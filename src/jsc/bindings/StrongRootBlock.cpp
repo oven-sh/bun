@@ -38,6 +38,7 @@ void StrongRootBlock::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
 
+    visitor.append(thisObject->m_next);
     visitor.append(thisObject->m_slots.begin(), thisObject->m_slots.end());
 }
 
@@ -49,12 +50,13 @@ DEFINE_VISIT_CHILDREN(StrongRootBlock);
 // relocate cells, so the returned pointer is stable while the block is on the
 // active list.
 //
-// The head/free pointers on JSVMClientData and every m_next link are raw (no
-// WriteBarrier): the whole list is rooted by a SimpleMarkingConstraint
-// (BunClientData.cpp) that runs on every return to Fixpoint, so a
-// freshly-prepended block is always appended before marking converges.
+// The head/free pointers on JSVMClientData are raw (no WriteBarrier): they are
+// rooted by a SimpleMarkingConstraint (BunClientData.cpp) that runs on every
+// return to Fixpoint, so a freshly-prepended block is always appended before
+// marking converges.
 StrongRootBlock* StrongRootBlock::acquire(WebCore::JSVMClientData* clientData, JSC::VM& vm, unsigned& outFreeSlot)
 {
+    releaseEmpties(clientData, vm);
     if (auto* cursor = clientData->m_strongRootBlockCursor) {
         if (!cursor->isFull()) {
             outFreeSlot = cursor->findFreeSlot();
@@ -79,7 +81,7 @@ StrongRootBlock* StrongRootBlock::acquire(WebCore::JSVMClientData* clientData, J
         block = StrongRootBlock::create(vm, clientData->m_strongRootBlockStructure);
     }
 
-    block->setNext(clientData->m_strongRootBlockHead);
+    block->setNext(vm, clientData->m_strongRootBlockHead);
     clientData->m_strongRootBlockHead = block;
     clientData->m_strongRootBlockCursor = block;
     outFreeSlot = 0;
@@ -87,9 +89,8 @@ StrongRootBlock* StrongRootBlock::acquire(WebCore::JSVMClientData* clientData, J
 }
 
 // Unlink `block` from the active list and either park it in the free slot (one
-// block of slack) or leave it unreachable so GC reclaims it. Runs from JSCell
-// destructors mid-sweep (see StrongRootBlock.h): plain loads/stores only.
-void StrongRootBlock::release(WebCore::JSVMClientData* clientData, StrongRootBlock* block)
+// block of slack) or leave it unreachable so GC reclaims it.
+void StrongRootBlock::release(WebCore::JSVMClientData* clientData, JSC::VM& vm, StrongRootBlock* block)
 {
     if (clientData->m_strongRootBlockCursor == block)
         clientData->m_strongRootBlockCursor = nullptr;
@@ -99,15 +100,27 @@ void StrongRootBlock::release(WebCore::JSVMClientData* clientData, StrongRootBlo
     } else {
         for (auto* prev = head; prev; prev = prev->next()) {
             if (prev->next() == block) {
-                prev->setNext(block->next());
+                prev->setNext(vm, block->next());
                 break;
             }
         }
     }
-    block->setNext(nullptr);
+    block->setNext(vm, nullptr);
 
     if (!clientData->m_strongRootBlockFree)
         clientData->m_strongRootBlockFree = block;
+}
+
+void StrongRootBlock::releaseEmpties(WebCore::JSVMClientData* clientData, JSC::VM& vm)
+{
+    if (!std::exchange(clientData->m_strongRootBlockHasEmpty, false)) [[likely]]
+        return;
+    for (auto* b = clientData->m_strongRootBlockHead; b;) {
+        auto* next = b->next();
+        if (b->isEmpty())
+            release(clientData, vm, b);
+        b = next;
+    }
 }
 
 } // namespace Bun

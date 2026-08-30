@@ -17,14 +17,10 @@ namespace Bun {
 // barriered slot store dirties only the owning block; blocks untouched since
 // the last full GC stay old-gen-marked and are skipped on eden.
 //
-// Active blocks form a singly-linked list via m_next from
-// JSVMClientData::m_strongRootBlockHead; the "Srb" marking constraint
-// (BunClientData.cpp) walks it and roots every block. The links are raw
-// pointers, not WriteBarriers, because Bun__StrongRef__delete unlinks blocks
-// from inside JSCell destructors mid-sweep, where barriered stores into (and
-// validated reads of) sibling cells are not allowed. One spare empty block is
-// kept in JSVMClientData::m_strongRootBlockFree; further empties are unlinked
-// and reclaimed by GC.
+// Active blocks form a singly-linked list via m_next whose head is rooted by
+// JSVMClientData::m_strongRootBlockHead. One spare empty block is kept in
+// JSVMClientData::m_strongRootBlockFree; further empties are unlinked and
+// reclaimed by GC.
 class StrongRootBlock final : public JSC::JSCell {
 public:
     using Base = JSC::JSCell;
@@ -79,6 +75,7 @@ public:
     }
 
     bool isFull() const { return m_occupiedCount == capacity; }
+    bool isEmpty() const { return !m_occupiedCount; }
 
     // Returns the lowest free slot index, or `capacity` if full.
     unsigned findFreeSlot() const
@@ -86,11 +83,12 @@ public:
         return static_cast<unsigned>(m_occupied.findBit(0, false));
     }
 
-    StrongRootBlock* next() const { return m_next; }
-    void setNext(StrongRootBlock* next) { m_next = next; }
+    StrongRootBlock* next() const { return m_next.get(); }
+    void setNext(JSC::VM& vm, StrongRootBlock* next) { m_next.setMayBeNull(vm, this, next); }
 
     static StrongRootBlock* acquire(WebCore::JSVMClientData* clientData, JSC::VM& vm, unsigned& outFreeSlot);
-    static void release(WebCore::JSVMClientData* clientData, StrongRootBlock* block);
+    static void release(WebCore::JSVMClientData* clientData, JSC::VM& vm, StrongRootBlock* block);
+    static void releaseEmpties(WebCore::JSVMClientData* clientData, JSC::VM& vm);
 
     template<typename Functor>
     void forEachOccupiedCell(const Functor& func) const
@@ -108,7 +106,7 @@ public:
     static constexpr ptrdiff_t slotsOffset() { return OBJECT_OFFSETOF(StrongRootBlock, m_slots); }
 
 private:
-    StrongRootBlock* m_next { nullptr };
+    JSC::WriteBarrier<StrongRootBlock> m_next;
     unsigned m_occupiedCount { 0 };
     WTF::BitSet<capacity> m_occupied;
     std::array<Slot, capacity> m_slots {};

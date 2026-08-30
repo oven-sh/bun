@@ -76,6 +76,13 @@ extern "C" void Bun__StrongRef__delete(StrongRefImpl* _Nonnull ref)
     // (covers the FIFO pattern where the oldest-armed block gets room while
     // the cursor sits at a full head).
     clientData->m_strongRootBlockCursor = block;
-    if (block->clear(decodeStrongRefIndex(ref))) [[unlikely]]
-        StrongRootBlock::release(clientData, block);
+    bool empty = block->clear(decodeStrongRefIndex(ref));
+    // release() barriers sibling cells; a JSCell destructor (sync, incremental or lazy sweep) must not, so defer it.
+    if (vm.heap.mutatorState() == JSC::MutatorState::Sweeping) [[unlikely]] {
+        clientData->m_strongRootBlockHasEmpty |= empty;
+        return;
+    }
+    if (empty) [[unlikely]]
+        StrongRootBlock::release(clientData, vm, block);
+    StrongRootBlock::releaseEmpties(clientData, vm);
 }

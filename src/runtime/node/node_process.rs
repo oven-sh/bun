@@ -169,14 +169,6 @@ mod _impl {
     };
     use bun_paths::PathBuffer;
 
-    #[cfg(windows)]
-    unsafe extern "C" {
-        // SAFETY precondition: `name` must point to a NUL-terminated wide string;
-        // `value` must be either null (delete) or a NUL-terminated wide string.
-        // Raw-pointer contract — cannot be `safe fn`.
-        fn SetEnvironmentVariableW(name: *const u16, value: *const u16) -> i32;
-    }
-
     // ───────────────────────────── title ─────────────────────────────
 
     // Windows `process.title` getter support: the C++ getter needs to know
@@ -520,7 +512,11 @@ mod _impl {
                 )
             }
             bun_sys::Result::Err(e) => {
-                let e = e.with_path_dest(&prev_cwd, slice.as_bytes());
+                let e = if e.syscall == bun_sys::Tag::chdir {
+                    e.with_path_dest(&prev_cwd, slice.as_bytes())
+                } else {
+                    e
+                };
                 Err(global_object.throw_value(e.to_js(global_object)))
             }
         }
@@ -569,7 +565,10 @@ mod _impl {
         };
         // SAFETY: buf1[len1] == 0; str2 is either null or NUL-terminated
         unsafe {
-            let _ = SetEnvironmentVariableW(buf1.as_ptr(), str2.unwrap_or(core::ptr::null()));
+            let _ = bun_sys::windows::kernel32::SetEnvironmentVariableW(
+                buf1.as_ptr(),
+                str2.unwrap_or(core::ptr::null()),
+            );
         }
     }
 } // mod _impl

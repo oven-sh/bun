@@ -6494,8 +6494,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         let descriptor_key = prop.key.expect("infallible: prop has key");
                         let loc = descriptor_key.loc;
 
-                        // TODO: when we have the `accessor` modifier, add `and !prop.flags.contains(.has_accessor_modifier)` to
-                        // the if statement.
                         let descriptor_kind: Expr =
                             if !prop.flags.contains(Flags::Property::IsMethod) {
                                 self.new_expr(E::Undefined {}, loc)
@@ -6903,6 +6901,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
             }
+            PropertyKind::Get | PropertyKind::Set
+                if prop.flags.contains(Flags::Property::IsLoweredAutoAccessor) =>
+            {
+                // typescript sets only design:type (the declared type) for an `accessor` member.
+                let v = self
+                    .serialize_metadata(prop.ts_metadata.clone())
+                    .expect("unreachable");
+                push_metadata!(b"design:type", v);
+            }
             PropertyKind::Get => {
                 if prop.flags.contains(Flags::Property::IsMethod) {
                     // typescript sets design:type to the return value & design:paramtypes to [].
@@ -6970,7 +6977,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
             }
-            PropertyKind::Spread | PropertyKind::Declare | PropertyKind::AutoAccessor => {} // not allowed in a class (auto_accessor is standard decorators only)
+            PropertyKind::Spread | PropertyKind::Declare => {}
+            PropertyKind::AutoAccessor => {} // lowered to a getter/setter pair before this runs
             PropertyKind::ClassStaticBlock => {} // not allowed to decorate this
         }
     }

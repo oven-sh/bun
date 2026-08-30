@@ -1013,6 +1013,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 self.fn_only_data_visit.is_this_nested = old_is_this_captured;
             }
 
+            // Before the useDefineForClassFields lowering below, which has to see
+            // the generated backing fields.
+            if !class.should_lower_standard_decorators {
+                self.lower_auto_accessors_in_place(class);
+            }
+
             if Self::IS_TYPESCRIPT_ENABLED {
                 // `lower_standard_decorators_stmt` owns field placement for such classes.
                 let use_define = self.options.use_define_for_class_fields

@@ -449,7 +449,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                             if let Some(prop) =
                                                 p.parse_property(kind, opts, None)?
                                             {
-                                                if prop.kind == PropertyKind::Normal
+                                                // Legacy mode decorates an abstract accessor
+                                                // like an abstract field (tsc parity).
+                                                if (prop.kind == PropertyKind::Normal
+                                                    || (prop.kind == PropertyKind::AutoAccessor
+                                                        && !p.options.features.standard_decorators))
                                                     && prop.value.is_none()
                                                     && opts.ts_decorators.len() > 0
                                                 {
@@ -463,10 +467,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         }
                                     }
                                     PropertyModifierKeyword::PAccessor => {
-                                        // "accessor" keyword for auto-accessor fields (TC39 standard decorators)
+                                        // "accessor" keyword for auto-accessor fields (valid in
+                                        // both decorator modes, like in TypeScript)
                                         if opts.is_class
                                             && !p.lexer.has_newline_before
-                                            && p.options.features.standard_decorators
                                             && PropertyModifierKeyword::find(raw)
                                                 == Some(PropertyModifierKeyword::PAccessor)
                                         {

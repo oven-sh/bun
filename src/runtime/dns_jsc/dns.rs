@@ -314,6 +314,28 @@ pub(crate) mod lib_uv_backend {
 // normalizeDNSName
 // ──────────────────────────────────────────────────────────────────────────
 
+unsafe extern "C" {
+    fn Bun__hostnameToASCII(
+        input: *const u8,
+        input_len: usize,
+        output: *mut u8,
+        output_cap: usize,
+    ) -> i32;
+}
+
+/// `None`: not valid IDNA. Do not map it to "", which NS/SOA treat as the root zone.
+fn hostname_to_ascii<'a>(name: &'a [u8], buf: &'a mut [u8; 1024]) -> Option<&'a [u8]> {
+    if strings::first_non_ascii(name).is_none() {
+        return Some(name);
+    }
+    // SAFETY: `buf` is a valid 1024-byte buffer; `name` is a valid slice.
+    let n = unsafe { Bun__hostnameToASCII(name.as_ptr(), name.len(), buf.as_mut_ptr(), buf.len()) };
+    if n <= 0 {
+        return None;
+    }
+    Some(&buf[..n as usize])
+}
+
 fn normalize_dns_name<'a>(name: &'a [u8], backend: &mut GetAddrInfoBackend) -> &'a [u8] {
     if *backend == GetAddrInfoBackend::CAres {
         // https://github.com/c-ares/c-ares/issues/477
@@ -5068,26 +5090,32 @@ impl Resolver {
         options: GetAddrInfoOptions,
         global_this: &JSGlobalObject,
     ) -> JsResult<JSValue> {
+        let mut ascii_buf = [0u8; 1024];
         // The system backends copy the hostname into a fixed `bun.PathBuffer` on the
         // stack before null-terminating it. Reject anything that cannot fit so we never
         // index past that buffer. RFC 1035 caps hostnames at 253 octets and NI_MAXHOST
         // is 1025, so this never rejects a name that could have resolved.
-        if name.len() >= MAX_PATH_BYTES || strings::contains_char(name, 0) {
-            let mut promise = JSPromiseStrong::init(global_this);
-            let promise_value = promise.value();
-            error_to_deferred(
-                c_ares::Error::ENOTFOUND,
-                b"getaddrinfo",
-                Some(name),
-                &mut promise,
-            )
-            .reject_later(global_this);
-            return Ok(promise_value);
-        }
+        let ascii_name = match hostname_to_ascii(name, &mut ascii_buf) {
+            Some(ascii) if ascii.len() < MAX_PATH_BYTES && !strings::contains_char(ascii, 0) => {
+                ascii
+            }
+            _ => {
+                let mut promise = JSPromiseStrong::init(global_this);
+                let promise_value = promise.value();
+                error_to_deferred(
+                    c_ares::Error::ENOTFOUND,
+                    b"getaddrinfo",
+                    Some(name),
+                    &mut promise,
+                )
+                .reject_later(global_this);
+                return Ok(promise_value);
+            }
+        };
 
         let mut opts = options;
         let mut backend = opts.backend;
-        let normalized = normalize_dns_name(name, &mut backend);
+        let normalized = normalize_dns_name(ascii_name, &mut backend);
         opts.backend = backend;
         let query = GetAddrInfo {
             options: opts,
@@ -5285,6 +5313,21 @@ impl Resolver {
             }
         };
 
+        // Wire name only; the cache key and request keep the caller's spelling for err.hostname.
+        let mut ascii_buf = [0u8; 1024];
+        let Some(ascii_name) = hostname_to_ascii(name, &mut ascii_buf) else {
+            let mut promise = JSPromiseStrong::init(global_this);
+            let promise_value = promise.value();
+            error_to_deferred(
+                c_ares::Error::EBADNAME,
+                T::SYSCALL.as_bytes(),
+                Some(name),
+                &mut promise,
+            )
+            .reject_later(global_this);
+            return Ok(promise_value);
+        };
+
         let cache_field = T::CACHE_FIELD; // "pending_{TYPE_NAME}_cache_cares"
 
         let key = resolve_info_request::PendingCacheKey::<T>::init(name);
@@ -5314,7 +5357,7 @@ impl Resolver {
         // is the freshly heap-allocated ResolveInfoRequest. c-ares stores the ctx
         // pointer and calls `T::RAW_CALLBACK` (→ `on_cares_complete`) which
         // consumes the request, so the `&mut` borrow is not held past this call.
-        unsafe { (*channel).resolve(name, &mut *request) };
+        unsafe { (*channel).resolve(ascii_name, &mut *request) };
 
         // SAFETY: bun_vm() returns a live VM pointer for the duration of the call.
         self.request_sent(global_this.bun_vm());

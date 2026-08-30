@@ -152,9 +152,7 @@ it("navigate + evaluate round-trip", async () => {
 // CVDisplayLink per pool; CoreVideo allows 64 per process). After exactly
 // 64 create/close cycles, the 65th view's navigate() hung forever. The
 // host now shares one WKProcessPool across all views. Sequential on
-// purpose (the cap is on lifetime instances, not concurrent ones); the
-// per-test timeout exists because the regression needs more than 64 full
-// create/navigate/close cycles.
+// purpose: the cap is on lifetime instances, not concurrent ones.
 it("survives more than 64 lifetime create/navigate/close cycles", async () => {
   for (let i = 1; i <= 70; i++) {
     const view = new Bun.WebView({ width: 64, height: 64, backend: "webkit", dataStore: "ephemeral" });
@@ -172,7 +170,7 @@ it("survives more than 64 lifetime create/navigate/close cycles", async () => {
       view.close();
     }
   }
-}, 90_000);
+});
 
 it("url constructor option fires navigate()", async () => {
   // `url:` is sugar for navigate() right after Create. The promise lands in

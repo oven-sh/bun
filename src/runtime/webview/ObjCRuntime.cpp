@@ -123,17 +123,11 @@ SEL WKWebViewConfiguration::s_initWithDirectory;
 SEL WKWebViewConfiguration::s_initWithConfiguration;
 SEL WKWebViewConfiguration::s_setProcessPool;
 
-// One WKProcessPool for every view in this host process, created on first
-// use and retained for process lifetime. A configuration with no explicit
-// pool makes WKWebView allocate a private WebProcessPool per view, and
-// every pool owns per-process OS resources: DisplayLinkCollection is a
-// WebProcessPool member, and each DisplayLink wraps a CVDisplayLink, a
-// resource CoreVideo caps at 64 per process. A fresh pool per view spends
-// capped resources on every instantiation even when each view is closed
-// before the next is created; after exactly 64 lifetime views, the 65th
-// view's navigate() never completed (oven-sh/bun#40951). One shared pool
-// spends them once. Site isolation is unaffected: cookies/storage live in
-// the per-configuration WKWebsiteDataStore, not the pool.
+// One pool for every view, retained for process lifetime. Without an
+// explicit pool each view gets a private WebProcessPool, which spends one
+// CVDisplayLink per display — CoreVideo allows 64 per process, so the
+// 65th lifetime view wedged (oven-sh/bun#40951). Cookies/storage are
+// per-configuration (WKWebsiteDataStore), not per-pool.
 id WKWebViewConfiguration::sharedProcessPool()
 {
     static id pool;

@@ -1689,3 +1689,34 @@ describe.concurrent("dot specifiers resolve to the directory index, not a siblin
     expect(exitCode).toBe(0);
   });
 });
+
+// https://github.com/oven-sh/bun/issues/40931
+it("import.meta.resolve with a file:// parent URL resolves bare package names", async () => {
+  // The space in the directory name makes import.meta.url percent-encoded,
+  // which reproduces the Windows failure (file:///C:/...) on every platform.
+  await using dir = tempDir("imr space", {
+    "node_modules/mypkg/package.json": JSON.stringify({
+      name: "mypkg",
+      version: "1.0.0",
+      exports: { ".": "./dist/index.mjs" },
+    }),
+    "node_modules/mypkg/dist/index.mjs": "export default 1;\n",
+    "node_modules/mypkg/dist/core/probe.mjs": [
+      `console.log(import.meta.resolve("mypkg"));`,
+      `console.log(import.meta.resolve("mypkg", import.meta.url));`,
+    ].join("\n"),
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--no-install", join("node_modules", "mypkg", "dist", "core", "probe.mjs")],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const [oneArg, twoArg] = stdout.trim().split("\n");
+  expect(oneArg).toEndWith("/node_modules/mypkg/dist/index.mjs");
+  expect(twoArg).toBe(oneArg);
+  expect(exitCode).toBe(0);
+});

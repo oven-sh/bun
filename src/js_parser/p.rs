@@ -6390,7 +6390,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         if let Some(prop_value) = prop.value {
                             match prop_value.data {
                                 js_ast::ExprData::EFunction(func) => {
-                                    let is_constructor = matches!(prop.key, Some(k) if matches!(k.data, js_ast::ExprData::EString(s) if s.eql_comptime(b"constructor")));
+                                    // `static constructor() {}` and `["constructor"]() {}` are
+                                    // ordinary methods, the same rule as parse_property and
+                                    // visit_class.
+                                    let is_constructor = !prop
+                                        .flags
+                                        .contains(Flags::Property::IsStatic)
+                                        && !prop.flags.contains(Flags::Property::IsComputed)
+                                        && matches!(prop.key, Some(k) if matches!(k.data, js_ast::ExprData::EString(s) if s.eql_comptime(b"constructor")));
 
                                     if is_constructor {
                                         constructor_function = Some(func);

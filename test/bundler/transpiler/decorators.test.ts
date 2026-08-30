@@ -698,6 +698,52 @@ test("decorated fields moving to constructor", () => {
   expect(a.c).toBe(5);
 });
 
+test("static method named 'constructor' is not treated as the constructor", () => {
+  const calls: any[] = [];
+  function dec(target, key?: string, index?: number) {
+    const name = target === A ? "A" : target === A.prototype ? "A.prototype" : "other";
+    calls.push({ target: name, key, index });
+  }
+
+  @dec
+  class A {
+    @dec x = 1;
+    static constructor(@dec d: string) {
+      return "static";
+    }
+  }
+
+  class Base {
+    args: any[];
+    constructor(...args: any[]) {
+      this.args = args;
+    }
+  }
+
+  function noop() {}
+  class B extends Base {
+    @noop y = 2;
+    static constructor() {
+      return "static B";
+    }
+  }
+
+  expect(new A().x).toBe(1);
+  expect(A.constructor()).toBe("static");
+  expect(new A().constructor).toBe(A);
+  // The parameter decorator belongs to the static method, not to the class.
+  expect(calls).toEqual([
+    { target: "A.prototype", key: "x", index: undefined },
+    { target: "A", key: "constructor", index: 0 },
+    { target: "A", key: undefined, index: undefined },
+  ]);
+
+  const b = new B(7, 8);
+  expect(b.y).toBe(2);
+  expect(b.args).toEqual([7, 8]);
+  expect(B.constructor()).toBe("static B");
+});
+
 test("only class decorator", () => {
   let a = 0;
   @d1

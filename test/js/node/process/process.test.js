@@ -582,7 +582,7 @@ it("process.versions", () => {
     tinycc: "05f0fafaa3be31e31d7b4b5c17dc60f62c991171",
     lolhtml: "725ce499aa9b71e38b7a2d0a9fbb6d7294a4079e",
     ares: "c7a3138dcfe3bb0eaaf10c0c24c36dc66dc790ab",
-    libdeflate: "c8c56a20f8f621e6a966b716b31f1dedab6a41e3",
+    libdeflate: "92e6a0db9fa848d742f9eb286c92afc60f2c3dda",
     zstd: "f8745da6ff1ad1e7bab384bd1f9d742439278e99",
     lshpack: "8905c024b6d052f083a3d11d0a169b3c2735c8a1",
   };

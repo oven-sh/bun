@@ -89,13 +89,24 @@ test.skipIf(isWindows)(
 // the stack-trace finalizer takes a different path and doesn't fire). The
 // processes run one at a time (concurrency starves the collector and hides the
 // race); a single crash fails the test.
+//
+// Skipped on Windows for the same reason as the test above: four runs of a
+// 60-iteration GC-churn loop are several times slower under Windows + ASAN in
+// CI, and the fixed C++ path is not platform-specific.
 test.skipIf(isWindows)(
   "vm.SourceTextModule evaluation error survives a concurrent-GC stack-trace finalizer",
   async () => {
     const fixture = `
       import * as vm from "node:vm";
-      let UREJ = 0;
-      process.on("unhandledRejection", () => { UREJ++; });
+      // Separate, pre-existing bug: the throwing top-level-await module below
+      // (shared by two importers) reports one unhandled rejection per graph even
+      // though every evaluate() is awaited and caught. Tolerate exactly that one
+      // so the crash under test stays the only way this process exits nonzero.
+      process.on("unhandledRejection", e => {
+        if (e instanceof URIError && e.message === "tla") return;
+        console.error("unexpected unhandled rejection:", e);
+        process.exit(3);
+      });
       const sl = async () => { await new Promise(r => setTimeout(r, 12)); for (let i = 0; i < 8; i++) await null; };
       const CA = async f => { try { return await f(); } catch (e) { return e; } };
       const ni = () => { throw new Error("noimports"); };
@@ -120,7 +131,7 @@ test.skipIf(isWindows)(
         { const val = ["str", "num", "null", "undef", "obj", "sym"][sd % 6];
           const src = { str: "throw 'x'", num: "throw 42", null: "throw null", undef: "throw undefined", obj: "throw {a:1}", sym: "throw Symbol.iterator" }[val];
           const m = M(src, "s6" + sd); await m.link(ni); await CA(() => m.evaluate()); }
-        await CA(async () => { await sl(); return UREJ; });
+        await sl();
       }
       for (let sd = 0; sd < 60; sd++) await fam(sd);
       console.log("ok");

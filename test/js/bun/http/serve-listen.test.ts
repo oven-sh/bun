@@ -161,31 +161,35 @@ describe.each([
   });
 });
 
-// A name that cannot be a host name (a space, a colon, an empty label) is
-// rejected in-process with the resolver's ENOTFOUND, the error Bun.connect
-// reports for the same name. The system resolver is never asked: some DNS
-// servers never answer a query for such a label, and the synchronous
-// getaddrinfo behind listen() then blocks startup for its full timeout.
+// A name that cannot be a host name (a space, a colon, an empty label,
+// brackets around anything but an IPv6 literal) is rejected in-process with the
+// resolver's ENOTFOUND, the error Bun.connect reports for the same name. The
+// system resolver is never asked: some DNS servers never answer a query for
+// such a label, and the synchronous getaddrinfo behind listen() then blocks
+// startup for its full timeout.
 describe.each([
   ["http", {}],
   ["https", { tls }],
 ] as const)("Bun.serve() %s with a hostname that is not a hostname", (_, options) => {
-  test.each(["this is not a hostname", "localhost:80", "a..b"])("%p throws getaddrinfo ENOTFOUND", hostname => {
-    let error: any;
-    try {
-      serve({ ...options, hostname, port: 0, fetch: () => new Response() }).stop(true);
-    } catch (e) {
-      error = e;
-    }
-    const { name, code, syscall, hostname: errHostname, message } = error ?? {};
-    expect({ name, code, syscall, hostname: errHostname, message }).toEqual({
-      name: "Error",
-      code: "ENOTFOUND",
-      syscall: "getaddrinfo",
-      hostname,
-      message: `getaddrinfo ENOTFOUND ${hostname}`,
-    });
-  });
+  test.each(["this is not a hostname", "localhost:80", "a..b", "[not-an-ipv6]"])(
+    "%p throws getaddrinfo ENOTFOUND",
+    hostname => {
+      let error: any;
+      try {
+        serve({ ...options, hostname, port: 0, fetch: () => new Response() }).stop(true);
+      } catch (e) {
+        error = e;
+      }
+      const { name, code, syscall, hostname: errHostname, message } = error ?? {};
+      expect({ name, code, syscall, hostname: errHostname, message }).toEqual({
+        name: "Error",
+        code: "ENOTFOUND",
+        syscall: "getaddrinfo",
+        hostname,
+        message: `getaddrinfo ENOTFOUND ${hostname}`,
+      });
+    },
+  );
 
   test("a later Bun.serve() still binds", () => {
     using server = serve({ ...options, port: 0, fetch: () => new Response() });

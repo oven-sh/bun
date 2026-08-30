@@ -1914,6 +1914,14 @@ impl UDPSocket {
 
         let str = args[0].to_bun_string(global_this)?;
         let connect_host = str.to_owned_slice_z();
+        if !bun_dns::is_valid_hostname(connect_host.as_bytes()) {
+            return Err(
+                global_this.throw_value(crate::dns_jsc::cares_jsc::not_a_hostname_error(
+                    global_this,
+                    connect_host.as_bytes(),
+                )),
+            );
+        }
 
         let connect_port_js = args[1];
 

@@ -2107,6 +2107,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             p.fn_or_arrow_data_visit.is_inside_switch = old_is_inside_switch;
 
+            // All case bodies share this block scope, so a `let`/`const`
+            // declared in one case can be used by a later case. Only now, with
+            // every case visited, are the use counts final.
+            if p.options.features.minify_syntax && p.options.features.dead_code_elimination {
+                for i in 0..cases.len() {
+                    let mut _stmts = stmts_to_list(p.arena, cases[i].body);
+                    p.mangle_stmts(&mut _stmts);
+                    cases[i].body = list_to_stmts(_stmts);
+                }
+            }
+
             for i in 0..cases.len() {
                 if p.should_lower_using_declarations(cases[i].body.slice()) {
                     lowered_using = true;

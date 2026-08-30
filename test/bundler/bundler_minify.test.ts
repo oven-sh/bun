@@ -1681,6 +1681,50 @@ describe("bundler", () => {
       expect(code.match(/let keep = /g)).toHaveLength(10);
     },
   });
+
+  // A `let`/`const` declared in one case clause is scoped to the whole switch
+  // block, so a later clause can still read or assign it. The single-use
+  // inliner used to run per clause and deleted `tag`, `s` and `n` after it
+  // had only seen the uses in the declaring clause. `only` has its single use
+  // in the same clause and must still be inlined.
+  itBundled("minify/SwitchCaseDeclUsedInLaterCase", {
+    files: {
+      "/entry.js": /* js */ `
+        function capture(v) { return v; }
+        function fallthrough(k) {
+          switch (k) {
+            case 1: const tag = { id: 1 }; capture(tag);
+            case 2: return typeof tag;
+          }
+        }
+        function defaultClause() {
+          switch (1) {
+            case 1: let s = "s1"; capture(s.length);
+            default: { return s + "!"; }
+          }
+        }
+        function reassigned(k) {
+          switch (k) {
+            case 1: let n = k; capture(n);
+            case 2: n = 5; return n;
+          }
+        }
+        function sameClause(v) {
+          switch (v) {
+            case 1: const only = v; return capture(only + 1);
+          }
+        }
+        console.log(JSON.stringify([fallthrough(1), defaultClause(), reassigned(1), sameClause(1)]));
+      `,
+    },
+    capture: ["v", "tag", "s.length", "n", "v + 1"],
+    minifySyntax: true,
+    minifyIdentifiers: false,
+    target: "bun",
+    run: {
+      stdout: '["object","s1!",5,2]',
+    },
+  });
 });
 
 // The runtime transpiler (`bun run`/`bun test`) implicitly enables
@@ -1711,6 +1755,44 @@ test("runtime transpiler does not collapse single-return arrow bodies", async ()
   expect(withArgs).toContain("return a + b * c");
   expect(withArgs).toContain("{");
   expect(noArgs).toContain("return 42");
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+});
+
+// The runtime transpiler runs the same single-use inliner. A `const` declared
+// in one case clause and read after a fall-through into the next clause must
+// keep its declaration.
+test("runtime transpiler keeps a switch case declaration that a later case reads", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      /* js */ `
+        function f(k) {
+          switch (k) {
+            case 1: const tag = { id: 1 }; use(tag);
+            case 2: return typeof tag;
+          }
+        }
+        function g() {
+          switch (1) {
+            case 1: let s = "s1"; use(s.length);
+            default: { return s + "!"; }
+          }
+        }
+        function use(v) { return v; }
+        let r;
+        try { r = g(); } catch (e) { r = e.constructor.name; }
+        console.log(JSON.stringify([f(1), r]));
+      `,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout).toBe('["object","s1!"]\n');
   expect(stderr).toBe("");
   expect(exitCode).toBe(0);
 });

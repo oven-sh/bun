@@ -1,6 +1,6 @@
 // @ts-nocheck
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import DecoratedClass from "./decorator-export-default-class-fixture";
 import DecoratedAnonClass from "./decorator-export-default-class-fixture-anon";
 
@@ -696,6 +696,96 @@ test("decorated fields moving to constructor", () => {
   expect(a.a).toBe(3);
   expect(a.b).toBe(4);
   expect(a.c).toBe(5);
+});
+
+test("static method named 'constructor' is not treated as the constructor", () => {
+  const calls: any[] = [];
+  function dec(target, key?: string, index?: number) {
+    const name = target === A ? "A" : target === A.prototype ? "A.prototype" : "other";
+    calls.push({ target: name, key, index });
+  }
+
+  @dec
+  class A {
+    @dec x = 1;
+    static constructor(@dec d: string) {
+      return "static";
+    }
+  }
+
+  class Base {
+    args: any[];
+    constructor(...args: any[]) {
+      this.args = args;
+    }
+  }
+
+  function noop() {}
+  class B extends Base {
+    @noop y = 2;
+    static constructor() {
+      return "static B";
+    }
+  }
+
+  expect(new A().x).toBe(1);
+  expect(A.constructor()).toBe("static");
+  expect(new A().constructor).toBe(A);
+  // The parameter decorator belongs to the static method, not to the class.
+  expect(calls).toEqual([
+    { target: "A.prototype", key: "x", index: undefined },
+    { target: "A", key: "constructor", index: 0 },
+    { target: "A", key: undefined, index: undefined },
+  ]);
+
+  const b = new B(7, 8);
+  expect(b.y).toBe(2);
+  expect(b.args).toEqual([7, 8]);
+  expect(B.constructor()).toBe("static B");
+});
+
+test("decorators on a static or computed 'constructor' key decorate an ordinary method", async () => {
+  const transpiler = new Bun.Transpiler({
+    loader: "ts",
+    tsconfig: { compilerOptions: { experimentalDecorators: true } },
+  });
+  // Only the real constructor rejects decorators.
+  expect(() => transpiler.transformSync("function dec() {}\nclass A { @dec constructor() {} }")).toThrow(
+    "TypeScript does not allow decorators on class constructors",
+  );
+
+  using dir = tempDir("decorators-static-ctor-key", {
+    "tsconfig.json": JSON.stringify({ compilerOptions: { experimentalDecorators: true } }),
+    "index.ts": `
+      const calls: any[] = [];
+      function dec(target: any, key: string, desc: PropertyDescriptor) {
+        const name = target === A ? "A" : target === A.prototype ? "A.prototype" : "other";
+        calls.push([name, key, typeof desc.value]);
+      }
+      class A {
+        @dec static constructor() { return "static"; }
+        @dec ["constructor"]() { return "proto"; }
+      }
+      console.log(JSON.stringify({ s: A.constructor(), p: new A().constructor(), calls }));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({
+    s: "static",
+    p: "proto",
+    calls: [
+      ["A.prototype", "constructor", "function"],
+      ["A", "constructor", "function"],
+    ],
+  });
+  expect(exitCode).toBe(0);
 });
 
 test("only class decorator", () => {

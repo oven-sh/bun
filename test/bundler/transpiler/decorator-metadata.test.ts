@@ -439,6 +439,26 @@ describe("decorator metadata", () => {
     expect(Reflect.getMetadata("design:returntype", A)).toBeUndefined();
   });
 
+  test("static method named 'constructor' is not the class constructor", () => {
+    function d1() {}
+    class Dep {}
+    // @ts-ignore
+    @d1
+    class A {
+      // @ts-ignore
+      static constructor(@d1 arg1: Dep) {
+        return "static";
+      }
+    }
+
+    // The class has no constructor, so it has no design:paramtypes.
+    expect(Reflect.getMetadata("design:paramtypes", A)).toBeUndefined();
+
+    // The static method has its own metadata, like any other decorated static method.
+    expect(Reflect.getMetadata("design:type", A, "constructor")).toBe(Function);
+    expect(Reflect.getMetadata("design:paramtypes", A, "constructor")).toEqual([Dep]);
+  });
+
   test("more types", () => {
     type B = "hello" | "world";
     const b = 2;

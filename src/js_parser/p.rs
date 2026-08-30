@@ -1013,11 +1013,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// Extensions every resolver extension order probes, so a key without one
-    /// of them (`./src/cat` for `./src/cat.js`) resolves through the normal
-    /// `require("./src/cat")` path.
+    /// Extensions the default extension orders probe (`.node` on target bun),
+    /// so a stem key (`./src/cat` for `./src/cat.js`) resolves like a
+    /// hand-written `require("./src/cat")`.
     const GLOB_STEM_EXTENSIONS: &'static [&'static [u8]] = &[
-        b".js", b".mjs", b".cjs", b".jsx", b".ts", b".mts", b".cts", b".tsx", b".json",
+        b".js", b".mjs", b".cjs", b".jsx", b".ts", b".mts", b".cts", b".tsx", b".json", b".node",
     ];
 
     fn glob_resolvable_stem(key: &[u8]) -> Option<&[u8]> {

@@ -630,6 +630,29 @@ describe("bundler", () => {
     },
   });
 
+  // An extensionless runtime string can name a native addon: target bun's
+  // extension order probes .node. The stem key must exist in the closed map,
+  // or the require throws MODULE_NOT_FOUND instead of reaching dlopen.
+  itBundled("glob-require/NativeAddonExtensionlessStem", {
+    target: "bun",
+    allowUnresolved: [],
+    files: {
+      "/entry.js": /* js */ `
+        const plat = process.env.PLAT || "x64-linux";
+        try {
+          require("./bin/" + plat);
+        } catch (e) {
+          console.log(e.code);
+        }
+      `,
+      "/bin/x64-linux.node": Buffer.from("dummy addon bytes"),
+    },
+    run: { stdout: "ERR_DLOPEN_FAILED" },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain('"./bin/x64-linux"');
+    },
+  });
+
   // The #9951 scenario end to end: a platform-specific .node addon required
   // via a const template specifier is embedded in a --compile binary. We use
   // dummy addon bytes so the test does not need node-gyp; loading is expected

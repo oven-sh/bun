@@ -812,7 +812,17 @@ impl JSGlobalObject {
     pub fn throw(&self, args: Arguments<'_>) -> JsError {
         let instance = self.create_error_instance(args);
         if instance.is_empty() {
-            debug_assert!(self.has_exception());
+            if !self.has_exception() {
+                // Message creation can fail without leaving an exception
+                // pending (e.g. the rendered message exceeds the maximum JS
+                // string length). Returning `Thrown` with no pending
+                // exception would silently swallow the throw, so throw a
+                // fallback instead.
+                return self.throw_value(
+                    ZigString::static_("error message is too long to display")
+                        .to_error_instance(self),
+                );
+            }
             return JsError::Thrown;
         }
         self.throw_value(instance)

@@ -18,7 +18,7 @@ use super::bun_test::{self};
 use super::diff_format::DiffFormatter;
 use super::execution::ExpectAssertions;
 use super::jest::Jest;
-use super::expect::{JSValueTestExt, FormatterTestExt, make_formatter};
+use super::expect::{JSValueTestExt, FormatterTestExt, make_formatter, MAX_MATCHER_OUTPUT_BYTES};
 use crate::expect_throw as throw;
 
 use bun_jsc::js_error_to_write_error;
@@ -1146,6 +1146,7 @@ impl Expect {
                 // TODO: print diff with properties from propertyMatchers
                 let signature = Self::get_signature(fn_name, "<green>propertyMatchers<r>", false);
                 let mut formatter = ConsoleObject::Formatter::new(global_this);
+                formatter.max_output_bytes = MAX_MATCHER_OUTPUT_BYTES;
                 return throw!(
                     self, global_this, signature,
                     "\n\nExpected <green>propertyMatchers<r> to match properties from received object\n\nReceived: {}\n",
@@ -1156,6 +1157,7 @@ impl Expect {
 
         if value.jest_snapshot_pretty_format(pretty_value, global_this).is_err() {
             let mut formatter = ConsoleObject::Formatter::new(global_this);
+            formatter.max_output_bytes = MAX_MATCHER_OUTPUT_BYTES;
             return Err(global_this.throw(format_args!(
                 "Failed to pretty format value: {}",
                 value.to_fmt(&mut formatter),
@@ -1223,6 +1225,7 @@ impl Expect {
                     }
                     _ => {
                         let mut formatter = ConsoleObject::Formatter::new(global_this);
+                        formatter.max_output_bytes = MAX_MATCHER_OUTPUT_BYTES;
                         global_this.throw(format_args!("Failed to snapshot value: {}", value.to_fmt(&mut formatter)))
                     }
                 });

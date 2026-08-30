@@ -5,6 +5,7 @@ import { mkdirSync, rmSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir, tls, tmpdirSync } from "harness";
 import { request } from "http";
 import { createServer } from "net";
+import { createServer as createTlsServer } from "tls";
 import { join } from "path";
 const tmp_dir = tmpdirSync();
 
@@ -385,6 +386,78 @@ it.skipIf(isWindows)("TLS over a unix socket is only reused for the hostname the
     connectionsAfterOther: 2,
   });
   expect(exitCode).toBe(0);
+});
+
+it.skipIf(isWindows)("TLS over a unix socket honors tls.ca", async () => {
+  using dir = tempDir("fetch-unix-tls-ca", {});
+  const unix = join(String(dir), "tls.sock");
+  let connections = 0;
+  const srv = createTlsServer(tls, sock => {
+    let buf = "";
+    sock.on("error", () => {});
+    sock.on("data", d => {
+      buf += d.toString("latin1");
+      let i: number;
+      while ((i = buf.indexOf("\r\n\r\n")) >= 0) {
+        buf = buf.slice(i + 4);
+        sock.write("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok");
+      }
+    });
+  });
+  srv.on("connection", () => connections++);
+  srv.listen(unix);
+  await once(srv, "listening");
+  try {
+    const bodies: string[] = [];
+    for (let i = 0; i < 2; i++) {
+      bodies.push(await (await fetch("https://localhost/x", { unix, tls: { ca: tls.cert } })).text());
+    }
+    expect({ bodies, connections }).toEqual({ bodies: ["ok", "ok"], connections: 1 });
+  } finally {
+    srv.close();
+  }
+});
+
+it.skipIf(isWindows)("unix keep-alive entries are not evicted by TCP pool pressure", async () => {
+  function makeServer() {
+    let connections = 0;
+    const srv = createServer(sock => {
+      connections++;
+      let buf = "";
+      sock.on("error", () => {});
+      sock.on("data", d => {
+        buf += d.toString("latin1");
+        let i: number;
+        while ((i = buf.indexOf("\r\n\r\n")) >= 0) {
+          buf = buf.slice(i + 4);
+          sock.write("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok");
+        }
+      });
+    });
+    return { srv, connections: () => connections };
+  }
+
+  using dir = tempDir("fetch-unix-pool-pressure", {});
+  const sockPath = join(String(dir), "p.sock");
+  const unix = makeServer();
+  unix.srv.listen(sockPath);
+  // More distinct TCP origins than the TCP keep-alive pool holds, so the TCP
+  // pool fills and evicts while the unix entry sits idle.
+  const tcp = Array.from({ length: 70 }, () => makeServer());
+  for (const t of tcp) t.srv.listen(0, "127.0.0.1");
+  await Promise.all([once(unix.srv, "listening"), ...tcp.map(t => once(t.srv, "listening"))]);
+  try {
+    expect(await (await fetch("http://localhost/x", { unix: sockPath })).text()).toBe("ok");
+    for (const t of tcp) {
+      const port = (t.srv.address() as import("net").AddressInfo).port;
+      expect(await (await fetch(`http://127.0.0.1:${port}/x`)).text()).toBe("ok");
+    }
+    expect(await (await fetch("http://localhost/x", { unix: sockPath })).text()).toBe("ok");
+    expect(unix.connections()).toBe(1);
+  } finally {
+    unix.srv.close();
+    for (const t of tcp) t.srv.close();
+  }
 });
 
 it("handle redirect to non-unix", async () => {

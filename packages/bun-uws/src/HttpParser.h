@@ -321,7 +321,7 @@ struct HttpResponseData;
             bool seenAnyCoding = false;
             bool seenContentLength = false;
             for (Header *h = headers; (++h)->key.length();) {
-                if (h->key.length() == 14 && !strncasecmp(h->key.data(), "content-length", 14)) {
+                if (!seenContentLength && h->key.length() == 14 && !strncasecmp(h->key.data(), "content-length", 14)) {
                     seenContentLength = true;
                     continue;
                 }

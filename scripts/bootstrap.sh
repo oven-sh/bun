@@ -52,16 +52,12 @@ execute_sudo() {
 execute_as_user() {
 	sh="$(require sh)"
 
-	if [ "$sudo" = "1" ] || [ "$can_sudo" = "1" ]; then
-		if [ -f "$(which sudo)" ]; then
-			execute sudo -n -u "$user" "$sh" -lc "$*"
-		elif [ -f "$(which doas)" ]; then
-			execute doas -u "$user" "$sh" -lc "$*"
-		elif [ -f "$(which su)" ]; then
-			execute su -s "$sh" "$user" -lc "$*"
-		else
-			execute "$sh" -lc "$*"
-		fi
+	if [ "$sudo" = "1" ]; then
+		# root drops to $user directly; sudo/doas may not exist or permit root
+		# (stock Alpine ships doas with no rule for root).
+		execute su -l -s "$sh" -c "$*" "$user"
+	elif [ "$can_sudo" = "1" ]; then
+		execute sudo -n -u "$user" "$sh" -lc "$*"
 	else
 		execute "$sh" -lc "$*"
 	fi

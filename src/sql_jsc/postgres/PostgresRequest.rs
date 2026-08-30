@@ -166,10 +166,21 @@ pub(crate) fn write_bind<Context: WriterContext>(
         };
         match effective_tag {
             types::Tag::jsonb | types::Tag::json => {
-                // Use jsonStringifyFast for SIMD-optimized serialization
-                let str = value
-                    .json_stringify_fast(global)
-                    .map_err(js_error_to_postgres)?;
+                // A string parameter already carries the JSON text. Send it
+                // verbatim (like node-postgres and postgres.js); stringifying
+                // it again would turn the document into a JSON string scalar.
+                let str = if value.is_string() {
+                    let str = BunString::from_js(value, global).map_err(js_error_to_postgres)?;
+                    if str.tag() == bun_core::Tag::Dead {
+                        return Err(AnyPostgresError::OutOfMemory);
+                    }
+                    str
+                } else {
+                    // Use jsonStringifyFast for SIMD-optimized serialization
+                    value
+                        .json_stringify_fast(global)
+                        .map_err(js_error_to_postgres)?
+                };
                 let slice = str.to_utf8();
                 let l = writer.length()?;
                 writer.write(slice.slice())?;

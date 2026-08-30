@@ -5923,12 +5923,6 @@
     "musl": 20,
     "windows": 20
   },
-  "js/node/harness.test.js": {
-    "default": 0,
-    "asan": 0,
-    "musl": 0,
-    "windows": 0
-  },
   "js/node/http/client-timeout-error.test.ts": {
     "default": 210,
     "asan": 260,

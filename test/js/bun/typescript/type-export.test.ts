@@ -1,7 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isDebug, isWindows, tempDir, tempDirWithFiles } from "harness";
 
 const ext = isWindows ? ".exe" : "";
+// `bun build --compile --bytecode` reads + rewrites a full standalone
+// executable (~1 GB under debug+ASAN) and the 18 compile cases queue behind a
+// 4-slot semaphore, so the tail tests' wall clock is (queue depth × per-compile
+// time) and easily clears the 5s default.
+const compileTimeout = isDebug ? 180_000 : undefined;
 
 async function run(cmd: string[], cwd: string) {
   await using proc = Bun.spawn({
@@ -38,14 +43,21 @@ async function withCompileSlot<T>(fn: () => Promise<T>): Promise<T> {
 async function compileAndRun(dir: string, entrypoint: string) {
   const outfile = dir + `/compiled${ext}`;
   return await withCompileSlot(async () => {
-    const buildResult = await run(
-      [bunExe(), "build", "--compile", "--bytecode", "--format=esm", entrypoint, "--outfile", outfile],
-      dir,
-    );
-    expect(buildResult.stderr).toBe("");
-    expect(buildResult.exitCode).toBe(0);
+    try {
+      const buildResult = await run(
+        [bunExe(), "build", "--compile", "--bytecode", "--format=esm", entrypoint, "--outfile", outfile],
+        dir,
+      );
+      expect(buildResult.stderr).toBe("");
+      expect(buildResult.exitCode).toBe(0);
 
-    return run([outfile], dir);
+      return await run([outfile], dir);
+    } finally {
+      // A debug+ASAN standalone executable is ~1 GB; 18 of them exhaust disk.
+      await Bun.file(outfile)
+        .delete()
+        .catch(() => {});
+    }
   });
 }
 
@@ -117,29 +129,29 @@ for (const b_file of b_files) {
         });
 
         describe.each(["run", "compile", "build"])("%s", mode => {
-          // TODO: "run" is skipped until ESM module_info is enabled in the runtime transpiler.
-          // Currently module_info is only generated for standalone ESM bytecode (--compile).
-          // Once enabled, flip this to include "run".
-          const testFn = mode === "run" ? test.skip : test.concurrent;
-          testFn("works", async () => {
-            let result: { stdout: string; stderr: string; exitCode: number };
-            if (mode === "compile") {
-              result = await compileAndRun(dir, dir + "/c.ts");
-            } else if (mode === "build") {
-              const build_result = await Bun.build({
-                entrypoints: [dir + "/c.ts"],
-                outdir: dir + "/dist",
-              });
-              expect(build_result.success).toBe(true);
-              result = await run([bunExe(), "run", dir + "/dist/c.js"], dir);
-            } else {
-              result = await run([bunExe(), "run", "c.ts"], dir);
-            }
+          test.concurrent(
+            "works",
+            async () => {
+              let result: { stdout: string; stderr: string; exitCode: number };
+              if (mode === "compile") {
+                result = await compileAndRun(dir, dir + "/c.ts");
+              } else if (mode === "build") {
+                const build_result = await Bun.build({
+                  entrypoints: [dir + "/c.ts"],
+                  outdir: dir + "/dist",
+                });
+                expect(build_result.success).toBe(true);
+                result = await run([bunExe(), "run", dir + "/dist/c.js"], dir);
+              } else {
+                result = await run([bunExe(), "run", "c.ts"], dir);
+              }
 
-            const parsedOutput = JSON.parse(result.stdout.trim());
-            expect(parsedOutput).toEqual({ my_value: "2", my_only: "3" });
-            expect(result.exitCode).toBe(0);
-          });
+              const parsedOutput = JSON.parse(result.stdout.trim());
+              expect(parsedOutput).toEqual({ my_value: "2", my_only: "3" });
+              expect(result.exitCode).toBe(0);
+            },
+            mode === "compile" ? compileTimeout : undefined,
+          );
         });
       });
     }
@@ -304,16 +316,18 @@ describe("check ownkeys from a star import", () => {
   };
 
   describe.each(["run", "compile"] as const)("%s", mode => {
-    const testFn = mode === "run" ? test.skip : test.concurrent;
+    test.concurrent(
+      "works",
+      async () => {
+        const result =
+          mode === "compile" ? await compileAndRun(dir, dir + "/main.ts") : await run([bunExe(), "main.ts"], dir);
 
-    testFn("works", async () => {
-      const result =
-        mode === "compile" ? await compileAndRun(dir, dir + "/main.ts") : await run([bunExe(), "main.ts"], dir);
-
-      expect(result.stderr.trim()).toBe("");
-      expect(JSON.parse(result.stdout.trim())).toEqual(expected);
-      expect(result.exitCode).toBe(0);
-    });
+        expect(result.stderr.trim()).toBe("");
+        expect(JSON.parse(result.stdout.trim())).toEqual(expected);
+        expect(result.exitCode).toBe(0);
+      },
+      mode === "compile" ? compileTimeout : undefined,
+    );
   });
 });
 
@@ -429,14 +443,166 @@ describe("import only used in decorator (#8439)", () => {
   });
 
   describe.each(["run", "compile"] as const)("%s", mode => {
-    const testFn = mode === "run" ? test.skip : test.concurrent;
+    test.concurrent(
+      "works",
+      async () => {
+        const result =
+          mode === "compile" ? await compileAndRun(dir, dir + "/index.ts") : await run([bunExe(), "index.ts"], dir);
 
-    testFn("works", async () => {
-      const result =
-        mode === "compile" ? await compileAndRun(dir, dir + "/index.ts") : await run([bunExe(), "index.ts"], dir);
+        expect(result.stderr.trim()).toBe("");
+        expect(result.exitCode).toBe(0);
+      },
+      mode === "compile" ? compileTimeout : undefined,
+    );
+  });
+});
 
-      expect(result.stderr.trim()).toBe("");
-      expect(result.exitCode).toBe(0);
+// https://github.com/oven-sh/bun/issues/7384
+describe("re-export of type alongside value at runtime (#7384)", () => {
+  const dir = tempDirWithFiles("reexport-type-7384", {
+    "EventTypes.ts": `
+      export type ValueOf<T> = T[keyof T];
+      export const BUEvents = { A: "a", B: "b" } as const;
+    `,
+    "utils.ts": `export { ValueOf, BUEvents } from "./EventTypes";`,
+    "index.ts": `
+      import { ValueOf, BUEvents } from "./utils";
+      type X = ValueOf<typeof BUEvents>;
+      const x: X = BUEvents.A;
+      console.log(JSON.stringify({ x, keys: Object.keys(BUEvents).sort() }));
+    `,
+  });
+
+  // BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER routes through the sync
+  // transpile in jsc_hooks.rs; without it the async RuntimeTranspilerStore path
+  // is taken. Both must attach module_info.
+  for (const disableAsync of [false, true]) {
+    test.concurrent(disableAsync ? "sync transpiler" : "async transpiler", async () => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "index.ts"],
+        env: disableAsync ? { ...bunEnv, BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER: "1" } : bunEnv,
+        cwd: dir,
+        stdio: ["inherit", "pipe", "pipe"],
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr.trim()).toBe("");
+      expect(JSON.parse(stdout.trim())).toEqual({ x: "a", keys: ["A", "B"] });
+      expect(exitCode).toBe(0);
     });
+  }
+
+  test.concurrent("BUN_FEATURE_FLAG_DISABLE_RUNTIME_MODULE_INFO restores the old error", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.ts"],
+      env: { ...bunEnv, BUN_FEATURE_FLAG_DISABLE_RUNTIME_MODULE_INFO: "1" },
+      cwd: dir,
+      stdio: ["inherit", "pipe", "pipe"],
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("export 'ValueOf' not found");
+    expect(exitCode).toBe(1);
+  });
+
+  // The on-disk RuntimeTranspilerCache stores the serialized ModuleInfo as
+  // esm_record. bunEnv disables the cache and the fixtures above are under the
+  // 4 KiB minimum, so cover the cache-HIT path explicitly: pad utils.ts past
+  // the floor, point BUN_RUNTIME_TRANSPILER_CACHE_PATH at a real dir, and run
+  // twice per transpile path so the second run hits create_from_cached_record.
+  const padding = Array.from({ length: 400 }, (_, i) => `const pad_${i} = ${i};`).join("\n");
+  const cacheDir = tempDirWithFiles("reexport-type-7384-cache", {
+    "EventTypes.ts": `
+      export type ValueOf<T> = T[keyof T];
+      export const BUEvents = { A: "a", B: "b" } as const;
+    `,
+    "utils.ts": `${padding}\nexport { ValueOf, BUEvents } from "./EventTypes";`,
+    "index.ts": `
+      import { ValueOf, BUEvents } from "./utils";
+      const x: ValueOf<typeof BUEvents> = BUEvents.A;
+      console.log(JSON.stringify({ x, keys: Object.keys(BUEvents).sort() }));
+    `,
+    ".cache-async/.keep": "",
+    ".cache-sync/.keep": "",
+  });
+  for (const disableAsync of [false, true]) {
+    test(`${disableAsync ? "sync" : "async"} transpiler (runtime transpiler cache hit)`, async () => {
+      const env = {
+        ...bunEnv,
+        BUN_RUNTIME_TRANSPILER_CACHE_PATH: `${cacheDir}/.cache-${disableAsync ? "sync" : "async"}`,
+        BUN_DEBUG_ENABLE_RESTORE_FROM_TRANSPILER_CACHE: "1",
+        ...(disableAsync ? { BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER: "1" } : {}),
+      };
+      for (const which of ["miss", "hit"]) {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "index.ts"],
+          env,
+          cwd: cacheDir,
+          stdio: ["inherit", "pipe", "pipe"],
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ which, stderr: stderr.trim(), out: JSON.parse(stdout.trim() || "null"), exitCode }).toEqual({
+          which,
+          stderr: "",
+          out: { x: "a", keys: ["A", "B"] },
+          exitCode: 0,
+        });
+      }
+    });
+  }
+});
+
+// Marking the JSModuleRecord m_isTypeScript means *every* unresolved indirect
+// export in a .ts file is tolerated at link time, not just type-only ones: the
+// re-exporting file has no local signal for which is which. A direct import of
+// the missing name still errors; a namespace import just omits the key. This
+// matches what `bun build` / `--compile` already produced and what
+// ts-node/tsx do. Pin it so the trade-off is explicit.
+test.concurrent("ts barrel re-exporting a missing value name links without error", async () => {
+  await using dir = tempDir("reexport-missing-value", {
+    "lib.ts": "export const foo = 1;",
+    "barrel.ts": `export { foo, fooo } from "./lib";`,
+    "via-ns.ts": `
+      import * as b from "./barrel";
+      console.log(JSON.stringify({ keys: Object.keys(b).sort(), fooo: (b as any).fooo }));
+    `,
+    "via-named.ts": `import { fooo } from "./barrel"; console.log(fooo);`,
+  });
+  {
+    const ns = await run([bunExe(), "via-ns.ts"], dir);
+    expect(ns.stderr.trim()).toBe("");
+    expect(JSON.parse(ns.stdout.trim())).toEqual({ keys: ["foo"], fooo: undefined });
+    expect(ns.exitCode).toBe(0);
+  }
+  {
+    const named = await run([bunExe(), "via-named.ts"], dir);
+    expect(named.stderr).toContain("Export named 'fooo' not found");
+    expect(named.exitCode).toBe(1);
+  }
+});
+
+// require(esm) replays part of the load synchronously and JSC hands the same
+// fetched source to the module analyzer a second time. The prebuilt module
+// record attached to runtime ESM must survive that second call; when it was
+// freed after the first one, the shared dependency `a` failed with
+// "module_info is null" for the whole graph.
+describe.each([
+  { name: "js", esm: "mjs", cjs: "cjs" },
+  { name: "ts", esm: "ts", cjs: "cts" },
+])("cjs entry requiring an esm graph with a shared dep ($name)", ({ esm, cjs }) => {
+  test.concurrent("loads and evaluates the shared dep once", async () => {
+    await using dir = tempDir("require-esm-diamond", {
+      [`entry.${cjs}`]: `require("./app.${esm}");`,
+      [`app.${esm}`]: `
+        import * as P from "./a.${esm}";
+        import Q from "./mid.${cjs}";
+        console.log(JSON.stringify({ P: P.value, Q, aEval: globalThis.aEval }));
+      `,
+      [`mid.${cjs}`]: `const y = require("./y.${esm}"); module.exports = { mid: y.y };`,
+      [`y.${esm}`]: `import { value } from "./a.${esm}"; export const y = "y:" + value;`,
+      [`a.${esm}`]: `export const value = "a"; globalThis.aEval = (globalThis.aEval ?? 0) + 1;`,
+    });
+    const result = await run([bunExe(), `entry.${cjs}`], String(dir));
+    expect(result.stderr).toBe("");
+    expect(JSON.parse(result.stdout.trim())).toEqual({ P: "a", Q: { mid: "y:a" }, aEval: 1 });
+    expect(result.exitCode).toBe(0);
   });
 });

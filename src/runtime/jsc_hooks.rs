@@ -2903,11 +2903,9 @@ fn transpile_source_code_inner(
                             list: core::mem::take(&mut entry.sourcemap).into_vec(),
                         },
                     );
-                    // Rebuild the cached ESM record for the
-                    // isolation source-provider cache (same shape as
-                    // `RuntimeTranspilerStore`).
-                    // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
-                    let module_info = if unsafe { &*jsc_vm }.use_isolation_source_provider_cache()
+                    // Rebuild the cached ESM record so JSC can skip its own
+                    // analyze pass (same shape as `RuntimeTranspilerStore`).
+                    let module_info = if VirtualMachine::use_module_info_for_esm()
                         && entry.metadata.module_type != CacheModuleType::Cjs
                         && !entry.esm_record.is_empty()
                     {
@@ -3052,12 +3050,12 @@ fn transpile_source_code_inner(
 
                 let is_commonjs_module = parse_result.ast.has_commonjs_export_names
                     || parse_result.ast.exports_kind == bun_ast::ExportsKind::Cjs;
-                // Collect the ESM record while printing, for the isolation
-                // source-provider cache (same shape as `RuntimeTranspilerStore`).
-                // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
+                // Collect the ESM record while printing so JSC builds the
+                // JSModuleRecord from Bun's output instead of re-parsing (same
+                // shape as `RuntimeTranspilerStore`).
                 let mut module_info: Option<
                     Box<bun_bundler::analyze_transpiled_module::ModuleInfo>,
-                > = if unsafe { &*jsc_vm }.use_isolation_source_provider_cache()
+                > = if VirtualMachine::use_module_info_for_esm()
                     && !is_commonjs_module
                     && loader.is_java_script_like()
                 {

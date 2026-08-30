@@ -863,8 +863,78 @@ pub mod analyze_transpiled_module {
                     self.record_kinds[idx] = RecordKind::ImportInfoSingleTypeScript;
                 }
             }
+            self.move_local_exports_last_in_name_order();
+            // Build-time indexes only; the runtime may keep this struct alive until
+            // the module is evaluated, so drop them and trim the rest now.
+            self.strings_map = HashMap::default();
+            self.exported_names = HashMap::default();
+            self.requested_modules.index = HashMap::default();
+            self.strings_buf.shrink_to_fit();
+            self.strings_lens.shrink_to_fit();
+            self.buffer.shrink_to_fit();
+            self.record_kinds.shrink_to_fit();
+            self.requested_modules.keys.shrink_to_fit();
+            self.requested_modules.values.shrink_to_fit();
+            self.requested_modules.phases.shrink_to_fit();
             self.finalized = true;
             Ok(())
+        }
+
+        /// JSC `std::sort`s the export entries, in insertion order, every time it
+        /// builds a namespace object; source order (`a0, a1, ..., a9999`) drives
+        /// that sort into its heapsort fallback, pre-sorted input is its best
+        /// case. The record order is not observable otherwise: the non-local
+        /// records keep their relative order, so error reporting is unchanged.
+        fn move_local_exports_last_in_name_order(&mut self) {
+            let is_local = |k: &RecordKind| *k == RecordKind::ExportInfoLocal;
+            if self.record_kinds.iter().filter(|k| is_local(k)).count() < 2 {
+                return;
+            }
+
+            let mut record_offsets: Vec<usize> = Vec::with_capacity(self.record_kinds.len());
+            let mut offset = 0usize;
+            for k in &self.record_kinds {
+                record_offsets.push(offset);
+                offset += k.len();
+            }
+
+            let mut string_offsets: Vec<usize> = Vec::with_capacity(self.strings_lens.len() + 1);
+            let mut string_end = 0usize;
+            string_offsets.push(string_end);
+            for &len in &self.strings_lens {
+                string_end += len as usize;
+                string_offsets.push(string_end);
+            }
+            let strings_buf = &self.strings_buf;
+            let name = |id: StringID| -> &[u8] {
+                match (
+                    string_offsets.get(id.0 as usize),
+                    string_offsets.get(id.0 as usize + 1),
+                ) {
+                    (Some(&start), Some(&end)) => &strings_buf[start..end],
+                    _ => &[],
+                }
+            };
+
+            let kinds = &self.record_kinds;
+            let buffer = &self.buffer;
+            // Export name is the first slot of every export record.
+            let export_name = |record: usize| name(buffer[record_offsets[record]]);
+            let mut locals: Vec<usize> =
+                (0..kinds.len()).filter(|&r| is_local(&kinds[r])).collect();
+            locals.sort_by(|&a, &b| export_name(a).cmp(export_name(b)));
+
+            let mut new_kinds: Vec<RecordKind> = Vec::with_capacity(kinds.len());
+            let mut new_buffer: Vec<StringID> = Vec::with_capacity(buffer.len());
+            let others = (0..kinds.len()).filter(|&r| !is_local(&kinds[r]));
+            for record in others.chain(locals.iter().copied()) {
+                let kind = kinds[record];
+                let start = record_offsets[record];
+                new_kinds.push(kind);
+                new_buffer.extend_from_slice(&buffer[start..start + kind.len()]);
+            }
+            self.record_kinds = new_kinds;
+            self.buffer = new_buffer;
         }
     }
 }
@@ -5489,7 +5559,9 @@ pub(crate) mod __gated_printer {
                         self.print_whitespacer(ws!(b"from "));
                     }
 
-                    let irp = &self.import_record(s.import_record_index as usize).path.text;
+                    let irp = Self::printed_import_record_path(
+                        self.import_record(s.import_record_index as usize),
+                    );
                     self.print_import_record_path(
                         self.import_record(s.import_record_index as usize),
                     );
@@ -5497,7 +5569,7 @@ pub(crate) mod __gated_printer {
 
                     if Self::MAY_HAVE_MODULE_INFO {
                         if let Some(mi) = self.module_info() {
-                            let irp_id = mi.str(irp);
+                            let irp_id = mi.str(&irp);
                             mi.request_module(
                                 irp_id,
                                 analyze_transpiled_module::FetchParameters::None,
@@ -5673,7 +5745,7 @@ pub(crate) mod __gated_printer {
                     }
 
                     self.print_whitespacer(ws!(b"} from "));
-                    let irp = &import_record.path.text;
+                    let irp = Self::printed_import_record_path(import_record);
                     self.print_import_record_path(import_record);
                     self.print_semicolon_after_statement();
 
@@ -5682,7 +5754,7 @@ pub(crate) mod __gated_printer {
                         // `name_for_symbol` (which needs `&mut self`) can run between uses.
                         let irp_id = {
                             let mi = self.module_info().expect("infallible: module_info enabled");
-                            let id = mi.str(irp);
+                            let id = mi.str(&irp);
                             mi.request_module(id, analyze_transpiled_module::FetchParameters::None);
                             id
                         };
@@ -6183,11 +6255,11 @@ pub(crate) mod __gated_printer {
                         // reshaped for borrowck — `module_info()` borrows `&mut self`,
                         // so we re-borrow it between `name_for_symbol` calls instead of holding
                         // a single long-lived `mi` across the whole block. `irp_id` is Copy.
-                        let import_record_path = &record.path.text;
+                        let import_record_path = Self::printed_import_record_path(record);
                         use analyze_transpiled_module::FetchParameters as FP;
                         let (irp_id, fetch_parameters) = {
                             let mi = self.module_info().expect("infallible: module_info enabled");
-                            let irp_id = mi.str(import_record_path);
+                            let irp_id = mi.str(&import_record_path);
                             let fetch_parameters: FP = if IS_BUN_PLATFORM {
                                 if let Some(loader) = record.loader {
                                     use bun_ast::Loader;
@@ -6363,27 +6435,41 @@ pub(crate) mod __gated_printer {
             Ok(())
         }
 
+        fn prints_namespace_in_path(import_record: &ImportRecord) -> bool {
+            import_record
+                .flags
+                .contains(ImportRecordFlags::PRINT_NAMESPACE_IN_PATH)
+                && !import_record.path.is_file()
+        }
+
+        /// The module specifier exactly as `print_import_record_path` writes it,
+        /// so the ModuleInfo record names the same module JSC will request.
+        fn printed_import_record_path(import_record: &ImportRecord) -> std::borrow::Cow<'_, [u8]> {
+            if Self::prints_namespace_in_path(import_record) {
+                let path = &import_record.path;
+                let mut out = Vec::with_capacity(path.namespace.len() + 1 + path.text.len());
+                out.extend_from_slice(path.namespace);
+                out.push(b':');
+                out.extend_from_slice(path.text);
+                std::borrow::Cow::Owned(out)
+            } else {
+                std::borrow::Cow::Borrowed(import_record.path.text)
+            }
+        }
+
         pub(crate) fn print_import_record_path(&mut self, import_record: &ImportRecord) {
             if IS_JSON {
                 unreachable!();
             }
 
             let quote = best_quote_char_for_string(import_record.path.text, false);
-            if import_record
-                .flags
-                .contains(ImportRecordFlags::PRINT_NAMESPACE_IN_PATH)
-                && !import_record.path.is_file()
-            {
-                self.print(quote);
+            self.print(quote);
+            if Self::prints_namespace_in_path(import_record) {
                 self.print_string_characters_utf8(import_record.path.namespace, quote);
                 self.print(b":");
-                self.print_string_characters_utf8(import_record.path.text, quote);
-                self.print(quote);
-            } else {
-                self.print(quote);
-                self.print_string_characters_utf8(import_record.path.text, quote);
-                self.print(quote);
             }
+            self.print_string_characters_utf8(import_record.path.text, quote);
+            self.print(quote);
         }
 
         #[inline]

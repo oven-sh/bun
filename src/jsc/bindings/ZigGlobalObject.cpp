@@ -174,6 +174,7 @@
 #include "webcrypto/JSSubtleCrypto.h"
 #include "ZigGeneratedClasses.h"
 #include "ZigSourceProvider.h"
+#include "BunAnalyzeTranspiledModule.h"
 #include "UtilInspect.h"
 #include "Base64Helpers.h"
 #include "wtf/text/OrdinalNumber.h"
@@ -3976,7 +3977,9 @@ JSC::JSValue GlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGlobalObj
     JSValue moduleRecordValue, RefPtr<JSC::ScriptFetcher> scriptFetcher,
     JSValue sentValue, JSValue resumeMode)
 {
-    noteModuleEvaluation(defaultGlobalObject(lexicalGlobalObject), moduleLoader);
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    noteModuleEvaluation(globalObject, moduleLoader);
+    Bun::releaseModuleInfoAfterLink(globalObject->vm(), globalObject, moduleRecordValue);
     return moduleLoader->evaluateNonVirtual(lexicalGlobalObject, key, moduleRecordValue,
         WTF::move(scriptFetcher), sentValue, resumeMode);
 }
@@ -3994,6 +3997,7 @@ JSC::JSValue EvalGlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGloba
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     noteModuleEvaluation(globalObject, moduleLoader);
+    Bun::releaseModuleInfoAfterLink(vm, globalObject, moduleRecordValue);
     JSC::JSValue result = moduleLoader->evaluateNonVirtual(lexicalGlobalObject, key, moduleRecordValue,
         WTF::move(scriptFetcher), sentValue, resumeMode);
     // The new C++ loader propagates the module body's throw out of

@@ -1,7 +1,7 @@
 /// <reference types="./plugins" />
 import { plugin } from "bun";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { resolve } from "path";
 
 declare global {
@@ -198,7 +198,6 @@ plugin({
 });
 
 // This is to test that it works when imported from a separate file
-import { tempDir } from "harness";
 import { render as svelteRender } from "svelte/server";
 import "../../third_party/svelte";
 import "./module-plugins";
@@ -341,6 +340,43 @@ export default Hello;
     const { body } = svelteRender(SvelteApp);
 
     expect(body).toBe("<!--[--><h1>Hello world!</h1><!--]-->");
+  });
+
+  // The printer writes a namespaced virtual specifier as "ns:path"; the module
+  // record handed to JSC must request that same string, not the bare path.
+  it("static import and export-star of a namespaced virtual module", async () => {
+    using dir = tempDir("plugin-ns-static-import", {
+      "preload.ts": `
+        import { plugin } from "bun";
+        plugin({
+          name: "virt",
+          setup(b) {
+            b.onResolve({ filter: /.*/, namespace: "virt" }, args => ({ path: args.path, namespace: "virt" }));
+            b.onLoad({ filter: /.*/, namespace: "virt" }, args => ({
+              contents: "export const name = " + JSON.stringify(args.path) + ";",
+              loader: "ts",
+            }));
+          },
+        });
+      `,
+      "entry.ts": `
+        import { name } from "virt:thing";
+        export * from "virt:other";
+        import * as self from "./entry.ts";
+        console.log(JSON.stringify({ name, star: self.name }));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--preload", "./preload.ts", "entry.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout.trim())).toEqual({ name: "thing", star: "other" });
+    expect(exitCode).toBe(0);
   });
 });
 

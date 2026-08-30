@@ -522,6 +522,64 @@ test(
   timeout,
 );
 
+// Regression: terminate() while the worker was still loading ES modules.
+// Transpile jobs that had finished on the thread pool but not yet been handed
+// to JSC were abandoned in two places: RuntimeTranspilerStore's batch runner
+// returned early once microtask draining reported termination (dropping the
+// rest of the popped batch on the floor), and a released job never freed the
+// ModuleInfo attached to its transpiled source. Both leak the per-module
+// record (ASAN reports it; the WTF strings leaked alongside are invisible to
+// LSAN), and the debug-only record cross-check returned a null promise to
+// JSC's module loader under termination (UBSan: member call on null JSCell).
+test.skipIf(!isASAN)(
+  "terminate() while ES modules are still being transpiled does not leak or crash",
+  async () => {
+    const moduleCount = 24;
+    const workers = 4;
+    const files: Record<string, string> = {
+      "worker.ts": [
+        "const pending: Promise<unknown>[] = [];",
+        `for (let i = 0; i < ${moduleCount}; i++) pending.push(import(\`./m\${i}.ts\`));`,
+        // Posted only after every import has been kicked off, so terminate()
+        // always lands with transpile jobs in flight.
+        'postMessage("loading");',
+        "await Promise.all(pending);",
+        "",
+      ].join("\n"),
+      "main.ts": `
+        for (let i = 0; i < ${workers}; i++) {
+          const worker = new Worker(new URL("./worker.ts", import.meta.url).href);
+          await new Promise<void>(resolve => {
+            worker.onmessage = () => {
+              worker.terminate();
+              resolve();
+            };
+          });
+        }
+        console.log("done");
+      `,
+    };
+    for (let i = 0; i < moduleCount; i++) {
+      files[`m${i}.ts`] = `export const value${i}: number = ${i};\nexport function get${i}() { return value${i}; }\n`;
+    }
+    using dir = tempDir("worker-terminate-while-transpiling", files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.ts"],
+      env: {
+        ...bunEnv,
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
+        LSAN_OPTIONS: `print_suppressions=0:suppressions=${join(import.meta.dirname, "../../../leaksan.supp")}`,
+      },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "done", stderr: "", exitCode: 0 });
+  },
+  timeout,
+);
+
 // A worker's own Bun.serve() listener kept dispatching requests
 // into the fetch handler for the rest of the loop tick after process.exit()
 // had stopped the VM. Building the Request for a VM whose termination had

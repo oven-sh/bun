@@ -473,8 +473,8 @@ fn tls_get_or_leak<T>(
 
 impl TranspilerJob {
     /// Kept as a private inherent fn (not `impl Drop`) because the
-    /// slot is recycled into the HiveArray via `store.put(this)`. Only caller is
-    /// `run_from_js_thread`.
+    /// slot is recycled into the HiveArray via `store.put(this)`. Callers are
+    /// `run_from_js_thread` and `release_queued_jobs_for_teardown`.
     ///
     /// Note: `HiveArrayFallback::put` runs `drop_in_place` on the slot (see
     /// hive_array.rs note), so the Drop-carrying fields — `bun_core::String` ×2,
@@ -926,12 +926,7 @@ impl TranspilerJob {
             }
         }
 
-        // SAFETY: leaf scalar field read; see `vm` note above. Inlined
-        // `VirtualMachine::use_isolation_source_provider_cache` to avoid forming
-        // `&VirtualMachine`.
-        let use_isolation_source_provider_cache = unsafe { (*vm).test_isolation_enabled }
-            && !bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_ISOLATION_SOURCE_CACHE::get()
-                .unwrap_or(false);
+        let use_module_info_for_esm = VirtualMachine::use_module_info_for_esm();
 
         if let Some(entry_ptr) = cache.entry.take() {
             // SAFETY: `entry` was boxed by `JSC_PARSER_CACHE_VTABLE.get` from a
@@ -954,7 +949,7 @@ impl TranspilerJob {
                 dump_source_string(vm, specifier, entry.output_code.byte_slice());
             }
 
-            let module_info = if use_isolation_source_provider_cache
+            let module_info = if use_module_info_for_esm
                 && entry.metadata.module_type != CacheModuleType::Cjs
                 && !entry.esm_record.is_empty()
             {
@@ -1051,10 +1046,14 @@ impl TranspilerJob {
 
         let is_commonjs_module = parse_result.ast.has_commonjs_export_names
             || parse_result.ast.exports_kind == ExportsKind::Cjs;
+        // `!log.has_errors()`: a duplicate-export or similar parser error leaves
+        // an AST whose ModuleInfo would mask the real syntax error. Fall back to
+        // JSC's analyze (mirrors the sync path's `log.errors > 0` bail).
         let mut module_info: Option<Box<analyze_transpiled_module::ModuleInfo>> =
-            if use_isolation_source_provider_cache
+            if use_module_info_for_esm
                 && !is_commonjs_module
                 && loader.is_java_script_like()
+                && !log.has_errors()
             {
                 Some(analyze_transpiled_module::ModuleInfo::create(
                     loader.is_type_script(),

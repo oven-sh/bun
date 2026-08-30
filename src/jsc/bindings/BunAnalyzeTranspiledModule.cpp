@@ -197,6 +197,27 @@ extern "C" void JSC_JSModuleRecord__addImportEntryNamespaceDefer(JSModuleRecord*
     });
 }
 
+} // namespace JSC
+
+void Bun::releaseModuleInfoAfterLink(JSC::VM& vm, Zig::GlobalObject* globalObject, JSC::JSValue moduleRecordValue)
+{
+    auto* moduleRecord = dynamicDowncast<JSC::JSModuleRecord>(moduleRecordValue);
+    if (!moduleRecord)
+        return;
+    auto* provider = moduleRecord->sourceCode().provider();
+    if (!provider || provider->sourceType() != JSC::SourceProviderSourceType::BunTranspiledModule)
+        return;
+    if (Bun::IsolatedModuleCache::canUse(vm, globalObject->bunVM()))
+        return;
+    auto* zigProvider = static_cast<Zig::SourceProvider*>(provider);
+    if (zigProvider->m_moduleInfo) {
+        zig__ModuleInfoDeserialized__deinit(zigProvider->m_moduleInfo);
+        zigProvider->m_moduleInfo = nullptr;
+    }
+}
+
+namespace JSC {
+
 static EncodedJSValue fallbackParse(JSGlobalObject* globalObject, const Identifier& moduleKey, const SourceCode& sourceCode, JSPromise* promise, JSModuleRecord* resultValue = nullptr);
 extern "C" EncodedJSValue Bun__analyzeTranspiledModule(JSGlobalObject* globalObject, const Identifier& moduleKey, const SourceCode& sourceCode, JSPromise* promise)
 {
@@ -210,20 +231,21 @@ extern "C" EncodedJSValue Bun__analyzeTranspiledModule(JSGlobalObject* globalObj
 
     auto provider = static_cast<Zig::SourceProvider*>(sourceCode.provider());
 
-    if (provider->m_moduleInfo == nullptr) {
-        dataLog("[note] module_info is null for module: ", moduleKey.utf8(), "\n");
-        RELEASE_AND_RETURN(scope, JSValue::encode(rejectWithError(createError(globalObject, WTF::String::fromLatin1("module_info is null")))));
-    }
+    // module_info stays on the provider until the module links (or, under
+    // --isolate, until ~SourceProvider): JSC analyzes the same JSSourceCode more
+    // than once (require(esm) sync replay re-issues makeModule on an entry whose
+    // modulePromise is still pending; --isolate reuses providers across globals),
+    // and every call must produce the same record. See releaseModuleInfoAfterLink.
+    ASSERT_WITH_MESSAGE(provider->m_moduleInfo, "BunTranspiledModule provider without module_info: %s", moduleKey.utf8().data());
+    if (provider->m_moduleInfo == nullptr) [[unlikely]]
+        RELEASE_AND_RETURN(scope, fallbackParse(globalObject, moduleKey, sourceCode, promise));
 
     auto* moduleInfo = provider->m_moduleInfo;
     auto moduleRecord = zig__ModuleInfoDeserialized__toJSModuleRecord(globalObject, vm, moduleKey, sourceCode, moduleInfo);
-    // Under --isolate the same SourceProvider is reused across globals via the
-    // IsolatedModuleCache, so module_info must remain alive on the provider;
-    // ~SourceProvider frees it. Otherwise, free now.
-    if (!Bun::IsolatedModuleCache::canUse(vm, uncheckedDowncast<Zig::GlobalObject>(globalObject)->bunVM())) {
-        zig__ModuleInfoDeserialized__deinit(moduleInfo);
-        provider->m_moduleInfo = nullptr;
-    }
+    // On a pending exception (worker termination) hand back the still-pending
+    // promise: JSModuleLoader::makeModule downcasts our return value before its
+    // caller consults the throw scope, so it must never be a null cell.
+    RETURN_IF_EXCEPTION(scope, JSValue::encode(promise));
     if (moduleRecord == nullptr) {
         RELEASE_AND_RETURN(scope, JSValue::encode(rejectWithError(createError(globalObject, WTF::String::fromLatin1("parseFromSourceCode failed")))));
     }
@@ -231,7 +253,7 @@ extern "C" EncodedJSValue Bun__analyzeTranspiledModule(JSGlobalObject* globalObj
 #if BUN_DEBUG
     RELEASE_AND_RETURN(scope, fallbackParse(globalObject, moduleKey, sourceCode, promise, moduleRecord));
 #else
-    promise->resolve(globalObject, vm, moduleRecord);
+    promise->fulfill(vm, moduleRecord);
     RELEASE_AND_RETURN(scope, JSValue::encode(promise));
 #endif
 }
@@ -248,12 +270,16 @@ static EncodedJSValue fallbackParse(JSGlobalObject* globalObject, const Identifi
     std::unique_ptr<ModuleProgramNode> moduleProgramNode = parseRootNode<ModuleProgramNode>(
         vm, sourceCode, ImplementationVisibility::Public, JSParserBuiltinMode::NotBuiltin,
         StrictModeLexicallyScopedFeature, JSParserScriptMode::Module, SourceParseMode::ModuleAnalyzeMode, error);
-    if (error.isValid())
-        RELEASE_AND_RETURN(scope, JSValue::encode(rejectWithError(error.toErrorObject(globalObject, sourceCode))));
+    if (error.isValid()) {
+        auto* errorObject = error.toErrorObject(globalObject, sourceCode);
+        RETURN_IF_EXCEPTION(scope, JSValue::encode(promise));
+        RELEASE_AND_RETURN(scope, JSValue::encode(rejectWithError(errorObject)));
+    }
     ASSERT(moduleProgramNode);
 
     ModuleAnalyzer moduleAnalyzer(globalObject, moduleKey, sourceCode, moduleProgramNode->features());
-    RETURN_IF_EXCEPTION(scope, JSValue::encode(promise->rejectWithCaughtException(vm, scope)));
+    // See Bun__analyzeTranspiledModule: never return a null cell to makeModule.
+    RETURN_IF_EXCEPTION(scope, JSValue::encode(promise));
 
     auto result = moduleAnalyzer.analyze(*moduleProgramNode);
     if (!result) {
@@ -278,7 +304,7 @@ static EncodedJSValue fallbackParse(JSGlobalObject* globalObject, const Identifi
     }
 
     scope.release();
-    promise->resolve(globalObject, vm, resultValue == nullptr ? moduleRecord : resultValue);
+    promise->fulfill(vm, resultValue == nullptr ? moduleRecord : resultValue);
     return JSValue::encode(promise);
 }
 

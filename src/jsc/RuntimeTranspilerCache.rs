@@ -55,7 +55,9 @@ bun_core::declare_scope!(cache, visible);
 /// offsets picked by a header byte) plus a body of tagged records with
 /// u8/u16/u32 ids and implied slots dropped, instead of fixed u32 arrays.
 /// Version 27: ModuleInfo string table holds Latin-1 / UTF-16 bodies, not WTF-8.
-const EXPECTED_VERSION: u32 = 27;
+/// Version 28: ModuleInfo is written for every runtime ESM transpile, not only
+/// under --isolate; older entries have an empty esm_record (#7384).
+const EXPECTED_VERSION: u32 = 28;
 
 /// Source files smaller than this are not written to / read from the on-disk
 /// transpiler cache. Originally 50 KiB, which excluded almost every file in a
@@ -870,6 +872,10 @@ impl RuntimeTranspilerCache {
 
         let mut features_hasher = Wyhash::init(SEED);
         parser_options.hash_for_runtime_transpiler(&mut features_hasher, used_jsx);
+        // Decides whether the entry carries an esm_record.
+        features_hasher.update(&[u8::from(
+            crate::virtual_machine::VirtualMachine::use_module_info_for_esm(),
+        )]);
         self.features_hash = Some(features_hasher.final_());
 
         self.entry = match Self::from_file(

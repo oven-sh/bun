@@ -1177,6 +1177,7 @@ impl<'arena> ScopeOrder<'arena> {
 pub struct ParenExprOpts {
     pub(crate) is_async: bool,
     pub(crate) force_arrow_fn: bool,
+    pub(crate) is_after_question_and_before_colon: bool,
 }
 
 #[repr(u8)]

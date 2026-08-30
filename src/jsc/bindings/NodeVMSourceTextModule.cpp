@@ -124,10 +124,8 @@ NodeVMSourceTextModule* NodeVMSourceTextModule::create(VM& vm, JSGlobalObject* g
         return nullptr;
     }
 
-    // Decoding verifies the cache format, the checksum and the key (source hash and
-    // compile flags). Nothing is linked here: a ModuleProgramCodeBlock needs the
-    // module's own JSModuleEnvironment as its scope, and that only exists once the
-    // module record created in createModuleRecord() is instantiated.
+    // Decoding checks the format, the checksum and the source key. Linking would need
+    // the module's JSModuleEnvironment, which does not exist yet.
     LexicallyScopedFeatures lexicallyScopedFeatures = StrictModeLexicallyScopedFeature;
     SourceCodeKey key(ptr->sourceCode(), {}, SourceCodeType::ModuleType, lexicallyScopedFeatures, JSParserScriptMode::Module, DerivedContextType::None, EvalContextType::None, false, {}, std::nullopt);
     Ref<CachedBytecode> cachedBytecode = CachedBytecode::create(std::span(cachedData), nullptr, {});

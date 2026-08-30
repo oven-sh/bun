@@ -353,46 +353,30 @@ impl<'a> LinkerContext<'a> {
                 .is_entry_point()
     }
 
-    /// The parser's verdict on a file: `ExplicitStrictMode` for a `"use strict"`
-    /// directive, an implicit kind for ES module syntax (`import`, `export`,
-    /// top-level `await`), `SloppyMode` otherwise.
     fn module_strict_mode(&self, source_index: usize) -> bun_ast::StrictModeKind {
         self.graph.ast.items_module_scope()[source_index].strict_mode
     }
 
-    /// A file whose code is strict, or that has no code of its own to be sloppy
-    /// with: the runtime helpers (strict-safe, they run strict in esm output)
-    /// and data loaders such as JSON, whose code the bundler generates.
+    /// The runtime helpers and data loaders such as JSON have no code of their own to be sloppy.
     fn file_is_strict(&self, source_index: usize) -> bool {
         source_index == Index::RUNTIME.value() as usize
             || !self.parse_graph().input_files.items_loader()[source_index].is_javascript_like()
             || self.module_strict_mode(source_index) != bun_ast::StrictModeKind::SloppyMode
     }
 
-    /// Whether a wrapped file needs a `"use strict"` directive at the top of its
-    /// `__commonJS` or `__esm` closure body. The esm output is a module and is
-    /// strict already. The cjs and iife outputs are a CommonJS module and a
-    /// script: sloppy unless a directive says otherwise, so a strict file's code
-    /// keeps its strictness only through a directive in the closure.
+    /// Strict code in a `__commonJS` or `__esm` closure needs its own directive in cjs and iife output.
     pub(crate) fn wrapper_needs_use_strict(&self, source_index: usize) -> bool {
         matches!(self.options.output_format, Format::Cjs | Format::Iife)
             && self.module_strict_mode(source_index) != bun_ast::StrictModeKind::SloppyMode
     }
 
-    /// Whether an entry point chunk needs a `"use strict"` directive at its top.
-    /// The entry point's statements are the chunk's top-level statements, so
-    /// the chunk's strictness is the entry point's. A directive the entry file
-    /// spelled out always applies to the output, as in esbuild. An ES module
-    /// entry file is strict with no directive to copy. Every other file in the
-    /// chunk is printed into the same scope, so its code is made strict only
-    /// when all of them are strict too: a sloppy CommonJS file must not turn
-    /// strict because of a directive it did not write.
+    /// A chunk-top directive applies to every file in the chunk, so an ES module entry point
+    /// gets one only when all of them are strict. A spelled-out entry directive applies as before.
     pub(crate) fn entry_chunk_needs_use_strict(&self, chunk: &Chunk) -> bool {
         let entry_strict_mode = self.module_strict_mode(chunk.entry_point.source_index() as usize);
         match self.options.output_format {
             Format::Esm => false,
-            // The dev server wraps every module in its own closure. A chunk-level
-            // directive would apply to all of them, so only a spelled-out one is kept.
+            // The dev server's module closures share the chunk, so only a spelled-out directive is kept.
             Format::InternalBakeDev => {
                 entry_strict_mode == bun_ast::StrictModeKind::ExplicitStrictMode
             }
@@ -4342,9 +4326,7 @@ impl InsideWrapperPrefix {
         Ok(())
     }
 
-    /// A directive is only a directive as the first statement of the wrapper
-    /// body, so it goes ahead of the `init_*()` dependency calls, which are
-    /// inserted at `sync_dependencies_end`.
+    /// Inserted first: a directive has to precede the `init_*()` calls added at `sync_dependencies_end`.
     pub(crate) fn append_directive(&mut self, stmt: Stmt) {
         self.stmts.insert(0, stmt);
         self.sync_dependencies_end += 1;

@@ -410,9 +410,7 @@ pub(crate) fn post_process_js_chunk(
         newline_before_comment = true;
     }
 
-    // Add the top-level "use strict" directive (see `entry_chunk_needs_use_strict`).
-    // For iife it goes inside the wrapper below, so that it does not apply to
-    // other scripts the output is concatenated with.
+    // For iife the directive goes inside the wrapper below, so it does not leak into concatenated scripts.
     let use_strict_directive = chunk.is_entry_point() && c.entry_chunk_needs_use_strict(chunk);
     if use_strict_directive && output_format != options::OutputFormat::Iife {
         j.push_static(b"\"use strict\";\n");

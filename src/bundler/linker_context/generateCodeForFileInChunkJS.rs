@@ -252,9 +252,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
         u32::MAX
     };
 
-    // The top-level directive must come first. The chunk's own entry point gets
-    // it at the top of the chunk instead (`post_process_js_chunk`). A file that
-    // is an entry point of another chunk is an ordinary dependency here.
+    // The chunk's own entry point gets the directive at the chunk top instead (`post_process_js_chunk`).
     let is_chunk_entry_point =
         chunk.is_entry_point() && chunk.entry_point.source_index() as usize == source_index;
     if flags.wrap != WrapKind::None
@@ -775,9 +773,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                         inner_stmts.slice_mut()[end] = transformed;
                         end += 1;
                     }
-                    // Directives alone are not a body. Everything else was hoisted,
-                    // so the closure stays empty, as the parser assumed when it
-                    // allocated no wrapper symbol (`needs_wrapper_ref`).
+                    // A closure with only directives stays empty: `needs_wrapper_ref` allocated no symbol for it.
                     if inner_stmts.slice()[..end]
                         .iter()
                         .all(|stmt| matches!(stmt.data, StmtData::SDirective(_)))

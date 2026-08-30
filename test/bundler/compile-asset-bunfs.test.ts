@@ -211,9 +211,9 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
           nestedWildcard: [join("_app", "immutable", "app.css")],
           literalFile: [join("_app", "immutable", "app.css")],
           absoluteOpt: ["empty.txt", "favicon.svg", "index.html"].map(n => join(r.client.root, n)).sort(),
-          // An absolute pattern keeps its prefix verbatim; entries append with the platform separator.
+          // An absolute pattern keeps its literal prefix verbatim, including its separator style.
           absolutePattern: ["empty.txt", "favicon.svg", "index.html"]
-            .map(n => r.client.root.replaceAll(sep, "/") + sep + n)
+            .map(n => r.client.root.replaceAll(sep, "/") + "/" + n)
             .sort(),
           enoentCode: "ENOENT",
           enotdirCode: "ENOTDIR",

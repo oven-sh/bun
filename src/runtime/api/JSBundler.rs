@@ -863,6 +863,16 @@ pub mod js_bundler {
                 this.files = file_map_from_js(global_this, JSValue::from_cell(files_obj))?;
             }
 
+            if !did_set_target
+                && this.target != Target::Bun
+                && options::any_entry_point_has_bun_hashbang(
+                    this.entry_points.keys(),
+                    Some(&this.files),
+                )
+            {
+                this.target = Target::Bun;
+            }
+
             if let Some(flag) = config.get_boolean_loose(global_this, "emitDCEAnnotations")? {
                 this.emit_dce_annotations = Some(flag);
             }

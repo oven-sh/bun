@@ -324,6 +324,32 @@ impl TargetExt for Target {
     }
 }
 
+const BUN_HASHBANG: &[u8] = b"#!/usr/bin/env bun";
+
+/// The `target` default documented in docs/bundler/index.mdx; callers apply it only when no target was given.
+pub fn any_entry_point_has_bun_hashbang(
+    entry_points: &[Box<[u8]>],
+    file_map: Option<&crate::bundle_v2::FileMap>,
+) -> bool {
+    entry_points.iter().any(|entry_point| {
+        if let Some((_, contents)) = file_map.and_then(|files| files.lookup(b"", entry_point)) {
+            return has_bun_hashbang(contents);
+        }
+        let mut first_bytes = [0u8; BUN_HASHBANG.len() + 1];
+        bun_sys::File::openat(bun_sys::Fd::cwd(), entry_point, bun_sys::O::RDONLY, 0)
+            .and_then(|file| file.read_all(&mut first_bytes))
+            .is_ok_and(|len| has_bun_hashbang(&first_bytes[..len]))
+    })
+}
+
+fn has_bun_hashbang(contents: &[u8]) -> bool {
+    contents.starts_with(BUN_HASHBANG)
+        && matches!(
+            contents.get(BUN_HASHBANG.len()),
+            None | Some(b'\n' | b'\r' | b' ' | b'\t')
+        )
+}
+
 pub use bun_options_types::Format;
 pub use bun_options_types::WindowsOptions;
 

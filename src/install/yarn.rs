@@ -3,7 +3,7 @@ use std::borrow::Cow;
 use std::io::Write as _;
 
 use crate::Error;
-use bun_collections::{HashMap, StringHashMap};
+use bun_collections::{HashMap, StringHashMap, index_sort};
 use bun_install::bin::Bin;
 use bun_install::dependency::{self, Dependency, DependencyExt as _};
 use bun_install::install::{self, DependencyID, PackageID, PackageManager};
@@ -236,34 +236,19 @@ impl<'a> Entry<'a> {
         ParsedNpmAlias { version: b"*" }
     }
 
+    /// Registry tarball URLs look like `<registry>/<name>/-/<basename>-<version>.tgz`,
+    /// where `<name>` spans two path segments (`@scope/name`) for scoped packages.
     pub(crate) fn get_package_name_from_resolved_url(url: &[u8]) -> Option<&[u8]> {
-        if let Some(dash_idx) = strings::index_of(url, b"/-/") {
-            let mut slash_count: usize = 0;
-            let mut last_slash: usize = 0;
-            let mut second_last_slash: usize = 0;
-
-            let mut i = dash_idx;
-            while i > 0 {
-                if url[i - 1] == b'/' {
-                    slash_count += 1;
-                    if slash_count == 1 {
-                        last_slash = i - 1;
-                    } else if slash_count == 2 {
-                        second_last_slash = i - 1;
-                        break;
-                    }
-                }
-                i -= 1;
-            }
-
-            if last_slash < dash_idx && url[last_slash + 1] == b'@' {
-                return Some(&url[second_last_slash + 1..dash_idx]);
-            } else if last_slash < dash_idx {
-                return Some(&url[last_slash + 1..dash_idx]);
-            }
+        let path = &url[..strings::index_of(url, b"/-/")?];
+        let (prefix, name) = strings::rsplit_once_char(path, b'/')?;
+        if name.is_empty() {
+            return None;
         }
-
-        None
+        let scope_start = strings::last_index_of_char(prefix, b'/').map_or(0, |slash| slash + 1);
+        if prefix[scope_start..].starts_with(b"@") {
+            return Some(&path[scope_start..]);
+        }
+        Some(name)
     }
 }
 
@@ -1398,7 +1383,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
     for (base_name, versions) in scoped_packages.iter_mut() {
         let base_name: &[u8] = base_name.as_ref();
 
-        versions.sort_by_key(|a| a.package_id);
+        index_sort::sort_slice_by(versions, |a, b| a.package_id.cmp(&b.package_id));
 
         let original_name_hash = string_hash(base_name);
         // `remove` drops the value (and thus the `Ids` Vec) automatically.

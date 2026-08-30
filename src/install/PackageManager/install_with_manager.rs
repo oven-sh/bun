@@ -1,6 +1,7 @@
 use core::sync::atomic::Ordering;
 
-use bun_collections::DynamicBitSet;
+use bun_ast::Source;
+use bun_collections::{DynamicBitSet, index_sort};
 use bun_core::UnwrapOrOom as _;
 use bun_core::time::nano_timestamp;
 use bun_core::{Global, Output};
@@ -56,7 +57,9 @@ pub fn install_with_manager(
 
     // Start resolving DNS for the default registry immediately.
     // Unless you're behind a proxy.
-    if !manager.env().has_http_proxy() {
+    if !manager.env().has_http_proxy()
+        && manager.options.offline != crate::package_manager_real::options::OfflineMode::Offline
+    {
         // And don't try to resolve DNS if it's an IP address.
         let scope_url = manager.options.scope.url.url();
         if !scope_url.hostname.is_empty() && !scope_url.is_ip_address() {
@@ -160,47 +163,7 @@ pub fn install_with_manager(
                 let mut lockfile = Lockfile::default();
                 let mut maybe_root = lockfile::Package::default();
 
-                // SAFETY: `manager.log` is a non-null backref to the CLI log set at init().
-                let root_package_json_entry = match manager
-                    .workspace_package_json_cache
-                    .get_with_path(
-                        manager.log_mut(),
-                        root_package_json_path.as_bytes(),
-                        Default::default(),
-                    ) {
-                    WorkspacePackageJsonCacheResult::Entry(entry) => entry,
-                    WorkspacePackageJsonCacheResult::ReadErr(err) => {
-                        if manager.log_mut().errors > 0 {
-                            manager
-                                .log_mut()
-                                .print(std::ptr::from_mut(Output::error_writer()))?;
-                        }
-                        Output::err(
-                            err,
-                            "failed to read '{}'",
-                            format_args!("{}", bstr::BStr::new(root_package_json_path.as_bytes())),
-                        );
-                        Global::exit(1);
-                    }
-                    WorkspacePackageJsonCacheResult::ParseErr(err) => {
-                        if manager.log_mut().errors > 0 {
-                            manager
-                                .log_mut()
-                                .print(std::ptr::from_mut(Output::error_writer()))?;
-                        }
-                        Output::err(
-                            err,
-                            "failed to parse '{}'",
-                            format_args!("{}", bstr::BStr::new(root_package_json_path.as_bytes())),
-                        );
-                        Global::exit(1);
-                    }
-                };
-
-                // `Source` is not `Copy`, so
-                // clone it (cheap — `Source` is a few `Box<[u8]>` handles) so the
-                // `&mut *mgr` reborrow below doesn't conflict with the cache borrow.
-                let source_copy = root_package_json_entry.source.clone();
+                let source_copy = root_package_json_source(manager, root_package_json_path)?;
 
                 let mut resolver: () = ();
                 // `parse` needs `manager`, `manager.log` and a fresh
@@ -272,6 +235,17 @@ pub fn install_with_manager(
                 };
 
                 had_any_diffs = manager.summary.has_diffs();
+                // Which workspaces asked for a self-contained node_modules is a property
+                // of their manifests, not of the dependency graph: mirror the freshly
+                // parsed manifests whether or not anything else changed, so the copy
+                // loaded from bun.lock never goes stale.
+                manager
+                    .lockfile
+                    .self_contained_workspaces
+                    .clear_retaining_capacity();
+                for key in lockfile.self_contained_workspaces.keys() {
+                    manager.lockfile.self_contained_workspaces.put(*key, ())?;
+                }
                 if manager.subcommand == Subcommand::Dedupe {
                     crate::dedupe::dedupe_after_differ(manager);
                 }
@@ -365,7 +339,7 @@ pub fn install_with_manager(
                         let mut v = Vec::new();
                         lf.overrides.append_overridden_name_hashes(&mut v);
                         lockfile.overrides.append_overridden_name_hashes(&mut v);
-                        v.sort_unstable();
+                        index_sort::sort_slice_unstable_by(&mut v, |a, b| a.cmp(b));
                         v.dedup();
                         v
                     };
@@ -456,7 +430,6 @@ pub fn install_with_manager(
                             lf.workspace_versions.insert(*key, version);
                         }
                     }
-
                     // Update patched dependencies
                     {
                         for (key, value) in lockfile.patched_dependencies.iter() {
@@ -558,7 +531,9 @@ pub fn install_with_manager(
                             .lockfile
                             .overrides
                             .append_catalog_valued_name_hashes(&mut catalog_overridden);
-                        catalog_overridden.sort_unstable();
+                        index_sort::sort_slice_unstable_by(&mut catalog_overridden, |a, b| {
+                            a.cmp(b)
+                        });
                         catalog_overridden.dedup();
                         let dependencies_len = manager.lockfile.buffers.dependencies.len();
                         for _dep_id in 0..dependencies_len {
@@ -822,7 +797,7 @@ pub fn install_with_manager(
                     if bun_core::handle_oom(Lockfile::eql(
                         &manager.lockfile,
                         &lockfile_before_clean,
-                        packages_len_before_install,
+                        lockfile_before_clean.loaded_package_count as usize,
                     )) {
                         break 'frozen_lockfile;
                     }
@@ -955,7 +930,10 @@ pub fn install_with_manager(
         // If the lockfile was frozen, we already checked it
         !manager.options.enable.frozen_lockfile()
             && if load_result.loaded_from_text_lockfile() {
-                !manager.lockfile.eql(&lockfile_before_clean, packages_len_before_install)?
+                !manager.lockfile.eql(
+                    &lockfile_before_clean,
+                    lockfile_before_clean.loaded_package_count as usize,
+                )?
             } else {
                 manager.lockfile.has_meta_hash_changed(
                     PackageManager::verbose_install() || manager.options.do_.print_meta_hash_string(),
@@ -1059,28 +1037,35 @@ impl<const CHECK_PEERS: bool, const ONLY_PRE_PATCH: bool>
         // duration of the callback (no `&mut event_loop` straddles it). The original
         // `this: &mut` in `run_and_wait` is dead past the `let mgr = ...` line.
         let this = unsafe { &mut *closure.manager };
-        if CHECK_PEERS {
-            if let Err(err) = this.process_peer_dependency_list() {
+        loop {
+            if CHECK_PEERS {
+                if let Err(err) = this.process_peer_dependency_list() {
+                    closure.err = Some(err);
+                    return true;
+                }
+            }
+
+            this.drain_dependency_list();
+
+            // void RunTasksCallbacks — the trait dispatch needs a
+            // concrete `RunTasksCallbacks` impl; `extract_ctx` collapses to `()` so we
+            // do NOT pass `this` as both receiver and ctx (would alias `&mut`).
+            let log_level = this.options.log_level;
+            if let Err(err) =
+                run_tasks::<InstallWaitCallbacks>(this, &mut (), CHECK_PEERS, log_level)
+            {
                 closure.err = Some(err);
                 return true;
             }
-        }
 
-        this.drain_dependency_list();
-
-        // void RunTasksCallbacks — the trait dispatch needs a
-        // concrete `RunTasksCallbacks` impl; `extract_ctx` collapses to `()` so we
-        // do NOT pass `this` as both receiver and ctx (would alias `&mut`).
-        let log_level = this.options.log_level;
-        if let Err(err) = run_tasks::<InstallWaitCallbacks>(this, &mut (), CHECK_PEERS, log_level) {
-            closure.err = Some(err);
-            return true;
-        }
-
-        if CHECK_PEERS {
-            if this.peer_dependencies.readable_length() > 0 {
-                return false;
+            // `run_tasks` can resolve a package whose deferred peers create no
+            // new async task (e.g. its tarball is already extracted). With zero
+            // pending tasks nothing wakes this loop again, so drain the peer
+            // queue now instead of sleeping on a wakeup that never comes.
+            if CHECK_PEERS && this.peer_dependencies.readable_length() > 0 {
+                continue;
             }
+            break;
         }
 
         if ONLY_PRE_PATCH {
@@ -1534,28 +1519,11 @@ fn report_lockfile_load_error(
     if log_level != Options::LogLevel::Silent
         && !crate::migration::reported_unsupported_lockfile_version(cause)
     {
-        match cause.step {
-            lockfile::LoadStep::OpenFile => Output::err(
-                cause.value,
-                "failed to open lockfile: '{}'",
-                format_args!("{}", bstr::BStr::new(&cause.lockfile_path)),
-            ),
-            lockfile::LoadStep::ParseFile => Output::err(
-                cause.value,
-                "failed to parse lockfile: '{}'",
-                format_args!("{}", bstr::BStr::new(&cause.lockfile_path)),
-            ),
-            lockfile::LoadStep::ReadFile => Output::err(
-                cause.value,
-                "failed to read lockfile: '{}'",
-                format_args!("{}", bstr::BStr::new(&cause.lockfile_path)),
-            ),
-            lockfile::LoadStep::Migrating => Output::err(
-                cause.value,
-                "failed to migrate lockfile: '{}'",
-                format_args!("{}", bstr::BStr::new(&cause.lockfile_path)),
-            ),
-        }
+        Output::err(
+            cause.value,
+            "failed to {} lockfile: '{}'",
+            (cause.step.verb(), bstr::BStr::new(&cause.lockfile_path)),
+        );
 
         if !manager.options.enable.fail_early() {
             Output::print_errorln("");
@@ -1885,12 +1853,11 @@ fn record_updating_package_versions(manager: &mut PackageManager) {
             let tag_total = original.tag.pre.len() + original.tag.build.len();
             if tag_total > 0 {
                 let mut tag_buf = vec![0u8; tag_total].into_boxed_slice();
-                let mut ptr = &mut tag_buf[..];
-                original.tag = original_resolution
-                    .npm()
-                    .version
-                    .tag
-                    .clone_into(&lockfile.buffers.string_bytes, &mut ptr);
+                original.tag = original_resolution.npm().version.tag.clone_into(
+                    &lockfile.buffers.string_bytes,
+                    &mut tag_buf,
+                    &mut 0,
+                );
 
                 entry_ptr.original_version_string_buf = tag_buf;
             }
@@ -1898,6 +1865,32 @@ fn record_updating_package_versions(manager: &mut PackageManager) {
             entry_ptr.original_version = Some(original);
         }
     }
+}
+
+fn root_package_json_source(
+    manager: &mut PackageManager,
+    root_package_json_path: &ZStr,
+) -> crate::Result<Source> {
+    let (verb, err) = match manager.workspace_package_json_cache.get_with_path(
+        manager.log_mut(),
+        root_package_json_path.as_bytes(),
+        Default::default(),
+    ) {
+        WorkspacePackageJsonCacheResult::Entry(entry) => return Ok(entry.source.clone()),
+        WorkspacePackageJsonCacheResult::ReadErr(err) => ("read", err),
+        WorkspacePackageJsonCacheResult::ParseErr(err) => ("parse", err),
+    };
+    if manager.log_mut().errors > 0 {
+        manager
+            .log_mut()
+            .print(std::ptr::from_mut(Output::error_writer()))?;
+    }
+    Output::err(
+        err,
+        "failed to {} '{}'",
+        (verb, bstr::BStr::new(root_package_json_path.as_bytes())),
+    );
+    Global::exit(1);
 }
 
 #[cold]
@@ -1937,42 +1930,7 @@ fn create_new_lockfile_and_enqueue(
         Global::crash();
     }
 
-    // SAFETY: `manager.log` is a non-null backref to the CLI log set at init().
-    let root_package_json_entry = match manager.workspace_package_json_cache.get_with_path(
-        manager.log_mut(),
-        root_package_json_path.as_bytes(),
-        Default::default(),
-    ) {
-        WorkspacePackageJsonCacheResult::Entry(entry) => entry,
-        WorkspacePackageJsonCacheResult::ReadErr(err) => {
-            if manager.log_mut().errors > 0 {
-                manager
-                    .log_mut()
-                    .print(std::ptr::from_mut(Output::error_writer()))?;
-            }
-            Output::err(
-                err,
-                "failed to read '{}'",
-                format_args!("{}", bstr::BStr::new(root_package_json_path.as_bytes())),
-            );
-            Global::exit(1);
-        }
-        WorkspacePackageJsonCacheResult::ParseErr(err) => {
-            if manager.log_mut().errors > 0 {
-                manager
-                    .log_mut()
-                    .print(std::ptr::from_mut(Output::error_writer()))?;
-            }
-            Output::err(
-                err,
-                "failed to parse '{}'",
-                format_args!("{}", bstr::BStr::new(root_package_json_path.as_bytes())),
-            );
-            Global::exit(1);
-        }
-    };
-
-    let source_copy = root_package_json_entry.source.clone();
+    let source_copy = root_package_json_source(manager, root_package_json_path)?;
 
     let mut resolver: () = ();
     {
@@ -2081,7 +2039,7 @@ fn refresh_children_of_named(
             })
             .collect()
     };
-    package_ids.sort_unstable();
+    index_sort::sort_indices_unstable(&mut package_ids, &mut |a, b| a.cmp(&b));
     package_ids.dedup();
     if package_ids.is_empty() {
         return Ok(Vec::new());

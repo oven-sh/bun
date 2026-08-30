@@ -1,4 +1,4 @@
-pub use _impl::{Context, NativeZstd};
+pub use _impl::NativeZstd;
 
 mod _impl {
     use core::cell::Cell;
@@ -47,6 +47,8 @@ mod _impl {
         pub poll_ref: JsCell<CountedKeepAlive>,
         pub this_value: JsCell<StrongOptional>, // jsc.Strong.Optional
         pub write_in_progress: Cell<bool>,
+        /// bit 0: the pending input's ArrayBuffer is pinned; bit 1: the pending output's. A held bufferless view sets neither.
+        pub pinned_buffers: Cell<u8>,
         pub pending_close: Cell<bool>,
         pub closed: Cell<bool>,
         pub task: JsCell<WorkPoolTask>,
@@ -60,9 +62,6 @@ mod _impl {
         pub(crate) estimated_external_size: usize,
     }
 
-    // `pub const ref/deref = RefCount.ref/deref;` — wired via `CompressionStreamImpl::{ref_,deref}`
-    // below; deref-to-zero reconstitutes the Box (running Drop) and frees, mirroring `bun.destroy`.
-    //
     // `pub const js = jsc.Codegen.JSNativeZstd; toJS/fromJS/fromJSDirect = js.*;` — provided by
     // `#[bun_jsc::JsClass]` derive (wires to_js / from_js / from_js_direct).
     //
@@ -115,6 +114,7 @@ mod _impl {
                 poll_ref: JsCell::new(CountedKeepAlive::default()),
                 this_value: JsCell::new(StrongOptional::empty()),
                 write_in_progress: Cell::new(false),
+                pinned_buffers: Cell::new(0),
                 pending_close: Cell::new(false),
                 closed: Cell::new(false),
                 // WorkPoolTask { callback: undefined } — callback is overwritten by
@@ -290,9 +290,7 @@ mod _impl {
         }
     }
 
-    // Called by RefCount when the count hits 0. `poll_ref` and `this_value`
-    // (Strong) cleanup are handled by their own Drop impls; the Box free is
-    // handled by IntrusiveRc dropping the Box.
+    // `poll_ref` and `this_value` (Strong) clean up via their own Drop impls.
     impl Drop for NativeZstd {
         fn drop(&mut self) {
             self.stream.with_mut(|s| match s.mode {

@@ -383,7 +383,7 @@ On some headless servers and CI environments, the current user's [Security Ident
 | ------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | ----- |
 | `*/5 * * * *`                              | Single trigger with [`Repetition`](https://learn.microsoft.com/en-us/windows/win32/taskschd/taskschedulerschema-repetition-triggerbasetype-element) (PT5M) | 1     |
 | `*/15 * * * *`                             | Single trigger with Repetition (PT15M)                                                                                                                     | 1     |
-| `0 9 * * MON-FRI`                          | One `CalendarTrigger` per weekday                                                                                                                          | 5     |
+| `0 9 * * MON-FRI`                          | One `CalendarTrigger` listing all five weekdays                                                                                                            | 1     |
 | `0,30 9-17 * * *`                          | 2 minutes × 9 hours                                                                                                                                        | 18    |
 | `@daily`, `@weekly`, `@monthly`, `@yearly` | Single trigger                                                                                                                                             | 1     |
 
@@ -399,7 +399,7 @@ On some headless servers and CI environments, the current user's [Security Ident
 | `*/15 * * 6 *`    | Month restriction prevents Repetition: 4 × 24 | 96            |
 | `0,30 * 15 * FRI` | OR-split doubles triggers: 2 × 24 × 2         | 96            |
 
-The key factor is whether the expression can use a [`Repetition`](https://learn.microsoft.com/en-us/windows/win32/taskschd/taskschedulerschema-repetition-triggerbasetype-element) interval (single trigger) or must expand to individual `CalendarTrigger` elements. Minute steps that **evenly divide 60** (`*/1`, `*/2`, `*/3`, `*/4`, `*/5`, `*/6`, `*/10`, `*/12`, `*/15`, `*/20`, `*/30`) use Repetition and work regardless of other fields. Steps that don't divide 60 (`*/7`, `*/8`, `*/9`, `*/11`, `*/13`, etc.) must be expanded, and with 24 hours active, the count quickly exceeds 48.
+The key factor is whether the expression can use a [`Repetition`](https://learn.microsoft.com/en-us/windows/win32/taskschd/taskschedulerschema-repetition-triggerbasetype-element) interval (single trigger) or must expand to individual `CalendarTrigger` elements. Minute steps that **evenly divide 60** (`*/1`, `*/2`, `*/3`, `*/4`, `*/5`, `*/6`, `*/10`, `*/12`, `*/15`, `*/20`, `*/30`) use Repetition only when the other four fields are unrestricted (`*`). Steps that don't divide 60 (`*/7`, `*/8`, `*/9`, `*/11`, `*/13`, etc.) must be expanded, and with 24 hours active, the count quickly exceeds 48.
 
 To work around it, simplify the expression or restrict the hour range:
 

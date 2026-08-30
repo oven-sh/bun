@@ -130,6 +130,7 @@ new!(pub CI_JOB_URL: string, "CI_JOB_URL", {});
 new!(pub CLAUDE_CODE_AGENT_RULE_DISABLED: boolean, "CLAUDE_CODE_AGENT_RULE_DISABLED", { default: false });
 new!(pub CLAUDECODE: boolean, "CLAUDECODE", { default: false });
 new!(pub COLORTERM: string, "COLORTERM", {});
+new!(pub COLUMNS: unsigned, "COLUMNS", {});
 new!(pub CURSOR_AGENT_RULE_DISABLED: boolean, "CURSOR_AGENT_RULE_DISABLED", { default: false });
 new!(pub CURSOR_TRACE_ID: boolean, "CURSOR_TRACE_ID", { default: false });
 new!(pub DO_NOT_TRACK: boolean, "DO_NOT_TRACK", { default: false });
@@ -174,6 +175,9 @@ new!(pub REPL_ID: boolean, "REPL_ID", { default: false });
 new!(pub RUNNER_DEBUG: boolean, "RUNNER_DEBUG", { default: false });
 platform_specific_new!(pub SDKROOT: string, posix = "SDKROOT", windows = None, {});
 platform_specific_new!(pub SHELL: string, posix = "SHELL", windows = None, {});
+// OpenSSL's overrides for its default certificate file and directory. Set but empty means none.
+new!(pub SSL_CERT_DIR: string, "SSL_CERT_DIR", {});
+new!(pub SSL_CERT_FILE: string, "SSL_CERT_FILE", {});
 // C:\Windows, for example.
 platform_specific_new!(pub SYSTEMROOT: string, posix = None, windows = "SYSTEMROOT", {});
 platform_specific_new!(pub TEMP: string, posix = "TEMP", windows = "TEMP", {});
@@ -278,7 +282,6 @@ pub mod feature_flag {
     new_feature_flag!(pub BUN_INTERNAL_INTERACTIVE_ASSUME_TTY, "BUN_INTERNAL_INTERACTIVE_ASSUME_TTY", {});
     new_feature_flag!(pub BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN, "BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN", {});
     new_feature_flag!(pub BUN_INTERNAL_SUPPRESS_CRASH_ON_NAPI_ABORT, "BUN_INTERNAL_SUPPRESS_CRASH_ON_NAPI_ABORT", {});
-    new_feature_flag!(pub BUN_INTERNAL_SUPPRESS_CRASH_ON_PROCESS_KILL_SELF, "BUN_INTERNAL_SUPPRESS_CRASH_ON_PROCESS_KILL_SELF", {});
     new_feature_flag!(pub BUN_INTERNAL_SUPPRESS_CRASH_ON_UV_STUB, "BUN_INTERNAL_SUPPRESS_CRASH_ON_UV_STUB", {});
     new_feature_flag!(pub BUN_FEATURE_FLAG_LAST_MODIFIED_PRETEND_304, "BUN_FEATURE_FLAG_LAST_MODIFIED_PRETEND_304", {});
     new_feature_flag!(pub BUN_NO_CODESIGN_MACHO_BINARY, "BUN_NO_CODESIGN_MACHO_BINARY", {});
@@ -488,11 +491,6 @@ pub(crate) mod kind {
                 deser: DeserOpts::DEFAULT,
             };
         }
-        impl Default for CtorOptions {
-            fn default() -> Self {
-                Self::DEFAULT
-            }
-        }
 
         /// Control how deserializing and deserialization errors are handled.
         ///
@@ -533,11 +531,6 @@ pub(crate) mod kind {
                 error_handling: ErrorHandling::DebugWarn,
                 empty_string_as: EmptyStringAs::Erroneous,
             };
-        }
-        impl Default for DeserOpts {
-            fn default() -> Self {
-                Self::DEFAULT
-            }
         }
 
         // `ip` (var_name + opts) lives on the struct so handle_error can read it; it is

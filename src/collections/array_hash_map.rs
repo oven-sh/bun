@@ -943,15 +943,6 @@ impl<K, V, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
     }
 
     #[inline]
-    pub fn get_adapted<Q: ?Sized, Ad>(&self, key: &Q, adapter: &Ad) -> Option<&V>
-    where
-        Ad: ArrayHashAdapter<Q, K>,
-    {
-        self.get_index_adapted(key, adapter)
-            .map(|i| &self.values[i])
-    }
-
-    #[inline]
     pub fn contains_adapted<Q: ?Sized, Ad>(&self, key: &Q, adapter: &Ad) -> bool
     where
         Ad: ArrayHashAdapter<Q, K>,

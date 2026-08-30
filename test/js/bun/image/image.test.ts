@@ -1046,6 +1046,31 @@ describe("Bun.Image", () => {
       await expect(new Bun.Image(cornersPng).png().write(String(dir))).rejects.toThrow();
     });
 
+    test(".write(dest) refuses the Blob destinations Bun.write refuses, with the same error", async () => {
+      using dir = tempDir("image-write-blob-dest", { "src.png": Buffer.from(cornersPng) });
+      const caught = async (fn: () => unknown): Promise<any> => {
+        try {
+          await fn();
+        } catch (e) {
+          return e;
+        }
+        throw new Error("did not throw or reject");
+      };
+      const errorShape = (e: any) => ({ name: e.name, code: e.code, message: e.message });
+      // A Blob backed by bytes and a Blob with no store at all. Bun.write()
+      // throws for both; .write() used to hand them to the file write path
+      // unchecked, which aborted the process for the byte-backed one.
+      for (const dest of [new Blob(["not a file"]), new Blob([])] as any[]) {
+        const expected = await caught(() => Bun.write(dest, "x"));
+        // An in-memory source and a Bun.file() source enter the pipeline
+        // through different schedulers; both deliver to the same write step.
+        for (const source of [cornersPng, Bun.file(join(String(dir), "src.png"))]) {
+          const actual = await caught(() => new Bun.Image(source).png().write(dest));
+          expect(errorShape(actual)).toEqual(errorShape(expected));
+        }
+      }
+    });
+
     test(".toBase64() produces valid base64", async () => {
       const b64 = await new Bun.Image(cornersPng).png().toBase64();
       expect(typeof b64).toBe("string");

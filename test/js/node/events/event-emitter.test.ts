@@ -102,6 +102,35 @@ describe("node:events", () => {
     expect(p).toBeInstanceOf(Promise);
     await expect(p).rejects.toMatchObject({ code: "ERR_INVALID_ARG_TYPE" });
   });
+
+  test("once rejects with the value emitted on 'error' and removes both listeners", async () => {
+    const emitter = new EventEmitter();
+    const p = EventEmitter.once(emitter, "hey");
+    const err = new Error("boom");
+    emitter.emit("error", err);
+    await expect(p).rejects.toBe(err);
+    expect([emitter.listenerCount("hey"), emitter.listenerCount("error")]).toEqual([0, 0]);
+  });
+
+  test("once settles once when the event fires and the signal aborts afterwards", async () => {
+    const emitter = new EventEmitter();
+    const controller = new AbortController();
+    const p = EventEmitter.once(emitter, "hey", { signal: controller.signal });
+    emitter.emit("hey", 42);
+    controller.abort();
+    expect(await p).toEqual([42]);
+    expect([emitter.listenerCount("hey"), emitter.listenerCount("error")]).toEqual([0, 0]);
+  });
+
+  test("once resolves with the Event dispatched on an EventTarget and ignores later events", async () => {
+    const target = new EventTarget();
+    const p = EventEmitter.once(target, "ping");
+    const event = new Event("ping");
+    target.dispatchEvent(event);
+    target.dispatchEvent(new Event("ping"));
+    const [received] = await p;
+    expect(received).toBe(event);
+  });
 });
 
 describe("EventEmitter", () => {
@@ -572,7 +601,7 @@ describe("EventEmitter.on", () => {
     ]);
   });
 
-  test("AbortController", () => {
+  test("AbortController", async () => {
     const { on, EventEmitter } = require("node:events");
 
     const ac = new AbortController();
@@ -584,32 +613,35 @@ describe("EventEmitter.on", () => {
       ee.emit("foo", 42);
       ee.emit("foo", "baz");
     });
-    (async () => {
+    const consumed = (async () => {
       try {
         for await (const event of on(ee, "foo", { signal: ac.signal })) {
           output.push([1, event]);
         }
-        console.log("unreachable");
+        output.push(["unreachable"]);
       } catch (error: any) {
-        const { code, message } = error;
-        output.push([2, { code, message }]);
-
-        expect(output).toEqual([
-          [1, ["bar"]],
-          [1, [42]],
-          [1, ["baz"]],
-          [
-            2,
-            {
-              code: "ABORT_ERR",
-              message: "The operation was aborted.",
-            },
-          ],
-        ]);
+        const { name, code, message, cause } = error;
+        output.push([2, { name, code, message, cause }]);
       }
     })();
 
     process.nextTick(() => ac.abort());
+    await consumed;
+
+    expect(output).toEqual([
+      [1, ["bar"]],
+      [1, [42]],
+      [1, ["baz"]],
+      [
+        2,
+        {
+          name: "AbortError",
+          code: "ABORT_ERR",
+          message: "The operation was aborted",
+          cause: ac.signal.reason,
+        },
+      ],
+    ]);
   });
 
   // Checks for potential issues with FixedQueue size
@@ -1091,5 +1123,68 @@ test("once() wrapper releases its target after firing", async () => {
     stdout: "collected 8/8 holding 8 wrappers",
     stderr: "",
     exitCode: 0,
+  });
+});
+
+describe("native EventEmitter propagates an exception from a `_events` getter", () => {
+  // The native EventEmitter prototype (process's) reads `this._events` when `this` is not a native
+  // emitter; a throwing getter must propagate rather than become "invalid this".
+  const nativeProto = Object.getPrototypeOf(process);
+
+  const cases: Array<[string, (obj: object) => void]> = [
+    ["on", obj => nativeProto.on.call(obj, "foo", () => {})],
+    ["addListener", obj => nativeProto.addListener.call(obj, "foo", () => {})],
+    ["once", obj => nativeProto.once.call(obj, "foo", () => {})],
+    ["emit", obj => nativeProto.emit.call(obj, "foo")],
+    ["removeListener", obj => nativeProto.removeListener.call(obj, "foo", () => {})],
+    ["removeAllListeners", obj => nativeProto.removeAllListeners.call(obj)],
+    ["eventNames", obj => nativeProto.eventNames.call(obj)],
+    ["listenerCount", obj => nativeProto.listenerCount.call(obj, "foo")],
+    ["listeners", obj => nativeProto.listeners.call(obj, "foo")],
+    ["getMaxListeners", obj => nativeProto.getMaxListeners.call(obj)],
+  ];
+
+  test.each(cases)("%s", (_name, invoke) => {
+    const sentinel = new Error("getter threw");
+    const obj = {};
+    Object.defineProperty(obj, "_events", {
+      get() {
+        throw sentinel;
+      },
+    });
+    let caught: unknown;
+    try {
+      invoke(obj);
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBe(sentinel);
+  });
+
+  test("Proxy get trap that throws", () => {
+    const sentinel = new Error("proxy get threw");
+    const obj = new Proxy(
+      {},
+      {
+        get(_t, key) {
+          if (key === "_events") throw sentinel;
+        },
+      },
+    );
+    let caught: unknown;
+    try {
+      nativeProto.on.call(obj, "foo", () => {});
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBe(sentinel);
+  });
+
+  test("a plain object receiver gets a working emitter", () => {
+    const obj: any = {};
+    let fired = 0;
+    nativeProto.on.call(obj, "x", () => fired++);
+    nativeProto.emit.call(obj, "x");
+    expect(fired).toBe(1);
   });
 });

@@ -11,12 +11,12 @@ Bun relies on pre-existing configuration files like `package.json` and `tsconfig
 
 Put `bunfig.toml` in your project root, alongside your `package.json`.
 
-To configure Bun globally, you can also create a `.bunfig.toml` file at one of the following paths:
+To configure Bun's package manager globally, you can also create a `.bunfig.toml` file at one of the following paths:
 
 - `$HOME/.bunfig.toml`
 - `$XDG_CONFIG_HOME/.bunfig.toml`
 
-If Bun finds both a global and a local `bunfig`, it shallow-merges them, with local overriding global. CLI flags override `bunfig` settings where applicable.
+Only package manager commands (`bun install`, `bun add`, `bun remove`, `bun update`, `bun pm`, `bunx`, and so on) read the global file. If Bun finds both a global and a local `bunfig`, it loads both; keys set in the local file override the same keys in the global file. CLI flags override `bunfig` settings where applicable.
 
 ## Runtime
 
@@ -230,11 +230,11 @@ The coverage threshold. By default, no threshold is set. If your test suite does
 coverageThreshold = 0.9
 ```
 
-You can set separate thresholds for line, function, and statement coverage.
+You can set separate thresholds for line and function coverage. Bun accepts a `statements` key but does not currently enforce it.
 
 ```toml title="bunfig.toml" icon="settings"
 [test]
-coverageThreshold = { lines = 0.7, functions = 0.8, statements = 0.9 }
+coverageThreshold = { lines = 0.7, functions = 0.8 }
 ```
 
 ### `test.coverageSkipTestFiles`
@@ -508,11 +508,20 @@ prefer = "online"
 
 Valid values are:
 
-| Value       | Description                                                                                        |
-| ----------- | -------------------------------------------------------------------------------------------------- |
-| `"online"`  | Default. Check the registry for stale packages as needed.                                          |
-| `"offline"` | Skip staleness checks and resolve packages from the local cache. Equivalent to `--prefer-offline`. |
-| `"latest"`  | Always check npm for the latest matching versions. Equivalent to `--prefer-latest`.                |
+| Value       | Description                                                                                                                         |
+| ----------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `"online"`  | Default. Check the registry for stale packages as needed.                                                                           |
+| `"offline"` | Skip staleness checks and resolve packages from the local cache. Equivalent to `--prefer-offline` (also honoured by `bun install`). |
+| `"latest"`  | Always check npm for the latest matching versions. Equivalent to `--prefer-latest`.                                                 |
+
+### `install.offline`
+
+When `true`, `bun install` never touches the network: package metadata and tarballs must already be in the cache, and anything missing is an error. Default `false`. Equivalent to `bun install --offline`. For the softer "use the cache when possible" behaviour see `install.prefer = "offline"` / `--prefer-offline`.
+
+```toml title="bunfig.toml" icon="settings"
+[install]
+offline = true
+```
 
 ### `install.frozenLockfile`
 
@@ -525,7 +534,7 @@ frozenLockfile = false
 
 ### `install.dryRun`
 
-Whether `bun install` actually installs dependencies. Default `false`. When `true`, it's equivalent to passing `--dry-run` to all `bun install` commands.
+Whether `bun install` resolves dependencies without installing them. Default `false`. When `true`, it's equivalent to passing `--dry-run` to all `bun install` commands.
 
 ```toml title="bunfig.toml" icon="settings"
 [install]

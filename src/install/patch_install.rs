@@ -20,8 +20,6 @@ use crate::{
     resolution::Resolution,
 };
 
-pub use crate::lockfile::PatchedDep;
-
 bun_output::declare_scope!(InstallPatch, visible);
 
 /// Length of the hex representation of `u64::MAX` (i.e. 16).
@@ -168,8 +166,7 @@ impl PatchTask {
                 // cannot hold a `&mut ch` across the call.
             }
             Callback::Apply(_) => {
-                // bun.handleOom(this.apply()) → panic on OOM.
-                self.apply().expect("OOM");
+                bun_core::handle_oom(self.apply());
             }
         }
         let mgr = self.manager.as_ptr();
@@ -331,7 +328,7 @@ impl PatchTask {
                         .is_required();
                     let pkg_again: Package = *manager.lockfile.packages.get(pkg_id as usize);
                     let network_task: *mut crate::NetworkTask =
-                        package_manager::generate_network_task_for_tarball(
+                        match package_manager::generate_network_task_for_tarball(
                             manager,
                             // TODO: not just npm package
                             task_id,
@@ -346,8 +343,11 @@ impl PatchTask {
                                 }
                                 _ => Authorization::NoAuthorization,
                             },
-                        )?
-                        .unwrap_or_else(|| unreachable!());
+                        ) {
+                            // --offline and not cached: already reported / skipped; nothing to patch
+                            Err(crate::network_task::ForTarballError::Offline) => return Ok(()),
+                            other => other?.unwrap_or_else(|| unreachable!()),
+                        };
                     if manager.get_preinstall_state(pkg_meta_id) == PreinstallState::Extract {
                         manager.set_preinstall_state(pkg_meta_id, PreinstallState::Extracting);
                         package_manager::enqueue_network_task(manager, network_task);

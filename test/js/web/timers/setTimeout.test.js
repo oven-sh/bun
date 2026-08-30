@@ -70,6 +70,53 @@ it("clearTimeout", async () => {
   expect(called).toBe(false);
 });
 
+it("clearTimeout and clearInterval look a numeric id up by value, whichever way JSC boxes the number", async () => {
+  // The same integer as a double-boxed JSValue: a Float64Array element never
+  // comes back as an int32, and -0 cannot be one.
+  const asDouble = n => new Float64Array([n])[0];
+  const fired = [];
+
+  const timeoutViaClearTimeout = setTimeout(() => fired.push("timeoutViaClearTimeout"), 0);
+  const timeoutViaClearInterval = setTimeout(() => fired.push("timeoutViaClearInterval"), 0);
+  const intervalViaClearInterval = setInterval(() => fired.push("intervalViaClearInterval"), 1);
+  const intervalViaClearTimeout = setInterval(() => fired.push("intervalViaClearTimeout"), 1);
+  const kept = setTimeout(() => fired.push("kept"), 0);
+  const timers = [
+    timeoutViaClearTimeout,
+    timeoutViaClearInterval,
+    intervalViaClearInterval,
+    intervalViaClearTimeout,
+    kept,
+  ];
+
+  try {
+    expect(asDouble(+timeoutViaClearTimeout)).toBe(+timeoutViaClearTimeout);
+    clearTimeout(asDouble(+timeoutViaClearTimeout));
+    clearInterval(asDouble(+timeoutViaClearInterval));
+    clearInterval(asDouble(+intervalViaClearInterval));
+    clearTimeout(asDouble(+intervalViaClearTimeout));
+
+    // Numbers that do not name a timer clear nothing and do not throw. The last one
+    // would hit `kept` if the value were wrapped into an int32 (ToInt32) instead of compared.
+    clearTimeout(+kept + 0.5);
+    clearTimeout(-0);
+    clearTimeout(NaN);
+    clearTimeout(Infinity);
+    clearTimeout(2 ** 31);
+    clearTimeout(-(2 ** 31) - 1);
+    clearTimeout(+kept + 2 ** 32);
+
+    expect(timers.map(t => t._destroyed)).toEqual([true, true, true, true, false]);
+
+    // This timer is due after every timer above, so once it fires each cleared
+    // timer would have fired too had it still been armed.
+    await new Promise(resolve => setTimeout(resolve, 2));
+    expect(fired).toEqual(["kept"]);
+  } finally {
+    timers.forEach(t => clearTimeout(t));
+  }
+});
+
 it.todo("setImmediate runs after setTimeout cb", async () => {
   var ranFirst = -1;
   setTimeout(() => {
@@ -548,10 +595,10 @@ for (const mode of ["clear", "refresh", "repeat"]) {
   }, 90_000);
 }
 
-it("setTimeout does not leak a pending exception when emitting a timeout warning throws", async () => {
+it("setTimeout propagates an error thrown while emitting a timeout warning", async () => {
   // The out-of-range timeout warning queues a process.nextTick, which reads process._exiting.
-  // If that read throws, the exception must not be left pending on the VM when setTimeout
-  // returns — otherwise debug builds hit releaseAssertNoException().
+  // If that read throws, setTimeout throws it (as in Node) rather than leaving it pending on
+  // the VM or swallowing it.
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -562,8 +609,13 @@ it("setTimeout does not leak a pending exception when emitting a timeout warning
           get() { throw new TypeError("boom"); },
           configurable: true,
         });
-        const t = setTimeout(() => {}, 1e100);
-        clearTimeout(t);
+        try {
+          setTimeout(() => {}, 1e100);
+          console.log("no throw");
+        } catch (e) {
+          console.log("threw " + e.message);
+        }
+        delete process._exiting;
         console.log("survived");
       `,
     ],
@@ -574,8 +626,8 @@ it("setTimeout does not leak a pending exception when emitting a timeout warning
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr).not.toContain("boom");
-  expect(stdout.trim()).toBe("survived");
+  expect(stdout.trim()).toBe("threw boom\nsurvived");
+  expect(stderr).toBe("");
   expect(exitCode).toBe(0);
 });
 

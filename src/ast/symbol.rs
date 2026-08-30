@@ -545,14 +545,6 @@ impl Map {
         })
     }
 
-    pub fn init(source_count: usize) -> Map {
-        let mut v: NestedList = Vec::with_capacity(source_count);
-        v.resize_with(source_count, Vec::new);
-        Map {
-            symbols_for_source: v,
-        }
-    }
-
     // Takes ownership of `list` and boxes it into a one-element NestedList.
     // PERF: one extra allocation — profile if needed (single caller is the
     // printer one-shot, cold).

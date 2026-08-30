@@ -33,12 +33,7 @@ public:
     {
         if constexpr (mode == JSC::SubspaceAccess::Concurrently)
             return nullptr;
-        return WebCore::subspaceForImpl<NapiHandleScopeImpl, WebCore::UseCustomHeapCellType::Yes>(
-            vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForNapiHandleScopeImpl.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForNapiHandleScopeImpl = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForNapiHandleScopeImpl.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForNapiHandleScopeImpl = std::forward<decltype(space)>(space); },
+        return WebCore::subspaceForImpl<NapiHandleScopeImpl, WebCore::UseCustomHeapCellType::Yes>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForNapiHandleScopeImpl, m_subspaceForNapiHandleScopeImpl),
             [](auto& server) -> JSC::HeapCellType& { return server.m_heapCellTypeForNapiHandleScopeImpl; });
     }
 

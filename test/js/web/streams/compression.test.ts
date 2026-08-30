@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN } from "harness";
+import { addAbortSignal } from "node:stream";
 import zlib from "node:zlib";
 
 // CompressionStream et al are C++ subclasses of JSTransformStream so that
@@ -713,6 +714,415 @@ describe("CompressionStream chunk handling (Node v26 semantics)", () => {
 
     expect(decoded).toBe("hello world");
   });
+});
+
+// One input chunk can expand enormously (a few hundred bytes of brotli or zstd
+// decode to gigabytes), so the coder emits its output in steps of at most the
+// stream's highWaterMark (64 KiB unless passed to the constructor), or the
+// chunk's own size if that is larger, and waits between steps while the readable
+// side (or the native sink) is full. A consumer that enforces a size limit in
+// its read loop, or simply reads slowly, sees the expansion one piece at a time,
+// and the write() that carried the chunk settles only once the whole expansion
+// has been pulled.
+describe("bounded output per input chunk", () => {
+  const kDefaultHighWaterMark = 64 * 1024;
+  const EXPANDED = 4 * 1024 * 1024;
+  const expanded = Buffer.alloc(EXPANDED, 0x41);
+  const bombs = {
+    gzip: (plain: Buffer = expanded) => zlib.gzipSync(plain),
+    deflate: (plain: Buffer = expanded) => zlib.deflateSync(plain),
+    "deflate-raw": (plain: Buffer = expanded) => zlib.deflateRawSync(plain),
+    brotli: (plain: Buffer = expanded) =>
+      zlib.brotliCompressSync(plain, { params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 5 } }),
+    zstd: (plain: Buffer = expanded) => zlib.zstdCompressSync(plain),
+  };
+  const inflaters = {
+    gzip: zlib.gunzipSync,
+    deflate: zlib.inflateSync,
+    "deflate-raw": zlib.inflateRawSync,
+    brotli: zlib.brotliDecompressSync,
+    zstd: zlib.zstdDecompressSync,
+  };
+  const formats = Object.keys(bombs) as (keyof typeof bombs)[];
+
+  function randomBytes(len: number) {
+    const out = Buffer.alloc(len);
+    for (let off = 0; off < len; off += 65536) crypto.getRandomValues(out.subarray(off, Math.min(off + 65536, len)));
+    return out;
+  }
+
+  function largest(pieces: Uint8Array[]) {
+    return pieces.reduce((max, piece) => Math.max(max, piece.byteLength), 0);
+  }
+
+  // Reads until `length` bytes have arrived; every piece is returned so callers
+  // can check how the expansion was split up.
+  async function readExactly(reader: ReadableStreamDefaultReader<Uint8Array>, length: number) {
+    const pieces: Uint8Array[] = [];
+    let total = 0;
+    while (total < length) {
+      const { value, done } = await reader.read();
+      expect(done).toBe(false);
+      pieces.push(value!);
+      total += value!.byteLength;
+    }
+    expect(total).toBe(length);
+    return pieces;
+  }
+
+  test.each(formats)(
+    "DecompressionStream(%s): one small chunk expands step by step as the reader pulls",
+    async format => {
+      const bomb = bombs[format]();
+      // The whole expansion arrives in one write, well under the thread-pool threshold.
+      expect(bomb.byteLength).toBeLessThan(kDefaultHighWaterMark);
+
+      const ds = new DecompressionStream(format);
+      const writer = ds.writable.getWriter();
+      const reader = ds.readable.getReader();
+      const write = writer.write(bomb);
+
+      const first = await reader.read();
+      expect(first.done).toBe(false);
+      expect(first.value!.byteLength).toBeLessThanOrEqual(kDefaultHighWaterMark);
+      // The readable holds one piece, so the coder is now parked with the rest of
+      // the expansion still undecoded and the write that carried it still in flight.
+      expect(await Promise.race([write.then(() => "settled"), Bun.sleep(0).then(() => "pending")])).toBe("pending");
+
+      const rest = await readExactly(reader, EXPANDED - first.value!.byteLength);
+      expect(largest(rest)).toBeLessThanOrEqual(kDefaultHighWaterMark);
+      expect(Buffer.concat([first.value!, ...rest]).equals(expanded)).toBe(true);
+
+      await write;
+      await writer.close();
+      expect(await reader.read()).toEqual({ value: undefined, done: true });
+    },
+  );
+
+  test("cancelling the readable mid-expansion settles the in-flight write instead of hanging it", async () => {
+    const ds = new DecompressionStream("brotli");
+    const writer = ds.writable.getWriter();
+    const reader = ds.readable.getReader();
+    const write = writer.write(bombs.brotli());
+
+    const first = await reader.read();
+    expect(first.value!.byteLength).toBeLessThanOrEqual(kDefaultHighWaterMark);
+
+    await reader.cancel(new Error("too large"));
+    // The readable will never pull again; the parked chunk is abandoned rather
+    // than left pending forever (which would also hang the erroring writable).
+    expect(await write).toBeUndefined();
+    await expect(writer.closed).rejects.toThrow("too large");
+  });
+
+  // The producer giving up is the other way a pending chunk can end: the abort
+  // has to wait for the in-flight write, so the chunk is given up when the
+  // writable starts erroring, even though nobody is reading.
+  test("writer.abort() mid-expansion settles and errors the readable", async () => {
+    const ds = new DecompressionStream("brotli");
+    const writer = ds.writable.getWriter();
+    const reader = ds.readable.getReader();
+    const write = writer.write(bombs.brotli());
+
+    const first = await reader.read();
+    expect(first.value!.byteLength).toBeLessThanOrEqual(kDefaultHighWaterMark);
+
+    await writer.abort(new Error("stop"));
+    expect(await write).toBeUndefined();
+    await expect(writer.closed).rejects.toThrow("stop");
+    // The abort algorithm errored the readable (dropping the piece it still held).
+    await expect(reader.read()).rejects.toThrow("stop");
+  });
+
+  // node:stream's addAbortSignal() errors the writable through its controller, the
+  // other route into the erroring state (it clears the sink's algorithms on the way).
+  test("addAbortSignal() on the writable mid-expansion settles the write", async () => {
+    const ds = new DecompressionStream("brotli");
+    const writer = ds.writable.getWriter();
+    const reader = ds.readable.getReader();
+    const write = writer.write(bombs.brotli());
+
+    const first = await reader.read();
+    expect(first.value!.byteLength).toBeLessThanOrEqual(kDefaultHighWaterMark);
+
+    const controller = new AbortController();
+    addAbortSignal(controller.signal, ds.writable);
+    controller.abort();
+    expect(await write).toBeUndefined();
+    await expect(writer.closed).rejects.toMatchObject({ name: "AbortError" });
+  });
+
+  // An abort during close() is different: the close in progress wins, so a flush
+  // being drained keeps going and the reader still gets all of it.
+  test("writer.abort() during a multi-step flush does not truncate it", async () => {
+    const input = randomBytes(100 * 1024);
+    const cs = new CompressionStream("zstd");
+    const writer = cs.writable.getWriter();
+    const reader = cs.readable.getReader();
+    await writer.write(input);
+    const closed = writer.close();
+
+    const first = await reader.read();
+    expect(first.value!.byteLength).toBe(kDefaultHighWaterMark);
+    const aborted = writer.abort(new Error("stop"));
+
+    const pieces = [first.value!];
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      pieces.push(value);
+    }
+    expect(zlib.zstdDecompressSync(Buffer.concat(pieces)).equals(input)).toBe(true);
+    expect(await Promise.all([closed, aborted])).toEqual([undefined, undefined]);
+  });
+
+  test("a request body bomb trips a streaming size guard after one step, not after the whole expansion", async () => {
+    const limit = 256 * 1024;
+    await using server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        const reader = req.body!.pipeThrough(new DecompressionStream("brotli")).getReader();
+        let total = 0;
+        let largestPiece = 0;
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          total += value.byteLength;
+          largestPiece = Math.max(largestPiece, value.byteLength);
+          if (total > limit) {
+            await reader.cancel();
+            break;
+          }
+        }
+        return Response.json({ total, largestPiece }, { status: total > limit ? 413 : 200 });
+      },
+    });
+
+    const res = await fetch(server.url, { method: "POST", body: bombs.brotli() });
+    expect(res.status).toBe(413);
+    const { total, largestPiece } = (await res.json()) as { total: number; largestPiece: number };
+    expect(largestPiece).toBeLessThanOrEqual(kDefaultHighWaterMark);
+    // The guard fires on the step that crosses the limit; nothing beyond it was decoded.
+    expect(total).toBeLessThanOrEqual(limit + kDefaultHighWaterMark);
+  });
+
+  test("DecompressionStream -> native HTTP response sink delivers a large expansion in steps", async () => {
+    const plain = Buffer.alloc(16 * 1024 * 1024, 0x5a);
+    const bomb = bombs.zstd(plain);
+    await using server = Bun.serve({
+      port: 0,
+      fetch() {
+        return new Response(new Blob([bomb]).stream().pipeThrough(new DecompressionStream("zstd")));
+      },
+    });
+
+    // The server pushes into the socket until the sink reports backpressure and
+    // parks mid-chunk; draining the body then resumes it step by step.
+    const res = await fetch(server.url);
+    const body = Buffer.from(await res.arrayBuffer());
+    expect(body.byteLength).toBe(plain.byteLength);
+    expect(body.equals(plain)).toBe(true);
+  });
+
+  test("a >128 KiB compressed chunk (thread-pool path) is also delivered in bounded steps", async () => {
+    // Incompressible prefix to push the compressed chunk over the thread-pool
+    // threshold, followed by a highly compressible expansion. A chunk bigger than
+    // the high water mark may produce up to its own size per step.
+    const plain = Buffer.concat([randomBytes(160 * 1024), expanded]);
+    const compressed = zlib.gzipSync(plain);
+    expect(compressed.byteLength).toBeGreaterThan(128 * 1024);
+
+    const ds = new DecompressionStream("gzip");
+    const writer = ds.writable.getWriter();
+    const reader = ds.readable.getReader();
+    const write = writer.write(compressed);
+
+    const pieces = await readExactly(reader, plain.byteLength);
+    expect(pieces.length).toBeGreaterThanOrEqual(2);
+    expect(largest(pieces)).toBeLessThanOrEqual(compressed.byteLength);
+    expect(Buffer.concat(pieces).equals(plain)).toBe(true);
+
+    await write;
+    await writer.close();
+    expect(await reader.read()).toEqual({ value: undefined, done: true });
+  });
+
+  test("a >128 KiB chunk that is not valid input errors both sides through the thread-pool path", async () => {
+    const ds = new DecompressionStream("gzip");
+    const writer = ds.writable.getWriter();
+    const readAll = new Response(ds.readable).arrayBuffer().then(
+      () => null,
+      e => e,
+    );
+    const write = writer.write(randomBytes(200 * 1024)).then(
+      () => null,
+      e => e,
+    );
+    const [readError, writeError] = await Promise.all([readAll, write]);
+    expect(readError).toBeInstanceOf(TypeError);
+    expect(writeError).toBe(readError);
+  });
+
+  test.each([16 * 1024, 1024 * 1024])(
+    "the constructor's highWaterMark (%i) sets the step size",
+    async highWaterMark => {
+      const ds = new DecompressionStream("brotli", { highWaterMark });
+      const writer = ds.writable.getWriter();
+      const reader = ds.readable.getReader();
+      const write = writer.write(bombs.brotli());
+
+      const pieces = await readExactly(reader, EXPANDED);
+      expect(largest(pieces)).toBe(highWaterMark);
+      expect(Buffer.concat(pieces).equals(expanded)).toBe(true);
+
+      await write;
+      await writer.close();
+    },
+  );
+
+  test("highWaterMark: Infinity turns the splitting off", async () => {
+    const ds = new DecompressionStream("zstd", { highWaterMark: Infinity });
+    const writer = ds.writable.getWriter();
+    const reader = ds.readable.getReader();
+    const write = writer.write(bombs.zstd());
+
+    const first = await reader.read();
+    expect(first.value!.byteLength).toBe(EXPANDED);
+    await write;
+    await writer.close();
+  });
+
+  test("CompressionStream takes the same option", async () => {
+    // zstd holds these back and emits them all from the flush, whose input is
+    // empty, so the high water mark alone bounds the pieces (64 KiB by default).
+    const highWaterMark = 8 * 1024;
+    const chunks = Array.from({ length: 8 }, () => randomBytes(highWaterMark));
+    const cs = new CompressionStream("zstd", { highWaterMark });
+    const writer = cs.writable.getWriter();
+    const written = (async () => {
+      for (const chunk of chunks) await writer.write(chunk);
+      await writer.close();
+    })();
+
+    const pieces = await Array.fromAsync(cs.readable);
+    await written;
+    expect(largest(pieces)).toBeLessThanOrEqual(highWaterMark);
+    expect(pieces.length).toBeGreaterThanOrEqual(8);
+    expect(zlib.zstdDecompressSync(Buffer.concat(pieces)).equals(Buffer.concat(chunks))).toBe(true);
+  });
+
+  test("the second argument is validated like a queuing strategy", () => {
+    expect(() => new DecompressionStream("gzip", { highWaterMark: -1 })).toThrow(RangeError);
+    expect(() => new CompressionStream("gzip", { highWaterMark: NaN })).toThrow(RangeError);
+    expect(() => new DecompressionStream("gzip", 4096 as any)).toThrow(TypeError);
+    expect(new DecompressionStream("gzip", {})).toBeInstanceOf(DecompressionStream);
+    expect(new DecompressionStream("gzip", undefined)).toBeInstanceOf(DecompressionStream);
+  });
+
+  // A client that goes away mid-expansion closes the response sink under the
+  // transform. The chunk being drained into it has to be given up so the
+  // transform's writable can finish erroring, which is what lets pipeThrough
+  // cancel the source; otherwise the source is never told and the handler's
+  // pipeline stays pending forever.
+  test("a client disconnecting mid-expansion propagates back to the source of the pipeline", async () => {
+    const sourceCancelled = Promise.withResolvers<unknown>();
+    await using server = Bun.serve({
+      port: 0,
+      fetch() {
+        const source = new ReadableStream({
+          start(controller) {
+            controller.enqueue(new Uint8Array(bombs.brotli()));
+          },
+          cancel(reason) {
+            sourceCancelled.resolve(reason);
+          },
+        });
+        return new Response(source.pipeThrough(new DecompressionStream("brotli")));
+      },
+    });
+
+    const res = await fetch(server.url);
+    const reader = res.body!.getReader();
+    expect((await reader.read()).done).toBe(false);
+    await reader.cancel();
+    await sourceCancelled.promise;
+  });
+
+  // The encoders are stepped the same way. Incompressible input comes out
+  // slightly larger than it went in, so highWaterMark-sized chunks overflow a
+  // step by a few bytes; brotli and zstd hold everything back until the flush,
+  // which then spans several steps.
+  test.each(formats)("CompressionStream(%s): output larger than one step is emitted in pieces", async format => {
+    const chunks = [
+      randomBytes(kDefaultHighWaterMark),
+      randomBytes(kDefaultHighWaterMark),
+      randomBytes(kDefaultHighWaterMark),
+    ];
+    const cs = new CompressionStream(format);
+    const writer = cs.writable.getWriter();
+    const written = (async () => {
+      for (const chunk of chunks) await writer.write(chunk);
+      await writer.close();
+    })();
+
+    const pieces = await Array.fromAsync(cs.readable);
+    await written;
+    expect(largest(pieces)).toBeLessThanOrEqual(kDefaultHighWaterMark);
+    expect(inflaters[format](Buffer.concat(pieces)).equals(Buffer.concat(chunks))).toBe(true);
+  });
+
+  // The close algorithm clears the transform's algorithms (which normally frees
+  // the coder) as soon as the flush arm returns, while a flush this large is
+  // still parked part-way through. The coder has to survive until the flush has
+  // actually been drained, here into the native response sink.
+  test.each(["zstd", "brotli"] as const)(
+    "CompressionStream(%s) -> native HTTP response sink: a flush spanning several steps is delivered in full",
+    async format => {
+      const input = randomBytes(200 * 1024);
+      await using server = Bun.serve({
+        port: 0,
+        fetch() {
+          return new Response(new Blob([input]).stream().pipeThrough(new CompressionStream(format)));
+        },
+      });
+
+      const body = Buffer.from(await (await fetch(server.url)).arrayBuffer());
+      expect(inflaters[format](body).equals(input)).toBe(true);
+    },
+  );
+
+  // reader.cancel() after writer.close() is the one terminal that does not go
+  // through the transform's cancel reaction (the close already owns the finish
+  // promise, so the source cancel algorithm just returns it), and the cancelled
+  // readable will never pull again. A flush parked between steps at that point
+  // still has to be woken up, or close() and cancel() both stay pending forever.
+  // Both encoders hold incompressible input back until the flush: zstd's ~100 KiB
+  // flush takes two steps (parked after the first, cancelled with no read in
+  // between), and brotli's ~200 KiB one takes four (the second read is served by
+  // the resumed flush, which then parks again before the cancel lands).
+  test.each([
+    { format: "zstd", writes: [100 * 1024], readsBeforeCancel: 0 },
+    { format: "brotli", writes: [100 * 1024, 100 * 1024], readsBeforeCancel: 2 },
+  ] as const)(
+    "reader.cancel() after writer.close() settles both while a $format flush is parked (reads first: $readsBeforeCancel)",
+    async ({ format, writes, readsBeforeCancel }) => {
+      const cs = new CompressionStream(format);
+      const writer = cs.writable.getWriter();
+      const reader = cs.readable.getReader();
+      for (const size of writes) await writer.write(randomBytes(size));
+      const closed = writer.close();
+
+      for (let i = 0; i < readsBeforeCancel; i++) {
+        const { value, done } = await reader.read();
+        expect(done).toBe(false);
+        expect(value!.byteLength).toBeLessThanOrEqual(kDefaultHighWaterMark);
+      }
+      const cancelled = reader.cancel();
+      // close() and cancel() share the transform's finish promise; the abandoned
+      // flush resolves it rather than leaving both pending forever.
+      expect(await Promise.all([closed, cancelled])).toEqual([undefined, undefined]);
+    },
+  );
 });
 
 // The native coder (a gzip deflate context is ~280 KiB of zlib state) must be

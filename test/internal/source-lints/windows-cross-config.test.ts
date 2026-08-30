@@ -36,6 +36,7 @@ function mockToolchain(overrides: Partial<Toolchain> = {}): Toolchain {
     rustHostTriple: undefined,
     strip: "/fake/llvm/bin/llvm-strip",
     llvmStrip: "/fake/llvm/bin/llvm-strip",
+    nm: "/fake/llvm/bin/llvm-nm",
     dsymutil: undefined,
     bun: "/fake/bin/bun",
     jsRuntime: "/fake/bin/bun",

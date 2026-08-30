@@ -79,7 +79,8 @@ bun remove <package>
 ### Execution Control & Validation
 
 <ParamField path="--dry-run" type="boolean">
-  Don't install anything
+  Resolve the change but don't remove packages, update <code>package.json</code>, or save a lockfile (the project's own
+  lifecycle scripts still run)
 </ParamField>
 
 <ParamField path="--force" type="boolean">
@@ -121,7 +122,7 @@ bun remove <package>
 ### Script Execution
 
 <ParamField path="--ignore-scripts" type="boolean">
-  Skip lifecycle scripts in the project's <code>package.json</code> (dependency scripts are never run)
+  Skip lifecycle scripts for all packages, including the project's <code>package.json</code> and trusted dependencies
 </ParamField>
 
 <ParamField path="--concurrent-scripts" type="number">
@@ -140,9 +141,9 @@ bun remove <package>
 
 ### Advanced & Performance
 
-<ParamField path="--backend" type="string" default="clonefile">
-  Platform-specific optimizations for installing dependencies. Possible values: <code>clonefile</code> (default),{" "}
-  <code>hardlink</code>, <code>symlink</code>, <code>copyfile</code>
+<ParamField path="--backend" type="string">
+  Platform-specific optimizations for installing dependencies. Possible values: <code>clonefile</code> (default on
+  macOS), <code>hardlink</code> (default on Linux and Windows), <code>symlink</code>, <code>copyfile</code>
 </ParamField>
 
 <ParamField path="--network-concurrency" type="number" default="48">

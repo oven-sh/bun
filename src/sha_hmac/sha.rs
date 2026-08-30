@@ -17,9 +17,8 @@ pub mod ffi {
     pub use bun_boringssl_sys::{
         ENGINE, EVP_Digest, EVP_DigestFinal, EVP_DigestInit, EVP_DigestUpdate, EVP_MD, EVP_MD_CTX,
         EVP_MD_CTX_cleanup, EVP_MD_CTX_init, EVP_blake2b256, EVP_blake2b512, EVP_md4, EVP_md5,
-        EVP_md5_sha1, EVP_ripemd160, EVP_sha1, EVP_sha3_224, EVP_sha3_256, EVP_sha3_384,
-        EVP_sha3_512, EVP_sha224, EVP_sha256, EVP_sha384, EVP_sha512, EVP_sha512_224,
-        EVP_sha512_256, HMAC,
+        EVP_ripemd160, EVP_sha1, EVP_sha3_224, EVP_sha3_256, EVP_sha3_384, EVP_sha3_512,
+        EVP_sha224, EVP_sha256, EVP_sha384, EVP_sha512, EVP_sha512_224, EVP_sha512_256, HMAC,
     };
 
     /// `#define EVP_MAX_MD_SIZE 64` — SHA-512 is the longest digest. Re-typed
@@ -194,8 +193,6 @@ pub mod evp {
     new_evp!(SHA384, SHA384_DIGEST_LENGTH, EVP_sha384);
     new_evp!(SHA256, SHA256_DIGEST_LENGTH, EVP_sha256);
     new_evp!(SHA512_256, SHA512_256_DIGEST_LENGTH, EVP_sha512_256);
-    new_evp!(MD5_SHA1, 36, EVP_md5_sha1); // EVP_md5_sha1 writes MD5(16) || SHA1(20) = 36 bytes
-    new_evp!(Blake2, 256 / 8, EVP_blake2b256);
 
     // ──────────────────────────────────────────────────────────────────────
     // evp::Algorithm — moved from bun_jsc::api::bun::crypto,
@@ -210,18 +207,6 @@ pub mod evp {
     #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
     #[non_exhaustive]
     pub enum Algorithm {
-        // DsaSha,
-        // DsaSha1,
-        // Md5Sha1,
-        // RsaMd5,
-        // RsaRipemd160,
-        // RsaSha1,
-        // RsaSha1_2,
-        // RsaSha224,
-        // RsaSha256,
-        // RsaSha384,
-        // RsaSha512,
-        // EcdsaWithSha1,
         Blake2b256,
         Blake2b512,
         Blake2s256,
@@ -274,7 +259,6 @@ pub mod evp {
 pub use evp::Algorithm;
 pub use evp::MD4;
 pub use evp::MD5;
-pub use evp::MD5_SHA1;
 pub use evp::SHA1;
 pub use evp::SHA224;
 pub use evp::SHA256;
@@ -297,26 +281,6 @@ pub mod hashers {
     );
 
     new_hasher!(
-        SHA512,
-        SHA512_DIGEST_LENGTH,
-        boringssl_sys::SHA512_CTX,
-        boringssl_sys::SHA512,
-        boringssl_sys::SHA512_Init,
-        boringssl_sys::SHA512_Update,
-        boringssl_sys::SHA512_Final
-    );
-
-    new_hasher!(
-        SHA384,
-        SHA384_DIGEST_LENGTH,
-        boringssl_sys::SHA512_CTX,
-        boringssl_sys::SHA384,
-        boringssl_sys::SHA384_Init,
-        boringssl_sys::SHA384_Update,
-        boringssl_sys::SHA384_Final
-    );
-
-    new_hasher!(
         SHA256,
         SHA256_DIGEST_LENGTH,
         boringssl_sys::SHA256_CTX,
@@ -324,25 +288,5 @@ pub mod hashers {
         boringssl_sys::SHA256_Init,
         boringssl_sys::SHA256_Update,
         boringssl_sys::SHA256_Final
-    );
-
-    new_hasher!(
-        SHA512_256,
-        SHA512_256_DIGEST_LENGTH,
-        boringssl_sys::SHA512_CTX,
-        boringssl_sys::SHA512_256,
-        boringssl_sys::SHA512_256_Init,
-        boringssl_sys::SHA512_256_Update,
-        boringssl_sys::SHA512_256_Final
-    );
-
-    new_hasher!(
-        RIPEMD160,
-        boringssl_sys::RIPEMD160_DIGEST_LENGTH as usize,
-        boringssl_sys::RIPEMD160_CTX,
-        boringssl_sys::RIPEMD160,
-        boringssl_sys::RIPEMD160_Init,
-        boringssl_sys::RIPEMD160_Update,
-        boringssl_sys::RIPEMD160_Final
     );
 }

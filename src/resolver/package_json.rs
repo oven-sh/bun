@@ -29,6 +29,7 @@ pub use ::bun_install_types::resolver_hooks::{INVALID_PACKAGE_ID, PackageID};
 // resolver never needs); callers here use the map API directly.
 pub type StringMap = StringArrayHashMap<Box<[u8]>>;
 pub use bun_collections::StringHashMapUnownedKey;
+use bun_collections::index_sort;
 use bun_glob as glob;
 
 // Assume they're not going to have hundreds of main fields or browser map
@@ -51,17 +52,6 @@ pub struct DependencyMap {
     // Borrows the package.json source contents; lifetime-erased to 'static,
     // kept alive by `PackageJSON::source_contents`.
     pub source_buf: &'static [u8],
-}
-
-impl Clone for DependencyMap {
-    /// Deep-clones the small key/value vecs; `SemverString`/`Dependency` are
-    /// POD over `source_buf`.
-    fn clone(&self) -> Self {
-        Self {
-            map: self.map.clone().expect("OOM"),
-            source_buf: self.source_buf,
-        }
-    }
 }
 
 // Inherent impls cannot carry associated type aliases (stable), so use a free alias.
@@ -292,7 +282,7 @@ trait FileSystemPackageJsonExt {
 }
 impl FileSystemPackageJsonExt for crate::fs::FileSystem {
     fn join(&self, parts: &[&[u8]]) -> &'static [u8] {
-        resolve_path::resolve_path::join::<resolve_path::resolve_path::platform::Loose>(parts)
+        resolve_path::resolve_path::join::<resolve_path::resolve_path::platform::Auto>(parts)
     }
 }
 
@@ -1146,7 +1136,9 @@ impl<'a> Visitor<'a> {
         // Let expansionKeys be the list of keys of matchObj either ending in "/"
         // or containing only a single "*", sorted by the sorting function
         // PATTERN_KEY_COMPARE which orders in descending order of specificity.
-        expansion_keys.sort_by(|a, b| strings::glob_length_compare(&a.key, &b.key));
+        index_sort::sort_slice_by(&mut expansion_keys, |a, b| {
+            strings::glob_length_compare(&a.key, &b.key)
+        });
 
         Entry {
             data: EntryData::Map(EntryDataMap {
@@ -1337,16 +1329,6 @@ pub struct Package<'a> {
     pub(crate) subpath: &'a [u8],
 }
 
-impl Default for Package<'_> {
-    fn default() -> Self {
-        Package {
-            name: b"",
-            version: b"",
-            subpath: b"",
-        }
-    }
-}
-
 #[derive(Clone, Copy, Default)]
 pub struct PackageExternal {
     pub name: Semver::String,
@@ -1359,7 +1341,7 @@ impl<'a> Package<'a> {
 
     pub(crate) fn clone(self, builder: &mut Semver::semver_string::Builder) -> PackageExternal {
         PackageExternal {
-            name: builder.append_utf8_without_pool::<Semver::String>(self.name, 0),
+            name: builder.append_without_pool::<Semver::String>(self.name, 0),
         }
     }
 
@@ -1512,6 +1494,19 @@ struct ModuleBufs {
     resolve_target_buf2: PathBuffer,
 }
 
+/// Same shape as `resolver::BufsSlot`: the `Drop` reclaims the box when a worker thread exits.
+struct ModuleBufsSlot(core::cell::Cell<*mut ModuleBufs>);
+impl Drop for ModuleBufsSlot {
+    fn drop(&mut self) {
+        let p = self.0.get();
+        if !p.is_null() {
+            // SAFETY: produced by `into_raw` in `module_bufs`; this thread is exiting, so no
+            // resolution frame still points into the buffers.
+            unsafe { bun_core::heap::destroy(p) };
+        }
+    }
+}
+
 thread_local! {
     // Heap-allocate the buffer struct on first use and store only a pointer
     // in TLS so the static-TLS template stays small (PE/COFF has no
@@ -1520,21 +1515,21 @@ thread_local! {
     // RefCell + escaped `&mut PathBuffer` would create aliased `&mut` at the inner call → UB.
     // Use raw-pointer access; only form `&mut PathBuffer` inside the non-recursive `String` arms
     // where the buffers are actually written (no overlap with a live outer `&mut`).
-    static MODULE_BUFS: core::cell::Cell<*mut ModuleBufs> =
-        const { core::cell::Cell::new(core::ptr::null_mut()) };
+    static MODULE_BUFS: ModuleBufsSlot =
+        const { ModuleBufsSlot(core::cell::Cell::new(core::ptr::null_mut())) };
 }
 
 #[inline]
 fn module_bufs() -> *mut ModuleBufs {
-    MODULE_BUFS.with(|c| {
-        let mut p = c.get();
+    MODULE_BUFS.with(|slot| {
+        let mut p = slot.0.get();
         if p.is_null() {
             p = bun_core::heap::into_raw(Box::new(ModuleBufs {
                 resolved_path_buf_percent: PathBuffer::ZEROED,
                 resolve_target_buf: PathBuffer::ZEROED,
                 resolve_target_buf2: PathBuffer::ZEROED,
             }));
-            c.set(p);
+            slot.0.set(p);
         }
         p
     })

@@ -31,7 +31,7 @@ To explicitly opt out (the default), set `globalStore = false` or `BUN_INSTALL_G
 
 ## Why it's fast
 
-The previous isolated linker called `clonefileat()` (macOS) or `link()`/`copyfile()` (other platforms) for every package on every install, even when the package cache was warm and `node_modules` was the only thing missing. Profiling a warm install of a 1,400-package fixture on macOS showed the main thread spending **95.4 % of its time inside `clonefileat`**:
+Without the global store, the isolated linker calls `clonefileat()` (macOS) or `link()`/`copyfile()` (other platforms) for every package on every install, even when the package cache is warm and `node_modules` is the only thing missing. Profiling a warm install of a 1,400-package fixture on macOS showed the main thread spending **95.4 % of its time inside `clonefileat`**:
 
 ```
 Sort by top of stack (bun install --linker isolated, warm cache):
@@ -54,7 +54,7 @@ Warm CI install on a 1,400-package React/webpack/Babel/jest fixture, Apple Silic
 | `--linker isolated`, `globalStore=false` | 840.9 ms     | 1,256 ms    | 1,387         | —              |
 | **`--linker isolated`, global store**    | **124.8 ms** | **94 ms**   | **0**         | **4,957**      |
 
-**6.6× faster** than the same linker without the global store, **6.6× faster** than hoisted.
+**6.7× faster** than the same linker without the global store, **6.6× faster** than hoisted.
 
 ### Disk
 

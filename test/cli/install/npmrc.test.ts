@@ -1,7 +1,7 @@
 import { write } from "bun";
 import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
 import { rm } from "fs/promises";
-import { VerdaccioRegistry, bunExe, bunEnv as env, tempDir } from "harness";
+import { VerdaccioRegistry, bunExe, bunEnv as env, isIPv6, tempDir } from "harness";
 import { join } from "path";
 const { iniInternals } = require("bun:internal-for-testing");
 const { loadNpmrc } = iniInternals;
@@ -550,6 +550,59 @@ registry=https://somehost.com/org1/npm/registry/
     expect(result.default_registry_token).toBe("");
   });
 
+  describe("credentials keyed to a bracketed IPv6 host", () => {
+    // The `//` is stripped off the key before it is parsed as a URL, leaving
+    // `[::1]:4873/`. A leading `[` used to parse to an empty host, so these keys
+    // never matched the registry they were written for.
+    test.each([
+      ["loopback with a port", "http://[::1]:4873/", "//[::1]:4873/"],
+      ["loopback without a port", "http://[::1]/", "//[::1]/"],
+      ["full address with a path", "http://[2001:db8::1]:4873/npm/registry/", "//[2001:db8::1]:4873/npm/registry/"],
+      ["key without the trailing slash", "http://[::1]:4873/", "//[::1]:4873"],
+    ])("_authToken is applied: %s", (_, registryUrl, key) => {
+      const result = loadNpmrc(`registry=${registryUrl}\n${key}:_authToken=v6-token\n`);
+      expect(result).toEqual({
+        default_registry_url: registryUrl,
+        default_registry_token: "v6-token",
+        default_registry_username: "",
+        default_registry_password: "",
+        default_registry_email: "",
+      });
+    });
+
+    test("username, _password and _auth are applied", () => {
+      const password = Buffer.from("v6-password").toString("base64");
+      expect(
+        loadNpmrc(`registry=http://[::1]:4873/\n//[::1]:4873/:username=v6-user\n//[::1]:4873/:_password=${password}\n`),
+      ).toEqual({
+        default_registry_url: "http://[::1]:4873/",
+        default_registry_token: "",
+        default_registry_username: "v6-user",
+        default_registry_password: "v6-password",
+        default_registry_email: "",
+      });
+
+      const auth = Buffer.from("v6-user:v6-password").toString("base64");
+      expect(loadNpmrc(`registry=http://[::1]:4873/\n//[::1]:4873/:_auth=${auth}\n`)).toEqual({
+        default_registry_url: "http://[::1]:4873/",
+        default_registry_token: "",
+        default_registry_username: "v6-user",
+        default_registry_password: "v6-password",
+        default_registry_email: "",
+      });
+    });
+
+    test.each([
+      ["a different port", "//[::1]:4874/"],
+      ["a different address", "//[::2]:4873/"],
+      ["a different path", "//[::1]:4873/other/"],
+    ])("a key for %s is not applied", (_, key) => {
+      const result = loadNpmrc(`registry=http://[::1]:4873/\n${key}:_authToken=v6-token\n`);
+      expect(result.default_registry_url).toBe("http://[::1]:4873/");
+      expect(result.default_registry_token).toBe("");
+    });
+  });
+
   it("does not print an undecodable _password value", async () => {
     const secret = "s!ecret!pass";
     using dir = tempDir("npmrc-password-decode", {
@@ -717,5 +770,47 @@ describe("--registry override", () => {
     expect(reqsB.map(r => r.auth)).toEqual(reqsB.map(() => null));
     expect(stdout).toContain("+ no-deps@1.0.0");
     expect(exitCode).toBe(0);
+  });
+});
+
+describe.skipIf(!isIPv6())("registry on a bracketed IPv6 host", () => {
+  test("sends the token keyed to //[::1]:port/ to the default and the scoped registry", async () => {
+    type Req = { path: string; auth: string | null };
+    const reqs: Req[] = [];
+    await using server = Bun.serve({
+      port: 0,
+      hostname: "::1",
+      fetch(req) {
+        reqs.push({ path: new URL(req.url).pathname, auth: req.headers.get("authorization") });
+        return new Response("not found", { status: 404 });
+      },
+    });
+    const url = `http://[::1]:${server.port}/`;
+
+    using dir = tempDir("npmrc-ipv6-registry", {
+      ".npmrc": `registry=${url}\n@v6:registry=${url}\n//[::1]:${server.port}/:_authToken=v6-SECRET-token\n`,
+      "package.json": JSON.stringify({
+        name: "app",
+        version: "1.0.0",
+        dependencies: { "no-deps": "1.0.0", "@v6/no-deps": "1.0.0" },
+      }),
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install", "--no-cache"],
+      cwd: String(dir),
+      // An ambient proxy would intercept the requests to the local registry.
+      env: { ...env, http_proxy: "", https_proxy: "", HTTP_PROXY: "", HTTPS_PROXY: "" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(reqs.toSorted((a, b) => a.path.localeCompare(b.path))).toEqual([
+      { path: "/@v6%2fno-deps", auth: "Bearer v6-SECRET-token" },
+      { path: "/no-deps", auth: "Bearer v6-SECRET-token" },
+    ]);
+    // The registry answers 404 to both manifest requests, so the install itself fails.
+    expect(exitCode).not.toBe(0);
   });
 });

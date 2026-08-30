@@ -648,6 +648,29 @@ describe("bun", () => {
     expect(exitCode).toBe(0);
   });
 
+  // The terminal renderer is TTY-only on Windows (see runElideLinesTest).
+  test.skipIf(isWindows)("terminal output reports how long a successful script took", () => {
+    using dir = tempDir("filter-done-in", {
+      packages: {
+        dep0: {
+          "package.json": JSON.stringify({ name: "dep0", scripts: { script: "exit 0" } }),
+        },
+      },
+      "package.json": JSON.stringify({ name: "ws", workspaces: ["packages/*"] }),
+    });
+
+    const { exitCode, stdout } = spawnSync({
+      cwd: String(dir),
+      cmd: [bunExe(), "run", "--filter", "dep0", "script"],
+      env: { ...bunEnv, FORCE_COLOR: "1", NO_COLOR: "0" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    expect(stdout.toString()).toMatch(/Done in (?:\d+ ms|\d+\.\d{2} s)/);
+    expect(exitCode).toBe(0);
+  });
+
   test("self-referential directory symlink in a workspace does not loop", () => {
     using dir = tempDir("filter-symlink-loop", {
       packages: {
@@ -1185,5 +1208,84 @@ describe("output timing", () => {
     });
     // Waiting out the grandchild's 30s sleep means the abort bypass regressed.
     expect(Date.now() - start).toBeLessThan(15000);
+  });
+});
+
+describe("auto-discovered bunfig.toml [run] section", () => {
+  // With `run.bun = true` bun puts a `node` shim on PATH, so `typeof Bun`
+  // tells which binary ran the script.
+  const typeofBun = `node -e "console.log('Bun is ' + typeof Bun)"`;
+
+  function workspace(prefix: string, bunfig: string) {
+    return tempDir(prefix, {
+      "bunfig.toml": bunfig,
+      "package.json": JSON.stringify({ name: "ws", workspaces: ["packages/*"] }),
+      packages: {
+        dep0: {
+          "index.js": Array(20).fill("console.log('log_line');").join("\n"),
+          "package.json": JSON.stringify({
+            name: "dep0",
+            scripts: { script: typeofBun, lines: `${bunExe()} run index.js` },
+          }),
+        },
+      },
+    });
+  }
+
+  function run(dir: string, args: string[], env: Record<string, string | undefined> = {}) {
+    const { exitCode, stdout, stderr } = spawnSync({
+      cwd: dir,
+      cmd: [bunExe(), ...args],
+      env: { ...bunEnv, ...env },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    return { exitCode, stdout: stdout.toString(), stderr: stderr.toString() };
+  }
+
+  test.each([
+    ["bun run --filter", ["run", "--filter", "dep0", "script"]],
+    ["bun --filter", ["--filter", "dep0", "script"]],
+    ["bun run --workspaces", ["run", "--workspaces", "script"]],
+  ])("%s applies [run] bun = true", (_, args) => {
+    using dir = workspace("filter-bunfig-run-bun", "[run]\nbun = true\n");
+    const r = run(String(dir), args);
+    expect(r.stdout).toContain("Bun is object");
+    expect(r.exitCode).toBe(0);
+  });
+
+  test("--bun on the CLI wins over [run] bun = false", () => {
+    using dir = workspace("filter-bunfig-cli-bun", "[run]\nbun = false\n");
+    const r = run(String(dir), ["run", "--bun", "--filter", "dep0", "script"]);
+    expect(r.stdout).toContain("Bun is object");
+    expect(r.exitCode).toBe(0);
+  });
+
+  // Elision only happens on a terminal. On POSIX FORCE_COLOR=1 turns the
+  // terminal renderer on for a pipe; on Windows it stays off (see runElideLinesTest).
+  test.skipIf(isWindows)("[run] elide-lines = 0 disables elision for --filter", () => {
+    using dir = workspace("filter-bunfig-elide", "[run]\nelide-lines = 0\n");
+    const r = run(String(dir), ["run", "--filter", "dep0", "lines"], { FORCE_COLOR: "1", NO_COLOR: "0" });
+    expect(r.stdout).not.toMatch(/lines elided/);
+    expect(r.stdout).toMatch(/(?:log_line[\s\S]*?){20}/);
+    expect(r.exitCode).toBe(0);
+  });
+
+  test.skipIf(isWindows)("--elide-lines on the CLI wins over [run] elide-lines", () => {
+    using dir = workspace("filter-bunfig-cli-elide", "[run]\nelide-lines = 0\n");
+    const r = run(String(dir), ["run", "--elide-lines", "15", "--filter", "dep0", "lines"], {
+      FORCE_COLOR: "1",
+      NO_COLOR: "0",
+    });
+    expect(r.stdout).toMatch(/\[5 lines elided\]/);
+    expect(r.exitCode).toBe(0);
+  });
+
+  test("a malformed bunfig.toml fails the run", () => {
+    using dir = workspace("filter-bunfig-malformed", '[run]\nbun = "yes"\n');
+    const r = run(String(dir), ["run", "--filter", "dep0", "script"]);
+    expect(r.stderr).toContain("Expected boolean");
+    expect(r.stdout).not.toContain("Bun is");
+    expect(r.exitCode).toBe(1);
   });
 });

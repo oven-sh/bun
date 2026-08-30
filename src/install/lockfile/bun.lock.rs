@@ -4,7 +4,7 @@ use core::fmt::Write as _;
 
 use crate::bun_json as JSON;
 use bun_ast::{Expr, expr::Data as ExprData};
-use bun_collections::{HashMap, StringHashMap};
+use bun_collections::{HashContext, HashMap, StringHashMap, index_sort};
 use bun_core::strings;
 use bun_core::{self};
 use bun_paths::PathBuffer;
@@ -44,7 +44,7 @@ use super::override_selector::{PackageSelector, parse_package_segment};
 use super::package::{Meta, PackageColumns as _, value_loc_of};
 use super::{
     CatalogMap, DependencySlice, LoadResult, Lockfile as BinaryLockfile, OverrideMap, Package,
-    PackageIndexEntry, PackageIndexMap, PatchedDep, TrustedDependenciesSet, VersionHashMap, tree,
+    PackageIndexMap, PatchedDep, TrustedDependenciesSet, VersionHashMap, tree,
 };
 
 use bun_io::AsFmt;
@@ -163,22 +163,39 @@ impl<'a> TreeDepsSortCtx<'a> {
             r.name.slice(self.string_buf),
         )
     }
+
+    fn sort(&self, dep_ids: &mut [DependencyID]) {
+        index_sort::sort_indices(dep_ids, &mut |a, b| {
+            if self.is_less_than(a, b) {
+                core::cmp::Ordering::Less
+            } else if self.is_less_than(b, a) {
+                core::cmp::Ordering::Greater
+            } else {
+                core::cmp::Ordering::Equal
+            }
+        });
+    }
+}
+
+/// The slot order every existing bun.lock has its `trustedDependencies` and
+/// `patchedDependencies` in (`std.AutoHashMap(u64)`'s hash).
+struct WrittenOrderContext;
+
+impl HashContext<u64> for WrittenOrderContext {
+    #[inline]
+    fn ctx_hash(key: &u64) -> u64 {
+        bun_wyhash::hash(&key.to_le_bytes())
+    }
+    #[inline]
+    fn ctx_eql(a: &u64, b: &u64) -> bool {
+        a == b
+    }
 }
 
 pub(crate) struct Stringifier;
 
 impl Stringifier {
     const INDENT_SCALAR: usize = 2;
-
-    pub(crate) fn save_from_binary(
-        lockfile: &mut BinaryLockfile,
-        load_result: &LoadResult,
-        options: &PackageManagerOptions,
-        writer: &mut Writer,
-    ) -> Result<(), WriteError> {
-        // bun.handleOom → drop wrapper; allocation aborts on OOM in Rust.
-        Self::save_from_binary_inner(lockfile, load_result, options, writer)
-    }
 
     /// Pick the `lockfileVersion` to stamp. A lockfile loaded from disk keeps
     /// the version it already carried — re-saving never silently upgrades an
@@ -253,7 +270,7 @@ impl Stringifier {
                         // No supported integrity: only v2-clean if the tarball
                         // URL is under the *default* registry, the one case the
                         // writer normalizes to `""` (see the npm URL
-                        // serialization in `save_from_binary_inner`). An empty
+                        // serialization in `save_from_binary`). An empty
                         // URL never sets the parser's `npm_url_needs_integrity`,
                         // so that round-trips for any reader. A URL under a
                         // configured-but-not-default scope is written verbatim,
@@ -286,7 +303,7 @@ impl Stringifier {
         if has_scoped { Version::V3 } else { Version::V2 }
     }
 
-    fn save_from_binary_inner(
+    pub(crate) fn save_from_binary(
         lockfile: &mut BinaryLockfile,
         load_result: &LoadResult,
         options: &PackageManagerOptions,
@@ -306,12 +323,15 @@ impl Stringifier {
 
         let mut temp_buf: Vec<u8> = Vec::new();
 
-        let mut found_trusted_dependencies: HashMap<u64, String> = HashMap::default();
+        // Written out in iteration order, which the hash and the reserved capacity decide.
+        let mut found_trusted_dependencies: HashMap<u64, String, WrittenOrderContext> =
+            HashMap::default();
         if let Some(trusted_dependencies) = &lockfile.trusted_dependencies {
             found_trusted_dependencies.reserve(trusted_dependencies.count());
         }
 
-        let mut found_patched_dependencies: HashMap<u64, (Box<[u8]>, String)> = HashMap::default();
+        let mut found_patched_dependencies: HashMap<u64, (Box<[u8]>, String), WrittenOrderContext> =
+            HashMap::default();
         found_patched_dependencies.reserve(lockfile.patched_dependencies.count());
 
         let mut optional_peers_buf: Vec<String> = Vec::new();
@@ -386,6 +406,7 @@ impl Stringifier {
                     extern_strings,
                     deps_buf,
                     &lockfile.workspace_versions,
+                    &lockfile.self_contained_workspaces,
                     &mut optional_peers_buf,
                     &pkg_map,
                     b"",
@@ -404,7 +425,7 @@ impl Stringifier {
                 }
 
                 // local Sorter struct → closure
-                workspace_sort_buf.sort_by(|&l, &r| {
+                index_sort::sort_indices(&mut workspace_sort_buf, &mut |l, r| {
                     let l_res = &pkg_resolutions[l as usize];
                     let r_res = &pkg_resolutions[r as usize];
                     l_res.workspace().order(*r_res.workspace(), buf, buf)
@@ -429,6 +450,7 @@ impl Stringifier {
                         extern_strings,
                         deps_buf,
                         &lockfile.workspace_versions,
+                        &lockfile.self_contained_workspaces,
                         &mut optional_peers_buf,
                         &pkg_map,
                         pkg_names[workspace_pkg_id as usize].slice(buf),
@@ -523,7 +545,7 @@ impl Stringifier {
 
             pkgs_iter.reset();
 
-            tree_sort_buf.sort_by(tree_sort_is_less_than);
+            index_sort::sort_slice_by(&mut tree_sort_buf, tree_sort_is_less_than);
 
             if found_trusted_dependencies.len() > 0 {
                 Self::write_indent(writer, *indent)?;
@@ -663,21 +685,11 @@ impl Stringifier {
                 tree_deps_sort_buf.clear();
                 tree_deps_sort_buf.extend_from_slice(dependencies);
 
-                {
-                    let ctx = TreeDepsSortCtx {
-                        string_buf: buf,
-                        deps_buf,
-                    };
-                    tree_deps_sort_buf.sort_by(|&a, &b| {
-                        if ctx.is_less_than(a, b) {
-                            core::cmp::Ordering::Less
-                        } else if ctx.is_less_than(b, a) {
-                            core::cmp::Ordering::Greater
-                        } else {
-                            core::cmp::Ordering::Equal
-                        }
-                    });
+                TreeDepsSortCtx {
+                    string_buf: buf,
+                    deps_buf,
                 }
+                .sort(&mut tree_deps_sort_buf);
 
                 for &dep_id in &tree_deps_sort_buf {
                     let pkg_id = resolution_buf[dep_id as usize];
@@ -762,21 +774,11 @@ impl Stringifier {
                     // there might be duplicate names due to dependency behaviors,
                     // but we print behaviors in different groups so it won't affect
                     // the result
-                    {
-                        let ctx = TreeDepsSortCtx {
-                            string_buf: buf,
-                            deps_buf,
-                        };
-                        pkg_deps_sort_buf.sort_by(|&a, &b| {
-                            if ctx.is_less_than(a, b) {
-                                core::cmp::Ordering::Less
-                            } else if ctx.is_less_than(b, a) {
-                                core::cmp::Ordering::Greater
-                            } else {
-                                core::cmp::Ordering::Equal
-                            }
-                        });
+                    TreeDepsSortCtx {
+                        string_buf: buf,
+                        deps_buf,
                     }
+                    .sort(&mut pkg_deps_sort_buf);
 
                     // INFO = { prod/dev/optional/peer dependencies, os, cpu, libc (TODO), bin, binDir }
 
@@ -1242,6 +1244,11 @@ impl Stringifier {
         extern_strings: &[ExternalString],
         deps_buf: &[Dependency],
         workspace_versions: &VersionHashMap,
+        self_contained_workspaces: &bun_collections::ArrayHashMap<
+            PackageNameHash,
+            (),
+            bun_collections::ArrayIdentityContextU64,
+        >,
         optional_peers_buf: &mut Vec<String>,
         pkg_map: &PkgMap<()>,
         relative_path: &[u8],
@@ -1294,6 +1301,12 @@ impl Stringifier {
                 write!(writer, "\"version\": \"{}\"", version.fmt(buf))?;
             }
 
+            if self_contained_workspaces.contains(&pkg_name_hashes[pkg_id as usize]) {
+                writer.write_all(b",\n")?;
+                Self::write_indent(writer, *indent)?;
+                writer.write_all(b"\"hoistingLimits\": \"workspaces\"")?;
+            }
+
             if pkg_bins[pkg_id as usize].tag != BinTag::None {
                 let bin = &pkg_bins[pkg_id as usize];
                 writer.write_all(b",\n")?;
@@ -1315,9 +1328,20 @@ impl Stringifier {
             any = true;
         }
 
+        // Re-sort by current name: a no-alias git/tarball dep sorts under its version
+        // literal at parse time, and `assign_resolution` renames it without a re-sort.
+        let deps_list = pkg_deps[pkg_id as usize];
+        let mut deps_sort_buf: Vec<DependencyID> = (deps_list.begin()..deps_list.end()).collect();
+        TreeDepsSortCtx {
+            string_buf: buf,
+            deps_buf,
+        }
+        .sort(&mut deps_sort_buf);
+
         for &(group_name, group_behavior) in WORKSPACE_DEPENDENCY_GROUPS.iter() {
             let mut first = true;
-            for dep in pkg_deps[pkg_id as usize].get(deps_buf) {
+            for &dep_id in &deps_sort_buf {
+                let dep = &deps_buf[dep_id as usize];
                 if !dep.behavior.intersects(group_behavior) {
                     continue;
                 }
@@ -2336,6 +2360,21 @@ pub(crate) fn parse_into_binary_lockfile(
                 .workspace_versions
                 .insert(name_hash, parsed.version.min());
         }
+
+        // `installConfig.hoistingLimits` mirrored from the workspace manifest, so the
+        // tree is hoisted the same way when it is rebuilt from this lockfile
+        if let Some(h) = value.get(b"hoistingLimits") {
+            if h.as_utf8_string_literal() == Some(b"workspaces".as_slice()) {
+                lockfile.self_contained_workspaces.insert(name_hash, ());
+            } else {
+                log.add_error(
+                    Some(source),
+                    value_loc_of(source, h.loc),
+                    b"Expected \"workspaces\" for hoistingLimits",
+                );
+                return Err(ParseError::InvalidWorkspaceObject);
+            }
+        }
     }
 
     let mut optional_peers_buf: HashMap<u64, ()> = HashMap::default();
@@ -2488,23 +2527,29 @@ pub(crate) fn parse_into_binary_lockfile(
         }
     }
 
-    let Some(pkgs_expr) = root.get(b"packages") else {
-        // packages is empty, but there might be empty workspace packages
-        if workspace_pkgs_len == 0 {
-            lockfile.init_empty();
-        }
+    let pkgs_expr = root.get(b"packages");
+
+    // A missing "packages" object is parsed like an empty one. With no
+    // workspace packages there is nothing to resolve, otherwise the workspace
+    // packages appended above and the root's dependencies on them still need
+    // the resolution pass below (which also sizes `buffers.resolutions`).
+    if pkgs_expr.is_none() && workspace_pkgs_len == 0 {
+        lockfile.init_empty();
         return Ok(());
-    };
+    }
 
     {
-        if !pkgs_expr.is_object() {
-            log.add_error(
-                Some(source),
-                value_loc_of(source, pkgs_expr.loc),
-                b"Expected an object",
-            );
-            return Err(ParseError::InvalidPackagesObject);
+        if let Some(pkgs_expr) = &pkgs_expr {
+            if !pkgs_expr.is_object() {
+                log.add_error(
+                    Some(source),
+                    value_loc_of(source, pkgs_expr.loc),
+                    b"Expected an object",
+                );
+                return Err(ParseError::InvalidPackagesObject);
+            }
         }
+        let pkg_rows: &[JSON::E::PropertyJSON] = pkgs_expr.as_ref().map_or(&[], object_rows);
 
         // find the bundle roots.
         //
@@ -2518,7 +2563,7 @@ pub(crate) fn parse_into_binary_lockfile(
         // the bundled map, and mark the dependency bundled if it exists. This works
         // because package's direct bundled dependencies can only exist at the top
         // level of it's node_modules.
-        for row in object_rows(&pkgs_expr) {
+        for row in pkg_rows {
             let pkg_path = row.key.slice();
 
             let Some(pkg_info) = row.value.as_array() else {
@@ -2546,7 +2591,7 @@ pub(crate) fn parse_into_binary_lockfile(
             bundled_pkgs.put(pkg_path, ());
         }
 
-        'next_pkg_key: for row in object_rows(&pkgs_expr) {
+        'next_pkg_key: for row in pkg_rows {
             let key_loc = row.key_loc;
             let pkg_path = row.key.slice();
 
@@ -3085,7 +3130,7 @@ pub(crate) fn parse_into_binary_lockfile(
                 let Some(res_id) =
                     peer_res_id.or_else(|| pkg_map.get(dep.name.slice(string_buf)).copied())
                 else {
-                    if dep.behavior.contains(Behavior::OPTIONAL) {
+                    if may_stay_unresolved(dep) {
                         continue;
                     }
                     dependency_resolution_failure(
@@ -3170,7 +3215,7 @@ pub(crate) fn parse_into_binary_lockfile(
                             .or_else(|| pkg_map.get(dep_name))
                             .copied()
                     }) else {
-                        if dep.behavior.contains(Behavior::OPTIONAL) {
+                        if may_stay_unresolved(dep) {
                             continue;
                         }
                         dependency_resolution_failure(
@@ -3202,7 +3247,7 @@ pub(crate) fn parse_into_binary_lockfile(
         }
 
         // then each package dependency
-        for row in object_rows(&pkgs_expr) {
+        for row in pkg_rows {
             let pkg_path = row.key.slice();
 
             let Some(&pkg_id) = pkg_map.get(pkg_path) else {
@@ -3259,7 +3304,7 @@ pub(crate) fn parse_into_binary_lockfile(
                                 return Err(ParseError::InvalidPackageKey);
                             }
                             Err(ResolveError::Unresolvable) => {
-                                if dep.behavior.contains(Behavior::OPTIONAL) {
+                                if may_stay_unresolved(dep) {
                                     continue 'deps;
                                 }
                                 dependency_resolution_failure(
@@ -3287,11 +3332,8 @@ pub(crate) fn parse_into_binary_lockfile(
             }
         }
 
-        if let Err(err) = lockfile.resolve(log) {
-            return Err(match err {
-                tree::SubtreeError::OutOfMemory => ParseError::OutOfMemory,
-                tree::SubtreeError::DependencyLoop => ParseError::InvalidPackagesObject,
-            });
+        if let Err(tree::SubtreeError::OutOfMemory) = lockfile.resolve(log) {
+            return Err(ParseError::OutOfMemory);
         }
     }
 
@@ -3396,12 +3438,7 @@ pub(crate) fn resolve_peer_dep_version_based(
         return None;
     }
 
-    let entry = package_index.get(&name_hash)?;
-    let candidates: &[PackageID] = match entry {
-        PackageIndexEntry::Id(id) => core::slice::from_ref(id),
-        PackageIndexEntry::Ids(ids) => ids.as_slice(),
-    };
-
+    let candidates = package_index.get(&name_hash)?.as_slice();
     for &id in candidates {
         if (id as usize) < pkg_resolutions.len()
             && pkg_resolutions[id as usize]
@@ -3456,6 +3493,11 @@ fn map_dep_to_pkg(
             };
         }
     }
+}
+
+/// Edges a fresh install may itself leave unresolved, so bun.lock lists them without a package.
+fn may_stay_unresolved(dep: &Dependency) -> bool {
+    dep.behavior.intersects(Behavior::OPTIONAL | Behavior::PEER)
 }
 
 fn dependency_resolution_failure(
@@ -3697,9 +3739,10 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
 
     {
         let bytes = lockfile.buffers.string_bytes.as_slice();
-        // `slice::sort_by` is pattern-defeating quicksort; `Dependency::cmp` is the
-        // total-order form of `isLessThan` (behavior group, then name ASC).
-        lockfile.buffers.dependencies[off..].sort_by(|a, b| Dependency::cmp(bytes, a, b));
+        // `Dependency::cmp` is the total-order form of `isLessThan` (behavior group, then name ASC).
+        index_sort::sort_slice_by(&mut lockfile.buffers.dependencies[off..], |a, b| {
+            Dependency::cmp(bytes, a, b)
+        });
     }
 
     optional_peers_buf.clear();

@@ -1,4 +1,5 @@
 import { spawnSync, which } from "bun";
+import { CString, dlopen, ptr } from "bun:ffi";
 import { describe, expect, it } from "bun:test";
 import { familySync } from "detect-libc";
 import { bunEnv, bunExe, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
@@ -491,6 +492,41 @@ it("ICU version does not regress", () => {
   expect(parseFloat(process.versions.icu, 10) || 0).toBeGreaterThanOrEqual(parseFloat(min, 10));
 });
 
+it("process.versions.icu and process.versions.unicode describe the ICU the process runs with", () => {
+  // macOS links the system libicucore, so the ICU the build compiled against
+  // can differ from the one the process runs with. String.prototype.toUpperCase
+  // goes through ICU's case mapping, and U+10D70 GARAY SMALL LETTER A only has
+  // an uppercase (U+10D50) from Unicode 16 (ICU 76) on.
+  const hasUnicode16 = "\u{10D70}".toUpperCase() === "\u{10D50}";
+  expect({
+    unicode16: parseFloat(process.versions.unicode) >= 16,
+    icu76: parseInt(process.versions.icu) >= 76,
+  }).toEqual({ unicode16: hasUnicode16, icu76: hasUnicode16 });
+  expect(process.versions.icu).toMatch(/^\d+\.\d+(\.\d+)*$/);
+  expect(process.versions.unicode).toMatch(/^\d+\.\d+(\.\d+)*$/);
+});
+
+it.skipIf(!isMacOS)("process.versions.icu and process.versions.unicode match the system libicucore", () => {
+  // dlopen returns the image bun itself links (-licucore), so these are the
+  // versions of the ICU that does the work in this process.
+  const { symbols } = dlopen("/usr/lib/libicucore.A.dylib", {
+    u_getVersion: { args: ["ptr"], returns: "void" },
+    u_getUnicodeVersion: { args: ["ptr"], returns: "void" },
+    u_versionToString: { args: ["ptr", "ptr"], returns: "void" },
+  });
+  const version = new Uint8Array(4);
+  const string = new Uint8Array(20);
+  const read = getVersion => {
+    getVersion(ptr(version));
+    symbols.u_versionToString(ptr(version), ptr(string));
+    return new CString(ptr(string)).toString();
+  };
+  expect({ icu: process.versions.icu, unicode: process.versions.unicode }).toEqual({
+    icu: read(symbols.u_getVersion),
+    unicode: read(symbols.u_getUnicodeVersion),
+  });
+});
+
 it("process.env.TZ", () => {
   var origTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
@@ -574,9 +610,9 @@ it("process.versions", () => {
   // These are the ACTUAL commits built into bun (not derived values, so
   // bumping a dep requires updating this test too).
   const expectedVersions = {
-    boringssl: "1a41b9025c2c0a37edd07ff10f6944f03e028522",
+    boringssl: "41bf9b59c2ebf277a7aa427e1ecad5cc80dd4d4f",
     libarchive: "ded82291ab41d5e355831b96b0e1ff49e24d8939",
-    mimalloc: "6e891cbe4790982ca9f3f9a60319a72e61b5d725",
+    mimalloc: "942b8342575bdece649438ca76f32276a019c51e",
     picohttpparser: "066d2b1e9ab820703db0837a7255d92d30f0c9f5",
     zlib: "12731092979c6d07f42da27da673a9f6c7b13586",
     tinycc: "05f0fafaa3be31e31d7b4b5c17dc60f62c991171",
@@ -1018,6 +1054,94 @@ describe.concurrent(() => {
     expect(process.memoryUsage.rss()).toEqual(expect.any(Number));
   });
 
+  // JSC measures the live size of the heap at the end of each collection and
+  // keeps one figure per kind of collection, eden or full. heapUsed used to
+  // report the eden figure only, so it did not change when a full collection
+  // freed memory. Each child disables Bun's GC timer so that the only
+  // collections are the ones it requests. Bun.gc(true) and bun:jsc's edenGC()
+  // return the figure measured by the collection they ran, which is what
+  // heapUsed has to report afterwards.
+  describe("process.memoryUsage().heapUsed reports the most recent collection", () => {
+    async function reportedBy(script, env = {}) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: { ...bunEnv, BUN_GC_TIMER_DISABLE: "1", ...env },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+      return JSON.parse(stdout);
+    }
+
+    it("after a full collection that follows an eden collection", async () => {
+      const { collections, heapUsed } = await reportedBy(`
+        const { edenGC } = require("bun:jsc");
+        const heapUsed = () => process.memoryUsage().heapUsed;
+
+        // The objects hang off the global object so that the eden collection
+        // counts them whatever the JIT keeps in registers. The array is built in
+        // a function of its own so that no frame that is still on the stack
+        // points at it when the last full collection runs.
+        function fill() {
+          const objects = [];
+          for (let i = 0; i < 50_000; i++) objects.push({ i });
+          globalThis.retained = objects;
+        }
+
+        const full = Bun.gc(true);
+        const heapUsedAfterFull = heapUsed();
+
+        fill();
+        const eden = edenGC();
+        const heapUsedAfterEden = heapUsed();
+
+        globalThis.retained = null;
+        const fullAfterEden = Bun.gc(true);
+        const heapUsedAfterFullAfterEden = heapUsed();
+
+        console.log(JSON.stringify({
+          collections: [full, eden, fullAfterEden],
+          heapUsed: [heapUsedAfterFull, heapUsedAfterEden, heapUsedAfterFullAfterEden],
+        }));
+      `);
+
+      const [full, eden, fullAfterEden] = collections;
+      // The eden collection counted the retained objects and the last full
+      // collection freed them, so a stale figure differs from the current one.
+      expect(full).toBeGreaterThan(0);
+      expect(eden).toBeGreaterThan(full);
+      expect(fullAfterEden).toBeLessThan(eden);
+      expect(heapUsed).toEqual(collections);
+    });
+
+    // Without the JIT, JSC turns off generational collection and runs every
+    // collection as a full one, so the eden figure stays 0 for the life of the
+    // process.
+    it("when every collection is a full collection", async () => {
+      const { full, heapUsed } = await reportedBy(
+        `
+          const full = Bun.gc(true);
+          console.log(JSON.stringify({ full, heapUsed: process.memoryUsage().heapUsed }));
+        `,
+        { BUN_JSC_useJIT: "false" },
+      );
+
+      expect(full).toBeGreaterThan(0);
+      expect(heapUsed).toBe(full);
+    });
+
+    // Nothing requests a collection while Bun starts up, so there is no figure
+    // yet. Nothing has been freed yet either, so the whole heap counts as used.
+    it("counts the whole heap as used before the first collection", async () => {
+      const { heapTotal, heapUsed } = await reportedBy(`console.log(JSON.stringify(process.memoryUsage()))`);
+
+      expect(heapTotal).toBeGreaterThan(0);
+      expect(heapUsed).toBe(heapTotal);
+    });
+  });
+
   describe("process.cpuUsage", () => {
     it("works", () => {
       expect(process.cpuUsage()).toEqual({
@@ -1382,6 +1506,41 @@ describe.concurrent(() => {
   it("process.report", () => {
     // TODO: write better tests
     JSON.stringify(process.report.getReport(), null, 2);
+  });
+
+  // A pending worker.terminate() is delivered at the exception checks inside the
+  // report builders, so a worker looping on getReport() is always interrupted in
+  // the middle of one. The host must see every worker exit, with no crash.
+  it("process.report.getReport() interrupted by worker.terminate()", async () => {
+    const workers = 3;
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const { Worker } = require("worker_threads");
+          const source = 'require("worker_threads").parentPort.postMessage("busy"); for (;;) process.report.getReport();';
+          let exited = 0;
+          for (let i = 0; i < ${workers}; i++) {
+            const worker = new Worker(source, { eval: true });
+            worker.on("message", () => worker.terminate());
+            worker.on("exit", () => {
+              if (++exited === ${workers}) console.log("exited", exited);
+            });
+          }
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: `exited ${workers}`,
+      stderr: "",
+      exitCode: 0,
+    });
   });
 
   it("process.exit with jsDoubleNumber that is an integer", async () => {

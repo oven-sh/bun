@@ -5,7 +5,7 @@ description: "Universal plugin API for extending Bun's runtime and bundler"
 
 Bun has a universal plugin API that extends both the _runtime_ and the _bundler_.
 
-Plugins intercept imports and perform custom loading logic, like reading files or transpiling code. Use them to add support for additional file types, such as `.scss` or `.yaml`. In Bun's bundler, plugins can implement framework-level features like CSS extraction, macros, and client-server code co-location.
+Plugins intercept imports and perform custom loading logic, like reading files or transpiling code. Use them to add support for additional file types, such as `.scss`. In Bun's bundler, plugins can implement framework-level features like CSS extraction, macros, and client-server code co-location.
 
 ## Lifecycle hooks
 
@@ -22,7 +22,7 @@ A rough overview of the types (see Bun's `bun.d.ts` for the full type definition
 
 ```ts Plugin Types icon="/icons/typescript.svg"
 type PluginBuilder = {
-  onStart(callback: () => void): void;
+  onStart(callback: () => void | Promise<void>): void;
   onResolve: (
     args: { filter: RegExp; namespace?: string },
     callback: (args: { path: string; importer: string }) => {
@@ -99,22 +99,24 @@ Other common namespaces are:
 ### `onStart`
 
 ```ts
-onStart(callback: () => void): Promise<void> | void;
+onStart(callback: () => void | Promise<void>): void;
 ```
 
 Registers a callback that runs when the bundler starts a new bundle.
 
 ```ts index.ts icon="/icons/typescript.svg"
-import { plugin } from "bun";
-
-plugin({
-  name: "onStart example",
-
-  setup(build) {
-    build.onStart(() => {
-      console.log("Bundle started!");
-    });
-  },
+await Bun.build({
+  entrypoints: ["./app.ts"],
+  plugins: [
+    {
+      name: "onStart example",
+      setup(build) {
+        build.onStart(() => {
+          console.log("Bundle started!");
+        });
+      },
+    },
+  ],
 });
 ```
 
@@ -169,7 +171,7 @@ To bundle your project, Bun walks down the dependency tree of all modules in you
 
 The `onResolve()` lifecycle callback customizes how Bun resolves a module.
 
-The first argument to `onResolve()` is an object with a `filter` and [`namespace`](#what-is-a-namespace) property. The filter is a regular expression run on the import string. Together they determine which modules your custom resolution logic applies to.
+The first argument to `onResolve()` is an object with a `filter` and [`namespace`](#namespaces) property. The filter is a regular expression run on the import string. Together they determine which modules your custom resolution logic applies to.
 
 The second argument to `onResolve()` is a callback that runs for each module import Bun finds that matches the `filter` and `namespace` defined in the first argument.
 
@@ -222,19 +224,22 @@ The callback can return a new `contents` string for the module as well as a new 
 For example:
 
 ```ts index.ts icon="/icons/typescript.svg"
-import { plugin } from "bun";
+import type { BunPlugin } from "bun";
 
 const envPlugin: BunPlugin = {
   name: "env plugin",
   setup(build) {
-    build.onLoad({ filter: /env/, namespace: "file" }, args => {
+    build.onResolve({ filter: /^env$/ }, args => {
+      return { path: args.path, namespace: "env" };
+    });
+    build.onLoad({ filter: /env/, namespace: "env" }, args => {
       return {
         contents: `export default ${JSON.stringify(process.env)}`,
         loader: "js",
       };
     });
   },
-});
+};
 
 Bun.build({
   entrypoints: ["./app.ts"],

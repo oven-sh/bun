@@ -1779,6 +1779,87 @@ test.concurrent("`bun update --silent` swallows the unfetchable-manifest warning
   expect(exitCode).toBe(0);
 });
 
+// `bun outdated` and `bun update -i` exist to answer for the direct dependencies, so for them a manifest that does not arrive is reported and fails the command (a registry that is down must not read as "nothing to update"); only an optional dependency's is a warning.
+const errorLines = (stderr: string) => stderr.split("\n").filter(line => line.startsWith("error:"));
+const manifestFailure = (server: Bun.Server, status: number) => `GET ${server.url.origin}/leaf - ${status}`;
+
+// leaf@1.0.0 installed while 1.1.0 exists, with the manifest cache off so every later command asks the registry again.
+async function staleDirectLeaf(server: Bun.Server, groups: Groups = {}) {
+  const dir = await installServed(server, "direct-manifest-failure-", grouped({ leaf: "1.0.0" }, groups));
+  await servedBunfig(server, dir, { cache: false });
+  return dir;
+}
+
+// Nothing but the header: no table, and no "up to date" either.
+const expectHeaderOnly = (stdout: string, command: string) =>
+  expect(stdout).toMatch(new RegExp(`^bun ${command} v[^\\n]*\\n$`));
+
+test.concurrent.each<[number, string[]]>([
+  [502, []],
+  [404, []],
+  [502, ["-r"]],
+])("a %d for a direct dependency's manifest fails `bun outdated` (extra args: %p)", async (status, args) => {
+  const knobs: RegistryKnobs = { status: {} };
+  using server = await serveRegistry(TAGGED_FREE, {}, knobs);
+  const dir = await staleDirectLeaf(server);
+
+  const healthy = await run(dir, "outdated", ...args);
+  expect(healthy.stdout).toMatch(/\| leaf\s+\| 1\.0\.0\s+\| 1\.0\.0\s+\| 1\.1\.0\s+\|/);
+  expectCleanStderr(healthy.stderr);
+  expect(healthy.exitCode).toBe(0);
+
+  knobs.status!.leaf = status;
+  const { stdout, stderr, exitCode } = await run(dir, "outdated", ...args);
+  expectHeaderOnly(stdout, "outdated");
+  expect(errorLines(stderr)).toStrictEqual([`error: ${manifestFailure(server, status)}`]);
+  expect(exitCode).toBe(1);
+});
+
+test.concurrent("a registry that does not answer at all fails `bun outdated`", async () => {
+  using server = await serveRegistry(TAGGED_FREE);
+  const dir = await staleDirectLeaf(server);
+  server.stop(true);
+  const { stdout, stderr, exitCode } = await run(dir, "outdated");
+  expectHeaderOnly(stdout, "outdated");
+  expect(errorLines(stderr)).toStrictEqual([expect.stringMatching(/^error: \w+ downloading package manifest leaf$/)]);
+  expect(exitCode).toBe(1);
+});
+
+test.concurrent(
+  "an optional dependency whose manifest cannot be fetched is only warned about by `bun outdated`",
+  async () => {
+    const knobs: RegistryKnobs = { status: {} };
+    using server = await serveRegistry(TAGGED_FREE, {}, knobs);
+    const dir = await staleDirectLeaf(server, { leaf: "optionalDependencies" });
+    knobs.status!.leaf = 502;
+    const { stdout, stderr, exitCode } = await run(dir, "outdated");
+    expectHeaderOnly(stdout, "outdated");
+    expectWarnings(stderr, `warn: ${manifestFailure(server, 502)}\n`);
+    expect(exitCode).toBe(0);
+  },
+);
+
+test.concurrent(
+  "a 502 for a direct dependency's manifest fails `bun update -i` instead of offering nothing",
+  async () => {
+    const knobs: RegistryKnobs = { status: {} };
+    using server = await serveRegistry(TAGGED_FREE, {}, knobs);
+    const dir = await staleDirectLeaf(server);
+    const before = await lockText(dir);
+
+    const healthy = await runInteractive(dir, "", "--dry-run");
+    expect(healthy.stdout).toContain("leaf");
+    expect(healthy.exitCode).toBe(0);
+
+    knobs.status!.leaf = 502;
+    const { stdout, stderr, exitCode } = await runInteractive(dir, "", "--dry-run");
+    expectHeaderOnly(stdout, "update --interactive");
+    expect(errorLines(stderr)).toStrictEqual([`error: ${manifestFailure(server, 502)}`]);
+    expect(await lockText(dir)).toBe(before);
+    expect(exitCode).toBe(1);
+  },
+);
+
 test.concurrent("`bun update <name>` from a member leaves a sibling's own entry alone but lets it follow", async () => {
   const { dir, pkg2Text } = await staleMembers("~1.0.0", "^1.0.0");
   const { stderr, exitCode } = await runIn(dir, "packages/pkg1", "update", "no-deps");

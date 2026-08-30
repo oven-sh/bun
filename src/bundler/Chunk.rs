@@ -6,7 +6,7 @@ use std::io::Write as _;
 use bun_alloc::AllocError;
 use bun_ast::{ImportKind, ImportRecord};
 use bun_ast::{Ref, Stmt};
-use bun_collections::{ArrayHashMap, AutoBitSet, VecExt};
+use bun_collections::{ArrayHashMap, AutoBitSet, VecExt, index_sort};
 use bun_core::{FeatureFlags, Output};
 // Note: `bun.ast.Index` is mirrored as both `crate::Index`
 // (`bun_ast::Index`) and `bun_ast::Index` via a
@@ -349,7 +349,7 @@ impl Order {
     /// equidistant to an entry point, then break the tie by sorting on the
     /// stable source index derived from the DFS over all entry points.
     pub(crate) fn sort(a: &mut [Order]) {
-        a.sort_unstable_by(|a, b| {
+        index_sort::sort_slice_unstable_by(a, |a, b| {
             if Order::less_than(Order::default(), *a, *b) {
                 core::cmp::Ordering::Less
             } else if Order::less_than(Order::default(), *b, *a) {
@@ -424,6 +424,52 @@ pub struct CodeResult {
     pub(crate) shifts: Vec<source_map::SourceMapShifts>,
 }
 
+/// What the paths `code()` writes over a chunk's references to other outputs
+/// are relative to. A public path makes them outdir-relative either way.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum ReferencePathStyle {
+    /// The directory of the chunk being emitted, as in esbuild.
+    ImporterRelative,
+    /// The outdir, wherever the emitting chunk lands (`bun build --compile`).
+    OutdirRelative,
+}
+
+impl ReferencePathStyle {
+    /// An executable loads every chunk from one virtual root, except for the
+    /// browser chunks a server build emits for its HTML imports: those are
+    /// served over HTTP.
+    pub(crate) fn for_chunk(chunk: &Chunk, compile: bool) -> ReferencePathStyle {
+        if compile
+            && !chunk
+                .flags
+                .contains(Flags::IS_BROWSER_CHUNK_FROM_SERVER_BUILD)
+        {
+            ReferencePathStyle::OutdirRelative
+        } else {
+            ReferencePathStyle::ImporterRelative
+        }
+    }
+}
+
+/// Whether `code()` records how far each path it writes moves the text after it
+/// (`CodeResult::shifts`, which the chunk's source map is corrected with) and
+/// appends the `//# debugId` comment. Only wanted for a chunk that gets a map.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum SourceMapShiftTracking {
+    Disabled,
+    Enabled,
+}
+
+impl SourceMapShiftTracking {
+    pub(crate) fn for_source_map(source_map: options::SourceMapOption) -> SourceMapShiftTracking {
+        if source_map == options::SourceMapOption::None {
+            SourceMapShiftTracking::Disabled
+        } else {
+            SourceMapShiftTracking::Enabled
+        }
+    }
+}
+
 // We don't need an allocator vtable here yet. `()` is kept as a token for the
 // caller's `Option<&DynAlloc>` plumbing; the actual
 // allocation goes through `alloc_buf` (global mimalloc) regardless. Real
@@ -433,17 +479,12 @@ type DynAlloc = ();
 
 /// Until `DynAlloc` is a real trait object, route
 /// through the global arena; mimalloc handles large allocations via mmap
-/// already.
+/// already. Returns an empty `Vec` with `n` bytes of capacity for the caller to fill and commit.
 #[inline]
-fn alloc_buf(_arena: DynAlloc, n: usize) -> Result<Box<[u8]>, AllocError> {
-    // Zero-fill is required for soundness: `set_len` over uninit bytes violates
-    // `Vec`'s safety contract, and `into_boxed_slice` may shrink-realloc (memcpy
-    // of uninit). The memset cost is negligible next to the subsequent memcpy
-    // that fully overwrites the buffer.
+fn alloc_buf(_arena: DynAlloc, n: usize) -> Result<Vec<u8>, AllocError> {
     let mut v: Vec<u8> = Vec::new();
     v.try_reserve_exact(n).map_err(|_| AllocError)?;
-    v.resize(n, 0);
-    Ok(v.into_boxed_slice())
+    Ok(v)
 }
 
 /// Extract the `OutputFile` index from a trailing `AdditionalFile` entry
@@ -549,13 +590,12 @@ impl IntermediateOutput {
         // Accept both `&mut usize` and
         // `Option<&mut usize>` so call sites spelled either way compile.
         display_size: impl Into<Option<&'d mut usize>>,
-        force_absolute_path: bool,
-        enable_source_map_shifts: bool,
+        reference_path_style: ReferencePathStyle,
+        shift_tracking: SourceMapShiftTracking,
     ) -> Result<CodeResult, AllocError> {
         let display_size: Option<&mut usize> = display_size.into();
-        // switch (enable_source_map_shifts) { inline else => |b| ... }
-        if enable_source_map_shifts {
-            self.code_with_source_map_shifts::<true>(
+        match shift_tracking {
+            SourceMapShiftTracking::Enabled => self.code_with_source_map_shifts::<true>(
                 allocator_to_use,
                 parse_graph,
                 linker_graph,
@@ -563,11 +603,10 @@ impl IntermediateOutput {
                 chunk,
                 chunks,
                 display_size,
-                force_absolute_path,
+                reference_path_style,
                 None,
-            )
-        } else {
-            self.code_with_source_map_shifts::<false>(
+            ),
+            SourceMapShiftTracking::Disabled => self.code_with_source_map_shifts::<false>(
                 allocator_to_use,
                 parse_graph,
                 linker_graph,
@@ -575,9 +614,9 @@ impl IntermediateOutput {
                 chunk,
                 chunks,
                 display_size,
-                force_absolute_path,
+                reference_path_style,
                 None,
-            )
+            ),
         }
     }
 
@@ -598,13 +637,13 @@ impl IntermediateOutput {
         // Accept both `&mut usize` and
         // `Option<&mut usize>` so call sites spelled either way compile.
         display_size: impl Into<Option<&'d mut usize>>,
-        force_absolute_path: bool,
-        enable_source_map_shifts: bool,
+        reference_path_style: ReferencePathStyle,
+        shift_tracking: SourceMapShiftTracking,
         standalone_chunk_contents: &[Option<Box<[u8]>>],
     ) -> Result<CodeResult, AllocError> {
         let display_size: Option<&mut usize> = display_size.into();
-        if enable_source_map_shifts {
-            self.code_with_source_map_shifts::<true>(
+        match shift_tracking {
+            SourceMapShiftTracking::Enabled => self.code_with_source_map_shifts::<true>(
                 allocator_to_use,
                 parse_graph,
                 linker_graph,
@@ -612,11 +651,10 @@ impl IntermediateOutput {
                 chunk,
                 chunks,
                 display_size,
-                force_absolute_path,
+                reference_path_style,
                 Some(standalone_chunk_contents),
-            )
-        } else {
-            self.code_with_source_map_shifts::<false>(
+            ),
+            SourceMapShiftTracking::Disabled => self.code_with_source_map_shifts::<false>(
                 allocator_to_use,
                 parse_graph,
                 linker_graph,
@@ -624,9 +662,9 @@ impl IntermediateOutput {
                 chunk,
                 chunks,
                 display_size,
-                force_absolute_path,
+                reference_path_style,
                 Some(standalone_chunk_contents),
-            )
+            ),
         }
     }
 
@@ -641,7 +679,7 @@ impl IntermediateOutput {
         chunk: &Chunk,
         chunks: &[Chunk],
         display_size: Option<&mut usize>,
-        force_absolute_path: bool,
+        reference_path_style: ReferencePathStyle,
         standalone_chunk_contents: Option<&[Option<Box<[u8]>>]>,
     ) -> Result<CodeResult, AllocError> {
         // `Graph.input_files` SoA accessors live in `Graph::InputFileColumns`;
@@ -682,8 +720,9 @@ impl IntermediateOutput {
                 // esbuild's `pathBetweenChunks`: with a public path configured, every
                 // reference is `publicPath + outdir-relative path`. Importer-relative
                 // paths would escape the prefix from chunks in subdirectories.
-                let use_outdir_relative_path =
-                    from_chunk_dir.is_empty() || force_absolute_path || !import_prefix.is_empty();
+                let use_outdir_relative_path = from_chunk_dir.is_empty()
+                    || reference_path_style == ReferencePathStyle::OutdirRelative
+                    || !import_prefix.is_empty();
 
                 let urls_for_css: &[&[u8]] = if standalone_chunk_contents.is_some() {
                     graph.ast.items_url_for_css()
@@ -800,8 +839,11 @@ impl IntermediateOutput {
                 };
 
                 let arena = allocator_to_use.unwrap_or_else(|| Self::allocator_for_size(count));
-                let mut total_buf = alloc_buf(*arena, count + debug_id_len)?;
-                let mut remain: &mut [u8] = &mut total_buf;
+                let total_len = count + debug_id_len;
+                let mut total_buf = alloc_buf(*arena, total_len)?;
+                // SAFETY: the loop below only copies bytes into `remain`; only the prefix it wrote is committed.
+                let mut remain: &mut [u8] =
+                    unsafe { &mut bun_core::vec::spare_bytes_mut(&mut total_buf)[..total_len] };
 
                 for piece in pieces.slice() {
                     let data = piece.data();
@@ -1005,10 +1047,13 @@ impl IntermediateOutput {
                 }
 
                 debug_assert!(remain.is_empty());
-                debug_assert!(total_buf.len() == count + debug_id_len);
+                let written = total_len - remain.len();
+                // SAFETY: `remain` advanced past exactly the `written` bytes the loop initialized.
+                unsafe { bun_core::vec::commit_spare(&mut total_buf, written) };
+                debug_assert!(total_buf.len() == total_len);
 
                 Ok(CodeResult {
-                    buffer: total_buf,
+                    buffer: total_buf.into_boxed_slice(),
                     shifts: if ENABLE_SOURCE_MAP_SHIFTS {
                         shifts
                     } else {
@@ -1203,7 +1248,7 @@ impl fmt::Display for UniqueKey {
     }
 }
 
-/// packed struct(u64) { source_index: u32, entry_point_id: u30, is_entry_point: bool, is_html: bool }
+/// packed struct(u64) { source_index: u32, entry_point_id: u30, is_entry_point: bool, _: u1 }
 #[repr(transparent)]
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 pub struct EntryPoint(u64);
@@ -1213,19 +1258,19 @@ pub(crate) type EntryPointId = u32;
 
 impl EntryPoint {
     const ENTRY_POINT_ID_MASK: u64 = (1 << 30) - 1;
+    const IS_ENTRY_POINT_BIT: u64 = 1 << 62;
 
-    pub(crate) fn new(
-        source_index: u32,
-        entry_point_id: u32,
-        is_entry_point: bool,
-        is_html: bool,
-    ) -> Self {
+    /// The chunk that entry point `entry_point_id` itself produces.
+    pub(crate) fn entry_point(source_index: u32, entry_point_id: EntryPointId) -> Self {
+        EntryPoint(Self::non_entry_point(source_index, entry_point_id).0 | Self::IS_ENTRY_POINT_BIT)
+    }
+
+    /// A chunk generated on behalf of `entry_point_id` (code-split, dev-server
+    /// CSS/HTML) that is not itself an entry point.
+    pub(crate) fn non_entry_point(source_index: u32, entry_point_id: EntryPointId) -> Self {
         debug_assert!((entry_point_id as u64) <= Self::ENTRY_POINT_ID_MASK);
         EntryPoint(
-            (source_index as u64)
-                | (((entry_point_id as u64) & Self::ENTRY_POINT_ID_MASK) << 32)
-                | ((is_entry_point as u64) << 62)
-                | ((is_html as u64) << 63),
+            (source_index as u64) | (((entry_point_id as u64) & Self::ENTRY_POINT_ID_MASK) << 32),
         )
     }
 
@@ -1241,7 +1286,7 @@ impl EntryPoint {
 
     #[inline]
     pub(crate) fn is_entry_point(self) -> bool {
-        (self.0 >> 62) & 1 != 0
+        self.0 & Self::IS_ENTRY_POINT_BIT != 0
     }
 
     #[inline]
@@ -1258,10 +1303,14 @@ pub struct JavaScriptChunk {
     pub parts_in_chunk_in_order: Box<[PartRange]>,
 
     // for code splitting
-    // The map hashes via `Ref`'s `Hash` impl. Values
-    // are `&'static`-erased slices into bundler-owned storage (see the
-    // lifetime note on `Chunk`).
-    pub(crate) exports_to_other_chunks: ArrayHashMap<Ref, &'static [u8]>,
+    /// The other chunks with top-level side effects that the walk ordering
+    /// this chunk reaches, in the order it finishes their first file with
+    /// side effects: the order the unbundled modules would run them in.
+    /// `compute_cross_chunk_dependencies` sorts this chunk's `import`
+    /// statements by it.
+    pub(crate) reached_chunks_in_order: Box<[u32]>,
+    /// Bindings declared in this chunk that another chunk imports; named by `cross_chunk_names`.
+    pub(crate) exports_to_other_chunks: ArrayHashMap<Ref, ()>,
     pub(crate) imports_from_other_chunks: ImportsFromOtherChunks,
     pub(crate) cross_chunk_prefix_stmts: Vec<Stmt>,
     pub(crate) cross_chunk_suffix_stmts: Vec<Stmt>,
@@ -1488,7 +1537,6 @@ pub(crate) type ImportsFromOtherChunks = ArrayHashMap<IndexInt, cross_chunk_impo
 
 #[derive(Default, Clone)]
 pub struct CrossChunkImportItem {
-    pub(crate) export_alias: Box<[u8]>,
     pub(crate) r#ref: Ref,
 }
 pub type CrossChunkImportItemList = Vec<CrossChunkImportItem>;
@@ -1503,27 +1551,45 @@ pub mod cross_chunk_import {
 }
 
 impl CrossChunkImport {
+    /// `evaluation_rank[other]` is the position of `other` in the importing
+    /// chunk's `reached_chunks_in_order` (`u32::MAX` when the walk did not
+    /// reach it). ESM hoists every `import` above the chunk's own code, so
+    /// this order is the only part of the source evaluation order the
+    /// statements can keep.
     pub(crate) fn sorted_cross_chunk_imports(
         list: &mut Vec<CrossChunkImport>,
-        chunks: &mut [Chunk],
+        chunks: &[Chunk],
         imports_from_other_chunks: &mut ImportsFromOtherChunks,
-    ) -> Result<(), crate::Error> {
+        stable_source_indices: &[u32],
+        evaluation_rank: &[u32],
+    ) {
         list.clear();
         list.reserve(imports_from_other_chunks.count());
 
         for i in 0..imports_from_other_chunks.count() {
             let chunk_index = imports_from_other_chunks.keys()[i];
-            let chunk = &mut chunks[chunk_index as usize];
 
-            let exports_to_other_chunks = &chunk.content.javascript().exports_to_other_chunks;
+            debug_assert!({
+                let exports_to_other_chunks = &chunks[chunk_index as usize]
+                    .content
+                    .javascript()
+                    .exports_to_other_chunks;
+                imports_from_other_chunks.values()[i]
+                    .iter()
+                    .all(|item| exports_to_other_chunks.contains(&item.r#ref))
+            });
             let import_items = &mut imports_from_other_chunks.values_mut()[i];
-            for item in import_items.slice_mut() {
-                item.export_alias = (*exports_to_other_chunks.get(&item.r#ref).unwrap()).into();
-                debug_assert!(!item.export_alias.is_empty());
-            }
-            import_items
-                .slice_mut()
-                .sort_by(|a, b| strings::order(&a.export_alias, &b.export_alias));
+            // Deterministic order; the names are only known after renaming.
+            index_sort::sort_slice_by(import_items.slice_mut(), |a, b| {
+                (
+                    stable_source_indices[a.r#ref.source_index() as usize],
+                    a.r#ref.inner_index(),
+                )
+                    .cmp(&(
+                        stable_source_indices[b.r#ref.source_index() as usize],
+                        b.r#ref.inner_index(),
+                    ))
+            });
 
             list.push(CrossChunkImport {
                 chunk_index,
@@ -1531,8 +1597,10 @@ impl CrossChunkImport {
             });
         }
 
-        list.sort_by_key(|a| a.chunk_index);
-        Ok(())
+        index_sort::sort_slice_by(list, |a, b| {
+            (evaluation_rank[a.chunk_index as usize], a.chunk_index)
+                .cmp(&(evaluation_rank[b.chunk_index as usize], b.chunk_index))
+        });
     }
 }
 

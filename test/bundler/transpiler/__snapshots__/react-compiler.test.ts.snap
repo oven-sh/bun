@@ -247,13 +247,6 @@ export {
 
 exports[`bundler react-compiler/DynamicImportInRender 1`] = `
 "var __MEMO_CACHE_SENTINEL = /* @__PURE__ */ Symbol.for("react.memo_cache_sentinel");
-var __require = /* @__PURE__ */ ((x) => typeof require !== "undefined" ? require : typeof Proxy !== "undefined" ? new Proxy(x, {
-  get: (a, b) => (typeof require !== "undefined" ? require : a)[b]
-}) : x)(function(x) {
-  if (typeof require !== "undefined")
-    return require.apply(this, arguments);
-  throw Error('Dynamic require of "' + x + '" is not supported');
-});
 
 // entry.jsx
 import { use } from "react";
@@ -284,13 +277,6 @@ export {
 
 exports[`bundler react-compiler/DynamicImportInEffectClosure 1`] = `
 "var __MEMO_CACHE_SENTINEL = /* @__PURE__ */ Symbol.for("react.memo_cache_sentinel");
-var __require = /* @__PURE__ */ ((x) => typeof require !== "undefined" ? require : typeof Proxy !== "undefined" ? new Proxy(x, {
-  get: (a, b) => (typeof require !== "undefined" ? require : a)[b]
-}) : x)(function(x) {
-  if (typeof require !== "undefined")
-    return require.apply(this, arguments);
-  throw Error('Dynamic require of "' + x + '" is not supported');
-});
 
 // entry.jsx
 import { useEffect } from "react";
@@ -379,6 +365,50 @@ function Comp() {
 }
 export {
   Comp
+};
+"
+`;
+
+exports[`bundler react-compiler/ZeroMemoSlotsNoRuntimeImport 1`] = `
+"// entry.jsx
+import { useState } from "react";
+function Counter() {
+  let [count] = useState(0);
+  return count + 2;
+}
+export {
+  Counter
+};
+"
+`;
+
+exports[`bundler react-compiler/ZeroMemoSlotsBeforeMemoizedComponent 1`] = `
+"// entry.jsx
+import { useState } from "react";
+import { jsxDEV } from "react/jsx-dev-runtime";
+import { c as _c } from "react/compiler-runtime";
+function Counter() {
+  let [count] = useState(0);
+  return count + 2;
+}
+function Hello(t0) {
+  let $ = _c(2);
+  let { name } = t0;
+  let t1;
+  if ($[0] !== name)
+    t1 = /* @__PURE__ */ jsxDEV("div", {
+      children: [
+        "Hello ",
+        name
+      ]
+    }, undefined, true, undefined, this), $[0] = name, $[1] = t1;
+  else
+    t1 = $[1];
+  return t1;
+}
+export {
+  Counter,
+  Hello
 };
 "
 `;

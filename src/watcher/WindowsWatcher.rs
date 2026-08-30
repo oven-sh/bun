@@ -9,6 +9,7 @@ use bun_paths::resolve_path::{ParentEqual, is_parent_or_equal};
 use bun_paths::{PathBuffer, WPathBuffer};
 use bun_ptr::{BackRef, RawSlice};
 
+use bun_collections::index_sort;
 use bun_sys::windows as w;
 use bun_sys::windows::HANDLE;
 
@@ -118,14 +119,7 @@ impl DirWatcher {
         {
             let err = w::Win32Error::get();
             bun_core::scoped_log!(watcher, "failed to start watching directory: {}", err.0);
-            return Err(bun_sys::Error {
-                // Route the raw code through the `u32` `SystemErrnoInit` impl
-                // (same Win32→errno table as `Win32ErrorExt::to_system_errno`).
-                errno: bun_sys::SystemErrno::init(err.0 as u32)
-                    .unwrap_or(bun_sys::SystemErrno::EINVAL) as _,
-                syscall: bun_sys::Tag::watch,
-                ..Default::default()
-            });
+            return Err(bun_sys::Error::from_win32(err, bun_sys::Tag::watch));
         }
         bun_core::scoped_log!(watcher, "read directory changes!");
         Ok(())
@@ -326,13 +320,7 @@ impl WindowsWatcher {
                     return Ok(None);
                 } else {
                     bun_core::scoped_log!(watcher, "GetQueuedCompletionStatus failed: {}", err.0);
-                    return Err(bun_sys::Error {
-                        errno: bun_sys::SystemErrno::init(err.0 as u32)
-                            .unwrap_or(bun_sys::SystemErrno::EINVAL)
-                            as _,
-                        syscall: bun_sys::Tag::watch,
-                        ..Default::default()
-                    });
+                    return Err(bun_sys::Error::from_win32(err, bun_sys::Tag::watch));
                 }
             }
 
@@ -509,7 +497,7 @@ fn process_watch_event_batch(this: &mut Watcher, event_count: usize) -> bun_sys:
     // log("event_count: {d}\n", .{event_count});
 
     let all_events = &mut this.watch_events[0..event_count];
-    all_events.sort_unstable_by(|a, b| WatchEvent::sort_by_index(*a, *b));
+    index_sort::sort_slice_unstable_by(all_events, |a, b| WatchEvent::sort_by_index(*a, *b));
 
     let mut last_event_index: usize = 0;
     // The sentinel must be wider than

@@ -7,7 +7,6 @@
 import assert from "node:assert";
 import * as path from "node:path";
 import {
-  ArgStrategyChildItem,
   CodeWriter,
   Func,
   NodeValidator,
@@ -36,9 +35,8 @@ import {
 } from "./bindgen-lib-internal";
 import { argParse, readdirRecursiveWithExclusionsAndExtensionsSync, writeIfNotChanged } from "./helpers";
 
-// arg parsing
-let { "codegen-root": codegenRoot, debug } = argParse(["codegen-root", "debug"]);
-if (debug === "false" || debug === "0" || debug == "OFF") debug = false;
+// arg parsing. The build passes `--debug=ON|OFF`; the output does not depend on it.
+const { "codegen-root": codegenRoot } = argParse(["codegen-root", "debug"]);
 if (!codegenRoot) {
   console.error("Missing --codegen-root=...");
   process.exit(1);
@@ -70,13 +68,14 @@ function resolveVariantStrategies(vari: Variant, name: string) {
 
     communicationStruct ??= new Struct();
     const prefix = `${arg.name}`;
-    const children = isNullable
-      ? resolveNullableArgumentStrategy(arg.type, prefix, communicationStruct)
-      : resolveComplexArgumentStrategy(arg.type, prefix, communicationStruct);
+    if (isNullable) {
+      resolveNullableArgumentStrategy(arg.type, prefix, communicationStruct);
+    } else {
+      resolveComplexArgumentStrategy(arg.type, prefix, communicationStruct);
+    }
     arg.loweringStrategy = {
       type: "uses-communication-buffer",
       prefix,
-      children,
     };
   }
 
@@ -108,30 +107,17 @@ function resolveVariantStrategies(vari: Variant, name: string) {
   vari.communicationStruct = communicationStruct;
 }
 
-function resolveNullableArgumentStrategy(
-  type: TypeImpl,
-  prefix: string,
-  communicationStruct: Struct,
-): ArgStrategyChildItem[] {
+function resolveNullableArgumentStrategy(type: TypeImpl, prefix: string, communicationStruct: Struct): void {
   assert(type.flags.optional && !("default" in type.flags));
   communicationStruct.add(`${prefix}Set`, "bool");
-  return resolveComplexArgumentStrategy(type, `${prefix}Value`, communicationStruct);
+  resolveComplexArgumentStrategy(type, `${prefix}Value`, communicationStruct);
 }
 
-function resolveComplexArgumentStrategy(
-  type: TypeImpl,
-  prefix: string,
-  communicationStruct: Struct,
-): ArgStrategyChildItem[] {
+function resolveComplexArgumentStrategy(type: TypeImpl, prefix: string, communicationStruct: Struct): void {
   const abiType = type.canDirectlyMapToCAbi();
   if (abiType) {
     communicationStruct.add(prefix, abiType);
-    return [
-      {
-        type: "c-abi-compatible",
-        abiType,
-      },
-    ];
+    return;
   }
 
   switch (type.kind) {
@@ -427,9 +413,6 @@ function getSimpleIdlType(type: TypeImpl): string | undefined {
           : "WebCore::IDLUnrestrictedDouble";
         break;
       case "stringEnum":
-        type.lowersToNamedType;
-        // const cType = cAbiTypeForEnum(type.data.length);
-        // entry = map[cType as IntegerTypeKind]!;
         entry = `WebCore::IDLEnumeration<${type.cppClassName()}>`;
         break;
       default:
@@ -496,9 +479,6 @@ function emitConvertValue(
           exceptionContext.name,
           exceptionContext.functionName,
         );
-    }
-
-    switch (type.kind) {
     }
 
     if (decl === "declare") {

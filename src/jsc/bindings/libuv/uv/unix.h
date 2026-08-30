@@ -47,20 +47,10 @@
 
 #if defined(__linux__)
 #include "uv/linux.h"
-#elif defined(__MVS__)
-#include "uv/os390.h"
-#elif defined(__PASE__) /* __PASE__ and _AIX are both defined on IBM i */
-#include "uv/posix.h" /* IBM i needs uv/posix.h, not uv/aix.h */
-#elif defined(_AIX)
-#include "uv/aix.h"
-#elif defined(__sun)
-#include "uv/sunos.h"
 #elif defined(__APPLE__)
 #include "uv/darwin.h"
 #elif defined(__DragonFly__) || defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__)
 #include "uv/bsd.h"
-#elif defined(__CYGWIN__) || defined(__MSYS__) || defined(__HAIKU__) || defined(__QNX__) || defined(__GNU__)
-#include "uv/posix.h"
 #endif
 
 #ifndef NI_MAXHOST

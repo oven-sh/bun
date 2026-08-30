@@ -14,7 +14,6 @@
 #[cfg(unix)]
 use core::ffi::c_int;
 use core::fmt::Arguments;
-use std::io::Write as _;
 
 use bstr::BStr;
 
@@ -80,8 +79,8 @@ use bun_core::output::ansi as Color;
 struct Cursor;
 impl Cursor {
     const HOME: &'static str = concat!("\x1b", "[", "H");
-    const CLEAR_LINE: &'static str = concat!("\x1b", "[", "2K");
-    const CLEAR_TO_END: &'static str = concat!("\x1b", "[", "0K");
+    /// Erase from the cursor to the end of the screen.
+    const CLEAR_BELOW: &'static str = concat!("\x1b", "[", "J");
     const CLEAR_SCREEN: &'static str = concat!("\x1b", "[", "2J");
     const CLEAR_SCROLLBACK: &'static str = concat!("\x1b", "[", "3J");
 }
@@ -851,6 +850,101 @@ enum InputMode {
     Editor,
 }
 
+/// A terminal cell, in rows below the row that holds the prompt.
+#[derive(Clone, Copy, Default)]
+struct ScreenPos {
+    row: usize,
+    col: usize,
+}
+
+impl ScreenPos {
+    fn next_row(self) -> ScreenPos {
+        ScreenPos {
+            row: self.row + 1,
+            col: 0,
+        }
+    }
+}
+
+/// Follows where the terminal puts text written after the prompt.
+struct Layout {
+    width: usize,
+    pos: ScreenPos,
+}
+
+impl Layout {
+    /// Lays out `text` and returns the cell its first glyph went to, or `next` for empty text.
+    fn advance(&mut self, mut text: &[u8]) -> ScreenPos {
+        let mut first: Option<ScreenPos> = None;
+        while !text.is_empty() {
+            let room = self.width.saturating_sub(self.pos.col);
+            let mut fits =
+                strings::visible::width::exclude_ansi_colors::utf8_index_at_width(text, room);
+            if fits == 0 {
+                // Like the terminal, a glyph that does not fit (a wide one) starts the next row.
+                if self.pos.col > 0 {
+                    self.pos = self.pos.next_row();
+                    continue;
+                }
+                // Wider than the whole terminal.
+                fits = text.len();
+            }
+            let (chunk, rest) = text.split_at(fits);
+            let columns = strings::visible::width::exclude_ansi_colors::utf8(chunk);
+            if columns > 0 {
+                first.get_or_insert(self.pos);
+            }
+            self.pos.col += columns;
+            text = rest;
+        }
+        first.unwrap_or_else(|| self.next())
+    }
+
+    /// The cell the next glyph goes to. A full row counts as wrapped; `refresh_line` makes that so.
+    fn next(&self) -> ScreenPos {
+        if self.pos.col >= self.width {
+            self.pos.next_row()
+        } else {
+            self.pos
+        }
+    }
+}
+
+/// What `refresh_line` last drew on the terminal. The REPL has one only when it is on a terminal.
+#[derive(Clone, Copy)]
+struct Drawing {
+    /// Last width the terminal reported.
+    width: u16,
+    /// Where the terminal cursor was left.
+    cursor: ScreenPos,
+    /// The cell after the last character of the line (the ghost text is not counted).
+    end: ScreenPos,
+}
+
+impl Drawing {
+    fn new() -> Drawing {
+        Drawing {
+            width: 80,
+            cursor: ScreenPos::default(),
+            end: ScreenPos::default(),
+        }
+    }
+
+    fn update_width(&mut self) {
+        if let Some(size) = bun_core::output::File::from(Fd::stdout()).winsize() {
+            if size.col > 0 {
+                self.width = size.col;
+            }
+        }
+    }
+
+    /// The input is gone from the screen; the next redraw starts where the cursor is.
+    fn erased(&mut self) {
+        self.cursor = ScreenPos::default();
+        self.end = ScreenPos::default();
+    }
+}
+
 pub(super) struct Repl<'a> {
     line_editor: LineEditor,
     history: History,
@@ -862,9 +956,9 @@ pub(super) struct Repl<'a> {
     // State
     input_mode: InputMode,
     running: bool,
-    is_tty: bool,
     use_colors: bool,
-    terminal_width: u16,
+    /// `None` when stdin or stdout is not a terminal; the input is then never redrawn.
+    drawing: Option<Drawing>,
     ctrl_c_pressed: bool,
 
     // Buffered stdin
@@ -901,9 +995,8 @@ impl<'a> Repl<'a> {
             suggestion: Vec::new(),
             input_mode: InputMode::Normal,
             running: false,
-            is_tty: false,
             use_colors: false,
-            terminal_width: 80,
+            drawing: None,
             ctrl_c_pressed: false,
             stdin_buf: [0u8; 256],
             stdin_buf_start: 0,
@@ -936,21 +1029,14 @@ impl<'a> Repl<'a> {
     // ========================================================================
 
     fn setup_terminal(&mut self) {
-        self.is_tty = Output::is_stdout_tty() && Output::is_stdin_tty();
-
-        if !self.is_tty {
+        if !(Output::is_stdout_tty() && Output::is_stdin_tty()) {
             self.use_colors = false;
             return;
         }
+        self.drawing = Some(Drawing::new());
 
         // Check for NO_COLOR
         self.use_colors = !env_var::NO_COLOR.get().unwrap_or(false);
-
-        // Get terminal size
-        let ts = Output::TERMINAL_SIZE.load();
-        if ts.col > 0 {
-            self.terminal_width = ts.col;
-        }
 
         // Enable raw mode
         #[cfg(unix)]
@@ -995,11 +1081,7 @@ impl<'a> Repl<'a> {
 
     /// Temporarily enable SIGINT delivery during blocking promise waits
     fn enable_signals_during_wait(&mut self) {
-        if let Some(vm) = self.vm {
-            // Cleared in disable_signals_during_wait; Release pairs with the
-            // Acquire load in `sigint_handler`.
-            SIGINT_VM.store(vm.jsc_vm, core::sync::atomic::Ordering::Release);
-        }
+        SIGINT_ARMED.store(true, core::sync::atomic::Ordering::Release);
 
         #[cfg(unix)]
         {
@@ -1021,9 +1103,27 @@ impl<'a> Repl<'a> {
         // On Windows, ENABLE_PROCESSED_INPUT is already set so Ctrl+C works
     }
 
+    /// Drive the loop until `promise` settles; `true` if a SIGINT (see `sigint_handler`) cut the wait short.
+    fn wait_for_promise_or_sigint(vm: &VirtualMachine, promise: *mut jsc::JSPromise) -> bool {
+        use core::sync::atomic::Ordering;
+        SIGINT_DURING_WAIT.store(false, Ordering::Release);
+        while jsc::JSPromise::opaque_mut(promise).status() == PromiseStatus::Pending {
+            if SIGINT_DURING_WAIT.swap(false, Ordering::AcqRel) {
+                return true;
+            }
+            vm.as_mut().event_loop_mut().tick();
+            if jsc::JSPromise::opaque_mut(promise).status() == PromiseStatus::Pending
+                && !SIGINT_DURING_WAIT.load(Ordering::Acquire)
+            {
+                vm.as_mut().event_loop_mut().auto_tick();
+            }
+        }
+        false
+    }
+
     /// Restore raw terminal mode after promise wait
     fn disable_signals_during_wait(&mut self) {
-        SIGINT_VM.store(core::ptr::null_mut(), core::sync::atomic::Ordering::Release);
+        SIGINT_ARMED.store(false, core::sync::atomic::Ordering::Release);
 
         #[cfg(unix)]
         {
@@ -1225,29 +1325,44 @@ impl<'a> Repl<'a> {
         2 // "> " or "\u{276f} "
     }
 
-    fn refresh_line(&self) {
-        // Non-TTY mirrors node's terminal:false repl: input is never echoed/redrawn — per-key
-        // CLEAR_LINE rewrites fill a socketpair's send buffer and wedge write(2) after a few
-        // hundred keystrokes. Print the prompt once when a fresh line begins, like node.
-        if !self.is_tty {
+    /// The ghost text is only drawn while the cursor is at the end of the line.
+    fn drawn_suggestion(&self) -> &[u8] {
+        if self.use_colors && self.line_editor.cursor == self.line_editor.buffer.len() {
+            &self.suggestion
+        } else {
+            b""
+        }
+    }
+
+    /// Call `leave_input` before printing anything below the input this draws.
+    fn refresh_line(&mut self) {
+        // Non-TTY never redraws (like node): per-key redraws wedge write(2) on a full socketpair.
+        let Some(mut drawing) = self.drawing else {
             if self.line_editor.buffer.is_empty() && self.input_mode == InputMode::Normal {
                 Output::flush();
                 self.write(self.get_prompt());
                 Output::flush();
             }
             return;
-        }
+        };
 
         // Flush any buffered output (e.g., from console.log in JS) before drawing prompt
         Output::flush();
+
+        // Every redraw, so that a resize is picked up.
+        drawing.update_width();
+        let width = usize::from(drawing.width);
 
         let prompt = self.get_prompt();
         let prompt_len = self.get_prompt_length();
         let line = self.line_editor.get_line();
 
-        // Move to beginning of line
+        // Erase the previous drawing from the prompt's row down.
+        if drawing.cursor.row > 0 {
+            self.print(format_args!("{}{}A", CSI, drawing.cursor.row));
+        }
         self.write(b"\r");
-        self.write(Cursor::CLEAR_LINE.as_bytes());
+        self.write(Cursor::CLEAR_BELOW.as_bytes());
 
         // Write prompt
         self.write(prompt);
@@ -1259,35 +1374,77 @@ impl<'a> Repl<'a> {
             self.write(line);
         }
 
-        // Ghost text; update_suggestion() already guarantees it fits on this row.
-        if !self.suggestion.is_empty()
-            && self.use_colors
-            && self.line_editor.cursor == self.line_editor.buffer.len()
-        {
+        let ghost = self.drawn_suggestion();
+        if !ghost.is_empty() {
             self.write(Color::DIM.as_bytes());
-            self.write(&self.suggestion);
+            self.write(ghost);
             self.write(Color::RESET.as_bytes());
         }
 
-        // Position cursor. The cursor is a byte offset, but the terminal column
-        // is the display width of the text before it, so multi-byte UTF-8 and
-        // wide (e.g. CJK) characters advance the column correctly.
-        let cursor_col =
-            strings::visible::width::exclude_ansi_colors::utf8(&line[..self.line_editor.cursor]);
-        let cursor_pos = prompt_len + cursor_col;
-        if cursor_pos < self.terminal_width as usize {
-            self.write(b"\r");
-            if cursor_pos > 0 {
-                let mut buf = [0u8; 16];
-                let mut w: &mut [u8] = &mut buf;
-                if write!(w, "{}{}C", CSI, cursor_pos).is_ok() {
-                    let written = 16 - w.len();
-                    self.write(&buf[..written]);
-                }
-            }
+        let (before_cursor, after_cursor) = line.split_at(self.line_editor.cursor);
+        let mut layout = Layout {
+            width,
+            pos: ScreenPos {
+                row: 0,
+                col: prompt_len,
+            },
+        };
+        layout.advance(before_cursor);
+        let mut cursor = layout.advance(after_cursor);
+        let end = layout.next();
+        if !ghost.is_empty() {
+            // Only drawn with the cursor at the end of the line, so the cursor sits on the ghost.
+            cursor = layout.advance(ghost);
         }
 
+        // Terminals defer the wrap after the last column; force it to match `layout`.
+        if layout.pos.col >= width {
+            self.write(b"\n");
+            layout.pos = layout.pos.next_row();
+        }
+        if layout.pos.row > cursor.row {
+            self.print(format_args!("{}{}A", CSI, layout.pos.row - cursor.row));
+        }
+        self.write(b"\r");
+        if cursor.col > 0 {
+            self.print(format_args!("{}{}C", CSI, cursor.col));
+        }
+
+        drawing.cursor = cursor;
+        drawing.end = end;
+        self.drawing = Some(drawing);
+
         Output::flush();
+    }
+
+    /// Erases the ghost, writes `echo` after the line, and moves to the start of the row below it.
+    fn leave_input(&mut self, echo: &[u8]) {
+        // False once a line that ends exactly at the right edge has left the cursor on a fresh row.
+        let mut on_input_row = true;
+        if let Some(Drawing { cursor, end, .. }) = self.drawing {
+            if !self.drawn_suggestion().is_empty() {
+                // Nothing but the ghost follows the cursor.
+                self.write(Cursor::CLEAR_BELOW.as_bytes());
+                on_input_row = cursor.col > 0;
+            } else {
+                if end.row > cursor.row {
+                    self.print(format_args!("{}{}B", CSI, end.row - cursor.row));
+                }
+                self.write(b"\r");
+                if end.col > 0 {
+                    self.print(format_args!("{}{}C", CSI, end.col));
+                }
+                on_input_row = end.col > 0;
+            }
+        }
+        self.write(echo);
+        if on_input_row || !echo.is_empty() {
+            self.write(b"\n");
+        }
+        self.suggestion.clear();
+        if let Some(drawing) = &mut self.drawing {
+            drawing.erased();
+        }
     }
 
     // ========================================================================
@@ -1322,7 +1479,7 @@ impl<'a> Repl<'a> {
     fn update_suggestion(&mut self) {
         self.suggestion.clear();
 
-        if !self.is_tty || !self.use_colors {
+        if self.drawing.is_none() || !self.use_colors {
             return;
         }
         if self.input_mode != InputMode::Normal {
@@ -1383,7 +1540,7 @@ impl<'a> Repl<'a> {
                 if !item.is_string() {
                     continue;
                 }
-                let slice = match item.to_slice(global) {
+                let slice = match item.to_utf8(global) {
                     Ok(s) => s,
                     Err(_) => {
                         global.clear_exception();
@@ -1419,18 +1576,6 @@ impl<'a> Repl<'a> {
                 }
             }
         }
-
-        // Dropped here, not at render, so accept can never apply more than was drawn.
-        if !self.suggestion.is_empty() {
-            let line_width = strings::visible::width::exclude_ansi_colors::utf8(&line);
-            let suggestion_width =
-                strings::visible::width::exclude_ansi_colors::utf8(&self.suggestion);
-            if self.get_prompt_length() + line_width + suggestion_width
-                >= self.terminal_width as usize
-            {
-                self.suggestion.clear();
-            }
-        }
     }
 
     fn accept_suggestion(&mut self) -> bool {
@@ -1442,14 +1587,6 @@ impl<'a> Repl<'a> {
         self.suggestion = sugg;
         self.suggestion.clear();
         ok
-    }
-
-    /// Clear the suggestion and wipe any ghost text already drawn past the cursor.
-    fn erase_suggestion(&mut self) {
-        if !self.suggestion.is_empty() {
-            self.write(Cursor::CLEAR_TO_END.as_bytes());
-            self.suggestion.clear();
-        }
     }
 
     fn write_highlighted(&self, text: &[u8]) {
@@ -1523,16 +1660,8 @@ impl<'a> Repl<'a> {
             self.enable_signals_during_wait();
             // Note: reshaped for borrowck — call disable_signals_during_wait() explicitly on each return path below
 
-            // Wait for the promise to settle
-            // Interrupted (SIGINT forbids execution) ⇒ handled just below.
-            let _ = vm
-                .as_mut()
-                .wait_for_promise(jsc::AnyPromise::Normal(promise));
-
-            // If execution was forbidden by SIGINT, clear it and report
-            if vm.jsc_vm().execution_forbidden() {
-                vm.jsc_vm().set_execution_forbidden(false);
-                global.clear_termination_exception();
+            // Wait for the promise to settle, or for a SIGINT.
+            if Self::wait_for_promise_or_sigint(vm, promise) {
                 self.print(format_args!("\n"));
                 self.disable_signals_during_wait();
                 return;
@@ -1828,14 +1957,8 @@ impl<'a> Repl<'a> {
             // owning JSC VM handle for this thread.
             jsc::JSPromise::opaque_mut(promise).set_handled();
             self.enable_signals_during_wait();
-            // Note: reshaped for borrowck — disable_signals_during_wait called on each path
-            // Interrupted (SIGINT forbids execution) ⇒ handled just below.
-            let _ = vm
-                .as_mut()
-                .wait_for_promise(jsc::AnyPromise::Normal(promise));
-            if vm.jsc_vm().execution_forbidden() {
-                vm.jsc_vm().set_execution_forbidden(false);
-                global.clear_termination_exception();
+            // Wait for the promise to settle, or for a SIGINT.
+            if Self::wait_for_promise_or_sigint(vm, promise) {
                 self.print(format_args!("\n"));
                 self.disable_signals_during_wait();
                 return;
@@ -1908,7 +2031,7 @@ impl<'a> Repl<'a> {
 
         // For strings, copy the raw string value (not quoted/JSON-ified)
         if value.is_string() {
-            let slice = value.to_slice(global)?;
+            let slice = value.to_utf8(global)?;
             return Ok(Some(Box::<[u8]>::from(slice.slice())));
         }
 
@@ -2222,7 +2345,7 @@ impl<'a> Repl<'a> {
         while self.running {
             let Some(key) = self.read_key() else {
                 // EOF
-                self.print(format_args!("\n"));
+                self.leave_input(b"");
                 break;
             };
 
@@ -2237,7 +2360,7 @@ impl<'a> Repl<'a> {
                 Key::CtrlD => match self.input_mode {
                     InputMode::Editor => {
                         // Finish editor mode
-                        self.print(format_args!("\n"));
+                        self.leave_input(b"");
                         // Note: reshaped for borrowck — clone editor_buffer slice before evaluate
                         if !self.editor_buffer.is_empty() {
                             let code = core::mem::take(&mut self.editor_buffer);
@@ -2261,6 +2384,9 @@ impl<'a> Repl<'a> {
                 Key::CtrlL => {
                     self.write(Cursor::CLEAR_SCREEN.as_bytes());
                     self.write(Cursor::HOME.as_bytes());
+                    if let Some(drawing) = &mut self.drawing {
+                        drawing.erased();
+                    }
                     self.refresh_line();
                 }
                 Key::CtrlA => {
@@ -2387,8 +2513,7 @@ impl<'a> Repl<'a> {
     }
 
     fn handle_enter(&mut self) -> Result<(), crate::Error> {
-        self.erase_suggestion();
-        self.print(format_args!("\n"));
+        self.leave_input(b"");
 
         // Note: reshaped for borrowck — copy line out so we can call &mut self methods
         let line: Vec<u8> = self.line_editor.get_line().to_vec();
@@ -2493,11 +2618,13 @@ impl<'a> Repl<'a> {
     }
 
     fn handle_ctrl_c(&mut self) {
-        self.erase_suggestion();
+        let cancels_line =
+            self.input_mode == InputMode::Normal && !self.line_editor.buffer.is_empty();
+        self.leave_input(if cancels_line { b"^C" } else { b"" });
         match self.input_mode {
             InputMode::Editor => {
                 self.print(format_args!(
-                    "\n{}// Editor mode cancelled{}\n",
+                    "{}// Editor mode cancelled{}\n",
                     Color::DIM,
                     Color::RESET
                 ));
@@ -2505,24 +2632,21 @@ impl<'a> Repl<'a> {
                 self.editor_buffer.clear();
             }
             InputMode::Multiline => {
-                self.print(format_args!("\n"));
                 self.input_mode = InputMode::Normal;
                 self.multiline_buffer.clear();
             }
-            InputMode::Normal if !self.line_editor.buffer.is_empty() => {
-                self.print(format_args!("^C\n"));
+            InputMode::Normal if cancels_line => {
                 self.line_editor.clear();
             }
             InputMode::Normal if self.ctrl_c_pressed => {
                 // Second Ctrl+C on empty line - exit
-                self.print(format_args!("\n"));
                 self.running = false;
                 return;
             }
             InputMode::Normal => {
                 self.ctrl_c_pressed = true;
                 self.print(format_args!(
-                    "\n{}(press Ctrl+C again to exit, or Ctrl+D){}\n",
+                    "{}(press Ctrl+C again to exit, or Ctrl+D){}\n",
                     Color::DIM,
                     Color::RESET
                 ));
@@ -2564,7 +2688,7 @@ impl<'a> Repl<'a> {
                 let _ = self.line_editor.insert(b' ');
                 self.refresh_line();
             } else if matches.len() > 1 {
-                self.print(format_args!("\n"));
+                self.leave_input(b"");
                 for m in &matches {
                     self.print(format_args!(
                         "  {}{}{}\n",
@@ -2651,7 +2775,7 @@ impl<'a> Repl<'a> {
                 }
             };
             if item.is_string() {
-                let slice = match item.to_slice(global) {
+                let slice = match item.to_utf8(global) {
                     Ok(s) => s,
                     Err(_) => {
                         global.clear_exception();
@@ -2669,7 +2793,7 @@ impl<'a> Repl<'a> {
             }
         } else if len <= 50 {
             // Multiple completions - show them
-            self.print(format_args!("\n"));
+            self.leave_input(b"");
             let mut i: u32 = 0;
             while i < (len as u32) {
                 let item = match completions.get_index(global, i) {
@@ -2680,7 +2804,7 @@ impl<'a> Repl<'a> {
                     }
                 };
                 if item.is_string() {
-                    match item.to_slice(global) {
+                    match item.to_utf8(global) {
                         Ok(slice) => {
                             self.print(format_args!(
                                 "  {}{}{}\n",
@@ -2700,8 +2824,9 @@ impl<'a> Repl<'a> {
             }
             self.refresh_line();
         } else {
+            self.leave_input(b"");
             self.print(format_args!(
-                "\n{}{} completions{}\n",
+                "{}{} completions{}\n",
                 Color::DIM,
                 len,
                 Color::RESET
@@ -2720,20 +2845,17 @@ impl<'a> Drop for Repl<'a> {
     }
 }
 
-/// Global pointer for signal handler to access the VM.
-// PORTING.md §Global mutable state: read from a signal handler → AtomicPtr.
-// Atomics are async-signal-safe; the previous raw-global `Option<*mut>` was
-// not. `null` encodes `None`.
-static SIGINT_VM: core::sync::atomic::AtomicPtr<jsc::VM> =
-    core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
+/// The REPL is waiting on a promise and wants SIGINT to cut the wait short (async-signal-safe: atomics only).
+static SIGINT_ARMED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+/// A SIGINT arrived during such a wait: stop waiting (the signal itself interrupts the loop's poll). Not a
+/// VM stop — the VM stays usable.
+static SIGINT_DURING_WAIT: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
 
 #[cfg(unix)]
 extern "C" fn sigint_handler(_: c_int) {
-    let vm = SIGINT_VM.load(core::sync::atomic::Ordering::Acquire);
-    if !vm.is_null() {
-        // `vm` was a valid `*mut jsc::VM` when stored (JS thread is
-        // blocked in wait while the handler runs, so it stays valid).
-        jsc::VM::opaque_ref(vm).set_execution_forbidden(true);
+    if SIGINT_ARMED.load(core::sync::atomic::Ordering::Acquire) {
+        SIGINT_DURING_WAIT.store(true, core::sync::atomic::Ordering::Release);
     }
 }
 

@@ -68,10 +68,8 @@ pub use reactive::*;
 /// buffer's `deallocate` is a no-op. Nonetheless, HIR types must NOT own
 /// global-heap allocations (`String`, `Box<T>`, `Vec<T>`): the arena bulk-
 /// frees on reset without walking elements, so any nested global allocation
-/// leaks per parse. Use [`StoreStr`] / [`HirBox`] / [`HirVec`] instead.
+/// leaks per parse. Use [`StoreStr`] / [`HirVec`] instead.
 pub type HirVec<T> = bun_alloc::AstVec<T>;
-/// Arena-backed `Box<T>`. See [`HirVec`] for the leak rationale.
-pub type HirBox<T> = bun_alloc::AstBox<T>;
 pub use bun_alloc::AstAlloc;
 /// Arena-owned (or `'static`) byte string. Copy; no Drop. See [`HirVec`].
 pub use bun_ast::StoreStr;
@@ -155,12 +153,6 @@ impl FloatValue {
 
     pub fn value(self) -> f64 {
         f64::from_bits(self.0)
-    }
-}
-
-impl From<f64> for FloatValue {
-    fn from(value: f64) -> Self {
-        FloatValue::new(value)
     }
 }
 
@@ -309,6 +301,23 @@ pub enum ReactFunctionType {
 pub enum ParamPattern {
     Place(Place),
     Spread(SpreadPattern),
+}
+
+impl ParamPattern {
+    /// The parameter's binding, whether or not it is a rest parameter.
+    pub fn place(&self) -> &Place {
+        match self {
+            ParamPattern::Place(p) => p,
+            ParamPattern::Spread(s) => &s.place,
+        }
+    }
+
+    pub fn place_mut(&mut self) -> &mut Place {
+        match self {
+            ParamPattern::Place(p) => p,
+            ParamPattern::Spread(s) => &mut s.place,
+        }
+    }
 }
 
 /// The HIR control-flow graph
@@ -660,6 +669,18 @@ pub enum InstructionKind {
     HoistedLet,
     HoistedFunction,
     Function,
+}
+
+impl InstructionKind {
+    /// Corresponds to TS `convertHoistedLValueKind` — returns None for non-hoisted kinds.
+    pub fn unhoisted(self) -> Option<InstructionKind> {
+        match self {
+            InstructionKind::HoistedLet => Some(InstructionKind::Let),
+            InstructionKind::HoistedConst => Some(InstructionKind::Const),
+            InstructionKind::HoistedFunction => Some(InstructionKind::Function),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -1163,6 +1184,19 @@ impl IdentifierName {
             IdentifierName::Named(v) | IdentifierName::Promoted(v) => v.slice(),
         }
     }
+
+    /// `#<kind><n>`, e.g. `#t12` for a promoted temporary.
+    pub fn promoted(kind: u8, n: u32) -> IdentifierName {
+        let mut itoa = bun_core::fmt::ItoaBuf::new();
+        let digits = itoa.format(n).as_bytes();
+        let mut buf = [0u8; 16];
+        buf[0] = b'#';
+        buf[1] = kind;
+        buf[2..2 + digits.len()].copy_from_slice(digits);
+        IdentifierName::Promoted(StoreStr::new(bun_ast::data_store_dupe_str(
+            &buf[..2 + digits.len()],
+        )))
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1292,6 +1326,23 @@ impl std::fmt::Display for PropertyLiteral {
 pub enum PlaceOrSpread {
     Place(Place),
     Spread(SpreadPattern),
+}
+
+impl PlaceOrSpread {
+    /// The argument's place, whether or not it is spread.
+    pub fn place(&self) -> &Place {
+        match self {
+            PlaceOrSpread::Place(p) => p,
+            PlaceOrSpread::Spread(s) => &s.place,
+        }
+    }
+
+    pub fn place_mut(&mut self) -> &mut Place {
+        match self {
+            PlaceOrSpread::Place(p) => p,
+            PlaceOrSpread::Spread(s) => &mut s.place,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -1478,7 +1529,7 @@ impl NonLocalBinding {
 // =============================================================================
 
 /// The recursive `Box<Type>` fields here intentionally use the global
-/// allocator, NOT [`HirBox`]: `Type` values are constructed and held by the
+/// allocator, NOT the AST arena: `Type` values are constructed and held by the
 /// process-lifetime [`ShapeRegistry`](crate::hir::object_shape::ShapeRegistry),
 /// which outlives the per-file AST arena, so an arena-backed box would dangle
 /// after `Store::reset()`. The leak hazard described on [`HirVec`] does not
@@ -1720,14 +1771,18 @@ pub fn is_ref_or_ref_value(ty: &Type) -> bool {
     is_use_ref_type(ty) || is_ref_value_type(ty)
 }
 
-/// Returns true if the type is a useState result (BuiltInUseState).
-pub fn is_use_state_type(ty: &Type) -> bool {
-    matches!(ty, Type::Object { shape_id: Some(id) } if *id == object_shape::BUILT_IN_USE_STATE_ID)
-}
-
 /// Returns true if the type is a setState function (BuiltInSetState).
 pub fn is_set_state_type(ty: &Type) -> bool {
     matches!(ty, Type::Function { shape_id: Some(id), .. } if *id == object_shape::BUILT_IN_SET_STATE_ID)
+}
+
+pub fn is_set_state_identifier(
+    identifier_id: IdentifierId,
+    identifiers: &[Identifier],
+    types: &[Type],
+) -> bool {
+    let ident = &identifiers[identifier_id.0 as usize];
+    is_set_state_type(&types[ident.type_.0 as usize])
 }
 
 /// Returns true if the type is a useEffect hook.

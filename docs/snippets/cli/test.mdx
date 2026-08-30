@@ -30,7 +30,7 @@ bun test <patterns>
   Set the random seed for test randomization
 </ParamField>
 
-<ParamField path="--bail" type="number" default="1">
+<ParamField path="--bail" type="number">
   Exit the test suite after <code>NUMBER</code> failures. If you do not specify a number, it defaults to 1.
 </ParamField>
 
@@ -56,7 +56,7 @@ bun test <patterns>
 </ParamField>
 
 <ParamField path="--reporter-outfile" type="string">
-  Output file path for the reporter format (required with --reporter)
+  Output file path for the reporter format (required with --reporter=junit)
 </ParamField>
 
 <ParamField path="--dots" type="boolean">

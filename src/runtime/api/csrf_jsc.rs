@@ -2,9 +2,9 @@
 //! `generate()`/`verify()` halves stay in `src/csrf/`.
 
 use bun_boringssl_sys as boring;
-use bun_core::zig_string::Slice as ZigStringSlice;
+use bun_core::Utf8Bytes;
 use bun_csrf as csrf;
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+use bun_jsc::{CallFrame, IntegerRange, JSGlobalObject, JSValue, JsResult};
 
 use crate::api::crypto::evp::Algorithm as EvpAlgorithm;
 use crate::crypto::evp;
@@ -17,35 +17,52 @@ fn algorithm_from_js_case_insensitive(
     global: &JSGlobalObject,
     input: JSValue,
 ) -> JsResult<Option<EvpAlgorithm>> {
-    let slice = input.to_slice(global)?;
+    let slice = input.to_utf8(global)?;
     Ok(evp::lookup_ignore_case(slice.slice()))
 }
 
-/// Validates an optional integer property in `[0, MAX_SAFE_INTEGER]`.
-/// Differs from `JSValue::get_optional_int::<u64>` in rejecting NaN and in
-/// the error message wording expected by existing tests.
-fn get_optional_int_u64(
+/// `expiresIn` / `maxAge`. NaN maps to the default, and `0` would mean "no expiry".
+fn get_optional_duration_ms(
     target: JSValue,
     global: &JSGlobalObject,
-    property: &'static str,
+    field_name: &'static [u8],
 ) -> JsResult<Option<u64>> {
-    let Some(value) = target.get(global, property)? else {
+    let Some(value) = target.get(global, field_name)? else {
         return Ok(None);
     };
-    if value.is_undefined() || value.is_empty() {
-        return Ok(Some(0));
-    }
-    if !value.is_number() {
-        return Err(global.throw_invalid_argument_type_value(property, "number", value));
-    }
-    let num: f64 = value.as_number();
-    const MAX_SAFE_INTEGER: f64 = 9007199254740991.0;
-    if num.fract() != 0.0 || num < 0.0 || num > MAX_SAFE_INTEGER {
-        return Err(global.throw_invalid_arguments(format_args!(
-            "{property} must be an integer between 0 and {MAX_SAFE_INTEGER}"
-        )));
-    }
-    Ok(Some(num as u64))
+    Ok(Some(global.validate_integer_range::<u64>(
+        value,
+        csrf::DEFAULT_EXPIRATION_MS,
+        IntegerRange {
+            min: 0,
+            field_name,
+            ..Default::default()
+        },
+    )?))
+}
+
+/// Reads the optional `encoding` property. Parsed as a Buffer encoding name
+/// ("" selects base64url), of which only the three token formats are accepted.
+fn get_optional_token_format(
+    target: JSValue,
+    global: &JSGlobalObject,
+) -> JsResult<Option<csrf::TokenFormat>> {
+    let Some(value) = target.get(global, "encoding")? else {
+        return Ok(None);
+    };
+    let encoding =
+        NodeEncoding::from_js_with_default_on_empty(value, global, NodeEncoding::Base64url)?;
+    let format = match encoding {
+        Some(NodeEncoding::Base64) => csrf::TokenFormat::Base64,
+        Some(NodeEncoding::Base64url) => csrf::TokenFormat::Base64Url,
+        Some(NodeEncoding::Hex) => csrf::TokenFormat::Hex,
+        _ => {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "Invalid format: must be 'base64', 'base64url', or 'hex'"
+            )));
+        }
+    };
+    Ok(Some(format))
 }
 
 /// JS binding function for generating CSRF tokens
@@ -56,7 +73,7 @@ pub(crate) fn csrf__generate(global: &JSGlobalObject, frame: &CallFrame) -> JsRe
 
     // We should have at least one argument (secret)
     let args = frame.arguments();
-    let mut secret: Option<ZigStringSlice> = None;
+    let mut secret: Option<Utf8Bytes> = None;
     if args.len() >= 1 {
         let js_secret = args[0];
         // Extract the secret (required)
@@ -68,21 +85,21 @@ pub(crate) fn csrf__generate(global: &JSGlobalObject, frame: &CallFrame) -> JsRe
                 global.throw_invalid_arguments(format_args!("Secret must be a non-empty string"))
             );
         }
-        secret = Some(js_secret.to_slice(global)?);
+        secret = Some(js_secret.to_utf8(global)?);
     }
     // Default values
     let mut expires_in: u64 = csrf::DEFAULT_EXPIRATION_MS;
     let mut encoding: csrf::TokenFormat = csrf::TokenFormat::Base64Url;
     let mut algorithm: EvpAlgorithm = csrf::DEFAULT_ALGORITHM;
-    let mut session_id: Option<ZigStringSlice> = None;
+    let mut session_id: Option<Utf8Bytes> = None;
 
     // Check if we have options object
     if args.len() > 1 && args[1].is_object() {
         let options_value = args[1];
 
         // Extract expiresIn (optional)
-        if let Some(expires_in_js) = get_optional_int_u64(options_value, global, "expiresIn")? {
-            expires_in = expires_in_js;
+        if let Some(ms) = get_optional_duration_ms(options_value, global, b"expiresIn")? {
+            expires_in = ms;
         }
 
         // Extract sessionId (optional)
@@ -96,27 +113,8 @@ pub(crate) fn csrf__generate(global: &JSGlobalObject, frame: &CallFrame) -> JsRe
         }
 
         // Extract encoding (optional)
-        if let Some(encoding_js) = options_value.get(global, "encoding")? {
-            let Some(encoding_enum) = NodeEncoding::from_js_with_default_on_empty(
-                encoding_js,
-                global,
-                NodeEncoding::Base64url,
-            )?
-            else {
-                return Err(global.throw_invalid_arguments(format_args!(
-                    "Invalid format: must be 'base64', 'base64url', or 'hex'"
-                )));
-            };
-            encoding = match encoding_enum {
-                NodeEncoding::Base64 => csrf::TokenFormat::Base64,
-                NodeEncoding::Base64url => csrf::TokenFormat::Base64Url,
-                NodeEncoding::Hex => csrf::TokenFormat::Hex,
-                _ => {
-                    return Err(global.throw_invalid_arguments(format_args!(
-                        "Invalid format: must be 'base64', 'base64url', or 'hex'"
-                    )));
-                }
-            };
+        if let Some(format) = get_optional_token_format(options_value, global)? {
+            encoding = format;
         }
 
         if let Some(algorithm_js) = options_value.get(global, "algorithm")? {
@@ -172,15 +170,12 @@ pub(crate) fn csrf__generate(global: &JSGlobalObject, frame: &CallFrame) -> JsRe
                 csrf::Error::TokenCreationFailed => {
                     global.throw(format_args!("Failed to create CSRF token"))
                 }
-                _ => global.throw(format_args!("{err} Failed to generate CSRF token")),
             });
         }
     };
 
-    // Encode the token
-    // `csrf::TokenFormat::to_node_encoding()` returns the cycle-broken
-    // `bun_core::NodeEncoding`, not `crate::node::Encoding` (which owns
-    // `encode_with_max_size`). Map locally to the runtime enum instead.
+    // Encode the token. `bun_csrf` sits below `crate::node::Encoding` (which
+    // owns `encode_with_max_size`), so `TokenFormat` is mapped back to it here.
     let node_encoding = match encoding {
         csrf::TokenFormat::Base64 => NodeEncoding::Base64,
         csrf::TokenFormat::Base64Url => NodeEncoding::Base64url,
@@ -211,14 +206,13 @@ pub(crate) fn csrf__verify(global: &JSGlobalObject, frame: &CallFrame) -> JsResu
             global.throw_invalid_arguments(format_args!("Token must be a non-empty string"))
         );
     }
-    let token = js_token.to_slice(global)?;
+    let token = js_token.to_utf8(global)?;
 
     // Default values
-    let mut secret: Option<ZigStringSlice> = None;
-    // `secret` is freed by Drop.
+    let mut secret: Option<Utf8Bytes> = None;
     let mut max_age: u64 = csrf::DEFAULT_EXPIRATION_MS;
     let mut encoding: csrf::TokenFormat = csrf::TokenFormat::Base64Url;
-    let mut session_id: Option<ZigStringSlice> = None;
+    let mut session_id: Option<Utf8Bytes> = None;
 
     let mut algorithm: EvpAlgorithm = csrf::DEFAULT_ALGORITHM;
 
@@ -246,32 +240,13 @@ pub(crate) fn csrf__verify(global: &JSGlobalObject, frame: &CallFrame) -> JsResu
         }
 
         // Extract maxAge (optional)
-        if let Some(max_age_js) = get_optional_int_u64(options_value, global, "maxAge")? {
-            max_age = max_age_js;
+        if let Some(ms) = get_optional_duration_ms(options_value, global, b"maxAge")? {
+            max_age = ms;
         }
 
         // Extract encoding (optional)
-        if let Some(encoding_js) = options_value.get(global, "encoding")? {
-            let Some(encoding_enum) = NodeEncoding::from_js_with_default_on_empty(
-                encoding_js,
-                global,
-                NodeEncoding::Base64url,
-            )?
-            else {
-                return Err(global.throw_invalid_arguments(format_args!(
-                    "Invalid format: must be 'base64', 'base64url', or 'hex'"
-                )));
-            };
-            encoding = match encoding_enum {
-                NodeEncoding::Base64 => csrf::TokenFormat::Base64,
-                NodeEncoding::Base64url => csrf::TokenFormat::Base64Url,
-                NodeEncoding::Hex => csrf::TokenFormat::Hex,
-                _ => {
-                    return Err(global.throw_invalid_arguments(format_args!(
-                        "Invalid format: must be 'base64', 'base64url', or 'hex'"
-                    )));
-                }
-            };
+        if let Some(format) = get_optional_token_format(options_value, global)? {
+            encoding = format;
         }
         if let Some(algorithm_js) = options_value.get(global, "algorithm")? {
             if !algorithm_js.is_string() {

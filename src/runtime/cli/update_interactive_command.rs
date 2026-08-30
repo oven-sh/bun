@@ -13,7 +13,7 @@ use bun_install::lockfile::package::PackageColumns as _;
 use bun_install::lockfile::{LoadResult, LoadStep};
 use bun_install::package_manager::options::Do;
 use bun_install::package_manager::{
-    LogLevel, ManifestLoad, Subcommand, WorkspaceFilter, populate_manifest_cache,
+    LogLevel, Subcommand, WorkspaceFilter, populate_manifest_cache,
     update_package_json_and_install_with_manager,
 };
 use bun_install::package_manager_real::command_line_arguments::UpdateGroups;
@@ -118,6 +118,14 @@ struct CatalogUpdateRequest {
     package_name: Box<[u8]>,
     new_version: Box<[u8]>,
     catalog_name: Option<Box<[u8]>>,
+}
+
+/// How risky an update looks from its semver distance.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CheckboxColor {
+    Green,
+    Yellow,
+    Red,
 }
 
 struct ColumnWidths {
@@ -575,6 +583,9 @@ impl UpdateInteractiveCommand {
             manager,
             populate_manifest_cache::Packages::Ids(&workspace_pkg_ids),
         )?;
+        if populate_manifest_cache::print_fetch_failures(manager)? {
+            Global::crash();
+        }
 
         // Get outdated packages
         let (mut outdated_packages, checked) =
@@ -878,7 +889,6 @@ impl UpdateInteractiveCommand {
                     &scope,
                     package_name,
                     Some(&mut expired),
-                    ManifestLoad::LoadFromMemoryFallbackToDisk,
                     needs_extended,
                 ) else {
                     continue;
@@ -1001,7 +1011,7 @@ impl UpdateInteractiveCommand {
         let mut grouped_result = Self::group_catalog_dependencies(outdated_packages)?;
 
         // Sort packages: dependencies first, then devDependencies, etc.
-        grouped_result.sort_by(|a, b| {
+        index_sort::sort_slice_by(&mut grouped_result, |a, b| {
             // First sort by dependency type
             let a_priority = dep_type_priority(a.dependency_type);
             let b_priority = dep_type_priority(b.dependency_type);
@@ -1217,10 +1227,7 @@ impl UpdateInteractiveCommand {
         let result = match Self::process_multi_select(&mut state, terminal_size) {
             Ok(r) => r,
             Err(err) => {
-                if matches!(
-                    err,
-                    crate::Error::EndOfStream | crate::Error::Core(bun_core::Error::EndOfStream)
-                ) {
+                if matches!(err, crate::Error::Core(bun_core::Error::EndOfStream)) {
                     Output::flush();
                     bun_core::prettyln!("\n<r><red>x<r> Cancelled");
                     Global::exit(0);
@@ -1559,7 +1566,7 @@ impl UpdateInteractiveCommand {
                         ))
                     };
 
-                    let mut checkbox_color: &str = "green"; // default
+                    let mut checkbox_color = CheckboxColor::Green;
                     if current_ver_parsed.valid && update_ver_parsed.valid {
                         let current_full = semver::Version {
                             major: current_ver_parsed.version.major.unwrap_or(0),
@@ -1589,22 +1596,24 @@ impl UpdateInteractiveCommand {
                         );
                         if let Some(d) = diff {
                             match d {
-                                semver::version::ChangedVersion::Major => checkbox_color = "red",
+                                semver::version::ChangedVersion::Major => {
+                                    checkbox_color = CheckboxColor::Red
+                                }
                                 semver::version::ChangedVersion::Minor => {
                                     if current_full.major == 0 {
-                                        checkbox_color = "red"; // 0.x.y minor changes are breaking
+                                        checkbox_color = CheckboxColor::Red; // 0.x.y minor changes are breaking
                                     } else {
-                                        checkbox_color = "yellow";
+                                        checkbox_color = CheckboxColor::Yellow;
                                     }
                                 }
                                 semver::version::ChangedVersion::Patch => {
                                     if current_full.major == 0 && current_full.minor == 0 {
-                                        checkbox_color = "red"; // 0.0.x patch changes are breaking
+                                        checkbox_color = CheckboxColor::Red; // 0.0.x patch changes are breaking
                                     } else {
-                                        checkbox_color = "green";
+                                        checkbox_color = CheckboxColor::Green;
                                     }
                                 }
-                                _ => checkbox_color = "green",
+                                _ => checkbox_color = CheckboxColor::Green,
                             }
                         }
                     }
@@ -1618,9 +1627,9 @@ impl UpdateInteractiveCommand {
 
                     // Checkbox with appropriate color
                     if selected {
-                        if checkbox_color == "red" {
+                        if checkbox_color == CheckboxColor::Red {
                             bun_core::pretty!("<r><red>{}<r> ", checkbox);
-                        } else if checkbox_color == "yellow" {
+                        } else if checkbox_color == CheckboxColor::Yellow {
                             bun_core::pretty!("<r><yellow>{}<r> ", checkbox);
                         } else {
                             bun_core::pretty!("<r><green>{}<r> ", checkbox);
@@ -1672,9 +1681,9 @@ impl UpdateInteractiveCommand {
                     );
 
                     if selected {
-                        if checkbox_color == "red" {
+                        if checkbox_color == CheckboxColor::Red {
                             bun_core::pretty!("<r><red>{}<r>", hyperlink);
-                        } else if checkbox_color == "yellow" {
+                        } else if checkbox_color == CheckboxColor::Yellow {
                             bun_core::pretty!("<r><yellow>{}<r>", hyperlink);
                         } else {
                             bun_core::pretty!("<r><green>{}<r>", hyperlink);
@@ -1930,7 +1939,7 @@ impl UpdateInteractiveCommand {
                     // ctrl+c, ctrl+d
                     reprint_menu = false;
                     cleanup_and_reprint!(reprint_menu);
-                    return Err(crate::Error::EndOfStream);
+                    return Err(crate::Error::Core(bun_core::Error::EndOfStream));
                 }
                 b' ' => {
                     state.selected[state.cursor] = !state.selected[state.cursor];

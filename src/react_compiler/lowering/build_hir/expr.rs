@@ -146,9 +146,22 @@ pub(crate) fn lower_expression(
                     .as_ref()
                     .ok_or_else(|| cold_todo("object property without key", loc))?;
                 let computed = prop.flags.contains(PF::IsComputed);
-                let key = match lower_object_property_key(builder, key_expr, computed)? {
-                    Some(k) => k,
-                    None => continue,
+                // `{["__proto__"]: v}` and `{__proto__}` define an own property; the
+                // static key they would otherwise lower to is emitted as
+                // `__proto__: v`, which sets the prototype instead. Complement of the
+                // parser's prototype-setter predicate in visit_expr.rs (methods were
+                // diverted above and are never setters).
+                let own_proto_key = (computed || prop.flags.contains(PF::WasShorthand))
+                    && matches!(&key_expr.data, Data::EString(s) if s.eql_comptime(b"__proto__"));
+                let key = if own_proto_key {
+                    ObjectPropertyKey::Computed {
+                        name: lower_expression_to_temporary(builder, key_expr)?,
+                    }
+                } else {
+                    match lower_object_property_key(builder, key_expr, computed)? {
+                        Some(k) => k,
+                        None => continue,
+                    }
                 };
                 let value_expr = prop
                     .value

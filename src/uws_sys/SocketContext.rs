@@ -296,7 +296,7 @@ impl BunSocketContextOptions {
             options.ca_file_name = ptr::null();
             files.push(file);
         }
-        if !self.dh_params_file_name.is_null() {
+        if self.dh_params.is_null() && !self.dh_params_file_name.is_null() {
             let file = LoadedFile::read(TlsFile::DhParams, self.dh_params_file_name)?;
             options.dh_params = file.bytes.as_ptr();
             options.dh_params_file_name = ptr::null();

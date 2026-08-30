@@ -27,7 +27,7 @@ use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSPromiseStrong, JSValue, JsCell, JsResult,
     SystemError, host_fn,
 };
-use bun_paths::{MAX_PATH_BYTES, PathBuffer};
+use bun_paths::PathBuffer;
 use bun_ptr::RefPtr;
 #[cfg(windows)]
 use bun_sys::windows::libuv;
@@ -59,6 +59,8 @@ pub(crate) mod netc {
         addrinfo, sockaddr, sockaddr_in, sockaddr_in6, sockaddr_storage,
     };
     pub(crate) use bun_sys::windows::ws2_32::{AF_INET, AF_INET6, AF_UNSPEC, SOCK_STREAM};
+    /// The libuv spelling: `c_ares::Error::init_eai` reads UV_EAI_* codes on Windows.
+    pub(crate) const EAI_NONAME: core::ffi::c_int = bun_libuv_sys::UV_EAI_NONAME;
 }
 type SockaddrStorage = netc::sockaddr_storage;
 type AddrInfo = netc::addrinfo;
@@ -1222,7 +1224,7 @@ impl GetAddrInfoRequest {
             let status = if !results.is_empty() {
                 0
             } else {
-                query.empty_status()
+                dns_sd::EMPTY_STATUS
             };
             bun_output::scoped_log!(
                 GetAddrInfoRequest,
@@ -2790,8 +2792,7 @@ pub mod internal {
         let port = unsafe { (*req).key.port };
 
         if results.is_empty() {
-            let err = query.empty_status();
-            after_result_entries(req, None, err);
+            after_result_entries(req, None, dns_sd::EMPTY_STATUS);
             return;
         }
 
@@ -3037,6 +3038,19 @@ pub mod internal {
         DNS_CACHE_SIZE.store(guard.len, Ordering::Relaxed);
         drop(guard);
 
+        if host.is_some_and(|h| !bun_dns::is_valid_hostname(h.as_bytes())) {
+            bun_output::scoped_log!(
+                dns,
+                "getaddrinfo({}) = cache miss (not a hostname)",
+                bstr::BStr::new(host.map(|h| h.as_bytes()).unwrap_or(b""))
+            );
+            after_result_entries(req, None, netc::EAI_NONAME);
+            if let Some(is_cache_hit) = is_cache_hit {
+                *is_cache_hit = true;
+            }
+            return Some(req);
+        }
+
         if host.is_some_and(|h| is_localhost_name(h.as_bytes())) {
             bun_output::scoped_log!(
                 dns,
@@ -3198,7 +3212,8 @@ pub mod internal {
         // touched under `global_cache().lock()`, which is held here.
         unsafe {
             if (*request).result.is_some() {
-                query.notify(request);
+                // Also wakes the loop: this can run inside the dns_ready_head drain itself.
+                query.notify_threadsafe(request);
                 return;
             }
             (*request).notify.push(DNSRequestOwner::Socket(socket));
@@ -5157,11 +5172,7 @@ impl Resolver {
         options: GetAddrInfoOptions,
         global_this: &JSGlobalObject,
     ) -> JsResult<JSValue> {
-        // The system backends copy the hostname into a fixed `bun.PathBuffer` on the
-        // stack before null-terminating it. Reject anything that cannot fit so we never
-        // index past that buffer. RFC 1035 caps hostnames at 253 octets and NI_MAXHOST
-        // is 1025, so this never rejects a name that could have resolved.
-        if name.len() >= MAX_PATH_BYTES || strings::contains_char(name, 0) {
+        if !bun_dns::is_valid_hostname(name) {
             let mut promise = JSPromiseStrong::init(global_this);
             let promise_value = promise.value();
             error_to_deferred(

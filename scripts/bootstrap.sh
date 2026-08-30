@@ -15,7 +15,7 @@
 #   2. Once green, change the subject to `[publish images]` and push again to
 #      bake the real `-vN` image tag.
 #   3. Merge after the publish run finishes so main never waits on a bake.
-# See "CI image lifecycle" above getBuildImageStep in .buildkite/ci.mjs.
+# See "CI image lifecycle" above getBuildImageSteps in .buildkite/ci.mjs.
 
 pid="$$"
 
@@ -2176,10 +2176,10 @@ prefetch_build_deps() {
 	bun_path="$(require bun)"
 	git_path="$(require git)"
 
-	# Only bootstrap.sh is uploaded to the bake VM, so the repo (and the
-	# prefetch script + scripts/build/deps/*.ts version pins) has to be cloned.
-	# BUN_BOOTSTRAP_REPO_REF lets the image-build orchestrator pin to the
-	# commit it was triggered from; default to main.
+	# bootstrap.sh is also run by hand outside a repo checkout, so the
+	# prefetch script + scripts/build/deps/*.ts version pins are cloned rather
+	# than assumed to be beside it. BUN_BOOTSTRAP_REPO_REF lets the CI bake
+	# step pin to the branch it was triggered from.
 	repo_ref="${BUN_BOOTSTRAP_REPO_REF:-main}"
 	clone_dir="$(create_tmp_directory)"
 	# Best-effort: a fork-PR branch that doesn't exist on the upstream remote,

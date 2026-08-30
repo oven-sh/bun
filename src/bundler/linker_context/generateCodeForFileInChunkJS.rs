@@ -110,11 +110,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
 
             let mut clousure_args: BoundedArray<G::Arg, 3> = BoundedArray::default();
             clousure_args.append_assume_capacity(G::Arg {
-                binding: Binding::alloc(
-                    temp_arena,
-                    B::Identifier { r#ref: hmr_api_ref },
-                    bun_ast::Loc::EMPTY,
-                ),
+                binding: Binding::alloc(temp_arena, B::Identifier { r#ref: hmr_api_ref }, None),
                 ..Default::default()
             });
 
@@ -128,7 +124,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                         B::Identifier {
                             r#ref: ast.module_ref,
                         },
-                        bun_ast::Loc::EMPTY,
+                        None,
                     ),
                     ..Default::default()
                 });
@@ -138,7 +134,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                         B::Identifier {
                             r#ref: ast.exports_ref,
                         },
-                        bun_ast::Loc::EMPTY,
+                        None,
                     ),
                     ..Default::default()
                 });
@@ -164,12 +160,12 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                             args: bun_ast::StoreSlice::new_mut(dup_args),
                             body: G::FnBody {
                                 stmts: inner,
-                                loc: bun_ast::Loc::EMPTY,
+                                loc: None,
                             },
                             ..Default::default()
                         },
                     },
-                    bun_ast::Loc::EMPTY,
+                    None,
                 ),
             ));
             stmts
@@ -269,7 +265,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                 S::Directive {
                     value: bun_ast::StoreStr::new(b"use strict"),
                 },
-                bun_ast::Loc::EMPTY,
+                None,
             ))
             .expect("unreachable");
     }
@@ -557,7 +553,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                             B::Identifier {
                                 r#ref: ast.exports_ref,
                             },
-                            bun_ast::Loc::EMPTY,
+                            None,
                         ),
                         ..Default::default()
                     });
@@ -569,7 +565,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                                 B::Identifier {
                                     r#ref: ast.module_ref,
                                 },
-                                bun_ast::Loc::EMPTY,
+                                None,
                             ),
                             ..Default::default()
                         });
@@ -587,12 +583,12 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                             args: bun_ast::StoreSlice::new(args.into_bump_slice()),
                             body: G::FnBody {
                                 stmts: body_stmts,
-                                loc: bun_ast::Loc::EMPTY,
+                                loc: None,
                             },
                             ..Default::default()
                         },
                     },
-                    bun_ast::Loc::EMPTY,
+                    None,
                 )]);
 
                 let commonjs_wrapper_definition = Expr::init(
@@ -602,12 +598,12 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                                 ref_: c.cjs_runtime_ref,
                                 ..Default::default()
                             },
-                            bun_ast::Loc::EMPTY,
+                            None,
                         ),
                         args: Vec::move_from_list(cjs_args),
                         ..Default::default()
                     },
-                    bun_ast::Loc::EMPTY,
+                    None,
                 );
 
                 // "var require_foo = __commonJS(...);"
@@ -618,7 +614,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                             B::Identifier {
                                 r#ref: ast.wrapper_ref,
                             },
-                            bun_ast::Loc::EMPTY,
+                            None,
                         ),
                         value: Some(commonjs_wrapper_definition),
                     }]);
@@ -630,7 +626,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                                 decls,
                                 ..Default::default()
                             },
-                            bun_ast::Loc::EMPTY,
+                            None,
                         ),
                     );
                 }
@@ -650,7 +646,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                 }
 
                 impl ExportHoist {
-                    fn wrap_identifier(&mut self, loc: bun_ast::Loc, ref_: Ref) -> Expr {
+                    fn wrap_identifier(&mut self, loc: Option<bun_ast::Loc>, ref_: Ref) -> Expr {
                         // Copy the BackRef so the `&Bump` borrow is detached
                         // from `&mut self` (needed for `self.decls.push`).
                         let arena = self.arena;
@@ -669,7 +665,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                     /// Trampoline matching `ToExprWrapper`'s erased fn-pointer signature.
                     fn wrap_trampoline(
                         ctx: *mut core::ffi::c_void,
-                        loc: bun_ast::Loc,
+                        loc: Option<bun_ast::Loc>,
                         ref_: Ref,
                     ) -> Expr {
                         // SAFETY: `ctx` is `&mut ExportHoist` derived at the call site.
@@ -793,7 +789,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                                 )),
                                 ..Default::default()
                             },
-                            bun_ast::Loc::EMPTY,
+                            None,
                         ),
                     );
                     hoist.decls.clear();
@@ -811,21 +807,21 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                             is_async,
                             body: G::FnBody {
                                 stmts: inner_stmts,
-                                loc: bun_ast::Loc::EMPTY,
+                                loc: None,
                             },
                             ..Default::default()
                         },
-                        bun_ast::Loc::EMPTY,
+                        None,
                     )]);
 
                     // "var init_foo = __esm(...);"
                     let value = Expr::init(
                         E::Call {
-                            target: Expr::init_identifier(c.esm_runtime_ref, bun_ast::Loc::EMPTY),
+                            target: Expr::init_identifier(c.esm_runtime_ref, None),
                             args: Vec::move_from_list(esm_args),
                             ..Default::default()
                         },
-                        bun_ast::Loc::EMPTY,
+                        None,
                     );
 
                     let decls = G::DeclList::from_slice(&[G::Decl {
@@ -834,7 +830,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                             B::Identifier {
                                 r#ref: ast.wrapper_ref,
                             },
-                            bun_ast::Loc::EMPTY,
+                            None,
                         ),
                         value: Some(value),
                     }]);
@@ -846,7 +842,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                                 decls,
                                 ..Default::default()
                             },
-                            bun_ast::Loc::EMPTY,
+                            None,
                         ),
                     );
                 } else {
@@ -873,11 +869,11 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                                 is_async,
                                 body: G::FnBody {
                                     stmts: inner_stmts,
-                                    loc: bun_ast::Loc::EMPTY,
+                                    loc: None,
                                 },
                                 ..Default::default()
                             },
-                            bun_ast::Loc::EMPTY,
+                            None,
                         );
 
                         stmts.append(
@@ -890,13 +886,13 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                                             B::Identifier {
                                                 r#ref: ast.wrapper_ref,
                                             },
-                                            bun_ast::Loc::EMPTY,
+                                            None,
                                         ),
                                         value: Some(value),
                                     }]),
                                     ..Default::default()
                                 },
-                                bun_ast::Loc::EMPTY,
+                                None,
                             ),
                         );
                     }

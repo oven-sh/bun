@@ -570,7 +570,7 @@ impl Framework {
             kind: bun_ast::Kind::Note,
             data: bun_ast::range_data(
                 None,
-                bun_ast::Range::NONE,
+                None,
                 // `range_data` takes `impl Into<Cow<'static, [u8]>>`;
                 // `concat!` yields `&'static str` — go via `.as_bytes()`.
                 concat!(

@@ -480,7 +480,7 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
     }
 
     fn maybe_report_error(&mut self, args: core::fmt::Arguments<'_>) {
-        let _ = self.log.add_error_fmt(None, bun_ast::Loc::EMPTY, args);
+        let _ = self.log.add_error_fmt(None, None, args);
     }
 
     fn buf(&self) -> &[u8] {

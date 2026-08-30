@@ -2416,7 +2416,7 @@ pub struct Scratch {
 }
 
 pub(crate) type DuplicateCheckerMap =
-    BunHashMap<PackageNameHash, bun_ast::Loc, IdentityContext<PackageNameHash>>;
+    BunHashMap<PackageNameHash, Option<bun_ast::Loc>, IdentityContext<PackageNameHash>>;
 pub(crate) type DependencyQueue = LinearFifo<DependencySlice, DynamicBuffer<DependencySlice>>;
 
 impl Scratch {

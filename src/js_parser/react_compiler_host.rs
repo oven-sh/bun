@@ -70,7 +70,7 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> bun_react_compiler::Host
                 let new_ref =
                     p.declare_generated_symbol(js_ast::symbol::Kind::Other, kind.tag_name());
                 let loc_ref = js_ast::LocRef {
-                    loc: bun_ast::Loc::EMPTY,
+                    loc: None,
                     ref_: new_ref,
                 };
                 p.is_import_item.insert(new_ref, ());
@@ -112,7 +112,7 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> bun_react_compiler::Host
         let name = p.arena.alloc_slice_copy(name);
         // current_scope is the component's FunctionBody here; find_symbol walks
         // up to module scope.
-        p.find_symbol(bun_ast::Loc::EMPTY, name).expect("oom").r#ref
+        p.find_symbol(None, name).expect("oom").r#ref
     }
 
     fn record_usage(&mut self, ref_: js_ast::Ref) {
@@ -122,7 +122,7 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> bun_react_compiler::Host
     fn add_import_record(&mut self, path: &[u8], kind: js_ast::ImportKind) -> (u32, js_ast::Ref) {
         let p = &mut *self.p;
         let path = p.arena.alloc_slice_copy(path);
-        let index = p.add_import_record_by_range(kind, bun_ast::Range::NONE, path);
+        let index = p.add_import_record_by_range(kind, None, path);
         let namespace_ref = p.new_symbol(js_ast::symbol::Kind::Other, path);
         VecExt::append(&mut p.module_scope_mut().generated, namespace_ref);
         (index, namespace_ref)

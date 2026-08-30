@@ -1474,7 +1474,7 @@ mod __css_validation {
         #[derive(Default)]
         struct PropertyInFile {
             source_index: IndexInt,
-            range: bun_ast::Range,
+            range: Option<bun_ast::Range>,
         }
 
         struct Visitor<'a, 'bump> {
@@ -1500,7 +1500,7 @@ mod __css_validation {
                 if !entry.found_existing {
                     *entry.value_ptr = PropertyInFile {
                         source_index,
-                        range,
+                        range: Some(range),
                     };
                     return;
                 }

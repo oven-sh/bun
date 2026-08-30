@@ -110,7 +110,7 @@ pub mod Macro {
             source_dir: &[u8],
             log: &mut bun_ast::Log,
             source: &bun_ast::Source,
-            import_range: bun_ast::Range,
+            import_range: Option<bun_ast::Range>,
             caller: bun_ast::Expr,
             function_name: &[u8],
         ) -> Result<bun_ast::Expr, crate::Error>;
@@ -147,7 +147,7 @@ pub mod Macro {
             source_dir: &[u8],
             log: &mut bun_ast::Log,
             source: &bun_ast::Source,
-            import_range: bun_ast::Range,
+            import_range: Option<bun_ast::Range>,
             caller: bun_ast::Expr,
             function_name: &[u8],
         ) -> Result<bun_ast::Expr, crate::Error> {

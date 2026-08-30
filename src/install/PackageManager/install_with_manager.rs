@@ -1487,7 +1487,7 @@ fn add_dependency_error(manager: &mut PackageManager, dependency: &Dependency, e
     if dependency.behavior.is_optional() || dependency.behavior.is_peer() {
         log.add_warning_with_note(
             None,
-            Default::default(),
+            None,
             err.name().as_bytes(),
             format_args!("error occurred while resolving {}", path_fmt),
         );

@@ -1731,9 +1731,7 @@ pub fn init(
                     }
 
                     if let Some(prop) = json.as_property(b"workspaces") {
-                        let value_loc =
-                            crate::bun_json::property_value_loc(&json_source.contents, prop.loc)
-                                .unwrap_or(prop.loc);
+                        let value_loc = Package::value_loc_of(&json_source, prop.loc);
                         let names = match &prop.expr.data {
                             bun_ast::ExprData::EArrayJSON(arr) => Some(
                                 Package::WorkspaceMap::NamesArray::Immutable(arr.get(), value_loc),
@@ -1752,7 +1750,7 @@ pub fn init(
                                         .unwrap_or(row.key_loc);
                                         Some(Package::WorkspaceMap::NamesArray::Immutable(
                                             arr.get(),
-                                            packages_loc,
+                                            Some(packages_loc),
                                         ))
                                     }
                                     _ => None,

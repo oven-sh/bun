@@ -433,7 +433,7 @@ impl Framework {
             kind: bun_ast::Kind::Note,
             data: bun_ast::range_data(
                 None,
-                bun_ast::Range::NONE,
+                None,
                 concat!(
                     "Install the built in react integration with \"",
                     "bun i react@experimental react-dom@experimental react-server-dom-bun react-refresh@experimental",

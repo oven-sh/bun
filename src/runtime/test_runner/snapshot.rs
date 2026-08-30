@@ -436,7 +436,7 @@ impl Snapshots {
                 bun_sys::Result::Err(e) => {
                     log.add_error_fmt(
                         &bun_ast::Source::init_empty_file(test_filename_z.as_bytes()),
-                        bun_ast::Loc { start: 0 },
+                        bun_ast::Loc::new(0),
                         format_args!(
                             "Failed to update inline snapshot: Failed to open file: {}",
                             bstr::BStr::new(e.name()),
@@ -469,9 +469,7 @@ impl Snapshots {
                     if !strings::eql(&ils.value, last_value) {
                         log.add_error_fmt(
                             &source,
-                            bun_ast::Loc {
-                                start: i32::try_from(uncommitted_segment_end).unwrap(),
-                            },
+                            bun_ast::Loc::from_usize(uncommitted_segment_end),
                             format_args!(
                                 "Failed to update inline snapshot: Multiple inline snapshots on the same line must all have the same value:\n{}",
                                 DiffFormatter {
@@ -501,9 +499,7 @@ impl Snapshots {
                     bun_core::scoped_log!(inline_snapshot, "-> Could not find byte");
                     log.add_error_fmt(
                         &source,
-                        bun_ast::Loc {
-                            start: i32::try_from(uncommitted_segment_end).unwrap(),
-                        },
+                        bun_ast::Loc::from_usize(uncommitted_segment_end),
                         format_args!(
                             "Failed to update inline snapshot: Ln {}, Col {} not found",
                             ils.line, ils.col
@@ -526,9 +522,7 @@ impl Snapshots {
                     if !strings::starts_with(&file_text[next_start..], fn_name) {
                         log.add_error_fmt(
                             &source,
-                            bun_ast::Loc {
-                                start: i32::try_from(next_start).unwrap(),
-                            },
+                            bun_ast::Loc::from_usize(next_start),
                             format_args!(
                                 "Failed to update inline snapshot: Could not find '{}' here",
                                 bstr::BStr::new(fn_name)
@@ -595,7 +589,7 @@ impl Snapshots {
                         unsafe { __parser_guard.assume_init_mut() };
 
                     parser.lexer.expect(js_lexer::T::TOpenParen)?;
-                    let after_open_paren_loc = parser.lexer.loc().start;
+                    let after_open_paren_loc = parser.lexer.loc().get() as i32;
                     if parser.lexer.token == js_lexer::T::TCloseParen {
                         // zero args
                         if ils.has_matchers {
@@ -606,7 +600,7 @@ impl Snapshots {
                             );
                             continue 'ils;
                         }
-                        let close_paren_loc = parser.lexer.loc().start;
+                        let close_paren_loc = parser.lexer.loc().get() as i32;
                         parser.lexer.expect(js_lexer::T::TCloseParen)?;
                         break 'blk (after_open_paren_loc, close_paren_loc, false);
                     }
@@ -619,9 +613,9 @@ impl Snapshots {
                         continue 'ils;
                     }
 
-                    let before_expr_loc = parser.lexer.loc().start;
+                    let before_expr_loc = parser.lexer.loc().get() as i32;
                     let expr_1 = parser.parse_expr(js_parser::Level::Comma)?;
-                    let after_expr_loc = parser.lexer.loc().start;
+                    let after_expr_loc = parser.lexer.loc().get() as i32;
 
                     let mut is_one_arg = false;
                     if parser.lexer.token == js_lexer::T::TComma {
@@ -632,7 +626,7 @@ impl Snapshots {
                     } else {
                         is_one_arg = true;
                     }
-                    let after_comma_loc = parser.lexer.loc().start;
+                    let after_comma_loc = parser.lexer.loc().get() as i32;
 
                     if is_one_arg {
                         parser.lexer.expect(js_lexer::T::TCloseParen)?;
@@ -660,9 +654,9 @@ impl Snapshots {
                         continue 'ils;
                     }
 
-                    let before_expr_2_loc = parser.lexer.loc().start;
+                    let before_expr_2_loc = parser.lexer.loc().get() as i32;
                     let expr_2 = parser.parse_expr(js_parser::Level::Comma)?;
-                    let after_expr_2_loc = parser.lexer.loc().start;
+                    let after_expr_2_loc = parser.lexer.loc().get() as i32;
 
                     if !ils.has_matchers {
                         log.add_error_fmt(
@@ -710,7 +704,7 @@ impl Snapshots {
                 {
                     log.add_error_fmt(
                         &source,
-                        bun_ast::Loc { start: final_start },
+                        bun_ast::Loc::from_usize(final_start_usize),
                         format_args!("Failed to update inline snapshot: Did not advance."),
                     );
                     continue;
@@ -809,7 +803,7 @@ impl Snapshots {
             if let Err(e) = file.file.seek_to(0) {
                 log.add_error_fmt(
                     &source,
-                    bun_ast::Loc { start: 0 },
+                    bun_ast::Loc::new(0),
                     format_args!(
                         "Failed to update inline snapshot: Seek file error: {}",
                         bstr::BStr::new(e.name()),
@@ -821,7 +815,7 @@ impl Snapshots {
             if let Err(e) = file.file.write_all(&result_text) {
                 log.add_error_fmt(
                     &source,
-                    bun_ast::Loc { start: 0 },
+                    bun_ast::Loc::new(0),
                     format_args!(
                         "Failed to update inline snapshot: Write file error: {}",
                         bstr::BStr::new(e.name()),

@@ -99,8 +99,8 @@ pub struct ConfigItem {
     pub(crate) registry_url: Box<[u8]>,
     pub(crate) optname: ConfigOpt,
     pub(crate) value: Box<[u8]>,
-    pub(crate) loc: Loc,
-    pub(crate) optname_loc: Loc,
+    pub(crate) loc: Option<Loc>,
+    pub(crate) optname_loc: Option<Loc>,
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -197,7 +197,7 @@ mod draft {
         pub fn init(source: &'a Source, env: &'a DotEnvLoader) -> Parser<'a> {
             Parser {
                 src: source.contents.as_ref(),
-                out: Expr::init(E::Object::default(), Loc::EMPTY),
+                out: Expr::init(E::Object::default(), None),
                 source,
                 env,
             }
@@ -364,19 +364,19 @@ mod draft {
                             )?
                             .into_value();
                         }
-                        break 'brk Expr::init(E::EString::init(b""), Loc::EMPTY);
+                        break 'brk Expr::init(E::EString::init(b""), None);
                     }
-                    Expr::init(E::Boolean { value: true }, Loc::EMPTY)
+                    Expr::init(E::Boolean { value: true }, None)
                 };
 
                 let value: Expr = match &value_raw.data {
                     ExprData::EString(s) => {
                         if s.data == b"true" {
-                            Expr::init(E::Boolean { value: true }, Loc::EMPTY)
+                            Expr::init(E::Boolean { value: true }, None)
                         } else if s.data == b"false" {
-                            Expr::init(E::Boolean { value: false }, Loc::EMPTY)
+                            Expr::init(E::Boolean { value: false }, None)
                         } else if s.data == b"null" {
-                            Expr::init(E::Null, Loc::EMPTY)
+                            Expr::init(E::Null, None)
                         } else {
                             value_raw
                         }
@@ -389,10 +389,10 @@ mod draft {
                         if !matches!(val.data, ExprData::EArray(_)) {
                             let mut arr = E::Array::default();
                             arr.push(bump, val)?;
-                            head.put(bump, key, Expr::init(arr, Loc::EMPTY))?;
+                            head.put(bump, key, Expr::init(arr, None))?;
                         }
                     } else {
-                        head.put(bump, key, Expr::init(E::Array::default(), Loc::EMPTY))?;
+                        head.put(bump, key, Expr::init(E::Array::default(), None))?;
                     }
                 }
 
@@ -463,7 +463,7 @@ mod draft {
                                     let expanded = Self::expand_env_vars(env, bump, val)?;
                                     return Ok(PrepareResult::Value(Expr::init(
                                         E::EString::init(expanded),
-                                        Loc { start: offset },
+                                        Loc::new(u32::try_from(offset).expect("int cast")),
                                     )));
                                 }
                                 break 'out;
@@ -482,7 +482,7 @@ mod draft {
                         if usage == Usage::Value {
                             return Ok(PrepareResult::Value(Expr::init(
                                 E::EString::init(expanded),
-                                Loc { start: offset },
+                                Loc::new(u32::try_from(offset).expect("int cast")),
                             )));
                         }
                         if usage == Usage::Section {
@@ -500,7 +500,7 @@ mod draft {
                         // `ca`/`omit`/`include`) fire. `json_val` was lifted to T4
                         // at the parse site above.
                         return Ok(PrepareResult::Value(Expr {
-                            loc: Loc { start: offset },
+                            loc: Some(Loc::new(u32::try_from(offset).expect("int cast"))),
                             data: json_val.data,
                         }));
                     }
@@ -698,18 +698,18 @@ mod draft {
                         if !did_any_escape {
                             return Ok(PrepareResult::Value(Expr::init(
                                 E::EString::init(val),
-                                Loc { start: offset },
+                                Loc::new(u32::try_from(offset).expect("int cast")),
                             )));
                         }
                         if unesc.len() <= STACK_BUF_SIZE {
                             return Ok(PrepareResult::Value(Expr::init(
                                 E::EString::init(bump.alloc_slice_copy(&unesc)),
-                                Loc { start: offset },
+                                Loc::new(u32::try_from(offset).expect("int cast")),
                             )));
                         }
                         return Ok(PrepareResult::Value(Expr::init(
                             E::EString::init(unesc.into_bump_slice()),
-                            Loc { start: offset },
+                            Loc::new(u32::try_from(offset).expect("int cast")),
                         )));
                     }
                     Usage::Key => {
@@ -730,7 +730,7 @@ mod draft {
             if usage == Usage::Value {
                 return Ok(PrepareResult::Value(Expr::init(
                     E::EString::init(val),
-                    Loc { start: offset },
+                    Loc::new(u32::try_from(offset).expect("int cast")),
                 )));
             }
             if usage == Usage::Key {
@@ -889,7 +889,7 @@ mod draft {
 
         fn single_str_rope(ropealloc: &'a Arena, str_: &[u8]) -> OOM<&'a mut Rope> {
             let rope = ropealloc.alloc(Rope {
-                head: Expr::init(E::EString::init(str_), Loc::EMPTY),
+                head: Expr::init(E::EString::init(str_), None),
                 next: ptr::null_mut(),
             });
             Ok(rope)
@@ -902,7 +902,7 @@ mod draft {
             existing_rope: &mut Option<&'a mut Rope>,
         ) -> OOM<()> {
             let slice = bump.alloc_slice_copy(&unesc[..]);
-            let expr = Expr::init(E::EString::init(slice), Loc::EMPTY);
+            let expr = Expr::init(E::EString::init(slice), None);
             if let Some(r) = existing_rope.as_deref_mut() {
                 let _ = r.append(expr, ropealloc)?;
             } else {
@@ -918,13 +918,13 @@ mod draft {
         fn str_to_rope(ropealloc: &'a Arena, key: &[u8]) -> OOM<&'a mut Rope> {
             let Some(mut dot_idx) = next_dot(key) else {
                 let rope = ropealloc.alloc(Rope {
-                    head: Expr::init(E::EString::init(key), Loc::EMPTY),
+                    head: Expr::init(E::EString::init(key), None),
                     next: ptr::null_mut(),
                 });
                 return Ok(rope);
             };
             let rope_head: &'a mut Rope = ropealloc.alloc(Rope {
-                head: Expr::init(E::EString::init(&key[..dot_idx]), Loc::EMPTY),
+                head: Expr::init(E::EString::init(&key[..dot_idx]), None),
                 next: ptr::null_mut(),
             });
 
@@ -935,13 +935,12 @@ mod draft {
                     _ => {
                         let rest = &key[dot_idx + 1..];
                         let _ = rope_head
-                            .append(Expr::init(E::EString::init(rest), Loc::EMPTY), ropealloc)?;
+                            .append(Expr::init(E::EString::init(rest), None), ropealloc)?;
                         break;
                     }
                 };
                 let part = &key[dot_idx + 1..next_dot_idx];
-                let _ =
-                    rope_head.append(Expr::init(E::EString::init(part), Loc::EMPTY), ropealloc)?;
+                let _ = rope_head.append(Expr::init(E::EString::init(part), None), ropealloc)?;
                 segments += 1;
                 dot_idx = next_dot_idx;
             }
@@ -1048,14 +1047,11 @@ mod draft {
                                 if let Some(value_expr) = prop.value {
                                     if let Some(value) = value_expr.as_utf8_string_literal() {
                                         // `put` stamps the key with the value's loc, so walk back over `<key>=` to the option name.
-                                        let optname_loc = match keyexpr.loc.to_nullable() {
-                                            Some(loc) => Loc {
-                                                start: loc.start
-                                                    - i32::try_from(key.len() - index)
-                                                        .expect("int cast"),
-                                            },
-                                            None => keyexpr.loc,
-                                        };
+                                        let optname_loc = keyexpr.loc.map(|loc| {
+                                            loc.sub(
+                                                u32::try_from(key.len() - index).expect("int cast"),
+                                            )
+                                        });
                                         return Some(IniOption::Some(ConfigItem {
                                             registry_url: Box::<[u8]>::from(url_part),
                                             value: Box::<[u8]>::from(value),
@@ -1699,7 +1695,7 @@ mod draft {
 
     fn parse_auth(
         value: &[u8],
-        loc: Loc,
+        loc: Option<Loc>,
         log: &mut Log,
         source: &Source,
     ) -> Option<(Box<[u8]>, Box<[u8]>)> {

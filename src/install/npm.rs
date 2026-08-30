@@ -2049,7 +2049,7 @@ impl PackageManifest {
             if let Some(err) = error_q.expr.as_utf8_string_literal() {
                 log.add_error_fmt(
                     Some(&source),
-                    bun_ast::Loc::EMPTY,
+                    None,
                     format_args!("npm error: {}", bstr::BStr::new(err)),
                 );
                 return Ok(None);

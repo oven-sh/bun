@@ -1069,7 +1069,7 @@ impl TranspilerJob {
         // top-level-await actually completes — causing the caller's
         // `wait_for_promise` on the preload to return early.
         if let Some(mi) = module_info.as_deref_mut() {
-            mi.flags.has_tla = !parse_result.ast.top_level_await_keyword.is_empty();
+            mi.flags.has_tla = parse_result.ast.top_level_await_keyword.is_some();
         }
         // Note: derive `*mut` from a `&mut` borrow (not `&x as *const _ as
         // *mut _`, which is Stacked-Borrows UB). The `&mut` borrow ends when the

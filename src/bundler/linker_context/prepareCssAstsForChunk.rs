@@ -13,7 +13,6 @@ use crate::bun_css::css_parser::{
 use crate::bun_css::{BundlerStyleSheet, ImportConditions, ImportInfo, PrinterOptions, Targets};
 use crate::bun_fs::Path;
 use bun_ast::{ImportKind, ImportRecord, ImportRecordFlags, ImportRecordTag, Index as AstIndex};
-use bun_ast::{Loc, Range};
 use bun_collections::VecExt;
 use bun_core::strings;
 use bun_resolver::DataURL;
@@ -166,7 +165,7 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                         entry.condition_import_records.push(ImportRecord {
                             kind: ImportKind::At,
                             path: *p,
-                            range: Range::default(),
+                            range: None,
                             tag: ImportRecordTag::None,
                             loader: None,
                             source_index: AstIndex::default(),
@@ -263,7 +262,7 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                                     // disjoint `Transpiler.log` backref.
                                     c.log_disjoint().add_error_fmt(
                                         None,
-                                        Loc::EMPTY,
+                                        None,
                                         format_args!("Error generating CSS for import: {}", e),
                                     );
                                     continue;
@@ -296,7 +295,7 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                     entry.condition_import_records.push(ImportRecord {
                         kind: ImportKind::At,
                         path: *p,
-                        range: Range::NONE,
+                        range: None,
                         tag: ImportRecordTag::None,
                         loader: None,
                         source_index: AstIndex::default(),

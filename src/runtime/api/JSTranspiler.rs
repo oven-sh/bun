@@ -883,28 +883,28 @@ fn export_replacement_value(
             data: bun_ast::ExprData::EBoolean(bun_ast::E::Boolean {
                 value: value.to_boolean(),
             }),
-            loc: bun_ast::Loc::EMPTY,
+            loc: None,
         }));
     }
 
     if value.is_number() {
         return Ok(Some(Expr {
             data: bun_ast::ExprData::ENumber(bun_ast::E::Number::new(value.as_number())),
-            loc: bun_ast::Loc::EMPTY,
+            loc: None,
         }));
     }
 
     if value.is_null() {
         return Ok(Some(Expr {
             data: bun_ast::ExprData::ENull(bun_ast::E::Null {}),
-            loc: bun_ast::Loc::EMPTY,
+            loc: None,
         }));
     }
 
     if value.is_undefined() {
         return Ok(Some(Expr {
             data: bun_ast::ExprData::EUndefined(bun_ast::E::Undefined {}),
-            loc: bun_ast::Loc::EMPTY,
+            loc: None,
         }));
     }
 
@@ -916,10 +916,7 @@ fn export_replacement_value(
         // `E::EString::init` erases the borrow to `'static` per the AST
         // crate's `Str` convention (see ast/E.rs).
         let data = arena.alloc_slice_copy(utf8.slice());
-        return Ok(Some(Expr::init(
-            bun_ast::E::EString::init(data),
-            bun_ast::Loc::EMPTY,
-        )));
+        return Ok(Some(Expr::init(bun_ast::E::EString::init(data), None)));
     }
 
     Ok(None)

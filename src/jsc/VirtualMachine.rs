@@ -3054,7 +3054,7 @@ pub fn process_fetch_log(
                 bun_ast::Msg {
                     data: bun_ast::range_data(
                         None,
-                        bun_ast::Range::NONE,
+                        None,
                         format!(
                             "Unexpected pending import in \"{specifier}\". To automatically \
                              install npm packages with Bun, please use an import statement \
@@ -3072,7 +3072,7 @@ pub fn process_fetch_log(
                 bun_ast::Msg {
                     data: bun_ast::range_data(
                         None,
-                        bun_ast::Range::NONE,
+                        None,
                         format!("{} while building {specifier}", err.name()).into_bytes(),
                     ),
                     ..Default::default()
@@ -4649,7 +4649,7 @@ impl VirtualMachine {
                 import_kind,
             );
             let msg = bun_ast::Msg {
-                data: bun_ast::range_data(None, bun_ast::Range::NONE, printed),
+                data: bun_ast::range_data(None, None, printed),
                 ..Default::default()
             };
             return Ok(Err(crate::ResolveMessage::create(
@@ -4808,7 +4808,7 @@ impl VirtualMachine {
                         import_kind,
                     );
                     bun_ast::Msg {
-                        data: bun_ast::range_data(None, bun_ast::Range::NONE, printed.clone()),
+                        data: bun_ast::range_data(None, None, printed.clone()),
                         metadata: bun_ast::Metadata::Resolve(bun_ast::MetadataResolve {
                             specifier: bun_ast::BabyString::r#in(&printed, specifier_utf8.slice()),
                             import_kind,

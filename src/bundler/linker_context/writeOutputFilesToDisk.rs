@@ -3,7 +3,6 @@ use std::io::Write as _;
 
 use crate::Error;
 use bun_alloc::MaxHeapAllocator;
-use bun_ast::Loc;
 use bun_core::fmt::quote;
 use bun_core::{String as BunString, strings};
 use bun_paths::{self as paths, PathBuffer};
@@ -45,7 +44,7 @@ pub(crate) fn write_output_files_to_disk(
                 c.log_mut()
                     .add_error_fmt(
                         None,
-                        Loc::EMPTY,
+                        None,
                         format_args!(
                             "Failed to create output directory {} is a file. Please choose a different outdir or delete {}",
                             quote(root_path),
@@ -55,7 +54,7 @@ pub(crate) fn write_output_files_to_disk(
             } else {
                 c.log_mut().add_error_fmt(
                     None,
-                    Loc::EMPTY,
+                    None,
                     format_args!(
                         "Failed to create output directory {} {}",
                         bstr::BStr::new(e.name()),
@@ -107,7 +106,7 @@ pub(crate) fn write_output_files_to_disk(
                     if let Err(e) = root_dir.make_path(rel_parent) {
                         c.log_mut().add_error_fmt(
                             None,
-                            Loc::EMPTY,
+                            None,
                             format_args!(
                                 "{} creating outdir {} while saving sourcemap {}",
                                 bstr::BStr::new(e.name()),
@@ -207,7 +206,7 @@ pub(crate) fn write_output_files_to_disk(
             if let Err(e) = root_dir.make_path(rel_parent) {
                 c.log_mut().add_error_fmt(
                     None,
-                    Loc::EMPTY,
+                    None,
                     format_args!(
                         "{} creating outdir {} while saving chunk {}",
                         bstr::BStr::new(e.name()),
@@ -443,7 +442,7 @@ pub(crate) fn write_output_files_to_disk(
                             Err(e) => {
                                 c.log_mut().add_error_fmt(
                                     None,
-                                    Loc::EMPTY,
+                                    None,
                                     format_args!(
                                         "{} writing bytecode for chunk {}",
                                         e,
@@ -643,7 +642,7 @@ pub(crate) fn write_output_files_to_disk(
                 if let Err(e) = root_dir.make_path(rel_parent) {
                     c.log_mut().add_error_fmt(
                         None,
-                        Loc::EMPTY,
+                        None,
                         format_args!(
                             "{} creating outdir {} while saving file {}",
                             bstr::BStr::new(e.name()),

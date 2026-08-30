@@ -821,7 +821,7 @@ impl WebWorker {
                     // `Log::add_error` takes `impl IntoText`; pass an owned
                     // `Vec<u8>` so the `Msg` owns its bytes (no lifetime tie
                     // to `err`, which is dropped immediately after).
-                    vm_log.add_error(None, bun_ast::Loc::EMPTY, err.slice().to_vec());
+                    vm_log.add_error(None, None, err.slice().to_vec());
                 }
                 self.flush_logs(vm);
                 return self.shutdown();

@@ -116,7 +116,7 @@ pub struct TSNamespaceScope {
 pub type TSNamespaceMemberMap = StringArrayHashMap<TSNamespaceMember, StringContext, AstAlloc>;
 
 pub struct TSNamespaceMember {
-    pub loc: Loc,
+    pub loc: Option<Loc>,
     pub data: Data,
 }
 

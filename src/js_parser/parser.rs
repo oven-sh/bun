@@ -437,8 +437,6 @@ pub(crate) struct ExprListLoc {
     pub(crate) loc: bun_ast::Loc,
 }
 
-pub(crate) const LOC_MODULE_SCOPE: bun_ast::Loc = bun_ast::Loc { start: -100 };
-
 pub struct DeferredImportNamespace {
     pub(crate) namespace: LocRef,
     pub(crate) import_record_id: u32,
@@ -689,7 +687,7 @@ pub struct TransposeState {
     pub(crate) is_await_target: bool,
     pub(crate) is_then_catch_target: bool,
     pub(crate) is_require_immediately_assigned_to_decl: bool,
-    pub(crate) loc: bun_ast::Loc,
+    pub(crate) loc: Option<bun_ast::Loc>,
     pub(crate) import_record_tag: Option<bun_ast::ImportRecordTag>,
     pub(crate) import_loader: Option<bun_ast::Loader>,
     pub(crate) import_options: Expr,
@@ -701,7 +699,7 @@ impl Default for TransposeState {
             is_await_target: false,
             is_then_catch_target: false,
             is_require_immediately_assigned_to_decl: false,
-            loc: bun_ast::Loc::EMPTY,
+            loc: None,
             import_record_tag: None,
             import_loader: None,
             import_options: Expr::EMPTY,
@@ -793,9 +791,7 @@ impl<'a> JSXTag<'a> {
                 // sole live alias while `P` lives.
                 unsafe { p.log_ptr().as_mut() }.add_error(
                     Some(source),
-                    bun_ast::Loc {
-                        start: member_range.loc.start + i32::try_from(index).expect("int cast"),
-                    },
+                    member_range.loc.add(index),
                     b"Unexpected \"-\"",
                 );
                 return Err(crate::Error::SyntaxError);
@@ -808,12 +804,13 @@ impl<'a> JSXTag<'a> {
             new_name[name.len()] = b'.';
             new_name[name.len() + 1..].copy_from_slice(member);
             name = new_name;
-            tag_range.len = member_range.loc.start + member_range.len - tag_range.loc.start;
+            tag_range.len =
+                i32::try_from(member_range.end().get() - tag_range.loc.get()).expect("int cast");
             tag = p.new_expr(
                 E::Dot {
                     target: tag,
                     name: member.into(),
-                    name_loc: member_range.loc,
+                    name_loc: Some(member_range.loc),
                     ..Default::default()
                 },
                 loc,
@@ -1060,7 +1057,7 @@ pub enum StrictModeFeature {
 
 #[derive(Clone, Copy)]
 pub struct InvalidLoc {
-    pub(crate) loc: bun_ast::Loc,
+    pub(crate) loc: Option<bun_ast::Loc>,
     pub(crate) kind: InvalidLocTag,
 }
 
@@ -1147,13 +1144,15 @@ pub(crate) type RefRefMap = HashMap<Ref, Ref>;
 // indexable + truncatable. The Scope itself is arena-owned for `'arena`.
 #[derive(Clone, Copy)]
 pub struct ScopeOrder<'arena> {
-    pub(crate) loc: bun_ast::Loc,
+    /// Where the scope opens; `None` for the module scope, which spans the
+    /// whole file and is entered before any location.
+    pub(crate) loc: Option<bun_ast::Loc>,
     pub(crate) scope: *mut Scope,
     _phantom: core::marker::PhantomData<&'arena Scope>,
 }
 impl<'arena> ScopeOrder<'arena> {
     #[inline]
-    pub(crate) fn new(loc: bun_ast::Loc, scope: *mut Scope) -> Self {
+    pub(crate) fn new(loc: Option<bun_ast::Loc>, scope: *mut Scope) -> Self {
         Self {
             loc,
             scope,
@@ -1193,7 +1192,7 @@ pub enum AwaitOrYield {
 /// arrow expressions.
 #[derive(Clone)]
 pub struct FnOrArrowDataParse {
-    pub(crate) needs_async_loc: bun_ast::Loc,
+    pub(crate) needs_async_loc: Option<bun_ast::Loc>,
     pub(crate) allow_await: AwaitOrYield,
     pub(crate) allow_yield: AwaitOrYield,
     pub(crate) allow_super_call: bool,
@@ -1221,7 +1220,7 @@ pub struct FnOrArrowDataParse {
 impl Default for FnOrArrowDataParse {
     fn default() -> Self {
         Self {
-            needs_async_loc: bun_ast::Loc::EMPTY,
+            needs_async_loc: None,
             allow_await: AwaitOrYield::AllowIdent,
             allow_yield: AwaitOrYield::AllowIdent,
             allow_super_call: false,
@@ -1307,8 +1306,7 @@ pub(crate) struct ImportClause<'a> {
 }
 
 pub struct PropertyOpts {
-    pub(crate) async_range: bun_ast::Range,
-    pub(crate) declare_range: bun_ast::Range,
+    pub(crate) declare_range: Option<bun_ast::Range>,
     pub(crate) is_async: bool,
     pub(crate) is_generator: bool,
 
@@ -1326,8 +1324,7 @@ pub struct PropertyOpts {
 impl Default for PropertyOpts {
     fn default() -> Self {
         Self {
-            async_range: bun_ast::Range::NONE,
-            declare_range: bun_ast::Range::NONE,
+            declare_range: None,
             is_async: false,
             is_generator: false,
             is_static: false,
@@ -1629,19 +1626,10 @@ pub use crate::parse::parse_entry::{JavaScriptParser, TSXParser};
 ///
 ///   // This is an error
 ///   function* foo() { (x = yield y) => {} }
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 pub struct DeferredArrowArgErrors {
-    pub(crate) invalid_expr_await: bun_ast::Range,
-    pub(crate) invalid_expr_yield: bun_ast::Range,
-}
-
-impl Default for DeferredArrowArgErrors {
-    fn default() -> Self {
-        Self {
-            invalid_expr_await: bun_ast::Range::NONE,
-            invalid_expr_yield: bun_ast::Range::NONE,
-        }
-    }
+    pub(crate) invalid_expr_await: Option<bun_ast::Range>,
+    pub(crate) invalid_expr_yield: Option<bun_ast::Range>,
 }
 
 pub fn new_lazy_export_ast<'bump>(

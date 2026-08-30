@@ -117,10 +117,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     // target of the EDot expression has already been visited.
     pub(crate) fn maybe_rewrite_property_access(
         &mut self,
-        loc: bun_ast::Loc,
+        loc: Option<bun_ast::Loc>,
         target: js_ast::Expr,
         name: &'a [u8],
-        name_loc: bun_ast::Loc,
+        name_loc: Option<bun_ast::Loc>,
         identifier_opts: IdentifierOpts,
     ) -> Option<Expr> {
         let p = self;
@@ -751,8 +751,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         &mut self,
         name: &'a [u8],
         target: &Expr,
-        loc: bun_ast::Loc,
-        name_loc: bun_ast::Loc,
+        loc: Option<bun_ast::Loc>,
+        name_loc: Option<bun_ast::Loc>,
     ) -> Option<Expr> {
         let p = self;
         let map: &js_ast::TSNamespaceMemberMap = &p.ts_namespace.map.unwrap();
@@ -818,16 +818,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 value: expr,
                 flags,
             },
-            bun_ast::Loc::EMPTY,
+            None,
         );
-        let right = p.new_expr(E::EString::from_static(b"undefined"), bun_ast::Loc::EMPTY);
+        let right = p.new_expr(E::EString::from_static(b"undefined"), None);
         Ok(p.new_expr(
             E::Binary {
                 op: js_ast::OpCode::BinStrictEq,
                 left,
                 right,
             },
-            bun_ast::Loc::EMPTY,
+            None,
         ))
     }
 
@@ -837,33 +837,27 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) -> Result<Expr, crate::Error> {
         let p = self;
         let test = Self::check_if_defined_helper(p, identifier_expr)?;
-        let object_ref = p
-            .find_symbol(bun_ast::Loc::EMPTY, b"Object")
-            .expect("unreachable")
-            .r#ref;
-        let yes = p.new_expr(E::Identifier::init(object_ref), bun_ast::Loc::EMPTY);
+        let object_ref = p.find_symbol(None, b"Object").expect("unreachable").r#ref;
+        let yes = p.new_expr(E::Identifier::init(object_ref), None);
         Ok(p.new_expr(
             E::If {
                 test,
                 yes,
                 no: identifier_expr,
             },
-            bun_ast::Loc::EMPTY,
+            None,
         ))
     }
 
-    pub(crate) fn maybe_comma_spread_error(&mut self, comma_after_spread: bun_ast::Loc) {
+    pub(crate) fn maybe_comma_spread_error(&mut self, comma_after_spread: Option<bun_ast::Loc>) {
         let p = self;
-        if comma_after_spread.is_empty() {
+        let Some(loc) = comma_after_spread else {
             return;
-        }
+        };
 
         p.log().add_range_error(
             Some(p.source),
-            bun_ast::Range {
-                loc: comma_after_spread,
-                len: 1,
-            },
+            bun_ast::Range { loc, len: 1 },
             b"Unexpected \",\" after rest pattern",
         );
     }

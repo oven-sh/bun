@@ -107,7 +107,7 @@ fn lower_jsx_element_name(builder: &mut HirBuilder, tag: &Expr) -> Result<JsxTag
 fn lower_jsx_member_expression(
     builder: &mut HirBuilder,
     expr: &E::Dot,
-    expr_loc: Loc,
+    expr_loc: Option<Loc>,
 ) -> Result<Place, CompilerError> {
     // Use the full member expression's loc for instruction locs (matching TS: exprPath.node.loc)
     let expr_loc = convert_loc(expr_loc);
@@ -198,7 +198,7 @@ fn lower_tag_identifier(
 pub(super) fn lower_jsx_call(
     builder: &mut HirBuilder,
     call: &E::Call,
-    expr_loc: Loc,
+    expr_loc: Option<Loc>,
 ) -> Result<InstructionValue, CompilerError> {
     let loc = convert_loc(expr_loc);
     let args: &[Expr] = &call.args;

@@ -40,21 +40,21 @@ impl Default for NameOfSymbol {
 
 pub struct Array {
     pub items: ExprNodeList,
-    pub comma_after_spread: crate::Loc,
+    pub comma_after_spread: Option<crate::Loc>,
     pub is_single_line: bool,
     pub is_parenthesized: bool,
     pub was_originally_macro: bool,
-    pub close_bracket_loc: crate::Loc,
+    pub close_bracket_loc: Option<crate::Loc>,
 }
 impl Default for Array {
     fn default() -> Self {
         Self {
             items: bun_alloc::AstAlloc::vec(),
-            comma_after_spread: crate::Loc::EMPTY,
+            comma_after_spread: None,
             is_single_line: false,
             is_parenthesized: false,
             was_originally_macro: false,
-            close_bracket_loc: crate::Loc::EMPTY,
+            close_bracket_loc: None,
         }
     }
 }
@@ -209,7 +209,7 @@ pub struct ImportMetaMain {
 
 #[derive(Clone, Copy)]
 pub struct NewTarget {
-    pub range: crate::Range,
+    pub range: Option<crate::Range>,
 }
 
 pub struct New {
@@ -220,7 +220,7 @@ pub struct New {
     /// this call expression. See the comment inside ECall for more details.
     pub can_be_unwrapped_if_unused: CallUnwrap,
 
-    pub close_parens_loc: crate::Loc,
+    pub close_parens_loc: Option<crate::Loc>,
 }
 impl Default for New {
     fn default() -> Self {
@@ -228,7 +228,7 @@ impl Default for New {
             target: ExprNodeIndex::EMPTY,
             args: bun_alloc::AstAlloc::vec(),
             can_be_unwrapped_if_unused: CallUnwrap::Never,
-            close_parens_loc: crate::Loc::EMPTY,
+            close_parens_loc: None,
         }
     }
 }
@@ -259,7 +259,7 @@ pub struct Call {
     pub args: ExprNodeList,
     pub optional_chain: Option<OptionalChain>,
     pub is_direct_eval: bool,
-    pub close_paren_loc: crate::Loc,
+    pub close_paren_loc: Option<crate::Loc>,
 
     /// True if there is a comment containing "@__PURE__" or "#__PURE__" preceding
     /// this call expression. This is an annotation used for tree shaking, and
@@ -281,7 +281,7 @@ impl Default for Call {
             args: bun_alloc::AstAlloc::vec(),
             optional_chain: None,
             is_direct_eval: false,
-            close_paren_loc: crate::Loc::EMPTY,
+            close_paren_loc: None,
             can_be_unwrapped_if_unused: CallUnwrap::Never,
             was_jsx_element: false,
         }
@@ -302,7 +302,7 @@ pub struct Dot {
     // Arena-owned slice (`StoreStr`: lifetime-erased arena ownership, bulk-freed
     // at `Store::reset()` — see `nodes.rs` StoreStr docs).
     pub name: Str,
-    pub name_loc: crate::Loc,
+    pub name_loc: Option<crate::Loc>,
     pub optional_chain: Option<OptionalChain>,
 
     /// If true, this property access is known to be free of side-effects. That
@@ -319,7 +319,7 @@ impl Default for Dot {
         Self {
             target: ExprNodeIndex::EMPTY,
             name: Str::EMPTY,
-            name_loc: crate::Loc::EMPTY,
+            name_loc: None,
             optional_chain: None,
             can_be_removed_if_unused: false,
             call_can_be_unwrapped_if_unused: CallUnwrap::Never,
@@ -349,7 +349,7 @@ impl Arrow {
     pub const NOOP_RETURN_UNDEFINED: Arrow = Arrow {
         args: crate::StoreSlice::EMPTY,
         body: G::FnBody {
-            loc: crate::Loc::EMPTY,
+            loc: None,
             stmts: crate::StoreSlice::EMPTY,
         },
         is_async: false,
@@ -363,7 +363,7 @@ impl Default for Arrow {
         Self {
             args: crate::StoreSlice::EMPTY,
             body: G::FnBody {
-                loc: crate::Loc::EMPTY,
+                loc: None,
                 stmts: crate::StoreSlice::EMPTY,
             },
             is_async: false,
@@ -621,7 +621,7 @@ pub struct JSXElement {
 
     pub flags: crate::flags::JSXElementBitset,
 
-    pub close_tag_loc: crate::Loc,
+    pub close_tag_loc: Option<crate::Loc>,
 }
 impl Default for JSXElement {
     fn default() -> Self {
@@ -631,7 +631,7 @@ impl Default for JSXElement {
             children: bun_alloc::AstAlloc::vec(),
             key_prop_index: -1,
             flags: crate::flags::JSXElementBitset::default(),
-            close_tag_loc: crate::Loc::EMPTY,
+            close_tag_loc: None,
         }
     }
 }
@@ -1122,7 +1122,7 @@ pub struct ObjectJSON {
     tape: core::ptr::NonNull<JsonTape>,
     first: u32,
     count: u32,
-    pub close_brace_loc: crate::Loc,
+    pub close_brace_loc: Option<crate::Loc>,
     pub is_single_line: bool,
 }
 
@@ -1152,7 +1152,7 @@ impl ObjectJSON {
         first: u32,
         count: u32,
         is_single_line: bool,
-        close_brace_loc: crate::Loc,
+        close_brace_loc: Option<crate::Loc>,
     ) -> Self {
         ObjectJSON {
             tape,
@@ -1204,7 +1204,7 @@ pub struct ArrayJSON {
     tape: core::ptr::NonNull<JsonTape>,
     first: u32,
     count: u32,
-    pub close_bracket_loc: crate::Loc,
+    pub close_bracket_loc: Option<crate::Loc>,
     pub is_single_line: bool,
 }
 
@@ -1224,7 +1224,7 @@ impl ArrayJSON {
         first: u32,
         count: u32,
         is_single_line: bool,
-        close_bracket_loc: crate::Loc,
+        close_bracket_loc: Option<crate::Loc>,
     ) -> Self {
         ArrayJSON {
             tape,
@@ -1264,22 +1264,22 @@ impl ArrayJSON {
 
 pub struct Object {
     pub properties: G::PropertyList,
-    pub comma_after_spread: crate::Loc,
+    pub comma_after_spread: Option<crate::Loc>,
     pub is_single_line: bool,
     pub is_parenthesized: bool,
     pub was_originally_macro: bool,
 
-    pub close_brace_loc: crate::Loc,
+    pub close_brace_loc: Option<crate::Loc>,
 }
 impl Default for Object {
     fn default() -> Self {
         Self {
             properties: bun_alloc::AstAlloc::vec(),
-            comma_after_spread: crate::Loc::EMPTY,
+            comma_after_spread: None,
             is_single_line: false,
             is_parenthesized: false,
             was_originally_macro: false,
-            close_brace_loc: crate::Loc::EMPTY,
+            close_brace_loc: None,
         }
     }
 }
@@ -1341,11 +1341,11 @@ bun_core::oom_from_alloc!(SetError);
 impl Object {
     pub const EMPTY: Object = Object {
         properties: bun_alloc::AstAlloc::vec(),
-        comma_after_spread: crate::Loc::EMPTY,
+        comma_after_spread: None,
         is_single_line: false,
         is_parenthesized: false,
         was_originally_macro: false,
-        close_brace_loc: crate::Loc::EMPTY,
+        close_brace_loc: None,
     };
 
     pub fn get(&self, key: &[u8]) -> Option<Expr> {
@@ -1402,11 +1402,7 @@ impl Object {
     }
 
     pub fn put_string(&mut self, bump: &Bump, key: &[u8], value: &[u8]) -> Result<(), AllocError> {
-        self.put(
-            bump,
-            key,
-            Expr::init(EString::init(value), crate::Loc::EMPTY),
-        )
+        self.put(bump, key, Expr::init(EString::init(value), None))
     }
 
     /// Walks `rope` segments, creating nested objects as needed, and returns
@@ -2106,7 +2102,7 @@ impl fmt::Display for EString {
 // value is in the Node
 pub struct TemplatePart {
     pub value: ExprNodeIndex,
-    pub tail_loc: crate::Loc,
+    pub tail_loc: Option<crate::Loc>,
     pub tail: TemplateContents,
 }
 
@@ -2165,7 +2161,7 @@ impl TemplateContents {
 
 impl Template {
     /// "`a${'b'}c`" => "`abc`"
-    pub fn fold(&mut self, bump: &Bump, loc: crate::Loc) -> Expr {
+    pub fn fold(&mut self, bump: &Bump, loc: Option<crate::Loc>) -> Expr {
         if self.tag.is_some()
             || (matches!(self.head, TemplateContents::Cooked(_)) && !self.head.cooked().is_utf8())
         {
@@ -2253,7 +2249,7 @@ impl Template {
                                         .e_string()
                                         .expect("infallible: variant checked")
                                         .shallow_clone(),
-                                    crate::Loc::EMPTY,
+                                    None,
                                 )
                                 .data
                                 .e_string_mut()
@@ -2294,7 +2290,7 @@ impl Template {
                                         .e_string()
                                         .expect("infallible: variant checked")
                                         .shallow_clone(),
-                                    crate::Loc::EMPTY,
+                                    None,
                                 )
                                 .data
                                 .e_string_mut()
@@ -2511,7 +2507,7 @@ mod json_tape_tests {
     fn prop(key: Str, value: JsonValue) -> PropertyJSON {
         PropertyJSON {
             key,
-            key_loc: Loc::EMPTY,
+            key_loc: Loc::new(0),
             value,
         }
     }
@@ -2558,13 +2554,13 @@ mod json_tape_tests {
         let kb = tape.get().alloc_str(b"b");
         let (first, count) = tape.get().append_props(&[prop(kb, JsonValue::Null)], &[]);
         // SAFETY: the tape's own pointer, as `Parser` passes it.
-        let inner = unsafe { ObjectJSON::new(tape.ptr(), first, count, true, Loc::EMPTY) };
+        let inner = unsafe { ObjectJSON::new(tape.ptr(), first, count, true, None) };
 
         // The parse continues: another string, then the outer object's rows.
         let ka = tape.get().alloc_str(b"a");
         let (first, count) = tape.get().append_props(&[prop(ka, JsonValue::Null)], &[]);
         // SAFETY: as above.
-        let outer = unsafe { ObjectJSON::new(tape.ptr(), first, count, true, Loc::EMPTY) };
+        let outer = unsafe { ObjectJSON::new(tape.ptr(), first, count, true, None) };
 
         // Post-parse reads, after every one of those writes.
         assert_eq!(inner.properties().len(), 1);
@@ -2581,11 +2577,11 @@ mod json_tape_tests {
 
         let (first, count) = tape.get().append_items(&[JsonValue::Null], &[]);
         // SAFETY: the tape's own pointer, as `Parser` passes it.
-        let inner = unsafe { ArrayJSON::new(tape.ptr(), first, count, true, Loc::EMPTY) };
+        let inner = unsafe { ArrayJSON::new(tape.ptr(), first, count, true, None) };
 
         let (first, count) = tape.get().append_items(&[JsonValue::Boolean(true)], &[]);
         // SAFETY: as above.
-        let outer = unsafe { ArrayJSON::new(tape.ptr(), first, count, true, Loc::EMPTY) };
+        let outer = unsafe { ArrayJSON::new(tape.ptr(), first, count, true, None) };
 
         assert_eq!(inner.items().len(), 1);
         assert!(matches!(inner.items()[0], JsonValue::Null));
@@ -2598,9 +2594,9 @@ mod json_tape_tests {
     fn zero_count_spans_do_not_read_the_tape() {
         let tape = TapeOwner::new();
         // SAFETY: the tape's own pointer.
-        let o = unsafe { ObjectJSON::new(tape.ptr(), 0, 0, true, Loc::EMPTY) };
+        let o = unsafe { ObjectJSON::new(tape.ptr(), 0, 0, true, None) };
         // SAFETY: as above.
-        let a = unsafe { ArrayJSON::new(tape.ptr(), 0, 0, true, Loc::EMPTY) };
+        let a = unsafe { ArrayJSON::new(tape.ptr(), 0, 0, true, None) };
         assert!(o.properties().is_empty());
         assert_eq!(o.value_locs(), Some(&[][..]));
         assert!(a.items().is_empty());
@@ -2639,13 +2635,13 @@ mod json_tape_tests {
         let kb = tape(tape_ptr).alloc_str(b"b");
         let (first, count) = tape(tape_ptr).append_props(&[prop(kb, JsonValue::Null)], &[]);
         // SAFETY: the tape's own pointer.
-        let inner = unsafe { ObjectJSON::new(tape_ptr, first, count, true, Loc::EMPTY) };
+        let inner = unsafe { ObjectJSON::new(tape_ptr, first, count, true, None) };
 
         // The parse keeps appending after the node is built.
         let ka = tape(tape_ptr).alloc_str(b"a");
         let (first, count) = tape(tape_ptr).append_props(&[prop(ka, JsonValue::Null)], &[]);
         // SAFETY: as above.
-        let outer = unsafe { ObjectJSON::new(tape_ptr, first, count, true, Loc::EMPTY) };
+        let outer = unsafe { ObjectJSON::new(tape_ptr, first, count, true, None) };
 
         assert_eq!(inner.properties()[0].key.slice(), b"b");
         assert_eq!(outer.properties()[0].key.slice(), b"a");

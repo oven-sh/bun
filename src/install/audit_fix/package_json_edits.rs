@@ -187,7 +187,7 @@ fn rewrite_property(arena: &bun_alloc::Arena, object: &mut Expr, edit: &PackageJ
         prop.value = Some(Expr::allocate(
             arena,
             E::EString::init(arena.alloc_slice_copy(&edit.new_literal)),
-            bun_ast::Loc::EMPTY,
+            None,
         ));
     }
 }

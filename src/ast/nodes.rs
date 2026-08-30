@@ -555,7 +555,7 @@ pub enum AssignTarget {
 
 #[derive(Copy, Clone)]
 pub struct LocRef {
-    pub loc: crate::Loc,
+    pub loc: Option<crate::Loc>,
     pub ref_: Ref,
 }
 
@@ -564,7 +564,7 @@ const _: () = assert!(core::mem::size_of::<LocRef>() == 12);
 impl Default for LocRef {
     fn default() -> Self {
         Self {
-            loc: crate::Loc::EMPTY,
+            loc: None,
             ref_: Ref::NONE,
         }
     }
@@ -576,7 +576,7 @@ pub struct ClauseItem {
     /// For exports: `export { foo as bar }` - "bar" is the alias
     /// For re-exports: `export { foo as bar } from 'path'` - "bar" is the alias
     pub alias: ArenaStr,
-    pub alias_loc: crate::Loc,
+    pub alias_loc: Option<crate::Loc>,
     /// Reference to the actual symbol being imported/exported.
     /// For imports: `import { foo as bar }` - ref to the symbol representing "foo" from the source module
     /// For exports: `export { foo as bar }` - ref to the local symbol "foo"
@@ -602,7 +602,7 @@ impl Default for ClauseItem {
     fn default() -> Self {
         Self {
             alias: empty_arena_str(),
-            alias_loc: crate::Loc::EMPTY,
+            alias_loc: None,
             name: LocRef::default(),
             original_name: empty_arena_str(),
         }
@@ -709,19 +709,19 @@ impl EnumValue {
 }
 
 pub struct Catch {
-    pub loc: crate::Loc,
+    pub loc: Option<crate::Loc>,
     pub binding: Option<BindingNodeIndex>,
     pub body: StmtNodeList,
-    pub body_loc: crate::Loc,
+    pub body_loc: Option<crate::Loc>,
 }
 
 pub struct Finally {
-    pub loc: crate::Loc,
+    pub loc: Option<crate::Loc>,
     pub stmts: StmtNodeList,
 }
 
 pub struct Case {
-    pub loc: crate::Loc,
+    pub loc: Option<crate::Loc>,
     pub value: Option<ExprNodeIndex>,
     pub body: StmtNodeList,
 }
@@ -753,15 +753,6 @@ impl Default for TlaCheck {
 pub struct Span {
     pub text: ArenaStr,
     pub range: crate::Range,
-}
-
-impl Default for Span {
-    fn default() -> Self {
-        Self {
-            text: empty_arena_str(),
-            range: crate::Range::default(),
-        }
-    }
 }
 
 /// Inlined enum values can only be numbers and strings
@@ -1163,7 +1154,7 @@ pub struct NamedImport {
     /// This field is used by the bundler to match imports with their corresponding
     /// exports and for error reporting when imports can't be resolved.
     pub alias: Option<ArenaStr>,
-    pub alias_loc: crate::Loc,
+    pub alias_loc: Option<crate::Loc>,
     pub namespace_ref: Ref,
     pub import_record_index: u32,
 
@@ -1181,7 +1172,7 @@ pub struct NamedImport {
 #[derive(Copy, Clone)]
 pub struct NamedExport {
     pub ref_: Ref,
-    pub alias_loc: crate::Loc,
+    pub alias_loc: Option<crate::Loc>,
 }
 
 #[repr(u8)]

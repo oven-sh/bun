@@ -15,7 +15,7 @@ pub use crate::b::B as Data;
 
 #[derive(Copy, Clone, Default)]
 pub struct Binding {
-    pub loc: crate::Loc,
+    pub loc: Option<crate::Loc>,
     pub data: B,
 }
 
@@ -68,9 +68,13 @@ impl BindingAlloc for crate::b::Missing {
 
 impl Binding {
     #[inline]
-    pub fn alloc(bump: &Arena, t: impl BindingAlloc, loc: crate::Loc) -> Binding {
+    pub fn alloc(
+        bump: &Arena,
+        t: impl BindingAlloc,
+        loc: impl Into<Option<crate::Loc>>,
+    ) -> Binding {
         Binding {
-            loc,
+            loc: loc.into(),
             data: t.alloc_into_b(bump),
         }
     }
@@ -95,7 +99,7 @@ pub struct ToExprWrapper {
     /// only used during the visit pass). `None` only for the pre-wire
     /// `dangling()` placeholder; niche-packed so layout matches `*const Arena`.
     arena: Option<bun_ptr::BackRef<Arena>>,
-    wrap: fn(*mut core::ffi::c_void, crate::Loc, Ref) -> Expr,
+    wrap: fn(*mut core::ffi::c_void, Option<crate::Loc>, Ref) -> Expr,
 }
 
 impl ToExprWrapper {
@@ -114,7 +118,10 @@ impl ToExprWrapper {
     /// coerce to fn pointers, so this stays zero-cost.
     /// The `*mut P` itself is passed per-call via `Binding::to_expr`.
     #[inline]
-    pub fn new(arena: &Arena, wrap: fn(*mut core::ffi::c_void, crate::Loc, Ref) -> Expr) -> Self {
+    pub fn new(
+        arena: &Arena,
+        wrap: fn(*mut core::ffi::c_void, Option<crate::Loc>, Ref) -> Expr,
+    ) -> Self {
         Self {
             arena: Some(bun_ptr::BackRef::new(arena)),
             wrap,
@@ -125,7 +132,7 @@ impl ToExprWrapper {
     pub(crate) fn wrap_identifier(
         &self,
         ctx: *mut core::ffi::c_void,
-        loc: crate::Loc,
+        loc: Option<crate::Loc>,
         ref_: Ref,
     ) -> Expr {
         (self.wrap)(ctx, loc, ref_)

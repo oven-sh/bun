@@ -120,7 +120,7 @@ impl HTMLBundle {
         let mut log = Log::init();
         log.add_error_fmt(
             None,
-            bun_ast::Loc::EMPTY,
+            None,
             format_args!(
                 "Bundling {} did not produce an html page for it. A plugin may have resolved it to another file or loaded it as something other than html.",
                 bun_core::fmt::quote(&self.path)

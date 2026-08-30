@@ -343,7 +343,7 @@ impl CssEql for VendorPrefix {
 impl CssEql for bun_ast::Loc {
     #[inline]
     fn eql(&self, other: &Self) -> bool {
-        self.start == other.start
+        self == other
     }
 }
 
@@ -1024,7 +1024,7 @@ impl CssHash for bun_ast::Loc {
     fn hash(&self, hasher: &mut Wyhash) {
         // Providing a structural hash here lets `#[derive(CssHash)]` types
         // include a `loc` field without `#[css(skip)]` if they want.
-        hasher.update(&self.start.to_ne_bytes());
+        hasher.update(&self.get().to_ne_bytes());
     }
 }
 

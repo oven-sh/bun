@@ -287,7 +287,7 @@ pub(crate) fn view(
                 items: ast::ExprNodeList::from_owned_slice(keys.into_boxed_slice()),
                 ..Default::default()
             },
-            bun_ast::Loc { start: -1 },
+            None,
         );
         manifest.set(&bump, b"versions", versions_array)?;
     }

@@ -876,6 +876,49 @@ describe("Bun.build", () => {
     expect(x.logs[0].position).toBeTruthy();
   });
 
+  test.concurrent("assigning to an import-equals binding is an error that points at the declaration", async () => {
+    const dir = tempDirWithFiles("import-equals-assign", {
+      "index.ts": "namespace Bar { export const x = 1 }\nimport foo = Bar;\nfoo = 1;\n",
+    });
+    const x = await Bun.build({ entrypoints: [join(dir, "index.ts")], throw: false });
+    expect(x.success).toBe(false);
+    expect(x.logs[0].message).toBe('Cannot assign to "foo" because it is a constant');
+    expect(x.logs[0].notes[0].message).toBe('The symbol "foo" was declared a constant here:');
+    expect(x.logs[0].notes[0].position).toMatchObject({ line: 2, column: 8 });
+  });
+
+  test.concurrent("a spread in a parenthesized expression is reported at the spread", async () => {
+    const dir = tempDirWithFiles("spread-in-parens", { "index.js": "(1, ...a);\n" });
+    const x = await Bun.build({ entrypoints: [join(dir, "index.js")], throw: false });
+    expect(x.success).toBe(false);
+    expect(x.logs[0].message).toBe('Unexpected "..."');
+    expect(x.logs[0].position).toMatchObject({ line: 1, column: 5, lineText: "(1, ...a);" });
+  });
+
+  test.concurrent('an invalid package.json "exports" value is reported at the value, not its key', async () => {
+    const dir = tempDirWithFiles("invalid-exports-position", {
+      "index.js": 'import "bool-exports";\nimport "array-exports";\n',
+      "node_modules/bool-exports/package.json": '{\n  "name": "bool-exports",\n  "exports": true\n}\n',
+      "node_modules/array-exports/package.json": '{\n  "name": "array-exports",\n  "exports": [true]\n}\n',
+    });
+    const x = await Bun.build({ entrypoints: [join(dir, "index.js")], throw: false });
+    const warnings = x.logs
+      .filter(log => log.message === "This value must be a string, an object, an array, or null")
+      .map(({ level, position }) => ({
+        level,
+        file: path.basename(path.dirname(position!.file)),
+        line: position!.line,
+        column: position!.column,
+        length: position!.length,
+        lineText: position!.lineText,
+      }))
+      .sort((a, b) => a.file.localeCompare(b.file));
+    expect(warnings).toEqual([
+      { level: "warn", file: "array-exports", line: 3, column: 15, length: 4, lineText: '  "exports": [true]' },
+      { level: "warn", file: "bool-exports", line: 3, column: 14, length: 4, lineText: '  "exports": true' },
+    ]);
+  });
+
   test.concurrent("module() throws error", async () => {
     expect(() =>
       Bun.build({

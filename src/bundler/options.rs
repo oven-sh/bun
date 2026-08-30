@@ -58,7 +58,7 @@ pub(crate) fn validate_path(
     if out.is_empty() {
         log.add_error_fmt(
             None,
-            bun_ast::Loc::EMPTY,
+            None,
             format_args!(
                 "Invalid {}: {}",
                 bstr::BStr::new(path_kind),
@@ -153,7 +153,7 @@ pub(crate) fn init_external_modules(
             if strings::index_of_char(&path[i + 1..], b'*').is_some() {
                 log.add_error_fmt(
                     None,
-                    bun_ast::Loc::EMPTY,
+                    None,
                     format_args!(
                         "External path \"{}\" cannot have more than one \"*\" wildcard",
                         bstr::BStr::new(external)

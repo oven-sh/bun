@@ -267,10 +267,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(G::Class {
             class_name: name,
             extends,
-            close_brace_loc,
+            close_brace_loc: Some(close_brace_loc),
             ts_decorators,
-            class_keyword,
-            body_loc,
+            class_keyword: Some(class_keyword),
+            body_loc: Some(body_loc),
             properties: bun_ast::StoreSlice::new_mut(properties.into_bump_slice_mut()),
             has_decorators: has_any_decorators,
             should_lower_standard_decorators: p.options.features.standard_decorators
@@ -305,7 +305,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             parts.push(E::TemplatePart {
                 value,
-                tail_loc,
+                tail_loc: Some(tail_loc),
                 tail,
             });
 
@@ -376,19 +376,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     pub(crate) fn parse_jsx_prop_value_identifier(
         &mut self,
-        previous_string_with_backslash_loc: &mut bun_ast::Loc,
+        previous_string_with_backslash_loc: &mut Option<bun_ast::Loc>,
     ) -> Result<Expr, Error> {
         let p = self;
         // Use NextInsideJSXElement() not Next() so we can parse a JSX-style string literal
         p.lexer.next_inside_jsx_element()?;
         if p.lexer.token == T::TStringLiteral {
-            previous_string_with_backslash_loc.start = p
+            let loc = p.lexer.loc();
+            let loc = p
                 .lexer
-                .loc()
-                .start
-                .max(p.lexer.previous_backslash_quote_in_jsx.loc.start);
+                .previous_backslash_quote_in_jsx
+                .map_or(loc, |backslash| loc.max(backslash.loc));
+            *previous_string_with_backslash_loc = Some(loc);
             let estr = p.lexer.to_e_string()?;
-            let expr = p.new_expr(estr, *previous_string_with_backslash_loc);
+            let expr = p.new_expr(estr, loc);
 
             p.lexer.next_inside_jsx_element()?;
             Ok(expr)
@@ -413,9 +414,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut items_list = BumpVec::<Expr>::new_in(p.arena);
         let mut errors = DeferredErrors::default();
         let mut arrow_arg_errors = DeferredArrowArgErrors::default();
-        let mut spread_range = bun_ast::Range::default();
-        let mut type_colon_range = bun_ast::Range::default();
-        let mut comma_after_spread = bun_ast::Loc::EMPTY;
+        let mut spread_range: Option<bun_ast::Range> = None;
+        let mut type_colon_range: Option<bun_ast::Range> = None;
+        let mut comma_after_spread: Option<bun_ast::Loc> = None;
 
         // Push a scope assuming this is an arrow function. It may not be, in which
         // case we'll need to roll this change back. This has to be done ahead of
@@ -440,13 +441,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let is_spread = p.lexer.token == T::TDotDotDot;
 
             if is_spread {
-                spread_range = p.lexer.range();
+                spread_range = Some(p.lexer.range());
                 // p.markSyntaxFeature()
                 p.lexer.next()?;
             }
 
             // We don't know yet whether these are arguments or expressions, so parse
-            p.latest_arrow_arg_loc = p.lexer.loc();
+            p.latest_arrow_arg_loc = Some(p.lexer.loc());
 
             let mut item = Expr::EMPTY;
             p.parse_expr_or_bindings(Level::Comma, Some(&mut errors), &mut item)?;
@@ -457,7 +458,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             // Skip over types
             if Self::IS_TYPESCRIPT_ENABLED && p.lexer.token == T::TColon {
-                type_colon_range = p.lexer.range();
+                type_colon_range = Some(p.lexer.range());
                 p.lexer.next()?;
                 p.skip_type_script_type(Level::Lowest)?;
             }
@@ -465,7 +466,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // There may be a "=" after the type (but not after an "as" cast)
             if Self::IS_TYPESCRIPT_ENABLED
                 && p.lexer.token == T::TEquals
-                && !p.forbid_suffix_after_as_loc.eql(p.lexer.loc())
+                && p.forbid_suffix_after_as_loc != Some(p.lexer.loc())
             {
                 p.lexer.next()?;
                 let rhs = p.parse_expr(Level::Comma)?;
@@ -480,7 +481,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             // Spread arguments must come last. If there's a spread argument followed
             if is_spread {
-                comma_after_spread = p.lexer.loc();
+                comma_after_spread = Some(p.lexer.loc());
             }
 
             // Eat the comma token
@@ -573,7 +574,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let args_slice: &'a mut [G::Arg] = args.into_bump_slice_mut();
                 let mut arrow = p.parse_arrow_body(args_slice, &mut arrow_data)?;
                 arrow.is_async = opts.is_async;
-                arrow.has_rest_arg = spread_range.len > 0;
+                arrow.has_rest_arg = spread_range.is_some();
                 p.pop_scope();
                 return Ok(p.new_expr(arrow, loc));
             }
@@ -585,7 +586,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.pop_and_flatten_scope(scope_index);
 
         // If this isn't an arrow function, then types aren't allowed
-        if type_colon_range.len > 0 {
+        if let Some(type_colon_range) = type_colon_range {
             p.log()
                 .add_range_error(Some(p.source), type_colon_range, b"Unexpected \":\"");
             return Err(crate::Error::SyntaxError);
@@ -615,9 +616,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // Is this a chain of expressions and comma operators?
         if items.len() > 0 {
             p.log_expr_errors(&mut errors);
-            if spread_range.len > 0 {
+            if spread_range.is_some() {
                 p.log()
-                    .add_range_error(Some(p.source), type_colon_range, b"Unexpected \"...\"");
+                    .add_range_error(Some(p.source), spread_range, b"Unexpected \"...\"");
                 return Err(crate::Error::SyntaxError);
             }
 
@@ -638,7 +639,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         let name = LocRef {
-            loc: p.lexer.loc(),
+            loc: Some(p.lexer.loc()),
             ref_: p.store_name_in_ref(p.lexer.identifier),
         };
         p.lexer.next()?;
@@ -689,12 +690,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
 
             name = Some(LocRef {
-                loc: name_loc,
+                loc: Some(name_loc),
                 ref_: js_ast::Ref::NONE,
             });
             if !opts.is_typescript_declare {
                 name.as_mut().unwrap().ref_ = p
-                    .declare_symbol(js_ast::symbol::Kind::Class, name_loc, name_text)
+                    .declare_symbol(js_ast::symbol::Kind::Class, Some(name_loc), name_text)
                     .expect("unreachable");
             }
         }
@@ -766,7 +767,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         let alias = p.lexer.identifier;
-        p.check_for_non_bmp_code_point(loc, alias);
+        p.check_for_non_bmp_code_point(Some(loc), alias);
         Ok(alias)
     }
 
@@ -875,7 +876,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
 
             if p.fn_or_arrow_data_parse.is_top_level {
-                p.top_level_await_keyword = token_range;
+                p.top_level_await_keyword = Some(token_range);
             }
 
             p.lexer.next()?;
@@ -1010,7 +1011,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             items.push(ArrayBinding {
                                 binding: Binding {
                                     data: B::B::BMissing(B::Missing {}),
-                                    loc: p.lexer.loc(),
+                                    loc: Some(p.lexer.loc()),
                                 },
                                 default_value: None,
                             });
@@ -1141,7 +1142,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         p.lexer.expect(T::TIdentifier)?;
         Ok(Binding {
-            loc,
+            loc: Some(loc),
             data: B::B::BMissing(B::Missing {}),
         })
     }
@@ -1446,7 +1447,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut opts = *_opts;
         let mut stmts = StmtList::new_in(p.arena);
 
-        let mut return_without_semicolon_start: i32 = -1;
+        let mut return_without_semicolon_start: Option<bun_ast::Loc> = None;
         opts.lexical_decl = LexicalDecl::AllowAll;
         let mut is_directive_prologue = true;
 
@@ -1518,21 +1519,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let mut needs_check = true;
                 if let js_ast::stmt::Data::SReturn(ret) = &stmt.data {
                     if ret.value.is_none() && !p.latest_return_had_semicolon {
-                        return_without_semicolon_start = stmt.loc.start;
+                        return_without_semicolon_start = stmt.loc;
                         needs_check = false;
                     }
                 }
 
-                if needs_check && return_without_semicolon_start != -1 {
+                if needs_check && let Some(return_start) = return_without_semicolon_start {
                     if let js_ast::stmt::Data::SExpr(_) = &stmt.data {
                         p.log().add_warning(
-                    Some(p.source),
-                            bun_ast::Loc { start: return_without_semicolon_start + 6 },
+                            Some(p.source),
+                            return_start.add(6),
                             b"The following expression is not returned because of an automatically-inserted semicolon",
                         );
                     }
 
-                    return_without_semicolon_start = -1;
+                    return_without_semicolon_start = None;
                 }
             }
         }
@@ -1590,7 +1591,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             )
                             .expect("unreachable");
                         let mut data = FnOrArrowDataParse {
-                            needs_async_loc: async_range.loc,
+                            needs_async_loc: Some(async_range.loc),
                             ..Default::default()
                         };
                         let arrow_body = p.parse_arrow_body(args, &mut data)?;

@@ -108,7 +108,8 @@ pub struct ParseUrl {
 pub type ParseResult = core::result::Result<ParsedSourceMap, ParseFail>;
 
 pub struct ParseFail {
-    pub loc: bun_ast::Loc,
+    /// Where in the mappings the failure is, if it has a position.
+    pub loc: Option<bun_ast::Loc>,
     pub err: crate::Error,
 }
 

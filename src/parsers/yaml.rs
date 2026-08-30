@@ -57,7 +57,7 @@ impl YAML {
         };
 
         match stream.docs.len() {
-            0 => Ok(Expr::init(E::Null {}, Loc::EMPTY)),
+            0 => Ok(Expr::init(E::Null {}, None)),
             1 => Ok(stream.docs[0].root),
             _ => {
                 // multi-document yaml streams are converted into arrays
@@ -71,7 +71,7 @@ impl YAML {
                         items,
                         ..Default::default()
                     },
-                    Loc::EMPTY,
+                    None,
                 ))
             }
         }
@@ -302,9 +302,7 @@ impl Pos {
     }
 
     pub(crate) fn loc(self) -> bun_ast::Loc {
-        bun_ast::Loc {
-            start: i32::try_from(self.0).expect("int cast"),
-        }
+        bun_ast::Loc::from_usize(self.0)
     }
 
     pub(crate) fn add(self, n: usize) -> Pos {
@@ -1544,7 +1542,8 @@ pub enum NodeTag {
 }
 
 impl NodeTag {
-    pub(crate) fn resolve_null(self, loc: bun_ast::Loc) -> Expr {
+    pub(crate) fn resolve_null(self, loc: impl Into<Option<bun_ast::Loc>>) -> Expr {
+        let loc = loc.into();
         match self {
             NodeTag::None
             | NodeTag::Bool
@@ -3223,8 +3222,8 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         if !self.has_cyclic_alias || !self.is_open_collection(node) {
             return Ok(());
         }
-        if let Ok(start) = usize::try_from(node.loc.start) {
-            self.token.start = Pos::from(start);
+        if let Some(loc) = node.loc {
+            self.token.start = Pos::from(loc.usize());
         }
         Err(ParseError::CyclicMerge)
     }
@@ -3287,7 +3286,7 @@ impl CollectionData for E::Array {
         let slot = ast::expr::Store::append(E::Array::default());
         (
             Expr {
-                loc,
+                loc: Some(loc),
                 data: ast::ExprData::EArray(slot),
             },
             slot,
@@ -3300,7 +3299,7 @@ impl CollectionData for E::Object {
         let slot = ast::expr::Store::append(E::Object::default());
         (
             Expr {
-                loc,
+                loc: Some(loc),
                 data: ast::ExprData::EObject(slot),
             },
             slot,
@@ -3906,7 +3905,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     self.charge_alias_expansion(copy)?;
 
                     // update position from the anchor node to the alias node.
-                    copy.loc = alias_start.loc();
+                    copy.loc = Some(alias_start.loc());
 
                     self.scan(ScanOptions::default())?;
 

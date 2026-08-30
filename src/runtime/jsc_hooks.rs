@@ -802,7 +802,7 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
                         // SAFETY: `log` is the unique per-VM `Box<Log>`.
                         let _ = unsafe { &mut *log.as_ptr() }.add_error_fmt(
                             None,
-                            bun_ast::Loc::EMPTY,
+                            None,
                             format_args!(
                                 "{} resolving preload {}",
                                 e.name(),
@@ -818,7 +818,7 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
                         // SAFETY: `log` is the unique per-VM `Box<Log>`.
                         let _ = unsafe { &mut *log.as_ptr() }.add_error_fmt(
                             None,
-                            bun_ast::Loc::EMPTY,
+                            None,
                             format_args!(
                                 "preload not found {}",
                                 bun_core::fmt::format_json_string_latin1(preload_slice),
@@ -3072,7 +3072,7 @@ fn transpile_source_code_inner(
                 // RuntimeTranspilerStore.rs for why this matters under
                 // --isolate / --parallel).
                 if let Some(mi) = module_info.as_deref_mut() {
-                    mi.flags.has_tla = !parse_result.ast.top_level_await_keyword.is_empty();
+                    mi.flags.has_tla = parse_result.ast.top_level_await_keyword.is_some();
                 }
                 // Derive the `*mut` from a `&mut` borrow (not `&x as *const _
                 // as *mut _`, which is Stacked-Borrows UB). The borrow ends

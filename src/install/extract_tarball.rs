@@ -53,7 +53,7 @@ impl ExtractTarball {
             if !self.integrity.verify(bytes) {
                 log.add_error_fmt(
                     None,
-                    bun_ast::Loc::EMPTY,
+                    None,
                     format_args!(
                         "Integrity check failed for tarball: {}",
                         bun_fmt::s(self.name.slice()),
@@ -249,7 +249,7 @@ impl ExtractTarball {
             } else {
                 log.add_error_fmt(
                     None,
-                    bun_ast::Loc::EMPTY,
+                    None,
                     format_args!(
                         "Refusing to install package with invalid name \"{}\"",
                         bun_fmt::s(name),
@@ -271,7 +271,7 @@ impl ExtractTarball {
                 Err(err) => {
                     log.add_error_fmt(
                         None,
-                        bun_ast::Loc::EMPTY,
+                        None,
                         format_args!(
                             "{} when create temporary directory named \"{}\" (while extracting \"{}\")",
                             bun_fmt::s(err.name()),
@@ -476,7 +476,7 @@ impl ExtractTarball {
                     if !bun_install::dependency::is_safe_install_folder_name(name) {
                         log.add_error_fmt(
                             None,
-                            bun_ast::Loc::EMPTY,
+                            None,
                             format_args!(
                                 "Refusing to install package with invalid name \"{}\"",
                                 bun_fmt::s(name),
@@ -497,7 +497,7 @@ impl ExtractTarball {
                     if !bun_install::repository::is_safe_resolved_tag(resolved) {
                         log.add_error_fmt(
                             None,
-                            bun_ast::Loc::EMPTY,
+                            None,
                             format_args!(
                                 "Refusing to install \"{}\": tarball root directory \"{}\" is not a valid folder name",
                                 bun_fmt::s(name),
@@ -566,7 +566,7 @@ impl ExtractTarball {
                             // i guess we just
                             log.add_error_fmt(
                                 None,
-                                bun_ast::Loc::EMPTY,
+                                None,
                                 format_args!(
                                     "moving \"{}\" to cache dir failed\n{}\n From: {}\n   To: {}",
                                     bun_fmt::s(name),
@@ -641,7 +641,7 @@ impl ExtractTarball {
                             let _ = sys::close(dir_to_move);
                             log.add_error_fmt(
                                 None,
-                                bun_ast::Loc::EMPTY,
+                                None,
                                 format_args!(
                                     "moving \"{}\" to cache dir failed\n{}\n  From: {}\n    To: {}",
                                     bun_fmt::s(name),
@@ -688,7 +688,7 @@ impl ExtractTarball {
                 ) {
                     log.add_error_fmt(
                         None,
-                        bun_ast::Loc::EMPTY,
+                        None,
                         format_args!(
                             "moving \"{}\" to cache dir failed: {}\n  From: {}\n    To: {}",
                             bun_fmt::s(name),
@@ -711,7 +711,7 @@ impl ExtractTarball {
                 Err(err) => {
                     log.add_error_fmt(
                         None,
-                        bun_ast::Loc::EMPTY,
+                        None,
                         format_args!(
                             "failed to verify cache dir for \"{}\": {}",
                             bun_fmt::s(name),
@@ -726,7 +726,7 @@ impl ExtractTarball {
                 Err(err) => {
                     log.add_error_fmt(
                         None,
-                        bun_ast::Loc::EMPTY,
+                        None,
                         format_args!(
                             "failed to resolve cache dir for \"{}\": {}",
                             bun_fmt::s(name),
@@ -775,7 +775,7 @@ impl ExtractTarball {
 
                         log.add_error_fmt(
                             None,
-                            bun_ast::Loc::EMPTY,
+                            None,
                             format_args!(
                                 "\"package.json\" for \"{}\" failed to open: {}",
                                 bun_fmt::s(name),
@@ -793,7 +793,7 @@ impl ExtractTarball {
                         let _ = json_file.close();
                         log.add_error_fmt(
                             None,
-                            bun_ast::Loc::EMPTY,
+                            None,
                             format_args!(
                                 "\"package.json\" for \"{}\" failed to resolve: {}",
                                 bun_fmt::s(name),

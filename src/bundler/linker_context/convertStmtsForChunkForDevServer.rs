@@ -5,7 +5,6 @@ use bun_alloc::{AllocError, Arena as Bump};
 use bun_ast as js_ast;
 use bun_ast::ArrayBinding;
 use bun_ast::ImportRecordFlags;
-use bun_ast::Loc;
 use bun_ast::{Binding, E, Expr, ExprNodeList, G, S, Stmt, StmtData, b};
 use bun_ast::{ImportRecordTag, Loader};
 use bun_collections::VecExt;
@@ -50,7 +49,7 @@ pub(crate) fn convert_stmts_for_chunk_for_dev_server<'bump>(
     ast: &mut JSAst<'_>,
 ) -> Result<(), AllocError> {
     let hmr_api_ref = ast.wrapper_ref;
-    let hmr_api_id = Expr::init_identifier(hmr_api_ref, Loc::EMPTY);
+    let hmr_api_id = Expr::init_identifier(hmr_api_ref, None);
     let mut esm_decls: bun_alloc::ArenaVec<'bump, ArrayBinding> = bun_alloc::ArenaVec::new_in(bump);
     let mut esm_callbacks: Vec<Expr> = Vec::new();
 
@@ -88,7 +87,7 @@ pub(crate) fn convert_stmts_for_chunk_for_dev_server<'bump>(
                     // empty object so body code referencing it doesn't throw.
                     // SAFETY: `st.items` is an arena-owned fat ptr; len is always sound to read.
                     let items_len = st.items.len();
-                    if !st.star_name_loc.is_empty() || items_len > 0 || st.default_name.is_some() {
+                    if st.star_name_loc.is_some() || items_len > 0 || st.default_name.is_some() {
                         stmts
                             .inside_wrapper_prefix
                             .append_non_dependency(Stmt::alloc(
@@ -116,7 +115,7 @@ pub(crate) fn convert_stmts_for_chunk_for_dev_server<'bump>(
                     || record.tag == ImportRecordTag::Bun
                     || record.tag == ImportRecordTag::Runtime;
                 let is_bare_import =
-                    st.star_name_loc.is_empty() && st.items.len() == 0 && st.default_name.is_none();
+                    st.star_name_loc.is_none() && st.items.len() == 0 && st.default_name.is_none();
 
                 if is_builtin {
                     if !is_bare_import {
@@ -145,7 +144,7 @@ pub(crate) fn convert_stmts_for_chunk_for_dev_server<'bump>(
                                         },
                                         ..Default::default()
                                     },
-                                    record.range.loc,
+                                    record.range.map(|r| r.loc),
                                 )]),
                                 ..Default::default()
                             },
@@ -164,7 +163,7 @@ pub(crate) fn convert_stmts_for_chunk_for_dev_server<'bump>(
                                             b::Identifier {
                                                 r#ref: st.namespace_ref,
                                             },
-                                            st.star_name_loc.to_nullable().unwrap_or(stmt.loc),
+                                            st.star_name_loc.or(stmt.loc),
                                         ),
                                         value: Some(call),
                                     }]),
@@ -174,16 +173,16 @@ pub(crate) fn convert_stmts_for_chunk_for_dev_server<'bump>(
                             ))?;
                     }
                 } else {
-                    let loc = st.star_name_loc.to_nullable().unwrap_or(stmt.loc);
+                    let loc = st.star_name_loc.or(stmt.loc);
                     if is_bare_import {
                         esm_decls.push(ArrayBinding {
                             binding: Binding {
                                 data: b::B::BMissing(b::Missing {}),
-                                loc: Loc::EMPTY,
+                                loc: None,
                             },
                             default_value: None,
                         });
-                        esm_callbacks.push(Expr::init(E::Arrow::NOOP_RETURN_UNDEFINED, Loc::EMPTY));
+                        esm_callbacks.push(Expr::init(E::Arrow::NOOP_RETURN_UNDEFINED, None));
                     } else {
                         let binding = Binding::alloc(
                             bump,
@@ -203,7 +202,7 @@ pub(crate) fn convert_stmts_for_chunk_for_dev_server<'bump>(
                                     b::Identifier {
                                         r#ref: ast.module_ref,
                                     },
-                                    Loc::EMPTY,
+                                    None,
                                 ),
                                 ..Default::default()
                             })));
@@ -216,21 +215,15 @@ pub(crate) fn convert_stmts_for_chunk_for_dev_server<'bump>(
                                     Expr::init(
                                         E::Binary {
                                             op: js_ast::OpCode::BinAssign,
-                                            left: Expr::init_identifier(
-                                                st.namespace_ref,
-                                                Loc::EMPTY,
-                                            ),
-                                            right: Expr::init_identifier(
-                                                ast.module_ref,
-                                                Loc::EMPTY,
-                                            ),
+                                            left: Expr::init_identifier(st.namespace_ref, None),
+                                            right: Expr::init_identifier(ast.module_ref, None),
                                         },
-                                        Loc::EMPTY,
+                                        None,
                                     ),
                                 )?,
                                 ..Default::default()
                             },
-                            Loc::EMPTY,
+                            None,
                         ));
                     }
 
@@ -258,21 +251,21 @@ pub(crate) fn convert_stmts_for_chunk_for_dev_server<'bump>(
                                 has_spread: false,
                                 is_single_line: true,
                             },
-                            Loc::EMPTY,
+                            None,
                         ),
                         value: Some(Expr::init(
                             E::Dot {
                                 target: hmr_api_id,
                                 name: b"imports".into(),
-                                name_loc: Loc::EMPTY,
+                                name_loc: None,
                                 ..Default::default()
                             },
-                            Loc::EMPTY,
+                            None,
                         )),
                     }]),
                     ..Default::default()
                 },
-                Loc::EMPTY,
+                None,
             ))?;
         // hmr.onUpdate = [ ... ];
         // Capture len before moving `esm_callbacks` (borrowck).
@@ -288,10 +281,10 @@ pub(crate) fn convert_stmts_for_chunk_for_dev_server<'bump>(
                                 E::Dot {
                                     target: hmr_api_id,
                                     name: b"updateImport".into(),
-                                    name_loc: Loc::EMPTY,
+                                    name_loc: None,
                                     ..Default::default()
                                 },
-                                Loc::EMPTY,
+                                None,
                             ),
                             right: Expr::init(
                                 E::Array {
@@ -299,14 +292,14 @@ pub(crate) fn convert_stmts_for_chunk_for_dev_server<'bump>(
                                     is_single_line: callbacks_len <= 2,
                                     ..Default::default()
                                 },
-                                Loc::EMPTY,
+                                None,
                             ),
                         },
-                        Loc::EMPTY,
+                        None,
                     ),
                     ..Default::default()
                 },
-                Loc::EMPTY,
+                None,
             ))?;
     }
 

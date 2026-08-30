@@ -164,7 +164,7 @@ impl<'a> ImportScanner<'a> {
                         }
 
                         // Remove the star import if it's unused
-                        if !st.star_name_loc.is_empty() {
+                        if st.star_name_loc.is_some() {
                             found_imports = true;
                             let symbol = &p.symbols[st.namespace_ref.inner_index() as usize];
 
@@ -198,7 +198,7 @@ impl<'a> ImportScanner<'a> {
                                 }
 
                                 if !has_any {
-                                    st.star_name_loc = bun_ast::Loc::EMPTY;
+                                    st.star_name_loc = None;
                                     did_remove_star_loc = true;
                                 }
                             }
@@ -272,7 +272,7 @@ impl<'a> ImportScanner<'a> {
                             || (!is_typescript_enabled
                                 && p.options.features.trim_unused_imports
                                 && found_imports
-                                && st.star_name_loc.is_empty()
+                                && st.star_name_loc.is_none()
                                 // SAFETY: arena-owned slice; see above.
                                 && st.items.slice().is_empty()
                                 && st.default_name.is_none())
@@ -302,15 +302,13 @@ impl<'a> ImportScanner<'a> {
                             == 0);
 
                     if convert_star_to_clause && !keep_unused_imports {
-                        st.star_name_loc = bun_ast::Loc::EMPTY;
+                        st.star_name_loc = None;
                     }
 
                     if is_typescript_enabled {
                         let default_binding = st.default_name.map(|name| (name.ref_, name.loc));
-                        let star_binding = st
-                            .star_name_loc
-                            .to_nullable()
-                            .map(|loc| (st.namespace_ref, loc));
+                        let star_binding =
+                            st.star_name_loc.map(|loc| (st.namespace_ref, Some(loc)));
                         let item_bindings = st
                             .items
                             .slice()
@@ -371,7 +369,7 @@ impl<'a> ImportScanner<'a> {
                     let st_items: &[js_ast::ClauseItem] = st.items.slice();
 
                     if p.options.bundle {
-                        if !st.star_name_loc.is_empty() && existing_count > 0 {
+                        if st.star_name_loc.is_some() && existing_count > 0 {
                             let existing = existing_items.unwrap();
                             // Map keys are Box<[u8]> that drop with the parser; copy into the
                             // AST arena so the `StoreStr` stored on NamedImport / NamespaceAlias
@@ -419,9 +417,7 @@ impl<'a> ImportScanner<'a> {
                                         namespace_ref,
                                         alias: js_ast::StoreStr::new(*alias),
                                         import_record_index: st.import_record_index,
-                                        was_originally_property_access: !st
-                                            .star_name_loc
-                                            .is_empty()
+                                        was_originally_property_access: st.star_name_loc.is_some()
                                             && existing.contains(original_name),
                                     }));
 
@@ -438,10 +434,10 @@ impl<'a> ImportScanner<'a> {
                         handle_oom(p.named_imports.ensure_unused_capacity(
                             st_items.len()
                                 + usize::from(st.default_name.is_some())
-                                + usize::from(!st.star_name_loc.is_empty()),
+                                + usize::from(st.star_name_loc.is_some()),
                         ));
 
-                        if let Some(loc) = st.star_name_loc.to_nullable() {
+                        if let Some(loc) = st.star_name_loc {
                             record!()
                                 .flags
                                 .insert(import_record::Flags::CONTAINS_IMPORT_STAR);
@@ -450,7 +446,7 @@ impl<'a> ImportScanner<'a> {
                                 js_ast::NamedImport {
                                     alias_is_star: true,
                                     alias: Some(raw_str(b"")),
-                                    alias_loc: loc,
+                                    alias_loc: Some(loc),
                                     namespace_ref: Ref::NONE,
                                     import_record_index: st.import_record_index,
                                     local_parts_with_uses: bun_alloc::AstAlloc::vec(),
@@ -531,7 +527,7 @@ impl<'a> ImportScanner<'a> {
                             if record!()
                                 .flags
                                 .contains(import_record::Flags::CONTAINS_IMPORT_STAR)
-                                || !st.star_name_loc.is_empty()
+                                || st.star_name_loc.is_some()
                             {
                                 // SAFETY: arena-owned slice valid for 'p.
                                 let original_name = symbol.original_name.slice();
@@ -540,9 +536,7 @@ impl<'a> ImportScanner<'a> {
                                         namespace_ref,
                                         alias: item.alias,
                                         import_record_index: st.import_record_index,
-                                        was_originally_property_access: !st
-                                            .star_name_loc
-                                            .is_empty()
+                                        was_originally_property_access: st.star_name_loc.is_some()
                                             && existing_items
                                                 .map(|m| m.contains(original_name))
                                                 .unwrap_or(false),
@@ -567,7 +561,7 @@ impl<'a> ImportScanner<'a> {
                     p.import_records_for_current_part
                         .push(st.import_record_index);
 
-                    if !st.star_name_loc.is_empty() {
+                    if st.star_name_loc.is_some() {
                         record!()
                             .flags
                             .insert(import_record::Flags::CONTAINS_IMPORT_STAR);
@@ -606,10 +600,9 @@ impl<'a> ImportScanner<'a> {
                         } else {
                             p.log().add_range_error(
                                 Some(p.source),
-                                bun_ast::Range {
-                                    loc: st.func.open_parens_loc,
-                                    len: 2,
-                                },
+                                st.func
+                                    .open_parens_loc
+                                    .map(|loc| bun_ast::Range { loc, len: 2 }),
                                 b"Exported functions must have a name",
                             );
                         }
@@ -627,10 +620,7 @@ impl<'a> ImportScanner<'a> {
                         } else {
                             p.log().add_range_error(
                                 Some(p.source),
-                                bun_ast::Range {
-                                    loc: st.class.body_loc,
-                                    len: 0,
-                                },
+                                st.class.body_loc.map(|loc| bun_ast::Range { loc, len: 0 }),
                                 b"Exported classes must have a name",
                             );
                         }
@@ -729,7 +719,7 @@ impl<'a> ImportScanner<'a> {
                             js_ast::NamedImport {
                                 alias: None,
                                 alias_is_star: true,
-                                alias_loc: alias.loc,
+                                alias_loc: Some(alias.loc),
                                 namespace_ref: Ref::NONE,
                                 import_record_index: st.import_record_index,
                                 is_exported: true,
@@ -737,7 +727,7 @@ impl<'a> ImportScanner<'a> {
                             },
                         )?;
                         let original: &'p [u8] = alias.original_name.slice();
-                        p.record_export(alias.loc, original, st.namespace_ref)?;
+                        p.record_export(Some(alias.loc), original, st.namespace_ref)?;
                         p.import_records.items_mut()[st.import_record_index as usize]
                             .flags
                             .insert(import_record::Flags::CONTAINS_IMPORT_STAR);

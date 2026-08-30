@@ -712,7 +712,7 @@ impl<'a> PackageInstaller<'a> {
                         bun_ast::add_error_pretty!(
                             manager.log_mut(),
                             None,
-                            bun_ast::Loc::EMPTY,
+                            None,
                             "Failed to link <b>{}<r>: {}",
                             bstr::BStr::new(alias),
                             err.name(),

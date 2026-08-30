@@ -2,7 +2,7 @@ use std::io::Write as _;
 
 use bstr::BStr;
 use bun_alloc::AllocError;
-use bun_ast::{E, Expr, ExprData, Loc, StoreStr};
+use bun_ast::{E, Expr, ExprData, StoreStr};
 use bun_collections::VecExt as _;
 use bun_core::{Global, Output, strings};
 use bun_semver::{self as Semver, SlicedString};
@@ -178,11 +178,7 @@ fn refuse_declared(literal: &[u8], target: &[u8], name: &[u8], flag: &[u8]) -> !
 }
 
 fn estring(arena: &bun_alloc::Arena, bytes: &[u8]) -> Expr {
-    Expr::allocate(
-        arena,
-        E::EString::init(arena.alloc_slice_copy(bytes)),
-        Loc::EMPTY,
-    )
+    Expr::allocate(arena, E::EString::init(arena.alloc_slice_copy(bytes)), None)
 }
 
 fn reference_literal<'a>(arena: &'a bun_alloc::Arena, name: &[u8]) -> &'a [u8] {
@@ -219,7 +215,7 @@ fn object_property(
         }
     }
     let arena = create?;
-    let created = Expr::allocate(arena, E::Object::default(), Loc::EMPTY);
+    let created = Expr::allocate(arena, E::Object::default(), None);
     match existing {
         Some(q) => obj.properties.slice_mut()[q.i as usize].value = Some(created),
         None => obj.append_property(estring(arena, key), created),

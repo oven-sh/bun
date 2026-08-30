@@ -651,7 +651,7 @@ impl JSBundleCompletionTask {
                 // `bun.handleOom(log.addError(..., bun.handleOom(dupe(..))))`
                 this.log.add_error_fmt(
                     None,
-                    bun_ast::Loc::EMPTY,
+                    None,
                     format_args!("{}", bstr::BStr::new(err.slice())),
                 );
                 // `this.result.value.deinit()` — owned fields drop with the
@@ -1093,7 +1093,7 @@ impl CompletionStruct for JSBundleCompletionTask {
                     Err(err) => {
                         self.log.add_error_fmt(
                             None,
-                            bun_ast::Loc::EMPTY,
+                            None,
                             format_args!("{}", bstr::BStr::new(err.slice())),
                         );
                         return Err(bun_bundler::Error::BuildFailed);

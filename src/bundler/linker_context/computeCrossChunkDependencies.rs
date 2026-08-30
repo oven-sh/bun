@@ -581,12 +581,9 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                     for stable_ref in stable_ref_list.iter() {
                         let ref_ = stable_ref.r#ref;
                         clause_items.push(bun_ast::ClauseItem {
-                            name: bun_ast::LocRef {
-                                ref_,
-                                loc: bun_ast::Loc::EMPTY,
-                            },
+                            name: bun_ast::LocRef { ref_, loc: None },
                             alias: bun_ast::StoreStr::EMPTY,
-                            alias_loc: bun_ast::Loc::EMPTY,
+                            alias_loc: None,
                             original_name: bun_ast::StoreStr::EMPTY,
                         });
                         let _ = repr.exports_to_other_chunks.put(ref_, ()); // OOM-only Result
@@ -604,7 +601,7 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                         });
                         stmts.push(bun_ast::Stmt::init(
                             bun_ast::StoreRef::from_bump(export_clause),
-                            bun_ast::Loc::EMPTY,
+                            None,
                         ));
                         repr.cross_chunk_suffix_stmts = stmts;
                     }
@@ -674,10 +671,10 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                             clauses.push(bun_ast::ClauseItem {
                                 name: bun_ast::LocRef {
                                     ref_: item.r#ref,
-                                    loc: bun_ast::Loc::EMPTY,
+                                    loc: None,
                                 },
                                 alias: bun_ast::StoreStr::EMPTY,
-                                alias_loc: bun_ast::Loc::EMPTY,
+                                alias_loc: None,
                                 original_name: bun_ast::StoreStr::new(b"" as &[u8]),
                             });
                         }
@@ -697,7 +694,7 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                         });
                         cross_chunk_prefix_stmts.push(bun_ast::Stmt::init(
                             bun_ast::StoreRef::from_bump(import),
-                            bun_ast::Loc::EMPTY,
+                            None,
                         ));
                     }
                     _ => {}

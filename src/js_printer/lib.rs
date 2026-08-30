@@ -1993,7 +1993,7 @@ pub(crate) mod __gated_printer {
                 unreachable!();
             }
 
-            if !import.star_name_loc.is_empty() {
+            if import.star_name_loc.is_some() {
                 self.print(b"var ");
                 self.print_symbol(import.namespace_ref);
                 self.print_space();
@@ -2069,7 +2069,7 @@ pub(crate) mod __gated_printer {
 
                 self.print_whitespacer(ws!(b"} = "));
 
-                if import.star_name_loc.is_empty() && import.default_name.is_none() {
+                if import.star_name_loc.is_none() && import.default_name.is_none() {
                     match statement {
                         None => self.print_require_or_import_expr(
                             import.import_record_index,
@@ -2118,7 +2118,7 @@ pub(crate) mod __gated_printer {
         }
 
         #[inline]
-        pub(crate) fn print_undefined(&mut self, loc: bun_ast::Loc, level: Level) {
+        pub(crate) fn print_undefined(&mut self, loc: Option<bun_ast::Loc>, level: Level) {
             if self.options.minify_syntax {
                 if level.gte(Level::Prefix) {
                     self.add_source_mapping(loc);
@@ -2139,7 +2139,7 @@ pub(crate) mod __gated_printer {
             match &stmt.data {
                 StmtData::SBlock(block) => {
                     self.print_space();
-                    self.print_block(stmt.loc, slice_of(block.stmts), Some(block.close_brace_loc));
+                    self.print_block(stmt.loc, slice_of(block.stmts), block.close_brace_loc);
                     self.print_newline();
                 }
                 _ => {
@@ -2160,7 +2160,7 @@ pub(crate) mod __gated_printer {
 
         pub(crate) fn print_block(
             &mut self,
-            loc: bun_ast::Loc,
+            loc: Option<bun_ast::Loc>,
             stmts: &[Stmt],
             close_brace_loc: Option<bun_ast::Loc>,
         ) {
@@ -2173,10 +2173,9 @@ pub(crate) mod __gated_printer {
                 self.unindent();
                 self.print_indent();
             }
-            if let Some(cbl) = close_brace_loc {
-                if cbl.start > loc.start {
-                    self.add_source_mapping(cbl);
-                }
+            // An absent `loc` orders before every location.
+            if close_brace_loc > loc {
+                self.add_source_mapping(close_brace_loc);
             }
             self.print(b"}");
             self.needs_semicolon = false;
@@ -2395,10 +2394,15 @@ pub(crate) mod __gated_printer {
         }
 
         #[inline]
-        pub(crate) fn add_source_mapping(&mut self, location: bun_ast::Loc) {
+        /// Map the output position to `location`; generated code (`None`)
+        /// gets no mapping.
+        pub(crate) fn add_source_mapping(&mut self, location: impl Into<Option<bun_ast::Loc>>) {
             if !GENERATE_SOURCE_MAP {
                 return;
             }
+            let Some(location) = location.into() else {
+                return;
+            };
             self.source_map_builder
                 .add_source_mapping(location, self.writer.slice());
         }
@@ -2406,7 +2410,7 @@ pub(crate) mod __gated_printer {
         #[inline]
         pub(crate) fn add_source_mapping_for_name(
             &mut self,
-            location: bun_ast::Loc,
+            location: Option<bun_ast::Loc>,
             _name: &[u8],
             _ref: Ref,
         ) {
@@ -2474,7 +2478,7 @@ pub(crate) mod __gated_printer {
 
         pub(crate) fn print_func(&mut self, func: &G::Fn) {
             self.print_fn_args(
-                Some(func.open_parens_loc),
+                func.open_parens_loc,
                 slice_of(func.args),
                 func.flags.contains(G::FnFlags::HasRestArg),
                 false,
@@ -2522,7 +2526,7 @@ pub(crate) mod __gated_printer {
             self.needs_semicolon = false;
             self.unindent();
             self.print_indent();
-            if class.close_brace_loc.start > class.body_loc.start {
+            if class.close_brace_loc > class.body_loc {
                 self.add_source_mapping(class.close_brace_loc);
             }
             self.print(b"}");
@@ -2915,7 +2919,7 @@ pub(crate) mod __gated_printer {
             }
 
             // External import()
-            self.add_source_mapping(record.range.loc);
+            self.add_source_mapping(record.range.map(|r| r.loc));
 
             self.print_space_before_identifier();
 
@@ -3419,7 +3423,7 @@ pub(crate) mod __gated_printer {
                             }
                         }
 
-                        if e.close_parens_loc.start > expr.loc.start {
+                        if e.close_parens_loc > expr.loc {
                             self.add_source_mapping(e.close_parens_loc);
                         }
 
@@ -3486,7 +3490,7 @@ pub(crate) mod __gated_printer {
                             self.print_expr(*arg, Level::Comma, ExprFlag::none());
                         }
                     }
-                    if e.close_paren_loc.start > expr.loc.start {
+                    if e.close_paren_loc > expr.loc {
                         self.add_source_mapping(e.close_paren_loc);
                     }
                     self.print(b")");
@@ -3754,7 +3758,7 @@ pub(crate) mod __gated_printer {
                     }
 
                     self.print_fn_args(
-                        if e.is_async { None } else { Some(expr.loc) },
+                        if e.is_async { None } else { expr.loc },
                         &e.args,
                         e.has_rest_arg,
                         true,
@@ -3865,7 +3869,7 @@ pub(crate) mod __gated_printer {
                         }
                     }
 
-                    if e.close_bracket_loc.start > expr.loc.start {
+                    if e.close_bracket_loc > expr.loc {
                         self.add_source_mapping(e.close_bracket_loc);
                     }
 
@@ -3919,7 +3923,7 @@ pub(crate) mod __gated_printer {
                             self.print_indent();
                         }
                     }
-                    if e.close_brace_loc.start > expr.loc.start {
+                    if e.close_brace_loc > expr.loc {
                         self.add_source_mapping(e.close_brace_loc);
                     }
                     self.print(b"}");
@@ -5696,7 +5700,7 @@ pub(crate) mod __gated_printer {
                             self.print_block(
                                 s.body.loc,
                                 slice_of(block.stmts),
-                                Some(block.close_brace_loc),
+                                block.close_brace_loc,
                             );
                             self.print_space();
                         }
@@ -5878,7 +5882,7 @@ pub(crate) mod __gated_printer {
                                 self.print_block(
                                     c_body[0].loc,
                                     slice_of(block.stmts),
-                                    Some(block.close_brace_loc),
+                                    block.close_brace_loc,
                                 );
                                 self.print_newline();
                                 continue;
@@ -6259,7 +6263,7 @@ pub(crate) mod __gated_printer {
                 }
                 StmtData::SBlock(s) => {
                     self.print_indent();
-                    self.print_block(stmt.loc, slice_of(s.stmts), Some(s.close_brace_loc));
+                    self.print_block(stmt.loc, slice_of(s.stmts), s.close_brace_loc);
                     self.print_newline();
                 }
                 StmtData::SDebugger(_) => {
@@ -6390,7 +6394,7 @@ pub(crate) mod __gated_printer {
             }
         }
 
-        pub(crate) fn print_if(&mut self, s: &S::If, loc: bun_ast::Loc) {
+        pub(crate) fn print_if(&mut self, s: &S::If, loc: Option<bun_ast::Loc>) {
             // `else if` chains recurse here directly without passing through
             // `print_stmt`, so they need their own guard.
             if !self.stack_check.is_safe_to_recurse() {
@@ -6409,11 +6413,7 @@ pub(crate) mod __gated_printer {
             match &s.yes.data {
                 StmtData::SBlock(block) => {
                     self.print_space();
-                    self.print_block(
-                        s.yes.loc,
-                        slice_of(block.stmts),
-                        Some(block.close_brace_loc),
-                    );
+                    self.print_block(s.yes.loc, slice_of(block.stmts), block.close_brace_loc);
                     if s.no.is_some() {
                         self.print_space();
                     } else {
@@ -6535,7 +6535,7 @@ pub(crate) mod __gated_printer {
                         data: ExprData::EString(js_ast::StoreRef::from(
                             NonNull::new(str.cast_mut()).expect("inlined enum string non-null"),
                         )),
-                        loc: bun_ast::Loc::EMPTY,
+                        loc: None,
                     },
                     level,
                     ExprFlagSet::empty(),
@@ -6812,7 +6812,7 @@ pub(crate) mod __gated_printer {
                     .and_then(|stmt| stmt.data.s_lazy_export())
             {
                 self.print_fn_args(
-                    Some(func.open_parens_loc),
+                    func.open_parens_loc,
                     slice_of(func.args),
                     func.flags.contains(G::FnFlags::HasRestArg),
                     false,
@@ -6857,7 +6857,7 @@ pub(crate) mod __gated_printer {
                         let _ = self.fmt(format_args!(", {},", item_count));
                         if item_count == 0 {
                             // Add a comment explaining why the number could be zero
-                            self.print(if !import.star_name_loc.is_empty() {
+                            self.print(if import.star_name_loc.is_some() {
                                 b" // namespace import".as_slice()
                             } else {
                                 b" // bare import".as_slice()
@@ -6923,11 +6923,11 @@ pub(crate) mod __gated_printer {
                 self.print(b"], ");
 
                 // Print the code
-                if !ast.top_level_await_keyword.is_empty() {
+                if ast.top_level_await_keyword.is_some() {
                     self.print(b"async");
                 }
                 self.print_fn_args(
-                    Some(func.open_parens_loc),
+                    func.open_parens_loc,
                     slice_of(func.args),
                     func.flags.contains(G::FnFlags::HasRestArg),
                     false,
@@ -6940,7 +6940,7 @@ pub(crate) mod __gated_printer {
                 self.print(b"}, ");
 
                 // Print isAsync
-                self.print(if !ast.top_level_await_keyword.is_empty() {
+                self.print(if ast.top_level_await_keyword.is_some() {
                     b"true".as_slice()
                 } else {
                     b"false".as_slice()

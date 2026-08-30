@@ -855,9 +855,9 @@ impl OverrideMap {
         &mut self,
         ctx: &mut ParseContext<'_, '_>,
         key: &[u8],
-        key_loc: bun_ast::Loc,
+        key_loc: Option<bun_ast::Loc>,
         value: &[u8],
-        value_loc: bun_ast::Loc,
+        value_loc: Option<bun_ast::Loc>,
     ) -> Result<(), Error> {
         let Selector { parent, target } = match parse_selector(key) {
             Ok(selector) => selector,
@@ -881,9 +881,9 @@ impl OverrideMap {
         ctx: &mut ParseContext<'_, '_>,
         parent: Option<&Dependency>,
         target: &PackageSelector<'_>,
-        key_loc: bun_ast::Loc,
+        key_loc: Option<bun_ast::Loc>,
         value: &[u8],
-        value_loc: bun_ast::Loc,
+        value_loc: Option<bun_ast::Loc>,
     ) -> Result<(), Error> {
         if value.starts_with(b"patch:") {
             // TODO(dylan-conway): apply .patch files to packages
@@ -973,7 +973,7 @@ fn clone_range(
 fn warn_selector_error(
     ctx: &mut ParseContext<'_, '_>,
     key: &[u8],
-    key_loc: bun_ast::Loc,
+    key_loc: Option<bun_ast::Loc>,
     err: SelectorError,
 ) {
     let source = Some(ctx.source);
@@ -1006,7 +1006,7 @@ fn warn_selector_error(
 
 fn parse_parent(
     ctx: &mut ParseContext<'_, '_>,
-    key_loc: bun_ast::Loc,
+    key_loc: Option<bun_ast::Loc>,
     selector: &PackageSelector<'_>,
 ) -> Option<Dependency> {
     let name_hash = SemverBuilder::string_hash(selector.name);
@@ -1024,7 +1024,7 @@ fn parse_parent(
 
 fn parse_range(
     ctx: &mut ParseContext<'_, '_>,
-    key_loc: bun_ast::Loc,
+    key_loc: Option<bun_ast::Loc>,
     name: SemverString,
     name_hash: PackageNameHash,
     range: &[u8],
@@ -1061,7 +1061,7 @@ fn parse_range(
 /// The rule is always stored under `key`; a `$ref` value only supplies the version spec (npm/pnpm semantics).
 fn parse_override_value(
     ctx: &mut ParseContext<'_, '_>,
-    loc: bun_ast::Loc,
+    loc: Option<bun_ast::Loc>,
     key: &[u8],
     value: &[u8],
     register_aliases: bool,

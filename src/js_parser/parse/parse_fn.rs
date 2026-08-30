@@ -58,7 +58,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // Difference
             let ref_ = p.new_symbol(js_ast::symbol::Kind::Other, name_text);
             name = Some(js_ast::LocRef {
-                loc: name_loc,
+                loc: Some(name_loc),
                 ref_,
             });
         }
@@ -81,7 +81,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut func = p.parse_fn(
             name,
             FnOrArrowDataParse {
-                needs_async_loc: loc,
+                needs_async_loc: Some(loc),
                 allow_await: if is_async {
                     AwaitOrYield::AllowExpr
                 } else {
@@ -179,7 +179,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             name,
             flags: initial_flags,
             arguments_ref: js_ast::Ref::NONE,
-            open_parens_loc: p.lexer.loc(),
+            open_parens_loc: Some(p.lexer.loc()),
             ..Default::default()
         };
         p.lexer.expect(T::TOpenParen)?;
@@ -201,7 +201,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         };
 
         // Don't suggest inserting "async" before anything if "await" is found
-        p.fn_or_arrow_data_parse.needs_async_loc = bun_ast::Loc::EMPTY;
+        p.fn_or_arrow_data_parse.needs_async_loc = None;
 
         // If "super()" is allowed in the body, it's allowed in the arguments
         p.fn_or_arrow_data_parse.allow_super_call = opts.allow_super_call;
@@ -440,12 +440,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // Don't declare the name "arguments" since it's shadowed and inaccessible
             let name_loc = p.lexer.loc();
             let ref_ = if !text.is_empty() && text != arguments_str {
-                p.declare_symbol(js_ast::symbol::Kind::HoistedFunction, name_loc, text)?
+                p.declare_symbol(js_ast::symbol::Kind::HoistedFunction, Some(name_loc), text)?
             } else {
                 p.new_symbol(js_ast::symbol::Kind::HoistedFunction, text)
             };
             name = Some(js_ast::LocRef {
-                loc: name_loc,
+                loc: Some(name_loc),
                 ref_,
             });
 
@@ -460,7 +460,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let func = p.parse_fn(
             name,
             FnOrArrowDataParse {
-                needs_async_loc: loc,
+                needs_async_loc: Some(loc),
                 allow_await: if is_async {
                     AwaitOrYield::AllowExpr
                 } else {
@@ -512,7 +512,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.allow_in = old_allow_in;
         p.fn_or_arrow_data_parse = old_fn_or_arrow_data;
         Ok(G::FnBody {
-            loc,
+            loc: Some(loc),
             stmts: bun_ast::StoreSlice::new_mut(stmts.into_bump_slice_mut()),
         })
     }
@@ -551,7 +551,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         if p.lexer.token == T::TOpenBrace {
             let body = p.parse_fn_body(data)?;
-            p.after_arrow_body_loc = p.lexer.loc();
+            p.after_arrow_body_loc = Some(p.lexer.loc());
             let has_react_hooks_suppression = p.lexer.has_react_hooks_suppression_before
                 || p.lexer.has_react_hooks_block_suppression;
             if has_react_hooks_suppression && p.fn_or_arrow_data_parse.is_top_level {
@@ -595,7 +595,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             args: args_slice,
             prefer_expr: true,
             body: G::FnBody {
-                loc: arrow_loc,
+                loc: Some(arrow_loc),
                 stmts: bun_ast::StoreSlice::new_mut(stmts),
             },
             has_react_hooks_suppression,

@@ -151,7 +151,7 @@ fn missing_package_entry(
 ) -> MigratePnpmLockfileError {
     log.add_error_fmt(
         None,
-        bun_ast::Loc::EMPTY,
+        None,
         format_args!(
             "pnpm-lock.yaml has no package entry '{}' for dependency '{}' of {}",
             bstr::BStr::new(dep_path),
@@ -444,7 +444,7 @@ fn as_string(expr: &Expr) -> Option<&'static [u8]> {
 }
 
 #[inline]
-fn get_string(expr: &Expr, name: &[u8]) -> Option<(&'static [u8], bun_ast::Loc)> {
+fn get_string(expr: &Expr, name: &[u8]) -> Option<(&'static [u8], Option<bun_ast::Loc>)> {
     let q = expr.as_property(name)?;
     Some((as_string(&q.expr)?, q.expr.loc))
 }
@@ -513,7 +513,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
     if !root.is_object() {
         log.add_error_fmt(
             None,
-            bun_ast::Loc::EMPTY,
+            None,
             format_args!(
                 "pnpm-lock.yaml root must be an object, got {}",
                 root.data.tag_name()
@@ -525,7 +525,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
     let Some(lockfile_version_expr) = root.get(b"lockfileVersion") else {
         log.add_error(
             None,
-            bun_ast::Loc::EMPTY,
+            None,
             b"pnpm-lock.yaml missing 'lockfileVersion' field",
         );
         return Err(MigratePnpmLockfileError::PnpmLockfileMissingVersion);
@@ -556,7 +556,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
 
         log.add_error_fmt(
             None,
-            bun_ast::Loc::EMPTY,
+            None,
             format_args!(
                 "pnpm-lock.yaml 'lockfileVersion' must be a number or string, got {}",
                 lockfile_version_expr.data.tag_name()
@@ -614,7 +614,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                 let Some(version_str) = as_string(value) else {
                     log.add_error_fmt(
                         None,
-                        bun_ast::Loc::EMPTY,
+                        None,
                         format_args!(
                             "pnpm-lock.yaml override '{}' must be a string",
                             bstr::BStr::new(name_str)
@@ -645,7 +645,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                 if !ok {
                     log.add_error_fmt(
                         None,
-                        bun_ast::Loc::EMPTY,
+                        None,
                         format_args!(
                             "pnpm-lock.yaml override '{}' has an invalid value '{}'",
                             bstr::BStr::new(name_str),
@@ -714,11 +714,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
         }
 
         let Some(importers_obj) = root.get_object(b"importers") else {
-            log.add_error(
-                None,
-                bun_ast::Loc::EMPTY,
-                b"pnpm-lock.yaml missing 'importers' field",
-            );
+            log.add_error(None, None, b"pnpm-lock.yaml missing 'importers' field");
             return Err(MigratePnpmLockfileError::PnpmLockfileMissingImporters);
         };
 
@@ -753,7 +749,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                 crate::GetJsonResult::ReadErr(_) => {
                     log.add_error_fmt(
                         None,
-                        bun_ast::Loc::EMPTY,
+                        None,
                         format_args!(
                             "pnpm-lock.yaml lists importer '{}' but '{}/package.json' does not exist",
                             bstr::BStr::new(importer_path),
@@ -797,7 +793,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
         let Some(root_pkg_expr) = has_root_pkg_expr else {
             log.add_error(
                 None,
-                bun_ast::Loc::EMPTY,
+                None,
                 b"pnpm-lock.yaml missing root package entry (importers['.'])",
             );
             return Err(MigratePnpmLockfileError::PnpmLockfileMissingRootPackage);
@@ -1060,7 +1056,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                         ) {
                             log.add_warning_fmt(
                                 None,
-                                bun_ast::Loc::EMPTY,
+                                None,
                                 format_args!(
                                     "relative link dependency not supported: {}@{}\n",
                                     bstr::BStr::new(dep.name.slice(string_bytes!(lockfile))),
@@ -1083,7 +1079,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
         if packages_obj.is_some() && snapshots_obj.is_none() {
             log.add_error(
                 None,
-                bun_ast::Loc::EMPTY,
+                None,
                 b"pnpm-lock.yaml has 'packages' but missing 'snapshots' field",
             );
             return Err(MigratePnpmLockfileError::PnpmLockfileInvalidSnapshot);
@@ -1216,7 +1212,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                     Err(MigratePnpmLockfileError::InvalidPnpmLockfile) => {
                         log.add_error_fmt(
                             None,
-                            bun_ast::Loc::EMPTY,
+                            None,
                             format_args!(
                                 "pnpm-lock.yaml package '{}' has an unsupported resolution",
                                 bstr::BStr::new(key_str)
@@ -1227,7 +1223,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                     Err(MigratePnpmLockfileError::PnpmLockfileGitSubdirectory) => {
                         log.add_error_fmt(
                             None,
-                            bun_ast::Loc::EMPTY,
+                            None,
                             format_args!(
                                 "pnpm-lock.yaml package '{}' is a git sub-directory dependency (resolution.path), which bun does not support",
                                 bstr::BStr::new(key_str)
@@ -1454,7 +1450,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                 }
                 log.add_error_fmt(
                     None,
-                    bun_ast::Loc::EMPTY,
+                    None,
                     format_args!(
                         "pnpm-lock.yaml cannot resolve root dependency '{}' - missing version in importer",
                         bstr::BStr::new(dep_name)
@@ -1521,7 +1517,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                 }
                 log.add_error_fmt(
                     None,
-                    bun_ast::Loc::EMPTY,
+                    None,
                     format_args!(
                         "pnpm-lock.yaml cannot resolve workspace dependency '{}' in '{}' - missing version",
                         bstr::BStr::new(dep_name),
@@ -1996,7 +1992,7 @@ fn append_importer_dependency(
             // catalog is missing an entry in the "catalogs" object in the lockfile
             log.add_error_fmt(
                 None,
-                bun_ast::Loc::EMPTY,
+                None,
                 format_args!(
                     "pnpm-lock.yaml catalog '{}' missing entry for dependency '{}'",
                     bstr::BStr::new(specifier_str[b"catalog:".len()..].trim_ascii()),
@@ -2135,7 +2131,7 @@ fn parse_append_importer_dependencies(
                 let Some(specifier_expr) = value.get(b"specifier") else {
                     log.add_error_fmt(
                         None,
-                        bun_ast::Loc::EMPTY,
+                        None,
                         format_args!(
                             "pnpm-lock.yaml dependency '{}' missing 'specifier' field",
                             bstr::BStr::new(name_str)
@@ -2147,7 +2143,7 @@ fn parse_append_importer_dependencies(
                 let Some(version_expr) = value.get(b"version") else {
                     log.add_error_fmt(
                         None,
-                        bun_ast::Loc::EMPTY,
+                        None,
                         format_args!(
                             "pnpm-lock.yaml dependency '{}' missing 'version' field",
                             bstr::BStr::new(name_str)
@@ -2326,7 +2322,7 @@ fn rewrite_bare_patch_keys(
         .map_err(|_| AllocError)?;
         // Interned into the DATA_STORE backing the cached package.json Expr tree, which outlives this fn.
         let interned: &[u8] = js_ast::data_store_dupe_str(join_buf.as_slice());
-        prop.key = Some(Expr::init(E::EString::init(interned), bun_ast::Loc::EMPTY));
+        prop.key = Some(Expr::init(E::EString::init(interned), None));
     }
     Ok(())
 }
@@ -2622,7 +2618,7 @@ fn update_package_json_after_migration(
             if let Some(paths) = &workspace_paths {
                 if !paths.is_empty() {
                     let value = paths_array(paths);
-                    let key = Expr::init(E::EString::init(b"packages"), bun_ast::Loc::EMPTY);
+                    let key = Expr::init(E::EString::init(b"packages"), None);
 
                     VecExt::append(
                         &mut ws_props,
@@ -2636,7 +2632,7 @@ fn update_package_json_after_migration(
             }
 
             if let Some(catalog) = catalog_obj {
-                let key = Expr::init(E::EString::init(b"catalog"), bun_ast::Loc::EMPTY);
+                let key = Expr::init(E::EString::init(b"catalog"), None);
                 VecExt::append(
                     &mut ws_props,
                     G::Property {
@@ -2648,7 +2644,7 @@ fn update_package_json_after_migration(
             }
 
             if let Some(catalogs) = catalogs_obj {
-                let key = Expr::init(E::EString::init(b"catalogs"), bun_ast::Loc::EMPTY);
+                let key = Expr::init(E::EString::init(b"catalogs"), None);
                 VecExt::append(
                     &mut ws_props,
                     G::Property {
@@ -2665,7 +2661,7 @@ fn update_package_json_after_migration(
                         properties: ws_props,
                         ..Default::default()
                     },
-                    bun_ast::Loc::EMPTY,
+                    None,
                 );
                 e_object_mut(&mut json).put(&bump, b"workspaces", workspace_obj)?;
                 wrote_workspaces = true;
@@ -2797,10 +2793,7 @@ fn data_store_dupe_expr_strings(expr: &mut Expr) {
 fn paths_array(paths: &[&'static [u8]]) -> Expr {
     let mut items = js_ast::ExprNodeList::init_capacity(paths.len());
     for path in paths {
-        VecExt::append(
-            &mut items,
-            Expr::init(E::EString::init(path), bun_ast::Loc::EMPTY),
-        );
+        VecExt::append(&mut items, Expr::init(E::EString::init(path), None));
     }
     Expr::init(
         E::Array {
@@ -2808,6 +2801,6 @@ fn paths_array(paths: &[&'static [u8]]) -> Expr {
             is_single_line: paths.len() == 1,
             ..Default::default()
         },
-        bun_ast::Loc::EMPTY,
+        None,
     )
 }

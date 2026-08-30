@@ -450,7 +450,7 @@ impl Linker {
                                 import_record.path.text,
                                 file_path.text,
                                 self.log_mut(),
-                                import_record.range.loc,
+                                import_record.range.map(|r| r.loc),
                                 if IS_BUN {
                                     BunPluginTarget::Bun
                                 } else if target == options::Target::Browser {

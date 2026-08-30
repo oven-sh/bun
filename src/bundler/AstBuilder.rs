@@ -11,7 +11,7 @@ use bun_alloc::Arena as Bump;
 
 use bun_alloc::AllocError as OOM;
 use bun_ast::{ImportKind, ImportRecord};
-use bun_ast::{Loc, Range, Source};
+use bun_ast::{Loc, Source};
 use bun_collections::VecExt;
 use bun_core::Output;
 use bun_core::{MutableString, strings};
@@ -143,7 +143,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         self.import_records.push(ImportRecord {
             path: FsPath::init(path),
             kind,
-            range: Range::default(),
+            range: None,
             tag: Default::default(),
             loader: None,
             source_index: Default::default(),
@@ -194,13 +194,10 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
                 ..Default::default()
             }));
             *clause = ClauseItem {
-                name: LocRef {
-                    loc: Loc::EMPTY,
-                    ref_,
-                },
+                name: LocRef { loc: None, ref_ },
                 original_name: bun_ast::StoreStr::new(import_id),
                 alias: bun_ast::StoreStr::new(import_id),
-                alias_loc: Loc::EMPTY,
+                alias_loc: None,
             };
         }
 
@@ -225,11 +222,11 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
     }
 
     pub(crate) fn new_stmt<T: StatementData>(&self, data: T) -> Stmt {
-        Stmt::alloc::<T>(data, Loc::EMPTY)
+        Stmt::alloc::<T>(data, None)
     }
 
     pub(crate) fn new_expr<T: IntoExprData>(&self, data: T) -> Expr {
-        Expr::init::<T>(data, Loc::EMPTY)
+        Expr::init::<T>(data, None)
     }
 
     pub(crate) fn new_external_symbol(&mut self, name: &[u8]) -> Result<Ref, OOM> {
@@ -434,24 +431,24 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
                         value: Expr::assign(
                             Expr::init(
                                 E::Dot {
-                                    target: Expr::init_identifier(self.hmr_api_ref, Loc::EMPTY),
+                                    target: Expr::init_identifier(self.hmr_api_ref, None),
                                     name: b"exports".into(),
-                                    name_loc: Loc::EMPTY,
+                                    name_loc: None,
                                     ..Default::default()
                                 },
-                                Loc::EMPTY,
+                                None,
                             ),
                             Expr::init(
                                 E::Object {
                                     properties: G::PropertyList::move_from_list(export_props),
                                     ..Default::default()
                                 },
-                                Loc::EMPTY,
+                                None,
                             ),
                         ),
                         ..Default::default()
                     },
-                    Loc::EMPTY,
+                    None,
                 ));
                 // mark a dependency on module_ref so it is renamed
                 parts[1]
@@ -551,7 +548,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
             char_freq: bun_ast::CharFreq { freqs: [0; 64] },
             flags: Default::default(),
             target,
-            top_level_await_keyword: Range::NONE,
+            top_level_await_keyword: None,
             nested_scope_slot_counts: Default::default(),
             hashbang: b"".into(),
             css: None,
@@ -572,7 +569,12 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         // Rust aborts on OOM by default; explicit expect for clarity
     }
 
-    pub(crate) fn record_export(&mut self, _loc: Loc, alias: &[u8], ref_: Ref) -> Result<(), OOM> {
+    pub(crate) fn record_export(
+        &mut self,
+        _loc: Option<Loc>,
+        alias: &[u8],
+        ref_: Ref,
+    ) -> Result<(), OOM> {
         if self.named_exports.get(alias).is_some() {
             // Duplicate exports are an error
             Output::panic(format_args!(
@@ -583,7 +585,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
             self.named_exports.put(
                 alias,
                 NamedExport {
-                    alias_loc: Loc::EMPTY,
+                    alias_loc: None,
                     ref_,
                 },
             )?;

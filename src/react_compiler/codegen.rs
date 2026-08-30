@@ -145,7 +145,7 @@ impl<'h> Codegen<'h> {
         r
     }
 
-    fn sentinel_expr(&mut self, w: WellKnown, loc: Loc) -> Expr {
+    fn sentinel_expr(&mut self, w: WellKnown, loc: Option<Loc>) -> Expr {
         let r = if let Some(r) = self.well_known[w as usize] {
             r
         } else {
@@ -169,7 +169,7 @@ impl<'h> Codegen<'h> {
         r
     }
 
-    fn ident_expr(&mut self, name: StoreStr, loc: Loc) -> Expr {
+    fn ident_expr(&mut self, name: StoreStr, loc: Option<Loc>) -> Expr {
         if name.slice() == b"undefined" {
             return Expr::init(E::Undefined {}, loc);
         }
@@ -180,7 +180,7 @@ impl<'h> Codegen<'h> {
     /// HIR. If the symbol is an import, emit `EImportIdentifier` so the linker
     /// and printer can rewrite it to a namespace property access when react is
     /// bundled; otherwise emit a plain `EIdentifier`.
-    fn ident_expr_for_ref(&mut self, ref_: Ref, loc: Loc) -> Expr {
+    fn ident_expr_for_ref(&mut self, ref_: Ref, loc: Option<Loc>) -> Expr {
         self.host.record_usage(ref_);
         if ref_.is_symbol() {
             if let Some(sym) = self.host.symbols().get(ref_.inner_index() as usize) {
@@ -238,7 +238,7 @@ pub(crate) fn codegen_function(
     if cache_count != 0 {
         let mut preface: Vec<Stmt> = Vec::new();
         let cache_name = cx.synthesize_name("$");
-        let loc = Loc::EMPTY;
+        let loc = None;
 
         // The import declaration for `useMemoCache` is emitted by
         // `add_imports_to_program`. Register it only here, so a function that
@@ -288,16 +288,16 @@ pub(crate) fn codegen_function(
             let instrument_fn_local = cx.env.instrument_fn_name.unwrap_or_else(|| {
                 store_str(instrument_config.fn_.import_specifier_name.as_bytes())
             });
-            let target = cx.cg.ident_expr(instrument_fn_local, Loc::EMPTY);
+            let target = cx.cg.ident_expr(instrument_fn_local, None);
 
             let gating_expr: Option<Expr> = cx
                 .env
                 .instrument_gating_name
-                .map(|name| cx.cg.ident_expr(name, Loc::EMPTY));
+                .map(|name| cx.cg.ident_expr(name, None));
             let global_gating_expr: Option<Expr> = instrument_config
                 .global_gating
                 .as_deref()
-                .map(|g| cx.cg.ident_expr(store_str(g.as_bytes()), Loc::EMPTY));
+                .map(|g| cx.cg.ident_expr(store_str(g.as_bytes()), None));
 
             let if_test = match (gating_expr, global_gating_expr) {
                 (Some(gating), Some(global)) => Expr::init(
@@ -306,7 +306,7 @@ pub(crate) fn codegen_function(
                         left: global,
                         right: gating,
                     },
-                    Loc::EMPTY,
+                    None,
                 ),
                 (Some(gating), None) => gating,
                 (None, Some(global)) => global,
@@ -321,23 +321,20 @@ pub(crate) fn codegen_function(
                 E::Call {
                     target,
                     args: AstAlloc::vec_from_iter([
-                        string_expr(fn_name_str, Loc::EMPTY),
-                        Expr::init(
-                            E::EString::init(store_str(filename_str).slice()),
-                            Loc::EMPTY,
-                        ),
+                        string_expr(fn_name_str, None),
+                        Expr::init(E::EString::init(store_str(filename_str).slice()), None),
                     ]),
                     ..Default::default()
                 },
-                Loc::EMPTY,
+                None,
             );
             let instrument_call = Stmt::alloc(
                 S::If {
                     test: if_test,
-                    yes: expr_stmt(call, Loc::EMPTY),
+                    yes: expr_stmt(call, None),
                     no: None,
                 },
-                Loc::EMPTY,
+                None,
             );
             compiled.body.insert(0, instrument_call);
         }
@@ -483,7 +480,7 @@ fn codegen_reactive_function(
             S::Directive {
                 value: store_str(d.as_bytes()),
             },
-            Loc::EMPTY,
+            None,
         ));
     }
     if !directives.is_empty() {
@@ -606,12 +603,12 @@ fn codegen_block_no_reset(
                         statements.push(Stmt::alloc(
                             S::Label {
                                 name: LocRef {
-                                    loc: Loc::EMPTY,
+                                    loc: None,
                                     ref_: label_ref,
                                 },
                                 stmt: inner,
                             },
-                            Loc::EMPTY,
+                            None,
                         ));
                     } else if let StmtData::SBlock(bs) = stmt.data {
                         statements.extend_from_slice(bs.stmts.slice());
@@ -642,7 +639,7 @@ fn codegen_reactive_scope(
     let scope_deps = cx.env.scopes[scope_id.0 as usize].dependencies.clone();
     let scope_decls = cx.env.scopes[scope_id.0 as usize].declarations.clone();
     let scope_reassignments = cx.env.scopes[scope_id.0 as usize].reassignments.clone();
-    let loc = Loc::EMPTY;
+    let loc = None;
 
     let mut cache_store_exprs: Vec<Expr> = Vec::new();
     let mut cache_load_exprs: Vec<Expr> = Vec::new();
@@ -892,10 +889,7 @@ fn codegen_terminal(
             }
             let label = if *target_kind == ReactiveTerminalTargetKind::Labeled {
                 let r = cx.cg.ref_for_label(*target);
-                Some(LocRef {
-                    loc: Loc::EMPTY,
-                    ref_: r,
-                })
+                Some(LocRef { loc: None, ref_: r })
             } else {
                 None
             };
@@ -912,10 +906,7 @@ fn codegen_terminal(
             }
             let label = if *target_kind == ReactiveTerminalTargetKind::Labeled {
                 let r = cx.cg.ref_for_label(*target);
-                Some(LocRef {
-                    loc: Loc::EMPTY,
-                    ref_: r,
-                })
+                Some(LocRef { loc: None, ref_: r })
             } else {
                 None
             };
@@ -1079,7 +1070,7 @@ fn codegen_terminal(
         } => codegen_for_of(cx, init, test, loop_block, *loc),
         ReactiveTerminal::Label { block, .. } => {
             let body = codegen_block(cx, block)?;
-            Ok(Some(block_stmt(body, Loc::EMPTY)))
+            Ok(Some(block_stmt(body, None)))
         }
         ReactiveTerminal::Try {
             block,
@@ -1268,7 +1259,7 @@ fn extract_for_in_of_lval(
             })?;
             let r = cx.cg.well_known(WellKnown::Underscore, b"_");
             return Ok((
-                Binding::alloc(cx.cg.arena, b::Identifier { r#ref: r }, Loc::EMPTY),
+                Binding::alloc(cx.cg.arena, b::Identifier { r#ref: r }, None),
                 S::Kind::KLet,
             ));
         }
@@ -1357,7 +1348,7 @@ fn codegen_for_init(cx: &mut Context, init: &ReactiveValue) -> Result<Option<Stm
                 decls: declarators,
                 ..Default::default()
             },
-            Loc::EMPTY,
+            None,
         )))
     } else {
         let expr = codegen_instruction_value_to_expression(cx, init)?;
@@ -1705,7 +1696,7 @@ fn codegen_instruction_value(
                     left: left_expr,
                     right: right_expr,
                 },
-                Loc::EMPTY,
+                None,
             ))
         }
         ReactiveValue::ConditionalExpression {
@@ -1723,7 +1714,7 @@ fn codegen_instruction_value(
                     yes: cons_expr,
                     no: alt_expr,
                 },
-                Loc::EMPTY,
+                None,
             ))
         }
         ReactiveValue::SequenceExpression {
@@ -1750,7 +1741,8 @@ fn codegen_instruction_value(
                             loc: None,
                             suggestions: None,
                         })?;
-                        expressions.push(string_expr("TODO handle declaration", Loc::EMPTY));
+                        expressions
+                            .push(string_expr("unsupported declaration in value block", None));
                     }
                     _ => {
                         cx.record_error(CompilerErrorDetail {
@@ -1760,7 +1752,7 @@ fn codegen_instruction_value(
                             loc: None,
                             suggestions: None,
                         })?;
-                        expressions.push(string_expr("TODO handle statement", Loc::EMPTY));
+                        expressions.push(string_expr("unsupported statement in value block", None));
                     }
                 }
             }
@@ -1778,7 +1770,7 @@ fn codegen_instruction_value(
                             left: acc,
                             right: next,
                         },
-                        Loc::EMPTY,
+                        None,
                     )
                 }))
             }
@@ -2081,7 +2073,7 @@ fn codegen_base_instruction_value(
             ("import", "meta") => Ok(Expr::init(E::ImportMeta {}, loc)),
             ("new", "target") => Ok(Expr::init(
                 E::NewTarget {
-                    range: ast::Range { loc, len: 0 },
+                    range: loc.map(ast::Range::at),
                 },
                 loc,
             )),
@@ -2279,7 +2271,7 @@ fn codegen_function_expression(
     name_hint: &Option<StoreStr>,
     lowered_func: &crate::hir::LoweredFunction,
     expr_type: FunctionExpressionType,
-    loc: Loc,
+    loc: Option<Loc>,
 ) -> Result<Expr, CompilerError> {
     let func = &cx.env.functions[lowered_func.func.0 as usize];
     let reactive_fn = build_reactive_function(func, cx.env)?;
@@ -2386,7 +2378,7 @@ fn codegen_function_expression(
 fn codegen_object_expression(
     cx: &mut Context,
     properties: &[ObjectPropertyOrSpread],
-    loc: Loc,
+    loc: Option<Loc>,
 ) -> Result<Expr, CompilerError> {
     let mut ast_properties: G::PropertyList = AstAlloc::vec_with_capacity(properties.len());
     for prop in properties {
@@ -2518,16 +2510,12 @@ fn codegen_object_property_key(
     key: &ObjectPropertyKey,
 ) -> Result<Expr, CompilerError> {
     match key {
-        ObjectPropertyKey::String { name } => {
-            Ok(Expr::init(E::EString::init(name.slice()), Loc::EMPTY))
-        }
+        ObjectPropertyKey::String { name } => Ok(Expr::init(E::EString::init(name.slice()), None)),
         ObjectPropertyKey::Identifier { name } => {
-            Ok(Expr::init(E::EString::init(name.slice()), Loc::EMPTY))
+            Ok(Expr::init(E::EString::init(name.slice()), None))
         }
         ObjectPropertyKey::Computed { name } => codegen_place_to_expression(cx, name),
-        ObjectPropertyKey::Number { name } => {
-            Ok(Expr::init(E::Number::new(name.value()), Loc::EMPTY))
-        }
+        ObjectPropertyKey::Number { name } => Ok(Expr::init(E::Number::new(name.value()), None)),
     }
 }
 
@@ -2594,8 +2582,8 @@ fn codegen_jsx_call(
     mut properties: G::PropertyList,
     children: ExprNodeList,
     key_value: Option<Expr>,
-    loc: Loc,
-    close_loc: Loc,
+    loc: Option<Loc>,
+    close_loc: Option<Loc>,
 ) -> Expr {
     let is_dev = cx.cg.host.is_jsx_dev();
 
@@ -2841,7 +2829,7 @@ fn codegen_array_pattern(
             crate::hir::ArrayPatternElement::Hole => {
                 items.push(ArrayBinding {
                     binding: Binding {
-                        loc: Loc::EMPTY,
+                        loc: None,
                         data: b::B::BMissing(b::Missing {}),
                     },
                     default_value: None,
@@ -2931,7 +2919,7 @@ fn codegen_place_to_expression(cx: &mut Context, place: &Place) -> Result<Expr, 
 fn convert_identifier(
     cx: &mut Context,
     identifier_id: IdentifierId,
-) -> Result<(Ref, Loc), CompilerError> {
+) -> Result<(Ref, Option<Loc>), CompilerError> {
     let loc = cx.env.identifiers[identifier_id.0 as usize].loc;
     Ok((cx.ref_for_id(identifier_id)?, convert_loc(loc)))
 }
@@ -3109,11 +3097,9 @@ fn convert_update_operator(op: crate::hir::UpdateOperator, prefix: bool) -> OpCo
 // Helpers
 // =============================================================================
 
-fn convert_loc(loc: Option<DiagSourceLocation>) -> Loc {
-    match loc.and_then(|l| l.start.index) {
-        Some(idx) => Loc { start: idx as i32 },
-        None => Loc::EMPTY,
-    }
+fn convert_loc(loc: Option<DiagSourceLocation>) -> Option<Loc> {
+    loc.and_then(|l| l.start.index)
+        .map(|idx| Loc::from_usize(idx as usize))
 }
 
 #[inline]
@@ -3131,12 +3117,12 @@ fn estring_utf8(s: &str) -> E::EString {
 }
 
 #[inline]
-fn string_expr(s: &str, loc: Loc) -> Expr {
+fn string_expr(s: &str, loc: Option<Loc>) -> Expr {
     Expr::init(estring_utf8(s), loc)
 }
 
 #[inline]
-fn comma_seq(exprs: Vec<Expr>, loc: Loc) -> Expr {
+fn comma_seq(exprs: Vec<Expr>, loc: Option<Loc>) -> Expr {
     let mut it = exprs.into_iter();
     let first = it.next().expect("comma_seq: nonempty");
     it.fold(first, |acc, next| {
@@ -3152,7 +3138,7 @@ fn comma_seq(exprs: Vec<Expr>, loc: Loc) -> Expr {
 }
 
 #[inline]
-fn expr_stmt(value: Expr, loc: Loc) -> Stmt {
+fn expr_stmt(value: Expr, loc: Option<Loc>) -> Stmt {
     Stmt::alloc(
         S::SExpr {
             value,
@@ -3165,23 +3151,23 @@ fn expr_stmt(value: Expr, loc: Loc) -> Stmt {
 #[inline]
 fn empty_stmt() -> Stmt {
     Stmt {
-        loc: Loc::EMPTY,
+        loc: None,
         data: StmtData::SEmpty(S::Empty {}),
     }
 }
 
-fn block_stmt(body: Vec<Stmt>, loc: Loc) -> Stmt {
+fn block_stmt(body: Vec<Stmt>, loc: Option<Loc>) -> Stmt {
     Stmt::alloc(
         S::Block {
             stmts: leak_stmts(body),
-            close_brace_loc: Loc::EMPTY,
+            close_brace_loc: None,
         },
         loc,
     )
 }
 
 /// Unwrap only `SExpr` to avoid dangling-else and lexical-declaration-as-body.
-fn body_stmt(mut body: Vec<Stmt>, loc: Loc) -> Stmt {
+fn body_stmt(mut body: Vec<Stmt>, loc: Option<Loc>) -> Stmt {
     if body.len() == 1 && matches!(body[0].data, StmtData::SExpr(_)) {
         return body.pop().unwrap();
     }
@@ -3212,7 +3198,7 @@ fn template_contents(q: &crate::hir::TemplateQuasi) -> E::TemplateContents {
 fn property_access_expr(
     target: Expr,
     prop: &PropertyLiteral,
-    loc: Loc,
+    loc: Option<Loc>,
     optional_chain: Option<OptionalChain>,
 ) -> Expr {
     match prop {
@@ -3237,7 +3223,7 @@ fn property_access_expr(
     }
 }
 
-fn codegen_primitive_value(cx: &mut Context, value: &PrimitiveValue, loc: Loc) -> Expr {
+fn codegen_primitive_value(cx: &mut Context, value: &PrimitiveValue, loc: Option<Loc>) -> Expr {
     match value {
         PrimitiveValue::Number(n) => {
             let f = n.value();
@@ -3468,7 +3454,7 @@ fn is_hook_identifier(cx: &Context, identifier_id: IdentifierId) -> bool {
 }
 
 fn wrap_hook_call_with_guard(guard_ref: Ref, call_expr: Expr, before: u32, after: u32) -> Expr {
-    let loc = Loc::EMPTY;
+    let loc = None;
     let guard_call = |kind: u32| -> Stmt {
         expr_stmt(
             Expr::init(
@@ -3533,7 +3519,7 @@ fn create_function_body_hook_guard(
     before: u32,
     after: u32,
 ) -> Stmt {
-    let loc = Loc::EMPTY;
+    let loc = None;
     let guard_call = |kind: u32| -> Stmt {
         expr_stmt(
             Expr::init(

@@ -3378,10 +3378,8 @@ fn edit_root_package_json(
                                             .fmt(lockfile.buffers.string_bytes.as_slice()),
                                     );
                                     let data = pack_bump().alloc_slice_copy(tmp.as_bytes());
-                                    dependency.value = Some(Expr::init(
-                                        E::EString::init(data),
-                                        Default::default(),
-                                    ));
+                                    dependency.value =
+                                        Some(Expr::init(E::EString::init(data), None));
                                     true
                                 };
                                 if resolved {
@@ -3401,8 +3399,7 @@ fn edit_root_package_json(
                         }
 
                         let dup = pack_bump().alloc_slice_copy(without_workspace_protocol);
-                        dependency.value =
-                            Some(Expr::init(E::EString::init(dup), Default::default()));
+                        dependency.value = Some(Expr::init(E::EString::init(dup), None));
                     } else if let Some(catalog_name_str) =
                         strings::without_prefix_if_possible_comptime(package_spec, b"catalog:")
                     {
@@ -3444,8 +3441,7 @@ fn edit_root_package_json(
 
                         let literal =
                             pack_bump().alloc_slice_copy(dep.version.literal.slice(map_buf));
-                        dependency.value =
-                            Some(Expr::init(E::EString::init(literal), Default::default()));
+                        dependency.value = Some(Expr::init(E::EString::init(literal), None));
                     }
                 }
             }

@@ -46,9 +46,7 @@ impl Composes {
         Ok(Composes {
             names,
             from,
-            loc: bun_ast::Loc {
-                start: i32::try_from(loc).expect("int cast"),
-            },
+            loc: bun_ast::Loc::from_usize(loc),
             cssparser_loc: Location::from_source_location(loc2),
         })
     }

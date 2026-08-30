@@ -213,7 +213,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     },
                     location: bun_ast::Location::init_or_null(
                         Some(p.source),
-                        js_lexer::range_of_identifier(p.source, result.declare_loc.unwrap()),
+                        js_lexer::range_of_identifier(p.source, result.declare_loc),
                     ),
                     ..Default::default()
                 }]);
@@ -922,10 +922,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let kind: js_ast::symbol::Kind =
                     p.symbols[result.r#ref.inner_index() as usize].kind;
                 if !Symbol::is_kind_private(kind) {
-                    let r = bun_ast::Range {
-                        loc: e_.index.loc,
+                    let r = e_.index.loc.map(|loc| bun_ast::Range {
+                        loc,
                         len: i32::try_from(name.len()).expect("int cast"),
-                    };
+                    });
                     p.log().add_range_error_fmt(
                         Some(p.source),
                         r,
@@ -939,10 +939,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         && (kind == js_ast::symbol::Kind::PrivateMethod
                             || kind == js_ast::symbol::Kind::PrivateStaticMethod)
                     {
-                        let r = bun_ast::Range {
-                            loc: e_.index.loc,
+                        let r = e_.index.loc.map(|loc| bun_ast::Range {
+                            loc,
                             len: i32::try_from(name.len()).expect("int cast"),
-                        };
+                        });
                         p.log().add_range_warning_fmt(
                             Some(p.source),
                             r,
@@ -955,10 +955,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         && (kind == js_ast::symbol::Kind::PrivateGet
                             || kind == js_ast::symbol::Kind::PrivateStaticGet)
                     {
-                        let r = bun_ast::Range {
-                            loc: e_.index.loc,
+                        let r = e_.index.loc.map(|loc| bun_ast::Range {
+                            loc,
                             len: i32::try_from(name.len()).expect("int cast"),
-                        };
+                        });
                         p.log().add_range_warning_fmt(
                             Some(p.source),
                             r,
@@ -971,10 +971,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         && (kind == js_ast::symbol::Kind::PrivateSet
                             || kind == js_ast::symbol::Kind::PrivateStaticSet)
                     {
-                        let r = bun_ast::Range {
-                            loc: e_.index.loc,
+                        let r = e_.index.loc.map(|loc| bun_ast::Range {
+                            loc,
                             len: i32::try_from(name.len()).expect("int cast"),
-                        };
+                        });
                         p.log().add_range_warning_fmt(
                             Some(p.source),
                             r,
@@ -2332,7 +2332,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     fn maybe_replace_bundler_feature_call(
         p: &mut Self,
         e_: &mut E::Call,
-        loc: bun_ast::Loc,
+        loc: Option<bun_ast::Loc>,
     ) -> Option<Expr> {
         // Check if the target is the `feature` function from "bun:bundle"
         // It could be e_identifier (for unbound) or e_import_identifier (for imports)

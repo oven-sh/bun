@@ -1,7 +1,7 @@
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-use bun_ast::{Loc, Log};
+use bun_ast::Log;
 use bun_core::FeatureFlags;
 use bun_core::MutableString;
 use bun_threading::IntrusiveWorkTask as _;
@@ -209,7 +209,7 @@ pub fn load_env(logger: &mut Log, env: &DotEnvLoader) {
                 logger
                     .add_error_fmt(
                         None,
-                        Loc::EMPTY,
+                        None,
                         format_args!(
                             "BUN_CONFIG_MAX_HTTP_REQUESTS value \"{}\" is not a valid integer between 1 and 65535",
                             bstr::BStr::new(max_http_requests),
@@ -221,7 +221,7 @@ pub fn load_env(logger: &mut Log, env: &DotEnvLoader) {
         if max == 0 {
             logger.add_warning_fmt(
                 None,
-                Loc::EMPTY,
+                None,
                 format_args!(
                     "BUN_CONFIG_MAX_HTTP_REQUESTS value must be a number between 1 and 65535"
                 ),

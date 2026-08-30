@@ -9,7 +9,6 @@ use core::mem::MaybeUninit;
 
 use bun_alloc::Arena as Bump;
 use bun_alloc::ArenaVecExt as _;
-use bun_ast::Loc;
 use bun_collections::{HashMap, VecExt};
 use bun_core::strings;
 
@@ -435,7 +434,7 @@ impl LinkerContext<'_> {
                 bun_ast::StoreSlice::new_mut(core::slice::from_mut(written))
             }};
         }
-        let loc = Loc::EMPTY;
+        let loc = None;
         // todo: investigate if preallocating this array is faster
         let mut ns_export_dependencies = bun_ast::DependencyList::init_capacity(re_exports_count);
         for &alias in export_aliases {
@@ -623,23 +622,23 @@ impl LinkerContext<'_> {
                     arena,
                     E::Dot {
                         name: b"exports".into(),
-                        name_loc: Loc::EMPTY,
-                        target: Expr::init_identifier(self.unbound_module_ref, Loc::EMPTY),
+                        name_loc: None,
+                        target: Expr::init_identifier(self.unbound_module_ref, None),
                         ..Default::default()
                     },
-                    Loc::EMPTY,
+                    None,
                 ),
                 Expr::allocate(
                     arena,
                     E::Call {
-                        target: Expr::init_identifier(to_common_js_ref, Loc::EMPTY),
+                        target: Expr::init_identifier(to_common_js_ref, None),
                         args: bun_ast::ExprNodeList::from_slice(&[Expr::init_identifier(
                             exports_ref,
-                            Loc::EMPTY,
+                            None,
                         )]),
                         ..Default::default()
                     },
-                    Loc::EMPTY,
+                    None,
                 ),
             ));
         }

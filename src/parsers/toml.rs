@@ -218,9 +218,7 @@ fn is_bare_key_char(c: u8) -> bool {
 }
 
 fn loc_of(pos: usize) -> Loc {
-    Loc {
-        start: i32::try_from(pos).expect("source length is bounded by i32::MAX"),
-    }
+    Loc::from_usize(pos)
 }
 
 // ── scanner ─────────────────────────────────────────────────────────────────
@@ -249,7 +247,7 @@ impl<'a, 'log> Scanner<'a, 'log> {
             args,
             bun_ast::AddErrorOptions {
                 source: Some(self.source),
-                loc: loc_of(pos),
+                loc: Some(loc_of(pos)),
                 len: 0,
                 redact_sensitive_information: self.redact,
             },

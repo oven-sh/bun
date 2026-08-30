@@ -791,12 +791,10 @@ impl<'a> CustomAtRuleParser for BundlerAtRuleParser<'a> {
             } else {
                 ImportKind::At
             },
-            range: bun_ast::Range {
-                loc: bun_ast::Loc {
-                    start: i32::try_from(start_position).expect("int cast"),
-                },
+            range: Some(bun_ast::Range {
+                loc: bun_ast::Loc::new(start_position),
                 len: i32::try_from(end_position - start_position).expect("int cast"),
-            },
+            }),
             // NOTE: `ImportRecord` deliberately has no `Default` (range/path/kind
             // are required); spell out the remaining defaults explicitly.
             tag: Default::default(),
@@ -2072,13 +2070,12 @@ mod rule_parsers {
                         this.local_properties
                             .entry(*ref_)
                             .or_insert_with(|| PropertyUsage {
+                                bitset: PropertyBitset::init_empty(),
+                                custom_properties: Box::default(),
                                 range: bun_ast::Range {
-                                    loc: bun_ast::Loc {
-                                        start: i32::try_from(location).expect("int cast"),
-                                    },
+                                    loc: bun_ast::Loc::from_usize(location),
                                     len: i32::try_from(len).expect("int cast"),
                                 },
-                                ..Default::default()
                             });
                     entry.fill(&usage, custom_properties_slice);
                 }
@@ -2218,7 +2215,7 @@ impl CssRef {
 #[derive(Default)]
 pub struct LocalEntry {
     pub ref_: CssRef,
-    pub loc: bun_ast::Loc,
+    pub loc: Option<bun_ast::Loc>,
 }
 
 /// If css modules is enabled, this maps locally scoped class names to their
@@ -2242,16 +2239,6 @@ pub struct PropertyUsage {
     pub bitset: PropertyBitset,
     pub custom_properties: Box<[&'static [u8]]>, // TODO: lifetime — arena slices
     pub range: bun_ast::Range,
-}
-
-impl Default for PropertyUsage {
-    fn default() -> Self {
-        Self {
-            bitset: PropertyBitset::init_empty(),
-            custom_properties: Box::default(),
-            range: bun_ast::Range::default(),
-        }
-    }
 }
 
 impl PropertyUsage {
@@ -3065,7 +3052,7 @@ impl<'a> Parser<'a> {
         if gop.found_existing {
             let prev_tag = entry.ref_.tag();
             if !prev_tag.contains(CssRefTag::CLASS) && tag.contains(CssRefTag::CLASS) {
-                entry.loc = loc;
+                entry.loc = Some(loc);
                 entry.ref_.set_tag(prev_tag | tag);
             }
         } else {
@@ -3077,7 +3064,7 @@ impl<'a> Parser<'a> {
             });
             *entry = LocalEntry {
                 ref_: CssRef::new(inner_index, tag),
-                loc,
+                loc: Some(loc),
             };
         }
 
@@ -3103,13 +3090,11 @@ impl<'a> Parser<'a> {
             import_records.push(ImportRecord {
                 path: ast::fs::path_init(url_static),
                 kind,
-                range: bun_ast::Range {
-                    loc: bun_ast::Loc {
-                        start: i32::try_from(start_position).expect("int cast"),
-                    },
+                range: Some(bun_ast::Range {
+                    loc: bun_ast::Loc::from_usize(start_position),
                     // TODO: technically this is not correct because the url could be escaped
                     len: i32::try_from(url.len()).expect("int cast"),
-                },
+                }),
                 tag: Default::default(),
                 loader: None,
                 source_index: Default::default(),

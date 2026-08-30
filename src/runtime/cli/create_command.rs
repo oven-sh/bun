@@ -863,7 +863,7 @@ impl CreateCommand {
                     pub(crate) fn npx_react_scripts_build() -> bun_ast::Expr {
                         bun_ast::Expr::init(
                             bun_ast::E::EString::init(b"npx react-scripts build"),
-                            bun_ast::Loc::EMPTY,
+                            None,
                         )
                     }
                 }

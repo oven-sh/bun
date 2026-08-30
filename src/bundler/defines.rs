@@ -321,7 +321,7 @@ impl DefineDataExt for DefineData {
                 if strings::eql(part, key) {
                     log.add_error_fmt(
                         None,
-                        bun_ast::Loc::default(),
+                        None,
                         format_args!(
                             "define key \"{}\" must be a valid identifier",
                             bstr::BStr::new(key)
@@ -330,7 +330,7 @@ impl DefineDataExt for DefineData {
                 } else {
                     log.add_error_fmt(
                         None,
-                        bun_ast::Loc::default(),
+                        None,
                         format_args!(
                             "define key \"{}\" contains invalid identifier \"{}\"",
                             bstr::BStr::new(part),

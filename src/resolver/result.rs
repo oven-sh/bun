@@ -357,8 +357,7 @@ impl DebugLogs {
             text
         };
 
-        self.notes
-            .push(bun_ast::range_data(None, bun_ast::Range::NONE, final_text));
+        self.notes.push(bun_ast::range_data(None, None, final_text));
     }
 
     #[cold]

@@ -25,7 +25,7 @@ pub trait LexerLog<'s> {
     fn log_mut(&mut self) -> &mut Log;
     /// NB: returns the lexer-stored `&'s Source`, *not* a `&self`-tied borrow.
     fn source(&self) -> &'s Source;
-    fn prev_error_loc_mut(&mut self) -> &mut Loc;
+    fn prev_error_loc_mut(&mut self) -> &mut Option<Loc>;
     fn start(&self) -> usize;
     fn syntax_err() -> Self::Err;
 
@@ -43,7 +43,7 @@ pub trait LexerLog<'s> {
             return;
         }
         let l = usize2loc(loc);
-        if l.eql(*self.prev_error_loc_mut()) {
+        if Some(l) == *self.prev_error_loc_mut() {
             return;
         }
         let source = self.source();
@@ -51,19 +51,25 @@ pub trait LexerLog<'s> {
             args,
             AddErrorOptions {
                 source: Some(source),
-                loc: l,
+                loc: Some(l),
                 ..Default::default()
             },
         );
-        *self.prev_error_loc_mut() = l;
+        *self.prev_error_loc_mut() = Some(l);
     }
 
     #[cold]
-    fn add_range_error(&mut self, r: Range, args: fmt::Arguments<'_>) -> Result<(), Self::Err> {
+    fn add_range_error(
+        &mut self,
+        r: impl Into<Option<Range>>,
+        args: fmt::Arguments<'_>,
+    ) -> Result<(), Self::Err> {
         if self.is_log_disabled() {
             return Ok(());
         }
-        if r.loc.eql(*self.prev_error_loc_mut()) {
+        let r = r.into();
+        let loc = r.map(|r| r.loc);
+        if loc.is_some() && loc == *self.prev_error_loc_mut() {
             return Ok(());
         }
         let source = self.source();
@@ -71,12 +77,14 @@ pub trait LexerLog<'s> {
             args,
             AddErrorOptions {
                 source: Some(source),
-                loc: r.loc,
-                len: r.len,
+                loc,
+                len: r.map_or(0, |r| r.len),
                 ..Default::default()
             },
         );
-        *self.prev_error_loc_mut() = r.loc;
+        if loc.is_some() {
+            *self.prev_error_loc_mut() = loc;
+        }
         Ok(())
     }
 

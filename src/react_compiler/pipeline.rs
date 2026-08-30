@@ -269,7 +269,7 @@ pub(crate) fn compile_outlined_fn(
     import_bindings: &IndexMap<bun_ast::Ref, VariableBinding>,
 ) -> Result<CodegenFunction, CompilerError> {
     use bun_alloc::AstAlloc;
-    use bun_ast::{G, Loc, StoreSlice, flags};
+    use bun_ast::{G, StoreSlice, flags};
 
     let mut env = Environment::with_config(env_config.clone());
     env.fn_type = fn_type;
@@ -300,7 +300,7 @@ pub(crate) fn compile_outlined_fn(
         name: codegen_fn.id,
         args: StoreSlice::new_mut(params.leak()),
         body: G::FnBody {
-            loc: Loc::EMPTY,
+            loc: None,
             stmts: StoreSlice::new_mut(body.leak()),
         },
         flags: fn_flags,

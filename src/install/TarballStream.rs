@@ -1118,7 +1118,7 @@ impl TarballStream {
                 } else if self.invalid_name {
                     (*task).log.add_error_fmt(
                         None,
-                        bun_ast::Loc::EMPTY,
+                        None,
                         format_args!(
                             "Refusing to install package with invalid name \"{}\"",
                             bun_fmt::s(tarball.name_and_basename().0),
@@ -1127,7 +1127,7 @@ impl TarballStream {
                 } else {
                     (*task).log.add_error_fmt(
                         None,
-                        bun_ast::Loc::EMPTY,
+                        None,
                         format_args!(
                             "{} extracting tarball for \"{}\"{}{} (at byte {} of {})",
                             err.name(),
@@ -1162,7 +1162,7 @@ impl TarballStream {
                     }
                     (*task).log.add_error_fmt(
                         None,
-                        bun_ast::Loc::EMPTY,
+                        None,
                         format_args!(
                             "Integrity check failed for tarball: {}",
                             bstr::BStr::new(tarball.name.slice()),

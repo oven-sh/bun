@@ -733,12 +733,9 @@ impl ByteRangeMapping {
                 let has_executed = block.has_executed || block.execution_count > 0;
 
                 for byte_offset in min..max {
-                    let Some(new_line_index) = LineOffsetTable::find_index(
-                        line_starts,
-                        Loc {
-                            start: i32::try_from(byte_offset).expect("int cast"),
-                        },
-                    ) else {
+                    let Some(new_line_index) =
+                        LineOffsetTable::find_index(line_starts, Loc::from_usize(byte_offset))
+                    else {
                         continue;
                     };
                     let line_start_byte_offset = line_starts[new_line_index];
@@ -779,12 +776,9 @@ impl ByteRangeMapping {
                 let mut max_line: u32 = 0;
 
                 for byte_offset in min..max {
-                    let Some(new_line_index) = LineOffsetTable::find_index(
-                        line_starts,
-                        Loc {
-                            start: i32::try_from(byte_offset).expect("int cast"),
-                        },
-                    ) else {
+                    let Some(new_line_index) =
+                        LineOffsetTable::find_index(line_starts, Loc::from_usize(byte_offset))
+                    else {
                         continue;
                     };
                     let line_start_byte_offset = line_starts[new_line_index];
@@ -838,12 +832,9 @@ impl ByteRangeMapping {
                 let has_executed = block.has_executed || block.execution_count > 0;
 
                 for byte_offset in min..max {
-                    let Some(new_line_index) = LineOffsetTable::find_index(
-                        line_starts,
-                        Loc {
-                            start: i32::try_from(byte_offset).expect("int cast"),
-                        },
-                    ) else {
+                    let Some(new_line_index) =
+                        LineOffsetTable::find_index(line_starts, Loc::from_usize(byte_offset))
+                    else {
                         continue;
                     };
                     let line_start_byte_offset = line_starts[new_line_index];
@@ -915,12 +906,9 @@ impl ByteRangeMapping {
                 let mut max_line: u32 = 0;
 
                 for byte_offset in min..max {
-                    let Some(new_line_index) = LineOffsetTable::find_index(
-                        line_starts,
-                        Loc {
-                            start: i32::try_from(byte_offset).expect("int cast"),
-                        },
-                    ) else {
+                    let Some(new_line_index) =
+                        LineOffsetTable::find_index(line_starts, Loc::from_usize(byte_offset))
+                    else {
                         continue;
                     };
                     let line_start_byte_offset = line_starts[new_line_index];

@@ -18,7 +18,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let p = self;
         // Parse an "import.meta" expression
         if p.lexer.token == T::TDot {
-            p.esm_import_keyword = js_lexer::range_of_identifier(p.source, loc);
+            p.esm_import_keyword = Some(bun_ast::Range {
+                loc,
+                len: b"import".len() as i32,
+            });
             p.lexer.next()?;
             if p.lexer.is_contextual_keyword(b"meta") {
                 p.lexer.next()?;
@@ -126,7 +129,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let alias_loc = p.lexer.loc();
             let alias = p.parse_clause_alias(b"import")?;
             let mut name = LocRef {
-                loc: alias_loc,
+                loc: Some(alias_loc),
                 ref_: p.store_name_in_ref(alias),
             };
             let mut original_name = alias;
@@ -150,7 +153,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     if p.lexer.is_contextual_keyword(b"as") {
                         original_name = p.lexer.identifier;
                         name = LocRef {
-                            loc: p.lexer.loc(),
+                            loc: Some(p.lexer.loc()),
                             ref_: p.store_name_in_ref(original_name),
                         };
                         p.lexer.next()?;
@@ -165,7 +168,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                             items.push(ClauseItem {
                                 alias: alias.into(),
-                                alias_loc,
+                                alias_loc: Some(alias_loc),
                                 name,
                                 original_name: original_name.into(),
                             });
@@ -176,7 +179,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         // "import { type as xxx } from 'mod'"
                         original_name = p.lexer.identifier;
                         name = LocRef {
-                            loc: p.lexer.loc(),
+                            loc: Some(p.lexer.loc()),
                             ref_: p.store_name_in_ref(original_name),
                         };
                         p.lexer.expect(T::TIdentifier)?;
@@ -195,7 +198,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                         items.push(ClauseItem {
                             alias: alias.into(),
-                            alias_loc,
+                            alias_loc: Some(alias_loc),
                             name,
                             original_name: original_name.into(),
                         });
@@ -225,7 +228,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     p.lexer.next()?;
                     original_name = p.lexer.identifier;
                     name = LocRef {
-                        loc: alias_loc,
+                        loc: Some(alias_loc),
                         ref_: p.store_name_in_ref(original_name),
                     };
                     p.lexer.expect(T::TIdentifier)?;
@@ -249,7 +252,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                 items.push(ClauseItem {
                     alias: alias.into(),
-                    alias_loc,
+                    alias_loc: Some(alias_loc),
                     name,
                     original_name: original_name.into(),
                 });
@@ -291,7 +294,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut items = bun_alloc::ArenaVec::<ClauseItem>::with_capacity_in(1, p.arena);
         p.lexer.expect(T::TOpenBrace)?;
         let mut is_single_line = !p.lexer.has_newline_before;
-        let mut first_non_identifier_loc = bun_ast::Loc { start: 0 };
+        let mut first_non_identifier_loc: Option<bun_ast::Loc> = None;
         let mut had_type_only_exports = false;
 
         while p.lexer.token != T::TCloseBrace {
@@ -299,7 +302,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let mut alias_loc = p.lexer.loc();
 
             let name = LocRef {
-                loc: alias_loc,
+                loc: Some(alias_loc),
                 ref_: p.store_name_in_ref(alias),
             };
             let original_name = alias;
@@ -314,8 +317,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             //   // This is a syntax error
             //   export { default }
             //
-            if p.lexer.token != T::TIdentifier && first_non_identifier_loc.start == 0 {
-                first_non_identifier_loc = p.lexer.loc();
+            if p.lexer.token != T::TIdentifier && first_non_identifier_loc.is_none() {
+                first_non_identifier_loc = Some(p.lexer.loc());
             }
             p.lexer.next()?;
 
@@ -341,7 +344,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 // "export { type as as }"
                                 items.push(ClauseItem {
                                     alias: alias.into(),
-                                    alias_loc,
+                                    alias_loc: Some(alias_loc),
                                     name,
                                     original_name: original_name.into(),
                                 });
@@ -355,7 +358,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                             items.push(ClauseItem {
                                 alias: alias.into(),
-                                alias_loc,
+                                alias_loc: Some(alias_loc),
                                 name,
                                 original_name: original_name.into(),
                             });
@@ -373,8 +376,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         //   // This is a syntax error
                         //   export { default }
                         //
-                        if p.lexer.token != T::TIdentifier && first_non_identifier_loc.start == 0 {
-                            first_non_identifier_loc = p.lexer.loc();
+                        if p.lexer.token != T::TIdentifier && first_non_identifier_loc.is_none() {
+                            first_non_identifier_loc = Some(p.lexer.loc());
                         }
 
                         // "export { type xx }"
@@ -406,7 +409,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                     items.push(ClauseItem {
                         alias: alias.into(),
-                        alias_loc,
+                        alias_loc: Some(alias_loc),
                         name,
                         original_name: original_name.into(),
                     });
@@ -422,7 +425,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                 items.push(ClauseItem {
                     alias: alias.into(),
-                    alias_loc,
+                    alias_loc: Some(alias_loc),
                     name,
                     original_name: original_name.into(),
                 });
@@ -449,13 +452,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // Throw an error here if we found a keyword earlier and this isn't an
         // "export from" statement after all
-        if first_non_identifier_loc.start != 0 && !p.lexer.is_contextual_keyword(b"from") {
+        if let Some(first_non_identifier_loc) = first_non_identifier_loc
+            && !p.lexer.is_contextual_keyword(b"from")
+        {
             let r = js_lexer::range_of_identifier(p.source, first_non_identifier_loc);
             p.lexer.add_range_error(
                 r,
                 format_args!(
                     "Expected identifier but found \"{}\"",
-                    bstr::BStr::new(p.source.text_for_range(r))
+                    bstr::BStr::new(r.map_or(&b""[..], |r| p.source.text_for_range(r)))
                 ),
             )?;
             return Err(crate::Error::SyntaxError);

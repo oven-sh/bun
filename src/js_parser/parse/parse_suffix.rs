@@ -45,14 +45,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 | T::TOpenParen
                 | T::TOpenBracket
                 | T::TQuestionDot => {
-                    p.forbid_suffix_after_as_loc = p.lexer.loc();
+                    p.forbid_suffix_after_as_loc = Some(p.lexer.loc());
                     return Ok(Continuation::Done);
                 }
                 _ => {}
             }
 
             if p.lexer.token.is_assign() {
-                p.forbid_suffix_after_as_loc = p.lexer.loc();
+                p.forbid_suffix_after_as_loc = Some(p.lexer.loc());
                 return Ok(Continuation::Done);
             }
             return Ok(Continuation::Next);
@@ -108,7 +108,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 E::Dot {
                     target,
                     name,
-                    name_loc,
+                    name_loc: Some(name_loc),
                     optional_chain: old_optional_chain,
                     ..Default::default()
                 },
@@ -176,7 +176,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     E::Call {
                         target,
                         args: list_loc.list,
-                        close_paren_loc: list_loc.loc,
+                        close_paren_loc: Some(list_loc.loc),
                         optional_chain: optional_start,
                         ..Default::default()
                     },
@@ -206,7 +206,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     E::Call {
                         target,
                         args: list_loc.list,
-                        close_paren_loc: list_loc.loc,
+                        close_paren_loc: Some(list_loc.loc),
                         optional_chain: optional_start,
                         ..Default::default()
                     },
@@ -246,7 +246,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         E::Dot {
                             target,
                             name,
-                            name_loc,
+                            name_loc: Some(name_loc),
                             optional_chain: optional_start,
                             ..Default::default()
                         },
@@ -388,7 +388,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             E::Call {
                 target,
                 args: list_loc.list,
-                close_paren_loc: list_loc.loc,
+                close_paren_loc: Some(list_loc.loc),
                 optional_chain: old_optional_chain,
                 ..Default::default()
             },
@@ -414,7 +414,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // "(a?: b) => {}"
         // "(a?, b?) => {}"
         if Self::IS_TYPESCRIPT_ENABLED
-            && left.loc.start == p.latest_arrow_arg_loc.start
+            && left.loc == p.latest_arrow_arg_loc
             && (p.lexer.token == T::TColon
                 || p.lexer.token == T::TCloseParen
                 || p.lexer.token == T::TComma)
@@ -1440,7 +1440,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let mut optional_chain: Option<OptionalChain> = None;
         loop {
-            if p.lexer.loc().start == p.after_arrow_body_loc.start {
+            if Some(p.lexer.loc()) == p.after_arrow_body_loc {
                 // Plain loop re-reading `p.lexer.token` each iteration.
                 loop {
                     match p.lexer.token {
@@ -1473,9 +1473,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             if Self::IS_TYPESCRIPT_ENABLED {
                 // Stop now if this token is forbidden to follow a TypeScript "as" cast
-                if p.forbid_suffix_after_as_loc.start > -1
-                    && p.lexer.loc().start == p.forbid_suffix_after_as_loc.start
-                {
+                if Some(p.lexer.loc()) == p.forbid_suffix_after_as_loc {
                     break;
                 }
             }

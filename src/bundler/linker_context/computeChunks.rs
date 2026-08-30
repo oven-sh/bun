@@ -699,7 +699,7 @@ pub(crate) fn compute_chunks(
                         // Split-borrow — see `LinkerContext::log_disjoint`.
                         this.log_disjoint().add_error_fmt(
                             None,
-                            bun_ast::Loc::EMPTY,
+                            None,
                             format_args!(
                                 "{}: Failed to get full path for directory '{}'",
                                 bstr::BStr::new(err.name()),

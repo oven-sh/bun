@@ -155,9 +155,9 @@ impl JSSourceMap {
         let mapping_list = match parse_result {
             Ok(parsed) => parsed,
             Err(fail) => {
-                if let Some(loc) = fail.loc.to_nullable() {
+                if let Some(loc) = fail.loc {
                     return Err(global.throw_value(global.create_syntax_error_instance(
-                        format_args!("{} at {}", fail.err.message(), loc.start),
+                        format_args!("{} at {}", fail.err.message(), loc.get()),
                     )));
                 }
                 return Err(global.throw_value(

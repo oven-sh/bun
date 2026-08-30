@@ -1852,9 +1852,13 @@ fn array_items(expr: &Expr) -> &[JSON::E::JsonValue] {
     }
 }
 
-fn item_loc(source: &bun_ast::Source, key_loc: bun_ast::Loc, index: usize) -> bun_ast::Loc {
-    let array_loc = value_loc_of(source, key_loc);
-    JSON::array_item_loc(&source.contents, array_loc, index).unwrap_or(array_loc)
+fn item_loc(
+    source: &bun_ast::Source,
+    key_loc: Option<bun_ast::Loc>,
+    index: usize,
+) -> Option<bun_ast::Loc> {
+    let array_loc = value_loc_of(source, key_loc)?;
+    Some(JSON::array_item_loc(&source.contents, array_loc, index).unwrap_or(array_loc))
 }
 
 pub(crate) fn parse_into_binary_lockfile(
@@ -1899,13 +1903,10 @@ pub(crate) fn parse_into_binary_lockfile(
     let Some(lockfile_version) = Version::from_int(lockfile_version_num) else {
         log.add_range_error_fmt_with_notes(
             Some(source),
-            bun_ast::Range {
-                loc: value_loc_of(source, lockfile_version_expr.loc),
-                ..Default::default()
-            },
+            value_loc_of(source, lockfile_version_expr.loc).map(bun_ast::Range::at),
             Box::new([bun_ast::range_data(
                 None,
-                bun_ast::Range::NONE,
+                None,
                 b"Run 'bun upgrade' to update to the latest version of Bun",
             )]),
             format_args!(
@@ -1978,7 +1979,7 @@ pub(crate) fn parse_into_binary_lockfile(
             let Some(path_str) = row.value.as_str() else {
                 log.add_error(
                     Some(source),
-                    value_loc_of(source, row.key_loc),
+                    value_loc_of(source, Some(row.key_loc)),
                     b"Expected a string",
                 );
                 return Err(ParseError::InvalidPatchedDependencies);
@@ -2030,7 +2031,7 @@ pub(crate) fn parse_into_binary_lockfile(
                 if !ok {
                     log.add_error(
                         Some(source),
-                        value_loc_of(source, row.key_loc),
+                        value_loc_of(source, Some(row.key_loc)),
                         b"Invalid override version",
                     );
                     return Err(ParseError::InvalidOverridesObject);
@@ -2041,7 +2042,7 @@ pub(crate) fn parse_into_binary_lockfile(
             let Some(group_obj) = row.value.as_object() else {
                 log.add_error(
                     Some(source),
-                    value_loc_of(source, row.key_loc),
+                    value_loc_of(source, Some(row.key_loc)),
                     b"Expected a string or an object",
                 );
                 return Err(ParseError::InvalidOverridesObject);
@@ -2057,7 +2058,7 @@ pub(crate) fn parse_into_binary_lockfile(
                 let Some(version_str) = child.value.as_str() else {
                     log.add_error(
                         Some(source),
-                        value_loc_of(source, child.key_loc),
+                        value_loc_of(source, Some(child.key_loc)),
                         b"Expected a string",
                     );
                     return Err(ParseError::InvalidOverridesObject);
@@ -2091,7 +2092,7 @@ pub(crate) fn parse_into_binary_lockfile(
                 if !ok {
                     log.add_error(
                         Some(source),
-                        value_loc_of(source, child.key_loc),
+                        value_loc_of(source, Some(child.key_loc)),
                         b"Invalid override version",
                     );
                     return Err(ParseError::InvalidOverridesObject);
@@ -2123,7 +2124,7 @@ pub(crate) fn parse_into_binary_lockfile(
             let Some(version_str) = row.value.as_str() else {
                 log.add_error(
                     Some(source),
-                    value_loc_of(source, row.key_loc),
+                    value_loc_of(source, Some(row.key_loc)),
                     b"Expected a string",
                 );
                 return Err(ParseError::InvalidCatalogObject);
@@ -2148,7 +2149,7 @@ pub(crate) fn parse_into_binary_lockfile(
                     None => {
                         log.add_error(
                             Some(source),
-                            value_loc_of(source, row.key_loc),
+                            value_loc_of(source, Some(row.key_loc)),
                             b"Invalid catalog version",
                         );
                         return Err(ParseError::InvalidCatalogObject);
@@ -2196,7 +2197,7 @@ pub(crate) fn parse_into_binary_lockfile(
             let Some(catalog_obj) = catalog_row.value.as_object() else {
                 log.add_error(
                     Some(source),
-                    value_loc_of(source, catalog_row.key_loc),
+                    value_loc_of(source, Some(catalog_row.key_loc)),
                     b"Expected an object",
                 );
                 return Err(ParseError::InvalidCatalogsObject);
@@ -2221,7 +2222,7 @@ pub(crate) fn parse_into_binary_lockfile(
                 let Some(version_str) = row.value.as_str() else {
                     log.add_error(
                         Some(source),
-                        value_loc_of(source, row.key_loc),
+                        value_loc_of(source, Some(row.key_loc)),
                         b"Expected a string",
                     );
                     return Err(ParseError::InvalidCatalogsObject);
@@ -2246,7 +2247,7 @@ pub(crate) fn parse_into_binary_lockfile(
                         None => {
                             log.add_error(
                                 Some(source),
-                                value_loc_of(source, row.key_loc),
+                                value_loc_of(source, Some(row.key_loc)),
                                 b"Invalid catalog version",
                             );
                             return Err(ParseError::InvalidCatalogsObject);
@@ -2286,7 +2287,7 @@ pub(crate) fn parse_into_binary_lockfile(
         if row.value.as_object().is_none() {
             log.add_error(
                 Some(source),
-                value_loc_of(source, row.key_loc),
+                value_loc_of(source, Some(row.key_loc)),
                 b"Expected an object",
             );
             return Err(ParseError::InvalidWorkspaceObject);
@@ -2308,7 +2309,7 @@ pub(crate) fn parse_into_binary_lockfile(
         let Some(name_expr) = value.get(b"name") else {
             log.add_error(
                 Some(source),
-                value_loc_of(source, row.key_loc),
+                value_loc_of(source, Some(row.key_loc)),
                 b"Expected a string name property",
             );
             return Err(ParseError::InvalidWorkspaceObject);
@@ -2569,7 +2570,7 @@ pub(crate) fn parse_into_binary_lockfile(
             let Some(pkg_info) = row.value.as_array() else {
                 log.add_error(
                     Some(source),
-                    value_loc_of(source, row.key_loc),
+                    value_loc_of(source, Some(row.key_loc)),
                     b"Expected an array",
                 );
                 return Err(ParseError::InvalidPackageInfo);
@@ -2598,7 +2599,7 @@ pub(crate) fn parse_into_binary_lockfile(
             let Some(pkg_info) = row.value.as_array() else {
                 log.add_error(
                     Some(source),
-                    value_loc_of(source, key_loc),
+                    value_loc_of(source, Some(key_loc)),
                     b"Expected an array",
                 );
                 return Err(ParseError::InvalidPackageInfo);
@@ -2610,7 +2611,7 @@ pub(crate) fn parse_into_binary_lockfile(
             if pkg_info.is_empty() {
                 log.add_error(
                     Some(source),
-                    value_loc_of(source, key_loc),
+                    value_loc_of(source, Some(key_loc)),
                     b"Missing package info",
                 );
                 return Err(ParseError::InvalidPackageInfo);
@@ -2623,7 +2624,7 @@ pub(crate) fn parse_into_binary_lockfile(
             let Some(res_info_str) = res_info.as_str() else {
                 log.add_error(
                     Some(source),
-                    item_loc(source, key_loc, res_info_idx),
+                    item_loc(source, Some(key_loc), res_info_idx),
                     b"Expected a string",
                 );
                 return Err(ParseError::InvalidPackageResolution);
@@ -2639,7 +2640,7 @@ pub(crate) fn parse_into_binary_lockfile(
                     Err(_) => {
                         log.add_error(
                             Some(source),
-                            item_loc(source, key_loc, res_info_idx),
+                            item_loc(source, Some(key_loc), res_info_idx),
                             b"Invalid package resolution",
                         );
                         return Err(ParseError::InvalidPackageResolution);
@@ -2650,7 +2651,7 @@ pub(crate) fn parse_into_binary_lockfile(
             if !name_str.is_empty() && !dependency::is_safe_install_folder_name(name_str) {
                 log.add_error(
                     Some(source),
-                    item_loc(source, key_loc, res_info_idx),
+                    item_loc(source, Some(key_loc), res_info_idx),
                     b"Invalid package name",
                 );
                 return Err(ParseError::InvalidPackageResolution);
@@ -2667,7 +2668,7 @@ pub(crate) fn parse_into_binary_lockfile(
                 Err(crate::resolution::FromTextLockfileError::UnexpectedResolution) => {
                     log.add_error_fmt(
                         source,
-                        item_loc(source, key_loc, res_info_idx),
+                        item_loc(source, Some(key_loc), res_info_idx),
                         format_args!("Unexpected resolution: {}", bstr::BStr::new(res_str)),
                     );
                     return Err(ParseError::UnexpectedResolution);
@@ -2679,7 +2680,7 @@ pub(crate) fn parse_into_binary_lockfile(
                 if i >= pkg_info.len() {
                     log.add_error(
                         Some(source),
-                        value_loc_of(source, key_loc),
+                        value_loc_of(source, Some(key_loc)),
                         b"Missing npm registry",
                     );
                     return Err(ParseError::InvalidPackageInfo);
@@ -2691,7 +2692,7 @@ pub(crate) fn parse_into_binary_lockfile(
                 let Some(registry_str) = registry_expr.as_str() else {
                     log.add_error(
                         Some(source),
-                        item_loc(source, key_loc, registry_idx),
+                        item_loc(source, Some(key_loc), registry_idx),
                         b"Expected a string",
                     );
                     return Err(ParseError::InvalidPackageInfo);
@@ -2788,7 +2789,7 @@ pub(crate) fn parse_into_binary_lockfile(
 
                     log.add_error_fmt(
                         source,
-                        item_loc(source, key_loc, res_info_idx),
+                        item_loc(source, Some(key_loc), res_info_idx),
                         format_args!(
                             "Unknown workspace: '{}'",
                             bstr::BStr::new(
@@ -2821,7 +2822,7 @@ pub(crate) fn parse_into_binary_lockfile(
                         if i >= pkg_info.len() {
                             log.add_error(
                                 Some(source),
-                                value_loc_of(source, key_loc),
+                                value_loc_of(source, Some(key_loc)),
                                 b"Missing dependencies object",
                             );
                             return Err(ParseError::InvalidPackageInfo);
@@ -2833,7 +2834,7 @@ pub(crate) fn parse_into_binary_lockfile(
                         else {
                             log.add_error(
                                 Some(source),
-                                item_loc(source, key_loc, deps_idx),
+                                item_loc(source, Some(key_loc), deps_idx),
                                 b"Expected an object",
                             );
                             return Err(ParseError::InvalidPackageInfo);
@@ -2885,7 +2886,7 @@ pub(crate) fn parse_into_binary_lockfile(
                         if i >= pkg_info.len() {
                             log.add_error(
                                 Some(source),
-                                value_loc_of(source, key_loc),
+                                value_loc_of(source, Some(key_loc)),
                                 b"Missing package binaries object",
                             );
                             return Err(ParseError::InvalidPackageInfo);
@@ -2895,7 +2896,7 @@ pub(crate) fn parse_into_binary_lockfile(
                         if pkg_info[bin_obj_idx].as_object().is_none() {
                             log.add_error(
                                 Some(source),
-                                item_loc(source, key_loc, bin_obj_idx),
+                                item_loc(source, Some(key_loc), bin_obj_idx),
                                 b"Expected an object",
                             );
                             return Err(ParseError::InvalidPackageInfo);
@@ -2923,7 +2924,7 @@ pub(crate) fn parse_into_binary_lockfile(
                     if i >= pkg_info.len() {
                         log.add_error(
                             Some(source),
-                            value_loc_of(source, key_loc),
+                            value_loc_of(source, Some(key_loc)),
                             b"Missing integrity",
                         );
                         return Err(ParseError::InvalidPackageInfo);
@@ -2931,7 +2932,7 @@ pub(crate) fn parse_into_binary_lockfile(
                     let Some(integrity_str) = pkg_info[i].as_str() else {
                         log.add_error(
                             Some(source),
-                            item_loc(source, key_loc, i),
+                            item_loc(source, Some(key_loc), i),
                             b"Expected a string",
                         );
                         return Err(ParseError::InvalidPackageInfo);
@@ -2946,7 +2947,7 @@ pub(crate) fn parse_into_binary_lockfile(
                         // *lockfile* pin.
                         log.add_warning(
                             Some(source),
-                            item_loc(source, key_loc, i),
+                            item_loc(source, Some(key_loc), i),
                             b"Unsupported or malformed integrity hash; ignoring",
                         );
                         pkg.meta.integrity = Integrity::default();
@@ -2965,7 +2966,7 @@ pub(crate) fn parse_into_binary_lockfile(
                     {
                         log.add_error(
                             Some(source),
-                            item_loc(source, key_loc, i),
+                            item_loc(source, Some(key_loc), i),
                             b"Missing integrity hash for npm package resolved to a tarball URL outside the configured registry",
                         );
                         return Err(ParseError::InvalidPackageInfo);
@@ -2979,7 +2980,7 @@ pub(crate) fn parse_into_binary_lockfile(
                             if !integrity_str.is_empty() && !pkg.meta.integrity.tag.is_supported() {
                                 log.add_warning(
                                     Some(source),
-                                    item_loc(source, key_loc, i),
+                                    item_loc(source, Some(key_loc), i),
                                     b"Unsupported or malformed integrity hash; ignoring",
                                 );
                                 pkg.meta.integrity = Integrity::default();
@@ -2992,7 +2993,7 @@ pub(crate) fn parse_into_binary_lockfile(
                     if i >= pkg_info.len() {
                         log.add_error(
                             Some(source),
-                            value_loc_of(source, key_loc),
+                            value_loc_of(source, Some(key_loc)),
                             b"Missing git dependency tag",
                         );
                         return Err(ParseError::InvalidPackageInfo);
@@ -3004,7 +3005,7 @@ pub(crate) fn parse_into_binary_lockfile(
                     let Some(bun_tag_str) = pkg_info[bun_tag_idx].as_str() else {
                         log.add_error(
                             Some(source),
-                            item_loc(source, key_loc, bun_tag_idx),
+                            item_loc(source, Some(key_loc), bun_tag_idx),
                             b"Expected a string",
                         );
                         return Err(ParseError::InvalidPackageInfo);
@@ -3023,7 +3024,7 @@ pub(crate) fn parse_into_binary_lockfile(
                     if enforce_safe_tag && !crate::repository::is_safe_resolved_tag(bun_tag_str) {
                         log.add_error(
                             Some(source),
-                            item_loc(source, key_loc, bun_tag_idx),
+                            item_loc(source, Some(key_loc), bun_tag_idx),
                             b"Invalid git dependency tag",
                         );
                         return Err(ParseError::InvalidPackageInfo);
@@ -3043,7 +3044,7 @@ pub(crate) fn parse_into_binary_lockfile(
                             if !integrity_str.is_empty() && !pkg.meta.integrity.tag.is_supported() {
                                 log.add_warning(
                                     Some(source),
-                                    item_loc(source, key_loc, i),
+                                    item_loc(source, Some(key_loc), i),
                                     b"Unsupported or malformed integrity hash; ignoring",
                                 );
                                 pkg.meta.integrity = Integrity::default();
@@ -3313,7 +3314,7 @@ pub(crate) fn parse_into_binary_lockfile(
                                     string_buf,
                                     source,
                                     log,
-                                    row.key_loc,
+                                    Some(row.key_loc),
                                 )?;
                                 return Err(ParseError::InvalidPackageInfo);
                             }
@@ -3506,7 +3507,7 @@ fn dependency_resolution_failure(
     buf: &[u8],
     source: &bun_ast::Source,
     log: &mut bun_ast::Log,
-    loc: bun_ast::Loc,
+    loc: Option<bun_ast::Loc>,
 ) -> Result<(), bun_alloc::AllocError> {
     let behavior_str = if dep.behavior.contains(Behavior::DEV) {
         "dev"
@@ -3617,7 +3618,7 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
                 let Some(version_str) = row.value.as_str() else {
                     log.add_error(
                         Some(source),
-                        value_loc_of(source, row.key_loc),
+                        value_loc_of(source, Some(row.key_loc)),
                         b"Expected a string",
                     );
                     return Err(ParseError::InvalidDependencyVersion);
@@ -3648,7 +3649,7 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
                         None => {
                             log.add_error(
                                 Some(source),
-                                value_loc_of(source, row.key_loc),
+                                value_loc_of(source, Some(row.key_loc)),
                                 b"Invalid dependency version",
                             );
                             return Err(ParseError::InvalidDependencyVersion);

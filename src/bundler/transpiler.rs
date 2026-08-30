@@ -52,7 +52,7 @@ pub trait PluginResolver {
         specifier: &[u8],
         importer: &[u8],
         log: &mut bun_ast::Log,
-        loc: bun_ast::Loc,
+        loc: Option<bun_ast::Loc>,
         target: BunPluginTarget,
     ) -> crate::Result<Option<bun_paths::fs::Path<'static>>>;
 }
@@ -518,7 +518,7 @@ impl<'a> Transpiler<'a> {
 
                 self.log_mut().add_error_fmt(
                     None,
-                    bun_ast::Loc::EMPTY,
+                    None,
                     format_args!(
                         "{} resolving \"{}\" (entry point)",
                         err,
@@ -544,7 +544,7 @@ impl<'a> Transpiler<'a> {
         if resolved.path_pair.primary.namespace == b"node" {
             self.log_mut().add_error_fmt(
                 None,
-                bun_ast::Loc::EMPTY,
+                None,
                 format_args!(
                     "Cannot use Node.js builtin \"{}\" as an entry point",
                     bstr::BStr::new(entry_point)
@@ -553,7 +553,7 @@ impl<'a> Transpiler<'a> {
         } else {
             self.log_mut().add_error_fmt(
                 None,
-                bun_ast::Loc::EMPTY,
+                None,
                 format_args!(
                     "\"{}\" is disabled due to \"browser\" field in package.json (entry point)",
                     bstr::BStr::new(entry_point)
@@ -1420,7 +1420,7 @@ impl<'a> Transpiler<'a> {
                     Err(err) => {
                         let _ = log.add_error_fmt(
                             None,
-                            bun_ast::Loc::EMPTY,
+                            None,
                             format_args!(
                                 "{} parsing data url \"{}\"",
                                 bstr::BStr::new(err.name()),
@@ -1435,7 +1435,7 @@ impl<'a> Transpiler<'a> {
                     Err(err) => {
                         let _ = log.add_error_fmt(
                             None,
-                            bun_ast::Loc::EMPTY,
+                            None,
                             format_args!(
                                 "{} decoding data \"{}\"",
                                 bstr::BStr::new(err.name()),
@@ -1473,7 +1473,7 @@ impl<'a> Transpiler<'a> {
                 Err(err) => {
                     let _ = log.add_error_fmt(
                         None,
-                        bun_ast::Loc::EMPTY,
+                        None,
                         format_args!(
                             "{} reading \"{}\"",
                             bstr::BStr::new(err.name()),
@@ -1940,7 +1940,7 @@ fn parse_data_loader<'a>(
                     value: expr,
                     ..Default::default()
                 },
-                bun_ast::Loc { start: 0 },
+                bun_ast::Loc::new(0),
             );
             let stmts = bun_ast::StoreSlice::new_mut(arena.alloc_slice_copy(&[stmt]));
             break 'parts Box::new([bun_ast::Part {
@@ -2049,24 +2049,24 @@ fn parse_data_loader<'a>(
                         kind: bun_ast::S::Kind::KVar,
                         ..Default::default()
                     },
-                    bun_ast::Loc { start: 0 },
+                    bun_ast::Loc::new(0),
                 );
                 let stmt1 = bun_ast::Stmt::alloc(
                     bun_ast::S::ExportClause {
                         items: bun_ast::StoreSlice::new_mut(&mut export_clauses[..count]),
                         is_single_line: false,
                     },
-                    bun_ast::Loc { start: 0 },
+                    bun_ast::Loc::new(0),
                 );
                 let stmt2 = bun_ast::Stmt::alloc(
                     bun_ast::S::ExportDefault {
                         value: bun_ast::StmtOrExpr::Expr(expr),
                         default_name: bun_ast::LocRef {
-                            loc: bun_ast::Loc::default(),
+                            loc: None,
                             ref_: bun_ast::Ref::NONE,
                         },
                     },
-                    bun_ast::Loc { start: 0 },
+                    bun_ast::Loc::new(0),
                 );
 
                 let stmts =
@@ -2083,11 +2083,11 @@ fn parse_data_loader<'a>(
                 bun_ast::S::ExportDefault {
                     value: bun_ast::StmtOrExpr::Expr(expr),
                     default_name: bun_ast::LocRef {
-                        loc: bun_ast::Loc::default(),
+                        loc: None,
                         ref_: bun_ast::Ref::NONE,
                     },
                 },
-                bun_ast::Loc { start: 0 },
+                bun_ast::Loc::new(0),
             );
 
             let stmts = bun_ast::StoreSlice::new_mut(arena.alloc_slice_copy(&[stmt]));
@@ -2120,19 +2120,16 @@ fn parse_text_loader<'a>(
     source_backing: resolver::cache::Contents,
     arena: &'a Arena,
 ) -> Option<ParseResult<'a>> {
-    let expr = bun_ast::Expr::init(
-        bun_ast::E::EString::init(&source.contents),
-        bun_ast::Loc::EMPTY,
-    );
+    let expr = bun_ast::Expr::init(bun_ast::E::EString::init(&source.contents), None);
     let stmt = bun_ast::Stmt::alloc(
         bun_ast::S::ExportDefault {
             value: bun_ast::StmtOrExpr::Expr(expr),
             default_name: bun_ast::LocRef {
-                loc: bun_ast::Loc::default(),
+                loc: None,
                 ref_: bun_ast::Ref::NONE,
             },
         },
-        bun_ast::Loc { start: 0 },
+        bun_ast::Loc::new(0),
     );
     let stmts = bun_ast::StoreSlice::new_mut(arena.alloc_slice_copy(&[stmt]));
     let parts: Box<[bun_ast::Part]> = Box::new([bun_ast::Part {
@@ -2173,22 +2170,22 @@ fn parse_md_loader<'a>(
         Err(_) => {
             let _ = log.add_error_fmt(
                 None,
-                bun_ast::Loc::EMPTY,
+                None,
                 format_args!("Failed to render markdown to HTML"),
             );
             return None;
         }
     };
-    let expr = bun_ast::Expr::init(bun_ast::E::EString::init(html), bun_ast::Loc::EMPTY);
+    let expr = bun_ast::Expr::init(bun_ast::E::EString::init(html), None);
     let stmt = bun_ast::Stmt::alloc(
         bun_ast::S::ExportDefault {
             value: bun_ast::StmtOrExpr::Expr(expr),
             default_name: bun_ast::LocRef {
-                loc: bun_ast::Loc::default(),
+                loc: None,
                 ref_: bun_ast::Ref::NONE,
             },
         },
-        bun_ast::Loc { start: 0 },
+        bun_ast::Loc::new(0),
     );
     let stmts = bun_ast::StoreSlice::new_mut(arena.alloc_slice_copy(&[stmt]));
     let parts: Box<[bun_ast::Part]> = Box::new([bun_ast::Part {
@@ -2223,7 +2220,7 @@ fn parse_wasm_loader<'a>(
         if !source.is_web_assembly() {
             let _ = log.add_error_fmt(
                 None,
-                bun_ast::Loc::EMPTY,
+                None,
                 format_args!(
                     "Invalid wasm file \"{}\" (missing magic header)",
                     bstr::BStr::new(path.text)
@@ -2793,7 +2790,7 @@ impl<'a> Transpiler<'a> {
                         };
                         self.log_mut().add_error_fmt(
                             None,
-                            bun_ast::Loc::EMPTY,
+                            None,
                             format_args!("{} \"{}\"", message, bstr::BStr::new(path)),
                         );
                     }
@@ -2847,7 +2844,7 @@ impl<'a> Transpiler<'a> {
         )?;
         self.log_mut().add_range_error_with_notes(
             None,
-            Default::default(),
+            None,
             msg,
             Box::new([bun_ast::Data {
                 text: note.into(),
@@ -3129,7 +3126,7 @@ impl<'a> Transpiler<'a> {
             Err(err) => {
                 let _ = self.log_mut().add_error_fmt(
                     None,
-                    bun_ast::Loc::EMPTY,
+                    None,
                     format_args!(
                         "{} reading \"{}\"",
                         err.name(),
@@ -3173,20 +3170,15 @@ impl<'a> Transpiler<'a> {
         ) {
             Ok(v) => v,
             Err(e) => {
-                let _ = self.log_mut().add_error_fmt(
-                    None,
-                    bun_ast::Loc::EMPTY,
-                    format_args!("{} parsing", e),
-                );
+                let _ = self
+                    .log_mut()
+                    .add_error_fmt(None, None, format_args!("{} parsing", e));
                 return None;
             }
         };
         if let Err(e) = sheet.minify(alloc, &bun_css::MinifyOptions::default(), &extra) {
-            self.log_mut().add_error_fmt(
-                None,
-                bun_ast::Loc::EMPTY,
-                format_args!("{} while minifying", e.kind),
-            );
+            self.log_mut()
+                .add_error_fmt(None, None, format_args!("{} while minifying", e.kind));
             return None;
         }
         let symbols = bun_ast::symbol::Map::init_list(Default::default());
@@ -3203,11 +3195,8 @@ impl<'a> Transpiler<'a> {
         ) {
             Ok(v) => v,
             Err(e) => {
-                self.log_mut().add_error_fmt(
-                    None,
-                    bun_ast::Loc::EMPTY,
-                    format_args!("{} while printing", e),
-                );
+                self.log_mut()
+                    .add_error_fmt(None, None, format_args!("{} while printing", e));
                 return None;
             }
         };

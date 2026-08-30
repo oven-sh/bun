@@ -106,7 +106,7 @@ impl MacroContext {
         source_dir: &[u8],
         log: &mut Log,
         source: &Source,
-        import_range: Range,
+        import_range: Option<Range>,
         caller: Expr,
         function_name: &[u8],
     ) -> crate::Result<Expr> {
@@ -308,7 +308,7 @@ fn __bun_macro_context_call(
     source_dir: &[u8],
     log: &mut Log,
     source: &Source,
-    import_range: Range,
+    import_range: Option<Range>,
     caller: Expr,
     function_name: &[u8],
 ) -> Result<Expr, bun_js_parser::Error> {
@@ -1064,7 +1064,7 @@ fn expr_from_blob(
     bump: &bun_alloc::Arena,
     content_type: &[u8],
     log: &mut Log,
-    loc: bun_ast::Loc,
+    loc: Option<bun_ast::Loc>,
 ) -> crate::Result<Expr> {
     use bun_ast::{E, ExprData, StoreStr as Str};
     use bun_http_types::MimeType::{Category, MimeType};

@@ -153,7 +153,7 @@ struct Parser<'a> {
 }
 
 impl<'a> Parser<'a> {
-    fn add_error(&mut self, loc: bun_ast::Loc, text: &'static [u8]) -> crate::Result<()> {
+    fn add_error(&mut self, loc: Option<bun_ast::Loc>, text: &'static [u8]) -> crate::Result<()> {
         self.log.add_error_opts(
             text,
             bun_ast::ErrorOpts {
@@ -168,7 +168,7 @@ impl<'a> Parser<'a> {
 
     fn add_error_format(
         &mut self,
-        loc: bun_ast::Loc,
+        loc: Option<bun_ast::Loc>,
         args: core::fmt::Arguments<'_>,
     ) -> crate::Result<()> {
         self.log.add_error_fmt_opts(

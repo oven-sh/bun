@@ -561,7 +561,7 @@ impl InitCommand {
         }
 
         if !did_load_package_json {
-            fields.object = bun_ast::Expr::init(bun_ast::E::Object::default(), bun_ast::Loc::EMPTY)
+            fields.object = bun_ast::Expr::init(bun_ast::E::Object::default(), None)
                 .data
                 .e_object();
         }
@@ -674,7 +674,7 @@ impl InitCommand {
                 object.put(
                     &bump,
                     b"private",
-                    bun_ast::Expr::init(bun_ast::E::Boolean { value: true }, bun_ast::Loc::EMPTY),
+                    bun_ast::Expr::init(bun_ast::E::Boolean { value: true }, None),
                 )?;
             }
         }
@@ -742,9 +742,9 @@ impl InitCommand {
                 needs_dependencies || needs_dev_dependencies || needs_typescript_dependency;
 
             if needs_dependencies {
-                let mut dependencies_object = object.get(b"dependencies").unwrap_or_else(|| {
-                    bun_ast::Expr::init(bun_ast::E::Object::default(), bun_ast::Loc::EMPTY)
-                });
+                let mut dependencies_object = object
+                    .get(b"dependencies")
+                    .unwrap_or_else(|| bun_ast::Expr::init(bun_ast::E::Object::default(), None));
                 let mut iter = needed_dependencies.iter_set();
                 while let Some(index) = iter.next() {
                     let dep = &dependencies[index];
@@ -758,9 +758,9 @@ impl InitCommand {
             }
 
             if needs_dev_dependencies {
-                let mut obj = object.get(b"devDependencies").unwrap_or_else(|| {
-                    bun_ast::Expr::init(bun_ast::E::Object::default(), bun_ast::Loc::EMPTY)
-                });
+                let mut obj = object
+                    .get(b"devDependencies")
+                    .unwrap_or_else(|| bun_ast::Expr::init(bun_ast::E::Object::default(), None));
                 let mut iter = needed_dev_dependencies.iter_set();
                 while let Some(index) = iter.next() {
                     let dep = &dev_dependencies[index];
@@ -773,9 +773,9 @@ impl InitCommand {
             }
 
             if needs_typescript_dependency {
-                let mut peer_dependencies = object.get(b"peerDependencies").unwrap_or_else(|| {
-                    bun_ast::Expr::init(bun_ast::E::Object::default(), bun_ast::Loc::EMPTY)
-                });
+                let mut peer_dependencies = object
+                    .get(b"peerDependencies")
+                    .unwrap_or_else(|| bun_ast::Expr::init(bun_ast::E::Object::default(), None));
                 peer_dependencies.data.e_object_mut().unwrap().put_string(
                     &bump,
                     b"typescript",
@@ -808,7 +808,7 @@ impl InitCommand {
                 &mut package_json_writer,
                 bun_ast::Expr {
                     data: bun_ast::ExprData::EObject(fields.object.unwrap()),
-                    loc: bun_ast::Loc::EMPTY,
+                    loc: None,
                 },
                 &bun_ast::Source::init_empty_file(b"package.json"),
                 js_printer::PrintJsonOptions {
@@ -1374,7 +1374,7 @@ impl Template {
         fields.name = self.name().to_vec();
         // Allocate in the process-lifetime CLI arena.
         let key: &mut Rope = crate::cli::cli_arena().alloc(Rope {
-            head: bun_ast::Expr::init(bun_ast::E::String::init(b"scripts"), bun_ast::Loc::EMPTY),
+            head: bun_ast::Expr::init(bun_ast::E::String::init(b"scripts"), None),
             next: core::ptr::null_mut(),
         });
         // SAFETY: object is arena-allocated and live for the command duration.

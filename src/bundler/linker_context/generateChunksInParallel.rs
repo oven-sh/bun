@@ -318,7 +318,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                     } else {
                         None
                     };
-                    c.log_mut().add_error(source, bun_ast::Loc::EMPTY, message);
+                    c.log_mut().add_error(source, None, message);
                 }
             }
             if had_print_error {
@@ -456,7 +456,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 }
             }
 
-            c.log_mut().add_error(None, bun_ast::Loc::EMPTY, msg);
+            c.log_mut().add_error(None, None, msg);
 
             for (name, template) in [
                 ("entry", entry_naming),
@@ -622,7 +622,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
     {
         c.log_mut().add_error(
             None,
-            bun_ast::Loc::EMPTY,
+            None,
             b"cannot write multiple output files without an output directory",
         );
         return Err(crate::Error::MultipleOutputFilesWithoutOutputDir);
@@ -1123,7 +1123,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                             // materialized.
                             let _ = c.log_disjoint().add_error_fmt(
                                 None,
-                                bun_ast::Loc::EMPTY,
+                                None,
                                 format_args!(
                                     "Failed to generate bytecode for {}",
                                     bstr::BStr::new(&chunk.final_rel_path)

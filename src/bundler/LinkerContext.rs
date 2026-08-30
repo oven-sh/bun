@@ -1611,9 +1611,9 @@ pub struct MatchImport {
     kind: MatchImportKind,
     namespace_ref: Ref,
     source_index: u32,
-    name_loc: Loc, // Optional, goes with sourceIndex, ignore if zero,
+    name_loc: Option<Loc>, // goes with source_index
     other_source_index: u32,
-    other_name_loc: Loc, // Optional, goes with otherSourceIndex, ignore if zero,
+    other_name_loc: Option<Loc>, // goes with other_source_index
     r#ref: Ref,
 }
 
@@ -1881,7 +1881,7 @@ impl<'a> LinkerContext<'a> {
     pub(crate) fn validate_tla(
         &mut self,
         source_index: crate::IndexInt,
-        tla_keywords: &[Range],
+        tla_keywords: &[Option<Range>],
         tla_checks: &mut [TlaCheck],
         input_files: &[Source],
         meta_flags: &mut [crate::js_meta::Flags],
@@ -1916,7 +1916,7 @@ impl<'a> LinkerContext<'a> {
                         continue;
                     }
                     tla_checks[source_index as usize].depth = 1;
-                    if tla_keywords[source_index as usize].len > 0 {
+                    if tla_keywords[source_index as usize].is_some() {
                         tla_checks[source_index as usize].parent = source_index;
                     }
 
@@ -1987,7 +1987,7 @@ impl<'a> LinkerContext<'a> {
                             let parent_tla_check = tla_checks[other_source_index as usize];
                             let parent_source_index = other_source_index;
 
-                            if parent_result_tla_keyword.len > 0 {
+                            if let Some(parent_result_tla_keyword) = parent_result_tla_keyword {
                                 let source = &input_files[other_source_index as usize];
                                 tla_pretty_path = source.path.pretty;
                                 let mut text = Vec::new();
@@ -2002,7 +2002,7 @@ impl<'a> LinkerContext<'a> {
                                     text: text.into(),
                                     location: bun_ast::Location::init_or_null(
                                         Some(source),
-                                        parent_result_tla_keyword,
+                                        Some(parent_result_tla_keyword),
                                     ),
                                     ..Default::default()
                                 });
@@ -2073,7 +2073,7 @@ impl<'a> LinkerContext<'a> {
     pub(crate) fn should_remove_import_export_stmt(
         &mut self,
         stmts: &mut StmtList,
-        loc: Loc,
+        loc: Option<Loc>,
         namespace_ref: Ref,
         import_record_index: u32,
         alloc: &Bump,
@@ -2114,7 +2114,7 @@ impl<'a> LinkerContext<'a> {
                         }]),
                         ..Default::default()
                     },
-                    record.range.loc,
+                    record.range.map(|r| r.loc),
                 ))
                 .expect("unreachable");
             return Ok(true);
@@ -2923,7 +2923,7 @@ impl<'a> LinkerContext<'a> {
             let parse_graph = self.parse_graph();
             let stmts: &[Stmt] = part.stmts.slice();
             debug_tree_shake!(
-                "markPartLiveForTreeShaking({}): {}:{} = {}, {}",
+                "markPartLiveForTreeShaking({}): {}:{} = {:?}, {}",
                 source_index,
                 bstr::BStr::new(
                     &parse_graph
@@ -2934,11 +2934,7 @@ impl<'a> LinkerContext<'a> {
                         .pretty
                 ),
                 part_index,
-                if !stmts.is_empty() {
-                    stmts[0].loc.start
-                } else {
-                    Loc::EMPTY.start
-                },
+                stmts.first().and_then(|stmt| stmt.loc).map(Loc::get),
                 if !stmts.is_empty() {
                     <&'static str>::from(stmts[0].data.tag())
                 } else {
@@ -3006,7 +3002,7 @@ pub(crate) use crate::bundle_v2::{ImportTrackerIterator, ImportTrackerStatus};
 fn import_tracker_eq(a: &ImportTracker, b: &ImportTracker) -> bool {
     a.source_index.get() == b.source_index.get()
         && a.import_ref == b.import_ref
-        && a.name_loc.start == b.name_loc.start
+        && a.name_loc == b.name_loc
 }
 
 impl<'a> LinkerContext<'a> {
@@ -3087,7 +3083,7 @@ impl<'a> LinkerContext<'a> {
                         | Loader::Md => {
                             log.add_error_fmt(
                                 Some(source),
-                                record.range.loc,
+                                record.range.map(|r| r.loc),
                                 format_args!(
                                     "Cannot import a \".{}\" file into a CSS file",
                                     <&'static str>::from(loader),
@@ -3850,8 +3846,8 @@ impl<'a> LinkerContext<'a> {
             if *ambig != result {
                 if result.kind == ambig.kind
                     && ambig.kind == MatchImportKind::Normal
-                    && ambig.name_loc.start != 0
-                    && result.name_loc.start != 0
+                    && ambig.name_loc.is_some()
+                    && result.name_loc.is_some()
                 {
                     return MatchImport {
                         kind: MatchImportKind::Ambiguous,
@@ -4313,10 +4309,10 @@ impl InsideWrapperPrefix {
                 self.sync_dependencies_end,
                 Stmt::alloc(
                     S::SExpr {
-                        value: Expr::init(E::Await { value: call_expr }, Loc::EMPTY),
+                        value: Expr::init(E::Await { value: call_expr }, None),
                         ..Default::default()
                     },
-                    Loc::EMPTY,
+                    None,
                 ),
             );
             return Ok(());
@@ -4363,7 +4359,7 @@ impl InsideWrapperPrefix {
                     ref_: promise_all_ref,
                     ..Default::default()
                 },
-                Loc::EMPTY,
+                None,
             );
 
             let mut items = bun_ast::ExprNodeList::init_capacity(2);
@@ -4375,7 +4371,7 @@ impl InsideWrapperPrefix {
                     items,
                     ..Default::default()
                 },
-                Loc::EMPTY,
+                None,
             ));
 
             let promise_all_call = Expr::init(
@@ -4384,7 +4380,7 @@ impl InsideWrapperPrefix {
                     args,
                     ..Default::default()
                 },
-                Loc::EMPTY,
+                None,
             );
 
             // replace the `await init_` expr with `await __promiseAll`
@@ -4394,11 +4390,11 @@ impl InsideWrapperPrefix {
                         E::Await {
                             value: promise_all_call,
                         },
-                        Loc::EMPTY,
+                        None,
                     ),
                     ..Default::default()
                 },
-                Loc::EMPTY,
+                None,
             );
         }
         Ok(())

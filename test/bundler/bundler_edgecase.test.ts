@@ -3277,6 +3277,73 @@ describe("bundler", () => {
       api.expectFile("/out.js").toContain("var arguments = 1;");
     },
   });
+
+  // The standard decorator lowering declares `var _init`, `var _dec` and one
+  // WeakMap per accessor next to each class. At the top level of a module
+  // those were never registered for the renamer, so every decorated class
+  // in the chunk shared one binding.
+  itBundled("edgecase/StandardDecoratorTemporariesPerClass", {
+    files: {
+      "/entry.js": /* js */ `
+        function Field(_, _c) {}
+        function AccessorDecorator(_, c) {
+          return { init: () => c.name, get: () => c.name };
+        }
+        class Entity { @Field id; }
+        class Action { @AccessorDecorator accessor success; }
+        console.log(new Entity().id);
+      `,
+    },
+    run: { stdout: "undefined" },
+  });
+  itBundled("edgecase/StandardDecoratorTemporariesAcrossFiles", {
+    files: {
+      "/entry.js": /* js */ `
+        import { A } from "./a";
+        import { B } from "./b";
+        console.log(new A().x, new B().x);
+      `,
+      "/a.js": /* js */ `
+        function dec(_, _c) {}
+        export class A { @dec accessor x = "a"; }
+      `,
+      "/b.js": /* js */ `
+        function dec(_, _c) {}
+        export class B { @dec accessor x = "b"; }
+      `,
+    },
+    run: { stdout: "a b" },
+  });
+  itBundled("edgecase/StandardDecoratorTemporariesInSiblingBlocksMinified", {
+    files: {
+      "/entry.js": /* js */ `
+        function dec(_, _c) {}
+        let A, B;
+        { A = class { @dec accessor x = "a"; }; }
+        { B = class { @dec accessor x = "b"; }; }
+        console.log(new A().x, new B().x);
+      `,
+    },
+    minifyIdentifiers: true,
+    run: { stdout: "a b" },
+  });
+  // `recv.#m()` on a lowered private method captures the receiver in `_obj`,
+  // declared with `var` inside the method. It must not shadow a user `_obj`.
+  itBundled("edgecase/StandardDecoratorReceiverTemporaryVsUserBinding", {
+    files: {
+      "/entry.js": /* js */ `
+        const _obj = "user";
+        function dec(_, _c) {}
+        class A {
+          @dec #m() { return "m"; }
+          call(o) { return o.get().#m() + " " + _obj; }
+        }
+        const a = new A();
+        console.log(a.call({ get: () => a }));
+      `,
+    },
+    run: { stdout: "m user" },
+  });
 });
 
 for (const backend of ["api", "cli"] as const) {

@@ -99,9 +99,12 @@ fn ssl_config_intern_for_http(config: SSLConfig) -> http::ssl_config::SharedPtr 
 /// The join does not normalize. `connect(2)` resolves `..` after following a
 /// symlink, `path.resolve` collapses it first, and the socket must stay the one
 /// the kernel would have picked from `cwd`.
+///
+/// Windows keeps the path as given: `sun_path` holds 108 bytes and, unlike the
+/// Linux and macOS paths in `bsd.c`, Windows has no fallback for a longer one.
 fn absolute_unix_socket_path(cwd: &[u8], path: Vec<u8>) -> Box<[u8]> {
     // Linux abstract-namespace sockets start with NUL and are not paths.
-    if path.first() == Some(&0) || bun_paths::is_absolute(&path) {
+    if cfg!(windows) || path.first() == Some(&0) || bun_paths::is_absolute(&path) {
         return path.into_boxed_slice();
     }
     bun_paths::join_sep_maybe_z::<false>(&[cwd, &path])

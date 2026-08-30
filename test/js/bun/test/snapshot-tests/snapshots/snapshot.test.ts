@@ -187,7 +187,9 @@ async function runBunTest(cwd: string, ...args: string[]) {
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(normalizeBunSnapshot(stdout)).toBe("bun test <version> (<revision>)");
-  const normalized = normalizeBunSnapshot(stderr, cwd);
+  // Some messages quote a path, which doubles the backslashes of a Windows path. Map that form to <dir> too.
+  const quotedDir = cwd.replaceAll("\\", "\\\\") + "\\\\";
+  const normalized = normalizeBunSnapshot(stderr.replaceAll(quotedDir, "<dir>/"), cwd);
   const summary = normalized
     .split("\n")
     .filter(line => summaryLine.test(line))

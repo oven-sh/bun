@@ -735,6 +735,33 @@ pub(crate) fn post_process_js_chunk(
     Ok(())
 }
 
+/// `require_foo();` / `init_foo();` for an entry point whose body the linker
+/// put behind a `__commonJS` / `__esm` wrapper. Every other call of that
+/// wrapper sits inside code that only runs once the entry point is running, so
+/// unless the tail makes this call the entry point's code never executes.
+///
+/// `None` when the parser gave the file no wrapper symbol (`needs_wrapper_ref`:
+/// every top-level statement is hoistable). The linker then emits the file
+/// unwrapped, so there is nothing to call, and printing the missing ref would
+/// emit `__INVALID__REF__()`.
+fn call_wrapper_stmt(wrapper_ref: Ref) -> Option<Stmt> {
+    wrapper_ref.is_valid().then(|| {
+        Stmt::alloc(
+            S::SExpr {
+                value: Expr::init(
+                    E::Call {
+                        target: Expr::init_identifier(wrapper_ref, bun_ast::Loc::EMPTY),
+                        ..Default::default()
+                    },
+                    bun_ast::Loc::EMPTY,
+                ),
+                ..Default::default()
+            },
+            bun_ast::Loc::EMPTY,
+        )
+    })
+}
+
 // `js_printer::print` ties bump/Options/import_records/renamer to a
 // single `'a`, and `Renamer<'r, 'src>` is invariant in `'src` — so the caller's
 // renamer lifetime fixes `'a`. All by-ref params that flow into `print` must
@@ -809,22 +836,7 @@ pub(crate) fn generate_entry_point_tail_js<'a>(
                             ));
                         } else {
                             // "init_foo();"
-                            stmts.push(Stmt::alloc(
-                                S::SExpr {
-                                    value: Expr::init(
-                                        E::Call {
-                                            target: Expr::init_identifier(
-                                                ast.wrapper_ref,
-                                                bun_ast::Loc::EMPTY,
-                                            ),
-                                            ..Default::default()
-                                        },
-                                        bun_ast::Loc::EMPTY,
-                                    ),
-                                    ..Default::default()
-                                },
-                                bun_ast::Loc::EMPTY,
-                            ));
+                            stmts.extend(call_wrapper_stmt(ast.wrapper_ref));
                         }
                     }
 
@@ -1082,8 +1094,17 @@ pub(crate) fn generate_entry_point_tail_js<'a>(
             }
         }
 
-        // TODO: iife
-        options::OutputFormat::Iife => {}
+        options::OutputFormat::Iife => match flags.wrap {
+            // "require_foo();" / "init_foo();"
+            //
+            // The result is dropped: there is no global name option to assign
+            // it to. Top-level await is a parse error in this format, so an ESM
+            // wrapper here is never async and the call needs no `await`.
+            crate::WrapKind::Cjs | crate::WrapKind::Esm => {
+                stmts.extend(call_wrapper_stmt(ast.wrapper_ref));
+            }
+            crate::WrapKind::None => {}
+        },
 
         options::OutputFormat::InternalBakeDev => {
             // nothing needs to be done here, as the exports are already
@@ -1118,24 +1139,9 @@ pub(crate) fn generate_entry_point_tail_js<'a>(
                 }
                 crate::WrapKind::Esm => {
                     // "init_foo();"
-                    stmts.push(Stmt::alloc(
-                        S::SExpr {
-                            value: Expr::init(
-                                E::Call {
-                                    target: Expr::init_identifier(
-                                        ast.wrapper_ref,
-                                        bun_ast::Loc::EMPTY,
-                                    ),
-                                    ..Default::default()
-                                },
-                                bun_ast::Loc::EMPTY,
-                            ),
-                            ..Default::default()
-                        },
-                        bun_ast::Loc::EMPTY,
-                    ));
+                    stmts.extend(call_wrapper_stmt(ast.wrapper_ref));
                 }
-                _ => {}
+                crate::WrapKind::None => {}
             }
 
             // TODO:
@@ -1159,8 +1165,10 @@ pub(crate) fn generate_entry_point_tail_js<'a>(
     }
 
     let print_options = js_printer::Options {
-        // TODO: IIFE indent
         indent: Default::default(),
+        // The printer indents the tail by one level inside the IIFE wrapper,
+        // like it does for every file's code in the chunk.
+        module_type: c.options.output_format,
         has_run_symbol_renamer: true,
 
         to_esm_ref,

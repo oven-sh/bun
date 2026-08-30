@@ -138,7 +138,7 @@ struct SpawnThreadsForTestingLoop {
     int32_t iterations;
     int fd;
     bool detached;
-    // Lives on the caller's stack; each loop bumps it exactly once, before the caller returns.
+    // Lives on the caller's stack; each loop bumps it exactly once, after its first spawn attempt.
     std::atomic<int32_t>* runningLoops;
 };
 
@@ -155,22 +155,29 @@ static void recordSpawnThreadsForTesting(int fd, const char* what, int value)
 static void* spawnThreadsForTestingLoop(void* arg)
 {
     std::unique_ptr<SpawnThreadsForTestingLoop> loop(static_cast<SpawnThreadsForTestingLoop*>(arg));
-    loop->runningLoops->fetch_add(1, std::memory_order_release);
     // Small detached stacks keep each spawn cheap (ASAN clears a whole stack's shadow at start).
     pthread_attr_t attr;
     pthread_attr_init(&attr);
     pthread_attr_setstacksize(&attr, 64 * 1024);
     pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
     intptr_t result = 0;
+    // The caller waits for this; it happens once the first spawn attempt has returned.
+    bool reportedRunning = false;
     for (int32_t i = 0; i < loop->iterations; i++) {
         pthread_t thread;
         int rc = pthread_create(&thread, &attr, spawnThreadsForTestingEntry, nullptr);
+        if (!reportedRunning) {
+            reportedRunning = true;
+            loop->runningLoops->fetch_add(1, std::memory_order_release);
+        }
         if (rc != 0) {
             recordSpawnThreadsForTesting(loop->fd, "pthread_create failed: errno", rc);
             result = rc;
             break;
         }
     }
+    if (!reportedRunning)
+        loop->runningLoops->fetch_add(1, std::memory_order_release);
     pthread_attr_destroy(&attr);
     // A detached loop has no return value, so a test that expects the loop to outlive it
     // can see in the file when it ran out of iterations instead.
@@ -221,7 +228,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_spawnThreadsForTesting, (JSC::JSGlobalObject
         }
     }
     pthread_attr_destroy(&attr);
-    // Every loop is spawning threads by the time this returns.
+    // Every loop has made its first spawn attempt by the time this returns.
     while (runningLoops.load(std::memory_order_acquire) < started)
         sched_yield();
     if (!detach) {

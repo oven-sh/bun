@@ -228,9 +228,7 @@ impl StandaloneModuleGraph {
     }
 
     /// Directory `name`'s stored key (posix-separated, no trailing `/`), or
-    /// the errno an `open(O_DIRECTORY)` of it would produce: `ENOTDIR` for an
-    /// embedded file, `ENOENT` otherwise. Through `get_ref()` the key borrow
-    /// is `'static` (the graph is the process-lifetime singleton).
+    /// the errno an `open(O_DIRECTORY)` of it would produce.
     pub fn dir_key(&self, name: &[u8]) -> Result<&[u8], E> {
         if !is_bun_standalone_file_path(name) {
             return Err(E::ENOENT);

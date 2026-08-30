@@ -192,13 +192,9 @@ impl ScanOpts {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// StandaloneAccessor — `bun_glob::walk::Accessor` impl backed by the
-// standalone-executable module graph, so `Glob.scan` can walk the embedded
-// `/$bunfs/` (`B:\~BUN\` on Windows) virtual directory tree. Lives here, not
-// in `bun_glob`: the low-tier crate owns the trait, the high-tier crate owns
-// the impl (same split as `bun_resolver::DirEntryAccessor`).
-// ─────────────────────────────────────────────────────────────────────────────
+/// `bun_glob::walk::Accessor` over the standalone module graph, so `Glob.scan`
+/// can walk the embedded `/$bunfs/` tree. Up-tier from the trait on purpose,
+/// like `bun_resolver::DirEntryAccessor`.
 pub(crate) mod standalone_accessor {
     use bun_core::ZStr;
     use bun_glob::walk::{Accessor, AccessorDirEntry, AccessorDirIter, AccessorHandle};
@@ -210,9 +206,8 @@ pub(crate) mod standalone_accessor {
 
     #[derive(Clone, Copy)]
     pub(crate) struct StandaloneHandle {
-        /// The canonical `dirs` key of the opened directory. The borrow is
-        /// `'static` because the graph is the process-lifetime singleton
-        /// (`Graph::get_ref`) and its keys are never mutated after startup.
+        /// The opened directory's `Graph::dir_key` (`'static`: the graph is
+        /// the immortal process singleton).
         dir: Option<&'static [u8]>,
     }
 
@@ -285,8 +280,8 @@ pub(crate) mod standalone_accessor {
         }
 
         fn iterate(dir: StandaloneHandle) -> Self {
-            // `dir` came from `open_resolved`, so `readdir` only misses when
-            // the handle is EMPTY (never handed out for a live directory).
+            // `readdir` only misses for the EMPTY handle: `open_resolved`
+            // proved the directory.
             let entries = dir
                 .dir
                 .and_then(|key| Graph::get_ref()?.readdir(key, false))
@@ -310,8 +305,7 @@ pub(crate) mod standalone_accessor {
             handle: StandaloneHandle,
             path: &ZStr,
         ) -> Result<Maybe<StandaloneHandle>, bun_core::Error> {
-            // Pool, not a stack `PathBuffer` (~64 KB on Windows): this runs
-            // inside the walker's iteration on worker-thread stacks.
+            // Pooled: a stack `PathBuffer` is ~64 KB on Windows.
             let mut buf = bun_paths::path_buffer_pool::get();
             Ok(open_resolved(resolve(handle, path.as_bytes(), &mut buf)))
         }
@@ -509,11 +503,9 @@ impl Glob {
             }
         }
 
-        // In a standalone executable, a scan rooted inside the embedded module
-        // graph walks the graph instead of the real filesystem. Mirror the
-        // walker's root choice (`Iterator::init`): an absolute pattern roots
-        // at the pattern's literal prefix and ignores the cwd, a relative
-        // pattern roots at the cwd.
+        // Match the walker's root choice (`Iterator::init`): an absolute
+        // pattern roots at its literal prefix and ignores the cwd, a relative
+        // pattern roots at the cwd. A `/$bunfs/` root walks the graph.
         let pattern_is_absolute = resolve_path::is_absolute(&self.pattern)
             || (cfg!(windows) && resolve_path::is_absolute_posix(&self.pattern));
         let in_standalone_graph = bun_standalone_graph::Graph::get_ref().is_some()

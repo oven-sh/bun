@@ -4677,14 +4677,10 @@ impl VirtualMachine {
         let specifier_utf8 = specifier.to_utf8();
         let source_utf8 = source.to_utf8();
 
-        // A `file:` source (e.g. the parent URL in
-        // `import.meta.resolve(specifier, parent)`) must become a filesystem
-        // path before the resolver walks `node_modules` from it: percent
-        // escapes decode, single-slash `file:/x` normalizes, and on Windows
-        // `file:///C:/x` becomes `C:\x`. A bare prefix strip gets all of
-        // these wrong, and the resolver then falls back to auto-install or
-        // fails. The guard stays at `file:/` (not `file:`) because this
-        // function also serves callers that pass plain paths.
+        // A `file:` source (the parent URL in two-arg `import.meta.resolve`)
+        // must become a filesystem path before the resolver walks
+        // `node_modules` from it: percent escapes decode, and on Windows
+        // `file:///C:/x` becomes `C:\x`.
         let decoded_source;
         let decoded_source_utf8;
         let normalized_source: &[u8] = if source_utf8.slice().starts_with(b"file:/") {

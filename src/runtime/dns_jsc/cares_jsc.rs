@@ -826,12 +826,8 @@ pub(crate) fn error_to_js_with_syscall_and_hostname(
     Ok(instance)
 }
 
-/// `getaddrinfo ENOTFOUND <hostname>`, the error `Bun.connect` reports for a
-/// name that does not resolve. The bind paths (`Bun.serve`, `Bun.listen`,
-/// `Bun.udpSocket`) throw it for a hostname `bun_dns::is_valid_hostname`
-/// rejects, before the name reaches the synchronous `getaddrinfo` in uSockets:
-/// some resolvers never answer a query for such a name, and the libc call then
-/// blocks the JS thread until the resolver gives up (tens of seconds on macOS).
+/// Thrown for a name `is_valid_hostname` rejects, before uSockets' synchronous
+/// `getaddrinfo` can block on a query some resolvers never answer.
 pub(crate) fn not_a_hostname_error(global_this: &JSGlobalObject, hostname: &[u8]) -> JSValue {
     system_error_with_syscall_and_hostname(c_ares::Error::ENOTFOUND, b"getaddrinfo", hostname)
         .to_error_instance(global_this)

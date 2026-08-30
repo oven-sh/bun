@@ -3582,9 +3582,7 @@ mod ffi {
     }
 }
 
-/// `Bun.serve({ hostname: "[::1]" })` takes a bracketed IPv6 literal; uSockets
-/// wants it bare. Brackets around anything else stay, and the name then fails
-/// `is_valid_hostname` instead of resolving as its inside.
+/// `Bun.serve({ hostname: "[::1]" })`: uSockets wants the IPv6 literal bare.
 fn strip_ipv6_brackets(hostname: &[u8]) -> &[u8] {
     if let [b'[', inner @ .., b']'] = hostname {
         if bun_core::ip_address::to_ip_address(inner).is_some_and(|ip| ip.is_ipv6()) {

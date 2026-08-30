@@ -638,8 +638,6 @@ impl UDPSocket {
 
         let config = this.config.get();
         let hostname_z = config.hostname.to_owned_slice_z();
-        // Both the bind and the connect below resolve their hostname with a
-        // synchronous getaddrinfo.
         if config.fd.is_none() && !bun_dns::is_valid_hostname(hostname_z.as_bytes()) {
             return Err(
                 global_this.throw_value(crate::dns_jsc::cares_jsc::not_a_hostname_error(

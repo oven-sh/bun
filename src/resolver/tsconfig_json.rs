@@ -118,7 +118,33 @@ impl JsonCache {
 // Probably like 5-10
 // Array iteration is faster and deterministically ordered in that case.
 // Both keys and values are owned (`Box`/`Vec`) and freed when the map drops.
-pub(crate) type PathsMap = ArrayHashMap<Box<[u8]>, Vec<Box<[u8]>>>;
+pub(crate) type PathsMap = ArrayHashMap<Box<[u8]>, Vec<TSConfigPath>>;
+
+/// One fallback entry of a `compilerOptions.paths` array.
+pub(crate) struct TSConfigPath {
+    pub(crate) text: Box<[u8]>,
+    /// Position of the string in the file that declared it, for diagnostics after the merge.
+    pub(crate) loc: bun_ast::Loc,
+}
+
+/// `compilerOptions.paths` and the file that declared it.
+pub(crate) struct TSConfigPaths {
+    pub(crate) map: PathsMap,
+    /// Without a "baseUrl" anywhere in the chain, relative entries resolve against its directory.
+    pub(crate) source_path: Box<[u8]>,
+}
+
+impl TSConfigPaths {
+    pub(crate) fn source_dir(&self) -> &[u8] {
+        bun_paths::dirname(&self.source_path).unwrap_or(&self.source_path)
+    }
+}
+
+/// One entry of the top-level `extends` field (a string, or one item of a TypeScript 5.0 array).
+pub(crate) struct TSConfigExtends {
+    pub(crate) spec: Box<[u8]>,
+    pub(crate) loc: bun_ast::Loc,
+}
 
 // Hand-listed Pragma fields actually used below.
 #[derive(EnumSetType, Debug)]
@@ -132,35 +158,34 @@ pub(crate) enum JsxField {
 
 pub(crate) type JsxFieldSet = EnumSet<JsxField>;
 
+/// Every field a base config can supply has an "unset" state (`None`, an empty `Box`,
+/// a missing `jsx_flags` bit), so a file in an `extends` chain only overrides what it sets.
 pub struct TSConfigJSON {
     pub(crate) abs_path: Box<[u8]>,
 
-    /// The absolute path of "compilerOptions.baseUrl"
+    /// The absolute path of "compilerOptions.baseUrl". Empty when unset.
     pub(crate) base_url: Box<[u8]>,
 
-    /// This is used if "Paths" is non-nil. It's equal to "BaseURL" except if
-    /// "BaseURL" is missing, in which case it is as if "BaseURL" was ".". This
-    /// is to implement the "paths without baseUrl" feature from TypeScript 4.1.
-    /// More info: https://github.com/microsoft/TypeScript/issues/31869
-    pub(crate) base_url_for_paths: Box<[u8]>,
-
-    pub(crate) extends: Box<[u8]>,
+    /// Drained by `Resolver::parse_tsconfig`, so a merged config has none.
+    pub(crate) extends: Vec<TSConfigExtends>,
     /// The verbatim values of "compilerOptions.paths". The keys are patterns to
     /// match and the values are arrays of fallback paths to search. Each key and
     /// each fallback path can optionally have a single "*" wildcard character.
     /// If both the key and the value have a wildcard, the substring matched by
     /// the wildcard is substituted into the fallback path. The keys represent
     /// module-style path names and the fallback paths are relative to the
-    /// "baseUrl" value in the "tsconfig.json" file.
-    pub(crate) paths: PathsMap,
+    /// "baseUrl" value in the "tsconfig.json" file, or to the declaring file's
+    /// directory without one (https://github.com/microsoft/TypeScript/issues/31869).
+    /// `Some` whenever the key is present: `"paths": {}` clears inherited paths.
+    pub(crate) paths: Option<TSConfigPaths>,
 
     pub jsx: options::jsx::Pragma,
     pub(crate) jsx_flags: JsxFieldSet,
 
     pub(crate) preserve_imports_not_used_as_values: Option<bool>,
 
-    pub emit_decorator_metadata: bool,
-    pub experimental_decorators: bool,
+    pub emit_decorator_metadata: Option<bool>,
+    pub experimental_decorators: Option<bool>,
     /// `None` = unset (keeps native [[Define]] class-field semantics).
     pub use_define_for_class_fields: Option<bool>,
 }
@@ -170,14 +195,13 @@ impl Default for TSConfigJSON {
         Self {
             abs_path: Box::default(),
             base_url: Box::default(),
-            base_url_for_paths: Box::default(),
-            extends: Box::default(),
-            paths: PathsMap::default(),
+            extends: Vec::new(),
+            paths: None,
             jsx: options::jsx::Pragma::default(),
             jsx_flags: JsxFieldSet::empty(),
-            preserve_imports_not_used_as_values: Some(false),
-            emit_decorator_metadata: false,
-            experimental_decorators: false,
+            preserve_imports_not_used_as_values: None,
+            emit_decorator_metadata: None,
+            experimental_decorators: None,
             use_define_for_class_fields: None,
         }
     }
@@ -226,6 +250,74 @@ impl TSConfigJSON {
         !self.base_url.is_empty()
     }
 
+    pub(crate) fn has_paths(&self) -> bool {
+        self.paths.as_ref().is_some_and(|p| p.map.count() > 0)
+    }
+
+    /// What relative "paths" entries resolve against.
+    pub(crate) fn paths_base_dir(&self) -> &[u8] {
+        if self.has_base_url() {
+            return &self.base_url;
+        }
+        match self.paths.as_ref() {
+            Some(paths) => paths.source_dir(),
+            None => b".",
+        }
+    }
+
+    /// Copies every setting `other` has onto `self`.
+    pub(crate) fn apply_extended_config(&mut self, mut other: Box<TSConfigJSON>) {
+        if other.has_base_url() {
+            self.base_url = core::mem::take(&mut other.base_url);
+        }
+        // tsc replaces "paths" across extends instead of merging the maps.
+        if other.paths.is_some() {
+            self.paths = other.paths.take();
+        }
+        self.jsx = other.merge_jsx(core::mem::take(&mut self.jsx));
+        self.jsx_flags.insert_all(other.jsx_flags);
+        if let Some(v) = other.preserve_imports_not_used_as_values {
+            self.preserve_imports_not_used_as_values = Some(v);
+        }
+        if let Some(v) = other.emit_decorator_metadata {
+            self.emit_decorator_metadata = Some(v);
+        }
+        if let Some(v) = other.experimental_decorators {
+            self.experimental_decorators = Some(v);
+        }
+        if let Some(v) = other.use_define_for_class_fields {
+            self.use_define_for_class_fields = Some(v);
+        }
+        TSConfigJSON::destroy(other);
+    }
+
+    /// Drops non-relative "paths" entries when no file in the merged chain set "baseUrl".
+    /// `source` is the file that declared "paths".
+    pub(crate) fn remove_paths_that_need_base_url(
+        &mut self,
+        log: &mut bun_ast::Log,
+        source: Option<&bun_ast::Source>,
+    ) {
+        if self.has_base_url() {
+            return;
+        }
+        let Some(paths) = self.paths.as_mut() else {
+            return;
+        };
+        paths.map.retain(|_, values| {
+            values.retain(|value| match source {
+                Some(source) => Self::is_valid_tsconfig_path_no_base_url_pattern(
+                    &value.text,
+                    log,
+                    source,
+                    value.loc,
+                ),
+                None => Self::is_relative_or_absolute_path(&value.text),
+            });
+            !values.is_empty()
+        });
+    }
+
     pub fn merge_jsx(&self, current: options::jsx::Pragma) -> options::jsx::Pragma {
         let mut out = current;
 
@@ -239,6 +331,7 @@ impl TSConfigJSON {
 
         if self.jsx_flags.contains(JsxField::ImportSource) {
             out.import_source = self.jsx.import_source.clone();
+            out.package_name.clone_from(&self.jsx.package_name);
         }
 
         if self.jsx_flags.contains(JsxField::Runtime) {
@@ -264,9 +357,11 @@ impl TSConfigJSON {
     // "${configDir}" with "./" and then convert it to an absolute path sometimes.
     // We convert it to an absolute path during module resolution, so we shouldn't need to do that here.
     // https://github.com/microsoft/TypeScript/blob/ef802b1e4ddaf8d6e61d6005614dd796520448f8/src/compiler/commandLineParser.ts#L3243-L3245
+    //
+    // `config_dir` is the root config's directory: tsc substitutes after the merge.
     fn str_replacing_templates(
         input: Box<[u8]>,
-        source: &bun_ast::Source,
+        config_dir: &[u8],
     ) -> Result<Box<[u8]>, bun_alloc::AllocError> {
         const TEMPLATE: &[u8] = b"${configDir}";
         let mut remaining: &[u8] = &input;
@@ -275,7 +370,6 @@ impl TSConfigJSON {
             cap: 0,
             ptr: None,
         };
-        let config_dir = source.path.source_dir();
 
         // There's only one template variable we support, so we can keep this simple for now.
         while let Some(index) = strings::index_of(remaining, TEMPLATE) {
@@ -307,10 +401,12 @@ impl TSConfigJSON {
         Ok(Box::from(&written[..len]))
     }
 
+    /// Parses one file. `extends` is recorded, not followed.
     pub fn parse(
         log: &mut bun_ast::Log,
         source: &bun_ast::Source,
         json_cache: &mut JsonCache,
+        config_dir: &[u8],
     ) -> Result<Option<Box<TSConfigJSON>>, crate::Error> {
         // Unfortunately "tsconfig.json" isn't actually JSON. It's some other
         // format that appears to be defined by the implementation details of the
@@ -331,7 +427,6 @@ impl TSConfigJSON {
 
         let mut result = TSConfigJSON {
             abs_path: Box::from(source.path.text),
-            paths: PathsMap::default(),
             ..Default::default()
         };
         // PERF: avoid re-scanning each JSON object's
@@ -344,12 +439,14 @@ impl TSConfigJSON {
         // guards), then handle them below in the original fixed order so any
         // inter-field ordering (`baseUrl` before `paths`, `jsx` before
         // `jsxImportSource`) is preserved.
-        let mut extends_value: Option<&bun_ast::E::JsonValue> = None;
+        let mut extends_value: Option<(&bun_ast::E::JsonValue, bun_ast::Loc)> = None;
         let mut compiler_opts: Option<&bun_ast::E::JsonValue> = None;
         if let bun_ast::ExprData::EObjectJSON(obj) = &json.data {
             for property in obj.get().properties() {
                 match property.key.slice() {
-                    b"extends" if extends_value.is_none() => extends_value = Some(&property.value),
+                    b"extends" if extends_value.is_none() => {
+                        extends_value = Some((&property.value, property.key_loc))
+                    }
                     b"compilerOptions" if compiler_opts.is_none() => {
                         compiler_opts = Some(&property.value)
                     }
@@ -358,14 +455,30 @@ impl TSConfigJSON {
             }
         }
 
-        if let Some(extends_value) = extends_value {
-            if !source.path.is_node_module() {
-                if let Some(str) = extends_value.as_str() {
-                    result.extends = Box::from(str);
+        // Parse "extends": a string, or an array of strings (TypeScript 5.0).
+        if let Some((extends_value, key_loc)) = extends_value {
+            let value_loc =
+                json_parser::property_value_loc(&source.contents, key_loc).unwrap_or(key_loc);
+            if let Some(str) = extends_value.as_str() {
+                result.extends.push(TSConfigExtends {
+                    spec: Box::from(str),
+                    loc: value_loc,
+                });
+            } else if let Some(array) = extends_value.as_array() {
+                let mut item_cursor = json_parser::array_item_loc(&source.contents, value_loc, 0);
+                for item in array.items() {
+                    let item_loc = item_cursor.unwrap_or(value_loc);
+                    item_cursor = item_cursor
+                        .and_then(|cur| json_parser::array_next_item_loc(&source.contents, cur));
+                    if let Some(str) = item.as_str() {
+                        result.extends.push(TSConfigExtends {
+                            spec: Box::from(str),
+                            loc: item_loc,
+                        });
+                    }
                 }
             }
         }
-        let mut has_base_url = false;
 
         // Parse "compilerOptions"
         if let Some(compiler_opts) = compiler_opts {
@@ -423,23 +536,24 @@ impl TSConfigJSON {
             // Parse "baseUrl"
             if let Some(base_url_prop) = base_url_v {
                 if let Some(base_url) = base_url_prop.as_str() {
+                    // tsc resolves "" against the config directory, the same as ".".
+                    let base_url: &[u8] = if base_url.is_empty() { b"." } else { base_url };
                     result.base_url =
-                        match Self::str_replacing_templates(Box::from(base_url), source) {
+                        match Self::str_replacing_templates(Box::from(base_url), config_dir) {
                             Ok(v) => v,
                             Err(_) => return Ok(None),
                         };
-                    has_base_url = true;
                 }
             }
 
             // Parse "emitDecoratorMetadata"
             if let Some(&bun_ast::E::JsonValue::Boolean(val)) = emit_decorator_metadata_v {
-                result.emit_decorator_metadata = val;
+                result.emit_decorator_metadata = Some(val);
             }
 
             // Parse "experimentalDecorators"
             if let Some(&bun_ast::E::JsonValue::Boolean(val)) = experimental_decorators_v {
-                result.experimental_decorators = val;
+                result.experimental_decorators = Some(val);
             }
 
             // Parse "useDefineForClassFields"
@@ -519,7 +633,9 @@ impl TSConfigJSON {
                         ImportsNotUsedAsValue::Preserve | ImportsNotUsedAsValue::Err => {
                             result.preserve_imports_not_used_as_values = Some(true);
                         }
-                        ImportsNotUsedAsValue::Remove => {}
+                        ImportsNotUsedAsValue::Remove => {
+                            result.preserve_imports_not_used_as_values = Some(false);
+                        }
                         _ => {
                             let _ = log.add_range_warning_fmt(
                                 Some(source),
@@ -564,12 +680,7 @@ impl TSConfigJSON {
                     bun_analytics::features::tsconfig_paths
                         .fetch_add(1, core::sync::atomic::Ordering::Relaxed);
 
-                    result.base_url_for_paths = if !result.base_url.is_empty() {
-                        result.base_url.clone()
-                    } else {
-                        Box::from(b".".as_slice())
-                    };
-                    result.paths = PathsMap::default();
+                    let mut paths_map = PathsMap::default();
                     for property in paths.properties() {
                         let key = property.key.slice();
                         let key_loc = property.key_loc;
@@ -604,50 +715,42 @@ impl TSConfigJSON {
                                 let array = e_array.get().items();
 
                                 if !array.is_empty() {
-                                    let mut values: Vec<Box<[u8]>> =
+                                    let mut values: Vec<TSConfigPath> =
                                         Vec::with_capacity(array.len());
                                     let array_loc =
                                         json_parser::property_value_loc(&source.contents, key_loc)
                                             .unwrap_or(key_loc);
                                     let mut item_cursor =
                                         json_parser::array_item_loc(&source.contents, array_loc, 0);
-                                    // errdefer allocator.free(values) — handled by Drop.
                                     for item in array.iter() {
-                                        let this_item_loc = item_cursor.unwrap_or(key_loc);
+                                        let item_loc = item_cursor.unwrap_or(key_loc);
                                         item_cursor = item_cursor.and_then(|cur| {
                                             json_parser::array_next_item_loc(&source.contents, cur)
                                         });
                                         if let Some(str_) = item.as_str() {
-                                            let item_loc = this_item_loc;
                                             let str = match Self::str_replacing_templates(
                                                 Box::from(str_),
-                                                source,
+                                                config_dir,
                                             ) {
                                                 Ok(v) => v,
                                                 Err(_) => return Ok(None),
                                             };
-                                            // errdefer allocator.free(str) — handled by Drop.
+                                            // Another file of the chain can supply "baseUrl":
+                                            // `remove_paths_that_need_base_url` checks later.
                                             if Self::is_valid_tsconfig_path_pattern(
                                                 &str, log, source, item_loc,
-                                            ) && (has_base_url
-                                                || Self::is_valid_tsconfig_path_no_base_url_pattern(
-                                                    &str, log, source, item_loc,
-                                                ))
-                                            {
-                                                values.push(str);
+                                            ) {
+                                                values.push(TSConfigPath {
+                                                    text: str,
+                                                    loc: item_loc,
+                                                });
                                             }
                                         }
                                     }
                                     if !values.is_empty() {
-                                        // Invalid patterns are filtered out above, so count <= array.len.
-                                        // Shrink the allocation so the slice stored in the map is exactly
-                                        // what was allocated — callers that later free these values
-                                        // (the extends-merge in the resolver) pass the stored slice
-                                        // to the allocator, which requires the original length.
                                         values.shrink_to_fit();
-                                        let _ = result.paths.put(Box::from(key), values);
+                                        let _ = paths_map.put(Box::from(key), values);
                                     }
-                                    // else: Every entry was invalid; nothing to store. `values` drops here.
                                 }
                             }
                             _ => {
@@ -662,12 +765,12 @@ impl TSConfigJSON {
                             }
                         }
                     }
+                    result.paths = Some(TSConfigPaths {
+                        map: paths_map,
+                        source_path: Box::from(source.path.text),
+                    });
                 }
             }
-        }
-
-        if cfg!(debug_assertions) && has_base_url {
-            debug_assert!(!result.base_url.is_empty());
         }
 
         Ok(Some(TSConfigJSON::new(result)))
@@ -738,12 +841,7 @@ impl TSConfigJSON {
         Some(strings::tokenize(text, b".").map(Box::from).collect())
     }
 
-    pub(crate) fn is_valid_tsconfig_path_no_base_url_pattern(
-        text: &[u8],
-        log: &mut bun_ast::Log,
-        source: &bun_ast::Source,
-        loc: bun_ast::Loc,
-    ) -> bool {
+    fn is_relative_or_absolute_path(text: &[u8]) -> bool {
         let c0: u8;
         let c1: u8;
         let c2: u8;
@@ -784,7 +882,16 @@ impl TSConfigJSON {
         }
 
         // Absolute unix "/"
-        if bun_paths::is_sep_any(c0) {
+        bun_paths::is_sep_any(c0)
+    }
+
+    pub(crate) fn is_valid_tsconfig_path_no_base_url_pattern(
+        text: &[u8],
+        log: &mut bun_ast::Log,
+        source: &bun_ast::Source,
+        loc: bun_ast::Loc,
+    ) -> bool {
+        if Self::is_relative_or_absolute_path(text) {
             return true;
         }
 

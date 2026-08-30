@@ -114,6 +114,9 @@ pub struct PackageJSON {
 
     pub(crate) exports: Option<ExportsMap>,
     pub(crate) imports: Option<ExportsMap>,
+
+    /// The "tsconfig" field: the file `extends: "<this package>"` loads.
+    pub(crate) tsconfig: Option<Box<[u8]>>,
 }
 
 // hand-rolled `Default` because `#[derive(Default)]` would zero
@@ -141,6 +144,7 @@ impl Default for PackageJSON {
             browser_map: BrowserMap::default(),
             exports: None,
             imports: None,
+            tsconfig: None,
         }
     }
 }
@@ -502,6 +506,7 @@ impl PackageJSON {
             side_effects: SideEffects::Unspecified,
             exports: None,
             imports: None,
+            tsconfig: None,
         };
         // shadow as `&Source`; the owned value is reconstructed at the bottom
         // (Source isn't `Clone`).
@@ -524,6 +529,14 @@ impl PackageJSON {
             if let Some(name_str) = name_json.expr.as_utf8_string_literal() {
                 if !name_str.is_empty() {
                     package_json.name = Box::from(name_str);
+                }
+            }
+        }
+
+        if let Some(tsconfig_json) = json.as_property(b"tsconfig") {
+            if let Some(tsconfig_str) = tsconfig_json.expr.as_utf8_string_literal() {
+                if !tsconfig_str.is_empty() {
+                    package_json.tsconfig = Some(Box::from(tsconfig_str));
                 }
             }
         }

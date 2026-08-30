@@ -301,6 +301,9 @@ static void unset_cloexec(int fd)
     fcntl(fd, F_SETFD, flags);
 }
 
+// PosixSignalHandle.rs: pops one signal the process.on() handler queued for the JS thread; 0 when empty.
+extern "C" int Bun__takeQueuedPosixSignal();
+
 extern "C" void on_before_reload_process_posix()
 {
     unset_cloexec(STDIN_FILENO);
@@ -352,6 +355,32 @@ extern "C" void on_before_reload_process_posix()
     sigset_t signal_set;
     sigemptyset(&signal_set);
     sigprocmask(SIG_SETMASK, &signal_set, nullptr);
+
+    // A SIGTERM that arrived before the reset was caught by the process.on() handler, which only
+    // queues it for the JS thread; that thread never ticks again before execve (it is running the
+    // --watch-kill-signal listeners, or another thread is doing the reload), so the signal would
+    // vanish with the old image. Re-raise the queue now that those dispositions are SIG_DFL: the
+    // outcome is the one a signal arriving after the reset gets. Emptying the queue first and
+    // skipping anything the loop above left caught keeps a re-raise from refilling the queue.
+    sigset_t queued;
+    sigemptyset(&queued);
+    bool any_queued = false;
+    while (int s = Bun__takeQueuedPosixSignal()) {
+        if (s > 0 && s < NSIG) {
+            sigaddset(&queued, s);
+            any_queued = true;
+        }
+    }
+    if (!any_queued)
+        return;
+    for (int s = 1; s < NSIG; s++) {
+        if (!sigismember(&queued, s))
+            continue;
+        struct sigaction current {};
+        if (sigaction(s, nullptr, &current) != 0 || current.sa_handler != SIG_DFL)
+            continue;
+        raise(s);
+    }
 }
 
 #endif // !OS(WINDOWS)

@@ -1,6 +1,6 @@
 import type { Subprocess } from "bun";
 import { spawn } from "bun";
-import { afterEach, expect, it } from "bun:test";
+import { afterEach, describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, isBroken, isLinux, isWindows, tempDir, tmpdirSync } from "harness";
 import { readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
@@ -128,6 +128,91 @@ setInterval(() => {}, 1000);
   },
   10000,
 );
+
+// Spawns `bun --watch --watch-kill-signal SIGINT <entry>`, touches the entry once
+// its first boot prints "started", then waits for whichever comes first: the
+// process exiting, or a second "started" (the execve reload went through).
+// Returns how many boots were seen; the caller asserts on the exit.
+async function touchOnceAndAwaitExitOrReboot(dir: string, entry: string): Promise<number> {
+  const path = join(dir, entry);
+  watchee = spawn({
+    cwd: dir,
+    cmd: [bunExe(), "--watch", "--watch-kill-signal", "SIGINT", entry],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+    stdin: "ignore",
+  });
+  const rebooted = Promise.withResolvers<void>();
+  let starts = 0;
+  const pump = (async () => {
+    const decoder = new TextDecoder();
+    let buffered = "";
+    for await (const chunk of watchee.stdout) {
+      buffered += decoder.decode(chunk, { stream: true });
+      let newline;
+      while ((newline = buffered.indexOf("\n")) !== -1) {
+        const line = buffered.slice(0, newline);
+        buffered = buffered.slice(newline + 1);
+        if (!line.includes("started")) continue;
+        if (++starts === 1) {
+          await Bun.write(path, (await Bun.file(path).text()) + "\n// touched\n");
+        } else {
+          rebooted.resolve();
+        }
+      }
+    }
+  })();
+  await Promise.race([watchee.exited, rebooted.promise]);
+  if (starts === 1) await pump;
+  return starts;
+}
+
+// The signal handler installed for process.on(<signal>) only queues the signal
+// for the JS thread. Once a watch reload is under way that thread never ticks
+// again, so a SIGTERM that lands during the reload used to be discarded by the
+// execve and the process came back up instead of dying (the parent in
+// test-watch-mode-kill-signal-override.mjs kills the watcher exactly then).
+// The reload must deliver whatever is still queued with the default
+// disposition: here the process has to die of the SIGTERM instead of rebooting.
+describe.skipIf(isWindows)("a signal caught during a --watch reload is not lost", () => {
+  // The kill-signal listener runs synchronously before the execve; the SIGTERM
+  // it sends itself is queued behind it and must still terminate the process.
+  it("when it arrives while the kill-signal listeners run on the JS thread", async () => {
+    using dir = tempDir("watch-signal-during-kill-signal-emit", {
+      "app.js": `process.on("SIGTERM", () => {});
+process.on("SIGINT", () => {
+  process.kill(process.pid, "SIGTERM");
+  process.exit(0);
+});
+console.log("started");
+setInterval(() => {}, 1000);
+`,
+    });
+    const starts = await touchOnceAndAwaitExitOrReboot(String(dir), "app.js");
+    expect(starts).toBe(1);
+    expect(watchee.signalCode).toBe("SIGTERM");
+  }, 10000);
+
+  // No listener for the kill signal, so the watcher thread execve's on its own
+  // while the JS thread is still spinning with the SIGTERM sitting in its queue.
+  it("when it is queued and the watcher thread reloads around a busy JS thread", async () => {
+    using dir = tempDir("watch-signal-queued-busy", {
+      "busy.js": `process.on("SIGTERM", () => {});
+console.log("started");
+process.kill(process.pid, "SIGTERM");
+// Self-limiting spin, like the wedge fixtures further down: long enough for
+// the watcher thread to reload around it, bounded so a leaked process exits on its own.
+const end = Date.now() + 30_000;
+while (Date.now() < end) {}
+process.exit(1);
+`,
+    });
+    const starts = await touchOnceAndAwaitExitOrReboot(String(dir), "busy.js");
+    expect(starts).toBe(1);
+    expect(watchee.signalCode).toBe("SIGTERM");
+  }, 10000);
+});
 
 // Watcher::start() must propagate a failed thread spawn as an Err through its
 // Result return instead of aborting inside start() with `.expect()`. An

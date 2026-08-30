@@ -1631,6 +1631,88 @@ describe("node:vm SourceTextModule cyclic graph linking", () => {
   });
 });
 
+describe("node:vm SourceTextModule top-level await rejection in a dependency", () => {
+  // Evaluating an importer runs Evaluate() on each dependency too, which gives the
+  // dependency its own capability promise. For a top-level-await dependency that
+  // promise is still pending when it is handed back and nothing ever observes it,
+  // so its later rejection used to be reported as unhandled (exit code 1) even
+  // though every evaluate() the user awaited rejected and was caught.
+  const evaluateAll = `
+    const results = [];
+    for (const [name, m] of modules) {
+      try {
+        await m.evaluate();
+        results.push(name + ": fulfilled");
+      } catch (e) {
+        results.push(name + ": " + e.constructor.name + " " + e.message + " " + m.status + " " + (m.error === e));
+      }
+    }
+    console.log(JSON.stringify(results));
+  `;
+
+  test.concurrent("a dependency shared by two importers", async () => {
+    const fixture = `
+      const vm = require("node:vm");
+      const M = (src, id) => new vm.SourceTextModule(src, { identifier: id });
+      const leaf = M("await 0; throw new URIError('tla');", "leaf");
+      const a = M("import 'leaf'; export const x = 1;", "a");
+      const b = M("import 'leaf'; export const y = 1;", "b");
+      await a.link(() => leaf);
+      await b.link(() => leaf);
+      const modules = [["a", a], ["b", b], ["leaf", leaf]];
+      ${evaluateAll}
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual([
+      "a: URIError tla errored true",
+      "b: URIError tla errored true",
+      "leaf: URIError tla errored true",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("a dependency two imports deep", async () => {
+    const fixture = `
+      const vm = require("node:vm");
+      const M = (src, id) => new vm.SourceTextModule(src, { identifier: id });
+      const leaf = M("await 0; throw new URIError('tla');", "leaf");
+      const mid = M("import 'leaf'; export const m = 1;", "mid");
+      const root = M("import 'mid'; export const r = 1;", "root");
+      const graph = { mid, leaf };
+      await root.link(spec => graph[spec]);
+      const modules = [["root", root], ["mid", mid], ["leaf", leaf]];
+      ${evaluateAll}
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual([
+      "root: URIError tla errored true",
+      "mid: URIError tla errored true",
+      "leaf: URIError tla errored true",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+});
+
 test("node:vm Object.defineProperty on the context global when the sandbox is an uncacheable dictionary holding an accessor for a built-in", async () => {
   // Regression: NodeVMGlobalObject::defineOwnProperty used a single PropertySlot
   // for both the global-object lookup and the sandbox lookup. When the first

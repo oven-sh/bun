@@ -301,7 +301,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     fn pfx_t_numeric_literal(p: &mut Self) -> PResult<Expr> {
         let loc = p.lexer.loc();
         let value = p.new_expr(E::Number::new(p.lexer.number), loc);
-        // p.checkForLegacyOctalLiteral()
+        if p.lexer.is_legacy_octal_literal {
+            p.record_legacy_octal_literal(p.lexer.range());
+        }
         p.lexer.next()?;
         Ok(value)
     }

@@ -7679,6 +7679,13 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
     }
     printer.binary_expression_stack = Vec::new();
 
+    // Add the top-level directives if present
+    for stmt in tree.directives.slice() {
+        printer.print_stmt(*stmt)?;
+        printer.writer.get_error()?;
+        printer.print_semicolon_if_needed();
+    }
+
     if !printer.options.bundling
         && tree.uses_require_ref
         && tree.exports_kind == js_ast::ExportsKind::Esm

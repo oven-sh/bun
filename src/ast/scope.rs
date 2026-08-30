@@ -1,11 +1,11 @@
 use bun_alloc::{AstAlloc, AstVec};
 use bun_collections::{StringHashMap, VecExt};
 
-use crate::StrictModeKind;
 use crate::base::Ref;
 use crate::nodes::StoreRef;
 use crate::symbol::{self, Symbol};
 use crate::ts::TSNamespaceScope;
+use crate::{Loc, StrictModeKind};
 
 /// Backed by `AstAlloc` so the table allocation *and* the per-key boxes land
 /// in the thread-local AST `mi_heap` and are reclaimed by the same
@@ -45,6 +45,8 @@ pub struct Scope {
     pub forbid_arguments: bool,
 
     pub strict_mode: StrictModeKind,
+    /// The `"use strict"` directive that made this scope strict, for error notes.
+    pub use_strict_loc: Loc,
 
     pub is_after_const_local_prefix: bool,
 
@@ -75,6 +77,7 @@ impl Scope {
         contains_direct_eval: false,
         forbid_arguments: false,
         strict_mode: StrictModeKind::SloppyMode,
+        use_strict_loc: Loc::EMPTY,
         is_after_const_local_prefix: false,
         ts_namespace: None,
     };

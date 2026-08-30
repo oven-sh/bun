@@ -410,14 +410,32 @@ pub(crate) fn post_process_js_chunk(
         newline_before_comment = true;
     }
 
-    // Add the top-level directive if present (but omit "use strict" in ES
+    // Add the top-level directives if present (but omit "use strict" in ES
     // modules because all ES modules are automatically in strict mode)
-    if chunk.is_entry_point() && !output_format.is_always_strict_mode() {
-        let flags = c.graph.ast.items_flags()[chunk.entry_point.source_index() as usize];
+    // The dev server wraps every module in its own closure, which gets the prologue instead.
+    if chunk.is_entry_point() && output_format != options::OutputFormat::InternalBakeDev {
+        let directives = c.graph.ast.items_directives()[chunk.entry_point.source_index() as usize];
 
-        if flags.contains(crate::bundled_ast::Flags::HAS_EXPLICIT_USE_STRICT_DIRECTIVE) {
-            j.push_static(b"\"use strict\";\n");
-            line_offset.advance(b"\"use strict\";\n");
+        for stmt in directives.slice() {
+            let js_ast::StmtData::SDirective(directive) = stmt.data else {
+                continue;
+            };
+            let directive = directive.value.slice();
+            if directive == b"use strict" && output_format.is_always_strict_mode() {
+                continue;
+            }
+            let mut buf = MutableString::init_empty();
+            // The printer escapes string literals ASCII-only for the bun target (`print_with_writer`).
+            let ascii_only = is_bun;
+            let _ = js_printer::quote_for_json(directive, &mut buf, ascii_only); // fmt::Result into Vec<u8> is infallible
+            bun_core::handle_oom(buf.append_slice(if c.options.minify_whitespace {
+                b";"
+            } else {
+                b";\n"
+            }));
+            let quoted = buf.take_slice();
+            line_offset.advance(&quoted);
+            j.push_owned(quoted.into_boxed_slice());
             newline_before_comment = true;
         }
     }

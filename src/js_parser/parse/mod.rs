@@ -335,6 +335,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(expr)
     }
 
+    /// Only an unescaped `"use strict"` or `'use strict'` token is a Use Strict Directive.
+    fn source_has_use_strict_token(&self, loc: bun_ast::Loc) -> bool {
+        const RAW: &[u8] = b"use strict";
+        let contents = self.source.contents();
+        let start = loc.i() + 1;
+        let end = start + RAW.len();
+        contents.get(start..end) == Some(RAW) && contents.get(end) == contents.get(loc.i())
+    }
+
     pub(crate) fn parse_call_args(&mut self) -> Result<ExprListLoc, Error> {
         // Allow "in" inside call arguments; restored on every exit path
         let old_allow_in = self.allow_in;
@@ -1167,7 +1176,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             T::TNumericLiteral => {
                 key = p.new_expr(E::Number::new(p.lexer.number), p.lexer.loc());
-                // check for legacy octal literal
+                if p.lexer.is_legacy_octal_literal {
+                    p.record_legacy_octal_literal(p.lexer.range());
+                }
                 p.lexer.next()?;
             }
             T::TStringLiteral => {
@@ -1448,7 +1459,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let mut return_without_semicolon_start: i32 = -1;
         opts.lexical_decl = LexicalDecl::AllowAll;
-        let mut is_directive_prologue = true;
+        let mut is_directive_prologue = opts.allow_directive_prologue;
 
         loop {
             for comment in p.lexer.comments_to_preserve_before.iter() {
@@ -1477,24 +1488,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 is_directive_prologue = false;
                 if let js_ast::stmt::Data::SExpr(expr) = &stmt.data {
                     if let js_ast::expr::Data::EString(str_) = &expr.value.data {
-                        if !str_.prefer_template {
+                        // A directive is a bare string token: `("use strict")` ends the prologue.
+                        if !str_.prefer_template && expr.value.loc == stmt.loc {
                             is_directive_prologue = true;
 
-                            if str_.eql_comptime(b"use strict") {
-                                skip = true;
-                                // Track "use strict" directives
-                                p.current_scope_mut().strict_mode =
-                                    StrictModeKind::ExplicitStrictMode;
-                                if p.current_scope == p.module_scope {
-                                    p.module_scope_directive_loc = stmt.loc;
+                            let is_use_strict = str_.eql_comptime(b"use strict");
+                            // `"use\x20strict"` cooks to the same value but is not a Use Strict Directive.
+                            let escaped_use_strict =
+                                is_use_strict && !p.source_has_use_strict_token(expr.value.loc);
+                            if str_.eql_comptime(b"use asm") || escaped_use_strict {
+                                // Dropped outside the REPL: asm.js fails validation after transformation, and the printer cannot keep the escape.
+                                if !p.options.repl_mode {
+                                    skip = true;
+                                    stmt.data = js_ast::stmt::Data::SEmpty(S::Empty {});
                                 }
-                            } else if str_.eql_comptime(b"use asm") && !p.options.repl_mode {
-                                // In the REPL the directive stays a string
-                                // statement so it evaluates as the result,
-                                // like node ('use asm' prints 'use asm').
-                                skip = true;
-                                stmt.data = js_ast::stmt::Data::SEmpty(S::Empty {});
                             } else {
+                                let directive_loc = expr.value.loc;
                                 let bytes = str_.string(p.arena).expect("OOM");
                                 stmt = Stmt::alloc(
                                     S::Directive {
@@ -1502,6 +1511,26 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     },
                                     stmt.loc,
                                 );
+
+                                if is_use_strict {
+                                    // Track "use strict" directives
+                                    let mut scope = p.current_scope;
+                                    scope.strict_mode = StrictModeKind::ExplicitStrictMode;
+                                    scope.use_strict_loc = directive_loc;
+
+                                    // The body's directive governs the parameters too: `function fn(arguments) { "use strict" }` is an error.
+                                    if scope.kind == js_ast::scope::Kind::FunctionBody {
+                                        if let Some(mut parent) = scope.parent {
+                                            if parent.kind == js_ast::scope::Kind::FunctionArgs
+                                                && parent.strict_mode == StrictModeKind::SloppyMode
+                                            {
+                                                parent.strict_mode =
+                                                    StrictModeKind::ExplicitStrictMode;
+                                                parent.use_strict_loc = directive_loc;
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
                     }

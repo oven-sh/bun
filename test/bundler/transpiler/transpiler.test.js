@@ -4670,15 +4670,121 @@ console.log("boop");
 `,
     );
   });
-  it("does not preserve use strict (for now)", () => {
+  it("preserves use strict", () => {
     expect(
       new Bun.Transpiler().transformSync(`"use strict";
   console.log("boop");
   `),
     ).toBe(
-      `console.log("boop");
+      `"use strict";
+console.log("boop");
 `,
     );
+  });
+  it("preserves the directive prologue ahead of everything else", () => {
+    // Duplicates are dropped. "use asm" is removed on purpose.
+    expect(
+      new Bun.Transpiler().transformSync(`"use strict";
+  'use client';
+  "use asm";
+  "use strict";
+  console.log("boop");
+  `),
+    ).toBe(
+      `"use strict";
+"use client";
+console.log("boop");
+`,
+    );
+  });
+  it("preserves directives in function bodies", () => {
+    expect(
+      new Bun.Transpiler().transformSync(
+        `function f(a) { "use strict"; "use other"; return a }
+  const g = () => { "use strict"; return 1 };
+  class A { m() { "use strict"; return 2 } }`,
+      ),
+    ).toBe(
+      `function f(a) {
+  "use strict";
+  "use other";
+  return a;
+}
+const g = () => {
+  "use strict";
+  return 1;
+};
+
+class A {
+  m() {
+    "use strict";
+    return 2;
+  }
+}
+`,
+    );
+    expect(
+      new Bun.Transpiler({ minifyWhitespace: true, minify: { syntax: true } }).transformSync(
+        `function f(a) { "use strict"; return a }`,
+      ),
+    ).toBe(`function f(a){"use strict";return a}`);
+  });
+  it("only treats a string at the start of a module or function body as a directive", () => {
+    // A block is not a directive prologue, so "use strict" does not make the
+    // scope strict: `var eval` and `eval = 1` are accepted.
+    expect(
+      new Bun.Transpiler().transformSync(`{ 'use strict'; var eval = 1 }
+  if (1) { 'use strict'; eval = 1 }
+  class A { static { "use strict"; } }`),
+    ).not.toContain('"use strict"');
+    // A template literal is never a directive
+    expect(new Bun.Transpiler().transformSync("function f() { `use strict`; var package = 1 }")).not.toContain(
+      "use strict",
+    );
+    // A Use Strict Directive has no escape sequence, and a parenthesized string
+    // ends the prologue. Neither makes the function strict.
+    expect(
+      new Bun.Transpiler().transformSync(`function f(a = 1) { "use\\x20strict"; var package = 1 }
+  function g() { '\\u0075se strict'; var package = 2 }
+  function h(a = 1) { ("use strict"); var package = 3 }
+  function i(a = 1) { ("first"); "use strict"; var package = 4 }
+  ("use strict"); var package = 5;`),
+    ).not.toContain("use strict");
+    // A namespace body is lowered to a function body and keeps its prologue, as in tsc
+    expect(new Bun.Transpiler({ loader: "ts" }).transformSync(`namespace N { "use strict"; export const x = 1 }`))
+      .toBe(`var N;
+((N) => {
+  "use strict";
+  N.x = 1;
+})(N ||= {});
+`);
+    // A directive prologue applies to the parameters as well
+    expect(() => new Bun.Transpiler().transformSync(`function f(arguments) { "use strict" }`)).toThrow(
+      'Declarations with the name "arguments" cannot be used in strict mode',
+    );
+    expect(() => new Bun.Transpiler().transformSync(`function f(a = 1) { "use strict"; return a }`)).toThrow(
+      'Cannot use a "use strict" directive in a function with a non-simple parameter list',
+    );
+    expect(() => new Bun.Transpiler().transformSync(`function f() { "use strict"; return 010 }`)).toThrow(
+      "Legacy octal literals cannot be used in strict mode",
+    );
+    // Object literal keys and destructuring keys are literals too
+    expect(() => new Bun.Transpiler().transformSync(`"use strict"; var o = { 010: 1 }`)).toThrow(
+      "Legacy octal literals cannot be used in strict mode",
+    );
+    expect(() => new Bun.Transpiler().transformSync(`"use strict"; var { 010: x } = o`)).toThrow(
+      "Legacy octal literals cannot be used in strict mode",
+    );
+    expect(() => new Bun.Transpiler().transformSync(`function f() { "use strict"; var { 010: x } = o }`)).toThrow(
+      "Legacy octal literals cannot be used in strict mode",
+    );
+    expect(new Bun.Transpiler().transformSync(`function f() { return 010 }`)).toBe(`function f() {
+  return 8;
+}
+`);
+    expect(new Bun.Transpiler().transformSync(`var { 010: x } = o, { 07: y } = o;`))
+      .toBe(`var { 8: x } = o, { 7: y } = o;
+`);
   });
 
   it("can parse 'a<b>' as typescript", () => {

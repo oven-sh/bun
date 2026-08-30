@@ -462,7 +462,26 @@ impl Order {
             bun_core::Global::exit(1)
         })
     }
+
+    /// The process-wide default result order. The connect-path DNS cache
+    /// (`bun_runtime::dns_jsc::internal::process_results`) reads it to decide
+    /// which address family leads the RFC 8305 interleave. Set from
+    /// `--dns-result-order` and `dns.setDefaultResultOrder`.
+    pub fn global_default() -> Order {
+        match GLOBAL_DEFAULT_ORDER.load(core::sync::atomic::Ordering::Relaxed) {
+            4 => Order::Ipv4first,
+            6 => Order::Ipv6first,
+            _ => Order::Verbatim,
+        }
+    }
+
+    pub fn set_global_default(order: Order) {
+        GLOBAL_DEFAULT_ORDER.store(order as u8, core::sync::atomic::Ordering::Relaxed);
+    }
 }
+
+static GLOBAL_DEFAULT_ORDER: core::sync::atomic::AtomicU8 =
+    core::sync::atomic::AtomicU8::new(Order::Verbatim as u8);
 
 /// The process-wide DNS
 /// cache lives in `bun_runtime` (it owns libinfo/libuv worker threads + JSC

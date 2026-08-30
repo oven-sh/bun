@@ -74,6 +74,12 @@ const getRuntimeDefaultResultOrderOption = $newRustFunction(
   0,
 );
 
+const setRuntimeDefaultResultOrderOption = $newRustFunction(
+  "runtime/dns_jsc/dns.rs",
+  "Resolver.setRuntimeDefaultResultOrderOption",
+  1,
+);
+
 function newResolver(options) {
   if (!newResolver.native) {
     newResolver.native = $newRustFunction("runtime/dns_jsc/dns.rs", "Resolver.newResolver", 1);
@@ -92,6 +98,9 @@ function defaultResultOrder() {
 function setDefaultResultOrder(order) {
   validateOrder(order);
   defaultResultOrder.value = order;
+  // The connect path (fetch, Bun.connect) dials through the internal DNS
+  // cache, not dns.lookup; push the order down so it applies there too.
+  setRuntimeDefaultResultOrderOption(order);
 }
 
 function getDefaultResultOrder() {

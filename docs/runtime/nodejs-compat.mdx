@@ -33,7 +33,7 @@ We update this page regularly. It reflects the latest version of Bun's compatibi
 
 ### [`node:dns`](https://nodejs.org/api/dns.html)
 
-🟢 Fully implemented. Missing `resolveTlsa`. Bun ignores the `Resolver` `maxTimeout` option, and the callback-style `Resolver` class cannot be subclassed (`dns.promises.Resolver` can).
+🟢 Fully implemented. Missing `resolveTlsa`. Bun ignores the `Resolver` `maxTimeout` option, and the callback-style `Resolver` class cannot be subclassed (`dns.promises.Resolver` can). `setDefaultResultOrder()` changes the dial order of `fetch()` and `Bun.connect()` for the whole process, including other worker threads, because they share one DNS cache. The `dns.lookup()` default stays per-thread like in Node.js.
 
 ### [`node:events`](https://nodejs.org/api/events.html)
 

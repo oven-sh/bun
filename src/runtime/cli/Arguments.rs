@@ -1234,6 +1234,12 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
 
         if let Some(order) = args.option(b"--dns-result-order") {
             ctx.runtime_options.dns_result_order = order.into();
+            // The connect-path DNS cache (fetch, Bun.connect, bun install)
+            // reads the process-wide order; run/repl_command still validate
+            // the string and exit on an invalid value.
+            if let Some(parsed) = bun_dns::Order::from_string(order) {
+                bun_dns::Order::set_global_default(parsed);
+            }
         }
 
         let has_cron_title = args.option(b"--cron-title");

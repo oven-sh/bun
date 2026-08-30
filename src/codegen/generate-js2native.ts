@@ -297,6 +297,7 @@ export function getJS2NativeRust() {
   // so the linker doesn't see two definitions.
   const handExported = new Set<string>([
     "JS2Rust___src_runtime_dns_jsc_dns_rs__Resolver_getRuntimeDefaultResultOrderOption",
+    "JS2Rust___src_runtime_dns_jsc_dns_rs__Resolver_setRuntimeDefaultResultOrderOption",
     "JS2Rust___src_runtime_dns_jsc_dns_rs__Resolver_newResolver",
     "JS2Rust___src_runtime_dns_jsc_dns_rs__internal_seedCacheForTesting",
   ]);

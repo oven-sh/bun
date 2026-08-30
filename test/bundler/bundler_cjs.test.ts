@@ -924,4 +924,32 @@ describe("bundler", () => {
       { runtime: "node", file: "/out/b.js", stdout: "" },
     ],
   });
+
+  // An ES module entry point that a sloppy dependency requires back is wrapped
+  // in __esm. The sloppy file keeps the chunk top free of a directive, so the
+  // entry point's closure carries its own.
+  itBundled("cjs/StrictModeWrappedESMEntryWithSloppyDepFormatCJS", {
+    files: {
+      "/entry.js": /* js */ `
+        import dep from "./sloppy-dep.cjs";
+        export const strict = (function () { return this === undefined; })();
+        console.log("entry", strict, "dep", dep);
+      `,
+      "/sloppy-dep.cjs": /* js */ `
+        module.exports = (function () { return this === undefined; })();
+        require("./entry.js");
+      `,
+    },
+    target: "node",
+    format: "cjs",
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).not.toStartWith('"use strict"');
+      expect(out).toContain('__esm(() => {\n  "use strict";\n');
+    },
+    run: {
+      runtime: "node",
+      stdout: "entry true dep false",
+    },
+  });
 });

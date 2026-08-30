@@ -252,11 +252,12 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
         u32::MAX
     };
 
-    // The chunk's own entry point gets the directive at the chunk top instead (`post_process_js_chunk`).
-    let is_chunk_entry_point =
-        chunk.is_entry_point() && chunk.entry_point.source_index() as usize == source_index;
+    // Skipped when the chunk top carries the directive for this file (`post_process_js_chunk`).
+    let covered_by_chunk_top = chunk.is_entry_point()
+        && chunk.entry_point.source_index() as usize == source_index
+        && c.entry_chunk_needs_use_strict(chunk);
     if flags.wrap != WrapKind::None
-        && !is_chunk_entry_point
+        && !covered_by_chunk_top
         && c.wrapper_needs_use_strict(source_index)
     {
         stmts.inside_wrapper_prefix.append_directive(Stmt::alloc(

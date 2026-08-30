@@ -32,18 +32,17 @@ describeWithContainer("postgres json string parameters", { image: "postgres_plai
     expect(row).toEqual({ kind: "object", value: { a: "hello", b: 42 } });
   });
 
-  test("non-ASCII JSON text round-trips through the verbatim path", async () => {
+  // A JS string is 8-bit or 16-bit as a whole, so two documents cover both
+  // transcode arms: "café" stays Latin-1, the emoji/CJK one forces UTF-16.
+  test.each([
+    ["Latin-1", { name: "caf\u00e9" }],
+    ["UTF-16", { name: "\u{1F680}", text: "\u4e16\u754c" }],
+  ])("non-ASCII JSON text (%s) round-trips through the verbatim path", async (_label, doc) => {
     await container.ready;
     await using sql = new SQL(options());
-    // A JS string is 8-bit or 16-bit as a whole, so two documents cover both
-    // transcode arms: "café" stays Latin-1, the emoji/CJK one forces UTF-16.
-    const latin1Doc = { name: "caf\u00e9" };
-    const utf16Doc = { name: "\u{1F680}", text: "\u4e16\u754c" };
-    for (const doc of [latin1Doc, utf16Doc]) {
-      const payload = JSON.stringify(doc);
-      const [row] = await sql`select jsonb_typeof(${payload}::jsonb) as kind, ${payload}::jsonb as value`;
-      expect(row).toEqual({ kind: "object", value: doc });
-    }
+    const payload = JSON.stringify(doc);
+    const [row] = await sql`select jsonb_typeof(${payload}::jsonb) as kind, ${payload}::jsonb as value`;
+    expect(row).toEqual({ kind: "object", value: doc });
   });
 
   test("json_to_recordset accepts a stringified array parameter", async () => {

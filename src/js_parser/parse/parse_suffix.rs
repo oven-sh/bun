@@ -124,7 +124,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         level: Level,
         optional_chain: &mut Option<OptionalChain>,
         left: &mut Expr,
+        flags: &mut EFlags,
     ) -> CResult {
+        if flags.contains(EFlags::IS_NEW_TARGET) {
+            p.log().add_range_error(
+                Some(p.source),
+                p.lexer.range(),
+                b"Cannot use an unparenthesized optional chain inside the target of \"new\"",
+            );
+            // Report this once per "new" target, not once per "?." in the chain
+            flags.remove(EFlags::IS_NEW_TARGET);
+        }
+
         p.lexer.next()?;
         let mut optional_start: Option<OptionalChain> = Some(OptionalChain::Start);
 
@@ -340,7 +351,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         //   }
         //
         // This matches the behavior of the TypeScript compiler.
-        if flags == EFlags::TsDecorator {
+        if flags.contains(EFlags::TS_DECORATOR) {
             return Ok(Continuation::Done);
         }
 
@@ -449,7 +460,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // condition ? yes : no
         //             ^
-        p.parse_expr_with_flags(Level::Comma, EFlags::None, &mut e_if.yes)?;
+        p.parse_expr_with_flags(Level::Comma, EFlags::empty(), &mut e_if.yes)?;
 
         p.allow_in = old_allow_in;
 
@@ -459,7 +470,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // condition ? yes : no
         //                   ^
-        p.parse_expr_with_flags(Level::Comma, EFlags::None, &mut e_if.no)?;
+        p.parse_expr_with_flags(Level::Comma, EFlags::empty(), &mut e_if.no)?;
 
         // condition ? yes : no
         //                     ^
@@ -1434,7 +1445,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         left: &mut Expr,
         level: Level,
         mut errors: Option<&mut DeferredErrors>,
-        flags: EFlags,
+        mut flags: EFlags,
     ) -> Result<(), Error> {
         let p = self;
 
@@ -1546,7 +1557,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 T::TBarBar => Self::sfx_t_bar_bar(p, level, left, flags),
                 T::TAmpersandAmpersand => Self::sfx_t_ampersand_ampersand(p, level, left, flags),
                 T::TQuestion => Self::sfx_t_question(p, level, errors.as_deref_mut(), left),
-                T::TQuestionDot => Self::sfx_t_question_dot(p, level, &mut optional_chain, left),
+                T::TQuestionDot => {
+                    Self::sfx_t_question_dot(p, level, &mut optional_chain, left, &mut flags)
+                }
                 T::TTemplateHead => Self::sfx_t_template_head(
                     p,
                     level,

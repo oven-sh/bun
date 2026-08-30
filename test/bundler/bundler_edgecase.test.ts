@@ -3277,6 +3277,69 @@ describe("bundler", () => {
       api.expectFile("/out.js").toContain("var arguments = 1;");
     },
   });
+  // These are early errors in every JS engine. The bundle must fail instead of
+  // emitting a file that fails to load.
+  itBundled("edgecase/DuplicateClassConstructorIsAnError", {
+    files: {
+      "/entry.js": /* js */ `
+        class A {
+          constructor() {}
+          constructor() {}
+        }
+        console.log(new A());
+      `,
+    },
+    bundleErrors: {
+      "/entry.js": ["Classes cannot contain more than one constructor"],
+    },
+  });
+  itBundled("edgecase/OptionalChainInNewTargetIsAnError", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log(new a?.b());
+      `,
+    },
+    bundleErrors: {
+      "/entry.js": ['Cannot use an unparenthesized optional chain inside the target of "new"'],
+    },
+  });
+  itBundled("edgecase/DuplicateLabelIsAnError", {
+    files: {
+      "/entry.js": /* js */ `
+        outer: {
+          outer: console.log(1);
+        }
+      `,
+    },
+    bundleErrors: {
+      "/entry.js": ['Duplicate label "outer"'],
+    },
+  });
+  // The printer must keep the parentheses that make these valid: "new foo()\`x\`()"
+  // and "o?.tag\`x\`" are a different program and a syntax error.
+  itBundled("edgecase/ParenthesizedNewTargetAndTemplateTagKeepParens", {
+    files: {
+      "/entry.js": /* js */ `
+        function foo() {
+          return function tag() {
+            return class {
+              constructor() {
+                this.k = "inner";
+              }
+            };
+          };
+        }
+        console.log(new (foo()\`x\`)().k);
+
+        const o = { tag: strings => strings[0], cls: class { constructor() { this.k = "chain"; } } };
+        console.log((o?.tag)\`x\`);
+        console.log(new (o?.cls)().k);
+      `,
+    },
+    run: {
+      stdout: "inner\nx\nchain",
+    },
+  });
 });
 
 for (const backend of ["api", "cli"] as const) {

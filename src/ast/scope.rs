@@ -34,6 +34,7 @@ pub struct Scope {
 
     // This is used to store the ref of the label symbol for ScopeLabel scopes.
     pub label_ref: Ref,
+    pub label_loc: crate::Loc,
     pub label_stmt_is_loop: bool,
 
     // If a scope contains a direct eval() expression, then none of the symbols
@@ -71,6 +72,7 @@ impl Scope {
         members: MemberHashMap::new_in(AstAlloc),
         generated: AstAlloc::vec(),
         label_ref: Ref::NONE,
+        label_loc: crate::Loc::EMPTY,
         label_stmt_is_loop: false,
         contains_direct_eval: false,
         forbid_arguments: false,

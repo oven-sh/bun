@@ -718,10 +718,17 @@ impl Expr {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum EFlags {
-    None,
-    TsDecorator,
+bitflags::bitflags! {
+    #[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
+    #[repr(transparent)]
+    pub struct EFlags: u8 {
+        const TS_DECORATOR = 1 << 0;
+
+        /// Set while parsing the target of `new`. An unparenthesized optional
+        /// chain there ("new a?.b()") is a syntax error, but "new (a?.b)()" is
+        /// not, and a parenthesized expression starts from empty flags.
+        const IS_NEW_TARGET = 1 << 1;
+    }
 }
 
 // `is_missing` lives in the `init`/`allocate` impl block below.

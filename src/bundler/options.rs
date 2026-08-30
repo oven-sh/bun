@@ -90,14 +90,9 @@ pub fn parser_glob_resolver(source_dir: &[u8], pattern: &[u8]) -> Vec<Box<[u8]>>
     }
 
     let walker = match bun_glob::BunGlobWalker::init_with_cwd(
-        pattern,
-        source_dir,
-        /* dot */ false,
-        /* absolute */ true,
-        /* follow_symlinks */ true,
-        /* error_on_broken_symlinks */ false,
-        /* only_files */ true,
-        None,
+        pattern, source_dir, /* dot */ false, /* absolute */ true,
+        /* follow_symlinks */ true, /* error_on_broken_symlinks */ false,
+        /* only_files */ true, None,
     ) {
         Ok(Ok(w)) => w,
         _ => return out,

@@ -1491,7 +1491,7 @@ The rules:
 
 - The path must start with `./` or `../` and name a directory or file prefix before the first `${}` or `+`. A bare `require("./" + name)` is left alone.
 - A placeholder right after a `/` matches across directories (`**/*`). Anywhere else it matches one path segment (`*`).
-- A `const` whose initializer is such a template or concatenation is followed, so `` const file = `./bin/${arch}/addon.node`; require(file) `` is bundled too.
+- A `const` whose initializer is such a template or concatenation is followed, so ``const file = `./bin/${arch}/addon.node`; require(file)`` is bundled too.
 - When the path ends in a placeholder, each file can also be reached without its extension: `require("./src/" + name)` finds `./src/cat.js` for `"cat"`.
 - A specifier that is not in the map falls back to the runtime `require()` or `import()`. With `allowUnresolved: []` (or `--reject-unresolved`) the map is a closed set and a miss throws `MODULE_NOT_FOUND`.
 - A pattern that matches no files, or more than 1024 files, leaves the call as a runtime call.

@@ -1016,9 +1016,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         arg: Expr,
         import_state: Option<&TransposeState>,
     ) -> Option<Expr> {
-        if !self.options.bundle
-            || !self.options.features.allow_runtime
-            || self.is_control_flow_dead
+        if !self.options.bundle || !self.options.features.allow_runtime || self.is_control_flow_dead
         {
             return None;
         }
@@ -1101,8 +1099,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let import_options = import_state.map_or(Expr::EMPTY, |s| s.import_options);
 
         let arena = self.arena;
-        let mut properties: BumpVec<'_, G::Property> =
-            BumpVec::with_capacity_in(keys.len(), arena);
+        let mut properties: BumpVec<'_, G::Property> = BumpVec::with_capacity_in(keys.len(), arena);
         for key in keys {
             let import_record_index = self.add_import_record(kind, loc, key);
             {

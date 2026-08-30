@@ -124,7 +124,8 @@ test("createLiveOutputFilter removes the annotations from the output of bun test
     filtered += filter(chunk);
   }
 
-  expect(raw).toContain("\n::group::test/a.test.ts:\n");
+  // bun prints the file path with the separator of the platform.
+  expect(raw).toMatch(/\n::group::test[\\/]a\.test\.ts:\n/);
   expect(raw).toContain("\n::error ");
   expect(raw).toContain("\n::endgroup::\n");
   expect(filtered).not.toContain("::");

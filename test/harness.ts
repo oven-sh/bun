@@ -656,8 +656,27 @@ export function fakeNodeRun(dir: string, file: string | string[], env?: Record<s
   };
 }
 
+const issuedPorts = new Set<number>();
+
+/**
+ * A free loopback TCP port for a server that must know its port before it
+ * starts (a spawned registry, redis, an inspector). A server created in this
+ * process should use `port: 0` instead.
+ *
+ * The kernel picks the port from its ephemeral range, so it is free right now
+ * and cannot land on a port another test binds by number (the node test
+ * suite's `common.PORT` block, 12346-12349). Ports already handed out by this
+ * process are skipped so that two calls never share a port.
+ */
 export function randomPort(): number {
-  return 1024 + Math.floor(Math.random() * (65535 - 1024));
+  for (;;) {
+    const probe = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+    const { port } = probe;
+    probe.stop(true);
+    if (issuedPorts.has(port)) continue;
+    issuedPorts.add(port);
+    return port;
+  }
 }
 
 const binaryTypes = {
@@ -1915,6 +1934,7 @@ export class VerdaccioRegistry {
   configPath: string;
   packagesPath: string;
   users: Record<string, string> = {};
+  private stopping = false;
 
   constructor(opts?: { configPath?: string; packagesPath?: string; verbose?: boolean }) {
     this.port = randomPort();
@@ -1923,6 +1943,7 @@ export class VerdaccioRegistry {
   }
 
   async start(silent: boolean = true) {
+    this.stopping = false;
     await rm(join(dirname(this.configPath), "htpasswd"), { force: true });
     // Bind the IPv4 loopback explicitly: a bare port makes verdaccio listen on
     // whatever `localhost` resolves to, which is `::1` on hosts that list it first,
@@ -1950,11 +1971,13 @@ export class VerdaccioRegistry {
     });
 
     this.process.on("exit", (code, signal) => {
+      if (this.stopping) return;
       if (code !== 0) {
         console.error(`Verdaccio exited with code ${code} and signal ${signal}`);
       } else {
         console.log("Verdaccio exited successfully");
       }
+      started.reject(new Error(`verdaccio exited before it started listening (code ${code}, signal ${signal})`));
     });
 
     this.process.on("message", (message: { verdaccio_started: boolean }) => {
@@ -1970,9 +1993,20 @@ export class VerdaccioRegistry {
     return `http://localhost:${this.port}/`;
   }
 
-  stop() {
+  /**
+   * Terminates the registry process. Resolves once it has exited. A registry
+   * that outlives its test file keeps its port bound for the rest of the CI
+   * job, and a later test that binds that port by number fails with
+   * EADDRINUSE.
+   */
+  stop(): Promise<void> {
     rmSync(join(dirname(this.configPath), "htpasswd"), { force: true });
-    this.process?.kill(0);
+    const proc = this.process;
+    if (!proc || proc.exitCode !== null || proc.signalCode !== null) return Promise.resolve();
+    this.stopping = true;
+    const exited = new Promise<void>(resolve => proc.once("exit", () => resolve()));
+    proc.kill();
+    return exited;
   }
 
   /**

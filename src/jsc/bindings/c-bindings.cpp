@@ -358,30 +358,18 @@ extern "C" void on_before_reload_process_posix()
 }
 
 #if OS(LINUX)
-// Linux builds link with -Wl,--wrap=execve -Wl,--wrap=pthread_create
-// (scripts/build/flags.ts), so every execve and pthread_create in the binary
-// lands in the two wrappers below.
-//
-// While one thread is inside execve(2), from check_unsafe_exec() until
-// de_thread() has killed the other threads or the exec has failed, the kernel
-// fails every clone(CLONE_FS) in the process with EAGAIN (fs/exec.c,
-// kernel/fork.c copy_fs). pthread_create is such a clone. The --watch reload
-// execs on the watcher thread, so a GC marker or worker thread that the JS
-// thread started at that moment failed, and WTF::Thread::create aborted the
-// process. Such an EAGAIN is transient: the exec either replaces the process,
-// which ends the failing thread too, or fails and clears the kernel flag.
-//
-// `threads_in_execve` counts the threads inside execve(2) right now.
-// `execve_generation` counts every exec ever started, so an exec that began and
-// ended during one pthread_create is still visible. __wrap_execve bumps the
-// count before the generation and __wrap_pthread_create reads them in the
-// opposite order, so an exec that overlaps an attempt shows up in at least one.
+// Linked in with -Wl,--wrap=execve -Wl,--wrap=pthread_create (scripts/build/flags.ts).
+// While a thread is inside execve(2), until de_thread() has killed the other threads or the
+// exec has failed, the kernel fails every clone(CLONE_FS) in the process with EAGAIN
+// (fs/exec.c check_unsafe_exec, kernel/fork.c copy_fs). WTF::Thread::create aborts on a
+// failed pthread_create, which killed --watch reloads. A pthread_create EAGAIN that overlaps
+// an exec of this process is retried instead. `execve_generation` counts execs ever started
+// so one that began and ended inside a single pthread_create is still seen; it is bumped
+// after `threads_in_execve` and read before it.
 static std::atomic<int> threads_in_execve { 0 };
 static std::atomic<unsigned> execve_generation { 0 };
-// Set in bun_initialize_process. The exec of a child that posix_spawn_bun made
-// with clone(CLONE_VM) runs in this address space too; it must not touch the
-// counters, because it never returns to undo them and the kernel flag it sets
-// lives in the child's own fs_struct.
+// The clone(CLONE_VM) child of posix_spawn_bun execs in this address space and never returns
+// to undo a count, so only the pid recorded in bun_initialize_process counts its execs.
 static pid_t execve_counting_pid = 0;
 
 extern "C" int __real_execve(const char*, char* const[], char* const[]);
@@ -399,9 +387,7 @@ extern "C" int __wrap_execve(const char* path, char* const argv[], char* const e
     return rc;
 }
 
-// Retries an EAGAIN that overlaps an exec of this process. Any other EAGAIN is
-// returned unchanged. The bound keeps a real limit, hit while an exec never
-// completes, from looping forever.
+// The attempt bound keeps a real limit, hit while an exec never completes, from looping forever.
 extern "C" int __wrap_pthread_create(pthread_t* thread, const pthread_attr_t* attr, void* (*start_routine)(void*), void* arg)
 {
     for (int attempt = 0;; attempt++) {

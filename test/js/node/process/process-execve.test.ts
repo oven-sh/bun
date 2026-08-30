@@ -174,8 +174,10 @@ describe.concurrent("process.execve", () => {
   // failed (fs/exec.c check_unsafe_exec, kernel/fork.c copy_fs). An exec of a
   // file that is executable but not a valid binary opens that window and then
   // fails with ENOEXEC, so the fixture can open it thousands of times while
-  // background threads keep calling pthread_create. Every failure they see is
-  // recorded in a file.
+  // background threads keep calling pthread_create. The threads are spawning
+  // before the first exec (the call returns once they run) and record both a
+  // failed spawn and running out of iterations, so an empty file means they
+  // spawned without failure for the whole exec loop.
   test.skipIf(!isLinux)("does not make pthread_create fail on other threads while the exec runs", async () => {
     using dir = tempDir("process-execve-pthread-create", {
       "index.js": `

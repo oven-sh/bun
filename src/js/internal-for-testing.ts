@@ -688,11 +688,9 @@ export const isMemoryPressureWatcherInstalled: () => boolean = $newCppFunction(
   0,
 );
 
-// Runs `parallelism` threads that each spawn `iterations` no-op threads through
-// bun's own pthread_create. Every failure is written to `fd`. With `detach` the
-// loops run in the background and the call returns 0 at once; otherwise it
-// waits for them and returns the first failing errno (0 when every spawn
-// succeeded). Always 0 on Windows.
+// `parallelism` threads each spawn `iterations` no-op threads through bun's own pthread_create,
+// writing every failure to `fd`. Returns the first failing errno, or with `detach` 0 as soon as
+// every loop runs; a detached loop also writes to `fd` when it runs out of iterations.
 export const spawnThreadsForTesting: (iterations: number, fd: number, parallelism: number, detach?: boolean) => number =
   $newCppFunction("InternalForTesting.cpp", "jsFunction_spawnThreadsForTesting", 4);
 

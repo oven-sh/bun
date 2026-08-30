@@ -9,9 +9,11 @@
 #include <wtf/text/AtomStringImpl.h>
 #include <wtf/text/StringImpl.h>
 #include <wtf/text/WTFString.h>
+#include <atomic>
 #include <memory>
 #if !OS(WINDOWS)
 #include <pthread.h>
+#include <sched.h>
 #include <unistd.h>
 #endif
 
@@ -135,26 +137,26 @@ static void* spawnThreadsForTestingEntry(void* arg)
 struct SpawnThreadsForTestingLoop {
     int32_t iterations;
     int fd;
+    bool detached;
+    // Lives on the caller's stack; each loop bumps it exactly once, before the caller returns.
+    std::atomic<int32_t>* runningLoops;
 };
 
-// Written right away: the caller may be killed a few microseconds later by the
-// exec it is racing.
-static void recordSpawnThreadsForTestingFailure(int fd, int rc)
+// Written at once: the exec this thread races may kill it microseconds later.
+static void recordSpawnThreadsForTesting(int fd, const char* what, int value)
 {
-    char message[64];
-    int length = snprintf(message, sizeof message, "pthread_create failed: errno %d\n", rc);
+    char message[96];
+    int length = snprintf(message, sizeof message, "%s %d\n", what, value);
     if (fd >= 0 && length > 0)
         (void)write(fd, message, static_cast<size_t>(length));
 }
 
-// Spawns `iterations` detached no-op threads. Stops at the first failure,
-// records it to `fd` and returns it.
+// Spawns `iterations` detached no-op threads; stops at and records the first failure.
 static void* spawnThreadsForTestingLoop(void* arg)
 {
     std::unique_ptr<SpawnThreadsForTestingLoop> loop(static_cast<SpawnThreadsForTestingLoop*>(arg));
-    // Detached threads with a small stack keep each spawn cheap (no join, and
-    // ASAN clears the shadow of the whole stack on thread start), so more
-    // spawns land in the exec window.
+    loop->runningLoops->fetch_add(1, std::memory_order_release);
+    // Small detached stacks keep each spawn cheap (ASAN clears a whole stack's shadow at start).
     pthread_attr_t attr;
     pthread_attr_init(&attr);
     pthread_attr_setstacksize(&attr, 64 * 1024);
@@ -164,22 +166,21 @@ static void* spawnThreadsForTestingLoop(void* arg)
         pthread_t thread;
         int rc = pthread_create(&thread, &attr, spawnThreadsForTestingEntry, nullptr);
         if (rc != 0) {
-            recordSpawnThreadsForTestingFailure(loop->fd, rc);
+            recordSpawnThreadsForTesting(loop->fd, "pthread_create failed: errno", rc);
             result = rc;
             break;
         }
     }
     pthread_attr_destroy(&attr);
+    // A detached loop has no return value, so a test that expects the loop to outlive it
+    // can see in the file when it ran out of iterations instead.
+    if (loop->detached && result == 0)
+        recordSpawnThreadsForTesting(loop->fd, "loop finished after spawning", loop->iterations);
     return reinterpret_cast<void*>(result);
 }
 #endif
 
-// Runs `parallelism` threads that each spawn `iterations` no-op threads through
-// bun's own pthread_create, so a test can keep this process inside clone(2)
-// while an execve(2) runs on another thread. Each failure is written to `fd`
-// (a file, so the record survives the exec). With `detach` the loops run in
-// the background and the call returns 0 at once. Otherwise it waits for them
-// and returns the first failing errno, or 0 when every spawn succeeded.
+// (iterations, fd, parallelism, detach): see spawnThreadsForTesting in internal-for-testing.ts.
 JSC_DEFINE_HOST_FUNCTION(jsFunction_spawnThreadsForTesting, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
 #if OS(WINDOWS)
@@ -204,21 +205,25 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_spawnThreadsForTesting, (JSC::JSGlobalObject
     pthread_attr_t attr;
     pthread_attr_init(&attr);
     pthread_attr_setdetachstate(&attr, detach ? PTHREAD_CREATE_DETACHED : PTHREAD_CREATE_JOINABLE);
+    std::atomic<int32_t> runningLoops { 0 };
     pthread_t loops[64];
     int32_t started = 0;
     int firstError = 0;
     for (; started < parallelism; started++) {
         // Owned by the loop thread.
-        auto* loop = new SpawnThreadsForTestingLoop { iterations, fd };
+        auto* loop = new SpawnThreadsForTestingLoop { iterations, fd, detach, &runningLoops };
         int rc = pthread_create(&loops[started], &attr, spawnThreadsForTestingLoop, loop);
         if (rc != 0) {
             delete loop;
-            recordSpawnThreadsForTestingFailure(fd, rc);
+            recordSpawnThreadsForTesting(fd, "loop thread pthread_create failed: errno", rc);
             firstError = rc;
             break;
         }
     }
     pthread_attr_destroy(&attr);
+    // Every loop is spawning threads by the time this returns.
+    while (runningLoops.load(std::memory_order_acquire) < started)
+        sched_yield();
     if (!detach) {
         for (int32_t i = 0; i < started; i++) {
             void* result = nullptr;

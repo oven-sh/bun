@@ -459,6 +459,10 @@ pub(crate) fn cluster_raw_bind(global: &JSGlobalObject, frame: &CallFrame) -> Js
             if path_bytes.len() >= sun.sun_path.len() {
                 return Ok(JSValue::js_number_from_int32(-(libc::ENAMETOOLONG)));
             }
+            let is_abstract = cfg!(target_os = "linux") && path_bytes.first() == Some(&0);
+            if !is_abstract && bun_core::strings::contains_char(path_bytes, 0) {
+                return Ok(JSValue::js_number_from_int32(-(libc::EINVAL)));
+            }
             for (i, b) in path_bytes.iter().enumerate() {
                 sun.sun_path[i] = *b as _;
             }

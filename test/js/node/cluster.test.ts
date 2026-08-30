@@ -274,6 +274,40 @@ if (cluster.isPrimary) {
   expect(stdout).toContain("exists after exit: false");
 });
 
+test.skipIf(isWindows)("SCHED_NONE pipe listen rejects a path with null bytes instead of truncating it", async () => {
+  const dir = tempDirWithFiles("bun-test", {
+    "main.ts": `
+const cluster = require("node:cluster");
+const net = require("node:net");
+const fs = require("node:fs");
+const path = require("node:path");
+
+cluster.schedulingPolicy = cluster.SCHED_NONE;
+
+if (cluster.isPrimary) {
+  const worker = cluster.fork();
+  worker.on("message", m => {
+    console.log("worker:", JSON.stringify(m));
+    console.log("truncated exists:", fs.existsSync(path.join(__dirname, "nul")));
+    worker.disconnect();
+  });
+  worker.on("exit", code => {
+    process.exit(code ?? 1);
+  });
+} else {
+  const server = net.createServer(() => {});
+  server.on("error", e => process.send({ code: e.code, syscall: e.syscall }));
+  server.listen(path.join(__dirname, "nul\\0byte.sock"), () => process.send({ listening: true }));
+}
+`,
+  });
+  const { stdout, stderr, exitCode } = await bunRun(joinP(dir, "main.ts"), bunEnv);
+  expect(stdout).toContain(`worker: {"code":"EINVAL","syscall":"bind"}`);
+  expect(stdout).toContain("truncated exists: false");
+  if (exitCode !== 0) expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+});
+
 test.skipIf(isWindows)("round-robin pipe listen applies readableAll/writableAll to the socket file", async () => {
   const dir = tempDirWithFiles("bun-test", {
     "main.ts": `

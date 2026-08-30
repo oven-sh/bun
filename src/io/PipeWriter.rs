@@ -233,7 +233,8 @@ fn write_to_blocking_pipe(fd: Fd, buf: &[u8]) -> sys::Result<usize> {
 }
 
 /// A pipe's errors for the socket that stands in for one: syscall `write` as in
-/// Node, and macOS's mid-send ENOTCONN as the EPIPE that Linux and a pipe give.
+/// Node, and macOS's mid-send ENOTCONN as EPIPE. Node passes ENOTCONN through;
+/// Bun's callers (FileSink, the shell) only know EPIPE, so it is folded here.
 /// https://github.com/apple-oss-distributions/xnu/blob/xnu-12377.121.6/bsd/kern/uipc_usrreq.c#L605-L619
 fn write_to_socket(fd: Fd, buf: &[u8]) -> sys::Result<usize> {
     sys::send_non_block(fd, buf).map_err(|err| {

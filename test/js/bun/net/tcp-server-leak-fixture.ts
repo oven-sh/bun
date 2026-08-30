@@ -1,22 +1,29 @@
 // Spawned by tcp-server.test.ts "should not leak memory". The counts below are
 // heap-wide, and a `bun test --parallel` worker runs several files in one heap,
-// so the check has to run in a process of its own. It does not import
-// "harness": that costs over a second of startup in a debug build.
+// so the check has to run in a process of its own. It mirrors the echo tests
+// of that file: a `using` listener and a client per binaryType. It does not
+// import "harness": that costs over a second of startup in a debug build.
 import { heapStats } from "bun:jsc";
 import { expect } from "bun:test";
 
-const ROUND_TRIPS = 10;
+const BINARY_TYPES = ["arraybuffer", "uint8array", "buffer"] as const;
+const ROUND_TRIPS_PER_TYPE = 4;
+const DATA_CLASS = { arraybuffer: ArrayBuffer, uint8array: Uint8Array, buffer: Buffer };
 
-async function echoRoundTrip(hostname: string, port: number) {
+type BinaryType = (typeof BINARY_TYPES)[number];
+
+async function echoRoundTrip(hostname: string, port: number, binaryType: BinaryType) {
   const { promise, resolve, reject } = Promise.withResolvers<void>();
   await Bun.connect({
     hostname,
     port,
     socket: {
+      binaryType,
       open(socket) {
         socket.write("ping");
       },
-      data(socket) {
+      data(socket, data) {
+        expect(data).toBeInstanceOf(DATA_CLASS[binaryType]);
         socket.end();
       },
       close() {
@@ -35,27 +42,27 @@ async function echoRoundTrip(hostname: string, port: number) {
 
 // Everything that touches a Listener or a TCPSocket stays inside this function,
 // so no frame below the count still holds one.
-async function run() {
+async function run(binaryType: BinaryType) {
   let closedOnServer = 0;
   const allClosedOnServer = Promise.withResolvers<void>();
-  const server = Bun.listen({
+  using server = Bun.listen({
     hostname: "127.0.0.1",
     port: 0,
     socket: {
+      binaryType,
       open() {},
       data(socket, data) {
         socket.write(data);
       },
       close() {
-        if (++closedOnServer === ROUND_TRIPS) allClosedOnServer.resolve();
+        if (++closedOnServer === ROUND_TRIPS_PER_TYPE) allClosedOnServer.resolve();
       },
     },
   });
-  for (let i = 0; i < ROUND_TRIPS; i++) {
-    await echoRoundTrip(server.hostname, server.port);
+  for (let i = 0; i < ROUND_TRIPS_PER_TYPE; i++) {
+    await echoRoundTrip(server.hostname, server.port, binaryType);
   }
   await allClosedOnServer.promise;
-  server.stop();
 }
 
 function liveObjects(type: string): number {
@@ -74,7 +81,9 @@ async function expectAtMost(type: string, max: number) {
   expect(liveObjects(type)).toBeLessThanOrEqual(max);
 }
 
-await run();
+for (const binaryType of BINARY_TYPES) {
+  await run(binaryType);
+}
 
 // 2 is the prototype and the constructor.
 await expectAtMost("Listener", 2);

@@ -1037,6 +1037,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return None;
         }
 
+        // Only the `file` namespace has a directory to walk.
+        if !self.source.path.is_file() {
+            return None;
+        }
         let source_dir = self.source.path.source_dir();
         if source_dir.is_empty() {
             return None;
@@ -1165,10 +1169,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // On a map miss `__glob` hands the specifier to the runtime
         // `require`/`import()`, so a file that is not in the bundle loads the
-        // same way it did before the call was rewritten.
-        let fallback = if kind == ImportKind::Require {
+        // same way it did before the call was rewritten. That is runtime
+        // resolution, so it exists only where `allowUnresolved` permits it;
+        // under `--reject-unresolved` the map is a closed set and a miss throws.
+        let fallback = if !self.options.allow_unresolved.allows(shape) {
+            None
+        } else if kind == ImportKind::Require {
             self.record_usage_of_runtime_require();
-            self.value_for_require(loc)
+            Some(self.value_for_require(loc))
         } else {
             let param_ref = self.new_symbol(js_ast::symbol::Kind::Other, b"specifier");
             VecExt::append(&mut self.current_scope_mut().generated, param_ref);
@@ -1186,7 +1194,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 binding: self.b(B::Identifier { r#ref: param_ref }, loc),
                 ..Default::default()
             }]));
-            self.new_expr(
+            Some(self.new_expr(
                 E::Arrow {
                     args,
                     body,
@@ -1194,14 +1202,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     ..Default::default()
                 },
                 loc,
-            )
+            ))
         };
 
-        let glob_call = self.call_runtime(
-            loc,
-            b"__glob",
-            ExprNodeList::from_slice(&[map_obj, fallback]),
-        );
+        let glob_args = match fallback {
+            Some(fallback) => ExprNodeList::from_slice(&[map_obj, fallback]),
+            None => ExprNodeList::init_one(map_obj),
+        };
+        let glob_call = self.call_runtime(loc, b"__glob", glob_args);
 
         Some(self.new_expr(
             E::Call {

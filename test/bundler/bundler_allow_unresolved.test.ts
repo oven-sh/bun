@@ -226,4 +226,138 @@ describe("bundler", () => {
     backend: "cli",
     allowUnresolved: ["./locales/*.json"],
   });
+
+  // 17. String concatenation has a shape ("./a/*"), so it is not opaque.
+  itBundled("allow-unresolved/ConcatShapeRejectedByEmptyString", {
+    files: {
+      "/entry.js": /* js */ `
+        const x = "foo";
+        require("./a/" + x);
+      `,
+    },
+    outdir: "/out",
+    allowUnresolved: [""],
+    bundleErrors: {
+      "/entry.js": ["will not be bundled"],
+    },
+  });
+
+  // 18. ... and a pattern that matches the concatenation's shape allows it.
+  itBundled("allow-unresolved/ConcatShapeAllowedByPattern", {
+    files: {
+      "/entry.js": /* js */ `
+        const x = "foo";
+        require("./a/" + x);
+      `,
+    },
+    outdir: "/out",
+    allowUnresolved: ["./a/*"],
+  });
+
+  // 19. A const bound to a template carries the template's shape.
+  itBundled("allow-unresolved/ConstBoundTemplateRejectedByEmptyString", {
+    files: {
+      "/entry.js": /* js */ `
+        const x = "foo";
+        const specifier = \`./a/\${x}.js\`;
+        require(specifier);
+      `,
+    },
+    outdir: "/out",
+    allowUnresolved: [""],
+    bundleErrors: {
+      "/entry.js": ["will not be bundled"],
+    },
+  });
+
+  // 20. ... and matches a pattern like the template itself would.
+  itBundled("allow-unresolved/ConstBoundTemplateAllowedByPattern", {
+    files: {
+      "/entry.js": /* js */ `
+        const x = "foo";
+        const specifier = \`./a/\${x}.js\`;
+        require(specifier);
+      `,
+    },
+    outdir: "/out",
+    allowUnresolved: ["./a/*.js"],
+  });
+
+  // 21. require.resolve() with a concatenation is checked the same way. It is
+  // never glob-bundled, so the pattern is the only way to allow it.
+  itBundled("allow-unresolved/RequireResolveConcatRejectedByEmptyString", {
+    files: {
+      "/entry.js": /* js */ `
+        const x = "foo";
+        require.resolve("./a/" + x);
+      `,
+    },
+    outdir: "/out",
+    allowUnresolved: [""],
+    bundleErrors: {
+      "/entry.js": ["will not be bundled"],
+    },
+  });
+  itBundled("allow-unresolved/RequireResolveConcatAllowedByPattern", {
+    files: {
+      "/entry.js": /* js */ `
+        const x = "foo";
+        require.resolve("./a/" + x);
+      `,
+      "/a/foo.js": `module.exports = 1;`,
+    },
+    outdir: "/out",
+    allowUnresolved: ["./a/*"],
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.js").not.toContain("__glob");
+    },
+  });
+
+  // 22. Strict mode with files on disk: the matches are bundled into a closed
+  // __glob map with no runtime fallback, so nothing resolves at runtime.
+  itBundled("allow-unresolved/StrictGlobIsClosedSet", {
+    target: "bun",
+    files: {
+      "/entry.js": /* js */ `
+        const name = process.env.NAME;
+        try {
+          console.log(require(\`./a/\${name}.js\`));
+        } catch (e) {
+          console.log(e.code, e.message.includes("in bundle"));
+        }
+      `,
+      "/a/foo.js": `module.exports = "foo";`,
+    },
+    outdir: "/out",
+    allowUnresolved: [],
+    run: [
+      { env: { NAME: "foo" }, stdout: "foo" },
+      { env: { NAME: "bar" }, stdout: "MODULE_NOT_FOUND true" },
+    ],
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.js").toContain("__glob(");
+      api.expectFile("/out/entry.js").not.toContain("__require");
+      api.expectFile("/out/entry.js").not.toContain("import.meta.require");
+    },
+  });
+
+  // 23. A pattern that allows the shape keeps the runtime fallback next to the
+  // bundled matches.
+  itBundled("allow-unresolved/PatternGlobKeepsFallback", {
+    target: "bun",
+    files: {
+      "/entry.js": /* js */ `
+        const name = process.env.NAME;
+        console.log(require(\`./a/\${name}.js\`));
+      `,
+      "/a/foo.js": `module.exports = "foo";`,
+    },
+    outdir: "/out",
+    allowUnresolved: ["./a/*.js"],
+    run: { env: { NAME: "foo" }, stdout: "foo" },
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.js").toContain("__glob(");
+      api.expectFile("/out/entry.js").toContain("__require");
+    },
+  });
 });

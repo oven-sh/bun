@@ -104,12 +104,14 @@ bun build <entry points>
 </ParamField>
 
 <ParamField path="--allow-unresolved" type="string" default="*">
-  Allow unresolved dynamic import()/require() specifiers matching these glob patterns. Pass <code>''</code> to allow
-  opaque specifiers
+  Allow unresolved dynamic import()/require() specifiers matching these glob patterns. A pattern is matched against
+  the specifier's static parts (a template literal, a string concatenation, or a <code>const</code> bound to one) with
+  <code>*</code> in place of each dynamic part. Pass <code>''</code> to allow opaque specifiers
 </ParamField>
 
 <ParamField path="--reject-unresolved" type="boolean">
-  Fail the build on any dynamic import()/require() specifier that cannot be resolved at build time
+  Fail the build on any dynamic import()/require() specifier that cannot be resolved at build time. A relative
+  template or concatenation that matches files on disk is bundled as a closed glob map and passes
 </ParamField>
 
 <ParamField path="--packages" type="string" default="bundle">

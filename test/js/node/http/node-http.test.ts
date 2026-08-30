@@ -3573,6 +3573,113 @@ it("server.close(cb) completes after a raw upgrade once both sockets are destroy
   await closed;
 });
 
+it("closeAllConnections() after close(cb) destroys the in-flight connection and close(cb) fires", async () => {
+  // Node's documented graceful-shutdown order: close() first, then
+  // closeAllConnections(). The second call must still reach the connections.
+  const server = createServer((req, res) => {
+    res.writeHead(200);
+    res.write("partial"); // never ends
+  });
+  let serverSocket: import("node:net").Socket;
+  server.on("connection", socket => {
+    serverSocket = socket;
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const { port } = server.address() as AddressInfo;
+
+  const req = http.get({ host: "127.0.0.1", port });
+  const [res] = (await once(req, "response")) as [IncomingMessage];
+  res.on("error", () => {});
+  const resClosed = new Promise<void>(resolve => res.on("close", resolve));
+  res.resume();
+
+  const { promise: closed, resolve: onClosed } = Promise.withResolvers<void>();
+  server.close(() => onClosed());
+  server.closeAllConnections();
+  expect(serverSocket!.destroyed).toBe(true);
+  await closed;
+  await resClosed;
+});
+
+it("closeAllConnections() leaves the listener open", async () => {
+  const server = createServer((req, res) => res.end("ok"));
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const { port } = server.address() as AddressInfo;
+
+  // A kept-alive connection that finished its request is idle, so it is destroyed.
+  const idle = connect(port, "127.0.0.1");
+  idle.on("error", () => {});
+  const idleClosed = new Promise<void>(resolve => idle.on("close", () => resolve()));
+  idle.write("GET / HTTP/1.1\r\nHost: example.com\r\n\r\n");
+  await new Promise<void>(resolve => {
+    let response = "";
+    idle.on("data", chunk => {
+      response += chunk;
+      if (response.endsWith("ok")) resolve();
+    });
+  });
+
+  server.closeAllConnections();
+  await idleClosed;
+  expect(server.listening).toBe(true);
+
+  // New connections are still accepted and served.
+  const statusCode = await new Promise<number>((resolve, reject) => {
+    http
+      .get({ host: "127.0.0.1", port, agent: false }, res => {
+        res.resume();
+        res.on("end", () => resolve(res.statusCode!));
+      })
+      .on("error", reject);
+  });
+  expect(statusCode).toBe(200);
+
+  const { promise: closed, resolve: onClosed } = Promise.withResolvers<void>();
+  server.close(() => onClosed());
+  await closed;
+  expect(server.listening).toBe(false);
+});
+
+it("closeAllConnections() does not destroy a socket handed to 'upgrade'", async () => {
+  // Node's docs: closeAllConnections() does not destroy sockets upgraded to
+  // another protocol.
+  const server = createServer();
+  let serverSocket: import("node:net").Socket;
+  server.on("upgrade", (req, socket) => {
+    serverSocket = socket;
+    socket.write("HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: WebSocket\r\n\r\n");
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const { port } = server.address() as AddressInfo;
+
+  const request = http.get({
+    host: "127.0.0.1",
+    port,
+    headers: { Connection: "Upgrade", Upgrade: "WebSocket" },
+  });
+  request.on("error", () => {});
+  const [, clientSocket] = (await once(request, "upgrade")) as [unknown, import("node:net").Socket];
+
+  server.closeAllConnections();
+  expect(serverSocket!.destroyed).toBe(false);
+  // The tunnel still carries data.
+  serverSocket!.write("still open");
+  const outcome = await Promise.race([
+    once(clientSocket, "data").then(([data]) => (data as Buffer).toString()),
+    new Promise<string>(resolve => clientSocket.on("close", () => resolve("closed"))),
+  ]);
+  expect(outcome).toBe("still open");
+
+  clientSocket.destroy();
+  serverSocket!.destroy();
+  const { promise: closed, resolve: onClosed } = Promise.withResolvers<void>();
+  server.close(() => onClosed());
+  await closed;
+});
+
 it("req.upgrade is true inside the 'connect' listener", async () => {
   let upgradeValue: unknown = "unset";
   const { promise: sawConnect, resolve: onConnect } = Promise.withResolvers<void>();

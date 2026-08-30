@@ -442,17 +442,17 @@ Server.prototype.unref = function () {
   return this;
 };
 
+// Like Node.js: destroys the tracked HTTP connections, busy or idle, and nothing
+// else. The listener stays open, and it still works after close(). A connection
+// handed over to 'upgrade'/'connect' had its parser released and is left alone,
+// as Node does for sockets upgraded to another protocol.
 Server.prototype.closeAllConnections = function () {
   http1Fallback?.closeAllHttp1Connections(this);
-  const server = this[serverSymbol];
-  if (!server) {
-    return;
+  const connections = this[kTrackedConnections];
+  if (!connections) return;
+  for (const socket of connections) {
+    if (socket.parser != null && !socket.destroyed) socket.destroy();
   }
-  this[serverSymbol] = undefined;
-  clearInterval(this[kConnectionsCheckingInterval]);
-  this.listening = false;
-
-  server.stop(true);
 };
 
 Server.prototype.getConnections = function (callback) {

@@ -90,20 +90,10 @@ fn ssl_config_intern_for_http(config: SSLConfig) -> http::ssl_config::SharedPtr 
     http::ssl_config::global_registry::intern(config)
 }
 
-/// The HTTP thread connects to the `unix` path later, and the keep-alive pool
-/// keys the connection on that path. A relative path is anchored to `cwd`
-/// here, on the JS thread, so it names one socket: a `process.chdir()` after
-/// this `fetch()` neither moves the connect target nor lets the pool hand back
-/// a connection to a same-named socket in another directory.
-///
-/// The join does not normalize. `connect(2)` resolves `..` after following a
-/// symlink, `path.resolve` collapses it first, and the socket must stay the one
-/// the kernel would have picked from `cwd`.
-///
-/// Windows keeps the path as given: `sun_path` holds 108 bytes and, unlike the
-/// Linux and macOS paths in `bsd.c`, Windows has no fallback for a longer one.
+/// The HTTP thread connects to the `unix` path later and the keep-alive pool
+/// keys on it, so a relative path is anchored to `cwd` at call time, unnormalized.
 fn absolute_unix_socket_path(cwd: &[u8], path: Vec<u8>) -> Box<[u8]> {
-    // Linux abstract-namespace sockets start with NUL and are not paths.
+    // Windows: bsd.c has no long-path fallback. Leading NUL: Linux abstract socket.
     if cfg!(windows) || path.first() == Some(&0) || bun_paths::is_absolute(&path) {
         return path.into_boxed_slice();
     }

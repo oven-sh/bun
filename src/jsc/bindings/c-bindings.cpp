@@ -93,7 +93,7 @@ extern "C" ssize_t bun_sysconf__SC_CLK_TCK()
 #endif
 }
 
-// Host CPU count, ignoring sched_getaffinity and cgroup cpu.max.
+// Host CPU count, ignoring sched_getaffinity and cgroup cpu.max (unlike WTF::numberOfProcessorCores).
 // Used to size os.cpus() so it matches the native cpus() result count.
 extern "C" int32_t bun_sysconf__SC_NPROCESSORS_ONLN()
 {

@@ -5687,3 +5687,235 @@ describe("same-target destructuring with a re-declared target", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+// The pattern reads `obj` once where the declarators read it once each. The
+// fold is only valid when both reads are pure reads of the same value: a
+// symbol this file declares and never assigns, outside `with` and direct
+// eval, or a known pure global like `Math`. An unbound global may be an
+// accessor, and a getter on the first property may reassign a captured
+// variable before the second read.
+describe("same-target destructuring with an unstable target", () => {
+  const plain = new Bun.Transpiler({ loader: "js" });
+  const minifier = new Bun.Transpiler({ loader: "js", minifyWhitespace: true, minify: { syntax: true } });
+
+  it("keeps the reads of an unbound global", () => {
+    expect(plain.transformSync("function f() { var h = CFG.host, p = CFG.port; return [h, p]; }")).toBe(
+      "function f() {\n  var h = CFG.host, p = CFG.port;\n  return [h, p];\n}\n",
+    );
+    expect(minifier.transformSync("function f() { var z = 0, h = CFG.host, p = CFG.port; return [z, h, p]; }")).toBe(
+      "function f(){var z=0,h=CFG.host,p=CFG.port;return[z,h,p]}",
+    );
+  });
+
+  it("keeps the reads of a variable that the file assigns", () => {
+    expect(
+      plain.transformSync("function f() { var o = M; var g = () => { o = N; }; var a = o.a, b = o.b; return [a, b]; }"),
+    ).toBe(
+      "function f() {\n  var o = M;\n  var g = () => {\n    o = N;\n  };\n  var a = o.a, b = o.b;\n  return [a, b];\n}\n",
+    );
+    expect(plain.transformSync("function f(o) { var a = o.a, b = o.b; o = N; return [a, b]; }")).toBe(
+      "function f(o) {\n  var a = o.a, b = o.b;\n  o = N;\n  return [a, b];\n}\n",
+    );
+    expect(plain.transformSync("function f(o) { var a = o.a, b = o.b; o++; return [a, b]; }")).toBe(
+      "function f(o) {\n  var a = o.a, b = o.b;\n  o++;\n  return [a, b];\n}\n",
+    );
+    expect(plain.transformSync("function f(o) { var a = o.a, b = o.b; [o] = N; return [a, b]; }")).toBe(
+      "function f(o) {\n  var a = o.a, b = o.b;\n  [o] = N;\n  return [a, b];\n}\n",
+    );
+    expect(plain.transformSync("function f(o) { var a = o.a, b = o.b; for (o of N); return [a, b]; }")).toBe(
+      "function f(o) {\n  var a = o.a, b = o.b;\n  for (o of N)\n    ;\n  return [a, b];\n}\n",
+    );
+    expect(minifier.transformSync("var o = M; var a = o.a, b = o.b; o = N; console.log(a, b);")).toBe(
+      "var o=M,a=o.a,b=o.b;o=N;console.log(a,b);",
+    );
+  });
+
+  it("keeps the reads when a block var hoists onto the variable", () => {
+    // The block `var o` gets its own symbol, linked to the function-level
+    // `o`. The assignment inside the block must count for the variable.
+    expect(
+      plain.transformSync(
+        "function f() { var g; { var o; g = () => { o = N; }; } var o = M; var a = o.a, b = o.b; return [a, b]; }",
+      ),
+    ).toBe(
+      "function f() {\n  var g;\n  {\n    var o;\n    g = () => {\n      o = N;\n    };\n  }\n  var o = M;\n  var a = o.a, b = o.b;\n  return [a, b];\n}\n",
+    );
+  });
+
+  it("keeps the reads inside a with statement", () => {
+    expect(plain.transformSync("function f(s) { with (s) { var a = o.a, b = o.b; } return [a, b]; }")).toBe(
+      "function f(s) {\n  with (s) {\n    var a = o.a, b = o.b;\n  }\n  return [a, b];\n}\n",
+    );
+    expect(plain.transformSync("function f(s) { var o = M; with (s) { var a = o.a, b = o.b; } return [a, b]; }")).toBe(
+      "function f(s) {\n  var o = M;\n  with (s) {\n    var a = o.a, b = o.b;\n  }\n  return [a, b];\n}\n",
+    );
+    expect(plain.transformSync("function f(s) { with (s) { var a = Math.cos, b = Math.sin; } return [a, b]; }")).toBe(
+      "function f(s) {\n  with (s) {\n    var a = Math.cos, b = Math.sin;\n  }\n  return [a, b];\n}\n",
+    );
+  });
+
+  it("keeps the reads when a direct eval can reach the variable", () => {
+    expect(
+      plain.transformSync("function f() { var o = M; var g = () => eval(s); var a = o.a, b = o.b; return [a, b]; }"),
+    ).toBe("function f() {\n  var o = M;\n  var g = () => eval(s);\n  var a = o.a, b = o.b;\n  return [a, b];\n}\n");
+    // A direct eval anywhere in the file can reach a top-level variable.
+    expect(plain.transformSync("var o = M; var g = () => eval(s); var a = o.a, b = o.b; console.log(a, b);")).toBe(
+      "var o = M;\nvar g = () => eval(s);\nvar a = o.a, b = o.b;\nconsole.log(a, b);\n",
+    );
+    expect(
+      minifier.transformSync("var o = M; function g() { return eval(s); } var a = o.a, b = o.b; console.log(a, b);"),
+    ).toBe("var o=M;function g(){return eval(s)}var a=o.a,b=o.b;console.log(a,b);");
+    expect(plain.transformSync("var o = M; var a = o.a, b = o.b; console.log(a, b, Math.cos, Math.sin);")).toBe(
+      "var o = M;\nvar { a, b } = o;\nconsole.log(a, b, Math.cos, Math.sin);\n",
+    );
+    expect(plain.transformSync("var o = M; var a = Math.cos, b = Math.sin; eval(s); console.log(a, b);")).toBe(
+      "var o = M;\nvar { cos: a, sin: b } = Math;\neval(s);\nconsole.log(a, b);\n",
+    );
+  });
+
+  it("keeps the reads of a parameter when a sloppy function uses arguments", () => {
+    expect(
+      plain.transformSync(
+        "function f(o) { var g = () => { arguments[0] = N; }; var a = o.a, b = o.b; return [a, b]; }",
+      ),
+    ).toBe(
+      "function f(o) {\n  var g = () => {\n    arguments[0] = N;\n  };\n  var a = o.a, b = o.b;\n  return [a, b];\n}\n",
+    );
+    expect(
+      plain.transformSync("function f(o) { var n = arguments.length; var a = o.a, b = o.b; return [a, b, n]; }"),
+    ).toBe("function f(o) {\n  var n = arguments.length;\n  var a = o.a, b = o.b;\n  return [a, b, n];\n}\n");
+    // Strict mode (a class body) and non-simple parameter lists do not map
+    // `arguments` onto the parameters. Nested functions have their own
+    // `arguments`.
+    expect(
+      plain.transformSync(
+        "class C { m(o) { var g = () => { arguments[0] = N; }; var a = o.a, b = o.b; return [a, b]; } }",
+      ),
+    ).toBe(
+      "class C {\n  m(o) {\n    var g = () => {\n      arguments[0] = N;\n    };\n    var { a, b } = o;\n    return [a, b];\n  }\n}\n",
+    );
+    expect(
+      plain.transformSync(
+        "function f(o = 1) { var g = () => { arguments[0] = N; }; var a = o.a, b = o.b; return [a, b]; }",
+      ),
+    ).toBe(
+      "function f(o = 1) {\n  var g = () => {\n    arguments[0] = N;\n  };\n  var { a, b } = o;\n  return [a, b];\n}\n",
+    );
+    expect(
+      plain.transformSync("function f(o) { function g() { arguments[0] = N; } var a = o.a, b = o.b; return [a, b]; }"),
+    ).toBe("function f(o) {\n  function g() {\n    arguments[0] = N;\n  }\n  var { a, b } = o;\n  return [a, b];\n}\n");
+  });
+
+  it("still folds a stable target", () => {
+    expect(plain.transformSync("function f() { var o = M; var a = o.a, b = o.b; return [a, b]; }")).toBe(
+      "function f() {\n  var o = M;\n  var { a, b } = o;\n  return [a, b];\n}\n",
+    );
+    expect(plain.transformSync("function f(o) { var a = o.a, b = o.b; return [a, b]; }")).toBe(
+      "function f(o) {\n  var { a, b } = o;\n  return [a, b];\n}\n",
+    );
+    expect(plain.transformSync("function f() { const o = M; var a = o.a, b = o.b; return [a, b]; }")).toBe(
+      "function f() {\n  const o = M;\n  var { a, b } = o;\n  return [a, b];\n}\n",
+    );
+    expect(plain.transformSync("function f() { var a = Math.cos, b = Math.sin; return [a, b]; }")).toBe(
+      "function f() {\n  var { cos: a, sin: b } = Math;\n  return [a, b];\n}\n",
+    );
+    expect(minifier.transformSync("var o = M; var a = o.a, b = o.b; console.log(a, b);")).toBe(
+      "var o=M,{a,b}=o;console.log(a,b);",
+    );
+  });
+
+  it("reads an unstable target once per declarator at runtime", async () => {
+    // A `.cjs` file runs in sloppy mode, which `with` and the mapped
+    // `arguments` object need.
+    using dir = tempDir("same-target-unstable", {
+      "unstable.cjs": /* js */ `
+        let reads = 0;
+        Object.defineProperty(globalThis, "CFG", {
+          get() {
+            reads++;
+            return { host: "h", port: 1 };
+          },
+          configurable: true,
+        });
+        function globalHead() {
+          reads = 0;
+          var h = CFG.host, p = CFG.port;
+          return [h, p, reads];
+        }
+        function globalMid() {
+          reads = 0;
+          var z = 0, h = CFG.host, p = CFG.port;
+          return [z, h, p, reads];
+        }
+        function getterReassigns() {
+          var cur = { get a() { cur = nxt; return "a1"; }, b: "b1" }, nxt = { a: "a2", b: "b2" };
+          var x = cur.a, y = cur.b;
+          return x + y;
+        }
+        function withScope() {
+          var has = 0;
+          var scope = new Proxy({ o: { a: "a", b: "b" } }, { has(t, k) { if (k === "o") has++; return k in t; } });
+          with (scope) { var a = o.a, b = o.b; }
+          return [a, b, has];
+        }
+        var hook;
+        function argumentsAlias(o) {
+          hook = () => { arguments[0] = { a: "a2", b: "b2" }; };
+          var a = o.a, b = o.b;
+          return a + b;
+        }
+        function blockHoisted() {
+          var swap;
+          { var o; swap = () => { o = { a: "a2", b: "b2" }; }; }
+          var o = { get a() { swap(); return "a1"; }, b: "b1" };
+          var a = o.a, b = o.b;
+          return a + b;
+        }
+        function directEval() {
+          var o = { get a() { run(); return "a1"; }, b: "b1" };
+          var run = () => eval("o = { a: 'a2', b: 'b2' }");
+          var a = o.a, b = o.b;
+          return a + b;
+        }
+        function stable() {
+          var o = { get a() { return "a1"; }, b: "b1" };
+          var a = o.a, b = o.b;
+          return a + b;
+        }
+        console.log(
+          JSON.stringify({
+            globalHead: globalHead(),
+            globalMid: globalMid(),
+            getterReassigns: getterReassigns(),
+            withScope: withScope(),
+            argumentsAlias: argumentsAlias({ get a() { hook(); return "a1"; }, b: "b1" }),
+            blockHoisted: blockHoisted(),
+            directEval: directEval(),
+            stable: stable(),
+          }),
+        );
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "unstable.cjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      globalHead: ["h", 1, 2],
+      globalMid: [0, "h", 1, 2],
+      getterReassigns: "a1b2",
+      withScope: ["a", "b", 2],
+      argumentsAlias: "a1b2",
+      blockHoisted: "a1b2",
+      directEval: "a1b2",
+      stable: "a1b1",
+    });
+    expect(exitCode).toBe(0);
+  });
+});

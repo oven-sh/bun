@@ -1792,26 +1792,31 @@ JSC::EncodedJSValue Bun::throwInvalidThisCallError(JSC::JSGlobalObject* globalOb
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    scope.throwException(globalObject, createInvalidThisError(globalObject, callFrame->thisValue(), typeName));
+    throwInvalidThisError(globalObject, scope, callFrame->thisValue(), typeName);
     return {};
 }
 
-JSC::JSObject* Bun::createInvalidThisError(JSC::JSGlobalObject* globalObject, JSC::JSValue thisValue, const ASCIILiteral typeName)
+void Bun::throwInvalidThisError(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSValue thisValue, const ASCIILiteral typeName)
 {
-    if (!thisValue.isEmpty())
+    auto& vm = JSC::getVM(globalObject);
+    if (!thisValue.isEmpty()) {
         thisValue = thisValue.toThis(globalObject, JSC::ECMAMode::strict());
-
-    if (thisValue.isEmpty() || thisValue.isUndefined()) {
-        return Bun::createError(globalObject, Bun::ErrorCode::ERR_INVALID_THIS, makeString("Expected this to be instanceof "_s, typeName));
+        RETURN_IF_EXCEPTION(scope, );
     }
 
-    // Pathological case: the this value returns a string which is extremely long or causes an out of memory error.
+    if (thisValue.isEmpty() || thisValue.isUndefined()) {
+        scope.throwException(globalObject, Bun::createError(globalObject, Bun::ErrorCode::ERR_INVALID_THIS, makeString("Expected this to be instanceof "_s, typeName)));
+        return;
+    }
+
     WTF::StringBuilder builder;
     builder.append("Expected this to be instanceof "_s);
     builder.append(typeName);
     builder.append(", but received "_s);
-    determineSpecificType(JSC::getVM(globalObject), globalObject, builder, thisValue);
-    return Bun::createError(globalObject, Bun::ErrorCode::ERR_INVALID_THIS, builder.toString());
+    // Describing the receiver reads its `constructor.name`, which can throw; that error wins.
+    determineSpecificType(vm, globalObject, builder, thisValue);
+    RETURN_IF_EXCEPTION(scope, );
+    scope.throwException(globalObject, Bun::createError(globalObject, Bun::ErrorCode::ERR_INVALID_THIS, builder.toString()));
 }
 
 JSC::EncodedJSValue Bun::throwError(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, Bun::ErrorCode code, const WTF::String& message)
@@ -2119,7 +2124,9 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Bun::jsFunctionMakeErrorWithCode, __att
         auto arg0 = callFrame->argument(1);
         auto arg1 = callFrame->argument(2);
         auto arg2 = callFrame->argument(3);
-        return JSC::JSValue::encode(createError(globalObject, error, Message::ERR_OUT_OF_RANGE(scope, globalObject, arg0, arg1, arg2)));
+        auto message = Message::ERR_OUT_OF_RANGE(scope, globalObject, arg0, arg1, arg2);
+        RETURN_IF_EXCEPTION(scope, {});
+        return JSC::JSValue::encode(createError(globalObject, error, message));
     }
 
     case Bun::ErrorCode::ERR_UNHANDLED_ERROR: {

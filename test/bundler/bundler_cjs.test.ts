@@ -892,4 +892,36 @@ describe("bundler", () => {
       stdout: "entry false\ndep true",
     },
   });
+
+  // A required file that is also an entry point of its own is an ordinary
+  // dependency in the other entry point's chunk, so its directive goes inside
+  // its wrapper there. In its own chunk the directive is at the top.
+  itBundled("cjs/StrictModeDirectiveDepIsAnotherEntryPointFormatCJS", {
+    files: {
+      "/a.js": /* js */ `
+        console.log("a", (function () { return this === undefined; })());
+        console.log("b", require("./b.js"));
+      `,
+      "/b.js": /* js */ `
+        "use strict";
+        module.exports = (function () { return this === undefined; })();
+      `,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    outdir: "/out",
+    target: "node",
+    format: "cjs",
+    onAfterBundle(api) {
+      const a = api.readFile("/out/a.js");
+      expect(a).not.toStartWith('"use strict"');
+      expect(a).toMatch(/__commonJS\(function\([^)]*\) \{\n  "use strict";\n/);
+      const b = api.readFile("/out/b.js");
+      expect(b).toStartWith('"use strict";\n');
+      expect(b).not.toMatch(/__commonJS\(function\([^)]*\) \{\n  "use strict";\n/);
+    },
+    run: [
+      { runtime: "node", file: "/out/a.js", stdout: "a false\nb true" },
+      { runtime: "node", file: "/out/b.js", stdout: "" },
+    ],
+  });
 });

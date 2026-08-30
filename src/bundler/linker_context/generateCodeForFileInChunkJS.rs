@@ -252,10 +252,13 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
         u32::MAX
     };
 
-    // The top-level directive must come first (the non-wrapped case is handled
-    // by the chunk generation code, although only for the entry point)
+    // The top-level directive must come first. The chunk's own entry point gets
+    // it at the top of the chunk instead (`post_process_js_chunk`). A file that
+    // is an entry point of another chunk is an ordinary dependency here.
+    let is_chunk_entry_point =
+        chunk.is_entry_point() && chunk.entry_point.source_index() as usize == source_index;
     if flags.wrap != WrapKind::None
-        && !c.graph.files.items_entry_point_kind()[source_index].is_entry_point()
+        && !is_chunk_entry_point
         && c.wrapper_needs_use_strict(source_index)
     {
         stmts.inside_wrapper_prefix.append_directive(Stmt::alloc(

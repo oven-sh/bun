@@ -630,43 +630,6 @@ bun_core::comptime_string_map! {
     };
 }
 
-impl From<Encoding> for bun_core::NodeEncoding {
-    fn from(e: Encoding) -> Self {
-        // Both enums are `#[repr(u8)]` with identical discriminant order
-        // (Utf8, Ucs2, Utf16le, Latin1, Ascii, Base64, Base64url, Hex, Buffer).
-        match e {
-            Encoding::Utf8 => Self::Utf8,
-            Encoding::Ucs2 => Self::Ucs2,
-            Encoding::Utf16le => Self::Utf16le,
-            Encoding::Latin1 => Self::Latin1,
-            Encoding::Ascii => Self::Ascii,
-            Encoding::Base64 => Self::Base64,
-            Encoding::Base64url => Self::Base64url,
-            Encoding::Hex => Self::Hex,
-            Encoding::Buffer => Self::Buffer,
-        }
-    }
-}
-
-impl From<bun_core::NodeEncoding> for Encoding {
-    fn from(e: bun_core::NodeEncoding) -> Self {
-        // Reverse of the impl above — both enums are `#[repr(u8)]` with identical
-        // discriminant order; required so `webcore::encoding::{to_string,to_bun_string}`'s
-        // `impl Into<Encoding>` bound accepts `bun_core::NodeEncoding` directly.
-        match e {
-            bun_core::NodeEncoding::Utf8 => Self::Utf8,
-            bun_core::NodeEncoding::Ucs2 => Self::Ucs2,
-            bun_core::NodeEncoding::Utf16le => Self::Utf16le,
-            bun_core::NodeEncoding::Latin1 => Self::Latin1,
-            bun_core::NodeEncoding::Ascii => Self::Ascii,
-            bun_core::NodeEncoding::Base64 => Self::Base64,
-            bun_core::NodeEncoding::Base64url => Self::Base64url,
-            bun_core::NodeEncoding::Hex => Self::Hex,
-            bun_core::NodeEncoding::Buffer => Self::Buffer,
-        }
-    }
-}
-
 pub(crate) fn js_assert_encoding_valid(
     global: &JSGlobalObject,
     call_frame: &CallFrame,

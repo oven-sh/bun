@@ -854,26 +854,9 @@ pub fn new_function_with_data(
 // `DOMCallArgumentType` / `DOMCallArgumentTypeWrapper` / `DOMCallResultType`
 // feed the C++ codegen
 // (`generate-classes.ts`), not runtime — there is nothing for the Rust side to
-// hold; the spec-strings stay in the codegen script.
-
-// The hand-written [`DomCall`] descriptor below is the mechanism for DOMJIT
-// entries — call sites write the slow/fast paths and the
-// `<class>__<fn>__put` extern themselves.
-
-/// Runtime descriptor for a DOMJIT entry.
-///
-/// Until the `#[bun_jsc::dom_call]` proc-macro lands,
-/// callers (e.g. `bun:ffi`'s `FFIObject`) hand-write the slow/fast paths and
-/// declare the C++-side `*__put` extern themselves; this struct carries just
-/// enough to drive `to_js` (the `put(global, obj)` call that installs the
-/// DOMJIT-backed property on a JS object).
-#[derive(Clone, Copy)]
-pub struct DomCall {
-    pub class_name: &'static str,
-    pub function_name: &'static str,
-    /// `<class>__<fn>__put`, defined in `ZigGeneratedCode.cpp`.
-    pub put: unsafe extern "C" fn(*mut JSGlobalObject, JSValue),
-}
+// hold; the spec-strings stay in the codegen script. Call sites (e.g.
+// `bun:ffi`'s `FFIObject`) declare the C++-side `<class>__<fn>__put` extern
+// themselves and call it to install the function.
 
 // ───────────────────────── instance/static method wrapping ─────────────────────────
 

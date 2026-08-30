@@ -53,14 +53,13 @@ bun_dispatch::link_interface! {
     pub TranspilerCacheImpl[Jsc] {
         fn get(source: &Source, parser_options: NonNull<()>, used_jsx: bool) -> bool;
         fn put(output_code: &[u8], sourcemap: &[u8], esm_record: &[u8]);
-        fn is_disabled() -> bool;
     }
 }
 
 impl RuntimeTranspilerCache {
     /// Build the dispatch handle for the set-once `r#impl` slot.
     ///
-    /// Centralises the raw-pointer obligation so the three public entry
+    /// Centralises the raw-pointer obligation so the two public entry
     /// points below stay safe.
     /// `this` is always derived from a live `&self` / `&mut self` in those
     /// callers and the returned `Copy` handle is consumed immediately, so
@@ -70,8 +69,7 @@ impl RuntimeTranspilerCache {
     fn handle(kind: TranspilerCacheImplKind, this: *mut Self) -> TranspilerCacheImpl {
         // SAFETY: `this` is non-null, aligned, and live for the immediate
         // dispatch at every call site (`get`/`put`: `&mut self`-derived with
-        // write provenance; `is_disabled`: `&self`-derived, impl ignores
-        // `this`). See `link_interface!` `new()` contract.
+        // write provenance). See `link_interface!` `new()` contract.
         unsafe { TranspilerCacheImpl::new(kind, this) }
     }
 

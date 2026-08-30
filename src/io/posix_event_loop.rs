@@ -210,7 +210,6 @@ pub enum PollTag {
     ShellBufferedWriter,
     TerminalPoll,
     ParentDeathWatchdog,
-    LifecycleScriptSubprocessOutputReader,
     MemoryPressure,
 }
 
@@ -232,8 +231,6 @@ pub mod poll_tag {
     pub const SHELL_BUFFERED_WRITER: PollTag = PollTag::ShellBufferedWriter;
     pub const TERMINAL_POLL: PollTag = PollTag::TerminalPoll;
     pub const PARENT_DEATH_WATCHDOG: PollTag = PollTag::ParentDeathWatchdog;
-    pub const LIFECYCLE_SCRIPT_SUBPROCESS_OUTPUT_READER: PollTag =
-        PollTag::LifecycleScriptSubprocessOutputReader;
     pub const MEMORY_PRESSURE: PollTag = PollTag::MemoryPressure;
 }
 

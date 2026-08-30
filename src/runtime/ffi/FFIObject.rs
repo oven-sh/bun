@@ -1,7 +1,6 @@
 use core::ffi::c_void;
 
 use bun_jsc::bun_string_jsc;
-use bun_jsc::host_fn::DomCall;
 use bun_jsc::{
     self as jsc, ArrayBuffer, CallFrame, JSFunction, JSGlobalObject, JSObject, JSString, JSValue,
     JsResult,
@@ -107,12 +106,6 @@ unsafe extern "C" {
     fn Bun__FFI__CStringConstructor(global: *const JSGlobalObject) -> JSValue;
 }
 
-const DOM_CALL: DomCall = DomCall {
-    class_name: "FFI",
-    function_name: "ptr",
-    put: FFI__ptr__put,
-};
-
 pub fn to_js(global_object: &JSGlobalObject) -> JSValue {
     // Unrolled manually; keep in sync with `FIELDS` below.
     let fields = FIELDS();
@@ -131,8 +124,8 @@ pub fn to_js(global_object: &JSGlobalObject) -> JSValue {
         Bun__FFI__CStringConstructor(global_object)
     });
 
-    // SAFETY: `put` is the C++-side `FFI__ptr__put` helper; global_object is live.
-    unsafe { (DOM_CALL.put)(std::ptr::from_ref(global_object).cast_mut(), object) };
+    // SAFETY: `FFI__ptr__put` is the C++-side helper that installs `ptr`; global_object is live.
+    unsafe { FFI__ptr__put(std::ptr::from_ref(global_object).cast_mut(), object) };
     object.put(global_object, b"read", reader::to_js(global_object));
 
     object
@@ -141,111 +134,28 @@ pub fn to_js(global_object: &JSGlobalObject) -> JSValue {
 pub mod reader {
     use super::*;
 
-    // Same shape as `DOM_CALL` above: the descriptor only needs the `put` extern.
-    const DOM_CALLS: &[(&str, DomCall)] = &[
-        (
-            "u8",
-            DomCall {
-                class_name: "Reader",
-                function_name: "u8",
-                put: super::Reader__u8__put,
-            },
-        ),
-        (
-            "u16",
-            DomCall {
-                class_name: "Reader",
-                function_name: "u16",
-                put: super::Reader__u16__put,
-            },
-        ),
-        (
-            "u32",
-            DomCall {
-                class_name: "Reader",
-                function_name: "u32",
-                put: super::Reader__u32__put,
-            },
-        ),
-        (
-            "ptr",
-            DomCall {
-                class_name: "Reader",
-                function_name: "ptr",
-                put: super::Reader__ptr__put,
-            },
-        ),
-        (
-            "i8",
-            DomCall {
-                class_name: "Reader",
-                function_name: "i8",
-                put: super::Reader__i8__put,
-            },
-        ),
-        (
-            "i16",
-            DomCall {
-                class_name: "Reader",
-                function_name: "i16",
-                put: super::Reader__i16__put,
-            },
-        ),
-        (
-            "i32",
-            DomCall {
-                class_name: "Reader",
-                function_name: "i32",
-                put: super::Reader__i32__put,
-            },
-        ),
-        (
-            "i64",
-            DomCall {
-                class_name: "Reader",
-                function_name: "i64",
-                put: super::Reader__i64__put,
-            },
-        ),
-        (
-            "u64",
-            DomCall {
-                class_name: "Reader",
-                function_name: "u64",
-                put: super::Reader__u64__put,
-            },
-        ),
-        (
-            "intptr",
-            DomCall {
-                class_name: "Reader",
-                function_name: "intptr",
-                put: super::Reader__intptr__put,
-            },
-        ),
-        (
-            "f32",
-            DomCall {
-                class_name: "Reader",
-                function_name: "f32",
-                put: super::Reader__f32__put,
-            },
-        ),
-        (
-            "f64",
-            DomCall {
-                class_name: "Reader",
-                function_name: "f64",
-                put: super::Reader__f64__put,
-            },
-        ),
+    /// `<class>__<fn>__put` helpers from ZigGeneratedCode.cpp; each installs one
+    /// `Reader` function on the object.
+    const PUTS: &[unsafe extern "C" fn(*mut JSGlobalObject, JSValue)] = &[
+        super::Reader__u8__put,
+        super::Reader__u16__put,
+        super::Reader__u32__put,
+        super::Reader__ptr__put,
+        super::Reader__i8__put,
+        super::Reader__i16__put,
+        super::Reader__i32__put,
+        super::Reader__i64__put,
+        super::Reader__u64__put,
+        super::Reader__intptr__put,
+        super::Reader__f32__put,
+        super::Reader__f64__put,
     ];
 
     pub fn to_js(global_this: &JSGlobalObject) -> JSValue {
-        let obj = JSValue::create_empty_object(global_this, DOM_CALLS.len());
-        for (_, dc) in DOM_CALLS {
+        let obj = JSValue::create_empty_object(global_this, PUTS.len());
+        for put in PUTS {
             // SAFETY: `put` is a C++-side helper; global_this is live for the call.
-            unsafe { (dc.put)(std::ptr::from_ref(global_this).cast_mut(), obj) };
+            unsafe { put(std::ptr::from_ref(global_this).cast_mut(), obj) };
         }
         obj
     }

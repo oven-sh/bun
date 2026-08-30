@@ -310,9 +310,7 @@ pub mod features {
     // attached to the single definition.
 }
 
-pub use features::{
-    Formatter as FeaturesFormatter, PACKED_FEATURES_LIST, PackedFeatures, packed_features,
-};
+pub use features::{PACKED_FEATURES_LIST, PackedFeatures, packed_features};
 
 /// Enforced at the macro definition site; kept as a `const fn`
 /// for documentation / debug assertions.

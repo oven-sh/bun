@@ -22,28 +22,12 @@ pub enum Error {
     SnapshotInConcurrentGroup,
     #[error("SyntaxError")]
     SyntaxError,
-    #[error("FmtError")]
-    FmtError,
     #[error("JSError")]
     JSError,
-    #[error("ERR_TLS_CERT_ALTNAME_INVALID")]
-    ERR_TLS_CERT_ALTNAME_INVALID,
-    #[error("ConnectionClosed")]
-    ConnectionClosed,
     #[error("FailedToOpenSocket")]
     FailedToOpenSocket,
-    #[error("MissingCredentials")]
-    MissingCredentials,
-    #[error("InvalidMethod")]
-    InvalidMethod,
     #[error("InvalidPath")]
     InvalidPath,
-    #[error("InvalidEndpoint")]
-    InvalidEndpoint,
-    #[error("InvalidSessionToken")]
-    InvalidSessionToken,
-    #[error("SignError")]
-    SignError,
     #[error("failed to parse multipart data")]
     FailedToParseMultipartData,
     #[error("boundary is too long")]
@@ -68,8 +52,6 @@ pub enum Error {
     FailedToInitPipe,
     #[error("FailedToBindPipe")]
     FailedToBindPipe,
-    #[error("MissingPackageJSON")]
-    MissingPackageJSON,
     #[error("HTTPForbidden")]
     HTTPForbidden,
     #[error("ExampleNotFound")]
@@ -152,8 +134,6 @@ pub enum Error {
     ReadError,
     #[error("OpenError")]
     OpenError,
-    #[error("CompilationFailed")]
-    CompilationFailed,
     #[error("UnexpectedPendingResolution")]
     UnexpectedPendingResolution,
     #[error("AsyncModule")]
@@ -403,17 +383,9 @@ impl Error {
             Self::TestNotActive => "TestNotActive",
             Self::SnapshotInConcurrentGroup => "SnapshotInConcurrentGroup",
             Self::SyntaxError => "SyntaxError",
-            Self::FmtError => "FmtError",
             Self::JSError => "JSError",
-            Self::ERR_TLS_CERT_ALTNAME_INVALID => "ERR_TLS_CERT_ALTNAME_INVALID",
-            Self::ConnectionClosed => "ConnectionClosed",
             Self::FailedToOpenSocket => "FailedToOpenSocket",
-            Self::MissingCredentials => "MissingCredentials",
-            Self::InvalidMethod => "InvalidMethod",
             Self::InvalidPath => "InvalidPath",
-            Self::InvalidEndpoint => "InvalidEndpoint",
-            Self::InvalidSessionToken => "InvalidSessionToken",
-            Self::SignError => "SignError",
             Self::FailedToParseMultipartData => "failed to parse multipart data",
             Self::BoundaryIsTooLong => "boundary is too long",
             Self::MissingFinalBoundary => "missing final boundary",
@@ -426,7 +398,6 @@ impl Error {
             Self::InvalidOptions => "InvalidOptions",
             Self::FailedToInitPipe => "FailedToInitPipe",
             Self::FailedToBindPipe => "FailedToBindPipe",
-            Self::MissingPackageJSON => "MissingPackageJSON",
             Self::HTTPForbidden => "HTTPForbidden",
             Self::ExampleNotFound => "ExampleNotFound",
             Self::GitHubRepositoryNotFound => "GitHubRepositoryNotFound",
@@ -470,7 +441,6 @@ impl Error {
             Self::FormatError => "FormatError",
             Self::ReadError => "ReadError",
             Self::OpenError => "OpenError",
-            Self::CompilationFailed => "CompilationFailed",
             Self::UnexpectedPendingResolution => "UnexpectedPendingResolution",
             Self::AsyncModule => "AsyncModule",
             Self::BlobNotFound => "BlobNotFound",

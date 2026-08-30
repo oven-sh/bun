@@ -46,13 +46,6 @@ impl ExprJsc for Expr {
         expr_to_js(self, global)
     }
 }
-impl ExprJsc for ExprData {
-    #[inline]
-    fn to_js(&self, global: &JSGlobalObject) -> Result<JSValue, ToJSError> {
-        data_to_js(self, global)
-    }
-}
-
 pub fn data_to_js(this: &ExprData, global: &JSGlobalObject) -> Result<JSValue, ToJSError> {
     data_to_js_with_check(this, global, StackCheck::init())
 }

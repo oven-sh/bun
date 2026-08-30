@@ -1107,7 +1107,6 @@ pub trait BaseWindowsPipeWriter: Sized {
     fn owns_fd(&self) -> bool;
     fn start_with_current_pipe(&mut self) -> sys::Result<()>;
     fn on_close_source(&mut self);
-    fn closed_without_reporting(&self) -> bool;
     fn set_closed_without_reporting(&mut self, v: bool);
 
     /// `uv::open_handles` closes this writer's stream through here at teardown.
@@ -1453,9 +1452,6 @@ impl<Parent: WindowsBufferedWriterParent> BaseWindowsPipeWriter for WindowsBuffe
             // SAFETY: parent is BACKREF set via set_parent; valid while writer alive.
             unsafe { Parent::on_close(self.parent) };
         }
-    }
-    fn closed_without_reporting(&self) -> bool {
-        self.closed_without_reporting
     }
     fn set_closed_without_reporting(&mut self, v: bool) {
         self.closed_without_reporting = v;
@@ -1989,9 +1985,6 @@ impl<Parent: WindowsStreamingWriterParent> BaseWindowsPipeWriter
         }
         // SAFETY: parent is BACKREF set via set_parent; valid while writer alive.
         unsafe { Parent::on_close(self.parent) };
-    }
-    fn closed_without_reporting(&self) -> bool {
-        self.closed_without_reporting
     }
     fn set_closed_without_reporting(&mut self, v: bool) {
         self.closed_without_reporting = v;

@@ -61,9 +61,7 @@ async function requestedReleasePath(lddStub: string): Promise<string | undefined
 describe.skipIf(isWindows)("install.sh target detection", () => {
   // musl's ldd prints its banner to stderr and exits non-zero.
   test.concurrent("selects the musl build when ldd reports musl", async () => {
-    const path = await requestedReleasePath(
-      `#!/bin/sh\nprintf 'musl libc (aarch64)\\nVersion 1.2.5\\n' >&2\nexit 1\n`,
-    );
+    const path = await requestedReleasePath(`#!/bin/sh\nprintf 'musl libc (aarch64)\\nVersion 1.2.5\\n' >&2\nexit 1\n`);
     expect(path).toBe("/oven-sh/bun/releases/latest/download/bun-linux-aarch64-musl.zip");
   });
 

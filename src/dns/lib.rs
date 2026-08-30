@@ -464,6 +464,34 @@ impl Order {
     }
 }
 
+/// Whether a getaddrinfo-style lookup could ever answer `name`: a numeric
+/// address, or a host name within the RFC 1035 limits (labels of 1 to 63
+/// bytes, 253 in all, one optional trailing dot) whose labels hold the bytes
+/// c-ares allows in a host name (`ares_is_hostnamech`: letters, digits, `-`,
+/// `_`, `/`, `*`) or non-ASCII bytes, which mDNS names carry as UTF-8.
+///
+/// Callers answer EAI_NONAME for anything else without asking a resolver, as
+/// glibc (`res_hnok` in nss_dns) and c-ares do. libinfo does not: it hands such
+/// names to mDNSResponder, which puts them on the wire and, when the upstream
+/// server never answers for a label with a space in it, waits out its timeout.
+pub fn is_valid_hostname(name: &[u8]) -> bool {
+    fn is_hostname_byte(b: u8) -> bool {
+        b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'/' | b'*') || !b.is_ascii()
+    }
+    if name.is_empty() || bun_core::strings::contains_char(name, 0) {
+        return false;
+    }
+    if bun_core::ip_address::to_ip_address(name).is_some() {
+        return true;
+    }
+    let name = name.strip_suffix(b".").unwrap_or(name);
+    if name.is_empty() || name.len() > 253 {
+        return false;
+    }
+    bun_core::strings::split(name, b".")
+        .all(|label| (1..=63).contains(&label.len()) && label.iter().all(|&b| is_hostname_byte(b)))
+}
+
 /// The process-wide DNS
 /// cache lives in `bun_runtime` (it owns libinfo/libuv worker threads + JSC
 /// stat counters). Lower-tier crates (`bun_http`, `bun_install`) reach it via

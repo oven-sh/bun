@@ -946,9 +946,6 @@ pub(crate) fn defines_from_transform_options(
 
     let drop_debugger = drop.iter().any(|item| *item == b"debugger");
 
-    // Everything above this line that is not a constant table: the resolved
-    // define map, the inlined env entries (strings only, `window` has none)
-    // and the drop list.
     let user_hash = defines::Define::hash_user_inputs(
         user_defines
             .keys()

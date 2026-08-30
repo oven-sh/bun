@@ -493,26 +493,15 @@ pub mod defines {
         pub identifiers: StringHashMap<IdentifierDefine>,
         pub dots: StringHashMap<Vec<DotDefine>>,
         pub drop_debugger: bool,
-        /// Hash of the non-constant inputs this table was built from: the
-        /// define pairs (`--define`, bunfig `[define]`, inlined env) and the
-        /// `--drop` entries (see `hash_user_inputs`). The runtime transpiler
-        /// cache keys on it, because those inputs change the transpiled
-        /// output. `None` when there are none.
+        /// `hash_user_inputs` of the define pairs and `--drop` entries this
+        /// table was built from. Part of the runtime transpiler cache key.
         pub user_hash: Option<u64>,
     }
 
     impl Define {
-        /// Hash the user define `(key, value)` pairs, the inlined env define
-        /// pairs and the `--drop` entries. The three lists stay separate
-        /// sections: `init` inserts the env pairs after the user pairs and
-        /// `DefineData::merge` keeps the later value, so the same pair means a
-        /// different table depending on its source. Each list is sorted, so
-        /// the order the entries were given in does not matter, and each
-        /// section is prefixed with its length and each entry with its byte
-        /// length, so two different inputs cannot produce the same byte
-        /// stream. Returns `None` when there is nothing to hash, so a
-        /// configuration without them adds nothing to the runtime transpiler
-        /// cache key.
+        /// Order-independent, length-prefixed hash of the three inputs. User
+        /// and env pairs are separate sections because `init` lets a later env
+        /// pair override a user pair. `None` when all three are empty.
         pub fn hash_user_inputs<'i>(
             defines: impl IntoIterator<Item = (&'i [u8], &'i [u8])>,
             env_defines: impl IntoIterator<Item = (&'i [u8], &'i [u8])>,

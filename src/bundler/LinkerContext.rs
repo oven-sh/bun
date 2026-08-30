@@ -370,8 +370,7 @@ impl<'a> LinkerContext<'a> {
             && self.module_strict_mode(source_index) != bun_ast::StrictModeKind::SloppyMode
     }
 
-    /// A chunk-top directive applies to every file in the chunk, so an ES module entry point
-    /// gets one only when all of them are strict. A spelled-out entry directive applies as before.
+    /// An ES module entry point gets the chunk-top directive only when every file in the chunk is strict.
     pub(crate) fn entry_chunk_needs_use_strict(&self, chunk: &Chunk) -> bool {
         let entry_strict_mode = self.module_strict_mode(chunk.entry_point.source_index() as usize);
         match self.options.output_format {

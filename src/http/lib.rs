@@ -1872,6 +1872,7 @@ impl<'a> HTTPClient<'a> {
                             } else {
                                 0
                             },
+                            self.unix_socket_path,
                         );
                     }
                 }

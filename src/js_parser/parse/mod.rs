@@ -221,12 +221,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // read fields before move (G::Property is not Copy).
                 let prop_kind = property.kind;
                 let prop_key = property.key;
+                let prop_flags = property.flags;
                 properties.push(property);
                 has_auto_accessor =
                     has_auto_accessor || prop_kind == js_ast::g::PropertyKind::AutoAccessor;
 
-                // Forbid decorators on class constructors
-                if opts.ts_decorators.len() > 0 {
+                // Forbid decorators on class constructors. A static or computed
+                // "constructor" key is an ordinary method.
+                if opts.ts_decorators.len() > 0
+                    && !prop_flags.contains(Flags::Property::IsStatic)
+                    && !prop_flags.contains(Flags::Property::IsComputed)
+                {
                     if let Some(key) = prop_key {
                         if let js_ast::expr::Data::EString(str_) = &key.data {
                             if str_.eql_comptime(b"constructor") {

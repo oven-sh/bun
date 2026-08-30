@@ -1,7 +1,19 @@
 import { Subprocess } from "bun";
 import { beforeEach, describe, expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, bunRun, tmpdirSync } from "harness";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from "fs";
+import { bunEnv, bunExe, bunRun, isWindows, tmpdirSync } from "harness";
+import { mkfifo } from "mkfifo";
 import { join } from "path";
 
 function dummyFile(size: number, cache_bust: string, value: string | { code: string }) {
@@ -227,6 +239,34 @@ describe("transpiler cache", () => {
     } finally {
       chmodSync(join(cache_dir), "777");
     }
+  });
+  test.skipIf(isWindows)("a fifo in place of an entry is removed instead of opened", async () => {
+    writeFileSync(join(temp_dir, "a.js"), dummyFile((50 * 1024 * 1.5) | 0, "fifo", "intact"));
+    expect(await bunRun(join(temp_dir, "a.js"), env)).toSpawn("intact");
+    expect(newCacheCount()).toBe(1);
+    const entry = join(cache_dir, readdirSync(cache_dir).find(f => f.endsWith(".pile"))!);
+    const good = readFileSync(entry);
+    unlinkSync(entry);
+    mkfifo(entry);
+
+    // Opening the fifo for reading would block until a writer showed up,
+    // which never happens. The timeout only turns that hang into a failure.
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(temp_dir, "a.js")],
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 30_000,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(proc.signalCode).toBeNull();
+    expect(stdout).toBe("intact\n");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+
+    expect(statSync(entry).isFile()).toBeTrue();
+    expect(readFileSync(entry).equals(good)).toBeTrue();
   });
   test("does not inline process.env", async () => {
     writeFileSync(

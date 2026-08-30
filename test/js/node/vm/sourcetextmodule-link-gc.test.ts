@@ -93,10 +93,11 @@ test.skipIf(isWindows)(
 // Skipped on Windows for the same reason as the test above: four runs of a
 // 60-iteration GC-churn loop are several times slower under Windows + ASAN in
 // CI, and the fixed C++ path is not platform-specific.
-test.skipIf(isWindows)(
-  "vm.SourceTextModule evaluation error survives a concurrent-GC stack-trace finalizer",
-  async () => {
-    const fixture = `
+//
+// The fixture is shared with the terminate() test below, which only needs it to
+// keep the finalizer busy for as long as the worker lives.
+function evaluationErrorFixture(iterations: number) {
+  return `
       import * as vm from "node:vm";
       // Separate, pre-existing bug: the throwing top-level-await module below
       // (shared by two importers) reports one unhandled rejection per graph even
@@ -133,11 +134,15 @@ test.skipIf(isWindows)(
           const m = M(src, "s6" + sd); await m.link(ni); await CA(() => m.evaluate()); }
         await sl();
       }
-      for (let sd = 0; sd < 60; sd++) await fam(sd);
+      for (let sd = 0; sd < ${iterations}; sd++) await fam(sd);
       console.log("ok");
     `;
+}
 
-    using dir = tempDir("vm-module-eval-error-gc", { "fixture.mjs": fixture });
+test.skipIf(isWindows)(
+  "vm.SourceTextModule evaluation error survives a concurrent-GC stack-trace finalizer",
+  async () => {
+    using dir = tempDir("vm-module-eval-error-gc", { "fixture.mjs": evaluationErrorFixture(60) });
 
     async function run() {
       await using proc = Bun.spawn({
@@ -156,6 +161,52 @@ test.skipIf(isWindows)(
       expect({ stdout, exitCode }).toEqual({ stdout: "ok", exitCode: 0 });
       void stderr;
     }
+  },
+  120_000,
+);
+
+// The finalizer now sets the mutator's pending exception aside with a
+// SuspendExceptionScope. That scope restores the slot blindly on exit, so a
+// termination exception thrown inside the window (a RETURN_IF_EXCEPTION inside
+// the stack computation services the worker's pending terminate() request)
+// survived the clear and was then overwritten, leaving the NeedExceptionHandling
+// trap bit set with no exception behind it. The next exception check asserted
+// `!!exception == needHandling(NeedExceptionHandling)`. Termination is now
+// deferred for the duration of the window (DeferTerminationForAWhile).
+//
+// Run the GC-churn fixture inside a Worker and terminate it mid-run, 20 times.
+// Every run of the build with the suspend scope but without the deferral
+// asserted; this guards that pairing rather than the original crash (it passes
+// on a build with neither). Windows: same reason as above.
+test.skipIf(isWindows)(
+  "terminate() while the stack-trace finalizer runs keeps the exception and trap state in sync",
+  async () => {
+    using dir = tempDir("vm-module-eval-error-gc-terminate", {
+      "fixture.mjs": evaluationErrorFixture(600),
+      "stress.mjs": `
+        import { readFileSync } from "node:fs";
+        const src = readFileSync(new URL("./fixture.mjs", import.meta.url), "utf8");
+        const url = URL.createObjectURL(new Blob([src], { type: "text/javascript" }));
+        for (let r = 0; r < 20; r++) {
+          const w = new Worker(url, { type: "module" });
+          await new Promise(res => setTimeout(res, 150 + ((r * 37) % 400)));
+          w.terminate();
+          await new Promise(res => w.addEventListener("close", res, { once: true }));
+        }
+        console.log("ok");
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--smol", "--experimental-vm-modules", "stress.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "ok", exitCode: 0 });
+    void stderr;
   },
   120_000,
 );

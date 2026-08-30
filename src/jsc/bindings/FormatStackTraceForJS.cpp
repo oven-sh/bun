@@ -6,6 +6,7 @@
 
 #include "JavaScriptCore/ArgList.h"
 #include "JavaScriptCore/CallData.h"
+#include "JavaScriptCore/DeferTermination.h"
 #include "JavaScriptCore/FrameTracers.h"
 #include "JavaScriptCore/TopExceptionScope.h"
 #include "JavaScriptCore/Error.h"
@@ -598,7 +599,10 @@ WTF::String computeErrorInfoWrapperToString(JSC::VM& vm, Vector<StackFrame>& sta
     OrdinalNumber line = OrdinalNumber::fromOneBasedInt(line_in);
     OrdinalNumber column = OrdinalNumber::fromOneBasedInt(column_in);
 
-    // Runs from the GC end phase while the mutator may have its own pending exception.
+    // Runs from the GC end phase while the mutator may have its own pending
+    // exception. A termination raised inside would survive the clear below and
+    // be clobbered by the restore, so hold it off until the mutator's next check.
+    JSC::DeferTerminationForAWhile deferTermination(vm);
     JSC::SuspendExceptionScope suspendExceptionScope(vm);
 
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);

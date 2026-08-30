@@ -11,8 +11,11 @@ import { createLiveOutputFilter } from "../../scripts/utils.mjs";
 const annotation =
   '::error file=test/a.test.ts,line=4,col=34,title=error: expect(received).toMatchObject(expected)::  {%0A-   "a": 2,%0A+   "a": 1,%0A  }%0A%0A      at <anonymous> (/repo/test/a.test.ts:4:34)\n';
 
+// The mode is explicit. The defaults read the CI variables of this process, which
+// test/preload.ts resets, but a test should not depend on that.
+const local = { github: false, buildkite: false };
 const filterAll = (chunks: string[], options?: { github?: boolean; buildkite?: boolean }) => {
-  const filter = createLiveOutputFilter(options);
+  const filter = createLiveOutputFilter({ ...local, ...options });
   return chunks.map(filter).join("");
 };
 
@@ -32,7 +35,7 @@ describe("createLiveOutputFilter", () => {
   });
 
   test("passes an incomplete line through unless it could be a workflow command", () => {
-    const filter = createLiveOutputFilter();
+    const filter = createLiveOutputFilter(local);
     // The dots reporter prints progress without a line end. It is shown at once.
     expect(filter("..")).toBe("..");
     expect(filter("\n\n::group::test/a.test.ts:\n1 | test")).toBe("\n\n1 | test");
@@ -70,7 +73,7 @@ describe("createLiveOutputFilter", () => {
   });
 
   test("returns what it still holds back when the stream ends", () => {
-    const filter = createLiveOutputFilter({ buildkite: true });
+    const filter = createLiveOutputFilter({ ...local, buildkite: true });
     expect(filter("1 pass\n--")).toBe("1 pass\n");
     expect(filter.end()).toBe("--");
     expect(filter(":")).toBe("");
@@ -82,7 +85,7 @@ describe("createLiveOutputFilter", () => {
     expect(filter.end()).toBe("");
     expect(filter.end()).toBe("");
 
-    const github = createLiveOutputFilter({ github: true });
+    const github = createLiveOutputFilter({ ...local, github: true });
     expect(github(annotation.trimEnd())).toBe("");
     expect(github.end()).toBe(annotation.trimEnd());
   });
@@ -91,6 +94,9 @@ describe("createLiveOutputFilter", () => {
     expect(filterAll(["::group::t\r", "\n1 | test\r\n"])).toBe("1 | test\r\n");
     expect(filterAll(["abc\r", "\n::endgroup::\r\n"])).toBe("abc\r\n");
     expect(filterAll([`x\r\n${annotation.trimEnd()}\r\n✗ c\r\n`])).toBe("x\r\n✗ c\r\n");
+    // A \r on its own ends the line too.
+    expect(filterAll(["abc\r", "::endgroup::\n"])).toBe("abc\r");
+    expect(filterAll(["x\r", "--- y\n"], { buildkite: true })).toBe("x\r y\n");
   });
 });
 
@@ -110,7 +116,7 @@ test("createLiveOutputFilter removes the annotations from the output of bun test
     stderr: "pipe",
   });
 
-  const filter = createLiveOutputFilter();
+  const filter = createLiveOutputFilter(local);
   let raw = "";
   let filtered = "";
   for await (const chunk of proc.stderr.pipeThrough(new TextDecoderStream())) {

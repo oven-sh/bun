@@ -2830,7 +2830,9 @@ export function createLiveOutputFilter({ github = isGithubAction, buildkite = is
     const startsLine = atLineStart;
 
     // A trailing \r may be the first half of a \r\n, so the line it ends is not complete yet.
-    const searchEnd = text.endsWith("\r") ? text.length - 2 : text.length - 1;
+    // Once written, the next chunk starts a line either way: the \n of a \r\n is an empty one.
+    const endsWithCR = text.endsWith("\r");
+    const searchEnd = endsWithCR ? text.length - 2 : text.length - 1;
     const lastLineStart = Math.max(text.lastIndexOf("\n", searchEnd), text.lastIndexOf("\r", searchEnd)) + 1;
     const lastLine = text.slice(lastLineStart);
     if (lastLine && (lastLineStart > 0 || startsLine) && holdBack(lastLine)) {
@@ -2839,7 +2841,7 @@ export function createLiveOutputFilter({ github = isGithubAction, buildkite = is
       atLineStart = true;
     } else {
       pending = "";
-      if (text) atLineStart = lastLineStart === text.length;
+      if (text) atLineStart = endsWithCR || lastLineStart === text.length;
     }
 
     // A chunk that starts in the middle of a line continues a line that was already written.

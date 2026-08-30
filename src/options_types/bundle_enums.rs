@@ -122,6 +122,28 @@ bun_core::comptime_string_map! {
     };
 }
 
+bitflags::bitflags! {
+    /// How the TypeScript parser treats an import whose bindings are unused
+    /// (or type-only). tsconfig's `importsNotUsedAsValues`,
+    /// `preserveValueImports` and `verbatimModuleSyntax` all fold into these
+    /// two bits (see `TSConfigJSON::unused_import_flags`).
+    ///
+    /// | input                                | neither        | KEEP_STMT      | KEEP_VALUES                    | both                           |
+    /// |--------------------------------------|----------------|----------------|--------------------------------|--------------------------------|
+    /// | `import 'foo'`                       | `import 'foo'` | `import 'foo'` | `import 'foo'`                 | `import 'foo'`                 |
+    /// | `import * as unused from 'foo'`      | (removed)      | `import 'foo'` | `import * as unused from 'foo'`| `import * as unused from 'foo'`|
+    /// | `import { unused } from 'foo'`       | (removed)      | `import 'foo'` | `import { unused } from 'foo'` | `import { unused } from 'foo'` |
+    /// | `import { type unused } from 'foo'`  | (removed)      | `import 'foo'` | (removed)                      | `import {} from 'foo'`         |
+    #[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
+    pub struct TSUnusedImportFlags: u8 {
+        /// `importsNotUsedAsValues` is `"preserve"` or `"error"`: keep the
+        /// statement for its side effects even when every binding is removed.
+        const KEEP_STMT = 1 << 0;
+        /// `preserveValueImports`: keep value bindings that are never used.
+        const KEEP_VALUES = 1 << 1;
+    }
+}
+
 // ─── Target: schema-coupled extension methods ─────────────────────────────
 
 mod sealed {

@@ -787,6 +787,149 @@ describe("bundler", () => {
       api.expectFile("/Users/user/project/out.js").toContain(`React.createElement`);
     },
   });
+  itBundled("tsconfig/ImportsNotUsedAsValuesPreserve", {
+    files: {
+      "/Users/user/project/src/entry.ts": /* ts */ `
+        import {x, y} from "./foo"
+        import z from "./foo"
+        import * as ns from "./foo"
+        console.log(1 as x, 2 as z, 3 as ns.y)
+      `,
+      "/Users/user/project/src/tsconfig.json": /* json */ `
+        {
+        "compilerOptions": {
+          "importsNotUsedAsValues": "preserve"
+        }
+      }
+      `,
+    },
+    bundling: false,
+    outfile: "/Users/user/project/out.js",
+    onAfterBundle(api) {
+      api.expectFile("/Users/user/project/out.js").toBe(`import"./foo";
+import"./foo";
+import"./foo";
+console.log(1, 2, 3);
+`);
+    },
+  });
+  const preserveValueImportsEntry = /* ts */ `
+    import {} from "a"
+    import {b1} from "b"
+    import {c1, type c2} from "c"
+    import {d1, d2, type d3} from "d"
+    import {type e1, type e2} from "e"
+    import f1, {} from "f"
+    import g1, {g2} from "g"
+    import h1, {type h2} from "h"
+    import * as i1 from "i"
+    import "j"
+  `;
+  const keepStmtAndValuesOutput = `import {} from "a";
+import { b1 } from "b";
+import { c1 } from "c";
+import { d1, d2 } from "d";
+import {} from "e";
+import f1, {} from "f";
+import g1, { g2 } from "g";
+import h1, {} from "h";
+import * as i1 from "i";
+import"j";
+`;
+  itBundled("tsconfig/PreserveValueImports", {
+    files: {
+      "/Users/user/project/src/entry.ts": preserveValueImportsEntry,
+      "/Users/user/project/src/tsconfig.json": /* json */ `
+        {
+        "compilerOptions": {
+          "preserveValueImports": true
+        }
+      }
+      `,
+    },
+    bundling: false,
+    outfile: "/Users/user/project/out.js",
+    onAfterBundle(api) {
+      api.expectFile("/Users/user/project/out.js").toBe(`import { b1 } from "b";
+import { c1 } from "c";
+import { d1, d2 } from "d";
+import f1 from "f";
+import g1, { g2 } from "g";
+import h1 from "h";
+import * as i1 from "i";
+import"j";
+`);
+    },
+  });
+  itBundled("tsconfig/PreserveValueImportsAndImportsNotUsedAsValuesPreserve", {
+    files: {
+      "/Users/user/project/src/entry.ts": preserveValueImportsEntry,
+      "/Users/user/project/src/tsconfig.json": /* json */ `
+        {
+        "compilerOptions": {
+          "importsNotUsedAsValues": "preserve",
+          "preserveValueImports": true
+        }
+      }
+      `,
+    },
+    bundling: false,
+    outfile: "/Users/user/project/out.js",
+    onAfterBundle(api) {
+      api.expectFile("/Users/user/project/out.js").toBe(keepStmtAndValuesOutput);
+    },
+  });
+  itBundled("tsconfig/VerbatimModuleSyntax", {
+    files: {
+      "/Users/user/project/src/entry.ts": preserveValueImportsEntry,
+      "/Users/user/project/src/tsconfig.json": /* json */ `
+        {
+        "compilerOptions": {
+          "verbatimModuleSyntax": true
+        }
+      }
+      `,
+    },
+    bundling: false,
+    outfile: "/Users/user/project/out.js",
+    onAfterBundle(api) {
+      api.expectFile("/Users/user/project/out.js").toBe(keepStmtAndValuesOutput);
+    },
+  });
+  // tsc keeps `import { unused }` as written and turns `import { type T }` into
+  // `import {} from`, so both modules run. Only `import type` is erased.
+  itBundled("tsconfig/VerbatimModuleSyntaxBundle", {
+    files: {
+      "/Users/user/project/src/entry.ts": /* ts */ `
+        import { unused } from "./side-effect"
+        import { type T } from "./inline-type"
+        import type { U } from "./erased"
+        console.log("entry")
+      `,
+      "/Users/user/project/src/side-effect.ts": /* ts */ `
+        console.log("side effect")
+        export const unused = 1
+      `,
+      "/Users/user/project/src/inline-type.ts": /* ts */ `
+        console.log("inline type")
+        export type T = number
+      `,
+      "/Users/user/project/src/erased.ts": /* ts */ `
+        console.log("erased")
+        export type U = number
+      `,
+      "/Users/user/project/src/tsconfig.json": /* json */ `
+        {
+        "compilerOptions": {
+          "verbatimModuleSyntax": true
+        }
+      }
+      `,
+    },
+    run: {
+      stdout: "side effect\ninline type\nentry",
+    },
+  });
   return;
   itBundled("tsconfig/PathsTypeOnly", {
     // GENERATED
@@ -1264,82 +1407,6 @@ describe("bundler", () => {
       `,
     },
     outfile: "/Users/user/project/out.js",
-  });
-  itBundled("tsconfig/ImportsNotUsedAsValuesPreserve", {
-    // GENERATED
-    files: {
-      "/Users/user/project/src/entry.ts": /* ts */ `
-        import {x, y} from "./foo"
-        import z from "./foo"
-        import * as ns from "./foo"
-        console.log(1 as x, 2 as z, 3 as ns.y)
-      `,
-      "/Users/user/project/src/tsconfig.json": /* json */ `
-        {
-        "compilerOptions": {
-          "importsNotUsedAsValues": "preserve"
-        }
-      }
-      `,
-    },
-    format: "esm",
-    outfile: "/Users/user/project/out.js",
-    mode: "convertformat",
-  });
-  itBundled("tsconfig/PreserveValueImports", {
-    // GENERATED
-    files: {
-      "/Users/user/project/src/entry.ts": /* ts */ `
-        import {} from "a"
-        import {b1} from "b"
-        import {c1, type c2} from "c"
-        import {d1, d2, type d3} from "d"
-        import {type e1, type e2} from "e"
-        import f1, {} from "f"
-        import g1, {g2} from "g"
-        import h1, {type h2} from "h"
-        import * as i1 from "i"
-        import "j"
-      `,
-      "/Users/user/project/src/tsconfig.json": /* json */ `
-        {
-        "compilerOptions": {
-          "preserveValueImports": true
-        }
-      }
-      `,
-    },
-    format: "esm",
-    outfile: "/Users/user/project/out.js",
-    mode: "convertformat",
-  });
-  itBundled("tsconfig/PreserveValueImportsAndImportsNotUsedAsValuesPreserve", {
-    // GENERATED
-    files: {
-      "/Users/user/project/src/entry.ts": /* ts */ `
-        import {} from "a"
-        import {b1} from "b"
-        import {c1, type c2} from "c"
-        import {d1, d2, type d3} from "d"
-        import {type e1, type e2} from "e"
-        import f1, {} from "f"
-        import g1, {g2} from "g"
-        import h1, {type h2} from "h"
-        import * as i1 from "i"
-        import "j"
-      `,
-      "/Users/user/project/src/tsconfig.json": /* json */ `
-        {
-        "compilerOptions": {
-          "importsNotUsedAsValues": "preserve",
-          "preserveValueImports": true
-        }
-      }
-      `,
-    },
-    format: "esm",
-    outfile: "/Users/user/project/out.js",
-    mode: "convertformat",
   });
   itBundled("tsconfig/Target", {
     // GENERATED

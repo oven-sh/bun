@@ -12,6 +12,7 @@ use js_ast::{Expr, G, LocRef, S, Stmt};
 use js_lexer::T;
 
 use crate::parser::fs;
+use crate::parser::options::TSUnusedImportFlags;
 use crate::parser::{
     AwaitOrYield, DeferredTsDecorators, LexicalDecl, ParseStatementOptions, ParsedPath, Ref,
     StatementScope, StmtList,
@@ -1291,10 +1292,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                     if Self::IS_TYPESCRIPT_ENABLED {
                         // export {type Foo} from 'bar';
+                        // export {} from 'bar';
                         // ->
                         // nothing
                         // https://www.typescriptlang.org/play?useDefineForClassFields=true&esModuleInterop=false&declaration=false&target=99&isolatedModules=false&ts=4.5.4#code/KYDwDg9gTgLgBDAnmYcDeAxCEC+cBmUEAtnAOQBGAhlGQNwBQQA
-                        if export_clause.clauses.is_empty() && export_clause.had_type_only_exports {
+                        if export_clause.clauses.is_empty()
+                            && !p
+                                .options
+                                .unused_import_flags_ts
+                                .contains(TSUnusedImportFlags::KEEP_STMT)
+                        {
                             return Ok(p.s(S::TypeScript {}, loc));
                         }
                     }
@@ -1355,7 +1362,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // ->
                     // nothing
                     // https://www.typescriptlang.org/play?useDefineForClassFields=true&esModuleInterop=false&declaration=false&target=99&isolatedModules=false&ts=4.5.4#code/KYDwDg9gTgLgBDAnmYcDeAxCEC+cBmUEAtnAOQBGAhlGQNwBQQA
-                    if export_clause.clauses.is_empty() && export_clause.had_type_only_exports {
+                    if export_clause.clauses.is_empty()
+                        && export_clause.had_type_only_exports
+                        && !p
+                            .options
+                            .unused_import_flags_ts
+                            .contains(TSUnusedImportFlags::KEEP_STMT)
+                    {
                         return Ok(p.s(S::TypeScript {}, loc));
                     }
                 }
@@ -1462,13 +1475,23 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     return Err(crate::Error::SyntaxError);
                 }
                 let import_clause = p.parse_import_clause()?;
-                if Self::IS_TYPESCRIPT_ENABLED {
-                    if import_clause.had_type_only_imports && import_clause.items.is_empty() {
-                        p.lexer.expect_contextual_keyword(b"from")?;
-                        let _ = p.parse_path()?;
-                        p.lexer.expect_or_insert_semicolon()?;
-                        return Ok(p.s(S::TypeScript {}, loc));
-                    }
+                if Self::IS_TYPESCRIPT_ENABLED
+                    && import_clause.items.is_empty()
+                    && !p
+                        .options
+                        .unused_import_flags_ts
+                        .contains(TSUnusedImportFlags::KEEP_STMT)
+                {
+                    // "import {} from 'mod'"
+                    // "import { type Foo } from 'mod'"
+                    //
+                    // A clause with no value bindings is type-only. TypeScript
+                    // drops the statement unless "importsNotUsedAsValues" or
+                    // "verbatimModuleSyntax" asks to keep it.
+                    p.lexer.expect_contextual_keyword(b"from")?;
+                    let _ = p.parse_path()?;
+                    p.lexer.expect_or_insert_semicolon()?;
+                    return Ok(p.s(S::TypeScript {}, loc));
                 }
 
                 stmt = S::Import {
@@ -1478,6 +1501,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // moved into the AST node here; no other &mut alias exists.
                     items: import_clause.items.into(),
                     is_single_line: import_clause.is_single_line,
+                    has_items_clause: true,
                     ..Default::default()
                 };
                 p.lexer.expect_contextual_keyword(b"from")?;
@@ -1640,6 +1664,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         T::TOpenBrace => {
                             let import_clause = p.parse_import_clause()?;
 
+                            // "import d, {} from 'mod'"
+                            // "import d, { type T } from 'mod'"
+                            //
+                            // TypeScript drops an empty clause (compare the `{`
+                            // arm above) unless the statement is kept as written.
+                            stmt.has_items_clause = !Self::IS_TYPESCRIPT_ENABLED
+                                || !import_clause.items.is_empty()
+                                || p.options
+                                    .unused_import_flags_ts
+                                    .contains(TSUnusedImportFlags::KEEP_STMT);
                             // SAFETY: sole owner — fresh arena slice from parse_import_clause,
                             // moved into the AST node here; no other &mut alias exists.
                             stmt.items = import_clause.items.into();

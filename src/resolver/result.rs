@@ -9,6 +9,7 @@ use ::bun_ast::import_record as ast;
 use ::bun_install_types::resolver_hooks as Install;
 use bun_alloc as allocators;
 use bun_core::MutableString;
+use bun_options_types::TSUnusedImportFlags;
 use bun_sys::Fd as FD;
 
 use crate::dir_info::DirInfoRef;
@@ -126,7 +127,7 @@ impl Default for Result {
 
 bitflags::bitflags! {
     #[derive(Default, Clone, Copy)]
-    pub struct ResultFlags: u8 {
+    pub struct ResultFlags: u16 {
         // Bits 0..=1 encode [`ExternalKind`]; write via `set_external_kind`.
         const IS_EXTERNAL = 1 << 0;
         const REWRITE_IMPORT_PATH = 1 << 1;
@@ -137,6 +138,9 @@ bitflags::bitflags! {
         const EXPERIMENTAL_DECORATORS = 1 << 6;
         /// tsconfig `"useDefineForClassFields": false` was set explicitly.
         const SET_SEMANTICS_FOR_CLASS_FIELDS = 1 << 7;
+        // Bits 8..=9 mirror [`TSUnusedImportFlags`]; write via `set_unused_import_flags_ts`.
+        const TS_KEEP_UNUSED_IMPORT_STMT = 1 << 8;
+        const TS_KEEP_UNUSED_IMPORT_VALUES = 1 << 9;
     }
 }
 
@@ -214,6 +218,30 @@ impl ResultFlags {
     #[inline]
     pub(crate) fn set_use_define_for_class_fields(&mut self, v: bool) {
         self.set(Self::SET_SEMANTICS_FOR_CLASS_FIELDS, !v)
+    }
+    #[inline]
+    pub fn unused_import_flags_ts(self) -> TSUnusedImportFlags {
+        let mut flags = TSUnusedImportFlags::empty();
+        flags.set(
+            TSUnusedImportFlags::KEEP_STMT,
+            self.contains(Self::TS_KEEP_UNUSED_IMPORT_STMT),
+        );
+        flags.set(
+            TSUnusedImportFlags::KEEP_VALUES,
+            self.contains(Self::TS_KEEP_UNUSED_IMPORT_VALUES),
+        );
+        flags
+    }
+    #[inline]
+    pub(crate) fn set_unused_import_flags_ts(&mut self, flags: TSUnusedImportFlags) {
+        self.set(
+            Self::TS_KEEP_UNUSED_IMPORT_STMT,
+            flags.contains(TSUnusedImportFlags::KEEP_STMT),
+        );
+        self.set(
+            Self::TS_KEEP_UNUSED_IMPORT_VALUES,
+            flags.contains(TSUnusedImportFlags::KEEP_VALUES),
+        );
     }
 }
 

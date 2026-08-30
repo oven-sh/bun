@@ -110,6 +110,7 @@ pub struct ParseTask {
     pub(crate) emit_decorator_metadata: bool,
     pub(crate) experimental_decorators: bool,
     pub(crate) use_define_for_class_fields: bool,
+    pub(crate) unused_import_flags_ts: options::TSUnusedImportFlags,
     // BACKREF; `None` only before enqueue (`Default`, runtime source).
     pub ctx: Option<bun_ptr::ParentRef<BundleV2<'static>, bun_ptr::Mut>>,
     // Borrows package_json (resolver arena); valid for the bundle pass.
@@ -272,6 +273,7 @@ impl ParseTask {
             emit_decorator_metadata: resolve_result.flags.emit_decorator_metadata(),
             experimental_decorators: resolve_result.flags.experimental_decorators(),
             use_define_for_class_fields: resolve_result.flags.use_define_for_class_fields(),
+            unused_import_flags_ts: resolve_result.flags.unused_import_flags_ts(),
             package_version,
             package_name,
             known_target,
@@ -326,6 +328,7 @@ impl Default for ParseTask {
             emit_decorator_metadata: false,
             experimental_decorators: false,
             use_define_for_class_fields: true,
+            unused_import_flags_ts: options::TSUnusedImportFlags::empty(),
             package_version: ast::StoreStr::EMPTY,
             package_name: ast::StoreStr::EMPTY,
             is_entry_point: false,
@@ -566,6 +569,7 @@ pub mod parse_worker {
             emit_decorator_metadata: false,
             experimental_decorators: false,
             use_define_for_class_fields: true,
+            unused_import_flags_ts: options::TSUnusedImportFlags::empty(),
             package_version: ast::StoreStr::EMPTY,
             package_name: ast::StoreStr::EMPTY,
             is_entry_point: false,
@@ -2482,6 +2486,7 @@ pub mod parse_worker {
         opts.features.minify_keep_names = topts.keep_names;
         opts.features.minify_whitespace = topts.minify_whitespace;
         opts.use_define_for_class_fields = task.use_define_for_class_fields;
+        opts.unused_import_flags_ts = task.unused_import_flags_ts;
         opts.features.emit_decorator_metadata = task.emit_decorator_metadata;
         // emitDecoratorMetadata implies legacy/experimental decorators, as it only
         // makes sense with TypeScript's legacy decorator system (reflect-metadata).

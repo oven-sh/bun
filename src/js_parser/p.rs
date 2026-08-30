@@ -1818,6 +1818,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 default_name: None,
                 star_name_loc: bun_ast::Loc::EMPTY,
                 phase_defer: false,
+                has_items_clause: true,
             },
             bun_ast::Loc::default(),
         );
@@ -1955,6 +1956,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 default_name: None,
                 star_name_loc: bun_ast::Loc::EMPTY,
                 phase_defer: false,
+                has_items_clause: true,
             },
             bun_ast::Loc::default(),
         );
@@ -2124,6 +2126,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     default_name: None,
                     star_name_loc: bun_ast::Loc::EMPTY,
                     phase_defer: false,
+                    has_items_clause: true,
                 },
                 bun_ast::Loc::EMPTY,
             )

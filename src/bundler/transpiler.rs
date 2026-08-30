@@ -729,6 +729,7 @@ impl<'a> Transpiler<'a> {
                     if let Some(v) = tsconfig.use_define_for_class_fields {
                         self.options.use_define_for_class_fields = v;
                     }
+                    self.options.unused_import_flags_ts = tsconfig.unused_import_flags();
                 }
             }
         }
@@ -988,6 +989,7 @@ pub struct ParseOptions<'a, 'b> {
     pub emit_decorator_metadata: bool,
     pub experimental_decorators: bool,
     pub use_define_for_class_fields: bool,
+    pub unused_import_flags_ts: options::TSUnusedImportFlags,
     pub remove_cjs_module_wrapper: bool,
 
     pub dont_bundle_twice: bool,
@@ -1569,7 +1571,7 @@ impl<'a> Transpiler<'a> {
                     jsx: to_parser_jsx_pragma(jsx),
                     keep_names: true,
                     ignore_dce_annotations: self.options.ignore_dce_annotations,
-                    preserve_unused_imports_ts: false,
+                    unused_import_flags_ts: this_parse.unused_import_flags_ts,
                     use_define_for_class_fields: this_parse.use_define_for_class_fields,
                     suppress_warnings_about_weird_code: true,
                     features: js_ast::RuntimeFeatures::default(),
@@ -2930,6 +2932,7 @@ impl<'a> Transpiler<'a> {
                 let experimental_decorators = resolve_result.flags.experimental_decorators();
                 let use_define_for_class_fields =
                     resolve_result.flags.use_define_for_class_fields();
+                let unused_import_flags_ts = resolve_result.flags.unused_import_flags_ts();
                 // `MacroRemap` (StringArrayHashMap of StringArrayHashMap) has
                 // no nested `Clone` impl (the inner clone is fallible).
                 // Rebuild the outer map, deep-cloning
@@ -2959,6 +2962,7 @@ impl<'a> Transpiler<'a> {
                     emit_decorator_metadata,
                     experimental_decorators,
                     use_define_for_class_fields,
+                    unused_import_flags_ts,
                     virtual_source: None,
                     replace_exports: Default::default(),
                     inject_jest_globals: false,

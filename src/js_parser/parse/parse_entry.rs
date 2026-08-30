@@ -71,7 +71,7 @@ pub struct Options<'a> {
     pub ts: bool,
     pub keep_names: bool,
     pub ignore_dce_annotations: bool,
-    pub preserve_unused_imports_ts: bool,
+    pub unused_import_flags_ts: options::TSUnusedImportFlags,
     pub use_define_for_class_fields: bool,
     pub suppress_warnings_about_weird_code: bool,
     pub features: RuntimeFeatures,
@@ -126,7 +126,7 @@ impl<'a> Default for Options<'a> {
             ts: false,
             keep_names: true,
             ignore_dce_annotations: false,
-            preserve_unused_imports_ts: false,
+            unused_import_flags_ts: options::TSUnusedImportFlags::empty(),
             use_define_for_class_fields: true,
             suppress_warnings_about_weird_code: true,
             features: RuntimeFeatures::default(),
@@ -176,7 +176,7 @@ impl<'a> Options<'a> {
             ts: self.ts,
             keep_names: self.keep_names,
             ignore_dce_annotations: self.ignore_dce_annotations,
-            preserve_unused_imports_ts: self.preserve_unused_imports_ts,
+            unused_import_flags_ts: self.unused_import_flags_ts,
             use_define_for_class_fields: self.use_define_for_class_fields,
             suppress_warnings_about_weird_code: self.suppress_warnings_about_weird_code,
             features: RuntimeFeatures {
@@ -264,6 +264,11 @@ impl<'a> Options<'a> {
             hasher.update(b"udfcf=0");
         }
 
+        if !self.unused_import_flags_ts.is_empty() {
+            hasher.update(b"ts_unused_imports=");
+            hasher.update(&[self.unused_import_flags_ts.bits()]);
+        }
+
         self.features.hash_for_runtime_transpiler(hasher);
     }
 
@@ -281,7 +286,7 @@ impl<'a> Options<'a> {
             jsx,
             keep_names: true,
             ignore_dce_annotations: false,
-            preserve_unused_imports_ts: false,
+            unused_import_flags_ts: options::TSUnusedImportFlags::empty(),
             use_define_for_class_fields: true,
             suppress_warnings_about_weird_code: true,
             features: RuntimeFeatures::default(),
@@ -461,8 +466,10 @@ impl<'a> Parser<'a> {
             }
         }
 
-        //
-        if TS {
+        // With any of the tsconfig "keep unused imports" settings, an import
+        // statement that survives parsing also survives the transform, so the
+        // "unused unless a binding is used" guess below does not apply.
+        if TS && p.options.unused_import_flags_ts.is_empty() {
             for import_record in p.import_records.items_mut() {
                 // Mark everything as unused
                 // Except:
@@ -1262,6 +1269,7 @@ impl<'a> Parser<'a> {
                             items: bun_ast::StoreSlice::EMPTY,
                             is_single_line: false,
                             phase_defer: false,
+                            has_items_clause: false,
                         },
                         ns_loc,
                     );
@@ -1922,6 +1930,7 @@ impl<'a> Parser<'a> {
                         star_name_loc: bun_ast::Loc::EMPTY,
                         is_single_line: false,
                         phase_defer: false,
+                        has_items_clause: true,
                     },
                     bun_ast::Loc::EMPTY,
                 );

@@ -3624,6 +3624,40 @@ console.log(resolve.length)
     );
   });
 
+  it("type only imports", () => {
+    const exp = ts.expectPrinted_;
+    // `import { type ... }` grammar, matching esbuild's parseImportClause table.
+    exp("import { type Foo } from 'mod'", "");
+    exp("import { type Foo as Bar } from 'mod'; Bar", "Bar");
+    exp("import { type if as yy } from 'mod'; yy", "yy");
+    exp("import { type 'xx' as yy } from 'mod'; yy", "yy");
+    exp("import { type } from 'mod'; type", 'import { type } from "mod";\ntype');
+    exp("import { type, as } from 'mod'; type; as", 'import { type, as } from "mod";\ntype;\nas');
+    // Type-only import of a binding named `as`.
+    exp("import { type as } from 'mod'", "");
+    exp("import { type as as foo } from 'mod'; foo", "foo");
+    exp("import { type as as as } from 'mod'; as", "as");
+    // Value import of a binding named `type`.
+    exp("import { type as xxx } from 'mod'; xxx", 'import { type as xxx } from "mod";\nxxx');
+    exp("import { type as as } from 'mod'; as", 'import { type as as } from "mod";\nas');
+    exp("import { \\u0074ype Foo, Bar } from 'mod'; Bar", 'import { Bar } from "mod";\nBar');
+
+    // A clause with no value bindings is type-only, like tsc treats it.
+    exp("import {} from 'mod'", "");
+    exp("import {} from 'mod'; x", "x");
+    exp("import d, {} from 'mod'; d", 'import d from "mod";\nd');
+    exp("import d, { type T } from 'mod'; d", 'import d from "mod";\nd');
+    exp("export {} from 'mod'", "");
+    exp("export { type Foo } from 'mod'", "");
+    // Unlike `import {} from 'mod'`, a bare import always runs for its side effects.
+    exp("import 'mod'", 'import"mod"');
+
+    // JavaScript has no type-only imports; the empty clause is printed as written.
+    const js = new Bun.Transpiler({ loader: "js" });
+    expect(js.transformSync("import {} from 'mod'")).toBe('import {} from "mod";\n');
+    expect(js.transformSync("import d, {} from 'mod'; d")).toBe('import d, {} from "mod";\nd;\n');
+  });
+
   it("type only exports", () => {
     let { expectPrinted_, expectParseError } = ts;
     expectPrinted_("export type {foo, bar as baz} from 'bar'", "");

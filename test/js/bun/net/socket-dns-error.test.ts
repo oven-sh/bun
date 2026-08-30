@@ -124,28 +124,20 @@ test("consecutive Bun.connect calls to the same unresolvable hostname all get th
 // answered ENOTFOUND in-process, without asking the system resolver. Some DNS
 // servers never answer a query for such a label, and the resolver then waits
 // out its own timeout (30s on macOS) before reporting anything.
-test("Bun.connect to a name that is not a hostname fails with ENOTFOUND without asking the resolver", async () => {
-  const errors = [];
-  for (const hostname of ["this is not a hostname", "localhost:80", "a..b"]) {
-    errors.push(
-      await Bun.connect({
-        hostname,
-        port: 80,
-        socket: { open() {}, data() {} },
-      }).then(
-        () => "resolved",
-        (e: Error) => pick(e),
-      ),
-    );
-  }
-  expect(errors).toEqual(
-    ["this is not a hostname", "localhost:80", "a..b"].map(hostname => ({
-      ...EXPECTED,
+test.each(["this is not a hostname", "localhost:80", "a..b"])(
+  "Bun.connect to %p, which is not a hostname, fails with ENOTFOUND without asking the resolver",
+  async hostname => {
+    const error = await Bun.connect({
       hostname,
-      message: `getaddrinfo ENOTFOUND ${hostname}`,
-    })),
-  );
-});
+      port: 80,
+      socket: { open() {}, data() {} },
+    }).then(
+      () => "resolved",
+      (e: Error) => pick(e),
+    );
+    expect(error).toEqual({ ...EXPECTED, hostname, message: `getaddrinfo ENOTFOUND ${hostname}` });
+  },
+);
 
 // An answer that is already known when Bun.connect() is called (answered
 // in-process, or a cache hit) is delivered from the event loop, not inline.

@@ -161,6 +161,7 @@ pub struct LexerSnapshot<'a> {
     pub(crate) rescan_close_brace_as_template_token: bool,
     pub(crate) prev_error_loc: Loc,
     pub(crate) prev_token_was_await_keyword: bool,
+    pub(crate) top_level_await_unsupported_format: Option<(Range, &'static str)>,
     pub(crate) fn_or_arrow_start_loc: Loc,
     pub(crate) regex_flags_start: Option<u16>,
     pub(crate) string_literal_raw_content: &'a [u8],
@@ -231,6 +232,12 @@ pub struct Lexer<'a> {
     pub(crate) rescan_close_brace_as_template_token: bool,
     pub(crate) prev_error_loc: Loc,
     pub(crate) prev_token_was_await_keyword: bool,
+    /// Set together with `prev_token_was_await_keyword` when that `await` sits
+    /// at the top level of a file whose output format cannot represent
+    /// top-level await ("cjs" or "iife"). Holds the `await` token's range and
+    /// the format name so `expected_string` reports the output format as the
+    /// problem instead of suggesting an "async" function.
+    pub(crate) top_level_await_unsupported_format: Option<(Range, &'static str)>,
     pub(crate) fn_or_arrow_start_loc: Loc,
     pub(crate) regex_flags_start: Option<u16>,
     pub(crate) arena: &'a Arena,
@@ -346,6 +353,7 @@ impl<'a> Lexer<'a> {
             rescan_close_brace_as_template_token: self.rescan_close_brace_as_template_token,
             prev_error_loc: self.prev_error_loc,
             prev_token_was_await_keyword: self.prev_token_was_await_keyword,
+            top_level_await_unsupported_format: self.top_level_await_unsupported_format,
             fn_or_arrow_start_loc: self.fn_or_arrow_start_loc,
             regex_flags_start: self.regex_flags_start,
             string_literal_raw_content: self.string_literal_raw_content,
@@ -384,6 +392,7 @@ impl<'a> Lexer<'a> {
         self.rescan_close_brace_as_template_token = original.rescan_close_brace_as_template_token;
         self.prev_error_loc = original.prev_error_loc;
         self.prev_token_was_await_keyword = original.prev_token_was_await_keyword;
+        self.top_level_await_unsupported_format = original.top_level_await_unsupported_format;
         self.fn_or_arrow_start_loc = original.fn_or_arrow_start_loc;
         self.regex_flags_start = original.regex_flags_start;
         self.string_literal_raw_content = original.string_literal_raw_content;
@@ -1854,6 +1863,24 @@ impl<'a> Lexer<'a> {
     #[inline(never)]
     pub(crate) fn expected_string(&mut self, text: &[u8]) -> Result<(), Error> {
         if self.prev_token_was_await_keyword {
+            if self.is_log_disabled {
+                return Err(Error::Backtrack);
+            }
+
+            // The parse already failed at the token after the `await`. Stop
+            // here instead of continuing: recovery past a mis-tokenized
+            // `await` produces bogus follow-up errors (it retries the rest of
+            // the statement as an async arrow head, e.g. `Expected "=>"`).
+            if let Some((await_range, format)) = self.top_level_await_unsupported_format {
+                self.add_range_error(
+                    await_range,
+                    format_args!(
+                        "Top-level await is not available with the \"{format}\" output format"
+                    ),
+                )?;
+                return Err(Error::SyntaxError);
+            }
+
             let mut notes: [bun_ast::Data; 1] = [bun_ast::Data::default()];
             if !self.fn_or_arrow_start_loc.is_empty() {
                 notes[0] = bun_ast::range_data(
@@ -1871,7 +1898,7 @@ impl<'a> Lexer<'a> {
                 format_args!("\"await\" can only be used inside an \"async\" function"),
                 notes_ptr,
             )?;
-            return Ok(());
+            return Err(Error::SyntaxError);
         }
         if self.contents.len() != self.start {
             self.add_range_error(
@@ -2239,6 +2266,7 @@ impl<'a> Lexer<'a> {
             rescan_close_brace_as_template_token: false,
             prev_error_loc: Loc::EMPTY,
             prev_token_was_await_keyword: false,
+            top_level_await_unsupported_format: None,
             fn_or_arrow_start_loc: Loc::EMPTY,
             regex_flags_start: None,
             arena,

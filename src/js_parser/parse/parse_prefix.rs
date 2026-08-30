@@ -191,6 +191,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 AwaitOrYield::AllowIdent => {
                     p.lexer.prev_token_was_await_keyword = true;
                     p.lexer.fn_or_arrow_start_loc = p.fn_or_arrow_data_parse.needs_async_loc;
+                    // At the top level, `await` is only an identifier because
+                    // the output format disables top-level await. Remember
+                    // that so a parse failure right after it blames the
+                    // format, not a missing "async" keyword.
+                    p.lexer.top_level_await_unsupported_format =
+                        if p.fn_or_arrow_data_parse.is_top_level {
+                            match p.options.output_format {
+                                crate::parser::options::Format::Cjs => Some((name_range, "cjs")),
+                                crate::parser::options::Format::Iife => Some((name_range, "iife")),
+                                _ => None,
+                            }
+                        } else {
+                            None
+                        };
                 }
             },
 

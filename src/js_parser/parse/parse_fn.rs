@@ -203,6 +203,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // Don't suggest inserting "async" before anything if "await" is found
         p.fn_or_arrow_data_parse.needs_async_loc = bun_ast::Loc::EMPTY;
 
+        // An `await` in a default argument is not a top-level await even when
+        // the function itself is at the top level.
+        p.fn_or_arrow_data_parse.is_top_level = false;
+
         // If "super()" is allowed in the body, it's allowed in the arguments
         p.fn_or_arrow_data_parse.allow_super_call = opts.allow_super_call;
         p.fn_or_arrow_data_parse.allow_super_property = opts.allow_super_property;

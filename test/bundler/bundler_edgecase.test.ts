@@ -3277,6 +3277,62 @@ describe("bundler", () => {
       api.expectFile("/out.js").toContain("var arguments = 1;");
     },
   });
+  // https://github.com/oven-sh/bun/issues/40968
+  // Top-level await with an output format that cannot represent it must report
+  // the format as the problem, with no cascading parser errors after it.
+  itBundled("edgecase/TopLevelAwaitCjsFormat#40968", {
+    files: {
+      "/entry.ts": /* ts */ `
+        async function main() { console.log("x") }
+        await main()
+      `,
+    },
+    format: "cjs",
+    target: "bun",
+    bundleErrors: {
+      "/entry.ts": ['Top-level await is not available with the "cjs" output format'],
+    },
+  });
+  itBundled("edgecase/TopLevelAwaitCjsFormatNestedBlock#40968", {
+    files: {
+      "/entry.ts": /* ts */ `
+        async function main() { console.log("x") }
+        if (import.meta.main) {
+          await main()
+        }
+      `,
+    },
+    format: "cjs",
+    target: "bun",
+    bundleErrors: {
+      "/entry.ts": ['Top-level await is not available with the "cjs" output format'],
+    },
+  });
+  itBundled("edgecase/TopLevelAwaitIifeFormat#40968", {
+    files: {
+      "/entry.ts": /* ts */ `
+        async function main() { console.log("x") }
+        await main()
+      `,
+    },
+    format: "iife",
+    bundleErrors: {
+      "/entry.ts": ['Top-level await is not available with the "iife" output format'],
+    },
+  });
+  // The `Expected "=>"` cascade also hid the real error for an `await` inside
+  // a plain function. Only the await error itself may be reported.
+  itBundled("edgecase/AwaitInNonAsyncFnNoCascade#40968", {
+    files: {
+      "/entry.ts": /* ts */ `
+        function f() { await g() }
+        f()
+      `,
+    },
+    bundleErrors: {
+      "/entry.ts": ['"await" can only be used inside an "async" function'],
+    },
+  });
 });
 
 for (const backend of ["api", "cli"] as const) {

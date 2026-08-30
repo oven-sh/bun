@@ -4964,10 +4964,14 @@ describe("await can only be used inside an async function message", () => {
           expect(error.notes).toHaveLength(0);
         }
       }
+      // The parser stops at the first await misuse, so a single BuildMessage
+      // is thrown. Older builds continued parsing and threw an AggregateError
+      // with cascading errors after it.
       if (e instanceof AggregateError) {
+        expect(e.errors).toHaveLength(1);
         handle(e.errors[0]);
       } else {
-        expect.unreachable();
+        handle(e);
       }
     }
   }

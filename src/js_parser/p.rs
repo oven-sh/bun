@@ -8761,10 +8761,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             false
         };
 
-        let mut fn_or_arrow_data_parse = FnOrArrowDataParse::default();
+        let mut fn_or_arrow_data_parse = FnOrArrowDataParse {
+            is_top_level: true,
+            ..FnOrArrowDataParse::default()
+        };
         if opts.features.top_level_await || SCAN_ONLY {
             fn_or_arrow_data_parse.allow_await = crate::AwaitOrYield::AllowExpr;
-            fn_or_arrow_data_parse.is_top_level = true;
         }
 
         let mut symbol_uses = SymbolUseMap::default();

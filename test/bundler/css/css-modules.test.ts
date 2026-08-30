@@ -1,3 +1,4 @@
+import { readdirSync } from "node:fs";
 import { itBundled } from "../expectBundled";
 
 describe("css", () => {
@@ -97,6 +98,209 @@ describe("css", () => {
         console.log(common_module_default);
         "
       `);
+    },
+  });
+
+  // A require()'d CSS file is wrapped in a CommonJS closure whose body is the
+  // `module.exports = ...` assignment of its lazy export. That body used to be
+  // tree-shaken away, so require() returned `{}` and the class map was lost,
+  // and since the wrapper was the only thing in this bundle that needs the
+  // runtime, `__commonJS` itself was missing from the output as well.
+  itBundled("css-module/RequireCssModule", {
+    files: {
+      "/entry.js": `
+        const styles = require('./styles.module.css');
+        const plain = require('./plain.css');
+        console.log(JSON.stringify(styles), JSON.stringify(plain));
+        export {};
+      `,
+      "/styles.module.css": `
+        .foo { composes: base from './base.module.css'; color: red }
+        .bar { composes: foo; color: blue }
+      `,
+      "/base.module.css": `.base { padding: 0 }`,
+      "/plain.css": `.plain { color: green }`,
+    },
+    outdir: "/out",
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.js").toMatchInlineSnapshot(`
+        "var __commonJS = (cb, mod) => () => (mod || cb((mod = { exports: {} }).exports, mod), mod.exports);
+
+        // styles.module.css
+        var require_styles_module = __commonJS(function(exports, module) {
+          module.exports = {
+            foo: "base_1Cz41w foo_-MSaAA",
+            bar: "base_1Cz41w foo_-MSaAA bar_-MSaAA"
+          };
+        });
+
+        // plain.css
+        var require_plain = __commonJS(function(exports, module) {
+          module.exports = {};
+        });
+
+        // entry.js
+        var styles = require_styles_module();
+        var plain = require_plain();
+        console.log(JSON.stringify(styles), JSON.stringify(plain));
+        "
+      `);
+    },
+    run: {
+      stdout: '{"foo":"base_1Cz41w foo_-MSaAA","bar":"base_1Cz41w foo_-MSaAA bar_-MSaAA"} {}',
+    },
+  });
+
+  // Without code splitting, import() of a CSS file goes through the same
+  // CommonJS wrapper as require().
+  itBundled("css-module/DynamicImportCssModuleWithoutSplitting", {
+    files: {
+      "/entry.js": `
+        const { default: styles } = await import('./styles.module.css');
+        console.log(JSON.stringify(styles));
+      `,
+      "/styles.module.css": `.foo { color: red }`,
+    },
+    outdir: "/out",
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.js").toContain("__toESM(require_styles_module()");
+    },
+    run: {
+      stdout: '{"foo":"foo_-MSaAA"}',
+    },
+  });
+
+  // Only the parts of a CSS file's JS side that actually get printed may pull
+  // the runtime into a chunk: a.js needs `__commonJS` for its require(), while
+  // b.js, which only reads the class map, must not pick up the helper that
+  // a.js made live.
+  itBundled("css-module/RequireCssInOneEntryDoesNotAddRuntimeToOthers", {
+    files: {
+      "/a.js": `
+        console.log(JSON.stringify(require('./a.css')));
+        export {};
+      `,
+      "/b.js": `
+        import styles from './b.module.css';
+        console.log(JSON.stringify(styles));
+      `,
+      "/a.css": `.a { color: red }`,
+      "/b.module.css": `.b { color: blue }`,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    outdir: "/out",
+    onAfterBundle(api) {
+      api.expectFile("/out/a.js").toMatchInlineSnapshot(`
+        "var __commonJS = (cb, mod) => () => (mod || cb((mod = { exports: {} }).exports, mod), mod.exports);
+
+        // a.css
+        var require_a = __commonJS(function(exports, module) {
+          module.exports = {};
+        });
+
+        // a.js
+        console.log(JSON.stringify(require_a()));
+        "
+      `);
+      api.expectFile("/out/b.js").toMatchInlineSnapshot(`
+        "// b.module.css
+        var b_module_default = {
+          b: "b_Kd7Gww"
+        };
+
+        // b.js
+        console.log(JSON.stringify(b_module_default));
+        "
+      `);
+    },
+    run: [
+      { file: "/out/a.js", stdout: "{}" },
+      { file: "/out/b.js", stdout: '{"b":"b_Kd7Gww"}' },
+    ],
+  });
+
+  // A stylesheet that is itself an entry point only produces a CSS file, so
+  // reaching the runtime from it must not count: the runtime has to stay in
+  // entry.js, the one chunk that prints the stylesheet's wrapper, instead of
+  // being split into a chunk of its own.
+  itBundled("css-module/RequireCssThatIsAlsoAnEntryPointWithSplitting", {
+    files: {
+      "/entry.js": `
+        console.log(JSON.stringify(require('./styles.module.css')));
+        export {};
+      `,
+      "/styles.module.css": `.foo { color: red }`,
+    },
+    entryPoints: ["/entry.js", "/styles.module.css"],
+    splitting: true,
+    outdir: "/out",
+    onAfterBundle(api) {
+      expect(readdirSync(api.outdir).sort()).toEqual(["entry.css", "entry.js", "styles.module.css"]);
+      api.expectFile("/out/entry.js").toContain("var __commonJS =");
+    },
+    run: {
+      file: "/out/entry.js",
+      stdout: '{"foo":"foo_-MSaAA"}',
+    },
+  });
+
+  itBundled("css-module/RequireCssThatIsAlsoAnEntryPointInCjsFormat", {
+    files: {
+      "/entry.js": `
+        console.log(JSON.stringify(require('./styles.module.css')));
+        export {};
+      `,
+      "/styles.module.css": `.foo { color: red }`,
+    },
+    entryPoints: ["/entry.js", "/styles.module.css"],
+    format: "cjs",
+    outdir: "/out",
+    run: {
+      file: "/out/entry.js",
+      stdout: '{"foo":"foo_-MSaAA"}',
+    },
+  });
+
+  // Wrapping a CSS file must not wrap the files its stylesheet references:
+  // the stub evaluates nothing from them. The asset used to come out as an
+  // empty `init_img` closure (plus the `__esm` helper) that entry.js then
+  // had to call.
+  itBundled("css-module/RequireCssDoesNotWrapStylesheetDependencies", {
+    files: {
+      "/entry.js": `
+        import img from './img.png';
+        const styles = require('./styles.css');
+        console.log(JSON.stringify(styles), typeof img);
+      `,
+      "/styles.css": `
+        @import './base.css';
+        .styles { background: url('./img.png') }
+      `,
+      "/base.css": `.base { color: red }`,
+      "/img.png": "not really a png",
+    },
+    outdir: "/out",
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.js").toMatchInlineSnapshot(`
+        "var __commonJS = (cb, mod) => () => (mod || cb((mod = { exports: {} }).exports, mod), mod.exports);
+
+        // styles.css
+        var require_styles = __commonJS(function(exports, module) {
+          module.exports = {};
+        });
+
+        // img.png
+        var img_default = "./img-qwe8ze7q.png";
+
+        // entry.js
+        var styles = require_styles();
+        console.log(JSON.stringify(styles), typeof img_default);
+        "
+      `);
+      api.expectFile("/out/entry.css").toContain(".base {");
+    },
+    run: {
+      stdout: "{} string",
     },
   });
 

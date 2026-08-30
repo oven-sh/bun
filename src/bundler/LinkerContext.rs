@@ -2677,6 +2677,11 @@ impl<'a> LinkerContext<'a> {
         // does O(V*E) work when shorter paths are discovered late on
         // diamond-shaped DAGs.
         debug_assert!(ctx.queue.is_empty());
+        // A stylesheet entry point only gets a CSS chunk (`compute_chunks`), so
+        // its bit must not reach the runtime through the JS parts of the
+        // stylesheets it reaches: under `--splitting` that bit would move the
+        // runtime out of the chunks that print those parts.
+        let from_css_entry_point = ctx.css_reprs[source_index as usize].is_some();
         ctx.queue.push_back((source_index, distance));
 
         while let Some((source_index, distance)) = ctx.queue.pop_front() {
@@ -2708,12 +2713,14 @@ impl<'a> LinkerContext<'a> {
                 }
             }
 
-            // CSS files only follow their import records.
-            if ctx.css_reprs[source_index as usize].is_some() {
-                continue;
-            }
-
-            for part in ctx.parts[source_index as usize].as_slice() {
+            // Of the JS parts a stylesheet also carries, only the live ones get printed.
+            let live_parts_only = ctx.css_reprs[source_index as usize].is_some();
+            let parts_live = &self.graph.parts_live[source_index as usize];
+            let parts = ctx.parts[source_index as usize].as_slice();
+            for (part_index, part) in parts.iter().enumerate() {
+                if live_parts_only && (from_css_entry_point || !parts_live.is_set(part_index)) {
+                    continue;
+                }
                 for dependency in part.dependencies.iter() {
                     let dep = dependency.source_index.get();
                     if dep != source_index
@@ -2794,7 +2801,16 @@ impl<'a> LinkerContext<'a> {
                     }
                 }
             }
-            return;
+
+            // The JS printed for a stylesheet lives in this same source index.
+            // ESM importers reach its export parts through part dependencies,
+            // but when it is require()d (or import()ed without splitting)
+            // `generate_code_for_lazy_export` leaves a `module.exports = ...`
+            // part here that nothing depends on. Keep it the way the parts of
+            // every other CommonJS-wrapped file are kept: by walking the file.
+            if self.graph.meta.items_flags()[source_index as usize].wrap != WrapKind::Cjs {
+                return;
+            }
         }
 
         // HTML files can reference non-JS/CSS assets (favicons, images, etc.)

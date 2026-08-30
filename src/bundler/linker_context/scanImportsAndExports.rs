@@ -277,12 +277,13 @@ pub(crate) fn scan_imports_and_exports(
             // SAFETY: `split_raw()`-derived column ptrs carry root provenance
             // from the `MultiArrayList` heap buffer; this block holds no other
             // borrow into ast/meta/files and makes no `&mut this` calls, so
-            // the reborrows are exclusive for the block. All five derefs share
+            // the reborrows are exclusive for the block. All six derefs share
             // the same invariant, so they are grouped under one `unsafe`.
             let mut dependency_wrapper = unsafe {
                 DependencyWrapper {
                     flags: &mut *flags,
                     import_records: &*import_records_list,
+                    css_asts: &*css_asts,
                     exports_kind: &mut *exports_kind,
                     entry_point_kinds: &*entry_point_kinds,
                     export_star_map: HashMap::default(),
@@ -1152,6 +1153,7 @@ struct DependencyWrapper<'a> {
     flags: &'a mut [js_meta::Flags],
     exports_kind: &'a mut [ExportsKind],
     import_records: &'a [ImportRecordList<'a>],
+    css_asts: &'a [bundled_ast::CssCol],
     export_star_map: HashMap<IndexInt, ()>,
     entry_point_kinds: &'a [EntryPoint::Kind],
     export_star_records: &'a [bun_alloc::AstVec<u32>],
@@ -1224,6 +1226,14 @@ impl DependencyWrapper<'_> {
                     ExportsKind::Cjs => WrapKind::Cjs,
                     _ => WrapKind::Esm,
                 };
+            }
+
+            // The import records of a CSS file (`@import`, `url()`, `composes`)
+            // belong to its stylesheet, not to the JS stub that gets wrapped
+            // here; the stub evaluates nothing from them. Wrapping them would
+            // only emit empty `init_*` closures for the referenced files.
+            if self.css_asts[source_index as usize].is_some() {
+                continue;
             }
 
             for record in self.import_records[source_index as usize].as_slice() {

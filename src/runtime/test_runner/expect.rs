@@ -5,7 +5,7 @@ use core::fmt;
 use bun_core::Output;
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{
-    CallFrame, JSGlobalObject, JSValue, JsError, JsResult,
+    AnyPromise, CallFrame, EnsureStillAlive, JSGlobalObject, JSValue, JsError, JsResult,
     ConsoleObject, JSFunction, JSPropertyIterator, JSString,
 };
 use bun_jsc::{JsClass as _, StringJsc as _};
@@ -485,16 +485,30 @@ impl Expect {
     ) -> JsResult<JSValue> {
         match flags.promise() {
             resolution @ (Promise::Resolves | Promise::Rejects) => {
-                if let Some(promise) = value.as_any_promise() {
+                if let Some(original) = value.as_any_promise() {
                     let vm = global_this.vm();
-                    promise.set_handled(vm);
+                    original.set_handled(vm);
+
+                    // A Promise subclass can override `then()` and only start its
+                    // work there (Bun.SQL's Query dispatches the query on the
+                    // first `then()` call), so waiting on the value's internal
+                    // promise state directly hangs forever. Adopt the value
+                    // through the spec resolve algorithm instead, as `await`
+                    // does: a plain promise takes the non-observable fast path,
+                    // and an overridden `then()` gets called.
+                    let wrapper = js_promise::JSPromise::create(global_this);
+                    wrapper.resolve(global_this, value)?;
+                    wrapper.set_handled();
+                    let promise = AnyPromise::Normal(core::ptr::from_mut(wrapper));
+                    // Roots the wrapper promise across `wait_for_promise`.
+                    let _wrapper_alive = EnsureStillAlive(promise.as_value());
 
                     // SAFETY: bun_vm() returns the live thread-local VirtualMachine.
-            global_this
-                .bun_vm()
-                .as_mut()
-                .wait_for_promise(promise)
-                .map_err(|stopped| stopped.throw(global_this))?;
+                    global_this
+                        .bun_vm()
+                        .as_mut()
+                        .wait_for_promise(promise)
+                        .map_err(|stopped| stopped.throw(global_this))?;
 
                     let new_value = promise.result(vm);
                     match promise.status() {

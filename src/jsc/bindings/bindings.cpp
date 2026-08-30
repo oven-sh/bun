@@ -1065,9 +1065,35 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
         return true;
     }
 
-    if constexpr (isStrict && !checkPrototypes && !skipPrototypeIdentity) {
-        if (!equal(JSObject::calculatedClassName(o1), JSObject::calculatedClassName(o2))) {
-            return false;
+    if constexpr (isStrict) {
+        const bool hasProxy = c1->type() == ProxyObjectType || c2->type() == ProxyObjectType;
+        if constexpr (!checkPrototypes && !skipPrototypeIdentity) {
+            if (hasProxy) {
+                // calculatedClassName() is "ProxyObject" for every Proxy; compare the observable prototype.
+                JSValue p1 = o1->getPrototype(globalObject);
+                RETURN_IF_EXCEPTION(scope, false);
+                JSValue p2 = o2->getPrototype(globalObject);
+                RETURN_IF_EXCEPTION(scope, false);
+                if (p1 != p2) {
+                    return false;
+                }
+            } else if (!equal(JSObject::calculatedClassName(o1), JSObject::calculatedClassName(o2))) {
+                return false;
+            }
+        }
+        // The generic walk below skips non-enumerable .length; a Proxy bypassed the fast path that checks it.
+        if (hasProxy && v1Array && v2Array) {
+            JSValue len1 = o1->get(globalObject, vm.propertyNames->length);
+            RETURN_IF_EXCEPTION(scope, false);
+            uint64_t length1 = len1.toLength(globalObject);
+            RETURN_IF_EXCEPTION(scope, false);
+            JSValue len2 = o2->get(globalObject, vm.propertyNames->length);
+            RETURN_IF_EXCEPTION(scope, false);
+            uint64_t length2 = len2.toLength(globalObject);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (length1 != length2) {
+                return false;
+            }
         }
     }
 
@@ -2201,7 +2227,11 @@ bool Bun__deepMatch(
     // similar to what is done in deepEquals (canPerformFastPropertyEnumerationForIterationBun)
 
     // arrays should match exactly
-    if (isArray(globalObject, objValue) && isArray(globalObject, subsetValue)) {
+    bool objIsArray = isArray(globalObject, objValue);
+    RETURN_IF_EXCEPTION(throwScope, false);
+    bool subsetIsArray = isArray(globalObject, subsetValue);
+    RETURN_IF_EXCEPTION(throwScope, false);
+    if (objIsArray && subsetIsArray) {
         if (obj->getArrayLength() != subsetObj->getArrayLength()) {
             return false;
         }

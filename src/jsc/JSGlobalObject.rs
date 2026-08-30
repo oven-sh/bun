@@ -729,28 +729,26 @@ impl JSGlobalObject {
         Ok(Some(result))
     }
 
-    /// `args` formatted as UTF-8. If a `Display` impl fails mid-way (e.g. a
-    /// JS `Symbol.toPrimitive` threw), the pending exception is cleared and
-    /// the partial message is used rather than an error about an error.
-    fn error_message(&self, args: Arguments<'_>) -> Vec<u8> {
+    /// `args` formatted as UTF-8, or `None` when formatting threw a JS exception (left pending).
+    fn error_message(&self, args: Arguments<'_>) -> Option<Vec<u8>> {
         let mut buf: Vec<u8> = Vec::with_capacity(2048);
         use core::fmt::Write;
-        if write!(WriteVec(&mut buf), "{}", args).is_err() {
-            let _ = self.clear_exception_except_termination();
+        let _ = write!(WriteVec(&mut buf), "{}", args);
+        if self.has_exception() {
+            return None;
         }
-        buf
+        Some(buf)
     }
 
     /// An argument-free ASCII literal is atomized (`String::static_`);
-    /// anything else is formatted/copied once.
+    /// anything else is formatted/copied once. Empty when formatting threw.
     fn error_instance(&self, kind: ErrorKind, args: Arguments<'_>) -> JSValue {
         match args.as_str() {
             Some(_) => error_instance(&BunString::create_format(args), self, kind),
-            None => error_instance(
-                &StringView::borrow_utf8(&self.error_message(args)),
-                self,
-                kind,
-            ),
+            None => match self.error_message(args) {
+                Some(message) => error_instance(&StringView::borrow_utf8(&message), self, kind),
+                None => JSValue::ZERO,
+            },
         }
     }
 
@@ -779,9 +777,10 @@ impl JSGlobalObject {
             Some(lit) => {
                 EncodedSlice::from_bytes(lit.as_bytes()).to_dom_exception_instance(self, code)
             }
-            None => {
-                EncodedSlice::utf8(&self.error_message(args)).to_dom_exception_instance(self, code)
-            }
+            None => match self.error_message(args) {
+                Some(message) => EncodedSlice::utf8(&message).to_dom_exception_instance(self, code),
+                None => JSValue::ZERO,
+            },
         }
     }
 

@@ -1426,6 +1426,10 @@ impl Expect {
             matcher_name,
             result.to_fmt(&mut formatter),
         ));
+        // Empty means formatting `result` ran user JS that threw; that exception is pending.
+        if err.is_empty() {
+            return JsError::Thrown;
+        }
         match bun_core::String::static_("InvalidMatcherError").to_js(global_this) {
             Ok(name) => err.put(global_this, b"name", name),
             // An exception (e.g. OOM) is already pending from to_js; propagate it
@@ -2872,8 +2876,16 @@ impl ExpectMatcherUtils {
         } else {
             bun_core::pretty_fmt!("<d>(<r><green>expected<r><d>)<r>", false)
         };
-        let buf = format!("{head}{not}{matcher_name}{expected_hint}\n\n{diff_formatter}\n");
-        bun_string_jsc::create_utf8_for_js(global_this, buf.as_bytes())
+        // format! panics when a Display impl returns Err, which DiffFormatter does when user JS throws.
+        let mut buf: Vec<u8> = Vec::with_capacity(256);
+        let _ = core::fmt::Write::write_fmt(
+            &mut bun_core::fmt::VecWriter(&mut buf),
+            format_args!("{head}{not}{matcher_name}{expected_hint}\n\n{diff_formatter}\n"),
+        );
+        if global_this.has_exception() {
+            return Err(JsError::Thrown);
+        }
+        bun_string_jsc::create_utf8_for_js(global_this, &buf)
     }
 }
 

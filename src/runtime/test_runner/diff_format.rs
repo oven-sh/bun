@@ -44,23 +44,32 @@ impl<'a> fmt::Display for DiffFormatter<'a> {
                 flush: false,
                 quote_strings: true,
             };
-            let _ = JestPrettyFormat::format(
+            // Err means a JS exception is pending; do not re-enter JSC with it live.
+            if JestPrettyFormat::format(
                 MessageLevel::Debug,
                 global_this,
                 core::slice::from_ref(&received),
                 1,
                 &mut received_buf,
                 fmt_options,
-            ); // TODO:
+            )
+            .is_err()
+            {
+                return Err(fmt::Error);
+            }
 
-            let _ = JestPrettyFormat::format(
+            if JestPrettyFormat::format(
                 MessageLevel::Debug,
                 global_this,
                 core::slice::from_ref(&expected),
                 1,
                 &mut expected_buf,
                 fmt_options,
-            ); // TODO:
+            )
+            .is_err()
+            {
+                return Err(fmt::Error);
+            }
         }
 
         let mut received_slice: &[u8] = received_buf.as_slice();

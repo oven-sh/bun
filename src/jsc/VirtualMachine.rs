@@ -4674,26 +4674,26 @@ impl VirtualMachine {
             }
         }
 
-        let specifier_utf8 = specifier.to_utf8();
-        let source_utf8 = source.to_utf8();
-
         // A `file:` source (the parent URL in two-arg `import.meta.resolve`)
         // must become a filesystem path before the resolver walks
         // `node_modules` from it: percent escapes decode, and on Windows
-        // `file:///C:/x` becomes `C:\x`.
+        // `file:///C:/x` becomes `C:\x`. If the URL does not parse,
+        // `normalize_source` below strips the prefix as before.
         let decoded_source;
-        let decoded_source_utf8;
-        let normalized_source: &[u8] = if source_utf8.slice().starts_with(b"file:/") {
+        let resolve_source = if source.starts_with_ascii(b"file:/") {
             decoded_source = bun_url::path_from_file_url(source);
             if decoded_source.is_dead() {
-                normalize_source(source_utf8.slice())
+                source
             } else {
-                decoded_source_utf8 = decoded_source.to_utf8();
-                decoded_source_utf8.slice()
+                &decoded_source
             }
         } else {
-            source_utf8.slice()
+            source
         };
+
+        let specifier_utf8 = specifier.to_utf8();
+        let source_utf8 = resolve_source.to_utf8();
+        let normalized_source = normalize_source(source_utf8.slice());
 
         if jsc_vm.plugin_runner.is_some() {
             use bun_bundler::transpiler::PluginRunner;

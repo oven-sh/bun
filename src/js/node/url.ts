@@ -1216,7 +1216,9 @@ function pathToFileURL(filepath: string, options?: { windows?: boolean } | null)
   const filePathLast = filepath.charCodeAt(filepath.length - 1);
   if (
     (filePathLast === Char.FORWARD_SLASH || (windows && filePathLast === Char.BACKWARD_SLASH)) &&
-    resolved[resolved.length - 1] !== path.sep
+    // The selected resolver's separator, not the host's:
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/url.js (pathToFileURL)
+    resolved[resolved.length - 1] !== (windows ? "\\" : "/")
   ) {
     resolved += "/";
   }

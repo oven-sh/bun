@@ -228,6 +228,8 @@ function ok(...args: unknown[]): void {
   innerOk(ok, args.length, ...args);
 }
 
+// A distinct function object, verbatim node v26.3.0 lib/assert.js:196: since
+// node 25's Assert-class refactor, `assert.ok !== assert` (see assert.spec.ts).
 Assert.prototype.ok = function ok(...args) {
   innerOk(ok, args.length, ...args);
 };

@@ -1986,6 +1986,25 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         self.listener = None;
         let global = self.global_this();
 
+        #[cfg(not(windows))]
+        if let Some(fd) = self.config.listen_fd {
+            let errno = bun_sys::get_errno(-1i32);
+            let err = jsc::SystemError::from(
+                bun_sys::Error::from_code(
+                    if errno != bun_sys::E::SUCCESS {
+                        errno
+                    } else {
+                        bun_sys::E::EBADF
+                    },
+                    bun_sys::Tag::listen,
+                )
+                .with_fd(bun_sys::Fd::from_native(fd))
+                .to_system_error(),
+            );
+            let _ = global.throw_value(err.to_error_instance(global));
+            return;
+        }
+
         let error_instance = match &self.config.address {
             server_config::Address::Tcp {
                 port,
@@ -3049,29 +3068,34 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         enum Addr {
             Tcp { port: u16, host: *const c_char },
             Unix { ptr: *const u8, len: usize },
+            Fd(i32),
         }
         let (addr, tcp, options) = {
             let cfg = &this_ref.get().config;
-            let addr = match &cfg.address {
-                server_config::Address::Tcp { port, hostname } => {
-                    let mut host: *const c_char = core::ptr::null();
-                    if let Some(existing) = hostname.as_deref() {
-                        let bytes = existing.as_bytes();
-                        if bytes.len() > 2 && bytes[0] == b'[' {
-                            // strip "[" and "]" from IPv6 literal
-                            host = stripped_hostname
-                                .insert(bun_core::ZBox::from_bytes(&bytes[1..bytes.len() - 1]))
-                                .as_ptr();
-                        } else {
-                            host = existing.as_ptr();
+            let addr = if let Some(fd) = cfg.listen_fd {
+                Addr::Fd(fd)
+            } else {
+                match &cfg.address {
+                    server_config::Address::Tcp { port, hostname } => {
+                        let mut host: *const c_char = core::ptr::null();
+                        if let Some(existing) = hostname.as_deref() {
+                            let bytes = existing.as_bytes();
+                            if bytes.len() > 2 && bytes[0] == b'[' {
+                                // strip "[" and "]" from IPv6 literal
+                                host = stripped_hostname
+                                    .insert(bun_core::ZBox::from_bytes(&bytes[1..bytes.len() - 1]))
+                                    .as_ptr();
+                            } else {
+                                host = existing.as_ptr();
+                            }
                         }
+                        Addr::Tcp { port: *port, host }
                     }
-                    Addr::Tcp { port: *port, host }
+                    server_config::Address::Unix(unix) => Addr::Unix {
+                        ptr: unix.as_ptr().cast(),
+                        len: unix.as_bytes().len(),
+                    },
                 }
-                server_config::Address::Unix(unix) => Addr::Unix {
-                    ptr: unix.as_ptr().cast(),
-                    len: unix.as_bytes().len(),
-                },
             };
             (addr, cfg.http1 || cfg.http2, cfg.get_usockets_options())
         };
@@ -3190,6 +3214,32 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         z,
                         options,
                     );
+                }
+            }
+            Addr::Fd(fd) => {
+                #[cfg(windows)]
+                {
+                    let _ = (fd, http1);
+                    let _ = global.throw_invalid_arguments(format_args!(
+                        "listening on a file descriptor is not supported on Windows"
+                    ));
+                }
+                #[cfg(not(windows))]
+                if http1 {
+                    // SAFETY: app is a live uws handle owned by this server. No
+                    // `&*this` is live across this call.
+                    unsafe {
+                        (*app).listen_fd(
+                            Some(trampoline::on_listen::<SSL, DEBUG>),
+                            this.cast::<c_void>(),
+                            fd,
+                            options,
+                        );
+                    }
+                } else {
+                    let _ = global.throw_invalid_arguments(format_args!(
+                        "fd cannot be used with an http3-only server"
+                    ));
                 }
             }
         }

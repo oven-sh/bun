@@ -4,7 +4,7 @@
 #include "WebCoreJSBuiltins.h"
 #include "ZigGlobalObject.h"
 
-extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue IPCSerialize(Zig::GlobalObject* global, JSC::EncodedJSValue message, JSC::EncodedJSValue handle, JSC::EncodedJSValue options)
+extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue IPCSerialize(Zig::GlobalObject* global, JSC::EncodedJSValue message, JSC::EncodedJSValue handle, JSC::EncodedJSValue options, JSC::EncodedJSValue target)
 {
     auto& vm = JSC::getVM(global);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -15,6 +15,7 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue IPCSerialize(Zig::G
     args.append(JSC::JSValue::decode(message));
     args.append(JSC::JSValue::decode(handle));
     args.append(JSC::JSValue::decode(options));
+    args.append(JSC::JSValue::decode(target));
 
     auto result = JSC::call(global, serializeFunction, callData, JSC::jsUndefined(), args);
     RETURN_IF_EXCEPTION(scope, {});

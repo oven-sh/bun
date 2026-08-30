@@ -114,7 +114,22 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
           readdirCode: errcode(() => fs.readdirSync(cfg)),
         };
 
-        console.log(JSON.stringify({ fileLoader, client, enoent, missing, singleFile }));
+        // Bun.Glob over the embedded tree (issue #40932)
+        const rootPosix = root.split(path.sep).join("/");
+        const glob = {
+          scanSync: [...new Bun.Glob("*").scanSync(root)].sort(),
+          scanAsync: (await Array.fromAsync(new Bun.Glob("*").scan(root))).sort(),
+          recursive: [...new Bun.Glob("**/*").scanSync(root)].sort(),
+          onlyFilesFalse: [...new Bun.Glob("*").scanSync({ cwd: root, onlyFiles: false })].sort(),
+          nestedWildcard: [...new Bun.Glob("_app/immutable/*.css").scanSync(root)].sort(),
+          literalFile: [...new Bun.Glob("_app/immutable/app.css").scanSync(root)].sort(),
+          absoluteOpt: [...new Bun.Glob("*").scanSync({ cwd: root, absolute: true })].sort(),
+          absolutePattern: [...new Bun.Glob(rootPosix + "/*").scanSync({})].sort(),
+          enoentCode: errcode(() => [...new Bun.Glob("*").scanSync(missing)]),
+          enotdirCode: errcode(() => [...new Bun.Glob("*").scanSync(indexHtml)]),
+        };
+
+        console.log(JSON.stringify({ fileLoader, client, enoent, missing, singleFile, glob }));
       `,
         "data.txt": "hello",
         "client/index.html": "<!doctype html><h1>hi</h1>",
@@ -182,6 +197,27 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
         enoent: { code: "ENOENT", path: r.missing, exists: false },
         missing: expect.stringMatching(/[/\\]root[/\\]does-not-exist$/),
         singleFile: { exists: true, content: `{"ok":true}`, readdirCode: "ENOTDIR" },
+        glob: {
+          scanSync: ["empty.txt", "favicon.svg", "index.html"],
+          scanAsync: ["empty.txt", "favicon.svg", "index.html"],
+          recursive: [
+            join("_app", "immutable", "app.css"),
+            join("_app", "immutable", "chunks", "entry.js"),
+            "empty.txt",
+            "favicon.svg",
+            "index.html",
+          ].sort(),
+          onlyFilesFalse: ["_app", "empty.txt", "favicon.svg", "index.html"],
+          nestedWildcard: [join("_app", "immutable", "app.css")],
+          literalFile: [join("_app", "immutable", "app.css")],
+          absoluteOpt: ["empty.txt", "favicon.svg", "index.html"].map(n => join(r.client.root, n)).sort(),
+          // An absolute pattern keeps its prefix verbatim; entries append with the platform separator.
+          absolutePattern: ["empty.txt", "favicon.svg", "index.html"]
+            .map(n => r.client.root.replaceAll(sep, "/") + sep + n)
+            .sort(),
+          enoentCode: "ENOENT",
+          enotdirCode: "ENOTDIR",
+        },
       });
       // recursive uses the platform path separator (same as Node's real-fs recursive readdir)
       expect(r.client.recursive.join("\n")).not.toContain(sep === "/" ? "\\" : "/");

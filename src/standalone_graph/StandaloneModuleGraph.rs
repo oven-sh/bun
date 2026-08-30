@@ -227,6 +227,20 @@ impl StandaloneModuleGraph {
         self.dirs.contains_key(name)
     }
 
+    /// The stored `dirs` key for `name` (normalized, posix-separated, no
+    /// trailing `/`), or `None` when `name` is not an embedded directory.
+    /// Through `get_ref()` the key borrow is `'static` (the graph is the
+    /// process-lifetime singleton).
+    pub fn dir_key(&self, name: &[u8]) -> Option<&[u8]> {
+        if !is_bun_standalone_file_path(name) {
+            return None;
+        }
+        let mut buf = PathBuffer::uninit();
+        let name = Self::normalize_dir_path(name, &mut buf);
+        let index = self.dirs.get_index(name)?;
+        Some(&self.dirs.keys()[index])
+    }
+
     /// `(entry, is_dir)`; `entry` is the basename, or the `name`-relative path when `recursive`.
     pub fn readdir(&self, name: &[u8], recursive: bool) -> Option<Vec<(Box<[u8]>, bool)>> {
         if !is_bun_standalone_file_path(name) {

@@ -992,9 +992,10 @@ function getLinuxBuildImageSteps(platform, options) {
     cancel_on_build_failing: isMergeQueue(),
     // Install the service from the machine's own copy of agent.mjs rather
     // than this checkout's, so the unit outlives the build directory.
+    // ($$ is a literal $ after pipeline-upload interpolation.)
     command: [
       `sh ./scripts/bootstrap.sh ${bootstrapArgs.join(" ")}`,
-      "node /var/lib/buildkite-agent/agent.mjs install",
+      `$$([ "$$(id -u)" = 0 ] || echo sudo -n) node /var/lib/buildkite-agent/agent.mjs install`,
     ],
     timeout_in_minutes: 3 * 60,
   };
@@ -1009,7 +1010,6 @@ function getLinuxBuildImageSteps(platform, options) {
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
     command: `node ./scripts/machine.mjs wait-image --name=${imageName} --build=${getBuildNumber()}`,
-    // Snapshotting the 100 GB build-host volume can take most of an hour.
     timeout_in_minutes: 120,
   };
 

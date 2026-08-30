@@ -52,12 +52,16 @@ execute_sudo() {
 execute_as_user() {
 	sh="$(require sh)"
 
-	if [ "$sudo" = "1" ]; then
-		# root drops to $user directly; sudo/doas may not exist or permit root
-		# (stock Alpine ships doas with no rule for root).
-		execute su -l -s "$sh" -c "$*" "$user"
-	elif [ "$can_sudo" = "1" ]; then
-		execute sudo -n -u "$user" "$sh" -lc "$*"
+	if [ "$sudo" = "1" ] || [ "$can_sudo" = "1" ]; then
+		if [ -f "$(which sudo)" ]; then
+			execute sudo -n -u "$user" "$sh" -lc "$*"
+		elif [ -f "$(which doas)" ]; then
+			execute doas -u "$user" "$sh" -lc "$*"
+		elif [ -f "$(which su)" ]; then
+			execute su -s "$sh" "$user" -lc "$*"
+		else
+			execute "$sh" -lc "$*"
+		fi
 	else
 		execute "$sh" -lc "$*"
 	fi
@@ -1725,14 +1729,16 @@ install_docker() {
 		execute_sudo "$systemctl" enable docker
 	fi
 	if [ "$os" = "linux" ] && [ "$distro" = "alpine" ]; then
-		execute_sudo rc-update add docker default
-		execute_sudo rc-service docker start
+		execute doas rc-update add docker default
+		execute doas rc-service docker start
 	fi
 
 	getent="$(which getent)"
 	if [ -n "$("$getent" group docker)" ]; then
-		# /usr/sbin is not on a non-root PATH on Debian/Ubuntu.
-		usermod="$(which usermod || ls /usr/sbin/usermod 2>/dev/null)"
+		usermod="$(which usermod)"
+		if [ -z "$usermod" ]; then
+			usermod="$(sudo which usermod)"
+		fi
 		if [ -f "$usermod" ]; then
 			execute_sudo "$usermod" -aG docker "$user"
 		fi

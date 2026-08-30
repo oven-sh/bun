@@ -1,7 +1,13 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isArm64, isLinux, isMacOS, isMusl, isPosix, isWindows, tempDir } from "harness";
-import { chmodSync, closeSync, cpSync, existsSync, openSync, readSync } from "node:fs";
+import { chmodSync, closeSync, cpSync, existsSync, openSync, readSync, readdirSync } from "node:fs";
 import { join } from "path";
+
+const os = isMacOS ? "darwin" : isLinux ? "linux" : isWindows ? "windows" : "unknown";
+const arch = isArm64 ? "aarch64" : "x64";
+const musl = isMusl ? "-musl" : "";
+// The platform of the bun running the tests. It is also how bun spells the target back in messages.
+const currentPlatformTarget = `bun-${os}-${arch}${musl}`;
 
 describe("Bun.build compile", () => {
   test("compile with current platform target string", async () => {
@@ -9,17 +15,13 @@ describe("Bun.build compile", () => {
       "app.js": `console.log("Cross-compiled app");`,
     });
 
-    const os = isMacOS ? "darwin" : isLinux ? "linux" : isWindows ? "windows" : "unknown";
-    const arch = isArm64 ? "aarch64" : "x64";
-    const musl = isMusl ? "-musl" : "";
-    const target = `bun-${os}-${arch}${musl}` as any;
     const outdir = join(dir + "", "out");
 
     const result = await Bun.build({
       entrypoints: [join(dir + "", "app.js")],
       outdir,
       compile: {
-        target: target,
+        target: currentPlatformTarget as any,
         outfile: "app-cross",
       },
     });
@@ -195,6 +197,110 @@ server.close();`,
         },
       }),
     ).toThrowErrorMatchingInlineSnapshot(`"Unknown compile target: bun-invalid-platform"`);
+  });
+
+  describe("version token in the target", () => {
+    // Any target other than the running bun is downloaded. Every build below is pointed at a local
+    // server that 404s, so a target that gets past the parser fails right away, offline, with an
+    // error that spells out the target the way it was parsed.
+    let server: ReturnType<typeof Bun.serve>;
+    beforeAll(() => {
+      server = Bun.serve({ port: 0, fetch: () => new Response("", { status: 404 }) });
+    });
+    afterAll(() => server.stop(true));
+
+    async function run(dir: string, args: string[]) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), ...args],
+        env: {
+          ...bunEnv,
+          BUN_COMPILE_TARGET_TARBALL_URL: String(server.url),
+          BUN_INSTALL_CACHE_DIR: join(dir, "cache"),
+        },
+        cwd: dir,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode, files: readdirSync(dir).sort() };
+    }
+
+    async function buildFromCli(target: string) {
+      using dir = tempDir("build-compile-version-cli", {
+        "app.js": `console.log("hi");`,
+      });
+      return await run(String(dir), ["build", "--compile", `--target=${target}`, "--outfile=app", "app.js"]);
+    }
+
+    // Bun.build() runs in a child process too so that the download settings above apply to it.
+    // Prints what Bun.build() returned, or the message it threw.
+    async function buildFromApi(target: string) {
+      using dir = tempDir("build-compile-version-api", {
+        "app.js": `console.log("hi");`,
+        "api.js": `
+          try {
+            const result = await Bun.build({
+              entrypoints: ["./app.js"],
+              throw: false,
+              compile: { target: process.argv[2], outfile: "./app" },
+            });
+            console.log(JSON.stringify({ success: result.success, logs: result.logs.map(log => log.message) }));
+          } catch (error) {
+            console.log(JSON.stringify({ threw: error.message }));
+          }
+        `,
+      });
+      const { stdout, stderr, exitCode, files } = await run(String(dir), ["api.js", target]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+      return { result: JSON.parse(stdout), files };
+    }
+
+    test("a version other than the running one is downloaded as written", async () => {
+      const target = `${currentPlatformTarget}-v1.2.3`;
+      const message = `Target platform '${target}' is not available for download. Check if this version of Bun supports this target.`;
+
+      const cli = await buildFromCli(target);
+      expect(cli.stderr).toContain(message);
+      expect(cli.files).toEqual(["app.js"]);
+      expect(cli.exitCode).toBe(1);
+
+      const api = await buildFromApi(target);
+      expect(api.result).toEqual({ success: false, logs: [message] });
+      expect(api.files).toEqual(["api.js", "app.js"]);
+    });
+
+    // These used to get through. A token Semver could not parse at all was dropped, so the first
+    // five built for the running bun; trailing text and an overflowing component were accepted as
+    // whatever Semver made of them, so the next two tried to download v1.2.3 and v1.0.7.
+    const rejectedTargets = [
+      `${currentPlatformTarget}-v1.2.3.4.5`,
+      `${currentPlatformTarget}-v1.2.3.`,
+      `${currentPlatformTarget}-v1..2`,
+      `${currentPlatformTarget}-v0.a`,
+      "bun-v1.2.3.4.5",
+      `${currentPlatformTarget}-v1.2.3rc1`,
+      `${currentPlatformTarget}-v1.99999999999999999999.7`,
+      // The error is about the version no matter which other tokens are present.
+      "bun-musl-v1.2.3.4.5",
+      // Incomplete versions were already rejected.
+      `${currentPlatformTarget}-v1.2`,
+      "bun-v1.",
+    ];
+
+    test.each(rejectedTargets)("bun build --compile rejects --target=%s", async target => {
+      const { stdout, stderr, exitCode, files } = await buildFromCli(target);
+      expect(stderr).toContain("error: Please pass a complete version number to --target");
+      expect(stdout).toBe("");
+      expect(files).toEqual(["app.js"]);
+      expect(exitCode).toBe(1);
+    });
+
+    test.each(rejectedTargets)("Bun.build rejects %s", async target => {
+      const { result, files } = await buildFromApi(target);
+      expect(result).toEqual({ threw: `Unknown compile target: ${target}` });
+      expect(files).toEqual(["api.js", "app.js"]);
+    });
   });
 
   // One compile per test: each compile copies the whole bun binary (~1 GB under debug+ASAN),

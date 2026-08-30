@@ -73,7 +73,7 @@ describe.concurrent("security scanner workspaces", () => {
     await using dir = tempDir("scanner-workspaces", files);
 
     await Bun.write(
-      join(dir, "bunfig.toml"),
+      join(String(dir), "bunfig.toml"),
       Bun.TOML.stringify({
         install: {
           cache: { disable: true },
@@ -151,7 +151,7 @@ describe.concurrent("security scanner workspaces", () => {
     await using dir = tempDir("scanner-workspaces-hoisted", files);
 
     await Bun.write(
-      join(dir, "bunfig.toml"),
+      join(String(dir), "bunfig.toml"),
       Bun.TOML.stringify({
         install: {
           cache: { disable: true },
@@ -228,7 +228,7 @@ describe.concurrent("security scanner workspaces", () => {
     await using dir = tempDir("scanner-workspaces-isolated", files);
 
     await Bun.write(
-      join(dir, "bunfig.toml"),
+      join(String(dir), "bunfig.toml"),
       Bun.TOML.stringify({
         install: {
           cache: { disable: true },
@@ -322,10 +322,10 @@ describe.concurrent("security scanner workspaces", () => {
         ]);
         expect(stdoutText + stderrText).toContain("Security scanner installed successfully");
         expect(exitCode).toBe(0);
-        expect(await Bun.file(join(dir, ...leftPad, "package.json")).exists()).toBe(true);
+        expect(await Bun.file(join(String(dir), ...leftPad, "package.json")).exists()).toBe(true);
         expect(
           await Bun.file(
-            join(dir, "node_modules", ".bun", "left-pad@1.3.0", "node_modules", "left-pad", "package.json"),
+            join(String(dir), "node_modules", ".bun", "left-pad@1.3.0", "node_modules", "left-pad", "package.json"),
           ).exists(),
         ).toBe(linker === "isolated");
       }
@@ -348,13 +348,13 @@ describe.concurrent("security scanner workspaces", () => {
         ]);
         expect(stdoutText + stderrText).toContain("Security scanner installed successfully");
         expect(exitCode).toBe(0);
-        expect(await Bun.file(join(dir, ...leftPad, "package.json")).exists()).toBe(true);
+        expect(await Bun.file(join(String(dir), ...leftPad, "package.json")).exists()).toBe(true);
         expect(
           await Bun.file(
-            join(dir, "node_modules", ".bun", "left-pad@1.3.0", "node_modules", "left-pad", "package.json"),
+            join(String(dir), "node_modules", ".bun", "left-pad@1.3.0", "node_modules", "left-pad", "package.json"),
           ).exists(),
         ).toBe(linker === "isolated");
-        const app1 = await Bun.file(join(dir, "packages", "app1", "package.json")).json();
+        const app1 = await Bun.file(join(String(dir), "packages", "app1", "package.json")).json();
         expect(app1.dependencies).toHaveProperty("is-odd");
       }
     },

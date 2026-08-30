@@ -92,7 +92,7 @@ test.concurrent("workspace devDependencies should take priority over peerDepende
   expect(stderr).not.toContain("http");
 
   // Check that the lockfile was created correctly
-  const lockfilePath = join(dir, "bun.lock");
+  const lockfilePath = join(String(dir), "bun.lock");
   expect(await Bun.file(lockfilePath).exists()).toBe(true);
 
   // Verify that version 2.0.0 (devDependency) was linked
@@ -168,7 +168,7 @@ test.concurrent("devDependencies and peerDependencies with different versions sh
   expect(exitCode).toBe(0);
 
   // Check that the lockfile was created correctly
-  const lockfilePath = join(dir, "bun.lock");
+  const lockfilePath = join(String(dir), "bun.lock");
   expect(await Bun.file(lockfilePath).exists()).toBe(true);
 });
 
@@ -215,7 +215,7 @@ test.concurrent("dependency behavior comparison prioritizes devDependencies", as
   expect(exitCode).toBe(0);
 
   // Check that the lockfile was created correctly
-  const lockfilePath = join(dir, "bun.lock");
+  const lockfilePath = join(String(dir), "bun.lock");
   expect(await Bun.file(lockfilePath).exists()).toBe(true);
 });
 
@@ -304,7 +304,7 @@ test.concurrent("Next.js monorepo scenario should not make unnecessary network r
   expect(stderr).not.toContain("http");
 
   // Check that the lockfile was created correctly
-  const lockfilePath = join(dir, "bun.lock");
+  const lockfilePath = join(String(dir), "bun.lock");
   expect(await Bun.file(lockfilePath).exists()).toBe(true);
 
   // Verify that version 15.0.0-canary.119 (devDependency) was used

@@ -42,5 +42,5 @@ test.concurrent("does not segfault", async () => {
       },
     }),
   });
-  expect(await bunRun(join(dir, "dir/a.ts"))).toSpawn();
+  expect(await bunRun(join(String(dir), "dir/a.ts"))).toSpawn();
 });

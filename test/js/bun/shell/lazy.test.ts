@@ -8,7 +8,7 @@ test("$ is lazy", async () => {
   await using base = tempDir("bun-lazy-test", {
     "bun-lazy": "789",
   });
-  const path = join(base, "bun-lazy");
+  const path = join(String(base), "bun-lazy");
   rmSync(path, { force: true, recursive: true });
   const pending = $`echo 123 > ${path}`;
   expect(async () => await Bun.file(path).text()).toThrow();

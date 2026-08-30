@@ -101,8 +101,8 @@ test("serve html", async () => {
     port,
     hostname,
   } = await waitForServer(dir, {
-    "/": join(dir, "index.html"),
-    "/dashboard": join(dir, "dashboard.html"),
+    "/": join(String(dir), "index.html"),
+    "/dashboard": join(String(dir), "dashboard.html"),
   });
   await using subprocess = subprocess1;
 
@@ -405,7 +405,7 @@ export default p;
       port,
       hostname,
     } = await waitForServer(dir, {
-      "/": join(dir, "index.html"),
+      "/": join(String(dir), "index.html"),
     });
     await using subprocess = subprocess1;
     const response = await fetch(`http://${hostname}:${port}/`);
@@ -459,7 +459,7 @@ plugins = []`,
       port,
       hostname,
     } = await waitForServer(dir, {
-      "/": join(dir, "index.html"),
+      "/": join(String(dir), "index.html"),
     });
     await using subprocess = subprocess1;
     const response = await fetch(`http://${hostname}:${port}/`);
@@ -535,16 +535,16 @@ export default {
       port,
       hostname,
     } = await waitForServer(dir, {
-      "/": join(dir, "index.html"),
-      "/about": join(dir, "about.html"),
-      "/contact": join(dir, "contact.html"),
-      "/products": join(dir, "products.html"),
-      "/services": join(dir, "services.html"),
-      "/blog": join(dir, "blog.html"),
-      "/team": join(dir, "team.html"),
-      "/careers": join(dir, "careers.html"),
-      "/faq": join(dir, "faq.html"),
-      "/ooga": join(dir, "ooga.html"),
+      "/": join(String(dir), "index.html"),
+      "/about": join(String(dir), "about.html"),
+      "/contact": join(String(dir), "contact.html"),
+      "/products": join(String(dir), "products.html"),
+      "/services": join(String(dir), "services.html"),
+      "/blog": join(String(dir), "blog.html"),
+      "/team": join(String(dir), "team.html"),
+      "/careers": join(String(dir), "careers.html"),
+      "/faq": join(String(dir), "faq.html"),
+      "/ooga": join(String(dir), "ooga.html"),
     });
     console.log("done waiting for server");
     await using subprocess = subprocess1;
@@ -640,7 +640,7 @@ test("serve html error handling", async () => {
     `,
   });
   async function getServers() {
-    const path = join(dir, "index.html");
+    const path = join(String(dir), "index.html");
 
     const { default: html } = await import(path);
     let servers: Server[] = [];
@@ -1137,7 +1137,7 @@ test("wildcard static routes", async () => {
       throw new Error("Error on purpose");
     `,
   });
-  const { default: html } = await import(join(dir, "index.html"));
+  const { default: html } = await import(join(String(dir), "index.html"));
   for (let development of [true, false]) {
     using server = Bun.serve({
       port: 0,

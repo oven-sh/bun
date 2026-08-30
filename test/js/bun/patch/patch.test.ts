@@ -108,8 +108,8 @@ describe("apply", () => {
       b: {},
     });
 
-    const afolder = join(tempdir, "a");
-    const bfolder = join(tempdir, "b");
+    const afolder = join(String(tempdir), "a");
+    const bfolder = join(String(tempdir), "b");
 
     const patchfile = await makeDiff(afolder, bfolder, tempdir);
     expect(patchfile).toBe("");
@@ -128,8 +128,8 @@ describe("apply", () => {
       };
       await using tempdir = tempDir("patch-test", files);
 
-      const afolder = join(tempdir, "a");
-      const bfolder = join(tempdir, "b");
+      const afolder = join(String(tempdir), "a");
+      const bfolder = join(String(tempdir), "b");
 
       console.log("makeDiff args", afolder, bfolder);
       const patchfile = await makeDiff(afolder, bfolder, tempdir);
@@ -153,8 +153,8 @@ describe("apply", () => {
       };
       await using tempdir = tempDir("patch-test", files);
 
-      const afolder = join(tempdir, "a");
-      const bfolder = join(tempdir, "b");
+      const afolder = join(String(tempdir), "a");
+      const bfolder = join(String(tempdir), "b");
 
       const patchfile = await makeDiff(afolder, bfolder, tempdir);
 
@@ -170,8 +170,8 @@ describe("apply", () => {
       };
       await using tempdir = tempDir("patch-test", files);
 
-      const afolder = join(tempdir, "a");
-      const bfolder = join(tempdir, "b");
+      const afolder = join(String(tempdir), "a");
+      const bfolder = join(String(tempdir), "b");
 
       const patchfile = await makeDiff(afolder, bfolder, tempdir);
 
@@ -189,8 +189,8 @@ describe("apply", () => {
       };
       await using tempdir = tempDir("patch-test", files);
 
-      const afolder = join(tempdir, "a");
-      const bfolder = join(tempdir, "b");
+      const afolder = join(String(tempdir), "a");
+      const bfolder = join(String(tempdir), "b");
 
       const patchfile = await makeDiff(afolder, bfolder, tempdir);
 
@@ -275,8 +275,8 @@ describe("apply", () => {
       };
       await using tempdir = tempDir("patch-test", files);
 
-      const afolder = join(tempdir, "a");
-      const bfolder = join(tempdir, "b");
+      const afolder = join(String(tempdir), "a");
+      const bfolder = join(String(tempdir), "b");
 
       const patchfile = await makeDiff(afolder, bfolder, tempdir);
 
@@ -317,8 +317,8 @@ describe("apply", () => {
 
       await using tempdir = tempDir("patch-test", files);
 
-      const afolder = join(tempdir, "a");
-      const bfolder = join(tempdir, "b");
+      const afolder = join(String(tempdir), "a");
+      const bfolder = join(String(tempdir), "b");
 
       await fs.chmod(join(bfolder, "hi.txt"), 0o755);
 
@@ -342,8 +342,8 @@ describe("apply", () => {
         "b/hello.txt": bfile,
       });
 
-      const afolder = join(tempdir, "a");
-      const bfolder = join(tempdir, "b");
+      const afolder = join(String(tempdir), "a");
+      const bfolder = join(String(tempdir), "b");
 
       const patchfile = await makeDiff(afolder, bfolder, tempdir);
 
@@ -361,8 +361,8 @@ describe("apply", () => {
         "b/hello.txt": bfile,
       });
 
-      const afolder = join(tempdir, "a");
-      const bfolder = join(tempdir, "b");
+      const afolder = join(String(tempdir), "a");
+      const bfolder = join(String(tempdir), "b");
 
       const patchfile = await makeDiff(afolder, bfolder, tempdir);
 
@@ -380,8 +380,8 @@ describe("apply", () => {
         "b/hello.txt": bfile,
       });
 
-      const afolder = join(tempdir, "a");
-      const bfolder = join(tempdir, "b");
+      const afolder = join(String(tempdir), "a");
+      const bfolder = join(String(tempdir), "b");
 
       const patchfile = await makeDiff(afolder, bfolder, tempdir);
 
@@ -399,8 +399,8 @@ describe("apply", () => {
         "b/hello.txt": bfile,
       });
 
-      const afolder = join(tempdir, "a");
-      const bfolder = join(tempdir, "b");
+      const afolder = join(String(tempdir), "a");
+      const bfolder = join(String(tempdir), "b");
 
       const patchfile = await makeDiff(afolder, bfolder, tempdir);
 
@@ -460,8 +460,8 @@ describe("apply", () => {
         "b/hello.txt": bfile,
       });
 
-      const afolder = join(tempdir, "a");
-      const bfolder = join(tempdir, "b");
+      const afolder = join(String(tempdir), "a");
+      const bfolder = join(String(tempdir), "b");
 
       const patchfile = await makeDiff(afolder, bfolder, tempdir);
 
@@ -521,8 +521,8 @@ describe("apply", () => {
         "b/hello.txt": bfile,
       });
 
-      const afolder = join(tempdir, "a");
-      const bfolder = join(tempdir, "b");
+      const afolder = join(String(tempdir), "a");
+      const bfolder = join(String(tempdir), "b");
 
       const patchfile = await makeDiff(afolder, bfolder, tempdir);
 

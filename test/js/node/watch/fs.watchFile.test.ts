@@ -368,7 +368,7 @@ describe("fs.watchFile", () => {
     await using dir = tempDir("watchfile-throw", {
       ".keep": "",
     });
-    const target = path.join(dir, "does-not-exist.txt");
+    const target = path.join(String(dir), "does-not-exist.txt");
 
     const fixture = /* js */ `
       const fs = require("fs");

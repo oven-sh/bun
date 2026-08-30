@@ -1683,7 +1683,7 @@ it("issue#7147", () => {
 
 it("should close with WAL enabled", () => {
   using dir = tempDir("sqlite-wal-test", { "empty.txt": "" });
-  const file = path.join(dir, "my.db");
+  const file = path.join(String(dir), "my.db");
   const db = new Database(file);
   db.exec("PRAGMA journal_mode = WAL");
   db.fileControl(constants.SQLITE_FCNTL_PERSIST_WAL, 0);
@@ -2468,7 +2468,7 @@ it("run() reports a closed database when a bound parameter's getter closes it", 
 // as-is and overflowed.
 it("fileControl rejects result TypedArrays smaller than 8 bytes", () => {
   using dir = tempDir("sqlite-fcntl-bounds", { "empty.txt": "" });
-  const db = new Database(path.join(dir, "my.db"));
+  const db = new Database(path.join(String(dir), "my.db"));
 
   expect(() => db.fileControl(constants.SQLITE_FCNTL_PERSIST_WAL, new Uint8Array(1))).toThrow(
     "TypedArray must be at least 8 bytes",
@@ -2716,11 +2716,11 @@ it("exit-time WAL checkpoint runs even with a never-finalized prepared statement
   });
   const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stdout).toBe("true\n");
-  const wal = path.join(dir, "exit.db-wal");
+  const wal = path.join(String(dir), "exit.db-wal");
   // TRUNCATE moved every frame into exit.db (or the sidecar was unlinked
   // by a full close). Either way, no un-checkpointed data is stranded.
   expect(existsSync(wal) ? statSync(wal).size : 0).toBe(0);
-  const verify = new Database(path.join(dir, "exit.db"));
+  const verify = new Database(path.join(String(dir), "exit.db"));
   expect(verify.query("SELECT x FROM t").get().x).toBe(42);
   verify.close();
   expect(exitCode).toBe(0);

@@ -95,9 +95,9 @@ describe("Bun.build compile with wasm", () => {
 
     // Test compilation with default target (current platform)
     const result = await Bun.build({
-      entrypoints: [join(dir, "app.js")],
+      entrypoints: [join(String(dir), "app.js")],
       compile: {
-        outfile: join(dir, "app-wasm"),
+        outfile: join(String(dir), "app-wasm"),
       },
     });
 

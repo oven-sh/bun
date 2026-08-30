@@ -22,7 +22,7 @@ test.each(["browser", "bun"] as const)("Bun.build reactFastRefresh works with ta
 
   // With reactFastRefresh: true, output should contain $RefreshReg$ and $RefreshSig$
   const buildEnabled = await Bun.build({
-    entrypoints: [join(dir, "component.tsx")],
+    entrypoints: [join(String(dir), "component.tsx")],
     reactFastRefresh: true,
     target,
     external: ["react"],
@@ -37,7 +37,7 @@ test.each(["browser", "bun"] as const)("Bun.build reactFastRefresh works with ta
 
   // Without reactFastRefresh (default), output should NOT contain refresh calls
   const buildDisabled = await Bun.build({
-    entrypoints: [join(dir, "component.tsx")],
+    entrypoints: [join(String(dir), "component.tsx")],
     target,
     external: ["react"],
   });

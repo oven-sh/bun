@@ -1033,7 +1033,10 @@ for (let credentials of allCredentials) {
           });
           const tmp_filename = `${randomUUID()}.txt`;
 
-          await Bun.write(s3(tmp_filename, { ...s3Options, bucket: S3Bucket }), file(path.join(dir, "hello.txt")));
+          await Bun.write(
+            s3(tmp_filename, { ...s3Options, bucket: S3Bucket }),
+            file(path.join(String(dir), "hello.txt")),
+          );
           await s3(tmp_filename, { ...s3Options, bucket: S3Bucket }).unlink();
         });
         it("Bun.write(s3file, file) should throw if the file does not exist", async () => {

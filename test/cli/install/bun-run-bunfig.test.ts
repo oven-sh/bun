@@ -201,7 +201,7 @@ describe.each(["bun run", "bun"])(`%s`, cmd => {
       stderr: "inherit",
       stdout: "pipe",
       stdin: "ignore",
-      cwd: pathJoin(cwd, "./subdir"),
+      cwd: pathJoin(String(cwd), "./subdir"),
     });
     const nodeBin = result.stdout.toString().trim();
 
@@ -235,7 +235,7 @@ describe.each(["bun run", "bun"])(`%s`, cmd => {
       cmd: [bunExe(), "--silent", ...runCmd, "where-node"],
       env: {
         ...bunEnv,
-        HOME: pathJoin(cwd, "./my-home"),
+        HOME: pathJoin(String(cwd), "./my-home"),
       },
       stderr: "inherit",
       stdout: "pipe",

@@ -323,9 +323,9 @@ snapshots:
     }
     expect(exitCode).toBe(0);
     expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
-    expect(fs.existsSync(join(tmpDir, "bun.lock"))).toBe(true);
+    expect(fs.existsSync(join(String(tmpDir), "bun.lock"))).toBe(true);
 
-    const bunLockContent = fs.readFileSync(join(tmpDir, "bun.lock"), "utf8");
+    const bunLockContent = fs.readFileSync(join(String(tmpDir), "bun.lock"), "utf8");
     expect(bunLockContent).toMatchSnapshot("large-single-package");
   }, 200000);
 
@@ -751,9 +751,9 @@ snapshots:
     }
     expect(exitCode).toBe(0);
     expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
-    expect(fs.existsSync(join(tmpDir, "bun.lock"))).toBe(true);
+    expect(fs.existsSync(join(String(tmpDir), "bun.lock"))).toBe(true);
 
-    const bunLockContent = fs.readFileSync(join(tmpDir, "bun.lock"), "utf8");
+    const bunLockContent = fs.readFileSync(join(String(tmpDir), "bun.lock"), "utf8");
     expect(bunLockContent).toMatchSnapshot("complex-monorepo");
   });
 
@@ -889,9 +889,9 @@ snapshots:
     }
     expect(exitCode).toBe(0);
     expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
-    expect(fs.existsSync(join(tmpDir, "bun.lock"))).toBe(true);
+    expect(fs.existsSync(join(String(tmpDir), "bun.lock"))).toBe(true);
 
-    const bunLockContent = fs.readFileSync(join(tmpDir, "bun.lock"), "utf8");
+    const bunLockContent = fs.readFileSync(join(String(tmpDir), "bun.lock"), "utf8");
     expect(bunLockContent).toMatchSnapshot("patches-overrides");
   });
 
@@ -1053,9 +1053,9 @@ snapshots:
     }
     expect(exitCode).toBe(0);
     expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
-    expect(fs.existsSync(join(tmpDir, "bun.lock"))).toBe(true);
+    expect(fs.existsSync(join(String(tmpDir), "bun.lock"))).toBe(true);
 
-    const bunLockContent = fs.readFileSync(join(tmpDir, "bun.lock"), "utf8");
+    const bunLockContent = fs.readFileSync(join(String(tmpDir), "bun.lock"), "utf8");
     expect(bunLockContent).toMatchSnapshot("peer-deps-auto-install");
   });
 });

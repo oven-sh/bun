@@ -72,13 +72,13 @@ describe.concurrent("bunshell rm", () => {
 
     // test on a directory
     {
-      let subDir = path.join(tempdir, "folder", "sub");
+      let subDir = path.join(String(tempdir), "folder", "sub");
       mkdirSync(subDir, { recursive: true });
       let subFile = path.join(subDir, "file.txt");
       writeFileSync(subFile, "test");
-      const { stdout, exitCode } = await $`rm -rv ${path.join(tempdir, "folder")}`;
+      const { stdout, exitCode } = await $`rm -rv ${path.join(String(tempdir), "folder")}`;
       expect(sortedShellOutput(stdout.toString())).toEqual(
-        sortedShellOutput(`${subFile}\n${subDir}\n${path.join(tempdir, "folder")}\n`),
+        sortedShellOutput(`${subFile}\n${subDir}\n${path.join(String(tempdir), "folder")}\n`),
       );
       expect(exitCode).toBe(0);
 
@@ -263,9 +263,9 @@ test.skipIf(process.platform === "win32")(
         }
       }
       await using root = tempDir(`rm-swap-${iter}`, files);
-      const victimDir = path.join(root, "victim");
+      const victimDir = path.join(String(root), "victim");
       const victimFile = path.join(victimDir, "keep.txt");
-      const target = path.join(root, "target");
+      const target = path.join(String(root), "target");
 
       // Start the recursive delete on the worker pool, then immediately
       // replace each subdirectory with a symlink pointing at the victim
@@ -274,7 +274,7 @@ test.skipIf(process.platform === "win32")(
       for (let i = 0; i < ENTRIES; i++) {
         const entry = path.join(target, `d${i}`);
         try {
-          renameSync(entry, path.join(root, "stash", `d${i}`));
+          renameSync(entry, path.join(String(root), "stash", `d${i}`));
           symlinkSync(victimDir, entry);
         } catch {
           // The walker may have already deleted this entry; that's fine.

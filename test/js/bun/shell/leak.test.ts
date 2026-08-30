@@ -95,7 +95,7 @@ describe.concurrent("fd leak", () => {
         "script.ts": testcode + impl,
       });
 
-      const { exited, stderr: stream } = Bun.spawn([process.argv0, "--smol", "test", join(dir, "script.ts")], {
+      const { exited, stderr: stream } = Bun.spawn([process.argv0, "--smol", "test", join(String(dir), "script.ts")], {
         env: bunEnv,
         stderr: "pipe",
       });
@@ -154,7 +154,7 @@ describe.concurrent("fd leak", () => {
         "script.ts": testcode + impl,
       });
 
-      const { exited, stderr: stream } = Bun.spawn([process.argv0, "--smol", "test", join(dir, "script.ts")], {
+      const { exited, stderr: stream } = Bun.spawn([process.argv0, "--smol", "test", join(String(dir), "script.ts")], {
         env: bunEnv,
         stderr: "pipe",
       });
@@ -242,11 +242,14 @@ describe.concurrent("fd leak", () => {
           "script.ts": testcode + impl,
         });
 
-        const { stderr: stream, exited } = Bun.spawn([process.argv0, "--smol", "test", join(dir, "script.ts")], {
-          env: bunEnv,
-          stdout: "ignore",
-          stderr: "pipe",
-        });
+        const { stderr: stream, exited } = Bun.spawn(
+          [process.argv0, "--smol", "test", join(String(dir), "script.ts")],
+          {
+            env: bunEnv,
+            stdout: "ignore",
+            stderr: "pipe",
+          },
+        );
         const [exitCode, stderr] = await Promise.all([exited, stream.text()]);
         if (exitCode != 0) {
           console.log("\n\nSTDERR:", stderr);

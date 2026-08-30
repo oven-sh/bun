@@ -7033,7 +7033,7 @@ test("doesn't error when the migration is out of sync", async () => {
   expect(out.lastIndexOf("no-deps")).toEqual(out.indexOf("no-deps"));
   expect(exitCode).toBe(0);
 
-  expect(await file(join(cwd, "node_modules/no-deps/package.json")).json()).toMatchObject({
+  expect(await file(join(String(cwd), "node_modules/no-deps/package.json")).json()).toMatchObject({
     version: "1.0.0",
     name: "no-deps",
   });

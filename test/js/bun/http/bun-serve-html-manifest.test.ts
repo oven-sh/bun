@@ -42,7 +42,7 @@ describe("Bun.serve HTML manifest", () => {
     });
 
     const proc = Bun.spawn({
-      cmd: [bunExe(), "run", join(dir, "server.ts")],
+      cmd: [bunExe(), "run", join(String(dir), "server.ts")],
       cwd: dir,
       env: bunEnv,
       stdout: "pipe",
@@ -152,7 +152,7 @@ describe("Bun.serve HTML manifest", () => {
 
     // Build first
     const buildProc = Bun.spawn({
-      cmd: [bunExe(), "run", join(dir, "build.ts")],
+      cmd: [bunExe(), "run", join(String(dir), "build.ts")],
       cwd: dir,
       env: bunEnv,
       stdout: "pipe",
@@ -165,8 +165,8 @@ describe("Bun.serve HTML manifest", () => {
 
     // Run the built server
     const serverProc = Bun.spawn({
-      cmd: [bunExe(), "run", join(dir, "dist", "server.js")],
-      cwd: join(dir, "dist"),
+      cmd: [bunExe(), "run", join(String(dir), "dist", "server.js")],
+      cwd: join(String(dir), "dist"),
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
@@ -252,7 +252,7 @@ describe("Bun.serve HTML manifest", () => {
     });
 
     const proc = Bun.spawn({
-      cmd: [bunExe(), "run", join(dir, "test.ts")],
+      cmd: [bunExe(), "run", join(String(dir), "test.ts")],
       cwd: dir,
       env: bunEnv,
       stdout: "pipe",
@@ -306,7 +306,15 @@ describe("Bun.serve HTML manifest", () => {
 
     // Build first to generate the manifest
     await using buildProc = Bun.spawn({
-      cmd: [bunExe(), "build", join(dir, "server.ts"), "--outdir", join(dir, "dist"), "--target", "bun"],
+      cmd: [
+        bunExe(),
+        "build",
+        join(String(dir), "server.ts"),
+        "--outdir",
+        join(String(dir), "dist"),
+        "--target",
+        "bun",
+      ],
       cwd: dir,
       env: bunEnv,
       stdout: "pipe",
@@ -319,8 +327,8 @@ describe("Bun.serve HTML manifest", () => {
 
     // Run the built server
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "run", join(dir, "dist", "server.js")],
-      cwd: join(dir, "dist"),
+      cmd: [bunExe(), "run", join(String(dir), "dist", "server.js")],
+      cwd: join(String(dir), "dist"),
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",

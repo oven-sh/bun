@@ -974,6 +974,8 @@ impl HttpThread {
                 client.close_proxy_tunnel(false);
                 drop(core::mem::take(&mut client.custom_ssl_ctx));
                 drop(core::mem::take(&mut client.state));
+                // After `state`: its `original_request_body` borrows this.
+                drop(core::mem::take(&mut client.buffered_sendfile_body));
                 if let Some(f) = release.release_at_shutdown {
                     f(release.ctx);
                 }

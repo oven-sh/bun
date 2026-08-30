@@ -249,15 +249,10 @@ pub(crate) mod standalone_accessor {
         let Some(graph) = Graph::get_ref() else {
             return Err(SysError::from_code(E::ENOENT, Tag::open));
         };
-        if let Some(key) = graph.dir_key(path) {
-            return Ok(StandaloneHandle { dir: Some(key) });
+        match graph.dir_key(path) {
+            Ok(key) => Ok(StandaloneHandle { dir: Some(key) }),
+            Err(code) => Err(SysError::from_code(code, Tag::open)),
         }
-        let code = if graph.contains_file(path) {
-            E::ENOTDIR
-        } else {
-            E::ENOENT
-        };
-        Err(SysError::from_code(code, Tag::open))
     }
 
     pub(crate) struct StandaloneDirEntry {
@@ -319,12 +314,14 @@ pub(crate) mod standalone_accessor {
             handle: StandaloneHandle,
             path: &ZStr,
         ) -> Result<Maybe<StandaloneHandle>, bun_core::Error> {
-            let mut buf = PathBuffer::uninit();
+            // Pool, not a stack `PathBuffer` (~64 KB on Windows): this runs
+            // inside the walker's iteration on worker-thread stacks.
+            let mut buf = bun_paths::path_buffer_pool::get();
             Ok(open_resolved(resolve(handle, path.as_bytes(), &mut buf)))
         }
 
         fn statat(handle: StandaloneHandle, path: &ZStr) -> Maybe<Stat> {
-            let mut buf = PathBuffer::uninit();
+            let mut buf = bun_paths::path_buffer_pool::get();
             let resolved = resolve(handle, path.as_bytes(), &mut buf);
             Graph::get_ref()
                 .and_then(|graph| graph.stat(resolved))
@@ -519,13 +516,21 @@ impl Glob {
         }
 
         // In a standalone executable, a scan rooted inside the embedded module
-        // graph walks the graph instead of the real filesystem.
+        // graph walks the graph instead of the real filesystem. Mirror the
+        // walker's root choice (`Iterator::init`): an absolute pattern roots
+        // at the pattern's literal prefix and ignores the cwd, a relative
+        // pattern roots at the cwd.
+        let pattern_is_absolute = resolve_path::is_absolute(&self.pattern)
+            || (cfg!(windows) && resolve_path::is_absolute_posix(&self.pattern));
         let in_standalone_graph = bun_standalone_graph::Graph::get_ref().is_some()
-            && (match_opts
-                .cwd
-                .as_deref()
-                .is_some_and(bun_standalone_graph::is_bun_standalone_file_path)
-                || bun_standalone_graph::is_bun_standalone_file_path(&self.pattern));
+            && if pattern_is_absolute {
+                bun_standalone_graph::is_bun_standalone_file_path(&self.pattern)
+            } else {
+                match_opts
+                    .cwd
+                    .as_deref()
+                    .is_some_and(bun_standalone_graph::is_bun_standalone_file_path)
+            };
 
         if in_standalone_graph {
             return Ok(Some(AnyGlobWalker::Standalone(init_walker::<

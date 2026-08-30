@@ -21,7 +21,7 @@ use bun_paths::{self as path, PathBuffer, strings};
 #[cfg(windows)]
 use bun_paths::{OSPathBuffer, WPathBuffer};
 use bun_sourcemap as SourceMap;
-use bun_sys::{self as Syscall, Fd, FdExt as _, Stat};
+use bun_sys::{self as Syscall, E, Fd, FdExt as _, Stat};
 
 bun_core::declare_scope!(StandaloneModuleGraph, hidden);
 
@@ -227,18 +227,24 @@ impl StandaloneModuleGraph {
         self.dirs.contains_key(name)
     }
 
-    /// The stored `dirs` key for `name` (normalized, posix-separated, no
-    /// trailing `/`), or `None` when `name` is not an embedded directory.
-    /// Through `get_ref()` the key borrow is `'static` (the graph is the
-    /// process-lifetime singleton).
-    pub fn dir_key(&self, name: &[u8]) -> Option<&[u8]> {
+    /// Directory `name`'s stored key (posix-separated, no trailing `/`), or
+    /// the errno an `open(O_DIRECTORY)` of it would produce: `ENOTDIR` for an
+    /// embedded file, `ENOENT` otherwise. Through `get_ref()` the key borrow
+    /// is `'static` (the graph is the process-lifetime singleton).
+    pub fn dir_key(&self, name: &[u8]) -> Result<&[u8], E> {
         if !is_bun_standalone_file_path(name) {
-            return None;
+            return Err(E::ENOENT);
         }
         let mut buf = PathBuffer::uninit();
         let name = Self::normalize_dir_path(name, &mut buf);
-        let index = self.dirs.get_index(name)?;
-        Some(&self.dirs.keys()[index])
+        if let Some(index) = self.dirs.get_index(name) {
+            return Ok(&self.dirs.keys()[index]);
+        }
+        Err(if self.lookup_file(name).is_some() {
+            E::ENOTDIR
+        } else {
+            E::ENOENT
+        })
     }
 
     /// `(entry, is_dir)`; `entry` is the basename, or the `name`-relative path when `recursive`.

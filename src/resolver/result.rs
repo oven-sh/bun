@@ -225,13 +225,9 @@ pub enum ResultUnion {
 }
 
 impl Result {
-    /// Read-only view of the `package_json` field. The field stores
-    /// `Option<*const _>` (rather than `Option<&'static _>`) so [`Default`] /
-    /// zeroed-init stays bit-valid; callers that only read go through here.
-    /// Single deref site for the ARENA-backed pointer — same invariant as
-    /// [`dir_info::DirInfo::package_json`]. Takes the `Copy` field directly so
-    /// the borrow checker only sees a field read at sites where `self` is
-    /// already mutably borrowed (e.g. while iterating `path_pair`).
+    /// Read-only view of the `package_json` field (`Option<*const _>` so
+    /// [`Default`] stays bit-valid). Takes the `Copy` field, not `&self`, for
+    /// sites that already borrow `self` mutably.
     #[inline]
     pub(crate) fn deref_package_json(
         ptr: Option<*const PackageJSON>,

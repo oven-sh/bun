@@ -3934,11 +3934,11 @@ struct LoaderResult<'a> {
     path: Fs::Path<'a>,
     is_main: bool,
     specifier: &'a [u8],
-    /// The nearest package.json (`DirInfo::package_json_for_module_type`).
-    /// Always `None` for non-JS-like loaders (not needed there).
+    /// `DirInfo::package_json_for_module_type`. `None` for non-JS-like loaders.
     package_json: Option<&'a bun_resolver::package_json::PackageJSON>,
-    /// The format the path declares (`bun_resolver::module_type_for_file`),
-    /// the parser's hint for a file whose contents use neither format's syntax.
+    /// The name of the enclosing (named) package. `None` for non-JS-like loaders.
+    package_name: Option<&'a [u8]>,
+    /// `bun_resolver::module_type_for_file` for `path`.
     module_type: ModuleType,
 }
 
@@ -4061,15 +4061,20 @@ unsafe fn get_loader_and_virtual_source<'a>(
 
     let dir = path.name().dir;
     let is_js_like = loader.map(|l| l.is_java_script_like()).unwrap_or(true);
-    let package_json = if is_js_like && bun_paths::is_absolute(dir) {
+    let (package_json, package_name) = if is_js_like && bun_paths::is_absolute(dir) {
         // SAFETY: per fn contract — `transpiler.resolver` is a value field of
         // the VM; `read_dir_info` is re-entrant on the JS thread.
         match unsafe { (*jsc_vm).transpiler.resolver.read_dir_info(dir) } {
-            Ok(Some(dir_info)) => dir_info.package_json_for_module_type,
-            _ => None,
+            Ok(Some(dir_info)) => (
+                dir_info.package_json_for_module_type,
+                dir_info
+                    .enclosing_package_json
+                    .and_then(|pkg| (!pkg.name.is_empty()).then_some(&*pkg.name)),
+            ),
+            _ => (None, None),
         }
     } else {
-        None
+        (None, None)
     };
     let module_type = if is_js_like {
         bun_resolver::module_type_for_file(path.name().ext, package_json)
@@ -4084,6 +4089,7 @@ unsafe fn get_loader_and_virtual_source<'a>(
         is_main,
         specifier,
         package_json,
+        package_name,
         module_type,
     })
 }
@@ -4255,9 +4261,7 @@ pub unsafe extern "C" fn Bun__transpileFile(
     }
 
     let module_type = lr.module_type;
-    let pkg_name: Option<&[u8]> = lr
-        .package_json
-        .and_then(|pkg| (!pkg.name.is_empty()).then_some(&*pkg.name));
+    let pkg_name = lr.package_name;
 
     // ── Concurrent-transpiler dispatch (`transpile_async:` block) ───────────
     // We only run the transpiler concurrently when we can — today that's import statements and

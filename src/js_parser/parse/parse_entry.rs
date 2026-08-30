@@ -265,9 +265,7 @@ impl<'a> Options<'a> {
         }
 
         // The cache file is keyed by the content hash alone, and the hint
-        // decides the format of a file with no ESM or CJS syntax. Without this
-        // the same bytes under "type": "module" and "type": "commonjs" share
-        // one entry.
+        // changes the output format.
         hasher.update(match self.module_type {
             options::ModuleType::Unknown => b"mt=?",
             options::ModuleType::Cjs => b"mt=c",
@@ -2011,8 +2009,7 @@ impl<'a> Parser<'a> {
             let runtime_import_names = jsx_imports.runtime_import_names(&mut buf);
             let source_import_names = jsx_imports.source_import_names();
 
-            // Inside the runtime's CommonJS function wrapper an `import`
-            // statement is a syntax error, so the JSX runtime is required.
+            // An `import` inside the CommonJS function wrapper is a syntax error.
             let wrap_in_commonjs = wrap_mode == WrapMode::BunCommonjs;
             for (path, names) in [
                 (import_source, runtime_import_names),

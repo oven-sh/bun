@@ -1930,12 +1930,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(())
     }
 
-    /// The `require()` form of [`generate_import_stmt`](Self::generate_import_stmt):
-    ///
-    ///   const { jsxDEV: jsxDEV_xyz } = require("react/jsx-dev-runtime");
-    ///
-    /// For a file the runtime wraps in the CommonJS function wrapper, where an
-    /// `import` statement would be a syntax error.
+    /// [`generate_import_stmt`](Self::generate_import_stmt) as
+    /// `const { name: ref } = require(path)`, for a file that gets the runtime's
+    /// CommonJS function wrapper.
     pub(crate) fn generate_require_stmt<I, Sym>(
         &mut self,
         import_path: &'a [u8],
@@ -2005,11 +2002,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             bun_ast::Loc::EMPTY,
         );
 
+        let is_jsx = tag == bun_ast::PartTag::JsxImport;
         parts.push(js_ast::Part {
             stmts: self.arena.alloc_slice_fill_with(1, |_| stmt).into(),
             declared_symbols,
             import_record_indices: js_ast::PartImportRecordIndices::init_one(import_record_i),
             tag,
+            can_be_removed_if_unused: is_jsx,
+            force_tree_shaking: is_jsx,
             ..Default::default()
         });
         Ok(())

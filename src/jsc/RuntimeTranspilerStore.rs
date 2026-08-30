@@ -330,11 +330,8 @@ impl RuntimeTranspilerStore {
         let owned_path = bun_paths::fs::Path::init(unsafe { &*owned_text.cast_const() });
         let promise: *mut JSInternalPromise = JSInternalPromise::create(global_object);
 
-        // The tag carries the package.json "type" to the CommonJS loader
-        // (`ignoreESModuleAnnotation`). The parser's format hint is
-        // `module_type`, which the caller derives from the extension first
-        // (`bun_resolver::module_type_for_file`), so it is not re-derived from
-        // the tag.
+        // The tag feeds the CommonJS loader's `ignoreESModuleAnnotation`; the
+        // parser's hint is `module_type`.
         let mut resolved_source = ResolvedSource::default();
         if let Some(pkg) = package_json {
             match pkg.module_type {

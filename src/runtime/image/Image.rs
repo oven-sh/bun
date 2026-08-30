@@ -1686,6 +1686,8 @@ impl PipelineTask {
         }
 
         if matches!(self.kind, Kind::Placeholder) {
+            // ThumbHash operates on 8-bit RGBA.
+            decoded.downconvert_to_8();
             self.result = match make_placeholder(&decoded.rgba, decoded.width, decoded.height) {
                 Ok(r) => r,
                 Err(e) => TaskResult::Err(e),
@@ -1721,12 +1723,22 @@ impl PipelineTask {
         // the profile reinterprets a non-sRGB source (Display-P3, Adobe RGB,
         // Jpegli XYB) as sRGB and visibly shifts the colours — see #30197.
         // JPEG/PNG/WebP embed it; HEIC/AVIF via the system backend do not.
+        // Only PNG truecolour encode honours 16 bpc; narrow for everything else.
+        if enc.format != codecs::Format::Png || enc.palette {
+            decoded.downconvert_to_8();
+        }
         if enc.icc_profile.is_none() {
             // `EncodeOptions.icc_profile` borrows for the duration of `encode()`
             // (raw `NonNull<[u8]>`); `decoded` outlives the call below.
             enc.icc_profile = decoded.icc_profile.as_deref().map(core::ptr::NonNull::from);
         }
-        let out = match codecs::encode(&decoded.rgba, decoded.width, decoded.height, enc) {
+        let out = match codecs::encode(
+            &decoded.rgba,
+            decoded.width,
+            decoded.height,
+            decoded.bit_depth,
+            enc,
+        ) {
             Ok(o) => o,
             Err(e) => {
                 self.result = TaskResult::Err(e);
@@ -1932,6 +1944,13 @@ impl PipelineTask {
     /// the profile survives unchanged.
     fn apply_pipeline(&self, d: &mut codecs::Decoded) -> Result<(), codecs::Error> {
         let p = &self.pipeline;
+        // The kernels are u8-only; narrow before any op. Skipped when no
+        // ops are set, preserving the 16-bpc PNG pass-through (#30462).
+        let has_op =
+            p.rotate != 0 || p.flip || p.flop || p.resize.is_some() || p.modulate.is_some();
+        if has_op {
+            d.downconvert_to_8();
+        }
         if p.rotate != 0 {
             let next = codecs::rotate(&d.rgba, d.width, d.height, u32::from(p.rotate))?;
             // Assignment drops
@@ -2005,7 +2024,7 @@ fn make_placeholder(rgba: &[u8], sw: u32, sh: u32) -> Result<TaskResult, codecs:
     // `rendered.rgba` is owned; drops at scope exit.
     // Placeholder is a synthetic ThumbHash render, not the source image —
     // no ICC profile attaches to it.
-    let out = codecs::png::encode(&rendered.rgba, rendered.w, rendered.h, -1, None)?;
+    let out = codecs::png::encode(&rendered.rgba, rendered.w, rendered.h, 8, -1, None)?;
     let _ = owned; // explicit lifetime hint; drops here.
     Ok(TaskResult::Encoded {
         out,
@@ -2048,6 +2067,10 @@ fn apply_orientation(
     orient: exif::Orientation,
 ) -> Result<(), codecs::Error> {
     let t = orient.transform();
+    // Same as apply_pipeline: the kernels are u8-only.
+    if t.flip || t.flop || t.rotate != 0 {
+        d.downconvert_to_8();
+    }
     if t.flip {
         let next = codecs::flip(&d.rgba, d.width, d.height, false)?;
         d.rgba = next;

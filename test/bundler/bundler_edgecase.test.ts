@@ -2885,6 +2885,115 @@ describe("bundler", () => {
     },
     120_000,
   );
+  // When a name reaches a file through two different `export *` statements,
+  // the linker traces each alternative to check that they end at the same
+  // symbol; an alternative that is itself a re-export is traced by a recursive
+  // call. These cycles lead straight back into an import that is still being
+  // traced, which used to recurse until the stack overflowed (the recursive
+  // call only checked for cycles within its own chain). esbuild reports the
+  // same error for both graphs. backend: "cli" so that the old crash killed a
+  // child process rather than the test runner.
+  itBundled("edgecase/ExportStarAmbiguityCycleIntoBarrel", {
+    files: {
+      "/entry.js": `import { x } from "./barrel.js"; console.log(x);`,
+      "/barrel.js": `export * from "./a.js"; export * from "./b.js";`,
+      "/a.js": `export const x = 1;`,
+      "/b.js": `export { x } from "./barrel.js";`,
+    },
+    backend: "cli",
+    bundleErrors: {
+      "/b.js": ['Ambiguous import "x" has multiple matching exports'],
+    },
+  });
+  // Here the import being traced is only re-entered two recursive calls down
+  // (b2 -> barrel1 -> b1 -> barrel2 -> b2), so every chain on the stack has to
+  // be checked, not just the caller's.
+  itBundled("edgecase/ExportStarAmbiguityCycleAcrossBarrels", {
+    files: {
+      "/entry.js": `import { x } from "./barrel1.js"; console.log(x);`,
+      "/a.js": `export const x = 1;`,
+      "/barrel1.js": `export * from "./a.js"; export * from "./b1.js";`,
+      "/b1.js": `export { x } from "./barrel2.js";`,
+      "/barrel2.js": `export * from "./a.js"; export * from "./b2.js";`,
+      "/b2.js": `export { x } from "./barrel1.js";`,
+    },
+    backend: "cli",
+    bundleErrors: {
+      "/b2.js": ['Ambiguous import "x" has multiple matching exports'],
+    },
+  });
+  // Alternatives traced one after the other may pass through the same
+  // re-export (both b and c go through shared); that is not a cycle. All
+  // three alternatives end at a.x, so the import is not ambiguous either.
+  itBundled("edgecase/ExportStarAmbiguityAlternativesShareReExport", {
+    files: {
+      "/entry.js": `import { x } from "./barrel.js"; console.log(x);`,
+      "/barrel.js": `export * from "./a.js"; export * from "./b.js"; export * from "./c.js";`,
+      "/a.js": `export const x = 1;`,
+      "/b.js": `export { x } from "./shared.js";`,
+      "/c.js": `export { x } from "./shared.js";`,
+      "/shared.js": `export { x } from "./a.js";`,
+    },
+    run: { stdout: "1" },
+  });
+  // An acyclic version of the above: barrel N's second `export *` leads to a
+  // re-export from barrel N+1, so tracing the alternatives recurses once per
+  // barrel. Bun.build() links on a thread with a 2 MiB stack, which a
+  // debug+ASAN build overflowed a little past 400 barrels (it now stops with a
+  // build error shortly before that); a release build bundles this chain.
+  // Either outcome is fine, what must not happen is the process dying, which
+  // is why the build runs in a child. Mostly spent parsing the 1200 files
+  // under ASAN, hence the timeout.
+  test.concurrent(
+    "edgecase/ExportStarAmbiguityDeepReExportChain",
+    async () => {
+      const depth = 600;
+      using dir = tempDir("export-star-ambiguity-deep-chain", {
+        "a.js": `export const x = 1;\n`,
+        ...Object.fromEntries(
+          Array.from({ length: depth }, (_, i) => [
+            `barrel${i}.js`,
+            `export * from "./a.js";\nexport * from "./b${i}.js";\n`,
+          ]),
+        ),
+        ...Object.fromEntries(
+          Array.from({ length: depth }, (_, i) => [`b${i}.js`, `export { x } from "./barrel${i + 1}.js";\n`]),
+        ),
+        [`barrel${depth}.js`]: `export * from "./a.js";\n`,
+        "entry.js": `import { x } from "./barrel0.js";\nconsole.log(x);\n`,
+        "build-fixture.ts": /* ts */ `
+          const result = await Bun.build({ entrypoints: [import.meta.dir + "/entry.js"], throw: false });
+          console.log(
+            JSON.stringify({
+              success: result.success,
+              logs: result.logs.map(log => log.message),
+              output: result.success ? await result.outputs[0].text() : null,
+            }),
+          );
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build-fixture.ts"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stderr, exitCode, signalCode: proc.signalCode }).toEqual({ stderr: "", exitCode: 0, signalCode: null });
+      const result = JSON.parse(stdout);
+      if (result.success) {
+        expect(result.logs).toEqual([]);
+        expect(result.output).toContain("var x = 1;");
+      } else {
+        expect(result).toEqual({
+          success: false,
+          logs: ['Maximum call stack size exceeded while resolving import "x"'],
+          output: null,
+        });
+      }
+    },
+    120_000,
+  );
   itBundled("edgecase/NonAsciiPathDerivedWrapperName", {
     files: {
       "/entry.ts": /* js */ `

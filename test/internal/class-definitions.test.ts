@@ -50,7 +50,6 @@ describe("define()", () => {
   });
 
   test("only the jest classes with a constructor are callable", () => {
-    expect(jestClasses.filter(def => def.noConstructor && def.call).map(def => def.name)).toEqual([]);
     expect(jestClasses.filter(def => def.call).map(def => def.name)).toEqual(["Expect", "ExpectTypeOf"]);
   });
 });

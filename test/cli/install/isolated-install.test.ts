@@ -1382,7 +1382,10 @@ test("ranged peer dependency resolution is stable across installs from bun.lock"
   await runBunInstall(bunEnv, packageDir);
 
   const bunDir = join(packageDir, "node_modules", ".bun");
-  expect(await readdirSorted(bunDir)).toEqual(expect.arrayContaining(["no-deps@1.0.1", "no-deps@1.1.0"]));
+  expect((await readdirSorted(bunDir)).filter(e => e.startsWith("no-deps@"))).toEqual([
+    "no-deps@1.0.1",
+    "no-deps@1.1.0",
+  ]);
   // `toContain` prints the full listing when the entry is missing or keyed with a different peer hash
   const entryName = "peer-deps-fixed@1.0.0+7ff199101204a65d";
   expect(await readdirSorted(bunDir)).toContain(entryName);

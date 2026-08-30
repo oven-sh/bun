@@ -493,9 +493,48 @@ pub mod defines {
         pub identifiers: StringHashMap<IdentifierDefine>,
         pub dots: StringHashMap<Vec<DotDefine>>,
         pub drop_debugger: bool,
+        /// `hash_user_inputs` of this table's inputs, for the runtime transpiler cache key.
+        pub user_hash: Option<u64>,
     }
 
     impl Define {
+        /// Order-independent, length-prefixed hash of the three inputs. `None` when all are empty.
+        pub fn hash_user_inputs<'i>(
+            defines: impl IntoIterator<Item = (&'i [u8], &'i [u8])>,
+            env_defines: impl IntoIterator<Item = (&'i [u8], &'i [u8])>,
+            drop: impl IntoIterator<Item = &'i [u8]>,
+        ) -> Option<u64> {
+            let mut defines: Vec<(&[u8], &[u8])> = defines.into_iter().collect();
+            let mut env_defines: Vec<(&[u8], &[u8])> = env_defines.into_iter().collect();
+            let mut drop: Vec<&[u8]> = drop.into_iter().filter(|item| !item.is_empty()).collect();
+            if defines.is_empty() && env_defines.is_empty() && drop.is_empty() {
+                return None;
+            }
+            defines.sort_unstable();
+            env_defines.sort_unstable();
+            drop.sort_unstable();
+            drop.dedup();
+
+            let mut hasher = bun_wyhash::Wyhash::init(0);
+            let mut update = |bytes: &[u8]| {
+                hasher.update(&(bytes.len() as u64).to_le_bytes());
+                hasher.update(bytes);
+            };
+            // Separate sections: `init` lets a later env pair override a user pair.
+            for pairs in [defines, env_defines] {
+                update(&(pairs.len() as u64).to_le_bytes());
+                for (key, value) in pairs {
+                    update(key);
+                    update(value);
+                }
+            }
+            update(&(drop.len() as u64).to_le_bytes());
+            for item in drop {
+                update(item);
+            }
+            Some(hasher.final_())
+        }
+
         pub(crate) fn for_identifier(&self, name: &[u8]) -> Option<&IdentifierDefine> {
             if let Some(data) = self.identifiers.get(name) {
                 return Some(data);

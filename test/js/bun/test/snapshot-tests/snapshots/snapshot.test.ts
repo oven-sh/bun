@@ -343,37 +343,35 @@ const snapshotCases: { label: string; value: string; snapshot: string; matchers?
 ];
 
 describe.concurrent("snapshots", () => {
-  for (const [i, { label, value, snapshot, matchers }] of snapshotCases.entries()) {
-    test(label, async () => {
-      // the previous case left its snapshot behind, so the run fails before -u replaces it
-      const previous = i === 0 ? `""` : snapshotCases[i - 1].snapshot;
-      using t = new SnapshotTester(false, defaultWrap(value, matchers), snapFile({ "abc 1": previous }));
-      expect(await expectUpdate(t, snapFile({ "abc 1": snapshot }))).toMatchInlineSnapshot(`
-        "$ bun test ./snapshot.test.ts (exit 1)
-        (fail) abc
-         0 pass
-         1 fail
-        snapshots: 1 failed
-         1 expect() calls
-        Ran 1 test across 1 file.
+  // each case starts from the snapshot the previous case leaves behind, so the run fails before -u replaces it
+  const chained = snapshotCases.map((c, i) => ({ ...c, previous: i === 0 ? `""` : snapshotCases[i - 1].snapshot }));
+  test.each(chained)("$label", async ({ value, snapshot, matchers, previous }) => {
+    using t = new SnapshotTester(false, defaultWrap(value, matchers), snapFile({ "abc 1": previous }));
+    expect(await expectUpdate(t, snapFile({ "abc 1": snapshot }))).toMatchInlineSnapshot(`
+      "$ bun test ./snapshot.test.ts (exit 1)
+      (fail) abc
+       0 pass
+       1 fail
+      snapshots: 1 failed
+       1 expect() calls
+      Ran 1 test across 1 file.
 
-        $ bun test -u ./snapshot.test.ts (exit 0)
-        (pass) abc
-         1 pass
-         0 fail
-        snapshots: +1 added
-         1 expect() calls
-        Ran 1 test across 1 file.
+      $ bun test -u ./snapshot.test.ts (exit 0)
+      (pass) abc
+       1 pass
+       0 fail
+      snapshots: +1 added
+       1 expect() calls
+      Ran 1 test across 1 file.
 
-        $ bun test ./snapshot.test.ts (exit 0)
-        (pass) abc
-         1 pass
-         0 fail
-         1 snapshots, 1 expect() calls
-        Ran 1 test across 1 file."
-      `);
-    });
-  }
+      $ bun test ./snapshot.test.ts (exit 0)
+      (pass) abc
+       1 pass
+       0 fail
+       1 snapshots, 1 expect() calls
+      Ran 1 test across 1 file."
+    `);
+  });
 
   test("jest newline oddity", async () => {
     using t = new SnapshotTester(false, defaultWrap("'\\n'"), snapFile({ "abc 1": `""` }));
@@ -687,37 +685,34 @@ describe.concurrent("snapshots", () => {
 });
 
 describe.concurrent("inline snapshots", () => {
-  for (const { label, value, snapshot, inline } of snapshotCases) {
-    if (inline === false) continue;
-    test(label, async () => {
-      const source = defaultWrap(value);
-      using t = new SnapshotTester(true, source.replace("toMatchSnapshot()", "toMatchInlineSnapshot('bad')"));
-      const updated = source.replace("toMatchSnapshot()", `toMatchInlineSnapshot(${quoteSnapshot(snapshot, "  ")})`);
-      expect(await expectUpdate(t, updated)).toMatchInlineSnapshot(`
-        "$ bun test ./snapshot.test.ts (exit 1)
-        (fail) abc
-         0 pass
-         1 fail
-        snapshots: 1 failed
-         1 expect() calls
-        Ran 1 test across 1 file.
+  test.each(snapshotCases.filter(c => c.inline !== false))("$label", async ({ value, snapshot }) => {
+    const source = defaultWrap(value);
+    using t = new SnapshotTester(true, source.replace("toMatchSnapshot()", "toMatchInlineSnapshot('bad')"));
+    const updated = source.replace("toMatchSnapshot()", `toMatchInlineSnapshot(${quoteSnapshot(snapshot, "  ")})`);
+    expect(await expectUpdate(t, updated)).toMatchInlineSnapshot(`
+      "$ bun test ./snapshot.test.ts (exit 1)
+      (fail) abc
+       0 pass
+       1 fail
+      snapshots: 1 failed
+       1 expect() calls
+      Ran 1 test across 1 file.
 
-        $ bun test -u ./snapshot.test.ts (exit 0)
-        (pass) abc
-         1 pass
-         0 fail
-         1 snapshots, 1 expect() calls
-        Ran 1 test across 1 file.
+      $ bun test -u ./snapshot.test.ts (exit 0)
+      (pass) abc
+       1 pass
+       0 fail
+       1 snapshots, 1 expect() calls
+      Ran 1 test across 1 file.
 
-        $ bun test ./snapshot.test.ts (exit 0)
-        (pass) abc
-         1 pass
-         0 fail
-         1 snapshots, 1 expect() calls
-        Ran 1 test across 1 file."
-      `);
-    });
-  }
+      $ bun test ./snapshot.test.ts (exit 0)
+      (pass) abc
+       1 pass
+       0 fail
+       1 snapshots, 1 expect() calls
+      Ran 1 test across 1 file."
+    `);
+  });
 });
 
 const helper_js = /*js*/ `import {expect} from "bun:test";
@@ -1630,11 +1625,16 @@ test("error snapshots", () => {
     throw undefined; // this one doesn't work in jest because it doesn't think the function threw
   }).toThrowErrorMatchingInlineSnapshot(`undefined`);
   expect(() => {
-    expect(() => {}).toThrowErrorMatchingInlineSnapshot(`undefined`);
+    try {
+      expect(() => {}).toThrowErrorMatchingInlineSnapshot(`undefined`);
+    } catch (e) {
+      (e as Error).message = Bun.stripANSI((e as Error).message);
+      throw e;
+    }
   }).toThrowErrorMatchingInlineSnapshot(`
-"\x1B[2mexpect(\x1B[0m\x1B[31mreceived\x1B[0m\x1B[2m).\x1B[0mtoThrowErrorMatchingInlineSnapshot\x1B[2m(\x1B[0m\x1B[2m)\x1B[0m
+"expect(received).toThrowErrorMatchingInlineSnapshot()
 
-\x1B[1mMatcher error\x1B[0m: Received function did not throw
+Matcher error: Received function did not throw
 "
 `);
 });

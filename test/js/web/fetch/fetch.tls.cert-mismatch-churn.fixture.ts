@@ -5,11 +5,12 @@
 // chain is trusted but whose hostname does not match, with the server
 // speaking first so SSL_read completes the handshake from the data path
 // (on_handshake fires from us_internal_ssl_on_data), racing AbortSignal
-// timeouts and keepalive pool churn. Run with BUN_CONFIG_HTTP_IDLE_TIMEOUT=1
-// so the idle-timeout failure path (HTTPClient::on_timeout) is reachable.
+// timeouts, keepalive pool churn, and handshakes that stall and are torn down
+// mid-handshake while the HTTP thread is busy with all of the above.
 //
-// Exits non-zero if any fetch produces an unexpected outcome or if the
-// process crashes.
+// Prints one JSON line: the count of every outcome class plus the list of
+// unexpected outcomes. The test asserts the exact shape, so a phase that
+// silently stops running fails it. Exits non-zero on any unexpected outcome.
 import tls from "node:tls";
 import net from "node:net";
 // Harness localhost cert (test/harness.ts `tls`): valid for localhost/127.0.0.1,
@@ -65,55 +66,74 @@ const goodServer = tls.createServer({ key: validTls.key, cert: validTls.cert }, 
   });
 });
 
-// Accepts TCP, never answers the ClientHello: exercises the idle-timeout
-// (HTTPClient::on_timeout) failure path mid-handshake.
+// Accepts TCP, never answers the ClientHello, so every fetch to it parks
+// mid-handshake until the fixture aborts it. The teardown then runs on a TLS
+// socket whose handshake never finished: the close callback fires
+// on_handshake, and the client must still deliver exactly one final result.
+// HTTPClient::on_timeout takes the same path, but the idle timer cannot fire
+// before uSockets' 4s sweep tick; bun-install-stalled-tls.test.ts covers it.
+const STALLED = 3;
+let stalledClientHellos = 0;
+const { promise: allStalled, resolve: onAllStalled } = Promise.withResolvers<void>();
 const stallServer = net.createServer(socket => {
   socket.on("error", () => {});
-  socket.on("data", () => {});
+  socket.once("data", () => {
+    if (++stalledClientHellos === STALLED) onAllStalled();
+  });
 });
 
 const mismatchPort = await listen(mismatchServer);
 const goodPort = await listen(goodServer);
 const stallPort = await listen(stallServer);
 
-const counts = new Map<string, number>();
-const bump = (k: string) => counts.set(k, (counts.get(k) ?? 0) + 1);
-
+const counts = {
+  // Plain mismatched-cert fetches: every one must reject with the altname error.
+  mismatch: { altname: 0 },
+  // Mismatched-cert fetches racing an AbortSignal: either side may win.
+  racedMismatch: { altname: 0, aborted: 0 },
+  // Valid cert through the keepalive pool: completes, or dies to the churn.
+  keepalive: { ok: 0, churn: 0 },
+  // Handshakes that never complete, torn down by the fixture's abort.
+  stalled: { aborted: 0 },
+};
 const failures: string[] = [];
 
-// Launched up front so the idle-timeout waits overlap the batch loop. The 1s
-// env override is padded for the 4s sweep tick, so on_timeout fires at ~4-8s;
-// the AbortSignal budget must be larger for that path to stay reachable.
+function errorCode(err: any): string {
+  return typeof err?.code === "string" ? err.code : String(err?.name ?? err);
+}
+
+// Launched up front so the stalled sockets sit on the HTTP thread for the
+// whole run and their teardown lands while it is busy with the batches.
+const stallControllers: AbortController[] = [];
 const stallJobs: Promise<void>[] = [];
-for (let i = 0; i < 3; i++) {
+for (let i = 0; i < STALLED; i++) {
+  const controller = new AbortController();
+  stallControllers.push(controller);
   stallJobs.push(
     fetch(`https://localhost:${stallPort}/`, {
       tls: { ca: validTls.cert },
-      signal: AbortSignal.timeout(10_000),
+      signal: controller.signal,
     }).then(
       res => {
         failures.push(`stalled handshake fetch resolved with status ${res.status}`);
       },
       err => {
-        const code = typeof err?.code === "string" ? err.code : err?.name;
-        if (code === "Timeout" || code === "TimeoutError" || code === "ETIMEDOUT" || code === "ECONNRESET") {
-          bump("stalled");
+        if (errorCode(err) === "AbortError") {
+          counts.stalled.aborted++;
         } else {
-          failures.push(`stalled handshake fetch rejected with ${code ?? err}`);
+          failures.push(`stalled handshake fetch rejected with ${errorCode(err)}`);
         }
       },
     ),
   );
 }
 
-// Churn until the stalled handshakes settle (on_timeout at ~4-8s, or the 10s
-// AbortSignal) so their teardown lands while the HTTP thread is busy.
-let stallsSettled = false;
-Promise.all(stallJobs).then(() => {
-  stallsSettled = true;
-});
-
-for (let batch = 0; batch < 8 || !stallsSettled; batch++) {
+const BATCHES = 16;
+// Spread the stalled-handshake teardowns over the run: one every `abortEvery`
+// batches (4, 8 and 12), each right after that batch's connects and handshakes
+// were queued on the HTTP thread, so the teardown lands while it is busy.
+const abortEvery = Math.floor(BATCHES / (STALLED + 1));
+for (let batch = 0; batch < BATCHES; batch++) {
   const jobs: Promise<void>[] = [];
 
   // Plain mismatched-cert fetches: must reject with the altname error.
@@ -124,10 +144,10 @@ for (let batch = 0; batch < 8 || !stallsSettled; batch++) {
           failures.push(`mismatched cert fetch resolved with status ${res.status}`);
         },
         err => {
-          if (err?.code !== "ERR_TLS_CERT_ALTNAME_INVALID") {
-            failures.push(`mismatched cert fetch rejected with ${err?.code ?? err}`);
+          if (errorCode(err) === "ERR_TLS_CERT_ALTNAME_INVALID") {
+            counts.mismatch.altname++;
           } else {
-            bump("altname");
+            failures.push(`mismatched cert fetch rejected with ${errorCode(err)}`);
           }
         },
       ),
@@ -146,11 +166,13 @@ for (let batch = 0; batch < 8 || !stallsSettled; batch++) {
           failures.push(`aborted mismatched cert fetch resolved with status ${res.status}`);
         },
         err => {
-          const code = typeof err?.code === "string" ? err.code : err?.name;
-          if (code === "ERR_TLS_CERT_ALTNAME_INVALID" || code === "TimeoutError" || err?.name === "TimeoutError") {
-            bump(code === "ERR_TLS_CERT_ALTNAME_INVALID" ? "altname" : "aborted");
+          const code = errorCode(err);
+          if (code === "ERR_TLS_CERT_ALTNAME_INVALID") {
+            counts.racedMismatch.altname++;
+          } else if (code === "TimeoutError") {
+            counts.racedMismatch.aborted++;
           } else {
-            failures.push(`aborted mismatched cert fetch rejected with ${code ?? err}`);
+            failures.push(`aborted mismatched cert fetch rejected with ${code}`);
           }
         },
       ),
@@ -166,48 +188,39 @@ for (let batch = 0; batch < 8 || !stallsSettled; batch++) {
       })
         .then(res => res.text())
         .then(
-          () => bump("good"),
+          () => counts.keepalive.ok++,
           err => {
-            const code = typeof err?.code === "string" ? err.code : err?.name;
+            const code = errorCode(err);
             // redirect-target 302s loop back to the same handler; hangups and
             // truncation surface as ECONNRESET-flavored errors.
-            if (
-              code === "TimeoutError" ||
-              code === "ECONNRESET" ||
-              code === "ConnectionClosed" ||
-              err?.name === "TimeoutError"
-            ) {
-              bump("churn");
+            if (code === "TimeoutError" || code === "ECONNRESET" || code === "ConnectionClosed") {
+              counts.keepalive.churn++;
             } else {
-              failures.push(`good cert fetch rejected with ${code ?? err}`);
+              failures.push(`good cert fetch rejected with ${code}`);
             }
           },
         ),
     );
   }
 
+  if (batch > 0 && batch % abortEvery === 0) {
+    // The server has seen each ClientHello, so every abort hits a socket that
+    // is connected and parked mid-handshake, never one still connecting.
+    await allStalled;
+    stallControllers.shift()?.abort();
+  }
+
   await Promise.all(jobs);
 }
 
-// Stalled handshakes run concurrently with the batches above (launched before
-// the loop, which churns until they settle); BUN_CONFIG_HTTP_IDLE_TIMEOUT=1
-// fails each through on_timeout mid-handshake, the AbortSignal keeps the
-// fixture bounded either way.
 await Promise.all(stallJobs);
 
 mismatchServer.close();
 goodServer.close();
 stallServer.close();
 
-if (failures.length > 0) {
-  console.log("unexpected outcomes:", failures.slice(0, 10));
-  process.exit(1);
-}
-if ((counts.get("altname") ?? 0) === 0) {
-  console.log("expected at least one ERR_TLS_CERT_ALTNAME_INVALID rejection");
-  process.exit(1);
-}
-console.log("OK", JSON.stringify(Object.fromEntries(counts)));
+// The first few failures are enough to diagnose; hundreds would drown the diff.
+console.log(JSON.stringify({ ...counts, failures: failures.slice(0, 10) }));
 // Keepalive server-side sockets survive server.close() and would keep the
 // process alive; everything is settled at this point.
-process.exit(0);
+process.exit(failures.length > 0 ? 1 : 0);

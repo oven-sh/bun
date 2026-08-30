@@ -2107,6 +2107,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             p.fn_or_arrow_data_visit.is_inside_switch = old_is_inside_switch;
 
+            // Function declarations directly in a case body stay in place. Now
+            // that every clause is visited, add their sloppy-mode `var` aliases.
+            for i in 0..cases.len() {
+                p.append_sloppy_mode_case_fn_assignments(&mut cases[i].body);
+            }
+
             for i in 0..cases.len() {
                 if p.should_lower_using_declarations(cases[i].body.slice()) {
                     lowered_using = true;

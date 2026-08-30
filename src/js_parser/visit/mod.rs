@@ -24,7 +24,7 @@ use bun_ast::scope::{Kind as ScopeKind, Member as ScopeMember};
 use bun_ast::symbol::Kind as SymbolKind;
 use bun_ast::{
     AssignTarget, B, Binding, BindingNodeIndex, E, Expr, ExprData, ExprNodeList, G, LocRef, S,
-    Stmt, StmtData, Symbol,
+    Stmt, StmtData, StmtNodeList, Symbol,
 };
 use bun_collections::VecExt;
 // `parser::SideEffects` is a stub enum without the assoc fns; the real
@@ -1274,6 +1274,92 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         shadow_ref
     }
 
+    /// In sloppy mode a block-level function declaration also assigns the
+    /// function to a `var` of the same name in the enclosing function scope
+    /// (Annex B). `hoist_symbols` split that `var` off into its own symbol. A
+    /// declaration directly in a case body stays in place instead of becoming
+    /// a `let` (see `visit_stmts`), so this adds the assignment right after it,
+    /// which is where the spec performs it. Run it on every case body of a
+    /// switch only after all of them have been visited: a direct `eval` in a
+    /// later clause still forbids renaming the two symbols apart.
+    pub(crate) fn append_sloppy_mode_case_fn_assignments(&mut self, body: &mut StmtNodeList) {
+        let p = self;
+        if p.hoisted_ref_for_sloppy_mode_block_fn.is_empty() {
+            return;
+        }
+
+        let hoisted_for = |p: &Self, stmt: &Stmt| -> Option<(LocRef, Ref)> {
+            let StmtData::SFunction(data) = stmt.data else {
+                return None;
+            };
+            let name = data.func.name?;
+            let hoisted_ref = *p.hoisted_ref_for_sloppy_mode_block_fn.get(&name.ref_)?;
+            Some((name, hoisted_ref))
+        };
+
+        let stmts: &'a [Stmt] = body.slice();
+        let count = stmts
+            .iter()
+            .filter(|stmt| hoisted_for(p, stmt).is_some())
+            .count();
+        if count == 0 {
+            return;
+        }
+
+        // Direct "eval" means neither identifier can be renamed, so the two
+        // symbols have to be one again. See the `before` handling in `visit_stmts`.
+        // SAFETY: current_scope is a valid arena ptr for the parse.
+        if p.current_scope().contains_direct_eval {
+            for stmt in stmts {
+                if let Some((name, hoisted_ref)) = hoisted_for(p, stmt) {
+                    p.symbols[hoisted_ref.inner_index() as usize]
+                        .link
+                        .set(name.ref_);
+                }
+            }
+            return;
+        }
+
+        let mut out: ListManaged<'a, Stmt> =
+            ListManaged::with_capacity_in(stmts.len() + count, p.arena);
+        for stmt in stmts {
+            out.push(*stmt);
+            let Some((name, hoisted_ref)) = hoisted_for(p, stmt) else {
+                continue;
+            };
+
+            p.record_usage(name.ref_);
+            let value = p.new_expr(
+                E::Identifier {
+                    ref_: name.ref_,
+                    ..Default::default()
+                },
+                name.loc,
+            );
+            let decls = [G::Decl {
+                binding: p.b(B::Identifier { r#ref: hoisted_ref }, name.loc),
+                value: Some(value),
+            }];
+
+            let relocated = p.maybe_relocate_vars_to_top_level(&decls, RelocateVarsMode::Normal);
+            if relocated.ok {
+                if let Some(new) = relocated.stmt {
+                    out.push(new);
+                }
+            } else {
+                out.push(p.s(
+                    S::Local {
+                        kind: LocalKind::KVar,
+                        decls: G::DeclList::from_slice(&decls),
+                        ..Default::default()
+                    },
+                    name.loc,
+                ));
+            }
+        }
+        *body = StmtNodeList::from_bump(out);
+    }
+
     // Try separating the list for appending, so that it's not a pointer.
     pub(crate) fn visit_stmts(
         &mut self,
@@ -1365,7 +1451,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             // or async functions, since this is a backwards-compatibility hack from
                             // Annex B of the JavaScript standard.
                             // SAFETY: current_scope is a valid arena ptr for the parse.
-                            if !p.current_scope().kind_stops_hoisting()
+                            //
+                            // A case body is one slice of the switch block scope. The binding
+                            // is created when the switch is entered, so any clause can call it.
+                            // A `let` at the top of this clause would be in its TDZ from every
+                            // other clause, and nothing in a switch precedes the first case, so
+                            // the declaration stays where it is. `s_switch` adds the Annex B
+                            // `var` assignment once every clause has been visited.
+                            if kind != StmtsKind::SwitchStmt
+                                && !p.current_scope().kind_stops_hoisting()
                                 && p.symbols[data.func.name.unwrap().ref_.inner_index() as usize]
                                     .kind
                                     == SymbolKind::HoistedFunction

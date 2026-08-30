@@ -13,11 +13,52 @@
 use crate::{ExportsKind, Source};
 use core::ptr::NonNull;
 
+/// Whether a cached transpile depends on `Features::runtime_hot`. The parser
+/// records it alongside `exports_kind`; `get()` rejects entries produced
+/// under the other mode.
+#[repr(u8)]
+#[derive(Copy, Clone, PartialEq, Eq, Default)]
+pub enum ImportMetaHotMode {
+    /// The source never touched `import.meta.hot`; valid in either mode.
+    #[default]
+    Unused = 0,
+    Plain = 1,
+    Hot = 2,
+}
+
+impl ImportMetaHotMode {
+    pub fn record(uses_import_meta_hot: bool, runtime_hot: bool) -> Self {
+        match (uses_import_meta_hot, runtime_hot) {
+            (false, _) => Self::Unused,
+            (true, false) => Self::Plain,
+            (true, true) => Self::Hot,
+        }
+    }
+
+    pub fn is_valid_for(self, runtime_hot: bool) -> bool {
+        match self {
+            Self::Unused => true,
+            Self::Plain => !runtime_hot,
+            Self::Hot => runtime_hot,
+        }
+    }
+
+    pub fn from_u8(raw: u8) -> Option<Self> {
+        match raw {
+            0 => Some(Self::Unused),
+            1 => Some(Self::Plain),
+            2 => Some(Self::Hot),
+            _ => None,
+        }
+    }
+}
+
 pub struct RuntimeTranspilerCache {
     pub input_hash: Option<u64>,
     pub input_byte_length: Option<u64>,
     pub features_hash: Option<u64>,
     pub exports_kind: ExportsKind,
+    pub import_meta_hot: ImportMetaHotMode,
     /// Set by `put()` / `get()` when a cache hit returns transpiled output.
     /// Bundler/parser only store/read the bytes; T6 owns the string wrapper
     /// when surfacing to JS.
@@ -38,6 +79,7 @@ impl Default for RuntimeTranspilerCache {
             input_byte_length: None,
             features_hash: None,
             exports_kind: ExportsKind::None,
+            import_meta_hot: ImportMetaHotMode::Unused,
             output_code: None,
             entry: None,
             r#impl: None,

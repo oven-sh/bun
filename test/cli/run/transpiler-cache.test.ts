@@ -322,6 +322,48 @@ describe("transpiler cache", () => {
       expect(newCacheCount()).toBe(0);
     });
   });
+
+  test("--hot only invalidates entries for files that use import.meta.hot", () => {
+    const filler = "\n//" + Buffer.alloc((50 * 1024 * 1.5) | 0, "/").toString();
+    const run = (extra: string[], file: string) => {
+      const result = Bun.spawnSync({ cmd: [bunExe(), ...extra, file], cwd: temp_dir, env });
+      if (!result.success) throw new Error(result.stderr.toString());
+      return result.stdout.toString().trim();
+    };
+    // Entries are named by the source's content hash and rewritten in place
+    // when they were produced under the other mode, so compare their bytes.
+    const entries = () =>
+      Object.fromEntries(readdirSync(cache_dir).map(name => [name, Bun.hash(readFileSync(join(cache_dir, name)))]));
+
+    // Files whose output does not depend on the mode, including one that uses
+    // other parts of import.meta, must keep one entry across mode switches.
+    writeFileSync(join(temp_dir, "plain.js"), `console.log("plain"); process.exit(0);` + filler);
+    writeFileSync(join(temp_dir, "url.js"), `console.log(typeof import.meta.url); process.exit(0);` + filler);
+    expect([run([], "plain.js"), run([], "url.js")]).toEqual(["plain", "string"]);
+    expect(newCacheCount()).toBe(2);
+    const stable = entries();
+    expect([run(["--hot"], "plain.js"), run(["--hot"], "url.js")]).toEqual(["plain", "string"]);
+    expect(entries()).toEqual(stable);
+    expect([run([], "plain.js"), run([], "url.js")]).toEqual(["plain", "string"]);
+    expect(entries()).toEqual(stable);
+
+    // A file that reads import.meta.hot (however it is spelled) gets its entry
+    // rewritten when the mode changes, and is never served the other mode's
+    // output.
+    writeFileSync(join(temp_dir, "hot.js"), `console.log(typeof import\n  .meta.hot); process.exit(0);` + filler);
+    expect(run([], "hot.js")).toBe("undefined");
+    expect(newCacheCount()).toBe(1);
+    const folded = entries();
+    expect(run(["--hot"], "hot.js")).toBe("object");
+    const live = entries();
+    expect(newCacheCount()).toBe(0);
+    expect(live).not.toEqual(folded);
+    expect(live).toMatchObject(stable);
+    expect(run(["--hot"], "hot.js")).toBe("object");
+    expect(entries()).toEqual(live);
+    expect(run([], "hot.js")).toBe("undefined");
+    expect(entries()).toEqual(folded);
+  });
 });
 
 test("rejects cached module records containing out-of-range string indices", () => {
@@ -334,17 +376,17 @@ test("rejects cached module records containing out-of-range string indices", () 
   //
   // Cache entry layout (src/jsc/RuntimeTranspilerCache.rs, Metadata::encode):
   //   0: cache_version u32, 4: module_type u8, 5: output_encoding u8,
-  //   then twelve u64 fields; esm_record_byte_offset @ 78,
-  //   esm_record_byte_length @ 86, esm_record_hash @ 94. Payload follows @ 102.
+  //   6: import_meta_hot u8, then twelve u64 fields; esm_record_byte_offset @ 79,
+  //   esm_record_byte_length @ 87, esm_record_hash @ 95. Payload follows @ 103.
   // Serialized module record layout (ModuleInfoStringTable + body, see
   // `ModuleInfoDeserialized::serialize` in src/js_printer/lib.rs):
   //   table: [offset_width u8][0;3][count u32][(count+1) offsets][pad to even][bytes]
   //   body:  [flags u8][id_width u8][0;2][n_requested u32][n_records u32]
   //          [n_records tag bytes][n_requested tag bytes][string ids @ id_width ...]
-  const ESM_RECORD_BYTE_OFFSET_AT = 78;
-  const ESM_RECORD_BYTE_LENGTH_AT = 86;
-  const ESM_RECORD_HASH_AT = 94;
-  const METADATA_SIZE = 102;
+  const ESM_RECORD_BYTE_OFFSET_AT = 79;
+  const ESM_RECORD_BYTE_LENGTH_AT = 87;
+  const ESM_RECORD_HASH_AT = 95;
+  const METADATA_SIZE = 103;
 
   function corruptModuleRecordStringIndices(file: string): boolean {
     const data = readFileSync(file);

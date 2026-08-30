@@ -112,10 +112,13 @@ console.log(`Reloaded ${globalThis.count} times`);
 globalThis.count++;
 
 // prevent `bun run` from exiting
-setInterval(function () {}, 1000000);
+const interval = setInterval(function () {}, 1000000);
+
+// stop this version's interval before the next version starts its own
+import.meta.hot.dispose(() => clearInterval(interval));
 ```
 
-If you run this file with `bun --hot server.ts`, you'll see the reload count increment every time you save the file.
+If you run this file with `bun --hot server.ts`, you'll see the reload count increment every time you save the file. Because the process is not restarted, anything a module creates at the top level (timers, event listeners, workers, database connections) keeps running after a reload unless the module releases it; [`import.meta.hot.dispose()`](#import-meta-hot) is the hook for that.
 
 ```bash terminal icon="terminal"
 bun --hot server.ts
@@ -145,15 +148,63 @@ Bun.serve({
 });
 ```
 
-<Note>
-Support for Vite's `import.meta.hot` is planned, to enable better lifecycle management for hot reloading and to align with the ecosystem.
+### `import.meta.hot`
 
+Under `bun --hot`, every module (the entrypoint and everything it imports) gets an `import.meta.hot` object with a subset of the [Vite HMR API](https://vite.dev/guide/api-hmr). Everywhere else (`bun run` without `--hot`, `bun build`, `Bun.Transpiler`, and inside `Worker`s, which are not reloaded) `import.meta.hot` is `undefined`.
+
+Without `--hot`, a call written out in full, such as `import.meta.hot.dispose(...)`, is removed at transpile time, and each `import.meta.hot.data` expression becomes a new empty object, which is why the example below also runs under plain `bun run`. Anything else needs an `if (import.meta.hot)` guard: storing `import.meta.hot` (or `import.meta`) in a variable, destructuring it, or passing one of its methods to a function throws a `TypeError` without `--hot`, and a value put into `data` by one expression is not visible to the next. The bundler's [`import.meta.hot`](/bundler/hot-reloading#import-meta-hot-api-reference) follows the same rules.
+
+```ts title="server.ts" icon="/icons/typescript.svg"
+import { SQL } from "bun";
+
+// `data` survives reloads of this module. Under plain `bun run` this line
+// initializes a throwaway object instead, so it works in both modes.
+const state = (import.meta.hot.data.state ??= { reloads: 0 });
+console.log(`reloaded ${state.reloads++} times`);
+
+const interval = setInterval(() => console.log("tick"), 1000);
+const sql = new SQL(process.env.DATABASE_URL!);
+
+import.meta.hot.dispose(async () => {
+  // Runs on the next reload, before any module is re-evaluated. Anything this
+  // version of the module created that the next one should not inherit goes here.
+  clearInterval(interval);
+  await sql.close();
+});
+```
+
+| Property    | Description                                                                                                                                                                                                                                                                                                                                          |
+| ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `data`      | An object kept across reloads, one per module. It starts out as `{}`; under `--hot`, mutating it and assigning to it both persist.                                                                                                                                                                                                                   |
+| `dispose()` | Registers a callback that is passed `data`. All callbacks registered since the previous reload run on the next one, in registration order (a module's before its importers'), before any module is re-evaluated, even if the module that registered them is not evaluated again. If they return promises, Bun waits for all of them to settle first. |
+| `accept()`  | No-op: `bun --hot` re-evaluates every module on each change, so every module implicitly accepts its own updates.                                                                                                                                                                                                                                     |
+
+`decline()`, `on()`, `off()`, `prune()`, `invalidate()` and `send()` also exist as no-ops, so modules written for Vite or for Bun's bundler dev server load under `--hot`. `prune()` has nothing to do here because a module the new code no longer imports still gets its `dispose()` callbacks run.
+
+An error thrown by a dispose callback (or a rejected promise returned from one) is printed like any other error in the reloaded file and does not stop the reload or the process. Changes saved while dispose promises are still pending are picked up by the reload that runs once they settle.
+
+A `--preload` script is evaluated once per process rather than once per reload, so a `dispose()` callback registered there runs on the first reload only and the script is not evaluated again, unless the entrypoint also imports it, in which case it is reloaded like any other module.
+
+`Bun.serve()` is reused across reloads: calling it again during a reload hands the new handlers to the server that is already listening, so open connections survive and no dispose callback is needed. To get a fresh server on every reload instead, stop the old one from `dispose()`; that releases the port immediately and the next version's `Bun.serve()` binds it again. Passing `id: null` on its own is not enough: it only stops the reload from reusing the server, so the old one keeps listening.
+
+```ts title="server.ts" icon="/icons/typescript.svg"
+const server = Bun.serve({ port: 3000, fetch: handler });
+
+import.meta.hot.dispose(() => {
+  server.stop();
+});
+```
+
+<Note>
+  The bundler's dev server implements more of this API (per-module accept boundaries, `data` transfer between module
+  versions, HMR events); see [Hot reloading](/bundler/hot-reloading).
 </Note>
 
 <Accordion title="Implementation details">
 
 On hot reload, Bun:
 
+- Runs the `import.meta.hot.dispose()` callbacks registered since the previous reload, and waits for any promises they returned
 - Resets the internal `require` cache and ES module registry (`Loader.registry`)
 - Runs the garbage collector synchronously (to minimize memory leaks, at the cost of runtime performance)
 - Re-transpiles all of your code from scratch (including sourcemaps)

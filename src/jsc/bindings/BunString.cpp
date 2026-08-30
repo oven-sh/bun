@@ -223,7 +223,8 @@ BunString toStringRef(JSC::JSGlobalObject* globalObject, JSValue value)
 {
     auto str = value.toWTFString(globalObject);
     if (str.isNull()) [[unlikely]] {
-        return { BunStringTag::Dead };
+        // Dead must imply a pending exception (String.fromJS asserts it).
+        return globalObject->vm().exceptionForInspection() ? BunString { BunStringTag::Dead } : BunString { BunStringTag::Empty };
     }
     if (str.length() == 0) [[unlikely]] {
         return { BunStringTag::Empty };

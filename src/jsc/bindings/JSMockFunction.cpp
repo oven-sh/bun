@@ -37,10 +37,10 @@ BUN_DECLARE_HOST_FUNCTION(JSMock__jsResetAllMocks);
 BUN_DECLARE_HOST_FUNCTION(JSMock__jsSpyOn);
 BUN_DECLARE_HOST_FUNCTION(JSMock__jsMockFn);
 
-#define CHECK_IS_MOCK_FUNCTION(thisValue)                                                              \
-    if (!thisObject) [[unlikely]] {                                                                    \
-        scope.throwException(globalObject, createInvalidThisError(globalObject, thisValue, "Mock"_s)); \
-        return {};                                                                                     \
+#define CHECK_IS_MOCK_FUNCTION(thisValue)                                \
+    if (!thisObject) [[unlikely]] {                                      \
+        throwInvalidThisError(globalObject, scope, thisValue, "Mock"_s); \
+        return {};                                                       \
     }
 
 namespace Bun {
@@ -357,32 +357,38 @@ public:
         this->tail.clear();
     }
 
-    void clearSpy()
+    // Puts the original value back on the spied-on object; that put can throw (a module namespace
+    // export, an indexed slot).
+    void clearSpy(JSGlobalObject* globalObject)
     {
+        auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
         this->reset();
 
-        if (auto* target = this->spyTarget.get()) {
-            JSValue implValue = this->spyOriginal.get();
-            if (!implValue) {
-                implValue = jsUndefined();
-            }
-
-            // Reset the spy back to the original value.
-            if (this->spyAttributes & SpyAttributeESModuleNamespace) {
-                if (auto* moduleNamespaceObject = tryJSDynamicCast<JSModuleNamespaceObject*>(target)) {
-                    moduleNamespaceObject->overrideExportValue(moduleNamespaceObject->globalObject(), this->spyIdentifier, implValue);
-                }
-            } else if (auto index = parseIndex(this->spyIdentifier)) {
-                // Use putDirectIndex for numeric property keys (e.g., spyOn(arr, 0))
-                target->putDirectIndex(globalObject(), *index, implValue, this->spyAttributes, PutDirectIndexLikePutDirect);
-            } else {
-                target->putDirect(this->vm(), this->spyIdentifier, implValue, this->spyAttributes);
-            }
+        auto* target = this->spyTarget.get();
+        JSValue implValue = this->spyOriginal.get();
+        if (!implValue) {
+            implValue = jsUndefined();
         }
-
+        JSC::Identifier identifier = this->spyIdentifier;
+        unsigned attributes = this->spyAttributes;
         this->spyTarget.clear();
         this->spyIdentifier = JSC::Identifier();
         this->spyAttributes = 0;
+        if (!target)
+            return;
+
+        if (attributes & SpyAttributeESModuleNamespace) {
+            if (auto* moduleNamespaceObject = tryJSDynamicCast<JSModuleNamespaceObject*>(target)) {
+                moduleNamespaceObject->overrideExportValue(globalObject, identifier, implValue);
+                RETURN_IF_EXCEPTION(scope, );
+            }
+        } else if (auto index = parseIndex(identifier)) {
+            // Use putDirectIndex for numeric property keys (e.g., spyOn(arr, 0))
+            target->putDirectIndex(globalObject, *index, implValue, attributes, PutDirectIndexLikePutDirect);
+            RETURN_IF_EXCEPTION(scope, );
+        } else {
+            target->putDirect(this->vm(), identifier, implValue, attributes);
+        }
     }
 
     JSArray* getCalls() const
@@ -626,9 +632,20 @@ static void forEachMockInSet(JSC::WriteBarrier<JSC::Unknown>& mockSet, const Fun
     }
 }
 
-extern "C" void JSMock__resetSpies(Zig::GlobalObject* globalObject)
+static void restoreAllMocks(Zig::GlobalObject* globalObject)
 {
-    forEachMockInSet(globalObject->mockModule.activeSpies, [](JSMockFunction* spy) { spy->clearSpy(); });
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    JSValue spies = globalObject->mockModule.activeSpies.get();
+    if (!spies)
+        return;
+    MarkedArgumentBuffer active;
+    uncheckedDowncast<ActiveSpySet>(spies)->takeSnapshot(active);
+    for (size_t i = 0; i < active.size(); ++i) {
+        if (auto* spy = dynamicDowncast<JSMockFunction>(active.at(i))) {
+            spy->clearSpy(globalObject);
+            RETURN_IF_EXCEPTION(scope, );
+        }
+    }
     globalObject->mockModule.activeSpies.clear();
 }
 
@@ -1074,9 +1091,9 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionMockRestore, (JSC::JSGlobalObject * globa
     auto scope = DECLARE_THROW_SCOPE(vm);
     CHECK_IS_MOCK_FUNCTION(thisValue);
 
-    thisObject->clearSpy();
-
-    RELEASE_AND_RETURN(scope, JSValue::encode(thisObject));
+    thisObject->clearSpy(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(thisObject);
 }
 JSC_DEFINE_HOST_FUNCTION(jsMockFunctionMockImplementation, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callframe))
 {
@@ -1190,9 +1207,11 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionMockResolvedValue, (JSC::JSGlobalObject *
     auto scope = DECLARE_THROW_SCOPE(vm);
     CHECK_IS_MOCK_FUNCTION(thisValue);
 
-    pushImpl(thisObject, globalObject, JSMockImplementation::Kind::ReturnValue, JSC::JSPromise::resolvedPromise(globalObject, callframe->argument(0)));
+    auto* promise = JSC::JSPromise::resolvedPromise(globalObject, callframe->argument(0));
+    RETURN_IF_EXCEPTION(scope, {});
+    pushImpl(thisObject, globalObject, JSMockImplementation::Kind::ReturnValue, promise);
 
-    RELEASE_AND_RETURN(scope, JSValue::encode(thisObject));
+    return JSValue::encode(thisObject);
 }
 JSC_DEFINE_HOST_FUNCTION(jsMockFunctionMockResolvedValueOnce, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
 {
@@ -1203,9 +1222,11 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionMockResolvedValueOnce, (JSC::JSGlobalObje
     auto scope = DECLARE_THROW_SCOPE(vm);
     CHECK_IS_MOCK_FUNCTION(thisValue);
 
-    pushImplOnce(thisObject, globalObject, JSMockImplementation::Kind::ReturnValue, JSC::JSPromise::resolvedPromise(globalObject, callframe->argument(0)));
+    auto* promise = JSC::JSPromise::resolvedPromise(globalObject, callframe->argument(0));
+    RETURN_IF_EXCEPTION(scope, {});
+    pushImplOnce(thisObject, globalObject, JSMockImplementation::Kind::ReturnValue, promise);
 
-    RELEASE_AND_RETURN(scope, JSValue::encode(thisObject));
+    return JSValue::encode(thisObject);
 }
 JSC_DEFINE_HOST_FUNCTION(jsMockFunctionMockRejectedValue, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
 {
@@ -1437,7 +1458,9 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSetSystemTime, (JSC::JSGlobalObject * globalO
 
 BUN_DEFINE_HOST_FUNCTION(JSMock__jsRestoreAllMocks, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
 {
-    JSMock__resetSpies(uncheckedDowncast<Zig::GlobalObject>(globalObject));
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    restoreAllMocks(uncheckedDowncast<Zig::GlobalObject>(globalObject));
+    RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsUndefined());
 }
 

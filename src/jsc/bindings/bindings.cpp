@@ -424,7 +424,9 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
         }
 
         case AsymmetricMatcherConstructorType::Array: {
-            if (JSC::isArray(globalObject, otherProp)) {
+            bool otherIsArray = JSC::isArray(globalObject, otherProp);
+            RETURN_IF_EXCEPTION(throwScope, AsymmetricMatcherResult::FAIL);
+            if (otherIsArray) {
                 return AsymmetricMatcherResult::PASS;
             }
             break;
@@ -493,7 +495,10 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
                 }
             } else if (auto* regex = dynamicDowncast<RegExpObject>(expectedTestValue)) {
                 JSString* otherString = otherProp.toString(globalObject);
-                if (regex->match(globalObject, otherString)) {
+                RETURN_IF_EXCEPTION(throwScope, AsymmetricMatcherResult::FAIL);
+                bool matched = !!regex->match(globalObject, otherString);
+                RETURN_IF_EXCEPTION(throwScope, AsymmetricMatcherResult::FAIL);
+                if (matched) {
                     return AsymmetricMatcherResult::PASS;
                 }
             }
@@ -521,10 +526,12 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
             // O(m*n) but works for now
             for (unsigned m = 0; m < expectedLength; m++) {
                 JSValue expectedValue = expectedArray->getIndex(globalObject, m);
+                RETURN_IF_EXCEPTION(throwScope, AsymmetricMatcherResult::FAIL);
                 bool found = false;
 
                 for (unsigned n = 0; n < otherLength; n++) {
                     JSValue otherValue = otherArray->getIndex(globalObject, n);
+                    RETURN_IF_EXCEPTION(throwScope, AsymmetricMatcherResult::FAIL);
                     Vector<std::pair<JSValue, JSValue>, 16> stack;
                     MarkedArgumentBuffer gcBuffer;
                     bool foundNow = Bun__deepEquals<false, true, false>(globalObject, expectedValue, otherValue, gcBuffer, stack, throwScope, true);
@@ -576,8 +583,9 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
         JSValue expectedValue = expectCloseTo->m_numberValue.get();
         JSValue digitsValue = expectCloseTo->m_digitsValue.get();
 
-        double received = otherProp.toNumber(globalObject);
-        double expected = expectedValue.toNumber(globalObject);
+        // expect.closeTo() validated both as numbers when it was constructed.
+        double received = otherProp.asNumber();
+        double expected = expectedValue.asNumber();
 
         constexpr double infinity = std::numeric_limits<double>::infinity();
 
@@ -586,6 +594,7 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
             return AsymmetricMatcherResult::PASS;
         } else {
             int32_t digits = digitsValue.toInt32(globalObject);
+            RETURN_IF_EXCEPTION(throwScope, AsymmetricMatcherResult::FAIL);
 
             double threshold = 0.5 * std::pow(10.0, -digits);
             bool isClose = std::abs(expected - received) < threshold;
@@ -2201,7 +2210,11 @@ bool Bun__deepMatch(
     // similar to what is done in deepEquals (canPerformFastPropertyEnumerationForIterationBun)
 
     // arrays should match exactly
-    if (isArray(globalObject, objValue) && isArray(globalObject, subsetValue)) {
+    bool objIsArray = isArray(globalObject, objValue);
+    RETURN_IF_EXCEPTION(throwScope, false);
+    bool subsetIsArray = objIsArray && isArray(globalObject, subsetValue);
+    RETURN_IF_EXCEPTION(throwScope, false);
+    if (subsetIsArray) {
         if (obj->getArrayLength() != subsetObj->getArrayLength()) {
             return false;
         }
@@ -4720,7 +4733,9 @@ JSC::EncodedJSValue JSC__JSValue__getIfPropertyExistsFromPath(JSC::EncodedJSValu
         return JSValue::encode(currProp);
     }
 
-    if (isArray(globalObject, path)) {
+    bool pathIsArray = isArray(globalObject, path);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (pathIsArray) {
         // each item in array is property name, ignore dot/bracket notation
         JSValue currProp = value;
         auto* pathObject = path.toObject(globalObject);

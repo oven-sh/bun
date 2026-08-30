@@ -161,28 +161,22 @@ pub struct TSConfigJSON {
 
     pub emit_decorator_metadata: bool,
     pub experimental_decorators: bool,
-    /// The explicit `compilerOptions.useDefineForClassFields` flag. `None` =
-    /// unset. Use [`Self::use_define_for_class_fields_or_target_default`]
-    /// for the value tsc applies.
+    /// The explicit flag only; [`Self::use_define_for_class_fields_or_target_default`] applies the `target` default.
     pub use_define_for_class_fields: Option<bool>,
     pub target: TSTarget,
 }
 
-/// `compilerOptions.target`. Bun reads it only for the default of
-/// `useDefineForClassFields`, so only the ES2022 boundary is kept.
+/// `compilerOptions.target`, reduced to the ES2022 boundary that decides the `useDefineForClassFields` default.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum TSTarget {
     #[default]
     Unspecified,
-    /// `useDefineForClassFields` defaults to `false` ([[Set]] assignments).
     BelowES2022,
-    /// `useDefineForClassFields` defaults to `true` ([[Define]] fields).
     AtOrAboveES2022,
 }
 
 impl TSTarget {
-    /// Case-insensitive, same table as tsc and esbuild. An unknown name stays
-    /// `Unspecified`.
+    /// Same name table as tsc and esbuild, case-insensitive.
     fn parse(value: &[u8]) -> TSTarget {
         let Some((lower, len)) = strings::ascii_lowercase_buf::<6>(value) else {
             return TSTarget::Unspecified;
@@ -258,9 +252,7 @@ impl TSConfigJSON {
         !self.base_url.is_empty()
     }
 
-    /// `useDefineForClassFields` as tsc resolves it: the explicit flag wins,
-    /// otherwise `target` decides (`false` below ES2022). `None` when neither
-    /// is set, so the caller keeps its own default.
+    /// `useDefineForClassFields` as tsc resolves it; `None` when neither the flag nor `target` is set.
     pub fn use_define_for_class_fields_or_target_default(&self) -> Option<bool> {
         self.use_define_for_class_fields.or(match self.target {
             TSTarget::Unspecified => None,

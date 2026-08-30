@@ -6702,8 +6702,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     let mut array: Vec<Expr> = s_class.class.ts_decorators.move_to_list_managed();
 
                     if self.options.features.emit_decorator_metadata {
-                        // Only a constructor the source declares gets `design:paramtypes`,
-                        // like tsc. A synthesized one would shadow the parent's metadata.
+                        // tsc emits `design:paramtypes` only for a constructor with a body in the source.
                         let declared_constructor = constructor_function.filter(|cf| {
                             !cf.func
                                 .flags

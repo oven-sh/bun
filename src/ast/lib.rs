@@ -2961,9 +2961,7 @@ pub mod flags {
         /// this function's body close. The React Compiler skips such functions.
         HasReactHooksSuppression,
 
-        /// A class constructor the TypeScript lowering added to hold field
-        /// assignments. The source has no constructor, so tsc emits no
-        /// `design:paramtypes` for the class.
+        /// A constructor the TypeScript lowering added; it never gets `design:paramtypes`.
         IsSynthesizedConstructor,
     }
     pub type FunctionSet = EnumSet<Function>;

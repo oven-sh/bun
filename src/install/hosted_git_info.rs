@@ -812,9 +812,17 @@ fn normalize_protocol(npa_str: &[u8]) -> UrlProtocolPair<'_> {
     }
 }
 
+/// Whether `url` already parses as a URL (the same check `parse_url` makes before it falls back
+/// to `correct_url`). Input that parses must not be "corrected": the last colon in
+/// `ssh://git@host:2222/user/repo` is a port, not an scp-style path separator.
+pub(crate) fn is_parseable_url(url: &[u8]) -> bool {
+    JscUrl::from_utf8(url).map(OwnedJscUrl).is_some()
+}
+
 /// Attempt to correct an scp-style URL into a proper URL, parsable with jsc.URL.
 ///
-/// This function assumes that the input is an scp-style URL.
+/// This function assumes that the input is an scp-style URL, i.e. that `is_parseable_url`
+/// returned false for it.
 pub(crate) fn correct_url<'a>(
     url_proto_pair: &UrlProtocolPair<'a>,
 ) -> Result<UrlProtocolPair<'a>, AllocError> {

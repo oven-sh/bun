@@ -1,7 +1,18 @@
 import { Subprocess } from "bun";
 import { beforeEach, describe, expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, bunRun, tmpdirSync } from "harness";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "fs";
+import { bunEnv, bunExe, bunRun, isWindows, tmpdirSync } from "harness";
 import { join } from "path";
 
 function dummyFile(size: number, cache_bust: string, value: string | { code: string }) {
@@ -164,7 +175,24 @@ describe("transpiler cache", () => {
       expect(await proc.stdout.text()).toBe("b\n");
     }
   }, 99999999);
-  test("disables the cache instead of falling back to the shared temp directory", async () => {
+  // No per-user cache location is available (no BUN_RUNTIME_TRANSPILER_CACHE_PATH,
+  // no XDG_CACHE_HOME, no HOME). The only remaining candidate is the temp dir,
+  // which every other local user can write to as well.
+  function noHomeEnv(shared_tmp: string) {
+    return {
+      ...env,
+      BUN_RUNTIME_TRANSPILER_CACHE_PATH: undefined,
+      XDG_CACHE_HOME: undefined,
+      HOME: undefined,
+      USERPROFILE: undefined,
+      BUN_TMPDIR: undefined,
+      TMPDIR: shared_tmp,
+      TMP: shared_tmp,
+      TEMP: shared_tmp,
+    };
+  }
+
+  test("never uses a shared temp directory that another user could have pre-populated", async () => {
     writeFileSync(join(temp_dir, "a.js"), dummyFile((50 * 1024 * 1.5) | 0, "1", "no-tmpdir-cache"));
 
     // Stand-in for the shared, world-writable system temp dir. Pre-create
@@ -173,22 +201,7 @@ describe("transpiler cache", () => {
     const shared_cache = join(shared_tmp, "bun", "@t@");
     mkdirSync(shared_cache, { recursive: true });
 
-    // No per-user cache location is available (no BUN_RUNTIME_TRANSPILER_CACHE_PATH,
-    // no XDG_CACHE_HOME, no HOME) — the only remaining candidate is the shared
-    // temp dir, so the cache must be disabled instead of using it.
-    expect(
-      await bunRun(join(temp_dir, "a.js"), {
-        ...env,
-        BUN_RUNTIME_TRANSPILER_CACHE_PATH: undefined,
-        XDG_CACHE_HOME: undefined,
-        HOME: undefined,
-        USERPROFILE: undefined,
-        BUN_TMPDIR: undefined,
-        TMPDIR: shared_tmp,
-        TMP: shared_tmp,
-        TEMP: shared_tmp,
-      }),
-    ).toSpawn("no-tmpdir-cache");
+    expect(await bunRun(join(temp_dir, "a.js"), noHomeEnv(shared_tmp))).toSpawn("no-tmpdir-cache");
 
     // No cache entry may be written into (or read back from) a directory that
     // another local user could own and pre-populate.
@@ -197,6 +210,88 @@ describe("transpiler cache", () => {
     // A per-user cache location still works.
     expect(await bunRun(join(temp_dir, "a.js"), env)).toSpawn("no-tmpdir-cache");
     expect(newCacheCount()).toBe(1);
+  });
+
+  test.skipIf(isWindows)(
+    "falls back to a private per-user directory in the temp dir when there is no home",
+    async () => {
+      writeFileSync(join(temp_dir, "a.js"), dummyFile((50 * 1024 * 1.5) | 0, "1", "tmpdir-cache"));
+      // Shaped like a standard /tmp: world-writable with the sticky bit.
+      const shared_tmp = join(temp_dir, "shared-tmp");
+      mkdirSync(shared_tmp, { recursive: true });
+      chmodSync(shared_tmp, 0o1777);
+
+      const user_root = join(shared_tmp, `bun-${process.geteuid!()}`);
+      const user_cache = join(user_root, "@t@");
+
+      expect(await bunRun(join(temp_dir, "a.js"), noHomeEnv(shared_tmp))).toSpawn("tmpdir-cache");
+      expect(readdirSync(user_cache)).toHaveLength(1);
+      // The root is ours alone: no group/other bits.
+      expect(statSync(user_root).mode & 0o077).toBe(0);
+
+      // The second run is served from the cache and writes no new entry.
+      expect(await bunRun(join(temp_dir, "a.js"), noHomeEnv(shared_tmp))).toSpawn("tmpdir-cache");
+      expect(readdirSync(user_cache)).toHaveLength(1);
+
+      // A private temp dir (no write bits for others) works as well.
+      const private_tmp = join(temp_dir, "private-tmp");
+      mkdirSync(private_tmp, { recursive: true });
+      chmodSync(private_tmp, 0o755);
+      expect(await bunRun(join(temp_dir, "a.js"), noHomeEnv(private_tmp))).toSpawn("tmpdir-cache");
+      expect(readdirSync(join(private_tmp, `bun-${process.geteuid!()}`, "@t@"))).toHaveLength(1);
+
+      // A temp dir reached through a symlink is used by its real path, so the
+      // entry lands in the directory that was checked.
+      const linked_tmp = join(temp_dir, "linked-tmp");
+      symlinkSync(private_tmp, linked_tmp);
+      writeFileSync(join(temp_dir, "b.js"), dummyFile((50 * 1024 * 1.5) | 0, "2", "linked-tmpdir-cache"));
+      expect(await bunRun(join(temp_dir, "b.js"), noHomeEnv(linked_tmp))).toSpawn("linked-tmpdir-cache");
+      expect(readdirSync(join(private_tmp, `bun-${process.geteuid!()}`, "@t@"))).toHaveLength(2);
+    },
+  );
+
+  test.skipIf(isWindows)("disables the cache when the per-user temp dir root cannot be trusted", async () => {
+    writeFileSync(join(temp_dir, "a.js"), dummyFile((50 * 1024 * 1.5) | 0, "1", "untrusted-root"));
+    const shared_tmp = join(temp_dir, "shared-tmp");
+    const user_root = join(shared_tmp, `bun-${process.geteuid!()}`);
+
+    // The temp dir is world-writable without the sticky bit: another user
+    // could rename our root away after the check, so nothing is created.
+    mkdirSync(shared_tmp, { recursive: true });
+    chmodSync(shared_tmp, 0o777);
+    expect(await bunRun(join(temp_dir, "a.js"), noHomeEnv(shared_tmp))).toSpawn("untrusted-root");
+    expect(readdirSync(shared_tmp)).toEqual([]);
+    chmodSync(shared_tmp, 0o1777);
+
+    // The same for a directory above the temp dir: another user could rename
+    // the whole temp dir away.
+    const outer = join(temp_dir, "outer");
+    const inner_tmp = join(outer, "tmp");
+    mkdirSync(inner_tmp, { recursive: true });
+    chmodSync(outer, 0o777);
+    chmodSync(inner_tmp, 0o755);
+    expect(await bunRun(join(temp_dir, "a.js"), noHomeEnv(inner_tmp))).toSpawn("untrusted-root");
+    expect(readdirSync(inner_tmp)).toEqual([]);
+
+    // Another local user pre-created the root as a world-writable directory.
+    mkdirSync(user_root, { recursive: true });
+    chmodSync(user_root, 0o777);
+    expect(await bunRun(join(temp_dir, "a.js"), noHomeEnv(shared_tmp))).toSpawn("untrusted-root");
+    expect(readdirSync(user_root)).toEqual([]);
+
+    // The root is a symlink into a directory another user controls.
+    rmSync(user_root, { recursive: true, force: true });
+    const elsewhere = join(temp_dir, "elsewhere");
+    mkdirSync(elsewhere, { recursive: true });
+    symlinkSync(elsewhere, user_root);
+    expect(await bunRun(join(temp_dir, "a.js"), noHomeEnv(shared_tmp))).toSpawn("untrusted-root");
+    expect(readdirSync(elsewhere)).toEqual([]);
+
+    // The root is not a directory at all.
+    rmSync(user_root, { force: true });
+    writeFileSync(user_root, "not a directory");
+    expect(await bunRun(join(temp_dir, "a.js"), noHomeEnv(shared_tmp))).toSpawn("untrusted-root");
+    expect(readFileSync(user_root, "utf8")).toBe("not a directory");
   });
   test("works if the cache is not user-readable", async () => {
     mkdirSync(cache_dir, { recursive: true });

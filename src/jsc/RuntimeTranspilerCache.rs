@@ -670,7 +670,126 @@ impl RuntimeTranspilerCache {
             .len();
         }
 
-        0
+        #[cfg(unix)]
+        {
+            Self::tmpdir_cache_dir(top, buf)
+        }
+        #[cfg(not(unix))]
+        {
+            0
+        }
+    }
+
+    /// `<tmpdir>/bun-<euid>/@t@`, or 0 when another user could swap a directory on that path.
+    #[cfg(unix)]
+    fn tmpdir_cache_dir(top: &[u8], buf: &mut PathBuffer) -> usize {
+        let euid = sys::c::geteuid();
+
+        let parent = path_handler::join_abs_string_buf_z::<platform::Loose>(
+            top,
+            &mut buf[..],
+            &[bun_resolver::fs::RealFS::tmpdir_path()],
+        );
+        let Ok(parent_fd) = sys::open(
+            parent,
+            sys::O::RDONLY | sys::O::DIRECTORY | sys::O::CLOEXEC,
+            0,
+        ) else {
+            return 0;
+        };
+        let _close_parent = sys::CloseOnDrop::new(parent_fd);
+        if !Self::dir_chain_is_stable(parent_fd, euid) {
+            return 0;
+        }
+
+        let mut name_buf = [0u8; 16];
+        let name =
+            bun_core::fmt::buf_print_z_infallible(&mut name_buf, format_args!("bun-{}", euid));
+        match sys::mkdirat(parent_fd, name, 0o700) {
+            Ok(()) => {}
+            Err(err) if err.get_errno() == sys::E::EEXIST => {}
+            Err(_) => return 0,
+        }
+        let Ok(root_fd) = sys::openat(
+            parent_fd,
+            name,
+            sys::O::RDONLY | sys::O::DIRECTORY | sys::O::NOFOLLOW | sys::O::CLOEXEC,
+            0,
+        ) else {
+            return 0;
+        };
+        let _close_root = sys::CloseOnDrop::new(root_fd);
+        let Ok(root_st) = sys::fstat(root_fd) else {
+            return 0;
+        };
+        let root_mode = root_st.st_mode as sys::Mode;
+        if root_st.st_uid != euid || root_mode & (sys::S::IWGRP | sys::S::IWOTH) != 0 {
+            return 0;
+        }
+
+        // Real path: later opens must not resolve a symlink the check never saw.
+        let Ok(real_parent) = sys::get_fd_path(parent_fd, buf) else {
+            return 0;
+        };
+        let mut len = real_parent.len();
+        let tail_len = 1 + name.len() + b"/@t@".len();
+        if len + tail_len >= MAX_PATH_BYTES {
+            return 0;
+        }
+        buf[len] = SEP;
+        len += 1;
+        buf[len..len + name.len()].copy_from_slice(name.as_bytes());
+        len += name.len();
+        buf[len..len + 4].copy_from_slice(b"/@t@");
+        len += 4;
+        buf[len] = 0;
+        len
+    }
+
+    /// Whether only us or root can modify `dir_fd` and every directory above it.
+    #[cfg(unix)]
+    fn dir_chain_is_stable(dir_fd: Fd, euid: libc::uid_t) -> bool {
+        let Ok(mut st) = sys::fstat(dir_fd) else {
+            return false;
+        };
+        if Self::entries_replaceable_by_others(&st, euid) {
+            return false;
+        }
+        // "..", "../..", ... from `dir_fd`: only needs search permission.
+        let mut dots = paths::path_buffer_pool::get();
+        let mut len = 0;
+        loop {
+            if len + b"/..".len() >= MAX_PATH_BYTES {
+                return false;
+            }
+            if len > 0 {
+                dots[len] = SEP;
+                len += 1;
+            }
+            dots[len..len + 2].copy_from_slice(b"..");
+            len += 2;
+            dots[len] = 0;
+            let Ok(up) = sys::fstatat(dir_fd, ZStr::from_buf(&dots[..], len)) else {
+                return false;
+            };
+            if up.st_dev == st.st_dev && up.st_ino == st.st_ino {
+                return true;
+            }
+            if Self::entries_replaceable_by_others(&up, euid) {
+                return false;
+            }
+            st = up;
+        }
+    }
+
+    /// Owned by a third user, or group/other writable without the sticky bit.
+    #[cfg(unix)]
+    fn entries_replaceable_by_others(st: &sys::Stat, euid: libc::uid_t) -> bool {
+        if st.st_uid != euid && st.st_uid != 0 {
+            return true;
+        }
+        let mode = st.st_mode as sys::Mode;
+        mode & (sys::S::IWGRP | sys::S::IWOTH) != 0 && mode & sys::S::ISVTX == 0
     }
 
     // Only do this at most once per-thread.

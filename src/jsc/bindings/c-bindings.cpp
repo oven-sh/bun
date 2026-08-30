@@ -9,10 +9,13 @@
 #include <sys/stat.h>
 #include <signal.h>
 #include <unistd.h>
+#include <atomic>
+#include <cerrno>
 #include <cstring>
 #include <csignal>
 #include <cstdint>
 #include <cstdlib>
+#include <pthread.h>
 #include <termios.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
@@ -354,6 +357,69 @@ extern "C" void on_before_reload_process_posix()
     sigprocmask(SIG_SETMASK, &signal_set, nullptr);
 }
 
+#if OS(LINUX)
+// Linux builds link with -Wl,--wrap=execve -Wl,--wrap=pthread_create
+// (scripts/build/flags.ts), so every execve and pthread_create in the binary
+// lands in the two wrappers below.
+//
+// While one thread is inside execve(2), from check_unsafe_exec() until
+// de_thread() has killed the other threads or the exec has failed, the kernel
+// fails every clone(CLONE_FS) in the process with EAGAIN (fs/exec.c,
+// kernel/fork.c copy_fs). pthread_create is such a clone. The --watch reload
+// execs on the watcher thread, so a GC marker or worker thread that the JS
+// thread started at that moment failed, and WTF::Thread::create aborted the
+// process. Such an EAGAIN is transient: the exec either replaces the process,
+// which ends the failing thread too, or fails and clears the kernel flag.
+//
+// `threads_in_execve` counts the threads inside execve(2) right now.
+// `execve_generation` counts every exec ever started, so an exec that began and
+// ended during one pthread_create is still visible. __wrap_execve bumps the
+// count before the generation and __wrap_pthread_create reads them in the
+// opposite order, so an exec that overlaps an attempt shows up in at least one.
+static std::atomic<int> threads_in_execve { 0 };
+static std::atomic<unsigned> execve_generation { 0 };
+// Set in bun_initialize_process. The exec of a child that posix_spawn_bun made
+// with clone(CLONE_VM) runs in this address space too; it must not touch the
+// counters, because it never returns to undo them and the kernel flag it sets
+// lives in the child's own fs_struct.
+static pid_t execve_counting_pid = 0;
+
+extern "C" int __real_execve(const char*, char* const[], char* const[]);
+extern "C" int __real_pthread_create(pthread_t*, const pthread_attr_t*, void* (*)(void*), void*);
+
+extern "C" int __wrap_execve(const char* path, char* const argv[], char* const envp[])
+{
+    if (getpid() != execve_counting_pid)
+        return __real_execve(path, argv, envp);
+    threads_in_execve.fetch_add(1, std::memory_order_seq_cst);
+    execve_generation.fetch_add(1, std::memory_order_seq_cst);
+    int rc = __real_execve(path, argv, envp);
+    // Only reached when execve failed and the old image keeps running.
+    threads_in_execve.fetch_sub(1, std::memory_order_seq_cst);
+    return rc;
+}
+
+// Retries an EAGAIN that overlaps an exec of this process. Any other EAGAIN is
+// returned unchanged. The bound keeps a real limit, hit while an exec never
+// completes, from looping forever.
+extern "C" int __wrap_pthread_create(pthread_t* thread, const pthread_attr_t* attr, void* (*start_routine)(void*), void* arg)
+{
+    for (int attempt = 0;; attempt++) {
+        unsigned generation = execve_generation.load(std::memory_order_seq_cst);
+        bool execInFlight = threads_in_execve.load(std::memory_order_seq_cst) > 0;
+        int rc = __real_pthread_create(thread, attr, start_routine, arg);
+        if (rc != EAGAIN || attempt >= 1000)
+            return rc;
+        if (!execInFlight && threads_in_execve.load(std::memory_order_seq_cst) == 0
+            && execve_generation.load(std::memory_order_seq_cst) == generation) {
+            // No exec overlapped this attempt: a real limit.
+            return rc;
+        }
+        usleep(1000);
+    }
+}
+#endif // OS(LINUX)
+
 #endif // !OS(WINDOWS)
 
 #define LSHPACK_MAX_HEADER_SIZE 65536
@@ -652,6 +718,8 @@ extern "C" void bun_initialize_process()
     // This is best effort, not all linux kernels support close_range or CLOSE_RANGE_CLOEXEC
     // To avoid breaking --watch, we skip stdin, stdout, stderr and IPC.
     bun_close_range(4, ~0U, CLOSE_RANGE_CLOEXEC);
+
+    execve_counting_pid = getpid();
 #endif
 
 #if OS(LINUX) || OS(DARWIN) || OS(FREEBSD)

@@ -148,6 +148,7 @@ extern "C" bool Bun__getEnvValue(JSC::JSGlobalObject* globalObject, const Encode
 extern "C" bool Bun__Node__ProcessThrowDeprecation;
 extern "C" bool Bun__Node__ProcessPendingDeprecation;
 extern "C" void Bun__writeProfilesBeforeSelfKill();
+extern "C" void JSC__JSGlobalObject__throwTerminationException(JSC::JSGlobalObject*);
 extern "C" int32_t bun_stdio_tty[3];
 
 namespace Bun {
@@ -1493,6 +1494,11 @@ extern "C" int Bun__handleUnhandledRejection(JSC::JSGlobalObject* lexicalGlobalO
         WTF::NakedPtr<JSC::Exception> listenerException;
         wrapped.emit(eventType, args, listenerException);
         if (listenerException) [[unlikely]] {
+            // A listener that stopped the VM (process.exit() in a worker, terminate()) left a termination whose request the entry scope exit already dropped: re-arm it instead of rethrowing that cell.
+            if (vm.isTerminationException(listenerException.get())) {
+                JSC__JSGlobalObject__throwTerminationException(globalObject);
+                return true;
+            }
             auto throwScope = DECLARE_THROW_SCOPE(vm);
             throwScope.throwException(globalObject, listenerException.get());
         }

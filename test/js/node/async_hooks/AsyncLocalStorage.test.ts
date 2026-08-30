@@ -1335,7 +1335,8 @@ describe.concurrent("unhandledRejection async context", () => {
 
   // expect(fn).toThrow() drains pending rejections synchronously, so the drain can
   // run while a context is installed. A promise rejected without one must still
-  // replay "no context" rather than inherit whatever the caller had.
+  // replay "no context" rather than inherit whatever the caller had, and the caller
+  // must get its own context back once the dispatch returns.
   test("a contextless rejection drained from inside a context replays an undefined store", async () => {
     await using proc = Bun.spawn({
       cmd: [
@@ -1351,6 +1352,7 @@ describe.concurrent("unhandledRejection async context", () => {
         Promise.reject(new Error("no-context"));
         als.run({ id: "X" }, () => {
           expect(() => { throw new Error("boom"); }).toThrow("boom");
+          console.log("after the drain:", JSON.stringify(als.getStore() ?? null));
         });`,
       ],
       env: bunEnv,
@@ -1358,7 +1360,11 @@ describe.concurrent("unhandledRejection async context", () => {
     });
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "store: null\n", stderr: "", exitCode: 0 });
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: `store: null\nafter the drain: {"id":"X"}\n`,
+      stderr: "",
+      exitCode: 0,
+    });
   });
 
   // --unhandled-rejections=strict and =throw route a rejection nobody listens for into
@@ -1442,6 +1448,50 @@ describe.concurrent("unhandledRejection async context", () => {
     },
   );
 
+  // A listener's throw ends the mode's dispatch early, but what the listener and the
+  // uncaughtException handler queued must still run before the process exits, with the
+  // context each was queued under. Nothing else keeps the loop alive here.
+  test.each(
+    ["default", "warn", "none", "throw", "strict", "warn-with-error-code"].flatMap(mode =>
+      runtimes.map(([name, exe]) => [mode, name, exe]),
+    ),
+  )("--unhandled-rejections=%s still drains what a throwing listener queued (%s)", async (mode, _name, exe) => {
+    await using proc = Bun.spawn({
+      cmd: [
+        exe,
+        ...(mode === "default" ? [] : [`--unhandled-rejections=${mode}`]),
+        "-e",
+        `const { AsyncLocalStorage } = require("node:async_hooks");
+        const als = new AsyncLocalStorage();
+        const log = [];
+        const show = label => log.push(label + " store=" + JSON.stringify(als.getStore() ?? null));
+        process.on("unhandledRejection", () => {
+          show("listener");
+          Promise.resolve().then(() => show("listener microtask"));
+          process.nextTick(() => show("listener nextTick"));
+          throw new Error("from-listener");
+        });
+        process.on("unhandledRejection", () => show("second listener"));
+        process.on("uncaughtException", err => {
+          show("uncaught(" + err.message + ")");
+          Promise.resolve().then(() => show("uncaught(" + err.message + ") microtask"));
+        });
+        process.on("exit", () => console.log(log.join(" | ")));
+        als.run(7, () => Promise.reject(new Error("e")));`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const listenerThrow =
+      "listener store=7 | uncaught(from-listener) store=null | listener nextTick store=7 | " +
+      (mode === "strict" ? "uncaught(e) microtask store=7 | " : "") +
+      "listener microtask store=7 | uncaught(from-listener) microtask store=null";
+    expect(stdout).toBe(`${mode === "strict" ? "uncaught(e) store=7 | " : ""}${listenerThrow}\n`);
+    expect(exitCode).toBe(0);
+  });
+
   // enterWith() leaves its store in the ambient slot until the next microtask clears it.
   // Every non-default mode drains microtasks inside the dispatch, so that clear can run
   // while the dispatch still holds the pre-dispatch slot for its restore. The restore must
@@ -1494,12 +1544,15 @@ describe.concurrent("unhandledRejection async context", () => {
     },
   );
 
-  // With no listener, the default mode prints the rejection with the promise's context
-  // still installed, so an error whose stack the printer computes lazily sees the store.
-  test("the default printer runs with the promise's context installed", async () => {
+  // With no listener, the printer runs with the promise's context still installed, so an
+  // error whose stack it computes lazily sees the store. In throw mode the fall-through
+  // print comes after the dispatch's microtask drain, so it also checks that the drain
+  // gave the context back.
+  test.each(["default", "throw"])("the printer runs with the promise's context installed (%s)", async mode => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
+        ...(mode === "default" ? [] : [`--unhandled-rejections=${mode}`]),
         "-e",
         `const { AsyncLocalStorage } = require("node:async_hooks");
         const fs = require("node:fs");
@@ -1524,6 +1577,74 @@ describe.concurrent("unhandledRejection async context", () => {
     expect(stdout).not.toContain("store=null");
     expect(stderr).toContain("printed");
     expect(exitCode).toBe(1);
+  });
+
+  // A worker has its own global, process object and rejection list; the dispatch runs
+  // there with the worker's context. The mode comes from the parent's command line.
+  test.each(runtimes)("the dispatch runs with the rejection-time context inside a worker (%s)", async (_name, exe) => {
+    await using proc = Bun.spawn({
+      cmd: [
+        exe,
+        "--unhandled-rejections=warn",
+        "-e",
+        `const { Worker } = require("node:worker_threads");
+        const worker = new Worker(
+          \`const { AsyncLocalStorage } = require("node:async_hooks");
+          const { parentPort } = require("node:worker_threads");
+          const als = new AsyncLocalStorage();
+          const log = [];
+          const show = label => log.push(label + " store=" + JSON.stringify(als.getStore() ?? null));
+          process.on("exit", () => {
+            show("exit");
+            parentPort.postMessage(log.join(" | "));
+          });
+          process.on("unhandledRejection", () => {
+            show("listener");
+            Promise.resolve().then(() => show("listener microtask"));
+          });
+          als.run("S", () => {
+            Promise.reject(new Error("e"));
+          });\`,
+          { eval: true },
+        );
+        worker.on("message", message => console.log(message));
+        worker.on("exit", code => console.log("worker exit", code));`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe(`listener store="S" | listener microtask store="S" | exit store=null\nworker exit 0\n`);
+    expect(exitCode).toBe(0);
+  });
+
+  // A listener that stops its worker (process.exit()) hands the dispatch a termination,
+  // not an error: nothing is reported, and the worker exits with the requested code.
+  test.each(runtimes)("a worker's unhandledRejection listener can call process.exit() (%s)", async (_name, exe) => {
+    await using proc = Bun.spawn({
+      cmd: [
+        exe,
+        "-e",
+        `const { Worker } = require("node:worker_threads");
+        const worker = new Worker(
+          \`const { parentPort } = require("node:worker_threads");
+          process.on("unhandledRejection", () => {
+            parentPort.postMessage("listener");
+            process.exit(3);
+          });
+          Promise.reject(new Error("e"));\`,
+          { eval: true },
+        );
+        worker.on("message", message => console.log(message));
+        worker.on("exit", code => console.log("worker exit", code));`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "listener\nworker exit 3\n", stderr: "", exitCode: 0 });
   });
 
   // `bun test` (isBunTest) doesn't dispatch the process event at all; the test
@@ -1605,6 +1726,45 @@ describe.concurrent("unhandledRejection async context", () => {
     expect(stdout).toContain("HOOK store: null\nPROBE store: null");
     expect(stderr).toContain("(pass) next callback observes no leaked store");
     expect(stderr).toContain("in-timer");
+    expect(exitCode).not.toBe(0);
+  });
+
+  // A throwing listener compiled in a node:vm context reaches the test runner's error
+  // path with that context's global, which is not the main one. The async-context guard
+  // there must still work on the main global's slot (the vm global shares it).
+  test("under `bun test`, a throwing listener from a vm context doesn't leak the store", async () => {
+    using dir = tempDir("als-vm-listener-buntest", {
+      "probe.test.ts": `
+        import { test } from "bun:test";
+        import { AsyncLocalStorage } from "node:async_hooks";
+        import vm from "node:vm";
+        const als = new AsyncLocalStorage();
+        process.on("warning", vm.runInContext('() => { throw new Error("from-vm-listener"); }', vm.createContext({})));
+
+        test("emits a warning inside a store", async () => {
+          await als.run({ id: "leaky-vm" }, async () => {
+            process.emitWarning("w");
+            await new Promise(resolve => setImmediate(resolve));
+          });
+        });
+
+        test("next callback observes no leaked store", () => {
+          console.log("PROBE store:", JSON.stringify(als.getStore() ?? null));
+        });
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "probe.test.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toContain("PROBE store: null");
+    expect(stderr).toContain("from-vm-listener");
+    expect(stderr).toContain("(pass) next callback observes no leaked store");
     expect(exitCode).not.toBe(0);
   });
 });

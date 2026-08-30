@@ -1606,6 +1606,7 @@ unsafe extern "C" {
 }
 
 /// Puts back the async context [`JSGlobalObject::enter_async_context`] replaced, or undefined if `enterWith()`'s one-shot cleanup cleared the slot meanwhile (the saved value is stale); stack-only, so `previous` stays GC-visible.
+#[must_use = "dropping immediately restores the previous async context; bind to a local"]
 pub struct AsyncContextScope<'a> {
     global: &'a JSGlobalObject,
     previous: JSValue,

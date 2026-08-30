@@ -1685,6 +1685,38 @@ describe.concurrent(() => {
     },
   );
 
+  // A throwing unhandledRejection listener ends the dispatch (later listeners do not run)
+  // and is reported as an uncaught exception. With no handler for it the process is done:
+  // nothing the listener queued runs, and the exit code is 1, as on Node. Strict mode is
+  // left out: Bun still runs the listener after the fatal report, Node exits first.
+  it.each(["default", "none", "warn", "warn-with-error-code", "throw"])(
+    "a throwing unhandledRejection listener with no uncaughtException handler exits 1 (--unhandled-rejections=%s)",
+    async mode => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          ...(mode === "default" ? [] : [`--unhandled-rejections=${mode}`]),
+          "-e",
+          `process.on("warning", warning => console.log("warning:", warning.name));
+          process.on("unhandledRejection", () => {
+            console.log("first ran");
+            Promise.resolve().then(() => console.log("listener microtask ran"));
+            throw new Error("from-listener");
+          });
+          process.on("unhandledRejection", () => console.log("second ran"));
+          process.on("exit", code => console.log("exit code=", code));
+          Promise.reject(new Error("e"));`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain("from-listener");
+      expect({ stdout, exitCode }).toEqual({ stdout: "first ran\nexit code= 1\n", exitCode: 1 });
+    },
+  );
+
   it("aborts when the uncaughtException handler throws", async () => {
     const proc = Bun.spawn([bunExe(), join(import.meta.dir, "process-onUncaughtExceptionAbort.js")], {
       stderr: "pipe",

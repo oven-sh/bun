@@ -3779,8 +3779,19 @@ impl VirtualMachine {
         let dispatched = self.dispatch_unhandled_rejection(global_object, reason, promise);
         drop(scope);
         if let Err(e) = dispatched {
+            // A termination is not this frame's to take; it stays pending for the frames above.
+            if global_object.has_pending_termination_exception() {
+                return;
+            }
             let exception = global_object.take_exception(e);
-            let _ = self.uncaught_exception(global_object, exception, false);
+            if exception.is_termination_exception() {
+                return;
+            }
+            // The early return skipped the mode's drain. A handled throw resumes the turn, so what the listener and the handler queued runs now; an unhandled one ends it, as on Node.
+            if self.uncaught_exception(global_object, exception, false) {
+                let _cleared = global_object.enter_async_context(JSValue::UNDEFINED);
+                let _ = self.event_loop_mut().drain_microtasks();
+            }
         }
     }
 

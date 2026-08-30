@@ -74,9 +74,8 @@ pub struct HttpThread {
     /// Stashed `InitOpts` for the default HTTPS context. When the user passed
     /// no explicit CA config, `on_start` defers
     /// `https_context.init_with_thread_opts` (which calls
-    /// `us_ssl_ctx_from_options` → `us_get_default_ca_store`, ~0.7 ms CPU +
-    /// ~400 KB heap to parse the bundled root certs) until the first SSL
-    /// connect actually arrives via [`HttpThread::connect`]`::<true>`. A
+    /// `us_ssl_ctx_from_options` → `us_get_default_ca_store`) until the first
+    /// SSL connect actually arrives via [`HttpThread::connect`]`::<true>`. A
     /// fully-cached `bun install` never makes one, so the cost is skipped
     /// entirely. If `--cafile` / `--ca` *was* passed, `on_start` still runs
     /// init eagerly so a bad CA file crashes at thread start (the long-standing
@@ -1224,13 +1223,13 @@ mod _event_loop_draft {
         thread.uws_loop = uws_loop;
         thread.http_context.init();
         // `https_context.init_with_thread_opts` eagerly builds the BoringSSL
-        // `SSL_CTX` and parses the bundled root-CA store
-        // (`us_get_default_ca_store`, root_certs.cpp:210), costing ~0.7 ms CPU
-        // and ~400 KB heap whether or not an HTTPS request ever happens. When
-        // there is no user-supplied CA config we stash `opts` and let the first
-        // `connect::<true>` call run it (see `HttpThread::lazy_https_init`) — a
-        // fully-cached `bun install` (which makes zero network requests) then
-        // skips the cost entirely.
+        // `SSL_CTX` and the default root-CA store (`us_get_default_ca_store`),
+        // which reads the OpenSSL default cert file/dir where present, whether
+        // or not an HTTPS request ever happens. When there is no user-supplied
+        // CA config we stash `opts` and let the first `connect::<true>` call
+        // run it (see `HttpThread::lazy_https_init`) — a fully-cached
+        // `bun install` (which makes zero network requests) then skips the
+        // cost entirely.
         if !opts.abs_ca_file_name.is_empty() || !opts.ca.is_empty() {
             // User passed --cafile / --ca: validate now so a bad CA file fails
             // the process at thread start (test contract:

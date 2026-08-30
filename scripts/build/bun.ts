@@ -234,6 +234,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   const depLibs: string[] = [];
   const depObjects: string[] = [];
   const depIncludes: string[] = [];
+  const depDefines: string[] = [];
   // Outputs of deps that provide headers — used as implicit inputs on PCH/cc/
   // no-PCH cxx so a dep rebuild invalidates compiles that #include its headers
   // (the .a is the signal — see comment at the PCH step). Deps with no provided
@@ -250,6 +251,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     depObjects.push(...d.objects);
     depChecks.push(...d.checks);
     depIncludes.push(...d.includes);
+    depDefines.push(...d.defines);
     // d.outputs is the "headers are ready" signal: for nested-cmake/
     // prebuilt that's the .a/stamp (headers are undeclared side-effects),
     // for direct deps it's the generated-header set + source stamp.
@@ -264,11 +266,11 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
 
   const flags = computeFlags(cfg);
 
-  // Full include set: bun's own + all dep includes + buildDir (for the
-  // generated versions header).
+  // Full include / define set: bun's own + what deps provide + buildDir (for
+  // the generated versions header).
   const allIncludes = [...bunIncludes(cfg), cfg.buildDir, ...depIncludes];
   const includeFlags = allIncludes.map(inc => `-I${inc}`);
-  const defineFlags = flags.defines.map(d => `-D${d}`);
+  const defineFlags = [...flags.defines, ...depDefines].map(d => `-D${d}`);
 
   // Final flag arrays for compile.
   const cxxFlagsFull = [...flags.cxxflags, ...includeFlags, ...defineFlags];

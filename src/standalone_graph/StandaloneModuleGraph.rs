@@ -314,12 +314,8 @@ impl bun_resolver::StandaloneModuleGraph for StandaloneModuleGraph {
         self.find_ref(name)
             .is_some_and(|file| !file.module_info.is_empty())
     }
-    fn find_assume_standalone_path(&self, name: &[u8]) -> Option<&[u8]> {
+    fn find_assume_standalone_path(&self, name: &[u8]) -> Option<&'static [u8]> {
         self.lookup_file(name).map(|f| f.name)
-    }
-
-    fn find(&self, name: &[u8]) -> Option<&[u8]> {
-        self.find_ref(name).map(|f| f.name)
     }
 
     fn base_public_path_with_default_suffix(&self) -> &'static [u8] {

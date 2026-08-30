@@ -250,13 +250,10 @@ pub(super) mod ffi {
         );
         // Returns the borrowed cert store of a live `SSL_CTX*`.
         pub(crate) safe fn SSL_CTX_get_cert_store(ctx: &SSL_CTX) -> *mut X509_STORE;
-        // Emptiness probe for a cert store: `get0_objects` borrows the
-        // object stack and `OPENSSL_sk_num(NULL)` returns 0.
-        pub(crate) fn X509_STORE_get0_objects(store: *mut X509_STORE) -> *mut c_void;
-        pub(crate) fn OPENSSL_sk_num(sk: *const c_void) -> usize;
         // The process-wide default root store; up-refs before returning, so
         // the caller owns a reference it must release with X509_STORE_free.
         pub(crate) fn us_get_shared_default_ca_store() -> *mut X509_STORE;
+        pub(crate) fn us_ssl_ctx_has_user_ca(ctx: *mut SSL_CTX) -> c_int;
         pub(crate) fn X509_STORE_free(store: *mut X509_STORE);
         // X509_STORE_CTX lifecycle for issuer lookups; `new` allocates,
         // `init` borrows the store, `free` releases. Used to extend the peer
@@ -560,7 +557,8 @@ pub(super) fn get_peer_certificate(
         // contains the bundled roots. The getter up-refs, so the temporary
         // reference is released after the walk.
         let mut shared_store: *mut boringssl::X509_STORE = core::ptr::null_mut();
-        if store.is_null() || ffi::OPENSSL_sk_num(ffi::X509_STORE_get0_objects(store)) == 0 {
+        let ssl_ctx = ffi::SSL_get_SSL_CTX(boringssl::SSL::opaque_ref(ssl_ptr));
+        if store.is_null() || ffi::us_ssl_ctx_has_user_ca(ssl_ctx) == 0 {
             shared_store = ffi::us_get_shared_default_ca_store();
             if !shared_store.is_null() {
                 store = shared_store;

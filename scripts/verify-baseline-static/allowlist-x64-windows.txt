@@ -869,9 +869,20 @@ blake2b_simd::avx2::compress1_loop  [AVX, AVX2]
 
 
 # ----------------------------------------------------------------------------
-# MSVC STL vectorized algorithms. Gate: __isa_available.
-# (14 symbols)
+# BoringSSL Keccak x4 (ML-KEM batch SHAKE). __attribute__((target("avx2"))); only reached when
+# BORINGSSL_have_keccak_x4() -> CRYPTO_is_AVX2_capable() (crypto/fipsmodule/keccak/internal.h).
+# (3 symbols)
 # ----------------------------------------------------------------------------
+keccak_f_x4                        [AVX, AVX2]
+bssl::BORINGSSL_keccak_short_x4    [AVX, AVX2]
+bssl::BORINGSSL_keccak_squeeze_x4  [AVX, AVX2]
+
+
+# ----------------------------------------------------------------------------
+# MSVC STL vectorized algorithms. Gate: __isa_available.
+# (15 symbols)
+# ----------------------------------------------------------------------------
+__std_mismatch_1                                                                                          [AVX, AVX2]
 __std_reverse_copy_trivially_copyable_1                                                                   [AVX, AVX2]
 __std_reverse_trivially_swappable_1                                                                       [AVX, AVX2]
 __std_reverse_trivially_swappable_2                                                                       [AVX, AVX2]

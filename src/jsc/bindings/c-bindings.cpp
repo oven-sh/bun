@@ -18,6 +18,7 @@
 #include <sys/socket.h>
 #if OS(DARWIN)
 #include <mach-o/loader.h>
+#include <spawn.h>
 #endif
 #else
 #include <uv.h>
@@ -301,6 +302,21 @@ static void unset_cloexec(int fd)
     fcntl(fd, F_SETFD, flags);
 }
 
+// The IPC channel to the parent, or -1. NODE_CHANNEL_FD survives in environ across the
+// reload and the reloaded image re-attaches to it, so the fd it names must survive too;
+// closed, the parent stops receiving 'message' events after the first reload.
+static int node_channel_fd()
+{
+    const char* s = getenv("NODE_CHANNEL_FD");
+    if (!s)
+        return -1;
+    char* end = nullptr;
+    long fd = strtol(s, &end, 10);
+    if (end == s || *end != '\0' || fd < 3 || fd > INT_MAX)
+        return -1;
+    return static_cast<int>(fd);
+}
+
 extern "C" void on_before_reload_process_posix()
 {
     unset_cloexec(STDIN_FILENO);
@@ -314,15 +330,8 @@ extern "C" void on_before_reload_process_posix()
     bun_close_range(3, ~0U, CLOSE_RANGE_CLOEXEC);
 #endif
 
-    // Preserve the IPC channel to the parent across the execve: NODE_CHANNEL_FD survives in
-    // environ and the reloaded image re-attaches to it; CLOEXEC'd, the parent stops receiving
-    // 'message' events after the first reload.
-    if (const char* s = getenv("NODE_CHANNEL_FD")) {
-        char* end = nullptr;
-        long fd = strtol(s, &end, 10);
-        if (end != s && *end == '\0' && fd >= 3 && fd <= INT_MAX)
-            unset_cloexec(static_cast<int>(fd));
-    }
+    if (int ipc = node_channel_fd(); ipc >= 0)
+        unset_cloexec(ipc);
 
     // Reset caught dispositions so a SIGTERM arriving between here and execve isn't queued-then-
     // lost. Inherited SIG_IGN is left alone. SIGSEGV/SIGBUS/RT/sigThreadSuspendResume are left
@@ -352,6 +361,56 @@ extern "C" void on_before_reload_process_posix()
     sigset_t signal_set;
     sigemptyset(&signal_set);
     sigprocmask(SIG_SETMASK, &signal_set, nullptr);
+}
+
+// Replaces the current image with `path`, like execve(2). Returns only on failure, with the
+// errno.
+extern "C" int bun_reload_process_exec(const char* path, char* const* argv, char* const* envp)
+{
+#if OS(DARWIN)
+    // macOS has no close_range(2), and fs.openSync does not set O_CLOEXEC, so a bare execve
+    // carries every fd that user code opened into the reloaded image, one more per reload.
+    // POSIX_SPAWN_SETEXEC replaces the image without forking and POSIX_SPAWN_CLOEXEC_DEFAULT
+    // closes every fd that is not listed in the file actions, whatever its FD_CLOEXEC bit: the
+    // same result as the close_range sweep above on Linux.
+    posix_spawnattr_t attrs;
+    posix_spawn_file_actions_t actions;
+    int rc = posix_spawnattr_init(&attrs);
+    if (rc != 0)
+        return rc;
+    rc = posix_spawn_file_actions_init(&actions);
+    if (rc != 0) {
+        posix_spawnattr_destroy(&attrs);
+        return rc;
+    }
+
+    // Only the mask is reset. SETEXEC already gives execve(2) semantics for dispositions
+    // (caught handlers become SIG_DFL, SIG_IGN is preserved), the same as the Linux path.
+    sigset_t emptyMask;
+    sigemptyset(&emptyMask);
+    posix_spawnattr_setsigmask(&attrs, &emptyMask);
+    posix_spawnattr_setflags(&attrs, POSIX_SPAWN_CLOEXEC_DEFAULT | POSIX_SPAWN_SETEXEC | POSIX_SPAWN_SETSIGMASK);
+
+    // A closed fd in the inherit list fails the whole spawn with EBADF, so check each one.
+    auto inherit = [&](int fd) {
+        if (fcntl(fd, F_GETFD, 0) != -1)
+            posix_spawn_file_actions_addinherit_np(&actions, fd);
+    };
+    inherit(STDIN_FILENO);
+    inherit(STDOUT_FILENO);
+    inherit(STDERR_FILENO);
+    if (int ipc = node_channel_fd(); ipc >= 0)
+        inherit(ipc);
+
+    pid_t pid;
+    rc = posix_spawn(&pid, path, &actions, &attrs, argv, envp);
+    posix_spawn_file_actions_destroy(&actions);
+    posix_spawnattr_destroy(&attrs);
+    return rc;
+#else
+    execve(path, argv, envp);
+    return errno;
+#endif
 }
 
 #endif // !OS(WINDOWS)

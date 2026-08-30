@@ -946,12 +946,38 @@ pub(crate) fn defines_from_transform_options(
 
     let drop_debugger = drop.iter().any(|item| *item == b"debugger");
 
-    Ok(defines::Define::init(
+    // Everything above this line that is not a constant table: the resolved
+    // define map, the inlined env entries (strings only, `window` has none)
+    // and the drop list.
+    let user_hash = defines::Define::hash_user_inputs(
+        user_defines
+            .keys()
+            .iter()
+            .zip(user_defines.values().iter())
+            .map(|(k, v)| (k.as_ref(), v.as_ref()))
+            .chain(
+                environment_defines
+                    .keys()
+                    .iter()
+                    .zip(environment_defines.values().iter())
+                    .filter_map(|(k, v)| match &v.value {
+                        defines::DefineValue::EString(s) if s.is_utf8() => {
+                            Some((k.as_ref(), s.slice8()))
+                        }
+                        _ => None,
+                    }),
+            ),
+        drop.iter().copied(),
+    );
+
+    let mut define = defines::Define::init(
         Some(resolved_defines),
         Some(environment_defines),
         drop_debugger,
         omit_unused_global_calls,
-    )?)
+    )?;
+    define.user_hash = user_hash;
+    Ok(define)
 }
 
 const DEFAULT_LOADER_EXT_BUN: &[&[u8]] = &[b".node", b".html"];
@@ -1414,6 +1440,7 @@ impl<'a> BundleOptions<'a> {
                 identifiers: self.define.identifiers.clone(),
                 dots: self.define.dots.clone(),
                 drop_debugger: self.define.drop_debugger,
+                user_hash: self.define.user_hash,
             }),
             drop: self.drop.clone(),
             bundler_feature_flags: self
@@ -1663,11 +1690,7 @@ impl<'a> BundleOptions<'a> {
             log,
             // `define` is filled by `load_defines` later;
             // initialize empty so the struct is well-formed before `load_defines` runs.
-            define: Box::new(defines::Define {
-                identifiers: Default::default(),
-                dots: Default::default(),
-                drop_debugger: false,
-            }),
+            define: Box::new(defines::Define::default()),
             loaders,
             output_dir: Box::from(transform.output_dir.as_deref().unwrap_or(b"out")),
             target,

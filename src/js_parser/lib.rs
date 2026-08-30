@@ -493,9 +493,49 @@ pub mod defines {
         pub identifiers: StringHashMap<IdentifierDefine>,
         pub dots: StringHashMap<Vec<DotDefine>>,
         pub drop_debugger: bool,
+        /// Hash of the non-constant inputs this table was built from: the
+        /// define pairs (`--define`, bunfig `[define]`, inlined env) and the
+        /// `--drop` entries (see `hash_user_inputs`). The runtime transpiler
+        /// cache keys on it, because those inputs change the transpiled
+        /// output. `None` when there are none.
+        pub user_hash: Option<u64>,
     }
 
     impl Define {
+        /// Hash define `(key, value)` pairs and `--drop` entries. Both lists
+        /// are sorted first, so the order they were given in does not matter,
+        /// and every entry is length-prefixed, so two different inputs cannot
+        /// produce the same byte stream. Returns `None` when there is nothing
+        /// to hash, so a configuration without them adds nothing to the
+        /// runtime transpiler cache key.
+        pub fn hash_user_inputs<'i>(
+            defines: impl IntoIterator<Item = (&'i [u8], &'i [u8])>,
+            drop: impl IntoIterator<Item = &'i [u8]>,
+        ) -> Option<u64> {
+            let mut defines: Vec<(&[u8], &[u8])> = defines.into_iter().collect();
+            let mut drop: Vec<&[u8]> = drop.into_iter().filter(|item| !item.is_empty()).collect();
+            if defines.is_empty() && drop.is_empty() {
+                return None;
+            }
+            defines.sort_unstable();
+            drop.sort_unstable();
+            drop.dedup();
+
+            let mut hasher = bun_wyhash::Wyhash::init(0);
+            for (key, value) in defines {
+                hasher.update(&(key.len() as u64).to_le_bytes());
+                hasher.update(key);
+                hasher.update(&(value.len() as u64).to_le_bytes());
+                hasher.update(value);
+            }
+            hasher.update(b"drop");
+            for item in drop {
+                hasher.update(&(item.len() as u64).to_le_bytes());
+                hasher.update(item);
+            }
+            Some(hasher.final_())
+        }
+
         pub(crate) fn for_identifier(&self, name: &[u8]) -> Option<&IdentifierDefine> {
             if let Some(data) = self.identifiers.get(name) {
                 return Some(data);

@@ -4,17 +4,17 @@ use bun_core::string_joiner::{StringJoiner, Watcher};
 use bun_sourcemap::{LineColumnOffset, LineColumnOffsetOptional};
 
 use crate::chunk::IntermediateOutput;
-use crate::linker_context_mod::{GenerateChunkCtx, LinkerOptionsMode};
+use crate::linker_context_mod::{LinkerOptionsMode, PostProcessChunkCtx};
 use crate::thread_pool;
 use crate::{Chunk, CompileResultForSourceMap, Index, options};
 
 /// This runs after we've already populated the compile results
 pub(crate) fn post_process_css_chunk(
-    ctx: GenerateChunkCtx,
+    ctx: &PostProcessChunkCtx,
     worker: &mut thread_pool::Worker,
     chunk: &mut Chunk,
 ) -> Result<(), crate::Error> {
-    let c = ctx.c();
+    let c = ctx.c;
     // Avoid FRU `..Default::default()` — StringJoiner impls Drop (E0509).
     let mut j = StringJoiner::default();
     j.watcher = Watcher {
@@ -139,24 +139,19 @@ pub(crate) fn post_process_css_chunk(
     // graph are alive.
     let mut j = unsafe { j.detach_lifetime() };
     chunk.intermediate_output =
-        bun_core::handle_oom(c.break_output_into_pieces(alloc, &mut j, ctx.chunks.len() as u32));
+        bun_core::handle_oom(c.break_output_into_pieces(alloc, &mut j, ctx.chunk_count()));
     // TODO: meta contents
 
-    chunk.isolated_hash = c.generate_isolated_hash(chunk, alloc);
+    chunk.isolated_hash = c.generate_isolated_hash(chunk);
     // chunk.flags.is_executable = is_executable;
 
     if c.options.source_maps != options::SourceMapOption::None {
         let can_have_shifts = matches!(chunk.intermediate_output, IntermediateOutput::Pieces(_));
-        // Copy the `ParentRef` out (not `c.resolver()`) so `output_dir`
-        // borrows the local, not `c`, avoiding the split-borrow with
-        // `c.generate_source_map_for_chunk(&mut self, …)` below.
-        let resolver = c.resolver.expect("resolver set in load()");
-        let output_dir = &resolver.opts.output_dir;
         chunk.output_source_map = c.generate_source_map_for_chunk(
             chunk.isolated_hash,
             worker,
             &compile_results_for_source_map,
-            output_dir,
+            &c.resolver().opts.output_dir,
             can_have_shifts,
         )?;
     }

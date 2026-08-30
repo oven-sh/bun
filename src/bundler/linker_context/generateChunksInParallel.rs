@@ -31,7 +31,7 @@ use crate::linker_context::prepare_css_asts_for_chunk::{
 };
 use crate::linker_context::static_route_visitor::StaticRouteVisitor;
 use crate::linker_context::write_output_files_to_disk::write_output_files_to_disk;
-use crate::linker_context_mod::{GenerateChunkCtx, PendingPartRange};
+use crate::linker_context_mod::{GenerateChunkCtx, PendingPartRange, PostProcessChunkCtx};
 
 /// Bytecode output file extension (also defined in `writeOutputFilesToDisk.rs`).
 const BYTECODE_EXTENSION: &str = ".jsc";
@@ -63,11 +63,12 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             crate::linker_context::cross_chunk_names::assign_unminified(c, chunks)?;
         }
         let ctx = GenerateChunkCtx {
-            chunk: bun_ptr::BackRef::new_mut(&mut chunks[0]),
             // SAFETY: `c` is the live `&mut LinkerContext` for the link step;
             // write provenance preserved.
             c: unsafe { bun_ptr::ParentRef::from_raw_mut(std::ptr::from_mut::<LinkerContext>(c)) },
             chunks: bun_ptr::BackRef::new(&*chunks),
+            // Unused by the renamer tasks, which get their chunk from `each_ptr`.
+            chunk: bun_ptr::BackRef::new(&chunks[0]),
         };
         // SAFETY: `parse_graph` is the `BundleV2.graph` backref (valid for the
         // link step); `pool` is the arena-allocated bundler ThreadPool.
@@ -141,24 +142,10 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
     }
 
     {
-        let mut chunk_contexts: Vec<GenerateChunkCtx> = Vec::with_capacity(chunks.len());
-
         {
             let mut total_count: usize = 0;
-            // `GenerateChunkCtx` fields are raw pointers; capture them
-            // before the `iter_mut()` borrow so the same slice backref can be
-            // stored in every ctx.
-            // SAFETY: `c` is the live `&mut LinkerContext` for the link step.
-            let c_ref =
-                unsafe { bun_ptr::ParentRef::from_raw_mut(std::ptr::from_mut::<LinkerContext>(c)) };
-            let chunks_ref: bun_ptr::BackRef<[Chunk]> = bun_ptr::BackRef::new(&*chunks);
             for chunk in chunks.iter_mut() {
-                chunk_contexts.push(GenerateChunkCtx {
-                    c: c_ref,
-                    chunks: chunks_ref,
-                    chunk: bun_ptr::BackRef::new_mut(chunk),
-                });
-                match &mut chunk.content {
+                match &chunk.content {
                     crate::chunk::Content::Javascript(js) => {
                         total_count += js.parts_in_chunk_in_order.len();
                         chunk.compile_results_for_chunk =
@@ -181,7 +168,24 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 }
             }
 
-            debug_assert_eq!(chunks.len(), chunk_contexts.len());
+            // Take the tasks' views only after the writes above, and until
+            // `group.wait()` only read `chunks` (no `iter_mut()`): writing
+            // through, or `&mut`-reborrowing, the owner invalidates every view
+            // previously taken from it.
+            // SAFETY: `c` is the live `&mut LinkerContext` for the link step;
+            // the fan-out only reads through this view.
+            let c_ref =
+                unsafe { bun_ptr::ParentRef::from_raw_mut(std::ptr::from_mut::<LinkerContext>(c)) };
+            let chunks_ref: bun_ptr::BackRef<[Chunk]> = bun_ptr::BackRef::new(&*chunks);
+            // Pointed into by the `PendingPartRange`s below; outlives `group.wait()`.
+            let chunk_contexts: Vec<GenerateChunkCtx> = chunks
+                .iter()
+                .map(|chunk| GenerateChunkCtx {
+                    c: c_ref,
+                    chunks: chunks_ref,
+                    chunk: bun_ptr::BackRef::new(chunk),
+                })
+                .collect();
 
             debug!(" START {} compiling part ranges", total_count);
             // Pre-reserved to `total_count` so pushes never reallocate; the
@@ -189,7 +193,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             let group = bun_threading::WaitGroup::init_with_count(total_count);
             let mut combined_part_ranges: Vec<PendingPartRange> = Vec::with_capacity(total_count);
             let mut batch = ThreadPoolLib::Batch::default();
-            for (chunk, chunk_ctx) in chunks.iter_mut().zip(chunk_contexts.iter_mut()) {
+            for (chunk, chunk_ctx) in chunks.iter().zip(chunk_contexts.iter()) {
                 match &chunk.content {
                     crate::chunk::Content::Javascript(js) => {
                         for (i, part_range) in js.parts_in_chunk_in_order.iter().enumerate() {
@@ -326,6 +330,10 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             }
         }
 
+        // Cross-chunk imports index the whole chunk list, whichever chunks get
+        // post-processed below.
+        let chunk_unique_keys: Vec<&'static [u8]> =
+            chunks.iter().map(|chunk| chunk.unique_key).collect();
         // For dev server, only post-process CSS + HTML chunks.
         let chunks_to_do: &mut [Chunk] = if IS_DEV_SERVER {
             &mut chunks[1..]
@@ -336,13 +344,13 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             debug_assert!(chunks_to_do.len() > 0);
             debug!(" START {} postprocess chunks", chunks_to_do.len());
 
-            // SAFETY: `parse_graph` is the `BundleV2.graph` backref (valid for
-            // the link step); `pool` is the arena-allocated bundler ThreadPool.
-            c.worker_pool().each_ptr(
-                chunk_contexts[0],
-                LinkerContext::generate_chunk,
-                chunks_to_do,
-            );
+            c.initialize_pretty_paths_for_isolated_hashes(chunks_to_do)?;
+            let ctx = PostProcessChunkCtx {
+                c: &*c,
+                chunk_unique_keys: &chunk_unique_keys,
+            };
+            c.worker_pool()
+                .each_ptr(ctx, LinkerContext::generate_chunk, chunks_to_do);
 
             debug!("  DONE {} postprocess chunks", chunks_to_do.len());
         }

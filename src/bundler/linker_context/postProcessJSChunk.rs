@@ -1,7 +1,7 @@
 use crate::LinkerContext;
 use crate::analyze_transpiled_module::ModuleInfo;
 use crate::bundle_v2::bake_types::{HmrRuntimeSide, get_hmr_runtime};
-use crate::linker_context_mod::{GenerateChunkCtx, LinkerOptionsMode};
+use crate::linker_context_mod::{LinkerOptionsMode, PostProcessChunkCtx};
 use crate::mal_prelude::*;
 use crate::options;
 use crate::options_impl::TargetExt as _;
@@ -38,7 +38,7 @@ fn print_result_take_code(r: &mut PrintResult) -> Box<[u8]> {
 
 /// This runs after we've already populated the compile results
 pub(crate) fn post_process_js_chunk(
-    ctx: GenerateChunkCtx,
+    ctx: &PostProcessChunkCtx,
     worker: &mut ThreadPool::Worker,
     chunk: &mut Chunk,
     chunk_index: usize,
@@ -46,7 +46,7 @@ pub(crate) fn post_process_js_chunk(
     let _trace = perf::trace("Bundler.postProcessJSChunk");
 
     let _ = chunk_index;
-    let c: &mut LinkerContext = ctx.c();
+    let c: &LinkerContext = ctx.c;
     debug_assert!(matches!(
         chunk.content,
         crate::chunk::Content::Javascript(_)
@@ -73,8 +73,8 @@ pub(crate) fn post_process_js_chunk(
 
     let runtime_input_file =
         c.graph.files.items_input_file()[Index::RUNTIME.value() as usize].get() as usize;
-    let runtime_scope: &mut Scope = &mut c.graph.ast.items_module_scope_mut()[runtime_input_file];
-    let runtime_members = &mut runtime_scope.members;
+    let runtime_scope: &Scope = &c.graph.ast.items_module_scope()[runtime_input_file];
+    let runtime_members = &runtime_scope.members;
     let to_common_js_ref = c
         .graph
         .symbols
@@ -156,10 +156,8 @@ pub(crate) fn post_process_js_chunk(
         for import_record in chunk.cross_chunk_imports.slice() {
             cross_chunk_import_records.push(ImportRecord {
                 kind: import_record.import_kind,
-                // `ctx.chunks` is a `BackRef<[Chunk]>` (safe `Deref`); chunk_index is
-                // in-bounds (produced by the linker for this chunks slice).
                 path: bun_paths::fs::Path::init(
-                    ctx.chunks[import_record.chunk_index as usize].unique_key,
+                    ctx.chunk_unique_keys[import_record.chunk_index as usize],
                 ),
                 range: bun_ast::Range::NONE,
                 // Remaining fields (`ImportRecord` has no `Default` impl):
@@ -700,12 +698,12 @@ pub(crate) fn post_process_js_chunk(
     // linker graph are alive.
     let mut j = unsafe { j.detach_lifetime() };
     chunk.intermediate_output = c
-        .break_output_into_pieces(worker_arena, &mut j, ctx.chunks.len() as u32)
+        .break_output_into_pieces(worker_arena, &mut j, ctx.chunk_count())
         .unwrap_or_else(|_| panic!("Unhandled out of memory error in breakOutputIntoPieces()"));
 
     // TODO: meta contents
 
-    chunk.isolated_hash = c.generate_isolated_hash(chunk, worker_arena);
+    chunk.isolated_hash = c.generate_isolated_hash(chunk);
     chunk
         .flags
         .set(crate::chunk::Flags::IS_EXECUTABLE, is_executable);
@@ -715,15 +713,11 @@ pub(crate) fn post_process_js_chunk(
             chunk.intermediate_output,
             crate::chunk::IntermediateOutput::Pieces(_)
         );
-        // Copy the `ParentRef` out (not `c.resolver()`) so the arg borrows the
-        // local, not `c`, avoiding the split-borrow with
-        // `c.generate_source_map_for_chunk(&mut self, …)`.
-        let resolver = c.resolver.expect("resolver set in load()");
         chunk.output_source_map = c.generate_source_map_for_chunk(
             chunk.isolated_hash,
             worker,
             &compile_results_for_source_map,
-            &resolver.opts.output_dir,
+            &c.resolver().opts.output_dir,
             can_have_shifts,
         )?;
     }
@@ -736,11 +730,10 @@ pub(crate) fn post_process_js_chunk(
 }
 
 // `js_printer::print` ties bump/Options/import_records/renamer to a
-// single `'a`, and `Renamer<'r, 'src>` is invariant in `'src` — so the caller's
-// renamer lifetime fixes `'a`. All by-ref params that flow into `print` must
-// share that lifetime.
+// single `'a`, so all by-ref params that flow into `print` share that
+// lifetime.
 pub(crate) fn generate_entry_point_tail_js<'a>(
-    c: &'a mut LinkerContext,
+    c: &'a LinkerContext,
     to_common_js_ref: Ref,
     to_esm_ref: Ref,
     source_index: IndexInt,

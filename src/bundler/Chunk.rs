@@ -114,43 +114,16 @@ impl Default for Content {
 // point into bundler-arena storage that outlives the
 // pool join and is only mutated by the owning task; this mirrors
 // `InputFile`'s blanket impls (bundle_v2.rs).
-//
-// CONCURRENCY: during the `generate_compile_result_for_*_chunk` fan-out, many
-// `PendingPartRange` tasks share ONE `*mut Chunk` and each writes a disjoint
-// `compile_results_for_chunk[i]`. That field is therefore [`CompileResultSlots`]
-// (UnsafeCell-per-slot) so the per-task write is routed through interior
-// mutability and never requires an aliased `&mut Chunk` /
-// `&mut [CompileResult]` — see [`Chunk::write_compile_result_slot`].
-// `files_with_parts_in_chunk` values are bumped via atomic RMW;
-// the renamer is fully populated before fan-out and treated as
-// read-only by the printer.
-// Caveat: `Renamer<'r>` still borrows `&'r mut {Number,Minify}Renamer`,
-// so the per-chunk renamer is reborrowed mutably from each part-range task;
-// the printer never writes through it, but the borrow should become `&'r`.
 unsafe impl Send for Chunk {}
-// SAFETY: shared `&Chunk` access during the worker fan-out touches only
-// `compile_results_for_chunk` (UnsafeCell-per-slot, disjoint indices) and
-// `files_with_parts_in_chunk` atomic counters; the remaining fields are
-// frozen before fan-out and read single-threaded after the pool join —
-// **except** `renamer`, which the per-part-range printer reborrows `&mut`
-// from each worker (read-only in practice). See the renamer caveat above:
-// once `Renamer<'r>` borrows `&'r` instead of `&'r mut`, this caveat (and
-// the matching split-borrow in `generate_compile_result_for_js_chunk`) goes
-// away. Pre-existing; this impl mirrors `unsafe impl Send for Chunk` and
-// the single-pointer fan-out the workers use.
+// SAFETY: the part-range fan-out (`generate_compile_result_for_*_chunk`)
+// shares one `&Chunk` per chunk across tasks. The only writes while it is
+// shared are the `compile_results_for_chunk` slots (`UnsafeCell`, one task
+// per index) and the `files_with_parts_in_chunk` atomics; every other field
+// is written only by the single-threaded owner before and after the fan-out.
 unsafe impl Sync for Chunk {}
 
-/// Disjoint-slot output buffer for [`Chunk::compile_results_for_chunk`].
-///
-/// Allocated single-threaded in `generate_chunks_in_parallel` *before* the
-/// `generate_compile_result_for_*_chunk` fan-out, written concurrently by
-/// worker threads at **disjoint** indices (one slot per `PendingPartRange.i`),
-/// then read single-threaded after the batch's `group.wait()`. Wrapping each
-/// slot in `UnsafeCell` makes the per-task write sound through a shared view —
-/// worker callbacks never need to materialize an aliased `&mut Chunk` or
-/// `&mut [CompileResult]` to publish their result.
+/// One slot per `PendingPartRange` of the chunk; see [`CompileResultSlots::write`].
 #[derive(Default)]
-#[repr(transparent)]
 pub struct CompileResultSlots(Box<[UnsafeCell<CompileResult>]>);
 
 // SAFETY: writes target disjoint slots (unique `i` per task); reads happen
@@ -168,6 +141,17 @@ impl CompileResultSlots {
     #[inline]
     pub fn len(&self) -> usize {
         self.0.len()
+    }
+
+    /// Publish one part range's result from its worker task.
+    ///
+    /// # Safety
+    /// `i` must be this task's own `PendingPartRange::i` (no other task writes
+    /// it), and nothing may read the slot before the pool join.
+    #[inline]
+    pub(crate) unsafe fn write(&self, i: usize, result: CompileResult) {
+        // SAFETY: per the contract, this is the slot's only access until the join.
+        unsafe { *self.0[i].get() = result };
     }
 
     /// Post-join read view. Single-threaded callers only (after the batch's `group.wait()`).
@@ -218,55 +202,6 @@ impl Default for Chunk {
 }
 
 impl Chunk {
-    /// Write `result` into `compile_results_for_chunk[i]` through a raw
-    /// `*mut Chunk`, for the `generate_compile_result_for_*_chunk` worker
-    /// callbacks.
-    ///
-    /// Many `PendingPartRange` tasks share one `*mut Chunk` and each writes a
-    /// unique `i`. The write is routed entirely through raw-pointer field
-    /// projection (`addr_of_mut!`) and `UnsafeCell::get`, so no `&Chunk`,
-    /// `&mut Chunk`, or `&mut [CompileResult]` is ever materialized — only a
-    /// raw `*mut CompileResult` to this task's slot. That keeps the write
-    /// sound under Stacked Borrows even while peer tasks hold their own raw
-    /// views into the same `Chunk`.
-    ///
-    /// # Safety
-    /// - `chunk` must point to a live `Chunk` whose `compile_results_for_chunk`
-    ///   was sized by `generate_chunks_in_parallel` (so `i` is in-bounds).
-    /// - No two concurrent callers may pass the same `i` for the same `chunk`.
-    /// - No reader may observe slot `i` until after the worker-pool join.
-    #[inline]
-    pub(crate) unsafe fn write_compile_result_slot(
-        chunk: *mut Chunk,
-        i: usize,
-        result: CompileResult,
-    ) {
-        // SAFETY: per fn contract — `chunk` is live, `i` in-bounds, slot
-        // exclusively owned by this caller.
-        unsafe {
-            // Project to the slots field with no intermediate `&`/`&mut Chunk`.
-            let slots: *mut CompileResultSlots =
-                core::ptr::addr_of_mut!((*chunk).compile_results_for_chunk);
-            // `CompileResultSlots` is `repr(transparent)` over
-            // `Box<[UnsafeCell<CompileResult>]>`; reading the boxed-slice fat
-            // pointer in place (no move/drop) yields `*mut [UnsafeCell<_>]`
-            // without forming `&Box`. `Box<T>` is documented to have the same
-            // layout/ABI as `*mut T` (and `NonNull<T>`).
-            let cells: *mut [UnsafeCell<CompileResult>] =
-                core::ptr::read(slots.cast::<*mut [UnsafeCell<CompileResult>]>());
-            debug_assert!(
-                i < cells.len(),
-                "compile_results_for_chunk slot out of bounds"
-            );
-            let cell: *mut UnsafeCell<CompileResult> =
-                cells.cast::<UnsafeCell<CompileResult>>().add(i);
-            // `UnsafeCell` is `repr(transparent)` — `*mut UnsafeCell<T>` and
-            // `*mut T` address the same byte. Drop the previous (default)
-            // value in place and store the result.
-            *cell.cast::<CompileResult>() = result;
-        }
-    }
-
     #[inline]
     pub(crate) fn is_entry_point(&self) -> bool {
         self.entry_point.is_entry_point()
@@ -1662,7 +1597,7 @@ pub mod bun_renamer {
     }
 
     impl ChunkRenamer {
-        pub(crate) fn as_renamer(&mut self) -> bun_js_printer::renamer::Renamer<'_, '_> {
+        pub(crate) fn as_renamer(&self) -> bun_js_printer::renamer::Renamer<'_, '_> {
             match self {
                 ChunkRenamer::None => unreachable!("ChunkRenamer not initialized"),
                 ChunkRenamer::Number(r) => bun_js_printer::renamer::Renamer::NumberRenamer(r),

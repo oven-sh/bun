@@ -536,6 +536,10 @@ function getBuildBunStep(platform, options) {
       // ASAN runtime settings — unrelated to build config, affects the
       // linked binary's startup during the smoke test.
       ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=0",
+      // Trial: compile with the oven-sh/rust bun-toolchain baked into the build-host image
+      // (scripts/bootstrap.sh install_bun_toolchain) instead of apt LLVM + rustup.
+      BUN_TOOLCHAIN_LLVM: "/opt/bun-toolchain",
+      BUN_TOOLCHAIN_RUST: "/opt/bun-toolchain",
     },
     command: [...nasmSetup, getBuildCommand(platform, options, "build")],
   };

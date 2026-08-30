@@ -1,5 +1,5 @@
 #!/bin/sh
-# Version: 41
+# Version: 42
 
 # A script that installs the dependencies needed to build and test Bun.
 # This should work on macOS and Linux with a POSIX shell.
@@ -1157,6 +1157,7 @@ install_build_essentials() {
 	# host (buildHostPlatform in .buildkite/ci.mjs); test images never
 	# cross-compile, so skip the ~3GB of NDK/SDK/sysroot downloads there.
 	if is_ci_build_host; then
+		install_bun_toolchain
 		install_cross_compiler_rt
 		install_android_ndk
 		install_freebsd_sysroot
@@ -1167,6 +1168,31 @@ install_build_essentials() {
 	fi
 	install_ccache
 	install_docker
+}
+
+install_bun_toolchain() {
+	# clang/lld + rustc/cargo built by oven-sh/rust's bun-toolchain workflow (PGO/BOLT-trained on
+	# building Bun). The build steps opt into it with BUN_TOOLCHAIN_LLVM/BUN_TOOLCHAIN_RUST
+	# (.buildkite/ci.mjs); the apt LLVM and rustup installs above stay for everything else.
+	toolchain_release="bun-toolchain-nightly-2026-07-20-bun-9e7de126"
+	case "$arch" in
+	x64) toolchain_sha256="4a1bc883846dc9a86cecc2c94148e567d18db902a393faa2c92db2326cf9ead8" ;;
+	aarch64) toolchain_sha256="8fb7ecd34b560d943ca93b6dc08c8d313dff9a3f8f8831469e4bc6486938009c" ;;
+	*) error "no bun toolchain for $arch" ;;
+	esac
+	if ! [ -f "$(which zstd)" ]; then install_packages zstd; fi
+	toolchain_dir="/opt/bun-toolchain"
+	toolchain_tar="$(download_and_verify_file "https://github.com/oven-sh/rust/releases/download/$toolchain_release/bun-toolchain-linux-$arch.tar.zst" "$toolchain_sha256")"
+	execute_sudo rm -rf "$toolchain_dir"
+	create_directory "$toolchain_dir"
+	execute_sudo tar -I zstd -xf "$toolchain_tar" -C "$toolchain_dir" --strip-components=1
+	execute_sudo rm -f "$toolchain_tar"
+	if ! [ -x "$toolchain_dir/bin/clang" ] || ! [ -x "$toolchain_dir/bin/rustc" ]; then
+		error "bun toolchain did not unpack into $toolchain_dir"
+	fi
+	execute "$toolchain_dir/bin/clang" --version
+	execute "$toolchain_dir/bin/rustc" -vV
+	grant_to_user "$toolchain_dir"
 }
 
 is_ci_build_host() {

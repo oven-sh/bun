@@ -1704,6 +1704,13 @@ it("import.meta.resolve with a file:// parent URL resolves bare package names", 
     "node_modules/mypkg/dist/core/probe.mjs": [
       `console.log(import.meta.resolve("mypkg"));`,
       `console.log(import.meta.resolve("mypkg", import.meta.url));`,
+      // Single-slash file URL: the WHATWG parser normalizes file:/p to file:///p.
+      `console.log(import.meta.resolve("mypkg", import.meta.url.replace("file:///", "file:/")));`,
+      `try {
+        import.meta.resolve("does-not-exist-xyz", import.meta.url);
+      } catch (e) {
+        console.log(e.message);
+      }`,
     ].join("\n"),
   });
   await using proc = Bun.spawn({
@@ -1715,8 +1722,13 @@ it("import.meta.resolve with a file:// parent URL resolves bare package names", 
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
-  const [oneArg, twoArg] = stdout.trim().split("\n");
+  const [oneArg, twoArg, singleSlash, errMessage] = stdout.trim().split("\n");
   expect(oneArg).toEndWith("/node_modules/mypkg/dist/index.mjs");
   expect(twoArg).toBe(oneArg);
+  expect(singleSlash).toBe(oneArg);
+  // The failure message prints the decoded referrer path, like Node.
+  expect(errMessage).toContain("does-not-exist-xyz");
+  expect(errMessage).toContain("imr space");
+  expect(errMessage).not.toContain("%20");
   expect(exitCode).toBe(0);
 });

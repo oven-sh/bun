@@ -4677,15 +4677,17 @@ impl VirtualMachine {
         let specifier_utf8 = specifier.to_utf8();
         let source_utf8 = source.to_utf8();
 
-        // A `file://` source (e.g. the parent URL in
+        // A `file:` source (e.g. the parent URL in
         // `import.meta.resolve(specifier, parent)`) must become a filesystem
         // path before the resolver walks `node_modules` from it: percent
-        // escapes decode, and on Windows `file:///C:/x` becomes `C:\x`. A
-        // bare prefix strip gets both wrong, and the resolver then falls
-        // back to auto-install or fails.
+        // escapes decode, single-slash `file:/x` normalizes, and on Windows
+        // `file:///C:/x` becomes `C:\x`. A bare prefix strip gets all of
+        // these wrong, and the resolver then falls back to auto-install or
+        // fails. The guard stays at `file:/` (not `file:`) because this
+        // function also serves callers that pass plain paths.
         let decoded_source;
         let decoded_source_utf8;
-        let normalized_source: &[u8] = if source_utf8.slice().starts_with(b"file://") {
+        let normalized_source: &[u8] = if source_utf8.slice().starts_with(b"file:/") {
             decoded_source = bun_url::path_from_file_url(source);
             if decoded_source.is_dead() {
                 normalize_source(source_utf8.slice())
@@ -4815,7 +4817,7 @@ impl VirtualMachine {
                 .unwrap_or_else(|| {
                     let printed = crate::ResolveMessage::fmt(
                         specifier_utf8.slice(),
-                        source_utf8.slice(),
+                        normalized_source,
                         err,
                         import_kind,
                     );
@@ -4832,7 +4834,7 @@ impl VirtualMachine {
             return Ok(Err(crate::ResolveMessage::create(
                 global,
                 &msg,
-                source_utf8.slice(),
+                normalized_source,
             )?));
         }
 

@@ -961,8 +961,8 @@ function getWindowsBuildImageStep(platform, options) {
  *     with the `bake` agent tag): bootstrap.sh provisions it — so this step's
  *     log is the bootstrap log — and agent.mjs installs the agent service.
  *     The machine is imaged as `image-name` once the step passes.
- *  2. `…-build-image` waits for that image to be available. It keeps the key
- *     the rest of the pipeline depends on.
+ *  2. `…-build-image` (labelled wait-for-image) waits for that image to be
+ *     available. It keeps the key the rest of the pipeline depends on.
  *
  * @param {Platform} platform
  * @param {PipelineOptions} options
@@ -1001,7 +1001,7 @@ function getLinuxBuildImageSteps(platform, options) {
 
   const waitStep = {
     key: `${imageKey}-build-image`,
-    label: `${getImageLabel(platform)} - build-image`,
+    label: `${getImageLabel(platform)} - wait-for-image`,
     depends_on: [bakeStep.key],
     agents: {
       queue: "build-image",

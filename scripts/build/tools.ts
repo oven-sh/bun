@@ -317,6 +317,11 @@ function llvmSearchPaths(os: OS, arch: Arch): string[] {
     }
     paths.push(`${brewPrefix}/opt/llvm@${LLVM_MAJOR}/bin`);
     paths.push(`${brewPrefix}/opt/llvm/bin`);
+    // Homebrew ships lld (ld64.lld / ld.lld) as a separate keg-only formula,
+    // NOT inside the llvm keg. Needed for native darwin ASAN links (see
+    // workarounds.ts "darwin-asan-ld-new").
+    paths.push(`${brewPrefix}/opt/lld@${LLVM_MAJOR}/bin`);
+    paths.push(`${brewPrefix}/opt/lld/bin`);
   }
 
   if (os === "windows") {
@@ -511,12 +516,15 @@ export function resolveLlvmToolchain(
     ld = ""; // darwin: unused
   }
 
-  // ld64.lld: lld's Mach-O port. Only used when a non-darwin host
-  // cross-compiles FOR darwin (resolveConfig swaps it in as cfg.ld); the
-  // target isn't known here, so resolve it opportunistically — it ships in
-  // the same LLVM install as ld.lld, and the lookup is a handful of stats.
+  // ld64.lld: lld's Mach-O port. Swapped in as cfg.ld when a non-darwin
+  // host cross-compiles FOR darwin, and for native darwin ASAN builds
+  // (Apple's ld_new rejects rustc's ASAN relocations — see workarounds.ts
+  // "darwin-asan-ld-new"). On Linux it ships alongside ld.lld; on darwin
+  // Homebrew puts it in a separate keg-only `lld@<ver>` formula, which
+  // llvmSearchPaths() covers. Resolved opportunistically on every unix host
+  // since the target isn't known yet.
   let ld64Lld: string | undefined;
-  if (os !== "darwin" && os !== "windows") {
+  if (os !== "windows") {
     ld64Lld = findLlvmTool("ld64.lld", paths, os, { checkVersion: false, required: false })?.path;
   }
 

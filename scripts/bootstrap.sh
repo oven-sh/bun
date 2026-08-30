@@ -1204,7 +1204,9 @@ install_llvm() {
 		append_to_path "/usr/lib/llvm-$(llvm_version)/bin"
 		;;
 	brew)
-		install_packages "llvm@$(llvm_version)"
+		# lld is a separate keg-only formula (ld64.lld is needed for native
+		# ASAN links — Apple's ld rejects rustc's ASAN relocations).
+		install_packages "llvm@$(llvm_version)" "lld@$(llvm_version)"
 		;;
 	apk)
 		install_packages \

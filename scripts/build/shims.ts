@@ -28,9 +28,10 @@ export interface ShimLinkOpts {
 const ASAN_DYLD_SHIM = "asan-dyld-shim.dylib";
 
 /**
- * macOS-from-Linux cross links need a post-link fixup pass over every
- * Mach-O executable they produce (the linked bun-profile/bun-debug AND the
- * stripped bun):
+ * darwin links that go through ld64.lld (cross-compiles, and native ASAN
+ * builds per workarounds.ts "darwin-asan-ld-new") need a post-link fixup
+ * pass over every Mach-O executable they produce (the linked
+ * bun-profile/bun-debug AND the stripped bun):
  *
  *   - ld64.lld parses `-stack_size` but doesn't implement it (LLVM 21 prints
  *     "not yet implemented"), so LC_MAIN.stacksize stays 0 → the 8 MB
@@ -51,7 +52,7 @@ const ASAN_DYLD_SHIM = "asan-dyld-shim.dylib";
  * postlink $out ...`.
  */
 export function needsMachoPostlink(cfg: Config): boolean {
-  return cfg.darwin && cfg.crossTarget !== undefined;
+  return cfg.darwinLld;
 }
 
 /** Host-compiled fixup tool. Lives next to the executables it patches. */

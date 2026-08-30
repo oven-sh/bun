@@ -303,6 +303,9 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     // Used for forcing CommonJS
     pub(crate) has_with_scope: bool,
 
+    /// `export`/top-level `await` in the source, fixed before unwrapping `exports.foo` adds one.
+    pub(crate) has_esm_exports_syntax: bool,
+    /// `has_esm_exports_syntax` or an ESM module type (`.mjs`, `"type": "module"`).
     pub(crate) is_file_considered_to_have_esm_exports: bool,
 
     pub(crate) has_called_runtime: bool,
@@ -1480,6 +1483,70 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     pub(crate) fn is_deoptimized_common_js(&self) -> bool {
         self.commonjs_named_exports_deoptimized && self.commonjs_named_exports.count() > 0
+    }
+
+    /// Warns once per unbound `module`/`exports` that `left` (an assignment target) writes to.
+    pub(crate) fn warn_about_commonjs_variable_in_esm(&mut self, left: &Expr) {
+        let Some(dot) = left.data.e_dot() else {
+            return;
+        };
+        let (id, loc, is_module_exports_property) = match dot.target.data {
+            // "module.exports = ..." and "exports.foo = ..."
+            js_ast::ExprData::EIdentifier(id) => (id, dot.target.loc, false),
+            // "module.exports.foo = ..."
+            js_ast::ExprData::EDot(inner) if inner.name == b"exports" => match inner.target.data {
+                js_ast::ExprData::EIdentifier(id) => (id, inner.target.loc, true),
+                _ => return,
+            },
+            _ => return,
+        };
+        if !id.ref_.is_symbol() {
+            return;
+        }
+
+        let symbol = &mut self.symbols[id.ref_.inner_index() as usize];
+        if symbol.kind != js_ast::symbol::Kind::Unbound || symbol.did_warn_about_commonjs_in_esm() {
+            return;
+        }
+        let name = symbol.original_name.slice();
+        let is_commonjs_variable = if is_module_exports_property {
+            name == b"module"
+        } else {
+            (name == b"module" && dot.name == b"exports") || name == b"exports"
+        };
+        if !is_commonjs_variable {
+            return;
+        }
+        symbol.set_did_warn_about_commonjs_in_esm(true);
+
+        let (why_range, why_text) = self.why_esm_note();
+        let source = self.source;
+        self.log().add_range_warning_fmt_with_note(
+            Some(source),
+            js_lexer::range_of_identifier(source, loc),
+            format_args!(
+                "The CommonJS \"{}\" variable is treated as a global variable in an ECMAScript module and may not work as expected",
+                bstr::BStr::new(name)
+            ),
+            format_args!("{}", why_text),
+            why_range,
+        );
+    }
+
+    /// Diagnostic note pointing at the syntax that makes this file an ES module.
+    pub(crate) fn why_esm_note(&self) -> (bun_ast::Range, &'static str) {
+        debug_assert!(self.has_esm_exports_syntax);
+        if self.esm_export_keyword.len > 0 {
+            (
+                self.esm_export_keyword,
+                "This file is considered to be an ECMAScript module because of the \"export\" keyword here:",
+            )
+        } else {
+            (
+                self.top_level_await_keyword,
+                "This file is considered to be an ECMAScript module because of the top-level \"await\" keyword here:",
+            )
+        }
     }
 
     pub(crate) fn record_usage(&mut self, ref_: Ref) {
@@ -2701,9 +2768,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             self.scope_order_to_visit = buf.into_bump_slice();
         }
 
-        self.is_file_considered_to_have_esm_exports = !self.top_level_await_keyword.is_empty()
-            || !self.esm_export_keyword.is_empty()
-            || self.options.module_type == options::ModuleType::Esm;
+        self.has_esm_exports_syntax =
+            !self.top_level_await_keyword.is_empty() || !self.esm_export_keyword.is_empty();
+        self.is_file_considered_to_have_esm_exports =
+            self.has_esm_exports_syntax || self.options.module_type == options::ModuleType::Esm;
 
         self.push_scope_for_visit_pass(js_ast::scope::Kind::Entry, loc_module_scope)?;
         self.fn_or_arrow_data_visit.is_outside_fn_or_arrow = true;
@@ -2803,10 +2871,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             .generated
             .ensure_unused_capacity(generated_symbols_count as usize * 3);
 
-        self.exports_ref =
-            self.declare_common_js_symbol(js_ast::symbol::Kind::Hoisted, b"exports")?;
-        self.module_ref =
-            self.declare_common_js_symbol(js_ast::symbol::Kind::Hoisted, b"module")?;
+        // `require` stays usable in an ES module; `module` and `exports` do not.
+        if !self.has_esm_exports_syntax {
+            self.exports_ref =
+                self.declare_common_js_symbol(js_ast::symbol::Kind::Hoisted, b"exports")?;
+            self.module_ref =
+                self.declare_common_js_symbol(js_ast::symbol::Kind::Hoisted, b"module")?;
+        } else {
+            // Not in scope: user code gets globals. `exports_ref` is still the namespace object.
+            self.exports_ref = self.new_symbol(js_ast::symbol::Kind::Hoisted, b"exports");
+            self.module_ref = self.new_symbol(js_ast::symbol::Kind::Hoisted, b"module");
+        }
 
         self.require_ref =
             self.declare_common_js_symbol(js_ast::symbol::Kind::Unbound, b"require")?;
@@ -8845,6 +8920,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             macro_call_count: 0,
             hoisted_ref_for_sloppy_mode_block_fn: Default::default(),
             has_with_scope: false,
+            has_esm_exports_syntax: false,
             is_file_considered_to_have_esm_exports: false,
             has_called_runtime: false,
             symbol_uses,

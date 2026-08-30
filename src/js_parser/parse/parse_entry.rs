@@ -1574,9 +1574,14 @@ impl<'a> Parser<'a> {
         // Checked after `to_ast`, which marks TypeScript type-only imports unused.
         let mut reject_import_statements = false;
 
-        if p.is_deoptimized_commonjs() {
+        if p.has_esm_exports_syntax {
+            // `module`/`exports` were never bound here, so nothing CommonJS was recorded.
+            debug_assert!(!p.is_deoptimized_commonjs());
+            exports_kind = js_ast::ExportsKind::Esm;
+        } else if p.is_deoptimized_commonjs() {
             exports_kind = js_ast::ExportsKind::Cjs;
-        } else if p.esm_export_keyword.len > 0 || p.top_level_await_keyword.len > 0 {
+        } else if p.esm_export_keyword.len > 0 {
+            // Synthesized by unwrapping `exports.foo = ...` to an ESM export.
             exports_kind = js_ast::ExportsKind::Esm;
         } else if uses_exports_ref || uses_module_ref || p.has_top_level_return || p.has_with_scope
         {

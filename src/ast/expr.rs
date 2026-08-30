@@ -2666,9 +2666,8 @@ pub enum Equality {
     Unknown,
     Equal,
     NotEqual,
-    /// `require.main === module` (or `!==`/`==`/`!=`, in either order); the
-    /// caller rewrites this to an import_meta_main node.
-    RequireMainAndModule,
+    /// `require.main === module` (any equality operator, either order) and the `module` ref.
+    RequireMainAndModule(Ref),
 }
 
 impl From<bool> for Equality {
@@ -2705,7 +2704,8 @@ impl EqlKindT for StrictEql {
 /// blanket-impl'd for every `P<...>` instantiation below.
 pub trait EqlParser {
     fn arena(&self) -> &Bump;
-    fn module_ref(&self) -> Ref;
+    /// Does this identifier ref name the CommonJS `module` object?
+    fn is_commonjs_module_ref(&self, ref_: Ref) -> bool;
 }
 // `impl EqlParser for P<...>` lives in `bun_js_parser` (next to `P`).
 
@@ -2836,8 +2836,8 @@ impl Data {
                 // always re-ordered to the right side.
                 if matches!(right, Data::ERequireMain) {
                     if let Some(id) = left.as_e_identifier() {
-                        if id.ref_.eql(p.module_ref()) {
-                            return Equality::RequireMainAndModule;
+                        if p.is_commonjs_module_ref(id.ref_) {
+                            return Equality::RequireMainAndModule(id.ref_);
                         }
                     }
                 }

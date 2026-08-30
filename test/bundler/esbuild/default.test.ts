@@ -1544,7 +1544,6 @@ describe.concurrent("bundler", () => {
     },
   });
   itBundled("default/TopLevelReturnForbiddenImport", {
-    todo: true,
     files: {
       "/entry.js": /* js */ `
         console.log('A');
@@ -1562,7 +1561,6 @@ describe.concurrent("bundler", () => {
     },
   });
   itBundled("default/TopLevelReturnForbiddenImportAndModuleExports", {
-    todo: true,
     files: {
       "/entry.js": /* js */ `
         module.exports.foo = 123
@@ -5652,11 +5650,12 @@ describe.concurrent("bundler", () => {
     },
     entryPoints: ["/cjs-in-esm.js", "/import-in-cjs.js", "/no-warnings-here.js"],
     format: "cjs",
-    /* TODO FIX expectedScanLog: `cjs-in-esm.js: WARNING: The CommonJS "exports" variable is treated as a global variable in an ECMAScript module and may not work as expected
-  cjs-in-esm.js: NOTE: This file is considered to be an ECMAScript module because of the "export" keyword here:
-  cjs-in-esm.js: WARNING: The CommonJS "module" variable is treated as a global variable in an ECMAScript module and may not work as expected
-  cjs-in-esm.js: NOTE: This file is considered to be an ECMAScript module because of the "export" keyword here:
-  `, */
+    bundleWarnings: {
+      "/cjs-in-esm.js": [
+        'The CommonJS "exports" variable is treated as a global variable in an ECMAScript module and may not work as expected',
+        'The CommonJS "module" variable is treated as a global variable in an ECMAScript module and may not work as expected',
+      ],
+    },
     external: ["bar"],
   });
   itBundled("default/MangleProps", {

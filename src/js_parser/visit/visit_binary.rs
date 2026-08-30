@@ -236,9 +236,9 @@ impl BinaryExpressionVisitor {
             }
             Op::Code::BinLooseEq => {
                 match data_eql::<false, TYPESCRIPT, SCAN_ONLY>(&e_.left.data, &e_.right.data, p) {
-                    Equality::RequireMainAndModule => {
+                    Equality::RequireMainAndModule(module_ref) => {
                         p.ignore_usage_of_runtime_require();
-                        p.ignore_usage(p.module_ref);
+                        p.ignore_usage(module_ref);
                         return p.value_for_import_meta_main(false, v.loc);
                     }
                     Equality::Equal => return p.new_expr(E::Boolean { value: true }, v.loc),
@@ -266,8 +266,8 @@ impl BinaryExpressionVisitor {
             }
             Op::Code::BinStrictEq => {
                 match data_eql::<true, TYPESCRIPT, SCAN_ONLY>(&e_.left.data, &e_.right.data, p) {
-                    Equality::RequireMainAndModule => {
-                        p.ignore_usage(p.module_ref);
+                    Equality::RequireMainAndModule(module_ref) => {
+                        p.ignore_usage(module_ref);
                         p.ignore_usage_of_runtime_require();
                         return p.value_for_import_meta_main(false, v.loc);
                     }
@@ -289,8 +289,8 @@ impl BinaryExpressionVisitor {
             }
             Op::Code::BinLooseNe => {
                 match data_eql::<false, TYPESCRIPT, SCAN_ONLY>(&e_.left.data, &e_.right.data, p) {
-                    Equality::RequireMainAndModule => {
-                        p.ignore_usage(p.module_ref);
+                    Equality::RequireMainAndModule(module_ref) => {
+                        p.ignore_usage(module_ref);
                         p.ignore_usage_of_runtime_require();
                         return p.value_for_import_meta_main(true, v.loc);
                     }
@@ -316,8 +316,8 @@ impl BinaryExpressionVisitor {
             }
             Op::Code::BinStrictNe => {
                 match data_eql::<true, TYPESCRIPT, SCAN_ONLY>(&e_.left.data, &e_.right.data, p) {
-                    Equality::RequireMainAndModule => {
-                        p.ignore_usage(p.module_ref);
+                    Equality::RequireMainAndModule(module_ref) => {
+                        p.ignore_usage(module_ref);
                         p.ignore_usage_of_runtime_require();
                         return p.value_for_import_meta_main(true, v.loc);
                     }
@@ -673,6 +673,11 @@ impl BinaryExpressionVisitor {
                         name.slice(),
                         was_anonymous_named_expr,
                     );
+                }
+
+                // Only `=` warns, as in esbuild; `typeof module` is a valid CommonJS check.
+                if p.options.bundle && p.has_esm_exports_syntax && !p.is_control_flow_dead {
+                    p.warn_about_commonjs_variable_in_esm(&e_.left);
                 }
             }
             Op::Code::BinNullishCoalescingAssign | Op::Code::BinLogicalOrAssign => {

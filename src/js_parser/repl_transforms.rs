@@ -26,11 +26,6 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         parts: &mut BumpVec<'bump, js_ast::Part>,
         bump: &'bump Bump,
     ) -> Result<(), bun_alloc::AllocError> {
-        // Skip transform if there's a top-level return (indicates module pattern)
-        if self.has_top_level_return {
-            return Ok(());
-        }
-
         // Collect all statements
         let mut total_stmts_count: usize = 0;
         for part in parts.iter() {

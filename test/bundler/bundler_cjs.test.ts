@@ -597,4 +597,358 @@ describe("bundler", () => {
       stdout: "loaded ok",
     },
   });
+
+  // ============================================================================
+  // A file with `export` (or top-level await) is an ECMAScript module, even if
+  // it also assigns to `module.exports` or `exports.foo`. In such a file `module`
+  // and `exports` are plain globals, not the CommonJS wrapper bindings, so the
+  // ESM exports stay and the bundler warns about the CommonJS assignment.
+  // ============================================================================
+
+  const mixedLib = /* js */ `
+    export const a = 1;
+    export function fa() { return a }
+    export default 9;
+    if (typeof module !== "undefined") module.exports.b = 2;
+  `;
+  const mixedEntry = /* js */ `
+    import def, { a, fa } from './lib.js';
+    import * as ns from './lib.js';
+    console.log(JSON.stringify({ a, fa: typeof fa, def, keys: Object.keys(ns) }));
+  `;
+  const mixedStdout = '{"a":1,"fa":"function","def":9,"keys":["a","default","fa"]}';
+  const moduleIsGlobalWarning =
+    'The CommonJS "module" variable is treated as a global variable in an ECMAScript module and may not work as expected';
+
+  for (const format of ["esm", "cjs", "iife"] as const) {
+    itBundled(`cjs/MixedExportAndModuleExportsIsESM_${format}`, {
+      files: {
+        "/entry.js": mixedEntry,
+        "/lib.js": mixedLib,
+      },
+      format,
+      bundleWarnings: {
+        "/lib.js": [moduleIsGlobalWarning],
+      },
+      onAfterBundle(api) {
+        // lib.js is not wrapped as CommonJS and `module` is printed as the global
+        api.expectFile("/out.js").not.toContain("__commonJS");
+        api.expectFile("/out.js").not.toContain("module_lib");
+        api.expectFile("/out.js").toContain("module.exports.b = 2");
+      },
+      run: { stdout: mixedStdout },
+    });
+  }
+
+  itBundled("cjs/MixedExportAndModuleExportsNamedImportOfCommonJSProperty", {
+    files: {
+      "/entry.js": /* js */ `
+        import { a, b } from './lib.js';
+        console.log(a, b);
+      `,
+      "/lib.js": mixedLib,
+    },
+    bundleWarnings: {
+      "/lib.js": [moduleIsGlobalWarning],
+    },
+    bundleErrors: {
+      "/entry.js": ['No matching export in "lib.js" for import "b"'],
+    },
+  });
+
+  itBundled("cjs/MixedExportAndExportsAssignment", {
+    files: {
+      "/entry.js": /* js */ `
+        import { a } from './lib.js';
+        console.log(a);
+      `,
+      "/lib.js": /* js */ `
+        export const a = 1;
+        if (typeof exports !== "undefined") exports.b = 2;
+        if (typeof module !== "undefined") module.exports = { c: 3 };
+      `,
+    },
+    bundleWarnings: {
+      "/lib.js": [
+        'The CommonJS "exports" variable is treated as a global variable in an ECMAScript module and may not work as expected',
+        moduleIsGlobalWarning,
+      ],
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("__commonJS");
+      api.expectFile("/out.js").toContain("exports.b = 2");
+      api.expectFile("/out.js").toContain("module.exports = { c: 3 }");
+    },
+    run: { stdout: "1" },
+  });
+
+  itBundled("cjs/TopLevelAwaitWithModuleExports", {
+    files: {
+      "/entry.js": /* js */ `
+        await Promise.resolve();
+        module.exports = { a: 1 };
+        console.log("done");
+      `,
+    },
+    bundleWarnings: {
+      "/entry.js": [moduleIsGlobalWarning],
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("module_entry");
+      api.expectFile("/out.js").toContain("module.exports = { a: 1 }");
+    },
+    run: { error: "ReferenceError: module is not defined" },
+  });
+
+  itBundled("cjs/TypeofModuleAndExportsInESM", {
+    files: {
+      "/entry.js": /* js */ `
+        export const x = 1;
+        console.log(typeof module, typeof exports);
+      `,
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("module_entry");
+      api.expectFile("/out.js").toContain("typeof module, typeof exports");
+    },
+    run: { stdout: "undefined undefined" },
+  });
+
+  itBundled("cjs/RequireMainEqualsModuleInESM", {
+    files: {
+      "/entry.js": /* js */ `
+        export const x = 1;
+        console.log(require.main === module, require.main !== module);
+      `,
+    },
+    target: "bun",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("module_entry");
+      api.expectFile("/out.js").toContain("import.meta.main");
+    },
+    run: { stdout: "true false" },
+  });
+
+  // Reads of `module.id`, `module.require()` and `exports.foo` in an ESM file
+  // are printed as written. The CommonJS folds (`module.id` inlined,
+  // `module.require(x)` rewritten to `require(x)`) do not apply to globals.
+  itBundled("cjs/ModuleMembersInESMStayVerbatim", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import { describeEnv } from './lib';
+        export const env = describeEnv();
+        console.log(env);
+      `,
+      "/lib.ts": /* ts */ `
+        globalThis['ca' + 'pture'] = x => x;
+        declare const module: any;
+        declare const exports: any;
+
+        export function describeEnv() {
+          return [
+            typeof module === 'undefined' ? 'no module' : capture(module.id),
+            typeof module === 'undefined' ? 'no require' : capture(module.require('node:fs')),
+            typeof exports === 'undefined' ? 'no exports' : capture(exports.foo),
+          ].join(', ');
+        }
+      `,
+    },
+    capture: ["module.id", 'module.require("node:fs")', "exports.foo"],
+    run: { stdout: "no module, no require, no exports" },
+  });
+
+  // The renamer must not take the names `module` and `exports` for minified
+  // identifiers in a file where they are globals.
+  itBundled("cjs/TypeofModuleAndExportsInESMMinified", {
+    files: {
+      "/entry.ts": /* ts */ `
+        globalThis['ca' + 'pture'] = x => x;
+        await Promise.resolve();
+        console.log(capture(typeof module), capture(typeof exports));
+      `,
+    },
+    minifyIdentifiers: true,
+    capture: ["typeof module", "typeof exports"],
+    run: { stdout: "undefined undefined" },
+  });
+
+  // With the CommonJS output format the globals refer to the output file's own
+  // `module` and `exports`, under bun and under node.
+  itBundled("cjs/ModuleAndExportsInESMWithFormatCJS", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import { install } from './install';
+        install();
+      `,
+      "/install.ts": /* ts */ `
+        declare const module: any;
+        declare const exports: any;
+
+        export function install() {
+          console.log(typeof module, typeof exports, module.exports === exports);
+        }
+      `,
+    },
+    format: "cjs",
+    target: "node",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toMatch(/\b(?:module|exports)_install\b/);
+    },
+    run: [{ stdout: "object object true" }, { runtime: "node", stdout: "object object true" }],
+  });
+
+  // `define` only replaces free identifiers, so it applies to `module` in a file
+  // with ESM exports and not in a CommonJS file, where `module` is the wrapper's
+  // argument.
+  itBundled("cjs/DefineModuleAppliesOnlyInESMFile", {
+    files: {
+      "/entry.js": /* js */ `
+        import { esm } from './esm.js';
+        const cjs = require('./cjs.js');
+        console.log(esm, cjs.value);
+      `,
+      "/esm.js": /* js */ `
+        export const esm = module;
+      `,
+      "/cjs.js": /* js */ `
+        module.exports = { value: typeof module };
+      `,
+    },
+    define: { module: '"defined"' },
+    run: { stdout: "defined object" },
+  });
+
+  // Bun keeps its content-based rule: a file with only CommonJS syntax is
+  // CommonJS, whatever its extension or the package "type" says.
+  itBundled("cjs/ModuleExportsInMJSStaysCommonJS", {
+    files: {
+      "/entry.js": /* js */ `
+        import lib from './lib.mjs';
+        console.log(JSON.stringify(lib));
+      `,
+      "/lib.mjs": /* js */ `
+        module.exports = { a: 1 };
+      `,
+      "/package.json": `{ "type": "module" }`,
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("__commonJS");
+    },
+    run: { stdout: '{"a":1}' },
+  });
+
+  // ============================================================================
+  // Top-level `return` is only legal inside the CommonJS function wrapper, so
+  // its presence makes the file CommonJS when no ESM export syntax is present.
+  // ============================================================================
+
+  for (const target of ["browser", "bun", "node"] as const) {
+    itBundled(`cjs/TopLevelReturnEntry_${target}`, {
+      files: {
+        "/entry.js": /* js */ `
+          console.log("before");
+          if (globalThis.foo === undefined) return;
+          console.log("after");
+        `,
+      },
+      target,
+      onAfterBundle(api) {
+        api.expectFile("/out.js").toContain("__commonJS");
+      },
+      run: { stdout: "before" },
+    });
+  }
+
+  // With the IIFE format the `return` must stay inside the wrapper; a bare
+  // `return` at the IIFE's top level would exit the whole bundle.
+  itBundled("cjs/TopLevelReturnIIFE", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log("before");
+        if (globalThis.foo === undefined) return;
+        console.log("after");
+      `,
+    },
+    format: "iife",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toMatch(/__commonJS\(function\(\) \{[^]*\breturn;[^]*\}\);/);
+    },
+  });
+
+  itBundled("cjs/TopLevelReturnImported", {
+    files: {
+      "/entry.js": /* js */ `
+        import "./lib.js";
+        console.log("entry");
+      `,
+      "/lib.js": /* js */ `
+        console.log("lib: before");
+        if (1) return;
+        console.log("lib: after");
+      `,
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("__commonJS");
+    },
+    run: { stdout: "lib: before\nentry" },
+  });
+
+  itBundled("cjs/TopLevelReturnNestedBlock", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log("A");
+        {
+          if (1) return;
+        }
+        console.log("B");
+      `,
+    },
+    run: { stdout: "A" },
+  });
+
+  itBundled("cjs/ReturnInsideFunctionIsNotTopLevel", {
+    files: {
+      "/entry.js": /* js */ `
+        function f() { return 1; }
+        const g = () => { return 2; };
+        console.log(f() + g());
+      `,
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("__commonJS");
+    },
+    run: { stdout: "3" },
+  });
+
+  // `exports.foo = ...` is normally unwrapped to an ESM export. A top-level
+  // return needs the CommonJS wrapper, so the unwrapping must be undone.
+  itBundled("cjs/TopLevelReturnKeepsExportsAssignments", {
+    files: {
+      "/entry.js": /* js */ `
+        const lib = require('./lib.js');
+        console.log(JSON.stringify(lib));
+      `,
+      "/lib.js": /* js */ `
+        exports.foo = 1;
+        if (globalThis.skip) return;
+        exports.bar = 2;
+      `,
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("__commonJS");
+    },
+    run: { stdout: '{"foo":1,"bar":2}' },
+  });
+
+  itBundled("cjs/TopLevelReturnWithExportIsAnError", {
+    files: {
+      "/entry.js": /* js */ `
+        export const a = 1;
+        return;
+      `,
+    },
+    bundleErrors: {
+      "/entry.js": ["Top-level return cannot be used inside an ECMAScript module"],
+    },
+  });
 });

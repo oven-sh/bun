@@ -599,10 +599,9 @@ WTF::String computeErrorInfoWrapperToString(JSC::VM& vm, Vector<StackFrame>& sta
     OrdinalNumber line = OrdinalNumber::fromOneBasedInt(line_in);
     OrdinalNumber column = OrdinalNumber::fromOneBasedInt(column_in);
 
-    // Runs from the GC end phase while the mutator may have its own pending
-    // exception. A termination raised inside would survive the clear below and
-    // be clobbered by the restore, so hold it off until the mutator's next check.
+    // A termination thrown in here would survive the clear below and be lost to the restore.
     JSC::DeferTerminationForAWhile deferTermination(vm);
+    // Runs from the GC end phase while the mutator may have its own pending exception.
     JSC::SuspendExceptionScope suspendExceptionScope(vm);
 
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);

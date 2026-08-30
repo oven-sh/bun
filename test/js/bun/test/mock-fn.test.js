@@ -1043,20 +1043,29 @@ describe("spyOn", () => {
       expect(fn).not.toHaveBeenCalled();
     });
 
-    test("spyOn on object doens't crash if object GC'd", () => {
+    test("a spy keeps its target alive until it is restored", async () => {
       const spies = new Array(1000);
+      const targets = new Array(1000);
       (() => {
         for (let i = 0; i < 1000; i++) {
           var obj = { original: 42 };
           obj.original = 42;
           const fn = spyOn(obj, "original");
           spies[i] = fn;
+          targets[i] = new WeakRef(obj);
         }
         Bun.gc(true);
       })();
+      // A WeakRef target stays alive until the end of the job that created or
+      // dereferenced it, so collection is only observable from a later job.
+      await Bun.sleep(0);
       Bun.gc(true);
+      expect(targets.filter(ref => ref.deref() !== undefined)).toHaveLength(1000);
 
       jest.restoreAllMocks();
+      await Bun.sleep(0);
+      Bun.gc(true);
+      expect(targets.filter(ref => ref.deref() !== undefined).length).toBeLessThan(1000);
     });
 
     test("spyOn works on globalThis", () => {
@@ -1095,6 +1104,35 @@ describe("spyOn", () => {
     expect(fn).toBe(obj.original);
     expect(fn2).toBe(fn);
     expect(fn).not.toBe(_original);
+  });
+
+  test("spyOn works with symbol keys", () => {
+    const key = Symbol("original");
+    const registered = Symbol.for("spyOn registered");
+    var obj = {
+      [key]() {
+        return 42;
+      },
+      [registered]() {
+        return 43;
+      },
+    };
+    const original = obj[key];
+    const originalRegistered = obj[registered];
+
+    const fn = spyOn(obj, key).mockReturnValue(1);
+    const fn2 = spyOn(obj, registered).mockReturnValue(2);
+    expect(obj[key]()).toBe(1);
+    expect(obj[registered]()).toBe(2);
+    expect(fn).toHaveBeenCalledTimes(1);
+    expect(fn2).toHaveBeenCalledTimes(1);
+
+    fn.mockRestore();
+    fn2.mockRestore();
+    expect(obj[key]).toBe(original);
+    expect(obj[registered]).toBe(originalRegistered);
+    expect(obj[key]()).toBe(42);
+    expect(obj[registered]()).toBe(43);
   });
 
   if (isBun) {

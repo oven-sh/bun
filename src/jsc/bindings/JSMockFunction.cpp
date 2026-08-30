@@ -17,7 +17,6 @@
 #include <JavaScriptCore/JSPromiseConstructor.h>
 #include <JavaScriptCore/LazyPropertyInlines.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
-#include <JavaScriptCore/Weak.h>
 #include <JavaScriptCore/GetterSetter.h>
 #include <JavaScriptCore/WeakMapImpl.h>
 #include <JavaScriptCore/WeakMapImplInlines.h>
@@ -266,8 +265,9 @@ public:
     mutable JSC::WriteBarrier<JSC::JSArray> instances;
     mutable JSC::WriteBarrier<JSC::JSArray> returnValues;
 
-    JSC::Weak<JSObject> spyTarget;
-    JSC::Identifier spyIdentifier;
+    JSC::WriteBarrier<JSObject> spyTarget;
+    // A JSString, or a Symbol for a symbol key.
+    JSC::WriteBarrier<JSC::Unknown> spyPropertyKey;
     unsigned spyAttributes = 0;
 
     static constexpr unsigned SpyAttributeESModuleNamespace = 1 << 30;
@@ -367,21 +367,27 @@ public:
                 implValue = jsUndefined();
             }
 
+            auto& vm = this->vm();
+            JSValue keyValue = this->spyPropertyKey.get();
+            Identifier key = keyValue.isSymbol()
+                ? Identifier::fromUid(asSymbol(keyValue)->privateName())
+                : Identifier::fromString(vm, asString(keyValue)->tryGetValue());
+
             // Reset the spy back to the original value.
             if (this->spyAttributes & SpyAttributeESModuleNamespace) {
                 if (auto* moduleNamespaceObject = tryJSDynamicCast<JSModuleNamespaceObject*>(target)) {
-                    moduleNamespaceObject->overrideExportValue(moduleNamespaceObject->globalObject(), this->spyIdentifier, implValue);
+                    moduleNamespaceObject->overrideExportValue(moduleNamespaceObject->globalObject(), key, implValue);
                 }
-            } else if (auto index = parseIndex(this->spyIdentifier)) {
+            } else if (auto index = parseIndex(key)) {
                 // Use putDirectIndex for numeric property keys (e.g., spyOn(arr, 0))
                 target->putDirectIndex(globalObject(), *index, implValue, this->spyAttributes, PutDirectIndexLikePutDirect);
             } else {
-                target->putDirect(this->vm(), this->spyIdentifier, implValue, this->spyAttributes);
+                target->putDirect(vm, key, implValue, this->spyAttributes);
             }
         }
 
         this->spyTarget.clear();
-        this->spyIdentifier = JSC::Identifier();
+        this->spyPropertyKey.clear();
         this->spyAttributes = 0;
     }
 
@@ -456,6 +462,9 @@ public:
     }
 };
 
+// cellHeapCellType never runs destructors, so spy state must be GC references.
+STATIC_ASSERT_IS_TRIVIALLY_DESTRUCTIBLE(JSMockFunction);
+
 template<typename Visitor>
 void JSMockFunction::visitAdditionalChildrenInGCThread(Visitor& visitor)
 {
@@ -471,6 +480,8 @@ void JSMockFunction::visitAdditionalChildrenInGCThread(Visitor& visitor)
     visitor.append(fn->returnValues);
     visitor.append(fn->invocationCallOrder);
     visitor.append(fn->spyOriginal);
+    visitor.append(fn->spyTarget);
+    visitor.append(fn->spyPropertyKey);
     fn->mock.visit(visitor);
 }
 
@@ -590,17 +601,6 @@ static const HashTableValue JSMockFunctionPrototypeTableValues[] = {
 };
 
 const ClassInfo JSMockFunction::s_info = { "Mock"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSMockFunction) };
-
-class SpyWeakHandleOwner final : public JSC::WeakHandleOwner {
-public:
-    void finalize(JSC::Handle<JSC::Unknown>, void* context) final {}
-};
-
-static SpyWeakHandleOwner& weakValueHandleOwner()
-{
-    static NeverDestroyed<SpyWeakHandleOwner> jscWeakValueHandleOwner;
-    return jscWeakValueHandleOwner;
-}
 
 const ClassInfo JSMockFunctionPrototype::s_info = { "Mock"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSMockFunctionPrototype) };
 
@@ -1507,8 +1507,8 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSpyOn, (JSC::JSGlobalObject * lexicalGlobalOb
         }
 
         auto* mock = JSMockFunction::create(vm, globalObject, globalObject->mockModule.mockFunctionStructure.getInitializedOnMainThread(globalObject), CallbackKind::GetterSetter);
-        mock->spyTarget = JSC::Weak<JSObject>(object, &weakValueHandleOwner(), nullptr);
-        mock->spyIdentifier = propertyKey.isSymbol() ? Identifier::fromUid(vm, propertyKey.uid()) : Identifier::fromString(vm, propertyKey.publicName());
+        mock->spyTarget.set(vm, mock, object);
+        mock->spyPropertyKey.set(vm, mock, propertyKey.isSymbol() ? JSValue(Symbol::create(vm, static_cast<SymbolImpl&>(*propertyKey.uid()))) : JSValue(jsString(vm, String(propertyKey.publicName()))));
         mock->spyAttributes = hasValue ? slot.attributes() : 0;
         unsigned attributes = 0;
 

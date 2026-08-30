@@ -3752,14 +3752,10 @@ impl<'a> Resolver<'a> {
 
                 let absolute_out_path: &[u8] = {
                     if entry_query.entry().abs_path.is_empty() {
+                        let new_abs = self.intern_entry_abs_path(entry_query.entry());
                         // SAFETY: EntryStore-owned slot; resolver mutex held. RHS fully
                         // evaluated before LHS `&mut Entry` is materialized.
-                        unsafe { &mut *entry_query.entry }.abs_path = Interned::from_static(
-                            self.fs_ref()
-                                .dirname_store
-                                .append_slice(abs_esm_path)
-                                .expect("unreachable"),
-                        );
+                        unsafe { &mut *entry_query.entry }.abs_path = new_abs;
                     }
                     entry_query.entry().abs_path.as_bytes()
                 };
@@ -3810,6 +3806,27 @@ impl<'a> Resolver<'a> {
         }
     }
 
+    /// Whether `dir/file_name` exists with exactly this spelling.
+    fn probed_name_exists(&self, dir: &[u8], file_name: &[u8]) -> bool {
+        let parts = [dir, file_name];
+        bun_sys::exists(self.fs_ref().abs_buf(&parts, bufs!(index)))
+    }
+
+    /// `Entry::abs_path` for a probe hit: the entry's own directory and on-disk
+    /// name. Not derived from the probed path, whose spelling can differ from
+    /// the entry's and whose basename offset is off when it ends in a separator
+    /// (`import "./x.js/"`).
+    fn intern_entry_abs_path(&self, entry: &Fs::file_system::Entry) -> Interned {
+        let dir = entry.dir();
+        let store = &self.fs_ref().dirname_store;
+        let joined = if !dir.is_empty() && dir[dir.len() - 1] == SEP {
+            store.append_parts(&[dir, entry.base()])
+        } else {
+            store.append_parts(&[dir, SEP_STR.as_bytes(), entry.base()])
+        };
+        Interned::from_static(joined.expect("unreachable"))
+    }
+
     /// Wildcard `exports`/`imports` target isn't a file: probe extensions like `load_as_file` does.
     ///
     /// Each probe goes through [`DirInfo::get_entry`] so the map walk happens
@@ -3837,6 +3854,11 @@ impl<'a> Resolver<'a> {
                 if let Some(ext_query) =
                     resolved_dir_info.get_entry(self.generation, &file_name[..])
                 {
+                    if ext_query.entry().base() != &file_name[..]
+                        && !self.probed_name_exists(resolved_dir_info.abs_path, &file_name[..])
+                    {
+                        continue;
+                    }
                     // SAFETY: rfs points at the process-global RealFS; the lazy-stat
                     // rewrite inside `kind()` is serialized on the per-entry mutex.
                     if unsafe { ext_query.entry().kind(rfs, self.store_fd) }
@@ -3887,6 +3909,11 @@ impl<'a> Resolver<'a> {
                     if let Some(ts_query) =
                         resolved_dir_info.get_entry(self.generation, &file_name[..])
                     {
+                        if ts_query.entry().base() != &file_name[..]
+                            && !self.probed_name_exists(resolved_dir_info.abs_path, &file_name[..])
+                        {
+                            continue;
+                        }
                         // SAFETY: rfs points at the process-global RealFS; the lazy-stat
                         // rewrite inside `kind()` is serialized on the per-entry mutex.
                         if unsafe { ts_query.entry().kind(rfs, self.store_fd) }
@@ -5330,6 +5357,11 @@ impl<'a> Resolver<'a> {
                 })
         };
         if let Some((Some(lookup), dirname_fd)) = looked_up {
+            if lookup.entry().base() != &base[..]
+                && !self.probed_name_exists(dir_info.abs_path, &base[..])
+            {
+                return MatchStatus::NotFound;
+            }
             // SAFETY: rfs points at the process-global RealFS; the lazy-stat
             // rewrite inside `kind()` is serialized on the per-entry mutex.
             if unsafe { lookup.entry().kind(rfs, self.store_fd) }
@@ -5337,16 +5369,10 @@ impl<'a> Resolver<'a> {
             {
                 let out_buf: &[u8] = {
                     if lookup.entry().abs_path.is_empty() {
-                        let parts = [dir_info.abs_path, &base[..]];
-                        let out_buf_ = self.fs_ref().abs_buf(&parts, bufs!(index));
+                        let new_abs = self.intern_entry_abs_path(lookup.entry());
                         // SAFETY: EntryStore-owned slot; resolver mutex held. RHS fully
                         // evaluated before LHS `&mut Entry` is materialized.
-                        unsafe { &mut *lookup.entry }.abs_path = Interned::from_static(
-                            self.fs_ref()
-                                .dirname_store
-                                .append_slice(out_buf_)
-                                .expect("unreachable"),
-                        );
+                        unsafe { &mut *lookup.entry }.abs_path = new_abs;
                     }
                     lookup.entry().abs_path.as_bytes()
                 };
@@ -5918,6 +5944,11 @@ impl<'a> Resolver<'a> {
 
                     let (ts_query, ts_dirname_fd) = dir_entry.get().lookup(&buffer[..]);
                     if let Some(query) = ts_query {
+                        if query.entry().base() != &buffer[..]
+                            && !self.probed_name_exists(dir_path, &buffer[..])
+                        {
+                            continue;
+                        }
                         // SAFETY: rfs points at the process-global RealFS; the lazy-stat
                         // rewrite inside `kind()` is serialized on the per-entry mutex.
                         if unsafe { query.entry().kind(rfs, self.store_fd) }
@@ -5933,31 +5964,7 @@ impl<'a> Resolver<'a> {
                             dec_ret!(Some(LoadResult {
                                 path: {
                                     if query.entry().abs_path.is_empty() {
-                                        // SAFETY: `dir` is `&'static [u8]` (DirnameStore-interned),
-                                        // copied out so no `&Entry` borrow survives into the
-                                        // `&mut Entry` write below.
-                                        let entry_dir = query.entry().dir;
-                                        let new_abs = if !entry_dir.is_empty()
-                                            && entry_dir[entry_dir.len() - 1] == SEP
-                                        {
-                                            let parts: [&[u8]; 2] = [entry_dir, &buffer[..]];
-                                            Interned::from_static(
-                                                self.fs_ref()
-                                                    .filename_store
-                                                    .append_parts(&parts)
-                                                    .expect("unreachable"),
-                                            )
-                                            // the trailing path CAN be missing here
-                                        } else {
-                                            let parts: [&[u8]; 3] =
-                                                [entry_dir, SEP_STR.as_bytes(), &buffer[..]];
-                                            Interned::from_static(
-                                                self.fs_ref()
-                                                    .filename_store
-                                                    .append_parts(&parts)
-                                                    .expect("unreachable"),
-                                            )
-                                        };
+                                        let new_abs = self.intern_entry_abs_path(query.entry());
                                         // SAFETY: EntryStore-owned slot; resolver mutex held. RHS
                                         // fully evaluated above — sole `&mut Entry` for this write.
                                         unsafe { &mut *query.entry }.abs_path = new_abs;
@@ -6022,6 +6029,10 @@ impl<'a> Resolver<'a> {
 
         let (ext_query, dirname_fd) = dir_entry.get().lookup(file_name);
         if let Some(query) = ext_query {
+            // See `probed_name_exists`; `buffer` already holds the joined path.
+            if query.entry().base() != file_name && !bun_sys::exists(&buffer[..]) {
+                return None;
+            }
             // SAFETY: rfs points at the process-global RealFS; the lazy-stat
             // rewrite inside `kind()` is serialized on the per-entry mutex.
             if unsafe { query.entry().kind(rfs, self.store_fd) } == Fs::file_system::EntryKind::File
@@ -6036,20 +6047,13 @@ impl<'a> Resolver<'a> {
                 // now that we've found it, we allocate it.
                 return Some(LoadResult {
                     path: {
-                        // SAFETY: EntryStore-owned slot; resolver mutex held. RHS is fully
-                        // evaluated (shared reads) before the LHS `&mut Entry` is
-                        // materialized for the write — no overlapping unique borrow.
-                        unsafe { &mut *query.entry }.abs_path = if query.entry().abs_path.is_empty()
-                        {
-                            Interned::from_static(
-                                self.fs_ref()
-                                    .dirname_store
-                                    .append_slice(&buffer[..])
-                                    .expect("unreachable"),
-                            )
-                        } else {
-                            query.entry().abs_path
-                        };
+                        if query.entry().abs_path.is_empty() {
+                            let new_abs = self.intern_entry_abs_path(query.entry());
+                            // SAFETY: EntryStore-owned slot; resolver mutex held. RHS is fully
+                            // evaluated (shared reads) before the LHS `&mut Entry` is
+                            // materialized for the write — no overlapping unique borrow.
+                            unsafe { &mut *query.entry }.abs_path = new_abs;
+                        }
                         query.entry().abs_path.as_bytes()
                     },
                     dirname_fd,

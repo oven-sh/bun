@@ -1989,6 +1989,91 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(())
     }
 
+    /// [`generate_import_stmt`](Self::generate_import_stmt) as
+    /// `const { name: ref } = require(path)`, for a file that gets the runtime's
+    /// CommonJS function wrapper.
+    pub(crate) fn generate_require_stmt<I, Sym>(
+        &mut self,
+        import_path: &'a [u8],
+        imports: I,
+        parts: &mut ListManaged<'a, js_ast::Part>,
+        symbols: &Sym,
+        tag: bun_ast::PartTag,
+    ) -> Result<(), crate::Error>
+    where
+        I: AsRef<[<Sym as GenerateImportSymbols>::Key]>,
+        Sym: GenerateImportSymbols,
+    {
+        let imports = imports.as_ref();
+        let import_record_i =
+            self.add_import_record_by_range(ImportKind::Require, bun_ast::Range::NONE, import_path);
+
+        let mut declared_symbols = bun_ast::DeclaredSymbolList::default();
+        declared_symbols.ensure_total_capacity(imports.len())?;
+        let mut properties = BumpVec::<B::Property>::with_capacity_in(imports.len(), self.arena);
+        for alias in imports {
+            let ref_ = symbols.get(alias).expect("unreachable");
+            let alias_name: &'static [u8] = symbols.alias_name(alias);
+            let key = self.new_expr(
+                E::String {
+                    data: alias_name.into(),
+                    ..Default::default()
+                },
+                bun_ast::Loc::EMPTY,
+            );
+            properties.push(B::Property {
+                flags: bun_ast::flags::PROPERTY_NONE,
+                key,
+                value: self.b(B::Identifier { r#ref: ref_ }, bun_ast::Loc::EMPTY),
+                default_value: None,
+            });
+            declared_symbols.append_assume_capacity(DeclaredSymbol {
+                ref_,
+                is_top_level: true,
+            });
+        }
+
+        let binding = self.b(
+            B::Object {
+                properties: bun_ast::StoreSlice::from_bump(properties),
+                is_single_line: true,
+            },
+            bun_ast::Loc::EMPTY,
+        );
+        let value = self.new_expr(
+            E::RequireString {
+                import_record_index: import_record_i,
+                ..Default::default()
+            },
+            bun_ast::Loc::EMPTY,
+        );
+        let mut decls = G::DeclList::init_capacity(1);
+        decls.append_assume_capacity(G::Decl {
+            binding,
+            value: Some(value),
+        });
+        let stmt = self.s(
+            S::Local {
+                kind: js_ast::LocalKind::KConst,
+                decls,
+                ..Default::default()
+            },
+            bun_ast::Loc::EMPTY,
+        );
+
+        let is_jsx = tag == bun_ast::PartTag::JsxImport;
+        parts.push(js_ast::Part {
+            stmts: self.arena.alloc_slice_fill_with(1, |_| stmt).into(),
+            declared_symbols,
+            import_record_indices: js_ast::PartImportRecordIndices::init_one(import_record_i),
+            tag,
+            can_be_removed_if_unused: is_jsx,
+            force_tree_shaking: is_jsx,
+            ..Default::default()
+        });
+        Ok(())
+    }
+
     pub(crate) fn generate_react_refresh_import(
         &mut self,
         parts: &mut ListManaged<'a, js_ast::Part>,

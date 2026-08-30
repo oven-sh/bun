@@ -119,6 +119,11 @@ pub struct DirInfo {
     // ergonomics. If a write is ever added, retype to `Option<NonNull<_>>`.
     pub enclosing_package_json: Option<&'static PackageJSON>,
 
+    /// The nearest package.json up the tree, named or not, whose `"type"`
+    /// decides the module format of `.js`-like files in this directory (Node's
+    /// LOOKUP_PACKAGE_SCOPE). Not inherited across a `node_modules` directory.
+    pub package_json_for_module_type: Option<&'static PackageJSON>,
+
     // `NonNull` (not `&'static`) so `enqueue_dependency_to_resolve` can write
     // `package_manager_package_id` back through it without a const→mut
     // provenance cast. Read via `.package_json_for_dependencies()`.
@@ -148,6 +153,7 @@ impl Default for DirInfo {
             package_json_for_browser_field: None,
             enclosing_tsconfig_json: None,
             enclosing_package_json: None,
+            package_json_for_module_type: None,
             package_json_for_dependencies: None,
             abs_path: b"",
             entries: Index::default(),

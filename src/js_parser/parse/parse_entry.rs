@@ -264,6 +264,14 @@ impl<'a> Options<'a> {
             hasher.update(b"udfcf=0");
         }
 
+        // The cache file is keyed by the content hash alone, and the hint
+        // changes the output format.
+        hasher.update(match self.module_type {
+            options::ModuleType::Unknown => b"mt=?",
+            options::ModuleType::Cjs => b"mt=c",
+            options::ModuleType::Esm => b"mt=e",
+        });
+
         self.features.hash_for_runtime_transpiler(hasher);
     }
 
@@ -1999,34 +2007,39 @@ impl<'a> Parser<'a> {
 
             let mut buf: [&'static [u8]; 3] = [b"", b"", b""];
             let runtime_import_names = jsx_imports.runtime_import_names(&mut buf);
-
-            if !runtime_import_names.is_empty() {
-                p.generate_import_stmt(
-                    import_source,
-                    runtime_import_names,
-                    &mut before,
-                    &jsx_imports,
-                    None,
-                    b"",
-                    false,
-                    js_ast::PartTag::JsxImport,
-                )
-                .expect("unreachable");
-            }
-
             let source_import_names = jsx_imports.source_import_names();
-            if !source_import_names.is_empty() {
-                p.generate_import_stmt(
-                    package_name,
-                    source_import_names,
-                    &mut before,
-                    &jsx_imports,
-                    None,
-                    b"",
-                    false,
-                    js_ast::PartTag::JsxImport,
-                )
-                .expect("unreachable");
+
+            // An `import` inside the CommonJS function wrapper is a syntax error.
+            let wrap_in_commonjs = wrap_mode == WrapMode::BunCommonjs;
+            for (path, names) in [
+                (import_source, runtime_import_names),
+                (package_name, source_import_names),
+            ] {
+                if names.is_empty() {
+                    continue;
+                }
+                if wrap_in_commonjs {
+                    p.generate_require_stmt(
+                        path,
+                        names,
+                        &mut before,
+                        &jsx_imports,
+                        js_ast::PartTag::JsxImport,
+                    )
+                    .expect("unreachable");
+                } else {
+                    p.generate_import_stmt(
+                        path,
+                        names,
+                        &mut before,
+                        &jsx_imports,
+                        None,
+                        b"",
+                        false,
+                        js_ast::PartTag::JsxImport,
+                    )
+                    .expect("unreachable");
+                }
             }
 
             p.jsx_imports = jsx_imports;

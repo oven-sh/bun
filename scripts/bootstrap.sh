@@ -1725,16 +1725,14 @@ install_docker() {
 		execute_sudo "$systemctl" enable docker
 	fi
 	if [ "$os" = "linux" ] && [ "$distro" = "alpine" ]; then
-		execute doas rc-update add docker default
-		execute doas rc-service docker start
+		execute_sudo rc-update add docker default
+		execute_sudo rc-service docker start
 	fi
 
 	getent="$(which getent)"
 	if [ -n "$("$getent" group docker)" ]; then
-		usermod="$(which usermod)"
-		if [ -z "$usermod" ]; then
-			usermod="$(sudo which usermod)"
-		fi
+		# /usr/sbin is not on a non-root PATH on Debian/Ubuntu.
+		usermod="$(which usermod || ls /usr/sbin/usermod 2>/dev/null)"
 		if [ -f "$usermod" ]; then
 			execute_sudo "$usermod" -aG docker "$user"
 		fi

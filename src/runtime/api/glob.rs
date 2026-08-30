@@ -233,11 +233,7 @@ pub(crate) mod standalone_accessor {
     }
 
     /// `path` resolved against the handle's directory when relative.
-    fn resolve<'a>(
-        handle: StandaloneHandle,
-        path: &'a [u8],
-        buf: &'a mut PathBuffer,
-    ) -> &'a [u8] {
+    fn resolve<'a>(handle: StandaloneHandle, path: &'a [u8], buf: &'a mut PathBuffer) -> &'a [u8] {
         if Platform::AUTO.is_absolute(path) {
             return path;
         }
@@ -508,9 +504,7 @@ impl Glob {
                 ),
             };
             match result.map_err(crate::Error::from)? {
-                bun_sys::Result::Err(err) => {
-                    Err(global_this.throw_value(err.to_js(global_this)))
-                }
+                bun_sys::Result::Err(err) => Err(global_this.throw_value(err.to_js(global_this))),
                 bun_sys::Result::Ok(gw) => Ok(Box::new(gw)),
             }
         }
@@ -536,14 +530,14 @@ impl Glob {
             return Ok(Some(AnyGlobWalker::Standalone(init_walker::<
                 StandaloneAccessor,
             >(
-                global_this, &self.pattern, &match_opts
+                global_this,
+                &self.pattern,
+                &match_opts,
             )?)));
         }
-        Ok(Some(AnyGlobWalker::Fs(init_walker::<walk::SyscallAccessor>(
-            global_this,
-            &self.pattern,
-            &match_opts,
-        )?)))
+        Ok(Some(AnyGlobWalker::Fs(
+            init_walker::<walk::SyscallAccessor>(global_this, &self.pattern, &match_opts)?,
+        )))
     }
 
     // No `#[bun_jsc::host_fn]` here — the `#[bun_jsc::JsClass]` derive on

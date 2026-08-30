@@ -977,7 +977,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return None;
         }
         let ext = &base[dot..];
-        if !Self::GLOB_STEM_EXTENSIONS.iter().any(|e| *e == ext) {
+        if !Self::GLOB_STEM_EXTENSIONS.contains(&ext) {
             return None;
         }
         Some(&key[..base_start + dot])
@@ -1082,7 +1082,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let Some(stem) = Self::glob_resolvable_stem(keys[i]) else {
                 continue;
             };
-            if !stem.ends_with(static_suffix) || keys.iter().any(|k| *k == stem) {
+            if !stem.ends_with(static_suffix) || keys.contains(&stem) {
                 continue;
             }
             keys.push(stem);

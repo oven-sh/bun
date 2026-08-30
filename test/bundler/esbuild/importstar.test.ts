@@ -1398,7 +1398,9 @@ describe("bundler", () => {
     },
     run: {
       file: "/test.js",
-      stdout: '{"inner":{"b":456},"a":123,"b":456}',
+      // inner.js re-exports "b", but entry.js only exports the "inner" namespace,
+      // so "b" must not show up on the entry point's module.exports.
+      stdout: '{"inner":{"b":456},"a":123}',
     },
   });
   itBundled("importstar/ReExportStarEntryPointAndInnerFile", {

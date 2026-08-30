@@ -265,7 +265,7 @@ pub enum AbortReason {
 // tier). The per-VM timer heap (`Timer::All`) lives in `bun_runtime` (higher
 // tier) and is reached through `RuntimeHooks::{timer_insert,timer_remove}` —
 // see `VirtualMachine::timer_insert/remove`. C++ only ever sees `*mut Timeout`
-// as an opaque token round-tripped through `create`/`run`/`deinit`, so the
+// as an opaque token round-tripped through `create`/`deinit`, so the
 // concrete layout is private to Rust; `repr(C)` is here so `offset_of!` is
 // well-defined for the `container_of` recovery in `bun_runtime::dispatch`.
 // ──────────────────────────────────────────────────────────────────────────
@@ -438,15 +438,6 @@ extern "C" fn AbortSignal__Timeout__create(
     milliseconds: u64,
 ) -> *mut Timeout {
     Timeout::init(vm, signal_, milliseconds)
-}
-
-/// # Safety
-/// `this` must be a live boxed `Timeout` returned from `AbortSignal__Timeout__create`;
-/// `vm` must be the live per-thread `VirtualMachine`.
-#[unsafe(no_mangle)]
-unsafe extern "C" fn AbortSignal__Timeout__run(this: *mut Timeout, vm: *mut VirtualMachine) {
-    // SAFETY: C++ caller passes a live boxed Timeout and the live per-thread VM.
-    unsafe { Timeout::run(this, vm) }
 }
 
 /// # Safety

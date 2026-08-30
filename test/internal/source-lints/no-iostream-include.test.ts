@@ -2,6 +2,7 @@ import { Glob } from "bun";
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { patterns } from "../../../scripts/glob-sources.ts";
 
 // <iostream> is unique among the C++ stream headers: on libstdc++ it emits a
 // reference to std::ios_base_library_init in every TU that includes it, which
@@ -22,24 +23,33 @@ import path from "node:path";
 test("C++ sources compiled into Bun do not include <iostream>", async () => {
   const repoRoot = path.resolve(import.meta.dir, "..", "..", "..");
 
-  const roots = ["src", "packages/bun-uws", "packages/bun-usockets"];
-  // sizegen.cpp is a build-time code generator, not linked into the bun binary.
-  const allowlist = new Set(["src/jsc/headergen/sizegen.cpp"]);
-
   const iostreamInclude = /^\s*#\s*include\s*<iostream>/m;
   const violations: string[] = [];
+  const check = (relFromRepo: string) => {
+    if (iostreamInclude.test(readFileSync(path.join(repoRoot, relFromRepo), "utf8"))) {
+      violations.push(relFromRepo.replaceAll("\\", "/"));
+    }
+  };
 
+  // The translation units the build compiles: the patterns it expands, plus
+  // the Windows-only sources scripts/build/bun.ts adds by hand.
+  let compiled = 0;
+  for (const pattern of [...patterns.cxx.paths, "src/jsc/bindings/windows/*.cpp"]) {
+    for await (const rel of new Glob(pattern).scan({ cwd: repoRoot })) {
+      compiled++;
+      check(rel);
+    }
+  }
+  expect(compiled).toBeGreaterThan(0);
+
+  // Headers are not in the build's source lists, so scan every header under
+  // the roots the compiled sources include from.
+  const roots = ["src", "packages/bun-uws", "packages/bun-usockets"];
   for (const root of roots) {
     let scanned = 0;
-    const glob = new Glob("**/*.{h,hpp,hxx,cpp,cc,cxx}");
-    for await (const rel of glob.scan({ cwd: path.join(repoRoot, root) })) {
+    for await (const rel of new Glob("**/*.{h,hpp,hxx}").scan({ cwd: path.join(repoRoot, root) })) {
       scanned++;
-      const relFromRepo = path.join(root, rel).replaceAll("\\", "/");
-      if (allowlist.has(relFromRepo)) continue;
-      const source = readFileSync(path.join(repoRoot, root, rel), "utf8");
-      if (iostreamInclude.test(source)) {
-        violations.push(relFromRepo);
-      }
+      check(path.join(root, rel));
     }
     // Guard against repoRoot resolving wrong (test file moved) or a scanned
     // root going away, which would make the ban below pass vacuously.

@@ -23,10 +23,6 @@ extern "C" bool Yarr__RegularExpression__isValid(RegularExpression* re)
 {
     return re->isValid();
 }
-extern "C" int Yarr__RegularExpression__matchedLength(RegularExpression* re)
-{
-    return re->matchedLength();
-}
 extern "C" int Yarr__RegularExpression__matches(RegularExpression* re, const BunString* string)
 {
     return re->match(string->toWTFString(BunString::ZeroCopy), 0, 0);

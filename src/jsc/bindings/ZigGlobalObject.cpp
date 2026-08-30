@@ -3329,37 +3329,6 @@ void GlobalObject::visitOutputConstraints(JSCell* cell, Visitor& visitor)
 template void GlobalObject::visitOutputConstraints(JSCell*, AbstractSlotVisitor&);
 template void GlobalObject::visitOutputConstraints(JSCell*, SlotVisitor&);
 
-// void GlobalObject::destroy(JSCell* cell)
-// {
-//     uncheckedDowncast<Zig::GlobalObject>(cell)->Zig::GlobalObject::~Zig::GlobalObject();
-// }
-
-// template<typename Visitor>
-// void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
-// {
-//     Zig::GlobalObject* thisObject = uncheckedDowncast<Zig::GlobalObject>(cell);
-//     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
-//     Base::visitChildren(thisObject, visitor);
-
-//     {
-//         // The GC thread has to grab the GC lock even though it is not mutating the containers.
-//         Locker locker { thisObject->m_gcLock };
-
-//         for (auto& structure : thisObject->m_structures.values())
-//             visitor.append(structure);
-
-//         for (auto& guarded : thisObject->m_guardedObjects)
-//             guarded->visitAggregate(visitor);
-//     }
-
-//     for (auto& constructor : thisObject->constructors().array())
-//         visitor.append(constructor);
-
-//     thisObject->m_builtinInternalFunctions.visit(visitor);
-// }
-
-// DEFINE_VISIT_CHILDREN(Zig::GlobalObject);
-
 void GlobalObject::clearModuleRegistry()
 {
     {

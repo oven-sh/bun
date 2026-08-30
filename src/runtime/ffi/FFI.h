@@ -129,7 +129,7 @@ EncodedJSValue ValueTrue = { TagValueTrue };
 typedef void* JSContext;
 
 // Bun_FFI_PointerOffsetToArgumentsList is injected into the build 
-// The value is generated in `make sizegen`
+// The value is JSC::CallFrame::argumentOffset(0), kept in bun_jsc::sizes.
 // The value is 6.
 // On ARM64_32, the value is something else but it really doesn't matter for our case
 // However, I don't want this to subtly break amidst future upgrades to JavaScriptCore

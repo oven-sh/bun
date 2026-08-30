@@ -87,6 +87,7 @@ namespace uWS {
         int allow_partial_trust_chain = 0;
         const char *sigalgs = nullptr;
         const char *ecdh_curve = nullptr;
+        const char *dh_params = nullptr;
 
         /* Conversion operator used internally */
         operator struct us_bun_socket_context_options_t() const {

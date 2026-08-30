@@ -1410,15 +1410,23 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
     }
   }
 
-  if (options.dh_params_file_name) {
+  if (options.dh_params || options.dh_params_file_name) {
     DH *dh_2048 = NULL;
-    FILE *paramfile = fopen(options.dh_params_file_name, "r");
-    if (paramfile) {
-      dh_2048 = PEM_read_DHparams(paramfile, NULL, NULL, NULL);
-      fclose(paramfile);
+    if (options.dh_params) {
+      BIO *params = BIO_new_mem_buf(options.dh_params, -1);
+      if (params) {
+        dh_2048 = PEM_read_bio_DHparams(params, NULL, NULL, NULL);
+        BIO_free(params);
+      }
     } else {
-      ssl_ctx_build_fail(ssl_context);
-      return NULL;
+      FILE *paramfile = fopen(options.dh_params_file_name, "r");
+      if (paramfile) {
+        dh_2048 = PEM_read_DHparams(paramfile, NULL, NULL, NULL);
+        fclose(paramfile);
+      } else {
+        ssl_ctx_build_fail(ssl_context);
+        return NULL;
+      }
     }
     if (dh_2048 == NULL) {
       ssl_ctx_build_fail(ssl_context);

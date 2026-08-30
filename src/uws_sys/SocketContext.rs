@@ -124,6 +124,8 @@ pub struct BunSocketContextOptions {
     pub allow_partial_trust_chain: i32,
     pub sigalgs: *const c_char,
     pub ecdh_curve: *const c_char,
+    /// PEM-encoded DH parameters; takes precedence over `dh_params_file_name`.
+    pub dh_params: *const c_char,
 }
 
 impl Default for BunSocketContextOptions {
@@ -155,11 +157,99 @@ impl Default for BunSocketContextOptions {
             allow_partial_trust_chain: 0,
             sigalgs: ptr::null(),
             ecdh_curve: ptr::null(),
+            dh_params: ptr::null(),
         }
     }
 }
 
-impl BunSocketContextOptions {
+/// The `*_file_name` option a read failure belongs to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TlsFile {
+    Key,
+    Cert,
+    Ca,
+    DhParams,
+}
+
+/// A `*_file_name` option that could not be read.
+#[derive(Debug)]
+pub struct LoadFileError {
+    pub file: TlsFile,
+    pub err: bun_sys::Error,
+}
+
+impl LoadFileError {
+    pub fn code(&self) -> create_bun_socket_error_t {
+        match self.file {
+            TlsFile::Key => create_bun_socket_error_t::load_key_file,
+            TlsFile::Cert => create_bun_socket_error_t::load_cert_file,
+            TlsFile::Ca => create_bun_socket_error_t::load_ca_file,
+            TlsFile::DhParams => create_bun_socket_error_t::load_dh_params_file,
+        }
+    }
+}
+
+struct LoadedFile {
+    file: TlsFile,
+    bytes: bun_core::ZBox,
+    /// The one-element array `key` / `cert` / `ca` points at. Boxed so the
+    /// address survives moves of the `LoadedFile`.
+    array: Box<[*const c_char; 1]>,
+}
+
+impl LoadedFile {
+    fn read(file: TlsFile, path: *const c_char) -> Result<Self, LoadFileError> {
+        // SAFETY: `path` is a caller-provided NUL-terminated C string.
+        let len = unsafe { bun_core::ffi::cstr(path) }.to_bytes().len();
+        // SAFETY: `path[len] == 0` (CStr invariant) and `path[..len]` is readable.
+        let path = unsafe { bun_core::ZStr::from_raw(path.cast::<u8>(), len) };
+        let contents = bun_sys::File::open(path, bun_sys::O::RDONLY, 0)
+            .and_then(|f| f.read_to_end())
+            .map_err(|err| LoadFileError {
+                file,
+                err: err.with_path(path.as_bytes()),
+            })?;
+        let bytes = bun_core::ZBox::from_vec(contents);
+        let array = Box::new([bytes.as_ptr()]);
+        Ok(Self { file, bytes, array })
+    }
+}
+
+impl Drop for LoadedFile {
+    /// Key material: zero before the allocator reuses the pages, as
+    /// `SSLConfig` does for its own C strings.
+    fn drop(&mut self) {
+        bun_alloc::free_sensitive(core::mem::take(&mut self.bytes).into_boxed_slice_with_nul());
+    }
+}
+
+/// [`BunSocketContextOptions`] whose `*_file_name` fields have been read:
+/// `key`, `cert`, `ca` and `dh_params` carry the bytes, so the C side never
+/// opens a path. Derefs to the rewritten options.
+pub struct LoadedOptions {
+    options: BunSocketContextOptions,
+    files: Vec<LoadedFile>,
+}
+
+impl Default for LoadedOptions {
+    /// [`BunSocketContextOptions::default`]: no TLS material, nothing to read.
+    fn default() -> Self {
+        Self {
+            options: BunSocketContextOptions::default(),
+            files: Vec::new(),
+        }
+    }
+}
+
+impl core::ops::Deref for LoadedOptions {
+    type Target = BunSocketContextOptions;
+    #[inline]
+    fn deref(&self) -> &BunSocketContextOptions {
+        &self.options
+    }
+}
+
+impl LoadedOptions {
     /// Build a BoringSSL `SSL_CTX` from these options. The passphrase is freed
     /// inside this call once private-key load completes.
     ///
@@ -169,10 +259,69 @@ impl BunSocketContextOptions {
     /// chain validation, populate verify_error) is applied in
     /// `us_internal_ssl_attach`, so a server reusing this ctx never sends
     /// CertificateRequest unless these options asked it to.
+    pub fn create_ssl_context(&self, err: &mut create_bun_socket_error_t) -> Option<OwnedSslCtx> {
+        // SAFETY: FFI call; the options are `#[repr(C)]` and passed by value, `err`
+        // is a valid out-param, and `self.files` keeps every buffer the options
+        // point at alive for the call. A non-null return carries the +1 from
+        // `SSL_CTX_new`.
+        let ctx = unsafe { OwnedSslCtx::from_raw(c::us_ssl_ctx_from_options(self.options, err)) };
+        if ctx.is_none()
+            && *err == create_bun_socket_error_t::invalid_ca
+            && self.files.iter().any(|f| f.file == TlsFile::Ca)
+        {
+            *err = create_bun_socket_error_t::invalid_ca_file;
+        }
+        ctx
+    }
+}
+
+impl BunSocketContextOptions {
+    /// Read the `*_file_name` options into memory. A file option replaces the
+    /// inline value of the same field, as it did when usockets opened the path.
+    pub fn load_files(&self) -> Result<LoadedOptions, LoadFileError> {
+        let mut options = *self;
+        let mut files = Vec::new();
+        if !self.key_file_name.is_null() {
+            let file = LoadedFile::read(TlsFile::Key, self.key_file_name)?;
+            options.key = file.array.as_ptr();
+            options.key_count = 1;
+            options.key_file_name = ptr::null();
+            files.push(file);
+        }
+        if !self.cert_file_name.is_null() {
+            let file = LoadedFile::read(TlsFile::Cert, self.cert_file_name)?;
+            options.cert = file.array.as_ptr();
+            options.cert_count = 1;
+            options.cert_file_name = ptr::null();
+            files.push(file);
+        }
+        if !self.ca_file_name.is_null() {
+            let file = LoadedFile::read(TlsFile::Ca, self.ca_file_name)?;
+            options.ca = file.array.as_ptr();
+            options.ca_count = 1;
+            options.ca_file_name = ptr::null();
+            files.push(file);
+        }
+        if !self.dh_params_file_name.is_null() {
+            let file = LoadedFile::read(TlsFile::DhParams, self.dh_params_file_name)?;
+            options.dh_params = file.bytes.as_ptr();
+            options.dh_params_file_name = ptr::null();
+            files.push(file);
+        }
+        Ok(LoadedOptions { options, files })
+    }
+
+    /// [`Self::load_files`] then [`LoadedOptions::create_ssl_context`]. A file
+    /// that cannot be read reports through `err` and returns `None`.
     pub fn create_ssl_context(self, err: &mut create_bun_socket_error_t) -> Option<OwnedSslCtx> {
-        // SAFETY: FFI call; `self` is `#[repr(C)]` and passed by value, `err` is a valid out-param.
-        // A non-null return carries the +1 from `SSL_CTX_new`.
-        unsafe { OwnedSslCtx::from_raw(c::us_ssl_ctx_from_options(self, err)) }
+        let loaded = match self.load_files() {
+            Ok(loaded) => loaded,
+            Err(e) => {
+                *err = e.code();
+                return None;
+            }
+        };
+        loaded.create_ssl_context(err)
     }
 
     /// SHA-256 over every field this struct carries, dereferencing string
@@ -258,6 +407,7 @@ impl BunSocketContextOptions {
         h.update(bun_core::bytes_of(&self.allow_partial_trust_chain));
         feed_z(&mut h, self.sigalgs);
         feed_z(&mut h, self.ecdh_curve);
+        feed_z(&mut h, self.dh_params);
         let mut out = [0u8; 32];
         h.final_(&mut out);
         out

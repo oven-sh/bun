@@ -546,7 +546,10 @@ impl<const SSL: bool> HTTPContext<SSL> {
                     uws::create_bun_socket_error_t::invalid_crl => InitError::InvalidCRL,
                     uws::create_bun_socket_error_t::none
                     | uws::create_bun_socket_error_t::invalid_ciphers
-                    | uws::create_bun_socket_error_t::invalid_ecdh_curve => {
+                    | uws::create_bun_socket_error_t::invalid_ecdh_curve
+                    | uws::create_bun_socket_error_t::load_key_file
+                    | uws::create_bun_socket_error_t::load_cert_file
+                    | uws::create_bun_socket_error_t::load_dh_params_file => {
                         InitError::FailedToOpenSocket
                     }
                 });

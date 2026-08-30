@@ -147,6 +147,37 @@ it("navigate + evaluate round-trip", async () => {
   expect(result).toBe("hi");
 });
 
+// #40951: every view used to get its own implicit WKProcessPool, so each
+// lifetime instance spent capped per-process OS resources (one
+// CVDisplayLink per pool; CoreVideo allows 64 per process). After exactly
+// 64 create/close cycles, the 65th view's navigate() hung forever. The
+// host now shares one WKProcessPool across all views. Sequential on
+// purpose (the cap is on lifetime instances, not concurrent ones); the
+// per-test timeout exists because the regression needs more than 64 full
+// create/navigate/close cycles.
+it(
+  "survives more than 64 lifetime create/navigate/close cycles",
+  async () => {
+    for (let i = 1; i <= 70; i++) {
+      const view = new Bun.WebView({ width: 64, height: 64, backend: "webkit", dataStore: "ephemeral" });
+      let watchdog: ReturnType<typeof setTimeout> | undefined;
+      try {
+        // Watchdog so a regression fails with the iteration number instead
+        // of a bare test timeout. Cleared every iteration.
+        const hung = new Promise<never>((_, reject) => {
+          watchdog = setTimeout(() => reject(new Error(`navigate() hung at lifetime instance #${i}`)), 10_000);
+        });
+        await Promise.race([view.navigate(html(`<p>v${i}</p>`)), hung]);
+        expect(view.url).toStartWith("data:text/html");
+      } finally {
+        clearTimeout(watchdog);
+        view.close();
+      }
+    }
+  },
+  90_000,
+);
+
 it("url constructor option fires navigate()", async () => {
   // `url:` is sugar for navigate() right after Create. The promise lands in
   // m_pendingNavigate; the user's next await serializes behind it. Here

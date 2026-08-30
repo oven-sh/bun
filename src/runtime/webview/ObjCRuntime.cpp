@@ -117,9 +117,32 @@ SEL WKWebView::s_callAsyncJavaScript;
 Class WKWebViewConfiguration::cls;
 Class WKWebViewConfiguration::cls_WKWebsiteDataStore;
 Class WKWebViewConfiguration::cls_WKWebsiteDataStoreConfiguration;
+Class WKWebViewConfiguration::cls_WKProcessPool;
 SEL WKWebViewConfiguration::s_nonPersistentDataStore;
 SEL WKWebViewConfiguration::s_initWithDirectory;
 SEL WKWebViewConfiguration::s_initWithConfiguration;
+SEL WKWebViewConfiguration::s_setProcessPool;
+
+// One WKProcessPool for every view in this host process, created on first
+// use and retained for process lifetime. A configuration with no explicit
+// pool makes WKWebView allocate a private WebProcessPool per view, and
+// every pool owns per-process OS resources: DisplayLinkCollection is a
+// WebProcessPool member, and each DisplayLink wraps a CVDisplayLink, a
+// resource CoreVideo caps at 64 per process. A fresh pool per view spends
+// capped resources on every instantiation even when each view is closed
+// before the next is created; after exactly 64 lifetime views, the 65th
+// view's navigate() never completed (oven-sh/bun#40951). One shared pool
+// spends them once. Site isolation is unaffected: cookies/storage live in
+// the per-configuration WKWebsiteDataStore, not the pool.
+id WKWebViewConfiguration::sharedProcessPool()
+{
+    static id pool;
+    if (!pool) {
+        Ref p(msgCls<id>(cls_WKProcessPool, s_alloc));
+        pool = p.msg<id>(s_init);
+    }
+    return pool;
+}
 
 // Keyed by directory path. Stores live for the process: each WKWebsiteDataStore
 // runs its own NetworkProcess session, so two instances at the same path don't
@@ -448,6 +471,8 @@ bool ObjCRuntime::load()
     // _WKWebsiteDataStoreConfiguration is SPI but stable since macOS 10.13.
     // initWithDirectory: is 15.2+.
     CLS(WKWebViewConfiguration::cls_WKWebsiteDataStoreConfiguration, "_WKWebsiteDataStoreConfiguration");
+    CLS(WKWebViewConfiguration::cls_WKProcessPool, "WKProcessPool");
+    WKWebViewConfiguration::s_setProcessPool = sel("setProcessPool:");
     WKWebViewConfiguration::s_nonPersistentDataStore = sel("nonPersistentDataStore");
     WKWebViewConfiguration::s_initWithDirectory = sel("initWithDirectory:");
     WKWebViewConfiguration::s_initWithConfiguration = sel("_initWithConfiguration:");

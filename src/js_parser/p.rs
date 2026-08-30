@@ -565,7 +565,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
 
     /// `const x = <relative-path template>` initializers, consulted by
     /// `append_dynamic_specifier_shape` so `require(x)` can glob.
-    pub glob_specifier_values: bun_ast::ast_result::ConstValuesMap,
+    pub(crate) glob_specifier_values: bun_ast::ast_result::ConstValuesMap,
 
     // These are backed by stack fallback allocators in _parse, and are uninitialized until then.
     pub(crate) binary_expression_stack: ListManaged<'a, BinaryExpressionVisitor>,
@@ -985,7 +985,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     /// Record `const x = <template>` so `require(x)` can glob. Lookup gates on
     /// `Kind::Constant`, so non-const entries stored here are simply ignored.
-    pub fn maybe_track_glob_specifier(&mut self, ref_: Ref, value: Option<Expr>) {
+    pub(crate) fn maybe_track_glob_specifier(&mut self, ref_: Ref, value: Option<Expr>) {
         if self.options.glob_resolver.is_none() {
             return;
         }
@@ -1011,7 +1011,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// bundling every file the shape can name (https://esbuild.github.io/api/#glob).
     /// `import_state` is `None` for `require()`. `None` means the call does not
     /// qualify and the caller keeps the runtime `require`/`import()`.
-    pub fn try_glob_dynamic_require(
+    pub(crate) fn try_glob_dynamic_require(
         &mut self,
         arg: Expr,
         import_state: Option<&TransposeState>,

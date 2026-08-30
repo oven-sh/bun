@@ -98,9 +98,8 @@ describe.skipIf(!isLinux || !cc)("node:child_process stdin write error on a sock
 
   // Node names every stream write failure "write". The errno is the one a pipe
   // gives for a reader that is gone, whatever the socket said.
-  test.concurrent.each(["ENOTCONN", "EPIPE"] as const)(
-    "send() failing with %s surfaces as EPIPE from write",
-    async sendErrno => {
+  describe.concurrent.each(["ENOTCONN", "EPIPE"] as const)("send() failing with %s", sendErrno => {
+    test("surfaces as EPIPE from write", async () => {
       const existing = bunEnv.LD_PRELOAD;
       await using proc = Bun.spawn({
         cmd: [bunExe(), "fixture.mjs"],
@@ -125,6 +124,6 @@ describe.skipIf(!isLinux || !cc)("node:child_process stdin write error on a sock
         stderr: "",
         exitCode: 0,
       });
-    },
-  );
+    });
+  });
 });

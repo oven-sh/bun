@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe } from "harness";
 
 // Coverage for the WebKit df289ce551 sync (oven-sh/WebKit#539). The case pins
 // an observable behavior difference between the previous JSC and the new one.
@@ -17,8 +17,7 @@ test("an eliminated arguments object is not rematerialized from slots a later va
   // iteration count the old engine returns `values2`'s elements ("bad value:
   // [object Object],1,2,3,4,5"); with more iterations it reads a bogus length
   // and aborts in operationMaterializeObjectInOSR ("MemoryExhaustion").
-  using dir = tempDir("webkit-df289ce551-load-varargs", {
-    "index.js": `
+  const source = `
       "use strict";
       function shouldBe(actual, expected) {
         if (actual !== expected) throw new Error("bad value: " + actual + ", expected: " + expected);
@@ -93,10 +92,9 @@ test("an eliminated arguments object is not rematerialized from slots a later va
       for (let i = 0; i < firstFive.length; ++i) shouldBe(recoveredFive[i], fiveMarker);
       shouldBe(recoveredFive[5], undefined);
       console.log("ok");
-    `,
-  });
+  `;
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "index.js"],
+    cmd: [bunExe(), "-e", source],
     env: {
       ...bunEnv,
       // The upstream test's options: tier up fast and deterministically.
@@ -104,7 +102,6 @@ test("an eliminated arguments object is not rematerialized from slots a later va
       BUN_JSC_thresholdForFTLOptimizeAfterWarmUp: "1000",
       BUN_JSC_useConcurrentJIT: "false",
     },
-    cwd: String(dir),
     stdout: "pipe",
     stderr: "pipe",
   });

@@ -101,6 +101,8 @@ pub struct FormatOptions {
     pub(crate) add_newline: bool,
     pub flush: bool,
     pub(crate) quote_strings: bool,
+    /// Sort `Set`/`Map` entries so the diff formatter is order-insensitive.
+    pub(crate) ordered_collections: bool,
 }
 
 impl JestPrettyFormat {
@@ -146,6 +148,7 @@ impl JestPrettyFormat {
         if len == 1 {
             fmt = Formatter::new(global);
             fmt.quote_strings = options.quote_strings;
+            fmt.ordered_collections = options.ordered_collections;
             let tag = Tag::get(vals[0], global)?;
 
             if tag.tag == Tag::String {
@@ -192,6 +195,7 @@ impl JestPrettyFormat {
         fmt = Formatter::new(global);
         fmt.remaining_values = &vals[..len][1..];
         fmt.quote_strings = options.quote_strings;
+        fmt.ordered_collections = options.ordered_collections;
 
         let result: JsResult<()> = (|| {
             let mut this_value: JSValue = vals[0];
@@ -318,6 +322,8 @@ pub struct Formatter<'a> {
     pub(crate) failed: bool,
     pub(crate) estimated_line_length: usize,
     pub(crate) always_newline_scope: bool,
+    /// See [`FormatOptions::ordered_collections`].
+    pub(crate) ordered_collections: bool,
 }
 
 impl<'a> Formatter<'a> {
@@ -332,6 +338,7 @@ impl<'a> Formatter<'a> {
             failed: false,
             estimated_line_length: 0,
             always_newline_scope: false,
+            ordered_collections: false,
         }
     }
 
@@ -747,6 +754,18 @@ impl<'a> Formatter<'a> {
         self.estimated_line_length += 1;
         Ok(())
     }
+
+    fn write_sorted_entries<W: bun_io::Write>(
+        &mut self,
+        writer: &mut WrappedWriter<'_, W>,
+        mut entries: Vec<Vec<u8>>,
+    ) {
+        entries.sort();
+        for entry in &entries {
+            writer.write_all(entry);
+        }
+        self.reset_line();
+    }
 }
 
 // split lifetimes — `&'a mut Formatter<'a>` is invariant and forces
@@ -843,6 +862,76 @@ impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
             return;
         }
         let _ = ctx.writer.write_all(b"\n");
+    }
+}
+
+/// See [`FormatOptions::ordered_collections`].
+pub(crate) struct SortedEntryCollector<'a, 'f, const IS_MAP: bool, const ENABLE_ANSI_COLORS: bool> {
+    pub(crate) formatter: &'a mut Formatter<'f>,
+    pub(crate) entries: Vec<Vec<u8>>,
+}
+
+impl<'a, 'f, const IS_MAP: bool, const ENABLE_ANSI_COLORS: bool>
+    SortedEntryCollector<'a, 'f, IS_MAP, ENABLE_ANSI_COLORS>
+{
+    pub(crate) extern "C" fn for_each(
+        _: *mut VM,
+        global_object: &JSGlobalObject,
+        ctx: *mut c_void,
+        next_value: JSValue,
+    ) {
+        // SAFETY: ctx was passed as `&mut Self as *mut c_void` by the caller of for_each.
+        let Some(ctx) = (unsafe { ctx.cast::<Self>().as_mut() }) else { return };
+        if ctx.formatter.failed {
+            return;
+        }
+        // each entry buffers from a fresh line so its bytes are order-independent
+        ctx.formatter.reset_line();
+        let mut buf: Vec<u8> = Vec::new();
+        if ctx.formatter.write_indent(&mut buf).is_err() {
+            return;
+        }
+        if IS_MAP {
+            let Ok(key) = JSObject::get_index(next_value, global_object, 0) else { return };
+            let Ok(value) = JSObject::get_index(next_value, global_object, 1) else { return };
+            let Ok(key_tag) = Tag::get(key, global_object) else { return };
+            if ctx
+                .formatter
+                .format::<Vec<u8>, ENABLE_ANSI_COLORS>(key_tag, &mut buf, key, ctx.formatter.global_this)
+                .is_err()
+            {
+                return;
+            }
+            if bun_io::Write::write_all(&mut buf, b" => ").is_err() {
+                return;
+            }
+            let Ok(value_tag) = Tag::get(value, global_object) else { return };
+            if ctx
+                .formatter
+                .format::<Vec<u8>, ENABLE_ANSI_COLORS>(value_tag, &mut buf, value, ctx.formatter.global_this)
+                .is_err()
+            {
+                return;
+            }
+        } else {
+            let Ok(tag) = Tag::get(next_value, global_object) else { return };
+            if ctx
+                .formatter
+                .format::<Vec<u8>, ENABLE_ANSI_COLORS>(tag, &mut buf, next_value, ctx.formatter.global_this)
+                .is_err()
+            {
+                return;
+            }
+        }
+        if ctx
+            .formatter
+            .print_comma::<Vec<u8>, ENABLE_ANSI_COLORS>(&mut buf)
+            .is_err()
+        {
+            return;
+        }
+        let _ = bun_io::Write::write_all(&mut buf, b"\n");
+        ctx.entries.push(buf);
     }
 }
 
@@ -1739,15 +1828,32 @@ impl<'a> Formatter<'a> {
                         // borrows `self`/`writer.ctx`; NLL releases both once `iter`
                         // is dead after `for_each` returns.
                         let global = self.global_this;
-                        let mut iter = MapIterator::<W, ENABLE_ANSI_COLORS> {
-                            formatter: self,
-                            writer: writer.ctx,
+                        let result = if self.ordered_collections
+                            && value.js_type() != JSType::WeakMap
+                        {
+                            let mut iter = SortedEntryCollector::<true, ENABLE_ANSI_COLORS> {
+                                formatter: self,
+                                entries: Vec::new(),
+                            };
+                            let result = value.for_each(
+                                global,
+                                (&raw mut iter).cast::<c_void>(),
+                                SortedEntryCollector::<true, ENABLE_ANSI_COLORS>::for_each,
+                            );
+                            let entries = iter.entries;
+                            self.write_sorted_entries(&mut writer, entries);
+                            result
+                        } else {
+                            let mut iter = MapIterator::<W, ENABLE_ANSI_COLORS> {
+                                formatter: self,
+                                writer: writer.ctx,
+                            };
+                            value.for_each(
+                                global,
+                                (&raw mut iter).cast::<c_void>(),
+                                MapIterator::<W, ENABLE_ANSI_COLORS>::for_each,
+                            )
                         };
-                        let result = value.for_each(
-                            global,
-                            (&raw mut iter).cast::<c_void>(),
-                            MapIterator::<W, ENABLE_ANSI_COLORS>::for_each,
-                        );
                         // `indent` / `quote_strings` must be restored on every exit,
                         // including thrown exceptions — restore before propagating.
                         self.indent = self.indent.saturating_sub(1);
@@ -1782,15 +1888,32 @@ impl<'a> Formatter<'a> {
                     {
                         self.indent += 1;
                         let global = self.global_this;
-                        let mut iter = SetIterator::<W, ENABLE_ANSI_COLORS> {
-                            formatter: self,
-                            writer: writer.ctx,
+                        let result = if self.ordered_collections
+                            && value.js_type() != JSType::WeakSet
+                        {
+                            let mut iter = SortedEntryCollector::<false, ENABLE_ANSI_COLORS> {
+                                formatter: self,
+                                entries: Vec::new(),
+                            };
+                            let result = value.for_each(
+                                global,
+                                (&raw mut iter).cast::<c_void>(),
+                                SortedEntryCollector::<false, ENABLE_ANSI_COLORS>::for_each,
+                            );
+                            let entries = iter.entries;
+                            self.write_sorted_entries(&mut writer, entries);
+                            result
+                        } else {
+                            let mut iter = SetIterator::<W, ENABLE_ANSI_COLORS> {
+                                formatter: self,
+                                writer: writer.ctx,
+                            };
+                            value.for_each(
+                                global,
+                                (&raw mut iter).cast::<c_void>(),
+                                SetIterator::<W, ENABLE_ANSI_COLORS>::for_each,
+                            )
                         };
-                        let result = value.for_each(
-                            global,
-                            (&raw mut iter).cast::<c_void>(),
-                            SetIterator::<W, ENABLE_ANSI_COLORS>::for_each,
-                        );
                         // `indent` / `quote_strings` must be restored on every exit,
                         // including thrown exceptions — restore before propagating.
                         self.indent = self.indent.saturating_sub(1);

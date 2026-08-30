@@ -2786,6 +2786,63 @@ export function endGroup() {
   console.log();
 }
 
+/**
+ * Creates a filter for the live output of one child process stream, for the CI log.
+ *
+ * The runner spawns every `bun test` with GITHUB_ACTIONS=true so that bun prints each
+ * failure as a `::error` workflow command it can parse, and the file headers as
+ * `::group::` commands. Those lines are for the parser, not for the log: GitHub renders
+ * them as annotations, Buildkite prints them verbatim. So outside GitHub Actions every
+ * line that starts with `::` is dropped. In GitHub Actions the group commands are dropped
+ * (the runner groups the log itself) and the rest is kept for GitHub to render. In
+ * Buildkite a line that starts with one of its group markers (`--- `) is defused too.
+ *
+ * The output arrives in pipe-sized chunks, and bun writes a `::error` line as many small
+ * writes, so a chunk usually ends in the middle of one. An incomplete last line that
+ * starts with `::` is held back until the rest of it arrives.
+ *
+ * @param {object} [options]
+ * @param {boolean} [options.github] the runner itself runs in GitHub Actions
+ * @param {boolean} [options.buildkite] the runner itself runs in Buildkite
+ * @returns {(chunk: string) => string} the text to write for each chunk
+ */
+export function createLiveOutputFilter({ github = isGithubAction, buildkite = isBuildkite } = {}) {
+  const ansi = /(?:\u001b\[[0-9;]*[a-zA-Z])*/.source;
+  const eol = /(?:\r\n|\r|\n)/.source;
+  const commands = new RegExp(`^${ansi}::${github ? "(?:end)?group::" : ""}.*${eol}`, "gm");
+  const groupMarkers = /^(?:---|\+\+\+|~~~|\^\^\^) /gm;
+
+  let pending = "";
+  let atLineStart = true;
+  return chunk => {
+    let text = pending + chunk;
+    const startsLine = atLineStart;
+
+    const lastLineStart = Math.max(text.lastIndexOf("\n"), text.lastIndexOf("\r")) + 1;
+    if ((lastLineStart > 0 || startsLine) && stripAnsi(text.slice(lastLineStart)).startsWith("::")) {
+      pending = text.slice(lastLineStart);
+      text = text.slice(0, lastLineStart);
+      atLineStart = true;
+    } else {
+      pending = "";
+      if (text) atLineStart = lastLineStart === text.length;
+    }
+
+    // A chunk that starts in the middle of a line continues a line that was already written.
+    let head = "";
+    if (!startsLine) {
+      const end = /\r\n|\r|\n/.exec(text);
+      const split = end ? end.index + end[0].length : text.length;
+      head = text.slice(0, split);
+      text = text.slice(split);
+    }
+
+    text = text.replace(commands, "");
+    if (buildkite) text = text.replace(groupMarkers, " ");
+    return head + text;
+  };
+}
+
 export function printEnvironment() {
   startGroup("Machine", () => {
     console.log("Operating System:", getOs());

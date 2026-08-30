@@ -36,6 +36,7 @@ import { parseArgs } from "node:util";
 import { prestartMap as dockerPrestartMap } from "../test/docker/prestart-map.mjs";
 import pLimit from "./p-limit.mjs";
 import {
+  createLiveOutputFilter,
   getAbi,
   getAbiVersion,
   getArch,
@@ -930,8 +931,8 @@ async function runTests() {
                 // calls from wiping each other when parallelSafeWidth > 1.
                 TEST_SERIAL_ID: String(index),
               },
-              stdout: concurrent ? () => {} : chunk => pipeTestStdout(process.stdout, chunk),
-              stderr: concurrent ? () => {} : chunk => pipeTestStdout(process.stderr, chunk),
+              stdout: concurrent ? () => {} : pipeTestStdout(process.stdout),
+              stderr: concurrent ? () => {} : pipeTestStdout(process.stderr),
             });
             const mb = 1024 ** 3;
             let stdoutPreview = stdout.slice(0, mb).split("\n").slice(0, 50).join("\n");
@@ -955,8 +956,8 @@ async function runTests() {
           async () =>
             spawnBunTest(execPath, join("test", testPath), {
               cwd,
-              stdout: concurrent ? () => {} : chunk => pipeTestStdout(process.stdout, chunk),
-              stderr: concurrent ? () => {} : chunk => pipeTestStdout(process.stderr, chunk),
+              stdout: concurrent ? () => {} : pipeTestStdout(process.stdout),
+              stderr: concurrent ? () => {} : pipeTestStdout(process.stderr),
             }),
           concurrent,
         );
@@ -1013,8 +1014,8 @@ async function runTests() {
           idleTimeout: parseInt(process.env.BUN_RUNNER_BATCH_IDLE_MS || "", 10) || 4 * 60_000,
           gracefulTimeout: true,
           env,
-          stdout: chunk => pipeTestStdout(process.stdout, chunk),
-          stderr: chunk => pipeTestStdout(process.stderr, chunk),
+          stdout: pipeTestStdout(process.stdout),
+          stderr: pipeTestStdout(process.stderr),
         }),
       );
       if (crashes) process.stderr.write(crashes);
@@ -1938,6 +1939,8 @@ async function spawnBun(execPath, { args, cwd, timeout, gracefulTimeout, idleTim
  * @param {string} [opts.cwd]
  * @param {string[]} [opts.args]
  * @param {object} [opts.env]
+ * @param {(chunk: string) => void} [opts.stdout]
+ * @param {(chunk: string) => void} [opts.stderr]
  * @returns {Promise<TestResult>}
  */
 async function spawnBunTest(execPath, testPath, opts = { cwd }) {
@@ -2002,8 +2005,8 @@ async function spawnBunTest(execPath, testPath, opts = { cwd }) {
     // per-test multiplier so the overall shard stays inside the job timeout.
     timeout: isReallyTest ? Math.ceil(timeout * (isAsan ? 2 : 1)) : 30_000,
     env,
-    stdout: options.stdout,
-    stderr: options.stderr,
+    stdout: opts.stdout ?? pipeTestStdout(process.stdout),
+    stderr: opts.stderr ?? pipeTestStdout(process.stderr),
   });
   let { tests, errors, stdout: stdoutPreview } = parseTestStdout(stdout, testPath);
   if (crashes) stdoutPreview += crashes;
@@ -2044,17 +2047,18 @@ function getTestTimeout(testPath) {
 }
 
 /**
+ * Streams the output of one child process stream to `io`, without the workflow
+ * commands bun test prints because GITHUB_ACTIONS is set (see createLiveOutputFilter).
+ *
  * @param {NodeJS.WritableStream} io
- * @param {string} chunk
+ * @returns {(chunk: string) => void}
  */
-function pipeTestStdout(io, chunk) {
-  if (isGithubAction) {
-    io.write(chunk.replace(/\:\:(?:end)?group\:\:.*(?:\r\n|\r|\n)/gim, ""));
-  } else if (isBuildkite) {
-    io.write(chunk.replace(/(?:---|\+\+\+|~~~|\^\^\^) /gim, " ").replace(/\:\:.*(?:\r\n|\r|\n)/gim, ""));
-  } else {
-    io.write(chunk.replace(/\:\:.*(?:\r\n|\r|\n)/gim, ""));
-  }
+function pipeTestStdout(io) {
+  const filter = createLiveOutputFilter();
+  return chunk => {
+    const text = filter(chunk);
+    if (text) io.write(text);
+  };
 }
 
 /**

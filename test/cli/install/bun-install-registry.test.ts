@@ -4744,8 +4744,7 @@ describe("hoisting", async () => {
 
   // hoist-lockfile-1@1.0.0 depends on `hoist-lockfile-shared: *`; the registry has 1.0.1, 1.0.2, 2.0.1 and 2.0.2.
   // The project's own range decides which copy that `*` shares, the same way an exact pin would.
-  async function sharedResolutions() {
-    await runBunInstall(env, packageDir, { saveTextLockfile: true });
+  async function lockedShared() {
     const { packages } = Bun.JSONC.parse(await file(join(packageDir, "bun.lock")).text()) as {
       packages: Record<string, [string]>;
     };
@@ -4754,6 +4753,11 @@ describe("hoisting", async () => {
         .filter(([, [resolution]]) => resolution.startsWith("hoist-lockfile-shared@"))
         .map(([key, [resolution]]) => [key, resolution]),
     );
+  }
+
+  async function sharedResolutions() {
+    await runBunInstall(env, packageDir, { saveTextLockfile: true });
+    return lockedShared();
   }
 
   test("a dependency's `*` shares the version the root's own range resolved to", async () => {
@@ -4814,6 +4818,29 @@ describe("hoisting", async () => {
       "hoist-lockfile-shared": "hoist-lockfile-shared@2.0.2",
       "hoist-lockfile-2/hoist-lockfile-shared": "hoist-lockfile-shared@1.0.2",
     });
+  });
+
+  test("`bun add` of a dependency with a `*` range shares the copy the root's own range already resolved to", async () => {
+    await write(packageJson, JSON.stringify({ name: "foo", dependencies: { "hoist-lockfile-shared": "^1.0.1" } }));
+    expect(await sharedResolutions()).toStrictEqual({ "hoist-lockfile-shared": "hoist-lockfile-shared@1.0.2" });
+
+    const { stderr, exited } = spawn({
+      cmd: [bunExe(), "add", "hoist-lockfile-1@1.0.0"],
+      cwd: packageDir,
+      stdout: "ignore",
+      stderr: "pipe",
+      env,
+    });
+    const [err, exitCode] = await Promise.all([stderr.text(), exited]);
+    expect(err).not.toContain("error:");
+    expect(exitCode).toBe(0);
+
+    expect((await file(packageJson).json()).dependencies).toEqual({
+      "hoist-lockfile-1": "1.0.0",
+      "hoist-lockfile-shared": "^1.0.1",
+    });
+    expect(await lockedShared()).toStrictEqual({ "hoist-lockfile-shared": "hoist-lockfile-shared@1.0.2" });
+    expect(await exists(join(packageDir, "node_modules", "hoist-lockfile-1", "node_modules"))).toBeFalse();
   });
 });
 

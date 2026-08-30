@@ -410,16 +410,12 @@ pub(crate) fn post_process_js_chunk(
         newline_before_comment = true;
     }
 
-    // Add the top-level directive if present (but omit "use strict" in ES
-    // modules because all ES modules are automatically in strict mode)
-    if chunk.is_entry_point() && !output_format.is_always_strict_mode() {
-        let flags = c.graph.ast.items_flags()[chunk.entry_point.source_index() as usize];
-
-        if flags.contains(crate::bundled_ast::Flags::HAS_EXPLICIT_USE_STRICT_DIRECTIVE) {
-            j.push_static(b"\"use strict\";\n");
-            line_offset.advance(b"\"use strict\";\n");
-            newline_before_comment = true;
-        }
+    // For iife the directive goes inside the wrapper below, so it does not leak into concatenated scripts.
+    let use_strict_directive = chunk.is_entry_point() && c.entry_chunk_needs_use_strict(chunk);
+    if use_strict_directive && output_format != options::OutputFormat::Iife {
+        j.push_static(b"\"use strict\";\n");
+        line_offset.advance(b"\"use strict\";\n");
+        newline_before_comment = true;
     }
 
     // For Kit, hoist runtime.js outside of the IIFE
@@ -447,13 +443,15 @@ pub(crate) fn post_process_js_chunk(
         }
         options::OutputFormat::Iife => {
             // Bun does not do arrow function lowering. So the wrapper can be an arrow.
-            let start: &[u8] = if c.options.minify_whitespace {
-                b"(()=>{"
-            } else {
-                b"(() => {\n"
+            let start: &[u8] = match (c.options.minify_whitespace, use_strict_directive) {
+                (true, false) => b"(()=>{",
+                (true, true) => b"(()=>{\"use strict\";",
+                (false, false) => b"(() => {\n",
+                (false, true) => b"(() => {\n  \"use strict\";\n",
             };
             j.push_static(start);
             line_offset.advance(start);
+            newline_before_comment |= use_strict_directive;
         }
         _ => {} // no wrapper
     }

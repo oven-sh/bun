@@ -1,4 +1,4 @@
-import { describe } from "bun:test";
+import { describe, expect } from "bun:test";
 import { itBundled } from "./expectBundled";
 
 // Tests for CommonJS <> ESM interop, specifically the __toESM helper behavior.
@@ -595,6 +595,361 @@ describe("bundler", () => {
     format: "cjs",
     run: {
       stdout: "loaded ok",
+    },
+  });
+
+  // ============================================================================
+  // An ES module is strict by construction. The cjs and iife outputs are a
+  // CommonJS module and a script, so they need a "use strict" directive for the
+  // module's code to stay strict. The esm output is a module and needs none.
+  // The chunk-top directive applies to every file in the chunk, so an ES module
+  // entry point gets one only when every other file in the chunk is strict too.
+  // ============================================================================
+
+  // Prints "true ReferenceError" in strict mode, "false assigned" in sloppy mode.
+  const strictProbe = /* js */ `
+    function thisIsUndefined() { return this === undefined; }
+    function assignUndeclared() {
+      try { undeclaredStrictProbe = 1; return "assigned"; } catch (e) { return e.constructor.name; }
+    }
+    console.log(thisIsUndefined(), assignUndeclared());
+  `;
+
+  itBundled("cjs/StrictModeESMEntryFormatCJS", {
+    files: {
+      "/entry.js": /* js */ `
+        export {};
+        ${strictProbe}
+      `,
+    },
+    target: "node",
+    format: "cjs",
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toStartWith('"use strict";\n');
+    },
+    run: {
+      stdout: "true ReferenceError",
+    },
+  });
+
+  itBundled("cjs/StrictModeESMEntryFormatCJSTargetBun", {
+    files: {
+      "/entry.js": /* js */ `
+        import { value } from "./dep.js";
+        console.log(value);
+        ${strictProbe}
+      `,
+      "/dep.js": /* js */ `export const value = "dep";`,
+    },
+    target: "bun",
+    format: "cjs",
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toStartWith(
+        '// @bun @bun-cjs\n(function(exports, require, module, __filename, __dirname) {"use strict";\n',
+      );
+    },
+    run: {
+      stdout: "dep\ntrue ReferenceError",
+    },
+  });
+
+  // A sloppy CommonJS dependency must not turn strict because of a directive it
+  // did not write. The chunk stays sloppy, which also leaves the entry point's
+  // own code sloppy: the same trade-off esbuild makes.
+  itBundled("cjs/StrictModeESMEntryWithSloppyDepFormatCJS", {
+    files: {
+      "/entry.js": /* js */ `
+        import dep from "./sloppy-dep.cjs";
+        console.log("dep", dep, "entry", (function () { return this === undefined; })());
+      `,
+      "/sloppy-dep.cjs": /* js */ `
+        var scope = { fromWith: "with works" };
+        with (scope) module.exports = fromWith;
+      `,
+    },
+    target: "node",
+    format: "cjs",
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).not.toContain("use strict");
+    },
+    run: {
+      stdout: "dep with works entry false",
+    },
+  });
+
+  // A CommonJS dependency with its own "use strict" is strict, so the chunk is.
+  itBundled("cjs/StrictModeESMEntryWithStrictDepFormatCJS", {
+    files: {
+      "/entry.js": /* js */ `
+        import dep from "./strict-dep.cjs";
+        console.log("dep", dep, "entry", (function () { return this === undefined; })());
+      `,
+      "/strict-dep.cjs": /* js */ `
+        "use strict";
+        module.exports = (function () { return this === undefined; })();
+      `,
+    },
+    target: "node",
+    format: "cjs",
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toStartWith('"use strict";\n');
+    },
+    run: {
+      stdout: "dep true entry true",
+    },
+  });
+
+  // Data files have no code of their own to be sloppy with.
+  itBundled("cjs/StrictModeESMEntryWithJSONFormatCJS", {
+    files: {
+      "/entry.js": /* js */ `
+        import data from "./data.json";
+        console.log(data.name, (function () { return this === undefined; })());
+      `,
+      "/data.json": `{ "name": "json" }`,
+    },
+    target: "node",
+    format: "cjs",
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toStartWith('"use strict";\n');
+    },
+    run: {
+      stdout: "json true",
+    },
+  });
+
+  // A directive the entry point spelled out applies to the whole output, with
+  // or without sloppy dependencies, as in esbuild and in earlier bun versions.
+  itBundled("cjs/StrictModeDirectiveEntryWithSloppyDepFormatCJS", {
+    files: {
+      "/entry.cjs": /* js */ `
+        "use strict";
+        console.log(require("./sloppy-dep.cjs"));
+      `,
+      "/sloppy-dep.cjs": /* js */ `
+        module.exports = "ok";
+      `,
+    },
+    target: "node",
+    format: "cjs",
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toStartWith('"use strict";\n');
+    },
+    run: {
+      stdout: "ok",
+    },
+  });
+
+  itBundled("cjs/StrictModeESMEntryBytecode", {
+    files: {
+      "/entry.js": /* js */ `
+        export {};
+        ${strictProbe}
+      `,
+    },
+    bytecode: true,
+    outdir: "/out",
+    onAfterBundle(api) {
+      expect(api.readFile("/out/entry.js")).toStartWith(
+        '// @bun @bytecode @bun-cjs\n(function(exports, require, module, __filename, __dirname) {"use strict";\n',
+      );
+    },
+    run: {
+      stdout: "true ReferenceError",
+    },
+  });
+
+  itBundled("cjs/StrictModeESMEntryFormatIIFE", {
+    files: {
+      "/entry.js": /* js */ `
+        export {};
+        ${strictProbe}
+      `,
+    },
+    target: "browser",
+    format: "iife",
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toStartWith('(() => {\n  "use strict";\n');
+    },
+    run: {
+      stdout: "true ReferenceError",
+    },
+  });
+
+  itBundled("cjs/StrictModeESMEntryFormatIIFEMinified", {
+    files: {
+      "/entry.js": /* js */ `
+        export {};
+        ${strictProbe}
+      `,
+    },
+    target: "browser",
+    format: "iife",
+    minifyWhitespace: true,
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toStartWith('(()=>{"use strict";');
+    },
+    run: {
+      stdout: "true ReferenceError",
+    },
+  });
+
+  itBundled("cjs/StrictModeESMEntryFormatESMHasNoDirective", {
+    files: {
+      "/entry.js": /* js */ `
+        export {};
+        ${strictProbe}
+      `,
+    },
+    target: "node",
+    format: "esm",
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).not.toContain("use strict");
+    },
+    run: {
+      stdout: "true ReferenceError",
+    },
+  });
+
+  // A sloppy CommonJS entry point stays sloppy: `with` is only valid there, and
+  // the ES module it requires runs strict inside its own __esm wrapper. These
+  // two run under node because bun's runtime transpiler drops a directive that
+  // is inside a function body.
+  itBundled("cjs/StrictModeESMRequiredFromSloppyEntryFormatCJS", {
+    files: {
+      "/entry.cjs": /* js */ `
+        var scope = { fromWith: "with works" };
+        with (scope) console.log(fromWith);
+        console.log("entry", (function () { return this === undefined; })());
+        const esm = require("./esm.mjs");
+        console.log("esm", esm.strict);
+      `,
+      "/esm.mjs": /* js */ `
+        console.log("esm evaluated");
+        export const strict = (function () { return this === undefined; })();
+      `,
+    },
+    target: "node",
+    format: "cjs",
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).not.toStartWith('"use strict"');
+      expect(out).toContain('__esm(() => {\n  "use strict";\n');
+    },
+    run: {
+      runtime: "node",
+      stdout: "with works\nentry false\nesm evaluated\nesm true",
+    },
+  });
+
+  // An ES module whose statements are all hoisted out of the __esm closure gets
+  // no closure, so there is nothing to put a directive in.
+  itBundled("cjs/StrictModeESMDeclarationsOnlyRequiredFromSloppyEntryFormatCJS", {
+    files: {
+      "/entry.cjs": /* js */ `
+        const esm = require("./esm.mjs");
+        console.log(esm.value, esm.fn());
+      `,
+      "/esm.mjs": /* js */ `
+        export const value = "value";
+        export function fn() { return "fn"; }
+      `,
+    },
+    target: "node",
+    format: "cjs",
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).not.toContain("use strict");
+      expect(out).not.toContain("__esm(");
+    },
+    run: {
+      stdout: "value fn",
+    },
+  });
+
+  // The directive of a required CommonJS file goes inside its __commonJS wrapper,
+  // also when that file shares the chunk with the entry point.
+  itBundled("cjs/StrictModeDirectiveRequiredFromSloppyEntryFormatCJS", {
+    files: {
+      "/entry.cjs": /* js */ `
+        console.log("entry", (function () { return this === undefined; })());
+        console.log("dep", require("./dep.cjs"));
+      `,
+      "/dep.cjs": /* js */ `
+        "use strict";
+        module.exports = (function () { return this === undefined; })();
+      `,
+    },
+    target: "node",
+    format: "cjs",
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).not.toStartWith('"use strict"');
+      expect(out).toMatch(/__commonJS\(function\([^)]*\) \{\n  "use strict";\n/);
+    },
+    run: {
+      runtime: "node",
+      stdout: "entry false\ndep true",
+    },
+  });
+
+  // A required file that is also an entry point of its own is an ordinary
+  // dependency in the other entry point's chunk, so its directive goes inside
+  // its wrapper there. In its own chunk the directive is at the top.
+  itBundled("cjs/StrictModeDirectiveDepIsAnotherEntryPointFormatCJS", {
+    files: {
+      "/a.js": /* js */ `
+        console.log("a", (function () { return this === undefined; })());
+        console.log("b", require("./b.js"));
+      `,
+      "/b.js": /* js */ `
+        "use strict";
+        module.exports = (function () { return this === undefined; })();
+      `,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    outdir: "/out",
+    target: "node",
+    format: "cjs",
+    onAfterBundle(api) {
+      const a = api.readFile("/out/a.js");
+      expect(a).not.toStartWith('"use strict"');
+      expect(a).toMatch(/__commonJS\(function\([^)]*\) \{\n  "use strict";\n/);
+      const b = api.readFile("/out/b.js");
+      expect(b).toStartWith('"use strict";\n');
+      expect(b).not.toMatch(/__commonJS\(function\([^)]*\) \{\n  "use strict";\n/);
+    },
+    run: [
+      { runtime: "node", file: "/out/a.js", stdout: "a false\nb true" },
+      { runtime: "node", file: "/out/b.js", stdout: "" },
+    ],
+  });
+
+  // An ES module entry point that a sloppy dependency requires back is wrapped
+  // in __esm. The sloppy file keeps the chunk top free of a directive, so the
+  // entry point's closure carries its own.
+  itBundled("cjs/StrictModeWrappedESMEntryWithSloppyDepFormatCJS", {
+    files: {
+      "/entry.js": /* js */ `
+        import dep from "./sloppy-dep.cjs";
+        export const strict = (function () { return this === undefined; })();
+        console.log("entry", strict, "dep", dep);
+      `,
+      "/sloppy-dep.cjs": /* js */ `
+        module.exports = (function () { return this === undefined; })();
+        require("./entry.js");
+      `,
+    },
+    target: "node",
+    format: "cjs",
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).not.toStartWith('"use strict"');
+      expect(out).toContain('__esm(() => {\n  "use strict";\n');
+    },
+    run: {
+      runtime: "node",
+      stdout: "entry true dep false",
     },
   });
 });

@@ -353,6 +353,44 @@ impl<'a> LinkerContext<'a> {
                 .is_entry_point()
     }
 
+    fn module_strict_mode(&self, source_index: usize) -> bun_ast::StrictModeKind {
+        self.graph.ast.items_module_scope()[source_index].strict_mode
+    }
+
+    /// The runtime helpers and data loaders such as JSON have no code of their own to be sloppy.
+    fn file_is_strict(&self, source_index: usize) -> bool {
+        source_index == Index::RUNTIME.value() as usize
+            || !self.parse_graph().input_files.items_loader()[source_index].is_javascript_like()
+            || self.module_strict_mode(source_index) != bun_ast::StrictModeKind::SloppyMode
+    }
+
+    /// Strict code in a `__commonJS` or `__esm` closure needs its own directive in cjs and iife output.
+    pub(crate) fn wrapper_needs_use_strict(&self, source_index: usize) -> bool {
+        matches!(self.options.output_format, Format::Cjs | Format::Iife)
+            && self.module_strict_mode(source_index) != bun_ast::StrictModeKind::SloppyMode
+    }
+
+    /// An ES module entry point gets the chunk-top directive only when every file in the chunk is strict.
+    pub(crate) fn entry_chunk_needs_use_strict(&self, chunk: &Chunk) -> bool {
+        let entry_strict_mode = self.module_strict_mode(chunk.entry_point.source_index() as usize);
+        match self.options.output_format {
+            Format::Esm => false,
+            // The dev server's module closures share the chunk, so only a spelled-out directive is kept.
+            Format::InternalBakeDev => {
+                entry_strict_mode == bun_ast::StrictModeKind::ExplicitStrictMode
+            }
+            Format::Cjs | Format::Iife => match entry_strict_mode {
+                bun_ast::StrictModeKind::SloppyMode => false,
+                bun_ast::StrictModeKind::ExplicitStrictMode => true,
+                _ => chunk
+                    .files_with_parts_in_chunk
+                    .keys()
+                    .iter()
+                    .all(|&source_index| self.file_is_strict(source_index as usize)),
+            },
+        }
+    }
+
     /// `"sideEffects": false` (or the resolver's equivalent), unless
     /// `--ignore-dce-annotations` says not to trust it.
     pub(crate) fn file_has_no_side_effects(&self, source_index: u32) -> bool {
@@ -4285,6 +4323,12 @@ impl InsideWrapperPrefix {
     pub(crate) fn append_non_dependency_slice(&mut self, stmts: &[Stmt]) -> Result<(), AllocError> {
         self.stmts.extend_from_slice(stmts);
         Ok(())
+    }
+
+    /// Inserted first: a directive has to precede the `init_*()` calls added at `sync_dependencies_end`.
+    pub(crate) fn append_directive(&mut self, stmt: Stmt) {
+        self.stmts.insert(0, stmt);
+        self.sync_dependencies_end += 1;
     }
 
     fn append_sync_dependency(&mut self, call_expr: Expr) -> Result<(), AllocError> {

@@ -252,26 +252,20 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
         u32::MAX
     };
 
-    let output_format = c.options.output_format;
-
-    // The top-level directive must come first (the non-wrapped case is handled
-    // by the chunk generation code, although only for the entry point)
+    // Skipped when the chunk top carries the directive for this file (`post_process_js_chunk`).
+    let covered_by_chunk_top = chunk.is_entry_point()
+        && chunk.entry_point.source_index() as usize == source_index
+        && c.entry_chunk_needs_use_strict(chunk);
     if flags.wrap != WrapKind::None
-        && ast
-            .flags
-            .contains(AstFlags::HAS_EXPLICIT_USE_STRICT_DIRECTIVE)
-        && !chunk.is_entry_point()
-        && !output_format.is_always_strict_mode()
+        && !covered_by_chunk_top
+        && c.wrapper_needs_use_strict(source_index)
     {
-        stmts
-            .inside_wrapper_prefix
-            .append_non_dependency(Stmt::alloc(
-                S::Directive {
-                    value: bun_ast::StoreStr::new(b"use strict"),
-                },
-                bun_ast::Loc::EMPTY,
-            ))
-            .expect("unreachable");
+        stmts.inside_wrapper_prefix.append_directive(Stmt::alloc(
+            S::Directive {
+                value: bun_ast::StoreStr::new(b"use strict"),
+            },
+            bun_ast::Loc::EMPTY,
+        ));
     }
 
     // `convert_stmts_for_chunk` takes `&mut c` inside the loop body, so capture
@@ -779,6 +773,13 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                         // resized in this loop; `end <= i < len`.
                         inner_stmts.slice_mut()[end] = transformed;
                         end += 1;
+                    }
+                    // A closure with only directives stays empty: `needs_wrapper_ref` allocated no symbol for it.
+                    if inner_stmts.slice()[..end]
+                        .iter()
+                        .all(|stmt| matches!(stmt.data, StmtData::SDirective(_)))
+                    {
+                        end = 0;
                     }
                     inner_stmts.truncate(end);
                 }

@@ -1,10 +1,8 @@
 import { file, write } from "bun";
-import { afterAll, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
+import { afterAll, beforeAll, expect, test } from "bun:test";
 import { exists } from "fs/promises";
 import { VerdaccioRegistry, bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
-
-setDefaultTimeout(1000 * 60 * 5);
 
 // Registry: no-deps 1.0.0/1.0.1/1.1.0/2.0.0, a-dep 1.0.1..1.0.10, @types/no-deps 1.0.0/2.0.0, one-range-dep@1.0.0 -> no-deps ^1.0.0, one-fixed-dep@1.0.0 -> no-deps 1.0.0, dep-with-tags latest=3.0.0, pre-2=2.0.1, 3.0.1 published above latest.
 

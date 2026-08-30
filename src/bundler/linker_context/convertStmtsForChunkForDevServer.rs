@@ -147,6 +147,7 @@ pub(crate) fn convert_stmts_for_chunk_for_dev_server<'bump>(
                                     },
                                     record.range.loc,
                                 )]),
+                                target_was_originally_property_access: true,
                                 ..Default::default()
                             },
                             stmt.loc,

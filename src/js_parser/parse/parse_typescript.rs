@@ -166,6 +166,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     let args = p.parse_call_args()?;
                     expr = p.new_expr(
                         E::Call {
+                            target_was_originally_property_access: expr
+                                .has_value_for_this_in_call(),
                             target: expr,
                             args: args.list,
                             close_paren_loc: args.loc,

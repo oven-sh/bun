@@ -1652,7 +1652,8 @@ pub(crate) mod __gated_printer {
         pub(crate) prev_op_end: i32,
         pub(crate) prev_num_end: i32,
         pub(crate) prev_reg_exp_end: i32,
-        pub(crate) call_target: Option<ExprData>,
+        /// The call target or template tag being printed, unless the source wrote it as `a.b`.
+        pub(crate) unbound_call_target: Option<ExprData>,
         pub(crate) writer: W,
 
         pub(crate) renamer: rename::Renamer<'a, 'a>,
@@ -2615,6 +2616,15 @@ pub(crate) mod __gated_printer {
             }
         }
 
+        /// Whether `import_ns.fn` for `e` needs the `(0, ...)` wrap. Exact by ref: the
+        /// call and template arms clear `unbound_call_target` before the arguments print.
+        fn is_unbound_call_target(&self, e: E::ImportIdentifier) -> bool {
+            matches!(
+                self.unbound_call_target,
+                Some(ExprData::EImportIdentifier(target)) if target.ref_.eql(e.ref_)
+            )
+        }
+
         #[inline]
         fn symbols(&self) -> &js_ast::symbol::Map {
             self.renamer.symbols()
@@ -3457,13 +3467,19 @@ pub(crate) mod __gated_printer {
                         }
                     }
                     // We only want to generate an unbound eval() in CommonJS
-                    self.call_target = Some(e.target.data);
-
                     let is_unbound_eval = !e.is_direct_eval
                         && self.is_unbound_eval_identifier(e.target)
                         && e.optional_chain.is_none();
 
-                    if is_unbound_eval {
+                    // "(0, a.b)()" folded to "a.b()" would bind `this` to "a"; keep the wrap.
+                    let target_was_originally_property_access =
+                        e.target_was_originally_property_access;
+                    let must_preserve_this = !target_was_originally_property_access
+                        && e.target.has_value_for_this_in_call();
+                    self.unbound_call_target =
+                        (!target_was_originally_property_access).then_some(e.target.data);
+
+                    if is_unbound_eval || must_preserve_this {
                         self.print(b"(0,");
                         self.print_space();
                         self.print_expr(e.target, Level::Postfix, ExprFlag::none());
@@ -3471,6 +3487,7 @@ pub(crate) mod __gated_printer {
                     } else {
                         self.print_expr(e.target, Level::Postfix, target_flags);
                     }
+                    self.unbound_call_target = None;
 
                     if e.optional_chain == Some(js_ast::OptionalChain::Start) {
                         self.print(b"?.");
@@ -4005,6 +4022,7 @@ pub(crate) mod __gated_printer {
                     // template back through the arena pointer
                     // would be a cross-thread data race. Re-prints recompute
                     // the identical fold, so emitted output is unchanged.
+                    let tag_was_originally_property_access = e.tag_was_originally_property_access;
                     let mut e = E::Template {
                         tag: e.tag,
                         parts: e.parts,
@@ -4014,6 +4032,7 @@ pub(crate) mod __gated_printer {
                             }
                             E::TemplateContents::Raw(r) => E::TemplateContents::Raw(*r),
                         },
+                        tag_was_originally_property_access,
                     };
                     if e.tag.is_none() && (self.options.minify_syntax || self.was_lazy_export) {
                         // `TemplatePart` is structurally
@@ -4079,6 +4098,7 @@ pub(crate) mod __gated_printer {
                                     }
                                     E::TemplateContents::Raw(r) => E::TemplateContents::Raw(*r),
                                 },
+                                tag_was_originally_property_access,
                             };
                             let e2 = copy.fold(self.bump, expr.loc);
                             match &e2.data {
@@ -4110,6 +4130,8 @@ pub(crate) mod __gated_printer {
                                                 E::TemplateContents::Raw(*r)
                                             }
                                         },
+                                        tag_was_originally_property_access: t
+                                            .tag_was_originally_property_access,
                                     };
                                 }
                                 _ => {}
@@ -4126,21 +4148,31 @@ pub(crate) mod __gated_printer {
 
                     if let Some(tag) = &e.tag {
                         self.add_source_mapping(expr.loc);
-                        // Optional chains are forbidden in template tags
-                        // `Expr::is_optional_chain` is gated upstream; inline its body.
-                        let is_optional_chain = match &expr.data {
+                        // A tag binds `this` like a call target; same two wraps as ECall.
+                        self.unbound_call_target =
+                            (!e.tag_was_originally_property_access).then_some(tag.data);
+                        let is_optional_chain = match &tag.data {
                             ExprData::EDot(d) => d.optional_chain.is_some(),
                             ExprData::EIndex(i) => i.optional_chain.is_some(),
                             ExprData::ECall(c) => c.optional_chain.is_some(),
                             _ => false,
                         };
-                        if is_optional_chain {
+                        if !e.tag_was_originally_property_access && tag.has_value_for_this_in_call()
+                        {
+                            // Prevent "x``" from becoming "y.z``"
+                            self.print(b"(0,");
+                            self.print_space();
+                            self.print_expr(*tag, Level::Lowest, ExprFlag::none());
+                            self.print(b")");
+                        } else if is_optional_chain {
+                            // Optional chains are forbidden in template tags
                             self.print(b"(");
                             self.print_expr(*tag, Level::Lowest, ExprFlag::none());
                             self.print(b")");
                         } else {
                             self.print_expr(*tag, Level::Postfix, ExprFlag::none());
                         }
+                        self.unbound_call_target = None;
                     } else {
                         self.add_source_mapping(expr.loc);
                     }
@@ -4230,13 +4262,8 @@ pub(crate) mod __gated_printer {
                             let import_record =
                                 self.import_record(namespace.import_record_index as usize);
                             if namespace.was_originally_property_access {
-                                let mut wrap = false;
                                 did_print = true;
-
-                                if let Some(target) = &self.call_target {
-                                    wrap = e.was_originally_identifier()
-                                        && matches!(target, ExprData::EIdentifier(id) if id.ref_.eql(e.ref_));
-                                }
+                                let wrap = self.is_unbound_call_target(*e);
 
                                 if wrap {
                                     self.print_whitespacer(ws!(b"(0, "));
@@ -4269,13 +4296,7 @@ pub(crate) mod __gated_printer {
 
                         if !did_print {
                             did_print = true;
-
-                            let wrap = if let Some(target) = &self.call_target {
-                                e.was_originally_identifier()
-                                    && matches!(target, ExprData::EIdentifier(id) if id.ref_.eql(e.ref_))
-                            } else {
-                                false
-                            };
+                            let wrap = self.is_unbound_call_target(*e);
 
                             if wrap {
                                 self.print_whitespacer(ws!(b"(0, "));
@@ -6763,7 +6784,7 @@ pub(crate) mod __gated_printer {
                 prev_op_end: -1,
                 prev_num_end: -1,
                 prev_reg_exp_end: -1,
-                call_target: None,
+                unbound_call_target: None,
                 writer,
                 renamer,
                 prev_stmt_tag: StmtTag::SEmpty,

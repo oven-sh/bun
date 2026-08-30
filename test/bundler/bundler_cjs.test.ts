@@ -1,4 +1,4 @@
-import { describe } from "bun:test";
+import { describe, expect } from "bun:test";
 import { itBundled } from "./expectBundled";
 
 // Tests for CommonJS <> ESM interop, specifically the __toESM helper behavior.
@@ -596,5 +596,132 @@ describe("bundler", () => {
     run: {
       stdout: "loaded ok",
     },
+  });
+
+  // ============================================================================
+  // `this` for CommonJS exports called through ESM imports
+  //
+  // The linker rewrites `who` (a named import of a CJS module) to the namespace
+  // member `import_lib.who`. Calling that as `import_lib.who()` would bind
+  // `this` to the namespace object, while Node (and unbundled Bun) call the
+  // export with `this === undefined`. The printer emits `(0, import_lib.who)()`
+  // and `(0, import_lib.who)\`\`` instead. `ns.who()` was a property access in
+  // the source, so it keeps the namespace as `this`.
+  //
+  // The probe reports "unbound" for both `undefined` and `globalThis` so the
+  // result does not depend on the strictness of the output format.
+  // ============================================================================
+  const thisProbe = /* js */ `
+    function probe(self, exports) {
+      return self === exports ? "exports" : self === undefined || self === globalThis ? "unbound" : "other";
+    }
+  `;
+  const thisForImportCallsFiles = {
+    "/entry.js": /* js */ `
+      import def from "./default.cjs";
+      import { who } from "./lib.cjs";
+      import * as ns from "./lib.cjs";
+      console.log(
+        def(), def\`\`,
+        who(), who\`\`,
+        ns.who(), ns.who\`\`,
+        (0, ns.who)(), (0, ns.who)\`\`,
+        (true && who)(), (1 ? who : 0)\`\`,
+        (0, who)(), (null ?? who)\`\`,
+      );
+    `,
+    "/default.cjs": /* js */ `
+      ${thisProbe}
+      module.exports = function () { return probe(this, module.exports); };
+    `,
+    "/lib.cjs": /* js */ `
+      ${thisProbe}
+      exports.who = function () { return probe(this, exports); };
+    `,
+  };
+  const thisForImportCallsStdout =
+    "unbound unbound unbound unbound other other unbound unbound unbound unbound unbound unbound";
+
+  itBundled("cjs/ThisForImportCalls", {
+    files: thisForImportCallsFiles,
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toContain("(0, import_default.default)()");
+      expect(out).toContain("(0, import_default.default)``");
+      expect(out).toContain("(0, import_lib.who)()");
+      expect(out).toContain("(0, import_lib.who)``");
+      expect(out).toContain("ns.who(), ns.who``");
+      expect(out).toContain("(0, ns.who)(), (0, ns.who)``");
+    },
+    run: { stdout: thisForImportCallsStdout },
+  });
+  itBundled("cjs/ThisForImportCallsMinifySyntax", {
+    files: thisForImportCallsFiles,
+    minifySyntax: true,
+    run: { stdout: thisForImportCallsStdout },
+  });
+  itBundled("cjs/ThisForImportCallsMinifyAll", {
+    files: thisForImportCallsFiles,
+    minifySyntax: true,
+    minifyWhitespace: true,
+    minifyIdentifiers: true,
+    run: { stdout: thisForImportCallsStdout },
+  });
+  itBundled("cjs/ThisForImportCallsFormatCJS", {
+    files: thisForImportCallsFiles,
+    format: "cjs",
+    run: { stdout: thisForImportCallsStdout },
+  });
+  itBundled("cjs/ThisForImportCallsFormatIIFE", {
+    files: thisForImportCallsFiles,
+    format: "iife",
+    run: { stdout: thisForImportCallsStdout },
+  });
+  itBundled("cjs/ThisForImportCallsTargetNode", {
+    files: thisForImportCallsFiles,
+    target: "node",
+    run: { stdout: thisForImportCallsStdout },
+  });
+  itBundled("cjs/ThisForImportCallsTargetBun", {
+    files: thisForImportCallsFiles,
+    target: "bun",
+    run: { stdout: thisForImportCallsStdout },
+  });
+
+  // External CJS packages in a cjs or iife bundle become `var import_ext = require("ext")`.
+  const thisForExternalImportCallsFiles = {
+    "/entry.js": /* js */ `
+      import { html } from "ext";
+      import * as ns from "ext";
+      console.log(html(), html\`\`, ns.html(), ns.html\`\`, (0, ns.html)(), (true && html)(), (1 ? html : 0)\`\`);
+    `,
+  };
+  const thisForExternalImportCallsRuntimeFiles = {
+    "/node_modules/ext/index.js": /* js */ `
+      ${thisProbe}
+      exports.html = function () { return probe(this, exports); };
+    `,
+  };
+  const thisForExternalImportCallsStdout = "unbound unbound other other unbound unbound unbound";
+  itBundled("cjs/ThisForExternalImportCallsFormatCJS", {
+    files: thisForExternalImportCallsFiles,
+    runtimeFiles: thisForExternalImportCallsRuntimeFiles,
+    external: ["ext"],
+    target: "node",
+    format: "cjs",
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toContain("(0, import_ext.html)()");
+      expect(out).toContain("(0, import_ext.html)``");
+      expect(out).toContain("ns.html(), ns.html``");
+    },
+    run: { stdout: thisForExternalImportCallsStdout },
+  });
+  itBundled("cjs/ThisForExternalImportCallsFormatIIFE", {
+    files: thisForExternalImportCallsFiles,
+    runtimeFiles: thisForExternalImportCallsRuntimeFiles,
+    external: ["ext"],
+    format: "iife",
+    run: { stdout: thisForExternalImportCallsStdout },
   });
 });

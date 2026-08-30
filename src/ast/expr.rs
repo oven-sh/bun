@@ -2001,6 +2001,7 @@ impl Data {
                     close_paren_loc: el.close_paren_loc,
                     can_be_unwrapped_if_unused: el.can_be_unwrapped_if_unused,
                     was_jsx_element: el.was_jsx_element,
+                    target_was_originally_property_access: el.target_was_originally_property_access,
                 });
                 Ok(Data::ECall(StoreRef::from_bump(item)))
             }
@@ -2084,6 +2085,7 @@ impl Data {
                     // `TemplateContents` is POD-shaped; `shallow_clone` is the
                     // safe field-wise copy.
                     head: el.head.shallow_clone(),
+                    tag_was_originally_property_access: el.tag_was_originally_property_access,
                 });
                 Ok(Data::ETemplate(StoreRef::from_bump(item)))
             }

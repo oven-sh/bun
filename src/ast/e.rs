@@ -273,6 +273,9 @@ pub struct Call {
 
     /// Used when printing to generate the source prop on the fly
     pub was_jsx_element: bool,
+
+    /// Set for `a.b()` / `a[b]()` in the source. Other property-access targets print as `(0, a.b)()`.
+    pub target_was_originally_property_access: bool,
 }
 impl Default for Call {
     fn default() -> Self {
@@ -284,6 +287,7 @@ impl Default for Call {
             close_paren_loc: crate::Loc::EMPTY,
             can_be_unwrapped_if_unused: CallUnwrap::Never,
             was_jsx_element: false,
+            target_was_originally_property_access: false,
         }
     }
 }
@@ -2118,6 +2122,8 @@ pub struct Template {
     /// `parts()` / `parts_mut()` for ergonomic access; never null.
     pub parts: crate::StoreSlice<TemplatePart>,
     pub head: TemplateContents,
+    /// Same as `Call::target_was_originally_property_access`, for the tag.
+    pub tag_was_originally_property_access: bool,
 }
 
 impl Template {
@@ -2340,6 +2346,7 @@ impl Template {
                         .expect("infallible: variant checked")
                         .shallow_clone(),
                 ),
+                tag_was_originally_property_access: false,
             },
             loc,
         )

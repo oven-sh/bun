@@ -347,6 +347,7 @@ pub(crate) fn generate_code_for_lazy_export(
                             tag: None,
                             parts: parts_slice,
                             head: E::TemplateContents::Cooked(E::String::init(b"")),
+                            tag_was_originally_property_access: false,
                         },
                         stmt.loc,
                     );

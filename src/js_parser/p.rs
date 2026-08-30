@@ -444,6 +444,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     // syntactic constructs as appropriate.
     pub(crate) stmt_expr_value: js_ast::ExprData,
     pub(crate) call_target: js_ast::ExprData,
+    pub(crate) template_tag: js_ast::ExprData,
     pub(crate) delete_target: js_ast::ExprData,
     pub(crate) loop_body: js_ast::StmtData,
     pub(crate) module_scope: js_ast::StoreRef<js_ast::Scope>,
@@ -8626,6 +8627,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             allow_in: true,
 
             call_target: null_expr_data(),
+            template_tag: null_expr_data(),
             delete_target: null_expr_data(),
             stmt_expr_value: null_expr_data(),
             loop_body: null_stmt_data(),

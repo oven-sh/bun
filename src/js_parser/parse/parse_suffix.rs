@@ -174,6 +174,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let target = *left;
                 *left = p.new_expr(
                     E::Call {
+                        target_was_originally_property_access: target.has_value_for_this_in_call(),
                         target,
                         args: list_loc.list,
                         close_paren_loc: list_loc.loc,
@@ -204,6 +205,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let target = *left;
                 *left = p.new_expr(
                     E::Call {
+                        target_was_originally_property_access: target.has_value_for_this_in_call(),
                         target,
                         args: list_loc.list,
                         close_paren_loc: list_loc.loc,
@@ -286,6 +288,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let tag = *left;
         *left = p.new_expr(
             E::Template {
+                tag_was_originally_property_access: tag.has_value_for_this_in_call(),
                 tag: Some(tag),
                 head: E::TemplateContents::Raw(head),
                 parts: E::Template::empty_parts(),
@@ -316,6 +319,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let loc = left.loc;
         *left = p.new_expr(
             E::Template {
+                tag_was_originally_property_access: tag.has_value_for_this_in_call(),
                 tag: Some(tag),
                 head: E::TemplateContents::Raw(head),
                 parts,
@@ -386,6 +390,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let target = *left;
         *left = p.new_expr(
             E::Call {
+                target_was_originally_property_access: target.has_value_for_this_in_call(),
                 target,
                 args: list_loc.list,
                 close_paren_loc: list_loc.loc,

@@ -1892,6 +1892,8 @@ fn codegen_base_instruction_value(
             }
             let call_expr = Expr::init(
                 E::Call {
+                    // Babel keeps `props.foo(...)` from optimize_props_method_calls a method call.
+                    target_was_originally_property_access: callee_expr.has_value_for_this_in_call(),
                     target: callee_expr,
                     args: arguments,
                     ..Default::default()
@@ -1915,6 +1917,7 @@ fn codegen_base_instruction_value(
                 E::Call {
                     target: member_expr,
                     args: arguments,
+                    target_was_originally_property_access: true,
                     ..Default::default()
                 },
                 loc,
@@ -2173,6 +2176,7 @@ fn codegen_base_instruction_value(
             let tag_expr = codegen_place_to_expression(cx, tag)?;
             Ok(Expr::init(
                 E::Template {
+                    tag_was_originally_property_access: tag_expr.has_value_for_this_in_call(),
                     tag: Some(tag_expr),
                     head: E::TemplateContents::Raw(value.raw),
                     parts: StoreSlice::EMPTY,
@@ -2201,6 +2205,7 @@ fn codegen_base_instruction_value(
                     tag: None,
                     head,
                     parts: StoreSlice::new_mut(parts.leak()),
+                    tag_was_originally_property_access: false,
                 },
                 loc,
             ))

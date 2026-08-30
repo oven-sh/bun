@@ -696,17 +696,29 @@ for (const { body, fn } of bodyTypes) {
           },
         );
         test("rejects a fetch textStream() when the connection drops after an empty decode", async () => {
+          // The client must consume "A" before the drop reaches the HTTP
+          // thread: a failure that arrives in the same progress update as
+          // unread body bytes errors the body and discards those bytes.
+          const consumedFirstChunk = Promise.withResolvers<void>();
           await using server = await rawChunkedServer(async sock => {
-            for (const p of [[0x41], [0xf0], [0x9f]]) await writeChunk(sock, p);
+            await writeChunk(sock, [0x41]);
+            await consumedFirstChunk.promise;
+            for (const p of [[0xf0], [0x9f]]) await writeChunk(sock, p);
             sock.destroy();
           });
           const res = await fetch(`http://127.0.0.1:${server.port}/`);
           let received = "";
           let error: any;
           try {
-            for await (const ch of res.textStream()) received += ch;
+            for await (const ch of res.textStream()) {
+              received += ch;
+              consumedFirstChunk.resolve();
+            }
           } catch (e) {
             error = e;
+          } finally {
+            // Let the server finish (and close the socket) if the stream ended early.
+            consumedFirstChunk.resolve();
           }
           expect({ code: error?.code, received }).toEqual({ code: "ECONNRESET", received: "A" });
         });

@@ -59,8 +59,11 @@ const child = spawn(process.execPath, ["-e", "setTimeout(() => {}, 30_000)"], {
   stdio: ["pipe", "ignore", "ignore"],
   env,
 });
+// "error" precedes "close", so a close without an error reports as such.
 const error = await new Promise(resolve => {
   child.stdin.on("error", err => resolve({ code: err.code, syscall: err.syscall, errno: err.errno }));
+  child.stdin.on("close", () => resolve("stdin closed without an error"));
+  child.on("error", err => resolve("spawn failed: " + err.code));
   child.stdin.end(Buffer.alloc(64 * 1024, 0x61));
 });
 child.kill();

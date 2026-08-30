@@ -377,6 +377,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         _ => {
                             let mut stmt_opts = ParseStatementOptions {
                                 lexical_decl: LexicalDecl::AllowAll,
+                                is_case_body: true,
                                 ..Default::default()
                             };
                             body.push(p.parse_stmt(&mut stmt_opts)?);
@@ -672,6 +673,26 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // Detect for-in loops
             if p.lexer.token == T::TIn {
                 p.forbid_initializers(decls_ptr.slice(), "in", is_var)?;
+                if let Some(init_stmt) = &init_ {
+                    if let js_ast::StmtData::SLocal(local) = &init_stmt.data {
+                        let message: Option<&'static [u8]> = match local.kind {
+                            js_ast::s::Kind::KUsing => {
+                                Some(b"Cannot use a \"using\" declaration in a for-in loop")
+                            }
+                            js_ast::s::Kind::KAwaitUsing => {
+                                Some(b"Cannot use an \"await using\" declaration in a for-in loop")
+                            }
+                            _ => None,
+                        };
+                        if let Some(message) = message {
+                            p.log().add_range_error(
+                                Some(p.source),
+                                js_lexer::range_of_identifier(p.source, init_stmt.loc),
+                                message,
+                            );
+                        }
+                    }
+                }
                 p.lexer.next()?;
                 let value = p.parse_expr(Level::Lowest)?;
                 p.lexer.expect(T::TCloseParen)?;
@@ -687,15 +708,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 ));
             }
 
-            // Only require "const" statement initializers when we know we're a normal for loop
+            // Only require "const"/"using" initializers when we know we're a normal for loop
             if let Some(init_stmt) = &init_ {
-                match &init_stmt.data {
-                    js_ast::StmtData::SLocal(local) => {
-                        if local.kind == js_ast::s::Kind::KConst {
-                            p.require_initializers(js_ast::s::Kind::KConst, decls_ptr.slice())?;
-                        }
+                if let js_ast::StmtData::SLocal(local) = &init_stmt.data {
+                    if local.kind == js_ast::s::Kind::KConst || local.kind.is_using() {
+                        p.require_initializers(local.kind, decls_ptr.slice())?;
                     }
-                    _ => {}
                 }
             }
 

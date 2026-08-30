@@ -1543,7 +1543,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         // Lower using declarations
-        if kind != StmtsKind::SwitchStmt && p.should_lower_using_declarations(stmts.as_slice()) {
+        if p.should_lower_using_declarations(stmts.as_slice()) {
             let mut ctx = LowerUsingDeclarationsContext::init(p)?;
             ctx.scan_stmts(p, stmts.as_mut_slice());
             // `finalize` stores a sub-slice of the old buffer as the lowered

@@ -1022,7 +1022,6 @@ pub enum StmtsKind {
     #[default]
     None,
     LoopBody,
-    SwitchStmt,
     FnBody,
 }
 
@@ -1458,6 +1457,8 @@ pub struct ParseStatementOptions<'a> {
     pub(crate) is_name_optional: bool,
     pub(crate) is_typescript_declare: bool,
     pub(crate) is_for_loop_init: bool,
+    /// Directly inside a switch clause, where a `using` declaration is a syntax error.
+    pub(crate) is_case_body: bool,
 }
 
 impl<'a> ParseStatementOptions<'a> {

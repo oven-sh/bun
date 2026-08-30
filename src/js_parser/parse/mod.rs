@@ -843,8 +843,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             p.lexer.next()?;
 
-            if p.lexer.token == T::TIdentifier && !p.lexer.has_newline_before {
-                if opts.lexical_decl != LexicalDecl::AllowAll {
+            // "for (using of xs)" iterates the identifier "using"; "for (using of = x;;)" declares "of"
+            if p.lexer.token == T::TIdentifier
+                && !p.lexer.has_newline_before
+                && (!opts.is_for_loop_init
+                    || p.lexer.raw() != b"of"
+                    || p.next_token_matches(|p| {
+                        p.lexer.token == T::TEquals
+                            || (Self::IS_TYPESCRIPT_ENABLED && p.lexer.token == T::TColon)
+                    }))
+            {
+                if opts.is_case_body {
+                    p.forbid_using_in_switch(token_range, js_ast::LocalKind::KUsing);
+                } else if opts.lexical_decl != LexicalDecl::AllowAll {
                     p.forbid_lexical_decl(token_range.loc);
                 }
                 // p.markSyntaxFeature(.using, token_range.loc);
@@ -896,14 +907,24 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.lexer.next()?;
 
             let raw2 = p.lexer.raw();
-            let mut value = if p.lexer.token == T::TIdentifier && raw2 == b"using" {
+            // "await\nusing x" awaits the identifier "using"; only a same-line "using" can start the declaration
+            let mut value = if p.lexer.token == T::TIdentifier
+                && raw2 == b"using"
+                && !p.lexer.has_newline_before
+            {
                 'value: {
                     // const using_loc = p.saveExprCommentsHere();
                     let using_range = p.lexer.range();
                     p.lexer.next()?;
                     if p.lexer.token == T::TIdentifier && !p.lexer.has_newline_before {
                         // It's an "await using" declaration if we get here
-                        if opts.lexical_decl != LexicalDecl::AllowAll {
+                        if opts.is_case_body {
+                            let keywords = bun_ast::Range {
+                                loc: token_range.loc,
+                                len: using_range.end().start - token_range.loc.start,
+                            };
+                            p.forbid_using_in_switch(keywords, js_ast::LocalKind::KAwaitUsing);
+                        } else if opts.lexical_decl != LexicalDecl::AllowAll {
                             p.forbid_lexical_decl(using_range.loc);
                         }
                         // p.markSyntaxFeature(.using, using_range.loc);

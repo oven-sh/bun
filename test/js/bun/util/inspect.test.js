@@ -1042,3 +1042,36 @@ describe.skipIf(!isASAN)("object mutated while being formatted", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+describe.each([
+  ["WeakMap", WeakMap],
+  ["WeakSet", WeakSet],
+])("%s with user-added size property", (name, Ctor) => {
+  it("Bun.inspect does not attempt to iterate", () => {
+    expect(Bun.inspect(new Ctor())).toBe(`${name} {}`);
+
+    const w = new Ctor();
+    w.size = 2;
+    expect(Bun.inspect(w)).toBe(`${name} {}`);
+  });
+
+  it("Bun.inspect does not invoke a .size getter", () => {
+    const w = new Ctor();
+    let called = false;
+    Object.defineProperty(w, "size", {
+      get() {
+        called = true;
+        throw new Error("should not be called");
+      },
+    });
+    expect(Bun.inspect(w)).toBe(`${name} {}`);
+    expect(called).toBe(false);
+  });
+
+  it("jest diff formatting does not crash", () => {
+    const w = new Ctor();
+    w.size = 2;
+    expect(() => expect(w).toMatchObject([0, 0])).toThrow(/toMatchObject/);
+    expect(() => expect(w).toEqual([])).toThrow(/toEqual/);
+  });
+});

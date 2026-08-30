@@ -463,10 +463,28 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
         }
     }
 
-    pub fn fmt_store_path<'a>(&'a self, string_buf: &'a [u8]) -> StorePathFormatter<'a, SemverInt> {
-        StorePathFormatter {
-            res: self,
-            string_buf,
+    /// The resolution part of a store entry name (`<name>@<resolution>`).
+    pub fn write_store_path<W: bun_core::io::Write + ?Sized>(
+        &self,
+        writer: &mut W,
+        string_buf: &[u8],
+    ) -> bun_core::CrateResult<()> {
+        match self.tag {
+            Tag::Root => writer.write_all(b"root"),
+            Tag::Npm => write!(writer, "{}", self.npm().version.fmt(string_buf)),
+            Tag::LocalTarball => self.local_tarball().write_store_path(writer, string_buf),
+            Tag::RemoteTarball => write_store_url(writer, self.remote_tarball().slice(string_buf)),
+            Tag::Folder => self.folder().write_store_path(writer, string_buf),
+            Tag::Git => self.git().write_store_path(writer, "git+", string_buf),
+            Tag::Github => self
+                .github()
+                .write_store_path(writer, "github+", string_buf),
+            Tag::Workspace => self.workspace().write_store_path(writer, string_buf),
+            Tag::Symlink => self.symlink().write_store_path(writer, string_buf),
+            Tag::SingleFileModule => self
+                .single_file_module()
+                .write_store_path(writer, string_buf),
+            _ => Ok(()),
         }
     }
 
@@ -531,52 +549,6 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
 // kept so dependents that named `resolution::StringBuilderLike` still resolve.
 pub use bun_semver::StringBuilder as StringBuilderLike;
 
-pub struct StorePathFormatter<'a, SemverInt: VersionInt> {
-    res: &'a ResolutionType<SemverInt>,
-    string_buf: &'a [u8],
-    // opts: String.StorePathFormatter.Options,
-}
-
-impl<'a, SemverInt: VersionInt> fmt::Display for StorePathFormatter<'a, SemverInt> {
-    fn fmt(&self, writer: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let string_buf = self.string_buf;
-        let res = self.res;
-        match res.tag {
-            Tag::Root => writer.write_str("root"),
-            Tag::Npm => write!(writer, "{}", res.npm().version.fmt(string_buf)),
-            Tag::LocalTarball => {
-                write!(writer, "{}", res.local_tarball().fmt_store_path(string_buf))
-            }
-            Tag::RemoteTarball => {
-                write!(
-                    writer,
-                    "{}",
-                    fmt_store_url(res.remote_tarball().slice(string_buf))
-                )
-            }
-            Tag::Folder => write!(writer, "{}", res.folder().fmt_store_path(string_buf)),
-            Tag::Git => write!(writer, "{}", res.git().fmt_store_path("git+", string_buf)),
-            Tag::Github => {
-                write!(
-                    writer,
-                    "{}",
-                    res.github().fmt_store_path("github+", string_buf)
-                )
-            }
-            Tag::Workspace => write!(writer, "{}", res.workspace().fmt_store_path(string_buf)),
-            Tag::Symlink => write!(writer, "{}", res.symlink().fmt_store_path(string_buf)),
-            Tag::SingleFileModule => {
-                write!(
-                    writer,
-                    "{}",
-                    res.single_file_module().fmt_store_path(string_buf)
-                )
-            }
-            _ => Ok(()),
-        }
-    }
-}
-
 /// Store path of a tarball or repository URL. The store path becomes a
 /// directory name (realpaths, stack traces, `bun pm` output), so the userinfo
 /// and the query string, which is where credentials go, are left out of it;
@@ -585,43 +557,30 @@ impl<'a, SemverInt: VersionInt> fmt::Display for StorePathFormatter<'a, SemverIn
 /// `https://user:token@host/pkg.tgz?token=x` becomes
 /// `https+++host+pkg.tgz+<16 hex>`. A URL without either part is spelled out
 /// unchanged.
-pub(crate) struct StoreURLFormatter<'a> {
-    url: &'a [u8],
-}
+pub(crate) fn write_store_url<W: bun_core::io::Write + ?Sized>(
+    writer: &mut W,
+    url: &[u8],
+) -> bun_core::CrateResult<()> {
+    // RFC 3986: the authority follows `scheme://` (or, for an scp-like
+    // `user@host:path`, starts the string) and ends at the first `/`, `?`
+    // or `#`; the userinfo is everything in it up to the last `@`.
+    let authority_start = match strings::index_of_char_usize(url, b':') {
+        Some(colon) if url[colon + 1..].starts_with(b"//") => colon + b"://".len(),
+        _ => 0,
+    };
+    let authority_end = strings::index_of_any(&url[authority_start..], b"/?#")
+        .map_or(url.len(), |i| authority_start + i);
+    let host_start = strings::last_index_of_char(&url[authority_start..authority_end], b'@')
+        .map_or(authority_start, |at| authority_start + at + 1);
+    let query_start = strings::index_of_char_usize(&url[host_start..], b'?')
+        .map_or(url.len(), |i| host_start + i);
 
-pub(crate) fn fmt_store_url(url: &[u8]) -> StoreURLFormatter<'_> {
-    StoreURLFormatter { url }
-}
-
-impl fmt::Display for StoreURLFormatter<'_> {
-    fn fmt(&self, writer: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let url = self.url;
-
-        // RFC 3986: the authority follows `scheme://` (or, for an scp-like
-        // `user@host:path`, starts the string) and ends at the first `/`, `?`
-        // or `#`; the userinfo is everything in it up to the last `@`.
-        let authority_start = match strings::index_of_char_usize(url, b':') {
-            Some(colon) if url[colon + 1..].starts_with(b"//") => colon + b"://".len(),
-            _ => 0,
-        };
-        let authority_end = strings::index_of_any(&url[authority_start..], b"/?#")
-            .map_or(url.len(), |i| authority_start + i);
-        let host_start = strings::last_index_of_char(&url[authority_start..authority_end], b'@')
-            .map_or(authority_start, |at| authority_start + at + 1);
-        let query_start = strings::index_of_char_usize(&url[host_start..], b'?')
-            .map_or(url.len(), |i| host_start + i);
-
-        write!(
-            writer,
-            "{}{}",
-            semver::string::fmt_store_path(&url[..authority_start]),
-            semver::string::fmt_store_path(&url[host_start..query_start]),
-        )?;
-        if host_start != authority_start || query_start != url.len() {
-            write!(writer, "+{:016x}", bun_wyhash::hash(url))?;
-        }
-        Ok(())
+    semver::string::write_store_path(writer, &url[..authority_start])?;
+    semver::string::write_store_path(writer, &url[host_start..query_start])?;
+    if host_start != authority_start || query_start != url.len() {
+        write!(writer, "+{:016x}", bun_wyhash::hash(url))?;
     }
+    Ok(())
 }
 
 pub struct URLFormatter<'a, SemverInt: VersionInt> {

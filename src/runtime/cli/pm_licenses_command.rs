@@ -7,7 +7,7 @@ use bun_ast::{Expr, Log, Source};
 use bun_collections::{DynamicBitSet, StringHashMap, index_sort};
 use bun_core::fmt::PathSep;
 use bun_core::{FileKind, Global, Output, strings};
-use bun_install::isolated_install::store::entry::fmt_store_key;
+use bun_install::isolated_install::store::entry::write_store_key;
 use bun_install::lockfile::{Lockfile, package::PackageColumns as _, reachable, tree};
 use bun_install::package_manager::{LogLevel, workspace_selection};
 use bun_install::{PackageID, PackageManager, Resolution, ResolutionTag};
@@ -574,7 +574,7 @@ impl BunStore {
         }
 
         let mut key: Vec<u8> = Vec::new();
-        let _ = write!(&mut key, "{}", fmt_store_key(pkg_name, resolution, buf));
+        write_store_key(&mut key, pkg_name, resolution, buf).expect("Vec<u8> write is infallible");
 
         let i = entries.partition_point(|e| e[..] < key[..]);
         let entry = entries.get(i)?;

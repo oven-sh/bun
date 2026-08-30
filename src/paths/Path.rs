@@ -993,30 +993,24 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
     }
 
     pub fn append_fmt(&mut self, args: core::fmt::Arguments<'_>) -> options::Result<()> {
-        // TODO: there's probably a better way to do this. needed for trimming slashes
-        let mut temp: Path<u8, { Kind::ANY }, { PathSeparators::ANY }> = Path::init();
+        self.append_with(|writer| writer.write_fmt(args))
+    }
 
-        // match BufType::Pool
-        let input = {
-            use std::io::Write;
-            let buf = u8::buffer_as_mut_slice(&mut temp._buf.pooled);
-            let mut cursor: &mut [u8] = buf;
-            let total = cursor.len();
-            match cursor.write_fmt(args) {
-                Ok(()) => {
-                    let written = total - cursor.len();
-                    &u8::buffer_as_slice(&temp._buf.pooled)[..written]
-                }
-                Err(_) => {
-                    if CheckLength::from_u8(CHECK) == CheckLength::CheckForGreaterThanMaxPath {
-                        return Err(PathError::MaxPathExceeded);
-                    }
-                    unreachable!();
-                }
+    /// Like `append_fmt`, for a producer of bytes that need not be UTF-8.
+    pub fn append_with(
+        &mut self,
+        write: impl FnOnce(&mut dyn bun_core::io::Write) -> bun_core::CrateResult<()>,
+    ) -> options::Result<()> {
+        let mut scratch = crate::path_buffer_pool::get();
+        let mut cursor = bun_core::fmt::SliceCursor::new(&mut scratch[..]);
+        if write(&mut cursor).is_err() {
+            if CheckLength::from_u8(CHECK) == CheckLength::CheckForGreaterThanMaxPath {
+                return Err(PathError::MaxPathExceeded);
             }
-        };
-
-        self.append(input)
+            unreachable!();
+        }
+        let len = cursor.at;
+        self.append(&scratch[..len])
     }
 
     fn assert_joinable(&self) {

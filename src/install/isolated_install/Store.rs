@@ -2,10 +2,10 @@ use core::cmp::Ordering;
 use core::fmt;
 use core::marker::PhantomData;
 
-use bstr::BStr;
-
 use bun_alloc::AllocError;
 use bun_collections::{ArrayHashMap, MultiArrayList};
+use bun_core::CrateResult;
+use bun_core::io::Write;
 use bun_semver::String as SemverString;
 use bun_wyhash::Wyhash;
 
@@ -348,9 +348,8 @@ pub mod entry {
         hasher: Wyhash,
     }
 
-    impl fmt::Write for ResolutionSink {
-        fn write_str(&mut self, s: &str) -> fmt::Result {
-            let bytes = s.as_bytes();
+    impl Write for ResolutionSink {
+        fn write_all(&mut self, bytes: &[u8]) -> CrateResult<()> {
             if let Some(room) = self.buf.get_mut(self.len..) {
                 let n = bytes.len().min(room.len());
                 room[..n].copy_from_slice(&bytes[..n]);
@@ -361,153 +360,109 @@ pub mod entry {
         }
     }
 
-    fn write_resolution(f: &mut fmt::Formatter<'_>, resolution: fmt::Arguments<'_>) -> fmt::Result {
+    fn write_resolution<W: Write + ?Sized>(
+        writer: &mut W,
+        write: impl FnOnce(&mut ResolutionSink) -> CrateResult<()>,
+    ) -> CrateResult<()> {
         let mut sink = ResolutionSink {
             buf: [0; MAX_RESOLUTION_LEN],
             len: 0,
             hasher: Wyhash::init(0),
         };
-        fmt::write(&mut sink, resolution)?;
+        write(&mut sink)?;
 
         if sink.len <= MAX_RESOLUTION_LEN {
-            return f.write_str(bun_core::str_utf8(&sink.buf[..sink.len]).ok_or(fmt::Error)?);
+            return writer.write_all(&sink.buf[..sink.len]);
         }
 
         let mut cut = CUT_RESOLUTION_LEN;
         while !bun_core::strings::is_on_char_boundary(&sink.buf, cut) {
             cut -= 1;
         }
-        f.write_str(bun_core::str_utf8(&sink.buf[..cut]).ok_or(fmt::Error)?)?;
-        write!(f, "+{:016x}", sink.hasher.final_())
+        writer.write_all(&sink.buf[..cut])?;
+        write!(writer, "+{:016x}", sink.hasher.final_())
     }
 
     /// `name@version` (or `name@file+path` / `name@root`) without the `+peerhash` suffix.
     /// The resolution part is bounded by [`MAX_RESOLUTION_LEN`].
-    pub struct StoreKeyFormatter<'a> {
+    pub fn write_store_key<W: Write + ?Sized>(
+        writer: &mut W,
         name: SemverString,
-        resolution: &'a Resolution,
-        string_buf: &'a [u8],
-    }
-
-    impl<'a> fmt::Display for StoreKeyFormatter<'a> {
-        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            let string_buf = self.string_buf;
-            let pkg_name = self.name;
-            let pkg_res = self.resolution;
-
-            match pkg_res.tag {
-                crate::resolution::Tag::Root => {
-                    if pkg_name.is_empty() {
-                        write!(
-                            f,
-                            "{}",
-                            BStr::new(bun_paths::basename(
-                                crate::bun_fs::FileSystem::instance().top_level_dir()
-                            ))
-                        )
-                    } else {
-                        write!(f, "{}@root", pkg_name.fmt_store_path(string_buf))
-                    }
+        resolution: &Resolution,
+        string_buf: &[u8],
+    ) -> CrateResult<()> {
+        match resolution.tag {
+            crate::resolution::Tag::Root => {
+                if name.is_empty() {
+                    writer.write_all(bun_paths::basename(
+                        crate::bun_fs::FileSystem::instance().top_level_dir(),
+                    ))
+                } else {
+                    name.write_store_path(writer, string_buf)?;
+                    writer.write_all(b"@root")
                 }
-                crate::resolution::Tag::Folder => {
-                    let folder = *pkg_res.folder();
-                    write!(f, "{}@", pkg_name.fmt_store_path(string_buf))?;
-                    write_resolution(
-                        f,
-                        format_args!("file+{}", folder.fmt_store_path(string_buf)),
-                    )
-                }
-                _ => {
-                    write!(f, "{}@", pkg_name.fmt_store_path(string_buf))?;
-                    write_resolution(f, format_args!("{}", pkg_res.fmt_store_path(string_buf)))
-                }
+            }
+            crate::resolution::Tag::Folder => {
+                let folder = *resolution.folder();
+                name.write_store_path(writer, string_buf)?;
+                writer.write_byte(b'@')?;
+                write_resolution(writer, |sink| {
+                    sink.write_all(b"file+")?;
+                    folder.write_store_path(sink, string_buf)
+                })
+            }
+            _ => {
+                name.write_store_path(writer, string_buf)?;
+                writer.write_byte(b'@')?;
+                write_resolution(writer, |sink| resolution.write_store_path(sink, string_buf))
             }
         }
     }
 
-    pub fn fmt_store_key<'a>(
-        name: SemverString,
-        resolution: &'a Resolution,
-        string_buf: &'a [u8],
-    ) -> StoreKeyFormatter<'a> {
-        StoreKeyFormatter {
-            name,
-            resolution,
-            string_buf,
-        }
-    }
-
-    pub struct StorePathFormatter<'a> {
-        pub(crate) entry_id: Id,
-        pub(crate) store: &'a Store,
-        pub lockfile: &'a Lockfile,
-    }
-
-    impl<'a> fmt::Display for StorePathFormatter<'a> {
-        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            use super::node::NodeColumns as _;
-            let store = self.store;
-            let entries = store.entries.slice();
-
-            let peer_hash = entries.items_peer_hash()[self.entry_id.get() as usize];
-            let node_id = entries.items_node_id()[self.entry_id.get() as usize];
-            let pkg_id = store.nodes.items_pkg_id()[node_id.get() as usize];
-
-            let pkgs = self.lockfile.packages.slice();
-            write!(
-                f,
-                "{}",
-                fmt_store_key(
-                    pkgs.items_name()[pkg_id as usize],
-                    &pkgs.items_resolution()[pkg_id as usize],
-                    self.lockfile.buffers.string_bytes.as_slice(),
-                )
-            )?;
-
-            if peer_hash != PeerHash::NONE {
-                write!(f, "+{:016x}", peer_hash.cast())?;
-            }
-
-            Ok(())
-        }
-    }
-
-    pub(crate) fn fmt_store_path<'a>(
+    /// The entry's directory name: its store key, then `+<peer hash>` when it has peers.
+    pub(crate) fn write_store_path<W: Write + ?Sized>(
+        writer: &mut W,
         entry_id: Id,
-        store: &'a Store,
-        lockfile: &'a Lockfile,
-    ) -> StorePathFormatter<'a> {
-        StorePathFormatter {
-            entry_id,
-            store,
-            lockfile,
+        store: &Store,
+        lockfile: &Lockfile,
+    ) -> CrateResult<()> {
+        use super::node::NodeColumns as _;
+        let entries = store.entries.slice();
+
+        let peer_hash = entries.items_peer_hash()[entry_id.get() as usize];
+        let node_id = entries.items_node_id()[entry_id.get() as usize];
+        let pkg_id = store.nodes.items_pkg_id()[node_id.get() as usize];
+
+        let pkgs = lockfile.packages.slice();
+        write_store_key(
+            writer,
+            pkgs.items_name()[pkg_id as usize],
+            &pkgs.items_resolution()[pkg_id as usize],
+            lockfile.buffers.string_bytes.as_slice(),
+        )?;
+
+        if peer_hash != PeerHash::NONE {
+            write!(writer, "+{:016x}", peer_hash.cast())?;
         }
+
+        Ok(())
     }
 
-    pub(crate) struct GlobalStorePathFormatter<'a> {
-        inner: StorePathFormatter<'a>,
-        entry_hash: u64,
-    }
-
-    impl<'a> fmt::Display for GlobalStorePathFormatter<'a> {
-        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            self.inner.fmt(f)?;
-            write!(f, "-{:016x}", self.entry_hash)
-        }
-    }
-
-    /// Like `fmt_store_path` but suffixes the entry's content hash so the
+    /// Like `write_store_path` but suffixes the entry's content hash so the
     /// resulting name is safe to use as a key in the shared global virtual
     /// store (different dependency closures get different directory names).
-    pub(crate) fn fmt_global_store_path<'a>(
+    pub(crate) fn write_global_store_path<W: Write + ?Sized>(
+        writer: &mut W,
         entry_id: Id,
-        store: &'a Store,
-        lockfile: &'a Lockfile,
-    ) -> GlobalStorePathFormatter<'a> {
-        GlobalStorePathFormatter {
-            inner: fmt_store_path(entry_id, store, lockfile),
-            entry_hash: store.entries.items_entry_hash()[entry_id.get() as usize],
-        }
+        store: &Store,
+        lockfile: &Lockfile,
+    ) -> CrateResult<()> {
+        write_store_path(writer, entry_id, store, lockfile)?;
+        write!(
+            writer,
+            "-{:016x}",
+            store.entries.items_entry_hash()[entry_id.get() as usize]
+        )
     }
 
     pub(crate) fn debug_gather_all_parents(entry_id: Id, store: &Store) -> Vec<Id> {
@@ -601,7 +556,7 @@ pub mod entry {
 }
 
 pub(crate) use entry::EntryColumns;
-pub use entry::{Entry, StoreKeyFormatter, fmt_store_key};
+pub use entry::{Entry, write_store_key};
 
 // ──────────────────────────────────────────────────────────────────────────
 // Node

@@ -421,12 +421,17 @@ impl<'a> Installer<'a> {
             | ResolutionTag::RemoteTarball
             | ResolutionTag::Folder => {
                 let mut store_path = AutoRelPath::init();
-
-                // OOM/capacity: fire-and-forget
-                let _ = store_path.append_fmt(format_args!(
-                    "node_modules/{}",
-                    store::entry::fmt_store_path(entry_id, self.store, self.lockfile()),
-                ));
+                store_path.append(b"node_modules").assume_ok();
+                store_path
+                    .append_with(|writer| {
+                        store::entry::write_store_path(
+                            writer,
+                            entry_id,
+                            self.store,
+                            self.lockfile(),
+                        )
+                    })
+                    .assume_ok();
 
                 let _ = sys::unlink(store_path.slice_z());
             }
@@ -2147,17 +2152,17 @@ impl<'a> Installer<'a> {
 
         let mut target = AutoRelPath::init();
 
-        let _ = target.append(b".."); // OOM/capacity: fire-and-forget
+        target.append(b"..").assume_ok();
         if strings::index_of_char(pkg_name.slice(string_buf), b'/').is_some() {
-            let _ = target.append(b".."); // OOM/capacity: fire-and-forget
+            target.append(b"..").assume_ok();
         }
-
-        // OOM/capacity: fire-and-forget
-        let _ = target.append_fmt(format_args!(
-            "{}/node_modules/{}",
-            store::entry::fmt_store_path(entry_id, self.store, self.lockfile()),
-            bstr::BStr::new(pkg_name.slice(string_buf)),
-        ));
+        target
+            .append_with(|writer| {
+                store::entry::write_store_path(writer, entry_id, self.store, self.lockfile())
+            })
+            .assume_ok();
+        target.append(b"node_modules").assume_ok();
+        target.append(pkg_name.slice(string_buf)).assume_ok();
 
         #[cfg(windows)]
         let mut full_target = AutoAbsPath::init_top_level_dir();
@@ -2453,17 +2458,13 @@ impl<'a> Installer<'a> {
         debug_assert!(self.entry_uses_global_store(entry_id));
         buf.clear();
         buf.append(self.global_store_path.as_ref().unwrap().as_bytes());
-        match which {
-            Which::Final => buf.append_fmt(format_args!(
-                "{}",
-                store::entry::fmt_global_store_path(entry_id, self.store, self.lockfile()),
-            )),
-            Which::Staging => buf.append_fmt(format_args!(
-                "{}.tmp-{:x}",
-                store::entry::fmt_global_store_path(entry_id, self.store, self.lockfile()),
-                self.global_store_tmp_suffix,
-            )),
-        }
+        buf.append_with(|writer| {
+            store::entry::write_global_store_path(writer, entry_id, self.store, self.lockfile())?;
+            match which {
+                Which::Final => Ok(()),
+                Which::Staging => write!(writer, ".tmp-{:x}", self.global_store_tmp_suffix),
+            }
+        });
     }
 
     /// Atomically publish a staged global-store entry by renaming
@@ -2497,13 +2498,18 @@ impl<'a> Installer<'a> {
                 // discard ours.
                 if self.manager().options.enable.force_install() {
                     let mut old = AutoAbsPath::init();
-                    let _ = old.append(self.global_store_path.as_ref().unwrap().as_bytes()); // OOM/capacity: fire-and-forget
-                    // OOM/capacity: fire-and-forget
-                    let _ = old.append_fmt(format_args!(
-                        "{}.old-{:x}",
-                        store::entry::fmt_global_store_path(entry_id, self.store, self.lockfile()),
-                        bun_core::fast_random(),
-                    ));
+                    old.append(self.global_store_path.as_ref().unwrap().as_bytes())
+                        .assume_ok();
+                    old.append_with(|writer| {
+                        store::entry::write_global_store_path(
+                            writer,
+                            entry_id,
+                            self.store,
+                            self.lockfile(),
+                        )?;
+                        write!(writer, ".old-{:x}", bun_core::fast_random())
+                    })
+                    .assume_ok();
                     if let Some(swap_err) =
                         sys::renameat(Fd::cwd(), final_.slice_z(), Fd::cwd(), old.slice_z()).err()
                     {
@@ -2545,11 +2551,10 @@ impl<'a> Installer<'a> {
         buf: &mut impl paths::PathLike,
         entry_id: StoreEntryId,
     ) {
-        buf.append_fmt(format_args!(
-            "{}/{}",
-            NODE_MODULES_BUN,
-            store::entry::fmt_store_path(entry_id, self.store, self.lockfile()),
-        ));
+        buf.append(NODE_MODULES_BUN.as_bytes());
+        buf.append_with(|writer| {
+            store::entry::write_store_path(writer, entry_id, self.store, self.lockfile())
+        });
     }
 
     /// Create the project-level symlink `node_modules/.bun/<storepath>` →
@@ -2662,11 +2667,11 @@ impl<'a> Installer<'a> {
                 buf.append(b"node_modules");
             }
             _ => {
-                buf.append_fmt(format_args!(
-                    "{}/{}/node_modules",
-                    NODE_MODULES_BUN,
-                    store::entry::fmt_store_path(entry_id, self.store, self.lockfile()),
-                ));
+                buf.append(NODE_MODULES_BUN.as_bytes());
+                buf.append_with(|writer| {
+                    store::entry::write_store_path(writer, entry_id, self.store, self.lockfile())
+                });
+                buf.append(b"node_modules");
             }
         }
     }
@@ -2736,10 +2741,14 @@ impl<'a> Installer<'a> {
                 if dep_id != invalid_dependency_id {
                     let pkg_name = pkg_names[pkg_id as usize];
                     buf.append(NODE_MODULES_BUN.as_bytes());
-                    buf.append_fmt(format_args!(
-                        "{}",
-                        store::entry::fmt_store_path(entry_id, self.store, self.lockfile()),
-                    ));
+                    buf.append_with(|writer| {
+                        store::entry::write_store_path(
+                            writer,
+                            entry_id,
+                            self.store,
+                            self.lockfile(),
+                        )
+                    });
                     buf.append(b"node_modules");
                     if pkg_name.is_empty() {
                         buf.append(paths::basename(
@@ -2775,10 +2784,9 @@ impl<'a> Installer<'a> {
             _ => {
                 let pkg_name = pkg_names[pkg_id as usize];
                 buf.append(NODE_MODULES_BUN.as_bytes());
-                buf.append_fmt(format_args!(
-                    "{}",
-                    store::entry::fmt_store_path(entry_id, self.store, self.lockfile()),
-                ));
+                buf.append_with(|writer| {
+                    store::entry::write_store_path(writer, entry_id, self.store, self.lockfile())
+                });
                 buf.append(b"node_modules");
                 buf.append(pkg_name.slice(string_buf));
             }

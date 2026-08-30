@@ -1,6 +1,5 @@
 use core::cell::{Cell, RefCell};
 use core::ops::Range;
-use std::io::Write as _;
 
 use bstr::BStr;
 use bun_collections::{DynamicBitSet, index_sort};
@@ -184,7 +183,7 @@ fn join_alias(scope: &[u8], name: &[u8]) -> Box<[u8]> {
     out.into_boxed_slice()
 }
 
-// Store folders are named `name@version[+peers]`, scoped as `@scope+name@version` (Store.rs fmt_store_key).
+// Store folders are named `name@version[+peers]`, scoped as `@scope+name@version` (Store.rs write_store_key).
 fn split_store_key(key: &[u8]) -> (Box<[u8]>, Option<Box<[u8]>>) {
     let Some(at) = strings::index_of_char_usize(&key[key.len().min(1)..], b'@').map(|i| i + 1)
     else {
@@ -1582,10 +1581,11 @@ fn push_store_entry_names(
             continue;
         }
         name.clear();
-        write!(
-            name,
-            "{}",
-            store_entry::fmt_store_path(store_entry::Id::from(entry_idx as u32), store, lockfile)
+        store_entry::write_store_path(
+            &mut name,
+            store_entry::Id::from(entry_idx as u32),
+            store,
+            lockfile,
         )
         .expect("Vec<u8> write is infallible");
         names.push(name.as_slice().into());

@@ -123,12 +123,9 @@ struct WyhashWriter<'a> {
     hasher: &'a mut Wyhash,
 }
 
-impl<'a> std::io::Write for WyhashWriter<'a> {
-    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+impl<'a> bun_core::io::Write for WyhashWriter<'a> {
+    fn write_all(&mut self, bytes: &[u8]) -> bun_core::CrateResult<()> {
         self.hasher.update(bytes);
-        Ok(bytes.len())
-    }
-    fn flush(&mut self) -> std::io::Result<()> {
         Ok(())
     }
 }
@@ -1313,7 +1310,7 @@ pub(crate) fn install_isolated_packages(
                             let mut hw = WyhashWriter {
                                 hasher: &mut stack[top_idx].hasher,
                             };
-                            write!(hw, "{}", store::entry::fmt_store_path(id, &store, lockfile))
+                            store::entry::write_store_path(&mut hw, id, &store, lockfile)
                                 .expect("unreachable");
                         }
                         // The store path for `.npm` is just `name@version`, which
@@ -1497,14 +1494,11 @@ pub(crate) fn install_isolated_packages(
                                     let mut sub = Wyhash::init(0x9E3779B97F4A7C15);
                                     {
                                         let mut hw = WyhashWriter { hasher: &mut sub };
-                                        write!(
-                                            hw,
-                                            "{}",
-                                            store::entry::fmt_store_path(
-                                                store::entry::Id::from(m),
-                                                &store,
-                                                lockfile
-                                            )
+                                        store::entry::write_store_path(
+                                            &mut hw,
+                                            store::entry::Id::from(m),
+                                            &store,
+                                            lockfile,
                                         )
                                         .expect("unreachable");
                                     }
@@ -1553,14 +1547,11 @@ pub(crate) fn install_isolated_packages(
                                     let mut sub = Wyhash::init(0);
                                     {
                                         let mut hw = WyhashWriter { hasher: &mut sub };
-                                        write!(
-                                            hw,
-                                            "{}",
-                                            store::entry::fmt_store_path(
-                                                store::entry::Id::from(m),
-                                                &store,
-                                                lockfile
-                                            )
+                                        store::entry::write_store_path(
+                                            &mut hw,
+                                            store::entry::Id::from(m),
+                                            &store,
+                                            lockfile,
                                         )
                                         .expect("unreachable");
                                     }

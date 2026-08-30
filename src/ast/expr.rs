@@ -1243,23 +1243,6 @@ impl Expr {
         Expr::init(t, self.loc)
     }
 
-    // Wraps the provided expression in the "!" prefix operator. The expression
-    // will potentially be simplified to avoid generating unnecessary extra "!"
-    // operators. For example, calling this with "!!x" will return "!x" instead
-    // of returning "!!!x".
-    pub(crate) fn not(&self, bump: &Bump) -> Expr {
-        self.maybe_simplify_not(bump).unwrap_or_else(|| {
-            Expr::init(
-                E::Unary {
-                    op: crate::OpCode::UnNot,
-                    value: *self,
-                    flags: E::UnaryFlags::empty(),
-                },
-                self.loc,
-            )
-        })
-    }
-
     #[inline]
     pub fn has_value_for_this_in_call(&self) -> bool {
         matches!(self.data, Data::EDot(_) | Data::EIndex(_))
@@ -1267,10 +1250,12 @@ impl Expr {
 
     /// The given "expr" argument should be the operand of a "!" prefix operator
     /// (i.e. the "x" in "!x"). This returns a simplified expression for the
-    /// whole operator (i.e. the "!x") if it can be simplified, or false if not.
-    /// It's separate from "Not()" above to avoid allocation on failure in case
-    /// that is undesired.
-    pub fn maybe_simplify_not(&self, bump: &Bump) -> Option<Expr> {
+    /// whole operator (i.e. the "!x") if it can be simplified, or None if not.
+    ///
+    /// "!(a, b)" is not handled here: the visitor distributes every unary
+    /// operator over a comma operand and then folds the new unary with the
+    /// side-effect information only it has.
+    pub fn maybe_simplify_not(&self) -> Option<Expr> {
         let expr = self;
         match expr.data {
             Data::ENull(_) | Data::EUndefined(_) => {
@@ -1288,6 +1273,11 @@ impl Expr {
                 if let Some(equal) = E::BigInt::check_equality(&b.value, b"0") {
                     return Some(expr.at(E::Boolean { value: equal }));
                 }
+            }
+            Data::EString(s) => {
+                return Some(expr.at(E::Boolean {
+                    value: s.is_blank(),
+                }));
             }
             Data::EFunction(_) | Data::EArrow(_) | Data::ERegExp(_) => {
                 return Some(expr.at(E::Boolean { value: false }));
@@ -1330,16 +1320,11 @@ impl Expr {
                         ex.op = crate::OpCode::BinStrictEq;
                         return Some(*expr);
                     }
-                    crate::OpCode::BinComma => {
-                        // "!(a, b)" => "a, !b"
-                        ex.right = ex.right.not(bump);
-                        return Some(*expr);
-                    }
                     _ => {}
                 }
             }
             Data::EInlinedEnum(inlined) => {
-                return inlined.value.maybe_simplify_not(bump);
+                return inlined.value.maybe_simplify_not();
             }
             _ => {}
         }

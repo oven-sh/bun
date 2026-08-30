@@ -3801,7 +3801,60 @@ class Foo {
     };
 
     it("unary operator", () => {
-      expectPrinted("a = !(b, c)", "a = (b, !c)");
+      // The output must also be a fixed point: transpiling it again must not
+      // find anything left to fold.
+      const expectPrintedStable = (code, out) => {
+        expectPrinted(code, out);
+        expectPrinted(out, out);
+      };
+
+      expectPrintedStable("a = !(b, c)", "a = (b, !c)");
+      expectPrintedStable("a = !(b, c == d)", "a = (b, c != d)");
+      expectPrintedStable("a = !(b, !!c)", "a = (b, !c)");
+
+      // "!(a, b)" => "a, !b" folds the new "!b" the same way a "!b" written in
+      // the source is folded.
+      expectPrintedStable('a = !(b, "c")', "a = (b, !1)");
+      expectPrintedStable('a = !(b, "")', "a = (b, !0)");
+      expectPrintedStable("a = !(b, `c`)", "a = (b, !1)");
+      expectPrintedStable("a = !(b, typeof c)", "a = (b, !1)");
+      expectPrintedStable("a = !(b, {})", "a = (b, !1)");
+      expectPrintedStable('a = !(b, c && "d")', "a = (b, !c)");
+      expectPrintedStable('a = !(b, (c, "d"))', "a = (b, c, !1)");
+      expectPrintedStable('a = +(b, "3")', "a = (b, 3)");
+      expectPrintedStable("a = -(b, -3)", "a = (b, 3)");
+      expectPrintedStable("a = ~(b, 1)", "a = (b, -2)");
+      expectPrintedStable("a = void (b, 1)", "a = (b, void 0)");
+
+      // Operands with side effects are still kept.
+      expectPrintedStable("a = !(b, typeof c())", "a = (b, !typeof c())");
+      expectPrintedStable("a = !(b, [c])", "a = (b, ![c])");
+      expectPrintedStable("a = void (b, c)", "a = (b, void c)");
+
+      // typeof and delete must not be distributed over the comma at all.
+      expectPrintedStable("a = typeof (b, c)", "a = typeof (b, c)");
+      expectPrintedStable("a = delete (b, c)", "a = delete (b, c)");
+    });
+
+    it("unary operator without dead code elimination", () => {
+      const transpiler = new Bun.Transpiler({
+        loader: "js",
+        minify: { syntax: true },
+        deadCodeElimination: false,
+      });
+      const check = (code, out) => expect(parsed(code, true, true, transpiler)).toBe(out);
+
+      // Literal operands of "!" fold even though the side-effect analysis is
+      // off, strings included.
+      check("a = !null", "a = !0");
+      check('a = !"c"', "a = !1");
+      check('a = !""', "a = !0");
+      check('a = !("c" + "d")', "a = !1");
+      check('a = !("" + "")', "a = !0");
+      check('a = !(b, "c")', "a = (b, !1)");
+      check("a = !(b, c == d)", "a = (b, c != d)");
+      // Needs the side-effect analysis, so it stays as written.
+      check("a = !(b, typeof c)", "a = (b, !typeof c)");
     });
 
     it.todo("const inlining", () => {

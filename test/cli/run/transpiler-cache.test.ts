@@ -1,7 +1,17 @@
 import { Subprocess } from "bun";
 import { beforeEach, describe, expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, bunRun, tmpdirSync } from "harness";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "fs";
+import { bunEnv, bunExe, bunRun, isDebug, tmpdirSync } from "harness";
 import { join } from "path";
 
 function dummyFile(size: number, cache_bust: string, value: string | { code: string }) {
@@ -321,6 +331,89 @@ describe("transpiler cache", () => {
       expect(await bunRun(join(temp_dir, "entry.mjs"), env)).toSpawn("file-loader");
       expect(newCacheCount()).toBe(0);
     });
+  });
+
+  // Entry::save (src/jsc/RuntimeTranspilerCache.rs) writes an entry with one
+  // gather write of four sections: header, output, sourcemap, esm record. When
+  // the OS writes less than that, save has to continue with the unwritten rest
+  // of each section. It used to send every section again from its start. No
+  // filesystem in a test produces such a short write, so debug builds read
+  // BUN_DEBUG_TRANSPILER_CACHE_MAX_WRITE, a cap on the bytes handed to each
+  // write, and log every write that save continues after. Release builds have
+  // neither, so this test only runs on debug builds (the gate and bun bd).
+  test.skipIf(!isDebug)("a save that needs several writes produces the same entry as one write", async () => {
+    // lib.mjs is the only file that is large enough to be cached (4 KiB).
+    // `bun test --isolate` also stores its esm record, so every section of
+    // the entry is non-empty; the last test of this file documents the layout.
+    const lib = [];
+    for (let i = 0; i < 300; i++) lib.push(`export const v${i} = ${i};`);
+    writeFileSync(join(temp_dir, "lib.mjs"), lib.join("\n") + "\n");
+    writeFileSync(
+      join(temp_dir, "uses-lib.test.js"),
+      `import { test, expect } from "bun:test";
+import { v1, v299 } from "./lib.mjs";
+test("lib", () => {
+  expect(v1 + v299).toBe(300);
+});`,
+    );
+
+    async function run(extraEnv: Record<string, string>) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "--isolate", "./uses-lib.test.js"],
+        cwd: temp_dir,
+        env: { ...env, BUN_DEBUG_cache: "1", ...extraEnv },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout + stderr).toContain("1 pass");
+      expect(exitCode).toBe(0);
+      return (stdout + stderr).match(/\[cache\] save: wrote \d+ bytes at offset \d+, \d+ bytes left/g) ?? [];
+    }
+
+    function entry() {
+      const names = readdirSync(cache_dir);
+      expect(names).toHaveLength(1);
+      return join(cache_dir, names[0]);
+    }
+
+    expect(await run({})).toEqual([]);
+    const expected = readFileSync(entry());
+    const ESM_RECORD_BYTE_LENGTH_AT = 86;
+    expect(expected.readBigUInt64LE(ESM_RECORD_BYTE_LENGTH_AT)).toBeGreaterThan(0n);
+
+    // 100 stops the first write inside the header, so the second write
+    // finishes the header and starts the output: one continuation drops a
+    // finished section and trims a partly written one. 4093 cuts the entry at
+    // offsets unrelated to the section boundaries.
+    for (const maxWrite of [100, 4093]) {
+      removeCache();
+      const continued = await run({ BUN_DEBUG_TRANSPILER_CACHE_MAX_WRITE: String(maxWrite) });
+      const actual = readFileSync(entry());
+      expect({
+        maxWrite,
+        size: actual.length,
+        writes: continued.length + 1,
+        firstWrite: continued[0],
+        identical: actual.equals(expected),
+      }).toEqual({
+        maxWrite,
+        size: expected.length,
+        writes: Math.ceil(expected.length / maxWrite),
+        firstWrite: `[cache] save: wrote ${maxWrite} bytes at offset 0, ${expected.length - maxWrite} bytes left`,
+        identical: true,
+      });
+    }
+
+    // The next run is served from the entry written in pieces. A rejected
+    // entry is unlinked and written again, which gives it a new inode.
+    const identity = () => {
+      const { ino, mtimeNs } = statSync(entry(), { bigint: true });
+      return { ino, mtimeNs };
+    };
+    const written = identity();
+    expect(await run({})).toEqual([]);
+    expect(identity()).toEqual(written);
   });
 });
 

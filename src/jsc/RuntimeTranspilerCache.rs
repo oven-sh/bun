@@ -325,47 +325,57 @@ impl Entry {
             };
             let metadata_bytes: &[u8] = &metadata_buf[0..metadata_bytes_len];
 
-            let mut vecs_buf: [sys::PlatformIoVecConst; 4] = bun_core::ffi::zeroed();
-            let mut vecs_i: usize = 0;
-            vecs_buf[vecs_i] = sys::platform_iovec_const_create(metadata_bytes);
-            vecs_i += 1;
-            if !output_bytes.is_empty() {
-                vecs_buf[vecs_i] = sys::platform_iovec_const_create(output_bytes);
-                vecs_i += 1;
-            }
-            if !sourcemap.is_empty() {
-                vecs_buf[vecs_i] = sys::platform_iovec_const_create(sourcemap);
-                vecs_i += 1;
-            }
-            if !esm_record.is_empty() {
-                vecs_buf[vecs_i] = sys::platform_iovec_const_create(esm_record);
-                vecs_i += 1;
-            }
-            let vecs: &[sys::PlatformIoVecConst] = &vecs_buf[0..vecs_i];
-
-            let mut position: i64 = 0;
             let file_len = Metadata::SIZE + output_bytes.len() + sourcemap.len() + esm_record.len();
+            // The unwritten part of each section, in file order.
+            let mut pending: [&[u8]; 4] = [metadata_bytes, output_bytes, sourcemap, esm_record];
+            debug_assert_eq!(
+                file_len,
+                pending.iter().map(|section| section.len()).sum::<usize>()
+            );
 
-            #[cfg(debug_assertions)]
-            {
-                let mut total: usize = 0;
-                for v in vecs {
-                    debug_assert!(v.len > 0);
-                    // `uv_buf_t::len` is `ULONG` (u32) on Windows, `usize` on POSIX.
-                    total += v.len as usize;
-                }
-                debug_assert!(file_len == total);
-            }
+            // Debug builds let a test cap each write so that the loop below has to continue.
+            #[cfg(not(bun_debug))]
+            let max_write = usize::MAX;
+            #[cfg(bun_debug)]
+            let max_write = match env_var::BUN_DEBUG_TRANSPILER_CACHE_MAX_WRITE.get() {
+                Some(limit) if limit > 0 => usize::try_from(limit).unwrap_or(usize::MAX),
+                _ => usize::MAX,
+            };
 
             let end_position = i64::try_from(file_len).expect("int cast");
             let _ = sys::preallocate_file(tmpfile.fd.cast(), 0, end_position);
+            let mut position: i64 = 0;
             while position < end_position {
-                let written = sys::pwritev(tmpfile.fd, vecs, position)?;
+                let mut vecs_buf: [sys::PlatformIoVecConst; 4] = bun_core::ffi::zeroed();
+                let mut vecs_len: usize = 0;
+                let mut budget = max_write;
+                for section in pending {
+                    let len = section.len().min(budget);
+                    if len == 0 {
+                        continue;
+                    }
+                    vecs_buf[vecs_len] = sys::platform_iovec_const_create(&section[..len]);
+                    vecs_len += 1;
+                    budget -= len;
+                }
+
+                let written = sys::pwritev(tmpfile.fd, &vecs_buf[..vecs_len], position)?;
                 if written == 0 {
                     return Err(crate::CrateError::WriteFailed);
                 }
 
+                advance_sections(&mut pending, written);
+                let offset = position;
                 position += i64::try_from(written).expect("int cast");
+                if position < end_position {
+                    bun_core::scoped_log!(
+                        cache,
+                        "save: wrote {} bytes at offset {}, {} bytes left",
+                        written,
+                        offset,
+                        end_position - position
+                    );
+                }
             }
 
             let _ = scopeguard::ScopeGuard::into_inner(errdefer);
@@ -544,6 +554,19 @@ pub struct RuntimeTranspilerCache {
 
 pub(crate) fn hash(bytes: &[u8]) -> u64 {
     Wyhash::hash(SEED, bytes)
+}
+
+/// Drops the first `written` bytes of the concatenation of `sections`.
+fn advance_sections(sections: &mut [&[u8]], mut written: usize) {
+    for section in sections {
+        let len = written.min(section.len());
+        *section = &section[len..];
+        written -= len;
+    }
+    debug_assert_eq!(
+        written, 0,
+        "the write reported more bytes than were pending"
+    );
 }
 
 /// Allocate `len` bytes and fill them via `pread_all` at `offset`, returning

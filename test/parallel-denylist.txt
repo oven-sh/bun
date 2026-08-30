@@ -14,7 +14,9 @@ bundler/transpiler/transpiler-stack-overflow.test.ts
 bundler/transpiler/transpiler.test.js
 cli/env/bun-options.test.ts
 cli/hot/watch-many-dirs.test.ts
+cli/inspect/bun-inspector-protocol.test.ts
 cli/install/migration/complex-workspace.test.ts
+cli/install/migration/migrate.test.ts
 cli/run/as-node.test.ts
 cli/run/env.test.ts
 cli/run/if-present.test.ts
@@ -60,6 +62,7 @@ js/bun/jsc/string-noAtomize.test.ts
 js/bun/md/md-edge-cases.test.ts
 js/bun/net/socket-retention.test.ts
 js/bun/plugin/plugins.test.ts
+js/bun/resolve/bun-main-entry-point.test.ts
 js/bun/resolve/import-custom-condition.test.ts
 js/bun/resolve/resolve-ts.test.ts
 js/bun/resolve/resolve.test.ts
@@ -138,12 +141,14 @@ js/node/tls/fetch-tls-cert.test.ts
 js/node/tls/node-tls-cert.test.ts
 js/node/tls/node-tls-context.test.ts
 js/node/tls/node-tls-namedpipes.test.ts
+js/node/tls/renegotiation.test.ts
 js/node/tty.test.ts
 js/node/util/bun-inspect.test.ts
 js/node/util/mime-api.test.ts
 js/node/util/util.test.js
 js/node/vm/sourcetextmodule-leak.test.ts
 js/sql/postgres-pgsslmode-env.test.ts
+js/sql/postgres-tls-ctx-leak.test.ts
 js/third_party/@azure/service-bus/azure-service-bus.test.ts
 js/third_party/astro/astro-post.test.js
 js/third_party/comlink/comlink.test.ts

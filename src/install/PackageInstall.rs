@@ -657,7 +657,7 @@ impl HardLinkWindowsInstallTask {
             return None;
         }
 
-        Some(windows::get_last_error().into())
+        Some(windows::last_system_errno().into())
     }
 }
 
@@ -884,7 +884,6 @@ impl<'a> PackageInstall<'a> {
             .node_modules
             .open_file(root_node_modules_dir, package_json_path)
             .ok()?;
-        // defer package_json_file.close()
 
         // Heuristic: most package.jsons will be less than 2048 bytes.
         read = package_json_file.read(&mut mutable.list[total..]).ok()?;
@@ -1205,7 +1204,7 @@ impl<'a> PackageInstall<'a> {
 
         #[cfg(windows)]
         {
-            use bun_sys::windows::{self, Win32ErrorExt as _};
+            use bun_sys::windows;
 
             let mut buf = bun_paths::w_path_buffer_pool::get();
             let mut buf2 = bun_paths::w_path_buffer_pool::get();
@@ -1221,14 +1220,11 @@ impl<'a> PackageInstall<'a> {
                 )
             } as usize;
             if dest_path_length == 0 || dest_path_length >= buf.len() {
-                let e = windows::Win32Error::get();
-                let err = if dest_path_length == 0 {
-                    e.to_system_errno()
-                        .map(crate::Error::Sys)
-                        .unwrap_or(crate::Error::Unexpected)
+                let err = crate::Error::Sys(if dest_path_length == 0 {
+                    windows::last_system_errno()
                 } else {
-                    crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG)
-                };
+                    bun_errno::SystemErrno::ENAMETOOLONG
+                });
                 return Err(Failure::boxed(err, Step::OpeningDestDir, None));
             }
 
@@ -1258,14 +1254,11 @@ impl<'a> PackageInstall<'a> {
                 )
             } as usize;
             if cache_path_length == 0 || cache_path_length >= buf2.len() {
-                let e = windows::Win32Error::get();
-                let err = if cache_path_length == 0 {
-                    e.to_system_errno()
-                        .map(crate::Error::Sys)
-                        .unwrap_or(crate::Error::Unexpected)
+                let err = crate::Error::Sys(if cache_path_length == 0 {
+                    windows::last_system_errno()
                 } else {
-                    crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG)
-                };
+                    bun_errno::SystemErrno::ENAMETOOLONG
+                });
                 return Err(Failure::boxed(err, Step::CopyingFiles, None));
             }
             // borrowck — index by `cache_path_length` directly so no shared borrow is live.
@@ -1322,7 +1315,7 @@ impl<'a> PackageInstall<'a> {
             while let Some(entry) = walker.next()? {
                 #[cfg(windows)]
                 {
-                    use bun_sys::windows::{self, Win32ErrorExt as _};
+                    use bun_sys::windows;
                     match entry.kind {
                         EntryKind::Directory | EntryKind::File => {}
                         _ => continue,
@@ -1380,29 +1373,20 @@ impl<'a> PackageInstall<'a> {
                                     }
                                 }
 
+                                let err = windows::last_system_errno();
                                 if let Some(progress) = progress_.as_deref_mut() {
                                     progress.root.end();
                                     progress.refresh();
                                 }
 
-                                if let Some(err) = windows::Win32Error::get().to_system_errno() {
-                                    bun_core::pretty_errorln!(
-                                        "<r><red>{}<r>: copying file {}",
-                                        <&'static str>::from(err),
-                                        bun_core::fmt::fmt_os_path(
-                                            entry.path.as_slice(),
-                                            Default::default()
-                                        )
-                                    );
-                                } else {
-                                    bun_core::pretty_errorln!(
-                                        "<r><red>error<r> copying file {}",
-                                        bun_core::fmt::fmt_os_path(
-                                            entry.path.as_slice(),
-                                            Default::default()
-                                        )
-                                    );
-                                }
+                                bun_core::pretty_errorln!(
+                                    "<r><red>{}<r>: copying file {}",
+                                    err,
+                                    bun_core::fmt::fmt_os_path(
+                                        entry.path.as_slice(),
+                                        Default::default()
+                                    )
+                                );
 
                                 Global::crash();
                             }
@@ -2098,7 +2082,7 @@ impl<'a> PackageInstall<'a> {
         // When we're linking on Windows, we want to avoid keeping the source directory handle open
         #[cfg(windows)]
         {
-            use bun_sys::windows::{self, Win32ErrorExt as _};
+            use bun_sys::windows;
             let mut wbuf = bun_paths::WPathBuffer::uninit();
             // SAFETY: FFI — destination_dir.fd() is an open handle; wbuf is a valid writable
             // WPathBuffer of the passed length.
@@ -2111,14 +2095,11 @@ impl<'a> PackageInstall<'a> {
                 )
             } as usize;
             if dest_path_length == 0 || dest_path_length >= wbuf.len() {
-                let e = windows::Win32Error::get();
-                let err = if dest_path_length == 0 {
-                    e.to_system_errno()
-                        .map(crate::Error::Sys)
-                        .unwrap_or(crate::Error::Unexpected)
+                let err = crate::Error::Sys(if dest_path_length == 0 {
+                    windows::last_system_errno()
                 } else {
-                    crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG)
-                };
+                    bun_errno::SystemErrno::ENAMETOOLONG
+                });
                 return InstallResult::fail(err, Step::LinkingDependency, None);
             }
 

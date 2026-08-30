@@ -12,22 +12,29 @@ async function stopAndAssertDrained(server: ReturnType<typeof Bun.serve>) {
   expect(server.pendingRequests).toBe(0);
 }
 
-test("RequestContext is freed when client aborts before Promise<Response> settles", async () => {
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), join(import.meta.dir, "serve-pending-promise-abort-leak-fixture.ts")],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+test.each([false, true])(
+  "RequestContext is freed when client aborts before Promise<Response> settles (http2: %p)",
+  async http2 => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        join(import.meta.dir, "serve-pending-promise-abort-leak-fixture.ts"),
+        ...(http2 ? ["--http2"] : []),
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr).toBe("");
-  const result = JSON.parse(stdout.trim());
-  expect(result.pending).toBe(0);
-  expect(result.abortCount).toBe(result.iterations);
-  expect(exitCode).toBe(0);
-});
+    expect(stderr).toBe("");
+    const result = JSON.parse(stdout.trim());
+    expect(result.pending).toBe(0);
+    expect(result.abortCount).toBe(result.iterations);
+    expect(exitCode).toBe(0);
+  },
+);
 
 test("Promise<Response> still works normally when not aborted", async () => {
   using server = Bun.serve({
@@ -606,4 +613,59 @@ test("413 on a chunked upload frees the context while the handler promise stays 
   } finally {
     socket.destroy();
   }
+});
+
+// A request subscribes to its connection's close only once its dispatch is
+// over (to_async), so a close that lands before that was lost. server.stop(true)
+// inside the handler closes the connection right there. A request with its body
+// in flight then went async on the closed socket and was parked forever: no
+// abort, a pending body read that never settled, pendingRequests stuck at 1,
+// and a stop() promise that never resolved. A request without a body rendered
+// a 204 into the closed socket instead of aborting.
+const stoppedRequests: Array<[string, string, string[]]> = [
+  ["a GET", "GET /stopped HTTP/1.1\r\nHost: example.com\r\n\r\n", ["abort http://example.com/stopped example.com"]],
+  [
+    "a POST with its body in flight",
+    // Declares 1000 bytes and sends 10.
+    "POST /stopped HTTP/1.1\r\nHost: example.com\r\nContent-Length: 1000\r\n\r\n0123456789",
+    ["abort http://example.com/stopped example.com", "text rejected: AbortError"],
+  ],
+];
+test.each(stoppedRequests)("server.stop(true) inside the handler of %s aborts it", async (_what, head, expected) => {
+  const events: string[] = [];
+  const { promise: reached, resolve: signalReached, reject: failReached } = Promise.withResolvers<void>();
+  let stopped: Promise<void>;
+  using server = Bun.serve({
+    port: 0,
+    idleTimeout: 0,
+    fetch(req, srv) {
+      // url and headers are read lazily from inside the listener: an abort
+      // delivered this way must still see them, like any other abort.
+      req.signal.addEventListener("abort", () => events.push(`abort ${req.url} ${req.headers.get("host")}`), {
+        once: true,
+      });
+      if (req.method === "POST") {
+        req.text().then(
+          () => events.push("text resolved"),
+          e => events.push(`text rejected: ${(e as Error).name}`),
+        );
+      }
+      stopped = srv.stop(true);
+      signalReached();
+      return new Promise<Response>(() => {});
+    },
+  });
+
+  const client = connect(Number(server.port), "127.0.0.1", () => client.write(head));
+  // A reset after the server closed the connection is expected; a failure
+  // before the handler ran is not.
+  client.on("error", failReached);
+
+  await reached;
+  // The abort is delivered as the dispatch finishes; an immediate queued from
+  // inside it runs after that.
+  await new Promise(resolve => setImmediate(resolve));
+  expect(events).toEqual(expected);
+  expect(server.pendingRequests).toBe(0);
+  await stopped!;
 });

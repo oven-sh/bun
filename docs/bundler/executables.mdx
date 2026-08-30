@@ -758,6 +758,19 @@ const wasmModule = await WebAssembly.instantiate(wasmBytes);
 const fontData = await file(fontPath).bytes();
 ```
 
+### Embed text as a string
+
+Use the `text` loader when you want the contents of a file as a string. `.txt` files use it by default. For other extensions, add `with { type: "text" }` or pass `--loader .md:text`.
+
+```ts index.ts icon="/icons/typescript.svg"
+import notes from "./notes.txt";
+import readme from "./README.md" with { type: "text" };
+
+console.log(notes); // the contents of notes.txt
+```
+
+In a compiled executable the text is stored once, in the form the JavaScript engine uses for strings (one byte per character for ASCII text, UTF-16 otherwise). The runtime hands the string back without a copy, so a large text import costs its size in the binary and no extra copy on the heap. A text import is a module, not a file: `Bun.embeddedFiles` does not list it. Use `with { type: "file" }` when you need a file path instead.
+
 ### Embed SQLite databases
 
 To embed a SQLite database into the compiled executable, set `type: "sqlite"` in the import attribute and the `embed` attribute to `"true"`.
@@ -1230,6 +1243,8 @@ compile: {
   outfile: "./myapp",
 }
 ```
+
+Without `outfile`, the executable is named after the entrypoint and written to `outdir`, or to the current working directory when there is no `outdir`. This matches `bun build --compile`.
 
 ### Supported targets
 

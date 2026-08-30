@@ -16,11 +16,19 @@ const screenshot = Buffer.alloc(100_000);
 for (let i = 0; i < screenshot.length; i++) screenshot[i] = (i * 7) & 0xff;
 const screenshotBase64 = screenshot.toString("base64");
 
+// `--exit-delay=<ms>`: how long the process outlives the command pipe, the way
+// a real browser takes a moment to shut down after the pipe closes. Default 0.
+const exitDelay = Number(process.argv.find(a => a.startsWith("--exit-delay="))?.slice("--exit-delay=".length) ?? 0);
+
 const NO_REPLY = Symbol("no reply");
 let commandsClosed = false;
 Object.assign(globalThis, {
   __fake_exit(code: number): never {
     process.exit(code);
+  },
+  // The command gets no reply, ever.
+  __fake_no_reply() {
+    return NO_REPLY;
   },
   // The process stays alive; only the reply pipe goes away.
   __fake_close_replies() {
@@ -94,7 +102,11 @@ while (!commandsClosed) {
   } catch {
     break;
   }
-  if (n === 0) process.exit(0); // the parent closed its end: it is gone or shutting down
+  if (n === 0) {
+    // The parent closed its end: it is gone or shutting down.
+    if (exitDelay > 0) await Bun.sleep(exitDelay);
+    process.exit(0);
+  }
   pending = Buffer.concat([pending, chunk.subarray(0, n)]);
   let nul: number;
   while ((nul = pending.indexOf(0)) !== -1) {

@@ -445,16 +445,15 @@ impl WindowsNamedPipeContext {
         }
     }
 
-    /// `owned_ctx` is one `SSL_CTX_up_ref` ADOPTED by `named_pipe.open` (kept on
-    /// success, freed by it on failure). Prefer it over `ssl_config` so a memoised
-    /// `tls.createSecureContext` reaches this path with its trust store intact —
+    /// `owned_ctx` is moved into `named_pipe.open`. Prefer it over `ssl_config` so a
+    /// memoised `tls.createSecureContext` reaches this path with its trust store intact —
     /// on this branch `[buntls]` returns `{secureContext}` only, so `ssl_config`
     /// alone would be empty.
     pub(crate) fn open(
         global_this: &JSGlobalObject,
         fd: Fd,
         ssl_config: Option<SSLConfig>,
-        owned_ctx: Option<*mut boringssl::SSL_CTX>,
+        owned_ctx: Option<boringssl::OwnedSslCtx>,
         socket: SocketType,
     ) -> Result<*mut WindowsNamedPipe, crate::Error> {
         // TODO: reuse the same context for multiple connections when possibles
@@ -477,7 +476,7 @@ impl WindowsNamedPipeContext {
         global_this: &JSGlobalObject,
         path: &[u8],
         ssl_config: Option<SSLConfig>,
-        owned_ctx: Option<*mut boringssl::SSL_CTX>,
+        owned_ctx: Option<boringssl::OwnedSslCtx>,
         socket: SocketType,
     ) -> Result<*mut WindowsNamedPipe, crate::Error> {
         // TODO: reuse the same context for multiple connections when possibles

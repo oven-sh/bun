@@ -469,18 +469,19 @@ fn run_tasks_erased(
                     }
                 }
 
-                if !has_network_error && task.response.metadata.is_none() {
-                    has_network_error = true;
-                    let min = manager.options.min_simultaneous_requests;
-                    let max = AsyncHTTP::max_simultaneous_requests().load(Ordering::Relaxed);
-                    if max > min {
-                        AsyncHTTP::max_simultaneous_requests()
-                            .store(min.max(max / 2), Ordering::Relaxed);
-                    }
+                // Headers can arrive and the connection still die before the
+                // body does; for a 2xx/3xx that is a failed download too (an
+                // error status keeps its own handling below).
+                let download_failed = match &task.response.metadata {
+                    None => true,
+                    Some(m) => task.response.fail.is_some() && m.response.status_code < 400,
+                };
+                if download_failed {
+                    throttle_after_network_error(manager, &mut has_network_error);
                 }
 
                 // Handle retry-able errors.
-                if task.response.metadata.is_none()
+                if download_failed
                     || task
                         .response
                         .metadata
@@ -517,7 +518,8 @@ fn run_tasks_erased(
                     }
                 }
 
-                let Some(metadata) = task.response.metadata.as_ref() else {
+                let Some(metadata) = task.response.metadata.as_ref().filter(|_| !download_failed)
+                else {
                     // Handle non-retry-able errors.
                     let err = task
                         .response
@@ -738,24 +740,21 @@ fn run_tasks_erased(
                 // touch `task.callback` (see `NetworkTask::reset_streaming_*`
                 // / `discard_unused_streaming_state`).
                 let extract = unsafe { &mut *extract_ptr };
-                // Streaming extraction never pushes its NetworkTask to
-                // `async_network_task_queue` once committed — the
-                // extract Task published by `TarballStream.finish()`
-                // owns its lifetime — so every `.extract` task that
-                // arrives here is taking the buffered path.
+                // A committed stream publishes its result through the extract
+                // Task, except when the connection failed mid-body:
+                // `TarballStream::finish()` then un-commits and sends the
+                // NetworkTask back here to be retried like any failed download.
                 debug_assert!(!task.streaming_committed);
 
-                if !has_network_error && task.response.metadata.is_none() {
-                    has_network_error = true;
-                    let min = manager.options.min_simultaneous_requests;
-                    let max = AsyncHTTP::max_simultaneous_requests().load(Ordering::Relaxed);
-                    if max > min {
-                        AsyncHTTP::max_simultaneous_requests()
-                            .store(min.max(max / 2), Ordering::Relaxed);
-                    }
+                let download_failed = match &task.response.metadata {
+                    None => true,
+                    Some(m) => task.response.fail.is_some() && m.response.status_code < 400,
+                };
+                if download_failed {
+                    throttle_after_network_error(manager, &mut has_network_error);
                 }
 
-                if task.response.metadata.is_none()
+                if download_failed
                     || task
                         .response
                         .metadata
@@ -773,9 +772,6 @@ fn run_tasks_erased(
 
                     if task.retried < manager.options.max_retry_count {
                         task.retried += 1;
-                        // Streaming never committed (asserted above), so
-                        // the pre-allocated stream is safe to reuse for
-                        // the retry attempt.
                         task.reset_streaming_for_retry();
                         enqueue::enqueue_network_task(manager, task_ptr);
 
@@ -784,7 +780,7 @@ fn run_tasks_erased(
                                 manager.log_mut(),
                                 None,
                                 bun_ast::Loc::EMPTY,
-                                "<r><yellow>warn:<r> {} downloading tarball <b>{}@{}<r>. Retrying {}/{}...",
+                                "{} downloading tarball <b>{}@{}<r>. Retrying {}/{}...",
                                 bstr::BStr::new(err.name().as_bytes()),
                                 bstr::BStr::new(extract.name.slice()),
                                 extract
@@ -806,7 +802,8 @@ fn run_tasks_erased(
                 // path below allocates its own Task.
                 task.discard_unused_streaming_state(manager);
 
-                let Some(metadata) = task.response.metadata.as_ref() else {
+                let Some(metadata) = task.response.metadata.as_ref().filter(|_| !download_failed)
+                else {
                     let err = task
                         .response
                         .fail
@@ -1878,6 +1875,19 @@ pub(crate) fn network_task_has_failed(this: &PackageManager, task_id: Task::Id) 
         .is_some_and(|e| e.failed)
 }
 
+/// The first failed download in a `run_tasks` pass halves the number of
+/// concurrent requests (down to the configured minimum).
+fn throttle_after_network_error(manager: &PackageManager, has_network_error: &mut bool) {
+    if core::mem::replace(has_network_error, true) {
+        return;
+    }
+    let min = manager.options.min_simultaneous_requests;
+    let max = AsyncHTTP::max_simultaneous_requests().load(Ordering::Relaxed);
+    if max > min {
+        AsyncHTTP::max_simultaneous_requests().store(min.max(max / 2), Ordering::Relaxed);
+    }
+}
+
 pub fn generate_network_task_for_tarball<'a>(
     this: &'a mut PackageManager,
     task_id: Task::Id,
@@ -1890,6 +1900,29 @@ pub fn generate_network_task_for_tarball<'a>(
 ) -> Result<Option<&'a mut NetworkTask>, ForTarballError> {
     if has_created_network_task(this, task_id, is_required) {
         return Ok(None);
+    }
+    // Only reached when the tarball is not already extracted in the cache. Under
+    // --offline nothing can be fetched: report it once (the dedupe entry above stays,
+    // so later edges to the same package are quiet) — as an error only if some edge
+    // requires it — and let the caller treat it like an already-failed download.
+    if this.options.offline == crate::package_manager_real::options::OfflineMode::Offline {
+        if is_required {
+            // reported once; later dependents see the failed dedupe entry
+            mark_network_task_failed(this, task_id);
+            let name = this.lockfile.str(&package.name).to_vec();
+            this.log_mut().add_error_fmt(
+                None,
+                bun_ast::Loc::EMPTY,
+                format_args!(
+                    "--offline: \"{}\" is not in the cache",
+                    bstr::BStr::new(&name)
+                ),
+            );
+        } else {
+            // let a later required edge on the same package report it
+            let _ = this.network_dedupe_map.remove(&task_id);
+        }
+        return Err(ForTarballError::Offline);
     }
 
     // reshaped for borrowck —
@@ -1973,6 +2006,16 @@ pub fn generate_network_task_for_tarball<'a>(
             &mut crate::network_task::filename_store_appender(),
         )
         .expect("unreachable"),
+        // Copied here: extract workers must not read lockfile buffers.
+        github_resolved: if package.resolution.tag == bun_install::ResolutionTag::Github {
+            strings::StringOrTinyString::init_append_if_needed(
+                this.lockfile.str(&package.resolution.github().resolved),
+                &mut crate::network_task::filename_store_appender(),
+            )
+            .expect("unreachable")
+        } else {
+            strings::StringOrTinyString::init(b"")
+        },
     };
 
     network_task.for_tarball(extract_tarball, scope, authorization)?;

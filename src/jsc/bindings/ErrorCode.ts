@@ -339,7 +339,6 @@ const errors: ErrorCodeMapping = [
   ["ERR_TRACE_EVENTS_UNAVAILABLE", Error],
   ["ERR_TRAILING_JUNK_AFTER_STREAM_END", TypeError],
   ["ERR_SQLITE_ERROR", Error],
-  ["ERR_CRYPTO_ARGON2_NOT_SUPPORTED", Error],
   ["ERR_HTTP2_INVALID_CONNECTION_HEADERS", TypeError],
   ["ERR_QUIC_CONNECTION_FAILED", Error],
   ["ERR_QUIC_ENDPOINT_CLOSED", Error],
@@ -362,5 +361,6 @@ const errors: ErrorCodeMapping = [
   ["ERR_INSPECTOR_NOT_WORKER", Error],
   ["ERR_INSPECTOR_COMMAND", Error],
   ["ERR_REDIS_SERVER_ERROR", Error, "RedisError"],
+  ["ERR_FFI_CC_DISABLED", Error],
 ];
 export default errors;

@@ -6,7 +6,7 @@ use bstr::BStr;
 use bun_core::strings;
 use bun_http_types::Method::Method;
 use bun_picohttp::Header as PicoHeader;
-use bun_ptr::{IntrusiveRc, RawSlice, RefCount};
+use bun_ptr::{RefCount, RefPtr};
 
 use super::acl::ACL;
 use super::storage_class::StorageClass;
@@ -163,12 +163,8 @@ fn boring_engine() -> *mut bun_sha_hmac::sha::ffi::ENGINE {
 // S3Credentials
 // ──────────────────────────────────────────────────────────────────────────
 
-// `bun.ptr.RefCount(...)` mixin → IntrusiveRc handles ref/deref; when count hits
-// zero the boxed allocation is dropped, which drops the Box<[u8]> fields, so no
-// explicit Drop body is needed here.
 #[derive(bun_ptr::RefCounted)]
 pub struct S3Credentials {
-    // Intrusive refcount; managed by bun_ptr::IntrusiveRc<S3Credentials>.
     ref_count: RefCount<S3Credentials>,
     pub access_key_id: Box<[u8]>,
     pub secret_access_key: Box<[u8]>,
@@ -185,7 +181,7 @@ pub struct S3Credentials {
 
 // `S3Credentials` owns its bytes via
 // `Box<[u8]>`, so a manual `Clone` deep-copies them and resets `ref_count` — the
-// intrusive count only applies to heap (`IntrusiveRc`) instances; a fresh value
+// intrusive count only applies to heap (`RefPtr`) instances; a fresh value
 // must start at 1.
 impl Clone for S3Credentials {
     fn clone(&self) -> Self {
@@ -259,8 +255,8 @@ impl S3Credentials {
             + self.bucket.len()
     }
 
-    pub fn dupe(&self) -> IntrusiveRc<S3Credentials> {
-        IntrusiveRc::new(S3Credentials {
+    pub fn dupe(&self) -> RefPtr<S3Credentials> {
+        RefPtr::new(S3Credentials {
             ref_count: RefCount::init(),
             access_key_id: self.access_key_id.clone(),
             secret_access_key: self.secret_access_key.clone(),
@@ -798,7 +794,6 @@ impl S3Credentials {
         // `authorization` (Box<[u8]>) drops on `?`.
 
         if sign_query {
-            // defer free(host); defer free(amz_date); — drop at scope exit.
             // SignResult implements Drop, so struct-update `..default()`
             // is forbidden; mutate a default in place instead.
             let mut r = SignResult::default();
@@ -1247,31 +1242,16 @@ pub struct S3CredentialsWithOptions {
     pub options: MultiPartUploadOptions,
     pub acl: Option<ACL>,
     pub storage_class: Option<StorageClass>,
-    // Self-referential views: these fields are non-owning;
-    // they borrow into the sibling `_*_slice: ZigStringSlice` fields
-    // below. `RawSlice` encodes that non-owning contract (and gives callers
-    // `.as_deref()` instead of an open-coded `unsafe { &*p }`).
-    pub content_disposition: Option<RawSlice<u8>>,
-    pub content_type: Option<RawSlice<u8>>,
-    pub content_encoding: Option<RawSlice<u8>>,
+    pub content_disposition: Option<bun_core::Utf8Bytes<'static>>,
+    pub content_type: Option<bun_core::Utf8Bytes<'static>>,
+    pub content_encoding: Option<bun_core::Utf8Bytes<'static>>,
     /// indicates if requester pays for the request (for requester pays buckets)
     pub request_payer: bool,
     /// indicates if the credentials have changed
     pub changed_credentials: bool,
     /// indicates if the virtual hosted style is used
     pub virtual_hosted_style: bool,
-    pub _access_key_id_slice: Option<bun_core::ZigStringSlice>,
-    pub _secret_access_key_slice: Option<bun_core::ZigStringSlice>,
-    pub _region_slice: Option<bun_core::ZigStringSlice>,
-    pub _endpoint_slice: Option<bun_core::ZigStringSlice>,
-    pub _bucket_slice: Option<bun_core::ZigStringSlice>,
-    pub _session_token_slice: Option<bun_core::ZigStringSlice>,
-    pub _content_disposition_slice: Option<bun_core::ZigStringSlice>,
-    pub _content_type_slice: Option<bun_core::ZigStringSlice>,
-    pub _content_encoding_slice: Option<bun_core::ZigStringSlice>,
 }
-
-// ZigStringSlice impls Drop, so no explicit Drop needed.
 
 // ──────────────────────────────────────────────────────────────────────────
 // SignedHeaders

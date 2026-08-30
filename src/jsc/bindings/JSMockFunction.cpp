@@ -1407,10 +1407,12 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsNow, (JSC::JSGlobalObject * globalObject, JSC
     return JSValue::encode(jsNumber(globalObject->jsDateNow()));
 }
 
-extern "C" void Bun__FakeTimers__setSystemTime(double ms);
+extern "C" void Bun__FakeTimers__setSystemTime(JSC::JSGlobalObject* globalObject, double ms);
 
 BUN_DEFINE_HOST_FUNCTION(JSMock__jsSetSystemTime, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
 {
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue argument0 = callframe->argument(0);
 
     // JSGlobalObject::overridenDateNow's "no override" sentinel is NaN (see
@@ -1422,10 +1424,13 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSetSystemTime, (JSC::JSGlobalObject * globalO
     } else {
         ms = argument0.isNumber() ? argument0.asNumber() : PNaN;
     }
+    if (std::isinf(ms)) {
+        return Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "setSystemTime() expects a finite number or a Date"_s);
+    }
     globalObject->overridenDateNow = ms;
     // Rebase the Rust-side fake-timers offset so advanceTimersByTime ticks
     // from this value instead of the activation-time clock.
-    Bun__FakeTimers__setSystemTime(ms);
+    Bun__FakeTimers__setSystemTime(globalObject, ms);
 
     return JSValue::encode(callframe->thisValue());
 }
@@ -1490,8 +1495,10 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSpyOn, (JSC::JSGlobalObject * lexicalGlobalOb
             if (slot.isTaintedByOpaqueObject()) [[unlikely]] {
                 // if it's a Proxy or JSModuleNamespaceObject
                 value = object->get(globalObject, propertyKey);
+                RETURN_IF_EXCEPTION(scope, {});
             } else {
                 value = slot.getValue(globalObject, propertyKey);
+                RETURN_IF_EXCEPTION(scope, {});
             }
 
             if (dynamicDowncast<JSMockFunction>(value)) {

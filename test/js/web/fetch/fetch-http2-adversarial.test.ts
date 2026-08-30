@@ -582,10 +582,11 @@ describe.concurrent("fetch() HTTP/2 adversarial", () => {
 });
 
 // ─── session-key regressions ─────────────────────────────────────────────────
-// The TLS handshake verifies the peer against the Host-header override when one
-// is present (get_tls_hostname), so the override must be part of the HTTP/2
-// session key — mirroring the HTTP/1.1 keep-alive pool's proxy_auth_hash.
-test("HTTP/2 session keyed by a Host header override is not reused for a request without one", async () => {
+// The TLS handshake (SNI and certificate verification) is keyed to the URL
+// host. A request-level Host header is only an HTTP/2 :authority pseudo-header
+// and plays no part in the session's identity, so it must not partition the
+// session pool.
+test("HTTP/2 session is reused across requests with different Host headers", async () => {
   await withAdversarialServer(
     {
       onStream: (socket, id) => {
@@ -597,24 +598,17 @@ test("HTTP/2 session keyed by a Host header override is not reused for a request
       const h2 = { protocol: "http2" as const, tls: { rejectUnauthorized: false } };
       const errcode = (e: any) => e.code || e.name;
 
-      // 1. Request with a Host override: TLS verification (when enabled) runs
-      //    against "other.example", not the URL hostname.
       const a = await fetch(url, { ...h2, headers: { Host: "other.example" } }).then(r => r.status, errcode);
       expect(a).toBe(200);
       expect(state.connections).toBe(1);
 
-      // 2. A request without an override expects verification against the URL
-      //    hostname. It must not multiplex onto the session that was verified
-      //    against the override — a fresh connection is required.
       const b = await fetch(url, h2).then(r => r.status, errcode);
       expect(b).toBe(200);
-      expect(state.connections).toBe(2);
+      expect(state.connections).toBe(1);
 
-      // 3. Same override again → same session key → the first session is
-      //    reused and no third connection is opened.
-      const c = await fetch(url, { ...h2, headers: { Host: "other.example" } }).then(r => r.status, errcode);
+      const c = await fetch(url, { ...h2, headers: { Host: "another.example" } }).then(r => r.status, errcode);
       expect(c).toBe(200);
-      expect(state.connections).toBe(2);
+      expect(state.connections).toBe(1);
     },
   );
 });

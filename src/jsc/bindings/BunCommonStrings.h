@@ -59,6 +59,7 @@
     macro(base64, "base64") \
     macro(base64url, "base64url") \
     macro(binaryTypeArrayBuffer, "arraybuffer") \
+    macro(binaryTypeBlob, "blob") \
     macro(binaryTypeNodeBuffer, "nodebuffer") \
     macro(binaryTypeUint8Array, "uint8array") \
     macro(buffer, "buffer") \

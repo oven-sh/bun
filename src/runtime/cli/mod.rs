@@ -574,7 +574,7 @@ pub mod cli {
             let _ = log.print(std::ptr::from_mut::<bun_core::io::Writer>(
                 bun_core::Output::error_writer(),
             ));
-            bun_crash_handler::handle_root_error(err, None);
+            bun_crash_handler::handle_root_error(err);
         }
     }
 }

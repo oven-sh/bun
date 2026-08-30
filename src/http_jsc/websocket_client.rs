@@ -10,17 +10,17 @@
 use core::cell::{Cell, RefCell};
 use core::ffi::{c_int, c_void};
 use core::mem::size_of;
-use core::ptr::NonNull;
 
 use bun_boringssl as boringssl;
+use bun_boringssl::c::OwnedSslCtx;
 use bun_collections::LinearFifo;
 use bun_collections::linear_fifo::DynamicBuffer;
-use bun_core::{ZigString, strings};
+use bun_core::{EncodedSlice, strings};
 use bun_http::websocket::{Opcode, WebsocketHeader};
 use bun_io::KeepAlive;
-use bun_jsc::{self as jsc, GlobalRef, JSGlobalObject, JSValue};
-use bun_ptr::{AsCtxPtr, ThisPtr};
-use bun_uws::{self as uws, NewSocketHandler, SslCtx, us_bun_verify_error_t};
+use bun_jsc::{self as jsc, GlobalRef, JSGlobalObject};
+use bun_ptr::{BackRef, JsCell, RefPtr, Root, ThisPtr};
+use bun_uws::{self as uws, NewSocketHandler, us_bun_verify_error_t};
 use bun_uws_sys::us_socket_t;
 
 use self::cpp_websocket::{CppWebSocket, CppWebSocketRef};
@@ -63,12 +63,16 @@ const MAX_CLOSE_REASON: usize = MAX_CONTROL_PAYLOAD - 2;
 const CONTROL_HEADER_SIZE: usize = 6;
 
 #[derive(bun_ptr::CellRefCounted)]
-#[ref_count(destroy = Self::deinit)]
 pub struct WebSocket<const SSL: bool> {
     pub(crate) ref_count: Cell<u32>,
 
     pub(crate) tcp: Cell<Socket<SSL>>,
-    pub(crate) outgoing_websocket: Cell<Option<NonNull<CppWebSocket>>>,
+    /// The I/O layer's ref (the adopted socket's userdata, or the tunnel
+    /// connection in proxy mode); released in `handle_close` / `clear_data`.
+    io_ref: Cell<Option<RefPtr<Self>>>,
+    /// C++ `WebSocket::m_connectedWebSocket` and the ref held on its behalf;
+    /// released together when C++ lets go.
+    pub(crate) outgoing_websocket: JsCell<Option<(BackRef<CppWebSocket>, RefPtr<Self>)>>,
 
     pub(crate) receive_state: Cell<ReceiveState>,
     pub(crate) receiving_type: Cell<Opcode>,
@@ -99,8 +103,10 @@ pub struct WebSocket<const SSL: bool> {
     pub(crate) payload_length_frame_bytes: Cell<[u8; 8]>,
     pub(crate) payload_length_frame_len: Cell<u8>,
 
-    // Non-owning; the allocation is managed by the microtask queue, not deinit.
-    pub(crate) initial_data_handler: Cell<Option<NonNull<InitialDataHandler<SSL>>>>,
+    /// The queued `InitialDataTask` (handshake-overflow bytes) until it runs or
+    /// `handle_data` drains it first; detached in `Drop` so a task that
+    /// outlives us does nothing.
+    pending_initial_task: Cell<Option<BackRef<InitialDataTask<SSL>, Root>>>,
     pub(crate) deflate: RefCell<Option<Box<WebSocketDeflate>>>,
 
     /// Track if current message is compressed
@@ -112,18 +118,13 @@ pub struct WebSocket<const SSL: bool> {
     /// with a custom CA. The socket's `SSL*` references the `SSL_CTX`
     /// inside, so this must outlive the connection. None when the upgrade
     /// used the shared default context.
-    pub(crate) secure: Cell<Option<*mut SslCtx>>,
+    pub(crate) secure: Cell<Option<OwnedSslCtx>>,
 
     /// Proxy tunnel for wss:// through HTTP proxy.
     /// When set, all I/O goes through the tunnel (TLS encryption/decryption).
     /// The tunnel handles the TLS layer, so this is used with ssl=false.
-    ///
-    /// intrusive refcount is hand-rolled on `WebSocketProxyTunnel`
-    /// (`ref_()`/`deref()`); stored as `NonNull` rather than `RefPtr` because
-    /// the tunnel does not (yet) implement `bun_ptr::RefCounted`. Ownership
-    /// semantics match `RefPtr`: assigning here implies a held ref, released
-    /// in `clear_data` via `WebSocketProxyTunnel::deref`.
-    pub(crate) proxy_tunnel: Cell<Option<NonNull<WebSocketProxyTunnel>>>,
+    /// Holds one ref, released in `clear_data`.
+    pub(crate) proxy_tunnel: JsCell<Option<RefPtr<WebSocketProxyTunnel>>>,
 }
 
 impl<const SSL: bool> WebSocket<SSL> {
@@ -136,14 +137,27 @@ impl<const SSL: bool> WebSocket<SSL> {
 
     #[inline]
     fn vm_loop_ctx(global_this: &JSGlobalObject) -> bun_io::EventLoopCtx {
-        // SAFETY: `EventLoopCtx.owner` is a type-erased `*mut ()` slot. Source
-        // it from `bun_vm_ptr()` (the FFI `*mut VirtualMachine`) rather than
-        // `bun_vm()`'s `&VirtualMachine`, so the stored pointer carries write
-        // provenance instead of being
-        // laundered through a shared-ref `*const _ as *mut` hop — the vtable
-        // slots (`file_polls`, `set_after_event_loop_callback`) write through
-        // it.
-        unsafe { jsc::virtual_machine::VirtualMachine::event_loop_ctx(global_this.bun_vm_ptr()) }
+        global_this.bun_vm().loop_ctx()
+    }
+
+    fn tunnel(&self) -> Option<ThisPtr<WebSocketProxyTunnel>> {
+        self.proxy_tunnel.get().as_ref().map(RefPtr::this_ptr)
+    }
+
+    /// C++'s back-reference, while it still holds one.
+    fn cpp_websocket(&self) -> Option<BackRef<CppWebSocket>> {
+        self.outgoing_websocket.get().as_ref().map(|(ws, _)| *ws)
+    }
+
+    /// C++ let go of `m_connectedWebSocket`: forget the back-reference and
+    /// release the ref held on its behalf. May free `self`.
+    fn release_cpp_ref(&self) {
+        self.outgoing_websocket.set(None);
+    }
+
+    /// Release the I/O layer's ref. May free `self`.
+    fn release_io_ref(&self) {
+        self.io_ref.set(None);
     }
 
     fn should_compress(&self, data_len: usize, opcode: Opcode) -> bool {
@@ -165,25 +179,16 @@ impl<const SSL: bool> WebSocket<SSL> {
         self.clear_send_buffers(true);
         self.control_frame_started.set(false);
         self.ping_len.set(0);
-        if let Some((_, reason)) = self.close_dispatch_pending.take() {
-            reason.deref();
-        }
+        self.close_dispatch_pending.take();
         self.receiving_compressed.set(false);
         self.message_is_compressed.set(false);
         self.deflate.replace(None);
-        if let Some(s) = self.secure.take() {
-            // SAFETY: s is a valid SSL_CTX* owned by us per field invariant
-            unsafe { boringssl::c::SSL_CTX_free(s) };
-        }
+        drop(self.secure.take());
         // Detach the tunnel first so its shutdown callbacks cannot re-enter this path.
-        if let Some(tunnel) = self.proxy_tunnel.take() {
-            let tunnel_ptr = tunnel.as_ptr();
-            // SAFETY: `tunnel` holds a live ref until the `deref` below.
-            let tunnel = unsafe { ThisPtr::new(tunnel_ptr) };
+        if let Some(tunnel) = self.proxy_tunnel.replace(None) {
             tunnel.clear_connected_web_socket();
-            WebSocketProxyTunnel::shutdown(tunnel);
-            // SAFETY: `tunnel` (NonNull) held a live intrusive ref; release it.
-            unsafe { WebSocketProxyTunnel::deref(tunnel_ptr) };
+            WebSocketProxyTunnel::shutdown(tunnel.this_ptr());
+            drop(tunnel);
             // Release the I/O-layer ref taken in init_with_tunnel() — the
             // tunnel was this struct's socket-equivalent owner. In the
             // non-tunnel path this same ref is released by handle_close()
@@ -191,26 +196,22 @@ impl<const SSL: bool> WebSocket<SSL> {
             // tunnel mode never adopts a socket so that callback never runs.
             // Callers that touch `self` after clear_data() must hold a local
             // ref guard (see cancel/finalize).
-            // SAFETY: allocation is live (guarded by callers' ref).
-            unsafe { Self::deref(self.as_ctx_ptr()) };
+            self.release_io_ref();
         }
     }
 
-    // `extern "C"` entrypoint; `this_ptr` is non-null by C++ contract (see SAFETY comments below).
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub(crate) extern "C" fn cancel(this_ptr: *mut Self) {
-        log!("cancel");
-        // clear_data() may drop the tunnel's I/O-layer ref; keep `*this_ptr`
-        // alive until we've finished closing the socket below. ScopedRef bumps
-        // the intrusive refcount now and derefs on Drop (after `this`'s last
-        // use, since `this` is declared after the guard).
-        // SAFETY: called from C++ with a valid `heap::alloc` pointer.
-        let _guard = unsafe { bun_ptr::ScopedRef::new(this_ptr) };
-        // SAFETY: called from C++ with a valid pointer; the guard's ref keeps
-        // the allocation alive past every re-entrant call below.
-        let this = unsafe { &*this_ptr };
+    pub(crate) fn cancel(this: ThisPtr<Self>) {
+        // clear_data() may drop the tunnel's I/O-layer ref; keep `this`
+        // alive until we've finished closing the socket below.
+        let _guard = RefPtr::from_this(this);
+        this.cancel_guarded();
+    }
 
-        let had_tunnel = this.proxy_tunnel.get().is_some();
+    /// [`cancel`](Self::cancel) for callers that already hold a ref guard.
+    fn cancel_guarded(&self) {
+        log!("cancel");
+        let this = self;
+        let had_tunnel = this.tunnel().is_some();
         this.clear_data();
 
         // Failure still sends close_notify best-effort but never waits for the peer's reply.
@@ -228,17 +229,16 @@ impl<const SSL: bool> WebSocket<SSL> {
         }
     }
 
+    /// Every caller holds a ref guard (the uws dispatcher, a C++ entry point,
+    /// or the tunnel callback), so `self` outlives the releases below.
     pub(crate) fn fail(&self, code: ErrorCode) {
         jsc::mark_binding!();
-        if let Some(ws) = self.outgoing_websocket.take() {
+        if let Some((ws, _cpp_ref)) = self.outgoing_websocket.replace(None) {
             log!("fail ({})", <&'static str>::from(code));
-            CppWebSocket::opaque_ref(ws.as_ptr()).did_abrupt_close(code);
-            // SAFETY: allocation kept live by the socket/tunnel I/O ref (or by
-            // the caller's guard).
-            unsafe { Self::deref(self.as_ctx_ptr()) };
+            ws.did_abrupt_close(code);
         }
 
-        Self::cancel(self.as_ctx_ptr());
+        self.cancel_guarded();
     }
 
     pub fn handle_handshake(
@@ -253,10 +253,10 @@ impl<const SSL: bool> WebSocket<SSL> {
 
         log!("onHandshake({})", success);
 
-        let Some(ws) = self.outgoing_websocket.get() else {
+        let Some(ws) = self.cpp_websocket() else {
             return;
         };
-        if !CppWebSocket::opaque_ref(ws.as_ptr()).reject_unauthorized() {
+        if !ws.reject_unauthorized() {
             // We accept the connection regardless of SSL errors.
             return;
         }
@@ -266,28 +266,14 @@ impl<const SSL: bool> WebSocket<SSL> {
             return;
         }
 
-        // SAFETY: native handle of an SSL socket is an SSL*
-        let ssl_ptr: *mut boringssl::c::SSL = socket
-            .get_native_handle()
-            .map_or(core::ptr::null_mut(), <*mut c_void>::cast);
-        // Fail closed: without the SSL handle we cannot verify the peer.
-        if ssl_ptr.is_null() {
+        // Fail closed: without the SSL handle or a name to check against we
+        // cannot verify the peer.
+        let Some(ssl) = socket.ssl_mut() else {
             self.fail(ErrorCode::FailedToConnect);
             return;
-        }
-        // `TLSEXT_NAMETYPE_host_name` is 0 per RFC 6066 / `<openssl/tls1.h>`.
-        const TLSEXT_NAMETYPE_HOST_NAME: c_int = 0;
-        // SAFETY: ssl_ptr is non-null (checked above) and outlived by the socket.
-        let servername =
-            unsafe { boringssl::c::SSL_get_servername(ssl_ptr, TLSEXT_NAMETYPE_HOST_NAME) };
-        if servername.is_null() {
-            return;
-        }
-        // SAFETY: servername is a NUL-terminated C string owned by the SSL session.
-        let hostname = unsafe { bun_core::ffi::cstr(servername) }.to_bytes();
-        // SAFETY: `ssl_ptr` is non-null (checked above) and outlived by the
-        // socket; the exclusive borrow is scoped to this non-reentrant call.
-        if !boringssl::check_server_identity(unsafe { &mut *ssl_ptr }, hostname) {
+        };
+        let hostname = ssl.servername().map(<[u8]>::to_vec).unwrap_or_default();
+        if hostname.is_empty() || !boringssl::check_server_identity(ssl, &hostname) {
             self.fail(ErrorCode::FailedToConnect);
         }
     }
@@ -301,17 +287,15 @@ impl<const SSL: bool> WebSocket<SSL> {
     pub fn handle_close(&self, _socket: Socket<SSL>, _code: c_int, _reason: *mut c_void) {
         log!("onClose");
         jsc::mark_binding!();
-        if let Some((code, mut reason)) = self.close_dispatch_pending.take() {
+        if let Some((code, reason)) = self.close_dispatch_pending.take() {
             // The socket closed while our close frame was mid-flush; the peer
             // either got it or didn't, but JS should still see the
             // user-initiated code/reason (not an abrupt 1006).
             self.detach_tcp();
             self.clear_data();
-            self.dispatch_close(code, &mut reason);
+            self.dispatch_close(code, reason);
             // For the socket.
-            // SAFETY: this is the terminal release of the socket's
-            // I/O-layer ref.
-            unsafe { Self::deref(self.as_ctx_ptr()) };
+            self.release_io_ref();
             return;
         }
         self.clear_data();
@@ -320,9 +304,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         self.dispatch_abrupt_close(ErrorCode::Ended);
 
         // For the socket.
-        // SAFETY: this is the terminal release of the socket's
-        // I/O-layer ref.
-        unsafe { Self::deref(self.as_ctx_ptr()) };
+        self.release_io_ref();
     }
 
     pub(crate) fn terminate(&self, code: ErrorCode) {
@@ -362,38 +344,39 @@ impl<const SSL: bool> WebSocket<SSL> {
     }
 
     fn dispatch_compressed_data(&self, data: &[u8], kind: Opcode) {
-        let mut deflate_slot = self.deflate.borrow_mut();
-        let Some(deflate) = deflate_slot.as_mut() else {
-            drop(deflate_slot);
-            self.terminate(ErrorCode::CompressionUnsupported);
-            return;
+        let rare = self.global_this.bun_vm().as_mut().rare_data();
+        let mut decompressed = rare.take_websocket_inflate_scratch();
+        let result = match self.deflate.borrow_mut().as_mut() {
+            None => Err(ErrorCode::CompressionUnsupported),
+            Some(deflate) => deflate
+                .decompress(rare.libdeflate_decompressor(), data, &mut decompressed)
+                .map_err(|err| match err {
+                    websocket_deflate::Error::InflateFailed => ErrorCode::InvalidCompressedData,
+                    websocket_deflate::Error::TooLarge => ErrorCode::MessageTooBig,
+                    websocket_deflate::Error::OutOfMemory => ErrorCode::FailedToAllocateMemory,
+                }),
         };
 
-        let mut decompressed = deflate.rare_data.array_list();
-        if let Err(err) = deflate.decompress(data, &mut decompressed) {
-            let error_code = match err {
-                websocket_deflate::Error::InflateFailed => ErrorCode::InvalidCompressedData,
-                websocket_deflate::Error::TooLarge => ErrorCode::MessageTooBig,
-                websocket_deflate::Error::OutOfMemory => ErrorCode::FailedToAllocateMemory,
-            };
-            drop(deflate_slot);
-            self.terminate(error_code);
-            return;
+        // The deflate borrow is released: both arms can re-enter `clear_data`.
+        match result {
+            Ok(()) => self.dispatch_data(&decompressed, kind),
+            Err(code) => self.terminate(code),
         }
 
-        // Drop the deflate borrow: `dispatch_data` can re-enter `clear_data`.
-        drop(deflate_slot);
-        let items = decompressed.as_slice();
-        self.dispatch_data(items, kind);
+        // Both arms run JS, so reach for `RareData` again instead of holding `rare` across them.
+        self.global_this
+            .bun_vm()
+            .as_mut()
+            .rare_data()
+            .put_back_websocket_inflate_scratch(decompressed);
     }
 
     /// Data will be cloned in C++.
     fn dispatch_data(&self, data: &[u8], kind: Opcode) {
-        let Some(out) = self.outgoing_websocket.get() else {
+        let Some(out) = self.cpp_websocket() else {
             self.clear_data();
             return;
         };
-        let out = CppWebSocket::opaque_ref(out.as_ptr());
 
         match kind {
             Opcode::Text => {
@@ -411,7 +394,7 @@ impl<const SSL: bool> WebSocket<SSL> {
                         return;
                     }
                 };
-                let mut outstring;
+                let outstring;
                 if let Some(utf16) = utf16_bytes {
                     // Ownership of the UTF-16 buffer transfers to C++: with
                     // `clone=false` and the global tag set, `Zig::toString`
@@ -420,19 +403,18 @@ impl<const SSL: bool> WebSocket<SSL> {
                     // be a UAF + double-free, so `utf16` must never be freed
                     // locally.
                     let utf16 = core::mem::ManuallyDrop::new(utf16);
-                    outstring = ZigString::from16_slice(&utf16);
-                    outstring.mark_global();
+                    outstring = EncodedSlice::utf16_global(&utf16);
                     jsc::mark_binding!();
                     out.did_receive_text(false, &outstring);
                 } else {
-                    outstring = ZigString::init(data);
+                    outstring = EncodedSlice::latin1(data);
                     jsc::mark_binding!();
                     out.did_receive_text(true, &outstring);
                 }
             }
             Opcode::Binary | Opcode::Ping | Opcode::Pong => {
                 jsc::mark_binding!();
-                out.did_receive_bytes(data.as_ptr(), data.len(), kind as u8);
+                out.did_receive_bytes(data, kind as u8);
             }
             _ => {
                 self.terminate(ErrorCode::UnexpectedOpcode);
@@ -544,26 +526,21 @@ impl<const SSL: bool> WebSocket<SSL> {
             return;
         }
         // Bumps the intrusive refcount and derefs on Drop.
-        let _guard = this.ref_guard();
+        let _guard = RefPtr::from_this(this);
 
         // Due to scheduling, it is possible for the websocket onData
         // handler to run with additional data before the microtask queue is
         // drained.
-        if let Some(initial_handler) = this.initial_data_handler.get() {
-            // This calls `handle_data`
-            // We deliberately do not set self.initial_data_handler to None here, that's done in handle_without_deinit.
-            // We do not free the memory here since the lifetime is managed by the microtask queue (it should free when called from there)
-            // SAFETY: `initial_handler` is valid (managed by microtask queue).
-            // `handle_without_deinit` re-enters `Self::handle_data` via the
-            // `adopted` raw ptr (same `heap::alloc` provenance as `this`).
-            unsafe { (*initial_handler.as_ptr()).handle_without_deinit() };
-
-            // handle_without_deinit is supposed to clear the handler from WebSocket*
-            // to prevent an infinite loop
-            debug_assert!(this.initial_data_handler.get().is_none());
+        if let Some(task) = this.pending_initial_task.take() {
+            // Deliver the buffered bytes now (this calls `handle_data`); the
+            // queued `InitialDataTask` is detached and will do nothing.
+            task.ws.set(None);
+            if let Some(initial_data) = task.data.replace(None) {
+                initial_data.deliver(this);
+            }
 
             // If we disconnected for any reason in the re-entrant case, we should just ignore the data
-            if this.outgoing_websocket.get().is_none() || !this.has_tcp() {
+            if this.cpp_websocket().is_none() || !this.has_tcp() {
                 return;
             }
         }
@@ -895,9 +872,7 @@ impl<const SSL: bool> WebSocket<SSL> {
 
     fn enqueue_encoded_bytes(&self, bytes: &[u8]) -> bool {
         // For tunnel mode, write through the tunnel instead of direct socket
-        if let Some(tunnel) = self.proxy_tunnel.get() {
-            // SAFETY: `proxy_tunnel` holds a live ref on `tunnel`.
-            let tunnel = unsafe { ThisPtr::new(tunnel.as_ptr()) };
+        if let Some(tunnel) = self.tunnel() {
             let wrote = match WebSocketProxyTunnel::write(tunnel, bytes) {
                 Ok(w) => w,
                 Err(_) => {
@@ -964,17 +939,8 @@ impl<const SSL: bool> WebSocket<SSL> {
                     // It's all ascii, we don't need to copy it an extra time.
                     latin1
                 } else {
-                    let mut buf = Vec::with_capacity(content_byte_len);
-                    // SAFETY: copy_latin1_into_utf8 only writes into the spare bytes and
-                    // reports how many it wrote; fill_spare commits exactly that many.
-                    unsafe {
-                        bun_core::vec::fill_spare(&mut buf, 0, |spare| {
-                            let r = strings::copy_latin1_into_utf8(spare, latin1);
-                            (r.written as usize, ())
-                        })
-                    };
-                    debug_assert_eq!(buf.len(), content_byte_len);
-                    utf8_storage = buf;
+                    utf8_storage = bun_core::handle_oom(strings::allocate_latin1_into_utf8(latin1));
+                    debug_assert_eq!(utf8_storage.len(), content_byte_len);
                     &utf8_storage
                 }
             }
@@ -1043,7 +1009,7 @@ impl<const SSL: bool> WebSocket<SSL> {
     /// to (tunnel mode writes through the tunnel instead of `tcp`).
     fn debug_assert_socket_writable(&self) {
         #[cfg(debug_assertions)]
-        if self.proxy_tunnel.get().is_none() {
+        if self.tunnel().is_none() {
             let tcp = self.tcp.get();
             debug_assert!(!tcp.is_shutdown());
             debug_assert!(!tcp.is_closed());
@@ -1059,11 +1025,9 @@ impl<const SSL: bool> WebSocket<SSL> {
         let wrote: Result<usize, bool> = {
             let out_buf = buf.readable_slice(0);
             debug_assert!(!out_buf.is_empty());
-            if let Some(tunnel) = self.proxy_tunnel.get() {
+            if let Some(tunnel) = self.tunnel() {
                 // In tunnel mode, route through the tunnel's TLS layer
                 // instead of the detached raw socket.
-                // SAFETY: `proxy_tunnel` holds a live ref on `tunnel`.
-                let tunnel = unsafe { ThisPtr::new(tunnel.as_ptr()) };
                 match WebSocketProxyTunnel::write(tunnel, out_buf) {
                     Ok(w) => Ok(w),
                     Err(_) => Err(true),
@@ -1155,7 +1119,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         // the 4-byte masking key lives at frame[2..6]
         frame[CONTROL_HEADER_SIZE..][..2].copy_from_slice(&code.to_be_bytes());
 
-        let mut reason = bun_core::String::empty();
+        let mut reason = bun_core::String::EMPTY;
         if body_len > 0 {
             let body = &body[..body_len];
             // close is always utf8
@@ -1182,7 +1146,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             if self.send_buffer.borrow().readable_length() == 0 {
                 self.shutdown_after_close_frame();
                 self.clear_data();
-                self.dispatch_close(dispatch_code, &mut reason);
+                self.dispatch_close(dispatch_code, reason);
             } else {
                 // The close frame was only partially written; the remainder is
                 // in send_buffer. clear_data() would discard it (and the
@@ -1201,17 +1165,17 @@ impl<const SSL: bool> WebSocket<SSL> {
     /// frame. SSL is excluded because the SSL handshake can happen during
     /// writes; tunnel mode operates on a detached socket.
     fn shutdown_after_close_frame(&self) {
-        if !SSL && self.proxy_tunnel.get().is_none() {
+        if !SSL && self.tunnel().is_none() {
             self.tcp.get().shutdown_read();
             self.tcp.get().shutdown();
         }
     }
 
     fn finish_pending_close(&self) {
-        if let Some((code, mut reason)) = self.close_dispatch_pending.take() {
+        if let Some((code, reason)) = self.close_dispatch_pending.take() {
             self.shutdown_after_close_frame();
             self.clear_data();
-            self.dispatch_close(code, &mut reason);
+            self.dispatch_close(code, reason);
         }
     }
 
@@ -1267,11 +1231,26 @@ impl<const SSL: bool> WebSocket<SSL> {
         if self.send_buffer.borrow().readable_length() > 0 {
             return true;
         }
-        if let Some(tunnel) = self.proxy_tunnel.get() {
-            // SAFETY: `tunnel` holds a live ref (RefPtr has no `Deref`).
-            return unsafe { tunnel.as_ref() }.has_backpressure();
+        self.tunnel().is_some_and(|t| t.has_backpressure())
+    }
+
+    pub(crate) fn buffered_amount(&self) -> usize {
+        self.send_buffer.borrow().readable_length()
+            + self.tunnel().map_or(0, |t| t.buffered_amount())
+    }
+
+    pub(crate) fn pause(&self) -> bool {
+        if let Some(tunnel) = self.tunnel() {
+            return tunnel.pause_stream();
         }
-        false
+        self.tcp.get().pause_stream()
+    }
+
+    pub(crate) fn resume(&self) -> bool {
+        if let Some(tunnel) = self.tunnel() {
+            return tunnel.resume_stream();
+        }
+        self.tcp.get().resume_stream()
     }
 
     /// Frame small unbackpressured sends on the stack; else fall back to [`Self::send_data`].
@@ -1285,32 +1264,17 @@ impl<const SSL: bool> WebSocket<SSL> {
         let _ = self.send_data(bytes, !self.has_backpressure(), opcode);
     }
 
-    // `extern "C"` entrypoint; pointers are valid by C++ contract (see SAFETY comments below).
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub(crate) extern "C" fn write_binary_data(
-        this_ptr: *mut Self,
-        ptr: *const u8,
-        len: usize,
-        op: u8,
-    ) {
+    pub(crate) fn write_binary_data(this: ThisPtr<Self>, slice: &[u8], op: u8) {
         // In tunnel mode, SSLWrapper.writeData() can synchronously fire
         // onClose → ws.fail() → cancel() → clear_data() and free `this`
         // before the catch block in enqueue_encoded_bytes/send_buffer runs.
-        // SAFETY: called from C++ with a valid `heap::alloc` pointer; ScopedRef
-        // bumps the intrusive refcount and derefs on Drop (after `this`'s last
-        // use, since `this` is declared after the guard).
-        let _guard = unsafe { bun_ptr::ScopedRef::new(this_ptr) };
-        // SAFETY: called from C++ with a valid pointer; guarded above.
-        let this = unsafe { &*this_ptr };
+        let _guard = RefPtr::from_this(this);
 
         if !this.has_tcp() || op > 0xF {
             this.dispatch_abrupt_close(ErrorCode::Ended);
             return;
         }
 
-        // SAFETY: ptr/len from C++; caller guarantees valid slice. Empty Blob
-        // sends (null, 0); `ffi::slice` tolerates that shape.
-        let slice: &[u8] = unsafe { bun_core::ffi::slice(ptr, len) };
         this.send_frame(Copy::Bytes(slice), slice.len(), Opcode::from_raw(op));
     }
 
@@ -1336,63 +1300,17 @@ impl<const SSL: bool> WebSocket<SSL> {
 
     fn has_tcp(&self) -> bool {
         // For tunnel mode, we have an active connection through the tunnel
-        if self.proxy_tunnel.get().is_some() {
+        if self.tunnel().is_some() {
             return true;
         }
         let tcp = self.tcp.get();
         !tcp.is_closed() && !tcp.is_shutdown()
     }
 
-    // `extern "C"` entrypoint; `this_ptr` is non-null by C++ contract (see SAFETY comments below).
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub(crate) extern "C" fn write_blob(this_ptr: *mut Self, blob_value: JSValue, op: u8) {
+    pub(crate) fn write_string(this: ThisPtr<Self>, str: &EncodedSlice, op: u8) {
         // See write_binary_data() — tunnel.write() can re-enter fail().
-        // SAFETY: called from C++ with a valid `heap::alloc` pointer; ScopedRef
-        // bumps the intrusive refcount and derefs on Drop (after `this`'s last
-        // use, since `this` is declared after the guard).
-        let _guard = unsafe { bun_ptr::ScopedRef::new(this_ptr) };
-        // SAFETY: called from C++ with a valid pointer; guarded above.
-        let this = unsafe { &*this_ptr };
+        let _guard = RefPtr::from_this(this);
 
-        if !this.has_tcp() || op > 0xF {
-            this.dispatch_abrupt_close(ErrorCode::Ended);
-            return;
-        }
-
-        // Cast the JSValue to a Blob.
-        // `bun_jsc::webcore::Blob` is an opaque C-ABI shim (real
-        // layout lives in `bun_runtime::webcore::Blob`, a higher-tier crate).
-        // `from_js`/`shared_view` trampoline through extern fns to avoid the
-        // dep cycle — see `bun_jsc::webcore::Blob` impl block.
-        let Some(blob) = blob_value.as_::<bun_jsc::webcore::Blob>() else {
-            this.dispatch_abrupt_close(ErrorCode::Ended);
-            return;
-        };
-        let opcode = Opcode::from_raw(op);
-        // SAFETY: `as_` returned a live `*mut Blob` owned by the JS heap;
-        // the JSValue is rooted by the caller for the duration of this call.
-        let data = unsafe { (*blob).shared_view() };
-        if data.is_empty() {
-            let _ = this.send_data(Copy::Bytes(&[]), !this.has_backpressure(), opcode);
-            return;
-        }
-
-        this.send_frame(Copy::Bytes(data), data.len(), opcode);
-    }
-
-    // `extern "C"` entrypoint; pointers are valid by C++ contract (see SAFETY comments below).
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub(crate) extern "C" fn write_string(this_ptr: *mut Self, str_: *const ZigString, op: u8) {
-        // See write_binary_data() — tunnel.write() can re-enter fail().
-        // SAFETY: called from C++ with a valid `heap::alloc` pointer; ScopedRef
-        // bumps the intrusive refcount and derefs on Drop (after `this`'s last
-        // use, since `this` is declared after the guard).
-        let _guard = unsafe { bun_ptr::ScopedRef::new(this_ptr) };
-        // SAFETY: called from C++ with a valid pointer; guarded above.
-        let this = unsafe { &*this_ptr };
-
-        // SAFETY: str_ is a valid pointer from C++
-        let str = unsafe { &*str_ };
         if !this.has_tcp() {
             this.dispatch_abrupt_close(ErrorCode::Ended);
             return;
@@ -1412,7 +1330,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             }
             // max length of a utf16 -> utf8 conversion is 4 times the length of the utf16 string
         } else if (str.len * 4) < STACK_FRAME_SIZE && !this.has_backpressure() {
-            let bytes = Copy::Utf16(str.utf16_slice_aligned());
+            let bytes = Copy::Utf16(str.utf16_slice());
             let (frame_size, byte_len) = bytes.frame_and_content_len();
             this.send_inline_frame(bytes, byte_len, frame_size, opcode);
             return;
@@ -1420,7 +1338,7 @@ impl<const SSL: bool> WebSocket<SSL> {
 
         let _ = this.send_data(
             if str.is_16bit() {
-                Copy::Utf16(str.utf16_slice_aligned())
+                Copy::Utf16(str.utf16_slice())
             } else {
                 Copy::Latin1(str.slice())
             },
@@ -1429,49 +1347,38 @@ impl<const SSL: bool> WebSocket<SSL> {
         );
     }
 
+    /// May free `self`.
     fn dispatch_abrupt_close(&self, code: ErrorCode) {
-        let Some(out) = self.outgoing_websocket.take() else {
+        let Some((out, _cpp_ref)) = self.outgoing_websocket.replace(None) else {
             return;
         };
         self.unref_keep_alive();
         jsc::mark_binding!();
-        CppWebSocket::opaque_ref(out.as_ptr()).did_abrupt_close(code);
-        // SAFETY: allocation kept live by caller's ref guard (see
-        // cancel/handle_close).
-        unsafe { Self::deref(self.as_ctx_ptr()) };
+        out.did_abrupt_close(code);
     }
 
-    fn dispatch_close(&self, code: u16, reason: &mut bun_core::String) {
-        let Some(out) = self.outgoing_websocket.take() else {
+    /// May free `self`.
+    fn dispatch_close(&self, code: u16, reason: bun_core::String) {
+        let Some((out, _cpp_ref)) = self.outgoing_websocket.replace(None) else {
             return;
         };
         self.unref_keep_alive();
         jsc::mark_binding!();
-        CppWebSocket::opaque_ref(out.as_ptr()).did_close(code, reason);
-        // SAFETY: allocation kept live by caller's ref guard.
-        unsafe { Self::deref(self.as_ctx_ptr()) };
+        out.did_close(code, reason);
     }
 
-    // `extern "C"` entrypoint; pointers are valid (or null where checked) by C++ contract.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub(crate) extern "C" fn close(this_ptr: *mut Self, code: u16, reason: *const ZigString) {
+    pub(crate) fn close(this: ThisPtr<Self>, code: u16, reason: Option<&EncodedSlice>) {
         // In tunnel mode, SSLWrapper.writeData() (via send_close_with_body →
         // enqueue_encoded_bytes → tunnel.write) can synchronously fire
         // onClose → ws.fail() → cancel() → clear_data() and free `this`
         // before send_close_with_body's own clear_data/dispatch_close run.
-        // SAFETY: called from C++ with a valid `heap::alloc` pointer; ScopedRef
-        // bumps the intrusive refcount and derefs on Drop (after `this`'s last
-        // use, since `this` is declared after the guard).
-        let _guard = unsafe { bun_ptr::ScopedRef::new(this_ptr) };
-        // SAFETY: called from C++ with a valid pointer; guarded above.
-        let this = unsafe { &*this_ptr };
+        let _guard = RefPtr::from_this(this);
 
         if !this.has_tcp() {
             return;
         }
         let mut reason_buf = [0u8; MAX_CONTROL_PAYLOAD];
-        // SAFETY: reason is null or a valid *const ZigString from C++
-        let reason_len = unsafe { reason.as_ref() }
+        let reason_len = reason
             .and_then(|str| encode_close_reason(str, &mut reason_buf))
             .unwrap_or(0);
 
@@ -1482,16 +1389,16 @@ impl<const SSL: bool> WebSocket<SSL> {
     /// `handle_close` for adopted sockets and by `clear_data` in tunnel mode)
     /// and an optional permessage-deflate context.
     fn new_raw(
-        outgoing: *mut CppWebSocket,
         global_this: &JSGlobalObject,
         deflate_params: Option<&websocket_deflate::Params>,
-        secure: Option<*mut SslCtx>,
-        proxy_tunnel: Option<NonNull<WebSocketProxyTunnel>>,
-    ) -> *mut Self {
-        let ws = bun_core::heap::into_raw(Box::new(WebSocket::<SSL> {
+        secure: Option<OwnedSslCtx>,
+        proxy_tunnel: Option<RefPtr<WebSocketProxyTunnel>>,
+    ) -> RefPtr<Self> {
+        let ws = RefPtr::new(WebSocket::<SSL> {
             ref_count: Cell::new(1),
             tcp: Cell::new(Socket::<SSL>::detached()),
-            outgoing_websocket: Cell::new(NonNull::new(outgoing)),
+            io_ref: Cell::new(None),
+            outgoing_websocket: JsCell::new(None),
             receive_state: Cell::new(ReceiveState::NeedHeader),
             receiving_type: Cell::new(Opcode::ResB),
             receiving_is_final: Cell::new(true),
@@ -1508,223 +1415,154 @@ impl<const SSL: bool> WebSocket<SSL> {
             header_fragment: Cell::new(None),
             payload_length_frame_bytes: Cell::new([0u8; 8]),
             payload_length_frame_len: Cell::new(0),
-            initial_data_handler: Cell::new(None),
+            pending_initial_task: Cell::new(None),
             deflate: RefCell::new(
                 deflate_params.and_then(|params| WebSocketDeflate::init(*params).ok()),
             ),
             receiving_compressed: Cell::new(false),
             message_is_compressed: Cell::new(false),
             secure: Cell::new(secure),
-            proxy_tunnel: Cell::new(proxy_tunnel),
-        }));
-        bun_core::scoped_log!(alloc, "new({}) = {:p}", Self::ALLOC_TYPE_NAME, ws);
+            proxy_tunnel: JsCell::new(proxy_tunnel),
+        });
+        bun_core::scoped_log!(alloc, "new({}) = {:p}", Self::ALLOC_TYPE_NAME, ws.as_ptr());
         ws
     }
 
-    /// Shared tail of `init`/`init_with_tunnel`: reserve the I/O buffers, take
-    /// the keep-alive ref, queue any handshake-buffered bytes, and take the
-    /// C++-side ref. Returns the type-erased pointer handed back to C++.
+    /// Shared tail of `init`/`init_with_tunnel`: record the I/O-layer ref,
+    /// reserve the I/O buffers, take the keep-alive ref, queue any
+    /// handshake-buffered bytes, and take the C++-side ref. Returns the
+    /// pointer handed back to C++.
     fn finish_init(
-        ws: *mut Self,
-        outgoing: *mut CppWebSocket,
+        io_ref: RefPtr<Self>,
+        outgoing: &CppWebSocket,
         global_this: &JSGlobalObject,
-        buffered_data: *mut u8,
-        buffered_data_len: usize,
-    ) -> *mut c_void {
-        // SAFETY: `ws` is the live `heap::alloc` allocation from `new_raw`;
-        // everything below needs only `&self` (interior mutability).
-        let ws_ref = unsafe { &*ws };
-        bun_core::handle_oom(ws_ref.send_buffer.borrow_mut().ensure_total_capacity(2048));
-        bun_core::handle_oom(
-            ws_ref
-                .receive_buffer
-                .borrow_mut()
-                .ensure_total_capacity(2048),
-        );
+        buffered_data: Option<Box<InitialData>>,
+    ) -> *mut Self {
+        let ws = io_ref.this_ptr();
+        // C++ holds the returned pointer as `m_connectedWebSocket`.
+        ws.outgoing_websocket
+            .set(Some((BackRef::new(outgoing), io_ref.clone())));
+        ws.io_ref.set(Some(io_ref));
+        bun_core::handle_oom(ws.send_buffer.borrow_mut().ensure_total_capacity(2048));
+        bun_core::handle_oom(ws.receive_buffer.borrow_mut().ensure_total_capacity(2048));
         {
-            let mut poll_ref = ws_ref.poll_ref.take();
+            let mut poll_ref = ws.poll_ref.take();
             poll_ref.r#ref(Self::vm_loop_ctx(global_this));
-            ws_ref.poll_ref.set(poll_ref);
+            ws.poll_ref.set(poll_ref);
         }
 
-        if buffered_data_len > 0 {
-            // SAFETY: buffered_data/len from C++; caller guarantees validity.
-            // The upgrade client allocated this buffer via mimalloc
-            // and transfers ownership to us.
-            // The global allocator is also mimalloc, so `heap::take`
-            // adopts the original allocation (no copy) and `Drop` will `mi_free` it.
-            let buffered_slice: Box<[u8]> = unsafe {
-                bun_core::heap::take(std::ptr::slice_from_raw_parts_mut(
-                    buffered_data,
-                    buffered_data_len,
-                ))
-            };
-            let initial_data = bun_core::heap::into_raw(Box::new(InitialDataHandler::<SSL> {
-                adopted: NonNull::new(ws),
-                slice: buffered_slice,
-                // We need to ref the outgoing websocket so that it doesn't get
-                // finalized before the initial data handler is called.
-                // SAFETY: outgoing is a valid CppWebSocket* (extern-C contract);
-                // it outlives the handler — `handle_without_deinit` drops the
-                // ref before C++ can finalize.
-                ws: NonNull::new(outgoing).map(|p| unsafe { CppWebSocketRef::new(p) }),
-            }));
-            // Backref so `handle_data` can drain the buffered slice ahead of
-            // fresh socket data, and so `deinit()` can detach from the box if
-            // teardown races ahead of the microtask drain.
-            ws_ref.initial_data_handler.set(NonNull::new(initial_data));
-
-            // Use a higher-priority callback for the initial onData handler
-            // `queue_microtask_callback` takes an erased
-            // `(*mut c_void, unsafe extern "C" fn(*mut c_void))`; cast both.
-            global_this.queue_microtask_callback(
-                initial_data.cast::<c_void>(),
-                InitialDataHandler::<SSL>::handle,
-            );
+        if let Some(buffered_data) = buffered_data.filter(|b| !b.0.is_empty()) {
+            // Use a higher-priority callback for the initial onData handler.
+            let task = Box::new(InitialDataTask {
+                ws: Cell::new(Some(BackRef::from(ws))),
+                data: JsCell::new(Some(InitialDataHandler {
+                    slice: buffered_data.0,
+                    // We need to ref the outgoing websocket so that it doesn't get
+                    // finalized before the initial data handler is called.
+                    _pending_activity: CppWebSocketRef::new(outgoing),
+                })),
+            });
+            ws.pending_initial_task
+                .set(Some(global_this.queue_microtask_boxed(task)));
         }
 
-        // And lastly, ref the new websocket since C++ has a reference to it
-        ws_ref.ref_();
-
-        ws.cast::<c_void>()
+        ws.as_ptr()
     }
 
-    pub(crate) extern "C" fn init(
-        outgoing: *mut CppWebSocket,
-        input_socket: *mut c_void,
+    pub(crate) fn init(
+        outgoing: &CppWebSocket,
+        input_socket: *mut us_socket_t,
         global_this: &JSGlobalObject,
-        buffered_data: *mut u8,
-        buffered_data_len: usize,
+        buffered_data: Option<Box<InitialData>>,
         deflate_params: Option<&websocket_deflate::Params>,
-        secure_ptr: *mut c_void,
-    ) -> *mut c_void {
-        let tcp = input_socket.cast::<us_socket_t>();
-        let secure = (!secure_ptr.is_null()).then(|| secure_ptr.cast::<SslCtx>());
-        let ws = Self::new_raw(outgoing, global_this, deflate_params, secure, None);
+        secure: Option<OwnedSslCtx>,
+    ) -> *mut Self {
+        let ws = Self::new_raw(global_this, deflate_params, secure, None);
+        let this = ws.this_ptr();
 
         // `adopt_group` takes a closure to write the new socket.
         let vm = global_this.bun_vm().as_mut();
         let loop_ = vm.uws_loop();
         let group = vm.rare_data().ws_client_group::<SSL>(loop_);
         if !Socket::<SSL>::adopt_group(
-            tcp,
+            input_socket,
             group,
             if SSL {
                 uws::DispatchKind::WsClientTls
             } else {
                 uws::DispatchKind::WsClient
             },
-            ws,
-            // SAFETY: `owner == ws` is a valid live allocation; raw-ptr field
-            // write avoids materializing a second `&mut` that would alias
-            // another borrow of the new allocation.
-            |owner, sock| unsafe { core::ptr::addr_of_mut!((*owner).tcp).write(Cell::new(sock)) },
+            ws.as_ptr(),
+            |_, sock| this.tcp.set(sock),
         ) {
-            // SAFETY: `ws` is the `heap::alloc` allocation just created
-            // above; sole owner on this failure path.
-            unsafe { Self::deref(ws) };
             return core::ptr::null_mut();
         }
 
-        Self::finish_init(ws, outgoing, global_this, buffered_data, buffered_data_len)
+        Self::finish_init(ws, outgoing, global_this, buffered_data)
     }
 
     /// Initialize a WebSocket client that uses a proxy tunnel for I/O.
     /// Used for wss:// through HTTP proxy where TLS is handled by the tunnel.
     /// The tunnel takes ownership of socket I/O, and this client reads/writes through it.
-    pub(crate) extern "C" fn init_with_tunnel(
-        outgoing: *mut CppWebSocket,
-        tunnel_ptr: *mut c_void,
+    pub(crate) fn init_with_tunnel(
+        outgoing: &CppWebSocket,
+        tunnel: ThisPtr<WebSocketProxyTunnel>,
         global_this: &JSGlobalObject,
-        buffered_data: *mut u8,
-        buffered_data_len: usize,
+        buffered_data: Option<Box<InitialData>>,
         deflate_params: Option<&websocket_deflate::Params>,
-    ) -> *mut c_void {
-        // SAFETY: tunnel_ptr is a valid *WebSocketProxyTunnel from C++ with an
-        // intrusive refcount. The caller retains its own ref; we bump the
-        // intrusive count to take ownership
-        // and store the raw owning handle (released in `clear_data`).
-        let tunnel_owned: NonNull<WebSocketProxyTunnel> = {
-            let p = tunnel_ptr.cast::<WebSocketProxyTunnel>();
-            // SAFETY: caller passes a live tunnel pointer (extern-C contract).
-            unsafe { (*p).ref_() };
-            NonNull::new(p).expect("extern-C contract: tunnel_ptr is non-null")
-        };
-
+    ) -> *mut Self {
+        // The caller retains its own ref on `tunnel`; take one of our own
+        // (released in `clear_data`).
+        //
         // ref_count starts at 1: this is the I/O-layer ref, owned by the
         // tunnel connection (analogous to the adopted-socket ref in init()
         // that handle_close() releases). It is released in clear_data() when
-        // proxy_tunnel is detached. The ws.ref() below adds the C++ ref
-        // paired with m_connectedWebSocket.
+        // proxy_tunnel is detached. `finish_init` adds the C++ ref paired
+        // with m_connectedWebSocket.
         let ws = Self::new_raw(
-            outgoing,
             global_this,
             deflate_params,
             None,
-            Some(tunnel_owned),
+            Some(RefPtr::from_this(tunnel)),
         );
 
-        Self::finish_init(ws, outgoing, global_this, buffered_data, buffered_data_len)
+        Self::finish_init(ws, outgoing, global_this, buffered_data)
     }
 
     /// Handle data received from the proxy tunnel (already decrypted).
     /// Called by the WebSocketProxyTunnel when it receives and decrypts data.
-    ///
-    /// # Safety
-    /// `this_ptr` must point to a live `WebSocket<SSL>` allocated via
-    /// `heap::alloc`; no `&`/`&mut` borrow of `*this_ptr` may be live across
-    /// this call (the tunnel calls through its raw `connected_websocket` backref).
-    pub(crate) unsafe fn handle_tunnel_data(this_ptr: *mut Self, data: &[u8]) {
+    pub(crate) fn handle_tunnel_data(this: ThisPtr<Self>, data: &[u8]) {
         // Process the decrypted data as if it came from the socket
         // has_tcp() now returns true for tunnel mode, so this will work correctly
-        // SAFETY: caller contract — `this_ptr` is a live `heap::alloc` pointer
-        // with no outstanding `&`/`&mut` borrow.
-        Self::handle_data(unsafe { ThisPtr::new(this_ptr) }, data);
+        Self::handle_data(this, data);
     }
 
     /// Called by the WebSocketProxyTunnel when the underlying socket drains.
     /// Flushes any buffered plaintext data through the tunnel.
-    ///
-    /// # Safety
-    /// `this_ptr` must point to a live `WebSocket<SSL>` allocated via
-    /// `heap::alloc`; no `&`/`&mut` borrow of `*this_ptr` may be live across
-    /// this call.
-    pub(crate) unsafe fn handle_tunnel_writable(this_ptr: *mut Self) {
-        // SAFETY: caller contract — `this_ptr` is a live `heap::alloc` pointer
-        // (the tunnel calls through its raw `connected_websocket` backref).
-        let this = unsafe { ThisPtr::new(this_ptr) };
+    pub(crate) fn handle_tunnel_writable(this: ThisPtr<Self>) {
         if this.close_received.get() && !this.has_pending_close_dispatch() {
             return;
         }
         // send_buffer → tunnel.write() can re-enter fail() synchronously
         // (see write_binary_data). The tunnel ref-guards itself in
         // on_writable() but not this struct.
-        let _guard = this.ref_guard();
+        let _guard = RefPtr::from_this(this);
 
         this.drain_send_buffer_and_finish_close();
     }
 
-    // `extern "C"` entrypoint; `this_ptr` is non-null by C++ contract (see SAFETY comments below).
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub(crate) extern "C" fn finalize(this_ptr: *mut Self) {
+    /// The JS wrapper was collected: C++ is letting go of its ref.
+    pub(crate) fn finalize(this: ThisPtr<Self>) {
         log!("finalize");
         // clear_data() may drop the tunnel's I/O-layer ref and the block
-        // below drops the C++ ref; keep `*this_ptr` alive until we've
-        // finished the tcp close check.
-        // SAFETY: called from C++ with a valid `heap::alloc` pointer; ScopedRef
-        // bumps the intrusive refcount and derefs on Drop (after `this`'s last
-        // use, since `this` is declared after the guard).
-        let _guard = unsafe { bun_ptr::ScopedRef::new(this_ptr) };
-        // SAFETY: called from C++ with a valid pointer; guarded above.
-        let this = unsafe { &*this_ptr };
+        // below drops the C++ ref; keep `this` alive until we've finished the
+        // tcp close check.
+        let _guard = RefPtr::from_this(this);
 
         this.clear_data();
 
         // This is only called by outgoing_websocket.
-        if this.outgoing_websocket.take().is_some() {
-            // SAFETY: allocation kept live by the local guard above.
-            unsafe { Self::deref(this_ptr) };
-        }
+        this.release_cpp_ref();
 
         if !this.tcp.get().is_closed() {
             this.tcp.get().close(uws::CloseKind::Failure);
@@ -1734,71 +1572,50 @@ impl<const SSL: bool> WebSocket<SSL> {
     /// The owning C++ WebSocket's context is being torn down: forget it (nothing
     /// here may call back into it or into script) and drop the connection now —
     /// a raw close on TLS too, since no loop remains to finish a graceful one.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub(crate) extern "C" fn drop_connection_without_callback(this_ptr: *mut Self) {
+    pub(crate) fn drop_connection_without_callback(this: ThisPtr<Self>) {
         log!("dropConnectionWithoutCallback");
-        // SAFETY: called from C++ with a valid `heap::alloc` pointer; the guard
-        // keeps the allocation alive across clear_data()/close re-entry.
-        let _guard = unsafe { bun_ptr::ScopedRef::new(this_ptr) };
-        // SAFETY: as above.
-        let this = unsafe { &*this_ptr };
+        let _guard = RefPtr::from_this(this);
 
-        let had_cpp = this.outgoing_websocket.take().is_some();
+        let _cpp_ref = this.outgoing_websocket.replace(None);
         this.clear_data();
         if !this.tcp.get().is_closed() {
             this.tcp.get().close(uws::CloseKind::Failure);
         }
-        if had_cpp {
-            // The ref held on behalf of the C++ object.
-            // SAFETY: allocation kept live by the local guard above.
-            unsafe { Self::deref(this_ptr) };
-        }
     }
 
-    // `deinit` is the IntrusiveRc destructor callback; not `impl Drop` because
-    // self is heap-allocated via heap::alloc and crosses FFI as *mut c_void.
-    unsafe fn deinit(this: *mut Self) {
-        // SAFETY: called once when ref_count hits zero; a shared borrow
-        // suffices — teardown uses interior mutability only, and it ends
-        // before the `heap::take` below.
-        let this_ref = unsafe { &*this };
-        this_ref.clear_data();
-        // deflate already dropped in clear_data; this is defensive
-        this_ref.deflate.replace(None);
-        if let Some(handler) = this_ref.initial_data_handler.take() {
-            // SAFETY: the handler box was allocated via `heap::into_raw` in
-            // init()/init_with_tunnel() and is normally freed by the queued
-            // microtask in `InitialDataHandler::handle`; this field still
-            // being set means that microtask has not run yet, so the box is
-            // live and the raw field write does not alias any borrow.
-            unsafe { core::ptr::addr_of_mut!((*handler.as_ptr()).adopted).write(None) };
-            if this_ref.global_this.bun_vm().is_shutting_down() {
-                // SAFETY: same allocation as above; the VM is shutting down, so
-                // the queued microtask can no longer run and this is the sole
-                // remaining owner of the box.
-                drop(unsafe { bun_core::heap::take(handler.as_ptr()) });
-            }
-        }
-        bun_core::scoped_log!(alloc, "destroy({}) = {:p}", Self::ALLOC_TYPE_NAME, this);
-        // SAFETY: this was allocated via heap::alloc in init/init_with_tunnel
-        drop(unsafe { bun_core::heap::take(this) });
-    }
-
-    // `extern "C"` entrypoint; `this` is non-null by C++ contract (see SAFETY comment below).
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub(crate) extern "C" fn memory_cost(this: *const Self) -> usize {
-        // SAFETY: called from C++ with a valid pointer
-        let this = unsafe { &*this };
+    pub(crate) fn memory_cost(&self) -> usize {
         let mut cost: usize = size_of::<Self>();
-        cost += this.send_buffer.try_borrow().map_or(0, |b| b.capacity());
-        cost += this.receive_buffer.try_borrow().map_or(0, |b| b.capacity());
+        cost += self.send_buffer.try_borrow().map_or(0, |b| b.capacity());
+        cost += self.receive_buffer.try_borrow().map_or(0, |b| b.capacity());
         // This is under-estimated a little, as we don't include usockets context.
         cost
     }
 }
 
+impl<const SSL: bool> Drop for WebSocket<SSL> {
+    fn drop(&mut self) {
+        self.clear_data();
+        // deflate already dropped in clear_data; this is defensive
+        self.deflate.replace(None);
+        if let Some(task) = self.pending_initial_task.take() {
+            // Still queued (or abandoned with the VM's microtask queue); it
+            // must not follow its back-reference to us.
+            task.ws.set(None);
+            if self.global_this.bun_vm().is_shutting_down() {
+                // The queue will never run it; release the C++ pending-activity
+                // ref it holds now.
+                task.data.set(None);
+            }
+        }
+        bun_core::scoped_log!(alloc, "destroy({}) = {:p}", Self::ALLOC_TYPE_NAME, self);
+    }
+}
+
 /// Transcode a close reason to UTF-8 into `buf`; `None` when it exceeds `MAX_CLOSE_REASON`.
-fn encode_close_reason(reason: &ZigString, buf: &mut [u8; MAX_CONTROL_PAYLOAD]) -> Option<usize> {
+fn encode_close_reason(
+    reason: &EncodedSlice,
+    buf: &mut [u8; MAX_CONTROL_PAYLOAD],
+) -> Option<usize> {
     use std::io::Write;
     let mut cursor = std::io::Cursor::new(&mut buf[..]);
     if reason.is_16bit() {
@@ -1822,183 +1639,218 @@ fn encode_close_reason(reason: &ZigString, buf: &mut [u8; MAX_CONTROL_PAYLOAD]) 
 // ──────────────────────────────────────────────────────────────────────────
 // exportAll()
 // ──────────────────────────────────────────────────────────────────────────
-// avoids the `paste` crate by passing the nine fully-qualified
-// `#[no_mangle]` idents at the call site (declare-site macro).
-macro_rules! export_websocket_client {
-    (
-        $ssl:expr,
-        cancel = $cancel:ident,
-        close = $close:ident,
-        finalize = $finalize:ident,
-        drop_connection_without_callback = $drop_connection_without_callback:ident,
-        init = $init:ident,
-        init_with_tunnel = $init_with_tunnel:ident,
-        memory_cost = $memory_cost:ident,
-        write_binary_data = $write_binary_data:ident,
-        write_blob = $write_blob:ident,
-        write_string = $write_string:ident $(,)?
-    ) => {
-        #[unsafe(no_mangle)]
-        pub extern "C" fn $cancel(this: *mut WebSocket<$ssl>) {
-            WebSocket::<$ssl>::cancel(this)
-        }
-        #[unsafe(no_mangle)]
-        pub extern "C" fn $close(this: *mut WebSocket<$ssl>, code: u16, reason: *const ZigString) {
-            WebSocket::<$ssl>::close(this, code, reason)
-        }
-        #[unsafe(no_mangle)]
-        pub extern "C" fn $finalize(this: *mut WebSocket<$ssl>) {
-            WebSocket::<$ssl>::finalize(this)
-        }
-        #[unsafe(no_mangle)]
-        pub extern "C" fn $drop_connection_without_callback(this: *mut WebSocket<$ssl>) {
-            WebSocket::<$ssl>::drop_connection_without_callback(this)
-        }
-        #[unsafe(no_mangle)]
-        pub extern "C" fn $init(
-            outgoing: *mut CppWebSocket,
-            input_socket: *mut c_void,
-            global_this: &JSGlobalObject,
-            buffered_data: *mut u8,
-            buffered_data_len: usize,
-            deflate_params: Option<&websocket_deflate::Params>,
-            secure_ptr: *mut c_void,
-        ) -> *mut c_void {
-            WebSocket::<$ssl>::init(
-                outgoing,
-                input_socket,
-                global_this,
-                buffered_data,
-                buffered_data_len,
-                deflate_params,
-                secure_ptr,
-            )
-        }
-        #[unsafe(no_mangle)]
-        pub extern "C" fn $init_with_tunnel(
-            outgoing: *mut CppWebSocket,
-            tunnel_ptr: *mut c_void,
-            global_this: &JSGlobalObject,
-            buffered_data: *mut u8,
-            buffered_data_len: usize,
-            deflate_params: Option<&websocket_deflate::Params>,
-        ) -> *mut c_void {
-            WebSocket::<$ssl>::init_with_tunnel(
-                outgoing,
-                tunnel_ptr,
-                global_this,
-                buffered_data,
-                buffered_data_len,
-                deflate_params,
-            )
-        }
-        #[unsafe(no_mangle)]
-        pub extern "C" fn $memory_cost(this: *const WebSocket<$ssl>) -> usize {
-            WebSocket::<$ssl>::memory_cost(this)
-        }
-        #[unsafe(no_mangle)]
-        pub extern "C" fn $write_binary_data(
-            this: *mut WebSocket<$ssl>,
-            ptr: *const u8,
-            len: usize,
-            op: u8,
-        ) {
-            WebSocket::<$ssl>::write_binary_data(this, ptr, len, op)
-        }
-        #[unsafe(no_mangle)]
-        pub extern "C" fn $write_blob(this: *mut WebSocket<$ssl>, blob_value: JSValue, op: u8) {
-            WebSocket::<$ssl>::write_blob(this, blob_value, op)
-        }
-        #[unsafe(no_mangle)]
-        pub extern "C" fn $write_string(
-            this: *mut WebSocket<$ssl>,
-            str_: *const ZigString,
-            op: u8,
-        ) {
-            WebSocket::<$ssl>::write_string(this, str_, op)
-        }
-    };
+pub type WebSocketClient = WebSocket<false>;
+pub type WebSocketClientTLS = WebSocket<true>;
+
+// HOST_EXPORT(Bun__WebSocketClient__cancel, c)
+pub fn bun__websocketclient__cancel(this: ThisPtr<crate::websocket_client::WebSocketClient>) {
+    WebSocketClient::cancel(this)
+}
+// HOST_EXPORT(Bun__WebSocketClient__bufferedAmount, c)
+pub fn bun__websocketclient__buffered_amount(
+    this: &crate::websocket_client::WebSocketClient,
+) -> usize {
+    this.buffered_amount()
+}
+// HOST_EXPORT(Bun__WebSocketClient__pause, c)
+pub fn bun__websocketclient__pause(this: &crate::websocket_client::WebSocketClient) -> bool {
+    this.pause()
+}
+// HOST_EXPORT(Bun__WebSocketClient__resume, c)
+pub fn bun__websocketclient__resume(this: &crate::websocket_client::WebSocketClient) -> bool {
+    this.resume()
+}
+// HOST_EXPORT(Bun__WebSocketClient__close, c)
+pub fn bun__websocketclient__close(
+    this: ThisPtr<crate::websocket_client::WebSocketClient>,
+    code: u16,
+    reason: Option<&bun_core::EncodedSlice>,
+) {
+    WebSocketClient::close(this, code, reason)
+}
+// HOST_EXPORT(Bun__WebSocketClient__finalize, c)
+pub fn bun__websocketclient__finalize(this: ThisPtr<crate::websocket_client::WebSocketClient>) {
+    WebSocketClient::finalize(this)
+}
+// HOST_EXPORT(Bun__WebSocketClient__dropConnectionWithoutCallback, c)
+pub fn bun__websocketclient__drop_connection_without_callback(
+    this: ThisPtr<crate::websocket_client::WebSocketClient>,
+) {
+    WebSocketClient::drop_connection_without_callback(this)
+}
+// HOST_EXPORT(Bun__WebSocketClient__init, c)
+pub fn bun__websocketclient__init(
+    outgoing: &crate::websocket_client::cpp_websocket::CppWebSocket,
+    input_socket: *mut bun_uws_sys::us_socket_t,
+    global_this: &JSGlobalObject,
+    buffered_data: Option<Box<crate::websocket_client::InitialData>>,
+    deflate_params: Option<&crate::websocket_client::websocket_deflate::Params>,
+    secure: Option<bun_boringssl::c::OwnedSslCtx>,
+) -> *mut crate::websocket_client::WebSocketClient {
+    WebSocketClient::init(
+        outgoing,
+        input_socket,
+        global_this,
+        buffered_data,
+        deflate_params,
+        secure,
+    )
+}
+// HOST_EXPORT(Bun__WebSocketClient__initWithTunnel, c)
+pub fn bun__websocketclient__init_with_tunnel(
+    outgoing: &crate::websocket_client::cpp_websocket::CppWebSocket,
+    tunnel: ThisPtr<crate::websocket_client::websocket_proxy_tunnel::WebSocketProxyTunnel>,
+    global_this: &JSGlobalObject,
+    buffered_data: Option<Box<crate::websocket_client::InitialData>>,
+    deflate_params: Option<&crate::websocket_client::websocket_deflate::Params>,
+) -> *mut crate::websocket_client::WebSocketClient {
+    WebSocketClient::init_with_tunnel(outgoing, tunnel, global_this, buffered_data, deflate_params)
+}
+// HOST_EXPORT(Bun__WebSocketClient__memoryCost, c)
+pub fn bun__websocketclient__memory_cost(this: &crate::websocket_client::WebSocketClient) -> usize {
+    this.memory_cost()
+}
+// HOST_EXPORT(Bun__WebSocketClient__writeBinaryData, c)
+pub fn bun__websocketclient__write_binary_data(
+    this: ThisPtr<crate::websocket_client::WebSocketClient>,
+    bytes: &[u8],
+    op: u8,
+) {
+    WebSocketClient::write_binary_data(this, bytes, op)
+}
+// HOST_EXPORT(Bun__WebSocketClient__writeString, c)
+pub fn bun__websocketclient__write_string(
+    this: ThisPtr<crate::websocket_client::WebSocketClient>,
+    str_: &bun_core::EncodedSlice,
+    op: u8,
+) {
+    WebSocketClient::write_string(this, str_, op)
 }
 
-export_websocket_client!(
-    false,
-    cancel = Bun__WebSocketClient__cancel,
-    close = Bun__WebSocketClient__close,
-    finalize = Bun__WebSocketClient__finalize,
-    drop_connection_without_callback = Bun__WebSocketClient__dropConnectionWithoutCallback,
-    init = Bun__WebSocketClient__init,
-    init_with_tunnel = Bun__WebSocketClient__initWithTunnel,
-    memory_cost = Bun__WebSocketClient__memoryCost,
-    write_binary_data = Bun__WebSocketClient__writeBinaryData,
-    write_blob = Bun__WebSocketClient__writeBlob,
-    write_string = Bun__WebSocketClient__writeString,
-);
-export_websocket_client!(
-    true,
-    cancel = Bun__WebSocketClientTLS__cancel,
-    close = Bun__WebSocketClientTLS__close,
-    finalize = Bun__WebSocketClientTLS__finalize,
-    drop_connection_without_callback = Bun__WebSocketClientTLS__dropConnectionWithoutCallback,
-    init = Bun__WebSocketClientTLS__init,
-    init_with_tunnel = Bun__WebSocketClientTLS__initWithTunnel,
-    memory_cost = Bun__WebSocketClientTLS__memoryCost,
-    write_binary_data = Bun__WebSocketClientTLS__writeBinaryData,
-    write_blob = Bun__WebSocketClientTLS__writeBlob,
-    write_string = Bun__WebSocketClientTLS__writeString,
-);
+// HOST_EXPORT(Bun__WebSocketClientTLS__cancel, c)
+pub fn bun__websocketclienttls__cancel(this: ThisPtr<crate::websocket_client::WebSocketClientTLS>) {
+    WebSocketClientTLS::cancel(this)
+}
+// HOST_EXPORT(Bun__WebSocketClientTLS__bufferedAmount, c)
+pub fn bun__websocketclienttls__buffered_amount(
+    this: &crate::websocket_client::WebSocketClientTLS,
+) -> usize {
+    this.buffered_amount()
+}
+// HOST_EXPORT(Bun__WebSocketClientTLS__pause, c)
+pub fn bun__websocketclienttls__pause(this: &crate::websocket_client::WebSocketClientTLS) -> bool {
+    this.pause()
+}
+// HOST_EXPORT(Bun__WebSocketClientTLS__resume, c)
+pub fn bun__websocketclienttls__resume(this: &crate::websocket_client::WebSocketClientTLS) -> bool {
+    this.resume()
+}
+// HOST_EXPORT(Bun__WebSocketClientTLS__close, c)
+pub fn bun__websocketclienttls__close(
+    this: ThisPtr<crate::websocket_client::WebSocketClientTLS>,
+    code: u16,
+    reason: Option<&bun_core::EncodedSlice>,
+) {
+    WebSocketClientTLS::close(this, code, reason)
+}
+// HOST_EXPORT(Bun__WebSocketClientTLS__finalize, c)
+pub fn bun__websocketclienttls__finalize(
+    this: ThisPtr<crate::websocket_client::WebSocketClientTLS>,
+) {
+    WebSocketClientTLS::finalize(this)
+}
+// HOST_EXPORT(Bun__WebSocketClientTLS__dropConnectionWithoutCallback, c)
+pub fn bun__websocketclienttls__drop_connection_without_callback(
+    this: ThisPtr<crate::websocket_client::WebSocketClientTLS>,
+) {
+    WebSocketClientTLS::drop_connection_without_callback(this)
+}
+// HOST_EXPORT(Bun__WebSocketClientTLS__init, c)
+pub fn bun__websocketclienttls__init(
+    outgoing: &crate::websocket_client::cpp_websocket::CppWebSocket,
+    input_socket: *mut bun_uws_sys::us_socket_t,
+    global_this: &JSGlobalObject,
+    buffered_data: Option<Box<crate::websocket_client::InitialData>>,
+    deflate_params: Option<&crate::websocket_client::websocket_deflate::Params>,
+    secure: Option<bun_boringssl::c::OwnedSslCtx>,
+) -> *mut crate::websocket_client::WebSocketClientTLS {
+    WebSocketClientTLS::init(
+        outgoing,
+        input_socket,
+        global_this,
+        buffered_data,
+        deflate_params,
+        secure,
+    )
+}
+// HOST_EXPORT(Bun__WebSocketClientTLS__memoryCost, c)
+pub fn bun__websocketclienttls__memory_cost(
+    this: &crate::websocket_client::WebSocketClientTLS,
+) -> usize {
+    this.memory_cost()
+}
+// HOST_EXPORT(Bun__WebSocketClientTLS__writeBinaryData, c)
+pub fn bun__websocketclienttls__write_binary_data(
+    this: ThisPtr<crate::websocket_client::WebSocketClientTLS>,
+    bytes: &[u8],
+    op: u8,
+) {
+    WebSocketClientTLS::write_binary_data(this, bytes, op)
+}
+// HOST_EXPORT(Bun__WebSocketClientTLS__writeString, c)
+pub fn bun__websocketclienttls__write_string(
+    this: ThisPtr<crate::websocket_client::WebSocketClientTLS>,
+    str_: &bun_core::EncodedSlice,
+    op: u8,
+) {
+    WebSocketClientTLS::write_string(this, str_, op)
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // InitialDataHandler
 // ──────────────────────────────────────────────────────────────────────────
 
-pub struct InitialDataHandler<const SSL: bool> {
-    pub(crate) adopted: Option<NonNull<WebSocket<SSL>>>,
-    /// Pending-activity ref, dropped when [`Self::handle_without_deinit`] consumes `adopted`.
-    pub(crate) ws: Option<CppWebSocketRef>,
-    pub(crate) slice: Box<[u8]>,
+/// Bytes the upgrade client read past the end of the handshake response; boxed
+/// so they cross C++ (`WebSocket::didConnect*`) as one opaque pointer.
+pub struct InitialData(pub Vec<u8>);
+
+/// Handshake-overflow bytes plus the pending-activity ref that keeps the C++
+/// `WebSocket` alive until they are delivered.
+struct InitialDataHandler {
+    slice: Vec<u8>,
+    _pending_activity: CppWebSocketRef,
 }
 
-impl<const SSL: bool> InitialDataHandler<SSL> {
-    fn handle_without_deinit(&mut self) {
-        let Some(this_socket_ptr) = self.adopted.take() else {
-            return;
-        };
-        let ws_ptr = this_socket_ptr.as_ptr();
-        // this fn is reachable re-entrantly from `WebSocket::handle_data`,
-        // so never materialize a `&mut WebSocket` here.
-        // SAFETY: `adopted` is a backref to a live WebSocket (heap::alloc
-        // provenance).
-        unsafe { (*ws_ptr).initial_data_handler.set(None) };
-        // RAII: take the owned ref so it drops at
-        // scope exit. Paired with the `adopted.take()` above so the ref is
-        // released exactly once even when this fn is later re-called with
-        // `adopted == None` (early return leaves `ws` already `None`).
-        let _ws_ref = self.ws.take();
-
+impl InitialDataHandler {
+    /// Feed the buffered bytes to `ws` as if they had just arrived.
+    fn deliver<const SSL: bool>(self, ws: ThisPtr<WebSocket<SSL>>) {
         // For tunnel mode, tcp is detached but connection is still active through the tunnel
-        // SAFETY: `ws_ptr` is live (see above); brief shared borrows for
-        // `is_closed()` / `is_some()` — no `&mut` to `*ws_ptr` is live.
-        let is_connected =
-            unsafe { !(*ws_ptr).tcp.get().is_closed() || (*ws_ptr).proxy_tunnel.get().is_some() };
-        // SAFETY: `ws_ptr` is live; raw read of a `Copy` field.
-        if unsafe { (*ws_ptr).outgoing_websocket.get().is_some() } && is_connected {
-            // SAFETY: `ws_ptr` carries `heap::alloc` provenance and is live; no
-            // borrow of `*ws_ptr` is live in this frame across the call.
-            let ws = unsafe { ThisPtr::new(ws_ptr) };
+        let is_connected = !ws.tcp.get().is_closed() || ws.tunnel().is_some();
+        if ws.cpp_websocket().is_some() && is_connected {
             WebSocket::<SSL>::handle_data(ws, &self.slice);
         }
     }
+}
 
-    /// `extern "C"` thunk shape for `JSGlobalObject::queue_microtask_callback`.
-    unsafe extern "C" fn handle(this: *mut c_void) {
-        let this = this.cast::<Self>();
-        // SAFETY: called from the microtask queue with the `heap::alloc`
-        // pointer from init()/init_with_tunnel(); the queue hands us sole
-        // ownership. Nothing reached from `handle_without_deinit` can access
-        // this allocation — it clears the WebSocket's backref before any
-        // dispatch — so the owning `&mut` never aliases.
-        let mut this = unsafe { bun_core::heap::take(this) };
-        this.handle_without_deinit();
+/// Microtask that delivers [`InitialDataHandler`] ahead of fresh socket data.
+pub(crate) struct InitialDataTask<const SSL: bool> {
+    /// Detached by `WebSocket`'s `Drop` (or by `handle_data` draining `data`
+    /// first) so a task that outlives its client does nothing.
+    ws: Cell<Option<BackRef<WebSocket<SSL>, Root>>>,
+    data: JsCell<Option<InitialDataHandler>>,
+}
+
+impl<const SSL: bool> jsc::MicrotaskCallback for InitialDataTask<SSL> {
+    fn run(self: Box<Self>) {
+        let Some(ws) = self.ws.take() else {
+            return;
+        };
+        let ws = ws.this_ptr();
+        ws.pending_initial_task.set(None);
+        if let Some(initial_data) = self.data.replace(None) {
+            let _guard = RefPtr::from_this(ws);
+            initial_data.deliver(ws);
+        }
     }
 }
 

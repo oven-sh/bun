@@ -457,7 +457,7 @@ const rustSharedTypes: Record<string, string> = {
   "JSC::JSGlobalObject": "crate::JSGlobalObject",
   "Zig::GlobalObject": "crate::JSGlobalObject",
   "ZigException": "crate::zig_exception::ZigException",
-  "ZigString": "bun_core::ZigString",
+  "EncodedSlice": "bun_core::EncodedSlice",
   "JSC::VM": "crate::VM",
   "JSC::JSPromise": "crate::JSPromise",
   "JSC::JSMap": "crate::JSMap",

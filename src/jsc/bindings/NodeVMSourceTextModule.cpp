@@ -89,7 +89,6 @@ NodeVMSourceTextModule* NodeVMSourceTextModule::create(VM& vm, JSGlobalObject* g
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     RefPtr fetcher(NodeVMScriptFetcher::create(vm, dynamicImportCallback, moduleWrapper));
-    RETURN_IF_EXCEPTION(scope, nullptr);
 
     SourceOrigin sourceOrigin { {}, *fetcher };
 
@@ -111,7 +110,6 @@ NodeVMSourceTextModule* NodeVMSourceTextModule::create(VM& vm, JSGlobalObject* g
     NodeVMSourceTextModule* ptr = new (NotNull, allocateCell<NodeVMSourceTextModule>(vm)) NodeVMSourceTextModule(
         vm, zigGlobalObject->NodeVMSourceTextModuleStructure(), WTF::move(identifier), contextValue,
         WTF::move(sourceCode), moduleWrapper, initializeImportMeta);
-    RETURN_IF_EXCEPTION(scope, nullptr);
     ptr->finishCreation(vm);
 
     if (cachedData.isEmpty()) {
@@ -126,12 +124,10 @@ NodeVMSourceTextModule* NodeVMSourceTextModule::create(VM& vm, JSGlobalObject* g
     }
 
     ptr->m_cachedExecutable.set(vm, ptr, executable);
-    LexicallyScopedFeatures lexicallyScopedFeatures = globalObject->globalScopeExtension() ? TaintedByWithScopeLexicallyScopedFeature : NoLexicallyScopedFeatures;
-    SourceCodeKey key(ptr->sourceCode(), {}, SourceCodeType::ProgramType, lexicallyScopedFeatures, JSParserScriptMode::Classic, DerivedContextType::None, EvalContextType::None, false, {}, std::nullopt);
+    LexicallyScopedFeatures lexicallyScopedFeatures = StrictModeLexicallyScopedFeature;
+    SourceCodeKey key(ptr->sourceCode(), {}, SourceCodeType::ModuleType, lexicallyScopedFeatures, JSParserScriptMode::Module, DerivedContextType::None, EvalContextType::None, false, {}, std::nullopt);
     Ref<CachedBytecode> cachedBytecode = CachedBytecode::create(std::span(cachedData), nullptr, {});
-    RETURN_IF_EXCEPTION(scope, nullptr);
     UnlinkedModuleProgramCodeBlock* unlinkedBlock = decodeCodeBlock<UnlinkedModuleProgramCodeBlock>(vm, key, WTF::move(cachedBytecode));
-    RETURN_IF_EXCEPTION(scope, nullptr);
 
     if (unlinkedBlock) {
         JSScope* jsScope = globalObject->globalScope();
@@ -297,6 +293,7 @@ JSValue NodeVMSourceTextModule::createModuleRecord(JSGlobalObject* globalObject)
         requestObject->putDirect(vm, attributesIdentifier, attributesObject);
         addModuleRequest({ request.m_specifier.string(), WTF::move(attributeMap) });
         requestsArray->putDirectIndex(globalObject, i, requestObject);
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     m_moduleRequestsArray.set(vm, this, requestsArray);
@@ -494,17 +491,11 @@ RefPtr<CachedBytecode> NodeVMSourceTextModule::bytecode(JSGlobalObject* globalOb
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (!m_bytecode) {
-        if (!m_cachedExecutable) {
-            ModuleProgramExecutable* executable = ModuleProgramExecutable::tryCreate(globalObject, m_sourceCode);
-            RETURN_IF_EXCEPTION(scope, nullptr);
-            if (!executable) {
-                throwSyntaxError(globalObject, scope, "Failed to create cached executable"_s);
-                return nullptr;
-            }
-            m_cachedExecutable.set(vm, this, executable);
+        m_bytecode = getBytecode(globalObject, SourceCodeType::ModuleType, m_sourceCode);
+        if (!m_bytecode) {
+            throwSyntaxError(globalObject, scope, "Failed to create cached data"_s);
+            return nullptr;
         }
-        m_bytecode = getBytecode(globalObject, m_cachedExecutable.get(), m_sourceCode);
-        RETURN_IF_EXCEPTION(scope, nullptr);
     }
 
     return m_bytecode;
@@ -551,8 +542,8 @@ void NodeVMSourceTextModule::initializeImportMeta(JSGlobalObject* globalObject)
     args.append(metaValue);
     args.append(m_moduleWrapper.get());
 
-    JSC::call(globalObject, m_initializeImportMeta.get(), callData, jsUndefined(), args);
     scope.release();
+    JSC::call(globalObject, m_initializeImportMeta.get(), callData, jsUndefined(), args);
 }
 
 JSObject* NodeVMSourceTextModule::createPrototype(VM& vm, JSGlobalObject* globalObject)

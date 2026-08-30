@@ -139,16 +139,11 @@ pub fn to_utf8_list_with_type_bun<const SKIP_TRAILING_REPLACEMENT: bool>(
 
         let count: usize = replacement.utf8_width() as usize;
         #[cfg(not(target_family = "wasm"))]
-        {
-            let extra = ((utf16_remaining.len() as u64 & ((1u64 << 52) - 1)) as f64 * 1.2) as usize;
-            list.reserve_exact((i + count + list.len() + extra).saturating_sub(list.len()));
-        }
+        let extra = ((utf16_remaining.len() as u64 & ((1u64 << 52) - 1)) as f64 * 1.2) as usize;
         #[cfg(target_family = "wasm")]
-        {
-            list.reserve_exact(
-                (i + count + list.len() + utf16_remaining.len() + 4).saturating_sub(list.len()),
-            );
-        }
+        let extra = utf16_remaining.len() + 4;
+        list.try_reserve_exact(i + count + extra)
+            .map_err(|_| AllocError)?;
         append_u16_as_u8(list, to_copy);
 
         if SKIP_TRAILING_REPLACEMENT {
@@ -167,8 +162,8 @@ pub fn to_utf8_list_with_type_bun<const SKIP_TRAILING_REPLACEMENT: bool>(
     }
 
     if !utf16_remaining.is_empty() {
-        let need = utf16_remaining.len() + list.len();
-        list.reserve_exact(need.saturating_sub(list.len()));
+        list.try_reserve_exact(utf16_remaining.len())
+            .map_err(|_| AllocError)?;
         append_u16_as_u8(list, utf16_remaining);
     }
 
@@ -540,17 +535,11 @@ pub fn copy_latin1_into_ascii(dest: &mut [u8], src: &[u8]) {
 pub enum BOM {
     Utf8,
     Utf16Le,
-    Utf16Be,
-    Utf32Le,
-    Utf32Be,
 }
 
 impl BOM {
     pub const UTF8_BYTES: [u8; 3] = [0xef, 0xbb, 0xbf];
     pub(crate) const UTF16_LE_BYTES: [u8; 2] = [0xff, 0xfe];
-    pub(crate) const UTF16_BE_BYTES: [u8; 2] = [0xfe, 0xff];
-    pub(crate) const UTF32_LE_BYTES: [u8; 4] = [0xff, 0xfe, 0x00, 0x00];
-    pub(crate) const UTF32_BE_BYTES: [u8; 4] = [0x00, 0x00, 0xfe, 0xff];
 
     pub fn detect(bytes: &[u8]) -> Option<BOM> {
         if bytes.len() < 3 {
@@ -560,12 +549,8 @@ impl BOM {
             return Some(BOM::Utf8);
         }
         if eql_ignore_len(bytes, &Self::UTF16_LE_BYTES) {
-            // if (bytes.len > 4 and eqlComptimeIgnoreLen(bytes[2..], utf32_le_bytes[2..]))
-            //   return .utf32_le;
             return Some(BOM::Utf16Le);
         }
-        // if (eqlComptimeIgnoreLen(bytes, utf16_be_bytes)) return .utf16_be;
-        // if (bytes.len > 4 and eqlComptimeIgnoreLen(bytes, utf32_le_bytes)) return .utf32_le;
         None
     }
 
@@ -581,9 +566,6 @@ impl BOM {
         match self {
             BOM::Utf8 => &Self::UTF8_BYTES,
             BOM::Utf16Le => &Self::UTF16_LE_BYTES,
-            BOM::Utf16Be => &Self::UTF16_BE_BYTES,
-            BOM::Utf32Le => &Self::UTF32_LE_BYTES,
-            BOM::Utf32Be => &Self::UTF32_BE_BYTES,
         }
     }
 
@@ -595,9 +577,6 @@ impl BOM {
         match self {
             BOM::Utf8 => "utf8",
             BOM::Utf16Le => "utf16_le",
-            BOM::Utf16Be => "utf16_be",
-            BOM::Utf32Le => "utf32_le",
-            BOM::Utf32Be => "utf32_be",
         }
     }
 
@@ -617,11 +596,6 @@ impl BOM {
                 let out = crate::strings_impl::to_utf8_alloc_from_le_bytes(trimmed_bytes);
                 drop(bytes);
                 out
-            }
-            _ => {
-                // TODO: this needs to re-encode, for now we just remove the BOM
-                crate::vec::drain_front(&mut bytes, self.get_header().len());
-                bytes
             }
         }
     }
@@ -649,13 +623,6 @@ impl BOM {
                 // Return the list slice (not `out`, the new alloc) to honor the
                 // "always points to the base of the input" doc comment.
                 &list[..]
-            }
-            _ => {
-                // TODO: this needs to re-encode, for now we just remove the BOM
-                let n = self.get_header().len();
-                let len = list.len();
-                list.copy_within(n.., 0);
-                &list[..len - n]
             }
         }
     }

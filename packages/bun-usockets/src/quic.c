@@ -1193,6 +1193,7 @@ us_quic_socket_context_t *us_create_quic_client_context(
     if (!ssl) return NULL;
     SSL_CTX_set_min_proto_version(ssl, TLS1_3_VERSION);
     SSL_CTX_set_max_proto_version(ssl, TLS1_3_VERSION);
+    X509_VERIFY_PARAM_set_flags(SSL_CTX_get0_param(ssl), X509_V_FLAG_IGNORE_EXPIRED_TRUST_ANCHORS);
     /* Same root store the H1/H2 client uses (bundled Mozilla roots + platform
      * CAs + NODE_EXTRA_CA_CERTS); set_default_verify_paths alone doesn't find
      * the system store on macOS/Windows. */

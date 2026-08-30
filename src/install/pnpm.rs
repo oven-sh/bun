@@ -17,6 +17,7 @@ use crate::external_slice::ExternalSlice;
 use crate::integrity::Integrity;
 use crate::lockfile::{self, LoadResult, LoadResultOk, Lockfile};
 use crate::npm::{self};
+use crate::package_manager_real::update_package_json_and_install::print_package_json_into_cache_entry;
 use crate::repository::Repository;
 use crate::resolution::{self, Resolution, TaggedValue};
 use crate::{DependencyID, INVALID_PACKAGE_ID, PackageID, PackageManager};
@@ -2732,36 +2733,14 @@ fn update_package_json_after_migration(
     }
 
     if needs_update {
-        let mut buffer_writer = bun_js_printer::BufferWriter::init();
-        buffer_writer.append_newline = !root_pkg_json.source.contents().is_empty()
-            && root_pkg_json.source.contents()[root_pkg_json.source.contents().len() - 1] == b'\n';
-        let mut package_json_writer = bun_js_printer::BufferPrinter::init(buffer_writer);
-
-        if bun_js_printer::print_json(
-            &mut package_json_writer,
-            json,
-            &root_pkg_json.source,
-            bun_js_printer::PrintJsonOptions {
-                indent: root_pkg_json.indentation,
-                mangled_props: None,
-                ..Default::default()
-            },
-        )
-        .is_err()
-        {
-            return Ok(());
+        print_package_json_into_cache_entry(root_pkg_json, json);
+        // The edits above spliced `Store`-allocated nodes into the cached tree,
+        // and the next `initialize_store()` recycles them. Re-parse so the entry
+        // owns its tree again before `bun add` prints it after the install.
+        if let Err(err) = root_pkg_json.reparse_root(log) {
+            bun_core::pretty_errorln!("package.json failed to parse due to error {}", err.name());
+            bun_core::Global::crash();
         }
-
-        if package_json_writer.flush().is_err() {
-            return Err(AllocError);
-        }
-
-        root_pkg_json.source.contents = std::borrow::Cow::Owned(
-            package_json_writer
-                .ctx
-                .written_without_trailing_zero()
-                .to_vec(),
-        );
 
         // Write the updated package.json
         if sys::File::write_file(

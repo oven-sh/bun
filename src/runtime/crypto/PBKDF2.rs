@@ -5,17 +5,19 @@ use bun_jsc::{
     ArrayBuffer, CallFrame, JSGlobalObject, JSValue, Job, JobContext, JsResult, JsThread, Strong,
 };
 
-use crate::node::{Flavor, StringObjects, StringOrBuffer};
+use crate::node::{Flavor, StringObjects, StringOrBuffer, ThreadIsolated, ThreadIsolatedArg};
 
 use crate::crypto::evp::{self, Algorithm};
 
 pub(crate) struct PBKDF2 {
-    pub password: StringOrBuffer,
-    pub salt: StringOrBuffer,
+    pub password: StringOrBuffer<'static>,
+    pub salt: StringOrBuffer<'static>,
     pub iteration_count: u32,
     pub length: usize,
     algorithm: Algorithm,
 }
+// SAFETY: `password` and `salt` are `StringOrBuffer`s (see its impl); the rest is plain data.
+unsafe impl ThreadIsolatedArg for PBKDF2 {}
 
 impl PBKDF2 {
     pub(crate) fn run(&mut self, output: &mut [u8]) -> bool {
@@ -57,12 +59,6 @@ impl PBKDF2 {
 
         true
     }
-
-    // `password`/`salt` are `StringOrBuffer` whose `Drop` releases the
-    // slice/WTF ref, so no explicit cleanup hook is needed —
-    // dropping `PBKDF2` is sufficient for the sync path. The async path holds
-    // `ThreadSafe<PBKDF2>`, whose `Drop` additionally unprotects JS-rooted
-    // buffers via the `Unprotect` impl below.
 
     /// The second element is the validated callback on the `Async` flavor and
     /// `JSValue::UNDEFINED` on `Sync` (as `Scrypt::from_js`).
@@ -153,7 +149,7 @@ impl PBKDF2 {
             }
 
             'invalid: {
-                let slice = arg4.to_slice(global_this)?;
+                let slice = arg4.to_utf8(global_this)?;
                 match evp::lookup_ignore_case(slice.slice()) {
                     Some(alg) => match alg {
                         Algorithm::Shake128 | Algorithm::Shake256 => break 'invalid,
@@ -164,18 +160,14 @@ impl PBKDF2 {
                 }
             }
 
-            if !global_this.has_exception() {
-                let slice = arg4.to_slice(global_this)?;
-                let name = slice.slice();
-                return Err(global_this
-                    .err(
-                        bun_jsc::ErrorCode::CRYPTO_INVALID_DIGEST,
-                        format_args!("Invalid digest: {}", bstr::BStr::new(name)),
-                    )
-                    .throw());
-                // `slice` drops here.
-            }
-            return Err(bun_jsc::JsError::Thrown);
+            let slice = arg4.to_utf8(global_this)?;
+            let name = slice.slice();
+            return Err(global_this
+                .err(
+                    bun_jsc::ErrorCode::CRYPTO_INVALID_DIGEST,
+                    format_args!("Invalid digest: {}", bstr::BStr::new(name)),
+                )
+                .throw());
         };
 
         let mut out = PBKDF2 {
@@ -185,14 +177,7 @@ impl PBKDF2 {
             length: keylen,
             algorithm,
         };
-        // Non-async path: `StringOrBuffer` fields drop with `out` on early return — no explicit call needed.
-        let mut guard = scopeguard::guard(&mut out, |out| {
-            if global_this.has_exception() && flavor == Flavor::Async {
-                bun_jsc::Unprotect::unprotect(out);
-            }
-        });
-
-        guard.salt = match StringOrBuffer::from_js_maybe_async(
+        out.salt = match StringOrBuffer::from_js_maybe_async(
             global_this,
             arg1,
             flavor,
@@ -208,11 +193,11 @@ impl PBKDF2 {
             }
         };
 
-        if guard.salt.slice().len() > i32::MAX as usize {
+        if out.salt.slice().len() > i32::MAX as usize {
             return Err(global_this.throw_invalid_arguments(format_args!("salt is too long")));
         }
 
-        guard.password = match StringOrBuffer::from_js_maybe_async(
+        out.password = match StringOrBuffer::from_js_maybe_async(
             global_this,
             arg0,
             flavor,
@@ -228,12 +213,12 @@ impl PBKDF2 {
             }
         };
 
-        if guard.password.slice().len() > i32::MAX as usize {
+        if out.password.slice().len() > i32::MAX as usize {
             return Err(global_this.throw_invalid_arguments(format_args!("password is too long")));
         }
 
         if flavor == Flavor::Sync {
-            if let StringOrBuffer::Buffer(buffer) = &mut guard.salt {
+            if let StringOrBuffer::Buffer(buffer) = &mut out.salt {
                 buffer.buffer = ArrayBuffer::from_typed_array(global_this, buffer.buffer.value);
             }
         }
@@ -252,26 +237,23 @@ impl PBKDF2 {
             Flavor::Sync => JSValue::UNDEFINED,
         };
 
-        scopeguard::ScopeGuard::into_inner(guard);
         Ok((out, callback))
     }
-}
 
-impl bun_jsc::Unprotect for PBKDF2 {
-    /// JS-side half of cleanup — owned slices are released by
-    /// `Drop for StringOrBuffer`.
-    #[inline]
-    fn unprotect(&mut self) {
-        self.password.unprotect();
-        self.salt.unprotect();
+    /// [`from_js`](Self::from_js) for the work-pool job, with its validated callback.
+    pub(crate) fn from_js_async(
+        global_this: &JSGlobalObject,
+        call_frame: &CallFrame,
+    ) -> JsResult<(ThreadIsolated<PBKDF2>, JSValue)> {
+        let (data, callback) = Self::from_js(global_this, call_frame, Flavor::Async)?;
+        // SAFETY: parsed with `Flavor::Async`.
+        Ok((unsafe { ThreadIsolated::new(data) }, callback))
     }
 }
 
 /// `crypto.pbkdf2` off the JS thread.
 pub(crate) struct Pbkdf2Job {
-    /// `from_js(.., Flavor::Async)` protected the input buffers; the
-    /// [`bun_jsc::ThreadSafe`] releases that with the job.
-    pub pbkdf2: bun_jsc::ThreadSafe<PBKDF2>,
+    pub pbkdf2: ThreadIsolated<PBKDF2>,
     pub output: Vec<u8>,
     pub err: bool,
 }
@@ -338,15 +320,17 @@ impl JobContext for Pbkdf2Job {
     }
 }
 
-/// Schedule the derivation on the work pool; `callback` was validated by
-/// `from_js(.., Flavor::Async)`.
-pub(crate) fn create_job(global_this: &JSGlobalObject, data: PBKDF2, callback: JSValue) {
+/// Schedule the derivation on the work pool; `callback` was validated by `from_js_async`.
+pub(crate) fn create_job(
+    global_this: &JSGlobalObject,
+    data: ThreadIsolated<PBKDF2>,
+    callback: JSValue,
+) {
     let cx = global_this.js_thread();
     Job::<Pbkdf2Job>::schedule(
         &cx,
         Pbkdf2Job {
-            // `from_js(.., Flavor::Async)` already protected — adopt, don't re-protect.
-            pbkdf2: bun_jsc::ThreadSafe::adopt(data),
+            pbkdf2: data,
             output: Vec::new(),
             err: false,
         },

@@ -841,8 +841,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         {
             self.push_scope_for_visit_pass(ScopeKind::ClassBody, class.body_loc)
                 .expect("unreachable");
-            // defer { p.pop_scope(); p.enclosing_class_keyword = old_enclosing_class_keyword; }
-            // — manual restore at block end below; no early returns in this block.
 
             let mut constructor_function: Option<bun_ast::StoreRef<E::Function>> = None;
             let properties: &mut [G::Property] = class.properties.slice_mut();
@@ -898,13 +896,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                 // Make it an error to use "arguments" in a class body
                 self.vis_scope().forbid_arguments = true;
-                // defer p.current_scope.forbid_arguments = false;
 
                 // The value of "this" is shadowed inside property values
                 let old_is_this_captured = self.fn_only_data_visit.is_this_nested;
                 self.fn_only_data_visit.is_this_nested = true;
-                // defer p.fn_only_data_visit.is_this_nested = old_is_this_captured;
-                // — manual restore at end of loop body; no `continue` after this point.
 
                 // We need to explicitly assign the name to the property initializer if it
                 // will be transformed such that it is no longer an inline initializer.

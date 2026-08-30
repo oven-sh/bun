@@ -434,15 +434,6 @@ struct us_internal_callback_t {
 
 #endif
 
-#if __cplusplus
-extern "C" {
-#endif
-int us_internal_raw_root_certs(struct us_cert_string_t **out);
-
-#if __cplusplus
-}
-#endif
-
 /* Listen sockets are sockets, with their own embedded group for the listener
  * itself (for the accept-readable poll) plus the accepted-socket parameters
  * stamped on every accept(). The accepted sockets are linked into whatever
@@ -471,16 +462,22 @@ struct us_listen_socket_t {
   unsigned char accept_kind;
   /* Set when TCP_DEFER_ACCEPT/SO_ACCEPTFILTER was successfully applied. */
   unsigned char deferred_accept;
+  /* LIBUS_SOCKET_OPEN_PAUSED: accepted sockets start without read interest. */
+  unsigned char accept_paused;
 };
 
 void us_internal_socket_group_link_connecting_socket(us_socket_group_r group, struct us_connecting_socket_t *c);
 void us_internal_socket_group_unlink_connecting_socket(us_socket_group_r group, struct us_connecting_socket_t *c);
 
-int us_raw_root_certs(struct us_cert_string_t **out);
 
 /* Save/restore the per-loop BIO routing state around in-handshake JS
- * callbacks (SNI / ALPN). Defined in crypto/openssl.c. */
-void us_internal_ssl_loop_state_save(void *ssl, void **out5);
-void us_internal_ssl_loop_state_restore(void **saved5);
+ * callbacks (SNI / ALPN). Defined in crypto/openssl.c. The snapshot is an
+ * opaque void*[US_SSL_LOOP_STATE_SLOTS] the caller provides; Rust callers
+ * size their array from us_internal_ssl_loop_state_slots() in a debug
+ * assertion so growth cannot silently corrupt a caller's stack. */
+#define US_SSL_LOOP_STATE_SLOTS 6
+int us_internal_ssl_loop_state_slots(void);
+void us_internal_ssl_loop_state_save(void *ssl, void **out);
+void us_internal_ssl_loop_state_restore(void **saved);
 
 #endif // INTERNAL_H

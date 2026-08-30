@@ -66,11 +66,20 @@ const {
   getHashes,
   scrypt,
   scryptSync,
+  argon2: _argon2,
+  argon2Sync: _argon2Sync,
 } = $rust("node_crypto_binding.rs", "createNodeCryptoBindingZig");
 
 const normalizeEncoding = $newRustFunction("node_util_binding.rs", "normalizeEncoding", 1);
 
-const { validateString } = require("internal/validators");
+const {
+  validateFunction,
+  validateInteger,
+  validateObject,
+  validateOneOf,
+  validateString,
+  validateUint32,
+} = require("internal/validators");
 const { deprecate } = require("internal/util/deprecate");
 
 const kHandle = Symbol("kHandle");
@@ -300,14 +309,97 @@ crypto_exports.randomBytes = randomBytes;
 crypto_exports.randomUUID = randomUUID;
 crypto_exports.randomUUIDv7 = randomUUIDv7;
 
-// Node only provides Argon2 when built against OpenSSL >= 3.2; BoringSSL has no
-// Argon2, so these throw the same error an unsupported Node build throws.
-// The unused parameters are declared to keep `.length` equal to Node's (3 and 2).
-crypto_exports.argon2 = function argon2(_algorithm, _parameters, _callback) {
-  throw $ERR_CRYPTO_ARGON2_NOT_SUPPORTED("Argon2 algorithm not supported");
+const kArgon2Types = { __proto__: null, argon2d: 0, argon2i: 1, argon2id: 2 };
+
+// Node's argon2 path rejects KeyObject and throws node-formatted
+// ERR_INVALID_ARG_TYPE, unlike the local `getArrayBufferOrView` above.
+function getArgon2BufferSource(buffer, name) {
+  if (isAnyArrayBuffer(buffer)) return buffer;
+  if (typeof buffer === "string") return Buffer.from(buffer, "utf8");
+  if (!isArrayBufferView(buffer)) {
+    throw $ERR_INVALID_ARG_TYPE(name, ["string", "ArrayBuffer", "Buffer", "TypedArray", "DataView"], buffer);
+  }
+  return buffer;
+}
+
+// Mirrors `check()` in node's lib/internal/crypto/argon2.js, except a
+// wrong-typed secret/associatedData names the property (node passes no name
+// there and trips ERR_INTERNAL_ASSERTION on it).
+function checkArgon2(algorithm, parameters) {
+  validateString(algorithm, "algorithm");
+  validateOneOf(algorithm, "algorithm", ["argon2d", "argon2i", "argon2id"]);
+  const type = kArgon2Types[algorithm];
+
+  validateObject(parameters, "parameters");
+
+  const { parallelism, tagLength, memory, passes } = parameters;
+  const MAX_POSITIVE_UINT_32 = 2 ** 32 - 1;
+
+  const message = getArgon2BufferSource(parameters.message, "parameters.message");
+  validateInteger(message.byteLength, "parameters.message.byteLength", 0, MAX_POSITIVE_UINT_32);
+
+  const nonce = getArgon2BufferSource(parameters.nonce, "parameters.nonce");
+  validateInteger(nonce.byteLength, "parameters.nonce.byteLength", 8, MAX_POSITIVE_UINT_32);
+
+  validateInteger(parallelism, "parameters.parallelism", 1, 2 ** 24 - 1);
+  validateInteger(tagLength, "parameters.tagLength", 4, MAX_POSITIVE_UINT_32);
+  validateInteger(memory, "parameters.memory", 8 * parallelism, MAX_POSITIVE_UINT_32);
+  validateUint32(passes, "parameters.passes", true);
+
+  let secret = parameters.secret;
+  if (secret === undefined) {
+    secret = new Uint8Array(0);
+  } else {
+    secret = getArgon2BufferSource(secret, "parameters.secret");
+    validateInteger(secret.byteLength, "parameters.secret.byteLength", 0, MAX_POSITIVE_UINT_32);
+  }
+
+  let associatedData = parameters.associatedData;
+  if (associatedData === undefined) {
+    associatedData = new Uint8Array(0);
+  } else {
+    associatedData = getArgon2BufferSource(associatedData, "parameters.associatedData");
+    validateInteger(associatedData.byteLength, "parameters.associatedData.byteLength", 0, MAX_POSITIVE_UINT_32);
+  }
+
+  return { message, nonce, secret, associatedData, tagLength, passes, parallelism, memory, type };
+}
+
+crypto_exports.argon2 = function argon2(algorithm, parameters, callback) {
+  parameters = checkArgon2(algorithm, parameters);
+
+  validateFunction(callback, "callback");
+
+  _argon2(
+    parameters.message,
+    parameters.nonce,
+    parameters.parallelism,
+    parameters.tagLength,
+    parameters.memory,
+    parameters.passes,
+    parameters.secret,
+    parameters.associatedData,
+    parameters.type,
+    (err, result) => {
+      if (err !== undefined) return callback(err);
+      callback(null, result);
+    },
+  );
 };
-crypto_exports.argon2Sync = function argon2Sync(_algorithm, _parameters) {
-  throw $ERR_CRYPTO_ARGON2_NOT_SUPPORTED("Argon2 algorithm not supported");
+crypto_exports.argon2Sync = function argon2Sync(algorithm, parameters) {
+  parameters = checkArgon2(algorithm, parameters);
+
+  return _argon2Sync(
+    parameters.message,
+    parameters.nonce,
+    parameters.parallelism,
+    parameters.tagLength,
+    parameters.memory,
+    parameters.passes,
+    parameters.secret,
+    parameters.associatedData,
+    parameters.type,
+  );
 };
 
 crypto_exports.checkPrime = checkPrime;

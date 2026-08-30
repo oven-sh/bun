@@ -37,6 +37,9 @@ pub mod posix_spawn {
     }
 }
 
+/// Ctrl+C handling for a process acting as a shell for foreground children.
+#[path = "ctrl_c.rs"]
+pub mod ctrl_c;
 /// `Process` / `Poller` / `WaiterThread` / `spawn_process` / `sync` /
 /// `Status` / `SpawnOptions` / `SpawnResult`.
 #[path = "process.rs"]
@@ -60,8 +63,9 @@ pub use bun_spawn_sys::{Argv, CStrPtr, Envp, ffi};
 
 pub use bun_spawn_sys::RusageFields;
 pub use process::{
-    Dup2, Exited, ExtraPipe, PidT, Poller, Process, Rusage, SignalCodeExt, SpawnOptions,
-    SpawnProcessResult, SpawnResultExt, Status, StdioKind, WaiterThread, spawn_process,
+    Dup2, Exited, ExtraPipe, PidT, Poller, Process, ProcessHandle, Rusage, SignalCodeExt, SpawnEnv,
+    SpawnOptions, SpawnProcessResult, SpawnResultExt, Status, StdioKind, WaiterThread,
+    spawn_process, spawn_process_cstr,
 };
 
 // Variant types live in `bun_runtime`/`bun_install`; each provides its body
@@ -178,9 +182,8 @@ pub mod subprocess {
         Detached,
     }
 
-    /// Type-erased payload for [`Source::Any`]. JSC-tier callers wrap
-    /// `webcore::AnyBlob` / `jsc::ArrayBufferStrong` in a thin adaptor that
-    /// implements this trait. The vtable travels with the value, so no global
+    /// Type-erased payload for [`Source::Any`]. JSC-tier callers implement it
+    /// for `webcore::AnyBlob`. The vtable travels with the value, so no global
     /// hook registration is needed.
     pub trait SourceData {
         fn slice(&self) -> &[u8];

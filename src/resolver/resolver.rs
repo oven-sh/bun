@@ -369,7 +369,6 @@ pub struct Bufs {
     pub(crate) remap_path_trailing_slash: PathBuffer,
     pub(crate) path_in_global_disk_cache: PathBuffer,
     pub(crate) abs_to_rel: PathBuffer,
-    pub(crate) import_path_for_standalone_module_graph: PathBuffer,
 
     #[cfg(windows)]
     pub(crate) win32_normalized_dir_info_cache: [u8; MAX_PATH_BYTES * 2],
@@ -1296,13 +1295,17 @@ impl<'a> Resolver<'a> {
         let mut source_dir_resolver = bun_paths::PosixToWinNormalizer::default();
         let source_dir_normalized: &[u8] = 'brk: {
             if let Some(graph) = self.standalone_module_graph {
-                if ::bun_options_types::standalone_path::is_bun_standalone_file_path(import_path) {
-                    if graph.find_assume_standalone_path(import_path).is_some() {
+                let specifier_is_embedded_path =
+                    ::bun_options_types::standalone_path::is_bun_standalone_file_path(import_path);
+                if specifier_is_embedded_path
+                    || ::bun_options_types::standalone_path::is_bun_standalone_file_path(source_dir)
+                {
+                    if let Some(file_name) = graph.resolve(source_dir, import_path) {
                         self.extension_order = original_order;
                         return ResultUnion::Success(Result {
                             import_kind: kind,
                             path_pair: PathPair {
-                                primary: Path::init(import_path),
+                                primary: Path::init(file_name),
                                 secondary: None,
                             },
                             module_type: options::ModuleType::Esm,
@@ -1310,40 +1313,9 @@ impl<'a> Resolver<'a> {
                             ..Default::default()
                         });
                     }
-
-                    self.extension_order = original_order;
-                    return ResultUnion::NotFound;
-                } else if ::bun_options_types::standalone_path::is_bun_standalone_file_path(
-                    source_dir,
-                ) {
-                    if import_path.len() > 2 && is_dot_slash(&import_path[0..2]) {
-                        let buf = bufs!(import_path_for_standalone_module_graph);
-                        let joined = bun_paths::join_abs_string_buf(
-                            source_dir,
-                            buf,
-                            &[import_path],
-                            bun_paths::Platform::Loose,
-                        );
-
-                        // Support relative paths in the graph
-                        if let Some(file_name) = graph.find_assume_standalone_path(joined) {
-                            // Intern: trait borrows into the graph; `Path::init`
-                            // needs `'static` (DirnameStore-backed).
-                            let file_name = Fs::file_system::DirnameStore::instance()
-                                .append_slice(file_name)
-                                .expect("unreachable");
-                            self.extension_order = original_order;
-                            return ResultUnion::Success(Result {
-                                import_kind: kind,
-                                path_pair: PathPair {
-                                    primary: Path::init(file_name),
-                                    secondary: None,
-                                },
-                                module_type: options::ModuleType::Esm,
-                                flags: ResultFlags::IS_STANDALONE_MODULE,
-                                ..Default::default()
-                            });
-                        }
+                    if specifier_is_embedded_path {
+                        self.extension_order = original_order;
+                        return ResultUnion::NotFound;
                     }
                     break 'brk Fs::FileSystem::instance().top_level_dir;
                 }
@@ -1381,10 +1353,6 @@ impl<'a> Resolver<'a> {
                 .resolve_cwd(source_dir)
                 .unwrap_or_else(|_| panic!("Failed to query CWD"));
         };
-
-        // r.mutex.lock();
-        // defer r.mutex.unlock();
-        // errdefer (r.flushDebugLogs(.fail) catch {}) — handled at each error return below
 
         // A path with a null byte cannot exist on the filesystem. Continuing
         // anyways would cause assertion failures.
@@ -1864,7 +1832,7 @@ impl<'a> Resolver<'a> {
                 // @branchHint(.unlikely)
                 bun_core::hint::cold();
                 for custom_path in custom_paths {
-                    let custom_utf8 = custom_path.to_utf8_without_ref();
+                    let custom_utf8 = custom_path.to_utf8();
                     match self.check_relative_path(
                         custom_utf8.slice(),
                         import_path,
@@ -2004,7 +1972,7 @@ impl<'a> Resolver<'a> {
             if let Some(custom_paths) = self.custom_dir_paths {
                 bun_core::hint::cold();
                 for custom_path in custom_paths {
-                    let custom_utf8 = custom_path.to_utf8_without_ref();
+                    let custom_utf8 = custom_path.to_utf8();
                     match self.check_package_path(
                         custom_utf8.slice(),
                         import_path,
@@ -4454,7 +4422,6 @@ impl<'a> Resolver<'a> {
             let (qt_unsafe_path, qt_safe_path) = (queue_top.unsafe_path, queue_top.safe_path);
             let queue_top_unsafe_path: &[u8] = qt_unsafe_path.slice();
             let queue_top_safe_path: &[u8] = qt_safe_path.slice();
-            // defer top_parent = queue_top.result — done at end of loop body
             queue_slice_len -= 1;
 
             let open_dir: FD = if queue_top.fd.is_valid() {
@@ -5187,7 +5154,6 @@ impl<'a> Resolver<'a> {
             debug.increase_indent();
         }
 
-        // defer { debug.decreaseIndent() } — handled at returns
         macro_rules! dec_ret {
             ($e:expr) => {{
                 if let Some(d) = self.debug_logs.as_mut() {
@@ -5576,7 +5542,6 @@ impl<'a> Resolver<'a> {
             ));
             debug.increase_indent();
         }
-        // defer if (r.debug_logs) |*debug| debug.decreaseIndent();
         macro_rules! dec_ret {
             ($e:expr) => {{
                 if let Some(d) = self.debug_logs.as_mut() {
@@ -6757,8 +6722,10 @@ fn primary_side_effects(
 ) -> SideEffects {
     if side_effects.has_side_effects(path) {
         SideEffects::HasSideEffects
-    } else {
+    } else if matches!(side_effects, crate::package_json::SideEffects::False) {
         SideEffects::NoSideEffectsPackageJson
+    } else {
+        SideEffects::NoSideEffectsPackageJsonArray
     }
 }
 

@@ -236,14 +236,17 @@ process.exit(0);
 // Buffer.alloc frame construction here.
 //
 // The forced-close path (#32095) and the throwing-callback path (#32037) meet
-// in the pool connection's close handler: the user's onclose runs first and
-// may throw, and the bookkeeping that follows it must still settle the
-// promise returned by close(). A server that accepts the TCP connection but
-// never answers keeps the connection mid-handshake, and connectionTimeout: 0
-// disables the connect timer, so close() is the only teardown path; if the
-// throw skipped the bookkeeping these fixtures would never print "closed".
-// The mock server lives in the fixture process (it must observe `accepted`
-// before forcing close) and is imported from ./wire-frames by absolute path.
+// in the pool connection's close handler: the bookkeeping that settles the
+// promise returned by close() must run even when a user callback throws. A
+// server that accepts the TCP connection but never answers keeps the
+// connection mid-handshake, and connectionTimeout: 0 disables the connect
+// timer, so close() is the only teardown path; if the bookkeeping were
+// skipped these fixtures would never print "closed". Since #39940 a slot
+// that never completed its handshake fired no onconnect, so the forced close
+// skips its onclose too; the throwing onclose stays installed to pin that it
+// is not invoked. The mock server lives in the fixture process (it must
+// observe `accepted` before forcing close) and is imported from ./wire-frames
+// by absolute path.
 function forcedCloseFixture(adapter: "postgres" | "mysql") {
   const url = adapter === "postgres" ? "postgres://postgres@127.0.0.1:" : "mysql://root@127.0.0.1:";
   const db = adapter === "postgres" ? "/postgres" : "/db";
@@ -275,12 +278,10 @@ for (const [adapter, closedCode] of [
   ["mysql", "ERR_MYSQL_CONNECTION_CLOSED"],
 ] as const) {
   test.concurrent(
-    `${adapter}: a throwing onclose does not prevent forced close() from resolving mid-handshake`,
+    `${adapter}: forced close() mid-handshake resolves and skips onclose for the never-connected slot`,
     async () => {
       const { stdout, exitCode } = await runFixture(forcedCloseFixture(adapter));
-      expect(stdout).toBe(
-        `onclose: ${closedCode}\nuncaught: boom from onclose\nclosed\nquery rejected: ${closedCode}\n`,
-      );
+      expect(stdout).toBe(`closed\nquery rejected: ${closedCode}\n`);
       expect(exitCode).toBe(0);
     },
   );

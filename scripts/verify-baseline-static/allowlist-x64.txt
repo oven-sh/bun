@@ -865,6 +865,17 @@ _ZN4bssl29x25519_ge_scalarmult_base_adxEPA32_hPKh  [ADX, BMI2]
 
 
 # ----------------------------------------------------------------------------
+# BoringSSL Keccak x4 (ML-KEM/ML-DSA batch SHAKE). __attribute__((target("avx2")));
+# only reached when BORINGSSL_have_keccak_x4() -> CRYPTO_is_AVX2_capable()
+# (crypto/fipsmodule/keccak/internal.h, callers in mlkem.cc.inc).
+# (3 symbols)
+# ----------------------------------------------------------------------------
+_ZL11keccak_f_x4PmS_S_S_                                                      [AVX, AVX2]
+_ZN4bssl25BORINGSSL_keccak_short_x4EPPhmPPKhmNS_25boringssl_keccak_config_tE  [AVX, AVX2]
+_ZN4bssl27BORINGSSL_keccak_squeeze_x4EPNS_19BORINGSSL_keccak_stEPPhm          [AVX, AVX2]
+
+
+# ----------------------------------------------------------------------------
 # BoringSSL RDRAND.
 # (2 symbols)
 # ----------------------------------------------------------------------------

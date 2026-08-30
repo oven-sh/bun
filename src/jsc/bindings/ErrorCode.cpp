@@ -535,7 +535,7 @@ extern "C" BunString Bun__ErrorCode__determineSpecificType(JSC::JSGlobalObject* 
 // C++ INVALID_ARG_VALUE overloads use so Rust-side error paths match exactly.
 extern "C" BunString Bun__ErrorCode__inspectForErrorMessage(JSC::JSGlobalObject* globalObject, EncodedJSValue value)
 {
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(JSC::getVM(globalObject));
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
     WTF::StringBuilder builder;
     JSValueToStringSafe(globalObject, builder, JSValue::decode(value), true);
     RETURN_IF_EXCEPTION(scope, Zig::BunStringEmpty);
@@ -1673,8 +1673,6 @@ static JSValue ERR_INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobalO
     ASCIILiteral type = nameView->contains('.') ? "property"_s : "argument"_s;
     WTF::StringBuilder builder;
 
-    RETURN_IF_EXCEPTION(throwScope, {});
-
     ASSERT(reason.isUndefined() || reason.isString());
 
     builder.append("The "_s);
@@ -1704,7 +1702,7 @@ static JSValue ERR_INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobalO
     return createError(globalObject, code, builder.toString());
 }
 
-extern "C" JSC::EncodedJSValue Bun__createErrorWithCode(JSC::JSGlobalObject* globalObject, ErrorCode code, BunString* message)
+extern "C" JSC::EncodedJSValue Bun__createErrorWithCode(JSC::JSGlobalObject* globalObject, ErrorCode code, const BunString* message)
 {
     return JSValue::encode(createError(globalObject, code, message->toWTFString(BunString::ZeroCopy)));
 }
@@ -1898,7 +1896,6 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Bun::jsFunctionMakeErrorWithCode, __att
     EXPECT_ARG_COUNT(1);
 
     JSC::JSValue codeValue = callFrame->argument(0);
-    RETURN_IF_EXCEPTION(scope, {});
 
 #if ASSERT_ENABLED
     if (!codeValue.isNumber()) {
@@ -2229,9 +2226,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Bun::jsFunctionMakeErrorWithCode, __att
         RETURN_IF_EXCEPTION(scope, {});
         auto cause = callFrame->argument(2);
         JSObject* error = createError(globalObject, ErrorCode::ERR_VM_MODULE_LINK_FAILURE, message);
-        RETURN_IF_EXCEPTION(scope, {});
         Bun::putDirectNamed(vm, error, "cause"_s, cause);
-        RETURN_IF_EXCEPTION(scope, {});
         return JSC::JSValue::encode(error);
     }
 

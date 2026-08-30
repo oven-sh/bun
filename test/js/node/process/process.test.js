@@ -574,9 +574,9 @@ it("process.versions", () => {
   // These are the ACTUAL commits built into bun (not derived values, so
   // bumping a dep requires updating this test too).
   const expectedVersions = {
-    boringssl: "2288897e2e716330490893d226b4f079f9da9e0c",
+    boringssl: "41bf9b59c2ebf277a7aa427e1ecad5cc80dd4d4f",
     libarchive: "ded82291ab41d5e355831b96b0e1ff49e24d8939",
-    mimalloc: "6a14aee24315e503fa295a1fa90fe8b24ad91774",
+    mimalloc: "942b8342575bdece649438ca76f32276a019c51e",
     picohttpparser: "066d2b1e9ab820703db0837a7255d92d30f0c9f5",
     zlib: "12731092979c6d07f42da27da673a9f6c7b13586",
     tinycc: "05f0fafaa3be31e31d7b4b5c17dc60f62c991171",

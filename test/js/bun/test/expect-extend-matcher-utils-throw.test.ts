@@ -95,12 +95,12 @@ test("failure message diff stops at a value that throws while being rendered", a
   });
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
-    stdout: JSON.stringify({
+  expect(stdout).toBe(
+    `${JSON.stringify({
       toStrictEqual: "expect(received).toStrictEqual(expected)\n\n",
       matcherHint: "getter failed",
-    }),
-    stderr: "",
-    exitCode: 0,
-  });
+    })}\n`,
+  );
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
 });

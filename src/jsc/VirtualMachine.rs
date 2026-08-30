@@ -1396,7 +1396,7 @@ impl VirtualMachine {
         bun_core::Global::mimalloc_cleanup(false);
         let vm = self.global().vm();
         if sync {
-            return vm.run_gc(true);
+            return vm.run_gc();
         }
         vm.collect_async();
         vm.heap_size()
@@ -3503,7 +3503,7 @@ pub fn collect_macro_vm_garbage() {
     }
     debug_assert!(!vm_ref.is_main_thread);
     debug_assert_eq!(vm_ref.macro_guard_depth, 0);
-    vm_ref.jsc_vm().run_gc(true);
+    vm_ref.jsc_vm().run_gc();
 }
 
 fn normalize_source(source: &[u8]) -> &[u8] {

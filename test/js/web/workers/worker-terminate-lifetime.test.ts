@@ -986,14 +986,18 @@ test(
               let ctrl;
               const body = new ReadableStream({ start(c) { ctrl = c; c.enqueue(new Uint8Array(1024)); } });
               const p = fetch("\${server.url}", { method: "POST", body, duplex: "half" })
-                .then((r) => { keep.push(r.body); const rd = r.body.getReader(); rd.read(); keep.push(rd); touched++; })
+                .then((r) => {
+                  keep.push(r.body); const rd = r.body.getReader(); rd.read(); keep.push(rd);
+                  // Exit with that state alive, shortly after the first response has been touched.
+                  if (touched++ === 0) setTimeout(() => process.exit(0), 30 + \${(i * 13) % 60});
+                })
                 .catch(() => {});
               keep.push(p, ctrl);
               setInterval(() => { try { ctrl.enqueue(new Uint8Array(512)); } catch {} }, 5);
             }
-            // Exit with that state alive; exit code 3 if no fetch ever reached it (the test would
-            // then not be exercising what it claims to).
-            setTimeout(() => process.exit(touched > 0 ? 0 : 3), 150 + \${(i * 13) % 60});
+            // Exit code 3 if no fetch ever reached it (the test would then not be exercising what
+            // it claims to).
+            setTimeout(() => process.exit(3), 5000);
           \`, { eval: true });
           w.on("error", (e) => { console.error(e); process.exit(1); });
           w.on("exit", (code) => {

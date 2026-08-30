@@ -5023,7 +5023,7 @@ JSC::EncodedJSValue JSC__JSValue__toError_(JSC::EncodedJSValue JSValue0)
 
 #pragma mark - JSC::VM
 
-size_t JSC__VM__runGC(JSC::VM* vm, bool sync)
+size_t JSC__VM__runGC(JSC::VM* vm)
 {
     JSC::JSLockHolder lock(vm);
 
@@ -5034,19 +5034,12 @@ size_t JSC__VM__runGC(JSC::VM* vm, bool sync)
 #endif
 
     vm->finalizeSynchronousJSExecution();
-
-    if (sync) {
-        vm->clearSourceProviderCaches();
-        vm->heap.deleteAllUnlinkedCodeBlocks(JSC::PreventCollectionAndDeleteAllCode);
-        vm->heap.collectNow(JSC::Sync, JSC::CollectionScope::Full);
+    vm->clearSourceProviderCaches();
+    vm->heap.deleteAllUnlinkedCodeBlocks(JSC::PreventCollectionAndDeleteAllCode);
+    vm->heap.collectNow(JSC::Sync, JSC::CollectionScope::Full);
 #if IS_MALLOC_DEBUGGING_ENABLED && OS(DARWIN)
-        malloc_zone_pressure_relief(nullptr, 0);
+    malloc_zone_pressure_relief(nullptr, 0);
 #endif
-    } else {
-        vm->heap.deleteAllUnlinkedCodeBlocks(JSC::DeleteAllCodeIfNotCollecting);
-        vm->heap.collectSync(JSC::CollectionScope::Full);
-    }
-
     vm->finalizeSynchronousJSExecution();
 
 #if IS_MALLOC_DEBUGGING_ENABLED && OS(DARWIN)
@@ -5056,6 +5049,17 @@ size_t JSC__VM__runGC(JSC::VM* vm, bool sync)
 #endif
 
     return vm->heap.sizeAfterLastFullCollection();
+}
+
+// The entry point has been evaluated and the event loop is about to start:
+// module-initialization bytecode will not run again, so let it go, but
+// collect concurrently — a synchronous full collection here stalls the first
+// event-loop tick for as long as marking the freshly loaded heap takes.
+void JSC__VM__collectAfterEntryPoint(JSC::VM* vm)
+{
+    JSC::JSLockHolder lock(vm);
+    vm->heap.deleteAllUnlinkedCodeBlocks(JSC::DeleteAllCodeIfNotCollecting);
+    vm->heap.collectAsync(JSC::CollectionScope::Full);
 }
 
 [[ZIG_EXPORT(nothrow)]] bool JSC__VM__isJITEnabled()

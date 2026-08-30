@@ -134,7 +134,7 @@ pub mod Macro {
     /// `bun_bundler::ThreadPool::Worker::deinit` after both per-worker
     /// `MacroContext` boxes are freed — every other `MacroContext::deinit`
     /// path is either inside JS execution or inside a GC sweep, where
-    /// re-entering `run_gc(true)` is unsound.
+    /// re-entering `run_gc()` is unsound.
     #[inline]
     pub fn collect_vm_garbage() {
         __bun_macro_collect_vm_garbage();

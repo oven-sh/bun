@@ -932,9 +932,7 @@ impl WebWorker {
             && (vm.is_event_loop_alive() || vm.event_loop_mut().tick_concurrent_with_count() > 0)
         {
             vm.global().vm().release_weak_refs();
-            // `Arena = bumpalo::Bump` has no collect; global mimalloc
-            // handles reclamation.
-            let _ = vm.global().vm().run_gc(false);
+            vm.global().vm().collect_after_entry_point();
         }
 
         // Always do a first tick so we call CppTask without delay after

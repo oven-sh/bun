@@ -26,7 +26,8 @@ unsafe extern "C" {
     safe fn JSC__VM__releaseAPILock(vm: &VM);
     safe fn JSC__VM__reportExtraMemory(vm: &VM, size: usize);
     safe fn JSC__VM__shrinkFootprint(vm: &VM);
-    safe fn JSC__VM__runGC(vm: &VM, sync: bool) -> usize;
+    safe fn JSC__VM__runGC(vm: &VM) -> usize;
+    safe fn JSC__VM__collectAfterEntryPoint(vm: &VM);
     safe fn JSC__VM__heapSize(vm: &VM) -> usize;
     safe fn JSC__VM__collectAsync(vm: &VM);
     safe fn JSC__VM__executionForbidden(vm: &VM) -> bool;
@@ -86,8 +87,16 @@ impl VM {
         JSC__VM__shrinkFootprint(self)
     }
 
-    pub fn run_gc(&self, sync: bool) -> usize {
-        JSC__VM__runGC(self, sync)
+    /// Synchronous full collection that also drops all unlinked code
+    /// (`Bun.gc(true)`); returns the heap size afterwards.
+    pub fn run_gc(&self) -> usize {
+        JSC__VM__runGC(self)
+    }
+
+    /// Drops unlinked code and starts a concurrent full collection; for the
+    /// one point right after the entry module has evaluated.
+    pub fn collect_after_entry_point(&self) {
+        JSC__VM__collectAfterEntryPoint(self)
     }
 
     pub(crate) fn heap_size(&self) -> usize {

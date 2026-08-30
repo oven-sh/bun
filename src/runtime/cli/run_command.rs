@@ -1470,9 +1470,7 @@ impl Run<'_> {
             && (vm.is_event_loop_alive() || vm.event_loop_ref().tick_concurrent_with_count() > 0)
         {
             vm.global().vm().release_weak_refs();
-            // `bun_alloc::Arena` has no per-heap collect to run alongside this
-            // GC; it would only be a memory-usage hint, not correctness.
-            let _ = vm.global().vm().run_gc(false);
+            vm.global().vm().collect_after_entry_point();
             vm.tick();
         }
 

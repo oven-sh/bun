@@ -112,7 +112,7 @@ test.serial("resets the database", async () => {
 - `--max-concurrency=N` caps how many run at once (default 20).
 - [`concurrentTestGlob`](/test/configuration#concurrenttestglob) in `bunfig.toml` turns it on for matching files only.
 
-Concurrent tests share a thread and a global; this is cooperative concurrency for I/O-bound tests, not extra CPU cores. `expect.assertions()` and other per-test global state need care under concurrency — see [Concurrent test execution](/test/index#concurrent-test-execution).
+Concurrent tests share a thread and a global; this is cooperative concurrency for I/O-bound tests, not extra CPU cores. `expect.assertions()` and other per-test global state need care under concurrency — see [Concurrent test execution](/test#concurrent-test-execution).
 
 ## Splitting a suite across CI machines with `--shard`
 
@@ -157,7 +157,7 @@ The file is plain JSON, slowest first, so it doubles as a "what's slow" report:
 
 #### One timings file per shard
 
-You can pass `--timings` more than once. Bun reads the files as one table and skips paths that don't exist yet. `--update-timings` writes to the **first** path. Under `--shard` that output contains only the files the shard ran, so the shards' outputs are disjoint. Read together on the next run, they add up to the whole suite with no merge step. [Large codebases](/test/index#large-codebases) on the main page has the full CI workflow.
+You can pass `--timings` more than once. Bun reads the files as one table and skips paths that don't exist yet. `--update-timings` writes to the **first** path. Under `--shard` that output contains only the files the shard ran, so the shards' outputs are disjoint. Read together on the next run, they add up to the whole suite with no merge step. [Large codebases](/test#large-codebases) on the main page has the full CI workflow.
 
 ## How it compares
 

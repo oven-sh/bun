@@ -87,6 +87,10 @@ pub struct Options<'a> {
 
     pub allow_unresolved: &'a options::AllowUnresolved,
 
+    /// Enables the `__glob({...})(arg)` rewrite for template-literal
+    /// `require()`/`import()`.
+    pub glob_resolver: Option<options::GlobResolver>,
+
     pub module_type: options::ModuleType,
     pub output_format: options::Format,
 
@@ -137,6 +141,7 @@ impl<'a> Default for Options<'a> {
             macro_context: None,
             warn_about_unbundled_modules: true,
             allow_unresolved: &options::AllowUnresolved::DEFAULT,
+            glob_resolver: None,
             module_type: options::ModuleType::Unknown,
             output_format: options::Format::Esm,
             transform_only: false,
@@ -222,6 +227,7 @@ impl<'a> Options<'a> {
             macro_context: None,
             warn_about_unbundled_modules: self.warn_about_unbundled_modules,
             allow_unresolved: self.allow_unresolved,
+            glob_resolver: self.glob_resolver,
             module_type: self.module_type,
             output_format: self.output_format,
             transform_only: self.transform_only,
@@ -295,6 +301,7 @@ impl<'a> Options<'a> {
             macro_context: None,
             warn_about_unbundled_modules: true,
             allow_unresolved: &options::AllowUnresolved::DEFAULT,
+            glob_resolver: None,
             module_type: options::ModuleType::Unknown,
             output_format: options::Format::Esm,
             transform_only: false,

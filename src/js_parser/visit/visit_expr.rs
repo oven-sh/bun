@@ -2029,7 +2029,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         *e = p.transpose_known_to_be_if_require(first, &state);
                         return;
                     }
-                    _ => {}
+                    _ => {
+                        let handles = p.fn_or_arrow_data_visit.try_body_count != 0;
+                        if let Some(glob) =
+                            p.try_glob_dynamic_require(first, bun_ast::ImportKind::Require, handles)
+                        {
+                            *e = glob;
+                            return;
+                        }
+                    }
                 }
             }
 

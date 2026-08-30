@@ -109,6 +109,15 @@ var __moduleCache;
 // When you do know the module is CJS
 export var __commonJS = (cb, mod) => () => (mod || cb((mod = { exports: {} }).exports, mod), mod.exports);
 
+// Lookup table for template-literal require()/import(); throws MODULE_NOT_FOUND on miss.
+export var __glob = map => path => {
+  var fn = map[path];
+  if (fn) return fn();
+  var e = new Error("Cannot find module '" + path + "' in glob import map. Available: " + Object.keys(map).join(", "));
+  e.code = "MODULE_NOT_FOUND";
+  throw e;
+};
+
 export var __name = (target, name) => {
   Object.defineProperty(target, "name", {
     value: name,

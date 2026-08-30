@@ -2445,6 +2445,7 @@ pub mod parse_worker {
         // a worker-owned `Transpiler` that outlives the parse.
         // SAFETY: ARENA — `topts` outlives `opts` (worker-owned for the bundle pass).
         opts.allow_unresolved = unsafe { bun_collections::detach_ref(&topts.allow_unresolved) };
+        opts.glob_resolver = Some(crate::options::parser_glob_resolver);
         // `Transpiler.macro_context` is `Option<bun_ast::Macro::MacroContext>`
         // (same nominal type as `ParserOptions.macro_context`'s pointee). Reborrow
         // through the raw `*mut Transpiler` so the `&mut MacroContext` is disjoint

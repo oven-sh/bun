@@ -78,6 +78,47 @@ pub(crate) fn validate_path(
 // `&transpiler.options.allow_unresolved` straight through.
 pub use bun_js_parser::options::AllowUnresolved;
 
+/// `glob_resolver` for the parser's template-literal `require()` / `import()`
+/// support: returns each match as a `./`- or `../`-prefixed relative specifier.
+pub fn parser_glob_resolver(source_dir: &[u8], pattern: &[u8]) -> Vec<Box<[u8]>> {
+    let mut out: Vec<Box<[u8]>> = Vec::new();
+    if !(pattern.starts_with(b"./") || pattern.starts_with(b"../")) {
+        return out;
+    }
+
+    let walker = match bun_glob::BunGlobWalker::init_with_cwd(
+        pattern, source_dir, true, false, true, false, true, None,
+    ) {
+        Ok(Ok(w)) => w,
+        _ => return out,
+    };
+    let mut walker = Box::new(walker);
+    let mut iter = bun_glob::walk::Iterator::new(&mut *walker);
+    if iter.init().map(|m| m.is_err()).unwrap_or(true) {
+        return out;
+    }
+    loop {
+        match iter.next() {
+            Ok(Ok(Some(m))) => {
+                let p: &[u8] = &m;
+                let mut s: Vec<u8> = p
+                    .iter()
+                    .map(|&b| if cfg!(windows) && b == b'\\' { b'/' } else { b })
+                    .collect();
+                if !(s.starts_with(b"./") || s.starts_with(b"../")) {
+                    s.splice(0..0, b"./".iter().copied());
+                }
+                out.push(s.into_boxed_slice());
+            }
+            Ok(Ok(None)) => break,
+            // A mid-walk failure would otherwise emit a partial map whose
+            // keys can never cover the runtime specifier.
+            Ok(Err(_)) | Err(_) => return Vec::new(),
+        }
+    }
+    out
+}
+
 // Canonical defs live in `bun_resolver::options` (lower tier; resolver is the
 // runtime consumer of `.patterns`/`.abs_paths`/`.node_modules`). Re-export so
 // `BundleOptions.external` and `Resolver.opts.external` are the SAME nominal

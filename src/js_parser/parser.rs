@@ -59,6 +59,10 @@ pub mod options {
     /// is captured.
     pub(crate) type AllowUnresolvedMatcher = fn(pattern: &[u8], shape: &[u8]) -> bool;
 
+    /// Filesystem glob for template-literal `require()`/`import()`; injected
+    /// by the bundler since the parser cannot depend on `bun_glob`.
+    pub type GlobResolver = fn(source_dir: &[u8], pattern: &[u8]) -> Vec<Box<[u8]>>;
+
     #[derive(Debug, Clone, Default)]
     pub enum AllowUnresolved {
         /// Default. Skip all checks — current behavior.

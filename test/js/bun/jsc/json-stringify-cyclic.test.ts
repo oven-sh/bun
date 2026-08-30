@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug } from "harness";
 
 // https://github.com/oven-sh/bun/issues/40974
 // JSON.stringify on a cyclic value must throw the TypeError after bounded
@@ -84,7 +84,8 @@ test("JSON.stringify on a cyclic value throws with bounded memory (#40974)", asy
   });
   // Unfixed, the indented object call alone grows RSS past 2GB (the fast
   // path's buffer doubles up to the 2GB string length limit before it gives
-  // up). Fixed, the whole process stays far below this in every build config.
-  expect(rssMB).toBeLessThan(1024);
+  // up). Fixed, a debug ASAN build measures ~350MB and a release build far
+  // less, so both bounds keep plenty of margin on each side.
+  expect(rssMB).toBeLessThan(isASAN || isDebug ? 1024 : 512);
   expect(exitCode).toBe(0);
 });

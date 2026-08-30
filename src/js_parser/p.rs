@@ -6390,9 +6390,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         if let Some(prop_value) = prop.value {
                             match prop_value.data {
                                 js_ast::ExprData::EFunction(func) => {
-                                    // `static constructor() {}` and `["constructor"]() {}` are
-                                    // ordinary methods, the same rule as parse_property and
-                                    // visit_class.
                                     let is_constructor = !prop
                                         .flags
                                         .contains(Flags::Property::IsStatic)

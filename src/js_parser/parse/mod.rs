@@ -226,8 +226,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 has_auto_accessor =
                     has_auto_accessor || prop_kind == js_ast::g::PropertyKind::AutoAccessor;
 
-                // Forbid decorators on class constructors. A static or computed
-                // "constructor" key is an ordinary method.
+                // Forbid decorators on class constructors
                 if opts.ts_decorators.len() > 0
                     && !prop_flags.contains(Flags::Property::IsStatic)
                     && !prop_flags.contains(Flags::Property::IsComputed)

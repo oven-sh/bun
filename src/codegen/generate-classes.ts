@@ -455,7 +455,7 @@ class ${proto} ${final ? "final" : ""} : public JSC::JSNonFinalObject {
 `;
 }
 
-function generateConstructorHeader(typeName) {
+function generateConstructorHeader(typeName, obj: ClassDefinition) {
   const name = constructorName(typeName);
 
   // we use a single shared isosubspace for constructors since they will rarely
@@ -488,7 +488,7 @@ class ${name} final : public JSC::InternalFunction {
 
       // Must be defined for each specialization class.
       static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES construct(JSC::JSGlobalObject*, JSC::CallFrame*);
-      static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES call(JSC::JSGlobalObject*, JSC::CallFrame*);
+      ${obj.call ? "" : "static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES call(JSC::JSGlobalObject*, JSC::CallFrame*);"}
 
       DECLARE_EXPORT_INFO;
   protected:
@@ -535,59 +535,15 @@ ${name}* ${name}::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::St
     return ptr;
 }
 
-JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${name}::call(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
+${
+  obj.call
+    ? ""
+    : `JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${name}::call(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame*)
 {
-    Zig::GlobalObject *globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
-    JSC::VM &vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-${
-  obj.call
-    ? !obj.constructNeedsThis
-      ? `
-    void* ptr = ${classSymbolName(typeName, "construct")}(globalObject, callFrame);
-
-    if (!ptr || scope.exception()) [[unlikely]] {
-      return JSValue::encode(JSC::jsUndefined());
-    }
-
-    Structure* structure = globalObject->${className(typeName)}Structure();
-    ${className(typeName)}* instance = ${className(typeName)}::create(vm, globalObject, structure, ptr);
-`
-      : `
-    Structure* structure = globalObject->${className(typeName)}Structure();
-    ${className(typeName)}* instance = ${className(typeName)}::create(vm, globalObject, structure, nullptr);
-
-    void* ptr = ${classSymbolName(typeName, "construct")}(globalObject, callFrame, JSValue::encode(instance));
-    if (scope.exception()) [[unlikely]] {
-      ASSERT_WITH_MESSAGE(!ptr, "Memory leak detected: new ${typeName}() allocated memory without checking for exceptions.");
-      return JSValue::encode(JSC::jsUndefined());
-    }
-
-    instance->m_ctx = ptr;
-`
-    : `
-    Bun::throwError(lexicalGlobalObject, scope, Bun::ErrorCode::ERR_ILLEGAL_CONSTRUCTOR, "${typeName} constructor cannot be invoked without 'new'"_s);
-    return JSValue::encode(JSC::jsUndefined());
+    return Bun::throwConstructorCalledWithoutNewError(lexicalGlobalObject, "${typeName}"_s);
+}
 `
 }
-
-${
-  obj.call
-    ? `    RETURN_IF_EXCEPTION(scope, {});
-  ${
-    obj.estimatedSize
-      ? `
-      auto size = ${symbolName(typeName, "estimatedSize")}(ptr);
-      vm.heap.reportExtraMemoryAllocated(instance, size);`
-      : ""
-  }
-
-    RELEASE_AND_RETURN(scope, JSValue::encode(instance));`
-    : ""
-}
-}
-
 JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${name}::construct(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
 {
     Zig::GlobalObject *globalObject = defaultGlobalObject(lexicalGlobalObject);
@@ -1618,7 +1574,7 @@ function generateImpl(typeName, obj: ClassDefinition) {
   const proto = obj.proto;
   return [
     (obj.final ?? true) ? generatePrototypeHeader(typeName, true) : null,
-    !obj.noConstructor ? generateConstructorHeader(typeName).trim() + "\n" : null,
+    !obj.noConstructor ? generateConstructorHeader(typeName, obj).trim() + "\n" : null,
     generatePrototype(typeName, obj).trim(),
     !obj.noConstructor ? generateConstructorImpl(typeName, obj).trim() : null,
     generateClassImpl(typeName, obj).trim(),

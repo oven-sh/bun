@@ -1796,6 +1796,13 @@ JSC::EncodedJSValue Bun::throwInvalidThisCallError(JSC::JSGlobalObject* globalOb
     return {};
 }
 
+JSC::EncodedJSValue Bun::throwConstructorCalledWithoutNewError(JSC::JSGlobalObject* globalObject, const ASCIILiteral typeName)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    return Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_ILLEGAL_CONSTRUCTOR, makeString(typeName, " constructor cannot be invoked without 'new'"_s));
+}
+
 JSC::JSObject* Bun::createInvalidThisError(JSC::JSGlobalObject* globalObject, JSC::JSValue thisValue, const ASCIILiteral typeName)
 {
     if (!thisValue.isEmpty())

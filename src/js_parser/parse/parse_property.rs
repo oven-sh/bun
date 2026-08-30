@@ -494,6 +494,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         } else if opts.is_class
                             && p.lexer.token == T::TOpenBrace
                             && name == b"static"
+                            // Static blocks cannot be decorated: `@x static {` is a field named "static".
+                            && opts.ts_decorators.len() == 0
                         {
                             let loc = p.lexer.loc();
                             p.lexer.next()?;

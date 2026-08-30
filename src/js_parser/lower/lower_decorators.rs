@@ -41,28 +41,38 @@ impl PrivateLoweredInfo {
 
 type PrivateLoweredMap = HashMap<u32, PrivateLoweredInfo>;
 
-struct FieldInitEntry {
-    prop: Property,
-    is_private: bool,
-    is_accessor: bool,
-}
-
-#[derive(Clone, Copy)]
-enum StaticElementKind {
-    Block,
-    FieldOrAccessor,
-}
-
-#[derive(Clone, Copy)]
-struct StaticElement {
-    kind: StaticElementKind,
-    index: usize,
-}
-
 #[derive(Clone, Copy)]
 enum RewriteKind {
-    ReplaceRef { old: Ref, new: Ref },
-    ReplaceThis { ref_: Ref, loc: bun_ast::Loc },
+    ReplaceRef {
+        old: Ref,
+        new: Ref,
+    },
+    ReplaceThis {
+        ref_: Ref,
+        loc: bun_ast::Loc,
+    },
+    /// `super.x` in code moved out of the class body.
+    ReplaceSuper {
+        home: SuperHome,
+        loc: bun_ast::Loc,
+    },
+    /// `new.target` is `undefined` in a field initializer and in a static
+    /// block. Moved into the constructor or after the class, it would not be.
+    ReplaceNewTarget,
+}
+
+/// The home object of `super` in code that left the class body.
+#[derive(Clone, Copy)]
+struct SuperHome {
+    /// The binding that holds the class as written. A class decorator may
+    /// rebind the class name to a subclass, which would put `super` one level
+    /// too low.
+    class: Ref,
+    /// `class.prototype` (an instance method) or `class` itself (static code).
+    prototype: bool,
+    /// The receiver: the class binding for static code moved after the class
+    /// (its `this`), or `this` (`None`) for an extracted private method.
+    receiver: Option<Ref>,
 }
 
 // ── Shallow-copy helpers (Property / Class are not `Clone` because they hold
@@ -165,11 +175,77 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.call_runtime(l, name, list)
     }
 
-    /// newSymbol + scope.generated.append in one call.
+    /// A generated binding for the lowering output (`_init`, `_dec`, the
+    /// WeakMap behind `#x`, ...).
+    ///
+    /// Without a renamer the printer emits `original_name` verbatim, so the
+    /// name gets a per-file counter: two decorated classes in one scope must
+    /// not share `_init`, and user code may already use `_x`. With a renamer
+    /// the symbol is a `var` binding of the enclosing function or module so
+    /// the renamers rename collisions.
     fn new_sym(&mut self, kind: js_ast::symbol::Kind, name: &'a [u8]) -> Ref {
+        let name: &'a [u8] = if self.will_use_renamer() {
+            name
+        } else {
+            self.temp_ref_count += 1;
+            bun_alloc::arena_format!(
+                in self.arena,
+                "{}${}",
+                bstr::BStr::new(name),
+                self.temp_ref_count
+            )
+            .into_bump_str()
+            .as_bytes()
+        };
         let ref_ = self.new_symbol(kind, name);
-        VecExt::append(&mut self.current_scope_mut().generated, ref_);
+        self.declare_var_binding(ref_);
         ref_
+    }
+
+    /// Registers a generated symbol as a `var` binding of the current
+    /// position. The lowering declares its temporaries with `var`, so they
+    /// belong to the nearest function or module scope, not to a block the
+    /// class sits in: otherwise the renamer lets two class expressions in
+    /// sibling blocks share `_x`. Nested scopes are renamed from
+    /// `scope.generated`, the top level of a file from `Part.declared_symbols`.
+    fn declare_var_binding(&mut self, ref_: Ref) {
+        let mut scope = self.current_scope_ref();
+        while !scope.kind_stops_hoisting() {
+            scope = scope.parent.expect("the module scope stops hoisting");
+        }
+        VecExt::append(&mut scope.generated, ref_);
+        self.declared_symbols
+            .append(bun_ast::DeclaredSymbol {
+                ref_,
+                is_top_level: scope == self.module_scope,
+            })
+            .expect("oom");
+    }
+
+    /// A `var` temporary for a value that the rewritten code reads twice (the
+    /// receiver of `obj.#x`, a `super` key). `drain_capture_temp_decls`
+    /// declares it.
+    fn capture_temp(&mut self, name: &'a [u8]) -> Ref {
+        let ref_ = self.new_sym(js_ast::symbol::Kind::Other, name);
+        self.temp_refs_to_declare.push(crate::parser::TempRef {
+            r#ref: ref_,
+            ..Default::default()
+        });
+        ref_
+    }
+
+    /// Name of the WeakMap behind an `accessor`: `_<key>` for a plain name,
+    /// otherwise a counter, since `accessor "x y"` must not declare `var _x y`.
+    fn accessor_storage_name(&self, key: &Expr, counter: &mut usize) -> &'a [u8] {
+        if let js_ast::ExprData::EString(s) = &key.data
+            && s.is_utf8()
+            && js_lexer::is_identifier(&s.data)
+        {
+            return self.bump_name2(b"_", &s.data);
+        }
+        let name = self.bump_name(b"_accessor_storage", Some(*counter));
+        *counter += 1;
+        name
     }
 
     /// Single var declaration statement.
@@ -272,26 +348,144 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         )
     }
 
-    /// Create a static block property from a single expression.
-    fn make_static_block(&mut self, expr: Expr, l: bun_ast::Loc) -> Property {
-        let bump = self.arena;
-        let stmt = self.s(
-            S::SExpr {
-                value: expr,
+    /// The key of `super.x` / `super[x]`, if `expr` is one.
+    fn super_property_key(&mut self, expr: &Expr) -> Option<Expr> {
+        match &expr.data {
+            js_ast::ExprData::EDot(d) if matches!(d.target.data, js_ast::ExprData::ESuper(_)) => {
+                Some(self.new_expr(E::EString::init(d.name.slice()), d.name_loc))
+            }
+            js_ast::ExprData::EIndex(i) if matches!(i.target.data, js_ast::ExprData::ESuper(_)) => {
+                Some(i.index)
+            }
+            _ => None,
+        }
+    }
+
+    /// `(home object, receiver)` for a `super` access.
+    fn super_home_and_receiver(&mut self, home: SuperHome, l: bun_ast::Loc) -> (Expr, Expr) {
+        let class = self.use_ref(home.class, l);
+        let home_object = if home.prototype {
+            self.new_expr(
+                E::Dot {
+                    target: class,
+                    name: b"prototype".into(),
+                    name_loc: l,
+                    ..Default::default()
+                },
+                l,
+            )
+        } else {
+            class
+        };
+        let receiver = match home.receiver {
+            Some(r) => self.use_ref(r, l),
+            None => self.new_expr(E::This {}, l),
+        };
+        (home_object, receiver)
+    }
+
+    /// `super.key` => `__superGet(home, receiver, key)`.
+    fn super_get(&mut self, home: SuperHome, key: Expr, l: bun_ast::Loc) -> Expr {
+        let (h, r) = self.super_home_and_receiver(home, l);
+        self.call_rt(l, b"__superGet", &[h, r, key])
+    }
+
+    /// `super.key = value` => `__superSet(home, receiver, key, value)`, which
+    /// evaluates to `value`.
+    fn super_set(&mut self, home: SuperHome, key: Expr, value: Expr, l: bun_ast::Loc) -> Expr {
+        let (h, r) = self.super_home_and_receiver(home, l);
+        self.call_rt(l, b"__superSet", &[h, r, key, value])
+    }
+
+    /// `super.key` as an assignment target inside a destructuring pattern:
+    /// `__superWrapper(home, receiver, key)._`.
+    fn super_wrapper(&mut self, home: SuperHome, key: Expr, l: bun_ast::Loc) -> Expr {
+        let (h, r) = self.super_home_and_receiver(home, l);
+        let wrapper = self.call_rt(l, b"__superWrapper", &[h, r, key]);
+        self.new_expr(
+            E::Dot {
+                target: wrapper,
+                name: b"_".into(),
+                name_loc: l,
+                ..Default::default()
+            },
+            l,
+        )
+    }
+
+    /// A `super` property key that is read and then written: a literal can be
+    /// repeated, anything else is captured in a temporary on its first use.
+    /// Returns `(first use, later use)`.
+    fn super_key_once(&mut self, key: Expr, l: bun_ast::Loc) -> (Expr, Expr) {
+        if matches!(
+            key.data,
+            js_ast::ExprData::EString(_) | js_ast::ExprData::ENumber(_)
+        ) {
+            return (key, key);
+        }
+        let key_ref = self.capture_temp(b"_key");
+        let write = self.assign_to(key_ref, key, l);
+        let read = self.use_ref(key_ref, l);
+        (write, read)
+    }
+
+    /// `fn.bind(receiver)`: a tagged template calls its tag with no receiver.
+    fn bind_receiver(&mut self, func: Expr, receiver: Expr, l: bun_ast::Loc) -> Expr {
+        let bind = self.new_expr(
+            E::Dot {
+                target: func,
+                name: b"bind".into(),
+                name_loc: l,
                 ..Default::default()
             },
             l,
         );
-        let stmts = bump.alloc_slice_copy(&[stmt]);
-        let stmts_list = bun_alloc::AstVec::<Stmt>::from_arena_slice(stmts);
-        let sb = bump.alloc(G::ClassStaticBlock {
-            loc: l,
-            stmts: stmts_list,
-        });
-        Property {
-            kind: PropertyKind::ClassStaticBlock,
-            class_static_block: Some(js_ast::StoreRef::from_bump(sb)),
-            ..Default::default()
+        self.new_expr(
+            E::Call {
+                target: bind,
+                args: ExprNodeList::from_arena_slice(self.arena.alloc_slice_copy(&[receiver])),
+                ..Default::default()
+            },
+            l,
+        )
+    }
+
+    /// The targets of a destructuring assignment pattern that moved out of the
+    /// class: `[super.x] = v` => `[__superWrapper(...)._] = v`.
+    fn rewrite_super_assign_target(&mut self, target: &mut Expr, home: SuperHome, l: bun_ast::Loc) {
+        let kind = RewriteKind::ReplaceSuper { home, loc: l };
+        if let Some(mut key) = self.super_property_key(target) {
+            self.rewrite_expr(&mut key, kind);
+            *target = self.super_wrapper(home, key, l);
+            return;
+        }
+        match &mut target.data {
+            js_ast::ExprData::EArray(arr) => {
+                for item in arr.items.slice_mut() {
+                    self.rewrite_super_assign_target(item, home, l);
+                }
+            }
+            js_ast::ExprData::ESpread(s) => self.rewrite_super_assign_target(&mut s.value, home, l),
+            js_ast::ExprData::EObject(obj) => {
+                for prop in obj.properties.slice_mut() {
+                    if prop.flags.contains(Flags::Property::IsComputed)
+                        && let Some(k) = &mut prop.key
+                    {
+                        self.rewrite_expr(k, kind);
+                    }
+                    if let Some(v) = &mut prop.value {
+                        self.rewrite_super_assign_target(v, home, l);
+                    }
+                    if let Some(init) = &mut prop.initializer {
+                        self.rewrite_expr(init, kind);
+                    }
+                }
+            }
+            js_ast::ExprData::EBinary(bin) if bin.op == js_ast::OpCode::BinAssign => {
+                self.rewrite_super_assign_target(&mut bin.left, home, l);
+                self.rewrite_expr(&mut bin.right, kind);
+            }
+            _ => self.rewrite_expr(target, kind),
         }
     }
 
@@ -344,36 +538,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         (((5 + 2 * idx) << 1) | 1) as f64
     }
 
-    /// Emit __privateAdd for a given storage ref.
-    fn emit_private_add(
-        &mut self,
-        is_static: bool,
-        storage_ref: Ref,
-        value: Option<Expr>,
-        loc: bun_ast::Loc,
-        constructor_inject: &mut BumpVec<'_, Stmt>,
-        static_blocks: &mut BumpVec<'_, Property>,
-    ) {
-        let target = self.new_expr(E::This {}, loc);
-        let storage = self.use_ref(storage_ref, loc);
-        let call = if let Some(v) = value {
-            self.call_rt(loc, b"__privateAdd", &[target, storage, v])
-        } else {
-            self.call_rt(loc, b"__privateAdd", &[target, storage])
-        };
-        if is_static {
-            static_blocks.push(self.make_static_block(call, loc));
-        } else {
-            constructor_inject.push(self.s(
-                S::SExpr {
-                    value: call,
-                    ..Default::default()
-                },
-                loc,
-            ));
-        }
-    }
-
     /// Get the method kind code (1=method, 2=getter, 3=setter).
     fn method_kind(prop: &Property) -> u8 {
         match prop.kind {
@@ -416,6 +580,130 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     // ── Generic tree rewriter ────────────────────────────
 
+    /// Every expression nested in a binding pattern: default values and
+    /// computed keys.
+    fn for_each_binding_expr(
+        &mut self,
+        binding: &mut js_ast::Binding,
+        visit: &mut dyn FnMut(&mut Self, &mut Expr),
+    ) {
+        match &mut binding.data {
+            js_ast::b::B::BArray(arr) => {
+                for item in arr.items.slice_mut() {
+                    if let Some(d) = &mut item.default_value {
+                        visit(self, d);
+                    }
+                    self.for_each_binding_expr(&mut item.binding, visit);
+                }
+            }
+            js_ast::b::B::BObject(obj) => {
+                for prop in obj.properties.slice_mut() {
+                    if prop.flags.contains(Flags::Property::IsComputed) {
+                        visit(self, &mut prop.key);
+                    }
+                    if let Some(d) = &mut prop.default_value {
+                        visit(self, d);
+                    }
+                    self.for_each_binding_expr(&mut prop.value, visit);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Every expression in a parameter list: patterns and default values.
+    fn for_each_arg_expr(
+        &mut self,
+        args: &mut [G::Arg],
+        visit: &mut dyn FnMut(&mut Self, &mut Expr),
+    ) {
+        for arg in args.iter_mut() {
+            self.for_each_binding_expr(&mut arg.binding, visit);
+            if let Some(d) = &mut arg.default {
+                visit(self, d);
+            }
+        }
+    }
+
+    /// Rewrites every expression in a parameter list and keeps the temporaries
+    /// a rewrite creates with that expression. A parameter default runs once
+    /// per call, and a `var` of the body is not visible to it, so an expression
+    /// that needs temporaries becomes `(() => { var _tmp; return expr; })()`.
+    fn rewrite_arg_exprs(
+        &mut self,
+        args: &mut [G::Arg],
+        visit: &mut dyn FnMut(&mut Self, &mut Expr),
+    ) {
+        self.for_each_arg_expr(args, &mut |p, e| {
+            let temps_before = p.temp_refs_to_declare.len();
+            visit(p, e);
+            let loc = e.loc;
+            let Some(decl) = p.drain_capture_temp_decls(temps_before, loc) else {
+                return;
+            };
+            let ret = p.s(S::Return { value: Some(*e) }, loc);
+            let stmts = p.arena.alloc_slice_copy(&[decl, ret]);
+            let arrow = p.new_expr(
+                E::Arrow {
+                    body: G::FnBody {
+                        loc,
+                        stmts: bun_ast::StoreSlice::new_mut(stmts),
+                    },
+                    is_async: false,
+                    ..Default::default()
+                },
+                loc,
+            );
+            *e = p.new_expr(
+                E::Call {
+                    target: arrow,
+                    args: bun_alloc::AstAlloc::vec(),
+                    ..Default::default()
+                },
+                loc,
+            );
+        });
+    }
+
+    /// The parts of a nested class that evaluate in the enclosing context:
+    /// the `extends` clause and computed keys. The body has its own `this`.
+    fn for_each_class_outer_expr(
+        &mut self,
+        class: &mut G::Class,
+        visit: &mut dyn FnMut(&mut Self, &mut Expr),
+    ) {
+        if let Some(e) = &mut class.extends {
+            visit(self, e);
+        }
+        for prop in class.properties.slice_mut() {
+            if prop.flags.contains(Flags::Property::IsComputed)
+                && let Some(k) = &mut prop.key
+            {
+                visit(self, k);
+            }
+        }
+    }
+
+    /// The body of a nested class: methods, initializers and static blocks.
+    fn for_each_class_body(
+        &mut self,
+        class: &mut G::Class,
+        visit: &mut dyn FnMut(&mut Self, &mut Expr),
+        visit_stmts: &mut dyn FnMut(&mut Self, &mut [Stmt]),
+    ) {
+        for prop in class.properties.slice_mut() {
+            if let Some(v) = &mut prop.value {
+                visit(self, v);
+            }
+            if let Some(i) = &mut prop.initializer {
+                visit(self, i);
+            }
+            if let Some(sb) = prop.class_static_block_mut() {
+                visit_stmts(self, sb.stmts.slice_mut());
+            }
+        }
+    }
+
     fn rewrite_expr(&mut self, expr: &mut Expr, kind: RewriteKind) {
         match kind {
             RewriteKind::ReplaceRef { old, new } => {
@@ -433,6 +721,166 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             RewriteKind::ReplaceThis { ref_, loc } => {
                 if matches!(expr.data, js_ast::ExprData::EThis(_)) {
                     *expr = self.use_ref(ref_, loc);
+                    return;
+                }
+            }
+            RewriteKind::ReplaceNewTarget => {
+                if matches!(expr.data, js_ast::ExprData::ENewTarget(_)) {
+                    *expr = self.new_expr(E::Undefined {}, expr.loc);
+                    return;
+                }
+            }
+            RewriteKind::ReplaceSuper { home, loc } => {
+                if let Some(mut key) = self.super_property_key(expr) {
+                    self.rewrite_expr(&mut key, kind);
+                    *expr = self.super_get(home, key, loc);
+                    return;
+                }
+                if let js_ast::ExprData::ECall(call) = &mut expr.data
+                    && let Some(mut key) = self.super_property_key(&call.target)
+                {
+                    self.rewrite_expr(&mut key, kind);
+                    let (_, receiver) = self.super_home_and_receiver(home, loc);
+                    let orig_args = call.args.slice_mut();
+                    let mut new_args = BumpVec::with_capacity_in(1 + orig_args.len(), self.arena);
+                    new_args.push(receiver);
+                    for arg in orig_args.iter_mut() {
+                        self.rewrite_expr(arg, kind);
+                        new_args.push(*arg);
+                    }
+                    let method = self.super_get(home, key, loc);
+                    // `super.m(...)` => `__superGet(home, C, "m").call(C, ...)`.
+                    // `super.m?.()` => `__superGet(home, C, "m")?.call(C, ...)`: the
+                    // call stays the start of its optional chain, so a
+                    // continuation such as `super.m?.().x` still short-circuits.
+                    let optional = call.optional_chain.is_some();
+                    call.target = self.new_expr(
+                        E::Dot {
+                            target: method,
+                            name: b"call".into(),
+                            name_loc: loc,
+                            optional_chain: optional.then_some(js_ast::OptionalChain::Start),
+                            ..Default::default()
+                        },
+                        loc,
+                    );
+                    call.args = ExprNodeList::from_bump_vec(new_args);
+                    if optional {
+                        call.optional_chain = Some(js_ast::OptionalChain::Continuation);
+                    }
+                    return;
+                }
+                if let js_ast::ExprData::ETemplate(t) = &mut expr.data
+                    && let Some(tag) = t.tag
+                    && let Some(mut key) = self.super_property_key(&tag)
+                {
+                    // `super.m\`...\`` => `__superGet(...).bind(C)\`...\``
+                    self.rewrite_expr(&mut key, kind);
+                    let method = self.super_get(home, key, loc);
+                    let (_, receiver) = self.super_home_and_receiver(home, loc);
+                    t.tag = Some(self.bind_receiver(method, receiver, loc));
+                    for part in t.parts_mut().iter_mut() {
+                        self.rewrite_expr(&mut part.value, kind);
+                    }
+                    return;
+                }
+                if let js_ast::ExprData::EBinary(bin) = &mut expr.data
+                    && bin.op == js_ast::OpCode::BinAssign
+                    && matches!(
+                        bin.left.data,
+                        js_ast::ExprData::EArray(_) | js_ast::ExprData::EObject(_)
+                    )
+                {
+                    let mut left = bin.left;
+                    self.rewrite_super_assign_target(&mut left, home, loc);
+                    bin.left = left;
+                    let mut right = bin.right;
+                    self.rewrite_expr(&mut right, kind);
+                    bin.right = right;
+                    return;
+                }
+                if let js_ast::ExprData::EBinary(bin) = &mut expr.data
+                    && (bin.op == js_ast::OpCode::BinAssign
+                        || compound_assign_base_op(bin.op).is_some())
+                    && let Some(mut key) = self.super_property_key(&bin.left)
+                {
+                    self.rewrite_expr(&mut key, kind);
+                    let mut value = bin.right;
+                    self.rewrite_expr(&mut value, kind);
+                    *expr = match compound_assign_base_op(bin.op) {
+                        // `super.x = v` => `__superSet(home, C, "x", v)`
+                        None => self.super_set(home, key, value, loc),
+                        Some(base_op) => {
+                            // The key use that is evaluated first carries the capture.
+                            let (first_key, second_key) = self.super_key_once(key, loc);
+                            if is_logical_op(base_op) {
+                                // `super.x ??= v` => `__superGet(...) ?? __superSet(..., v)`
+                                let current = self.super_get(home, first_key, loc);
+                                let set = self.super_set(home, second_key, value, loc);
+                                self.new_expr(
+                                    E::Binary {
+                                        op: base_op,
+                                        left: current,
+                                        right: set,
+                                    },
+                                    loc,
+                                )
+                            } else {
+                                // `super.x += v` => `__superSet(..., "x", __superGet(..., "x") + v)`
+                                // `__superSet` evaluates its key before the value.
+                                let current = self.super_get(home, second_key, loc);
+                                let new_value = self.new_expr(
+                                    E::Binary {
+                                        op: base_op,
+                                        left: current,
+                                        right: value,
+                                    },
+                                    loc,
+                                );
+                                self.super_set(home, first_key, new_value, loc)
+                            }
+                        }
+                    };
+                    return;
+                }
+                if let js_ast::ExprData::EUnary(un) = &mut expr.data
+                    && is_update_op(un.op)
+                    && let Some(mut key) = self.super_property_key(&un.value)
+                {
+                    // Same shape as the private-member update: the operator runs on
+                    // a temporary, so ToNumeric applies to the read value.
+                    self.rewrite_expr(&mut key, kind);
+                    // `__superSet` evaluates its key before the value, so the set
+                    // carries the capture and the inner get reuses it.
+                    let (set_key, get_key) = self.super_key_once(key, loc);
+                    let tmp_ref = self.capture_temp(b"_tmp");
+                    let current = self.super_get(home, get_key, loc);
+                    let read_into_tmp = self.assign_to(tmp_ref, current, loc);
+                    let tmp = self.use_ref(tmp_ref, loc);
+                    let update = self.new_expr(
+                        E::Unary {
+                            op: un.op,
+                            value: tmp,
+                            flags: Default::default(),
+                        },
+                        loc,
+                    );
+                    *expr = if js_ast::OpCode::is_prefix(un.op) {
+                        // `++super.x` => `__superSet(..., "x", (_tmp = __superGet(..., "x"), ++_tmp))`
+                        let value = read_into_tmp.join_with_comma(update);
+                        self.super_set(home, set_key, value, loc)
+                    } else {
+                        // `super.x++` => `(__superSet(..., "x", (_tmp = __superGet(...), _old = _tmp++, _tmp)), _old)`
+                        let old_ref = self.capture_temp(b"_old");
+                        let save_old = self.assign_to(old_ref, update, loc);
+                        let tmp_again = self.use_ref(tmp_ref, loc);
+                        let value = read_into_tmp
+                            .join_with_comma(save_old)
+                            .join_with_comma(tmp_again);
+                        let set = self.super_set(home, set_key, value, loc);
+                        let old = self.use_ref(old_ref, loc);
+                        set.join_with_comma(old)
+                    };
                     return;
                 }
             }
@@ -477,6 +925,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             js_ast::ExprData::EObject(e) => {
                 for prop in e.properties.slice_mut() {
+                    if prop.flags.contains(Flags::Property::IsComputed)
+                        && let Some(k) = &mut prop.key
+                    {
+                        self.rewrite_expr(k, kind);
+                    }
                     if let Some(v) = &mut prop.value {
                         self.rewrite_expr(v, kind);
                     }
@@ -494,22 +947,69 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     self.rewrite_expr(&mut part.value, kind);
                 }
             }
+            js_ast::ExprData::EAwait(e) => self.rewrite_expr(&mut e.value, kind),
+            js_ast::ExprData::EYield(e) => {
+                if let Some(v) = &mut e.value {
+                    self.rewrite_expr(v, kind);
+                }
+            }
+            js_ast::ExprData::EImport(e) => {
+                self.rewrite_expr(&mut e.expr, kind);
+                self.rewrite_expr(&mut e.options, kind);
+            }
             js_ast::ExprData::EArrow(e) => {
+                self.rewrite_arg_exprs(e.args.slice_mut(), &mut |p, a| p.rewrite_expr(a, kind));
+                // A `super` rewrite in the body gets its temporaries per call.
+                let temps_before = self.temp_refs_to_declare.len();
                 let stmts = e.body.stmts.slice_mut();
                 self.rewrite_stmts(stmts, kind);
+                e.body.stmts =
+                    self.declare_capture_temps_in_fn_body(e.body.stmts, temps_before, e.body.loc);
             }
+            // A function and a class body bind their own `this`, `super` and
+            // `new.target`; only a renamed class reference reaches into them.
             js_ast::ExprData::EFunction(e) => match kind {
-                RewriteKind::ReplaceThis { .. } => {}
+                RewriteKind::ReplaceThis { .. }
+                | RewriteKind::ReplaceSuper { .. }
+                | RewriteKind::ReplaceNewTarget => {}
                 RewriteKind::ReplaceRef { .. } => {
+                    self.for_each_arg_expr(e.func.args.slice_mut(), &mut |p, a| {
+                        p.rewrite_expr(a, kind)
+                    });
                     let stmts = e.func.body.stmts.slice_mut();
                     if !stmts.is_empty() {
                         self.rewrite_stmts(stmts, kind);
                     }
                 }
             },
-            js_ast::ExprData::EClass(_) => {}
+            js_ast::ExprData::EClass(c) => self.rewrite_class(c, kind),
             _ => {}
         }
+    }
+
+    fn rewrite_class(&mut self, class: &mut G::Class, kind: RewriteKind) {
+        self.for_each_class_outer_expr(class, &mut |p, e| p.rewrite_expr(e, kind));
+        if matches!(kind, RewriteKind::ReplaceRef { .. }) {
+            self.for_each_class_body(
+                class,
+                &mut |p, e| p.rewrite_expr(e, kind),
+                &mut |p, stmts| p.rewrite_stmts(stmts, kind),
+            );
+        }
+    }
+
+    /// The head of `for (x of ...)`: a declaration, or an expression that is an
+    /// assignment target.
+    fn rewrite_loop_head(&mut self, init: &mut Stmt, kind: RewriteKind) {
+        if let js_ast::StmtData::SExpr(se) = &mut init.data
+            && let RewriteKind::ReplaceSuper { home, loc } = kind
+        {
+            let mut target = se.value;
+            self.rewrite_super_assign_target(&mut target, home, loc);
+            se.value = target;
+            return;
+        }
+        self.rewrite_stmts(core::slice::from_mut(init), kind);
     }
 
     fn rewrite_stmts(&mut self, stmts: &mut [Stmt], kind: RewriteKind) {
@@ -529,6 +1029,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 js_ast::StmtData::SLocal(local) => {
                     for decl in local.decls.slice_mut() {
+                        self.for_each_binding_expr(&mut decl.binding, &mut |p, e| {
+                            p.rewrite_expr(e, kind)
+                        });
                         if let Some(v) = &mut decl.value {
                             self.rewrite_expr(v, kind);
                         }
@@ -540,6 +1043,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
                 js_ast::StmtData::SThrow(data) => self.rewrite_expr(&mut data.value, kind),
+                js_ast::StmtData::SClass(data) => self.rewrite_class(&mut data.class, kind),
+                js_ast::StmtData::SFunction(data) => {
+                    if matches!(kind, RewriteKind::ReplaceRef { .. }) {
+                        self.for_each_arg_expr(data.func.args.slice_mut(), &mut |p, a| {
+                            p.rewrite_expr(a, kind)
+                        });
+                        self.rewrite_stmts(data.func.body.stmts.slice_mut(), kind);
+                    }
+                }
                 js_ast::StmtData::SIf(data) => {
                     let mut t = data.test;
                     self.rewrite_expr(&mut t, kind);
@@ -570,6 +1082,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     data.body = body;
                 }
                 js_ast::StmtData::SForIn(data) => {
+                    let mut init = data.init;
+                    self.rewrite_loop_head(&mut init, kind);
+                    data.init = init;
                     let mut v = data.value;
                     self.rewrite_expr(&mut v, kind);
                     data.value = v;
@@ -578,6 +1093,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     data.body = body;
                 }
                 js_ast::StmtData::SForOf(data) => {
+                    let mut init = data.init;
+                    self.rewrite_loop_head(&mut init, kind);
+                    data.init = init;
                     let mut v = data.value;
                     self.rewrite_expr(&mut v, kind);
                     data.value = v;
@@ -618,6 +1136,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     let body = data.body.slice_mut();
                     self.rewrite_stmts(body, kind);
                     if let Some(c) = &mut data.catch {
+                        if let Some(b) = &mut c.binding {
+                            self.for_each_binding_expr(b, &mut |p, e| p.rewrite_expr(e, kind));
+                        }
                         let cb = c.body.slice_mut();
                         self.rewrite_stmts(cb, kind);
                     }
@@ -704,6 +1225,134 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
+    /// A lowered private access that reads and then writes `obj.#x` names the
+    /// receiver twice. Only identifiers and `this` can be repeated safely; any
+    /// other receiver is captured in a temporary so its side effects run once
+    /// and nested private calls don't duplicate the whole subtree (the
+    /// duplication is exponential in the length of a chain like
+    /// `o.#m().#m().#m()`). Returns `(first use, later use)`.
+    fn capture_private_receiver(&mut self, obj_expr: Expr, l: bun_ast::Loc) -> (Expr, Expr) {
+        match &obj_expr.data {
+            js_ast::ExprData::EIdentifier(id) => {
+                let obj_ref = id.ref_;
+                (obj_expr, self.use_ref(obj_ref, obj_expr.loc))
+            }
+            js_ast::ExprData::EThis(_) => (obj_expr, self.new_expr(E::This {}, obj_expr.loc)),
+            _ => {
+                let tmp_ref = self.capture_temp(b"_obj");
+                let write = self.assign_to(tmp_ref, obj_expr, l);
+                let read = self.use_ref(tmp_ref, l);
+                (write, read)
+            }
+        }
+    }
+
+    /// `obj.#x` as an assignment target inside a destructuring pattern:
+    /// `__privateWrapper(obj, _x, setter, getter)._`.
+    fn private_wrapper_expr(
+        &mut self,
+        obj: Expr,
+        info: &PrivateLoweredInfo,
+        l: bun_ast::Loc,
+    ) -> Expr {
+        let storage = self.use_ref(info.storage_ref, l);
+        let mut args = BumpVec::with_capacity_in(4, self.arena);
+        args.push(obj);
+        args.push(storage);
+        if let Some(desc_ref) = info.accessor_desc_ref {
+            for name in [&b"set"[..], &b"get"[..]] {
+                let desc = self.use_ref(desc_ref, l);
+                args.push(self.new_expr(
+                    E::Dot {
+                        target: desc,
+                        name: name.into(),
+                        name_loc: l,
+                        ..Default::default()
+                    },
+                    l,
+                ));
+            }
+        } else if info.setter_fn_ref.is_some() || info.getter_fn_ref.is_some() {
+            args.push(match info.setter_fn_ref {
+                Some(r) => self.use_ref(r, l),
+                None => self.new_expr(E::Undefined {}, l),
+            });
+            if let Some(r) = info.getter_fn_ref {
+                args.push(self.use_ref(r, l));
+            }
+        }
+        let wrapper = self.call_runtime(l, b"__privateWrapper", ExprNodeList::from_bump_vec(args));
+        self.new_expr(
+            E::Dot {
+                target: wrapper,
+                name: b"_".into(),
+                name_loc: l,
+                ..Default::default()
+            },
+            l,
+        )
+    }
+
+    /// The targets of a destructuring assignment pattern: `[this.#x] = v` =>
+    /// `[__privateWrapper(this, _x)._] = v`.
+    fn rewrite_private_assign_target(&mut self, target: &mut Expr, map: &PrivateLoweredMap) {
+        let l = target.loc;
+        if let Some((obj, info)) = Self::lowered_private_member(target, map) {
+            let mut obj = obj;
+            self.rewrite_private_accesses_in_expr(&mut obj, map);
+            *target = self.private_wrapper_expr(obj, &info, l);
+            return;
+        }
+        match &mut target.data {
+            js_ast::ExprData::EArray(arr) => {
+                for item in arr.items.slice_mut() {
+                    self.rewrite_private_assign_target(item, map);
+                }
+            }
+            js_ast::ExprData::ESpread(s) => self.rewrite_private_assign_target(&mut s.value, map),
+            js_ast::ExprData::EObject(obj) => {
+                for prop in obj.properties.slice_mut() {
+                    if prop.flags.contains(Flags::Property::IsComputed)
+                        && let Some(k) = &mut prop.key
+                    {
+                        self.rewrite_private_accesses_in_expr(k, map);
+                    }
+                    if let Some(v) = &mut prop.value {
+                        self.rewrite_private_assign_target(v, map);
+                    }
+                    if let Some(init) = &mut prop.initializer {
+                        self.rewrite_private_accesses_in_expr(init, map);
+                    }
+                }
+            }
+            js_ast::ExprData::EBinary(bin) if bin.op == js_ast::OpCode::BinAssign => {
+                let mut left = bin.left;
+                self.rewrite_private_assign_target(&mut left, map);
+                bin.left = left;
+                let mut right = bin.right;
+                self.rewrite_private_accesses_in_expr(&mut right, map);
+                bin.right = right;
+            }
+            _ => self.rewrite_private_accesses_in_expr(target, map),
+        }
+    }
+
+    /// `obj.#x op= value` and `++obj.#x` style updates need the current value
+    /// first. Returns the lowered private member if `left` is one.
+    fn lowered_private_member(
+        left: &Expr,
+        map: &PrivateLoweredMap,
+    ) -> Option<(Expr, PrivateLoweredInfo)> {
+        let js_ast::ExprData::EIndex(idx) = &left.data else {
+            return None;
+        };
+        let js_ast::ExprData::EPrivateIdentifier(pi) = &idx.index.data else {
+            return None;
+        };
+        let info = map.get(&pi.ref_.inner_index()).copied()?;
+        Some((idx.target, info))
+    }
+
     fn rewrite_private_accesses_in_expr(&mut self, expr: &mut Expr, map: &PrivateLoweredMap) {
         let expr_loc = expr.loc;
         match &mut expr.data {
@@ -723,6 +1372,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 e.index = idx;
             }
             js_ast::ExprData::EBinary(e) => {
+                if e.op == js_ast::OpCode::BinAssign
+                    && matches!(
+                        e.left.data,
+                        js_ast::ExprData::EArray(_) | js_ast::ExprData::EObject(_)
+                    )
+                {
+                    let mut left = e.left;
+                    self.rewrite_private_assign_target(&mut left, map);
+                    e.left = left;
+                    let mut right = e.right;
+                    self.rewrite_private_accesses_in_expr(&mut right, map);
+                    e.right = right;
+                    return;
+                }
                 if e.op == js_ast::OpCode::BinAssign {
                     if let js_ast::ExprData::EIndex(left_idx) = &mut e.left.data {
                         if let js_ast::ExprData::EPrivateIdentifier(pi) = &left_idx.index.data {
@@ -736,6 +1399,42 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             }
                         }
                     }
+                }
+                if let Some(base_op) = compound_assign_base_op(e.op)
+                    && let Some((obj, info)) = Self::lowered_private_member(&e.left, map)
+                {
+                    let mut obj = obj;
+                    self.rewrite_private_accesses_in_expr(&mut obj, map);
+                    // The receiver use that is evaluated first carries the capture.
+                    let (first_obj, second_obj) = self.capture_private_receiver(obj, expr_loc);
+                    let mut rt = e.right;
+                    self.rewrite_private_accesses_in_expr(&mut rt, map);
+                    *expr = if is_logical_op(base_op) {
+                        // `o.#x ??= v` => `__privateGet(o, _x) ?? __privateSet(o, _x, v)`
+                        let current = self.private_get_expr(first_obj, &info, expr_loc);
+                        let set = self.private_set_expr(second_obj, &info, rt, expr_loc);
+                        self.new_expr(
+                            E::Binary {
+                                op: base_op,
+                                left: current,
+                                right: set,
+                            },
+                            expr_loc,
+                        )
+                    } else {
+                        // `o.#x += v` => `__privateSet(o, _x, __privateGet(o, _x) + v)`
+                        let current = self.private_get_expr(second_obj, &info, expr_loc);
+                        let value = self.new_expr(
+                            E::Binary {
+                                op: base_op,
+                                left: current,
+                                right: rt,
+                            },
+                            expr_loc,
+                        );
+                        self.private_set_expr(first_obj, &info, value, expr_loc)
+                    };
+                    return;
                 }
                 if e.op == js_ast::OpCode::BinIn {
                     if let js_ast::ExprData::EPrivateIdentifier(pi) = &e.left.data {
@@ -761,27 +1460,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         if let Some(info) = map.get(&pi.ref_.inner_index()).copied() {
                             let mut obj_expr = tgt_idx.target;
                             self.rewrite_private_accesses_in_expr(&mut obj_expr, map);
-                            // `x.#m(...)` becomes `__privateGet(x, _m).call(x, ...)`, which
-                            // references the receiver twice. Only identifiers and `this` can
-                            // be repeated safely; any other receiver is captured in a
-                            // temporary so its side effects run once and nested private
-                            // calls don't duplicate the whole subtree (the duplication is
-                            // exponential in the length of a chain like `o.#m().#m().#m()`).
-                            let (get_obj, this_arg) = match &obj_expr.data {
-                                js_ast::ExprData::EIdentifier(id) => {
-                                    let obj_ref = id.ref_;
-                                    (obj_expr, self.use_ref(obj_ref, obj_expr.loc))
-                                }
-                                js_ast::ExprData::EThis(_) => {
-                                    (obj_expr, self.new_expr(E::This {}, obj_expr.loc))
-                                }
-                                _ => {
-                                    let tmp_ref = self.generate_temp_ref(Some(b"_obj"));
-                                    let write = self.assign_to(tmp_ref, obj_expr, expr_loc);
-                                    let read = self.use_ref(tmp_ref, expr_loc);
-                                    (write, read)
-                                }
-                            };
+                            // `x.#m(...)` becomes `__privateGet(x, _m).call(x, ...)`.
+                            let (get_obj, this_arg) =
+                                self.capture_private_receiver(obj_expr, expr_loc);
                             let private_access = self.private_get_expr(get_obj, &info, expr_loc);
                             let call_target = self.new_expr(
                                 E::Dot {
@@ -813,7 +1494,50 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     self.rewrite_private_accesses_in_expr(arg, map);
                 }
             }
-            js_ast::ExprData::EUnary(e) => self.rewrite_private_accesses_in_expr(&mut e.value, map),
+            js_ast::ExprData::EUnary(e) => {
+                if is_update_op(e.op)
+                    && let Some((obj, info)) = Self::lowered_private_member(&e.value, map)
+                {
+                    let mut obj = obj;
+                    self.rewrite_private_accesses_in_expr(&mut obj, map);
+                    // `__privateSet` evaluates its receiver before the value, so the
+                    // set carries the capture and the inner get reuses it.
+                    let (set_obj, get_obj) = self.capture_private_receiver(obj, expr_loc);
+                    // The update runs on a temporary so ToNumeric applies to the
+                    // read value (a string increments as a number, a BigInt stays
+                    // a BigInt), the same as `++` on a plain variable.
+                    let tmp_ref = self.capture_temp(b"_tmp");
+                    let current = self.private_get_expr(get_obj, &info, expr_loc);
+                    let read_into_tmp = self.assign_to(tmp_ref, current, expr_loc);
+                    let tmp = self.use_ref(tmp_ref, expr_loc);
+                    let update = self.new_expr(
+                        E::Unary {
+                            op: e.op,
+                            value: tmp,
+                            flags: Default::default(),
+                        },
+                        expr_loc,
+                    );
+                    if js_ast::OpCode::is_prefix(e.op) {
+                        // `++o.#x` => `__privateSet(o, _x, (_tmp = __privateGet(o, _x), ++_tmp))`
+                        let value = read_into_tmp.join_with_comma(update);
+                        *expr = self.private_set_expr(set_obj, &info, value, expr_loc);
+                    } else {
+                        // `o.#x++` => `(__privateSet(o, _x, (_tmp = __privateGet(o, _x), _old = _tmp++, _tmp)), _old)`
+                        let old_ref = self.capture_temp(b"_old");
+                        let save_old = self.assign_to(old_ref, update, expr_loc);
+                        let tmp_again = self.use_ref(tmp_ref, expr_loc);
+                        let value = read_into_tmp
+                            .join_with_comma(save_old)
+                            .join_with_comma(tmp_again);
+                        let set = self.private_set_expr(set_obj, &info, value, expr_loc);
+                        let old = self.use_ref(old_ref, expr_loc);
+                        *expr = set.join_with_comma(old);
+                    }
+                    return;
+                }
+                self.rewrite_private_accesses_in_expr(&mut e.value, map)
+            }
             js_ast::ExprData::EDot(e) => self.rewrite_private_accesses_in_expr(&mut e.target, map),
             js_ast::ExprData::ESpread(e) => {
                 self.rewrite_private_accesses_in_expr(&mut e.value, map)
@@ -850,6 +1574,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             js_ast::ExprData::EObject(e) => {
                 for prop in e.properties.slice_mut() {
+                    if prop.flags.contains(Flags::Property::IsComputed)
+                        && let Some(k) = &mut prop.key
+                    {
+                        self.rewrite_private_accesses_in_expr(k, map);
+                    }
                     if let Some(v) = &mut prop.value {
                         self.rewrite_private_accesses_in_expr(v, map);
                     }
@@ -858,8 +1587,31 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
             }
+            js_ast::ExprData::EImport(e) => {
+                self.rewrite_private_accesses_in_expr(&mut e.expr, map);
+                self.rewrite_private_accesses_in_expr(&mut e.options, map);
+            }
+            js_ast::ExprData::EClass(c) => {
+                self.for_each_class_outer_expr(c, &mut |p, e| {
+                    p.rewrite_private_accesses_in_expr(e, map)
+                });
+                self.for_each_class_body(
+                    c,
+                    &mut |p, e| p.rewrite_private_accesses_in_expr(e, map),
+                    &mut |p, stmts| p.rewrite_private_accesses_in_stmts(stmts, map),
+                );
+            }
             js_ast::ExprData::ETemplate(e) => {
-                if let Some(t) = &mut e.tag {
+                if let Some(tag) = e.tag
+                    && let Some((obj, info)) = Self::lowered_private_member(&tag, map)
+                {
+                    // `obj.#m\`...\`` => `__privateMethod(obj, _m, _m_fn).bind(obj)\`...\``
+                    let mut obj = obj;
+                    self.rewrite_private_accesses_in_expr(&mut obj, map);
+                    let (get_obj, bind_obj) = self.capture_private_receiver(obj, expr_loc);
+                    let method = self.private_get_expr(get_obj, &info, expr_loc);
+                    e.tag = Some(self.bind_receiver(method, bind_obj, expr_loc));
+                } else if let Some(t) = &mut e.tag {
                     self.rewrite_private_accesses_in_expr(t, map);
                 }
                 // SAFETY: see `rewrite_expr` ETemplate.
@@ -868,6 +1620,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             }
             js_ast::ExprData::EFunction(e) => {
+                self.rewrite_arg_exprs(e.func.args.slice_mut(), &mut |p, a| {
+                    p.rewrite_private_accesses_in_expr(a, map)
+                });
                 let temps_before = self.temp_refs_to_declare.len();
                 let stmts = e.func.body.stmts.slice_mut();
                 self.rewrite_private_accesses_in_stmts(stmts, map);
@@ -878,6 +1633,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 );
             }
             js_ast::ExprData::EArrow(e) => {
+                self.rewrite_arg_exprs(e.args.slice_mut(), &mut |p, a| {
+                    p.rewrite_private_accesses_in_expr(a, map)
+                });
                 let temps_before = self.temp_refs_to_declare.len();
                 let stmts = e.body.stmts.slice_mut();
                 self.rewrite_private_accesses_in_stmts(stmts, map);
@@ -937,6 +1695,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         js_ast::StmtNodeList::from_bump(new_stmts)
     }
 
+    /// The head of `for (x of ...)`: a declaration, or an expression that is an
+    /// assignment target.
+    fn rewrite_private_loop_head(&mut self, init: &mut Stmt, map: &PrivateLoweredMap) {
+        if let js_ast::StmtData::SExpr(se) = &mut init.data {
+            let mut target = se.value;
+            self.rewrite_private_assign_target(&mut target, map);
+            se.value = target;
+            return;
+        }
+        self.rewrite_private_accesses_in_stmts(core::slice::from_mut(init), map);
+    }
+
     fn rewrite_private_accesses_in_stmts(&mut self, stmts: &mut [Stmt], map: &PrivateLoweredMap) {
         for stmt_item in stmts.iter_mut() {
             match &mut stmt_item.data {
@@ -953,10 +1723,35 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 js_ast::StmtData::SLocal(data) => {
                     for decl in data.decls.slice_mut() {
+                        self.for_each_binding_expr(&mut decl.binding, &mut |p, e| {
+                            p.rewrite_private_accesses_in_expr(e, map)
+                        });
                         if let Some(v) = &mut decl.value {
                             self.rewrite_private_accesses_in_expr(v, map);
                         }
                     }
+                }
+                js_ast::StmtData::SClass(data) => {
+                    self.for_each_class_outer_expr(&mut data.class, &mut |p, e| {
+                        p.rewrite_private_accesses_in_expr(e, map)
+                    });
+                    self.for_each_class_body(
+                        &mut data.class,
+                        &mut |p, e| p.rewrite_private_accesses_in_expr(e, map),
+                        &mut |p, stmts| p.rewrite_private_accesses_in_stmts(stmts, map),
+                    );
+                }
+                js_ast::StmtData::SFunction(data) => {
+                    self.rewrite_arg_exprs(data.func.args.slice_mut(), &mut |p, a| {
+                        p.rewrite_private_accesses_in_expr(a, map)
+                    });
+                    let temps_before = self.temp_refs_to_declare.len();
+                    self.rewrite_private_accesses_in_stmts(data.func.body.stmts.slice_mut(), map);
+                    data.func.body.stmts = self.declare_capture_temps_in_fn_body(
+                        data.func.body.stmts,
+                        temps_before,
+                        data.func.body.loc,
+                    );
                 }
                 js_ast::StmtData::SIf(data) => {
                     let mut t = data.test;
@@ -988,6 +1783,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     data.body = body;
                 }
                 js_ast::StmtData::SForIn(data) => {
+                    let mut init = data.init;
+                    self.rewrite_private_loop_head(&mut init, map);
+                    data.init = init;
                     let mut v = data.value;
                     self.rewrite_private_accesses_in_expr(&mut v, map);
                     data.value = v;
@@ -996,6 +1794,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     data.body = body;
                 }
                 js_ast::StmtData::SForOf(data) => {
+                    let mut init = data.init;
+                    self.rewrite_private_loop_head(&mut init, map);
+                    data.init = init;
                     let mut v = data.value;
                     self.rewrite_private_accesses_in_expr(&mut v, map);
                     data.value = v;
@@ -1036,6 +1837,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     let body = data.body.slice_mut();
                     self.rewrite_private_accesses_in_stmts(body, map);
                     if let Some(c) = &mut data.catch {
+                        if let Some(b) = &mut c.binding {
+                            self.for_each_binding_expr(b, &mut |p, e| {
+                                p.rewrite_private_accesses_in_expr(e, map)
+                            });
+                        }
                         let cb = c.body.slice_mut();
                         self.rewrite_private_accesses_in_stmts(cb, map);
                     }
@@ -1101,6 +1907,181 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     // ── Core lowering ────────────────────────────────────
 
+    /// An expression that leaves the class body (a static initializer or a
+    /// static block) can no longer see the class's own `this` or `super`, nor
+    /// the inner class name of a named class expression. Point all of them at
+    /// the binding that holds the class instead.
+    fn rewrite_moved_static_expr(
+        &mut self,
+        expr: &mut Expr,
+        home: SuperHome,
+        class_name_loc: bun_ast::Loc,
+        name_rewrite: Option<RewriteKind>,
+    ) {
+        self.rewrite_expr(
+            expr,
+            RewriteKind::ReplaceThis {
+                ref_: home
+                    .receiver
+                    .expect("static code has the class as receiver"),
+                loc: class_name_loc,
+            },
+        );
+        self.rewrite_expr(
+            expr,
+            RewriteKind::ReplaceSuper {
+                home,
+                loc: class_name_loc,
+            },
+        );
+        self.rewrite_expr(expr, RewriteKind::ReplaceNewTarget);
+        if let Some(rk) = name_rewrite {
+            self.rewrite_expr(expr, rk);
+        }
+    }
+
+    /// `super` inside a private method that leaves the class body keeps its
+    /// meaning: the home object is the class (static) or its prototype. The
+    /// inner name of a named class expression is rewritten as in any other
+    /// moved code.
+    fn rewrite_extracted_private_method(
+        &mut self,
+        value: &mut Expr,
+        home: SuperHome,
+        class_name_loc: bun_ast::Loc,
+        name_rewrite: Option<RewriteKind>,
+    ) {
+        let js_ast::ExprData::EFunction(f) = &mut value.data else {
+            return;
+        };
+        let kind = RewriteKind::ReplaceSuper {
+            home,
+            loc: class_name_loc,
+        };
+        self.rewrite_arg_exprs(f.func.args.slice_mut(), &mut |p, a| p.rewrite_expr(a, kind));
+        // The temporaries of a rewritten `super` update belong to the method's
+        // own frame, like the receiver captures of lowered private accesses.
+        let temps_before = self.temp_refs_to_declare.len();
+        self.rewrite_stmts(f.func.body.stmts.slice_mut(), kind);
+        f.func.body.stmts =
+            self.declare_capture_temps_in_fn_body(f.func.body.stmts, temps_before, f.func.body.loc);
+        if let Some(rk) = name_rewrite {
+            self.rewrite_expr(value, rk);
+        }
+    }
+
+    /// `__runInitializers(_init, flag, target, ...value)`.
+    fn run_initializers_call(
+        &mut self,
+        init_ref: Ref,
+        flag: f64,
+        target: Expr,
+        value: Option<Expr>,
+        l: bun_ast::Loc,
+    ) -> Expr {
+        let i_e = self.use_ref(init_ref, l);
+        let n_e = self.new_expr(E::Number::new(flag), l);
+        match value {
+            Some(v) => self.call_rt(l, b"__runInitializers", &[i_e, n_e, target, v]),
+            None => self.call_rt(l, b"__runInitializers", &[i_e, n_e, target]),
+        }
+    }
+
+    /// `__privateAdd(target, storage, ...value)`.
+    fn private_add_call(
+        &mut self,
+        target: Expr,
+        storage_ref: Ref,
+        value: Option<Expr>,
+        l: bun_ast::Loc,
+    ) -> Expr {
+        let storage = self.use_ref(storage_ref, l);
+        match value {
+            Some(v) => self.call_rt(l, b"__privateAdd", &[target, storage, v]),
+            None => self.call_rt(l, b"__privateAdd", &[target, storage]),
+        }
+    }
+
+    /// The value a public field is initialized with once it has left the class
+    /// body: `__publicField(target, key, ...value)` keeps [[Define]] semantics;
+    /// TypeScript with `useDefineForClassFields: false` assigns instead.
+    fn public_field_init(
+        &mut self,
+        target: Expr,
+        prop: &Property,
+        value: Option<Expr>,
+        use_define: bool,
+        l: bun_ast::Loc,
+    ) -> Expr {
+        if use_define {
+            let key = prop.key.expect("infallible: prop has key");
+            return match value {
+                Some(v) => self.call_rt(l, b"__publicField", &[target, key, v]),
+                None => self.call_rt(l, b"__publicField", &[target, key]),
+            };
+        }
+        let member = self.member_target(target, prop);
+        let value = value.unwrap_or_else(|| self.new_expr(E::Undefined {}, l));
+        Expr::assign(member, value)
+    }
+
+    /// Build the getter/setter pair that replaces an `accessor` field, backed by
+    /// the WeakMap in `storage_ref`. Returns `(getter, setter)` function exprs.
+    fn auto_accessor_get_set(&mut self, storage_ref: Ref, l: bun_ast::Loc) -> (Expr, Expr) {
+        let bump = self.arena;
+        let this_e = self.new_expr(E::This {}, l);
+        let wm_e = self.use_ref(storage_ref, l);
+        let get_ret = self.call_rt(l, b"__privateGet", &[this_e, wm_e]);
+        let get_body = bump.alloc_slice_copy(&[self.s(
+            S::Return {
+                value: Some(get_ret),
+            },
+            l,
+        )]);
+        let get_fn = G::Fn {
+            body: G::FnBody {
+                stmts: bun_ast::StoreSlice::new_mut(get_body),
+                loc: l,
+            },
+            ..Default::default()
+        };
+
+        let setter_param_ref = self.new_symbol(js_ast::symbol::Kind::Other, b"v");
+        let this_e2 = self.new_expr(E::This {}, l);
+        let wm_e2 = self.use_ref(storage_ref, l);
+        let v_e = self.use_ref(setter_param_ref, l);
+        let set_call = self.call_rt(l, b"__privateSet", &[this_e2, wm_e2, v_e]);
+        let set_body = bump.alloc_slice_copy(&[self.s(
+            S::SExpr {
+                value: set_call,
+                ..Default::default()
+            },
+            l,
+        )]);
+        let setter_binding = self.b(
+            B::Identifier {
+                r#ref: setter_param_ref,
+            },
+            l,
+        );
+        let setter_fn_args = bump.alloc(G::Arg {
+            binding: setter_binding,
+            ..Default::default()
+        });
+        let set_fn = G::Fn {
+            args: bun_ast::StoreSlice::new_mut(core::slice::from_mut(setter_fn_args)),
+            body: G::FnBody {
+                stmts: bun_ast::StoreSlice::new_mut(set_body),
+                loc: l,
+            },
+            ..Default::default()
+        };
+        (
+            self.new_expr(E::Function { func: get_fn }, l),
+            self.new_expr(E::Function { func: set_fn }, l),
+        )
+    }
+
     #[allow(clippy::too_many_lines)]
     fn lower_impl(
         &mut self,
@@ -1119,6 +2100,56 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // declared in a `var` statement alongside the other lowering variables
         // right before output assembly.
         let temp_refs_before = p.temp_refs_to_declare.len();
+
+        // ── Phase 0: Classify the class body ─────────────
+        //
+        // Same rules as esbuild's `computeClassLoweringInfo`: once any member
+        // is decorated (or an `accessor` needs its WeakMap storage) every field
+        // leaves the class body, so initializers keep their source order, and
+        // every private member is lowered so the moved code can still reach it.
+        let class_decorators_len = class.ts_decorators.len_u32() as usize;
+        let mut has_decorated_prop = false;
+        let mut has_auto_accessor = false;
+        let mut has_any_private = false;
+        let mut has_public_instance_field = false;
+        for prop in class.properties.slice().iter() {
+            if prop.kind == PropertyKind::ClassStaticBlock {
+                continue;
+            }
+            if prop.ts_decorators.len_u32() > 0 {
+                has_decorated_prop = true;
+            }
+            if prop.kind == PropertyKind::AutoAccessor {
+                has_auto_accessor = true;
+            }
+            if prop_is_private(prop) {
+                has_any_private = true;
+            } else if !prop.flags.contains(Flags::Property::IsMethod)
+                && !prop.flags.contains(Flags::Property::IsStatic)
+                && !is_synthesized_param_prop(prop)
+            {
+                has_public_instance_field = true;
+            }
+        }
+        let has_any_decorators = has_decorated_prop || class_decorators_len > 0;
+        let use_define = !Self::IS_TYPESCRIPT_ENABLED || p.options.use_define_for_class_fields;
+        let lower_all_static_fields = has_decorated_prop || has_auto_accessor;
+        let lower_all_instance_fields =
+            lower_all_static_fields || (!use_define && has_public_instance_field);
+        let lower_all_private = lower_all_static_fields && has_any_private;
+        // Hoisting one computed key before the class means every computed key
+        // must be hoisted, or the keys would no longer evaluate in source order.
+        let hoist_all_computed_keys = has_decorated_prop
+            || class.properties.slice().iter().any(|prop| {
+                prop.kind != PropertyKind::ClassStaticBlock
+                    && !prop.flags.contains(Flags::Property::IsMethod)
+                    && key_needs_hoisting(prop)
+                    && if prop.flags.contains(Flags::Property::IsStatic) {
+                        lower_all_static_fields
+                    } else {
+                        lower_all_instance_fields
+                    }
+            });
 
         // ── Phase 1: Setup ───────────────────────────────
         let mut class_name_ref: Ref;
@@ -1145,8 +2176,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if let Some(name) = name_from_context
                     && can_be_class_binding_name(name)
                 {
+                    // This is the class's own `.name`, so it is spelled exactly.
+                    let name_ref = p.new_symbol(js_ast::symbol::Kind::Other, name);
+                    VecExt::append(&mut p.current_scope_mut().generated, name_ref);
                     class.class_name = Some(js_ast::LocRef {
-                        ref_: p.new_sym(js_ast::symbol::Kind::Other, name),
+                        ref_: name_ref,
                         loc,
                     });
                 }
@@ -1155,6 +2189,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             class_name_ref = class.class_name.as_ref().unwrap().ref_;
             class_name_loc = class.class_name.as_ref().unwrap().loc;
         }
+        let original_class_name_ref = class_name_ref;
 
         let mut inner_class_ref: Ref = class_name_ref;
         if !is_expr {
@@ -1166,17 +2201,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             inner_class_ref = p.new_sym(js_ast::symbol::Kind::Other, name);
         }
 
-        // `ExprNodeList = Vec<Expr>` owns its
-        // buffer, so this MUST be a real ownership transfer; the previous
-        // `ptr::read` left a second owner in the local that dropped at function
-        // exit, freeing the buffer that `E::Array { items }` (Phase-2/5 below)
-        // still pointed at → use-after-poison in `expr_can_be_removed_if_unused`.
+        // `ExprNodeList` owns its buffer, so this must be a real ownership
+        // transfer: a `ptr::read` copy left in a local would free the buffer
+        // that the `E::Array { items }` built below still points at.
         let mut class_decorators: ExprNodeList =
             bun_alloc::AstAlloc::take(&mut class.ts_decorators);
-        let class_decorators_len = class_decorators.len_u32() as usize;
 
-        let init_ref = p.new_sym(js_ast::symbol::Kind::Other, b"_init");
-        if is_expr {
+        // The decorator context array. A class with only undecorated
+        // `accessor` fields has no decorators to run and gets no metadata.
+        let init_ref = if has_any_decorators {
+            p.new_sym(js_ast::symbol::Kind::Other, b"_init")
+        } else {
+            Ref::NONE
+        };
+        if is_expr && has_any_decorators {
             let binding = p.b(B::Identifier { r#ref: init_ref }, loc);
             expr_var_decls.push(G::Decl {
                 binding,
@@ -1185,7 +2223,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         let mut base_ref: Option<Ref> = None;
-        if class.extends.is_some() {
+        if has_any_decorators && class.extends.is_some() {
             let br = p.new_sym(js_ast::symbol::Kind::Other, b"_base");
             base_ref = Some(br);
             if is_expr {
@@ -1206,9 +2244,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             dec_counter += 1;
             let cdr = p.new_sym(js_ast::symbol::Kind::Other, b"_dec");
             class_dec_ref = Some(cdr);
-            // Move ownership into the AST node — `class_decorators` is not read
-            // again on this branch (Phase-5's else-arm only runs when
-            // `class_dec_ref` is `None`, i.e. `class_decorators_len == 0`).
             let items = bun_alloc::AstAlloc::take(&mut class_decorators);
             let arr = p.new_expr(
                 E::Array {
@@ -1229,8 +2264,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
+        // Decorator arrays and computed keys are evaluated before the class, in
+        // source order: each member's decorators, then its key. In expression
+        // mode these `var` declarations are hoisted by the output assembly.
         let mut prop_dec_refs: HashMap<usize, Ref> = HashMap::default();
-        let mut computed_key_refs: HashMap<usize, Ref> = HashMap::default();
         let mut pre_eval_stmts = BumpVec::<Stmt>::new_in(bump);
         let mut computed_key_counter: usize = 0;
 
@@ -1248,15 +2285,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 };
                 let dec_ref = p.new_sym(js_ast::symbol::Kind::Other, dec_name);
                 prop_dec_refs.insert(prop_idx, dec_ref);
-                if is_expr {
-                    let binding = p.b(B::Identifier { r#ref: dec_ref }, loc);
-                    expr_var_decls.push(G::Decl {
-                        binding,
-                        value: None,
-                    });
-                }
-                // SAFETY: shallow-reborrow arena Vec.
-                let items: ExprNodeList = unsafe { core::ptr::read(&raw const prop.ts_decorators) };
+                let items = bun_alloc::AstAlloc::take(&mut prop.ts_decorators);
                 let arr = p.new_expr(
                     E::Array {
                         items,
@@ -1266,10 +2295,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 );
                 pre_eval_stmts.push(p.var_decl(dec_ref, Some(arr), loc));
             }
-            if prop.flags.contains(Flags::Property::IsComputed)
-                && prop.key.is_some()
-                && prop.ts_decorators.len_u32() > 0
-            {
+            if hoist_all_computed_keys && key_needs_hoisting(prop) {
                 computed_key_counter += 1;
                 let key_name: &'a [u8] = if computed_key_counter == 1 {
                     b"_computedKey"
@@ -1277,14 +2303,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     p.bump_name(b"_computedKey", Some(computed_key_counter))
                 };
                 let key_ref = p.new_sym(js_ast::symbol::Kind::Other, key_name);
-                computed_key_refs.insert(prop_idx, key_ref);
-                if is_expr {
-                    let binding = p.b(B::Identifier { r#ref: key_ref }, loc);
-                    expr_var_decls.push(G::Decl {
-                        binding,
-                        value: None,
-                    });
-                }
                 let key_loc = prop.key.expect("infallible: prop has key").loc;
                 pre_eval_stmts.push(p.var_decl(key_ref, prop.key, loc));
                 prop.key = Some(p.use_ref(key_ref, key_loc));
@@ -1331,8 +2349,75 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             class_name_loc = loc;
         }
 
+        // Code moved out of a named class expression's body must reference the
+        // temporary that holds the class, not the inner class name.
+        let name_rewrite: Option<RewriteKind> = if is_expr && !expr_class_is_anonymous {
+            Some(RewriteKind::ReplaceRef {
+                old: original_class_name_ref,
+                new: class_name_ref,
+            })
+        } else {
+            None
+        };
+
+        // `super` in moved code resolves from the class as written. A class
+        // decorator rebinds the class name, possibly to a subclass, before the
+        // moved code runs, so the original class gets its own binding. It is
+        // declared and assigned only if a `super` rewrite used it.
+        let super_home_ref = if class_decorators_len > 0 {
+            p.new_sym(js_ast::symbol::Kind::Other, b"_home")
+        } else {
+            class_name_ref
+        };
+        let static_super_home = SuperHome {
+            class: super_home_ref,
+            prototype: false,
+            receiver: Some(class_name_ref),
+        };
+
+        // `__decorateElement` appends one initializer slot per decorated field
+        // or accessor, in call order: static accessors, instance accessors,
+        // static fields, instance fields. Number the members the same way.
+        let mut initializer_index: HashMap<usize, usize> = HashMap::default();
+        let mut call_static_method_extra_inits = false;
+        let mut call_instance_method_extra_inits = false;
+        {
+            let mut counts = [0usize; 4];
+            let cprops: &[Property] = class.properties.slice();
+            for (prop_idx, prop) in cprops.iter().enumerate() {
+                if !prop_dec_refs.contains_key(&prop_idx) {
+                    continue;
+                }
+                match field_or_accessor_order(prop) {
+                    Some(i) => counts[i] += 1,
+                    None => {
+                        if prop.flags.contains(Flags::Property::IsStatic) {
+                            call_static_method_extra_inits = true;
+                        } else {
+                            call_instance_method_extra_inits = true;
+                        }
+                    }
+                }
+            }
+            let mut next = [
+                0,
+                counts[0],
+                counts[0] + counts[1],
+                counts[0] + counts[1] + counts[2],
+            ];
+            for (prop_idx, prop) in cprops.iter().enumerate() {
+                if !prop_dec_refs.contains_key(&prop_idx) {
+                    continue;
+                }
+                if let Some(i) = field_or_accessor_order(prop) {
+                    initializer_index.insert(prop_idx, next[i]);
+                    next[i] += 1;
+                }
+            }
+        }
+
         // ── Phase 3: __decoratorStart + base decls ───────
-        let init_start_expr: Expr = {
+        let init_start_expr: Option<Expr> = if has_any_decorators {
             let base_expr = if let Some(br) = base_ref {
                 p.new_expr(
                     E::Identifier {
@@ -1344,7 +2429,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             } else {
                 p.new_expr(E::Undefined {}, loc)
             };
-            p.call_rt(loc, b"__decoratorStart", &[base_expr])
+            Some(p.call_rt(loc, b"__decoratorStart", &[base_expr]))
+        } else {
+            None
         };
 
         let mut base_decl_stmt: Stmt = Stmt::empty();
@@ -1364,119 +2451,231 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             class.extends = Some(p.use_ref(br, loc));
         }
 
-        let init_decl_stmt: Stmt = if !is_expr {
-            p.var_decl(init_ref, Some(init_start_expr), loc)
+        let init_decl_stmt: Option<Stmt> = if !is_expr && let Some(ise) = init_start_expr {
+            Some(p.var_decl(init_ref, Some(ise), loc))
         } else {
-            Stmt::empty()
+            None
         };
 
         // ── Phase 4: Property loop ───────────────────────
-        let mut suffix_exprs = BumpVec::<Expr>::new_in(bump);
-        let mut constructor_inject_stmts = BumpVec::<Stmt>::new_in(bump);
+        let mut prefix_stmts = BumpVec::<Stmt>::new_in(bump);
         let mut new_properties = BumpVec::<Property>::new_in(bump);
+        // `__privateAdd(this, _m)` for lowered private methods: first thing in
+        // the constructor, so field initializers can call them.
+        let mut instance_private_method_adds = BumpVec::<Expr>::new_in(bump);
+        let mut static_private_method_adds = BumpVec::<Expr>::new_in(bump);
+        // Field, accessor and static-block initialization in source order.
+        let mut instance_members = BumpVec::<Expr>::new_in(bump);
+        let mut static_members = BumpVec::<Expr>::new_in(bump);
         let mut static_non_field_elements = BumpVec::<Expr>::new_in(bump);
         let mut instance_non_field_elements = BumpVec::<Expr>::new_in(bump);
-        let mut has_static_private_methods = false;
-        let mut has_instance_private_methods = false;
-        let mut static_field_decorate = BumpVec::<Expr>::new_in(bump);
-        let mut instance_field_decorate = BumpVec::<Expr>::new_in(bump);
-        let mut static_accessor_count: usize = 0;
-        let mut instance_accessor_count: usize = 0;
-        let mut static_init_entries = BumpVec::<FieldInitEntry>::new_in(bump);
-        let mut instance_init_entries = BumpVec::<FieldInitEntry>::new_in(bump);
-        let mut static_element_order = BumpVec::<StaticElement>::new_in(bump);
-        let mut extracted_static_blocks =
-            BumpVec::<js_ast::StoreRef<G::ClassStaticBlock>>::new_in(bump);
-        let mut prefix_stmts = BumpVec::<Stmt>::new_in(bump);
+        let mut static_field_elements = BumpVec::<Expr>::new_in(bump);
+        let mut instance_field_elements = BumpVec::<Expr>::new_in(bump);
         let mut private_lowered_map: PrivateLoweredMap = PrivateLoweredMap::default();
         let mut accessor_storage_counter: usize = 0;
         let mut emitted_private_adds: HashMap<u32, ()> = HashMap::default();
-        let mut static_private_add_blocks = BumpVec::<Property>::new_in(bump);
-
-        // Pre-scan: determine if all private members need lowering
-        let mut lower_all_private = false;
-        {
-            let mut has_any_private = false;
-            let mut has_any_decorated = false;
-            let cprops: &[Property] = class.properties.slice();
-            for cprop in cprops.iter() {
-                if cprop.kind == PropertyKind::ClassStaticBlock {
-                    continue;
-                }
-                if cprop.ts_decorators.len_u32() > 0 {
-                    has_any_decorated = true;
-                    if cprop.key.is_some()
-                        && matches!(
-                            cprop.key.unwrap().data,
-                            js_ast::ExprData::EPrivateIdentifier(_)
-                        )
-                    {
-                        lower_all_private = true;
-                        break;
-                    }
-                }
-                if cprop.key.is_some()
-                    && matches!(
-                        cprop.key.unwrap().data,
-                        js_ast::ExprData::EPrivateIdentifier(_)
-                    )
-                {
-                    has_any_private = true;
-                }
-            }
-            if !lower_all_private && has_any_private && has_any_decorated {
-                lower_all_private = true;
-            }
-        }
 
         let props_slice2: &mut [Property] = class.properties.slice_mut();
         for (prop_idx, prop) in props_slice2.iter_mut().enumerate() {
-            if prop.ts_decorators.len_u32() == 0 {
-                // ── Non-decorated property ──
-                if lower_all_private
-                    && let Some(nk_expr) = prop.key
-                    && matches!(nk_expr.data, js_ast::ExprData::EPrivateIdentifier(_))
-                    && prop.kind != PropertyKind::ClassStaticBlock
-                    && prop.kind != PropertyKind::AutoAccessor
-                {
-                    let npriv_ref = match &nk_expr.data {
+            let is_static = prop.flags.contains(Flags::Property::IsStatic);
+
+            if prop.kind == PropertyKind::ClassStaticBlock {
+                if !lower_all_static_fields {
+                    new_properties.push(prop_full_copy(prop));
+                    continue;
+                }
+                let Some(sb) = prop.class_static_block_mut() else {
+                    continue;
+                };
+                let stmts_slice = sb.stmts.slice_mut();
+                p.rewrite_stmts(
+                    stmts_slice,
+                    RewriteKind::ReplaceThis {
+                        ref_: class_name_ref,
+                        loc: class_name_loc,
+                    },
+                );
+                p.rewrite_stmts(
+                    stmts_slice,
+                    RewriteKind::ReplaceSuper {
+                        home: static_super_home,
+                        loc: class_name_loc,
+                    },
+                );
+                p.rewrite_stmts(stmts_slice, RewriteKind::ReplaceNewTarget);
+                if let Some(rk) = name_rewrite {
+                    p.rewrite_stmts(stmts_slice, rk);
+                }
+
+                let all_exprs = stmts_slice.iter().all(|s| {
+                    matches!(
+                        s.data,
+                        js_ast::StmtData::SExpr(_) | js_ast::StmtData::SEmpty(_)
+                    )
+                });
+                if all_exprs {
+                    for sb_stmt in stmts_slice.iter() {
+                        if let js_ast::StmtData::SExpr(s) = &sb_stmt.data {
+                            static_members.push(s.value);
+                        }
+                    }
+                } else {
+                    // A non-expression statement needs an IIFE, since the class
+                    // may be in expression position.
+                    let stmts_ptr = bun_ast::StoreSlice::new_mut(stmts_slice);
+                    let iife_body = p.new_expr(
+                        E::Arrow {
+                            body: G::FnBody {
+                                loc,
+                                stmts: stmts_ptr,
+                            },
+                            is_async: false,
+                            ..Default::default()
+                        },
+                        loc,
+                    );
+                    static_members.push(p.new_expr(
+                        E::Call {
+                            target: iife_body,
+                            args: bun_alloc::AstAlloc::vec(),
+                            ..Default::default()
+                        },
+                        loc,
+                    ));
+                }
+                continue;
+            }
+
+            let key_expr = prop.key.expect("infallible: class member has a key");
+            let is_private = matches!(key_expr.data, js_ast::ExprData::EPrivateIdentifier(_));
+            let is_method = prop.flags.contains(Flags::Property::IsMethod);
+            let is_accessor = prop.kind == PropertyKind::AutoAccessor;
+            // TypeScript `declare` / `abstract` fields have no runtime presence.
+            let omit_field_init =
+                matches!(prop.kind, PropertyKind::Declare | PropertyKind::Abstract);
+            let must_lower_field = !is_method
+                && !is_synthesized_param_prop(prop)
+                && if is_static {
+                    lower_all_static_fields
+                } else {
+                    lower_all_instance_fields
+                };
+
+            // The object a moved initializer runs against.
+            macro_rules! member_target_expr {
+                () => {
+                    if is_static {
+                        p.use_ref(class_name_ref, class_name_loc)
+                    } else {
+                        p.new_expr(E::This {}, loc)
+                    }
+                };
+            }
+            macro_rules! push_member {
+                ($e:expr) => {
+                    if is_static {
+                        static_members.push($e);
+                    } else {
+                        instance_members.push($e);
+                    }
+                };
+            }
+            // `super` in a private method moved out of the class body.
+            macro_rules! method_super_home {
+                () => {
+                    SuperHome {
+                        class: super_home_ref,
+                        prototype: !is_static,
+                        receiver: None,
+                    }
+                };
+            }
+            // The initializer, rewritten for where it runs now: the constructor
+            // or the statements after the class.
+            macro_rules! moved_initializer {
+                () => {{
+                    let mut init_val = prop.initializer;
+                    if let Some(iv) = &mut init_val {
+                        if is_static {
+                            p.rewrite_moved_static_expr(
+                                iv,
+                                static_super_home,
+                                class_name_loc,
+                                name_rewrite,
+                            );
+                        } else {
+                            p.rewrite_expr(iv, RewriteKind::ReplaceNewTarget);
+                        }
+                    }
+                    init_val
+                }};
+            }
+
+            if let Some(dec_ref) = prop_dec_refs.get(&prop_idx).copied() {
+                // ── Decorated property ──
+                let mut flags: f64;
+                if is_method {
+                    flags = match prop.kind {
+                        PropertyKind::Get => 2.0,
+                        PropertyKind::Set => 3.0,
+                        _ => 1.0,
+                    };
+                } else {
+                    flags = if is_accessor { 4.0 } else { 5.0 };
+                }
+                if is_static {
+                    flags += 8.0;
+                }
+                if is_private {
+                    flags += 16.0;
+                }
+                let k = (flags as u8) & 7;
+                let decorator_array = p.use_ref(dec_ref, loc);
+
+                let mut dec_arg_count: usize = 5;
+                let mut private_storage_ref: Option<Ref> = None;
+                let mut private_extra_ref: Option<Ref> = None;
+                let mut private_method_fn_ref: Option<Ref> = None;
+
+                if is_private {
+                    let priv_ref = match &key_expr.data {
                         js_ast::ExprData::EPrivateIdentifier(pi) => pi.ref_,
                         _ => unreachable!(),
                     };
-                    let npriv_inner = npriv_ref.inner_index();
+                    let priv_inner = priv_ref.inner_index();
                     // SAFETY: arena-owned.
-                    let npriv_orig: &'a [u8] =
-                        p.symbols[npriv_inner as usize].original_name.slice();
+                    let private_orig: &'a [u8] =
+                        p.symbols[priv_inner as usize].original_name.slice();
 
-                    if prop.flags.contains(Flags::Property::IsMethod) {
-                        // Non-decorated private method/getter/setter → WeakSet + fn extraction
-                        let nk = Self::method_kind(prop);
-                        let existing = private_lowered_map.get(&npriv_inner).copied();
+                    if (1..=3).contains(&k) {
+                        let existing = private_lowered_map.get(&priv_inner).copied();
                         let ws_ref = if let Some(ex) = existing {
                             ex.storage_ref
                         } else {
-                            let nm = p.bump_name2(b"_", &npriv_orig[1..]);
+                            let nm = p.bump_name2(b"_", &private_orig[1..]);
                             p.new_sym(js_ast::symbol::Kind::Other, nm)
                         };
+                        private_storage_ref = Some(ws_ref);
                         let fn_nm = {
                             let mut v = BumpVec::<u8>::new_in(bump);
                             v.push(b'_');
-                            v.extend_from_slice(&npriv_orig[1..]);
-                            v.extend_from_slice(Self::fn_suffix(nk));
+                            v.extend_from_slice(&private_orig[1..]);
+                            v.extend_from_slice(Self::fn_suffix(k));
                             v.into_bump_slice()
                         };
                         let fn_ref = p.new_sym(js_ast::symbol::Kind::Other, fn_nm);
+                        private_method_fn_ref = Some(fn_ref);
 
                         let mut new_info =
                             existing.unwrap_or_else(|| PrivateLoweredInfo::new(ws_ref));
-                        if nk == 1 {
+                        if k == 1 {
                             new_info.method_fn_ref = Some(fn_ref);
-                        } else if nk == 2 {
+                        } else if k == 2 {
                             new_info.getter_fn_ref = Some(fn_ref);
                         } else {
                             new_info.setter_fn_ref = Some(fn_ref);
                         }
-                        private_lowered_map.insert(npriv_inner, new_info);
+                        private_lowered_map.insert(priv_inner, new_info);
 
                         if existing.is_none() {
                             let wse = p.new_weak_set_expr(loc);
@@ -1484,268 +2683,263 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         } else {
                             prefix_stmts.push(p.var_decl(fn_ref, None, loc));
                         }
-
-                        // Assign function: _fn = function() { ... }
-                        let val = prop
-                            .value
-                            .unwrap_or_else(|| p.new_expr(E::Undefined {}, loc));
-                        let assign = p.assign_to(fn_ref, val, loc);
-                        prefix_stmts.push(p.s(
-                            S::SExpr {
-                                value: assign,
-                                ..Default::default()
-                            },
-                            loc,
-                        ));
-
-                        // __privateAdd (once per name)
-                        if !emitted_private_adds.contains_key(&npriv_inner) {
-                            emitted_private_adds.insert(npriv_inner, ());
-                            p.emit_private_add(
-                                prop.flags.contains(Flags::Property::IsStatic),
-                                ws_ref,
-                                None,
-                                loc,
-                                &mut constructor_inject_stmts,
-                                &mut static_private_add_blocks,
-                            );
-                        }
-                        continue;
-                    } else {
-                        // Non-decorated private field → WeakMap
-                        let wm_nm = p.bump_name2(b"_", &npriv_orig[1..]);
-                        let wm_ref = p.new_sym(js_ast::symbol::Kind::Other, wm_nm);
-                        private_lowered_map.insert(npriv_inner, PrivateLoweredInfo::new(wm_ref));
+                        dec_arg_count = 6;
+                    } else if k == 5 {
+                        let nm = p.bump_name2(b"_", &private_orig[1..]);
+                        let wm_ref = p.new_sym(js_ast::symbol::Kind::Other, nm);
+                        private_storage_ref = Some(wm_ref);
+                        private_lowered_map.insert(priv_inner, PrivateLoweredInfo::new(wm_ref));
                         let wme = p.new_weak_map_expr(loc);
                         prefix_stmts.push(p.var_decl(wm_ref, Some(wme), loc));
-
-                        let init_val = prop
-                            .initializer
-                            .unwrap_or_else(|| p.new_expr(E::Undefined {}, loc));
-                        let this_e = p.new_expr(E::This {}, loc);
-                        let wm_e = p.use_ref(wm_ref, loc);
-                        let call = p.call_rt(loc, b"__privateAdd", &[this_e, wm_e, init_val]);
-                        if !prop.flags.contains(Flags::Property::IsStatic) {
-                            constructor_inject_stmts.push(p.s(
-                                S::SExpr {
-                                    value: call,
-                                    ..Default::default()
-                                },
-                                loc,
-                            ));
-                        } else {
-                            static_private_add_blocks.push(p.make_static_block(call, loc));
-                        }
-                        continue;
+                        dec_arg_count = 5;
+                    } else if k == 4 {
+                        let nm = p.bump_name2(b"_", &private_orig[1..]);
+                        let wm_ref = p.new_sym(js_ast::symbol::Kind::Other, nm);
+                        private_storage_ref = Some(wm_ref);
+                        let acc_nm = {
+                            let mut v = BumpVec::<u8>::new_in(bump);
+                            v.push(b'_');
+                            v.extend_from_slice(&private_orig[1..]);
+                            v.extend_from_slice(b"_acc");
+                            v.into_bump_slice()
+                        };
+                        let acc_ref = p.new_sym(js_ast::symbol::Kind::Other, acc_nm);
+                        private_method_fn_ref = Some(acc_ref);
+                        private_lowered_map.insert(
+                            priv_inner,
+                            PrivateLoweredInfo {
+                                storage_ref: wm_ref,
+                                method_fn_ref: None,
+                                getter_fn_ref: None,
+                                setter_fn_ref: None,
+                                accessor_desc_ref: Some(acc_ref),
+                            },
+                        );
+                        let wme = p.new_weak_map_expr(loc);
+                        prefix_stmts.push(p.var_decl2(wm_ref, Some(wme), acc_ref, None, loc));
+                        dec_arg_count = 6;
                     }
-                }
-                // Undecorated auto-accessor → WeakMap + getter/setter
-                if prop.kind == PropertyKind::AutoAccessor {
-                    let accessor_name: &'a [u8] = 'brk: {
-                        if let Some(k) = prop.key {
-                            if let js_ast::ExprData::EString(s) = &k.data
-                                && s.is_utf8()
-                            {
-                                break 'brk p.bump_name2(b"_", &s.data);
-                            }
-                        }
-                        let name =
-                            p.bump_name(b"_accessor_storage", Some(accessor_storage_counter));
-                        accessor_storage_counter += 1;
-                        name
-                    };
+                } else if k == 4 {
+                    // Decorated public auto-accessor → WeakMap
+                    let accessor_name =
+                        p.accessor_storage_name(&key_expr, &mut accessor_storage_counter);
                     let wm_ref = p.new_sym(js_ast::symbol::Kind::Other, accessor_name);
+                    private_extra_ref = Some(wm_ref);
                     let wme = p.new_weak_map_expr(loc);
                     prefix_stmts.push(p.var_decl(wm_ref, Some(wme), loc));
+                    dec_arg_count = 6;
+                }
 
-                    // Getter: get foo() { return __privateGet(this, _foo); }
-                    let this_e = p.new_expr(E::This {}, loc);
-                    let wm_e = p.use_ref(wm_ref, loc);
-                    let get_ret = p.call_rt(loc, b"__privateGet", &[this_e, wm_e]);
-                    let get_body = bump.alloc_slice_copy(&[p.s(
-                        S::Return {
-                            value: Some(get_ret),
-                        },
-                        loc,
-                    )]);
-                    let get_fn = G::Fn {
-                        body: G::FnBody {
-                            stmts: bun_ast::StoreSlice::new_mut(get_body),
-                            loc,
-                        },
+                // Build __decorateElement args
+                let target_ref = if is_expr && let Some(ecr) = expr_class_ref {
+                    ecr
+                } else {
+                    class_name_ref
+                };
+                let mut dec_args = BumpVec::with_capacity_in(dec_arg_count, bump);
+                dec_args.push(p.new_expr(
+                    E::Identifier {
+                        ref_: init_ref,
                         ..Default::default()
+                    },
+                    loc,
+                ));
+                dec_args.push(p.new_expr(E::Number::new(flags), loc));
+                dec_args.push(if is_private {
+                    let priv_ref = match &key_expr.data {
+                        js_ast::ExprData::EPrivateIdentifier(pi) => pi.ref_,
+                        _ => unreachable!(),
                     };
-
-                    // Setter: set foo(v) { __privateSet(this, _foo, v); }
-                    let setter_param_ref = p.new_sym(js_ast::symbol::Kind::Other, b"v");
-                    let this_e2 = p.new_expr(E::This {}, loc);
-                    let wm_e2 = p.use_ref(wm_ref, loc);
-                    let v_e = p.use_ref(setter_param_ref, loc);
-                    let set_call = p.call_rt(loc, b"__privateSet", &[this_e2, wm_e2, v_e]);
-                    let set_body = bump.alloc_slice_copy(&[p.s(
-                        S::SExpr {
-                            value: set_call,
+                    // `original_name` is an arena-owned `StoreStr`.
+                    let priv_name = E::Str::new(
+                        p.symbols[priv_ref.inner_index() as usize]
+                            .original_name
+                            .slice(),
+                    );
+                    p.new_expr(
+                        E::EString {
+                            data: priv_name,
                             ..Default::default()
                         },
                         loc,
-                    )]);
-                    let setter_binding = p.b(
-                        B::Identifier {
-                            r#ref: setter_param_ref,
+                    )
+                } else {
+                    key_expr
+                });
+                dec_args.push(decorator_array);
+
+                if is_private && let Some(storage_ref) = private_storage_ref {
+                    dec_args.push(p.use_ref(storage_ref, loc));
+                    if dec_arg_count == 6 {
+                        if (1..=3).contains(&k) {
+                            let mut method = prop
+                                .value
+                                .unwrap_or_else(|| p.new_expr(E::Undefined {}, loc));
+                            p.rewrite_extracted_private_method(
+                                &mut method,
+                                method_super_home!(),
+                                class_name_loc,
+                                name_rewrite,
+                            );
+                            dec_args.push(method);
+                        } else if k == 4 {
+                            dec_args.push(p.use_ref(storage_ref, loc));
+                        } else {
+                            dec_args.push(p.new_expr(E::Undefined {}, loc));
+                        }
+                    }
+                } else {
+                    p.record_usage(target_ref);
+                    dec_args.push(p.new_expr(
+                        E::Identifier {
+                            ref_: target_ref,
+                            ..Default::default()
                         },
+                        class_name_loc,
+                    ));
+                    if dec_arg_count == 6 {
+                        if let Some(extra_ref) = private_extra_ref {
+                            dec_args.push(p.use_ref(extra_ref, loc));
+                        } else {
+                            dec_args.push(p.new_expr(E::Undefined {}, loc));
+                        }
+                    }
+                }
+
+                let dec_args_list = ExprNodeList::from_bump_vec(dec_args);
+                let raw_element = p.call_runtime(loc, b"__decorateElement", dec_args_list);
+                let element = if let Some(fn_ref) = private_method_fn_ref {
+                    p.assign_to(fn_ref, raw_element, loc)
+                } else {
+                    raw_element
+                };
+
+                if k >= 4 {
+                    // Field or accessor: the decorate call runs after the class,
+                    // the initializer runs in source order with the other fields.
+                    match (is_static, k == 4) {
+                        (true, true) => static_non_field_elements.push(element),
+                        (true, false) => static_field_elements.push(element),
+                        (false, true) => instance_non_field_elements.push(element),
+                        (false, false) => instance_field_elements.push(element),
+                    }
+                    if omit_field_init {
+                        continue;
+                    }
+                    let idx = initializer_index
+                        .get(&prop_idx)
+                        .copied()
+                        .expect("infallible: decorated field has an initializer slot");
+                    let init_val = moved_initializer!();
+                    let target = member_target_expr!();
+                    let run_init = p.run_initializers_call(
+                        init_ref,
+                        Self::init_flag(idx),
+                        target,
+                        init_val,
                         loc,
                     );
-                    let setter_fn_args = bump.alloc(G::Arg {
-                        binding: setter_binding,
-                        ..Default::default()
-                    });
-                    let set_fn = G::Fn {
-                        args: bun_ast::StoreSlice::new_mut(core::slice::from_mut(setter_fn_args)),
-                        body: G::FnBody {
-                            stmts: bun_ast::StoreSlice::new_mut(set_body),
-                            loc,
-                        },
-                        ..Default::default()
-                    };
-
-                    let mut getter_flags = prop.flags;
-                    getter_flags.insert(Flags::Property::IsMethod);
-                    new_properties.push(Property {
-                        key: prop.key,
-                        value: Some(p.new_expr(E::Function { func: get_fn }, loc)),
-                        kind: PropertyKind::Get,
-                        flags: getter_flags,
-                        ..Default::default()
-                    });
-                    new_properties.push(Property {
-                        key: prop.key,
-                        value: Some(p.new_expr(E::Function { func: set_fn }, loc)),
-                        kind: PropertyKind::Set,
-                        flags: getter_flags,
-                        ..Default::default()
-                    });
-
-                    let init_val = prop
-                        .initializer
-                        .unwrap_or_else(|| p.new_expr(E::Undefined {}, loc));
-                    if !prop.flags.contains(Flags::Property::IsStatic) {
-                        let this_e3 = p.new_expr(E::This {}, loc);
-                        let wm_e3 = p.use_ref(wm_ref, loc);
-                        let call = p.call_rt(loc, b"__privateAdd", &[this_e3, wm_e3, init_val]);
-                        constructor_inject_stmts.push(p.s(
-                            S::SExpr {
-                                value: call,
-                                ..Default::default()
-                            },
-                            loc,
-                        ));
+                    let target = member_target_expr!();
+                    let member_expr = if k == 4 {
+                        let wm = if is_private {
+                            private_storage_ref
+                        } else {
+                            private_extra_ref
+                        }
+                        .expect("infallible: accessor has storage");
+                        p.private_add_call(target, wm, Some(run_init), loc)
+                    } else if let Some(storage_ref) = private_storage_ref {
+                        p.private_add_call(target, storage_ref, Some(run_init), loc)
                     } else {
-                        let cn_e = p.use_ref(class_name_ref, class_name_loc);
-                        let wm_e3 = p.use_ref(wm_ref, loc);
-                        suffix_exprs.push(p.call_rt(
-                            loc,
-                            b"__privateAdd",
-                            &[cn_e, wm_e3, init_val],
-                        ));
+                        p.public_field_init(target, prop, Some(run_init), use_define, loc)
+                    };
+                    push_member!(member_expr);
+                    let target = member_target_expr!();
+                    let extra = p.run_initializers_call(
+                        init_ref,
+                        Self::extra_init_flag(idx),
+                        target,
+                        None,
+                        loc,
+                    );
+                    push_member!(extra);
+                    continue;
+                }
+
+                if is_static {
+                    static_non_field_elements.push(element);
+                } else {
+                    instance_non_field_elements.push(element);
+                }
+                if let Some(storage_ref) = private_storage_ref {
+                    // Lowered private method: the function lives in `_m_fn`, the
+                    // class body only needs the brand added to each instance.
+                    let priv_inner = match &key_expr.data {
+                        js_ast::ExprData::EPrivateIdentifier(pi) => pi.ref_.inner_index(),
+                        _ => unreachable!(),
+                    };
+                    if !emitted_private_adds.contains_key(&priv_inner) {
+                        emitted_private_adds.insert(priv_inner, ());
+                        let target = member_target_expr!();
+                        let add = p.private_add_call(target, storage_ref, None, loc);
+                        if is_static {
+                            static_private_method_adds.push(add);
+                        } else {
+                            instance_private_method_adds.push(add);
+                        }
                     }
                     continue;
                 }
-                // Static blocks → extract to suffix
-                if prop.kind == PropertyKind::ClassStaticBlock {
-                    if let Some(sb) = prop.class_static_block {
-                        static_element_order.push(StaticElement {
-                            kind: StaticElementKind::Block,
-                            index: extracted_static_blocks.len(),
-                        });
-                        extracted_static_blocks.push(sb);
-                    }
-                    continue;
-                }
+                new_properties.push(prop_copy(prop));
+                continue;
+            }
+
+            // ── Undecorated property ──
+
+            // `constructor(public x)` declares `x;` through the visit pass;
+            // its assignment is already in the constructor.
+            if is_synthesized_param_prop(prop) {
                 new_properties.push(prop_full_copy(prop));
                 continue;
             }
 
-            // ── Decorated property ──
-            let mut flags: f64;
-            if prop.flags.contains(Flags::Property::IsMethod) {
-                flags = match prop.kind {
-                    PropertyKind::Get => 2.0,
-                    PropertyKind::Set => 3.0,
-                    _ => 1.0,
-                };
-            } else {
-                flags = match prop.kind {
-                    PropertyKind::AutoAccessor => 4.0,
-                    _ => 5.0,
-                };
-            }
-            if prop.flags.contains(Flags::Property::IsStatic) {
-                flags += 8.0;
-            }
-            let key_expr = prop.key.expect("infallible: prop has key");
-            let is_private = matches!(key_expr.data, js_ast::ExprData::EPrivateIdentifier(_));
             if is_private {
-                flags += 16.0;
-            }
-
-            let decorator_array = if let Some(dec_ref) = prop_dec_refs.get(&prop_idx).copied() {
-                p.use_ref(dec_ref, loc)
-            } else {
-                // SAFETY: shallow-reborrow arena Vec.
-                let items: ExprNodeList = unsafe { core::ptr::read(&raw const prop.ts_decorators) };
-                p.new_expr(
-                    E::Array {
-                        items,
-                        ..Default::default()
-                    },
-                    loc,
-                )
-            };
-
-            let k = (flags as u8) & 7;
-
-            let mut dec_arg_count: usize = 5;
-            let mut private_storage_ref: Option<Ref> = None;
-            let mut private_extra_ref: Option<Ref> = None;
-            let mut private_method_fn_ref: Option<Ref> = None;
-
-            if is_private {
-                let priv_ref = match &key_expr.data {
+                let npriv_ref = match &key_expr.data {
                     js_ast::ExprData::EPrivateIdentifier(pi) => pi.ref_,
                     _ => unreachable!(),
                 };
-                let priv_inner = priv_ref.inner_index();
+                let npriv_inner = npriv_ref.inner_index();
                 // SAFETY: arena-owned.
-                let private_orig: &'a [u8] = p.symbols[priv_inner as usize].original_name.slice();
+                let npriv_orig: &'a [u8] = p.symbols[npriv_inner as usize].original_name.slice();
 
-                if (1..=3).contains(&k) {
-                    let existing = private_lowered_map.get(&priv_inner).copied();
+                if lower_all_private && is_method {
+                    // Private method/getter/setter → WeakSet brand + extracted fn
+                    let nk = Self::method_kind(prop);
+                    let existing = private_lowered_map.get(&npriv_inner).copied();
                     let ws_ref = if let Some(ex) = existing {
                         ex.storage_ref
                     } else {
-                        let nm = p.bump_name2(b"_", &private_orig[1..]);
+                        let nm = p.bump_name2(b"_", &npriv_orig[1..]);
                         p.new_sym(js_ast::symbol::Kind::Other, nm)
                     };
-                    private_storage_ref = Some(ws_ref);
                     let fn_nm = {
                         let mut v = BumpVec::<u8>::new_in(bump);
                         v.push(b'_');
-                        v.extend_from_slice(&private_orig[1..]);
-                        v.extend_from_slice(Self::fn_suffix(k));
+                        v.extend_from_slice(&npriv_orig[1..]);
+                        v.extend_from_slice(Self::fn_suffix(nk));
                         v.into_bump_slice()
                     };
                     let fn_ref = p.new_sym(js_ast::symbol::Kind::Other, fn_nm);
-                    private_method_fn_ref = Some(fn_ref);
 
                     let mut new_info = existing.unwrap_or_else(|| PrivateLoweredInfo::new(ws_ref));
-                    if k == 1 {
+                    if nk == 1 {
                         new_info.method_fn_ref = Some(fn_ref);
-                    } else if k == 2 {
+                    } else if nk == 2 {
                         new_info.getter_fn_ref = Some(fn_ref);
                     } else {
                         new_info.setter_fn_ref = Some(fn_ref);
                     }
-                    private_lowered_map.insert(priv_inner, new_info);
+                    private_lowered_map.insert(npriv_inner, new_info);
 
                     if existing.is_none() {
                         let wse = p.new_weak_set_expr(loc);
@@ -1753,223 +2947,196 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     } else {
                         prefix_stmts.push(p.var_decl(fn_ref, None, loc));
                     }
-                    dec_arg_count = 6;
-                } else if k == 5 {
-                    let nm = p.bump_name2(b"_", &private_orig[1..]);
-                    let wm_ref = p.new_sym(js_ast::symbol::Kind::Other, nm);
-                    private_storage_ref = Some(wm_ref);
-                    private_lowered_map.insert(priv_inner, PrivateLoweredInfo::new(wm_ref));
-                    let wme = p.new_weak_map_expr(loc);
-                    prefix_stmts.push(p.var_decl(wm_ref, Some(wme), loc));
-                    dec_arg_count = 5;
-                } else if k == 4 {
-                    let nm = p.bump_name2(b"_", &private_orig[1..]);
-                    let wm_ref = p.new_sym(js_ast::symbol::Kind::Other, nm);
-                    private_storage_ref = Some(wm_ref);
-                    let acc_nm = {
-                        let mut v = BumpVec::<u8>::new_in(bump);
-                        v.push(b'_');
-                        v.extend_from_slice(&private_orig[1..]);
-                        v.extend_from_slice(b"_acc");
-                        v.into_bump_slice()
-                    };
-                    let acc_ref = p.new_sym(js_ast::symbol::Kind::Other, acc_nm);
-                    private_method_fn_ref = Some(acc_ref);
-                    private_lowered_map.insert(
-                        priv_inner,
-                        PrivateLoweredInfo {
-                            storage_ref: wm_ref,
-                            method_fn_ref: None,
-                            getter_fn_ref: None,
-                            setter_fn_ref: None,
-                            accessor_desc_ref: Some(acc_ref),
-                        },
+
+                    let mut val = prop
+                        .value
+                        .unwrap_or_else(|| p.new_expr(E::Undefined {}, loc));
+                    p.rewrite_extracted_private_method(
+                        &mut val,
+                        method_super_home!(),
+                        class_name_loc,
+                        name_rewrite,
                     );
-                    let wme = p.new_weak_map_expr(loc);
-                    prefix_stmts.push(p.var_decl2(wm_ref, Some(wme), acc_ref, None, loc));
-                    dec_arg_count = 6;
-                }
-            } else if k == 4 {
-                // Decorated public auto-accessor → WeakMap
-                let accessor_name: &'a [u8] = 'brk: {
-                    if let js_ast::ExprData::EString(s) = &key_expr.data
-                        && s.is_utf8()
-                    {
-                        break 'brk p.bump_name2(b"_", &s.data);
-                    }
-                    let name = p.bump_name(b"_accessor_storage", Some(accessor_storage_counter));
-                    accessor_storage_counter += 1;
-                    name
-                };
-                let wm_ref = p.new_sym(js_ast::symbol::Kind::Other, accessor_name);
-                private_extra_ref = Some(wm_ref);
-                let wme = p.new_weak_map_expr(loc);
-                prefix_stmts.push(p.var_decl(wm_ref, Some(wme), loc));
-                dec_arg_count = 6;
-            }
-
-            // Build __decorateElement args
-            let target_ref = if is_expr && let Some(ecr) = expr_class_ref {
-                ecr
-            } else {
-                class_name_ref
-            };
-            let mut dec_args = BumpVec::with_capacity_in(dec_arg_count, bump);
-            dec_args.push(p.new_expr(
-                E::Identifier {
-                    ref_: init_ref,
-                    ..Default::default()
-                },
-                loc,
-            ));
-            dec_args.push(p.new_expr(E::Number::new(flags), loc));
-            dec_args.push(if is_private {
-                let priv_ref = match &key_expr.data {
-                    js_ast::ExprData::EPrivateIdentifier(pi) => pi.ref_,
-                    _ => unreachable!(),
-                };
-                // `original_name` is an arena-owned `StoreStr`.
-                let priv_name = E::Str::new(
-                    p.symbols[priv_ref.inner_index() as usize]
-                        .original_name
-                        .slice(),
-                );
-                p.new_expr(
-                    E::EString {
-                        data: priv_name,
-                        ..Default::default()
-                    },
-                    loc,
-                )
-            } else {
-                key_expr
-            });
-            dec_args.push(decorator_array);
-
-            if is_private && let Some(storage_ref) = private_storage_ref {
-                dec_args.push(p.use_ref(storage_ref, loc));
-                if dec_arg_count == 6 {
-                    if (1..=3).contains(&k) {
-                        dec_args.push(
-                            prop.value
-                                .unwrap_or_else(|| p.new_expr(E::Undefined {}, loc)),
-                        );
-                    } else if k == 4 {
-                        dec_args.push(p.use_ref(storage_ref, loc));
-                    } else {
-                        dec_args.push(p.new_expr(E::Undefined {}, loc));
-                    }
-                }
-            } else {
-                p.record_usage(target_ref);
-                dec_args.push(p.new_expr(
-                    E::Identifier {
-                        ref_: target_ref,
-                        ..Default::default()
-                    },
-                    class_name_loc,
-                ));
-                if dec_arg_count == 6 {
-                    if let Some(extra_ref) = private_extra_ref {
-                        dec_args.push(p.use_ref(extra_ref, loc));
-                    } else {
-                        dec_args.push(p.new_expr(E::Undefined {}, loc));
-                    }
-                }
-            }
-
-            let dec_args_list = ExprNodeList::from_bump_vec(dec_args);
-            let raw_element = p.call_runtime(loc, b"__decorateElement", dec_args_list);
-            let element = if let Some(fn_ref) = private_method_fn_ref {
-                p.assign_to(fn_ref, raw_element, loc)
-            } else {
-                raw_element
-            };
-
-            // Categorize the element
-            if k >= 4 {
-                let mut prop_shallow = prop_copy(prop);
-                if is_private {
-                    if let Some(ps_ref) = private_storage_ref {
-                        prop_shallow.key = Some(p.new_expr(
-                            E::Identifier {
-                                ref_: ps_ref,
-                                ..Default::default()
-                            },
-                            loc,
-                        ));
-                    }
-                }
-                if let Some(pe_ref) = private_extra_ref {
-                    prop_shallow.value = Some(p.new_expr(
-                        E::Identifier {
-                            ref_: pe_ref,
+                    let assign = p.assign_to(fn_ref, val, loc);
+                    prefix_stmts.push(p.s(
+                        S::SExpr {
+                            value: assign,
                             ..Default::default()
                         },
                         loc,
                     ));
+
+                    if !emitted_private_adds.contains_key(&npriv_inner) {
+                        emitted_private_adds.insert(npriv_inner, ());
+                        let target = member_target_expr!();
+                        let add = p.private_add_call(target, ws_ref, None, loc);
+                        if is_static {
+                            static_private_method_adds.push(add);
+                        } else {
+                            instance_private_method_adds.push(add);
+                        }
+                    }
+                    continue;
                 }
 
-                let is_accessor = k == 4;
-                let init_entry = FieldInitEntry {
-                    prop: prop_shallow,
-                    is_private,
-                    is_accessor,
-                };
+                if lower_all_private && is_accessor {
+                    // Private auto-accessor → WeakSet brand + getter/setter fns over
+                    // a WeakMap, the same shape as a lowered private getter/setter.
+                    let storage_nm = {
+                        let mut v = BumpVec::<u8>::new_in(bump);
+                        v.push(b'_');
+                        v.extend_from_slice(&npriv_orig[1..]);
+                        v.extend_from_slice(b"_storage");
+                        v.into_bump_slice()
+                    };
+                    let storage_ref = p.new_sym(js_ast::symbol::Kind::Other, storage_nm);
+                    let wme = p.new_weak_map_expr(loc);
+                    prefix_stmts.push(p.var_decl(storage_ref, Some(wme), loc));
 
-                if prop.flags.contains(Flags::Property::IsStatic) {
-                    if is_accessor {
-                        static_non_field_elements.push(element);
-                        static_accessor_count += 1;
-                    } else {
-                        static_field_decorate.push(element);
-                    }
-                    static_element_order.push(StaticElement {
-                        kind: StaticElementKind::FieldOrAccessor,
-                        index: static_init_entries.len(),
-                    });
-                    static_init_entries.push(init_entry);
-                } else {
-                    if is_accessor {
-                        instance_non_field_elements.push(element);
-                        instance_accessor_count += 1;
-                    } else {
-                        instance_field_decorate.push(element);
-                    }
-                    instance_init_entries.push(init_entry);
-                }
-            } else if is_private && private_storage_ref.is_some() {
-                let priv_inner2 = match &key_expr.data {
-                    js_ast::ExprData::EPrivateIdentifier(pi) => pi.ref_.inner_index(),
-                    _ => unreachable!(),
-                };
-                if !emitted_private_adds.contains_key(&priv_inner2) {
-                    emitted_private_adds.insert(priv_inner2, ());
-                    p.emit_private_add(
-                        prop.flags.contains(Flags::Property::IsStatic),
-                        private_storage_ref.unwrap(),
-                        None,
-                        loc,
-                        &mut constructor_inject_stmts,
-                        &mut static_private_add_blocks,
+                    let ws_nm = p.bump_name2(b"_", &npriv_orig[1..]);
+                    let ws_ref = p.new_sym(js_ast::symbol::Kind::Other, ws_nm);
+                    let get_nm = p.bump_name2(ws_nm, b"_get");
+                    let set_nm = p.bump_name2(ws_nm, b"_set");
+                    let get_ref = p.new_sym(js_ast::symbol::Kind::Other, get_nm);
+                    let set_ref = p.new_sym(js_ast::symbol::Kind::Other, set_nm);
+                    private_lowered_map.insert(
+                        npriv_inner,
+                        PrivateLoweredInfo {
+                            storage_ref: ws_ref,
+                            method_fn_ref: None,
+                            getter_fn_ref: Some(get_ref),
+                            setter_fn_ref: Some(set_ref),
+                            accessor_desc_ref: None,
+                        },
                     );
+                    let wse = p.new_weak_set_expr(loc);
+                    prefix_stmts.push(p.var_decl2(ws_ref, Some(wse), get_ref, None, loc));
+                    prefix_stmts.push(p.var_decl(set_ref, None, loc));
+                    let (get_fn, set_fn) = p.auto_accessor_get_set(storage_ref, loc);
+                    let assign_get = p.assign_to(get_ref, get_fn, loc);
+                    prefix_stmts.push(p.s(
+                        S::SExpr {
+                            value: assign_get,
+                            ..Default::default()
+                        },
+                        loc,
+                    ));
+                    let assign_set = p.assign_to(set_ref, set_fn, loc);
+                    prefix_stmts.push(p.s(
+                        S::SExpr {
+                            value: assign_set,
+                            ..Default::default()
+                        },
+                        loc,
+                    ));
+
+                    let target = member_target_expr!();
+                    let add = p.private_add_call(target, ws_ref, None, loc);
+                    if is_static {
+                        static_private_method_adds.push(add);
+                    } else {
+                        instance_private_method_adds.push(add);
+                    }
+                    let init_val = moved_initializer!();
+                    let target = member_target_expr!();
+                    let add_value = p.private_add_call(target, storage_ref, init_val, loc);
+                    push_member!(add_value);
+                    continue;
                 }
-                if prop.flags.contains(Flags::Property::IsStatic) {
-                    static_non_field_elements.push(element);
-                    has_static_private_methods = true;
-                } else {
-                    instance_non_field_elements.push(element);
-                    has_instance_private_methods = true;
+
+                if lower_all_private {
+                    // Private field → WeakMap
+                    let wm_nm = p.bump_name2(b"_", &npriv_orig[1..]);
+                    let wm_ref = p.new_sym(js_ast::symbol::Kind::Other, wm_nm);
+                    private_lowered_map.insert(npriv_inner, PrivateLoweredInfo::new(wm_ref));
+                    let wme = p.new_weak_map_expr(loc);
+                    prefix_stmts.push(p.var_decl(wm_ref, Some(wme), loc));
+
+                    let init_val = moved_initializer!();
+                    let target = member_target_expr!();
+                    let add = p.private_add_call(target, wm_ref, init_val, loc);
+                    push_member!(add);
+                    continue;
                 }
-            } else {
-                let new_prop = prop_copy(prop);
-                new_properties.push(new_prop);
-                if prop.flags.contains(Flags::Property::IsStatic) {
-                    static_non_field_elements.push(element);
-                } else {
-                    instance_non_field_elements.push(element);
+
+                if must_lower_field && !is_accessor {
+                    // Keep `#p;` as the brand check; the initializer runs with the
+                    // other fields. Static private fields never reach here: lowering
+                    // static fields lowers every private member.
+                    debug_assert!(!is_static);
+                    let mut brand = prop_full_copy(prop);
+                    brand.initializer = None;
+                    new_properties.push(brand);
+                    if let Some(init) = moved_initializer!() {
+                        let target = p.new_expr(E::This {}, loc);
+                        let member = p.new_expr(
+                            E::Index {
+                                target,
+                                index: key_expr,
+                                optional_chain: None,
+                            },
+                            key_expr.loc,
+                        );
+                        instance_members.push(Expr::assign(member, init));
+                    }
+                    continue;
+                }
+
+                if !is_accessor {
+                    new_properties.push(prop_full_copy(prop));
+                    continue;
                 }
             }
+
+            if is_accessor {
+                // Undecorated auto-accessor → WeakMap + getter/setter
+                let accessor_name =
+                    p.accessor_storage_name(&key_expr, &mut accessor_storage_counter);
+                let wm_ref = p.new_sym(js_ast::symbol::Kind::Other, accessor_name);
+                let wme = p.new_weak_map_expr(loc);
+                prefix_stmts.push(p.var_decl(wm_ref, Some(wme), loc));
+
+                let (get_fn, set_fn) = p.auto_accessor_get_set(wm_ref, loc);
+                let mut getter_flags = prop.flags;
+                getter_flags.insert(Flags::Property::IsMethod);
+                new_properties.push(Property {
+                    key: prop.key,
+                    value: Some(get_fn),
+                    kind: PropertyKind::Get,
+                    flags: getter_flags,
+                    ..Default::default()
+                });
+                new_properties.push(Property {
+                    key: prop.key,
+                    value: Some(set_fn),
+                    kind: PropertyKind::Set,
+                    flags: getter_flags,
+                    ..Default::default()
+                });
+
+                let init_val = moved_initializer!();
+                let target = member_target_expr!();
+                let add = p.private_add_call(target, wm_ref, init_val, loc);
+                push_member!(add);
+                continue;
+            }
+
+            if is_method || !must_lower_field {
+                new_properties.push(prop_full_copy(prop));
+                continue;
+            }
+
+            // TypeScript's [[Set]] mode: a field without an initializer is a
+            // declaration only, tsc emits nothing for it.
+            if omit_field_init || (!use_define && prop.initializer.is_none()) {
+                continue;
+            }
+
+            // Public field → initialized with the other fields, in source order
+            let init_val = moved_initializer!();
+            let target = member_target_expr!();
+            let member_expr = p.public_field_init(target, prop, init_val, use_define, loc);
+            push_member!(member_expr);
         }
 
         // ── Phase 5: Rewrite private accesses ────────────
@@ -1978,54 +3145,47 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if let Some(v) = &mut nprop.value {
                     p.rewrite_private_accesses_in_expr(v, &private_lowered_map);
                 }
+                if let Some(ini) = &mut nprop.initializer {
+                    p.rewrite_private_accesses_in_expr(ini, &private_lowered_map);
+                }
                 if let Some(sb) = nprop.class_static_block_mut() {
                     p.rewrite_private_accesses_in_stmts(sb.stmts.slice_mut(), &private_lowered_map);
                 }
             }
-            for entry in instance_init_entries.iter_mut() {
-                if let Some(ini) = &mut entry.prop.initializer {
-                    p.rewrite_private_accesses_in_expr(ini, &private_lowered_map);
+            for list in [
+                &mut instance_members,
+                &mut static_members,
+                &mut static_non_field_elements,
+                &mut instance_non_field_elements,
+                &mut static_field_elements,
+                &mut instance_field_elements,
+            ] {
+                for elem in list.iter_mut() {
+                    p.rewrite_private_accesses_in_expr(elem, &private_lowered_map);
                 }
-            }
-            for entry in static_init_entries.iter_mut() {
-                if let Some(ini) = &mut entry.prop.initializer {
-                    p.rewrite_private_accesses_in_expr(ini, &private_lowered_map);
-                }
-            }
-            for sb_ptr in extracted_static_blocks.iter_mut() {
-                // `StoreRef::DerefMut` — arena-owned, safe under the StoreRef invariant.
-                let sb = &mut **sb_ptr;
-                p.rewrite_private_accesses_in_stmts(sb.stmts.slice_mut(), &private_lowered_map);
-            }
-            for elem in static_non_field_elements.iter_mut() {
-                p.rewrite_private_accesses_in_expr(elem, &private_lowered_map);
-            }
-            for elem in instance_non_field_elements.iter_mut() {
-                p.rewrite_private_accesses_in_expr(elem, &private_lowered_map);
-            }
-            for elem in static_field_decorate.iter_mut() {
-                p.rewrite_private_accesses_in_expr(elem, &private_lowered_map);
-            }
-            for elem in instance_field_decorate.iter_mut() {
-                p.rewrite_private_accesses_in_expr(elem, &private_lowered_map);
             }
             p.rewrite_private_accesses_in_stmts(&mut pre_eval_stmts, &private_lowered_map);
             p.rewrite_private_accesses_in_stmts(&mut prefix_stmts, &private_lowered_map);
         }
 
         // ── Phase 6: Emit suffix ─────────────────────────
-        let static_field_count = static_field_decorate.len();
-        let total_accessor_count = static_accessor_count + instance_accessor_count;
-        let static_field_base_idx = total_accessor_count;
-        let instance_accessor_base_idx = static_accessor_count;
-        let instance_field_base_idx = total_accessor_count + static_field_count;
-
+        let mut suffix_exprs = BumpVec::<Expr>::new_in(bump);
+        if !super_home_ref.eql(class_name_ref)
+            && p.symbols[super_home_ref.inner_index() as usize].use_count_estimate > 0
+        {
+            // `_home = C` before the class decorator can rebind `C`.
+            prefix_stmts.push(p.var_decl(super_home_ref, None, loc));
+            let class_value = p.use_ref(class_name_ref, class_name_loc);
+            suffix_exprs.push(p.assign_to(super_home_ref, class_value, loc));
+        }
         suffix_exprs.extend_from_slice(&static_non_field_elements);
         suffix_exprs.extend_from_slice(&instance_non_field_elements);
-        suffix_exprs.extend_from_slice(&static_field_decorate);
-        suffix_exprs.extend_from_slice(&instance_field_decorate);
+        suffix_exprs.extend_from_slice(&static_field_elements);
+        suffix_exprs.extend_from_slice(&instance_field_elements);
+        suffix_exprs.extend_from_slice(&static_private_method_adds);
 
-        // 5: Class decorator
+        // Class decorators run before any static member is initialized; the
+        // class binding is rebound to the decorated class first.
         if class_decorators_len > 0 {
             p.record_usage(class_name_ref);
             let class_name_str: E::Str = if let Some(name) = original_class_name_for_decorator {
@@ -2089,140 +3249,47 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             suffix_exprs.push(p.assign_to(class_name_ref, dec_call, class_name_loc));
         }
 
-        // 6: Static method extra initializers
-        if !static_non_field_elements.is_empty() || has_static_private_methods {
-            let i_e = p.use_ref(init_ref, loc);
-            let n_e = p.new_expr(E::Number::new(3.0), loc);
+        // Static method extra initializers
+        if call_static_method_extra_inits {
             let c_e = p.use_ref(class_name_ref, class_name_loc);
-            suffix_exprs.push(p.call_rt(loc, b"__runInitializers", &[i_e, n_e, c_e]));
+            let call = p.run_initializers_call(init_ref, 3.0, c_e, None, loc);
+            suffix_exprs.push(call);
         }
 
-        // 7: Static elements in source order
-        {
-            let mut s_accessor_idx: usize = 0;
-            let mut s_field_idx: usize = 0;
-            for elem in static_element_order.iter() {
-                match elem.kind {
-                    StaticElementKind::Block => {
-                        // `StoreRef::DerefMut` — arena-owned, safe under the StoreRef invariant.
-                        let sb = &mut *extracted_static_blocks[elem.index];
-                        let stmts_slice = sb.stmts.slice_mut();
-                        p.rewrite_stmts(
-                            stmts_slice,
-                            RewriteKind::ReplaceThis {
-                                ref_: class_name_ref,
-                                loc: class_name_loc,
-                            },
-                        );
+        // Static fields, accessors and blocks in source order
+        suffix_exprs.extend_from_slice(&static_members);
 
-                        let all_exprs = stmts_slice
-                            .iter()
-                            .all(|s| matches!(s.data, js_ast::StmtData::SExpr(_)));
-
-                        if all_exprs {
-                            for sb_stmt in stmts_slice.iter() {
-                                match &sb_stmt.data {
-                                    js_ast::StmtData::SExpr(s) => suffix_exprs.push(s.value),
-                                    _ => unreachable!(),
-                                }
-                            }
-                        } else {
-                            // Wrap in IIFE
-                            let stmts_ptr = bun_ast::StoreSlice::new_mut(stmts_slice);
-                            let iife_body = p.new_expr(
-                                E::Arrow {
-                                    body: G::FnBody {
-                                        loc,
-                                        stmts: stmts_ptr,
-                                    },
-                                    is_async: false,
-                                    ..Default::default()
-                                },
-                                loc,
-                            );
-                            suffix_exprs.push(p.new_expr(
-                                E::Call {
-                                    target: iife_body,
-                                    args: bun_alloc::AstAlloc::vec(),
-                                    ..Default::default()
-                                },
-                                loc,
-                            ));
-                        }
-                    }
-                    StaticElementKind::FieldOrAccessor => {
-                        let entry = &static_init_entries[elem.index];
-                        let field_idx: usize = if entry.is_accessor {
-                            let idx = s_accessor_idx;
-                            s_accessor_idx += 1;
-                            idx
-                        } else {
-                            let idx = static_field_base_idx + s_field_idx;
-                            s_field_idx += 1;
-                            idx
-                        };
-
-                        let mut run_args = BumpVec::with_capacity_in(4, bump);
-                        run_args.push(p.use_ref(init_ref, loc));
-                        run_args.push(p.new_expr(E::Number::new(Self::init_flag(field_idx)), loc));
-                        run_args.push(p.use_ref(class_name_ref, class_name_loc));
-                        if let Some(init_val) = entry.prop.initializer {
-                            run_args.push(init_val);
-                        }
-                        let run_args_list = ExprNodeList::from_bump_vec(run_args);
-                        let run_init_call =
-                            p.call_runtime(loc, b"__runInitializers", run_args_list);
-
-                        if entry.is_accessor || entry.is_private {
-                            let wm_ref_expr = if entry.is_accessor && !entry.is_private {
-                                entry.prop.value.expect("infallible: prop has value")
-                            } else {
-                                entry.prop.key.expect("infallible: prop has key")
-                            };
-                            let cn_e = p.use_ref(class_name_ref, class_name_loc);
-                            suffix_exprs.push(p.call_rt(
-                                loc,
-                                b"__privateAdd",
-                                &[cn_e, wm_ref_expr, run_init_call],
-                            ));
-                        } else {
-                            let cn_e = p.use_ref(class_name_ref, class_name_loc);
-                            let assign_target = p.member_target(cn_e, &entry.prop);
-                            suffix_exprs.push(Expr::assign(assign_target, run_init_call));
-                        }
-
-                        // Extra initializer
-                        let i_e = p.use_ref(init_ref, loc);
-                        let n_e = p.new_expr(E::Number::new(Self::extra_init_flag(field_idx)), loc);
-                        let c_e = p.use_ref(class_name_ref, class_name_loc);
-                        suffix_exprs.push(p.call_rt(loc, b"__runInitializers", &[i_e, n_e, c_e]));
-                    }
-                }
-            }
-        }
-
-        // 8: Class extra initializers
         if class_decorators_len > 0 {
-            let i_e = p.use_ref(init_ref, loc);
-            let n_e = p.new_expr(E::Number::new(1.0), loc);
+            // Class extra initializers. `__decorateElement` with kind 0 already
+            // defined `Symbol.metadata` on the class.
             let c_e = p.use_ref(class_name_ref, class_name_loc);
-            suffix_exprs.push(p.call_rt(loc, b"__runInitializers", &[i_e, n_e, c_e]));
-        }
-
-        // 9: __decoratorMetadata
-        {
+            let call = p.run_initializers_call(init_ref, 1.0, c_e, None, loc);
+            suffix_exprs.push(call);
+        } else if has_any_decorators {
             let i_e = p.use_ref(init_ref, loc);
             let c_e = p.use_ref(class_name_ref, class_name_loc);
             suffix_exprs.push(p.call_rt(loc, b"__decoratorMetadata", &[i_e, c_e]));
         }
 
         // ── Phase 7: Constructor injection ───────────────
-        if !instance_non_field_elements.is_empty() || has_instance_private_methods {
-            let i_e = p.use_ref(init_ref, loc);
-            let n_e = p.new_expr(E::Number::new(5.0), loc);
+        // Right after `super()`: the private method brands, then the extra
+        // initializers of the instance methods. The fields follow. In
+        // TypeScript's [[Set]] mode the parameter property assignments come
+        // between the two groups, as tsc emits them.
+        let mut ctor_prologue_stmts = BumpVec::<Stmt>::new_in(bump);
+        for e in instance_private_method_adds.iter() {
+            ctor_prologue_stmts.push(p.s(
+                S::SExpr {
+                    value: *e,
+                    ..Default::default()
+                },
+                loc,
+            ));
+        }
+        if call_instance_method_extra_inits {
             let t_e = p.new_expr(E::This {}, loc);
-            let call = p.call_rt(loc, b"__runInitializers", &[i_e, n_e, t_e]);
-            constructor_inject_stmts.push(p.s(
+            let call = p.run_initializers_call(init_ref, 5.0, t_e, None, loc);
+            ctor_prologue_stmts.push(p.s(
                 S::SExpr {
                     value: call,
                     ..Default::default()
@@ -2230,73 +3297,25 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 loc,
             ));
         }
-
-        // Instance field/accessor init + extra-init
-        {
-            let mut i_accessor_idx: usize = 0;
-            let mut i_field_idx: usize = 0;
-            for entry in instance_init_entries.iter() {
-                let field_idx: usize = if entry.is_accessor {
-                    let idx = instance_accessor_base_idx + i_accessor_idx;
-                    i_accessor_idx += 1;
-                    idx
-                } else {
-                    let idx = instance_field_base_idx + i_field_idx;
-                    i_field_idx += 1;
-                    idx
-                };
-
-                let mut run_args = BumpVec::with_capacity_in(4, bump);
-                run_args.push(p.use_ref(init_ref, loc));
-                run_args.push(p.new_expr(E::Number::new(Self::init_flag(field_idx)), loc));
-                run_args.push(p.new_expr(E::This {}, loc));
-                if let Some(init_val) = entry.prop.initializer {
-                    run_args.push(init_val);
-                }
-                let run_args_list = ExprNodeList::from_bump_vec(run_args);
-                let run_init_call = p.call_runtime(loc, b"__runInitializers", run_args_list);
-
-                if entry.is_accessor || entry.is_private {
-                    let wm_ref_expr = if entry.is_accessor && !entry.is_private {
-                        entry.prop.value.expect("infallible: prop has value")
-                    } else {
-                        entry.prop.key.expect("infallible: prop has key")
-                    };
-                    let t_e = p.new_expr(E::This {}, loc);
-                    let call = p.call_rt(loc, b"__privateAdd", &[t_e, wm_ref_expr, run_init_call]);
-                    constructor_inject_stmts.push(p.s(
-                        S::SExpr {
-                            value: call,
-                            ..Default::default()
-                        },
-                        loc,
-                    ));
-                } else {
-                    let t_e = p.new_expr(E::This {}, loc);
-                    let mt = p.member_target(t_e, &entry.prop);
-                    constructor_inject_stmts.push(Stmt::assign(mt, run_init_call));
-                }
-
-                // Extra initializer
-                let i_e = p.use_ref(init_ref, loc);
-                let n_e = p.new_expr(E::Number::new(Self::extra_init_flag(field_idx)), loc);
-                let t_e = p.new_expr(E::This {}, loc);
-                let call = p.call_rt(loc, b"__runInitializers", &[i_e, n_e, t_e]);
-                constructor_inject_stmts.push(p.s(
-                    S::SExpr {
-                        value: call,
-                        ..Default::default()
-                    },
-                    loc,
-                ));
-            }
+        let mut ctor_field_stmts = BumpVec::<Stmt>::new_in(bump);
+        for e in instance_members.iter() {
+            ctor_field_stmts.push(p.s(
+                S::SExpr {
+                    value: *e,
+                    ..Default::default()
+                },
+                loc,
+            ));
         }
 
-        // Inject into constructor
-        if !constructor_inject_stmts.is_empty() {
+        if !ctor_prologue_stmts.is_empty() || !ctor_field_stmts.is_empty() {
             let mut found_constructor = false;
             for nprop in new_properties.iter_mut() {
-                if !nprop.flags.contains(Flags::Property::IsMethod) || nprop.key.is_none() {
+                if !nprop.flags.contains(Flags::Property::IsMethod)
+                    || nprop.flags.contains(Flags::Property::IsStatic)
+                    || nprop.flags.contains(Flags::Property::IsComputed)
+                    || nprop.key.is_none()
+                {
                     continue;
                 }
                 let is_ctor = match &nprop.key.unwrap().data {
@@ -2311,34 +3330,41 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     _ => unreachable!(),
                 };
                 let body_slice: &[Stmt] = func.func.body.stmts.slice();
-                let mut body_stmts = BumpVec::<Stmt>::with_capacity_in(
-                    body_slice.len() + constructor_inject_stmts.len(),
-                    bump,
-                );
-                body_stmts.extend_from_slice(body_slice);
-                let mut super_index: Option<usize> = None;
-                for (index, item) in body_stmts.iter().enumerate() {
-                    let js_ast::StmtData::SExpr(se) = &item.data else {
-                        continue;
-                    };
-                    let js_ast::ExprData::ECall(call) = &se.value.data else {
-                        continue;
-                    };
-                    if !matches!(call.target.data, js_ast::ExprData::ESuper(_)) {
-                        continue;
+                let mut prologue_at: usize = 0;
+                if class.extends.is_some() {
+                    for (index, item) in body_slice.iter().enumerate() {
+                        let js_ast::StmtData::SExpr(se) = &item.data else {
+                            continue;
+                        };
+                        let js_ast::ExprData::ECall(call) = &se.value.data else {
+                            continue;
+                        };
+                        if !matches!(call.target.data, js_ast::ExprData::ESuper(_)) {
+                            continue;
+                        }
+                        prologue_at = index + 1;
+                        break;
                     }
-                    super_index = Some(index);
-                    break;
                 }
-                let insert_at = if let Some(j) = super_index { j + 1 } else { 0 };
+                let mut fields_at = prologue_at;
+                if !use_define {
+                    let args = func.func.args.slice();
+                    while fields_at < body_slice.len()
+                        && p.is_param_prop_assignment(&body_slice[fields_at], args)
+                    {
+                        fields_at += 1;
+                    }
+                }
                 // BumpVec has no `splice`; rebuild.
                 let mut spliced = BumpVec::<Stmt>::with_capacity_in(
-                    body_stmts.len() + constructor_inject_stmts.len(),
+                    body_slice.len() + ctor_prologue_stmts.len() + ctor_field_stmts.len(),
                     bump,
                 );
-                spliced.extend_from_slice(&body_stmts[..insert_at]);
-                spliced.extend_from_slice(&constructor_inject_stmts);
-                spliced.extend_from_slice(&body_stmts[insert_at..]);
+                spliced.extend_from_slice(&body_slice[..prologue_at]);
+                spliced.extend_from_slice(&ctor_prologue_stmts);
+                spliced.extend_from_slice(&body_slice[prologue_at..fields_at]);
+                spliced.extend_from_slice(&ctor_field_stmts);
+                spliced.extend_from_slice(&body_slice[fields_at..]);
                 func.func.body.stmts = bun_ast::StoreSlice::new_mut(spliced.into_bump_slice_mut());
                 found_constructor = true;
                 break;
@@ -2348,7 +3374,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let mut ctor_stmts = BumpVec::<Stmt>::new_in(bump);
                 if class.extends.is_some() {
                     let target = p.new_expr(E::Super {}, loc);
-                    let args_ref = p.new_sym(js_ast::symbol::Kind::Unbound, arguments_str);
+                    // `arguments` must keep its name: it is the function's own binding.
+                    let args_ref = p.new_symbol(js_ast::symbol::Kind::Unbound, arguments_str);
+                    VecExt::append(&mut p.current_scope_mut().generated, args_ref);
                     let inner = p.new_expr(
                         E::Identifier {
                             ref_: args_ref,
@@ -2375,7 +3403,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         loc,
                     ));
                 }
-                ctor_stmts.extend_from_slice(&constructor_inject_stmts);
+                ctor_stmts.extend_from_slice(&ctor_prologue_stmts);
+                ctor_stmts.extend_from_slice(&ctor_field_stmts);
                 let ctor_body_ptr = bun_ast::StoreSlice::new_mut(ctor_stmts.into_bump_slice_mut());
                 let func = G::Fn {
                     name: None,
@@ -2405,21 +3434,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     },
                 );
             }
-        }
-
-        // Static private __privateAdd blocks at beginning
-        if !static_private_add_blocks.is_empty() {
-            let mut merged = BumpVec::<Property>::with_capacity_in(
-                static_private_add_blocks.len() + new_properties.len(),
-                bump,
-            );
-            for sp in static_private_add_blocks.drain(..) {
-                merged.push(sp);
-            }
-            for np in new_properties.drain(..) {
-                merged.push(np);
-            }
-            new_properties = merged;
         }
 
         class.properties = bun_ast::StoreSlice::new_mut(new_properties.into_bump_slice_mut());
@@ -2489,7 +3503,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
 
             // _init = __decoratorStart(...)
-            comma_parts.push(p.assign_to(init_ref, init_start_expr, loc));
+            if let Some(ise) = init_start_expr {
+                comma_parts.push(p.assign_to(init_ref, ise, loc));
+            }
 
             // _class = class { ... }
             let class_expr = p.new_expr(class_copy(class), loc);
@@ -2552,7 +3568,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
         out.extend_from_slice(&pre_eval_stmts);
         out.extend_from_slice(&prefix_stmts);
-        out.push(init_decl_stmt);
+        if let Some(ids) = init_decl_stmt {
+            out.push(ids);
+        }
         out.push(original_stmt.unwrap());
         for expr in suffix_exprs.iter() {
             out.push(p.s(
@@ -2563,8 +3581,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 expr.loc,
             ));
         }
-        // Inner class binding: let _Foo = Foo
-        if !inner_class_ref.eql(class_name_ref) {
+        // Inner class binding: let _Foo = Foo. Only decorator expressions that
+        // name the class reference it.
+        if !inner_class_ref.eql(class_name_ref)
+            && p.symbols[inner_class_ref.inner_index() as usize].use_count_estimate > 0
+        {
             p.record_usage(class_name_ref);
             let binding = p.b(
                 B::Identifier {
@@ -2590,4 +3611,134 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             ));
         }
     }
+}
+
+#[inline]
+fn prop_is_private(prop: &Property) -> bool {
+    matches!(
+        prop.key,
+        Some(k) if matches!(k.data, js_ast::ExprData::EPrivateIdentifier(_))
+    )
+}
+
+/// The visit pass declares a TypeScript parameter property (`constructor(public
+/// x)`) as a class field whose key is the parameter's identifier, not a string.
+/// No other class field has a non-computed identifier key.
+#[inline]
+fn is_synthesized_param_prop(prop: &Property) -> bool {
+    !prop.flags.contains(Flags::Property::IsComputed)
+        && !prop.flags.contains(Flags::Property::IsMethod)
+        && matches!(
+            prop.key,
+            Some(k) if matches!(k.data, js_ast::ExprData::EIdentifier(_))
+        )
+}
+
+/// A computed key with side effects must be evaluated exactly once, where the
+/// class is defined. String and number literals can be copied instead.
+#[inline]
+fn key_needs_hoisting(prop: &Property) -> bool {
+    prop.flags.contains(Flags::Property::IsComputed)
+        && matches!(
+            prop.key,
+            Some(k) if !matches!(k.data, js_ast::ExprData::EString(_) | js_ast::ExprData::ENumber(_))
+        )
+}
+
+/// The order `__decorateElement` allocates initializer slots in: static
+/// accessors, instance accessors, static fields, instance fields. Methods,
+/// getters and setters have no slot.
+#[inline]
+fn field_or_accessor_order(prop: &Property) -> Option<usize> {
+    if prop.flags.contains(Flags::Property::IsMethod) {
+        return None;
+    }
+    let is_static = prop.flags.contains(Flags::Property::IsStatic);
+    match prop.kind {
+        PropertyKind::AutoAccessor => Some(if is_static { 0 } else { 1 }),
+        PropertyKind::Normal | PropertyKind::Declare | PropertyKind::Abstract => {
+            Some(if is_static { 2 } else { 3 })
+        }
+        _ => None,
+    }
+}
+
+impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
+    /// `this.x = x` for a `constructor(public x)` parameter property, as the
+    /// visit pass emits it at the top of the constructor body. A user statement
+    /// `this.y = x` has a different property name.
+    fn is_param_prop_assignment(&self, stmt: &Stmt, args: &[G::Arg]) -> bool {
+        let js_ast::StmtData::SExpr(se) = &stmt.data else {
+            return false;
+        };
+        let js_ast::ExprData::EBinary(bin) = &se.value.data else {
+            return false;
+        };
+        if bin.op != js_ast::OpCode::BinAssign {
+            return false;
+        }
+        let js_ast::ExprData::EDot(dot) = &bin.left.data else {
+            return false;
+        };
+        if !matches!(dot.target.data, js_ast::ExprData::EThis(_)) {
+            return false;
+        }
+        let js_ast::ExprData::EIdentifier(id) = &bin.right.data else {
+            return false;
+        };
+        args.iter().any(|arg| {
+            arg.is_typescript_ctor_field
+                && matches!(arg.binding.data, js_ast::b::B::BIdentifier(b) if b.r#ref.eql(id.ref_))
+                && self.symbols[id.ref_.inner_index() as usize]
+                    .original_name
+                    .slice()
+                    == dot.name.slice()
+        })
+    }
+}
+
+#[inline]
+fn is_update_op(op: js_ast::OpCode) -> bool {
+    matches!(
+        op,
+        js_ast::OpCode::UnPreInc
+            | js_ast::OpCode::UnPreDec
+            | js_ast::OpCode::UnPostInc
+            | js_ast::OpCode::UnPostDec
+    )
+}
+
+/// `&&`, `||`, `??`: the right side runs only when the left side says so.
+#[inline]
+fn is_logical_op(op: js_ast::OpCode) -> bool {
+    matches!(
+        op,
+        js_ast::OpCode::BinLogicalAnd
+            | js_ast::OpCode::BinLogicalOr
+            | js_ast::OpCode::BinNullishCoalescing
+    )
+}
+
+/// The operator behind a compound assignment: `+=` is `+`.
+#[inline]
+fn compound_assign_base_op(op: js_ast::OpCode) -> Option<js_ast::OpCode> {
+    use js_ast::OpCode;
+    Some(match op {
+        OpCode::BinAddAssign => OpCode::BinAdd,
+        OpCode::BinSubAssign => OpCode::BinSub,
+        OpCode::BinMulAssign => OpCode::BinMul,
+        OpCode::BinDivAssign => OpCode::BinDiv,
+        OpCode::BinRemAssign => OpCode::BinRem,
+        OpCode::BinPowAssign => OpCode::BinPow,
+        OpCode::BinShlAssign => OpCode::BinShl,
+        OpCode::BinShrAssign => OpCode::BinShr,
+        OpCode::BinUShrAssign => OpCode::BinUShr,
+        OpCode::BinBitwiseOrAssign => OpCode::BinBitwiseOr,
+        OpCode::BinBitwiseAndAssign => OpCode::BinBitwiseAnd,
+        OpCode::BinBitwiseXorAssign => OpCode::BinBitwiseXor,
+        OpCode::BinNullishCoalescingAssign => OpCode::BinNullishCoalescing,
+        OpCode::BinLogicalOrAssign => OpCode::BinLogicalOr,
+        OpCode::BinLogicalAndAssign => OpCode::BinLogicalAnd,
+        _ => return None,
+    })
 }

@@ -180,7 +180,7 @@ test("cyclic imports with async dependencies should generate async wrappers", as
     var { AsyncEntryPoint: AsyncEntryPoint2 } = await Promise.resolve().then(() => exports_AsyncEntryPoint);
     AsyncEntryPoint2();
 
-    //# debugId=66236CFF39257E1264756E2164756E21
+    //# debugId=703D61C2E7D11F0864756E2164756E21
     //# sourceMappingURL=entryBuild.js.map
     "
   `);

@@ -11,6 +11,8 @@ var __defProp = Object.defineProperty;
 var __getOwnPropNames = Object.getOwnPropertyNames;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
 var __hasOwnProp = Object.prototype.hasOwnProperty;
+var __reflectGet = Reflect.get;
+var __reflectSet = Reflect.set;
 
 // Shared getter/setter functions: .bind(obj, key) avoids creating a closure
 // and JSLexicalEnvironment per property. BoundFunction is much cheaper.
@@ -232,6 +234,28 @@ export var __privateSet = (obj, member, value, setter) => (
   value
 );
 export var __privateMethod = (obj, member, method) => (__accessCheck(obj, member, "access private method"), method);
+// `obj.#x` as an assignment target: `__privateWrapper(obj, _x)._ = value`.
+export var __privateWrapper = (obj, member, setter, getter) => ({
+  set _(value) {
+    __privateSet(obj, member, value, setter);
+  },
+  get _() {
+    return __privateGet(obj, member, getter);
+  },
+});
+// `super.key` in code moved out of the class: `cls` is the home object.
+export var __superGet = (cls, obj, key) => __reflectGet(__getProtoOf(cls), key, obj);
+// Class bodies are strict mode code: a failed [[Set]] throws, as `super.key = val` does.
+export var __superSet = (cls, obj, key, val) =>
+  __reflectSet(__getProtoOf(cls), key, val, obj) ? val : __typeError("Attempted to assign to readonly property.");
+export var __superWrapper = (cls, obj, key) => ({
+  get _() {
+    return __superGet(cls, obj, key);
+  },
+  set _(val) {
+    __superSet(cls, obj, key, val);
+  },
+});
 
 export var __decoratorStart = base => [, , , __create(base?.[__knownSymbol("metadata")] ?? null)];
 var __decoratorStrings = ["class", "method", "getter", "setter", "accessor", "field", "value", "get", "set"];

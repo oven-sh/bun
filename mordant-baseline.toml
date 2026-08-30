@@ -19,7 +19,6 @@
 
 [bun_jsc]
 "defaulted_failure:src/jsc/ConsoleObject.rs" = 4
-"same_match_twice:src/jsc/VirtualMachine.rs" = 1
 
 [bun_parsers]
 "parallel_vecs:src/parsers/xml.rs" = 1

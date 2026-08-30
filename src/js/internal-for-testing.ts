@@ -658,9 +658,15 @@ export const structuredCloneAdvanced: (
 
 export const isASANEnabled: () => boolean = $newCppFunction("InternalForTesting.cpp", "jsFunction_isASANEnabled", 0);
 
-export const BunString_toThreadSafeRefCountDelta: () => number = $newCppFunction(
+export const BunString_threadIsolatedCopyRefCountDelta: () => number = $newCppFunction(
   "InternalForTesting.cpp",
-  "jsFunction_BunString_toThreadSafeRefCountDelta",
+  "jsFunction_BunString_threadIsolatedCopyRefCountDelta",
+  0,
+);
+
+export const BunString_makeThreadShareableRefCountDelta: () => number = $newCppFunction(
+  "InternalForTesting.cpp",
+  "jsFunction_BunString_makeThreadShareableRefCountDelta",
   0,
 );
 
@@ -725,12 +731,6 @@ export const translateNtStatusToE: (status: number) => string | undefined = $new
   1,
 );
 
-export const sysErrorNameFromLibuv: (errno: number) => string | undefined = $newRustFunction(
-  "sys/Error.rs",
-  "TestingAPIs.sysErrorNameFromLibuv",
-  1,
-);
-
 export const sigactionLayout: () =>
   | undefined
   | {
@@ -783,3 +783,19 @@ export const byteStreamInternals = {
     stream: ReadableStream,
   ) => void,
 };
+
+// How many internal modules (node:fs etc.) this process created from bytecode embedded by `bun build --compile
+// --bytecode` instead of parsing their source.
+export const internalModulesLoadedFromBytecode: () => number = $newCppFunction(
+  "InternalModuleRegistry.cpp",
+  "jsInternalModulesLoadedFromBytecode",
+  0,
+);
+
+// The bytecode `bun build --compile --bytecode` embeds for a builtin module, plus the external string table it embeds
+// beside it: internal module number `index` (null past the last), or `source` written in builtin syntax (@-intrinsics,
+// a function expression) compiled under `name`.
+export const internalModuleBytecode: {
+  (index: number): { name: string; bytecode: Uint8Array; strings: Uint8Array } | null;
+  (source: string, name: string): { name: string; bytecode: Uint8Array; strings: Uint8Array };
+} = $newCppFunction("InternalModuleRegistry.cpp", "jsInternalModuleBytecode", 2);

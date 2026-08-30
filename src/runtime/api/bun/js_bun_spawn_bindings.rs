@@ -25,7 +25,7 @@ use bun_sys::{self as sys, FdExt as _, SignalCode};
 use crate::api::bun_process::ExtraPipe;
 #[cfg(not(windows))]
 use crate::api::bun_process::SpawnResultExt as _;
-use crate::api::bun_process::{self as spawn, CStrPtr, Process, Rusage, SpawnOptions};
+use crate::api::bun_process::{self as spawn, CStrPtr, Rusage, SpawnOptions};
 // User-facing JS `Stdio` enum (extract/as_spawn_option/is_piped).
 use crate::api::bun_spawn::stdio::{self, Stdio};
 use crate::api::bun_subprocess::{
@@ -51,27 +51,6 @@ impl JSValueSpawnExt for JSValue {
 #[inline]
 fn signal_code_from_js(val: JSValue, global: &JSGlobalObject) -> JsResult<SignalCode> {
     bun_sys_jsc::signal_code_jsc::from_js(val, global)
-}
-
-/// `Terminal.CreateResult` — local mirror that flattens `IntrusiveRc<Terminal>`
-/// to a `BackRef<Terminal>` used by `Subprocess.terminal`, so the scopeguard /
-/// field-assignment paths share one pointer type with `existing_terminal`.
-struct TerminalCreateResult {
-    /// BACKREF — the `IntrusiveRc<Terminal>` pointer leaked via `into_raw()`
-    /// when this struct was populated; the +1 ref is held until
-    /// `Subprocess::finalize` (or the spawn-error scopeguard's
-    /// `abandon_from_spawn`) releases it, so the pointee outlives this struct.
-    pub terminal: bun_ptr::BackRef<Terminal, bun_ptr::Mut>,
-    pub js_value: JSValue,
-}
-
-impl TerminalCreateResult {
-    /// Shared borrow of the held `Terminal` (BackRef invariant: +1-ref'd
-    /// IntrusiveRc, live while this struct is held).
-    #[inline]
-    fn term(&self) -> &Terminal {
-        self.terminal.get()
-    }
 }
 
 #[inline]
@@ -112,8 +91,7 @@ fn get_argv0(
     pretend_argv0: Option<&CStr>,
     first_cmd: JSValue,
 ) -> JsResult<Argv0Result> {
-    let arg0 = first_cmd.to_slice_or_null(global_this)?;
-    // `arg0` drops at scope exit (was `defer arg0.deinit()`).
+    let arg0 = first_cmd.to_utf8(global_this)?;
 
     // Check for null bytes in command (security: prevent null byte injection)
     if strings::index_of_char(arg0.slice(), 0).is_some() {
@@ -134,8 +112,11 @@ fn get_argv0(
     let argv0_to_use: &[u8] = arg0.slice();
 
     // This mimicks libuv's behavior, which mimicks execvpe
-    // Only resolve from $PATH when the command is not an absolute path
-    let path_to_use: &[u8] = if strings::index_of_char(argv0_to_use, b'/').is_some() {
+    // Only resolve from $PATH when the command is not an absolute path.
+    // libuv never appends .cmd/.bat, so a `\` path without one is still completed here.
+    let names_a_file = strings::index_of_char(argv0_to_use, b'/').is_some()
+        || (cfg!(windows) && bun_which::is_windows_path_with_executable_extension(argv0_to_use));
+    let path_to_use: &[u8] = if names_a_file {
         b""
         // If no $PATH is provided, we fallback to the one from environ
         // This is already the behavior of the PATH passed in here.
@@ -241,7 +222,7 @@ fn get_argv(
 
     let mut arg_index: usize = 1;
     while let Some(value) = cmds_array.next()? {
-        let arg = bun_core::OwnedString::new(value.to_bun_string(global_this)?);
+        let arg = value.to_bun_string(global_this)?;
 
         // Check for null bytes in argument (security: prevent null byte injection)
         if arg.index_of_ascii_char(0).is_some() {
@@ -251,7 +232,7 @@ fn get_argv(
                     format_args!(
                         "The argument 'args[{}]' must be a string without null bytes. Received \"{}\"",
                         arg_index,
-                        arg.to_zig_string()
+                        arg
                     ),
                 )
                 .throw());
@@ -395,22 +376,13 @@ fn spawn_maybe_sync(
     let mut windows_hide: bool = false;
     #[cfg(windows)]
     let mut windows_verbatim_arguments: bool = false;
-    let mut abort_signal: Option<*mut WebCore::AbortSignal> = None;
-    let mut terminal_info: Option<TerminalCreateResult> = None;
+    let mut abort_signal: Option<bun_jsc::AbortSignalRef> = None;
+    let mut terminal_info: Option<terminal_body::CreateResult> = None;
     let mut existing_terminal: Option<bun_ptr::BackRef<Terminal, bun_ptr::Mut>> = None; // Existing terminal passed by user
     let mut terminal_js_value: JSValue = JSValue::ZERO;
     let mut defer_guard = scopeguard::guard(
-        (&mut abort_signal, &mut terminal_info),
-        |(abort_signal, terminal_info): (
-            &mut Option<*mut WebCore::AbortSignal>,
-            &mut Option<TerminalCreateResult>,
-        )| {
-            if let Some(signal) = abort_signal.take() {
-                // signal was ref()'d when stored; unref releases that ref.
-                // `AbortSignal` is an `opaque_ffi!` ZST handle; `opaque_ref` is
-                // the centralised non-null deref proof.
-                WebCore::AbortSignal::opaque_ref(signal).unref();
-            }
+        &mut terminal_info,
+        |terminal_info: &mut Option<terminal_body::CreateResult>| {
             // If we created a new terminal but spawn failed, close it. The
             // writer/reader/finalize deref paths release the remaining refs.
             // Downgrade the JSRef so the wrapper is GC-eligible, and mark
@@ -419,12 +391,12 @@ fn spawn_maybe_sync(
             if let Some(info) = terminal_info.take() {
                 // `abandon_from_spawn` is the spawn-side error-path teardown
                 // (downgrade JSRef, mark finalized, close_internal).
-                info.term().abandon_from_spawn();
+                info.terminal.abandon_from_spawn();
             }
         },
     );
-    // Note: reshaped for borrowck — re-borrow through the guard tuple.
-    let (abort_signal, terminal_info) = &mut *defer_guard;
+    // Note: reshaped for borrowck — re-borrow through the guard.
+    let terminal_info = &mut **defer_guard;
 
     // Owned ZBox for `cwd` held here so the `&[u8]` borrow stays valid until
     // `spawn_process` returns.
@@ -448,8 +420,8 @@ fn spawn_maybe_sync(
 
         if args.is_object() {
             if let Some(argv0_) = args.get_truthy(global_this, "argv0")? {
-                let argv0_str = argv0_.get_zig_string(global_this)?;
-                if argv0_str.len > 0 {
+                let argv0_str = argv0_.to_bun_string(global_this)?;
+                if !argv0_str.is_empty() {
                     let owned = argv0_str.to_owned_slice_z();
                     // Check for null bytes in argv0 (security: prevent null byte injection)
                     if strings::index_of_char(owned.as_bytes(), 0).is_some() {
@@ -470,8 +442,8 @@ fn spawn_maybe_sync(
 
             // need to update `cwd` before searching for executable with `Which.which`
             if let Some(cwd_) = args.get_truthy(global_this, "cwd")? {
-                let cwd_str = cwd_.get_zig_string(global_this)?;
-                if cwd_str.len > 0 {
+                let cwd_str = cwd_.to_bun_string(global_this)?;
+                if !cwd_str.is_empty() {
                     cwd_owned = cwd_str.to_owned_slice_z();
                     // Check for null bytes in cwd (security: prevent null byte injection)
                     if strings::index_of_char(cwd_owned.as_bytes(), 0).is_some() {
@@ -520,14 +492,11 @@ fn spawn_maybe_sync(
                                         }
                                     };
                                 } else {
-                                    if !global_this.has_exception() {
-                                        return Err(global_this.throw_invalid_argument_type(
-                                            "spawn",
-                                            "serialization",
-                                            "string",
-                                        ));
-                                    }
-                                    return Ok(JSValue::ZERO);
+                                    return Err(global_this.throw_invalid_argument_type(
+                                        "spawn",
+                                        "serialization",
+                                        "string",
+                                    ));
                                 }
                             }
                             break 'ipc_mode IPC::Mode::Advanced;
@@ -547,7 +516,7 @@ fn spawn_maybe_sync(
                     if let Some(abort_error) = sig.node_abort_error_if_aborted(global_this) {
                         return Err(global_this.throw_value(abort_error));
                     }
-                    **abort_signal = Some(sig.ref_());
+                    abort_signal = Some(sig.ref_());
                 } else {
                     return Err(global_this.throw_invalid_argument_type_value(
                         b"signal",
@@ -846,25 +815,11 @@ fn spawn_maybe_sync(
                         terminal_js_value = terminal_val;
                     } else if terminal_val.is_object() {
                         // Create a new terminal from options
-                        let mut term_options =
+                        let term_options =
                             TerminalOptions::parse_from_js(global_this, terminal_val)?;
-                        match Terminal::create_from_spawn(global_this, &mut term_options) {
-                            Ok(created) => {
-                                **terminal_info = Some(TerminalCreateResult {
-                                    // Transfer the +1 ref to `Subprocess.terminal` (released
-                                    // in `Subprocess::finalize`); the scopeguard's
-                                    // `abandon_from_spawn` path covers the error case.
-                                    // `IntrusiveRc::into_raw` is never null (NonNull-backed).
-                                    // SAFETY: `into_raw()` yields the live heap pointer
-                                    // (write provenance, non-null); ref released later.
-                                    terminal: unsafe {
-                                        bun_ptr::BackRef::from_raw_mut(created.terminal.into_raw())
-                                    },
-                                    js_value: created.js_value,
-                                });
-                            }
+                        match Terminal::create_from_spawn(global_this, &term_options) {
+                            Ok(created) => *terminal_info = Some(created),
                             Err(err) => {
-                                drop(term_options);
                                 return Err(match err {
                                     TerminalInitError::OpenPtyFailed => {
                                         global_this.throw(format_args!("Failed to open PTY"))
@@ -893,7 +848,7 @@ fn spawn_maybe_sync(
                             existing_terminal
                                 .map(|t| t.get_slave_fd())
                                 .unwrap_or_else(|| {
-                                    terminal_info.as_ref().unwrap().term().get_slave_fd()
+                                    terminal_info.as_ref().unwrap().terminal.get_slave_fd()
                                 });
                         stdio[0] = Stdio::Fd(slave_fd);
                         stdio[1] = Stdio::Fd(slave_fd);
@@ -1001,8 +956,7 @@ fn spawn_maybe_sync(
             //
             // When Bun.spawn() is given an `.ipc` callback, it enables IPC as follows:
             if let Err(_err) = env_array.try_reserve(3) {
-                let _ = global_this.throw_out_of_memory();
-                return Ok(JSValue::ZERO);
+                return Err(global_this.throw_out_of_memory());
             }
             let ipc_fd: i32 = 'brk: {
                 if ipc_channel == -1 {
@@ -1119,11 +1073,10 @@ fn spawn_maybe_sync(
         if is_sync {
             // SAFETY: defer runs while `jsc_vm` (the thread VM) is still live.
             unsafe {
-                let main_loop = (*jsc_vm_ptr_cleanup).event_loop();
                 (*jsc_vm_ptr_cleanup)
                     .rare_data()
                     .spawn_sync_event_loop(&mut *jsc_vm_ptr_cleanup)
-                    .cleanup(jsc_vm_ptr_cleanup.cast(), main_loop.cast());
+                    .cleanup(jsc_vm_ptr_cleanup.cast());
             }
         }
     }
@@ -1181,13 +1134,13 @@ fn spawn_maybe_sync(
         // For existing terminals, the session is already set up - child just uses the fd as stdio.
         #[cfg(unix)]
         pty_slave_fd: match terminal_info.as_ref() {
-            Some(ti) => ti.term().get_slave_fd().native(),
+            Some(ti) => ti.terminal.get_slave_fd().native(),
             None => -1,
         },
         #[cfg(windows)]
         pseudoconsole: existing_terminal
             .as_deref()
-            .or_else(|| terminal_info.as_ref().map(TerminalCreateResult::term))
+            .or_else(|| terminal_info.as_ref().map(|info| info.terminal.get()))
             .and_then(Terminal::get_pseudoconsole),
 
         #[cfg(windows)]
@@ -1244,8 +1197,9 @@ fn spawn_maybe_sync(
         Err(err) => {
             // See EMFILE arm above.
             spawn_options.deinit();
-            let _ = global_this.throw_error(crate::Error::from(err), ": failed to spawn process");
-            return Ok(JSValue::ZERO);
+            return Err(
+                global_this.throw_error(crate::Error::from(err), ": failed to spawn process")
+            );
         }
         Ok(maybe) => match maybe {
             sys::Result::Err(err) => {
@@ -1299,12 +1253,7 @@ fn spawn_maybe_sync(
     let spawned_stdout = spawned.stdout.take();
     let spawned_stderr = spawned.stderr.take();
     let mut spawned_extra_pipes = core::mem::take(&mut spawned.extra_pipes);
-    // `to_process` returns a freshly Box-allocated `Process` carrying an
-    // intrusive `ThreadSafeRefCount` initialized to 1. `Subprocess.process`
-    // stores it as `*mut Process`; the matching `deref()` in
-    // `Subprocess::finalize` (or the error path below) frees the Box when the
-    // refcount reaches zero.
-    let process: *mut Process = spawned.to_process(loop_handle);
+    let process = spawned.to_process(loop_handle);
 
     #[cfg(unix)]
     let posix_ipc_fd = if !is_sync && maybe_ipc_mode.is_some() {
@@ -1320,9 +1269,7 @@ fn spawn_maybe_sync(
     // address-dependent fields (maxbufs, ipc_data on Windows) afterward.
     let subprocess_ptr = bun_core::heap::into_raw(Box::new(SubprocessT {
         global_this: bun_ptr::BackRef::new(global_this),
-        // SAFETY: `to_process` returns a non-null `Box::into_raw` pointer; the
-        // intrusive ref is released in `Subprocess::finalize`.
-        process: unsafe { bun_ptr::BackRef::from_raw_mut(process) },
+        process,
         pid_rusage: Cell::new(None),
         // stdin/stdout/stderr are assigned immediately after this literal.
         // `Writable.init()` writes to `subprocess.weak_file_sink_stdin_ptr`,
@@ -1341,7 +1288,7 @@ fn spawn_maybe_sync(
         // (released in Subprocess::on_process_exit; stranded if child outlives VM teardown).
         ref_count: bun_ptr::RefCount::init_exact_refs(2),
         stdio_pipes: JsCell::new(core::mem::take(&mut spawned_extra_pipes)),
-        ipc_data: Cell::new(None),
+        ipc_data: JsCell::new(None),
         flags: Cell::new(if is_sync {
             Subprocess::Flags::IS_SYNC
         } else {
@@ -1360,7 +1307,7 @@ fn spawn_maybe_sync(
         closed: Default::default(),
         this_value: Default::default(),
         weak_file_sink_stdin_ptr: Cell::new(None),
-        abort_signal: Cell::new(None),
+        abort_signal: JsCell::new(None),
         event_loop_timer_refd: Cell::new(false),
         event_loop_timer: JsCell::new(crate::timer::EventLoopTimer::init_paused(
             crate::timer::EventLoopTimerTag::SubprocessTimeout,
@@ -1393,13 +1340,11 @@ fn spawn_maybe_sync(
     #[cfg(windows)]
     if !is_sync {
         if let Some(ipc_mode) = maybe_ipc_mode {
-            subprocess
-                .ipc_data
-                .set(core::ptr::NonNull::new(IPC::SendQueue::new(
-                    ipc_mode,
-                    subprocess_ipc_owner(subprocess_ptr),
-                    IPC::SocketUnion::Uninitialized,
-                )));
+            subprocess.ipc_data.set(Some(IPC::SendQueue::new(
+                ipc_mode,
+                subprocess_ipc_owner(subprocess_ptr),
+                IPC::SocketUnion::Uninitialized,
+            )));
         }
     }
 
@@ -1457,17 +1402,9 @@ fn spawn_maybe_sync(
             subprocess.finalize_streams();
             subprocess.process_mut().detach();
             if let Some(ipc_data) = subprocess.ipc_data.take() {
-                // SAFETY: owned ref from `SendQueue::new` above; nothing else
-                // holds it yet (no socket wired, no task scheduled).
-                unsafe {
-                    (*ipc_data.as_ptr()).detach();
-                    <IPC::SendQueue as bun_ptr::CellRefCounted>::deref(ipc_data.as_ptr());
-                }
+                // Nothing else holds it yet (no socket wired, no task scheduled).
+                ipc_data.detach();
             }
-            // Release the intrusive ref
-            // (finalize() won't run on this error path).
-            // SAFETY: this error path returns without ever reading `process` again.
-            unsafe { Process::deref(subprocess.process.as_ptr()) };
             let mut mb = subprocess.stdout_maxbuf.get();
             MaxBuf::remove_from_subprocess(&mut mb);
             subprocess.stdout_maxbuf.set(mb);
@@ -1511,16 +1448,16 @@ fn spawn_maybe_sync(
     if let Some(info) = terminal_info.take() {
         terminal_js_value = info.js_value;
         #[cfg(unix)]
-        info.term().mark_inline_spawned();
+        info.terminal.mark_inline_spawned();
         #[cfg(windows)]
         {
             // ConPTY has no slave fd; this just marks inline_spawned.
-            info.term().close_slave_fd();
+            info.terminal.close_slave_fd();
             // Release the ConDrv \Reference handle now that the child holds a
             // copy: conhost then exits on its own once the child disconnects
             // and the reader observes EOF without us having to tear ConPTY
             // down from on_process_exit.
-            info.term().release_pseudoconsole_reference();
+            info.terminal.release_pseudoconsole_reference();
         }
         subprocess.update_flags(|f| f.insert(Subprocess::Flags::OWNS_TERMINAL));
     }
@@ -1579,13 +1516,11 @@ fn spawn_maybe_sync(
             );
             if !raw_socket.is_null() {
                 let socket = raw_socket;
-                subprocess
-                    .ipc_data
-                    .set(core::ptr::NonNull::new(IPC::SendQueue::new(
-                        mode,
-                        subprocess_ipc_owner(subprocess_ptr),
-                        IPC::SocketUnion::Uninitialized,
-                    )));
+                subprocess.ipc_data.set(Some(IPC::SendQueue::new(
+                    mode,
+                    subprocess_ipc_owner(subprocess_ptr),
+                    IPC::SocketUnion::Uninitialized,
+                )));
                 posix_ipc_info = Some(IPC::Socket::from(socket));
             }
         }
@@ -1792,8 +1727,7 @@ fn spawn_maybe_sync(
     if let Writable::Buffer(buffer) = subprocess.stdin.get() {
         if let Err(err) = Writable::buffer_writer_mut(buffer).start() {
             let _ = subprocess.try_kill(subprocess.kill_signal);
-            let _ = global_this.throw_value(err.to_js(global_this));
-            return Err(JsError::Thrown);
+            return Err(global_this.throw_value(err.to_js(global_this)));
         }
     }
 
@@ -1825,15 +1759,16 @@ fn spawn_maybe_sync(
     // Adding the abort listener may call the onAbortSignal callback immediately if it was already aborted
     // Therefore, we must do this at the very end.
     if let Some(signal) = abort_signal.take() {
-        // SAFETY: `signal` is a live *mut AbortSignal carrying the +1 ref taken
-        // above; ownership of that ref transfers to `subprocess.abort_signal`.
+        // Ownership of the ref transfers to `subprocess.abort_signal`.
         // `add_listener` may synchronously fire `on_abort_signal` (already
-        // aborted), which re-enters via `subprocess_ptr` — write through the
-        // raw pointer so no `&mut Subprocess` is held across the call.
+        // aborted), which re-enters via `subprocess_ptr` and may take the
+        // field, so store it first and hold no `&mut Subprocess` across the call.
+        let sig: *mut WebCore::AbortSignal = signal.get();
+        // SAFETY: `subprocess_ptr` is live; `sig` is kept alive by the ref just stored.
         unsafe {
-            (*signal).pending_activity_ref();
-            let _ = (*signal).add_listener(subprocess_ptr.cast(), Subprocess::on_abort_signal);
-            (*subprocess_ptr).abort_signal.set(NonNull::new(signal));
+            (*subprocess_ptr).abort_signal.set(Some(signal));
+            (*sig).pending_activity_ref();
+            let _ = (*sig).add_listener(subprocess_ptr.cast(), Subprocess::on_abort_signal);
         }
     }
 
@@ -1869,12 +1804,12 @@ fn spawn_maybe_sync(
             // Adding the abort listener may call the onAbortSignal callback immediately if it was already aborted
             // Therefore, we must do this at the very end.
             if let Some(signal) = abort_signal.take() {
+                let sig: *mut WebCore::AbortSignal = signal.get();
                 // SAFETY: see the matching block above.
                 unsafe {
-                    (*signal).pending_activity_ref();
-                    let _ =
-                        (*signal).add_listener(subprocess_ptr.cast(), Subprocess::on_abort_signal);
-                    (*subprocess_ptr).abort_signal.set(NonNull::new(signal));
+                    (*subprocess_ptr).abort_signal.set(Some(signal));
+                    (*sig).pending_activity_ref();
+                    let _ = (*sig).add_listener(subprocess_ptr.cast(), Subprocess::on_abort_signal);
                 }
             }
         }
@@ -2032,8 +1967,10 @@ fn spawn_maybe_sync(
     }
     if global_this.has_exception() {
         // e.g. a termination exception.
-        // SAFETY: same as the `finalize` below; `subprocess` is not used after this line.
-        SubprocessT::finalize(unsafe { Box::from_raw(subprocess_ptr) });
+        // SAFETY: same as below; `subprocess` is not used after this line.
+        unsafe {
+            bun_jsc::host_fn::host_fn_finalize_ref_counted(subprocess_ptr, SubprocessT::finalize)
+        };
         return Ok(JSValue::ZERO);
     }
 
@@ -2056,9 +1993,11 @@ fn spawn_maybe_sync(
     let exited_due_to_max_buffer = subprocess.exited_due_to_maxbuf.get();
     let result_pid = JSValue::js_number_from_int32(subprocess.pid());
     // SAFETY: `subprocess_ptr` was produced by `heap::into_raw(Box::new(...))`
-    // above (spawnSync path: never handed to a JS wrapper); reclaim ownership.
-    // `subprocess` (`&mut *subprocess_ptr`) is not used after this line.
-    SubprocessT::finalize(unsafe { Box::from_raw(subprocess_ptr) });
+    // above (spawnSync path: never handed to a JS wrapper); do what the
+    // wrapper's finalizer would have. `subprocess` is not used after this line.
+    unsafe {
+        bun_jsc::host_fn::host_fn_finalize_ref_counted(subprocess_ptr, SubprocessT::finalize)
+    };
     let (stdout, stderr, resource_usage) = output?;
 
     let sync_value = JSValue::create_empty_object(global_this, 0);
@@ -2106,11 +2045,10 @@ fn throw_command_not_found(global_this: &JSGlobalObject, command: &[u8]) -> JsEr
         message: BunString::create_format(format_args!(
             "Executable not found in $PATH: \"{}\"",
             bstr::BStr::new(command)
-        ))
-        .into(),
-        code: BunString::static_("ENOENT").into(),
+        )),
+        code: BunString::static_("ENOENT"),
         errno: -UV_E::NOENT,
-        path: BunString::clone_utf8(command).into(),
+        path: BunString::clone_utf8(command),
         ..Default::default()
     };
     global_this.throw_value(err.to_error_instance(global_this))
@@ -2126,7 +2064,7 @@ fn append_envp_from_js(
     path: &mut &[u8],
     storage: &mut Vec<ZBox>,
 ) -> JsResult<()> {
-    let mut object_iter = JSPropertyIterator::init(
+    let object_iter = JSPropertyIterator::init(
         global_this,
         object,
         jsc::PropertyIteratorOptions {
@@ -2144,13 +2082,12 @@ fn append_envp_from_js(
         .saturating_sub(envp.len()),
     );
     storage.reserve(object_iter.len);
-    while let Some(key) = object_iter.next()? {
-        let value = object_iter.value;
+    while let Some((key, value)) = object_iter.next()? {
         if value.is_undefined() {
             continue;
         }
 
-        let value_bunstr = bun_core::OwnedString::new(value.to_bun_string(global_this)?);
+        let value_bunstr = value.to_bun_string(global_this)?;
 
         // Check for null bytes in env key and value (security: prevent null byte injection)
         if key.index_of_ascii_char(0).is_some() {
@@ -2159,8 +2096,8 @@ fn append_envp_from_js(
                     jsc::ErrorCode::INVALID_ARG_VALUE,
                     format_args!(
                         "The property 'options.env['{}']' must be a string without null bytes. Received \"{}\"",
-                        key.to_zig_string(),
-                        key.to_zig_string()
+                        key,
+                        key
                     ),
                 )
                 .throw());
@@ -2171,8 +2108,8 @@ fn append_envp_from_js(
                     jsc::ErrorCode::INVALID_ARG_VALUE,
                     format_args!(
                         "The property 'options.env['{}']' must be a string without null bytes. Received \"{}\"",
-                        key.to_zig_string(),
-                        value_bunstr.to_zig_string()
+                        key,
+                        value_bunstr
                     ),
                 )
                 .throw());
@@ -2181,8 +2118,7 @@ fn append_envp_from_js(
         // PERF: per-entry allocation — profile if it shows up on a hot path.
         let line: ZBox = {
             let mut buf: Vec<u8> = Vec::new();
-            write!(&mut buf, "{}={}", key, value_bunstr.to_zig_string())
-                .map_err(|_| JsError::OutOfMemory)?;
+            write!(&mut buf, "{}={}", key, value_bunstr).map_err(|_| JsError::OutOfMemory)?;
             ZBox::from_vec(buf)
         };
 
@@ -2261,7 +2197,7 @@ impl CgroupTarget {
             return Ok(Self::DirFd(Fd::from_native(fd)));
         }
         if value.is_string() {
-            let path = value.to_slice(global)?;
+            let path = value.to_utf8(global)?;
             if strings::contains_char(path.slice(), 0) {
                 return Err(global
                     .err(

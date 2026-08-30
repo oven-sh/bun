@@ -195,6 +195,35 @@ describe.concurrent("bun test --isolate", () => {
     expect(exitCode).toBe(0);
   });
 
+  // The cached module record carries each name as Latin-1 or UTF-16; the second file links from that record.
+  test("with --isolate, cached module records keep short, Latin-1 and UTF-16 names", async () => {
+    using dir = tempDir("isolate-module-names", {
+      "names.ts": `export const a = 1, ab = 2, abc = 3, abcd = 4, café = 5, слово = 6; export { a as é, ab as ф };`,
+      "a.test.ts": `
+        import { test, expect } from "bun:test";
+        import { a, ab, abc, abcd, café, слово, é, ф } from "./names";
+        test("first", () => {
+          (globalThis as any).__a_ran = true;
+          expect([a, ab, abc, abcd, café, слово, é, ф].join()).toBe("1,2,3,4,5,6,1,2");
+        });
+      `,
+      "b.test.ts": `
+        import { test, expect } from "bun:test";
+        import { isolatedModuleCacheSourceType } from "bun:internal-for-testing";
+        import { a, ab, abc, abcd, café, слово, é, ф } from "./names";
+        test("from cache", () => {
+          expect((globalThis as any).__a_ran).toBeUndefined();
+          expect(isolatedModuleCacheSourceType(require.resolve("./names"))).toBe("BunTranspiledModule");
+          expect([a, ab, abc, abcd, café, слово, é, ф].join()).toBe("1,2,3,4,5,6,1,2");
+        });
+      `,
+    });
+    const { stderr, exitCode } = await runTests(String(dir), ["--isolate"], ["./a.test.ts", "./b.test.ts"]);
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("2 pass");
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("0 fail");
+    expect(exitCode).toBe(0);
+  });
+
   test("with --isolate, leaked outbound socket is closed before next file", async () => {
     using dir = tempDir("isolate-socket", {
       "a-connect.test.ts": `
@@ -787,20 +816,22 @@ test.concurrent("--isolate: cached SourceProvider's module_info rebuilds correct
   // export entries. Under --isolate, file b hits the SourceProvider cache and
   // rebuilds JSModuleRecord from the cached module_info (Bun__analyzeTranspiledModule)
   // instead of re-parsing. If the record is wrong, named imports would be
-  // undefined or the count would mismatch.
+  // undefined or the count would mismatch. The names are long enough that the
+  // record's string table passes 64 KB and stores its offsets as u32.
   const N = 2000;
+  const P = Buffer.alloc(40, "p").toString();
   let big = "";
-  for (let i = 0; i < N; i++) big += `export function f${i}(x){return x+${i};}\n`;
+  for (let i = 0; i < N; i++) big += `export function f${i}${P}(x){return x+${i};}\n`;
   big += `export const COUNT = ${N};\n`;
 
   const tBody = (name: string) => `
     import { test, expect } from "bun:test";
-    import { f0, f1, f${N - 1}, COUNT } from "./big";
+    import { f0${P}, f1${P}, f${N - 1}${P}, COUNT } from "./big";
     import * as all from "./big";
     test("${name}", () => {
-      expect(f0(1)).toBe(1);
-      expect(f1(1)).toBe(2);
-      expect(f${N - 1}(1)).toBe(${N});
+      expect(f0${P}(1)).toBe(1);
+      expect(f1${P}(1)).toBe(2);
+      expect(f${N - 1}${P}(1)).toBe(${N});
       expect(COUNT).toBe(${N});
       expect(Object.keys(all).length).toBe(${N + 1});
     });

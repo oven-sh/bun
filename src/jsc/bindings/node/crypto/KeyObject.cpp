@@ -176,9 +176,11 @@ JSC::JSValue KeyObject::exportJwkEdKey(JSC::JSGlobalObject* lexicalGlobalObject,
         }
     })();
 
+    auto crvKey = commonStrings.jwkCrvString(lexicalGlobalObject)->value(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(scope, {});
     jwk->putDirect(
         vm,
-        Identifier::fromString(vm, commonStrings.jwkCrvString(lexicalGlobalObject)->value(lexicalGlobalObject)),
+        Identifier::fromString(vm, crvKey),
         jsString(vm, makeString(curve)));
 
     if (exportType == CryptoKeyType::Private) {
@@ -186,18 +188,22 @@ JSC::JSValue KeyObject::exportJwkEdKey(JSC::JSGlobalObject* lexicalGlobalObject,
 
         JSValue encoded = JSValue::decode(StringBytes::encode(lexicalGlobalObject, scope, privateData.span(), BufferEncodingType::base64url));
         RETURN_IF_EXCEPTION(scope, {});
+        auto dKey = commonStrings.jwkDString(lexicalGlobalObject)->value(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(scope, {});
         jwk->putDirect(
             vm,
-            Identifier::fromString(vm, commonStrings.jwkDString(lexicalGlobalObject)->value(lexicalGlobalObject)),
+            Identifier::fromString(vm, dKey),
             encoded);
     }
 
     ncrypto::DataPointer publicData = pkey.rawPublicKey();
     JSValue encoded = JSValue::decode(StringBytes::encode(lexicalGlobalObject, scope, publicData.span(), BufferEncodingType::base64url));
     RETURN_IF_EXCEPTION(scope, {});
+    auto xKey = commonStrings.jwkXString(lexicalGlobalObject)->value(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(scope, {});
     jwk->putDirect(
         vm,
-        Identifier::fromString(vm, commonStrings.jwkXString(lexicalGlobalObject)->value(lexicalGlobalObject)),
+        Identifier::fromString(vm, xKey),
         encoded);
 
     jwk->putDirect(
@@ -237,9 +243,11 @@ JSC::JSValue KeyObject::exportJwkEcKey(JSC::JSGlobalObject* lexicalGlobalObject,
 
     JSObject* jwk = JSC::constructEmptyObject(lexicalGlobalObject);
 
+    auto ktyKey = commonStrings.jwkKtyString(lexicalGlobalObject)->value(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(scope, {});
     jwk->putDirect(
         vm,
-        Identifier::fromString(vm, commonStrings.jwkKtyString(lexicalGlobalObject)->value(lexicalGlobalObject)),
+        Identifier::fromString(vm, ktyKey),
         commonStrings.jwkEcString(lexicalGlobalObject));
 
     setEncodedValue(lexicalGlobalObject, scope, jwk, commonStrings.jwkXString(lexicalGlobalObject), x.get(), degree_bytes);
@@ -268,9 +276,11 @@ JSC::JSValue KeyObject::exportJwkEcKey(JSC::JSGlobalObject* lexicalGlobalObject,
     }
     }
 
+    auto crvKey = commonStrings.jwkCrvString(lexicalGlobalObject)->value(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(scope, {});
     jwk->putDirect(
         vm,
-        Identifier::fromString(vm, commonStrings.jwkCrvString(lexicalGlobalObject)->value(lexicalGlobalObject)),
+        Identifier::fromString(vm, crvKey),
         jsString(vm, makeString(crvName)));
 
     if (exportType == CryptoKeyType::Private) {
@@ -295,8 +305,10 @@ JSC::JSValue KeyObject::exportJwkRsaKey(JSC::JSGlobalObject* lexicalGlobalObject
 
     auto publicKey = rsa.getPublicKey();
 
+    auto ktyKey = commonStrings.jwkKtyString(lexicalGlobalObject)->value(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(scope, {});
     jwk->putDirect(vm,
-        Identifier::fromString(vm, commonStrings.jwkKtyString(lexicalGlobalObject)->value(lexicalGlobalObject)),
+        Identifier::fromString(vm, ktyKey),
         commonStrings.jwkRsaString(lexicalGlobalObject));
 
     setEncodedValue(lexicalGlobalObject, scope, jwk, commonStrings.jwkNString(lexicalGlobalObject), publicKey.n);
@@ -334,8 +346,10 @@ JSC::JSValue KeyObject::exportJwkSecretKey(JSC::JSGlobalObject* lexicalGlobalObj
     JSValue encoded = JSValue::decode(StringBytes::encode(lexicalGlobalObject, scope, m_data->symmetricKey, BufferEncodingType::base64url));
     RETURN_IF_EXCEPTION(scope, {});
 
+    auto ktyKey = commonStrings.jwkKtyString(lexicalGlobalObject)->value(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(scope, {});
     jwk->putDirect(vm,
-        Identifier::fromString(vm, commonStrings.jwkKtyString(lexicalGlobalObject)->value(lexicalGlobalObject)),
+        Identifier::fromString(vm, ktyKey),
         commonStrings.jwkOctString(lexicalGlobalObject));
 
     jwk->putDirect(vm,
@@ -790,6 +804,7 @@ void KeyObject::getRsaKeyDetails(JSGlobalObject* globalObject, ThrowScope& scope
     }
 
     JSValue publicExponent = JSBigInt::parseInt(globalObject, vm, publicExponentHex.span(), 16, JSBigInt::ErrorParseMode::IgnoreExceptions, JSBigInt::ParseIntSign::Unsigned);
+    RETURN_IF_EXCEPTION(scope, );
     if (!publicExponent) {
         ERR::CRYPTO_OPERATION_FAILED(scope, globalObject, "Failed to create public exponent"_s);
         return;
@@ -1616,10 +1631,6 @@ void KeyObject::getKeyFormatAndType(
     KeyEncodingContext ctx,
     EVPKeyPointer::AsymmetricKeyEncodingConfig& config)
 {
-    // if (!formatType) {
-    //     ASSERT(ctx == KeyEncodingContext::Generate);
-    //     config.output_key_object = true;
-    // } else {
     config.output_key_object = false;
 
     config.format = formatType;
@@ -1631,7 +1642,6 @@ void KeyObject::getKeyFormatAndType(
             || (ctx == KeyEncodingContext::Generate && config.format == EVPKeyPointer::PKFormatType::JWK));
         config.type = EVPKeyPointer::PKEncodingType::PKCS1;
     }
-    // }
 }
 
 EVPKeyPointer::PrivateKeyEncodingConfig KeyObject::getPrivateKeyEncoding(
@@ -1997,7 +2007,6 @@ KeyObject::PrepareAsymmetricKeyResult KeyObject::prepareAsymmetricKey(JSC::JSGlo
 
                 if (encodingView != "buffer"_s) {
                     encoding = parseEnumerationFromView<BufferEncodingType>(encodingView).value_or(BufferEncodingType::utf8);
-                    RETURN_IF_EXCEPTION(scope, {});
                 }
             }
 

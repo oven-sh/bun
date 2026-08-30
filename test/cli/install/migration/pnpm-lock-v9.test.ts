@@ -1645,7 +1645,8 @@ ${variants}`;
       );
       expect(migrated).toContain(`"has-peer/peer": ["peer@file:vendor/peer", {}]`);
       expect(migrated).toContain(`"with/peer": ["peer@file:vendor/peer", {}]`);
-      expect(migrated).toContain(`"with/has-peer/peer": ["peer@file:vendor/peer", {}]`);
+      // the peer of with/has-peer dedupes against the sibling copy at with/peer
+      expect(migrated).not.toContain(`"with/has-peer/peer"`);
       expect(migrated).not.toContain(`"optionalPeers"`);
 
       const install = await run(packageDir, "install", "--frozen-lockfile");

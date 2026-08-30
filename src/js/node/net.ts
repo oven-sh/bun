@@ -161,7 +161,7 @@ const kPerfHooksNetConnectContext = Symbol("kPerfHooksNetConnectContext");
 const khandshakeTimer = Symbol("khandshakeTimer");
 const kerrorEmitted = Symbol("kerrorEmitted");
 const kUserUnrefed = Symbol("kUserUnrefed");
-// Set when pause() dropped the handle's hold on the loop, so the read paths
+// Set when readStop() dropped the handle's hold on the loop, so the read paths
 // only restore a hold they actually removed - re-refing a handle that never
 // held the loop (a wrapped duplex with no fd) would pin the process.
 const kPausedUnref = Symbol("kPausedUnref");
@@ -418,7 +418,7 @@ const SocketHandlers: SocketHandler = {
     self._unrefTimer();
     self.bytesRead += buffer.length;
     if (!self.push(buffer)) {
-      pauseForBackpressure(self, socket);
+      readStop(self, socket);
     }
   },
   drain(socket) {
@@ -567,17 +567,22 @@ const SocketHandlers: SocketHandler = {
   binaryType: "buffer",
 } as const;
 
-// push() (or an onread callback) said stop. Like node's readStop, a socket that
-// is not reading does not hold the loop (see Socket.prototype.pause); a write
-// awaiting drain still does, and unrefAfterDrain drops the hold once it completes.
-function pauseForBackpressure(self, handle) {
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/stream_base_commons.js#L191-L198; a stopped handle does not hold the loop, a pending write still does.
+function readStop(self, handle) {
   handle?.pause?.();
+  // A socket over a generic duplex has no fd and never held the loop.
   if (self[kupgraded] && !(self[kupgraded] instanceof Socket)) return;
   self[kPausedUnref] = true;
   if (!self[kwriteCallback]) handle?.unref?.();
 }
 
-// Reads are flowing again: give back the hold a pause dropped. Cleared even when
+// https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L494-L498
+function pauseOnCreate(self, handle) {
+  readStop(self, handle);
+  self.readableFlowing = false;
+}
+
+// Reads are flowing again: give back the hold readStop dropped. Cleared even when
 // the user unref'd, so a later ref() is not undone by unrefAfterDrain.
 function restorePausedHold(self, handle) {
   if (!self[kPausedUnref]) return;
@@ -601,7 +606,7 @@ function finishSocketEnd(self) {
   // the loop while reading or with a write in flight, so node lets the process exit even if
   // the (half-open) writable side stays open and the readable side was never consumed. Mirror
   // that: drop this handle's hold on the loop unless a write is still waiting on drain, and
-  // forget any pause()-time unref so a later read()/resume() does not pin the loop again.
+  // forget any readStop-time unref so a later read()/resume() does not pin the loop again.
   // A subsequent buffered write re-refs (see _write) so its callback can still fire.
   const socket = self._handle;
   if (socket && !self[kwriteCallback]) {
@@ -760,7 +765,7 @@ const ServerHandlers: SocketHandler<NetSocket> = {
     self._unrefTimer();
     self.bytesRead += buffer.length;
     if (!self.push(buffer)) {
-      pauseForBackpressure(self, socket);
+      readStop(self, socket);
     }
   },
   keylog(socket, line) {
@@ -983,9 +988,9 @@ const ServerHandlers: SocketHandler<NetSocket> = {
         self.authorized = true;
       }
     }
-    const pauseOnConnect = server && (server.pauseOnConnect ?? server[bunSocketServerOptions]?.pauseOnConnect);
+    const pauseOnConnect = server?.pauseOnConnect;
     if (pauseOnConnect) {
-      self.pause();
+      pauseOnCreate(self, socket);
     }
     if (!pauseOnConnect && !self.destroyed) {
       // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L502-L524
@@ -1159,7 +1164,9 @@ function onconnection(err, clientHandle) {
   }
   clientHandle[kServerSocket] = handle;
   const options = self[bunSocketServerOptions];
-  const { pauseOnConnect, connectionListener, [kSocketClass]: SClass } = options;
+  const { connectionListener, [kSocketClass]: SClass } = options;
+  // Read per connection like node; the listener itself was created with the value listen() saw.
+  const pauseOnConnect = self.pauseOnConnect;
   // Propagate the server's half-open/highWaterMark settings to the accepted
   // socket so the Duplex's allowHalfOpen matches what the native layer was
   // configured with in kRealListen; without this, net.createServer({
@@ -1229,14 +1236,11 @@ function onconnection(err, clientHandle) {
   _socket._server = self;
 
   if (pauseOnConnect && !isTLS) {
-    _socket.pause();
+    pauseOnCreate(_socket, clientHandle);
   }
 
-  if (typeof connectionListener === "function") {
-    clientHandle.pauseOnConnect = pauseOnConnect;
-    if (!isTLS) {
-      self.prependOnceListener("connection", connectionListener);
-    }
+  if (typeof connectionListener === "function" && !isTLS) {
+    self.prependOnceListener("connection", connectionListener);
   }
   if (isTLS) initAcceptedTLSSocket(self, _socket);
 
@@ -1268,9 +1272,6 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
     }
     if (!self[kupgraded]) req!.oncomplete(0, self._handle, req, true, true);
     socket.data.req = undefined;
-    if (self.pauseOnConnect) {
-      self.pause();
-    }
     if (self[kupgraded]) {
       self.connecting = false;
       SocketHandlers2.drain!(socket);
@@ -1281,7 +1282,7 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
     const { self } = socket.data;
     self._unrefTimer();
     self.bytesRead += buffer.length;
-    if (!self.push(buffer)) pauseForBackpressure(self, socket);
+    if (!self.push(buffer)) readStop(self, socket);
   },
   drain(socket) {
     $debug("Bun.Socket drain");
@@ -1506,6 +1507,7 @@ function kConnectTcp(self, addressType, req, address, port) {
     // where libuv sockets are half-open and the stream layer decides.
     allowHalfOpen: true,
     tls: req.tls,
+    pauseOnConnect: req.pauseOnConnect,
     data: { self, req },
     socket: self[khandlers],
   });
@@ -1519,6 +1521,7 @@ function kConnectPipe(self, req, address) {
     // Always half-open natively; see kConnect.
     allowHalfOpen: true,
     tls: req.tls,
+    pauseOnConnect: req.pauseOnConnect,
     data: { self, req },
     socket: self[khandlers],
   });
@@ -1616,7 +1619,6 @@ function Socket(options?) {
   this[ksocket] = undefined;
   this.server = undefined;
   this._server = undefined;
-  this.pauseOnConnect = false;
   this._peername = null;
   this._sockname = null;
   this._closeAfterHandlingError = false;
@@ -1724,7 +1726,7 @@ function Socket(options?) {
           if (self.destroyed) return;
           if (ret === false || self.isPaused()) {
             self[kOnreadTail] = kOnreadEmptyTail;
-            pauseForBackpressure(self, self._handle);
+            readStop(self, self._handle);
           }
           return;
         }
@@ -1755,7 +1757,7 @@ function Socket(options?) {
         if (ret === false || self.isPaused()) {
           const rest = buffer.subarray(offset);
           self[kOnreadTail] = rest.length !== 0 ? rest : kOnreadEmptyTail;
-          pauseForBackpressure(self, self._handle);
+          readStop(self, self._handle);
           return;
         }
       }
@@ -1919,6 +1921,7 @@ Socket.prototype.connect = function connect(...args) {
         socket: SocketHandlers,
         // Always half-open natively; see kConnect.
         allowHalfOpen: true,
+        pauseOnConnect,
       }).catch(error => {
         if (!this.destroyed) {
           this.emit("error", error);
@@ -1926,9 +1929,10 @@ Socket.prototype.connect = function connect(...args) {
         }
       });
     }
-    this.pauseOnConnect = pauseOnConnect;
     if (pauseOnConnect) {
-      this.pause();
+      // An fd is open already; a dial is paused when it opens, and afterConnect releases its hold.
+      if (fd != null) pauseOnCreate(this, this._handle);
+      else this.readableFlowing = false;
     } else {
       process.nextTick(() => {
         // An already-open handle (fd, wrapped duplex) starts reading here unless
@@ -2348,19 +2352,11 @@ Socket.prototype.resume = function resume() {
   return ret;
 };
 
+// Only a connected onread socket stops reading here: https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L817-L827
 Socket.prototype.pause = function pause() {
-  if (!this.destroyed) {
-    this._handle?.pause?.();
-    // libuv only counts a stream handle as active - and therefore as keeping
-    // the event loop alive - while it is reading. A paused socket lets the
-    // process exit; resume() re-refs it unless the user explicitly unref'd.
-    this._handle?.unref?.();
-    // Only remember the unref when this handle can actually hold the loop: a
-    // TLS socket wrapped over a generic duplex has no fd, so re-refing it
-    // later would newly pin the process.
-    if (!this[kupgraded] || this[kupgraded] instanceof Socket) {
-      this[kPausedUnref] = true;
-    }
+  const handle = this._handle;
+  if (handle && this[kOnreadBuffer] !== undefined && !this.connecting && !this.destroyed) {
+    readStop(this, handle);
   }
   return Duplex.prototype.pause.$call(this);
 };
@@ -3135,6 +3131,7 @@ function internalConnect(self, options, address, port, addressType, localAddress
     req.localPort = localPort;
     req.addressType = addressType;
     req.tls = tls;
+    req.pauseOnConnect = options.pauseOnConnect;
 
     traceConnectStart(req);
     err = kConnectTcp(self, addressType, req, address, port);
@@ -3155,6 +3152,7 @@ function internalConnect(self, options, address, port, addressType, localAddress
     req.address = address;
     req.oncomplete = afterConnect;
     req.tls = tls;
+    req.pauseOnConnect = options.pauseOnConnect;
 
     traceConnectStart(req, address);
     err = kConnectPipe(self, req, address);
@@ -3279,6 +3277,7 @@ function internalConnectMultiple(context, canceled?) {
   req.localPort = localPort;
   req.addressType = addressType;
   req.tls = tls;
+  req.pauseOnConnect = context.options.pauseOnConnect;
 
   ArrayPrototypePush.$call(self.autoSelectFamilyAttemptedAddresses, `${address}:${port}`);
 
@@ -3385,6 +3384,10 @@ function afterConnect(status, handle, req, readable, writable) {
       self._handle.setKeepAlive(true, self[kSetKeepAliveInitialDelay]);
     }
 
+    // Ours already reads, Node's starts at read(): stop a paused plain socket now, and after the listeners unless one asked for a read.
+    const pausedBeforeConnect = self.isPaused();
+    if (pausedBeforeConnect && !self.encrypted) readStop(self, self._handle);
+
     self.emit("connect");
     self.emit("ready");
 
@@ -3394,7 +3397,9 @@ function afterConnect(status, handle, req, readable, writable) {
 
     // Start the first read, or get an immediate EOF.
     // this doesn't actually consume any bytes, because len=0.
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L1695-L1696
     if (readable && !self.isPaused()) self.read(0);
+    else if (!pausedBeforeConnect && !self.encrypted && !self._readableState.reading) readStop(self, self._handle);
   } else {
     let details;
     const localAddress = req.localAddress;
@@ -3518,7 +3523,6 @@ function Server(options?, connectionListener?) {
   this._usingWorkers = false;
   this.workers = [];
   this._unref = false;
-  this.listeningId = 1;
 
   this[bunSocketServerOptions] = undefined;
   // Server option coercion matches Node's Server constructor:
@@ -3576,6 +3580,8 @@ Server.prototype.close = function close(callback) {
   if (this._handle) {
     if (typeof this._handle.stop === "function") {
       this._handle.stop(false);
+      // Listener::do_stop unrefs the loop at once; hold it one turn like node's uv_close() (test-process-beforeexit).
+      setImmediate(noop);
       // Released here, not on 'close': https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2434-L2437
       const clusterHandle = this[kClusterHandle];
       if (clusterHandle) {
@@ -3860,7 +3866,11 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
     );
   } catch (err) {
     const isUnix = path != null;
-    setTimeout(emitErrorNextTick, 1, this, formatListenError(err, isUnix ? path : hostname, isUnix ? undefined : port));
+    process.nextTick(
+      emitErrorNextTick,
+      this,
+      formatListenError(err, isUnix ? path : hostname, isUnix ? undefined : port),
+    );
   }
   return this;
 };
@@ -3897,6 +3907,7 @@ Server.prototype[kRealListen] = function (
       exclusive: exclusive || this[bunSocketServerOptions]?.exclusive || false,
       socket: serverHandlersFor(this),
       data: this,
+      pauseOnConnect: this.pauseOnConnect,
     });
     // Mirror libuv uv_pipe_chmod: readableAll/writableAll relax the unix socket
     // file's group/other permission bits. Skipped on Windows and abstract
@@ -3929,6 +3940,7 @@ Server.prototype[kRealListen] = function (
       exclusive: exclusive || this[bunSocketServerOptions]?.exclusive || false,
       socket: serverHandlersFor(this),
       data: this,
+      pauseOnConnect: this.pauseOnConnect,
     });
   } else {
     this._handle = Bun.listen({
@@ -3941,6 +3953,7 @@ Server.prototype[kRealListen] = function (
       exclusive: exclusive || this[bunSocketServerOptions]?.exclusive || false,
       socket: serverHandlersFor(this),
       data: this,
+      pauseOnConnect: this.pauseOnConnect,
     });
   }
 
@@ -3964,14 +3977,8 @@ Server.prototype[kRealListen] = function (
   // Unref the handle if the server was unref'ed prior to listening
   if (this._unref) this.unref();
 
-  // We must schedule the emitListeningNextTick() only after the next run of
-  // the event loop's IO queue. Otherwise, the server may not actually be listening
-  // when the 'listening' event is emitted.
-  //
-  // That leads to all sorts of confusion.
-  //
-  // process.nextTick() is not sufficient because it will run before the IO queue.
-  setTimeout(emitListeningNextTick, 1, this);
+  // A tick, not a timer, so a close() from 'listening' runs before the loop accepts anything (as in Node).
+  process.nextTick(emitListeningNextTick, this);
 };
 
 Server.prototype[EventEmitter.captureRejectionSymbol] = function (err, event, sock) {
@@ -4018,6 +4025,7 @@ function emitListeningNextTick(self) {
   self.emit("listening");
 }
 
+const { isPrimary } = require("internal/cluster/isPrimary");
 let cluster;
 function listenInCluster(
   server,
@@ -4041,10 +4049,12 @@ function listenInCluster(
 ) {
   exclusive = !!exclusive;
 
-  if (cluster === undefined) cluster = require("node:cluster");
+  // A worker's first require of node:cluster runs its bootstrap (IPC handlers, 'online'); listen() has always been one
+  // of the places that happens, exclusive or not.
+  if (!isPrimary && cluster === undefined) cluster = require("node:cluster");
 
   if (
-    !cluster.isPrimary &&
+    !isPrimary &&
     !exclusive &&
     typeof address === "string" &&
     address.length > 0 &&
@@ -4085,7 +4095,7 @@ function listenInCluster(
     return;
   }
 
-  if (cluster.isPrimary || exclusive) {
+  if (isPrimary || exclusive) {
     server[kRealListen](
       path,
       port,
@@ -4156,7 +4166,7 @@ function listenInCluster(
         server[kClusterUnixPath] = undefined;
         handle[kClusterOwner] = null;
         handle.close();
-        setTimeout(emitErrorNextTick, 1, server, err);
+        process.nextTick(emitErrorNextTick, server, err);
       }
       return;
     }
@@ -4180,7 +4190,7 @@ Server.prototype[kClusterFauxListen] = function (handle, backlog, path) {
   handle[kClusterOwner] = this;
   handle.listen(backlog || 511);
   if (this._unref) this.unref();
-  setTimeout(emitListeningNextTick, 1, this);
+  process.nextTick(emitListeningNextTick, this);
 };
 
 function onClusterConnection(err, clientHandle) {

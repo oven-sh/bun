@@ -21,7 +21,6 @@
 
 #include "HttpParser.h"
 #include "AsyncSocketData.h"
-#include "ProxyParser.h"
 #include "HttpContext.h"
 
 #include "MoveOnlyFunction.h"
@@ -208,6 +207,11 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
     /* The parser writes this through a bool& (getHeaders / consumePostPadded),
      * so it cannot live in `state`. */
     bool isConnectRequest = false;
+    /* Cleartext HTTP/2 preface sniffing: bytes of "PRI * HTTP/2.0..." matched
+     * and held back so far (0-3) while the first read(s) were too short to
+     * decide; PROTOCOL_DECIDED once this connection is known to be HTTP/1. */
+    static constexpr unsigned char PROTOCOL_DECIDED = 255;
+    unsigned char h2PrefaceMatched = 0;
 
     /* Chunk-extension bytes consumed on the current chunk-size line, reset per
      * chunk (llhttp's on_chunk_header); capped at MAX_CHUNK_EXTENSION_SIZE for
@@ -228,10 +232,6 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
             || ((state & HTTP_NODE_RECEIVED_FIN) && nodeHttpQueuedPipelinedCount == 0)
             || ((state & HTTP_CLOSE_WHEN_IDLE) && this->isIdle);
     }
-
-#ifdef UWS_WITH_PROXY
-    ProxyParser proxyParser;
-#endif
 };
 
 /* Per-connection state that only node:http compat servers need.

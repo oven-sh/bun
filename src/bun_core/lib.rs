@@ -54,14 +54,12 @@ pub mod string;
 pub use ::bstr::{BStr, BString, ByteSlice};
 pub use string::string_joiner::StringJoiner;
 pub use string::{
-    HashedString, MutableString, NodeEncoding, OwnedString, OwnedStringCell,
-    SliceWithUnderlyingString, SmolStr, String, StringBuilder, WTFStringImpl, WTFStringImplExt,
-    WTFStringImplStruct, ZigString, ZigStringSlice,
+    EncodedSlice, HashedString, MutableString, NodeEncoding, SmolStr, String, StringBuilder,
+    StringView, Utf8Bytes, Utf8WithString, WTFStringImpl, WTFStringImplExt, WTFStringImplStruct,
 };
 pub use string::{
-    STRING_ALLOCATION_LIMIT, ZigStringGithubActionFormatter, cheap_prefix_normalizer,
-    escape_reg_exp, identifier, lexer, lexer_tables, parse_double, printer, quote_for_json,
-    string_joiner, write, zig_string,
+    STRING_ALLOCATION_LIMIT, cheap_prefix_normalizer, escape_reg_exp, identifier, lexer,
+    lexer_tables, parse_double, printer, quote_for_json, string_joiner, write,
 };
 pub use string::{StringPointer, Tag, slice_to_nul};
 
@@ -71,9 +69,7 @@ pub use string::{StringPointer, Tag, slice_to_nul};
 // merge would otherwise cycle). The original crates re-export these.
 // ──────────────────────────────────────────────────────────────────────────
 pub mod external_shared;
-pub use external_shared::{
-    ExternalShared, ExternalSharedDescriptor, ExternalSharedOptional, WTFString,
-};
+pub use external_shared::{ExternalShared, ExternalSharedDescriptor, WTFString};
 pub mod bounded_array;
 pub use bounded_array::{BoundedArray, BoundedArrayAligned};
 
@@ -590,7 +586,6 @@ bun_dispatch::link_interface! {
         fn create_file(cwd: Fd, path: &[u8]) -> core::result::Result<Fd, Error>;
         fn quiet_writer_from_fd(fd: Fd) -> output::QuietWriter;
         fn quiet_writer_adapt(qw: output::QuietWriter, buf: *mut u8, len: usize) -> output::QuietWriterAdapter;
-        fn quiet_writer_flush(qw: &mut output::QuietWriter);
         fn quiet_writer_write_all(qw: &mut output::QuietWriter, bytes: &[u8]) -> bool;
         fn quiet_writer_fd(qw: &output::QuietWriter) -> Fd;
         fn tty_winsize(fd: Fd) -> Option<Winsize>;
@@ -1075,12 +1070,9 @@ macro_rules! enum_unwrap {
     };
 }
 
-/// Unwrap a `Result`, calling `outOfMemory()` on
-/// `Err`. The full multi-arm version (which narrows mixed error sets) lives in
-/// `bun_crash_handler::handle_oom`; that crate sits *above* `bun_core` in the
-/// dep graph, so this tier-0 alias is the OOM-only arm — sufficient for the
-/// `Result<T, AllocError>` / `Result<T, Error>` callers in `js_parser`,
-/// `bake/DevServer`, etc. that spell it `bun_core::handle_oom`.
+/// Unwrap a `Result`, calling `outOfMemory()` on **any** `Err`. The
+/// `AllocError`-only version lives in `bun_crash_handler::handle_oom` (that
+/// crate sits *above* `bun_core` in the dep graph).
 #[inline]
 #[track_caller]
 pub fn handle_oom<T, E>(r: core::result::Result<T, E>) -> T {
@@ -1091,15 +1083,8 @@ pub fn handle_oom<T, E>(r: core::result::Result<T, E>) -> T {
 }
 
 /// Extension-method form of [`handle_oom`]: `.unwrap_or_oom()` on any
-/// `Result<T, E>`. The *loose* idiom
-/// that panics on **any** `Err`, not just OOM-only error sets. For the
-/// narrowing version see `bun_crash_handler::HandleOom`.
-///
-/// This is intentionally a blanket `impl<T, E>` — it matches the
-/// existing `bun_core::handle_oom` free fn and the two pre-existing local
-/// blanket impls in `run_command.rs` / `valkey.rs`. Callers that want a strict
-/// `error{OutOfMemory}`-only whitelist should use `bun_crash_handler::HandleOom`
-/// instead.
+/// `Result<T, E>`, treating **any** `Err` as OOM. For the `AllocError`-only
+/// version see `bun_crash_handler::handle_oom`.
 pub trait UnwrapOrOom {
     type Output;
     fn unwrap_or_oom(self) -> Self::Output;

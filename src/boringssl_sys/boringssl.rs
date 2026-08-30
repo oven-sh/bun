@@ -79,6 +79,14 @@ opaque!(
     CRYPTO_BUFFER_POOL
 );
 opaque!(
+    /// `struct crypto_buffer_st` (`typedef ... CRYPTO_BUFFER`).
+    CRYPTO_BUFFER
+);
+opaque!(
+    /// `struct x509_lazy_cert_set_st` (`typedef ... X509_LAZY_CERT_SET`, oven-sh/boringssl).
+    X509_LAZY_CERT_SET
+);
+opaque!(
     /// `struct x509_st` (`typedef ... X509`).
     X509
 );
@@ -278,6 +286,15 @@ impl OwnedSslCtx {
     /// Transfers the reference back out; the caller must free it.
     pub fn into_raw(self) -> *mut SSL_CTX {
         core::mem::ManuallyDrop::new(self).0.as_ptr()
+    }
+}
+
+impl Clone for OwnedSslCtx {
+    /// Another reference to the same `SSL_CTX` (`SSL_CTX_up_ref`).
+    fn clone(&self) -> Self {
+        // SAFETY: `self.0` is a live SSL_CTX.
+        unsafe { SSL_CTX_up_ref(self.0.as_ptr()) };
+        Self(self.0)
     }
 }
 
@@ -826,8 +843,7 @@ opaque!(
 pub type SSL_verify_cb = Option<unsafe extern "C" fn(c_int, *mut X509_STORE_CTX) -> c_int>;
 
 /// `int pem_password_cb(char *buf, int size, int rwflag, void *userdata)`.
-pub(crate) type pem_password_cb =
-    unsafe extern "C" fn(*mut c_char, c_int, c_int, *mut c_void) -> c_int;
+pub type pem_password_cb = unsafe extern "C" fn(*mut c_char, c_int, c_int, *mut c_void) -> c_int;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Extern functions — SSL / BIO / ERR / HMAC / RSA / PBKDF2
@@ -1064,6 +1080,32 @@ unsafe extern "C" {
 
     pub fn SSL_get_verify_result(ssl: *const SSL) -> c_long;
 
+    /// Reads the next PEM block whose type is `expected_name` (e.g. `c"CERTIFICATE"`), skipping others, and
+    /// returns its decoded (and, with `cb`, decrypted) payload without parsing it.
+    pub fn PEM_bytes_read_bio(
+        out_data: *mut *mut u8,
+        out_len: *mut c_long,
+        out_name: *mut *mut c_char,
+        expected_name: *const c_char,
+        bio: *mut BIO,
+        cb: Option<pem_password_cb>,
+        userdata: *mut c_void,
+    ) -> c_int;
+    pub fn CRYPTO_BUFFER_new(
+        data: *const u8,
+        len: usize,
+        pool: *mut CRYPTO_BUFFER_POOL,
+    ) -> *mut CRYPTO_BUFFER;
+    pub fn CRYPTO_BUFFER_free(buf: *mut CRYPTO_BUFFER);
+    /// oven-sh/boringssl: a set of DER certificates indexed by subject and parsed on first use. Takes a reference to
+    /// each buffer; NULL if any cannot be indexed (see `X509_LAZY_CERT_SET_can_index`).
+    pub fn X509_LAZY_CERT_SET_new(
+        certs: *const *mut CRYPTO_BUFFER,
+        num_certs: usize,
+    ) -> *mut X509_LAZY_CERT_SET;
+    pub fn X509_LAZY_CERT_SET_can_index(der: *const u8, len: usize) -> c_int;
+    pub safe fn X509_get_default_cert_file() -> *const c_char;
+    pub safe fn X509_get_default_cert_dir() -> *const c_char;
     pub fn PEM_read_bio_X509(
         bp: *mut BIO,
         x: *mut *mut X509,
@@ -1083,6 +1125,7 @@ unsafe extern "C" {
     pub fn X509_STORE_add_cert(store: *mut X509_STORE, x509: *mut X509) -> c_int;
     pub fn X509_STORE_add_crl(store: *mut X509_STORE, crl: *mut X509_CRL) -> c_int;
     pub fn X509_STORE_set_flags(store: *mut X509_STORE, flags: c_ulong) -> c_int;
+    pub fn X509_VERIFY_PARAM_set_flags(param: *mut c_void, flags: c_ulong) -> c_int;
     pub fn X509_CRL_free(crl: *mut X509_CRL);
     pub fn PEM_read_bio_X509_CRL(
         bp: *mut BIO,

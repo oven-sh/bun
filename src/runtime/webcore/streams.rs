@@ -1,7 +1,7 @@
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
-use bun_ptr::{BackRef, RawSlice};
+use bun_ptr::{BackRef, RawSlice, RefPtr};
 
 use crate::webcore::jsc::{
     self as jsc, ArrayBuffer, CommonAbortReason, CommonAbortReasonExt as _, JSGlobalObject,
@@ -16,7 +16,7 @@ use crate::webcore::blob::Any as AnyBlob;
 use crate::webcore::{AutoFlusher, ByteListPool};
 
 // scope statics renamed with `Log` suffix so they don't collide with
-// the `HTTPServerWritable<SSL,H3>` / `NetworkSink` *types* defined below
+// the `HTTPServerWritable<SSL>` / `NetworkSink` *types* defined below
 // (RequestContext was blocked on this name clash).
 bun_core::declare_scope!(HTTPServerWritableLog, visible);
 bun_core::declare_scope!(NetworkSinkLog, visible);
@@ -83,7 +83,6 @@ pub enum StartTag {
     FileSink,
     HTTPSResponseSink,
     HTTPResponseSink,
-    H3ResponseSink,
     NetworkSink,
     FetchRequestBodySink,
     HTMLRewriterSink,
@@ -146,9 +145,6 @@ impl Start {
             StartTag::HTTPResponseSink => {
                 Self::from_js_with_tag::<{ StartTag::HTTPResponseSink }>(global_this, value)
             }
-            StartTag::H3ResponseSink => {
-                Self::from_js_with_tag::<{ StartTag::H3ResponseSink }>(global_this, value)
-            }
             StartTag::FetchRequestBodySink => {
                 Self::from_js_with_tag::<{ StartTag::FetchRequestBodySink }>(global_this, value)
             }
@@ -174,7 +170,7 @@ impl Start {
                 let mut empty = true;
 
                 if let Some(val) =
-                    value.get_own(global_this, &bun_core::String::static_str("asUint8Array"))?
+                    value.get_own(global_this, &bun_core::String::static_("asUint8Array"))?
                 {
                     if val.is_boolean() {
                         as_uint8array = val.to_boolean();
@@ -218,7 +214,7 @@ impl Start {
 
                     return Ok(Start::FileSink(FileSinkOptions {
                         input_path: crate::webcore::PathOrFileDescriptor::Path(
-                            path.to_slice(global_this)?,
+                            path.to_utf8(global_this)?,
                         ),
                         ..Default::default()
                     }));
@@ -254,7 +250,6 @@ impl Start {
             StartTag::NetworkSink
             | StartTag::HTTPSResponseSink
             | StartTag::HTTPResponseSink
-            | StartTag::H3ResponseSink
             | StartTag::FetchRequestBodySink
             | StartTag::HTMLRewriterSink => {
                 let mut empty = true;
@@ -873,7 +868,7 @@ pub enum SourceHandle {
     ShellWritable(BackRef<crate::shell::subproc::Writable, bun_ptr::Mut>),
     FetchResponseBody(BackRef<crate::webcore::fetch::fetch_tasklet::FetchTasklet, bun_ptr::Mut>),
     ServerRequestBody(crate::server::AnyRequestContext),
-    S3DownloadBody(BackRef<crate::webcore::s3::client::S3DownloadStreamWrapper, bun_ptr::Mut>),
+    S3DownloadBody(BackRef<crate::webcore::s3::client::S3DownloadStreamWrapper>),
     HTMLRewriter(BackRef<crate::api::html_rewriter::RewriterPipe>),
     /// `bun:internal-for-testing` only: `ready()` re-enters the stream's
     /// `on_cancel`, making consumed-during-`signal_drained` re-entrancy
@@ -912,10 +907,8 @@ impl SourceHandle {
             SourceHandle::Subprocess(p) => p.on_close(err),
             // SAFETY: live backref; cleared before the pointee is freed.
             SourceHandle::ShellWritable(mut p) => unsafe { p.get_mut() }.on_close(err),
-            // SAFETY: live backref; cleared before the pointee is freed.
-            SourceHandle::FetchResponseBody(mut p) => unsafe { p.get_mut() }.on_stream_cancelled(),
-            // SAFETY: live backref; cleared before the pointee is freed.
-            SourceHandle::S3DownloadBody(mut p) => unsafe { p.get_mut() }.on_stream_cancelled(),
+            SourceHandle::FetchResponseBody(p) => p.on_stream_cancelled(),
+            SourceHandle::S3DownloadBody(p) => p.on_stream_cancelled(),
             SourceHandle::ServerRequestBody(_) => {}
             SourceHandle::HTMLRewriter(p) => p.on_close(err),
             SourceHandle::TestingCancelOnDrain(_) => {}
@@ -939,13 +932,12 @@ impl SourceHandle {
             SourceHandle::FetchResponseBody(p) => p.on_ready(),
             SourceHandle::ServerRequestBody(any) => any.on_request_body_stream_drained(),
             SourceHandle::HTMLRewriter(p) => p.on_ready(),
+            SourceHandle::S3DownloadBody(p) => p.on_stream_drained(),
             SourceHandle::TestingCancelOnDrain(p) => {
                 p.on_cancel();
             }
             // Remaining variants leave `on_ready` at the trait default (no-op).
-            SourceHandle::Subprocess(_)
-            | SourceHandle::ShellWritable(_)
-            | SourceHandle::S3DownloadBody(_) => {}
+            SourceHandle::Subprocess(_) | SourceHandle::ShellWritable(_) => {}
         }
     }
 
@@ -955,6 +947,7 @@ impl SourceHandle {
     pub fn consumer_collected(self) {
         match self {
             SourceHandle::FetchResponseBody(p) => p.on_body_stream_collected(),
+            SourceHandle::S3DownloadBody(p) => p.on_stream_collected(),
             SourceHandle::None
             | SourceHandle::JSController(_)
             | SourceHandle::ServerRequestBody(_)
@@ -962,7 +955,6 @@ impl SourceHandle {
             | SourceHandle::FileReader(_)
             | SourceHandle::Subprocess(_)
             | SourceHandle::ShellWritable(_)
-            | SourceHandle::S3DownloadBody(_)
             | SourceHandle::HTMLRewriter(_)
             | SourceHandle::TestingCancelOnDrain(_) => {}
         }
@@ -971,6 +963,7 @@ impl SourceHandle {
     pub fn start(&mut self) {
         match *self {
             SourceHandle::FetchResponseBody(p) => p.on_start(),
+            SourceHandle::S3DownloadBody(p) => p.on_consumer_attached(),
             // Remaining variants leave `on_start` at the trait default (no-op).
             SourceHandle::None
             | SourceHandle::JSController(_)
@@ -979,7 +972,6 @@ impl SourceHandle {
             | SourceHandle::FileReader(_)
             | SourceHandle::Subprocess(_)
             | SourceHandle::ShellWritable(_)
-            | SourceHandle::S3DownloadBody(_)
             | SourceHandle::HTMLRewriter(_)
             | SourceHandle::TestingCancelOnDrain(_) => {}
         }
@@ -989,11 +981,6 @@ impl SourceHandle {
 // ──────────────────────────────────────────────────────────────────────────
 // HTTPServerWritable
 // ──────────────────────────────────────────────────────────────────────────
-
-// Selecting the response type from the const generics would require an
-// associated-type trait keyed on them. The pointer is kept opaque at the
-// type level; all dispatch happens at runtime through `any_res()` / `uws::AnyResponse`.
-type UwsResponse<const SSL: bool, const HTTP3: bool> = c_void;
 
 /// `Done` and `Aborted` are both "done" (no further sends); `Aborted`
 /// additionally records that the peer went away. `start()` (reachable again
@@ -1006,8 +993,12 @@ pub(crate) enum HTTPServerWritableState {
     Aborted,
 }
 
-pub struct HTTPServerWritable<const SSL: bool, const HTTP3: bool> {
-    pub(crate) res: Option<*mut UwsResponse<SSL, HTTP3>>,
+/// `SSL` only selects which JS sink class (`HTTPResponseSink` /
+/// `HTTPSResponseSink`) wraps this; the response itself is dispatched at
+/// runtime through `uws::AnyResponse`, so one instantiation serves HTTP/1.1,
+/// HTTP/2 and HTTP/3 alike.
+pub struct HTTPServerWritable<const SSL: bool> {
+    pub(crate) res: Option<uws::AnyResponse>,
     pub(crate) buffer: Vec<u8>,
     pub(crate) pooled_buffer: Option<NonNull<ByteListPoolNode>>,
     pub offset: BlobSizeType,
@@ -1056,7 +1047,7 @@ pub struct HTTPServerWritable<const SSL: bool, const HTTP3: bool> {
     pub(crate) auto_flusher: AutoFlusher,
 }
 
-impl<const SSL: bool, const HTTP3: bool> Default for HTTPServerWritable<SSL, HTTP3> {
+impl<const SSL: bool> Default for HTTPServerWritable<SSL> {
     fn default() -> Self {
         Self {
             res: None,
@@ -1083,7 +1074,7 @@ impl<const SSL: bool, const HTTP3: bool> Default for HTTPServerWritable<SSL, HTT
     }
 }
 
-impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
+impl<const SSL: bool> HTTPServerWritable<SSL> {
     /// Borrow the JS global stored at construction.
     ///
     /// Invariant: `global_this` is set before first use (any auto-flusher
@@ -1105,9 +1096,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         self.buffer.capacity() as usize
     }
 
-    pub(crate) const NAME: &'static str = if HTTP3 {
-        "H3ResponseSink"
-    } else if SSL {
+    pub(crate) const NAME: &'static str = if SSL {
         "HTTPSResponseSink"
     } else {
         "HTTPResponseSink"
@@ -1117,25 +1106,22 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
 
 /// Per-monomorphization JSSink wrapper alias. Mirrors
 /// `pub const JSSink = Sink.JSSink(@This(), name)`.
-pub type HTTPServerWritableJSSink<const SSL: bool, const HTTP3: bool> =
-    crate::webcore::sink::JSSink<HTTPServerWritable<SSL, HTTP3>>;
+pub type HTTPServerWritableJSSink<const SSL: bool> =
+    crate::webcore::sink::JSSink<HTTPServerWritable<SSL>>;
 
 // `HTTPServerWritable` is exposed to JS via `Sink.JSSink(@This(), name)` where
-// `name` ∈ {HTTPResponseSink, HTTPSResponseSink, H3ResponseSink}. Const-generics
-// can't drive `#[link_name]`, so declare all three extern sets in a private mod
-// and dispatch at call time on `(SSL, HTTP3)`. The branch is on const generics;
+// `name` ∈ {HTTPResponseSink, HTTPSResponseSink}. Const-generics
+// can't drive `#[link_name]`, so declare both extern sets in a private mod
+// and dispatch at call time on `SSL`. The branch is on a const generic;
 // the optimizer folds it to a direct call per monomorphization.
 mod http_sink_abi {
     crate::decl_js_sink_externs!("HTTPResponseSink" as http);
     crate::decl_js_sink_externs!("HTTPSResponseSink" as https);
-    crate::decl_js_sink_externs!("H3ResponseSink" as h3);
 }
 
 macro_rules! http_sink_dispatch {
     ($f:ident($($arg:expr),*)) => {
-        if HTTP3 {
-            http_sink_abi::h3::$f($($arg),*)
-        } else if SSL {
+        if SSL {
             http_sink_abi::https::$f($($arg),*)
         } else {
             http_sink_abi::http::$f($($arg),*)
@@ -1143,9 +1129,7 @@ macro_rules! http_sink_dispatch {
     };
 }
 
-impl<const SSL: bool, const HTTP3: bool> crate::webcore::sink::JsSinkAbi
-    for HTTPServerWritable<SSL, HTTP3>
-{
+impl<const SSL: bool> crate::webcore::sink::JsSinkAbi for HTTPServerWritable<SSL> {
     fn from_js_extern(value: JSValue) -> usize {
         http_sink_dispatch!(from_js(value))
     }
@@ -1164,18 +1148,10 @@ impl<const SSL: bool, const HTTP3: bool> crate::webcore::sink::JsSinkAbi
     }
 }
 
-impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
-    /// Const-generic → runtime dispatch for the type-erased `res` field.
+impl<const SSL: bool> HTTPServerWritable<SSL> {
     #[inline]
     fn any_res(&self) -> Option<uws::AnyResponse> {
-        let res = self.res?;
-        Some(if HTTP3 {
-            uws::AnyResponse::H3(res.cast::<uws::H3::Response>())
-        } else if SSL {
-            uws::AnyResponse::SSL(res.cast::<uws::Response<true>>())
-        } else {
-            uws::AnyResponse::TCP(res.cast::<uws::Response<false>>())
-        })
+        self.res
     }
 
     fn handle_wrote(&mut self, amount1: usize) {
@@ -1390,11 +1366,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         &self.buffer[self.offset as usize..]
     }
 
-    pub(crate) fn on_writable(
-        &mut self,
-        write_offset: u64,
-        _res: *mut UwsResponse<SSL, HTTP3>,
-    ) -> bool {
+    pub(crate) fn on_writable(&mut self, write_offset: u64, _res: uws::AnyResponse) -> bool {
         // write_offset is the amount of data that was written not how much we need to write
         bun_core::scoped_log!(HTTPServerWritableLog, "onWritable ({})", write_offset);
         // onWritable reset backpressure state to allow flushing
@@ -2080,14 +2052,10 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
 // `JsSinkType` impl: routes the codegen `${name}__{construct,write,end,flush,
 // start,getInternalFd,memoryCost}` thunks (via `JSSink::<Self>::js_*`) into
 // the inherent streaming methods above. Mirrors `Sink.JSSink(@This(), name)`.
-impl<const SSL: bool, const HTTP3: bool> crate::webcore::sink::JsSinkType
-    for HTTPServerWritable<SSL, HTTP3>
-{
+impl<const SSL: bool> crate::webcore::sink::JsSinkType for HTTPServerWritable<SSL> {
     const NAME: &'static str = Self::NAME;
     const HAS_FLUSH_FROM_JS: bool = true;
-    const START_TAG: Option<StartTag> = Some(if HTTP3 {
-        StartTag::H3ResponseSink
-    } else if SSL {
+    const START_TAG: Option<StartTag> = Some(if SSL {
         StartTag::HTTPSResponseSink
     } else {
         StartTag::HTTPResponseSink
@@ -2109,23 +2077,19 @@ impl<const SSL: bool, const HTTP3: bool> crate::webcore::sink::JsSinkType
     }
 }
 
-pub type HTTPSResponseSink = HTTPServerWritable<true, false>;
-pub type HTTPResponseSink = HTTPServerWritable<false, false>;
-pub type H3ResponseSink = HTTPServerWritable<true, true>;
+pub type HTTPSResponseSink = HTTPServerWritable<true>;
+pub type HTTPResponseSink = HTTPServerWritable<false>;
 
 // ──────────────────────────────────────────────────────────────────────────
 // NetworkSink
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct NetworkSink {
-    // Stored as `BackRef`
-    // (set-once); while `Some` the sink holds a counted ref on the intrusively
-    // ref-counted `MultiPartUpload`, released in `detach_writable`.
-    pub task: Option<BackRef<bun_s3::MultiPartUpload, bun_ptr::Mut>>,
+    /// The sink's ref on the upload, released in `detach_writable`.
+    pub task: Option<RefPtr<bun_s3::MultiPartUpload>>,
     pub(crate) source: SourceHandle,
     // JSC_BORROW: process-lifetime VM global; safe `Deref` via `BackRef`.
     pub global_this: Option<BackRef<JSGlobalObject>>,
-    pub(crate) high_water_mark: BlobSizeType,
     /// Pending `flush()` promise. Serves both the user `s3file.writer().flush()`
     /// API and the `readDirectStream` / `BunAsyncIterableSource` pump, which
     /// parks on `controller.flush(true)` (not `m_onPull`) on backpressure.
@@ -2143,6 +2107,10 @@ pub struct NetworkSink {
     pub(crate) upstream_error: jsc::strong::Optional,
     pub(crate) ended: bool,
     pub(crate) done: bool,
+    /// `s3file.writer()`: the box is referenced by the JS wrapper (`finalize`) and by the upload's
+    /// completion callback; whichever lets go last frees it. 0 = owned elsewhere
+    /// (`S3UploadStreamWrapper`).
+    pub(crate) writer_holders: core::cell::Cell<u8>,
 }
 
 impl Default for NetworkSink {
@@ -2151,13 +2119,13 @@ impl Default for NetworkSink {
             task: None,
             source: SourceHandle::default(),
             global_this: None,
-            high_water_mark: 2048,
             flush_promise: JSPromiseStrong::default(),
             pending: WritablePending::default(),
             end_promise: JSPromiseStrong::default(),
             upstream_error: jsc::strong::Optional::empty(),
             ended: false,
             done: false,
+            writer_holders: core::cell::Cell::new(0),
         }
     }
 }
@@ -2176,14 +2144,9 @@ impl NetworkSink {
     }
 
     /// Shared borrow of the upload task, if attached.
-    ///
-    /// SAFETY (invariant): `task` is an intrusively ref-counted heap allocation;
-    /// while `Some`, this sink holds a counted ref (released in `detach_writable`),
-    /// so the pointee is live for at least `'_`.
     #[inline]
     fn task_ref(&self) -> Option<&bun_s3::MultiPartUpload> {
-        // `BackRef::get` encapsulates the deref under the counted-ref invariant.
-        self.task.as_ref().map(BackRef::get)
+        self.task.as_deref()
     }
 
     pub(crate) fn new(init: NetworkSink) -> Box<NetworkSink> {
@@ -2197,16 +2160,11 @@ impl NetworkSink {
         None
     }
 
-    pub(crate) fn start(&mut self, stream_start: &Start) -> bun_sys::Result<()> {
+    pub(crate) fn start(&mut self, _stream_start: &Start) -> bun_sys::Result<()> {
         if self.ended {
             return bun_sys::Result::Ok(());
         }
 
-        if let &Start::ChunkSize(chunk_size) = stream_start {
-            if chunk_size > 0 {
-                self.high_water_mark = chunk_size;
-            }
-        }
         self.source.start();
         bun_sys::Result::Ok(())
     }
@@ -2215,11 +2173,26 @@ impl NetworkSink {
         self.detach_writable();
     }
 
-    fn detach_writable(&mut self) {
-        if let Some(task) = self.task.take() {
-            // task is ref-counted; deref releases our ref
-            bun_s3::MultiPartUpload::deref_(task.as_ptr());
+    /// One of the `writer_holders` is done with the box.
+    ///
+    /// # Safety
+    /// `this` is the live heap box from `writable()`; not used by the caller afterwards.
+    pub(crate) unsafe fn release_writer_holder(this: *mut NetworkSink) {
+        // SAFETY: fn contract.
+        unsafe {
+            let holders = (*this).writer_holders.get();
+            if holders == 0 {
+                return;
+            }
+            (*this).writer_holders.set(holders - 1);
+            if holders == 1 {
+                drop(bun_core::heap::take(this));
+            }
         }
+    }
+
+    fn detach_writable(&mut self) {
+        self.task = None;
     }
 
     /// The S3 upload drained: settle the flush/write promises (terminal, like
@@ -2397,6 +2370,40 @@ impl NetworkSink {
         bun_sys::Result::Ok(())
     }
 
+    /// JS-pump terminator for a source that failed. Unlike `end()`, the upload
+    /// is aborted, not committed; the stashed reason becomes the caller's
+    /// rejection. The pump's reject reaction still releases the pump ref, so
+    /// no wrapper deref here.
+    ///
+    /// Raw `*mut Self`: `task.fail()` synchronously fires
+    /// `S3UploadStreamWrapper::resolve`, which re-borrows this sink.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
+    pub(crate) fn fail_from_js_pump(this: *mut Self, global: &JSGlobalObject, reason: JSValue) {
+        // SAFETY: `this` is the live Box<NetworkSink> the wrapper owns; the
+        // borrow ends before `fail` re-enters.
+        let task_ref = unsafe {
+            if (*this).ended {
+                return;
+            }
+            (*this).ended = true;
+            (*this).done = true;
+            (*this).pending.result = Writable::Done;
+            (*this).pending.run();
+            if !reason.is_empty_or_undefined_or_null() {
+                (*this).upstream_error.set(global, reason);
+            }
+            // Our own ref: `fail` re-enters and may clear `(*this).task`.
+            (*this).task.clone()
+        };
+        let Some(task) = task_ref else {
+            return;
+        };
+        let _ = task.fail(bun_s3_signing::error::S3Error {
+            code: b"UnknownError",
+            message: b"ReadableStream ended with an error",
+        });
+    }
+
     /// Native-path terminator called from `SinkHandle::end`. Unlike `end()`
     /// (clean EOF / commit), an upstream error on the ByteStream fast-path must
     /// abort the upload and surface the original JS error to the caller.
@@ -2428,13 +2435,14 @@ impl NetworkSink {
             return;
         }
         // SAFETY: scoped accesses for field writes; no re-entry in this block.
-        let (task_ref, wrapper) = unsafe {
+        let (task, wrapper) = unsafe {
             (*this).ended = true;
             (*this).source.clear();
-            let Some(task_ref) = (*this).task else {
+            // Our own ref: `fail`/`write_bytes` re-enter and may clear `(*this).task`.
+            let Some(task) = (*this).task.clone() else {
                 return;
             };
-            let wrapper = task_ref
+            let wrapper = task
                 .callback_context
                 .get()
                 .cast::<crate::webcore::s3::client::S3UploadStreamWrapper>();
@@ -2448,9 +2456,8 @@ impl NetworkSink {
                     (*this).upstream_error.set(&global, js_err);
                 }
             }
-            (task_ref, wrapper)
+            (task, wrapper)
         };
-        let task = task_ref.get();
         if err.is_some() {
             let _ = task.fail(bun_s3_signing::error::S3Error {
                 code: b"UnknownError",
@@ -2460,7 +2467,7 @@ impl NetworkSink {
             let _ = task.write_bytes(b"", true);
         }
         // SAFETY: `wrapper` live with rc ≥ 1; this may free `*this`.
-        unsafe { crate::webcore::s3::client::S3UploadStreamWrapper::deref_(wrapper) };
+        unsafe { crate::webcore::s3::client::S3UploadStreamWrapper::deref(wrapper) };
     }
 
     pub(crate) fn end_from_js(
@@ -2507,10 +2514,19 @@ impl crate::webcore::sink::JsSinkType for NetworkSink {
     crate::impl_js_sink_forwarders!();
 
     unsafe fn finalize(this: *mut Self) {
-        // SAFETY: trait contract — `this` is live, and the inherent `finalize`
-        // only releases the ref on the separate `MultiPartUpload`, never this
-        // sink, so the `&mut` scoped to this call stays valid throughout.
-        unsafe { (*this).finalize() }
+        // SAFETY: trait contract — `this` is live and not used after this call.
+        unsafe {
+            (*this).finalize();
+            Self::release_writer_holder(this);
+        }
+    }
+    unsafe fn close_with_error(
+        this: *mut Self,
+        global: &JSGlobalObject,
+        reason: JSValue,
+    ) -> bun_sys::Result<()> {
+        Self::fail_from_js_pump(this, global, reason);
+        bun_sys::Result::Ok(())
     }
     fn end_from_js(&mut self, global: &JSGlobalObject) -> bun_sys::Result<JSValue> {
         Self::end_from_js(self, global)

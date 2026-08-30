@@ -78,6 +78,11 @@ export const SocketConfig = b.dictionary(
       default: false,
       internalName: "ipv6_only",
     },
+    pauseOnConnect: {
+      type: b.bool.loose,
+      default: false,
+      internalName: "pause_on_connect",
+    },
     unix: {
       type: b.String.nullable.loose,
       internalName: "unix_", // `unix` is a predefined C macro...

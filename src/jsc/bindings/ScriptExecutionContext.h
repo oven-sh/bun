@@ -98,8 +98,6 @@ public:
     // The owning Zig::GlobalObject cell is being destroyed; from here on there is no global/VM.
     void globalObjectDestroyed();
 
-    bool isDocument() { return false; }
-    bool isWorkerGlobalScope() { return true; }
     bool isJSExecutionForbidden();
     void reportException(const String& errorMessage, int lineNumber, int columnNumber, const String& sourceURL, JSC::Exception* exception, RefPtr<void*>&&, CachedScript* = nullptr, bool = false)
     {

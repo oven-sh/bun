@@ -48,37 +48,27 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             'parse_attributes: loop {
                 match p.lexer.token {
                     T::TIdentifier => {
-                        // `i` must be incremented whenever this arm pushes a property.
-                        // The early `continue` for an ignored bare `key` prop
-                        // intentionally skips the increment: no property is pushed there, so
-                        // `key_prop_i`/`first_spread_prop_i` stay valid indices into `props`.
                         // Parse the prop name
                         let key_range = p.lexer.range();
                         let prop_name_literal = p.lexer.identifier;
                         let special_prop = E::JSXSpecialProp::from_bytes(prop_name_literal)
                             .unwrap_or(E::JSXSpecialProp::Any);
                         p.lexer.next_inside_jsx_element()?;
+                        let was_shorthand = p.lexer.token != T::TEquals;
 
                         if special_prop == E::JSXSpecialProp::Key {
-                            // <ListItem key>
-                            if p.lexer.token != T::TEquals {
-                                // Unlike Babel, we're going to just warn here and move on.
-                                p.log().add_warning(
-                                    Some(p.source),
-                                    key_range.loc,
-                                    b"\"key\" prop ignored. Must be a string, number or symbol.",
-                                );
-                                continue;
+                            if was_shorthand {
+                                flags.insert(flags::JSXElement::HasBareKey);
+                            } else {
+                                key_prop_i = i;
                             }
-
-                            key_prop_i = i;
                         }
 
                         let prop_name =
                             p.new_expr(E::EString::init(prop_name_literal), key_range.loc);
 
                         // Parse the value
-                        let value: Expr = if p.lexer.token != T::TEquals {
+                        let value: Expr = if was_shorthand {
                             // Implicitly true value
                             // <button selected>
                             p.new_expr(
@@ -97,6 +87,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         props.push(G::Property {
                             key: Some(prop_name),
                             value: Some(value),
+                            flags: if was_shorthand {
+                                flags::Property::WasShorthand.into()
+                            } else {
+                                flags::PROPERTY_NONE
+                            },
                             ..Default::default()
                         });
                         i += 1;
@@ -220,8 +215,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 flags.insert(flags::JSXElement::IsKeyAfterSpread);
             }
             properties = G::PropertyList::move_from_list(props);
+            let runtime = p
+                .jsx_runtime_pragma()
+                .map_or(p.options.jsx.runtime, |runtime| runtime.runtime);
             if is_key_after_spread
-                && p.options.jsx.runtime == options::JSXRuntime::Automatic
+                && runtime == options::JSXRuntime::Automatic
                 && !p.has_classic_runtime_warned
             {
                 p.log().add_warning(
@@ -263,6 +261,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // A slash here is a self-closing element
         if p.lexer.token == T::TSlash {
             let close_tag_loc = p.lexer.loc();
+            flags.insert(flags::JSXElement::IsSelfClosing);
             // Use NextInsideJSXElement() not Next() so we can parse ">>" as ">"
 
             p.lexer.next_inside_jsx_element()?;
@@ -292,16 +291,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         loop {
             match p.lexer.token {
                 T::TStringLiteral => {
+                    let child_loc = p.lexer.loc();
                     let e_string = p.lexer.to_e_string()?;
-                    children.push(p.new_expr(e_string, loc));
+                    children.push(p.new_expr(e_string, child_loc));
                     p.lexer.next_jsx_element_child()?;
                 }
                 T::TOpenBrace => {
                     // Use Next() instead of NextJSXElementChild() here since the next token is an expression
                     p.lexer.next()?;
 
-                    let is_spread = p.lexer.token == T::TDotDotDot;
-                    if is_spread {
+                    let mut spread_loc = None;
+                    if p.lexer.token == T::TDotDotDot {
+                        spread_loc = Some(p.lexer.loc());
                         p.lexer.next()?;
                     }
 
@@ -312,8 +313,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
 
                         let mut item = p.parse_expr(Level::Lowest)?;
-                        if is_spread {
-                            item = p.new_expr(E::Spread { value: item }, loc);
+                        if let Some(spread_loc) = spread_loc {
+                            item = p.new_expr(E::Spread { value: item }, spread_loc);
                         }
                         children.push(item);
                     }
@@ -363,12 +364,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                     return Ok(p.new_expr(
                         E::JSXElement {
-                            tag: end_tag.data.as_expr(),
+                            tag: start_tag,
                             children: ExprNodeList::move_from_list(children),
                             properties,
                             key_prop_index: key_prop_i,
                             flags,
-                            close_tag_loc: end_tag.range.loc,
+                            close_tag_loc: less_than_loc,
                             ..Default::default()
                         },
                         loc,

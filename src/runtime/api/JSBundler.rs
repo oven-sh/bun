@@ -31,17 +31,6 @@ pub mod js_bundler {
 
     type OwnedString = MutableString;
 
-    /// `options::JSX::Runtime` → `api::JsxRuntime` (only the reverse `From`
-    /// exists upstream).
-    fn jsx_runtime_to_api(r: options::JSX::Runtime) -> api::JsxRuntime {
-        match r {
-            options::JSX::Runtime::_None => api::JsxRuntime::_none,
-            options::JSX::Runtime::Automatic => api::JsxRuntime::Automatic,
-            options::JSX::Runtime::Classic => api::JsxRuntime::Classic,
-            options::JSX::Runtime::Solid => api::JsxRuntime::Solid,
-        }
-    }
-
     /// A map of file paths to their in-memory contents.
     /// LAYERING: the data-only struct (`map: StringHashMap<Box<[u8]>>`) and
     /// `get`/`contains`/`resolve` live in `bun_bundler::bundle_v2` so the
@@ -743,14 +732,15 @@ pub mod js_bundler {
                     let _ =
                         bun_core::copy_lowercase(&slice.slice()[0..len], &mut str_lower[0..len]);
                     if let Some(runtime) = options::JSX::RUNTIME_MAP.get(&str_lower[0..len]) {
-                        this.jsx.runtime = jsx_runtime_to_api(runtime.runtime);
+                        this.jsx.runtime = runtime.runtime.into();
                         if let Some(dev) = runtime.development {
                             this.jsx.development = dev;
                         }
                     } else {
                         return Err(global_this.throw_invalid_arguments(format_args!(
-                            "Invalid jsx.runtime: '{}'. Must be one of: 'classic', 'automatic', 'react', 'react-jsx', or 'react-jsxdev'",
-                            bstr::BStr::new(slice.slice())
+                            "Invalid jsx.runtime: '{}'. Must be one of: {}",
+                            bstr::BStr::new(slice.slice()),
+                            options::JSX::RUNTIME_LIST_FOR_DISPLAY
                         )));
                     }
                     drop(slice);

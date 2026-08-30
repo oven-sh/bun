@@ -506,11 +506,25 @@ impl<'a> Parser<'a> {
         // Symbol use counts are unavailable
         // So we say "did we parse any JSX?"
         // if yes, just automatically add the import so that .bun knows to include the file.
-        if p.options.jsx.parse && p.needs_jsx_import {
+        let pragma_runtime = p.jsx_runtime_pragma();
+        let jsx_runtime = pragma_runtime.map_or(p.options.jsx.runtime, |runtime| runtime.runtime);
+        let jsx_development = pragma_runtime
+            .and_then(|runtime| runtime.development)
+            .unwrap_or(p.options.jsx.development);
+        let needs_jsx_runtime_import = !matches!(
+            jsx_runtime,
+            options::JSX::Runtime::Preserve | options::JSX::Runtime::Solid
+        );
+        if p.options.jsx.parse && p.needs_jsx_import && needs_jsx_runtime_import {
             // `add_import_record` requires `&'a [u8]`, but borrowing
             // `p.options` would conflict with `&mut p`, so copy into the arena.
             let arena = p.arena;
-            let import_source: &'a [u8] = arena.alloc_slice_copy(p.options.jsx.import_source());
+            let import_source = if jsx_development {
+                p.options.jsx.import_source.development.as_ref()
+            } else {
+                p.options.jsx.import_source.production.as_ref()
+            };
+            let import_source: &'a [u8] = arena.alloc_slice_copy(import_source);
             let classic_import_source: &'a [u8] =
                 arena.alloc_slice_copy(&p.options.jsx.classic_import_source);
             let _ = p.add_import_record(

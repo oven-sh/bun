@@ -86,7 +86,7 @@ subcommands:
         summary: "defaults to: .tsx,.ts,.jsx,.js,.json"
       - name: "jsx-runtime"
         type: string
-        enum: ["automatic", "classic"]
+        enum: ["automatic", "classic", "solid", "preserve", "react", "react-jsx", "react-jsxdev"]
         summary: 'JSX runtime to use. Defaults to "automatic"'
       - name: main-fields
         type: string
@@ -223,4 +223,3 @@ parameters:
         SHELL=zsh bun getcompletes r
 
 # vim:et:sts=2:sws=2:sw=2:foldmethod=indent
-

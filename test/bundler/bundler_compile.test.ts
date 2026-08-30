@@ -186,8 +186,10 @@ describe("bundler", () => {
     });
   }
   // ESM bytecode test matrix: each scenario × {default, minified} = 2 tests per scenario.
-  // With --compile, static imports are inlined into one chunk, but dynamic imports
-  // create separate modules in the standalone graph — each with its own bytecode + ModuleInfo.
+  // Without --splitting everything lands in one chunk with one bytecode blob and
+  // one ModuleInfo: dynamically imported files are inlined as async __esm
+  // wrappers, not emitted as separate modules (see bundler_compile_splitting for
+  // per-chunk records).
   const esmBytecodeScenarios: Array<{
     name: string;
     files: Record<string, string>;
@@ -319,6 +321,85 @@ describe("bundler", () => {
         `,
       },
       stdout: "function",
+    },
+    {
+      // dep.ts is both imported statically and import()ed, so (without
+      // splitting) it is inlined as an async __esm wrapper and the entry's
+      // import of it is printed as a top-level `await init_dep()`. No input
+      // file has a top-level await at the chunk's top level, but the chunk
+      // does; if the module record does not say so, JSC evaluates the chunk
+      // synchronously and everything after that await never runs (the binary
+      // used to print only "dep evaluated" and exit 0).
+      name: "AwaitInitOfAsyncWrappedDependency",
+      files: {
+        "/entry.ts": `
+          import { value } from "./dep.ts";
+          import { lazy } from "./helper.ts";
+          console.log("entry:", value);
+          lazy().then(m => console.log("lazy:", m.value));
+        `,
+        "/dep.ts": `
+          export const value = await Promise.resolve("tla value");
+          console.log("dep evaluated");
+        `,
+        "/helper.ts": `export const lazy = () => import("./dep.ts");`,
+      },
+      stdout: "dep evaluated\nentry: tla value\nlazy: tla value",
+    },
+    {
+      // The entry point itself is import()ed, so it becomes an async __esm
+      // wrapper and the chunk ends with the entry point tail's
+      // `await init_entry()`. With the record claiming no top-level await,
+      // JSC never observes that promise, so a rejected top-level await in the
+      // entry surfaced as an unhandled rejection. It has to be the entry
+      // module's evaluation error (an uncaught exception), which is what the
+      // same build without --bytecode and `bun run` report.
+      name: "AwaitInitOfAsyncWrappedEntryPoint",
+      files: {
+        "/entry.ts": `
+          import { lazy } from "./helper.ts";
+          process.on("uncaughtException", err => console.log("uncaughtException:", err.message));
+          process.on("unhandledRejection", err => console.log("unhandledRejection:", err.message));
+          console.log("entry:", typeof lazy);
+          await Promise.reject(new Error("tla rejected"));
+        `,
+        "/helper.ts": `export const lazy = () => import("./entry.ts");`,
+      },
+      stdout: "entry: function\nuncaughtException: tla rejected",
+    },
+    {
+      // The only top-level await in the input is dead code, so the printed
+      // chunk has none and JSC's own analysis of it says no top-level await.
+      // The record is built from the printed output, not from the parser's
+      // await keyword, so it must agree; debug builds cross-check the two and
+      // refuse to start the binary if the record claims an await that was
+      // never printed.
+      name: "DeadTopLevelAwait",
+      files: {
+        "/entry.ts": `
+          if (false) await Promise.resolve();
+          console.log("no await printed");
+        `,
+      },
+      stdout: "no await printed",
+    },
+    {
+      // Same cross-check, for awaits that are printed but all sit inside a
+      // function body of some shape: the record must still say no top-level
+      // await.
+      name: "AwaitOnlyInsideFunctions",
+      files: {
+        "/entry.ts": `
+          const arrow = async () => { await null; return "arrow"; };
+          const expr = async function () { await null; return (async x => await x)("expression"); };
+          async function decl() { await null; return "declaration"; }
+          const obj = { async method() { await null; return "method"; } };
+          class K { async method() { await null; return "class method"; } }
+          console.log("sync module");
+          Promise.all([arrow(), expr(), decl(), obj.method(), new K().method()]).then(r => console.log(r.join(", ")));
+        `,
+      },
+      stdout: "sync module\narrow, expression, declaration, method, class method",
     },
   ];
 

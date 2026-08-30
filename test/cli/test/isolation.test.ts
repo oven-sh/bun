@@ -987,6 +987,43 @@ test("t2", () => {
   },
 );
 
+test.concurrent("--isolate: cached module_info's top-level await flag describes the printed output", async () => {
+  // The record decides whether JSC evaluates the module as an async module.
+  // tla.test.ts registers its test after a real top-level await: with the
+  // flag missing, the body is abandoned at that await and no test runs.
+  // dead.test.ts's only await is eliminated as dead code before printing, so
+  // its record must not carry the flag; the debug build's fallbackParse diff
+  // (see the test above) catches a record that still derives it from the
+  // source's await keyword.
+  using dir = tempDir("isolate-tla-flag", {
+    "tla.test.ts": `import { test, expect } from "bun:test";
+const value = await Promise.resolve("awaited");
+test("tla", () => {
+  expect(value).toBe("awaited");
+});
+`,
+    "dead.test.ts": `import { test, expect } from "bun:test";
+if (false) await Promise.resolve();
+test("dead", () => {
+  expect(1).toBe(1);
+});
+`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--isolate", "./tla.test.ts", "./dead.test.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).not.toContain("BEGIN analyzeTranspiledModule");
+  expect(stderr).toContain("2 pass");
+  expect(stderr).toContain("0 fail");
+  expect(exitCode).toBe(0);
+});
+
 test.concurrent("--isolate: leaked AbortSignal.timeout does not fire in next file", async () => {
   using dir = tempDir("isolate-abort-timeout", {
     "a-leak.test.ts": `

@@ -97,6 +97,11 @@ pub(crate) fn post_process_js_chunk(
     // the cross-chunk prefix imports below, then the per-part-range results
     // (printed in parallel into their own ModuleInfo) are appended, then the
     // cross-chunk suffix and entry point tail exports are printed into it.
+    // The printer also sets `flags.has_tla` on whichever of these records it
+    // prints a top-level `await` into, including the `await init_foo()` /
+    // `await init_entry()` the linker synthesizes for async wrapped files; JSC
+    // evaluates the bytecode on the sync path and abandons the body at its
+    // first `await` if the chunk's record does not carry that flag.
     // Stored on chunk.content.javascript.module_info — owned `Box<ModuleInfo>`.
     let mut module_info: Option<Box<ModuleInfo>> = c.options.generates_module_info().then(|| {
         let loader =
@@ -248,31 +253,6 @@ pub(crate) fn post_process_js_chunk(
             }],
             chunk.renamer.as_renamer(),
         );
-    }
-
-    // The printer does not know about top-level await, so derive that flag from
-    // the AST. The JSC module loader decides sync vs async evaluation from
-    // JSModuleRecord::hasTLA(), which is set from this bit when the record is
-    // constructed from module_info (BunAnalyzeTranspiledModule). Without it, a
-    // bytecode-compiled module that contains TLA gets evaluated on the sync path
-    // and the suspended generator is dropped — the entry promise resolves
-    // immediately and the process exits before the awaited value lands.
-    if let Some(mi) = module_info.as_deref_mut() {
-        let tla_keywords = c.parse_graph().ast.items_top_level_await_keyword();
-        let wraps = c.graph.meta.items_flags();
-        for part_range in chunk.content.javascript().parts_in_chunk_in_order.iter() {
-            let idx = part_range.source_index.get() as usize;
-            if idx >= tla_keywords.len() {
-                continue;
-            }
-            if wraps[idx].wrap != crate::WrapKind::None {
-                continue;
-            }
-            if !tla_keywords[idx].is_empty() {
-                mi.flags.has_tla = true;
-                break;
-            }
-        }
     }
 
     // Generate the exports for the entry point, if there are any.

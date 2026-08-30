@@ -81,6 +81,7 @@
 #include <fcntl.h>
 #include <signal.h>
 #include <sys/resource.h>
+extern "C" const char* uv_version_string(void); // uv-posix-polyfills.c
 #else
 #include <uv.h>
 #include <io.h>
@@ -259,18 +260,14 @@ static JSValue constructVersions(VM& vm, JSObject* processObject)
         // Use commit hash for zstd (semantic version extraction not working yet)
         { "zstd", BUN_VERSION_ZSTD_HASH },
         { "v8", REPORTED_NODEJS_V8_VERSION },
-#if !OS(WINDOWS)
-        { "uv", "1.48.0" },
-#endif
     };
     auto putVersion = [&](const char* name, const char* version) {
         object->putDirect(vm, JSC::Identifier::fromString(vm, ASCIILiteral::fromLiteralUnsafe(name)), JSC::jsOwnedString(vm, String(ASCIILiteral::fromLiteralUnsafe(version))), 0);
     };
     for (auto& entry : versions)
         putVersion(entry.name, entry.version);
-#if OS(WINDOWS)
+    // Windows links libuv; posix defines it in uv-posix-polyfills.c.
     putDirectNamed(vm, object, "uv"_s, JSValue(JSC::jsOwnedString(vm, String::fromLatin1(uv_version_string()))));
-#endif
     putVersion("napi", "10");
     putVersion("icu", U_ICU_VERSION);
     putVersion("unicode", U_UNICODE_VERSION);

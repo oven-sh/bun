@@ -6,7 +6,10 @@ test("build", async () => {
 });
 
 for (const file of Array.from(new Bun.Glob("*.js").scanSync(import.meta.dir))) {
-  // crash inside uv_async_init
+  // Env teardown calls the async cleanup hooks but does not turn the loop
+  // until they call napi_remove_async_cleanup_hook (Node does), so the
+  // uv_async_t each hook sends never gets its callbacks before the finalizer
+  // asserts on the count.
   test.todoIf(["test.js"].includes(file))(file, () => {
     run(dirname(import.meta.dir), basename(import.meta.dir) + sep + file);
   });

@@ -102,6 +102,10 @@ pub(crate) struct RuntimeState {
     /// stop; one ref per entry, released by `CronJob::remove_from_list` /
     /// `clear_all_for_vm`.
     pub(crate) cron_jobs: Vec<bun_ptr::RefPtr<crate::api::cron::CronJob>>,
+    /// The `uv_loop_t` addons get for this VM; they keep its address as long as
+    /// the VM lives, hence embedded.
+    #[cfg(unix)]
+    pub(crate) uv_loop: crate::napi::uv_posix::UvLoop,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -409,6 +413,13 @@ unsafe fn init_runtime_state(
         active_handles: ActiveHandles::default(),
         wake_ctx: None,
         cron_jobs: Vec::new(),
+        // SAFETY: `vm` is the live VM being initialised; `handle` is one of
+        // the fields `VirtualMachine::init` wrote before calling this hook
+        // (the wake context below reads it the same way).
+        #[cfg(unix)]
+        uv_loop: unsafe {
+            crate::napi::uv_posix::UvLoop::new(ptr::NonNull::new_unchecked(vm), (*vm).handle())
+        },
     }));
     RUNTIME_STATE.with(|c| c.set(state));
 

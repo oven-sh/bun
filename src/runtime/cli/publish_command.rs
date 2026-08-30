@@ -97,7 +97,6 @@ pub(crate) struct Context<'a, const DIRECTORY_PUBLISH: bool> {
 
     pub(crate) package_name: Box<[u8]>,
     pub(crate) package_version: Box<[u8]>,
-    pub(crate) abs_tarball_path: Box<ZStr>,
     pub(crate) tarball_bytes: Box<[u8]>,
     pub(crate) uses_workspaces: bool,
 
@@ -438,7 +437,6 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
             command_ctx: ctx,
             package_name,
             package_version,
-            abs_tarball_path: ZStr::boxed(abs_tarball_path.as_bytes()),
             tarball_bytes: tarball_bytes.into(),
             uses_workspaces: false,
             normalized_pkg_info,
@@ -647,9 +645,6 @@ impl PublishCommand {
                 Global::crash();
             }
         };
-
-        // TODO: read this into memory
-        let _ = bun_sys::unlink(&context.abs_tarball_path);
 
         if let Err(err) = Self::publish::<true>(&context) {
             err.report_and_crash();
@@ -2006,10 +2001,7 @@ impl PublishCommand {
             install::dependency::without_build_tag(&ctx.package_version);
 
         let mut buf: Vec<u8> = Vec::with_capacity(
-            ctx.package_name.len() * 5
-                + version_without_build_tag.len() * 4
-                + ctx.abs_tarball_path.len()
-                + encoded_tarball_len,
+            ctx.package_name.len() * 5 + version_without_build_tag.len() * 4 + encoded_tarball_len,
         );
 
         let _ = write!(

@@ -1,7 +1,7 @@
-import { file, spawn, write } from "bun";
+import { file, gunzipSync, spawn, write } from "bun";
 import { readTarball } from "bun:internal-for-testing";
 import { beforeEach, describe, expect, test } from "bun:test";
-import { exists, mkdir, rm } from "fs/promises";
+import { chmod, exists, lstat, mkdir, rm, symlink } from "fs/promises";
 import { bunEnv, bunExe, isLinux, isWindows, pack, runBunInstall, tempDir, tmpdirSync } from "harness";
 import fs from "node:fs/promises";
 import { join } from "path";
@@ -49,6 +49,22 @@ test("basic", async () => {
 
   const tarball = readTarball(join(packageDir, "pack-basic-1.2.3.tgz"));
   expect(tarball.entries).toMatchObject([{ "pathname": "package/package.json" }, { "pathname": "package/index.js" }]);
+});
+
+// The archive ends right after the two end-of-archive blocks. libarchive's default for a custom
+// output sink would pad it to a full 10 KiB record instead, which would change the size and shasum
+// of every tarball bun produces.
+test("the archive is not padded to a full tar record", async () => {
+  await Promise.all([
+    write(join(packageDir, "package.json"), JSON.stringify({ name: "pack-unpadded", version: "1.0.0" })),
+    write(join(packageDir, "index.js"), "module.exports = 1;"),
+  ]);
+
+  await pack(packageDir, bunEnv);
+
+  const tar = gunzipSync(await file(join(packageDir, "pack-unpadded-1.0.0.tgz")).bytes());
+  // header + data for each of the two entries, then the two end-of-archive blocks
+  expect(tar.byteLength).toBe(6 * 512);
 });
 
 test("in subdirectory", async () => {
@@ -559,6 +575,106 @@ describe("flags", () => {
 
     // --dry-run never writes the tarball.
     expect(await exists(join(packageDir, "pack-quiet-dry-test-1.1.1.tgz"))).toBeFalse();
+  });
+});
+
+// The tarball used to be streamed to its destination while it was being built, so any failure on
+// the way exited 1 and left a truncated `<name>-<version>.tgz` behind for the next `bun publish
+// ./*.tgz` to pick up. `ulimit -f 0` (RLIMIT_FSIZE) makes every write to the tarball fail with
+// EFBIG, which unlike a permission based setup also works when the tests run as root; setting it
+// needs a POSIX shell.
+describe.skipIf(isWindows)("a failed pack leaves no tarball behind", () => {
+  const packageJson = JSON.stringify({ name: "pack-failed", version: "1.0.0" });
+
+  async function packExpectingFailure(cwd: string, { fileSizeLimit }: { fileSizeLimit: boolean }, ...args: string[]) {
+    await using proc = spawn({
+      cmd: fileSizeLimit
+        ? ["/bin/sh", "-c", 'ulimit -f 0 && exec "$0" pm pack "$@"', bunExe(), ...args]
+        : [bunExe(), "pm", "pack", ...args],
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+      env: bunEnv,
+    });
+    const [, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { err, exitCode };
+  }
+
+  test.concurrent.each([
+    { args: [], tarball: "pack-failed-1.0.0.tgz" },
+    { args: ["--destination=out"], tarball: join("out", "pack-failed-1.0.0.tgz") },
+    { args: ["--filename=custom.tgz"], tarball: "custom.tgz" },
+  ])("when the tarball cannot be written (args: $args)", async ({ args, tarball }) => {
+    await using dir = tempDir("pack-failed", {
+      "package.json": packageJson,
+      "index.js": "module.exports = 1;",
+    });
+
+    const { err, exitCode } = await packExpectingFailure(dir, { fileSizeLimit: true }, ...args);
+
+    expect(err).toContain("EFBIG");
+    expect(err).toContain('failed to write tarball: "');
+    expect({ exitCode, tarballExists: await exists(join(dir, tarball)) }).toEqual({
+      exitCode: 1,
+      tarballExists: false,
+    });
+  });
+
+  // Root can read a mode 000 file, so this one only runs as a regular user.
+  test.concurrent.skipIf(process.getuid?.() === 0)("when one of the files cannot be opened", async () => {
+    await using dir = tempDir("pack-failed-unreadable", {
+      "package.json": packageJson,
+      "index.js": "module.exports = 1;",
+      "unreadable.js": "module.exports = 2;",
+    });
+    await chmod(join(dir, "unreadable.js"), 0o000);
+
+    const { err, exitCode } = await packExpectingFailure(dir, { fileSizeLimit: false });
+
+    expect(err).toContain('EACCES: Permission denied: failed to open file: "unreadable.js"');
+    expect({ exitCode, tarballExists: await exists(join(dir, "pack-failed-1.0.0.tgz")) }).toEqual({
+      exitCode: 1,
+      tarballExists: false,
+    });
+  });
+
+  // Only the regular file pack itself created (or truncated) is removed; a destination that is
+  // something else, like a symlink, is not pack's to delete.
+  test.concurrent("does not delete a --filename that is a symlink", async () => {
+    await using dir = tempDir("pack-failed-symlink", {
+      "package.json": packageJson,
+      "index.js": "module.exports = 1;",
+      "target.tgz": "",
+    });
+    await symlink("target.tgz", join(dir, "link.tgz"));
+
+    const { err, exitCode } = await packExpectingFailure(dir, { fileSizeLimit: true }, "--filename=link.tgz");
+
+    expect(err).toContain('failed to write tarball: "link.tgz"');
+    expect({ exitCode, linkIsSymlink: (await lstat(join(dir, "link.tgz"))).isSymbolicLink() }).toEqual({
+      exitCode: 1,
+      linkIsSymlink: true,
+    });
+  });
+
+  // A destination that cannot even be opened was not written to, so it is left as it is (root can
+  // open a read-only file, hence the skip).
+  test.concurrent.skipIf(process.getuid?.() === 0)("keeps a destination it cannot open for writing", async () => {
+    await using dir = tempDir("pack-failed-readonly-dest", {
+      "package.json": packageJson,
+      "index.js": "module.exports = 1;",
+      "pack-failed-1.0.0.tgz": "an earlier tarball",
+    });
+    await chmod(join(dir, "pack-failed-1.0.0.tgz"), 0o444);
+
+    const { err, exitCode } = await packExpectingFailure(dir, { fileSizeLimit: false });
+
+    expect(err).toContain('EACCES: Permission denied: failed to open tarball file destination: "');
+    expect({ exitCode, destination: await file(join(dir, "pack-failed-1.0.0.tgz")).text() }).toEqual({
+      exitCode: 1,
+      destination: "an earlier tarball",
+    });
   });
 });
 

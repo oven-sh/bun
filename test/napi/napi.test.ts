@@ -386,9 +386,33 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     it("handles empty/null data without throwing", async () => {
       const result = await checkSameOutput("test_napi_create_external_buffer_empty", []);
       expect(result).toContain("PASS: napi_create_external_buffer with nullptr and zero length");
+      // Only a NULL pointer yields a detached buffer; a real pointer with length 0 is wrapped as-is.
+      expect(result).toContain(
+        "non-null data, zero length: buffer_info_data_is_caller_pointer=1 typedarray_info_data_is_caller_pointer=1 arraybuffer_detached=0 arraybuffer_data_is_caller_pointer=1 arraybuffer_byte_length=0",
+      );
       expect(result).toContain("PASS: napi_create_external_buffer with non-null data and zero length");
       expect(result).toContain("PASS: napi_create_external_buffer with nullptr finalizer");
       expect(result).not.toContain("FAIL");
+    });
+
+    it("wraps a real pointer with length 0 as an attached empty Buffer and finalizes it once", async () => {
+      const result = await checkSameOutput("test_external_buffer_zero_length_driver", []);
+      expect(result.split(/\r?\n/)).toEqual([
+        "Buffer.isBuffer(buf): true",
+        "buf.length: 0",
+        "buf.buffer.detached: false",
+        "buf.buffer.byteLength: 0",
+        "new Uint8Array(buf).length: 0",
+        "Buffer.from(buf).length: 0",
+        `Buffer.concat([buf, Buffer.from('ab')]).toString(): "ab"`,
+        'buf.toString(): ""',
+        "buf.equals(Buffer.alloc(0)): true",
+        "finalized while alive: false",
+        "some slot finalized once: true",
+        "some slot finalized more than once: false",
+        "finalize_cb calls with unexpected data or hint: 0",
+        "resolved to undefined",
+      ]);
     });
 
     it("finalize_cb is tied to the ArrayBuffer lifetime, not the Buffer view", async () => {

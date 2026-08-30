@@ -1643,6 +1643,10 @@ unsafe fn cancel_all_timers(vm: *mut VirtualMachine) {
     unsafe {
         crate::node::node_fs_stat_watcher::StatWatcherScheduler::shutdown_for_exit(vm);
     }
+    // The `process.on("memoryPressure")` watcher serves listeners of the
+    // outgoing global, which nothing removes one by one.
+    // SAFETY: `vm` per fn contract; the event loop is still alive.
+    unsafe { crate::node::memory_pressure::shutdown_for_exit(vm) };
     // SAFETY: `state` is the live boxed per-thread `RuntimeState`; `vm` per fn
     // contract. `addr_of_mut!` does not materialize a `&mut RuntimeState`.
     unsafe {

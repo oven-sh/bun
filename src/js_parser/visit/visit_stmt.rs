@@ -4,7 +4,7 @@ use crate::lexer as js_lexer;
 use crate::p::{P, ReactRefreshExportKind};
 use crate::parser::{
     PrependTempRefsOpts, ReactRefresh, Ref, RelocateVarsMode, SideEffects, StmtsKind,
-    statement_cares_about_scope,
+    StrictModeFeature, statement_cares_about_scope,
 };
 use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
 use bun_ast::flags;
@@ -68,7 +68,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // points into the arena, not into `*stmt`.
         let data_copy = stmt.data;
         match data_copy {
-            StmtData::SDirective(_) | StmtData::SComment(_) | StmtData::SEmpty(_) => {
+            StmtData::SDirective(directive) => {
+                // Directives do not end the const local prefix
+                p.cur_scope().is_after_const_local_prefix = was_after_after_const_local_prefix;
+                let legacy_octal_loc = directive.legacy_octal_loc;
+                if legacy_octal_loc.start > 0 && p.is_strict_mode() {
+                    p.mark_strict_mode_feature(
+                        StrictModeFeature::LegacyOctalEscape,
+                        p.source.range_of_legacy_octal_escape(legacy_octal_loc),
+                        b"",
+                    )?;
+                }
+                stmts.push(*stmt);
+                Ok(())
+            }
+            StmtData::SComment(_) | StmtData::SEmpty(_) => {
                 p.cur_scope().is_after_const_local_prefix = was_after_after_const_local_prefix;
                 stmts.push(*stmt);
                 Ok(())
@@ -134,19 +148,31 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         data: &mut S::Import,
     ) -> Result<(), Error> {
         p.record_declared_symbol(data.namespace_ref);
+        if let Some(star_name_loc) = data.star_name_loc.to_nullable() {
+            p.validate_import_name(star_name_loc, data.namespace_ref)?;
+        }
 
         if let Some(default_name) = data.default_name {
             p.record_declared_symbol(default_name.ref_);
+            p.validate_import_name(default_name.loc, default_name.ref_)?;
         }
 
         let items = data.items.slice();
         if !items.is_empty() {
             for item in items.iter() {
                 p.record_declared_symbol(item.name.ref_);
+                p.validate_import_name(item.name.loc, item.name.ref_)?;
             }
         }
 
         stmts.push(*stmt);
+        Ok(())
+    }
+
+    /// An import makes the file a module, so its bindings are strict mode declarations.
+    fn validate_import_name(&mut self, loc: bun_ast::Loc, ref_: Ref) -> Result<(), Error> {
+        let name = self.load_name_from_ref(ref_);
+        self.validate_declared_symbol_name(loc, name);
         Ok(())
     }
 
@@ -1327,9 +1353,25 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         stmt: &mut Stmt,
         data: &mut S::Label,
     ) -> Result<(), Error> {
+        // Forbid functions inside labels in strict mode
+        if p.is_strict_mode() && matches!(data.stmt.data, StmtData::SFunction(_)) {
+            p.mark_strict_mode_feature(
+                StrictModeFeature::LabelFunctionStmt,
+                js_lexer::range_of_identifier(p.source, data.stmt.loc),
+                b"",
+            )?;
+        }
+
         p.push_scope_for_visit_pass(js_ast::scope::Kind::Label, stmt.loc)
             .expect("unreachable");
         let name = p.load_name_from_ref(data.name.ref_);
+        if js_lexer::is_strict_mode_reserved_word(name) {
+            p.mark_strict_mode_feature(
+                StrictModeFeature::ReservedWord,
+                js_lexer::range_of_identifier(p.source, data.name.loc),
+                name,
+            )?;
+        }
         let ref_ = p.new_symbol(js_ast::symbol::Kind::Label, name);
         data.name.ref_ = ref_;
         p.cur_scope().label_ref = ref_;
@@ -1621,6 +1663,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         stmt: &mut Stmt,
         data: &mut S::With,
     ) -> Result<(), Error> {
+        p.mark_strict_mode_feature(
+            StrictModeFeature::WithStatement,
+            js_lexer::range_of_identifier(p.source, stmt.loc),
+            b"",
+        )?;
         p.visit_expr(&mut data.value);
 
         p.push_scope_for_visit_pass(js_ast::scope::Kind::With, data.body_loc)
@@ -1893,6 +1940,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         let decl: &mut G::Decl = &mut local.decls.slice_mut()[0];
                         if let js_ast::binding::Data::BIdentifier(b_id) = decl.binding.data {
                             if let Some(val) = decl.value {
+                                p.mark_strict_mode_feature(
+                                    StrictModeFeature::ForInVarInit,
+                                    p.source.range_of_operator_before(val.loc, b"="),
+                                    b"",
+                                )?;
                                 let id_ref = b_id.r#ref;
                                 stmts.push(Stmt::assign(
                                     Expr::init_identifier(id_ref, decl.binding.loc),
@@ -2155,6 +2207,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         p.record_declared_symbol(data.name.ref_);
+        // The enum lowers to a `var` with this name.
+        let enum_name = p.load_name_from_ref(data.name.ref_);
+        p.validate_declared_symbol_name(data.name.loc, enum_name);
         p.push_scope_for_visit_pass(js_ast::scope::Kind::Entry, stmt.loc)?;
         p.record_declared_symbol(data.arg);
 
@@ -2348,6 +2403,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         data: &mut S::Namespace,
     ) -> Result<(), Error> {
         p.record_declared_symbol(data.name.ref_);
+        // The namespace lowers to a `var` with this name.
+        let namespace_name = p.load_name_from_ref(data.name.ref_);
+        p.validate_declared_symbol_name(data.name.loc, namespace_name);
 
         // Scan ahead for any variables inside this namespace. This must be done
         // ahead of time before visiting any statements inside the namespace

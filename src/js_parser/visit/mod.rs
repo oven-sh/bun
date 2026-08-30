@@ -11,7 +11,7 @@ use crate::p::{LowerUsingDeclarationsContext, P};
 use crate::parser::{
     ExprIn, FnOnlyDataVisit, FnOrArrowDataVisit, ImportItemForNamespaceMap, PrependTempRefsOpts,
     Ref, RelocateVarsMode, ScopeOrder, StmtsKind, StrictModeFeature, StringVoidMap, VisitArgsOpts,
-    VisitDeclOpts, is_eval_or_arguments,
+    VisitDeclOpts,
 };
 use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
 use bun_ast as js_ast;
@@ -90,15 +90,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if let Some(name) = func.name {
             if let Some(name_ref) = name.ref_.to_nullable() {
                 self.record_declared_symbol(name_ref);
-                let symbol_name = self.load_name_from_ref(name_ref);
-                if is_eval_or_arguments(symbol_name) {
-                    self.mark_strict_mode_feature(
-                        StrictModeFeature::EvalOrArguments,
-                        js_lexer::range_of_identifier(self.source, name.loc),
-                        symbol_name,
-                    )
-                    .expect("unreachable");
-                }
             }
         }
 
@@ -112,13 +103,23 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             args,
             &VisitArgsOpts {
                 has_rest_arg: func.flags.contains(flags::Function::HasRestArg),
-                body: body_stmts,
-                is_unique_formal_parameters: true,
+                body_loc,
+                is_unique_formal_parameters: func
+                    .flags
+                    .contains(flags::Function::IsUniqueFormalParameters),
             },
         );
 
         self.push_scope_for_visit_pass(ScopeKind::FunctionBody, body_loc)
             .expect("unreachable");
+
+        // The body's own "use strict" applies to the name, so check it in the body scope.
+        if let Some(name) = func.name {
+            if let Some(name_ref) = name.ref_.to_nullable() {
+                let symbol_name = self.load_name_from_ref(name_ref);
+                self.validate_declared_symbol_name(name.loc, symbol_name);
+            }
+        }
         // Stmt is Copy — copy the slice into a bump-backed Vec.
         let mut stmts = BumpVec::with_capacity_in(body_stmts.len(), self.arena);
         stmts.extend_from_slice(body_stmts);
@@ -199,8 +200,24 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         func
     }
 
+    /// The body's own "use strict" directive, read from the FunctionBody child scope.
+    fn fn_body_use_strict_loc(&self, body_loc: bun_ast::Loc) -> Option<bun_ast::Loc> {
+        let args_scope = self.current_scope();
+        debug_assert!(args_scope.kind == ScopeKind::FunctionArgs);
+        args_scope
+            .children
+            .slice()
+            .iter()
+            .find(|child| child.kind == ScopeKind::FunctionBody)
+            .filter(|body| {
+                body.strict_mode == StrictModeKind::ExplicitStrictMode
+                    && body.use_strict_loc.start > body_loc.start
+            })
+            .map(|body| body.use_strict_loc)
+    }
+
     pub(crate) fn visit_args(&mut self, args: &mut [G::Arg], opts: &VisitArgsOpts) {
-        let strict_loc = fn_body_contains_use_strict(opts.body);
+        let strict_loc = self.fn_body_use_strict_loc(opts.body_loc);
         let has_simple_args = Self::is_simple_parameter_list(args, opts.has_rest_arg);
         // StringVoidMap::get returns a pool guard; Drop releases.
         let mut duplicate_args_check: Option<
@@ -224,11 +241,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // Section 15.1.1 Static Semantics: Early Errors: "Multiple occurrences of
         // the same BindingIdentifier in a FormalParameterList is only allowed for
         // functions which have simple parameter lists and which are not defined in
-        // strict mode code."
+        // strict mode code." The ESM output is strict mode code too.
         if opts.is_unique_formal_parameters
             || strict_loc.is_some()
             || !has_simple_args
             || self.is_strict_mode()
+            || self.is_strict_mode_output_format()
         {
             duplicate_args_check = Some(StringVoidMap::get());
         }
@@ -629,14 +647,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let name: &'a [u8] = self.symbols[bind.r#ref.inner_index() as usize]
                     .original_name
                     .slice();
-                if is_eval_or_arguments(name) {
-                    self.mark_strict_mode_feature(
-                        StrictModeFeature::EvalOrArguments,
-                        js_lexer::range_of_identifier(self.source, binding.loc),
-                        name,
-                    )
-                    .expect("unreachable");
-                }
+                self.validate_declared_symbol_name(binding.loc, name);
                 if let Some(dup) = duplicate_arg_check {
                     if dup.get_or_put_contains(name) {
                         self.log().add_range_error_fmt(
@@ -775,6 +786,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if has_if_scope {
             self.push_scope_for_visit_pass(ScopeKind::Block, stmt.loc)
                 .expect("unreachable");
+            if self.is_strict_mode() {
+                self.mark_strict_mode_feature(
+                    StrictModeFeature::IfElseFunctionStmt,
+                    js_lexer::range_of_identifier(self.source, stmt.loc),
+                    b"",
+                )
+                .expect("unreachable");
+            }
         }
 
         let old_is_inside_single_stmt_body = self.is_inside_single_stmt_body;
@@ -816,6 +835,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.enclosing_class_keyword = class.class_keyword;
         self.vis_scope()
             .recursive_set_strict_mode(StrictModeKind::ImplicitStrictModeClass);
+        if let Some(name) = class.class_name {
+            let original_name: &'a [u8] = self.symbols[name.ref_.inner_index() as usize]
+                .original_name
+                .slice();
+            self.validate_declared_symbol_name(name.loc, original_name);
+        }
 
         // Insert a shadowing name that spans the whole class, which matches
         // JavaScript's semantics. The class body (and extends clause) "captures" the
@@ -1962,24 +1987,4 @@ fn scopes_for_enum_at<'a>(
     map.get(&loc)
         .copied()
         .expect("scopes_in_order_for_enum miss for enum stmt loc")
-}
-
-fn fn_body_contains_use_strict(body: &[Stmt]) -> Option<bun_ast::Loc> {
-    use bun_ast::stmt::Data as StmtData;
-    for stmt in body {
-        // "use strict" has to appear at the top of the function body
-        // but we can allow comments
-        match &stmt.data {
-            StmtData::SComment(_) => continue,
-            StmtData::SDirective(dir) => {
-                // SAFETY: arena-owned slice valid for the parse.
-                if dir.value.slice() == b"use strict" {
-                    return Some(stmt.loc);
-                }
-            }
-            StmtData::SEmpty(_) => {}
-            _ => return None,
-        }
-    }
-    None
 }

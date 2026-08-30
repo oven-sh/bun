@@ -268,6 +268,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
             .append_non_dependency(Stmt::alloc(
                 S::Directive {
                     value: bun_ast::StoreStr::new(b"use strict"),
+                    legacy_octal_loc: bun_ast::Loc::EMPTY,
                 },
                 bun_ast::Loc::EMPTY,
             ))

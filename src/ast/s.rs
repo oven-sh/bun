@@ -42,6 +42,8 @@ pub struct Comment {
 
 pub struct Directive {
     pub value: StoreStr, // arena-owned
+    /// See `EString::legacy_octal_loc`.
+    pub legacy_octal_loc: crate::Loc,
 }
 
 #[derive(Default)]

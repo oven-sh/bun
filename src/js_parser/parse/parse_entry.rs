@@ -438,6 +438,7 @@ impl<'a> Parser<'a> {
         // Parse the file in the first pass, but do not bind symbols
         let mut opts = ParseStatementOptions {
             scope: StatementScope::Module,
+            allow_directive_prologue: true,
             ..Default::default()
         };
 
@@ -825,6 +826,7 @@ impl<'a> Parser<'a> {
         // Parse the file in the first pass, but do not bind symbols
         let mut opts = ParseStatementOptions {
             scope: StatementScope::Module,
+            allow_directive_prologue: true,
             ..Default::default()
         };
         let mut parse_tracer = bun_core::perf::trace("JSParser::parse");

@@ -57,6 +57,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
             all_stmts.push(self.s(
                 S::Directive {
                     value: b"use strict".into(),
+                    legacy_octal_loc: bun_ast::Loc::EMPTY,
                 },
                 self.module_scope_directive_loc,
             ));

@@ -298,7 +298,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.lexer.rescan_close_brace_as_template_token()?;
 
             let tail: E::TemplateContents = if !include_raw {
-                E::TemplateContents::Cooked(p.lexer.to_e_string()?)
+                let mut cooked = p.lexer.to_e_string()?;
+                if p.lexer.legacy_octal_loc.start > tail_loc.start {
+                    cooked.legacy_octal_loc = p.lexer.legacy_octal_loc;
+                }
+                E::TemplateContents::Cooked(cooked)
             } else {
                 E::TemplateContents::Raw(p.lexer.raw_template_contents().into())
             };
@@ -329,6 +333,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let loc = p.lexer.loc();
         let mut str_ = p.lexer.to_e_string()?;
         str_.prefer_template = p.lexer.token == T::TNoSubstitutionTemplateLiteral;
+        if p.lexer.legacy_octal_loc.start > loc.start {
+            str_.legacy_octal_loc = p.lexer.legacy_octal_loc;
+        }
 
         let expr = p.new_expr(str_, loc);
         p.lexer.next()?;
@@ -1167,7 +1174,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             T::TNumericLiteral => {
                 key = p.new_expr(E::Number::new(p.lexer.number), p.lexer.loc());
-                // check for legacy octal literal
+                p.check_for_legacy_octal_literal(key.loc);
                 p.lexer.next()?;
             }
             T::TStringLiteral => {
@@ -1321,6 +1328,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             loader: None,
         };
 
+        // An import or export path makes the file a module; the scope is only strict after parsing.
+        if p.lexer.legacy_octal_loc.start > path.loc.start {
+            let notes = p.why_es_module();
+            p.log().add_range_error_fmt_with_notes(
+                Some(p.source),
+                p.source
+                    .range_of_legacy_octal_escape(p.lexer.legacy_octal_loc),
+                notes,
+                format_args!(
+                    "Legacy octal escape sequences cannot be used in an ECMAScript module"
+                ),
+            );
+        }
+
         if p.lexer.token == T::TNoSubstitutionTemplateLiteral {
             p.lexer.next()?;
         } else {
@@ -1448,7 +1469,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let mut return_without_semicolon_start: i32 = -1;
         opts.lexical_decl = LexicalDecl::AllowAll;
-        let mut is_directive_prologue = true;
+        let mut is_directive_prologue = opts.allow_directive_prologue;
 
         loop {
             for comment in p.lexer.comments_to_preserve_before.iter() {
@@ -1483,8 +1504,23 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             if str_.eql_comptime(b"use strict") {
                                 skip = true;
                                 // Track "use strict" directives
-                                p.current_scope_mut().strict_mode =
-                                    StrictModeKind::ExplicitStrictMode;
+                                let directive_loc = expr.value.loc;
+                                let scope = p.current_scope_mut();
+                                scope.strict_mode = StrictModeKind::ExplicitStrictMode;
+                                scope.use_strict_loc = directive_loc;
+
+                                // The directive also covers the parameters.
+                                if scope.kind == js_ast::scope::Kind::FunctionBody {
+                                    if let Some(mut parent) = scope.parent {
+                                        if parent.kind == js_ast::scope::Kind::FunctionArgs
+                                            && parent.strict_mode == StrictModeKind::SloppyMode
+                                        {
+                                            parent.strict_mode = StrictModeKind::ExplicitStrictMode;
+                                            parent.use_strict_loc = directive_loc;
+                                        }
+                                    }
+                                }
+
                                 if p.current_scope == p.module_scope {
                                     p.module_scope_directive_loc = stmt.loc;
                                 }
@@ -1499,6 +1535,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 stmt = Stmt::alloc(
                                     S::Directive {
                                         value: bun_ast::StoreStr::new(bytes),
+                                        legacy_octal_loc: str_.legacy_octal_loc,
                                     },
                                     stmt.loc,
                                 );

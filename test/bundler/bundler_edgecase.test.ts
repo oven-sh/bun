@@ -3277,6 +3277,295 @@ describe("bundler", () => {
       api.expectFile("/out.js").toContain("var arguments = 1;");
     },
   });
+  // A `with` statement in a sloppy CommonJS dependency cannot run inside an
+  // ESM bundle (modules are strict), so bundling it to ESM is an error in the
+  // dependency instead of a SyntaxError when the bundle loads.
+  itBundled("edgecase/SloppyWithStatementESMOutputIsAnError", {
+    files: {
+      "/entry.js": /* js */ `
+        const dep = require("./dep.cjs");
+        console.log(dep);
+      `,
+      "/dep.cjs": /* js */ `
+        var obj = { foo() { return "foo" } };
+        with (obj) { module.exports = foo() }
+      `,
+    },
+    format: "esm",
+    bundleErrors: {
+      "/dep.cjs": ["With statements cannot be used with the ESM output format due to strict mode"],
+    },
+  });
+  itBundled("edgecase/SloppyDeleteBareNameESMOutputIsAnError", {
+    files: {
+      "/entry.js": /* js */ `
+        x = 1;
+        delete x;
+        console.log(typeof x);
+      `,
+    },
+    format: "esm",
+    bundleErrors: {
+      "/entry.js": ["Delete of a bare identifier cannot be used with the ESM output format due to strict mode"],
+    },
+  });
+  itBundled("edgecase/SloppyWithStatementCJSOutput", {
+    files: {
+      "/entry.js": /* js */ `
+        const dep = require("./dep.cjs");
+        console.log(dep);
+      `,
+      "/dep.cjs": /* js */ `
+        var obj = { foo() { return "foo" } };
+        with (obj) { module.exports = foo() }
+      `,
+    },
+    format: "cjs",
+    run: { stdout: "foo" },
+  });
+  // Sloppy-mode constructs that the bundler rewrites are not an error for ESM
+  // output: the renamer renames bound reserved words, and block-level function
+  // declarations in an `if` or a label are lowered to `let` plus a `var`.
+  itBundled("edgecase/SloppyReservedWordBindingsESMOutputAreRenamed", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log(require("./dep.cjs"));
+      `,
+      "/dep.cjs": /* js */ `
+        var package = 1, interface = 2;
+        function f(static) { return static + package + interface }
+        function protected() {}
+        try {} catch (private) {}
+        module.exports = f(3) + typeof protected;
+      `,
+    },
+    format: "esm",
+    run: { stdout: "6function" },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("var _package = 1");
+    },
+  });
+  itBundled("edgecase/SloppyBlockLevelFunctionsESMOutputAreLowered", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log(require("./dep.cjs"));
+      `,
+      "/dep.cjs": /* js */ `
+        lbl: function f() {}
+        if (0) function g() {}
+        module.exports = typeof f + typeof g;
+      `,
+    },
+    format: "esm",
+    run: { stdout: "functionundefined" },
+  });
+  // Labels are not renamed, so a reserved word as a label is still an error.
+  itBundled("edgecase/SloppyReservedWordLabelESMOutputIsAnError", {
+    files: {
+      "/entry.js": /* js */ `
+        package: for (;;) break package;
+      `,
+    },
+    format: "esm",
+    bundleErrors: {
+      "/entry.js": ['"package" is a reserved word and cannot be used with the ESM output format due to strict mode'],
+    },
+  });
+  // The printer writes numbers in decimal and escapes as `\xNN`, so legacy octal
+  // syntax never reaches the output and is not an error for ESM output.
+  itBundled("edgecase/SloppyLegacyOctalESMOutputIsReprinted", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log(JSON.stringify(require("./dep.cjs")));
+      `,
+      "/dep.cjs": /* js */ `
+        var n = 010, m = 08, s = "\\1", t = "\\012";
+        module.exports = [n, m, s, t];
+      `,
+    },
+    format: "esm",
+    run: { stdout: '[8,8,"\\u0001","\\n"]' },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toContain("var n = 8");
+      expect(out).not.toContain("010");
+      expect(out).not.toContain("\\1");
+    },
+  });
+  // A for-in initializer is lowered to an assignment before the loop, so it is
+  // not an error for any output format.
+  itBundled("edgecase/SloppyForInInitializerIsLowered", {
+    files: {
+      "/entry.js": /* js */ `
+        for (var i = "init" in {}) ;
+        console.log(i);
+      `,
+    },
+    format: "esm",
+    run: { stdout: "init" },
+  });
+  // The sloppy-mode constructs that an ES module rejects are reported in the
+  // file that has ESM syntax, no matter the output format.
+  itBundled("edgecase/StrictModeConstructsInESMFileCJSOutput", {
+    files: {
+      "/entry.js": /* js */ `
+        export let n = 010;
+        with (x) y;
+      `,
+    },
+    format: "cjs",
+    bundleErrors: {
+      "/entry.js": [
+        "Legacy octal literals cannot be used in an ECMAScript module",
+        "With statements cannot be used in an ECMAScript module",
+      ],
+    },
+  });
+  // Only the "esm" output format is strict mode code. An IIFE keeps the sloppy
+  // constructs as written.
+  itBundled("edgecase/SloppyWithStatementIIFEOutput", {
+    files: {
+      "/entry.js": /* js */ `
+        var scope = { greeting: "hi" };
+        with (scope) { console.log(greeting); }
+      `,
+    },
+    format: "iife",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("with (scope)");
+    },
+    run: { stdout: "hi" },
+  });
+  // A duplicate parameter name is only valid in sloppy mode, and the renamer
+  // does not change it, so it cannot go into ESM output.
+  itBundled("edgecase/SloppyDuplicateParametersESMOutputIsAnError", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log(require("./dep.cjs"));
+      `,
+      "/dep.cjs": /* js */ `
+        function f(a, a) { return a }
+        module.exports = f(1, 2);
+      `,
+    },
+    format: "esm",
+    bundleErrors: {
+      "/dep.cjs": ['"a" cannot be bound multiple times in the same parameter list'],
+    },
+  });
+  itBundled("edgecase/SloppyDuplicateParametersCJSOutput", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log(require("./dep.cjs"));
+      `,
+      "/dep.cjs": /* js */ `
+        function f(a, a) { return a }
+        module.exports = f(1, 2);
+      `,
+    },
+    format: "cjs",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("function f(a, a)");
+    },
+  });
+  // The renamer only renames bound symbols. An unbound reserved word is printed
+  // as written, so it would make the ESM output a syntax error.
+  itBundled("edgecase/SloppyUnboundReservedWordESMOutputIsAnError", {
+    files: {
+      "/entry.cjs": /* js */ `
+        exports.x = 1;
+        console.log(package);
+        static = 2;
+      `,
+    },
+    format: "esm",
+    bundleErrors: {
+      "/entry.cjs": [
+        '"package" is a reserved word and cannot be used with the ESM output format due to strict mode',
+        '"static" is a reserved word and cannot be used with the ESM output format due to strict mode',
+      ],
+    },
+  });
+  itBundled("edgecase/SloppyUnboundReservedWordCJSOutput", {
+    files: {
+      "/entry.cjs": /* js */ `
+        exports.x = 1;
+        console.log(typeof package);
+      `,
+    },
+    format: "cjs",
+    run: { stdout: "undefined" },
+  });
+  itBundled("edgecase/SloppyUnboundReservedWordReplacedByDefine", {
+    files: {
+      "/entry.cjs": /* js */ `
+        exports.x = 1;
+        console.log(package);
+      `,
+    },
+    format: "esm",
+    define: {
+      package: "123",
+    },
+    run: { stdout: "123" },
+  });
+  // `--minify-syntax` substitutes a single-use `let` into the next statement
+  // and visits the result again. The strict-mode errors of the substituted
+  // expression must not be reported a second time.
+  itBundled("edgecase/StrictModeErrorsReportedOnceWithMinifySyntax", {
+    files: {
+      "/entry.js": /* js */ `
+        "use strict";
+        function f() { let n = 010; return n + 1; }
+        function g() { let s = "\\1"; return s + "a"; }
+        function h() { let d = delete x; return d + 1; }
+        function t(a) { let y = 5; return \`\\1\${a}\` + y; }
+        console.log(f(), g(), h(), t(1));
+      `,
+    },
+    minifySyntax: true,
+    bundleErrors: {
+      "/entry.js": [
+        "Legacy octal literals cannot be used in strict mode",
+        "Legacy octal escape sequences cannot be used in strict mode",
+        "Delete of a bare identifier cannot be used in strict mode",
+        "Legacy octal escape sequences cannot be used in template literals",
+      ],
+    },
+  });
+  // `eval` and `arguments` are not renamed, so an assignment to them in a
+  // sloppy file cannot go into ESM output.
+  itBundled("edgecase/SloppyEvalAssignmentESMOutputIsAnError", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log(require("./dep.cjs"));
+      `,
+      "/dep.cjs": /* js */ `
+        eval = 0;
+        arguments++;
+        module.exports = typeof eval;
+      `,
+    },
+    format: "esm",
+    bundleErrors: {
+      "/dep.cjs": ["Invalid assignment target", "Invalid assignment target"],
+    },
+  });
+  itBundled("edgecase/SloppyEvalAssignmentCJSOutput", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log(require("./dep.cjs"));
+      `,
+      "/dep.cjs": /* js */ `
+        eval = 0;
+        module.exports = typeof eval;
+      `,
+    },
+    format: "cjs",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("eval = 0;");
+    },
+  });
 });
 
 for (const backend of ["api", "cli"] as const) {

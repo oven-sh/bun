@@ -266,6 +266,9 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
 
     pub(crate) hoisted_ref_for_sloppy_mode_block_fn: RefRefMap,
 
+    /// Legacy octal number literals (`010`, `08`) by `Loc.start`, for the visit pass.
+    pub(crate) legacy_octal_literals: HashMap<i32, bun_ast::Range>,
+
     // Used for forcing CommonJS
     pub(crate) has_with_scope: bool,
 
@@ -2727,6 +2730,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
+        // Legacy HTML comments are not allowed in ESM files
+        if self.lexer.legacy_html_comment_range.len > 0 && self.is_file_considered_esm() {
+            let notes = self.why_es_module();
+            self.log().add_range_error_fmt_with_notes(
+                Some(self.source),
+                self.lexer.legacy_html_comment_range,
+                notes,
+                format_args!(
+                    "Legacy HTML single-line comments are not allowed in ECMAScript modules"
+                ),
+            );
+        }
+
         // ECMAScript modules are always interpreted as strict mode. This has to be
         // done before "hoistSymbols" because strict mode can alter hoisting (!).
         if self.esm_import_keyword.len > 0 {
@@ -2860,6 +2876,87 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.options.bundle || self.options.features.minify_identifiers
     }
 
+    /// ESM syntax only; a `.mjs` file with no import or export runs as CommonJS.
+    #[inline]
+    pub(crate) fn is_file_considered_esm(&self) -> bool {
+        self.esm_import_keyword.len > 0
+            || self.esm_export_keyword.len > 0
+            || self.top_level_await_keyword.len > 0
+    }
+
+    /// Runs at hoisting time because `export {}` at the end of the file can make the scope strict.
+    fn check_for_duplicate_function_declarations(&mut self, scope: js_ast::StoreRef<Scope>) {
+        let is_module_top_level = scope.parent.is_none() && self.is_file_considered_esm();
+        let is_strict_block = scope.strict_mode != js_ast::StrictModeKind::SloppyMode
+            && scope.kind == js_ast::scope::Kind::Block;
+        if !is_module_top_level && !is_strict_block {
+            return;
+        }
+
+        for replaced in scope.replaced.slice() {
+            let symbol = &self.symbols[replaced.ref_.inner_index() as usize];
+            if !symbol.kind.is_function() {
+                continue;
+            }
+            // `Symbol.original_name` is an arena-owned `StoreStr` valid for 'a.
+            let name: &'a [u8] = symbol.original_name.slice();
+            let Some(member) = scope.members.get(name).copied() else {
+                continue;
+            };
+            if !self.symbols[member.ref_.inner_index() as usize]
+                .kind
+                .is_function()
+            {
+                continue;
+            }
+
+            // The "why" note prefixes the reason that the scope is a module or strict.
+            let (mut why_text, why_notes) = if is_module_top_level {
+                (
+                    b"Duplicate top-level function declarations are not allowed in an ECMAScript module."
+                        .to_vec(),
+                    self.why_es_module(),
+                )
+            } else {
+                let (where_, notes) = self.why_strict_mode(scope);
+                (
+                    format!(
+                        "Duplicate function declarations are not allowed in nested blocks {}.",
+                        bstr::BStr::new(where_)
+                    )
+                    .into_bytes(),
+                    notes,
+                )
+            };
+            let mut why_location = None;
+            if let Some(note) = why_notes.into_vec().pop() {
+                why_text.push(b' ');
+                why_text.extend_from_slice(&note.text);
+                why_location = note.location;
+            }
+
+            let notes: Box<[bun_ast::Data]> = Box::new([
+                bun_ast::range_data(
+                    Some(self.source),
+                    js_lexer::range_of_identifier(self.source, replaced.loc),
+                    format!("\"{}\" was originally declared here", bstr::BStr::new(name))
+                        .into_bytes(),
+                ),
+                bun_ast::Data {
+                    text: why_text.into(),
+                    location: why_location,
+                },
+            ]);
+
+            self.log().add_range_error_fmt_with_notes(
+                Some(self.source),
+                js_lexer::range_of_identifier(self.source, member.loc),
+                notes,
+                format_args!("\"{}\" has already been declared", bstr::BStr::new(name)),
+            );
+        }
+    }
+
     fn hoist_symbols(&mut self, mut scope: js_ast::StoreRef<js_ast::Scope>) {
         // This runs before the visit pass, so it walks the scope tree at the full
         // nesting depth the parser allowed; deep trees must error here instead of
@@ -2868,6 +2965,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             self.report_stack_overflow(bun_ast::Loc::EMPTY);
             return;
         }
+
+        self.check_for_duplicate_function_declarations(scope);
 
         // `StoreRef` is the arena back-pointer with safe `Deref`/`DerefMut` —
         // scope is arena-owned and valid for the parser 'a lifetime; the visit
@@ -3195,6 +3294,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // `parent != scope` (fresh alloc) so the two `&mut` do not alias.
         VecExt::append(&mut parent.children, scope);
         scope.strict_mode = parent.strict_mode;
+        scope.use_strict_loc = parent.use_strict_loc;
 
         self.current_scope = scope;
 
@@ -4236,7 +4336,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         r: bun_ast::Range,
         detail: &[u8],
     ) -> Result<(), crate::Error> {
+        let mut can_be_transformed = false;
         let text: &'a [u8] = match feature {
+            StrictModeFeature::WithStatement => b"With statements",
+            StrictModeFeature::DeleteBareName => b"Delete of a bare identifier",
+            StrictModeFeature::ForInVarInit => {
+                can_be_transformed = true;
+                b"Variable initializers inside for-in loops"
+            }
             StrictModeFeature::EvalOrArguments => bun_alloc::arena_format!(
                 in self.arena,
                 "Declarations with the name \"{}\"",
@@ -4251,47 +4358,25 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             )
             .into_bump_str()
             .as_bytes(),
+            StrictModeFeature::LegacyOctalLiteral => b"Legacy octal literals",
+            StrictModeFeature::LegacyOctalEscape => b"Legacy octal escape sequences",
+            StrictModeFeature::IfElseFunctionStmt => b"Function declarations inside if statements",
+            StrictModeFeature::LabelFunctionStmt => b"Function declarations inside labels",
         };
 
-        let scope = self.current_scope();
         if self.is_strict_mode() {
-            let mut why: &'a [u8] = b"";
-            let mut where_: bun_ast::Range = bun_ast::Range::NONE;
-            match scope.strict_mode {
-                js_ast::StrictModeKind::ImplicitStrictModeImport => {
-                    where_ = self.esm_import_keyword
-                }
-                js_ast::StrictModeKind::ImplicitStrictModeExport => {
-                    where_ = self.esm_export_keyword
-                }
-                js_ast::StrictModeKind::ImplicitStrictModeTopLevelAwait => {
-                    where_ = self.top_level_await_keyword
-                }
-                js_ast::StrictModeKind::ImplicitStrictModeClass => {
-                    why = b"All code inside a class is implicitly in strict mode";
-                    where_ = self.enclosing_class_keyword;
-                }
-                _ => {}
-            }
-            if why.is_empty() {
-                why = bun_alloc::arena_format!(
-                    in self.arena,
-                    "This file is implicitly in strict mode because of the \"{}\" keyword here",
-                    bstr::BStr::new(self.source.text_for_range(where_))
-                )
-                .into_bump_str()
-                .as_bytes();
-            }
-            // bun_ast::Data is !Copy (Cow) — build the notes Box directly.
-            let notes: Box<[bun_ast::Data]> =
-                Box::new([bun_ast::range_data(Some(self.source), where_, why.to_vec())]);
+            let (where_, notes) = self.why_strict_mode(self.current_scope);
             self.log().add_range_error_fmt_with_notes(
                 Some(self.source),
                 r,
                 notes,
-                format_args!("{} cannot be used in strict mode", bstr::BStr::new(text)),
+                format_args!(
+                    "{} cannot be used {}",
+                    bstr::BStr::new(text),
+                    bstr::BStr::new(where_)
+                ),
             );
-        } else if self.is_strict_mode_output_format() {
+        } else if !can_be_transformed && self.is_strict_mode_output_format() {
             self.log().add_range_error_fmt(
                 Some(self.source),
                 r,
@@ -4302,6 +4387,59 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             );
         }
         Ok(())
+    }
+
+    /// The phrase that completes "... cannot be used {}" and the note that points at the trigger.
+    pub(crate) fn why_strict_mode(
+        &self,
+        scope: js_ast::StoreRef<Scope>,
+    ) -> (&'static [u8], Box<[bun_ast::Data]>) {
+        match scope.strict_mode {
+            js_ast::StrictModeKind::ImplicitStrictModeClass => (
+                b"in strict mode",
+                Box::new([bun_ast::range_data(
+                    Some(self.source),
+                    self.enclosing_class_keyword,
+                    b"All code inside a class is implicitly in strict mode".as_slice(),
+                )]),
+            ),
+            js_ast::StrictModeKind::ExplicitStrictMode => (
+                b"in strict mode",
+                Box::new([bun_ast::range_data(
+                    Some(self.source),
+                    self.source.range_of_string(scope.use_strict_loc),
+                    b"Strict mode is triggered by the \"use strict\" directive here:".as_slice(),
+                )]),
+            ),
+            js_ast::StrictModeKind::ImplicitStrictModeImport
+            | js_ast::StrictModeKind::ImplicitStrictModeExport
+            | js_ast::StrictModeKind::ImplicitStrictModeTopLevelAwait => {
+                (b"in an ECMAScript module", self.why_es_module())
+            }
+            js_ast::StrictModeKind::SloppyMode => (b"in strict mode", Box::new([])),
+        }
+    }
+
+    /// The note that says which syntax made this file an ECMAScript module.
+    pub(crate) fn why_es_module(&self) -> Box<[bun_ast::Data]> {
+        const BECAUSE: &str = "This file is considered to be an ECMAScript module because";
+        let (range, what): (bun_ast::Range, &str) = if self.esm_export_keyword.len > 0 {
+            (self.esm_export_keyword, "of the \"export\" keyword here:")
+        } else if self.top_level_await_keyword.len > 0 {
+            (
+                self.top_level_await_keyword,
+                "of the top-level \"await\" keyword here:",
+            )
+        } else if self.esm_import_keyword.len > 0 {
+            (self.esm_import_keyword, "of the \"import\" keyword here:")
+        } else {
+            return Box::new([]);
+        };
+        Box::new([bun_ast::range_data(
+            Some(self.source),
+            range,
+            format!("{BECAUSE} {what}").into_bytes(),
+        )])
     }
 
     #[inline]
@@ -4453,18 +4591,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) -> Result<Ref, crate::Error> {
         // p.checkForNonBMPCodePoint(loc, name)
 
-        // Forbid declaring a symbol with a reserved word in strict mode
-        if self.is_strict_mode()
-            && name.as_ptr() != arguments_str.as_ptr()
-            && bun_ast::lexer_tables::is_strict_mode_reserved_word(name)
-        {
-            self.mark_strict_mode_feature(
-                StrictModeFeature::ReservedWord,
-                js_lexer::range_of_identifier(self.source, loc),
-                name,
-            )?;
-        }
-
         // Allocate a new symbol
         let mut ref_ = self.new_symbol(kind, name);
 
@@ -4486,6 +4612,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // `Scope` — see `Scope::get_or_put_member_with_hash`.
         let mut scope: js_ast::StoreRef<js_ast::Scope> = self.current_scope;
         let scope_kind = scope.kind;
+        let mut replaced: Option<js_ast::scope::Member> = None;
         // SAFETY: see key-lifetime note above — `name: &'a [u8]` outlives the
         // arena-owned `Scope` map.
         let entry = unsafe { scope.members.get_or_put_borrowed(name) };
@@ -4517,6 +4644,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 MR::ReplaceWithNew => {
                     self.symbols[symbol_idx].link.set(ref_);
+                    replaced = Some(existing);
 
                     // If these are both functions, remove the overwritten declaration
                     if kind.is_function() && self.symbols[symbol_idx].kind.is_function() {
@@ -4535,7 +4663,40 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
         *entry.value_ptr = js_ast::scope::Member { ref_, loc };
+        if let Some(existing) = replaced {
+            VecExt::append(&mut scope.replaced, existing);
+        }
         Ok(ref_)
+    }
+
+    /// Call while the lexer is on the `TNumericLiteral` that became the `E::Number` at `loc`.
+    pub(crate) fn check_for_legacy_octal_literal(&mut self, loc: bun_ast::Loc) {
+        if self.lexer.is_legacy_octal_literal {
+            let range = self.lexer.range();
+            self.legacy_octal_literals.insert(loc.start, range);
+        }
+    }
+
+    /// Visit-pass check, since ESM and class bodies only become strict after parsing.
+    pub(crate) fn validate_declared_symbol_name(&mut self, loc: bun_ast::Loc, name: &[u8]) {
+        if js_lexer::is_strict_mode_reserved_word(name) {
+            // The bundler renames a bound reserved word (`package` to `_package`).
+            if self.is_strict_mode() {
+                self.mark_strict_mode_feature(
+                    StrictModeFeature::ReservedWord,
+                    js_lexer::range_of_identifier(self.source, loc),
+                    name,
+                )
+                .expect("unreachable");
+            }
+        } else if is_eval_or_arguments(name) {
+            self.mark_strict_mode_feature(
+                StrictModeFeature::EvalOrArguments,
+                js_lexer::range_of_identifier(self.source, loc),
+                name,
+            )
+            .expect("unreachable");
+        }
     }
 
     pub(crate) fn validate_function_name(&mut self, func: &G::Fn) {
@@ -5196,7 +5357,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     pub(crate) fn is_valid_assignment_target(&self, expr: &Expr) -> bool {
         match &expr.data {
             js_ast::ExprData::EIdentifier(ident) => {
-                !is_eval_or_arguments(self.load_name_from_ref(ident.ref_))
+                // The renamer keeps `eval` and `arguments`, so ESM output is strict here too.
+                !((self.is_strict_mode() || self.is_strict_mode_output_format())
+                    && is_eval_or_arguments(self.load_name_from_ref(ident.ref_)))
             }
             js_ast::ExprData::EDot(e) => e.optional_chain.is_none(),
             js_ast::ExprData::EIndex(e) => e.optional_chain.is_none(),
@@ -8158,6 +8321,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     remaining_stmts[0] = self.s(
                         S::Directive {
                             value: b"use strict".into(),
+                            legacy_octal_loc: bun_ast::Loc::EMPTY,
                         },
                         self.module_scope_directive_loc,
                     );
@@ -8706,6 +8870,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             has_classic_runtime_warned: false,
             macro_call_count: 0,
             hoisted_ref_for_sloppy_mode_block_fn: Default::default(),
+            legacy_octal_literals: Default::default(),
             has_with_scope: false,
             is_file_considered_to_have_esm_exports: false,
             has_called_runtime: false,

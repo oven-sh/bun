@@ -670,8 +670,9 @@ pub enum RelocateVarsMode {
 }
 
 #[derive(Default)]
-pub struct VisitArgsOpts<'a> {
-    pub(crate) body: &'a [Stmt],
+pub struct VisitArgsOpts {
+    /// `Fn.body.loc`, the location of the body's opening brace.
+    pub(crate) body_loc: bun_ast::Loc,
     pub(crate) has_rest_arg: bool,
     /// This is true if the function is an arrow function or a method
     pub(crate) is_unique_formal_parameters: bool,
@@ -1054,8 +1055,15 @@ pub struct ParsedPath<'a> {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum StrictModeFeature {
+    WithStatement,
+    DeleteBareName,
+    ForInVarInit,
     EvalOrArguments,
     ReservedWord,
+    LegacyOctalLiteral,
+    LegacyOctalEscape,
+    IfElseFunctionStmt,
+    LabelFunctionStmt,
 }
 
 #[derive(Clone, Copy)]
@@ -1457,6 +1465,8 @@ pub struct ParseStatementOptions<'a> {
     pub(crate) is_name_optional: bool,
     pub(crate) is_typescript_declare: bool,
     pub(crate) is_for_loop_init: bool,
+    /// Only a module body or a function body starts with a directive prologue.
+    pub(crate) allow_directive_prologue: bool,
 }
 
 impl<'a> ParseStatementOptions<'a> {

@@ -68,6 +68,30 @@ describe("createLiveOutputFilter", () => {
     expect(filterAll([":", ":endgroup::\n"])).toBe("");
     expect(filterAll(["-", "- c\n"])).toBe("-- c\n");
   });
+
+  test("returns what it still holds back when the stream ends", () => {
+    const filter = createLiveOutputFilter({ buildkite: true });
+    expect(filter("1 pass\n--")).toBe("1 pass\n");
+    expect(filter.end()).toBe("--");
+    expect(filter(":")).toBe("");
+    expect(filter.end()).toBe(":");
+    // A command that the stream ends in the middle of is still a command.
+    expect(filter("::endgroup::")).toBe("");
+    expect(filter.end()).toBe("");
+    expect(filter("::group::t\r")).toBe("");
+    expect(filter.end()).toBe("");
+    expect(filter.end()).toBe("");
+
+    const github = createLiveOutputFilter({ github: true });
+    expect(github(annotation.trimEnd())).toBe("");
+    expect(github.end()).toBe(annotation.trimEnd());
+  });
+
+  test("handles a \\r\\n that is split across two chunks", () => {
+    expect(filterAll(["::group::t\r", "\n1 | test\r\n"])).toBe("1 | test\r\n");
+    expect(filterAll(["abc\r", "\n::endgroup::\r\n"])).toBe("abc\r\n");
+    expect(filterAll([`x\r\n${annotation.trimEnd()}\r\n✗ c\r\n`])).toBe("x\r\n✗ c\r\n");
+  });
 });
 
 test("createLiveOutputFilter removes the annotations from the output of bun test, as it arrives", async () => {

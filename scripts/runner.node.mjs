@@ -1410,8 +1410,8 @@ async function runTests() {
  * @property {string} [cwd]
  * @property {number} [timeout]
  * @property {object} [env]
- * @property {function} [stdout]
- * @property {function} [stderr]
+ * @property {((chunk: string) => void) & { end?: () => void }} [stdout] called per chunk; `end` when the stream closes
+ * @property {((chunk: string) => void) & { end?: () => void }} [stderr]
  */
 
 /**
@@ -1555,12 +1555,14 @@ async function spawnSafe(options) {
         stdout?.(text);
         buffer += text;
       });
+      subprocess.stdout.on("close", () => stdout?.end?.());
       subprocess.stderr.on("data", chunk => {
         armIdleTimer?.();
         const text = chunk.toString("utf-8");
         stderr?.(text);
         buffer += text;
       });
+      subprocess.stderr.on("close", () => stderr?.end?.());
     } catch (error) {
       spawnError = error;
       resolve();
@@ -2049,16 +2051,22 @@ function getTestTimeout(testPath) {
 /**
  * Streams the output of one child process stream to `io`, without the workflow
  * commands bun test prints because GITHUB_ACTIONS is set (see createLiveOutputFilter).
+ * spawnSafe calls `end()` when the stream closes.
  *
  * @param {NodeJS.WritableStream} io
- * @returns {(chunk: string) => void}
+ * @returns {((chunk: string) => void) & { end: () => void }}
  */
 function pipeTestStdout(io) {
   const filter = createLiveOutputFilter();
-  return chunk => {
+  const write = chunk => {
     const text = filter(chunk);
     if (text) io.write(text);
   };
+  write.end = () => {
+    const text = filter.end();
+    if (text) io.write(text);
+  };
+  return write;
 }
 
 /**

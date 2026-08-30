@@ -2800,17 +2800,18 @@ export function endGroup() {
  * The output arrives in pipe-sized chunks, and bun writes a `::error` line as many small
  * writes, so a chunk usually ends in the middle of one. An incomplete last line that
  * starts with `::`, or that is so far only the start of a marker, is held back until
- * the rest of it arrives.
+ * the rest of it arrives. `end()` returns what is still held back when the stream ends.
  *
  * @param {object} [options]
  * @param {boolean} [options.github] the runner itself runs in GitHub Actions
  * @param {boolean} [options.buildkite] the runner itself runs in Buildkite
- * @returns {(chunk: string) => string} the text to write for each chunk
+ * @returns {((chunk: string) => string) & { end: () => string }} the text to write for each chunk
  */
 export function createLiveOutputFilter({ github = isGithubAction, buildkite = isBuildkite } = {}) {
   const ansi = /(?:\u001b\[[0-9;]*[a-zA-Z])*/.source;
-  const eol = /(?:\r\n|\r|\n)/.source;
-  const commands = new RegExp(`^${ansi}::${github ? "(?:end)?group::" : ""}.*${eol}`, "gm");
+  const command = `^${ansi}::${github ? "(?:end)?group::" : ""}.*`;
+  const commands = new RegExp(`${command}(?:\r\n|\r|\n)`, "gm");
+  const lastCommand = new RegExp(`${command}\r?$`);
   const groupMarkers = /^(?:---|\+\+\+|~~~|\^\^\^) /gm;
   const markers = buildkite ? ["::", "--- ", "+++ ", "~~~ ", "^^^ "] : ["::"];
 
@@ -2824,11 +2825,13 @@ export function createLiveOutputFilter({ github = isGithubAction, buildkite = is
 
   let pending = "";
   let atLineStart = true;
-  return chunk => {
+  const filter = chunk => {
     let text = pending + chunk;
     const startsLine = atLineStart;
 
-    const lastLineStart = Math.max(text.lastIndexOf("\n"), text.lastIndexOf("\r")) + 1;
+    // A trailing \r may be the first half of a \r\n, so the line it ends is not complete yet.
+    const searchEnd = text.endsWith("\r") ? text.length - 2 : text.length - 1;
+    const lastLineStart = Math.max(text.lastIndexOf("\n", searchEnd), text.lastIndexOf("\r", searchEnd)) + 1;
     const lastLine = text.slice(lastLineStart);
     if (lastLine && (lastLineStart > 0 || startsLine) && holdBack(lastLine)) {
       pending = lastLine;
@@ -2852,6 +2855,13 @@ export function createLiveOutputFilter({ github = isGithubAction, buildkite = is
     if (buildkite) text = text.replace(groupMarkers, " ");
     return head + text;
   };
+  filter.end = () => {
+    const text = pending;
+    pending = "";
+    atLineStart = true;
+    return text.replace(lastCommand, "");
+  };
+  return filter;
 }
 
 export function printEnvironment() {

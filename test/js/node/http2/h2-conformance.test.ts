@@ -1774,6 +1774,29 @@ describe("stream release after a queued END_STREAM", () => {
       }
       expect(refs).toHaveLength(STREAMS);
       const live = await liveCount(refs);
+      if (live > 0) {
+        const { retainerChains } = await import("./h2-release-probe-retainers.ts");
+        const survivors = refs
+          .map((ref, i) => [i, ref.deref() as any] as const)
+          .filter(([, s]) => s !== undefined)
+          .map(([i, s]) => ({
+            i,
+            id: s.id,
+            destroyed: s.destroyed,
+            closed: s.closed,
+            nativeState: (() => { try { return s.state; } catch (e) { return String(e); } })(),
+            rstCode: s.rstCode,
+            writableFinished: s.writableFinished,
+            writableEnded: s.writableEnded,
+            readableEnded: s.readableEnded,
+            readableFlowing: s.readableFlowing,
+            sessionState: (() => { try { return s.session?.state; } catch (e) { return String(e); } })(),
+            hasSession: !!s.session,
+          }));
+        console.error("[probe] survivors", JSON.stringify(survivors, null, 2));
+        console.error("[probe] client state", JSON.stringify(client.state), "stalled client stream state", JSON.stringify((stalled as any).state));
+        console.error("[probe]", retainerChains("ServerHttp2Stream"));
+      }
       // The premise: the stalled stream is still open (not errored or reset into releasing the
       // queue) and its response was still queued while the other requests were answered.
       expect(stalledError).toBeNull();

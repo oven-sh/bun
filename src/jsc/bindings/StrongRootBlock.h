@@ -88,7 +88,6 @@ public:
 
     static StrongRootBlock* acquire(WebCore::JSVMClientData* clientData, JSC::VM& vm, unsigned& outFreeSlot);
     static void release(WebCore::JSVMClientData* clientData, JSC::VM& vm, StrongRootBlock* block);
-    static void releaseEmpties(WebCore::JSVMClientData* clientData, JSC::VM& vm);
 
     template<typename Functor>
     void forEachOccupiedCell(const Functor& func) const

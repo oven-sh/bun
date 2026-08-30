@@ -269,8 +269,6 @@ public:
     // release() if unlinked), so it is already rooted via m_strongRootBlockHead.
     Bun::StrongRootBlock* m_strongRootBlockCursor { nullptr };
     JSC::Structure* m_strongRootBlockStructure { nullptr };
-    // A block went empty inside a sweep-time destructor; release() it on the next mutator-side acquire/delete.
-    bool m_strongRootBlockHasEmpty { false };
 
     // Backing storage for Bun::IsolatedModuleCache (see IsolatedModuleCache.h).
     // All access should go through that class. Stored as the JSC base type to

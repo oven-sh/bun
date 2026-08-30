@@ -56,7 +56,6 @@ DEFINE_VISIT_CHILDREN(StrongRootBlock);
 // marking converges.
 StrongRootBlock* StrongRootBlock::acquire(WebCore::JSVMClientData* clientData, JSC::VM& vm, unsigned& outFreeSlot)
 {
-    releaseEmpties(clientData, vm);
     if (auto* cursor = clientData->m_strongRootBlockCursor) {
         if (!cursor->isFull()) {
             outFreeSlot = cursor->findFreeSlot();
@@ -64,12 +63,20 @@ StrongRootBlock* StrongRootBlock::acquire(WebCore::JSVMClientData* clientData, J
         }
     }
 
-    for (auto* b = clientData->m_strongRootBlockHead; b; b = b->next()) {
-        if (!b->isFull()) {
-            clientData->m_strongRootBlockCursor = b;
-            outFreeSlot = b->findFreeSlot();
-            return b;
-        }
+    // Blocks emptied by sweep-time deletes stay linked (see Bun__StrongRef__delete); keep one, release the rest here.
+    StrongRootBlock* found = nullptr;
+    for (auto* b = clientData->m_strongRootBlockHead; b;) {
+        auto* next = b->next();
+        if (b->isEmpty() && found)
+            release(clientData, vm, b);
+        else if (!b->isFull() && !found)
+            found = b;
+        b = next;
+    }
+    if (found) {
+        clientData->m_strongRootBlockCursor = found;
+        outFreeSlot = found->findFreeSlot();
+        return found;
     }
 
     StrongRootBlock* block = clientData->m_strongRootBlockFree;
@@ -109,18 +116,6 @@ void StrongRootBlock::release(WebCore::JSVMClientData* clientData, JSC::VM& vm, 
 
     if (!clientData->m_strongRootBlockFree)
         clientData->m_strongRootBlockFree = block;
-}
-
-void StrongRootBlock::releaseEmpties(WebCore::JSVMClientData* clientData, JSC::VM& vm)
-{
-    if (!std::exchange(clientData->m_strongRootBlockHasEmpty, false)) [[likely]]
-        return;
-    for (auto* b = clientData->m_strongRootBlockHead; b;) {
-        auto* next = b->next();
-        if (b->isEmpty())
-            release(clientData, vm, b);
-        b = next;
-    }
 }
 
 } // namespace Bun

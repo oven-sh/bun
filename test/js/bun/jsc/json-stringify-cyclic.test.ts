@@ -61,7 +61,6 @@ test("JSON.stringify on a cyclic value throws with bounded memory (#40974)", asy
     for (let i = 0; i < 1000; i++) q = q[q.length - 1];
     results.deepArrayLeaf = q[0];
 
-    results.rssMB = Math.round(process.memoryUsage().rss / 1024 / 1024);
     console.log(JSON.stringify(results));
   `;
   await using proc = Bun.spawn({
@@ -71,7 +70,7 @@ test("JSON.stringify on a cyclic value throws with bounded memory (#40974)", asy
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
-  const { rssMB, ...results } = JSON.parse(stdout);
+  const results = JSON.parse(stdout);
   expect(results).toEqual({
     objFlat: "TypeError",
     objIndent: "TypeError",
@@ -82,10 +81,11 @@ test("JSON.stringify on a cyclic value throws with bounded memory (#40974)", asy
     deepObjectLeaf: 1,
     deepArrayLeaf: "leaf",
   });
-  // Unfixed, the indented object call alone grows RSS past 2GB (the fast
-  // path's buffer doubles up to the 2GB string length limit before it gives
-  // up). Fixed, a debug ASAN build measures ~350MB and a release build far
-  // less, so both bounds keep plenty of margin on each side.
-  expect(rssMB).toBeLessThan(isASAN || isDebug ? 1024 : 512);
+  // Unfixed, the indented object call alone grows the child past 2GB (the
+  // fast path's buffer doubles up to the 2GB string length limit before it
+  // gives up). Fixed, a debug ASAN build peaks around 350MB and a release
+  // build far less, so both bounds keep plenty of margin on each side.
+  const maxRSSMB = proc.resourceUsage()!.maxRSS / 1024 / 1024;
+  expect(maxRSSMB).toBeLessThan(isASAN || isDebug ? 1024 : 512);
   expect(exitCode).toBe(0);
 });

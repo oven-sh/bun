@@ -1701,11 +1701,20 @@ it("import.meta.resolve with a file:// parent URL resolves bare package names", 
       exports: { ".": "./dist/index.mjs" },
     }),
     "node_modules/mypkg/dist/index.mjs": "export default 1;\n",
+    "other/node_modules/otherpkg/package.json": JSON.stringify({
+      name: "otherpkg",
+      version: "1.0.0",
+      exports: { ".": "./index.mjs" },
+    }),
+    "other/node_modules/otherpkg/index.mjs": "export default 2;\n",
     "node_modules/mypkg/dist/core/probe.mjs": [
       `console.log(import.meta.resolve("mypkg"));`,
       `console.log(import.meta.resolve("mypkg", import.meta.url));`,
       // Single-slash file URL: the WHATWG parser normalizes file:/p to file:///p.
       `console.log(import.meta.resolve("mypkg", import.meta.url.replace("file:///", "file:/")));`,
+      // A synthetic parent in a different tree: otherpkg only exists under
+      // other/node_modules, so this passes only if the parent is honored.
+      `console.log(import.meta.resolve("otherpkg", new URL("../../../../other/app.mjs", import.meta.url).href));`,
       `try {
         import.meta.resolve("does-not-exist-xyz", import.meta.url);
       } catch (e) {
@@ -1722,10 +1731,11 @@ it("import.meta.resolve with a file:// parent URL resolves bare package names", 
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
-  const [oneArg, twoArg, singleSlash, errMessage] = stdout.trim().split("\n");
+  const [oneArg, twoArg, singleSlash, otherTree, errMessage] = stdout.trim().split("\n");
   expect(oneArg).toEndWith("/node_modules/mypkg/dist/index.mjs");
   expect(twoArg).toBe(oneArg);
   expect(singleSlash).toBe(oneArg);
+  expect(otherTree).toEndWith("/other/node_modules/otherpkg/index.mjs");
   // The failure message prints the decoded referrer path, like Node.
   expect(errMessage).toContain("does-not-exist-xyz");
   expect(errMessage).toContain("imr space");

@@ -220,8 +220,7 @@ impl Drop for LoadedFile {
     }
 }
 
-/// [`BunSocketContextOptions`] with every `*_file_name` read into `key`,
-/// `cert`, `ca` or `dh_params`.
+/// [`BunSocketContextOptions`] with the `*_file_name` options read into memory.
 pub struct LoadedOptions {
     options: BunSocketContextOptions,
     files: Vec<LoadedFile>,
@@ -272,8 +271,7 @@ impl LoadedOptions {
 }
 
 impl BunSocketContextOptions {
-    /// Read each `*_file_name` option into the matching bytes field. A file
-    /// option replaces an inline value of the same field.
+    /// Read each `*_file_name` option into the matching bytes field.
     pub fn load_files(&self) -> Result<LoadedOptions, LoadFileError> {
         let mut options = *self;
         let mut files = Vec::new();

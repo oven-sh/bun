@@ -44,8 +44,6 @@ impl<'a> fmt::Display for DiffFormatter<'a> {
                 flush: false,
                 quote_strings: true,
             };
-            // An `Err` leaves a JS exception pending on the VM; the caller
-            // handles `fmt::Error` (see `JSGlobalObject::error_message`).
             JestPrettyFormat::format(
                 MessageLevel::Debug,
                 global_this,

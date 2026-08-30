@@ -1043,7 +1043,7 @@ describe("spyOn", () => {
       expect(fn).not.toHaveBeenCalled();
     });
 
-    test("spyOn on object doens't crash if object GC'd", () => {
+    test("spyOn retains its target and restores after GC pressure", () => {
       const spies = new Array(1000);
       (() => {
         for (let i = 0; i < 1000; i++) {
@@ -1181,11 +1181,10 @@ describe("spyOn", () => {
       expect(K.prototype).toBe(kPrototype);
       expect(new K().m()).toBe(42);
 
-      // arrow functions have no prototype property at all
+      // arrow functions have no prototype property at all, so the
+      // missing-property check fires first (matching jest)
       const arrow = () => {};
-      expect(() => spyOn(arrow, "prototype")).toThrow(
-        "Cannot spy on the `prototype` property because it is not a function",
-      );
+      expect(() => spyOn(arrow, "prototype")).toThrow("Property `prototype` does not exist in the provided object");
       expect(Object.hasOwn(arrow, "prototype")).toBe(false);
     });
 
@@ -1201,6 +1200,197 @@ describe("spyOn", () => {
       fn.mockRestore();
       expect(Bar.prototype()).toBe(7);
       expect(fn).not.toHaveBeenCalled();
+    });
+  }
+
+  test("throws when the property does not exist", () => {
+    const obj = { a: 1 };
+    expect(() => spyOn(obj, "typo")).toThrow("Property `typo` does not exist in the provided object");
+    // No phantom own property is left behind.
+    expect(Object.hasOwn(obj, "typo")).toBe(false);
+    expect(Object.keys(obj)).toEqual(["a"]);
+
+    expect(() => spyOn(Object.create({ inherited: () => 1 }), "nope")).toThrow(
+      "Property `nope` does not exist in the provided object",
+    );
+
+    expect(() => spyOn({ foo: 1 }, Symbol("foo"))).toThrow(
+      "Property `Symbol(foo)` does not exist in the provided object",
+    );
+  });
+
+  test("spies through a Proxy with default traps", () => {
+    const target = { m: () => "orig" };
+    const proxy = new Proxy(target, {});
+    const fn = spyOn(proxy, "m").mockReturnValue("MRV");
+
+    expect(proxy.m()).toBe("MRV");
+    expect(target.m()).toBe("MRV");
+    expect(fn).toHaveBeenCalledTimes(2);
+
+    fn.mockRestore();
+    expect(target.m()).toBe("orig");
+    expect(proxy.m()).toBe("orig");
+    expect(fn).not.toHaveBeenCalled();
+  });
+
+  test("spies through a Proxy with forwarding traps", () => {
+    const target = { m: () => "orig" };
+    const proxy = new Proxy(target, {
+      get: Reflect.get,
+      set: Reflect.set,
+      has: Reflect.has,
+      defineProperty: Reflect.defineProperty,
+    });
+    const fn = spyOn(proxy, "m");
+
+    expect(proxy.m()).toBe("orig");
+    expect(fn).toHaveBeenCalledTimes(1);
+    fn.mockReturnValue("MRV");
+    expect(target.m()).toBe("MRV");
+    expect(fn).toHaveBeenCalledTimes(2);
+
+    fn.mockRestore();
+    expect(target.m()).toBe("orig");
+  });
+
+  test("preserves property attributes when restoring through a Proxy", () => {
+    const original = () => "orig";
+    const target = {};
+    Object.defineProperty(target, "m", { value: original, enumerable: false, configurable: true, writable: true });
+    const proxy = new Proxy(target, {});
+
+    spyOn(proxy, "m").mockRestore();
+
+    expect(Object.getOwnPropertyDescriptor(target, "m")).toEqual({
+      value: original,
+      writable: true,
+      enumerable: false,
+      configurable: true,
+    });
+    expect(target.m()).toBe("orig");
+  });
+
+  test("propagates exceptions from a Proxy get trap", () => {
+    const proxy = new Proxy(
+      {},
+      {
+        has: () => true,
+        get() {
+          throw new Error("boom-get");
+        },
+      },
+    );
+    expect(() => spyOn(proxy, "x")).toThrow("boom-get");
+  });
+
+  if (isBun) {
+    test("throws when a Proxy reports the property missing", () => {
+      // has trap absent, target empty => [[HasProperty]] is false; jest reads via
+      // [[Get]] here and throws a different error for the non-function value.
+      expect(() => spyOn(new Proxy({}, { get: () => 1 }), "x")).toThrow(
+        "Property `x` does not exist in the provided object",
+      );
+    });
+
+    test("mockRestore propagates a Proxy set trap failure and can retry", () => {
+      let allow = true;
+      const target = { m: () => "orig" };
+      const proxy = new Proxy(target, {
+        set: (t, k, v) => (allow ? Reflect.set(t, k, v) : false),
+      });
+      const fn = spyOn(proxy, "m");
+      allow = false;
+      expect(() => fn.mockRestore()).toThrow(TypeError);
+      expect(target.m).toBe(fn);
+      // The failed restore must not have reset the spy: the still-installed
+      // mock keeps forwarding to the original until the retry succeeds.
+      expect(target.m()).toBe("orig");
+      allow = true;
+      fn.mockRestore();
+      expect(target.m()).toBe("orig");
+      expect(target.m).not.toBe(fn);
+
+      let armed = false;
+      const target2 = { m: () => "orig" };
+      const proxy2 = new Proxy(target2, {
+        set(t, k, v) {
+          if (armed) throw new Error("boom-set");
+          return Reflect.set(t, k, v);
+        },
+      });
+      const fn2 = spyOn(proxy2, "m");
+      armed = true;
+      expect(() => fn2.mockRestore()).toThrow("boom-set");
+      armed = false;
+      fn2.mockRestore();
+      expect(target2.m()).toBe("orig");
+    });
+
+    test("restoreAllMocks propagates a Proxy set trap failure and keeps skipped spies tracked", () => {
+      let armed = false;
+      const throwingSet = (t, k, v) => {
+        if (armed) throw new Error("boom-set");
+        return Reflect.set(t, k, v);
+      };
+      const t1 = { m: () => "orig1" };
+      const t2 = { m: () => "orig2" };
+      spyOn(new Proxy(t1, { set: throwingSet }), "m");
+      spyOn(new Proxy(t2, { set: throwingSet }), "m");
+
+      armed = true;
+      expect(() => jest.restoreAllMocks()).toThrow("boom-set");
+      // At least one spy was skipped and is still the mock (activeSpies not cleared).
+      expect(t1.m.mock !== undefined || t2.m.mock !== undefined).toBe(true);
+
+      armed = false;
+      jest.restoreAllMocks();
+      expect(t1.m()).toBe("orig1");
+      expect(t2.m()).toBe("orig2");
+    });
+
+    test("installs and restores through a redirecting set trap symmetrically", () => {
+      const store = {};
+      const target = { m: () => "orig" };
+      const proxy = new Proxy(target, {
+        get: (t, k) => (k in store ? store[k] : t[k]),
+        set: (t, k, v) => ((store[k] = v), true),
+      });
+      const fn = spyOn(proxy, "m").mockReturnValue("MRV");
+      expect(proxy.m()).toBe("MRV");
+      expect(store.m).toBe(fn);
+      fn.mockRestore();
+      expect(proxy.m()).toBe("orig");
+      expect(store.m()).toBe("orig");
+    });
+
+    test("spies on a non-function value through a Proxy", () => {
+      const target = { n: 42 };
+      const proxy = new Proxy(target, {});
+      const fn = spyOn(proxy, "n");
+
+      expect(proxy.n).toBe(42);
+      expect(fn).toHaveBeenCalledTimes(1);
+
+      fn.mockRestore();
+      expect(Object.getOwnPropertyDescriptor(target, "n")).toEqual({
+        value: 42,
+        writable: true,
+        enumerable: true,
+        configurable: true,
+      });
+      expect(fn).not.toHaveBeenCalled();
+    });
+
+    test("keeps a Proxy spy target reachable until restore", () => {
+      const target = { m: () => "orig" };
+      (() => {
+        spyOn(new Proxy(target, {}), "m").mockReturnValue("MRV");
+      })();
+      Bun.gc(true);
+      expect(target.m()).toBe("MRV");
+      jest.restoreAllMocks();
+      expect(target.m()).toBe("orig");
     });
   }
 

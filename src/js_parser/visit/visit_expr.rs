@@ -1218,7 +1218,24 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             }
             Op::UnDelete => {
+                let name_before = match e_.value.data {
+                    Data::EIdentifier(id) => Some(p.load_name_from_ref(id.ref_)),
+                    _ => None,
+                };
                 p.visit_expr_in_out(&mut e_.value, ExprIn::default());
+                // `delete <ident>` is a strict-mode early error; wrap substituted operands.
+                if let Data::EIdentifier(id) = e_.value.data {
+                    let name_after = p.symbols[id.ref_.inner_index() as usize]
+                        .original_name
+                        .slice();
+                    if name_before != Some(name_after) {
+                        e_.value = Expr {
+                            loc: e_.value.loc,
+                            data: prefill::data::ZERO,
+                        }
+                        .join_with_comma(e_.value);
+                    }
+                }
             }
             _ => {
                 let assign_target = Op::unary_assign_target(e_.op);

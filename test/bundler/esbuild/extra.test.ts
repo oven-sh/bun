@@ -671,6 +671,98 @@ describe("bundler", () => {
     run: true,
   });
 
+  // Object/array define values should be hoisted to a single shared binding so
+  // identity holds and mutations are visible across references (esbuild parity).
+  itBundled("extra/DefineObjectIdentity", {
+    files: {
+      "in.js": /* js */ `
+        const a = CFG, b = CFG;
+        if (a !== b) throw "identity: a !== b";
+        if (a.nested !== b.nested) throw "identity: a.nested !== b.nested";
+        a.k = 99;
+        if (b.k !== 99) throw "mutation: b.k !== 99";
+        console.log("ok");
+      `,
+    },
+    define: { CFG: '{"k":1,"nested":{"x":2}}' },
+    run: { stdout: "ok" },
+    onAfterBundle(api) {
+      const out = api.readFile("out.js");
+      const literals = out.match(/\{\s*k:\s*1/g);
+      if ((literals?.length ?? 0) !== 1) {
+        throw new Error("expected exactly one { k: 1 ... } literal in output, got " + (literals?.length ?? 0));
+      }
+    },
+  });
+  itBundled("extra/DefineObjectIdentityDot", {
+    files: {
+      "in.js": /* js */ `
+        const a = process.env.CFG, b = process.env.CFG;
+        if (a !== b) throw "identity: a !== b";
+        if (ARR !== ARR) throw "identity: ARR !== ARR";
+        const arr = ARR;
+        arr.push(4);
+        if (ARR.length !== 4) throw "mutation: ARR.length !== 4";
+        console.log("ok");
+      `,
+    },
+    define: { "process.env.CFG": '{"k":1}', "ARR": "[1,2,3]" },
+    run: { stdout: "ok" },
+  });
+  itBundled("extra/DefineObjectIdentityNoBundle", {
+    files: {
+      "in.js": /* js */ `
+        const a = CFG, b = CFG;
+        if (a !== b) throw "identity: a !== b";
+        console.log("ok");
+      `,
+    },
+    bundling: false,
+    define: { CFG: '{"k":1}' },
+    run: { stdout: "ok" },
+  });
+  // `delete` on a hoisted-object define must not print `delete <bare identifier>`
+  // (strict-mode early error); the operand has to be wrapped.
+  itBundled("extra/DefineObjectDeleteTarget", {
+    files: {
+      "in.mjs": /* js */ `
+        export {};
+        console.log(delete process.env.CFG, delete import.meta.CFG, process.env.CFG.x);
+      `,
+    },
+    define: { "process.env.CFG": '{"x":1}', "import.meta.CFG": "[1,2]" },
+    run: { stdout: "true true 1" },
+    onAfterBundle(api) {
+      const out = api.readFile("out.js");
+      if (/\bdelete\s+[A-Za-z_$][\w$]*\s*[,;]/.test(out)) {
+        throw new Error("output contains `delete <bare identifier>` (strict-mode SyntaxError):\n" + out);
+      }
+    },
+  });
+  itBundled("extra/DefineObjectDeleteBareIdentifier", {
+    files: {
+      "in.js": /* js */ `
+        // sloppy-mode source: delete <unbound> is valid here
+        var keep = 1;
+        console.log(delete CFG, delete ARR, delete keep);
+      `,
+    },
+    format: "iife",
+    define: { CFG: '{"k":1}', ARR: "[1,2,3]" },
+    // iife + node keeps the bundle sloppy so `delete keep` stays valid syntax at runtime.
+    run: { runtime: "node", stdout: "true true false" },
+    onAfterBundle(api) {
+      const out = api.readFile("out.js");
+      if (/\bdelete\s+define_[\w$]*\s*[,;)]/.test(out)) {
+        throw new Error("hoisted define emitted as bare `delete <identifier>`:\n" + out);
+      }
+      // Source-written `delete keep` must stay a bare identifier reference.
+      if (!/\bdelete\s+keep\b/.test(out)) {
+        throw new Error("source-written `delete keep` was wrapped:\n" + out);
+      }
+    },
+  });
+
   // Various ESM cases
   itBundled("extra/CatchScope1", {
     files: {

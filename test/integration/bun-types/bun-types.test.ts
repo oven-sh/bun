@@ -524,6 +524,59 @@ describe("@types/bun integration test", () => {
     });
   });
 
+  // Also runs on debug builds: spawned tsc over a single file, like the
+  // Bun.mmap check above. @types/node@24 declares `off`/`removeListener` only
+  // on EventEmitter, not on `Process`, so the `memoryPressure` overloads in
+  // overrides.d.ts used to hide the inherited signatures and reject every
+  // other event name (#40003). @types/node >= 26 declares them on `Process`
+  // directly, which masks the bug, so this check pins @types/node@24 instead
+  // of reusing the base fixture.
+  describe("process event methods with @types/node@24", () => {
+    test("removeListener and off accept other event names", async () => {
+      const checkDir = join(TEMP_DIR, "types-node-24-check");
+      const tsconfig = structuredClone(sourceTsconfig);
+      tsconfig.include = ["index.ts"];
+      await mkdir(checkDir, { recursive: true });
+      await makeTree(checkDir, {
+        "package.json": JSON.stringify({ name: "types-node-24-check", private: true }),
+        "tsconfig.json": JSON.stringify(tsconfig, null, 2),
+        "index.ts": `process.removeListener("SIGINT", () => {});
+           process.off("unhandledRejection", () => {});
+           process.removeListener("memoryPressure", () => {});
+           process.on("memoryPressure", level => {
+             level satisfies "warning" | "critical";
+           });`,
+      });
+      await $`cd ${checkDir} && bun add @types/node@24`.quiet();
+      await cp(join(BASE_FIXTURE_DIR, "node_modules", "bun-types"), join(checkDir, "node_modules", "bun-types"), {
+        recursive: true,
+      });
+      await cp(
+        join(BASE_FIXTURE_DIR, "node_modules", "@types", "bun"),
+        join(checkDir, "node_modules", "@types", "bun"),
+        { recursive: true },
+      );
+
+      // Guard against resolution drift silently checking the wrong major.
+      const nodeTypesPkg = await Bun.file(join(checkDir, "node_modules", "@types", "node", "package.json")).json();
+      expect(nodeTypesPkg.version).toStartWith("24.");
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), join(BASE_FIXTURE_DIR, "node_modules", "typescript", "bin", "tsc"), "-p", "."],
+        env: bunEnv,
+        cwd: checkDir,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr.trim()).toBe("");
+      expect(stdout.trim()).toBe("");
+      expect(exitCode).toBe(0);
+    });
+  });
+
   describe("Test Globals", () => {
     const code = `
       const test_shouldBeAFunction: Function = test;

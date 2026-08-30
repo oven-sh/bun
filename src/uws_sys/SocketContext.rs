@@ -192,8 +192,7 @@ impl LoadFileError {
 struct LoadedFile {
     file: TlsFile,
     bytes: bun_core::ZBox,
-    /// The one-element array `key` / `cert` / `ca` points at. Boxed so the
-    /// address survives moves of the `LoadedFile`.
+    /// What `key` / `cert` / `ca` points at.
     array: Box<[*const c_char; 1]>,
 }
 
@@ -216,16 +215,13 @@ impl LoadedFile {
 }
 
 impl Drop for LoadedFile {
-    /// Key material: zero before the allocator reuses the pages, as
-    /// `SSLConfig` does for its own C strings.
     fn drop(&mut self) {
         bun_alloc::free_sensitive(core::mem::take(&mut self.bytes).into_boxed_slice_with_nul());
     }
 }
 
-/// [`BunSocketContextOptions`] whose `*_file_name` fields have been read:
-/// `key`, `cert`, `ca` and `dh_params` carry the bytes, so the C side never
-/// opens a path. Derefs to the rewritten options.
+/// [`BunSocketContextOptions`] with every `*_file_name` read into `key`,
+/// `cert`, `ca` or `dh_params`.
 pub struct LoadedOptions {
     options: BunSocketContextOptions,
     files: Vec<LoadedFile>,
@@ -276,8 +272,8 @@ impl LoadedOptions {
 }
 
 impl BunSocketContextOptions {
-    /// Read the `*_file_name` options into memory. A file option replaces the
-    /// inline value of the same field, as it did when usockets opened the path.
+    /// Read each `*_file_name` option into the matching bytes field. A file
+    /// option replaces an inline value of the same field.
     pub fn load_files(&self) -> Result<LoadedOptions, LoadFileError> {
         let mut options = *self;
         let mut files = Vec::new();
@@ -311,8 +307,7 @@ impl BunSocketContextOptions {
         Ok(LoadedOptions { options, files })
     }
 
-    /// [`Self::load_files`] then [`LoadedOptions::create_ssl_context`]. A file
-    /// that cannot be read reports through `err` and returns `None`.
+    /// [`Self::load_files`] then [`LoadedOptions::create_ssl_context`].
     pub fn create_ssl_context(self, err: &mut create_bun_socket_error_t) -> Option<OwnedSslCtx> {
         let loaded = match self.load_files() {
             Ok(loaded) => loaded,

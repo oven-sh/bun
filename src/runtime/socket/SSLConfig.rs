@@ -298,9 +298,6 @@ fn handle_path(
     string: &bun_core::String,
 ) -> JsResult<*const c_char> {
     let name = string.to_owned_slice_z();
-    // The file is read when the SSL_CTX is built, which for fetch happens on the
-    // HTTP thread at connect time. Pin a relative path to the cwd of this call
-    // so a later `process.chdir()` cannot change which file is meant.
     let name = if name.is_empty() || bun_paths::is_absolute(name.as_bytes()) {
         name
     } else {

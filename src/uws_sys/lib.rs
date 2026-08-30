@@ -110,8 +110,7 @@ pub enum create_bun_socket_error_t {
     invalid_ciphers,
     invalid_crl,
     invalid_ecdh_curve,
-    /// Set on this side when a `*_file_name` option cannot be read before
-    /// the bytes are handed over; C never produces these.
+    /// A `*_file_name` option could not be read. Set from Rust only.
     load_key_file,
     load_cert_file,
     load_dh_params_file,

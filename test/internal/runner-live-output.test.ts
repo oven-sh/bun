@@ -59,6 +59,15 @@ describe("createLiveOutputFilter", () => {
     // Not when the line continues one that was already written.
     expect(filterAll(["x ", "--- y\n"], { buildkite: true })).toBe("x --- y\n");
   });
+
+  test("holds back the start of a marker until it is complete or ruled out", () => {
+    expect(filterAll(["--", "- a\n"], { buildkite: true })).toBe(" a\n");
+    expect(filterAll(["x\n-", "-", "- b\n"], { buildkite: true })).toBe("x\n b\n");
+    expect(filterAll(["---", "x\n"], { buildkite: true })).toBe("---x\n");
+    expect(filterAll(["--- a", "b\n"], { buildkite: true })).toBe(" ab\n");
+    expect(filterAll([":", ":endgroup::\n"])).toBe("");
+    expect(filterAll(["-", "- c\n"])).toBe("-- c\n");
+  });
 });
 
 test("createLiveOutputFilter removes the annotations from the output of bun test, as it arrives", async () => {
@@ -84,7 +93,6 @@ test("createLiveOutputFilter removes the annotations from the output of bun test
     raw += chunk;
     filtered += filter(chunk);
   }
-  expect(await proc.exited).toBe(1);
 
   expect(raw).toContain("\n::group::test/a.test.ts:\n");
   expect(raw).toContain("\n::error ");
@@ -93,4 +101,5 @@ test("createLiveOutputFilter removes the annotations from the output of bun test
   expect(filtered).toMatch(/^(✗|\(fail\)) fails/m);
   expect(filtered).toContain("error: expect(received).toMatchObject(expected)");
   expect(filtered).toContain("1 fail");
+  expect(await proc.exited).toBe(1);
 });

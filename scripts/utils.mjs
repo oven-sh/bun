@@ -2799,7 +2799,8 @@ export function endGroup() {
  *
  * The output arrives in pipe-sized chunks, and bun writes a `::error` line as many small
  * writes, so a chunk usually ends in the middle of one. An incomplete last line that
- * starts with `::` is held back until the rest of it arrives.
+ * starts with `::`, or that is so far only the start of a marker, is held back until
+ * the rest of it arrives.
  *
  * @param {object} [options]
  * @param {boolean} [options.github] the runner itself runs in GitHub Actions
@@ -2811,6 +2812,15 @@ export function createLiveOutputFilter({ github = isGithubAction, buildkite = is
   const eol = /(?:\r\n|\r|\n)/.source;
   const commands = new RegExp(`^${ansi}::${github ? "(?:end)?group::" : ""}.*${eol}`, "gm");
   const groupMarkers = /^(?:---|\+\+\+|~~~|\^\^\^) /gm;
+  const markers = buildkite ? ["::", "--- ", "+++ ", "~~~ ", "^^^ "] : ["::"];
+
+  /** @param {string} line an incomplete line */
+  const holdBack = line => {
+    const visible = stripAnsi(line);
+    return (
+      visible.startsWith("::") || markers.some(marker => marker.length > visible.length && marker.startsWith(visible))
+    );
+  };
 
   let pending = "";
   let atLineStart = true;
@@ -2819,8 +2829,9 @@ export function createLiveOutputFilter({ github = isGithubAction, buildkite = is
     const startsLine = atLineStart;
 
     const lastLineStart = Math.max(text.lastIndexOf("\n"), text.lastIndexOf("\r")) + 1;
-    if ((lastLineStart > 0 || startsLine) && stripAnsi(text.slice(lastLineStart)).startsWith("::")) {
-      pending = text.slice(lastLineStart);
+    const lastLine = text.slice(lastLineStart);
+    if (lastLine && (lastLineStart > 0 || startsLine) && holdBack(lastLine)) {
+      pending = lastLine;
       text = text.slice(0, lastLineStart);
       atLineStart = true;
     } else {

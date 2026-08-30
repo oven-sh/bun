@@ -60,8 +60,10 @@ JSC::JSObject* createError(Zig::GlobalObject* globalObject, ErrorCode code, cons
 JSC::JSObject* createError(JSC::JSGlobalObject* globalObject, ErrorCode code, const WTF::String& message);
 JSC::JSObject* createError(Zig::GlobalObject* globalObject, ErrorCode code, JSC::JSValue message);
 JSC::JSObject* createError(VM& vm, Zig::GlobalObject* globalObject, ErrorCode code, JSValue message, JSValue options);
-JSObject* createInvalidThisError(JSGlobalObject* globalObject, JSValue thisValue, const ASCIILiteral typeName);
-// Throws createInvalidThisError(callFrame->thisValue()) and returns the empty value; one call at each generated host-function's invalid-this branch.
+// Throws ERR_INVALID_THIS describing `thisValue` ("…but received an instance of X"); if describing
+// the receiver itself throws (a `constructor`/`name` getter), that exception is left instead.
+void throwInvalidThisError(JSGlobalObject* globalObject, JSC::ThrowScope&, JSValue thisValue, const ASCIILiteral typeName);
+// throwInvalidThisError(callFrame->thisValue()) and returns the empty value; one call at each generated host-function's invalid-this branch.
 JSC::EncodedJSValue throwInvalidThisCallError(JSGlobalObject* globalObject, JSC::CallFrame* callFrame, const ASCIILiteral typeName);
 JSObject* createInvalidThisError(JSGlobalObject* globalObject, const String& message);
 

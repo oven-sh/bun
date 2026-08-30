@@ -1,4 +1,5 @@
 import { spawnSync, which } from "bun";
+import { CString, dlopen, ptr } from "bun:ffi";
 import { describe, expect, it } from "bun:test";
 import { familySync } from "detect-libc";
 import { bunEnv, bunExe, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
@@ -491,6 +492,41 @@ it("ICU version does not regress", () => {
     throw new Error(`Unknown platform/arch: ${process.platform}-${process.arch}`);
   }
   expect(parseFloat(process.versions.icu, 10) || 0).toBeGreaterThanOrEqual(parseFloat(min, 10));
+});
+
+it("process.versions.icu and process.versions.unicode describe the ICU the process runs with", () => {
+  // macOS links the system libicucore, so the ICU the build compiled against
+  // can differ from the one the process runs with. String.prototype.toUpperCase
+  // goes through ICU's case mapping, and U+10D70 GARAY SMALL LETTER A only has
+  // an uppercase (U+10D50) from Unicode 16 (ICU 76) on.
+  const hasUnicode16 = "\u{10D70}".toUpperCase() === "\u{10D50}";
+  expect({
+    unicode16: parseFloat(process.versions.unicode) >= 16,
+    icu76: parseInt(process.versions.icu) >= 76,
+  }).toEqual({ unicode16: hasUnicode16, icu76: hasUnicode16 });
+  expect(process.versions.icu).toMatch(/^\d+\.\d+(\.\d+)*$/);
+  expect(process.versions.unicode).toMatch(/^\d+\.\d+(\.\d+)*$/);
+});
+
+it.skipIf(!isMacOS)("process.versions.icu and process.versions.unicode match the system libicucore", () => {
+  // dlopen returns the image bun itself links (-licucore), so these are the
+  // versions of the ICU that does the work in this process.
+  const { symbols } = dlopen("/usr/lib/libicucore.A.dylib", {
+    u_getVersion: { args: ["ptr"], returns: "void" },
+    u_getUnicodeVersion: { args: ["ptr"], returns: "void" },
+    u_versionToString: { args: ["ptr", "ptr"], returns: "void" },
+  });
+  const version = new Uint8Array(4);
+  const string = new Uint8Array(20);
+  const read = getVersion => {
+    getVersion(ptr(version));
+    symbols.u_versionToString(ptr(version), ptr(string));
+    return new CString(ptr(string)).toString();
+  };
+  expect({ icu: process.versions.icu, unicode: process.versions.unicode }).toEqual({
+    icu: read(symbols.u_getVersion),
+    unicode: read(symbols.u_getUnicodeVersion),
+  });
 });
 
 it("process.env.TZ", () => {

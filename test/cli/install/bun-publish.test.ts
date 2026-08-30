@@ -741,6 +741,114 @@ test("can publish workspace package", async () => {
   expect(await file(join(packageDir, "node_modules", "publish-pkg-3", "package.json")).json()).toEqual(pkgJson);
 });
 
+// https://github.com/oven-sh/bun/issues/20477: releases bump the versions after the last `bun install`,
+// so the manifest sent to the registry has to use the package.json files, not bun.lock.
+test("publishes the workspace versions and catalog ranges currently in package.json", async () => {
+  let captured: any = null;
+  using mock = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      if (req.method === "PUT") captured = await req.json();
+      return new Response("OK", { status: 200 });
+    },
+  });
+
+  const packageDir = tmpdirSync();
+  const coreDir = join(packageDir, "packages", "core");
+  const utilsDir = join(packageDir, "packages", "utils");
+  const rootPackageJson = (react: string) =>
+    JSON.stringify({ name: "mono", private: true, workspaces: { packages: ["packages/*"], catalog: { react } } });
+  const corePackageJson = (version: string) => JSON.stringify({ name: "@acme/core", version });
+  const utilsPackageJson = (version: string) =>
+    JSON.stringify({
+      name: "@acme/utils",
+      version,
+      dependencies: { "@acme/core": "workspace:*" },
+      peerDependencies: { "@acme/core": "workspace:^", "react": "catalog:" },
+      // optional so that `bun install` does not ask the mock registry for react
+      peerDependenciesMeta: { react: { optional: true } },
+    });
+
+  await Promise.all([
+    write(
+      join(packageDir, "bunfig.toml"),
+      Bun.TOML.stringify({
+        install: {
+          cache: false,
+          registry: { url: `http://localhost:${mock.port}`, token: "unused" },
+        },
+      }),
+    ),
+    write(join(packageDir, "package.json"), rootPackageJson("^18.3.1")),
+    write(join(coreDir, "package.json"), corePackageJson("1.2.3")),
+    write(join(utilsDir, "package.json"), utilsPackageJson("0.4.0")),
+  ]);
+  await runBunInstall(env, packageDir);
+
+  // the release bump, without another install
+  await Promise.all([
+    write(join(packageDir, "package.json"), rootPackageJson("^19.1.0")),
+    write(join(coreDir, "package.json"), corePackageJson("1.3.0")),
+    write(join(utilsDir, "package.json"), utilsPackageJson("0.4.1")),
+  ]);
+
+  const { err, exitCode } = await publish(env, utilsDir);
+  expect(err).not.toContain("error:");
+  expect(exitCode).toBe(0);
+
+  expect(captured.versions["0.4.1"]).toMatchObject({
+    name: "@acme/utils",
+    version: "0.4.1",
+    dependencies: { "@acme/core": "1.3.0" },
+    peerDependencies: { "@acme/core": "^1.3.0", "react": "^19.1.0" },
+  });
+});
+
+test("publishes a workspace package next to a bun.lock that does not parse", async () => {
+  let captured: any = null;
+  using mock = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      if (req.method === "PUT") captured = await req.json();
+      return new Response("OK", { status: 200 });
+    },
+  });
+
+  const packageDir = tmpdirSync();
+  const utilsDir = join(packageDir, "packages", "utils");
+  await Promise.all([
+    write(
+      join(packageDir, "bunfig.toml"),
+      Bun.TOML.stringify({
+        install: { registry: { url: `http://localhost:${mock.port}`, token: "unused" } },
+      }),
+    ),
+    write(
+      join(packageDir, "package.json"),
+      JSON.stringify({ name: "mono", private: true, workspaces: ["packages/*"] }),
+    ),
+    write(join(packageDir, "bun.lock"), "<<<<<<< HEAD\n"),
+    write(
+      join(packageDir, "packages", "core", "package.json"),
+      JSON.stringify({ name: "@acme/core", version: "1.3.0" }),
+    ),
+    write(
+      join(utilsDir, "package.json"),
+      JSON.stringify({ name: "@acme/utils", version: "0.4.1", dependencies: { "@acme/core": "workspace:^" } }),
+    ),
+  ]);
+
+  const { err, exitCode } = await publish(env, utilsDir);
+  expect(err).toBe("");
+  expect(exitCode).toBe(0);
+
+  expect(captured.versions["0.4.1"]).toMatchObject({
+    name: "@acme/utils",
+    version: "0.4.1",
+    dependencies: { "@acme/core": "^1.3.0" },
+  });
+});
+
 describe("--dry-run", async () => {
   test("does not publish", async () => {
     const { packageDir, packageJson } = await registry.createTestDir();

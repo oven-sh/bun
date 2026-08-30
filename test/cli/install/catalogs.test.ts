@@ -1598,11 +1598,64 @@ describe("peer dependencies", () => {
     });
   });
 
-  // package.json is edited after the install so bun.lock's catalogs are the ones that lack the entry.
+  // The root catalog is the one in package.json right now, not the one bun.lock recorded at the last install.
+  test.concurrent("bun pm pack substitutes the catalog range edited into package.json after the install", async () => {
+    const dir = await makeRepo({
+      catalog: { "no-deps": "^1.0.0" },
+      peerSpec: "catalog:",
+      libVersion: "1.2.3",
+      linker: "hoisted",
+    });
+    await install(dir, "hoisted");
+    await rewriteRootPackageJson(dir, { catalog: { "no-deps": "^2.0.0" } });
+    expect(await Bun.file(join(dir, "bun.lock")).text()).toContain('"no-deps": "^1.0.0"');
+
+    const libDir = join(dir, "packages", "lib");
+    await pack(libDir, bunEnv);
+    const tarball = readTarball(join(libDir, "lib-1.2.3.tgz"));
+    const packageJson = tarball.entries.find(
+      (entry: { pathname: string }) => entry.pathname === "package/package.json",
+    );
+    expect(JSON.parse(packageJson.contents)).toStrictEqual({
+      name: "lib",
+      version: "1.2.3",
+      peerDependencies: { "no-deps": "^2.0.0" },
+    });
+  });
+
+  // The catalog parse logs this error and skips the entry; pack reports it like `bun install` does
+  // instead of complaining that the entry is missing.
+  test.concurrent("bun pm pack reports an invalid catalog range at its definition", async () => {
+    const dir = await makeRepo({
+      catalog: { "no-deps": ".:" },
+      peerSpec: "catalog:",
+      libVersion: "1.2.3",
+      linker: "hoisted",
+    });
+    const libDir = join(dir, "packages", "lib");
+
+    await using proc = spawn({
+      cmd: [bunExe(), "pm", "pack"],
+      cwd: libDir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const normalizedErr = normalizeBunSnapshot(err, dir);
+    expect(normalizedErr).toContain("error: Invalid dependency version\n");
+    expect(normalizedErr).toContain("at <dir>/package.json:");
+    expect(normalizedErr).not.toContain("no matching catalog dependency");
+    expect(normalizeBunSnapshot(out, dir)).toBe("bun pack <version> (<revision>)");
+    expect(exitCode).toBe(1);
+    expect(existsSync(join(libDir, "lib-1.2.3.tgz"))).toBeFalse();
+  });
+
+  // lib's package.json is edited after the install; the root catalog never had these entries.
   describe.each([
     ["a-dep", "catalog:"],
     ["no-deps", "catalog:missing"],
-  ] as const)("bun pm pack with a %s peer of %s missing from the lockfile's catalogs", (peerName, peerSpec) => {
+  ] as const)("bun pm pack with a %s peer of %s missing from the catalogs", (peerName, peerSpec) => {
     test.concurrent("fails without writing a tarball", async () => {
       const dir = await makeRepo({
         catalog: { "no-deps": ">=1.0.0" },

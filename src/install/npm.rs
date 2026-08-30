@@ -1371,7 +1371,8 @@ pub mod package_manifest {
         ) -> Result<Option<PackageManifest>, Error> {
             let mut file_path_buf = [0u8; 512 + 64];
             let file_name = Self::manifest_file_name(&mut file_path_buf, file_id, scope)?;
-            let Ok(cache_file) = File::openat(cache_dir, file_name, bun_sys::O::RDONLY, 0) else {
+            // A non-regular entry counts as missing too: the save after the fetch replaces it.
+            let Ok((cache_file, _)) = File::open_regular_at(cache_dir, file_name) else {
                 return Ok(None);
             };
 

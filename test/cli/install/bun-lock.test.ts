@@ -1,7 +1,7 @@
 import { file, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { readlinkSync } from "fs";
-import { access, copyFile, cp, exists, open, rm, writeFile } from "fs/promises";
+import { access, copyFile, cp, exists, open, rm, stat, symlink, writeFile } from "fs/promises";
 import {
   bunExe,
   bunEnv as env,
@@ -13,6 +13,7 @@ import {
   toBeValidBin,
   VerdaccioRegistry,
 } from "harness";
+import { mkfifo } from "mkfifo";
 import { join } from "path";
 
 expect.extend({
@@ -1264,6 +1265,141 @@ describe.concurrent("hand-edited bun.lock that lists workspaces but has no packa
       version: "1.0.0",
     });
     expect(await file(join(String(dir), "bun.lock")).text()).toBe(lockfileWithoutPackages(2));
+  });
+});
+
+// `bun install` reads these files on its own. A FIFO at any of their paths used
+// to block it forever inside open(); a character device such as /dev/zero used
+// to be read until the process ran out of memory. No Windows variant: FIFOs and
+// device files are POSIX.
+describe.skipIf(isWindows).concurrent("a file bun install reads is not a regular file", () => {
+  const projectFiles = {
+    "package.json": JSON.stringify({ name: "not-a-file", workspaces: ["packages/*"] }),
+    "packages/member/package.json": JSON.stringify({ name: "member", version: "1.0.0" }),
+  };
+  const installed = "bun install <version> (<revision>)\n\nDone! Checked 2 packages (no changes)";
+
+  async function install(cwd: string, ...args: string[]) {
+    await using proc = spawn({
+      cmd: [bunExe(), "install", ...args],
+      cwd,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { out: normalizeBunSnapshot(out, cwd), err: normalizeBunSnapshot(err, cwd), exitCode };
+  }
+
+  // Both the load and the "did the lockfile change" comparison before the save
+  // open the lockfile.
+  for (const lockfile of ["bun.lock", "bun.lockb"]) {
+    it(`${lockfile} is a FIFO: it is ignored like a corrupt lockfile and replaced`, async () => {
+      using dir = tempDir("bun-lock-fifo", projectFiles);
+      mkfifo(join(String(dir), lockfile));
+
+      const { out, err, exitCode } = await install(String(dir));
+      expect(err).toBe(`ENODEV: failed to open lockfile: '${lockfile}'\n\nwarn: Ignoring lockfile\nSaved lockfile`);
+      expect(out).toBe(installed);
+      expect(exitCode).toBe(0);
+      expect((await stat(join(String(dir), lockfile))).isFile()).toBe(true);
+    });
+  }
+
+  it("bun.lock is a character device: it is rejected instead of read", async () => {
+    using dir = tempDir("bun-lock-chardev", projectFiles);
+    await symlink("/dev/null", join(String(dir), "bun.lock"));
+
+    const { out, err, exitCode } = await install(String(dir), "--frozen-lockfile");
+    expect(err).toMatchInlineSnapshot(`
+      "ENODEV: failed to open lockfile: 'bun.lock'
+
+      warn: Ignoring lockfile
+      error: lockfile had changes, but lockfile is frozen"
+    `);
+    expect(out).toMatchInlineSnapshot(`"bun install <version> (<revision>)"`);
+    expect(exitCode).toBe(1);
+  });
+
+  for (const lockfile of ["package-lock.json", "yarn.lock", "pnpm-lock.yaml"]) {
+    it(`${lockfile} is a FIFO: there is nothing to migrate`, async () => {
+      using dir = tempDir("bun-lock-migrate-fifo", projectFiles);
+      mkfifo(join(String(dir), lockfile));
+
+      const { out, err, exitCode } = await install(String(dir));
+      expect(err).toBe("Saved lockfile");
+      expect(out).toBe(installed);
+      expect(exitCode).toBe(0);
+    });
+  }
+
+  it(".npmrc is a FIFO: it is skipped like an unreadable one", async () => {
+    using dir = tempDir("bun-lock-npmrc-fifo", projectFiles);
+    mkfifo(join(String(dir), ".npmrc"));
+
+    const { out, err, exitCode } = await install(String(dir));
+    expect(err).toBe("Saved lockfile");
+    expect(out).toBe(installed);
+    expect(exitCode).toBe(0);
+  });
+
+  // Locating the project opens package.json before anything reads it.
+  it("package.json is a FIFO: the install fails", async () => {
+    using dir = tempDir("bun-lock-package-json-fifo", {});
+    mkfifo(join(String(dir), "package.json"));
+
+    const { out, err, exitCode } = await install(String(dir));
+    expect(err).toMatchInlineSnapshot(`"ENODEV: failed to read '<dir>/package.json'"`);
+    expect(out).toMatchInlineSnapshot(`"bun install <version> (<revision>)"`);
+    expect(exitCode).toBe(1);
+  });
+
+  it("the package.json of a file: directory dependency is a FIFO: the dependency fails to resolve", async () => {
+    using dir = tempDir("bun-lock-folder-dep-fifo", {
+      "package.json": JSON.stringify({ name: "app", dependencies: { dep: "file:./dep" } }),
+      "dep/.keep": "",
+    });
+    mkfifo(join(String(dir), "dep", "package.json"));
+
+    const { out, err, exitCode } = await install(String(dir));
+    expect(err).toMatchInlineSnapshot(`
+      "error: ENODEV
+
+      note: error occurred while resolving dep
+      error: dep@file:./dep failed to resolve"
+    `);
+    expect(out).toMatchInlineSnapshot(`"bun install <version> (<revision>)"`);
+    expect(exitCode).toBe(1);
+  });
+
+  // A second install checks each installed package through the package.json
+  // in node_modules. One that is not a regular file means the package needs
+  // to be installed again.
+  it("an installed package's package.json is a FIFO: the package is installed again", async () => {
+    using dir = tempDir("bun-lock-installed-fifo", {
+      "package.json": JSON.stringify({ name: "app", dependencies: { dep: "file:./dep.tgz" } }),
+    });
+    const archive = new Bun.Archive(
+      { "package/package.json": JSON.stringify({ name: "dep", version: "1.0.0" }) },
+      { compress: "gzip" },
+    );
+    await write(join(String(dir), "dep.tgz"), await archive.bytes());
+    expect((await install(String(dir), "--linker=hoisted")).exitCode).toBe(0);
+
+    const installedPackageJson = join(String(dir), "node_modules", "dep", "package.json");
+    await rm(installedPackageJson);
+    mkfifo(installedPackageJson);
+
+    const { out, exitCode } = await install(String(dir), "--linker=hoisted");
+    expect(out).toMatchInlineSnapshot(`
+      "bun install <version> (<revision>)
+
+      + dep@./dep.tgz
+
+      1 package installed"
+    `);
+    expect(exitCode).toBe(0);
+    expect(await file(installedPackageJson).json()).toEqual({ name: "dep", version: "1.0.0" });
   });
 });
 

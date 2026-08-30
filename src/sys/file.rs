@@ -191,10 +191,16 @@ impl File {
         self.read_to_end_with_array_list(&mut v, SizeHint::ProbablySmall)?;
         Ok(v)
     }
+    /// [`File::read_to_end`] presized from the size [`File::open_regular_at`] returned, so the file is not `fstat`ed again.
+    pub fn read_to_end_sized(&self, size: u64) -> Maybe<Vec<u8>> {
+        let mut v = Vec::new();
+        self.read_to_end_with_array_list(&mut v, SizeHint::Known(size))?;
+        Ok(v)
+    }
     /// `File.readToEndWithArrayList(buf, hint)` — like `read_all` but takes a
     /// `SizeHint` so callers can pre-reserve. Returns total bytes appended.
     /// `ProbablySmall` reserves 64; `UnknownSize` fstats and reserves
-    /// `size+16`.
+    /// `size+16`, as does `Known(size)` without the fstat.
     pub fn read_to_end_with_array_list(&self, list: &mut Vec<u8>, hint: SizeHint) -> Maybe<usize> {
         match hint {
             SizeHint::ProbablySmall => {
@@ -202,14 +208,15 @@ impl File {
                     return Err(Error::oom());
                 }
             }
-            SizeHint::UnknownSize => {
+            SizeHint::UnknownSize | SizeHint::Known(_) => {
+                let size = match hint {
+                    SizeHint::Known(size) => usize::try_from(size).unwrap_or(usize::MAX),
+                    _ => self.get_end_pos()?,
+                };
                 // `st_size` is only a hint (sparse files, racing writers, /proc):
                 // reserve fallibly so an absurd size surfaces as ENOMEM to the
                 // caller instead of aborting the process in `handle_alloc_error`.
-                let want = self
-                    .get_end_pos()?
-                    .saturating_add(16)
-                    .saturating_sub(list.len());
+                let want = size.saturating_add(16).saturating_sub(list.len());
                 if list.try_reserve_exact(want).is_err() {
                     return Err(Error::oom());
                 }
@@ -339,20 +346,48 @@ impl File {
     }
 
     // ── one-shot path helpers (open + io + close) ───────────────────────
-    /// Open + read + close. Accepts `&[u8]`; `&ZStr` callers deref-coerce.
+    /// Open `path` for reading and return it with its size; `EISDIR` for a directory, `ENODEV` for any other non-regular file.
+    pub fn open_regular_at(dir: impl AsFd, path: &[u8]) -> Maybe<(Self, u64)> {
+        let dir = dir.as_fd();
+        // On Windows `O_NONBLOCK` would make the handle overlapped; the fstat still rejects there.
+        #[cfg(unix)]
+        let flags = O::RDONLY | O::CLOEXEC | O::NONBLOCK;
+        #[cfg(not(unix))]
+        let flags = O::RDONLY | O::CLOEXEC;
+        let file = Self::openat(dir, path, flags, 0)?;
+        let size = file.ensure_regular(path)?;
+        Ok((file, size))
+    }
+    /// The check of [`File::open_regular_at`] for a file opened with other flags: the size of a regular file, else its error.
+    pub fn ensure_regular(&self, path: &[u8]) -> Maybe<u64> {
+        let st = self.stat().map_err(|e| e.with_path(path))?;
+        let mode = st.st_mode as Mode;
+        if !S::ISREG(mode) {
+            let errno = if S::ISDIR(mode) { E::EISDIR } else { E::ENODEV };
+            return Err(Error::new(errno, Tag::open).with_path(path));
+        }
+        Ok(st.st_size.max(0) as u64)
+    }
+    /// Open + read + close of a regular file ([`File::open_regular_at`]); `&ZStr` deref-coerces.
     pub fn read_from(dir: impl AsFd, path: &[u8]) -> Maybe<Vec<u8>> {
         let dir = dir.as_fd();
-        let f = Self::openat(dir, path, O::RDONLY, 0)?;
+        let (f, size) = Self::open_regular_at(dir, path)?;
         // `Drop` closes the fd on all paths (no leak on read failure).
+        f.read_to_end_sized(size)
+    }
+    /// [`File::read_from`] that reads a device too: for a path the user named (`--config=/dev/null`).
+    pub fn read_from_any_file_type(dir: impl AsFd, path: &[u8]) -> Maybe<Vec<u8>> {
+        let dir = dir.as_fd();
+        let f = Self::openat(dir, path, O::RDONLY, 0)?;
         f.read_to_end()
     }
-    /// Open + read; returns BOTH
+    /// [`File::read_from`] that returns BOTH
     /// the open `File` handle and the bytes. Caller owns the fd and must
     /// `close()` it. On read error the fd is closed before returning (no leak).
     pub fn read_file_from(dir: impl AsFd, path: &[u8]) -> Maybe<(Self, Vec<u8>)> {
         let dir = dir.as_fd();
-        let f = Self::openat(dir, path, O::RDONLY, 0)?;
-        match f.read_to_end() {
+        let (f, size) = Self::open_regular_at(dir, path)?;
+        match f.read_to_end_sized(size) {
             Ok(bytes) => Ok((f, bytes)),
             // The fd escapes only on success; `Drop` closes it here.
             Err(e) => Err(e),

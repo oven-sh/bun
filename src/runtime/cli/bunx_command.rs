@@ -287,11 +287,7 @@ impl BunxCommand {
         dir_fd: Fd,
         subpath_z: &ZStr,
     ) -> crate::Result<Box<[u8]>> {
-        let target_package_json_fd = bun_sys::openat(dir_fd, subpath_z, O::RDONLY, 0)?;
-        let target_package_json = bun_sys::File::from_fd(target_package_json_fd);
-
-        // TODO: make this better
-        let package_json_bytes = target_package_json.read_to_end()?;
+        let package_json_bytes = bun_sys::File::read_from(dir_fd, subpath_z)?;
         let package_json_contents = package_json_bytes.as_slice();
         let source = bun_ast::Source::init_path_string(subpath_z.as_bytes(), package_json_contents);
 
@@ -417,11 +413,10 @@ impl BunxCommand {
             subpath[len] = 0;
             // SAFETY: subpath[len] == 0 written above
             let subpath_z = ZStr::from_buf(&subpath[..], len);
-            let target_package_json_fd = match bun_sys::openat(Fd::cwd(), subpath_z, O::RDONLY, 0) {
-                Ok(fd) => fd,
+            let target_package_json = match bun_sys::File::open_regular_at(Fd::cwd(), subpath_z) {
+                Ok((file, _)) => file,
                 Err(_) => return Err(crate::Error::NeedToInstall),
             };
-            let target_package_json = bun_sys::File::from_fd(target_package_json_fd);
 
             let is_stale: bool = 'is_stale: {
                 #[cfg(windows)]
@@ -432,7 +427,7 @@ impl BunxCommand {
                     // SAFETY: FFI call with valid out-params
                     let rc = unsafe {
                         win::ntdll::NtQueryInformationFile(
-                            target_package_json_fd.native(),
+                            target_package_json.handle.native(),
                             &mut io_status_block,
                             (&mut info as *mut win::FILE_BASIC_INFORMATION).cast(),
                             u32::try_from(size_of::<win::FILE_BASIC_INFORMATION>())

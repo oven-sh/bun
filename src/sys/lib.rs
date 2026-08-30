@@ -4861,6 +4861,8 @@ pub enum SizeHint {
     ProbablySmall,
     /// `fstat()` the fd to pre-size the buffer.
     UnknownSize,
+    /// Pre-size the buffer to the size the caller's own `fstat()` reported.
+    Known(u64),
 }
 
 /// `bun.sys.syslog` — debug-scoped log under `SYS`.

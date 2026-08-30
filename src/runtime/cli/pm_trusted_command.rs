@@ -541,14 +541,16 @@ impl TrustCommand {
             (*pm_raw).root_package_json_file.handle = bun_core::Fd::INVALID;
             bun_sys::File::from_fd(fd)
         };
-        let package_json_contents = root_file.read_to_end().map_err(crate::Error::from)?;
-
         // SAFETY: `ROOT_PACKAGE_JSON_PATH` is set during `PackageManager::init`
         // (single-threaded startup) and immutable thereafter.
-        let package_json_source = bun_ast::Source::init_path_string(
-            unsafe { ROOT_PACKAGE_JSON_PATH.read() }.as_bytes(),
-            package_json_contents.as_slice(),
-        );
+        let package_json_path = unsafe { ROOT_PACKAGE_JSON_PATH.read() }.as_bytes();
+        let package_json_contents = root_file
+            .ensure_regular(package_json_path)
+            .and_then(|size| root_file.read_to_end_sized(size))
+            .map_err(crate::Error::from)?;
+
+        let package_json_source =
+            bun_ast::Source::init_path_string(package_json_path, package_json_contents.as_slice());
 
         let bump = Bump::new();
         // SAFETY: `ctx.log` set by `Command::init`, non-null for the command.

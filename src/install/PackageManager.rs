@@ -1594,6 +1594,11 @@ pub fn init(
                     this_cwd.len() + b"/package.json".len(),
                 );
 
+                // Only locates the project: like its readers (`File::open_regular_at`), never block on a FIFO.
+                #[cfg(unix)]
+                let flags = bun_sys::O::CLOEXEC | bun_sys::O::NONBLOCK;
+                #[cfg(not(unix))]
+                let flags = bun_sys::O::CLOEXEC;
                 match bun_sys::File::openat(
                     bun_sys::Fd::cwd(),
                     package_json_path.as_bytes(),
@@ -1601,7 +1606,7 @@ pub fn init(
                         bun_sys::O::RDWR
                     } else {
                         bun_sys::O::RDONLY
-                    } | bun_sys::O::CLOEXEC,
+                    } | flags,
                     0,
                 ) {
                     Ok(f) => break 'child f,

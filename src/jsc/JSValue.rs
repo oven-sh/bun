@@ -2784,20 +2784,22 @@ impl JSValue {
         })
     }
     /// `JSValue.jestDeepMatch` — `expect(a).toMatchObject(b)` /
-    /// snapshot-property-matcher subset comparison.
-    pub fn jest_deep_match(
-        self,
-        subset: JSValue,
-        global: &JSGlobalObject,
-        replace_props_with_asymmetric_matchers: bool,
-    ) -> JsResult<bool> {
+    /// snapshot-property-matcher subset comparison. Mutates neither side.
+    pub fn jest_deep_match(self, subset: JSValue, global: &JSGlobalObject) -> JsResult<bool> {
         host_fn::from_js_host_call_generic(global, || {
-            JSC__JSValue__jestDeepMatch(
-                self,
-                subset,
-                global,
-                replace_props_with_asymmetric_matchers,
-            )
+            JSC__JSValue__jestDeepMatch(self, subset, global)
+        })
+    }
+    /// Clone of `self` with the matchers a passing [`Self::jest_deep_match`]
+    /// checked put in place of the properties they matched; what
+    /// `toMatchSnapshot(matchers)` serializes. Both arguments must be objects.
+    pub fn jest_substitute_asymmetric_matchers(
+        self,
+        matchers: JSValue,
+        global: &JSGlobalObject,
+    ) -> JsResult<JSValue> {
+        host_fn::from_js_host_call(global, || {
+            Bun__JSValue__substituteAsymmetricMatchers(self, matchers, global)
         })
     }
 
@@ -2909,8 +2911,12 @@ unsafe extern "C" {
         this: JSValue,
         subset: JSValue,
         global: &JSGlobalObject,
-        replace_props: bool,
     ) -> bool;
+    safe fn Bun__JSValue__substituteAsymmetricMatchers(
+        value: JSValue,
+        matchers: JSValue,
+        global: &JSGlobalObject,
+    ) -> JSValue;
     safe fn JSC__JSValue__asBigIntCompare(
         this: JSValue,
         global: &JSGlobalObject,

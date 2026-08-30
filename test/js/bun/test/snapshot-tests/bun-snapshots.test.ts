@@ -33,6 +33,174 @@ test("ArrayBuffer values are serialized like typed arrays", () => {
   `);
 });
 
+// https://github.com/oven-sh/bun/issues/3521
+test("property matchers do not mutate the received object", () => {
+  const date = new Date(0);
+  const obj = { id: 42, when: date, nested: { name: "abc" }, list: [1, "two", 3] };
+  expect(obj).toMatchSnapshot({
+    id: expect.any(Number),
+    when: expect.any(Date),
+    nested: { name: expect.any(String) },
+    list: [1, expect.any(String), 3],
+  });
+  expect(obj.id).toBe(42);
+  expect(obj.when).toBe(date);
+  expect(obj.nested.name).toBe("abc");
+  expect(obj.list[1]).toBe("two");
+});
+
+test("property matchers preserve class name and handle shared references", () => {
+  class User {
+    id: number;
+    name: string;
+    constructor() {
+      this.id = 1;
+      this.name = "alice";
+    }
+  }
+  const user = new User();
+  expect(user).toMatchSnapshot({ id: expect.any(Number) });
+  expect(user.id).toBe(1);
+  expect(user).toBeInstanceOf(User);
+
+  const shared = { x: 1 };
+  const dag = { a: shared, b: shared };
+  expect(dag).toMatchSnapshot({
+    a: { x: expect.any(Number) },
+    b: { x: expect.any(Number) },
+  });
+  expect(dag.a).toBe(shared);
+  expect(dag.b).toBe(shared);
+  expect(shared.x).toBe(1);
+
+  const cyclic: any = { id: 1 };
+  cyclic.self = cyclic;
+  expect(cyclic).toMatchSnapshot({ id: expect.any(Number) });
+  expect(cyclic.id).toBe(1);
+  expect(cyclic.self).toBe(cyclic);
+
+  const err: any = new Error("boom");
+  err.code = "E_FOO";
+  expect(err).toMatchSnapshot({ code: expect.any(String) });
+  expect(err.code).toBe("E_FOO");
+
+  let getterCalls = 0;
+  const withGetter = {
+    id: 1,
+    get ts() {
+      getterCalls++;
+      return Date.now();
+    },
+  };
+  expect(withGetter).toMatchSnapshot({ id: expect.any(Number) });
+  expect(withGetter.id).toBe(1);
+  expect(getterCalls).toBe(0);
+
+  const inner: any = { id: 1 };
+  const outer: any = { inner };
+  inner.parent = outer;
+  expect(outer).toMatchSnapshot({ inner: { id: expect.any(Number) } });
+  expect(inner.id).toBe(1);
+  expect(inner.parent).toBe(outer);
+});
+
+// The recorded snapshot must show exactly the matchers the property-matcher
+// check looked at, in the same places they were looked at.
+test("snapshot records the matchers that were checked", () => {
+  // The propertyMatchers argument itself is never matched against the
+  // received value, so it must not replace the snapshot.
+  const plain = { a: 1 };
+  expect(plain).toMatchSnapshot(expect.any(Object));
+  expect(plain).toMatchSnapshot(expect.any(Array));
+
+  // One received object checked through two properties, with a different
+  // matcher at each: it is a single object, so it records the same everywhere.
+  const shared = { x: 1, y: "s" };
+  expect({ a: shared, b: shared }).toMatchSnapshot({
+    a: { x: expect.any(Number) },
+    b: { y: expect.any(String) },
+  });
+  expect(shared.x).toBe(1);
+  expect(shared.y).toBe("s");
+
+  // A matcher on a key the received object implements as a getter.
+  const withGetter = {
+    get id() {
+      return 7;
+    },
+  };
+  expect(withGetter).toMatchSnapshot({ id: expect.any(Number) });
+  expect(withGetter.id).toBe(7);
+
+  // Errors render as [Name: message], so a matcher on message is visible
+  // through the message's string form.
+  const err = new TypeError("boom");
+  expect(err).toMatchSnapshot({ message: expect.any(String) });
+  expect(err.message).toBe("boom");
+
+  // Instances of native classes render by own properties like plain objects.
+  const headers = new Headers({ "x-a": "1" });
+  expect(headers).toMatchSnapshot({ append: expect.any(Function) });
+  expect(Object.hasOwn(headers, "append")).toBe(false);
+  expect(headers.get("x-a")).toBe("1");
+
+  const event = new Event("x");
+  expect(event).toMatchSnapshot({ timeStamp: expect.any(Number) });
+  expect(Object.hasOwn(event, "timeStamp")).toBe(false);
+  expect(typeof event.timeStamp).toBe("number");
+
+  // Events with a dedicated rendering (message/error) fall back to the
+  // by-properties rendering once a matcher is recorded on them.
+  const message = new MessageEvent("message", { data: "hi" });
+  expect(message).toMatchSnapshot({ data: expect.any(String) });
+  expect(message.data).toBe("hi");
+
+  // A received value that is itself a matcher still prints as that matcher.
+  expect(expect.any(String)).toMatchSnapshot({});
+
+  // A shared object referenced again from inside an object the matchers did
+  // not walk keeps its real values there (as in Jest; the in-place mutation
+  // used to show the matcher at both places).
+  const user = { id: 7 };
+  expect({ current: user, log: [{ user }] }).toMatchSnapshot({ current: { id: expect.any(Number) } });
+  expect(user.id).toBe(7);
+
+  // A cyclic received object is checked against every matcher object it is
+  // paired with, so a matcher one lap into the cycle is checked and recorded.
+  const ring: any = { id: 1 };
+  ring.self = ring;
+  expect(ring).toMatchSnapshot({ self: { self: { id: expect.any(Number) } } });
+  expect(ring.id).toBe(1);
+});
+
+// The matcher is recorded on the object the getter returns, which the snapshot
+// shows under the field that holds it; the getter itself is left as it was.
+test("a matcher object checked through a getter is recorded on the object behind it", () => {
+  class Wrapper {
+    _user: { name: string };
+    constructor() {
+      this._user = { name: "alice" };
+    }
+    get user() {
+      return this._user;
+    }
+  }
+  const wrapper = new Wrapper();
+  expect(wrapper).toMatchSnapshot({ user: { name: expect.any(String) } });
+  expect(wrapper._user.name).toBe("alice");
+  expect(Object.hasOwn(wrapper, "user")).toBe(false);
+
+  const withOwnGetter = {
+    _user: { name: "bob" },
+    get user() {
+      return this._user;
+    },
+  };
+  expect(withOwnGetter).toMatchSnapshot({ user: { name: expect.any(String) } });
+  expect(withOwnGetter._user.name).toBe("bob");
+  expect(Object.getOwnPropertyDescriptor(withOwnGetter, "user")!.get).toBeFunction();
+});
+
 describe("toMatchSnapshot errors", () => {
   it("should throw if property matchers exist and received is not an object", () => {
     expect(() => {

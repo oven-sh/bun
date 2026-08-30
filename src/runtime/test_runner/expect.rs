@@ -1134,6 +1134,8 @@ impl Expect {
         pretty_value: &mut impl bun_io::Write,
         fn_name: &'static str,
     ) -> JsResult<()> {
+        let mut snapshot_value = value;
+
         if let Some(_prop_matchers) = property_matchers {
             if !value.is_object() {
                 let signature = Self::get_signature(fn_name, "<green>properties<r><d>, <r>hint", false);
@@ -1142,7 +1144,7 @@ impl Expect {
 
             let prop_matchers = _prop_matchers;
 
-            if !value.jest_deep_match(prop_matchers, global_this, true)? {
+            if !value.jest_deep_match(prop_matchers, global_this)? {
                 // TODO: print diff with properties from propertyMatchers
                 let signature = Self::get_signature(fn_name, "<green>propertyMatchers<r>", false);
                 let mut formatter = ConsoleObject::Formatter::new(global_this);
@@ -1152,9 +1154,11 @@ impl Expect {
                     value.to_fmt(&mut formatter),
                 ).map(drop);
             }
+
+            snapshot_value = value.jest_substitute_asymmetric_matchers(prop_matchers, global_this)?;
         }
 
-        if value.jest_snapshot_pretty_format(pretty_value, global_this).is_err() {
+        if snapshot_value.jest_snapshot_pretty_format(pretty_value, global_this).is_err() {
             let mut formatter = ConsoleObject::Formatter::new(global_this);
             return Err(global_this.throw(format_args!(
                 "Failed to pretty format value: {}",

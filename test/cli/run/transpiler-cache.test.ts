@@ -407,6 +407,32 @@ describe("transpiler cache", () => {
       expect(newCacheCount()).toBe(0);
     });
 
+    test("--define passed to bun test invalidates cache", () => {
+      // `bun test` builds its define table on its own boot path. The test file
+      // is below the minimum cache size; the module it imports is not, and
+      // `bun a.js` loads that same module.
+      writeFileSync(join(temp_dir, "a.js"), code + "\n//" + filler);
+      writeFileSync(
+        join(temp_dir, "a.test.js"),
+        `import "./a.js";\nimport { test } from "bun:test";\ntest("x", () => {});\n`,
+      );
+      // `bun test` prints its version banner to stdout ahead of the module's output.
+      const lastLine = (args: string[]) => run(temp_dir, args).split("\n").at(-1);
+
+      expect(lastLine(["test", "--define", 'BVAL:"cli"', "./a.test.js"])).toBe("cli");
+      expect(newCacheCount()).toBe(1);
+
+      expect(lastLine(["test", "./a.test.js"])).toBe("undefined");
+      expect(newCacheCount()).toBe(0);
+      expect(run(temp_dir, ["a.js"])).toBe("undefined");
+      expect(newCacheCount()).toBe(0);
+
+      expect(lastLine(["test", "--define", 'BVAL:"cli"', "./a.test.js"])).toBe("cli");
+      expect(newCacheCount()).toBe(0);
+      expect(run(temp_dir, ["a.js"])).toBe("undefined");
+      expect(newCacheCount()).toBe(0);
+    });
+
     test("--drop invalidates cache", () => {
       writeFileSync(
         join(temp_dir, "a.js"),

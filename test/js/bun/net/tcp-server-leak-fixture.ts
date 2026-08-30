@@ -23,7 +23,8 @@ async function echoRoundTrip(hostname: string, port: number, binaryType: BinaryT
         socket.write("ping");
       },
       data(socket, data) {
-        expect(data).toBeInstanceOf(DATA_CLASS[binaryType]);
+        // Not toBeInstanceOf: a Buffer is also a Uint8Array.
+        expect(data.constructor).toBe(DATA_CLASS[binaryType]);
         socket.end();
       },
       close() {

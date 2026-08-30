@@ -19,6 +19,9 @@ pub struct ImportRecord {
     pub tag: Tag,
     pub loader: Option<Loader>,
 
+    /// The `with { ... }` clause as written; empty when the import has none.
+    pub attributes: &'static [ImportAttribute],
+
     pub source_index: Index,
 
     /// The original import specifier as written in source code (e.g., "./foo.js").
@@ -97,6 +100,49 @@ bitflags::bitflags! {
 }
 
 pub type List<'a> = bun_alloc::ArenaVec<'a, ImportRecord>;
+
+/// One `key: "value"` entry of an import attributes clause (UTF-8).
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct ImportAttribute {
+    pub key: &'static [u8],
+    pub value: &'static [u8],
+}
+
+impl ImportRecord {
+    /// The value of the import's `type` attribute, if it has one.
+    pub fn type_attribute(&self) -> Option<&'static [u8]> {
+        self.attributes
+            .iter()
+            .find(|attr| attr.key == b"type")
+            .map(|attr| attr.value)
+    }
+
+    /// The module-graph key: the path, plus the attributes sorted by key (`bunBakeGraph` only routes).
+    pub fn module_graph_key<'k>(
+        path_text: &'k [u8],
+        attributes: &[ImportAttribute],
+        buf: &'k mut Vec<u8>,
+    ) -> &'k [u8] {
+        use std::io::Write as _;
+        let mut sorted: Vec<&ImportAttribute> = attributes
+            .iter()
+            .filter(|attr| attr.key != b"bunBakeGraph")
+            .collect();
+        if sorted.is_empty() {
+            return path_text;
+        }
+        sorted.sort_by_key(|attr| attr.key);
+        buf.clear();
+        buf.extend_from_slice(path_text);
+        for attr in sorted {
+            write!(buf, "\0{}:", attr.key.len()).expect("unreachable");
+            buf.extend_from_slice(attr.key);
+            write!(buf, "\0{}:", attr.value.len()).expect("unreachable");
+            buf.extend_from_slice(attr.value);
+        }
+        buf
+    }
+}
 
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]

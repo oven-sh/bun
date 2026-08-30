@@ -146,6 +146,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
             range: Range::default(),
             tag: Default::default(),
             loader: None,
+            attributes: &[],
             source_index: Default::default(),
             original_path: b"",
             flags: Default::default(),

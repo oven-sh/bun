@@ -51,6 +51,8 @@ pub enum Loader {
     Json5 = 19,
     Md = 20,
     Xml = 21,
+    /// `with { type: "bytes" }`: the file's bytes as a `Uint8Array` default export.
+    Bytes = 22,
 }
 
 // Crosses FFI as `uint8_t default_loader` / `uint8_t loader` in
@@ -63,7 +65,7 @@ bun_core::assert_ffi_discr!(
     Jsx = 0, Js = 1, Ts = 2, Tsx = 3, Css = 4, File = 5, Json = 6,
     Jsonc = 7, Toml = 8, Wasm = 9, Napi = 10, Base64 = 11, Dataurl = 12,
     Text = 13, Bunsh = 14, Sqlite = 15, SqliteEmbedded = 16, Html = 17,
-    Yaml = 18, Json5 = 19, Md = 20, Xml = 21,
+    Yaml = 18, Json5 = 19, Md = 20, Xml = 21, Bytes = 22,
 );
 
 // E0658: inherent assoc types are nightly-only; lifted to module scope.
@@ -88,6 +90,8 @@ bun_core::comptime_string_map! {
         b"json5" => Loader::Json5,
         b"xml" => Loader::Xml,
         b"wasm" => Loader::Wasm,
+        // JSC's reserved `type` for WebAssembly modules; loads like a plain `.wasm` import.
+        b"webassembly" => Loader::Wasm,
         b"napi" => Loader::Napi,
         b"node" => Loader::Napi,
         b"dataurl" => Loader::Dataurl,
@@ -100,6 +104,7 @@ bun_core::comptime_string_map! {
         b"html" => Loader::Html,
         b"md" => Loader::Md,
         b"markdown" => Loader::Md,
+        b"bytes" => Loader::Bytes,
     };
 }
 
@@ -127,7 +132,10 @@ impl Loader {
     }
 
     pub fn handles_empty_file(self) -> bool {
-        matches!(self, Loader::Wasm | Loader::File | Loader::Text)
+        matches!(
+            self,
+            Loader::Wasm | Loader::File | Loader::Text | Loader::Bytes
+        )
     }
 
     // `to_mime_type` / `from_mime_type` stay in bun_http_types as extension
@@ -242,7 +250,8 @@ impl Loader {
             | Loader::Json5
             | Loader::Xml
             | Loader::File
-            | Loader::Md => SideEffects::NoSideEffectsPureData,
+            | Loader::Md
+            | Loader::Bytes => SideEffects::NoSideEffectsPureData,
             _ => SideEffects::HasSideEffects,
         }
     }

@@ -337,6 +337,17 @@ export default "Hello, world!";
 
 </CodeGroup>
 
+### `bytes`
+
+**Bytes loader**. Not the default for any extension. Select it with the `type` import attribute.
+
+Bun reads the file and returns its bytes as a `Uint8Array`.
+
+```ts
+import bytes from "./model.bin" with { type: "bytes" };
+console.log(bytes instanceof Uint8Array); // => true
+```
+
 ### `md`
 
 **Markdown loader**. Default for `.md` and `.markdown`.

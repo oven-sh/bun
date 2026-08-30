@@ -70,6 +70,7 @@ pub type MangledProps = bun_collections::ArrayHashMap<Ref, Box<[u8]>>;
 /// js_printer is the sole producer of ModuleInfo records; the bundler/runtime
 /// only consume the serialized form.
 pub mod analyze_transpiled_module {
+    use bun_ast::ImportRecord;
     use bun_collections::HashMap;
 
     /// Every record kind carries one trailing bitcast-`FetchParameters` slot
@@ -686,6 +687,19 @@ pub mod analyze_transpiled_module {
             // PERF: owned-key dupe; revisit with a raw-entry API.
             self.strings_map.insert(value.to_vec(), idx);
             StringID(idx)
+        }
+
+        /// Mirrors `ScriptFetchParameters::parseType`: json, webassembly, or host-defined.
+        pub(crate) fn fetch_parameters_for(
+            &mut self,
+            import_record: &ImportRecord,
+        ) -> FetchParameters {
+            match import_record.type_attribute() {
+                None => FetchParameters::None,
+                Some(b"json") => FetchParameters::Json,
+                Some(b"webassembly") => FetchParameters::Webassembly,
+                Some(other) => FetchParameters::host_defined(self.str(other)),
+            }
         }
 
         pub(crate) fn request_module(
@@ -5489,31 +5503,22 @@ pub(crate) mod __gated_printer {
                         self.print_whitespacer(ws!(b"from "));
                     }
 
-                    let irp = &self.import_record(s.import_record_index as usize).path.text;
-                    self.print_import_record_path(
-                        self.import_record(s.import_record_index as usize),
-                    );
+                    let record = self.import_record(s.import_record_index as usize);
+                    let irp = &record.path.text;
+                    self.print_import_record_path(record);
+                    self.print_import_attributes(record);
                     self.print_semicolon_after_statement();
 
                     if Self::MAY_HAVE_MODULE_INFO {
                         if let Some(mi) = self.module_info() {
                             let irp_id = mi.str(irp);
-                            mi.request_module(
-                                irp_id,
-                                analyze_transpiled_module::FetchParameters::None,
-                            );
+                            let fetch_parameters = mi.fetch_parameters_for(record);
+                            mi.request_module(irp_id, fetch_parameters);
                             if let Some(alias) = &s.alias {
                                 let alias_id = mi.str(alias.original_name.slice());
-                                mi.add_export_info_namespace(
-                                    alias_id,
-                                    irp_id,
-                                    analyze_transpiled_module::FetchParameters::None,
-                                );
+                                mi.add_export_info_namespace(alias_id, irp_id, fetch_parameters);
                             } else {
-                                mi.add_export_info_star(
-                                    irp_id,
-                                    analyze_transpiled_module::FetchParameters::None,
-                                );
+                                mi.add_export_info_star(irp_id, fetch_parameters);
                             }
                         }
                     }
@@ -5675,16 +5680,18 @@ pub(crate) mod __gated_printer {
                     self.print_whitespacer(ws!(b"} from "));
                     let irp = &import_record.path.text;
                     self.print_import_record_path(import_record);
+                    self.print_import_attributes(import_record);
                     self.print_semicolon_after_statement();
 
                     if Self::MAY_HAVE_MODULE_INFO && self.module_info.is_some() {
                         // reshaped for borrowck — re-borrow module_info per item so
                         // `name_for_symbol` (which needs `&mut self`) can run between uses.
-                        let irp_id = {
+                        let (irp_id, fetch_parameters) = {
                             let mi = self.module_info().expect("infallible: module_info enabled");
                             let id = mi.str(irp);
-                            mi.request_module(id, analyze_transpiled_module::FetchParameters::None);
-                            id
+                            let fetch_parameters = mi.fetch_parameters_for(import_record);
+                            mi.request_module(id, fetch_parameters);
+                            (id, fetch_parameters)
                         };
                         for item in slice_of(s.items).iter() {
                             let name = self.name_for_symbol(item.name.ref_);
@@ -5695,7 +5702,7 @@ pub(crate) mod __gated_printer {
                                 alias_id,
                                 name_id,
                                 irp_id,
-                                analyze_transpiled_module::FetchParameters::None,
+                                fetch_parameters,
                             );
                         }
                     }
@@ -6105,78 +6112,7 @@ pub(crate) mod __gated_printer {
                     }
 
                     self.print_import_record_path(record);
-
-                    // backwards compatibility: previously, we always stripped type
-                    if IS_BUN_PLATFORM {
-                        if let Some(loader) = record.loader {
-                            use bun_ast::Loader;
-                            match loader {
-                                Loader::Jsx => {
-                                    self.print_whitespacer(ws!(b" with { type: \"jsx\" }"))
-                                }
-                                Loader::Js => {
-                                    self.print_whitespacer(ws!(b" with { type: \"js\" }"))
-                                }
-                                Loader::Ts => {
-                                    self.print_whitespacer(ws!(b" with { type: \"ts\" }"))
-                                }
-                                Loader::Tsx => {
-                                    self.print_whitespacer(ws!(b" with { type: \"tsx\" }"))
-                                }
-                                Loader::Css => {
-                                    self.print_whitespacer(ws!(b" with { type: \"css\" }"))
-                                }
-                                Loader::File => {
-                                    self.print_whitespacer(ws!(b" with { type: \"file\" }"))
-                                }
-                                Loader::Json => {
-                                    self.print_whitespacer(ws!(b" with { type: \"json\" }"))
-                                }
-                                Loader::Jsonc => {
-                                    self.print_whitespacer(ws!(b" with { type: \"jsonc\" }"))
-                                }
-                                Loader::Toml => {
-                                    self.print_whitespacer(ws!(b" with { type: \"toml\" }"))
-                                }
-                                Loader::Yaml => {
-                                    self.print_whitespacer(ws!(b" with { type: \"yaml\" }"))
-                                }
-                                Loader::Json5 => {
-                                    self.print_whitespacer(ws!(b" with { type: \"json5\" }"))
-                                }
-                                Loader::Xml => {
-                                    self.print_whitespacer(ws!(b" with { type: \"xml\" }"))
-                                }
-                                Loader::Wasm => {
-                                    self.print_whitespacer(ws!(b" with { type: \"wasm\" }"))
-                                }
-                                Loader::Napi => {
-                                    self.print_whitespacer(ws!(b" with { type: \"napi\" }"))
-                                }
-                                Loader::Base64 => {
-                                    self.print_whitespacer(ws!(b" with { type: \"base64\" }"))
-                                }
-                                Loader::Dataurl => {
-                                    self.print_whitespacer(ws!(b" with { type: \"dataurl\" }"))
-                                }
-                                Loader::Text => {
-                                    self.print_whitespacer(ws!(b" with { type: \"text\" }"))
-                                }
-                                Loader::Bunsh => {
-                                    self.print_whitespacer(ws!(b" with { type: \"sh\" }"))
-                                }
-                                Loader::Sqlite | Loader::SqliteEmbedded => {
-                                    self.print_whitespacer(ws!(b" with { type: \"sqlite\" }"))
-                                }
-                                Loader::Html => {
-                                    self.print_whitespacer(ws!(b" with { type: \"html\" }"))
-                                }
-                                Loader::Md => {
-                                    self.print_whitespacer(ws!(b" with { type: \"md\" }"))
-                                }
-                            }
-                        }
-                    }
+                    self.print_import_attributes(record);
                     self.print_semicolon_after_statement();
 
                     if Self::MAY_HAVE_MODULE_INFO && self.module_info.is_some() {
@@ -6188,40 +6124,7 @@ pub(crate) mod __gated_printer {
                         let (irp_id, fetch_parameters) = {
                             let mi = self.module_info().expect("infallible: module_info enabled");
                             let irp_id = mi.str(import_record_path);
-                            let fetch_parameters: FP = if IS_BUN_PLATFORM {
-                                if let Some(loader) = record.loader {
-                                    use bun_ast::Loader;
-                                    match loader {
-                                        Loader::Json => FP::Json,
-                                        Loader::Jsx => FP::host_defined(mi.str(b"jsx")),
-                                        Loader::Js => FP::host_defined(mi.str(b"js")),
-                                        Loader::Ts => FP::host_defined(mi.str(b"ts")),
-                                        Loader::Tsx => FP::host_defined(mi.str(b"tsx")),
-                                        Loader::Css => FP::host_defined(mi.str(b"css")),
-                                        Loader::File => FP::host_defined(mi.str(b"file")),
-                                        Loader::Jsonc => FP::host_defined(mi.str(b"jsonc")),
-                                        Loader::Toml => FP::host_defined(mi.str(b"toml")),
-                                        Loader::Yaml => FP::host_defined(mi.str(b"yaml")),
-                                        Loader::Wasm => FP::host_defined(mi.str(b"wasm")),
-                                        Loader::Napi => FP::host_defined(mi.str(b"napi")),
-                                        Loader::Base64 => FP::host_defined(mi.str(b"base64")),
-                                        Loader::Dataurl => FP::host_defined(mi.str(b"dataurl")),
-                                        Loader::Text => FP::host_defined(mi.str(b"text")),
-                                        Loader::Bunsh => FP::host_defined(mi.str(b"sh")),
-                                        Loader::Sqlite | Loader::SqliteEmbedded => {
-                                            FP::host_defined(mi.str(b"sqlite"))
-                                        }
-                                        Loader::Html => FP::host_defined(mi.str(b"html")),
-                                        Loader::Json5 => FP::host_defined(mi.str(b"json5")),
-                                        Loader::Xml => FP::host_defined(mi.str(b"xml")),
-                                        Loader::Md => FP::host_defined(mi.str(b"md")),
-                                    }
-                                } else {
-                                    FP::None
-                                }
-                            } else {
-                                FP::None
-                            };
+                            let fetch_parameters: FP = mi.fetch_parameters_for(record);
                             let phase = if phase_defer {
                                 analyze_transpiled_module::ModulePhase::Defer
                             } else {
@@ -6384,6 +6287,30 @@ pub(crate) mod __gated_printer {
                 self.print_string_characters_utf8(import_record.path.text, quote);
                 self.print(quote);
             }
+        }
+
+        /// Prints ` with { key: "value", ... }`; the legacy `assert` keyword prints as `with`.
+        pub(crate) fn print_import_attributes(&mut self, import_record: &ImportRecord) {
+            let attributes = import_record.attributes;
+            if attributes.is_empty() {
+                return;
+            }
+            self.print_space();
+            self.print(b"with");
+            self.print_space();
+            self.print(b"{");
+            for (i, attribute) in attributes.iter().enumerate() {
+                if i > 0 {
+                    self.print(b",");
+                }
+                self.print_space();
+                self.print_clause_alias(attribute.key);
+                self.print(b":");
+                self.print_space();
+                self.print_string_literal_utf8(attribute.value, false);
+            }
+            self.print_space();
+            self.print(b"}");
         }
 
         #[inline]

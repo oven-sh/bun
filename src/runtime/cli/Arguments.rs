@@ -118,7 +118,7 @@ const TRANSPILER_PARAMS_: &[ParamType] = &[
         "--feature <STR>...               Enable a feature flag for dead-code elimination, e.g. --feature=SUPER_SECRET"
     ),
     parse_param!(
-        "-l, --loader <STR>...             Parse files with .ext:loader, e.g. --loader .js:jsx. Valid loaders: js, jsx, ts, tsx, json, toml, text, file, wasm, napi"
+        "-l, --loader <STR>...             Parse files with .ext:loader, e.g. --loader .js:jsx. Valid loaders: js, jsx, ts, tsx, json, toml, text, bytes, file, wasm, napi"
     ),
     parse_param!(
         "--no-macros                       Disable macros from being executed in the bundler, transpiler and runtime"

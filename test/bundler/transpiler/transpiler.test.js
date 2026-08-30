@@ -2980,9 +2980,29 @@ console.log(<div {...obj} key="after" />);`),
     });
 
     it("import assert", () => {
-      expectPrinted_(`import json from "./foo.json" assert { type: "json" };`, `import json from "./foo.json"`);
+      expectPrinted_(
+        `import json from "./foo.json" assert { type: "json" };`,
+        `import json from "./foo.json" with { type: "json" }`,
+      );
       expectPrinted_(`import json from "./foo.json";`, `import json from "./foo.json"`);
       expectPrinted_(`import("./foo.json", { type: "json" });`, `import("./foo.json", { type: \"json\" })`);
+    });
+
+    it("import attributes are kept as written", () => {
+      expectPrinted_(
+        `import json from "./foo.json" with { type: "json", "other-key": "value" };`,
+        `import json from "./foo.json" with { type: "json", "other-key": "value" }`,
+      );
+      expectPrinted_(
+        `export * from "./foo.json" with { type: "json" };`,
+        `export * from "./foo.json" with { type: "json" }`,
+      );
+      expectPrinted_(
+        `export { a } from "./foo.json" with { type: "json" };`,
+        `export { a } from "./foo.json" with { type: "json" }`,
+      );
+      expectPrinted_(`import "./x"\nwith { type: "json" };`, `import"./x" with { type: "json" }`);
+      expectParseError(`import "./x" with { type: "json", type: "json" };`, 'Duplicate import attribute "type"');
     });
 
     it("import with unicode", () => {

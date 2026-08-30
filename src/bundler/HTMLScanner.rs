@@ -113,6 +113,7 @@ impl<'a> HTMLScanner<'a> {
             range: Range::NONE,
             tag: ImportRecordTag::default(),
             loader: None,
+            attributes: &[],
             source_index: AstIndex::default(),
             original_path: b"",
             flags: ImportRecordFlags::default(),

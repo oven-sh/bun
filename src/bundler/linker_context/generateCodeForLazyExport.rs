@@ -379,6 +379,16 @@ pub(crate) fn generate_code_for_lazy_export(
         if matches!(c.target.data, ExprData::ERequireCallTarget))
         && this.options.output_format != crate::options::OutputFormat::Cjs;
 
+    // A lazy export's runtime helper call (`__toBytes(...)`) has no import binding its symbol.
+    let runtime_api_call = runtime_api_call_target(this, source_index, &expr);
+    if let Some((local_ref, actual_ref)) = runtime_api_call {
+        // SAFETY: the lazy export's own symbol; no other borrow of it is live.
+        unsafe { this.graph.symbol_mut(local_ref) }
+            .link
+            .set(actual_ref);
+    }
+    let runtime_api_call = runtime_api_call.map(|(_, actual_ref)| actual_ref);
+
     match exports_kind {
         bun_ast::ExportsKind::Cjs => {
             part.stmts.slice_mut()[0] = Stmt::assign(
@@ -407,6 +417,15 @@ pub(crate) fn generate_code_for_lazy_export(
                     Index::part(1u32),
                     b"__require",
                     1,
+                )?;
+            }
+            if let Some(actual_ref) = runtime_api_call {
+                this.graph.generate_symbol_import_and_use(
+                    source_index,
+                    1,
+                    actual_ref,
+                    1,
+                    Index::RUNTIME,
                 )?;
             }
         }
@@ -517,9 +536,38 @@ pub(crate) fn generate_code_for_lazy_export(
                         1,
                     )?;
                 }
+                if let Some(actual_ref) = runtime_api_call {
+                    this.graph.generate_symbol_import_and_use(
+                        source_index,
+                        generated.1,
+                        actual_ref,
+                        1,
+                        Index::RUNTIME,
+                    )?;
+                }
             }
         }
     }
 
     Ok(())
+}
+
+/// `(generated symbol, runtime export)` of a lazy export's runtime helper call.
+fn runtime_api_call_target(
+    this: &LinkerContext,
+    source_index: IndexInt,
+    expr: &Expr,
+) -> Option<(Ref, Ref)> {
+    let ExprData::ECall(call) = expr.data else {
+        return None;
+    };
+    let ExprData::EImportIdentifier(id) = call.target.data else {
+        return None;
+    };
+    let symbols = &this.graph.ast.items_symbols()[source_index as usize];
+    let name = symbols[id.ref_.inner_index() as usize]
+        .original_name
+        .slice();
+    let export = this.graph.ast.items_named_exports()[Index::RUNTIME.get() as usize].get(name)?;
+    Some((id.ref_, export.ref_))
 }

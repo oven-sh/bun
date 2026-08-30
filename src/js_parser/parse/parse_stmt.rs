@@ -1236,13 +1236,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     namespace_ref = p.store_name_in_ref(name);
                 }
 
-                let import_record_index = p.add_import_record(
-                    ImportKind::Stmt,
-                    path.loc,
-                    path.text,
-                    // TODO: import assertions
-                    // path.assertions
-                );
+                let import_record_index =
+                    p.add_import_record(ImportKind::Stmt, path.loc, path.text);
 
                 if path.is_macro {
                     p.log().add_error(
@@ -1254,8 +1249,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     p.log().add_error(
                         Some(p.source),
                         loc,
-                        b"cannot use export statement with \"type\" attribute",
+                        b"cannot use export statement with \"bunBakeGraph\" attribute",
                     );
+                }
+                if !path.attributes.is_empty() {
+                    p.set_import_record_attributes(import_record_index, &path);
                 }
 
                 if Self::TRACK_SYMBOL_USAGE_DURING_PARSE_PASS {
@@ -1309,12 +1307,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         p.log().add_error(
                             Some(p.source),
                             loc,
-                            b"export from cannot be used with \"type\" attribute",
+                            b"export from cannot be used with \"bunBakeGraph\" attribute",
                         );
                     }
 
                     let import_record_index =
                         p.add_import_record(ImportKind::Stmt, parsed_path.loc, parsed_path.text);
+                    if !parsed_path.attributes.is_empty() {
+                        p.set_import_record_attributes(import_record_index, &parsed_path);
+                    }
                     let path_name = fs::PathName::init(parsed_path.text);
                     let namespace_ref = {
                         use std::io::Write as _;

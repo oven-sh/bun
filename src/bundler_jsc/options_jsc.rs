@@ -54,6 +54,7 @@ pub fn loader_from_js(
             | bun_ast::Loader::Sqlite
             | bun_ast::Loader::SqliteEmbedded
             | bun_ast::Loader::Html
+            | bun_ast::Loader::Bytes
     ) {
         return Err(global.throw_invalid_arguments(format_args!(
             "loader \"{}\" is not supported in Bun.Transpiler",

@@ -93,9 +93,8 @@ use crate::{JSGlobalObject, JSValue, Strong};
 /// Common pattern: Start strong, downgrade to weak when idle, upgrade to strong when active.
 /// See ServerWebSocket, UDPSocket, MySQLConnection, and ValkeyClient for examples.
 ///
-/// `JsRef` is `!Send + !Sync` (transitively via `JSValue` and `Strong`): the
-/// `StrongRootBlock` slot backing `Strong` hangs off the per-VM JSVMClientData
-/// and must be dropped on the JS thread.
+/// `JsRef` is `!Send + !Sync` (transitively via `JSValue` and `Strong`): a
+/// `Strong` must be dropped on the JS thread.
 pub enum JsRef {
     Weak(JSValue),
     Strong(Strong),
@@ -149,7 +148,7 @@ impl JsRef {
         match self {
             JsRef::Weak(_) => {}
             JsRef::Strong(_) => {
-                // `Strong`'s `Drop` releases the block slot when `*self` is
+                // `Strong`'s `Drop` releases the slot when `*self` is
                 // overwritten below, so no explicit deinit is needed.
             }
             JsRef::Finalized => {
@@ -227,7 +226,7 @@ impl JsRef {
 
     pub fn finalize(&mut self) {
         // Overwriting `*self` drops the prior variant (releasing the `Strong`
-        // block slot via its `Drop`), so no explicit deinit step is needed.
+        // slot via its `Drop`), so no explicit deinit step is needed.
         // External `jsref.deinit()` callers become `*jsref = JsRef::empty()`.
         *self = JsRef::Finalized;
     }

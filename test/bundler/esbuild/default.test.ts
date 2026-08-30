@@ -1163,9 +1163,9 @@ describe.concurrent("bundler", () => {
       const json = JSON.parse(api.readFile("/Users/user/project/out/entry.js.map"));
       api.expectFile("/Users/user/project/out/entry.js").not.toContain(`//# sourceMappingURL`);
       api.expectFile("/Users/user/project/out/entry.js").toContain(`//# debugId=${json.debugId}`);
-      // see src/sourcemap/sourcemap.zig DebugIDFormatter for more info
+      // see src/sourcemap/lib.rs DebugIDFormatter for more info
       expect(json.debugId).toMatch(/^[A-F0-9]{32}$/);
-      expect(json.debugId.endsWith("64756e2164756e21"));
+      expect(Buffer.from(json.debugId.slice(16), "hex").toString()).toBe("bun!bun!");
     },
     run: {
       stdout: "hi",
@@ -1186,9 +1186,9 @@ describe.concurrent("bundler", () => {
       const json = JSON.parse(api.readFile("/Users/user/project/out/entry.js.map"));
       api.expectFile("/Users/user/project/out/entry.js").toContain(`//# sourceMappingURL=entry.js.map`);
       api.expectFile("/Users/user/project/out/entry.js").toContain(`//# debugId=${json.debugId}`);
-      // see src/sourcemap/sourcemap.zig DebugIDFormatter for more info
+      // see src/sourcemap/lib.rs DebugIDFormatter for more info
       expect(json.debugId).toMatch(/^[A-F0-9]{32}$/);
-      expect(json.debugId.endsWith("64756e2164756e21"));
+      expect(Buffer.from(json.debugId.slice(16), "hex").toString()).toBe("bun!bun!");
     },
     run: {
       stdout: "hi",
@@ -1206,9 +1206,12 @@ describe.concurrent("bundler", () => {
     outdir: "/Users/user/project/out",
     sourceMap: "inline",
     onAfterBundle(api) {
-      api
-        .expectFile("/Users/user/project/out/entry.js")
-        .toContain(`//# sourceMappingURL=data:application/json;base64,`);
+      const code = api.readFile("/Users/user/project/out/entry.js");
+      expect(code).toContain(`//# sourceMappingURL=data:application/json;base64,`);
+      const json = JSON.parse(atob(code.slice(code.lastIndexOf("base64,") + "base64,".length).trim()));
+      expect(code).toContain(`//# debugId=${json.debugId}`);
+      expect(json.debugId).toMatch(/^[A-F0-9]{32}$/);
+      expect(Buffer.from(json.debugId.slice(16), "hex").toString()).toBe("bun!bun!");
     },
     run: {
       stdout: "hi",

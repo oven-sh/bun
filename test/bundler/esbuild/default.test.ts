@@ -4624,35 +4624,68 @@ describe.concurrent("bundler", () => {
       stdout: "1\n2",
     },
   });
-  // TODO: this doesnt warn in esbuild ???
-  // itBundled("default/DefineAssignWarning", {
-  //   // GENERATED
-  //   files: {
-  //     "/read.js": /* js */ `
-  //       console.log(
-  //         [a, b.c, b['c']],
-  //         [d, e.f, e['f']],
-  //         [g, h.i, h['i']],
-  //       )
-  //     `,
-  //     "/write.js": /* js */ `
-  //       console.log(
-  //         [a = 0, b.c = 0, b['c'] = 0],
-  //         [d = 0, e.f = 0, e['f'] = 0],
-  //         [g = 0, h.i = 0, h['i'] = 0],
-  //       )
-  //     `,
-  //   },
-  //   entryPoints: ["/read.js", "/write.js"],
-  //   define: {
-  //     a: "null",
-  //     "b.c": "null",
-  //     d: "ident",
-  //     "e.f": "ident",
-  //     g: "dot.chain",
-  //     "h.i": "dot.chain",
-  //   },
-  // });
+  // A define with a constant value (`a`) is only substituted where it is read;
+  // as an assignment target the identifier stays as written, since `null = 0`
+  // is a syntax error. esbuild also logs an "assign-to-define" warning there,
+  // bun does not. A define whose value is an identifier (`d`) is substituted
+  // in both positions.
+  itBundled("default/DefineAssignWarning", {
+    files: {
+      "/read.js": /* js */ `
+        capture(a);
+        capture(d);
+      `,
+      "/write.js": /* js */ `
+        capture(a = 1);
+        capture(a += 1);
+        capture(a++);
+        capture(--a);
+        capture([a] = [3]);
+        capture({ x: a } = { x: 4 });
+        capture(a ??= 5);
+        for (a in { 5: 0 });
+        for (a of [6]);
+        capture(d = 7);
+        console.log(a, globalThis.a, globalThis.ident);
+      `,
+    },
+    entryPoints: ["/read.js", "/write.js"],
+    define: {
+      a: "null",
+      d: "ident",
+    },
+    runtimeFiles: {
+      // The output is an ES module, so the globals it assigns to must exist.
+      "/test.js": /* js */ `
+        globalThis.capture = x => x;
+        globalThis.a = undefined;
+        globalThis.ident = undefined;
+        await import("./out/write.js");
+      `,
+    },
+    onAfterBundle(api) {
+      expect(api.captureFile("/out/read.js")).toEqual(["null", "ident"]);
+      expect(api.captureFile("/out/write.js")).toEqual([
+        "a = 1",
+        "a += 1",
+        "a++",
+        "--a",
+        "[a] = [3]",
+        "{ x: a } = { x: 4 }",
+        "a ??= 5",
+        "ident = 7",
+      ]);
+      const write = api.readFile("/out/write.js");
+      expect(write).toContain("for (a in { 5: 0 })");
+      expect(write).toContain("for (a of [6])");
+    },
+    run: {
+      file: "/test.js",
+      // The read of `a` is replaced with the define, the writes went to the
+      // real global.
+      stdout: "null 6 7",
+    },
+  });
   itBundled("default/KeepNamesTreeShaking", {
     todo: true, // TODO: Full keepNames implementation with Object.defineProperty
     files: {

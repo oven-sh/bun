@@ -349,6 +349,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             });
                         } else if p.options.bundle
                             && name == b"id"
+                            && !identifier_opts.is_delete_target()
                             && identifier_opts.assign_target() == js_ast::AssignTarget::None
                         {
                             // inline module.id
@@ -356,6 +357,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             return Some(p.new_expr(e_string_init(p.source.path.pretty), name_loc));
                         } else if p.options.bundle
                             && name == b"filename"
+                            && !identifier_opts.is_delete_target()
                             && identifier_opts.assign_target() == js_ast::AssignTarget::None
                         {
                             // inline module.filename
@@ -365,6 +367,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             );
                         } else if p.options.bundle
                             && name == b"path"
+                            && !identifier_opts.is_delete_target()
                             && identifier_opts.assign_target() == js_ast::AssignTarget::None
                         {
                             // inline module.path
@@ -443,7 +446,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
                 js_ast::ExprData::EString(str_) => {
-                    if p.options.features.minify_syntax {
+                    if p.options.features.minify_syntax
+                        && !identifier_opts.is_delete_target()
+                        && identifier_opts.assign_target() == js_ast::AssignTarget::None
+                    {
                         // minify "long-string".length to 11
                         if name == b"length" {
                             if let Some(len) = e_string_javascript_length(&str_) {
@@ -493,11 +499,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
                 js_ast::ExprData::EImportMeta(_) => {
-                    if name == b"main" {
+                    let can_inline = !identifier_opts.is_delete_target()
+                        && identifier_opts.assign_target() == js_ast::AssignTarget::None;
+
+                    if can_inline && name == b"main" {
                         return Some(p.value_for_import_meta_main(false, target.loc));
                     }
 
-                    if name == b"hot" {
+                    if can_inline && name == b"hot" {
                         return Some(Expr {
                             data: js_ast::ExprData::ESpecial(
                                 if p.options.features.hot_module_reloading {
@@ -511,9 +520,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
 
                     // Inline import.meta properties for Bake
-                    if p.options.framework.is_some()
-                        || (p.options.bundle
-                            && p.options.output_format == js_parser::options::Format::Cjs)
+                    if can_inline
+                        && (p.options.framework.is_some()
+                            || (p.options.bundle
+                                && p.options.output_format == js_parser::options::Format::Cjs))
                     {
                         if name == b"dir" || name == b"dirname" {
                             // Inline import.meta.dir
@@ -665,6 +675,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                     E::Special::HotEnabled | E::Special::HotDisabled => {
                         let enabled = p.options.features.hot_module_reloading;
+                        // Only the disabled rewrites produce values; the enabled ones are `hmr.<name>` references.
+                        if !enabled
+                            && (identifier_opts.is_delete_target()
+                                || identifier_opts.assign_target() != js_ast::AssignTarget::None)
+                        {
+                            return None;
+                        }
                         if name == b"data" {
                             return Some(if enabled {
                                 Expr {

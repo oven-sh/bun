@@ -509,6 +509,36 @@ describe("bundler", () => {
       stdout: '[[{"xyz":456},456],[{"xyz":123},123],[{"xyz":456},456],[{"xyz":123},123]]',
     },
   });
+  itBundled("cjs2esm/DeleteExportsPropertyDeopt", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as lib from './lib.js';
+        console.log(lib.a, lib.b);
+      `,
+      "/lib.js": /* js */ `
+        exports.a = 1;
+        exports.b = 2;
+        delete exports.a;
+      `,
+    },
+    cjs2esm: { unhandled: ["/lib.js"] },
+    run: { stdout: "undefined 2" },
+  });
+  itBundled("cjs2esm/DeleteModuleExportsPropertyDeopt", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as lib from './lib.js';
+        console.log(lib.a, lib.b);
+      `,
+      "/lib.js": /* js */ `
+        module.exports.a = 1;
+        module.exports.b = 2;
+        delete module.exports.a;
+      `,
+    },
+    cjs2esm: { unhandled: ["/lib.js"] },
+    run: { stdout: "undefined 2" },
+  });
   // `delete (null ?? exports.a)` evaluates to a value, so the result is `true`
   // with no effect on the property. Under cjs2esm, `exports.a` is rewritten to
   // an `ECommonjsExportIdentifier`; the printer has to re-wrap it as `(0, ...)`

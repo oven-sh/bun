@@ -502,36 +502,48 @@ pub mod defines {
     }
 
     impl Define {
-        /// Hash define `(key, value)` pairs and `--drop` entries. Both lists
-        /// are sorted first, so the order they were given in does not matter,
-        /// and every entry is length-prefixed, so two different inputs cannot
-        /// produce the same byte stream. Returns `None` when there is nothing
-        /// to hash, so a configuration without them adds nothing to the
-        /// runtime transpiler cache key.
+        /// Hash the user define `(key, value)` pairs, the inlined env define
+        /// pairs and the `--drop` entries. The three lists stay separate
+        /// sections: `init` inserts the env pairs after the user pairs and
+        /// `DefineData::merge` keeps the later value, so the same pair means a
+        /// different table depending on its source. Each list is sorted, so
+        /// the order the entries were given in does not matter, and each
+        /// section is prefixed with its length and each entry with its byte
+        /// length, so two different inputs cannot produce the same byte
+        /// stream. Returns `None` when there is nothing to hash, so a
+        /// configuration without them adds nothing to the runtime transpiler
+        /// cache key.
         pub fn hash_user_inputs<'i>(
             defines: impl IntoIterator<Item = (&'i [u8], &'i [u8])>,
+            env_defines: impl IntoIterator<Item = (&'i [u8], &'i [u8])>,
             drop: impl IntoIterator<Item = &'i [u8]>,
         ) -> Option<u64> {
             let mut defines: Vec<(&[u8], &[u8])> = defines.into_iter().collect();
+            let mut env_defines: Vec<(&[u8], &[u8])> = env_defines.into_iter().collect();
             let mut drop: Vec<&[u8]> = drop.into_iter().filter(|item| !item.is_empty()).collect();
-            if defines.is_empty() && drop.is_empty() {
+            if defines.is_empty() && env_defines.is_empty() && drop.is_empty() {
                 return None;
             }
             defines.sort_unstable();
+            env_defines.sort_unstable();
             drop.sort_unstable();
             drop.dedup();
 
             let mut hasher = bun_wyhash::Wyhash::init(0);
-            for (key, value) in defines {
-                hasher.update(&(key.len() as u64).to_le_bytes());
-                hasher.update(key);
-                hasher.update(&(value.len() as u64).to_le_bytes());
-                hasher.update(value);
+            let mut update = |bytes: &[u8]| {
+                hasher.update(&(bytes.len() as u64).to_le_bytes());
+                hasher.update(bytes);
+            };
+            for pairs in [defines, env_defines] {
+                update(&(pairs.len() as u64).to_le_bytes());
+                for (key, value) in pairs {
+                    update(key);
+                    update(value);
+                }
             }
-            hasher.update(b"drop");
+            update(&(drop.len() as u64).to_le_bytes());
             for item in drop {
-                hasher.update(&(item.len() as u64).to_le_bytes());
-                hasher.update(item);
+                update(item);
             }
             Some(hasher.final_())
         }

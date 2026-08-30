@@ -954,19 +954,15 @@ pub(crate) fn defines_from_transform_options(
             .keys()
             .iter()
             .zip(user_defines.values().iter())
-            .map(|(k, v)| (k.as_ref(), v.as_ref()))
-            .chain(
-                environment_defines
-                    .keys()
-                    .iter()
-                    .zip(environment_defines.values().iter())
-                    .filter_map(|(k, v)| match &v.value {
-                        defines::DefineValue::EString(s) if s.is_utf8() => {
-                            Some((k.as_ref(), s.slice8()))
-                        }
-                        _ => None,
-                    }),
-            ),
+            .map(|(k, v)| (k.as_ref(), v.as_ref())),
+        environment_defines
+            .keys()
+            .iter()
+            .zip(environment_defines.values().iter())
+            .filter_map(|(k, v)| match &v.value {
+                defines::DefineValue::EString(s) if s.is_utf8() => Some((k.as_ref(), s.slice8())),
+                _ => None,
+            }),
         drop.iter().copied(),
     );
 

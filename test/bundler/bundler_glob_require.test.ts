@@ -741,3 +741,33 @@ test.skipIf(isWindows)("glob-require/SymlinkedFileIsBundled", async () => {
   expect(stdout).toBe("REAL-A\n");
   expect(exitCode).toBe(0);
 });
+
+// A stem alias is speculative. When a custom --extension-order cannot probe
+// the matched extension, the build must not fail on the alias record.
+test("glob-require/StemAliasCustomExtensionOrder", async () => {
+  using dir = tempDir("bundler-glob-extorder", {
+    "entry.js": `const which = process.env.WHICH || "foo.mjs";\nconsole.log(require("./mods/" + which));`,
+    "mods/foo.mjs": `module.exports = "mjs";`,
+  });
+
+  await using build = Bun.spawn({
+    cmd: [bunExe(), "build", "--target=bun", "--extension-order", ".ts,.js", "./entry.js", "--outfile=out.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [, buildStderr, buildExitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+  expect(buildStderr).toBe("");
+  expect(buildExitCode).toBe(0);
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "./out.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("mjs\n");
+  expect(exitCode).toBe(0);
+});

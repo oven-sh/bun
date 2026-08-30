@@ -1121,22 +1121,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         matches.sort();
         matches.dedup();
 
-        let mut keys: Vec<&'a [u8]> = Vec::with_capacity(matches.len() * 2);
+        let mut keys: Vec<(&'a [u8], bool)> = Vec::with_capacity(matches.len() * 2);
         for m in matches.iter() {
-            keys.push(self.arena.alloc_slice_copy(m));
+            keys.push((self.arena.alloc_slice_copy(m), false));
         }
         // `require("./src/" + name)` passes the stem `./src/cat` for
         // `./src/cat.js`, so also alias each stem the runtime string can
         // produce (it must end with the static text after the last placeholder).
         let static_suffix = &shape[strings::last_index_of_char(shape, 0).map_or(0, |i| i + 1)..];
         for i in 0..matches.len() {
-            let Some(stem) = Self::glob_resolvable_stem(keys[i]) else {
+            let Some(stem) = Self::glob_resolvable_stem(keys[i].0) else {
                 continue;
             };
-            if !stem.ends_with(static_suffix) || keys.contains(&stem) {
+            if !stem.ends_with(static_suffix) || keys.iter().any(|&(k, _)| k == stem) {
                 continue;
             }
-            keys.push(stem);
+            keys.push((stem, true));
         }
         keys.sort();
 
@@ -1149,13 +1149,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let arena = self.arena;
         let mut properties: BumpVec<'_, G::Property> = BumpVec::with_capacity_in(keys.len(), arena);
-        for key in keys {
+        for (key, is_stem) in keys {
             let import_record_index = self.add_import_record(kind, loc, key);
             {
                 let record = &mut self.import_records.items_mut()[import_record_index as usize];
+                // A stem is a speculative alias the parser invented. When the
+                // configured extension order cannot resolve it, disable the
+                // entry instead of failing the build.
                 record.flags.set(
                     bun_ast::ImportRecordFlags::HANDLES_IMPORT_ERRORS,
-                    handles_import_errors,
+                    handles_import_errors || is_stem,
                 );
                 if let Some(state) = import_state {
                     if let Some(loader) = state.import_loader {

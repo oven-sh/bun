@@ -1468,12 +1468,9 @@ mod vm_loader_ctx {
                 // Short-lived `&mut Resolver` (not `&mut VirtualMachine`) for
                 // the call — narrows the borrow re-entrant JS could alias.
                 match (*this).transpiler.resolver.read_dir_info(dir) {
-                    Ok(Some(dir_info)) => {
-                        dir_info
-                            .package_json()
-                            .or(dir_info.enclosing_package_json)
-                            .map(core::ptr::from_ref::<PackageJSON>)
-                    }
+                    Ok(Some(dir_info)) => dir_info
+                        .package_json_for_module_type
+                        .map(core::ptr::from_ref::<PackageJSON>),
                     _ => None,
                 }
             },
@@ -2968,9 +2965,7 @@ fn transpile_source_code_inner(
                                         .resolver
                                         .read_dir_info(source.path.name().dir)
                                 } {
-                                    Ok(Some(dir_info)) => {
-                                        dir_info.package_json().or(dir_info.enclosing_package_json)
-                                    }
+                                    Ok(Some(dir_info)) => dir_info.package_json_for_module_type,
                                     _ => None,
                                 }
                             });
@@ -3215,10 +3210,9 @@ fn transpile_source_code_inner(
                                 // re-entrant on the JS thread and returns a
                                 // stable cache slot.
                                 match unsafe { (*jsc_vm).transpiler.resolver.read_dir_info(dir) } {
-                                    Ok(Some(dir_info)) => dir_info
-                                        .package_json()
-                                        .or(dir_info.enclosing_package_json)
-                                        .map(|p| p.module_type),
+                                    Ok(Some(dir_info)) => {
+                                        dir_info.package_json_for_module_type.map(|p| p.module_type)
+                                    }
                                     _ => None,
                                 }
                             })
@@ -3940,8 +3934,12 @@ struct LoaderResult<'a> {
     path: Fs::Path<'a>,
     is_main: bool,
     specifier: &'a [u8],
+    /// The nearest package.json (`DirInfo::package_json_for_module_type`).
     /// Always `None` for non-JS-like loaders (not needed there).
     package_json: Option<&'a bun_resolver::package_json::PackageJSON>,
+    /// The format the path declares (`bun_resolver::module_type_for_file`),
+    /// the parser's hint for a file whose contents use neither format's syntax.
+    module_type: ModuleType,
 }
 
 /// `options.getLoaderAndVirtualSource` — high-tier body.
@@ -4061,18 +4059,22 @@ unsafe fn get_loader_and_virtual_source<'a>(
     // SAFETY: per fn contract.
     let is_main = specifier == unsafe { &*jsc_vm }.main();
 
-    // package.json sniff for `.js`/`.ts` module-type.
     let dir = path.name().dir;
     let is_js_like = loader.map(|l| l.is_java_script_like()).unwrap_or(true);
     let package_json = if is_js_like && bun_paths::is_absolute(dir) {
         // SAFETY: per fn contract — `transpiler.resolver` is a value field of
         // the VM; `read_dir_info` is re-entrant on the JS thread.
         match unsafe { (*jsc_vm).transpiler.resolver.read_dir_info(dir) } {
-            Ok(Some(dir_info)) => dir_info.package_json().or(dir_info.enclosing_package_json),
+            Ok(Some(dir_info)) => dir_info.package_json_for_module_type,
             _ => None,
         }
     } else {
         None
+    };
+    let module_type = if is_js_like {
+        bun_resolver::module_type_for_file(path.name().ext, package_json)
+    } else {
+        ModuleType::Unknown
     };
 
     Ok(LoaderResult {
@@ -4082,6 +4084,7 @@ unsafe fn get_loader_and_virtual_source<'a>(
         is_main,
         specifier,
         package_json,
+        module_type,
     })
 }
 
@@ -4251,35 +4254,7 @@ pub unsafe extern "C" fn Bun__transpileFile(
         }
     }
 
-    // ── module_type sniff from extension / package.json ─────────────────────
-    let module_type: ModuleType = 'brk: {
-        let ext = lr.path.name().ext;
-        // regex /\.[cm][jt]s$/
-        if ext.len() == b".cjs".len() {
-            if ext == b".cjs" {
-                break 'brk ModuleType::Cjs;
-            }
-            if ext == b".mjs" {
-                break 'brk ModuleType::Esm;
-            }
-            if ext == b".cts" {
-                break 'brk ModuleType::Cjs;
-            }
-            if ext == b".mts" {
-                break 'brk ModuleType::Esm;
-            }
-        }
-        // regex /\.[jt]s$/
-        if ext.len() == b".ts".len() && (ext == b".js" || ext == b".ts") {
-            // Use the package.json module type if it exists.
-            break 'brk lr
-                .package_json
-                .map(|pkg| pkg.module_type)
-                .unwrap_or(ModuleType::Unknown);
-        }
-        // For JSX/TSX and other extensions, let the file contents decide.
-        ModuleType::Unknown
-    };
+    let module_type = lr.module_type;
     let pkg_name: Option<&[u8]> = lr
         .package_json
         .and_then(|pkg| (!pkg.name.is_empty()).then_some(&*pkg.name));
@@ -4335,6 +4310,7 @@ pub unsafe extern "C" fn Bun__transpileFile(
                     &lr.path,
                     referrer.clone(),
                     concurrent_loader,
+                    module_type,
                     lr.package_json,
                 )
             };

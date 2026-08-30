@@ -4354,10 +4354,7 @@ impl VirtualMachine {
             Ok(lr) => lr,
             Err(_) => return Err(crate::CrateError::ModuleNotFound),
         };
-        let module_type = lr
-            .package_json
-            .map(|pkg| pkg.module_type)
-            .unwrap_or(bun_bundler::options::ModuleType::Unknown);
+        let module_type = bun_resolver::module_type_for_file(lr.path.name().ext, lr.package_json);
 
         // A drop-guard so both the normal and error paths reset the arena on
         // the right edge.

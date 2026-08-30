@@ -119,6 +119,14 @@ pub struct DirInfo {
     // ergonomics. If a write is ever added, retype to `Option<NonNull<_>>`.
     pub enclosing_package_json: Option<&'static PackageJSON>,
 
+    /// The package.json whose `"type"` field decides the module format of the
+    /// files in this directory that have no format-specific extension
+    /// (`.cjs`/`.mjs`): the nearest one up the tree, with or without a
+    /// `"name"` (Node's LOOKUP_PACKAGE_SCOPE). A nameless `{"type":"commonjs"}`
+    /// in `dist/cjs/` is the common case `enclosing_package_json` skips. Not
+    /// inherited across a `node_modules` directory.
+    pub package_json_for_module_type: Option<&'static PackageJSON>,
+
     // `NonNull` (not `&'static`) so `enqueue_dependency_to_resolve` can write
     // `package_manager_package_id` back through it without a const→mut
     // provenance cast. Read via `.package_json_for_dependencies()`.
@@ -148,6 +156,7 @@ impl Default for DirInfo {
             package_json_for_browser_field: None,
             enclosing_tsconfig_json: None,
             enclosing_package_json: None,
+            package_json_for_module_type: None,
             package_json_for_dependencies: None,
             abs_path: b"",
             entries: Index::default(),

@@ -1571,15 +1571,8 @@ impl<'a> Resolver<'a> {
                 }
             }
 
-            // If you use mjs or mts, then you're using esm
-            // If you use cjs or cts, then you're using cjs
-            // This should win out over the module type from package.json
-            if !kind.is_from_css()
-                && module_type == options::ModuleType::Unknown
-                && name.ext.len() == 4
-            {
-                module_type =
-                    module_type_from_ext(name.ext).unwrap_or(options::ModuleType::Unknown);
+            if !kind.is_from_css() && module_type == options::ModuleType::Unknown {
+                module_type = module_type_for_file(name.ext, dir.package_json_for_module_type);
             }
 
             // Probe the listing in one `entries_mutex` critical section: a
@@ -1676,12 +1669,6 @@ impl<'a> Resolver<'a> {
 
                     path.set_realpath(symlink);
                 }
-            }
-        }
-
-        if !kind.is_from_css() && module_type == options::ModuleType::Unknown {
-            if let Some(pkg) = result.package_json_ref() {
-                module_type = pkg.module_type;
             }
         }
 
@@ -6401,6 +6388,12 @@ impl<'a> Resolver<'a> {
             }
         }
 
+        if !info.is_node_modules() {
+            info.package_json_for_module_type = info
+                .package_json()
+                .or(parent.and_then(|parent_| parent_.package_json_for_module_type));
+        }
+
         // Record if this directory has a tsconfig.json or jsconfig.json file
         if self.opts.load_tsconfig_json {
             let mut tsconfig_path: Option<&[u8]> = None;
@@ -6753,6 +6746,26 @@ bun_core::comptime_string_map! {
 #[inline]
 fn module_type_from_ext(ext: &[u8]) -> Option<options::ModuleType> {
     MODULE_TYPE_FROM_EXT.get(ext).copied()
+}
+
+/// The module format a file's path declares, before its contents are read.
+/// `.mjs`/`.mts` and `.cjs`/`.cts` decide by themselves. Every other
+/// extension defers to `package_json`, the nearest package.json up the tree
+/// ([`DirInfo::package_json_for_module_type`](crate::DirInfo::package_json_for_module_type)).
+/// `Unknown` leaves the decision to the parser's content sniff.
+///
+/// Every path that parses a file at runtime goes through this one rule, so a
+/// file's format does not depend on how it is loaded. The bundler's resolver
+/// uses it too (`finalize_result`), with one exception: a file reached through
+/// a package.json `exports` map keeps the `import`/`require` condition that
+/// matched, or the package root's `"type"` (`load_node_modules`).
+pub fn module_type_for_file(ext: &[u8], package_json: Option<&PackageJSON>) -> options::ModuleType {
+    if ext.len() == 4 {
+        if let Some(module_type) = module_type_from_ext(ext) {
+            return module_type;
+        }
+    }
+    package_json.map_or(options::ModuleType::Unknown, |pkg| pkg.module_type)
 }
 
 pub struct Dirname;

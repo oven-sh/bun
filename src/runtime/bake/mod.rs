@@ -309,7 +309,8 @@ impl Framework {
             }
 
             for drop_item in bundler_options.drop.keys() {
-                if !drop_item.is_empty() {
+                // `debugger` is a statement drop, `configure_defines` already set `drop_debugger`
+                if !drop_item.is_empty() && *drop_item != b"debugger" {
                     let parsed = bun_bundler::defines::DefineData::parse(
                         drop_item, b"", true, true, log, arena,
                     )?;

@@ -4848,29 +4848,29 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             IdentifierOpts::new().with_was_originally_identifier(true),
         );
         if parts.len() > 1 {
-            return Ok(self.member_expression(loc, value, &parts[1..]));
+            return Ok(self.member_expression(loc, value, &parts[1..], IdentifierOpts::default()));
         }
 
         Ok(value)
     }
 
+    /// `last_link_opts` applies to the final property access only: in `a.b.c = 1` only `c` is the target.
     fn member_expression(
         &mut self,
         loc: bun_ast::Loc,
         initial_value: Expr,
         parts: &[&'a [u8]],
+        last_link_opts: IdentifierOpts,
     ) -> Expr {
         let mut value = initial_value;
 
-        for part in parts {
-            if let Some(rewrote) = self.maybe_rewrite_property_access(
-                loc,
-                value,
-                part,
-                loc,
-                // All defaults on the packed-u8 IdentifierOpts.
-                IdentifierOpts::default(),
-            ) {
+        for (i, part) in parts.iter().enumerate() {
+            let opts = if i + 1 == parts.len() {
+                last_link_opts
+            } else {
+                IdentifierOpts::default()
+            };
+            if let Some(rewrote) = self.maybe_rewrite_property_access(loc, value, part, loc, opts) {
                 value = rewrote;
             } else {
                 value = self.new_expr(
@@ -5194,6 +5194,25 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         } else {
             expr
         }
+    }
+
+    /// A top-level `this` with a user `--define this=...` applied first.
+    pub(crate) fn value_for_this_with_defines(
+        &mut self,
+        loc: bun_ast::Loc,
+        assign_target: js_ast::AssignTarget,
+        is_delete_target: bool,
+    ) -> Option<Expr> {
+        if self.fn_only_data_visit.is_this_nested {
+            return None;
+        }
+        let defines = self.define;
+        if let Some(data) = defines.identifiers.get(b"this".as_slice()) {
+            if !data.valueless() {
+                return Some(self.value_for_define(loc, assign_target, is_delete_target, data));
+            }
+        }
+        self.value_for_this(loc)
     }
 
     pub(crate) fn value_for_this(&mut self, loc: bun_ast::Loc) -> Option<Expr> {
@@ -6272,24 +6291,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // real Expr.Data by contract.
         let value = define_data.value;
         match value {
-            js_ast::ExprData::EIdentifier(id) => {
-                // Identifier defines always carry a name. Match the
-                // contract so `handle_identifier`'s trailing `find_symbol`
-                // rebind runs against the *resolved* scope ref, not the
-                // define-time ref silently passed through with `None`.
+            js_ast::ExprData::EIdentifier(_) => {
+                // An identifier define stores its member chain (`a.b.c`) in `original_name`
                 let original_name: &[u8] = define_data
                     .original_name()
                     .expect("identifier define must have original_name");
                 // SAFETY: `define_data` borrows `p.define: &'a Define`; the
                 // backing `original_name` bytes live for `'a`. Erase the local
-                // borrow lifetime to satisfy `handle_identifier`'s
-                // `Option<&'a [u8]>` param.
+                // borrow lifetime so the parts can be stored in the AST.
                 let original_name: &'a [u8] =
                     unsafe { bun_collections::detach_lifetime(original_name) };
-                return self.handle_identifier(
+                return self.instantiate_define_member_chain(
                     loc,
-                    id,
-                    Some(original_name),
+                    original_name,
                     IdentifierOpts::new()
                         .with_assign_target(assign_target)
                         .with_is_delete_target(is_delete_target)
@@ -6304,17 +6318,89 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Expr { data: value, loc }
     }
 
+    /// esbuild's `instantiateDefineExpr`: resolves the first part of `name`, then builds property accesses.
+    fn instantiate_define_member_chain(
+        &mut self,
+        loc: bun_ast::Loc,
+        name: &'a [u8],
+        opts: IdentifierOpts,
+    ) -> Expr {
+        let mut splitter = strings::split(name, b".");
+        let first: &'a [u8] = splitter.next().unwrap_or(name);
+        let mut rest: Vec<&'a [u8]> = Vec::new();
+        while let Some(part) = splitter.next() {
+            rest.push(part);
+        }
+
+        let value: Expr = match first {
+            b"null" => Expr {
+                loc,
+                data: js_ast::ExprData::ENull(E::Null),
+            },
+            b"undefined" => Expr {
+                loc,
+                data: js_ast::ExprData::EUndefined(E::Undefined),
+            },
+            b"this" => {
+                // Not `value_for_this_with_defines`: `--define this=this.x` must not recurse
+                match self.value_for_this(loc) {
+                    Some(value) => value,
+                    None => Expr {
+                        loc,
+                        data: js_ast::ExprData::EThis(E::This),
+                    },
+                }
+            }
+            b"import" if rest.first().is_some_and(|part| *part == b"meta") => {
+                rest.remove(0);
+                // The CommonJS wrapper takes an `import.meta` parameter when the module uses it
+                self.has_import_meta = true;
+                Expr {
+                    loc,
+                    data: js_ast::ExprData::EImportMeta(E::ImportMeta),
+                }
+            }
+            _ => {
+                let result = self.find_symbol(loc, first).expect("unreachable");
+                // In `a.b = 1` the target is the chain, so the head `a` is only read
+                let head_opts = if rest.is_empty() {
+                    opts
+                } else {
+                    IdentifierOpts::new().with_was_originally_identifier(true)
+                };
+                self.handle_identifier(
+                    loc,
+                    E::Identifier::init(result.r#ref)
+                        .with_must_keep_due_to_with_stmt(result.is_inside_with_scope)
+                        .with_can_be_removed_if_unused(true),
+                    None,
+                    head_opts,
+                )
+            }
+        };
+
+        if rest.is_empty() {
+            return value;
+        }
+        // The last link is the assignment or delete target, as the literal `a.b.c = 1` would be
+        self.member_expression(
+            loc,
+            value,
+            &rest,
+            IdentifierOpts::new()
+                .with_assign_target(opts.assign_target())
+                .with_is_delete_target(opts.is_delete_target()),
+        )
+    }
+
     // `parts` is `&[Box<[u8]>]` to match the active `DotDefine.parts:
     // Vec<Box<[u8]>>` shape (auto-derefs at call sites). The full draft uses
     // `StoreSlice<StoreStr>`; both index to a `[u8]` so the body is unchanged.
     pub(crate) fn is_dot_define_match(&mut self, expr: Expr, parts: &[Box<[u8]>]) -> bool {
+        // `a?.b` matches the define for `a.b`, as in esbuild
         match expr.data {
             js_ast::ExprData::EDot(ex) => {
                 if parts.len() > 1 {
-                    if ex.optional_chain.is_some() {
-                        return false;
-                    }
-                    // Intermediates must be dot expressions
                     let last = parts.len() - 1;
                     let is_tail_match = strings::eql(&parts[last], &ex.name);
                     return is_tail_match && self.is_dot_define_match(ex.target, &parts[..last]);
@@ -6323,18 +6409,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             js_ast::ExprData::EImportMeta(_) => {
                 return parts.len() == 2 && &*parts[0] == b"import" && &*parts[1] == b"meta";
             }
-            // Note: this behavior differs from esbuild
-            // esbuild does not try to match index accessors
-            // we do, but only if it's a UTF8 string
-            // the intent is to handle people using this form instead of E.Dot. So we really only want to do this if the accessor can also be an identifier
+            js_ast::ExprData::EThis(_) => {
+                // Only a top-level "this" can match a define
+                if !self.fn_only_data_visit.is_this_nested {
+                    return parts.len() == 1 && &*parts[0] == b"this";
+                }
+            }
+            // `a["b"]` matches the define for `a.b`. A UTF-16 (non-ASCII) literal is skipped: comparing it allocates.
             js_ast::ExprData::EIndex(index) => {
                 if parts.len() > 1 {
                     if let js_ast::ExprData::EString(mut s) = index.index.data {
                         if s.is_utf8() {
-                            if index.optional_chain.is_some() {
-                                return false;
-                            }
                             let last = parts.len() - 1;
+                            // `slice` flattens a rope left by a folded `"b" + "c"`
                             let is_tail_match = strings::eql(&parts[last], s.slice(self.arena));
                             return is_tail_match
                                 && self.is_dot_define_match(index.target, &parts[..last]);

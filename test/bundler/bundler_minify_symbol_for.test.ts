@@ -119,7 +119,7 @@ describe("bundler", () => {
     itBundled("minify/SymbolForEdgeCases", {
       files: {
         "/entry.js": /* js */ `
-          // Optional chaining - these are preserved because optional chaining has observable behavior
+          // Optional chaining - Symbol?.for matches the same known global as Symbol.for
           Symbol?.for("optional1");
           Symbol?.for?.("optional2");
           
@@ -149,9 +149,10 @@ describe("bundler", () => {
       onAfterBundle(api) {
         const output = api.readFile("/out.js");
 
-        // Optional chaining preserves the call because it has observable behavior (checking if Symbol exists)
-        expect(output).toContain("optional1");
-        expect(output).toContain("optional2");
+        // An unused Symbol?.for(...) is removed like Symbol.for(...), as esbuild does.
+        // `Symbol?.for("x")` has no side effect whether or not Symbol exists.
+        expect(output).not.toContain("optional1");
+        expect(output).not.toContain("optional2");
 
         // All the conditional/ternary expressions were optimized away completely
         // because they evaluate to unused Symbol.for calls

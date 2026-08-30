@@ -32,6 +32,17 @@ describeWithContainer("postgres json string parameters", { image: "postgres_plai
     expect(row).toEqual({ kind: "object", value: { a: "hello", b: 42 } });
   });
 
+  test("non-ASCII JSON text round-trips through the verbatim path", async () => {
+    await container.ready;
+    await using sql = new SQL(options());
+    // "café" is Latin-1 in JSC's 8-bit representation, "🚀"/"世界" force
+    // UTF-16, so one payload covers both transcode arms of the verbatim path.
+    const doc = { name: "caf\u00e9\u{1F680}", text: "\u4e16\u754c" };
+    const payload = JSON.stringify(doc);
+    const [row] = await sql`select jsonb_typeof(${payload}::jsonb) as kind, ${payload}::jsonb as value`;
+    expect(row).toEqual({ kind: "object", value: doc });
+  });
+
   test("json_to_recordset accepts a stringified array parameter", async () => {
     await container.ready;
     await using sql = new SQL(options());
@@ -64,12 +75,10 @@ describeWithContainer("postgres json string parameters", { image: "postgres_plai
   test("non-JSON string bound to ::json fails on the server", async () => {
     await container.ready;
     await using sql = new SQL(options());
-    let error: Error | undefined;
-    try {
-      await sql`select ${"not json"}::json as x`;
-    } catch (e) {
-      error = e as Error;
-    }
-    expect(error?.message).toMatch(/invalid input syntax for type json/);
+    // .execute() because `expect(query).rejects` on the lazy Query hangs:
+    // https://github.com/oven-sh/bun/issues/40949
+    await expect(sql`select ${"not json"}::json as x`.execute()).rejects.toThrow(
+      /invalid input syntax for type json/,
+    );
   });
 });

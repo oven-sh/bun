@@ -158,29 +158,25 @@ pub(crate) fn write_bind<Context: WriterContext>(
         // convert it to the binary representation. This minimizes the room
         // for mistakes on our end, such as stripping the timezone
         // differently than what Postgres does when given a timestamp with
-        // timezone.
-        let effective_tag = if tag.is_binary_format_supported() && value.is_string() {
+        // timezone. A string bound to json/jsonb already carries the JSON
+        // text, so send it verbatim (like node-postgres and postgres.js);
+        // stringifying it again would turn the document into a JSON string
+        // scalar. json/jsonb are text-format either way, so the format code
+        // written above does not change.
+        let effective_tag = if value.is_string()
+            && (tag.is_binary_format_supported()
+                || matches!(tag, types::Tag::json | types::Tag::jsonb))
+        {
             types::Tag::text
         } else {
             tag
         };
         match effective_tag {
             types::Tag::jsonb | types::Tag::json => {
-                // A string parameter already carries the JSON text. Send it
-                // verbatim (like node-postgres and postgres.js); stringifying
-                // it again would turn the document into a JSON string scalar.
-                let str = if value.is_string() {
-                    let str = BunString::from_js(value, global).map_err(js_error_to_postgres)?;
-                    if str.tag() == bun_core::Tag::Dead {
-                        return Err(AnyPostgresError::OutOfMemory);
-                    }
-                    str
-                } else {
-                    // Use jsonStringifyFast for SIMD-optimized serialization
-                    value
-                        .json_stringify_fast(global)
-                        .map_err(js_error_to_postgres)?
-                };
+                // Use jsonStringifyFast for SIMD-optimized serialization
+                let str = value
+                    .json_stringify_fast(global)
+                    .map_err(js_error_to_postgres)?;
                 let slice = str.to_utf8();
                 let l = writer.length()?;
                 writer.write(slice.slice())?;

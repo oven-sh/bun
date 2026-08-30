@@ -306,6 +306,9 @@ describe.concurrent("Bun.serve http2 protocol", () => {
     ["field name with @ [ ] ?", [...baseHeaders("/hello"), ["x-a@[b]?", "1"]]],
     ["field name with DEL", [...baseHeaders("/hello"), ["x-a\x7f", "1"]]],
     ["field name with a byte above 0x7f", [...baseHeaders("/hello"), ["x-a\xe9", "1"]]],
+    // HPACK allows a zero-length string, so lshpack decodes the field; the
+    // empty name fails RFC 9110 token grammar in validFieldName.
+    ["zero-length field name", [...baseHeaders("/hello"), ["", "x"]]],
     ["field value with a control byte", [...baseHeaders("/hello"), ["x-v", "a\x01b"]]],
     ["field value with ESC", [...baseHeaders("/hello"), ["x-v", "a\x1bb"]]],
   ] as [string, [string, string][]][]) {
@@ -1310,14 +1313,6 @@ describe.concurrent("Bun.serve http2 protocol", () => {
     expect(await raw.rst(1)).toBe(3);
     raw.headers(3, baseHeaders("/release-late-read"));
     await raw.body(3);
-    raw.close();
-  });
-
-  test("zero-length field name is rejected (HPACK) → GOAWAY", async () => {
-    const raw = await RawH2.connect(fx.port, secure);
-    raw.headers(1, [...baseHeaders("/hello"), ["", "x"]]);
-    const g = await raw.goaway();
-    expect([1, 9]).toContain(g.code);
     raw.close();
   });
 

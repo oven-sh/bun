@@ -5,8 +5,8 @@ import { mkdirSync, rmSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir, tls, tmpdirSync } from "harness";
 import { request } from "http";
 import { createServer } from "net";
-import { createServer as createTlsServer } from "tls";
 import { join } from "path";
+import { createServer as createTlsServer } from "tls";
 const tmp_dir = tmpdirSync();
 
 it("throws ENAMETOOLONG when socket path exceeds platform-specific limit", () => {

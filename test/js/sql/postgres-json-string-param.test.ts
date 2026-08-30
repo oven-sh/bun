@@ -35,12 +35,15 @@ describeWithContainer("postgres json string parameters", { image: "postgres_plai
   test("non-ASCII JSON text round-trips through the verbatim path", async () => {
     await container.ready;
     await using sql = new SQL(options());
-    // "café" is Latin-1 in JSC's 8-bit representation, "🚀"/"世界" force
-    // UTF-16, so one payload covers both transcode arms of the verbatim path.
-    const doc = { name: "caf\u00e9\u{1F680}", text: "\u4e16\u754c" };
-    const payload = JSON.stringify(doc);
-    const [row] = await sql`select jsonb_typeof(${payload}::jsonb) as kind, ${payload}::jsonb as value`;
-    expect(row).toEqual({ kind: "object", value: doc });
+    // A JS string is 8-bit or 16-bit as a whole, so two documents cover both
+    // transcode arms: "café" stays Latin-1, the emoji/CJK one forces UTF-16.
+    const latin1Doc = { name: "caf\u00e9" };
+    const utf16Doc = { name: "\u{1F680}", text: "\u4e16\u754c" };
+    for (const doc of [latin1Doc, utf16Doc]) {
+      const payload = JSON.stringify(doc);
+      const [row] = await sql`select jsonb_typeof(${payload}::jsonb) as kind, ${payload}::jsonb as value`;
+      expect(row).toEqual({ kind: "object", value: doc });
+    }
   });
 
   test("json_to_recordset accepts a stringified array parameter", async () => {

@@ -868,7 +868,4 @@ export default [
       },
     },
   }),
-  // define({
-  //   name: "Jest2",
-  // }),
 ];

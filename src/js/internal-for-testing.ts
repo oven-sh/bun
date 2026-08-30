@@ -731,12 +731,6 @@ export const translateNtStatusToE: (status: number) => string | undefined = $new
   1,
 );
 
-export const sysErrorNameFromLibuv: (errno: number) => string | undefined = $newRustFunction(
-  "sys/Error.rs",
-  "TestingAPIs.sysErrorNameFromLibuv",
-  1,
-);
-
 export const sigactionLayout: () =>
   | undefined
   | {
@@ -797,3 +791,11 @@ export const internalModulesLoadedFromBytecode: () => number = $newCppFunction(
   "jsInternalModulesLoadedFromBytecode",
   0,
 );
+
+// The bytecode `bun build --compile --bytecode` embeds for a builtin module, plus the external string table it embeds
+// beside it: internal module number `index` (null past the last), or `source` written in builtin syntax (@-intrinsics,
+// a function expression) compiled under `name`.
+export const internalModuleBytecode: {
+  (index: number): { name: string; bytecode: Uint8Array; strings: Uint8Array } | null;
+  (source: string, name: string): { name: string; bytecode: Uint8Array; strings: Uint8Array };
+} = $newCppFunction("InternalModuleRegistry.cpp", "jsInternalModuleBytecode", 2);

@@ -130,7 +130,7 @@ impl BuildMessage {
         object.put(
             global,
             b"namespace",
-            bun_string_jsc::create_utf8_for_js(global, location.namespace)?,
+            bun_string_jsc::create_utf8_for_js(global, &location.namespace)?,
         );
         object.put(global, b"line", JSValue::from(location.line));
         object.put(global, b"column", JSValue::from(location.column));

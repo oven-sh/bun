@@ -589,7 +589,7 @@ impl ClientSession {
         };
         client.state.response_stage = HTTPStage::Headers;
 
-        if let Err(err) = self.flush() {
+        if let Err(err) = self.pump_send_bodies() {
             self.fail_all(err);
             return;
         }
@@ -718,7 +718,7 @@ impl ClientSession {
         }
         self.rearm_timeout();
         encode::drain_send_body(self, stream_mut(stream), usize::MAX);
-        if let Err(err) = self.flush() {
+        if let Err(err) = self.pump_send_bodies() {
             self.fail_all(err);
         }
     }
@@ -825,8 +825,7 @@ impl ClientSession {
         if self.fatal_error.is_some() {
             return;
         }
-        encode::drain_send_bodies(self);
-        if let Err(err) = self.flush() {
+        if let Err(err) = self.pump_send_bodies() {
             return self.fail_all(err);
         }
 
@@ -882,12 +881,19 @@ impl ClientSession {
         self.maybe_release();
     }
 
-    fn handle_writable(&mut self) {
-        if let Err(err) = self.flush() {
-            return self.fail_all(err);
+    /// Drain and flush until backpressure or nothing is left: a full flush raises no onWritable.
+    fn pump_send_bodies(&mut self) -> Result<(), Error> {
+        loop {
+            let more = encode::drain_send_bodies(self);
+            let backpressured = self.flush()?;
+            if !more || backpressured {
+                return Ok(());
+            }
         }
-        encode::drain_send_bodies(self);
-        if let Err(err) = self.flush() {
+    }
+
+    fn handle_writable(&mut self) {
+        if let Err(err) = self.pump_send_bodies() {
             return self.fail_all(err);
         }
         self.reap_aborted();

@@ -864,7 +864,8 @@ pub(crate) fn schedule_barrel_deferred_imports(
         };
 
         let barrel_ir = &mut this.graph.ast.items_import_records_mut()[barrel_idx as usize];
-        if un_defer_record(barrel_ir, resolution.import_record_index as usize) {
+        let went_live = un_defer_record(barrel_ir, resolution.import_record_index as usize);
+        if went_live {
             // Resolve now: propagation below needs the source index.
             newly_scheduled +=
                 resolve_barrel_records(this, barrel_idx, &[resolution.import_record_index]);
@@ -888,6 +889,36 @@ pub(crate) fn schedule_barrel_deferred_imports(
                 alias: propagate_alias,
                 is_star: resolution.alias_is_star,
             });
+
+            // The record just went from deferred to live. Propagate every
+            // other alias this barrel imports through it, exactly as Phase 1
+            // seeding does for a record that is live when the barrel finishes
+            // parsing. Propagating only the alias that triggered the un-defer
+            // makes a downstream barrel's deferral set (and with it the
+            // symbol binding the linker produces) depend on parse completion
+            // order (#40657).
+            if went_live {
+                let named_imports = &this.graph.ast.items_named_imports()[barrel_idx as usize];
+                for ni in named_imports.values() {
+                    if ni.import_record_index != resolution.import_record_index {
+                        continue;
+                    }
+                    if ni.alias_is_star {
+                        queue.push(BarrelWorkItem {
+                            barrel_source_index: rec_si.get(),
+                            alias: b"",
+                            is_star: true,
+                        });
+                    } else if let Some(alias_ptr) = ni.alias {
+                        // Arena-backed `StoreStr`, valid for the bundler-arena lifetime.
+                        queue.push(BarrelWorkItem {
+                            barrel_source_index: rec_si.get(),
+                            alias: alias_ptr.slice(),
+                            is_star: false,
+                        });
+                    }
+                }
+            }
         }
 
         qi += 1;

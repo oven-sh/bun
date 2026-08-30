@@ -8,6 +8,7 @@ import {
   runInNewContext,
   runInThisContext,
   Script,
+  SourceTextModule,
 } from "node:vm";
 
 function capture(_: any, _1?: any) {}
@@ -920,6 +921,16 @@ test("can't use bytecode from a different script", () => {
   expect(secondScript.cachedDataRejected).toBeTrue();
   expect(firstScript.runInThisContext()).toBe(2);
   expect(secondScript.runInThisContext()).toBe(4);
+});
+
+test("SourceTextModule accepts the cachedData it produced", () => {
+  const source = `{ function inBlock() { return 1; } }\nexport default await Promise.resolve(inBlock);`; // module-only syntax, and a block function (strict semantics)
+  const cachedData = new SourceTextModule(source, { identifier: "m" }).createCachedData();
+  expect(cachedData.length).toBeGreaterThan(0);
+  expect(() => new SourceTextModule(source, { identifier: "m", cachedData })).not.toThrow(); // ERR_VM_MODULE_CACHED_DATA_REJECTED otherwise
+  expect(() => new SourceTextModule("export default 2;", { identifier: "m", cachedData })).toThrow(
+    expect.objectContaining({ code: "ERR_VM_MODULE_CACHED_DATA_REJECTED" }),
+  );
 });
 
 describe("Script compiles its source once and links that in every context it runs in", () => {

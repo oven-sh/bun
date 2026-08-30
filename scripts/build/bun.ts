@@ -95,8 +95,11 @@ function systemLibs(cfg: Config): string[] {
   if (cfg.freebsd) {
     // pthread/m: explicit on FreeBSD (not folded into libc).
     // execinfo: backtrace() — separate library on FreeBSD.
-    // kvm/procstat/elf/util: process introspection for node:os and crash handler.
-    libs.push("-lc", "-lpthread", "-lm", "-lexecinfo", "-lkvm", "-lprocstat", "-lelf", "-lutil");
+    // kvm/procstat/elf: process introspection for node:os and crash handler.
+    // libutil (openpty) is linked statically: its soname bumped .so.9 → .so.10
+    // between 14.x and 15.0, so a dynamic NEEDED entry from the 14.3 sysroot
+    // fails to load on 15.x (#40530). Every other lib here kept its soname.
+    libs.push("-lc", "-lpthread", "-lm", "-lexecinfo", "-lkvm", "-lprocstat", "-lelf", "-l:libutil.a");
   }
 
   if (cfg.windows) {
@@ -231,6 +234,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   const depLibs: string[] = [];
   const depObjects: string[] = [];
   const depIncludes: string[] = [];
+  const depDefines: string[] = [];
   // Outputs of deps that provide headers — used as implicit inputs on PCH/cc/
   // no-PCH cxx so a dep rebuild invalidates compiles that #include its headers
   // (the .a is the signal — see comment at the PCH step). Deps with no provided
@@ -247,6 +251,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     depObjects.push(...d.objects);
     depChecks.push(...d.checks);
     depIncludes.push(...d.includes);
+    depDefines.push(...d.defines);
     // d.outputs is the "headers are ready" signal: for nested-cmake/
     // prebuilt that's the .a/stamp (headers are undeclared side-effects),
     // for direct deps it's the generated-header set + source stamp.
@@ -261,11 +266,11 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
 
   const flags = computeFlags(cfg);
 
-  // Full include set: bun's own + all dep includes + buildDir (for the
-  // generated versions header).
+  // Full include / define set: bun's own + what deps provide + buildDir (for
+  // the generated versions header).
   const allIncludes = [...bunIncludes(cfg), cfg.buildDir, ...depIncludes];
   const includeFlags = allIncludes.map(inc => `-I${inc}`);
-  const defineFlags = flags.defines.map(d => `-D${d}`);
+  const defineFlags = [...flags.defines, ...depDefines].map(d => `-D${d}`);
 
   // Final flag arrays for compile.
   const cxxFlagsFull = [...flags.cxxflags, ...includeFlags, ...defineFlags];

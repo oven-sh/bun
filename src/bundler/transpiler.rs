@@ -1588,6 +1588,7 @@ impl<'a> Transpiler<'a> {
                     framework: None,
                     repl_mode: self.options.repl_mode,
                     lower_toml_datetimes: false,
+                    is_entry_point: false,
                 };
 
                 opts.features.emit_decorator_metadata = this_parse.emit_decorator_metadata;
@@ -3070,7 +3071,7 @@ impl<'a> Transpiler<'a> {
         output: &[u8],
     ) -> Box<[u8]> {
         let rel_to_root = bun_paths::resolve_path::relative_platform::<
-            bun_paths::resolve_path::platform::Loose,
+            bun_paths::resolve_path::platform::Auto,
             false,
         >(&self.options.root_dir, file_path_text);
         let pathname = Fs::PathName::init(rel_to_root);

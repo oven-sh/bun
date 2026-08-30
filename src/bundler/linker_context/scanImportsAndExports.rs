@@ -125,7 +125,6 @@ pub(crate) fn scan_imports_and_exports(
     let sorted_aliases: *mut [js_meta::SortedAndFilteredExportAliases] =
         meta.sorted_and_filtered_export_aliases;
     let cjs_export_copies: *mut [js_meta::CjsExportCopies] = meta.cjs_export_copies;
-    let entry_point_part_indices: *mut [Index] = meta.entry_point_part_index;
 
     {
         // Step 1: Figure out what modules must be CommonJS
@@ -824,7 +823,6 @@ pub(crate) fn scan_imports_and_exports(
                         ..Default::default()
                     },
                 )?;
-                col!(entry_point_part_indices)[id] = Index::part(entry_point_part_index);
 
                 // Pull in the "__toCommonJS" symbol if we need it due to being an entry point
                 if force_include_exports && output_format != Format::InternalBakeDev {
@@ -1525,11 +1523,11 @@ mod __css_validation {
                     data: bun_ast::range_data(
                         Some(&col_ref!(self.all_sources)[source_index as usize]),
                         range,
-                        bun_ast::alloc_print(format_args!(
-                            "The value of {} in the class {} is undefined.",
+                        bun_ast::alloc_print!(
+                            "<r>The value of <b>{}<r> in the class <b>{}<r> is undefined.",
                             bstr::BStr::new(property_name),
                             bstr::BStr::new(local_original_name),
-                        )),
+                        ),
                     )
                     .clone_line_text(self.log.clone_line_text),
                     notes: Box::<[bun_ast::Data]>::from(
@@ -1540,10 +1538,10 @@ mod __css_validation {
                                         [entry.value_ptr.source_index as usize],
                                 ),
                                 entry.value_ptr.range,
-                                bun_ast::alloc_print(format_args!(
+                                bun_ast::alloc_print!(
                                     "The first definition of {} is in this style rule:",
                                     bstr::BStr::new(property_name)
-                                )),
+                                ),
                             ),
                             bun_ast::Data {
                                 text: {

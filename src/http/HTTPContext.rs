@@ -10,10 +10,9 @@ use crate::{
     get_cert_error_from_no, h2,
 };
 use bun_boringssl::ssl_ctx_setup;
-use bun_boringssl_sys::SSL_CTX;
+use bun_boringssl_sys::{OwnedSslCtx, SSL_CTX};
 use bun_collections::{HiveArray, TaggedPtrUnion};
 use bun_core::strings;
-use bun_core::{self, FeatureFlags};
 use bun_ptr::RefPtr;
 use bun_uws as uws;
 
@@ -39,15 +38,12 @@ pub struct HTTPContext<const SSL: bool> {
     /// struct is either a `http_thread.{http,https}_context` static or a
     /// `bun.default_allocator.create()` for custom-SSL entries.
     pub(crate) group: uws::SocketGroup,
-    /// `SSL_CTX*` built from this context's SSLConfig (or the default
-    /// `request_cert=1` opts). One owned ref; `SSL_CTX_free` on deinit.
-    /// Only meaningful when `SSL`.
-    pub(crate) secure: Option<*mut SSL_CTX>,
+    /// Built from this context's SSLConfig (or the default `request_cert=1`
+    /// opts). Only meaningful when `SSL`.
+    pub(crate) secure: Option<OwnedSslCtx>,
     /// HTTP/2 sessions with at least one active stream, available for
-    /// concurrent attachment if `hasHeadroom()`.
-    // Raw pointers; the intrusive refcount (bumped on insert, dropped on
-    // removal) is what keeps each session alive while listed here.
-    pub(crate) active_h2_sessions: Vec<*mut h2::ClientSession>,
+    /// concurrent attachment if `hasHeadroom()`. Each entry holds a ref.
+    pub(crate) active_h2_sessions: Vec<RefPtr<h2::ClientSession>>,
     /// HTTPClients whose fresh TLS connect is in flight and whose request
     /// is h2-capable. Subsequent h2-capable requests to the same origin
     /// coalesce onto the first one's session once ALPN resolves rather
@@ -361,7 +357,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
     /// Shared-borrow a live `*const ClientSession` to read/set its
     /// `Cell<u32>` registry index. Module-private — callers guarantee the
     /// session is live (registry holds a strong ref while indexed).
-    /// `registry_index`/`set_registry_index`/`ref_` only touch `Cell` fields,
+    /// `registry_index`/`set_registry_index` only touch `Cell` fields,
     /// so a shared borrow is sound regardless of other raw aliases on this
     /// single thread.
     ///
@@ -380,24 +376,21 @@ impl<const SSL: bool> HTTPContext<SSL> {
     /// taken in [`Self::register_h2`] through the pointer the registry held.
     /// `session` only identifies the entry being removed.
     fn h2_swap_remove_and_deref(
-        list: &mut Vec<*mut h2::ClientSession>,
+        list: &mut Vec<RefPtr<h2::ClientSession>>,
         idx: u32,
         session: *const h2::ClientSession,
     ) {
         debug_assert!(
-            (idx as usize) < list.len() && core::ptr::eq(list[idx as usize].cast_const(), session)
+            (idx as usize) < list.len()
+                && core::ptr::eq(list[idx as usize].as_ptr().cast_const(), session)
         );
-        let entry = list.swap_remove(idx as usize);
+        let _removed = list.swap_remove(idx as usize);
         if (idx as usize) < list.len() {
             // The swapped-in entry is a distinct allocation from `session`
             // (the entry at `idx` was just removed); `set_registry_index`
             // only touches a `Cell<u32>`.
-            Self::h2_session_ref(list[idx as usize]).set_registry_index(idx);
+            list[idx as usize].set_registry_index(idx);
         }
-        // SAFETY: `entry` is the pointer `register_h2` took the registry's ref
-        // through; the session is live because a listed session always also
-        // has a socket-ext or pool holder, so this is never the last ref.
-        unsafe { h2::ClientSession::deref(entry) };
     }
 
     pub(crate) fn register_h2(&mut self, session: *mut h2::ClientSession) {
@@ -408,10 +401,10 @@ impl<const SSL: bool> HTTPContext<SSL> {
         if s.registry_index() != u32::MAX {
             return;
         }
-        // Note: `session.ref()` — intrusive refcount bump.
-        s.ref_();
         s.set_registry_index(u32::try_from(self.active_h2_sessions.len()).expect("int cast"));
-        self.active_h2_sessions.push(session);
+        // SAFETY: `session` is live (caller contract).
+        self.active_h2_sessions
+            .push(unsafe { RefPtr::init_ref(session) });
     }
 
     /// Called from drainQueuedShutdowns when the abort-tracker lookup
@@ -483,7 +476,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
         if !SSL {
             unreachable!();
         }
-        self.secure.unwrap()
+        self.secure.as_ref().unwrap().as_ptr()
     }
 
     pub(crate) fn init_with_client_config(
@@ -879,7 +872,11 @@ impl<const SSL: bool> HTTPContext<SSL> {
         let socket = HTTPSocket::<SSL>::connect_unix_group(
             &mut self.group,
             Self::KIND,
-            if SSL { self.secure } else { None },
+            if SSL {
+                self.secure.as_ref().map(OwnedSslCtx::as_ptr)
+            } else {
+                None
+            },
             socket_path,
             ActiveSocket::<SSL>::init(
                 client
@@ -897,16 +894,9 @@ impl<const SSL: bool> HTTPContext<SSL> {
     pub(crate) fn connect(
         &mut self,
         client: &mut HTTPClient,
-        hostname_: &[u8],
+        hostname: &[u8],
         port: u16,
     ) -> Result<Option<HTTPSocket<SSL>>, Error> {
-        let hostname: &[u8] =
-            if FeatureFlags::HARDCODE_LOCALHOST_TO_127_0_0_1 && hostname_ == b"localhost" {
-                b"127.0.0.1"
-            } else {
-                hostname_
-            };
-
         client.connected_url = client
             .http_proxy
             .clone()
@@ -914,9 +904,9 @@ impl<const SSL: bool> HTTPContext<SSL> {
         // URL.hostname is a borrowed slice — assigning a local would not
         // satisfy the field's lifetime, so this uses raw lifetime erasure.
         client.connected_url.hostname =
-            // SAFETY: hostname borrows either a static literal or `client.url`/
-            // `client.http_proxy` which outlive `connected_url` for the
-            // duration of the connect attempt.
+            // SAFETY: hostname borrows `client.url` or `client.http_proxy`,
+            // which outlive `connected_url` for the duration of the connect
+            // attempt.
             unsafe { bun_ptr::detach_lifetime(hostname) };
 
         if SSL {
@@ -929,11 +919,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
                 let reusable = self
                     .active_h2_sessions
                     .iter()
-                    .map(|&session| {
-                        h2::ClientSession::this_ptr(
-                            NonNull::new(session).expect("h2 registry entries are non-null"),
-                        )
-                    })
+                    .map(|session| session.this_ptr())
                     .find(|s| {
                         s.has_headroom()
                             && s.matches(hostname, port, cfg)
@@ -1045,7 +1031,11 @@ impl<const SSL: bool> HTTPContext<SSL> {
         let socket = HTTPSocket::<SSL>::connect_group(
             &mut self.group,
             Self::KIND,
-            if SSL { self.secure } else { None },
+            if SSL {
+                self.secure.as_ref().map(OwnedSslCtx::as_ptr)
+            } else {
+                None
+            },
             hostname,
             port as c_int,
             ActiveSocket::<SSL>::init(
@@ -1124,12 +1114,6 @@ impl<const SSL: bool> Drop for HTTPContext<SSL> {
             // is freed (it unlinks from the loop's group list).
             // SAFETY: group was init()'d in `init`/`init_with_opts`; HTTP-thread-only.
             unsafe { uws::SocketGroup::destroy(&raw mut self.group) };
-        }
-        if SSL {
-            if let Some(c) = self.secure {
-                // SAFETY: we own one ref on the SSL_CTX.
-                unsafe { bun_boringssl_sys::SSL_CTX_free(c) };
-            }
         }
     }
 }

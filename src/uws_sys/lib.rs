@@ -384,6 +384,8 @@ pub mod app;
 pub mod body_reader_mixin;
 #[path = "ConnectingSocket.rs"]
 pub mod connecting_socket;
+#[path = "h2.rs"]
+pub mod h2;
 #[path = "h3.rs"]
 pub mod h3;
 #[path = "InternalLoopData.rs"]

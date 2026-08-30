@@ -370,6 +370,14 @@ pub struct VirtualMachine {
 #[derive(Default)]
 pub struct TestIsolationState {
     pub saved_cwd: Option<Box<[u8]>>,
+    /// The time zone the test runner applied at startup (`TZ`, default
+    /// `Etc/UTC`). Empty means no override (local time). Re-applied after
+    /// every file so a `process.env.TZ` write stays with the file that made it.
+    /// `Option` keeps the zero-initialized VM valid (a `Box` has no null niche).
+    pub time_zone: Option<Box<[u8]>>,
+    /// The proxy env keys as the env map held them at startup, restored after
+    /// every file. See [`crate::rare_data::ProxyEnvSnapshot`].
+    pub proxy_env: Option<crate::rare_data::ProxyEnvSnapshot>,
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -441,6 +449,52 @@ pub unsafe extern "C" fn Bun__standaloneInternalModuleBytecode(
         *size = found.len();
     }
     true
+}
+
+/// Module loader resolve hook: whether `onResolve` plugins could claim a specifier before the builtin/standalone fast paths.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Bun__hasPluginRunner(vm: *mut VirtualMachine) -> bool {
+    // SAFETY: `vm` is the live per-thread VM the C++ global object holds.
+    unsafe { (*vm).plugin_runner.is_some() }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__hasStandaloneModuleGraph() -> bool {
+    standalone_module_graph().is_some()
+}
+
+/// `StandaloneGlobalObject::moduleLoaderResolve`: an embedded import specifier names its file directly, so it resolves
+/// without entering the resolver. Returns the graph's own spelling of the key (the same bytes on POSIX; on Windows the
+/// canonical separator form) so every importer lands on one registry entry, or null if `name` is not an embedded file.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Bun__standaloneModuleKey(
+    name: *const u8,
+    len: usize,
+    out_len: *mut usize,
+) -> *const u8 {
+    // SAFETY: `name[..len]` is the caller's live 8-bit string buffer.
+    let name = unsafe { bun_core::ffi::slice(name, len) };
+    if !bun_options_types::standalone_path::is_bun_standalone_file_path(name) {
+        return core::ptr::null();
+    }
+    match standalone_module_graph().and_then(|graph| graph.find_assume_standalone_path(name)) {
+        Some(canonical) => {
+            // SAFETY: `out_len` is the caller's writable out-parameter.
+            unsafe { *out_len = canonical.len() };
+            canonical.as_ptr()
+        }
+        None => core::ptr::null(),
+    }
+}
+
+/// `StandaloneGlobalObject::moduleLoaderFetch`: an embedded key whose file carries a serialized ES module record, i.e.
+/// one the loader can register ahead of JSC's graph walk (CommonJS, JSON, assets take the normal path).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Bun__standaloneModuleHasModuleInfo(name: *const u8, len: usize) -> bool {
+    // SAFETY: `name[..len]` is the caller's live 8-bit string buffer.
+    let name = unsafe { bun_core::ffi::slice(name, len) };
+    bun_options_types::standalone_path::is_bun_standalone_file_path(name)
+        && standalone_module_graph().is_some_and(|graph| graph.has_module_info(name))
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -561,8 +615,6 @@ impl VMHolder {
     }
 }
 
-#[thread_local]
-pub static IS_BUNDLER_THREAD_FOR_BYTECODE_CACHE: Cell<bool> = Cell::new(false);
 #[thread_local]
 pub static IS_MAIN_THREAD_VM: Cell<bool> = Cell::new(false);
 
@@ -953,17 +1005,38 @@ impl VirtualMachine {
         self.event_loop_mut()
     }
 
+    /// Let the main VM's heap take the executable's initial module graph without collecting: everything allocated
+    /// while it loads is live, so collections before it finishes only re-mark it. The budget is what loading the graph
+    /// reads (bytecode, records, string table; capped); after the first collection JSC's usual sizing applies. Workers load a fraction of the graph and
+    /// keep the default.
+    fn let_heap_take_initial_module_graph(
+        &self,
+        graph: &'static dyn bun_resolver::StandaloneModuleGraph,
+    ) {
+        unsafe extern "C" {
+            safe fn JSC__Heap__setInitialAllocationBudget(vm: &VM, bytes: usize);
+        }
+        const MIN_BUDGET: usize = 8 * 1024 * 1024;
+        const MAX_BUDGET: usize = 128 * 1024 * 1024;
+        let budget = graph
+            .module_graph_load_bytes()
+            .clamp(MIN_BUDGET, MAX_BUDGET);
+        if budget > MIN_BUDGET {
+            JSC__Heap__setInitialAllocationBudget(self.jsc_vm(), budget);
+        }
+    }
+
     /// Hand the executable's shared bytecode string table (if any) to JSC as this VM's `DecoderStringTable`.
     fn install_bytecode_string_table(
         &self,
         graph: &'static dyn bun_resolver::StandaloneModuleGraph,
     ) {
+        unsafe extern "C" {
+            fn Bun__DecoderStringTable__install(vm: *mut VM, bytes: *const u8, len: usize);
+        }
         let table = graph.bytecode_string_table();
         if table.is_empty() {
             return;
-        }
-        unsafe extern "C" {
-            fn Bun__DecoderStringTable__install(vm: *mut VM, bytes: *const u8, len: usize);
         }
         // SAFETY: `jsc_vm` set in `init()`; `table` is a mmapped process-lifetime span from the executable's own section.
         unsafe { Bun__DecoderStringTable__install(self.jsc_vm, table.as_ptr(), table.len()) };
@@ -2102,6 +2175,15 @@ extern crate alloc;
 /// casts back on the other side of each hook.
 pub type RuntimeState = *mut c_void;
 
+/// Runtime flags a Worker's `execArgv` can set. `true` means allowed.
+#[derive(Copy, Clone, Debug)]
+pub struct WorkerExecArgvFlags {
+    /// `!--no-addons`
+    pub allow_addons: bool,
+    /// `!--no-ffi-cc`
+    pub allow_ffi_cc: bool,
+}
+
 pub struct RuntimeHooks {
     /// `bun.api.Timer.All.init()` + `Body.Value.HiveAllocator.init()` +
     /// `configureDebugger()` — everything `init()` does that names a
@@ -2222,16 +2304,10 @@ pub struct RuntimeHooks {
         transpiler: *mut Transpiler<'static>,
         graph: &'static dyn bun_resolver::StandaloneModuleGraph,
     ),
-    /// Parse `execArgv` against the `RunCommand`
-    /// param table and return the resulting `allow_addons` value
-    /// (`!args.flag("--no-addons")`), or `None` if parsing failed.
-    /// The param table lives in
-    /// `bun_runtime::cli` (forward-dep). Only `--no-addons` is honoured;
-    /// the caller writes the returned bool back into
-    /// `transform_options.allow_addons` so the override semantics
-    /// ("override the existing even if it was set") match.
-    pub parse_worker_exec_argv_allow_addons:
-        unsafe fn(exec_argv: &[bun_core::WTFStringImpl]) -> Option<bool>,
+    /// Parse a Worker's `execArgv` for the flags in [`WorkerExecArgvFlags`].
+    /// `None` if parsing failed.
+    pub parse_worker_exec_argv_flags:
+        unsafe fn(exec_argv: &[bun_core::WTFStringImpl]) -> Option<WorkerExecArgvFlags>,
     /// `CronJob.clearAllForVM(vm, .teardown)`. `CronJob` lives in
     /// `bun_runtime::api::cron`.
     pub stop_cron_for_vm_teardown: fn(vm: &mut VirtualMachine),
@@ -2963,6 +3039,15 @@ pub fn process_fetch_log(
     // we must convert to UTF-8 here.
     let referrer_utf8 = referrer.to_utf8();
 
+    let msg_to_js = |msg: bun_ast::Msg| -> JSValue {
+        take(match msg.metadata {
+            bun_ast::Metadata::Build => BuildMessage::create(global_this, msg),
+            bun_ast::Metadata::Resolve(_) => {
+                ResolveMessage::create(global_this, &msg, referrer_utf8.slice())
+            }
+        })
+    };
+
     match log.msgs.len() {
         0 => {
             let msg = if err == crate::CrateError::UnexpectedPendingResolution {
@@ -3000,14 +3085,7 @@ pub fn process_fetch_log(
             // Note: `Msg` is not `Copy`, so move it out — the caller deinits
             // the log immediately after, so consuming the vec is sound.
             let msg = log.msgs.swap_remove(0);
-            match msg.metadata {
-                bun_ast::Metadata::Build => take(BuildMessage::create(global_this, msg)),
-                bun_ast::Metadata::Resolve(_) => take(ResolveMessage::create(
-                    global_this,
-                    &msg,
-                    referrer_utf8.slice(),
-                )),
-            }
+            msg_to_js(msg)
         }
 
         _ => {
@@ -3020,14 +3098,7 @@ pub fn process_fetch_log(
             let mut errors_stack: [JSValue; 256] = [JSValue::default(); 256];
             let len = log.msgs.len().min(errors_stack.len());
             for (i, msg) in log.msgs.drain(..len).enumerate() {
-                errors_stack[i] = match msg.metadata {
-                    bun_ast::Metadata::Build => take(BuildMessage::create(global_this, msg)),
-                    bun_ast::Metadata::Resolve(_) => take(ResolveMessage::create(
-                        global_this,
-                        &msg,
-                        referrer_utf8.slice(),
-                    )),
-                };
+                errors_stack[i] = msg_to_js(msg);
             }
 
             take(global_this.create_aggregate_error(
@@ -3498,6 +3569,12 @@ impl VirtualMachine {
             .transform_options
             .allow_addons
             .unwrap_or(true)
+    }
+
+    /// Whether `bun:ffi` `cc()` is allowed (`--no-ffi-cc` and `--no-addons` disable it).
+    pub fn allow_ffi_cc(&self) -> bool {
+        let opts = &self.transpiler.options.transform_options;
+        opts.allow_ffi_cc.unwrap_or(true) && opts.allow_addons.unwrap_or(true)
     }
 
     /// Whether to warn when a previously-unhandled rejection later gains a handler.
@@ -4017,6 +4094,7 @@ impl VirtualMachine {
         let vm_ref = unsafe { &mut *vm };
         vm_ref.transpiler.resolver.standalone_module_graph = Some(graph);
         vm_ref.install_bytecode_string_table(graph);
+        vm_ref.let_heap_take_initial_module_graph(graph);
         // Avoid reading from tsconfig.json & package.json when in standalone mode
         vm_ref.transpiler.configure_linker_with_auto_jsx(false);
         vm_ref.transpiler.resolver.store_fd = false;
@@ -4585,6 +4663,25 @@ impl VirtualMachine {
         let jsc_vm_ptr = global.bun_vm_ptr();
         // SAFETY: per-thread VM is live (caller is on the JS thread).
         let jsc_vm = unsafe { &mut *jsc_vm_ptr };
+
+        // Bare/`node:` builtins: answer from the alias table before paying for UTF-8 copies and the resolver.
+        // (Alias names are ASCII, so the Latin-1 bytes are the UTF-8 bytes whenever they can match.)
+        if jsc_vm.plugin_runner.is_none() && specifier.is_8bit() {
+            if let Some(hardcoded) = ModuleLoader::HardcodedModule::Alias::get(
+                specifier.latin1(),
+                bun_ast::Target::Bun,
+                Default::default(),
+            ) {
+                return Ok(Ok(
+                    if mode == ResolveMode::RequireResolve && hardcoded.node_builtin {
+                        specifier.clone()
+                    } else {
+                        bun_core::String::from_bytes(hardcoded.path.as_bytes())
+                    },
+                ));
+            }
+        }
+
         let specifier_utf8 = specifier.to_utf8();
         let source_utf8 = source.to_utf8();
 
@@ -5132,6 +5229,28 @@ impl VirtualMachine {
                     hook.global_this = new_global;
                 }
             }
+        }
+
+        self.undo_process_env_side_effects();
+    }
+
+    /// The `process.env` keys with a custom setter (`applySharedEnvSideEffects`
+    /// in JSEnvironmentVariableMap.cpp) write past the env object: TZ into the
+    /// WTF time zone override, NODE_TLS_REJECT_UNAUTHORIZED and
+    /// BUN_CONFIG_VERBOSE_FETCH into per-VM caches, and the proxy keys into the
+    /// env map that seeds the next global's `process.env`. Put each back to
+    /// its startup state so a file's write does not reach the files after it.
+    fn undo_process_env_side_effects(&mut self) {
+        self.default_tls_reject_unauthorized = None;
+        self.default_verbose_fetch.set(None);
+        if let Some(tz) = self.test_isolation_state.time_zone.as_deref() {
+            let _ = self
+                .global()
+                .set_time_zone(&bun_core::EncodedSlice::from_bytes(tz));
+        }
+        if let Some(snapshot) = self.test_isolation_state.proxy_env.as_ref() {
+            let mut slots = self.proxy_env_storage.lock();
+            slots.restore(&mut self.transpiler.env_mut().map, snapshot);
         }
     }
 

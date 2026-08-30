@@ -21,7 +21,7 @@ use bun_paths::{self as path, PathBuffer, strings};
 #[cfg(windows)]
 use bun_paths::{OSPathBuffer, WPathBuffer};
 use bun_sourcemap as SourceMap;
-use bun_sys::{self as Syscall, Fd, FdExt as _, Stat};
+use bun_sys::{self as Syscall, E, Fd, FdExt as _, Stat};
 
 bun_core::declare_scope!(StandaloneModuleGraph, hidden);
 
@@ -49,7 +49,7 @@ pub struct StandaloneModuleGraph {
     pub builtin_bytecode: Vec<(u32, *mut [u8])>,
     /// The one shared bytecode string table (`JSC::EncoderStringTable::serialize`) every chunk's payload references by ordinal; installed on the VM's `DecoderStringTable` at startup.
     pub bytecode_string_table: &'static [u8],
-    /// The string table every module's `module_info` body indexes (`ModuleInfoStringTable`); empty when there is none.
+    /// The slot table every module's `module_info` body indexes (`ModuleInfoSlotTable`); empty when there is none.
     pub module_info_string_table: &'static [u8],
     /// The first `startup_module_count` of `files` (table order = load order) are the entry
     /// point's static import closure, i.e. what loads before the first `import()`.
@@ -227,6 +227,24 @@ impl StandaloneModuleGraph {
         self.dirs.contains_key(name)
     }
 
+    /// Directory `name`'s stored key (posix-separated, no trailing `/`), or
+    /// the errno an `open(O_DIRECTORY)` of it would produce.
+    pub fn dir_key(&self, name: &[u8]) -> Result<&[u8], E> {
+        if !is_bun_standalone_file_path(name) {
+            return Err(E::ENOENT);
+        }
+        let mut buf = PathBuffer::uninit();
+        let name = Self::normalize_dir_path(name, &mut buf);
+        if let Some(index) = self.dirs.get_index(name) {
+            return Ok(&self.dirs.keys()[index]);
+        }
+        Err(if self.lookup_file(name).is_some() {
+            E::ENOTDIR
+        } else {
+            E::ENOENT
+        })
+    }
+
     /// `(entry, is_dir)`; `entry` is the basename, or the `name`-relative path when `recursive`.
     pub fn readdir(&self, name: &[u8], recursive: bool) -> Option<Vec<(Box<[u8]>, bool)>> {
         if !is_bun_standalone_file_path(name) {
@@ -305,12 +323,12 @@ unsafe impl Sync for StandaloneModuleGraph {}
 /// slice; the `&mut`-returning inherent methods above stay for the runtime's
 /// blob/sourcemap caching path.
 impl bun_resolver::StandaloneModuleGraph for StandaloneModuleGraph {
-    fn find_assume_standalone_path(&self, name: &[u8]) -> Option<&[u8]> {
-        self.lookup_file(name).map(|f| f.name)
+    fn has_module_info(&self, name: &[u8]) -> bool {
+        self.find_ref(name)
+            .is_some_and(|file| !file.module_info.is_empty())
     }
-
-    fn find(&self, name: &[u8]) -> Option<&[u8]> {
-        self.find_ref(name).map(|f| f.name)
+    fn find_assume_standalone_path(&self, name: &[u8]) -> Option<&'static [u8]> {
+        self.lookup_file(name).map(|f| f.name)
     }
 
     fn base_public_path_with_default_suffix(&self) -> &'static [u8] {
@@ -325,6 +343,21 @@ impl bun_resolver::StandaloneModuleGraph for StandaloneModuleGraph {
     }
     fn bytecode_string_table(&self) -> &'static [u8] {
         self.bytecode_string_table
+    }
+    fn module_graph_load_bytes(&self) -> usize {
+        let modules: usize = self
+            .files
+            .values()
+            .iter()
+            .filter(|f| f.loader.is_javascript_like() || !f.bytecode.is_empty())
+            .map(|f| if f.bytecode.is_empty() { f.contents.len() } else { f.bytecode.len() } + f.module_info.len())
+            .sum();
+        let builtins: usize = self
+            .builtin_bytecode
+            .iter()
+            .map(|&(_, bytes)| bytes.len())
+            .sum();
+        modules + builtins + self.bytecode_string_table.len()
     }
 }
 
@@ -567,13 +600,14 @@ pub struct File {
     pub cached_blob: std::sync::OnceLock<NonNull<Blob>>,
     pub encoding: Encoding,
     wtf_string: std::sync::OnceLock<BunString>,
+    utf8: std::sync::OnceLock<Box<[u8]>>,
     // BACKREF into the embedded section; JSC mutates the bytecode buffer in place.
     pub bytecode: *mut [u8],
     pub module_info: *mut [u8],
     /// The file path used when generating bytecode (e.g., "B:/~BUN/root/app.js").
     /// Must match exactly at runtime for bytecode cache hits.
     pub bytecode_origin_path: &'static [u8],
-    /// `WTF::StringImpl::hash()` of `contents` as a Latin-1 string, computed at build time (0 = not recorded).
+    /// `WTF::StringImpl::hash()` of `contents`, computed at build time (0 = not recorded).
     pub source_hash: u32,
     pub module_format: ModuleFormat,
     pub side: FileSide,
@@ -591,9 +625,34 @@ impl File {
             && (self.side == FileSide::Client || !self.loader.is_javascript_like())
     }
 
+    /// An `Encoding::Utf16` body as code units.
+    fn utf16_units(&self) -> &'static [u16] {
+        debug_assert!(self.encoding == Encoding::Utf16);
+        let bytes = self.contents.as_bytes();
+        debug_assert!(bytes.as_ptr().addr().is_multiple_of(align_of::<u16>()));
+        #[expect(
+            clippy::cast_ptr_alignment,
+            reason = "`to_bytes` writes UTF-16 at an even offset and the section base is page-aligned (the 128-byte bytecode alignment relies on the same property)"
+        )]
+        // SAFETY: even byte count at a 2-byte-aligned offset of a section that is never freed.
+        unsafe {
+            core::slice::from_raw_parts(bytes.as_ptr().cast::<u16>(), bytes.len() / 2)
+        }
+    }
+
+    /// `contents` as the file's bytes: the section itself, or a UTF-8 transcode of a UTF-16 body made once.
+    pub fn utf8_contents(&self) -> &[u8] {
+        if self.encoding != Encoding::Utf16 {
+            return self.contents.as_bytes();
+        }
+        self.utf8.get_or_init(|| {
+            bun_core::strings::to_utf8_alloc_with_type(self.utf16_units()).into_boxed_slice()
+        })
+    }
+
     pub fn stat(&self) -> Stat {
         let mut result: Stat = bun_core::ffi::zeroed();
-        result.st_size = self.contents.len() as _;
+        result.st_size = self.utf8_contents().len() as _;
         // `Stat` is `libc::stat` (POSIX) / `uv_stat_t` (Windows, `st_mode: u64`).
         result.st_mode = (libc::S_IFREG | 0o644) as _;
         result
@@ -623,24 +682,24 @@ impl File {
             .get_or_init(|| {
                 let mut s = match self.encoding {
                     Encoding::Binary => BunString::clone_utf8(self.contents.as_bytes()),
+                    Encoding::Latin1 if self.source_hash != 0 => {
+                        // Already thread-shareable: hash known, never atomized.
+                        return BunString::create_static_external_latin1_with_hash(
+                            self.contents.as_bytes(),
+                            self.source_hash,
+                        );
+                    }
                     Encoding::Latin1 => {
                         BunString::create_static_external(self.contents.as_bytes(), true)
                     }
                     Encoding::Utf16 => {
-                        let bytes = self.contents.as_bytes();
-                        debug_assert!(bytes.as_ptr().addr().is_multiple_of(align_of::<u16>()));
-                        #[expect(
-                            clippy::cast_ptr_alignment,
-                            reason = "`to_bytes` writes UTF-16 at an even offset and the section base is page-aligned (the 128-byte bytecode alignment relies on the same property)"
-                        )]
-                        // SAFETY: even byte count at a 2-byte-aligned offset of a
-                        // section that is never freed.
-                        let units = unsafe {
-                            core::slice::from_raw_parts(
-                                bytes.as_ptr().cast::<u16>(),
-                                bytes.len() / 2,
-                            )
-                        };
+                        let units = self.utf16_units();
+                        if self.source_hash != 0 {
+                            return BunString::create_static_external_utf16_with_hash(
+                                units,
+                                self.source_hash,
+                            );
+                        }
                         BunString::create_static_external_utf16(units)
                     }
                 };
@@ -774,7 +833,10 @@ bitflags::bitflags! {
         /// After the startup module count: one `StringPointer` to the string table every module's `module_info`
         /// body indexes.
         const HAS_MODULE_INFO_STRING_TABLE  = 1 << 9;
-        // _padding: u22
+        /// Built with `--compile --bytecode --target=<a different os/arch/libc than the bun that built it>`: the embedded
+        /// bytecode was written by another platform's JavaScriptCore. Reported with crash reports.
+        const CROSS_COMPILED_BYTECODE       = 1 << 10;
+        // _padding: u21
     }
 }
 
@@ -782,6 +844,7 @@ const TRAILER: &[u8] = b"\n---- Bun! ----\n";
 
 unsafe extern "C" {
     fn Bun__WTFStringHashLatin1(ptr: *const u8, len: usize) -> u32;
+    fn Bun__WTFStringHashUTF16(ptr: *const u16, len: usize) -> u32;
 }
 /// `WTF::StringImpl::hash()` for an 8-bit string with these bytes.
 fn wtf_latin1_string_hash(bytes: &[u8]) -> u32 {
@@ -989,6 +1052,7 @@ impl StandaloneModuleGraph {
                     cached_blob: std::sync::OnceLock::new(),
                     encoding: module.encoding,
                     wtf_string: std::sync::OnceLock::new(),
+                    utf8: std::sync::OnceLock::new(),
                 },
             );
         }
@@ -1093,31 +1157,45 @@ fn is_text_module_output(output_file: &OutputFile) -> bool {
     output_file.loader == Loader::Text && output_file.output_kind == options::OutputKind::Asset
 }
 
-/// Writes `utf8` as a `WTF::StringImpl` body: 8-bit when ASCII, else UTF-16
-/// at an even offset so the runtime can alias a `char16_t*` (the same split
-/// as `String::clone_utf8`). `to_bytes` reserves `2 * utf8.len() + 4` bytes.
+/// Stored as a `WTF::StringImpl` body the runtime aliases: a text import or a JS chunk this executable runs.
+fn is_stored_as_string(output_file: &OutputFile) -> bool {
+    is_text_module_output(output_file)
+        || (output_file.loader.is_javascript_like()
+            && output_file.side != Some(options::Side::Client))
+}
+
+/// Writes `utf8` as a `WTF::StringImpl` body (8-bit if ASCII, else UTF-16 at an even offset) with its hash.
 fn encode_text_module(
     string_builder: &mut bun_core::StringBuilder,
     utf8: &[u8],
-) -> (StringPointer, Encoding) {
-    // Invalid UTF-8 becomes U+FFFD, as with `TextDecoder`.
-    let units = match strings::to_utf16_alloc(utf8, false, false) {
-        Ok(None) => return (string_builder.append_count_z(utf8), Encoding::Latin1),
-        Ok(Some(units)) => units,
-        Err(_) => bun_alloc::out_of_memory(),
+) -> (StringPointer, Encoding, u32) {
+    let Some(first_non_ascii) = strings::first_non_ascii(utf8) else {
+        let hash = if utf8.is_empty() {
+            0
+        } else {
+            wtf_latin1_string_hash(utf8)
+        };
+        return (string_builder.append_count_z(utf8), Encoding::Latin1, hash);
     };
     if !string_builder.len.is_multiple_of(align_of::<u16>()) {
         string_builder.writable()[0] = 0;
         string_builder.len += 1;
     }
     let start = string_builder.len;
-    let byte_len = units.len() * 2;
-    // SAFETY: a `u8` view over initialized `u16`s is in bounds and aligned.
-    let bytes = unsafe { core::slice::from_raw_parts(units.as_ptr().cast::<u8>(), byte_len) };
     let dst = string_builder.writable();
-    dst[..byte_len].copy_from_slice(bytes);
+    assert!(dst.len() >= 2 * utf8.len() + 2);
+    // SAFETY: `to_bytes` reserved `2 * utf8.len() + 4` bytes for this file; asserted above.
+    let byte_len = unsafe {
+        bun_core::strings::write_wtf8_as_utf16le(utf8, first_non_ascii as usize, dst.as_mut_ptr())
+    };
     dst[byte_len] = 0;
     dst[byte_len + 1] = 0;
+    #[expect(
+        clippy::cast_ptr_alignment,
+        reason = "written at an even offset just above"
+    )]
+    // SAFETY: `byte_len` initialized bytes at an even offset of the (page-aligned) section buffer.
+    let hash = unsafe { Bun__WTFStringHashUTF16(dst.as_ptr().cast::<u16>(), byte_len / 2) };
     string_builder.len += byte_len + 2;
     (
         StringPointer {
@@ -1125,31 +1203,17 @@ fn encode_text_module(
             length: byte_len as u32,
         },
         Encoding::Utf16,
+        hash,
     )
 }
 
 /// The embedded bunfs key for an output file, relative to the prefix.
-///
-/// Windows: store the key with `/`. The template printer emits native
-/// `\` into `dest_path`, but `find_assume_standalone_path` normalizes
-/// lookups to `/`, so a `\` key would miss (ENOENT). `src/bundler/Chunk.rs`
-/// only normalizes a scratch copy, so we re-normalize here.
-fn module_dest_path(output_file: &OutputFile) -> std::borrow::Cow<'_, [u8]> {
-    let dest_path = bun_core::strings::remove_leading_dot_slash(&output_file.dest_path);
-    #[cfg(windows)]
-    {
-        let mut buf = bun_paths::path_buffer_pool::get();
-        std::borrow::Cow::Owned(
-            path::resolve_path::platform_to_posix_buf::<u8>(dest_path, &mut buf).to_vec(),
-        )
-    }
-    #[cfg(not(windows))]
-    {
-        std::borrow::Cow::Borrowed(dest_path)
-    }
+fn module_dest_path(output_file: &OutputFile) -> &[u8] {
+    bun_core::strings::remove_leading_dot_slash(&output_file.dest_path)
 }
 
 pub(crate) fn to_bytes(
+    target: &CompileTarget,
     prefix: &[u8],
     output_files: &[OutputFile],
     output_format: Format,
@@ -1191,7 +1255,7 @@ pub(crate) fn to_bytes(
                 has_entry_point |= is_entry_point(output_file);
 
                 string_builder.count_z(bytes);
-                if is_text_module_output(output_file) {
+                if is_stored_as_string(output_file) {
                     // UTF-16 worst case: 2 bytes per byte, padding, 2-byte NUL.
                     string_builder.cap += bytes.len() + 3;
                 }
@@ -1229,7 +1293,7 @@ pub(crate) fn to_bytes(
 
         // Same `[name]` and `[hash]` means the same bytes: keep the first copy.
         if seen_paths
-            .get_or_put(&module_dest_path(output_file))?
+            .get_or_put(module_dest_path(output_file))?
             .found_existing
         {
             continue;
@@ -1322,7 +1386,7 @@ pub(crate) fn to_bytes(
 
         if Environment::IS_CANARY || Environment::IS_DEBUG {
             if let Some(dump_code_dir) = bun_core::env_var::BUN_FEATURE_FLAG_DUMP_CODE.get() {
-                let dest_path = &*module_dest_path(output_file);
+                let dest_path = module_dest_path(output_file);
                 // `dest_path` keeps `..` for the embedded bunfs key below; neutralize
                 // every `..` segment here so the on-disk dump can't escape
                 // `dump_code_dir` (the join would otherwise normalize `..` above it).
@@ -1366,19 +1430,7 @@ pub(crate) fn to_bytes(
             name: StringPointer::default(),
             loader: output_file.loader,
             contents: StringPointer::default(),
-            // Latin1 lets the runtime wrap the mmapped section bytes in a
-            // zero-copy ExternalStringImpl. The printer escapes non-ASCII for
-            // server-side JS, but `--banner`/`--footer`/hashbang and
-            // client-side (target=browser) chunks are concatenated verbatim
-            // as UTF-8, so verify the final bytes before committing to Latin1.
-            encoding: match output_file.loader {
-                Loader::Js | Loader::Jsx | Loader::Ts | Loader::Tsx
-                    if strings::first_non_ascii(buf_bytes).is_none() =>
-                {
-                    Encoding::Latin1
-                }
-                _ => Encoding::Binary,
-            },
+            encoding: Encoding::Binary,
             module_format: if output_file.loader.is_javascript_like() {
                 match output_format {
                     Format::Cjs => ModuleFormat::Cjs,
@@ -1427,20 +1479,27 @@ pub(crate) fn to_bytes(
         }
     }
 
+    let mut source_hashes: Vec<u8> = Vec::with_capacity(modules.len() * size_of::<u32>());
     for (module, output_file) in modules.iter_mut().zip(&module_files) {
-        if is_text_module_output(output_file) {
-            (module.contents, module.encoding) =
+        let mut hash = 0u32;
+        if is_stored_as_string(output_file) {
+            (module.contents, module.encoding, hash) =
                 encode_text_module(&mut string_builder, output_file.value.as_slice());
         } else {
             module.contents = string_builder.append_count_z(output_file.value.as_slice());
         }
+        // `Flags::HAS_SOURCE_HASHES`: JSC's SourceCodeKey hash, so a launch from bytecode never reads the source text.
+        if !output_file.loader.is_javascript_like() {
+            hash = 0;
+        }
+        source_hashes.extend_from_slice(&hash.to_le_bytes());
     }
 
     for (module, output_file) in modules.iter_mut().zip(&module_files) {
         module.name = string_builder.fmt_append_count_z(format_args!(
             "{}{}",
             bstr::BStr::new(prefix),
-            bstr::BStr::new(&*module_dest_path(output_file))
+            bstr::BStr::new(module_dest_path(output_file))
         ));
         // The bytecode cache was generated under the bytecode output file's
         // path; the runtime must present exactly the same path to hit it.
@@ -1458,18 +1517,6 @@ pub(crate) fn to_bytes(
             modules.len() * size_of::<CompiledModuleGraphFile>(),
         )
     };
-    // `Flags::HAS_SOURCE_HASHES`: the hash JSC's SourceCodeKey wants, so a launch that runs from bytecode never reads the
-    // source text just to hash it. Only for Latin-1 contents, which are handed to JSC as-is.
-    let mut source_hashes: Vec<u8> = Vec::with_capacity(modules.len() * size_of::<u32>());
-    for (module, output_file) in modules.iter().zip(&module_files) {
-        let hash = if module.encoding == Encoding::Latin1 && output_file.loader.is_javascript_like()
-        {
-            wtf_latin1_string_hash(output_file.value.as_slice())
-        } else {
-            0
-        };
-        source_hashes.extend_from_slice(&hash.to_le_bytes());
-    }
     let modules_ptr = string_builder.append_count(modules_as_bytes);
     let hashes_ptr = string_builder.append_count(&source_hashes);
     debug_assert_eq!(hashes_ptr.offset, modules_ptr.offset + modules_ptr.length);
@@ -1497,6 +1544,13 @@ pub(crate) fn to_bytes(
         record[4..8].copy_from_slice(&module_info_string_table_ptr.length.to_le_bytes());
         let _ = string_builder.append_count(&record);
         flags |= Flags::HAS_MODULE_INFO_STRING_TABLE;
+    }
+    if !target.is_host_platform()
+        && output_files
+            .iter()
+            .any(|file| file.output_kind == options::OutputKind::Bytecode)
+    {
+        flags |= Flags::CROSS_COMPILED_BYTECODE;
     }
     let compile_exec_argv_ptr = string_builder.append_count_z(compile_exec_argv);
 
@@ -1588,6 +1642,12 @@ impl CompileErrorReason {
 }
 
 impl CompileError {
+    pub fn fmt(args: core::fmt::Arguments<'_>) -> CompileError {
+        let mut v = Vec::new();
+        let _ = write!(&mut v, "{}", args);
+        CompileError::Message(v)
+    }
+
     pub fn slice(&self) -> &[u8] {
         match self {
             CompileError::Message(m) => m,
@@ -1602,9 +1662,7 @@ impl CompileResult {
     }
 
     pub fn fail_fmt(args: core::fmt::Arguments<'_>) -> CompileResult {
-        let mut v = Vec::new();
-        let _ = write!(&mut v, "{}", args);
-        CompileResult::Err(CompileError::Message(v))
+        CompileResult::Err(CompileError::fmt(args))
     }
 }
 
@@ -1701,17 +1759,12 @@ pub(crate) fn inject<'a>(
             out_buf[zname.len()] = 0;
 
             use bun_sys::windows as w;
-            use bun_sys::windows::Win32ErrorExt as _;
             // SAFETY: both buffers NUL-terminated above; `CopyFileW` does not
             // retain the pointers past return.
             if unsafe { w::CopyFileW(in_buf.as_ptr(), out_buf.as_ptr(), w::FALSE) } == w::FALSE {
-                let e = w::Win32Error::get();
-                // Map the Win32 code through the errno table so users see a
-                // name, not a raw integer.
                 bun_core::pretty_errorln!(
-                    "<r><red>error<r><d>:<r> failed to copy bun executable into temporary file: {:?}",
-                    e.to_system_errno()
-                        .unwrap_or(bun_sys::SystemErrno::EUNKNOWN)
+                    "<r><red>error<r><d>:<r> failed to copy bun executable into temporary file: {}",
+                    w::last_system_errno()
                 );
                 return None;
             }
@@ -2318,6 +2371,103 @@ pub(crate) fn download_to_path(
     Ok(())
 }
 
+/// The bun executable a `--compile` build for `target` injects into: `self_exe_path` if given, this process for the
+/// host target, otherwise the cached download of that platform's bun at this version (fetched now if missing).
+pub fn target_executable(
+    target: &CompileTarget,
+    env: &mut bun_dotenv::Loader,
+    self_exe_path: Option<&[u8]>,
+) -> Result<bun_core::ZBox, CompileError> {
+    Ok(if let Some(path) = self_exe_path {
+        bun_core::ZBox::from_vec_with_nul(path.to_vec())
+    } else if target.is_default() {
+        match bun_core::self_exe_path() {
+            Ok(p) => bun_core::ZBox::from_vec_with_nul(p.as_bytes().to_vec()),
+            Err(e) => {
+                return Err(CompileError::fmt(format_args!(
+                    "failed to get self executable path: {}",
+                    bstr::BStr::new(e.name())
+                )));
+            }
+        }
+    } else {
+        let mut exe_path_buf = PathBuffer::uninit();
+        let mut version_str: Vec<u8> = Vec::new();
+        let _ = write!(&mut version_str, "{}", target);
+        version_str.push(0);
+        // SAFETY: trailing 0 byte appended above.
+        let version_zstr = ZStr::from_slice_with_nul(&version_str[..]);
+
+        let mut needs_download: bool = true;
+        let dest_z = target.exe_path(&mut exe_path_buf, version_zstr, env, &mut needs_download);
+
+        if needs_download {
+            if let Err(e) = download_to_path(target, env, dest_z) {
+                return Err(match e {
+                    crate::Error::TargetNotFound => CompileError::fmt(format_args!(
+                        "Target platform '{}' is not available for download. Check if this version of Bun supports this target.",
+                        target
+                    )),
+                    crate::Error::NetworkError => CompileError::fmt(format_args!(
+                        "Network error downloading executable for '{}'. Check your internet connection and proxy settings.",
+                        target
+                    )),
+                    crate::Error::InvalidResponse => CompileError::fmt(format_args!(
+                        "Downloaded file for '{}' appears to be corrupted. Please try again.",
+                        target
+                    )),
+                    crate::Error::ExtractionFailed => CompileError::fmt(format_args!(
+                        "Failed to extract executable for '{}'. The download may be incomplete.",
+                        target
+                    )),
+                    _ => CompileError::fmt(format_args!(
+                        "Failed to download '{}': {}",
+                        target,
+                        bstr::BStr::new(e.name())
+                    )),
+                });
+            }
+        }
+
+        bun_core::ZBox::from_vec_with_nul(dest_z.as_bytes().to_vec())
+    })
+}
+
+/// `--compile --bytecode` for another platform: that executable's builtins section (`bun_exe_format::builtins`), so
+/// the bundler can generate bytecode for *its* internal modules. `Ok(None)` when the executable has no section this bun
+/// can read; builtin bytecode is skipped then.
+pub fn target_builtins(
+    target: &CompileTarget,
+    env: &mut bun_dotenv::Loader,
+    self_exe_path: Option<&[u8]>,
+) -> Result<Option<std::sync::Arc<[u8]>>, CompileError> {
+    use bun_exe_format::builtins::{Builtins, BuiltinsError, find_section};
+    let exe = target_executable(target, env, self_exe_path)?;
+    let file = match bun_sys::File::read_from(Fd::cwd(), exe.as_bytes()) {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            return Err(CompileError::fmt(format_args!(
+                "failed to read executable for '{}': {}",
+                target, e
+            )));
+        }
+    };
+    match find_section(&file).and_then(|section| Builtins::parse(section).map(|_| section)) {
+        Ok(section) => Ok(Some(std::sync::Arc::from(section))),
+        // No section (a bun from before there was one), a newer layout than this bun reads, or a container this reader
+        // doesn't handle: its internal modules load from source. A section that is there but malformed is an error.
+        Err(
+            BuiltinsError::MissingSection
+            | BuiltinsError::UnsupportedVersion
+            | BuiltinsError::UnrecognizedExecutable,
+        ) => Ok(None),
+        Err(e) => Err(CompileError::fmt(format_args!(
+            "failed to read the builtin modules of the executable for '{}': {}",
+            target, e
+        ))),
+    }
+}
+
 pub fn to_executable(
     target: &CompileTarget,
     output_files: &[OutputFile],
@@ -2334,6 +2484,7 @@ pub fn to_executable(
     #[cfg(windows)]
     let _ = root_dir;
     let bytes = match to_bytes(
+        target,
         module_prefix,
         output_files,
         output_format,
@@ -2353,60 +2504,9 @@ pub fn to_executable(
     }
     // bytes drops at end of scope
 
-    // `ZBox` always owns its bytes and drops on scope exit, so no
-    // ownership flag is needed.
-    let self_exe: bun_core::ZBox = if let Some(path) = self_exe_path {
-        bun_core::ZBox::from_vec_with_nul(path.to_vec())
-    } else if target.is_default() {
-        match bun_core::self_exe_path() {
-            Ok(p) => bun_core::ZBox::from_vec_with_nul(p.as_bytes().to_vec()),
-            Err(e) => {
-                return Ok(CompileResult::fail_fmt(format_args!(
-                    "failed to get self executable path: {}",
-                    bstr::BStr::new(e.name())
-                )));
-            }
-        }
-    } else {
-        let mut exe_path_buf = PathBuffer::uninit();
-        let mut version_str: Vec<u8> = Vec::new();
-        let _ = write!(&mut version_str, "{}", target);
-        version_str.push(0);
-        // SAFETY: trailing 0 byte appended above.
-        let version_zstr = ZStr::from_slice_with_nul(&version_str[..]);
-
-        let mut needs_download: bool = true;
-        let dest_z = target.exe_path(&mut exe_path_buf, version_zstr, env, &mut needs_download);
-
-        if needs_download {
-            if let Err(e) = download_to_path(target, env, dest_z) {
-                return Ok(match e {
-                    crate::Error::TargetNotFound => CompileResult::fail_fmt(format_args!(
-                        "Target platform '{}' is not available for download. Check if this version of Bun supports this target.",
-                        target
-                    )),
-                    crate::Error::NetworkError => CompileResult::fail_fmt(format_args!(
-                        "Network error downloading executable for '{}'. Check your internet connection and proxy settings.",
-                        target
-                    )),
-                    crate::Error::InvalidResponse => CompileResult::fail_fmt(format_args!(
-                        "Downloaded file for '{}' appears to be corrupted. Please try again.",
-                        target
-                    )),
-                    crate::Error::ExtractionFailed => CompileResult::fail_fmt(format_args!(
-                        "Failed to extract executable for '{}'. The download may be incomplete.",
-                        target
-                    )),
-                    _ => CompileResult::fail_fmt(format_args!(
-                        "Failed to download '{}': {}",
-                        target,
-                        bstr::BStr::new(e.name())
-                    )),
-                });
-            }
-        }
-
-        bun_core::ZBox::from_vec_with_nul(dest_z.as_bytes().to_vec())
+    let self_exe = match target_executable(target, env, self_exe_path) {
+        Ok(p) => p,
+        Err(e) => return Ok(CompileResult::Err(e)),
     };
 
     let mut temp_path_buf = bun_paths::path_buffer_pool::get();
@@ -2474,7 +2574,7 @@ pub fn to_executable(
         // Close the file handle before moving (Windows requires this)
         fd.close();
 
-        use bun_sys::windows::{self, Win32ErrorExt as _};
+        use bun_sys::windows;
         // Move the file using MoveFileExW
         // SAFETY: NUL-terminated wide strings constructed above. Pass the
         // full-buffer pointer (not a `[..len]` sub-slice) so the pointer's
@@ -2490,27 +2590,19 @@ pub fn to_executable(
             )
         } == windows::FALSE
         {
-            let werr = windows::Win32Error::get();
+            let err = windows::last_system_errno();
             let _ = Syscall::unlink(injected.temp_path);
-            if let Some(sys_err) = werr.to_system_errno() {
-                if sys_err == bun_sys::SystemErrno::EISDIR {
-                    return Ok(CompileResult::fail_fmt(format_args!(
-                        "{} is a directory. Please choose a different --outfile or delete the directory",
-                        bstr::BStr::new(outfile)
-                    )));
-                } else {
-                    return Ok(CompileResult::fail_fmt(format_args!(
-                        "failed to move executable to {}: {}",
-                        bstr::BStr::new(dest_path),
-                        <&'static str>::from(sys_err)
-                    )));
-                }
-            } else {
+            if err == bun_sys::SystemErrno::EISDIR {
                 return Ok(CompileResult::fail_fmt(format_args!(
-                    "failed to move executable to {}",
-                    bstr::BStr::new(dest_path)
+                    "{} is a directory. Please choose a different --outfile or delete the directory",
+                    bstr::BStr::new(outfile)
                 )));
             }
+            return Ok(CompileResult::fail_fmt(format_args!(
+                "failed to move executable to {}: {}",
+                bstr::BStr::new(dest_path),
+                err
+            )));
         }
 
         // Set Windows icon and/or metadata using unified function
@@ -2827,14 +2919,11 @@ fn append_bytecode_aligned(
     writable[0..padding].fill(0);
     string_builder.len += padding;
     let aligned_offset = string_builder.len;
-    let writable_after_padding = string_builder.writable();
-    writable_after_padding[0..bytecode.len()].copy_from_slice(bytecode);
-    let unaligned_space = &writable_after_padding[bytecode.len()..];
-    let len = bytecode.len() + unaligned_space.len().min(128);
-    string_builder.len += len;
+    string_builder.writable()[0..bytecode.len()].copy_from_slice(bytecode);
+    string_builder.len += bytecode.len();
     StringPointer {
         offset: aligned_offset as u32,
-        length: len as u32,
+        length: bytecode.len() as u32,
     }
 }
 

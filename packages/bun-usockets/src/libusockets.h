@@ -186,12 +186,6 @@ struct us_udp_packet_buffer_t;
 struct ssl_ctx_st;
 struct ssl_st;
 
-
-struct us_cert_string_t {
-    const char* str;
-    size_t len;
-};
-
 /* Public interface for UDP sockets */
 
 /* Peeks data and length of UDP payload */
@@ -556,6 +550,11 @@ struct ssl_ctx_st *us_ssl_ctx_from_options(
  * (uWS App.h) that don't pull in BoringSSL headers. */
 void us_internal_ssl_ctx_up_ref(struct ssl_ctx_st *ssl_ctx);
 void us_internal_ssl_ctx_unref(struct ssl_ctx_st *ssl_ctx);
+/* Install an ALPN selector that prefers "h2", then "http/1.1" (when
+ * allow_http1). Used by uWS when an App has an HTTP/2 context attached. */
+void us_ssl_ctx_enable_http2_alpn(struct ssl_ctx_st *ssl_ctx, int allow_http1);
+/* 1 iff the completed handshake on `s` negotiated ALPN "h2". */
+int us_socket_alpn_is_h2(us_socket_r s);
 long us_ssl_ctx_live_count(void);
 /* Appends the certificates in the PEM `content` to `ctx`'s trust store;
  * returns 0 when nothing could be added. */
@@ -712,7 +711,8 @@ struct us_socket_t *us_socket_pair(us_socket_group_r group, unsigned char kind, 
 struct us_socket_t *us_socket_from_fd(us_socket_group_r group, unsigned char kind, struct ssl_ctx_st *ssl_ctx, int socket_ext_size, LIBUS_SOCKET_DESCRIPTOR fd, int options, int ipc)
     __attribute__((nonnull(1)));  /* ssl_ctx nullable */
 struct us_socket_t *us_socket_open(struct us_socket_t *s, int is_client, char *ip, int ip_length);
-int us_raw_root_certs(struct us_cert_string_t **out);
+/* The bundled Mozilla root certificates, DER-encoded, in static memory. Returns the count. */
+size_t us_bundled_root_certs_der(const uint8_t *const **out_certs, const size_t **out_lens);
 unsigned int us_get_remote_address_info(char *buf, us_socket_r s, const char **dest, int *port, int *is_ipv6);
 unsigned int us_get_local_address_info(char *buf, us_socket_r s, const char **dest, int *port, int *is_ipv6);
 int us_socket_get_error(us_socket_r s);

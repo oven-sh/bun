@@ -11,6 +11,7 @@
 #include "BunClientData.h"
 #include "JavaScriptCore/JSGlobalObject.h"
 #include "JavaScriptCore/ExceptionScope.h"
+#include "JavaScriptCore/CachedTypes.h"
 #include "ZigSourceProvider.h"
 #include "ZigGlobalObject.h"
 #include "headers-handwritten.h"
@@ -43,14 +44,32 @@ Identifier getFromIdentifierArray(VM& vm, Identifier* identifierArray, uint32_t 
 extern "C" JSModuleRecord* zig__ModuleInfoDeserialized__toJSModuleRecord(JSGlobalObject* globalObject, VM& vm, const Identifier& module_key, const SourceCode& source_code, bun_ModuleInfoDeserialized* module_info);
 extern "C" void zig__renderDiff(const char* expected_ptr, size_t expected_len, const char* received_ptr, size_t received_len, JSGlobalObject* globalObject);
 
-extern "C" void JSC__IdentifierArray__setFromUtf8(Identifier* identifierArray, size_t n, VM& vm, char* str, size_t len)
+// AtomStringImpl::add copies the characters; the record they came from is freed once the JSModuleRecord is built.
+extern "C" void JSC__IdentifierArray__setFromChars(Identifier* identifierArray, size_t n, VM& vm, const uint8_t* chars, size_t len, bool is8Bit)
 {
-    identifierArray[n] = Identifier::fromString(vm, AtomString::fromUTF8(std::span<const char>(str, len)));
+    ASSERT(is8Bit || !(reinterpret_cast<uintptr_t>(chars) % alignof(char16_t)));
+    RefPtr<AtomStringImpl> atom = is8Bit
+        ? AtomStringImpl::add(std::span { reinterpret_cast<const Latin1Character*>(chars), len })
+        : AtomStringImpl::add(std::span { reinterpret_cast<const char16_t*>(chars), len / sizeof(char16_t) });
+    identifierArray[n] = Identifier::fromUid(vm, atom.get());
 }
 extern "C" bool JSC__IdentifierArray__isNull(Identifier* identifierArray, size_t n)
 {
     return identifierArray[n].isNull();
 }
+// A module-info slot (EncoderStringTable::slotFor) resolves like the bytecode's own string slots: one atom for both.
+extern "C" bool JSC__IdentifierArray__setFromSlot(Identifier* identifierArray, size_t n, VM& vm, uint32_t slot)
+{
+    auto* table = WebCore::clientData(vm)->decoderStringTable();
+    if (!table)
+        return false;
+    RefPtr<AtomStringImpl> atom = table->atomForSlot(vm, slot);
+    if (!atom)
+        return false;
+    identifierArray[n] = Identifier::fromUid(vm, atom.get());
+    return true;
+}
+
 // Slots for the executable's shared module-info string table (`count`
 // strings): null until first use, then kept for every later module.
 extern "C" Identifier* Bun__VM__sharedModuleInfoIdentifiers(VM& vm, size_t count)
@@ -74,9 +93,10 @@ extern "C" void JSC__IdentifierArray__destroy(Identifier* identifiers, size_t co
     WTF::fastFree(identifiers);
 }
 
-extern "C" JSModuleRecord* JSC_JSModuleRecord__create(JSGlobalObject* globalObject, VM& vm, const Identifier* moduleKey, const SourceCode& sourceCode, bool hasImportMeta, bool isTypescript, bool hasTLA)
+extern "C" JSModuleRecord* JSC_JSModuleRecord__create(JSGlobalObject* globalObject, VM& vm, const Identifier* moduleKey, const SourceCode& sourceCode, bool hasImportMeta, bool isTypescript, bool hasTLA, uint32_t requestedModuleCount, uint32_t importCount, uint32_t exportCount)
 {
     JSModuleRecord* result = JSModuleRecord::create(globalObject, vm, globalObject->moduleRecordStructure(), *moduleKey, sourceCode, hasImportMeta ? ImportMetaFeature : 0);
+    result->reserveCapacity(requestedModuleCount, importCount, exportCount);
     result->m_isTypeScript = isTypescript;
     result->setHasTLA(hasTLA);
     return result;

@@ -9,6 +9,13 @@
 #include <wtf/text/AtomStringImpl.h>
 #include <wtf/text/StringImpl.h>
 #include <wtf/text/WTFString.h>
+#include <atomic>
+#include <memory>
+#if !OS(WINDOWS)
+#include <pthread.h>
+#include <sched.h>
+#include <unistd.h>
+#endif
 
 extern "C" BunString BunString__threadIsolatedCopy(const BunString* str);
 extern "C" void BunString__makeThreadShareable(BunString* str);
@@ -119,6 +126,122 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_emitMemoryPressure, (JSC::JSGlobalObject * g
 JSC_DEFINE_HOST_FUNCTION(jsFunction_isMemoryPressureWatcherInstalled, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     return JSValue::encode(jsBoolean(Bun__MemoryPressure__isInstalled(defaultGlobalObject(globalObject))));
+}
+
+#if !OS(WINDOWS)
+static void* spawnThreadsForTestingEntry(void* arg)
+{
+    return arg;
+}
+
+struct SpawnThreadsForTestingLoop {
+    int32_t iterations;
+    int fd;
+    bool detached;
+    // Lives on the caller's stack; each loop bumps it exactly once, after its first spawn attempt.
+    std::atomic<int32_t>* runningLoops;
+};
+
+// Written at once: the exec this thread races may kill it microseconds later.
+static void recordSpawnThreadsForTesting(int fd, const char* what, int value)
+{
+    char message[96];
+    int length = snprintf(message, sizeof message, "%s %d\n", what, value);
+    if (fd >= 0 && length > 0)
+        (void)write(fd, message, static_cast<size_t>(length));
+}
+
+// Spawns `iterations` detached no-op threads; stops at and records the first failure.
+static void* spawnThreadsForTestingLoop(void* arg)
+{
+    std::unique_ptr<SpawnThreadsForTestingLoop> loop(static_cast<SpawnThreadsForTestingLoop*>(arg));
+    // Small detached stacks keep each spawn cheap (ASAN clears a whole stack's shadow at start).
+    pthread_attr_t attr;
+    pthread_attr_init(&attr);
+    pthread_attr_setstacksize(&attr, 64 * 1024);
+    pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+    intptr_t result = 0;
+    // The caller waits for this; it happens once the first spawn attempt has returned.
+    bool reportedRunning = false;
+    for (int32_t i = 0; i < loop->iterations; i++) {
+        pthread_t thread;
+        int rc = pthread_create(&thread, &attr, spawnThreadsForTestingEntry, nullptr);
+        if (!reportedRunning) {
+            reportedRunning = true;
+            loop->runningLoops->fetch_add(1, std::memory_order_release);
+        }
+        if (rc != 0) {
+            recordSpawnThreadsForTesting(loop->fd, "pthread_create failed: errno", rc);
+            result = rc;
+            break;
+        }
+    }
+    if (!reportedRunning)
+        loop->runningLoops->fetch_add(1, std::memory_order_release);
+    pthread_attr_destroy(&attr);
+    // A detached loop has no return value, so a test that expects the loop to outlive it
+    // can see in the file when it ran out of iterations instead.
+    if (loop->detached && result == 0)
+        recordSpawnThreadsForTesting(loop->fd, "loop finished after spawning", loop->iterations);
+    return reinterpret_cast<void*>(result);
+}
+#endif
+
+// (iterations, fd, parallelism, detach): see spawnThreadsForTesting in internal-for-testing.ts.
+JSC_DEFINE_HOST_FUNCTION(jsFunction_spawnThreadsForTesting, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+#if OS(WINDOWS)
+    UNUSED_PARAM(globalObject);
+    UNUSED_PARAM(callFrame);
+    return JSValue::encode(jsNumber(0));
+#else
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    int32_t iterations = callFrame->argument(0).toInt32(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    int32_t fd = callFrame->argument(1).toInt32(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    int32_t parallelism = callFrame->argument(2).toInt32(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    bool detach = callFrame->argument(3).toBoolean(globalObject);
+    if (parallelism < 1)
+        parallelism = 1;
+    if (parallelism > 64)
+        parallelism = 64;
+
+    pthread_attr_t attr;
+    pthread_attr_init(&attr);
+    pthread_attr_setdetachstate(&attr, detach ? PTHREAD_CREATE_DETACHED : PTHREAD_CREATE_JOINABLE);
+    std::atomic<int32_t> runningLoops { 0 };
+    pthread_t loops[64];
+    int32_t started = 0;
+    int firstError = 0;
+    for (; started < parallelism; started++) {
+        // Owned by the loop thread.
+        auto* loop = new SpawnThreadsForTestingLoop { iterations, fd, detach, &runningLoops };
+        int rc = pthread_create(&loops[started], &attr, spawnThreadsForTestingLoop, loop);
+        if (rc != 0) {
+            delete loop;
+            recordSpawnThreadsForTesting(fd, "loop thread pthread_create failed: errno", rc);
+            firstError = rc;
+            break;
+        }
+    }
+    pthread_attr_destroy(&attr);
+    // Every loop has made its first spawn attempt by the time this returns.
+    while (runningLoops.load(std::memory_order_acquire) < started)
+        sched_yield();
+    if (!detach) {
+        for (int32_t i = 0; i < started; i++) {
+            void* result = nullptr;
+            pthread_join(loops[i], &result);
+            int rc = static_cast<int>(reinterpret_cast<intptr_t>(result));
+            if (rc != 0 && firstError == 0)
+                firstError = rc;
+        }
+    }
+    return JSValue::encode(jsNumber(firstError));
+#endif
 }
 
 }

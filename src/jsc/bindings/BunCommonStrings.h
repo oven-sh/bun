@@ -3,10 +3,21 @@
 // clang-format off
 // The items in this list must also be present in BunBuiltinNames.h
 // If we use it as an identifier name in hot code, we should put it in this list.
+// macro(name, builtinName): the cached JSString shares the atom behind `builtinNames(vm).<builtinName>PublicName()`.
 #define BUN_COMMON_STRINGS_EACH_NAME(macro) \
-    macro(require)                          \
-    macro(resolve) \
-    macro(mockedFunction)
+    macro(require, require) \
+    macro(resolve, resolve) \
+    macro(mockedFunction, mockedFunction) \
+    macro(binaryTypeBlob, blob)
+
+// These are JSC common identifiers: the cached JSString shares the atom behind `vm.propertyNames->propertyName`.
+// macro(name, propertyName, literal)
+#define BUN_COMMON_STRINGS_EACH_VM_PROPERTY_NAME(macro) \
+    macro(fetchError, error, "error") \
+    macro(keyTypePrivate, privateKeyword, "private") \
+    macro(keyTypePublic, publicKeyword, "public") \
+    macro(mockResultReturn, returnKeyword, "return") \
+    macro(mockResultThrow, throwKeyword, "throw")
 
 // These ones don't need to be in BunBuiltinNames.h
 // If we don't use it as an identifier name, but we want to avoid allocating the string frequently, put it in this list.
@@ -61,12 +72,10 @@
     macro(base64, "base64") \
     macro(base64url, "base64url") \
     macro(binaryTypeArrayBuffer, "arraybuffer") \
-    macro(binaryTypeBlob, "blob") \
     macro(binaryTypeNodeBuffer, "nodebuffer") \
     macro(binaryTypeUint8Array, "uint8array") \
     macro(buffer, "buffer") \
     macro(fetchCors, "cors") \
-    macro(fetchError, "error") \
     macro(fetchFollow, "follow") \
     macro(fetchForceCache, "force-cache") \
     macro(fetchInclude, "include") \
@@ -81,14 +90,10 @@
     macro(hex, "hex") \
     macro(ipv4Lower, "ipv4") \
     macro(ipv6Lower, "ipv6") \
-    macro(keyTypePrivate, "private") \
-    macro(keyTypePublic, "public") \
     macro(keyTypeSecret, "secret") \
     macro(latin1, "latin1") \
     macro(lax, "lax") \
     macro(mockResultIncomplete, "incomplete") \
-    macro(mockResultReturn, "return") \
-    macro(mockResultThrow, "throw") \
     macro(none, "none") \
     macro(protocolHttp, "http") \
     macro(protocolHttps, "https") \
@@ -122,7 +127,8 @@
 
 // clang-format on
 
-#define BUN_COMMON_STRINGS_INDEX_ENTRY(name) name,
+#define BUN_COMMON_STRINGS_INDEX_ENTRY(name, builtinName) name,
+#define BUN_COMMON_STRINGS_INDEX_ENTRY_VM_PROPERTY_NAME(name, propertyName, literal) name,
 #define BUN_COMMON_STRINGS_INDEX_ENTRY_NOT_BUILTIN_NAMES(name, literal) name,
 
 #define BUN_COMMON_STRINGS_ACCESSOR_DEFINITION(name)                                                 \
@@ -130,6 +136,12 @@
     {                                                                                                \
         return m_strings[static_cast<size_t>(Index::name)].getInitializedOnMainThread(globalObject); \
     }
+
+#define BUN_COMMON_STRINGS_ACCESSOR_DEFINITION_BUILTIN_NAME(name, builtinName) \
+    BUN_COMMON_STRINGS_ACCESSOR_DEFINITION(name)
+
+#define BUN_COMMON_STRINGS_ACCESSOR_DEFINITION_VM_PROPERTY_NAME(name, propertyName, literal) \
+    BUN_COMMON_STRINGS_ACCESSOR_DEFINITION(name)
 
 #define BUN_COMMON_STRINGS_ACCESSOR_DEFINITION_NOT_BUILTIN_NAMES(name, literal) \
     BUN_COMMON_STRINGS_ACCESSOR_DEFINITION(name)
@@ -141,12 +153,14 @@ public:
     // clang-format off
     enum class Index : uint8_t {
         BUN_COMMON_STRINGS_EACH_NAME(BUN_COMMON_STRINGS_INDEX_ENTRY)
+        BUN_COMMON_STRINGS_EACH_VM_PROPERTY_NAME(BUN_COMMON_STRINGS_INDEX_ENTRY_VM_PROPERTY_NAME)
         BUN_COMMON_STRINGS_EACH_NAME_NOT_BUILTIN_NAMES(BUN_COMMON_STRINGS_INDEX_ENTRY_NOT_BUILTIN_NAMES)
         Count
     };
     // clang-format on
 
-    BUN_COMMON_STRINGS_EACH_NAME(BUN_COMMON_STRINGS_ACCESSOR_DEFINITION)
+    BUN_COMMON_STRINGS_EACH_NAME(BUN_COMMON_STRINGS_ACCESSOR_DEFINITION_BUILTIN_NAME)
+    BUN_COMMON_STRINGS_EACH_VM_PROPERTY_NAME(BUN_COMMON_STRINGS_ACCESSOR_DEFINITION_VM_PROPERTY_NAME)
     BUN_COMMON_STRINGS_EACH_NAME_NOT_BUILTIN_NAMES(BUN_COMMON_STRINGS_ACCESSOR_DEFINITION_NOT_BUILTIN_NAMES)
     void initialize();
 
@@ -165,6 +179,9 @@ private:
 } // namespace Bun
 
 #undef BUN_COMMON_STRINGS_INDEX_ENTRY
+#undef BUN_COMMON_STRINGS_INDEX_ENTRY_VM_PROPERTY_NAME
 #undef BUN_COMMON_STRINGS_INDEX_ENTRY_NOT_BUILTIN_NAMES
 #undef BUN_COMMON_STRINGS_ACCESSOR_DEFINITION
+#undef BUN_COMMON_STRINGS_ACCESSOR_DEFINITION_BUILTIN_NAME
+#undef BUN_COMMON_STRINGS_ACCESSOR_DEFINITION_VM_PROPERTY_NAME
 #undef BUN_COMMON_STRINGS_ACCESSOR_DEFINITION_NOT_BUILTIN_NAMES

@@ -12,29 +12,38 @@
 namespace Bun {
 using namespace JSC;
 
-#define BUN_COMMON_STRINGS_LITERAL_ENTRY(name) ASCIILiteral(),
+// Every entry's text, by Index. Identifier-backed entries share the identifier's atom (see identifierAt).
+#define BUN_COMMON_STRINGS_LITERAL_ENTRY(name, builtinName) #builtinName##_s,
+#define BUN_COMMON_STRINGS_LITERAL_ENTRY_VM_PROPERTY_NAME(name, propertyName, literal) literal##_s,
 #define BUN_COMMON_STRINGS_LITERAL_ENTRY_NOT_BUILTIN_NAMES(name, literal) literal##_s,
 // clang-format off
 static constexpr ASCIILiteral commonStringLiterals[] = {
     BUN_COMMON_STRINGS_EACH_NAME(BUN_COMMON_STRINGS_LITERAL_ENTRY)
+    BUN_COMMON_STRINGS_EACH_VM_PROPERTY_NAME(BUN_COMMON_STRINGS_LITERAL_ENTRY_VM_PROPERTY_NAME)
     BUN_COMMON_STRINGS_EACH_NAME_NOT_BUILTIN_NAMES(BUN_COMMON_STRINGS_LITERAL_ENTRY_NOT_BUILTIN_NAMES)
 };
 // clang-format on
 #undef BUN_COMMON_STRINGS_LITERAL_ENTRY
+#undef BUN_COMMON_STRINGS_LITERAL_ENTRY_VM_PROPERTY_NAME
 #undef BUN_COMMON_STRINGS_LITERAL_ENTRY_NOT_BUILTIN_NAMES
 static_assert(std::size(commonStringLiterals) == static_cast<size_t>(CommonStrings::Index::Count));
 
-static const JSC::Identifier& builtinNameAt(VM& vm, CommonStrings::Index index)
+// The identifier an entry shares its atom with, or null for a literal-only entry.
+static const JSC::Identifier* identifierAt(VM& vm, CommonStrings::Index index)
 {
-    auto& names = WebCore::builtinNames(vm);
     switch (index) {
-#define BUN_COMMON_STRINGS_BUILTIN_NAME_CASE(name) \
-    case CommonStrings::Index::name:               \
-        return names.name##PublicName();
+#define BUN_COMMON_STRINGS_BUILTIN_NAME_CASE(name, builtinName) \
+    case CommonStrings::Index::name:                            \
+        return &WebCore::builtinNames(vm).builtinName##PublicName();
         BUN_COMMON_STRINGS_EACH_NAME(BUN_COMMON_STRINGS_BUILTIN_NAME_CASE)
 #undef BUN_COMMON_STRINGS_BUILTIN_NAME_CASE
+#define BUN_COMMON_STRINGS_VM_PROPERTY_NAME_CASE(name, propertyName, literal) \
+    case CommonStrings::Index::name:                                          \
+        return &vm.propertyNames->propertyName;
+        BUN_COMMON_STRINGS_EACH_VM_PROPERTY_NAME(BUN_COMMON_STRINGS_VM_PROPERTY_NAME_CASE)
+#undef BUN_COMMON_STRINGS_VM_PROPERTY_NAME_CASE
     default:
-        RELEASE_ASSERT_NOT_REACHED();
+        return nullptr;
     }
 }
 
@@ -46,8 +55,9 @@ void CommonStrings::initialize()
             size_t i = &init.property - self.m_strings;
             ASSERT(i < std::size(self.m_strings));
             auto literal = commonStringLiterals[i];
-            if (literal.isNull()) {
-                init.set(jsOwnedString(init.vm, builtinNameAt(init.vm, static_cast<Index>(i)).string()));
+            if (const auto* identifier = identifierAt(init.vm, static_cast<Index>(i))) {
+                ASSERT(identifier->string() == literal);
+                init.set(jsOwnedString(init.vm, identifier->string()));
                 return;
             }
             init.set(jsString(init.vm, AtomString(literal)));
@@ -68,18 +78,7 @@ template void CommonStrings::visit(JSC::SlotVisitor&);
 #if ASSERT_ENABLED
 bool CommonStrings::isCommonStringLiteral(std::span<const Latin1Character> literal)
 {
-    // The builtin-name entries have a null literal above; their text is the name itself.
-#define BUN_COMMON_STRINGS_BUILTIN_NAME_LITERAL(name) #name##_s,
-    static constexpr ASCIILiteral builtinNameLiterals[] = {
-        BUN_COMMON_STRINGS_EACH_NAME(BUN_COMMON_STRINGS_BUILTIN_NAME_LITERAL)
-    };
-#undef BUN_COMMON_STRINGS_BUILTIN_NAME_LITERAL
-
     for (const auto& entry : commonStringLiterals) {
-        if (!entry.isNull() && equalSpans(entry.span8(), literal))
-            return true;
-    }
-    for (const auto& entry : builtinNameLiterals) {
         if (equalSpans(entry.span8(), literal))
             return true;
     }

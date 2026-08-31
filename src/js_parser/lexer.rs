@@ -3322,10 +3322,7 @@ pub(crate) fn is_whitespace(codepoint: CodePoint) -> bool {
         || strings::is_unicode_space_separator(codepoint as u32)
 }
 
-/// A legal comment is kept in the output: `/*! ... */`, `//! ...`, or any
-/// comment that contains the word `@license` or `@preserve` (the same rule
-/// as esbuild, so `@licensee` does not count). `text` is the whole comment
-/// including its `//` or `/*` opener.
+/// esbuild's rule: `/*! ... */`, `//! ...`, or the word `@license` / `@preserve` anywhere in the comment.
 pub(crate) fn is_legal_comment(text: &[u8]) -> bool {
     if text.len() > 2 && text[2] == b'!' {
         return true;

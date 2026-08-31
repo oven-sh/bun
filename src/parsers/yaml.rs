@@ -342,10 +342,10 @@ impl Line {
 // Encoding trait
 // ───────────────────────────────────────────────────────────────────────────
 
-/// Stack buffer for an ASCII literal widened to `Enc::Unit`. Rust cannot do
+/// Stack buffer for a byte literal widened to `Enc::Unit`. Rust cannot do
 /// const transcoding behind a trait method, so the literal is widened at the
 /// call site into this inline buffer instead.
-/// All call sites in this file pass ≤4-byte ASCII; the
+/// All call sites in this file pass at most 4 bytes; the
 /// cap of 8 leaves headroom for new literals.
 #[derive(Clone, Copy)]
 pub struct EncLit<U: Copy + Default> {
@@ -382,7 +382,9 @@ pub trait Encoding: Copy + 'static {
     /// Zero unit (used as EOF sentinel).
     const NUL: Self::Unit;
 
-    /// Construct a Unit from a `u8` ASCII char literal.
+    /// Construct a Unit from one byte of UTF-8 source text. Callers pass
+    /// ASCII and the bytes of encoded code points alike, which is only
+    /// an identity while `Unit == u8`.
     fn ch(c: u8) -> Self::Unit;
 
     /// Widen a unit to u32 for switching.
@@ -390,9 +392,10 @@ pub trait Encoding: Copy + 'static {
         u.into()
     }
 
-    /// A string literal in the target encoding. Callers pass ASCII only;
-    /// widened into an inline `EncLit` buffer (see `EncLit` doc for the
-    /// const-generics rationale).
+    /// A UTF-8 byte-string literal in the target encoding, widened per unit
+    /// into an inline `EncLit` buffer (see `EncLit` doc for the
+    /// const-generics rationale). Per-unit widening is only correct while
+    /// `Unit == u8`.
     fn literal(s: &'static [u8]) -> EncLit<Self::Unit>;
 
     /// Number of leading units to skip if `input` starts with [3] c-byte-order-mark.

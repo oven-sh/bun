@@ -607,23 +607,33 @@ it("process.umask()", () => {
   expect(process.umask()).toBe(orig);
 });
 
-it("process.versions", () => {
-  // Expected dependency versions — must match scripts/build/deps/*.ts commits.
-  // These are the ACTUAL commits built into bun (not derived values, so
-  // bumping a dep requires updating this test too).
-  const expectedVersions = {
-    boringssl: "41bf9b59c2ebf277a7aa427e1ecad5cc80dd4d4f",
-    libarchive: "ded82291ab41d5e355831b96b0e1ff49e24d8939",
-    mimalloc: "942b8342575bdece649438ca76f32276a019c51e",
-    picohttpparser: "066d2b1e9ab820703db0837a7255d92d30f0c9f5",
-    zlib: "12731092979c6d07f42da27da673a9f6c7b13586",
-    tinycc: "05f0fafaa3be31e31d7b4b5c17dc60f62c991171",
-    lolhtml: "725ce499aa9b71e38b7a2d0a9fbb6d7294a4079e",
-    ares: "c7a3138dcfe3bb0eaaf10c0c24c36dc66dc790ab",
-    libdeflate: "c8c56a20f8f621e6a966b716b31f1dedab6a41e3",
-    zstd: "f8745da6ff1ad1e7bab384bd1f9d742439278e99",
-    lshpack: "8905c024b6d052f083a3d11d0a169b3c2735c8a1",
+it("process.versions", async () => {
+  // Verifies process.versions reports the same commits pinned in
+  // scripts/build/deps/*.ts. Reading the source files at test time keeps a
+  // single source of truth so dep bumps don't require touching this test.
+  const depsDir = resolve(import.meta.dir, "../../../../scripts/build/deps");
+  const deps = {
+    boringssl: "boringssl",
+    libarchive: "libarchive",
+    mimalloc: "mimalloc",
+    picohttpparser: "picohttpparser",
+    zlib: "zlib",
+    tinycc: "tinycc",
+    lolhtml: "lolhtml",
+    ares: "cares",
+    libdeflate: "libdeflate",
+    zstd: "zstd",
+    lshpack: "lshpack",
   };
+
+  const expectedVersions = {};
+  for (const [key, file] of Object.entries(deps)) {
+    const src = await Bun.file(join(depsDir, `${file}.ts`)).text();
+    // No $ anchor: some pins carry a trailing comment (zlib.ts: `"; // 2.3.3`)
+    const match = src.match(/^const [A-Z_]+_COMMIT = "([0-9a-f]{40})";/m);
+    expect(match, `failed to extract commit from ${file}.ts`).not.toBeNull();
+    expectedVersions[key] = match[1];
+  }
 
   for (const [name, expectedHash] of Object.entries(expectedVersions)) {
     expect(process.versions).toHaveProperty(name);

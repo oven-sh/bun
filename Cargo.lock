@@ -850,7 +850,6 @@ dependencies = [
  "bun_collections",
  "bun_core",
  "bun_dotenv",
- "bun_http_types",
  "bun_js_parser",
  "bun_jsc",
  "bun_parsers",

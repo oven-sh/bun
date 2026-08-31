@@ -658,6 +658,22 @@ impl UDPSocket {
 
         let config = this.config.get();
         let hostname_z = config.hostname.to_owned_slice_z();
+        if config.fd.is_none() && !bun_dns::is_valid_hostname(hostname_z.as_bytes()) {
+            return Err(
+                global_this.throw_value(crate::dns_jsc::cares_jsc::not_a_hostname_error(
+                    global_this,
+                    hostname_z.as_bytes(),
+                )),
+            );
+        }
+        if let Some(connect) = &config.connect {
+            let address = connect.address.to_utf8();
+            if !bun_dns::is_valid_hostname(&address) {
+                return Err(global_this.throw_value(
+                    crate::dns_jsc::cares_jsc::not_a_hostname_error(global_this, &address),
+                ));
+            }
+        }
 
         // Reserve an adopted descriptor before creating the socket so a
         // concurrent adoption of the same number fails with EEXIST (like
@@ -1916,6 +1932,14 @@ impl UDPSocket {
 
         let str = args[0].to_bun_string(global_this)?;
         let connect_host = str.to_owned_slice_z();
+        if !bun_dns::is_valid_hostname(connect_host.as_bytes()) {
+            return Err(
+                global_this.throw_value(crate::dns_jsc::cares_jsc::not_a_hostname_error(
+                    global_this,
+                    connect_host.as_bytes(),
+                )),
+            );
+        }
 
         let connect_port_js = args[1];
 

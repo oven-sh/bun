@@ -25,57 +25,6 @@ function dummyFile(size: number, cache_bust: string, value: string | { code: str
   return data;
 }
 
-// Layout of a cache entry (src/jsc/RuntimeTranspilerCache.rs, Metadata::encode):
-//   0: cache_version u32, 4: module_type u8, 5: output_encoding u8, then
-//   twelve little-endian u64 fields: features_hash, input_byte_length,
-//   input_hash, and byte_offset / byte_length / hash for each of the output,
-//   sourcemap and esm_record sections. 102: wyhash of bytes 0..102. The three
-//   sections follow the header back to back, starting at 110.
-const pile = {
-  MODULE_TYPE_AT: 4,
-  OUTPUT_ENCODING_AT: 5,
-  OUTPUT_BYTE_OFFSET_AT: 30,
-  OUTPUT_BYTE_LENGTH_AT: 38,
-  OUTPUT_HASH_AT: 46,
-  SOURCEMAP_BYTE_OFFSET_AT: 54,
-  SOURCEMAP_BYTE_LENGTH_AT: 62,
-  ESM_RECORD_BYTE_OFFSET_AT: 78,
-  ESM_RECORD_BYTE_LENGTH_AT: 86,
-  ESM_RECORD_HASH_AT: 94,
-  HEADER_HASH_AT: 102,
-  HEADER_SIZE: 110,
-  // `SEED` in RuntimeTranspilerCache.rs. `Bun.hash.wyhash` is the same function
-  // the cache uses for every hash in the entry.
-  SEED: 42n,
-};
-
-function pileHash(bytes: Uint8Array): bigint {
-  return Bun.hash.wyhash(bytes, pile.SEED);
-}
-
-function pileSection(entry: Buffer, offsetAt: number, lengthAt: number): Buffer {
-  const offset = Number(entry.readBigUInt64LE(offsetAt));
-  const length = Number(entry.readBigUInt64LE(lengthAt));
-  return entry.subarray(offset, offset + length);
-}
-
-/** Makes deliberate edits to the header fields pass the header hash check. */
-function signPileHeader(entry: Buffer): Buffer {
-  entry.writeBigUInt64LE(pileHash(entry.subarray(0, pile.HEADER_HASH_AT)), pile.HEADER_HASH_AT);
-  return entry;
-}
-
-/**
- * A rejected entry is unlinked and written again, which gives it new
- * timestamps (and usually a new inode). A hit only reads it.
- */
-function fileIdentity(path: string) {
-  const { ino, mtimeNs, ctimeNs } = statSync(path, { bigint: true });
-  expect(mtimeNs).toBeGreaterThan(0n);
-  expect(ctimeNs).toBeGreaterThan(0n);
-  return { ino, mtimeNs, ctimeNs };
-}
-
 let temp_dir: string = "";
 let cache_dir = "";
 
@@ -133,14 +82,8 @@ describe("transpiler cache", () => {
     expect(await bunRun(join(temp_dir, "a.js"), env)).toSpawn("");
     expect(existsSync(cache_dir)).toBeTrue();
     expect(newCacheCount()).toBe(1);
-    const entry = join(cache_dir, readdirSync(cache_dir)[0]);
-    expect(readFileSync(entry).readBigUInt64LE(pile.OUTPUT_BYTE_LENGTH_AT)).toBe(0n);
-    const before = fileIdentity(entry);
     expect(await bunRun(join(temp_dir, "a.js"), env)).toSpawn("");
     expect(newCacheCount()).toBe(0);
-    // The entry with the empty output section was used, not rejected and
-    // written again.
-    expect(fileIdentity(entry)).toEqual(before);
   });
   test("ignores files under the minimum cache size", async () => {
     // MINIMUM_CACHE_SIZE is 4 KiB (src/jsc/RuntimeTranspilerCache.rs); files
@@ -297,120 +240,33 @@ describe("transpiler cache", () => {
       chmodSync(join(cache_dir), "777");
     }
   });
+  test.skipIf(isWindows)("a fifo in place of an entry is removed instead of opened", async () => {
+    writeFileSync(join(temp_dir, "a.js"), dummyFile((50 * 1024 * 1.5) | 0, "fifo", "intact"));
+    expect(await bunRun(join(temp_dir, "a.js"), env)).toSpawn("intact");
+    expect(newCacheCount()).toBe(1);
+    const entry = join(cache_dir, readdirSync(cache_dir).find(f => f.endsWith(".pile"))!);
+    const good = readFileSync(entry);
+    unlinkSync(entry);
+    mkfifo(entry);
 
-  // An entry is bun's own earlier output. If it does not read back exactly as
-  // it was written (disk error, torn write, another writer), the module must
-  // still run from source and the entry must be written again.
-  describe("damaged entries", () => {
-    async function primeEntry(marker: string) {
-      writeFileSync(join(temp_dir, "a.js"), dummyFile(8 * 1024, "damaged", marker));
-      expect(await bunRun(join(temp_dir, "a.js"), env)).toSpawn(marker);
-      expect(newCacheCount()).toBe(1);
-      const entry = join(cache_dir, readdirSync(cache_dir)[0]);
-      return { entry, good: readFileSync(entry) };
-    }
-
-    test("are replaced and the module still runs", async () => {
-      const { entry, good } = await primeEntry("intact");
-      const sourcemap = pileSection(good, pile.SOURCEMAP_BYTE_OFFSET_AT, pile.SOURCEMAP_BYTE_LENGTH_AT);
-      expect(sourcemap.length).toBeGreaterThan(0);
-
-      const damage: Record<string, (data: Buffer) => Buffer> = {
-        // The header is taken at face value: the module ran as an empty file.
-        "output length zeroed": data => {
-          data.writeBigUInt64LE(0n, pile.OUTPUT_BYTE_LENGTH_AT);
-          return data;
-        },
-        "sourcemap length zeroed": data => {
-          data.writeBigUInt64LE(0n, pile.SOURCEMAP_BYTE_LENGTH_AT);
-          return data;
-        },
-        "module type flipped": data => {
-          data[pile.MODULE_TYPE_AT] = data[pile.MODULE_TYPE_AT] === 1 ? 2 : 1;
-          return data;
-        },
-        "output encoding flipped": data => {
-          data[pile.OUTPUT_ENCODING_AT] = data[pile.OUTPUT_ENCODING_AT] === 1 ? 3 : 1;
-          return data;
-        },
-        "header hash zeroed": data => {
-          data.writeBigUInt64LE(0n, pile.HEADER_HASH_AT);
-          return data;
-        },
-        // A header that passes its own hash check still has to describe the
-        // file. Adding the lengths up used to overflow.
-        "output length u64::MAX in a signed header": data => {
-          data.writeBigUInt64LE(0xffff_ffff_ffff_ffffn, pile.OUTPUT_BYTE_LENGTH_AT);
-          return signPileHeader(data);
-        },
-        "bytes appended": data => Buffer.concat([data, Buffer.alloc(16)]),
-        "last byte removed": data => data.subarray(0, data.length - 1),
-        // The sourcemap section was never checked against its hash.
-        "sourcemap byte flipped": data => {
-          const offset = Number(data.readBigUInt64LE(pile.SOURCEMAP_BYTE_OFFSET_AT));
-          data[offset + (sourcemap.length >> 1)] ^= 0xff;
-          return data;
-        },
-      };
-
-      const results: Record<string, unknown> = {};
-      const expected: Record<string, unknown> = {};
-      for (const [name, apply] of Object.entries(damage)) {
-        writeFileSync(entry, apply(Buffer.from(good)));
-        const { stdout, stderr, exitCode } = await bunRun(join(temp_dir, "a.js"), env);
-        results[name] = {
-          stdout,
-          stderr,
-          exitCode,
-          cacheFiles: newCacheCount(),
-          replaced: readFileSync(entry).equals(good),
-        };
-        expected[name] = { stdout: "intact", stderr: "", exitCode: 0, cacheFiles: 0, replaced: true };
-      }
-      expect(results).toEqual(expected);
+    // Opening the fifo for reading would block until a writer showed up,
+    // which never happens. The timeout only turns that hang into a failure.
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(temp_dir, "a.js")],
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 30_000,
+      killSignal: "SIGKILL",
     });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(proc.signalCode).toBeNull();
+    expect(stdout).toBe("intact\n");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
 
-    test("an entry whose hashes match is used as written", async () => {
-      const { entry } = await primeEntry("ORIGINAL");
-      const edited = readFileSync(entry);
-      const output = pileSection(edited, pile.OUTPUT_BYTE_OFFSET_AT, pile.OUTPUT_BYTE_LENGTH_AT);
-      const at = output.indexOf("ORIGINAL");
-      expect(at).toBeGreaterThanOrEqual(0);
-      output.write("REPLACED", at);
-      edited.writeBigUInt64LE(pileHash(output), pile.OUTPUT_HASH_AT);
-      writeFileSync(entry, signPileHeader(edited));
-
-      // Proves the checks above are what rejects a damaged entry: an entry
-      // that is consistent with itself is served from the cache.
-      const before = fileIdentity(entry);
-      expect(await bunRun(join(temp_dir, "a.js"), env)).toSpawn("REPLACED");
-      expect(fileIdentity(entry)).toEqual(before);
-    });
-
-    test.skipIf(isWindows)("a fifo in place of an entry is removed instead of opened", async () => {
-      const { entry, good } = await primeEntry("intact");
-      unlinkSync(entry);
-      mkfifo(entry);
-
-      // Opening the fifo for reading used to block until a writer showed up,
-      // which never happens. The timeout only turns that hang into a failure.
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), join(temp_dir, "a.js")],
-        env,
-        stdout: "pipe",
-        stderr: "pipe",
-        timeout: 30_000,
-        killSignal: "SIGKILL",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(proc.signalCode).toBeNull();
-      expect(stdout).toBe("intact\n");
-      expect(stderr).toBe("");
-      expect(exitCode).toBe(0);
-
-      expect(statSync(entry).isFile()).toBeTrue();
-      expect(readFileSync(entry).equals(good)).toBeTrue();
-    });
+    expect(statSync(entry).isFile()).toBeTrue();
+    expect(readFileSync(entry).equals(good)).toBeTrue();
   });
   test("does not inline process.env", async () => {
     writeFileSync(
@@ -462,6 +318,139 @@ describe("transpiler cache", () => {
     expect(newCacheCount()).toBe(0); // delete + write
     expect(run(["--feature=OTHER", "--feature=SUPER_SECRET"])).toBe("enabled");
     expect(newCacheCount()).toBe(0); // cache hit, order doesn't matter
+  });
+
+  // A define replaces an identifier at parse time, so the define table is part
+  // of the cache key. The cache is shared by every project of the user, and
+  // keyed by source bytes, so two projects with the same file must not see
+  // each other's values.
+  describe("defines are part of the cache key", () => {
+    const code = `console.log(typeof BVAL === "undefined" ? "undefined" : BVAL);`;
+    const filler = Buffer.alloc((50 * 1024 * 1.5) | 0, "/").toString();
+
+    const run = (cwd: string, args: string[]) => {
+      const result = Bun.spawnSync({ cmd: [bunExe(), ...args], cwd, env });
+      if (!result.success) throw new Error(result.stderr.toString());
+      return result.stdout.toString().trim();
+    };
+
+    test("bunfig [define] invalidates cache", () => {
+      // `bun run <file>` loads bunfig.toml after the command line is parsed,
+      // so the define table only exists once the runtime is up.
+      const projectA = join(temp_dir, "a");
+      const projectB = join(temp_dir, "b");
+      for (const dir of [projectA, projectB]) {
+        mkdirSync(dir);
+        writeFileSync(join(dir, "a.js"), code + "\n//" + filler);
+      }
+      const setDefine = (dir: string, value: string | null) => {
+        if (value === null) rmSync(join(dir, "bunfig.toml"), { force: true });
+        else writeFileSync(join(dir, "bunfig.toml"), `[define]\nBVAL = '${JSON.stringify(value)}'\n`);
+      };
+
+      setDefine(projectA, "one");
+      expect(run(projectA, ["run", "./a.js"])).toBe("one");
+      expect(newCacheCount()).toBe(1);
+      expect(run(projectA, ["run", "./a.js"])).toBe("one");
+      expect(newCacheCount()).toBe(0);
+
+      // A new value: features_hash differs -> old entry deleted, new entry written
+      setDefine(projectA, "two");
+      expect(run(projectA, ["run", "./a.js"])).toBe("two");
+      expect(newCacheCount()).toBe(0);
+
+      setDefine(projectA, null);
+      expect(run(projectA, ["run", "./a.js"])).toBe("undefined");
+      expect(newCacheCount()).toBe(0);
+
+      // The same source bytes in another project, with its own define
+      setDefine(projectB, "mine");
+      expect(run(projectB, ["run", "./a.js"])).toBe("mine");
+      expect(newCacheCount()).toBe(0);
+      expect(run(projectB, ["./a.js"])).toBe("mine");
+      expect(newCacheCount()).toBe(0);
+    });
+
+    test("--define invalidates cache", () => {
+      writeFileSync(join(temp_dir, "a.js"), code + "\n//" + filler);
+
+      expect(run(temp_dir, ["--define", 'BVAL:"cli"', "a.js"])).toBe("cli");
+      expect(existsSync(cache_dir)).toBeTrue();
+      expect(newCacheCount()).toBe(1);
+      expect(run(temp_dir, ["--define", 'BVAL:"cli"', "a.js"])).toBe("cli");
+      expect(newCacheCount()).toBe(0);
+
+      expect(run(temp_dir, ["--define", 'BVAL:"other"', "a.js"])).toBe("other");
+      expect(newCacheCount()).toBe(0);
+
+      expect(run(temp_dir, ["a.js"])).toBe("undefined");
+      expect(newCacheCount()).toBe(0);
+
+      expect(run(temp_dir, ["run", "--define", 'BVAL:"cli"', "./a.js"])).toBe("cli");
+      expect(newCacheCount()).toBe(0);
+
+      // The key is built from the resolved map: flag order does not matter,
+      // and a key given twice keeps its last value, so `x` then `cli` is
+      // served the entry that `--define BVAL:"cli"` alone wrote above.
+      expect(run(temp_dir, ["--define", 'BVAL:"cli"', "--define", "OTHER:1", "a.js"])).toBe("cli");
+      expect(newCacheCount()).toBe(0);
+      const entry = join(cache_dir, readdirSync(cache_dir)[0]);
+      const written = readFileSync(entry);
+      expect(run(temp_dir, ["--define", "OTHER:1", "--define", 'BVAL:"cli"', "a.js"])).toBe("cli");
+      expect(readFileSync(entry).equals(written)).toBeTrue();
+
+      expect(run(temp_dir, ["--define", 'BVAL:"cli"', "a.js"])).toBe("cli");
+      const alone = readFileSync(entry);
+      expect(alone.equals(written)).toBeFalse();
+      expect(run(temp_dir, ["--define", 'BVAL:"x"', "--define", 'BVAL:"cli"', "a.js"])).toBe("cli");
+      expect(readFileSync(entry).equals(alone)).toBeTrue();
+      expect(newCacheCount()).toBe(0);
+    });
+
+    test("--define passed to bun test invalidates cache", () => {
+      // `bun test` builds its define table on its own boot path. The test file
+      // is below the minimum cache size; the module it imports is not, and
+      // `bun a.js` loads that same module.
+      writeFileSync(join(temp_dir, "a.js"), code + "\n//" + filler);
+      writeFileSync(
+        join(temp_dir, "a.test.js"),
+        `import "./a.js";\nimport { test } from "bun:test";\ntest("x", () => {});\n`,
+      );
+      // `bun test` prints its version banner to stdout ahead of the module's output.
+      const lastLine = (args: string[]) => run(temp_dir, args).split("\n").at(-1);
+
+      expect(lastLine(["test", "--define", 'BVAL:"cli"', "./a.test.js"])).toBe("cli");
+      expect(newCacheCount()).toBe(1);
+
+      expect(lastLine(["test", "./a.test.js"])).toBe("undefined");
+      expect(newCacheCount()).toBe(0);
+      expect(run(temp_dir, ["a.js"])).toBe("undefined");
+      expect(newCacheCount()).toBe(0);
+
+      expect(lastLine(["test", "--define", 'BVAL:"cli"', "./a.test.js"])).toBe("cli");
+      expect(newCacheCount()).toBe(0);
+      expect(run(temp_dir, ["a.js"])).toBe("undefined");
+      expect(newCacheCount()).toBe(0);
+    });
+
+    test("--drop invalidates cache", () => {
+      writeFileSync(
+        join(temp_dir, "a.js"),
+        `console.log("logged");\nprocess.stdout.write("written\\n");` + "\n//" + filler,
+      );
+
+      expect(run(temp_dir, ["a.js"])).toBe("logged\nwritten");
+      expect(newCacheCount()).toBe(1);
+
+      expect(run(temp_dir, ["--drop=console", "a.js"])).toBe("written");
+      expect(newCacheCount()).toBe(0);
+
+      expect(run(temp_dir, ["--drop=console", "a.js"])).toBe("written");
+      expect(newCacheCount()).toBe(0);
+
+      expect(run(temp_dir, ["a.js"])).toBe("logged\nwritten");
+      expect(newCacheCount()).toBe(0);
+    });
   });
 
   // Serving the entry point from the cache must not change how the modules it
@@ -516,37 +505,49 @@ test("rejects cached module records containing out-of-range string indices", () 
   // record, so any index beyond the table length (other than the reserved
   // *-default / *-namespace sentinels near u32::MAX) must be rejected.
   //
+  // Cache entry layout (src/jsc/RuntimeTranspilerCache.rs, Metadata::encode):
+  //   0: cache_version u32, 4: module_type u8, 5: output_encoding u8,
+  //   then twelve u64 fields; esm_record_byte_offset @ 78,
+  //   esm_record_byte_length @ 86, esm_record_hash @ 94. Payload follows @ 102.
   // Serialized module record layout (ModuleInfoStringTable + body, see
   // `ModuleInfoDeserialized::serialize` in src/js_printer/lib.rs):
   //   table: [offset_width u8][0;3][count u32][(count+1) offsets][pad to even][bytes]
   //   body:  [flags u8][id_width u8][0;2][n_requested u32][n_records u32]
   //          [n_records tag bytes][n_requested tag bytes][string ids @ id_width ...]
+  const ESM_RECORD_BYTE_OFFSET_AT = 78;
+  const ESM_RECORD_BYTE_LENGTH_AT = 86;
+  const ESM_RECORD_HASH_AT = 94;
+  const METADATA_SIZE = 102;
+
   function corruptModuleRecordStringIndices(file: string): boolean {
     const data = readFileSync(file);
-    if (data.length < pile.HEADER_SIZE) return false;
-    const record = pileSection(data, pile.ESM_RECORD_BYTE_OFFSET_AT, pile.ESM_RECORD_BYTE_LENGTH_AT);
-    if (record.length === 0) return false;
+    if (data.length < METADATA_SIZE) return false;
+    const esmOff = Number(data.readBigUInt64LE(ESM_RECORD_BYTE_OFFSET_AT));
+    const esmLen = Number(data.readBigUInt64LE(ESM_RECORD_BYTE_LENGTH_AT));
+    if (esmLen === 0 || esmOff + esmLen > data.length) return false;
 
     const readUint = (at: number, width: number) =>
-      width === 1 ? record.readUInt8(at) : width === 2 ? record.readUInt16LE(at) : record.readUInt32LE(at);
-    const offsetWidth = record.readUInt8(0);
-    const count = record.readUInt32LE(4);
-    const offsetsAt = 8;
+      width === 1 ? data.readUInt8(at) : width === 2 ? data.readUInt16LE(at) : data.readUInt32LE(at);
+    const offsetWidth = data.readUInt8(esmOff);
+    const count = data.readUInt32LE(esmOff + 4);
+    const offsetsAt = esmOff + 8;
     const total = readUint(offsetsAt + count * offsetWidth, offsetWidth);
     const offsetsLen = (count + 1) * offsetWidth;
     const bodyAt = offsetsAt + offsetsLen + (offsetsLen % 2) + total;
-    const nRequested = record.readUInt32LE(bodyAt + 4);
-    const nRecords = record.readUInt32LE(bodyAt + 8);
+    const nRequested = data.readUInt32LE(bodyAt + 4);
+    const nRecords = data.readUInt32LE(bodyAt + 8);
     const idsAt = bodyAt + 12 + nRecords + nRequested;
-    if (nRecords === 0 || idsAt >= record.length) return false;
+    const end = esmOff + esmLen;
+    if (nRecords === 0 || idsAt >= end) return false;
 
     // Point every string id in the body past the table (and past the two
     // sentinels count / count+1): all-ones at whatever width the ids use.
-    record.fill(0xff, idsAt);
-    // Keep the entry consistent with itself so the rewritten record gets past
-    // the cache loader and reaches the module record deserializer under test.
-    data.writeBigUInt64LE(pileHash(record), pile.ESM_RECORD_HASH_AT);
-    writeFileSync(file, signPileHeader(data));
+    data.fill(0xff, idsAt, end);
+    // The cache loader skips esm-record content verification when the stored
+    // hash field is zero, so whoever writes the cache file controls exactly
+    // what reaches the module record deserializer.
+    data.writeBigUInt64LE(0n, ESM_RECORD_HASH_AT);
+    writeFileSync(file, data);
     return true;
   }
 

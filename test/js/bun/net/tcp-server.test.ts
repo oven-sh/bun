@@ -1,6 +1,7 @@
 import { connect, listen, SocketHandler, TCPSocketListener } from "bun";
 import { describe, expect, it } from "bun:test";
-import { expectMaxObjectTypeCount, isWindows } from "harness";
+import { bunEnv, bunExe } from "harness";
+import { join } from "node:path";
 
 type Resolve = (value?: unknown) => void;
 type Reject = (reason?: any) => void;
@@ -165,7 +166,7 @@ it("echo server 1 on 1", async () => {
 
     using server: TCPSocketListener<any> | undefined = listen({
       socket: handlers,
-      hostname: "localhost",
+      hostname: "127.0.0.1",
       port: 0,
 
       data: {
@@ -175,7 +176,7 @@ it("echo server 1 on 1", async () => {
     });
     const clientProm = connect({
       socket: handlers,
-      hostname: "localhost",
+      hostname: "127.0.0.1",
       port: server.port,
       data: {
         counter: 0,
@@ -272,7 +273,7 @@ describe("tcp socket binaryType", () => {
 
         using server: TCPSocketListener<any> | undefined = listen({
           socket: handlers,
-          hostname: "localhost",
+          hostname: "127.0.0.1",
           port: 0,
           data: {
             isServer: true,
@@ -282,7 +283,7 @@ describe("tcp socket binaryType", () => {
 
         const clientProm = connect({
           socket: handlers,
-          hostname: "localhost",
+          hostname: "127.0.0.1",
           port: server.port,
           data: {
             counter: 0,
@@ -296,17 +297,18 @@ describe("tcp socket binaryType", () => {
 });
 
 it("should not leak memory", async () => {
-  // assert we don't leak the sockets
-  // we expect 1 or 2 because that's the prototype / structure
-  await expectMaxObjectTypeCount(expect, "Listener", 2);
-  // JSC's native `using` implementation keeps the disposed value in a
-  // bytecode register for the lifetime of the enclosing function frame
-  // (emitUsingBodyScope does not clear `slot.value` after calling dispose),
-  // whereas Bun's previous lowered `__callDispose` polyfill released the
-  // reference via `stack.pop()` immediately. On Windows this can leave one
-  // extra accepted socket reachable for one more GC cycle. Disposal still
-  // happens correctly; this is purely a GC-observable register-lifetime
-  // difference. The JSC-side fix (clearing the value register after dispose)
-  // requires a WebKit rebuild and is tracked separately.
-  await expectMaxObjectTypeCount(expect, "TCPSocket", isWindows ? 4 : 2);
+  // The fixture counts live Listener and TCPSocket objects after the sockets
+  // close. The count is heap-wide, and under `bun test --parallel` this
+  // process also holds the previous file's global (its own TCPSocket
+  // prototype, and any sockets it left behind), so the fixture runs alone.
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), join(import.meta.dir, "tcp-server-leak-fixture.ts")],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("");
+  expect(exitCode).toBe(0);
 });

@@ -52,10 +52,6 @@ static constexpr int32_t kSafeIntegersFlag = 1 << 1;
 static constexpr int32_t kStrictFlag = 1 << 2;
 static constexpr int32_t kOwnedByDatabaseFlag = 1 << 3;
 
-#ifndef BREAKING_CHANGES_BUN_1_2
-#define BREAKING_CHANGES_BUN_1_2 0
-#endif
-
 /* ******************************************************************************** */
 // Lazy Load SQLite on macOS
 // This seemed to be about 3% faster on macOS

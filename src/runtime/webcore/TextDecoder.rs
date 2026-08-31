@@ -97,7 +97,7 @@ impl TextDecoder {
 
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_encoding(&self, global_this: &JSGlobalObject) -> JSValue {
-        EncodedSlice::latin1(EncodingLabel::get_label(self.encoding)).to_js(global_this)
+        self.encoding.to_js(global_this)
     }
 
     #[inline(always)]
@@ -653,7 +653,7 @@ pub extern "C" fn TextDecoder__createForStream(
     fatal: bool,
     ignore_bom: bool,
     out_utf8_fast_path: *mut bool,
-    out_encoding_label: *mut bun_core::String,
+    out_encoding: *mut EncodingLabel,
 ) -> *mut TextDecoder {
     // SAFETY: both out-params are stack locals on the caller's frame.
     unsafe { *out_utf8_fast_path = false };
@@ -681,8 +681,8 @@ pub extern "C" fn TextDecoder__createForStream(
             }
         }
     };
-    // SAFETY: as above; the label borrows a 'static byte slice (no refcount).
-    unsafe { out_encoding_label.write(bun_core::String::static_(encoding.get_label())) };
+    // SAFETY: as above.
+    unsafe { out_encoding.write(encoding) };
     if matches!(encoding, EncodingLabel::Utf8) && !fatal {
         // SAFETY: as above.
         unsafe { *out_utf8_fast_path = true };
@@ -694,6 +694,15 @@ pub extern "C" fn TextDecoder__createForStream(
         encoding,
         ..TextDecoder::default()
     }))
+}
+
+/// `TextDecoderStream.prototype.encoding`.
+#[unsafe(no_mangle)]
+pub extern "C" fn TextDecoder__encodingToJS(
+    global: &JSGlobalObject,
+    encoding: EncodingLabel,
+) -> JSValue {
+    encoding.to_js(global)
 }
 
 #[unsafe(no_mangle)]

@@ -320,11 +320,9 @@ pub(crate) unsafe fn rename_symbols_in_chunk(
 
     let mut sorted: Vec<u32> = Vec::new();
 
-    // Nested scopes are renamed only after every top-level symbol in the
-    // chunk has been added to the root scope. Interleaving the two lets a
-    // nested local take a name that a later part's top-level symbol keeps,
-    // so the local shadows it (#41054). esbuild does the same two-phase
-    // split in renameSymbolsInChunk.
+    // Renamed in a second pass, once every top-level symbol in the chunk is
+    // in the root scope. Interleaving the passes let a nested local shadow a
+    // later part's top-level symbol (#41054).
     let mut nested_scopes: Vec<(u32, *const bun_ast::Scope)> = Vec::new();
 
     for &source_index in files_in_order {
@@ -454,13 +452,11 @@ pub(crate) unsafe fn rename_symbols_in_chunk(
     }
 
     for &(source_index, scope) in &nested_scopes {
-        // Reshaped for borrowck — `&mut r.root` while `r` is the
-        // `&mut self` receiver. Take a raw pointer; `assign_names_*` does
-        // not touch `self.root` through `self`.
+        // Raw pointer for borrowck: `assign_names_*` takes `&mut r` plus
+        // `r.root`, and never reaches `self.root` through `self`.
         let root: *mut renamer::NumberScope = core::ptr::addr_of_mut!(r.root);
-        // SAFETY: each pointer is a valid arena-allocated scope (a CJS
-        // module scope or a part scope) collected in the loop above; nothing
-        // mutates those scopes between collection and this deref.
+        // SAFETY: each `scope` is a live arena-allocated scope collected
+        // above; nothing mutates those scopes in between.
         r.assign_names_recursive_with_number_scope(
             root,
             unsafe { &*scope },

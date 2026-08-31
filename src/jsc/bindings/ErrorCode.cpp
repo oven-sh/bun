@@ -1729,10 +1729,10 @@ extern "C" JSC::EncodedJSValue Bun__wrapAbortError(JSC::JSGlobalObject* lexicalG
     auto cause = JSC::JSValue::decode(causeParam);
 
     if (cause.isUndefined()) {
-        return JSC::JSValue::encode(Bun::createError(vm, globalObject, Bun::ErrorCode::ABORT_ERR, globalObject->commonStrings().OperationWasAbortedString(globalObject)));
+        return JSC::JSValue::encode(Bun::createError(vm, globalObject, Bun::ErrorCode::ABORT_ERR, WebCore::clientData(vm)->commonStrings().OperationWasAbortedString(globalObject)));
     }
 
-    auto message = globalObject->commonStrings().OperationWasAbortedString(globalObject);
+    auto message = WebCore::clientData(vm)->commonStrings().OperationWasAbortedString(globalObject);
     JSC::JSObject* options = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 24);
     Bun::putDirectNamed(vm, options, "cause"_s, cause);
 
@@ -1750,10 +1750,10 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionMakeAbortError, (JSC::JSGlobalObject * lexica
     if (!options.isUndefined() && options.isCell() && !options.asCell()->isObject()) return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "options"_s, "object"_s, options);
 
     if (message.isUndefined() && options.isUndefined()) {
-        return JSValue::encode(Bun::createError(vm, lexicalGlobalObject, Bun::ErrorCode::ABORT_ERR, JSValue(globalObject->commonStrings().OperationWasAbortedString(globalObject))));
+        return JSValue::encode(Bun::createError(vm, lexicalGlobalObject, Bun::ErrorCode::ABORT_ERR, JSValue(WebCore::clientData(vm)->commonStrings().OperationWasAbortedString(globalObject))));
     }
 
-    if (message.isUndefined()) message = globalObject->commonStrings().OperationWasAbortedString(globalObject);
+    if (message.isUndefined()) message = WebCore::clientData(vm)->commonStrings().OperationWasAbortedString(globalObject);
     auto error = Bun::createError(vm, globalObject, Bun::ErrorCode::ABORT_ERR, message, options);
     return JSC::JSValue::encode(error);
 }

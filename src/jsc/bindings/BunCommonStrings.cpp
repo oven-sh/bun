@@ -47,11 +47,11 @@ static const JSC::Identifier* identifierAt(VM& vm, CommonStrings::Index index)
     }
 }
 
-void CommonStrings::initialize()
+CommonStrings::CommonStrings()
 {
     for (auto& string : m_strings) {
         string.initLater([](const JSC::LazyProperty<JSGlobalObject, JSString>::Initializer& init) {
-            auto& self = defaultGlobalObject(init.owner)->commonStrings();
+            auto& self = WebCore::clientData(init.vm)->commonStrings();
             size_t i = &init.property - self.m_strings;
             ASSERT(i < std::size(self.m_strings));
             auto literal = commonStringLiterals[i];
@@ -131,7 +131,7 @@ static JSC::JSValue toJS(Zig::GlobalObject* globalObject, HTTPMethod method)
 {
 #define FOR_EACH_METHOD(method)    \
     case HTTPMethod::http##method: \
-        return globalObject->commonStrings().http##method##String(globalObject);
+        return WebCore::clientData(globalObject->vm())->commonStrings().http##method##String(globalObject);
 
     switch (method) {
         FOR_EACH_METHOD(ACL)
@@ -214,7 +214,7 @@ enum class CommonStringsForRust : uint8_t {
 
 static JSC::JSValue toJS(Zig::GlobalObject* globalObject, CommonStringsForRust commonString)
 {
-    auto& commonStrings = globalObject->commonStrings();
+    auto& commonStrings = WebCore::clientData(globalObject->vm())->commonStrings();
     switch (commonString) {
     case CommonStringsForRust::IPv4:
         return commonStrings.IPv4String(globalObject);
@@ -288,7 +288,7 @@ enum class FetchCacheMode : uint8_t {
 
 extern "C" JSC::EncodedJSValue Bun__FetchCacheMode__toJS(FetchCacheMode mode, Zig::GlobalObject* globalObject)
 {
-    auto& commonStrings = globalObject->commonStrings();
+    auto& commonStrings = WebCore::clientData(globalObject->vm())->commonStrings();
     switch (mode) {
     case FetchCacheMode::Default:
         return JSValue::encode(globalObject->vm().smallStrings.defaultString());
@@ -318,7 +318,7 @@ enum class FetchRedirect : uint8_t {
 
 extern "C" JSC::EncodedJSValue Bun__FetchRedirect__toJS(FetchRedirect redirect, Zig::GlobalObject* globalObject)
 {
-    auto& commonStrings = globalObject->commonStrings();
+    auto& commonStrings = WebCore::clientData(globalObject->vm())->commonStrings();
     switch (redirect) {
     case FetchRedirect::Follow:
         return JSValue::encode(commonStrings.fetchFollowString(globalObject));
@@ -343,7 +343,7 @@ enum class FetchRequestMode : uint8_t {
 
 extern "C" JSC::EncodedJSValue Bun__FetchRequestMode__toJS(FetchRequestMode mode, Zig::GlobalObject* globalObject)
 {
-    auto& commonStrings = globalObject->commonStrings();
+    auto& commonStrings = WebCore::clientData(globalObject->vm())->commonStrings();
     switch (mode) {
     case FetchRequestMode::SameOrigin:
         return JSValue::encode(commonStrings.fetchSameOriginString(globalObject));

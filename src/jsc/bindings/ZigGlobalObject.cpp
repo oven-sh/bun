@@ -2042,7 +2042,6 @@ void GlobalObject::finishCreation(VM& vm)
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
 
-    m_commonStrings.initialize();
     m_bakeAdditions.initialize();
     m_markdownTagStrings.initialize();
 
@@ -3200,6 +3199,7 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     // A stale m_vm surfaces as a SEGV in TypeCastTraits<JSVMClientData>::isType
     // when downcast<> calls the virtual isWebCoreJSClientData() on garbage.
     WebCore::clientData(visitor.vm())->httpHeaderIdentifiers().template visit<Visitor>(visitor);
+    WebCore::clientData(visitor.vm())->commonStrings().template visit<Visitor>(visitor);
 
     thisObject->visitGeneratedLazyClasses<Visitor>(thisObject, visitor);
     thisObject->visitAdditionalChildrenInGCThread<Visitor>(visitor);

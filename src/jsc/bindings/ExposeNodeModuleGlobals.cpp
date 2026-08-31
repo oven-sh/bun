@@ -131,13 +131,13 @@ extern "C" [[ZIG_EXPORT(check_slow)]] void Bun__REPL__setupGlobalRequire(
 
     auto* resolveFunction = JSBoundFunction::create(vm, globalObject,
         globalObject->requireResolveFunctionUnbound(), moduleObject,
-        ArgList(), 1, globalObject->commonStrings().resolveString(globalObject),
+        ArgList(), 1, WebCore::clientData(globalObject->vm())->commonStrings().resolveString(globalObject),
         makeSource("resolve"_s, SourceOrigin(), SourceTaintedOrigin::Untainted));
     RETURN_IF_EXCEPTION(scope, );
 
     auto* requireFunction = JSBoundFunction::create(vm, globalObject,
         globalObject->requireFunctionUnbound(), moduleObject,
-        ArgList(), 1, globalObject->commonStrings().requireString(globalObject),
+        ArgList(), 1, WebCore::clientData(globalObject->vm())->commonStrings().requireString(globalObject),
         makeSource("require"_s, SourceOrigin(), SourceTaintedOrigin::Untainted));
     RETURN_IF_EXCEPTION(scope, );
 

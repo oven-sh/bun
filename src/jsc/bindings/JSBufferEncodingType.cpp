@@ -20,7 +20,7 @@
 
 #include "config.h"
 #include "JSBufferEncodingType.h"
-#include "ZigGlobalObject.h"
+#include "BunClientData.h"
 #include "wtf/Forward.h"
 
 #include <JavaScriptCore/JSCInlines.h>
@@ -30,8 +30,8 @@ using namespace JSC;
 
 template<> JSString* convertEnumerationToJS(JSGlobalObject& lexicalGlobalObject, BufferEncodingType enumerationValue)
 {
-    auto* globalObject = defaultGlobalObject(&lexicalGlobalObject);
-    auto& commonStrings = globalObject->commonStrings();
+    auto* globalObject = &lexicalGlobalObject;
+    auto& commonStrings = WebCore::clientData(globalObject->vm())->commonStrings();
     // clang-format off
     switch (enumerationValue) {
     case BufferEncodingType::utf8:      return commonStrings.utf8String(globalObject);

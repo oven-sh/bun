@@ -235,8 +235,9 @@ public:
     // LazyProperty::initLater ~90 times (stores a tagged function pointer),
     // so there is no startup cost worth deferring.
     WebCore::HTTPHeaderIdentifiers& httpHeaderIdentifiers() { return m_httpHeaderIdentifiers; }
-    // Same shape and rooting as httpHeaderIdentifiers().
-    Bun::CommonStrings& commonStrings() { return m_commonStrings; }
+
+    // Public so Bun::commonStrings(vm) below is a static_cast and a member load.
+    Bun::CommonStrings commonStrings;
 
     WebCore::DOMURLBaseCache& urlBaseCache() { return m_urlBaseCache; }
 
@@ -315,7 +316,6 @@ private:
     std::unique_ptr<ExtendedDOMClientIsoSubspaces> m_clientSubspaces;
 
     WebCore::HTTPHeaderIdentifiers m_httpHeaderIdentifiers;
-    Bun::CommonStrings m_commonStrings;
 
     WebCore::DOMURLBaseCache m_urlBaseCache;
 
@@ -402,6 +402,15 @@ static inline BunBuiltinNames& builtinNames(JSC::VM& vm)
 }
 
 } // namespace WebCore
+
+namespace Bun {
+
+ALWAYS_INLINE CommonStrings& commonStrings(JSC::VM& vm)
+{
+    return static_cast<WebCore::JSVMClientData*>(vm.clientData)->commonStrings;
+}
+
+} // namespace Bun
 
 inline void* bunVM(JSC::VM& vm)
 {

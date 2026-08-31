@@ -235,7 +235,7 @@ public:
         function->finishCreation(vm);
 
         // Do not forget to set the original name: https://github.com/oven-sh/bun/issues/8794
-        function->m_originalName.set(vm, function, WebCore::clientData(vm)->commonStrings().mockedFunctionString(globalObject));
+        function->m_originalName.set(vm, function, Bun::commonStrings(vm).mockedFunctionString());
 
         return function;
     }
@@ -805,17 +805,17 @@ static JSValue createMockResult(JSC::VM& vm, Zig::GlobalObject* globalObject, Mo
 {
     JSC::Structure* structure = globalObject->mockModule.mockResultStructure.getInitializedOnMainThread(globalObject);
 
-    auto& commonStrings = WebCore::clientData(vm)->commonStrings();
+    auto& commonStrings = Bun::commonStrings(vm);
     JSC::JSString* typeString = nullptr;
     switch (type) {
     case MockResultType::Return:
-        typeString = commonStrings.mockResultReturnString(globalObject);
+        typeString = commonStrings.mockResultReturnString();
         break;
     case MockResultType::Throw:
-        typeString = commonStrings.mockResultThrowString(globalObject);
+        typeString = commonStrings.mockResultThrowString();
         break;
     case MockResultType::Incomplete:
-        typeString = commonStrings.mockResultIncompleteString(globalObject);
+        typeString = commonStrings.mockResultIncompleteString();
         break;
     }
 

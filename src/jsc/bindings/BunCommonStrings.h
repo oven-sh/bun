@@ -1,17 +1,14 @@
 #pragma once
 
 // clang-format off
-// The items in this list must also be present in BunBuiltinNames.h
-// If we use it as an identifier name in hot code, we should put it in this list.
-// macro(name, builtinName): the cached JSString shares the atom behind `builtinNames(vm).<builtinName>PublicName()`.
+// macro(name, builtinName): strings that are also Bun builtin names (BunBuiltinNames.h).
 #define BUN_COMMON_STRINGS_EACH_NAME(macro) \
     macro(require, require) \
     macro(resolve, resolve) \
     macro(mockedFunction, mockedFunction) \
     macro(binaryTypeBlob, blob)
 
-// These are JSC common identifiers: the cached JSString shares the atom behind `vm.propertyNames->propertyName`.
-// macro(name, propertyName, literal)
+// macro(name, propertyName, literal): strings that are also JSC common identifiers (vm.propertyNames).
 #define BUN_COMMON_STRINGS_EACH_VM_PROPERTY_NAME(macro) \
     macro(fetchError, error, "error") \
     macro(keyTypePrivate, privateKeyword, "private") \
@@ -127,45 +124,49 @@
 
 // clang-format on
 
-#define BUN_COMMON_STRINGS_INDEX_ENTRY(name, builtinName) name,
-#define BUN_COMMON_STRINGS_INDEX_ENTRY_VM_PROPERTY_NAME(name, propertyName, literal) name,
-#define BUN_COMMON_STRINGS_INDEX_ENTRY_NOT_BUILTIN_NAMES(name, literal) name,
+namespace JSC {
+class VM;
+class JSString;
+class AbstractSlotVisitor;
+class SlotVisitor;
+}
 
-#define BUN_COMMON_STRINGS_ACCESSOR_DEFINITION(name)                                                 \
-    JSC::JSString* name##String(JSC::JSGlobalObject* globalObject)                                   \
-    {                                                                                                \
-        return m_strings[static_cast<size_t>(Index::name)].getInitializedOnMainThread(globalObject); \
+#define BUN_COMMON_STRINGS_INDEX_ENTRY(name, ...) name,
+#define BUN_COMMON_STRINGS_SLOT(name, ...) JSC::JSString* m_##name { nullptr };
+#define BUN_COMMON_STRINGS_ACCESSOR(name, ...)  \
+    JSC::JSString* name##String()               \
+    {                                           \
+        if (!m_##name) [[unlikely]]             \
+            initialize(m_##name, Index::name);  \
+        return m_##name;                        \
     }
-
-#define BUN_COMMON_STRINGS_ACCESSOR_DEFINITION_BUILTIN_NAME(name, builtinName) \
-    BUN_COMMON_STRINGS_ACCESSOR_DEFINITION(name)
-
-#define BUN_COMMON_STRINGS_ACCESSOR_DEFINITION_VM_PROPERTY_NAME(name, propertyName, literal) \
-    BUN_COMMON_STRINGS_ACCESSOR_DEFINITION(name)
-
-#define BUN_COMMON_STRINGS_ACCESSOR_DEFINITION_NOT_BUILTIN_NAMES(name, literal) \
-    BUN_COMMON_STRINGS_ACCESSOR_DEFINITION(name)
 
 namespace Bun {
 
-// Per-VM cache of the strings above (one JSString each, created on first use).
-// Lives in JSVMClientData; every Zig::GlobalObject visits it.
-class CommonStrings {
-public:
+// One JSString per entry above, created on first use. A member of JSVMClientData
+// (reach it with Bun::commonStrings(vm)), rooted by the "Bcs" marking constraint.
+struct CommonStrings {
     // clang-format off
     enum class Index : uint8_t {
         BUN_COMMON_STRINGS_EACH_NAME(BUN_COMMON_STRINGS_INDEX_ENTRY)
-        BUN_COMMON_STRINGS_EACH_VM_PROPERTY_NAME(BUN_COMMON_STRINGS_INDEX_ENTRY_VM_PROPERTY_NAME)
-        BUN_COMMON_STRINGS_EACH_NAME_NOT_BUILTIN_NAMES(BUN_COMMON_STRINGS_INDEX_ENTRY_NOT_BUILTIN_NAMES)
+        BUN_COMMON_STRINGS_EACH_VM_PROPERTY_NAME(BUN_COMMON_STRINGS_INDEX_ENTRY)
+        BUN_COMMON_STRINGS_EACH_NAME_NOT_BUILTIN_NAMES(BUN_COMMON_STRINGS_INDEX_ENTRY)
         Count
     };
+
+    BUN_COMMON_STRINGS_EACH_NAME(BUN_COMMON_STRINGS_SLOT)
+    BUN_COMMON_STRINGS_EACH_VM_PROPERTY_NAME(BUN_COMMON_STRINGS_SLOT)
+    BUN_COMMON_STRINGS_EACH_NAME_NOT_BUILTIN_NAMES(BUN_COMMON_STRINGS_SLOT)
+
+    BUN_COMMON_STRINGS_EACH_NAME(BUN_COMMON_STRINGS_ACCESSOR)
+    BUN_COMMON_STRINGS_EACH_VM_PROPERTY_NAME(BUN_COMMON_STRINGS_ACCESSOR)
+    BUN_COMMON_STRINGS_EACH_NAME_NOT_BUILTIN_NAMES(BUN_COMMON_STRINGS_ACCESSOR)
     // clang-format on
 
-    BUN_COMMON_STRINGS_EACH_NAME(BUN_COMMON_STRINGS_ACCESSOR_DEFINITION_BUILTIN_NAME)
-    BUN_COMMON_STRINGS_EACH_VM_PROPERTY_NAME(BUN_COMMON_STRINGS_ACCESSOR_DEFINITION_VM_PROPERTY_NAME)
-    BUN_COMMON_STRINGS_EACH_NAME_NOT_BUILTIN_NAMES(BUN_COMMON_STRINGS_ACCESSOR_DEFINITION_NOT_BUILTIN_NAMES)
-
-    CommonStrings();
+    explicit CommonStrings(JSC::VM& vm)
+        : m_vm(vm)
+    {
+    }
 
     template<typename Visitor>
     void visit(Visitor& visitor);
@@ -176,15 +177,13 @@ public:
 #endif
 
 private:
-    JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSString> m_strings[static_cast<size_t>(Index::Count)];
+    void initialize(JSC::JSString*& slot, Index);
+
+    JSC::VM& m_vm;
 };
 
 } // namespace Bun
 
 #undef BUN_COMMON_STRINGS_INDEX_ENTRY
-#undef BUN_COMMON_STRINGS_INDEX_ENTRY_VM_PROPERTY_NAME
-#undef BUN_COMMON_STRINGS_INDEX_ENTRY_NOT_BUILTIN_NAMES
-#undef BUN_COMMON_STRINGS_ACCESSOR_DEFINITION
-#undef BUN_COMMON_STRINGS_ACCESSOR_DEFINITION_BUILTIN_NAME
-#undef BUN_COMMON_STRINGS_ACCESSOR_DEFINITION_VM_PROPERTY_NAME
-#undef BUN_COMMON_STRINGS_ACCESSOR_DEFINITION_NOT_BUILTIN_NAMES
+#undef BUN_COMMON_STRINGS_SLOT
+#undef BUN_COMMON_STRINGS_ACCESSOR

@@ -207,7 +207,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsTextEncoderConstructor, (JSGlobalObject * lexicalGlob
 
 static inline JSValue jsTextEncoder_encodingGetter(JSGlobalObject& lexicalGlobalObject, JSTextEncoder&)
 {
-    return WebCore::clientData(lexicalGlobalObject.vm())->commonStrings().utf8WithDashString(&lexicalGlobalObject);
+    return Bun::commonStrings(lexicalGlobalObject.vm()).utf8WithDashString();
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsTextEncoder_encoding, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName attributeName))

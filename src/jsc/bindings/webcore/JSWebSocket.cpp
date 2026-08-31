@@ -665,14 +665,14 @@ JSC_DEFINE_CUSTOM_GETTER(jsWebSocket_extensions, (JSGlobalObject * lexicalGlobal
 
 static inline JSValue jsWebSocket_binaryTypeGetter(JSGlobalObject& lexicalGlobalObject, JSWebSocket& thisObject)
 {
-    auto& commonStrings = WebCore::clientData(lexicalGlobalObject.vm())->commonStrings();
+    auto& commonStrings = Bun::commonStrings(lexicalGlobalObject.vm());
     switch (thisObject.wrapped().binaryType()) {
     case WebSocket::BinaryType::Blob:
-        return commonStrings.binaryTypeBlobString(&lexicalGlobalObject);
+        return commonStrings.binaryTypeBlobString();
     case WebSocket::BinaryType::ArrayBuffer:
-        return commonStrings.binaryTypeArrayBufferString(&lexicalGlobalObject);
+        return commonStrings.binaryTypeArrayBufferString();
     case WebSocket::BinaryType::NodeBuffer:
-        return commonStrings.binaryTypeNodeBufferString(&lexicalGlobalObject);
+        return commonStrings.binaryTypeNodeBufferString();
     }
     ASSERT_NOT_REACHED();
     return jsUndefined();

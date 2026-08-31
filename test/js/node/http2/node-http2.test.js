@@ -5270,6 +5270,68 @@ it("remoteSettings/localSettings are never null before the peer's SETTINGS arriv
   }
 });
 
+// node's ServerHttp2Session exposes the Http2Server/Http2SecureServer that accepted the connection
+// as a `server` getter on its prototype (still set after the session is destroyed);
+// performServerHandshake() sessions have no owning server and ClientHttp2Session has no such
+// property at all. Bun had no getter, so `session.server` was undefined everywhere.
+describe.concurrent("ServerHttp2Session.server", () => {
+  async function acceptOneSession(server, scheme, connectOptions) {
+    const accepted = Promise.withResolvers();
+    server.on("session", accepted.resolve);
+    server.on("error", accepted.reject);
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    const client = http2.connect(`${scheme}://127.0.0.1:${server.address().port}`, connectOptions);
+    client.on("error", accepted.reject);
+    try {
+      const session = await accepted.promise;
+      expect(session.server).toBe(server);
+      // node's shape: an accessor on the prototype, not an own property written by the constructor.
+      expect(Object.hasOwn(session, "server")).toBe(false);
+      const { get, set, enumerable, configurable } = Object.getOwnPropertyDescriptor(
+        Object.getPrototypeOf(session),
+        "server",
+      );
+      expect({ get: typeof get, set, enumerable, configurable }).toEqual({
+        get: "function",
+        set: undefined,
+        enumerable: false,
+        configurable: true,
+      });
+      // The client side never gets one.
+      expect("server" in client).toBe(false);
+
+      const closed = new Promise(resolve => session.once("close", resolve));
+      session.destroy();
+      await closed;
+      expect(session.destroyed).toBe(true);
+      expect(session.server).toBe(server);
+    } finally {
+      client.destroy();
+      await new Promise(resolve => server.close(resolve));
+    }
+  }
+
+  it("is the Http2Server that accepted the connection", async () => {
+    await acceptOneSession(http2.createServer(), "http");
+  });
+
+  it("is the Http2SecureServer that accepted the connection", async () => {
+    await acceptOneSession(http2.createSecureServer(TLS_CERT), "https", TLS_OPTIONS);
+  });
+
+  it("is undefined for a performServerHandshake() session", () => {
+    const [clientSide, serverSide] = duplexPair();
+    const session = http2.performServerHandshake(serverSide);
+    try {
+      expect("server" in session).toBe(true);
+      expect(session.server).toBeUndefined();
+    } finally {
+      session.destroy();
+      clientSide.destroy();
+    }
+  });
+});
+
 describe("frames issued from inside a user-supplied Duplex transport's _write", () => {
   // A transport wrapper that sends a frame of its own from its _write (a keepalive ping, a
   // settings update, a goaway, another request) must see that frame sequenced AFTER the unit

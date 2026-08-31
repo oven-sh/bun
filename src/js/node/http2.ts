@@ -4500,6 +4500,12 @@ class ServerHttp2Session extends Http2Session {
     process.nextTick(emitConnectNT, this, socket);
   }
 
+  // undefined for performServerHandshake() sessions; node never clears it, not even on destroy().
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js (ServerHttp2Session#server)
+  get server() {
+    return this[kServer];
+  }
+
   get originSet() {
     if (this.encrypted) {
       return Array.from(initOriginSet(this));

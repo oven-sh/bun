@@ -2790,16 +2790,12 @@ macro_rules! impl_buffered_writer_parent {
             #[inline]
             unsafe fn get_buffer<'a>(this: *mut Self) -> &'a [u8] {
                 // SAFETY: see on_write. Shared-only borrow of the buffer storage.
-                let $gb_this = this;
-                #[allow(unused_unsafe)]
-                unsafe { $gb }
+                $crate::impl_streaming_writer_parent!(@acc $borrow $gb_this = this; $gb)
             }
             #[inline]
             unsafe fn event_loop(this: *mut Self) -> $crate::EventLoopHandle {
                 // SAFETY: see on_write.
-                let $el_this = this;
-                #[allow(unused_unsafe)]
-                unsafe { $el }
+                $crate::impl_streaming_writer_parent!(@acc $borrow $el_this = this; $el)
             }
         }
 
@@ -2808,23 +2804,17 @@ macro_rules! impl_buffered_writer_parent {
             #[inline]
             unsafe fn loop_(this: *mut Self) -> *mut $crate::pipe_writer::__parent_macro::UvLoop {
                 // SAFETY: BACKREF set via `set_parent`; shared-only read.
-                let $uv_this = this;
-                #[allow(unused_unsafe)]
-                unsafe { $uv }
+                $crate::impl_streaming_writer_parent!(@acc $borrow $uv_this = this; $uv)
             }
             #[inline]
             unsafe fn ref_(this: *mut Self) {
                 // SAFETY: see loop_. Intrusive refcount bump.
-                let $ref_this = this;
-                #[allow(unused_unsafe)]
-                unsafe { $ref_ };
+                $crate::impl_streaming_writer_parent!(@acc $borrow $ref_this = this; $ref_)
             }
             #[inline]
             unsafe fn deref(this: *mut Self) {
                 // SAFETY: see loop_. May free `this`.
-                let $deref_this = this;
-                #[allow(unused_unsafe)]
-                unsafe { $deref };
+                $crate::impl_streaming_writer_parent!(@acc $borrow $deref_this = this; $deref)
             }
         }
 
@@ -2849,9 +2839,7 @@ macro_rules! impl_buffered_writer_parent {
             #[inline]
             unsafe fn get_buffer<'a>(this: *mut Self) -> &'a [u8] {
                 // SAFETY: see on_write.
-                let $gb_this = this;
-                #[allow(unused_unsafe)]
-                unsafe { $gb }
+                $crate::impl_streaming_writer_parent!(@acc $borrow $gb_this = this; $gb)
             }
             const HAS_ON_WRITABLE: bool = false;
         }

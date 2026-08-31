@@ -246,14 +246,12 @@ impl Environment {
         id
     }
 
-    /// Name the unnamed temporary `identifier_id` `#t<n>` after its
-    /// declaration id, so it is kept as a variable in the output.
+    /// Name the temporary `#t<declaration id>` so it survives as a variable.
     pub fn promote_temporary(&mut self, identifier_id: IdentifierId) {
         self.promote_temporary_with_kind(identifier_id, b't');
     }
 
-    /// Like [`Self::promote_temporary`], but `#T<n>`: a JSX tag has to
-    /// start with a capital letter to be read as a component.
+    /// `#T<declaration id>`: a JSX tag must start with a capital letter.
     pub fn promote_temporary_jsx_tag(&mut self, identifier_id: IdentifierId) {
         self.promote_temporary_with_kind(identifier_id, b'T');
     }

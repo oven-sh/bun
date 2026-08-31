@@ -10,8 +10,8 @@
  * given into its sysroot path and into its host triple, so both probes are
  * covered. The fake sysroot has a `gcc-ld/ld.lld` only under the pinned
  * names: an unpinned probe resolves to a path that does not exist and
- * `rustLld` comes back undefined. PATH is emptied so no real rustup runs a
- * pre-flight.
+ * `rustLld` comes back undefined. PATH holds only the fixture's `bin`
+ * directory, so no real rustup runs a pre-flight.
  */
 import { afterEach, expect, test } from "bun:test";
 import { isWindows, tempDir } from "harness";

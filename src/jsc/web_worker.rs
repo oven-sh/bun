@@ -928,7 +928,9 @@ impl WebWorker {
         self.set_status(Status::Running);
 
         // don't run the GC if we don't actually need to
-        if vm.is_event_loop_alive() || vm.event_loop_mut().tick_concurrent_with_count() > 0 {
+        if vm.standalone_module_graph.is_none()
+            && (vm.is_event_loop_alive() || vm.event_loop_mut().tick_concurrent_with_count() > 0)
+        {
             vm.global().vm().release_weak_refs();
             // `Arena = bumpalo::Bump` has no collect; global mimalloc
             // handles reclamation.
@@ -1275,75 +1277,14 @@ unsafe fn resolve_entry_point_specifier<'s>(
     error_message: &mut BunString,
     log: &mut bun_ast::Log,
 ) -> Option<&'s [u8]> {
-    // SAFETY: per fn contract; read-only field.
-    if let Some(graph) = unsafe { (*parent).standalone_module_graph } {
-        if graph.find(str).is_some() {
-            return Some(str);
-        }
-
-        // Since `bun build --compile` renames files to `.js` by default, we
-        // need to do the reverse of our file extension mapping.
-        //
-        //   new Worker("./foo")     -> new Worker("./foo.js")
-        //   new Worker("./foo.ts")  -> new Worker("./foo.js")
-        //   new Worker("./foo.jsx") -> new Worker("./foo.js")
-        //   new Worker("./foo.mjs") -> new Worker("./foo.js")
-        //   new Worker("./foo.mts") -> new Worker("./foo.js")
-        //   new Worker("./foo.cjs") -> new Worker("./foo.js")
-        //   new Worker("./foo.cts") -> new Worker("./foo.js")
-        //   new Worker("./foo.tsx") -> new Worker("./foo.js")
-        //
-        if str.starts_with(b"./") || str.starts_with(b"../") {
-            'try_from_extension: {
-                let mut pathbuf = bun_paths::path_buffer_pool::get();
-                let base_path = graph.base_public_path_with_default_suffix();
-                let base = bun_paths::resolve_path::join_abs_string_buf::<bun_paths::platform::Loose>(
-                    base_path,
-                    &mut pathbuf[..],
-                    &[str],
-                );
-                let base_len = base.len();
-                let extname_len = bun_paths::extension(base).len();
-                // `extname` cannot be held as a sub-slice of `pathbuf` while
-                // writing into `pathbuf` — compare
-                // by re-slicing after dropping the mutable borrow.
-                let extname = &pathbuf[base_len - extname_len..base_len];
-
-                // ./foo -> ./foo.js
-                if extname.is_empty() {
-                    pathbuf[base_len..base_len + 3].copy_from_slice(b".js");
-                    if let Some(js_file) = graph.find(&pathbuf[0..base_len + 3]) {
-                        return Some(js_file);
-                    }
-                    break 'try_from_extension;
-                }
-
-                // ./foo.ts -> ./foo.js
-                if extname == b".ts" {
-                    pathbuf[base_len - 3..base_len].copy_from_slice(b".js");
-                    if let Some(js_file) = graph.find(&pathbuf[0..base_len]) {
-                        return Some(js_file);
-                    }
-                    break 'try_from_extension;
-                }
-
-                if extname.len() == 4 {
-                    const EXTS: [&[u8]; 6] = [b".tsx", b".jsx", b".mjs", b".mts", b".cts", b".cjs"];
-                    for ext in EXTS {
-                        if extname == ext {
-                            let js_len = b".js".len();
-                            pathbuf[base_len - ext.len()..base_len - ext.len() + js_len]
-                                .copy_from_slice(b".js");
-                            let as_js = &pathbuf[0..base_len - ext.len() + js_len];
-                            if let Some(js_file) = graph.find(as_js) {
-                                return Some(js_file);
-                            }
-                            break 'try_from_extension;
-                        }
-                    }
-                }
-            }
-        }
+    // In a `bun build --compile` executable, a relative specifier names an embedded entry point (relative to the
+    // embedded root) before it names a file on disk, and an absolute one may be an embedded path in either syntax
+    // (`new URL("./w.ts", import.meta.url)`).
+    // SAFETY: per fn contract; `standalone_module_graph` is a read-only field.
+    if let Some(graph) = unsafe { (*parent).standalone_module_graph }
+        && let Some(name) = graph.resolve(graph.base_public_path_with_default_suffix(), str)
+    {
+        return Some(name);
     }
 
     // A `data:` URL is the module itself (the loader decodes it); it never names

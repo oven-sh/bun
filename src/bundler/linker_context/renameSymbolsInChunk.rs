@@ -5,7 +5,7 @@ use core::cmp::Ordering;
 use crate::bundled_ast::Flags as AstFlags;
 use bun_ast::StmtData;
 use bun_ast::symbol;
-use bun_ast::{Part, SlotCounts};
+use bun_ast::{Part, Ref, SlotCounts};
 
 use crate::bun_renamer as renamer;
 use crate::bun_renamer::{ChunkRenamer, MinifyRenamer, NumberRenamer, StableSymbolCount};
@@ -72,7 +72,7 @@ pub(crate) unsafe fn rename_symbols_in_chunk(
     // elements; the lists do not reallocate during this function. Read-only
     // columns are deref'd to `&[T]`; the two written columns
     // (`module_scope`, `parts`) are deref'd to `&mut [T]` — see CONCURRENCY
-    // note above re: code-splitting overlap. All ten derefs share the same
+    // note above re: code-splitting overlap. All eleven derefs share the same
     // invariant, so they are grouped under one `unsafe` block.
     let (
         all_module_scopes,
@@ -85,7 +85,8 @@ pub(crate) unsafe fn rename_symbols_in_chunk(
         exports_ref_col,
         module_ref_col,
         nested_slot_counts_col,
-    ): (_, &[js_meta::Flags], _, _, _, _, _, _, _, _) = unsafe {
+        cjs_export_copies_col,
+    ): (_, &[js_meta::Flags], _, _, _, _, _, _, _, _, _) = unsafe {
         (
             &mut *ast.module_scope,
             &*meta.flags,
@@ -97,7 +98,22 @@ pub(crate) unsafe fn rename_symbols_in_chunk(
             &*ast.exports_ref,
             &*ast.module_ref,
             &*ast.nested_scope_slot_counts,
+            &*meta.cjs_export_copies,
         )
+    };
+
+    // An entry point chunk ends with `generate_entry_point_tail_js`, which
+    // declares a copy binding (`var export_foo = import_cjs.foo`) for each
+    // re-export that resolves to a CommonJS property. The tail is printed with
+    // this chunk's renamer, so those bindings are numbered like the chunk's
+    // other top-level symbols. Otherwise the copy prints under its original
+    // name and can redeclare another binding with that name: a user binding,
+    // an unbound global, or another copy whose alias formats to the same
+    // identifier (`"x-y"` and `"x.y"` both give `export_x_y`).
+    let entry_point_cjs_export_copies: &[Ref] = if chunk.entry_point.is_entry_point() {
+        &cjs_export_copies_col[chunk.entry_point.source_index() as usize]
+    } else {
+        &[]
     };
 
     // `symbol::Map` is not `Clone`/`Copy`. Build a non-owning shallow view via
@@ -256,6 +272,14 @@ pub(crate) unsafe fn rename_symbols_in_chunk(
             minify_renamer.accumulate_symbol_use_count(
                 &mut top_level_symbols,
                 ref_,
+                1,
+                stable_source_indices,
+            )?;
+        }
+        for &copy in entry_point_cjs_export_copies {
+            minify_renamer.accumulate_symbol_use_count(
+                &mut top_level_symbols,
+                copy,
                 1,
                 stable_source_indices,
             )?;
@@ -428,6 +452,12 @@ pub(crate) unsafe fn rename_symbols_in_chunk(
             }
             r.number_scope_pool.hive.used = bun_collections::hive_array::HiveBitSet::init_empty();
         }
+    }
+
+    // After the files, so a user binding with the same name keeps it and the
+    // copy takes the numbered one.
+    for &copy in entry_point_cjs_export_copies {
+        r.add_top_level_symbol(copy);
     }
 
     Ok(ChunkRenamer::Number(r))

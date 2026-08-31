@@ -558,21 +558,51 @@ describe("CompressionStream chunk handling (Node v26 semantics)", () => {
     },
   );
 
-  // Poll `get()` once per tick until it stays unchanged for 5 consecutive
-  // samples (parked on backpressure) or reaches `total` (ran away). The caller
-  // asserts the parked value is < total.
-  async function waitUntilStable(get: () => number, total: number) {
-    let last = get();
+  // 64 KiB chunks. A paused pipe holds whatever the socket buffers plus a few userland buffers
+  // absorb (Linux loopback autotunes to several MB per direction, so 100-250 chunks is normal);
+  // 32 MiB is beyond any of that, so a source that gets this far was never paused.
+  const RUNAWAY = 512;
+
+  /** A pull source of copies of `chunk` that keeps producing until `endAfter()` or RUNAWAY. */
+  function countingSource(chunk: Uint8Array) {
+    let pulls = 0;
+    let closeAt = RUNAWAY;
+    const stream = new ReadableStream({
+      pull(c) {
+        pulls++;
+        c.enqueue(chunk.slice());
+        if (pulls >= closeAt) c.close();
+      },
+    });
+    return {
+      stream,
+      get pulls() {
+        return pulls;
+      },
+      /** Ends the stream `n` pulls from now; returns the pull count it will end at. */
+      endAfter(n: number) {
+        closeAt = Math.min(closeAt, pulls + n);
+        return closeAt;
+      },
+    };
+  }
+
+  // Resolves once `source` has stopped pulling (no new pull across 50 consecutive 5 ms samples)
+  // or ran away to RUNAWAY. Where it parks depends on the kernel, so callers only assert that it
+  // parked below RUNAWAY, never at a specific count.
+  async function waitUntilParked(source: { readonly pulls: number }) {
+    let last = source.pulls;
     let stable = 0;
-    while (stable < 5 && get() < total) {
-      await Bun.sleep(1);
-      const now = get();
+    while (stable < 50 && source.pulls < RUNAWAY) {
+      await Bun.sleep(5);
+      const now = source.pulls;
       if (now === last) stable++;
       else {
         stable = 0;
         last = now;
       }
     }
+    return source.pulls;
   }
 
   // Native-sink backpressure: when the HTTP response sink's socket buffer fills
@@ -580,76 +610,54 @@ describe("CompressionStream chunk handling (Node v26 semantics)", () => {
   // the writable side parks on m_nativeSinkReadyPromise. Without that, a fast
   // source with a stalled client fills the sink buffer unboundedly.
   test("CompressionStream -> native HTTP sink applies backpressure to a stalled client", async () => {
-    let pulls = 0;
     // Incompressible data so the gzipped output is ~as large as the input.
     const chunk = crypto.getRandomValues(new Uint8Array(64 * 1024));
-    // Backpressure parks after ~tens of pulls (a few MB of socket+sink buffer /
-    // 64KB); 200 is enough headroom to distinguish "parked" from "ran away"
-    // without pushing ~32MB through gzip+HTTP under debug+ASAN.
-    const TOTAL = 200;
+    let source!: ReturnType<typeof countingSource>;
     await using server = Bun.serve({
       port: 0,
       fetch() {
-        const body = new ReadableStream({
-          pull(c) {
-            pulls++;
-            c.enqueue(chunk.slice());
-            if (pulls >= TOTAL) c.close();
-          },
-        });
-        return new Response(body.pipeThrough(new CompressionStream("gzip")));
+        source = countingSource(chunk);
+        return new Response(source.stream.pipeThrough(new CompressionStream("gzip")));
       },
     });
     const res = await fetch(server.url);
     const reader = res.body!.getReader();
     await reader.read();
-    // Let the server's pull loop run until it either parks on backpressure or
-    // runs away to TOTAL.
-    await waitUntilStable(() => pulls, TOTAL);
-    const pullsWhileStalled = pulls;
+    const pullsWhileStalled = await waitUntilParked(source);
+    if (pullsWhileStalled >= RUNAWAY) await reader.cancel();
+    expect(pullsWhileStalled).toBeGreaterThan(0);
+    expect(pullsWhileStalled).toBeLessThan(RUNAWAY);
+    // Reading again must resume the parked pull loop and run it to the end.
+    const closeAt = source.endAfter(8);
     while (!(await reader.read()).done) {}
-    // Without backpressure the pull loop reaches TOTAL while the client is
-    // stalled; with it, pulls stay bounded by the socket + sink buffer
-    // (~a few MB / 64KB ≈ tens of pulls).
-    expect(pullsWhileStalled).toBeLessThan(TOTAL);
-    expect(pulls).toBe(TOTAL);
+    expect(source.pulls).toBe(closeAt);
   });
 
   test("request body -> DecompressionStream propagates backpressure to the client", async () => {
-    let clientPulls = 0;
-    let clientPullsWhileServerStalled = -1;
     const chunk = crypto.getRandomValues(new Uint8Array(64 * 1024));
     const compressed = new Uint8Array(
       await new Response(new Blob([chunk]).stream().pipeThrough(new CompressionStream("gzip"))).arrayBuffer(),
     );
-    const TOTAL = 200;
-    const { promise: drain, resolve: startDrain } = Promise.withResolvers<void>();
+    const source = countingSource(compressed);
+    let clientPullsWhileServerStalled = -1;
+    let closeAt = -1;
     await using server = Bun.serve({
       port: 0,
       async fetch(req) {
         const reader = req.body!.pipeThrough(new DecompressionStream("gzip")).getReader();
         await reader.read();
-        // Stall: let the client's pull loop either park or run away.
-        await waitUntilStable(() => clientPulls, TOTAL);
-        clientPullsWhileServerStalled = clientPulls;
-        startDrain();
+        // Stall: the client's pull loop either parks on backpressure or runs away.
+        clientPullsWhileServerStalled = await waitUntilParked(source);
+        closeAt = source.endAfter(8);
         while (!(await reader.read()).done) {}
         return new Response("ok");
       },
     });
-    const body = new ReadableStream({
-      pull(c) {
-        clientPulls++;
-        c.enqueue(compressed.slice());
-        if (clientPulls >= TOTAL) c.close();
-      },
-    });
-    const res = await fetch(server.url, { method: "POST", body, duplex: "half" } as RequestInit);
-    await drain;
+    const res = await fetch(server.url, { method: "POST", body: source.stream, duplex: "half" } as RequestInit);
     expect(await res.text()).toBe("ok");
     expect(clientPullsWhileServerStalled).toBeGreaterThan(0);
-    expect(clientPullsWhileServerStalled).toBeLessThan(TOTAL);
-    expect(clientPulls).toBe(TOTAL);
+    expect(clientPullsWhileServerStalled).toBeLessThan(RUNAWAY);
+    expect(source.pulls).toBe(closeAt);
   });
 
   test("req.clone().textStream() -> TextEncoderStream -> CompressionStream -> Response round-trips", async () => {

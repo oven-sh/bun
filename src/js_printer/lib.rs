@@ -2230,6 +2230,7 @@ pub(crate) mod __gated_printer {
                     //
                     // Caveats:
                     //   - Same consecutive target
+                    //   - A stable target (`is_stable_destructuring_target`)
                     //   - No optional chaining
                     //   - No computed property access
                     //   - Identifier bindings only
@@ -2267,6 +2268,10 @@ pub(crate) mod __gated_printer {
                         // the `n` it reads are two refs for one variable.
                         let symbols = self.renamer.symbols();
                         let target_ref = symbols.follow(target_id.ref_);
+
+                        if !self.is_stable_destructuring_target(*target_id, target_ref) {
+                            break 'brk;
+                        }
 
                         // A group evaluates its target once, before any
                         // assignment, but the original declarators execute in
@@ -2392,6 +2397,26 @@ pub(crate) mod __gated_printer {
                 }
                 decls = &decls[1..];
             }
+        }
+
+        /// The group reads its target once where the declarators read it once
+        /// each, and a getter on the first property runs in between. The
+        /// target must be a declared symbol that nothing assigns, outside
+        /// `with` and direct `eval`, or a known pure global such as `Math`.
+        fn is_stable_destructuring_target(&self, id: E::Identifier, target_ref: Ref) -> bool {
+            if id.must_keep_due_to_with_stmt() {
+                return false;
+            }
+            let Some(symbol) = self.symbols().get_const(target_ref) else {
+                return false;
+            };
+            if symbol.has_been_assigned_to() || symbol.namespace_alias.is_some() {
+                return false;
+            }
+            if symbol.kind == js_ast::symbol::Kind::Unbound {
+                return id.can_be_removed_if_unused();
+            }
+            !symbol.must_not_be_renamed()
         }
 
         #[inline]

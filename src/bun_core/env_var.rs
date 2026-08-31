@@ -175,6 +175,9 @@ new!(pub REPL_ID: boolean, "REPL_ID", { default: false });
 new!(pub RUNNER_DEBUG: boolean, "RUNNER_DEBUG", { default: false });
 platform_specific_new!(pub SDKROOT: string, posix = "SDKROOT", windows = None, {});
 platform_specific_new!(pub SHELL: string, posix = "SHELL", windows = None, {});
+// OpenSSL's overrides for its default certificate file and directory. Set but empty means none.
+new!(pub SSL_CERT_DIR: string, "SSL_CERT_DIR", {});
+new!(pub SSL_CERT_FILE: string, "SSL_CERT_FILE", {});
 // C:\Windows, for example.
 platform_specific_new!(pub SYSTEMROOT: string, posix = None, windows = "SYSTEMROOT", {});
 platform_specific_new!(pub TEMP: string, posix = "TEMP", windows = "TEMP", {});

@@ -2042,7 +2042,6 @@ void GlobalObject::finishCreation(VM& vm)
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
 
-    m_commonStrings.initialize();
     m_bakeAdditions.initialize();
     m_markdownTagStrings.initialize();
 

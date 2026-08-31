@@ -73,7 +73,7 @@ impl ManagedTask {
 
     /// A task that owns `ctx` and [`run`](RunOnce::run)s it (or drops it if
     /// the queue is released unrun).
-    pub fn new_boxed<T: RunOnce>(ctx: Box<T>) -> Task {
+    pub fn new_boxed<T: RunOnce + 'static>(ctx: Box<T>) -> Task {
         fn run<T: RunOnce>(p: *mut c_void) -> JsResult<()> {
             // SAFETY: `p` is the `Box<T>` `new_boxed` leaked into `ctx`; `run`
             // passes it back exactly once.

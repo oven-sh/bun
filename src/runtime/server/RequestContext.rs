@@ -2440,7 +2440,7 @@ where
                     resp.write_header(b"transfer-encoding", b"chunked");
                 }
                 // HEAD never transmits the body.
-                Self::cancel_unread_body(&response, global_this);
+                Self::cancel_unread_body(response, global_this);
                 this.end_without_body(this.should_close_connection());
             }
             Body::Value::Used | Body::Value::Null | Body::Value::Empty | Body::Value::Error(_) => {

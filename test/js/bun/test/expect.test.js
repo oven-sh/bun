@@ -169,7 +169,61 @@ describe("expect()", () => {
         /Received promise that rejected/,
       );
       // A non-callable `then` does not make a thenable.
-      await expectFailure(() => expect({ then: 4 }).resolves.toBe(4)).toThrow(/Expected promise/);
+      await expectFailure(() => expect({ then: 4 }).resolves.toBe(4)).toThrow(
+        /Expected a promise or a function returning a promise/,
+      );
+    }
+  });
+
+  // Jest calls a function receiver and waits on what it returns. Vitest does
+  // this for `.rejects` only.
+  test("resolves/rejects on a function returning a promise", async () => {
+    await expect(() => Promise.reject(new Error("fn boom"))).rejects.toThrow("fn boom");
+    await expect(async () => {
+      throw new Error("async fn boom");
+    }).rejects.toThrow("async fn boom");
+    await expect(() => ({
+      /** @param {(reason: unknown) => void} reject */
+      then(_, reject) {
+        reject(4);
+      },
+    })).rejects.toBe(4);
+
+    if (!isVitest) {
+      await expect(() => Promise.resolve(4)).resolves.toBe(4);
+      await expect(async () => 4).resolves.not.toBe(5);
+      await expect(() => ({
+        /** @param {(value: unknown) => void} resolve */
+        then(resolve) {
+          resolve(4);
+        },
+      })).resolves.toBe(4);
+    }
+
+    if (isBun) {
+      // The mismatch message names the settled value, not the function.
+      await expectFailure(() => expect(() => Promise.resolve("settled to this")).rejects.toBe(1)).toThrow(
+        /Received promise that resolved: "settled to this"/,
+      );
+      await expectFailure(() => expect(async () => "settled to this").rejects.toBe(1)).toThrow(
+        /Received promise that resolved: "settled to this"/,
+      );
+      await expectFailure(() => expect(() => Promise.reject("settled to this")).resolves.toBe(1)).toThrow(
+        /Received promise that rejected: "settled to this"/,
+      );
+      // A function that returns a non-thenable is a usage error.
+      await expectFailure(() => expect(ANY(() => 4)).resolves.toBe(4)).toThrow(
+        /Expected a promise or a function returning a promise/,
+      );
+      await expectFailure(() => expect(ANY(() => 4)).rejects.toBe(4)).toThrow(
+        /Expected a promise or a function returning a promise/,
+      );
+      // A function that throws synchronously propagates its own error.
+      const boom = () => {
+        throw new Error("sync boom");
+      };
+      await expectFailure(() => expect(ANY(boom)).rejects.toThrow("anything")).toThrow("sync boom");
+      await expectFailure(() => expect(ANY(boom)).resolves.toBe(1)).toThrow("sync boom");
     }
   });
 
@@ -4695,6 +4749,12 @@ describe("expect()", () => {
         await expect({ a: Promise.reject("1") }).toEqual({ a: expect.not.rejectsTo.stringContaining("2") });
         await expect(Promise.reject(new Error("rejectMessage"))).rejects.toMatchObject({ message: "rejectMessage" });
 
+        // a thenable and a function returning a promise match like a promise does
+        await expect({ then: (/** @type {any} */ _, /** @type {any} */ reject) => reject("1") }).toEqual(
+          expect.rejectsTo.stringContaining("1"),
+        );
+        await expect({ a: () => Promise.reject("1") }).toEqual({ a: expect.rejectsTo.stringContaining("1") });
+
         // a resolved promise should not match
         await expect(Promise.resolve("a")).not.toEqual(expect.rejectsTo.stringContaining("a"));
 
@@ -4720,6 +4780,12 @@ describe("expect()", () => {
           }),
         ).resolves.toThrow();
 
+        // a thenable and a function returning a promise match like a promise does
+        await expect({ then: (/** @type {any} */ resolve) => resolve("1") }).toEqual(
+          expect.resolvesTo.stringContaining("1"),
+        );
+        await expect({ a: () => Promise.resolve("1") }).toEqual({ a: expect.resolvesTo.stringContaining("1") });
+
         // a rejected promise should not match
         await expect(Promise.reject("a")).not.toEqual(expect.resolvesTo.stringContaining("a"));
 
@@ -4732,6 +4798,20 @@ describe("expect()", () => {
             setTimeout(() => resolve("a"), 0);
           }),
         ).toEqual(expect.resolvesTo.stringContaining("a"));
+      });
+
+      // A function receiver that throws synchronously fails the test with its own
+      // error. `.not` must not turn the pending exception into a pass.
+      test("expect.rejectsTo / resolvesTo propagate a sync throw from a received function", () => {
+        const boom = () => {
+          throw new Error("asymmetric sync boom");
+        };
+        expect(() => expect(boom).toEqual(expect.rejectsTo.anything())).toThrow("asymmetric sync boom");
+        expect(() => expect(boom).toEqual(expect.not.rejectsTo.anything())).toThrow("asymmetric sync boom");
+        expect(() => expect({ a: boom }).toEqual({ a: expect.resolvesTo.anything() })).toThrow("asymmetric sync boom");
+        expect(() => expect({ a: boom }).toEqual({ a: expect.not.resolvesTo.anything() })).toThrow(
+          "asymmetric sync boom",
+        );
       });
     }
   });

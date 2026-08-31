@@ -78,6 +78,25 @@ describe("bun:test", () => {
     expect(undefined).toBeUndefined();
     expect(undefined).not.toBeDefined();
   });
+
+  test("resolves / rejects", async () => {
+    await expect(Promise.resolve(1)).resolves.toBe(1);
+    await expect({
+      then(resolve: (value: number) => void) {
+        resolve(1);
+      },
+    }).resolves.toBe(1);
+    await expect(() => Promise.resolve(1)).resolves.toBe(1);
+    await expect(async () => "a").resolves.toBe("a");
+    expectType(expect(Promise.resolve(1)).resolves).is<Matchers<number>>();
+    expectType(expect(() => Promise.resolve(1)).resolves).is<Matchers<number>>();
+    expectType(expect(async () => "a").resolves).is<Matchers<string>>();
+
+    await expect(Promise.reject(new Error("Bad"))).rejects.toThrow("Bad");
+    await expect(async () => {
+      throw new Error("Bad");
+    }).rejects.toThrow("Bad");
+  });
 });
 
 test.each([1, 2, 3])("test.each", a => {

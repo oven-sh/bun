@@ -920,18 +920,22 @@ declare module "bun:test" {
     not: Matchers<unknown>;
 
     /**
-     * Expects the value to be a promise that resolves.
+     * Expects the value to be a promise (or any thenable) that resolves.
+     * A function is called first, and the matcher waits on what it returns.
      *
      * @example
      * expect(Promise.resolve(1)).resolves.toBe(1);
+     * expect(async () => 1).resolves.toBe(1);
      */
-    resolves: Matchers<Awaited<T>>;
+    resolves: Matchers<Awaited<T extends (...args: any[]) => infer R ? R : T>>;
 
     /**
-     * Expects the value to be a promise that rejects.
+     * Expects the value to be a promise (or any thenable) that rejects.
+     * A function is called first, and the matcher waits on what it returns.
      *
      * @example
      * expect(Promise.reject("error")).rejects.toBe("error");
+     * expect(async () => { throw new Error("error"); }).rejects.toThrow("error");
      */
     rejects: Matchers<unknown>;
 

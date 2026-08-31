@@ -244,7 +244,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsGetterProxyEnvironmentVariable, (JSGlobalObject * glo
 
     BunString name = Bun::toStringView(propertyName.publicName());
     BunString value = Bun__getEnvValueBunString(globalObject, &name);
-    if (value.tag == BunStringTag::Dead) {
+    if (value.isDead()) {
         return JSValue::encode(jsUndefined());
     }
     RELEASE_AND_RETURN(scope, JSValue::encode(jsString(vm, value.toWTFString())));

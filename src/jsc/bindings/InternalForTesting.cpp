@@ -6,10 +6,12 @@
 #include "JavaScriptCore/JSArrayBufferView.h"
 #include "headers-handwritten.h"
 #include "webcore/HTTPHeaderMap.h"
+#include <wtf/FastMalloc.h>
 #include <wtf/text/AtomStringImpl.h>
 #include <wtf/text/StringImpl.h>
 #include <wtf/text/WTFString.h>
 #include <atomic>
+#include <cmath>
 #include <memory>
 #if !OS(WINDOWS)
 #include <pthread.h>
@@ -62,6 +64,29 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_hasReifiedStatic, (JSC::JSGlobalObject * glo
 JSC_DEFINE_HOST_FUNCTION(jsFunction_isASANEnabled, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
 #if ASAN_ENABLED
+    return JSValue::encode(jsBoolean(true));
+#else
+    return JSValue::encode(jsBoolean(false));
+#endif
+}
+
+// Caps every `tryFastMalloc` (so `WTF::StringImpl::tryCreateUninitialized`
+// too) at `bytes`: a larger request returns null, exactly as a failed
+// allocation does. `Infinity` lifts the cap. Debug WTF only; returns false on
+// a release build, where `WTF::fastSetMaxSingleAllocationSize` does not exist.
+// A non-`try` fastMalloc over the cap asserts, so keep the window small.
+JSC_DEFINE_HOST_FUNCTION(jsFunction_setMaxSingleAllocationSizeForTesting, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+#if !defined(NDEBUG)
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    double bytes = callFrame->argument(0).toNumber(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (std::isnan(bytes) || bytes < 0) {
+        throwTypeError(globalObject, scope, "setMaxSingleAllocationSizeForTesting expects a non-negative number"_s);
+        return {};
+    }
+    WTF::fastSetMaxSingleAllocationSize(bytes >= static_cast<double>(SIZE_MAX) ? SIZE_MAX : static_cast<size_t>(bytes));
     return JSValue::encode(jsBoolean(true));
 #else
     return JSValue::encode(jsBoolean(false));

@@ -159,7 +159,7 @@ impl SSLConfigFromJs for SSLConfig {
             any = true;
         }
         if let Some(dh_params_file) = generated.dh_params_file.as_ref() {
-            result.dh_params_file_name = handle_path(vm, global, "dhParamsFile", dh_params_file)?;
+            result.dh_params_file_name = handle_path(global, "dhParamsFile", dh_params_file)?;
             any = true;
         }
         if let Some(server_name) = generated.server_name.as_ref() {
@@ -220,15 +220,15 @@ impl SSLConfigFromJs for SSLConfig {
             || result.allow_partial_trust_chain;
 
         if let Some(key_file) = generated.key_file.as_ref() {
-            result.key_file_name = handle_path(vm, global, "keyFile", key_file)?;
+            result.key_file_name = handle_path(global, "keyFile", key_file)?;
             result.requires_custom_request_ctx = true;
         }
         if let Some(cert_file) = generated.cert_file.as_ref() {
-            result.cert_file_name = handle_path(vm, global, "certFile", cert_file)?;
+            result.cert_file_name = handle_path(global, "certFile", cert_file)?;
             result.requires_custom_request_ctx = true;
         }
         if let Some(ca_file) = generated.ca_file.as_ref() {
-            result.ca_file_name = handle_path(vm, global, "caFile", ca_file)?;
+            result.ca_file_name = handle_path(global, "caFile", ca_file)?;
             result.requires_custom_request_ctx = true;
         }
 
@@ -292,7 +292,6 @@ pub fn resolve_reject_unauthorized(
 // `field` is a runtime &'static str (not monomorphized) since it is only
 // used in a cold error message.
 fn handle_path(
-    vm: &VirtualMachine,
     global: &JSGlobalObject,
     field: &'static str,
     string: &bun_core::String,
@@ -301,15 +300,13 @@ fn handle_path(
     let name = if name.is_empty() || bun_paths::is_absolute(name.as_bytes()) {
         name
     } else {
-        let mut buf = bun_paths::path_buffer_pool::get();
-        let Some(joined) = bun_paths::resolve_path::join_abs_string_buf_checked::<
-            bun_paths::resolve_path::platform::Auto,
-        >(vm.top_level_dir(), &mut buf[..], &[name.as_bytes()]) else {
+        let mut abs = bun_paths::AutoAbsPathChecked::init_top_level_dir();
+        if abs.join(&[name.as_bytes()]).is_err() {
             return Err(
                 global.throw_invalid_arguments(format_args!("Unable to access {} path", field))
             );
-        };
-        bun_core::ZBox::from_bytes(joined)
+        }
+        bun_core::ZBox::from_bytes(abs.slice())
     };
     // `bun_sys::access` routes to `access(2)` on POSIX and
     // `GetFileAttributesW` on Windows (via `sys_uv`), so this is the

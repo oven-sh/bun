@@ -1101,7 +1101,14 @@ static int us_install_ca_buffers(SSL_CTX *ctx, X509_STORE *store, STACK_OF(CRYPT
 static enum create_bun_socket_error_t us_ssl_ctx_use_ca_file_content(SSL_CTX *ctx, const char *content) {
   BIO *in = BIO_new_mem_buf(content, -1);
   STACK_OF(X509_NAME) *ca_list = in ? sk_X509_NAME_new_null() : NULL;
-  int ok = ca_list && SSL_add_bio_cert_subjects_to_stack(ca_list, in) && sk_X509_NAME_num(ca_list) > 0;
+  /* Like SSL_load_client_CA_file, the first block must be a certificate and its
+   * PEM error stays on the queue for the caller; later PEM errors end the list. */
+  X509 *first = ca_list ? PEM_read_bio_X509(in, NULL, NULL, NULL) : NULL;
+  X509_NAME *name = first ? X509_NAME_dup(X509_get_subject_name(first)) : NULL;
+  X509_free(first);
+  int ok = name && sk_X509_NAME_push(ca_list, name);
+  if (!ok) X509_NAME_free(name);
+  ok = ok && SSL_add_bio_cert_subjects_to_stack(ca_list, in);
   BIO_free(in);
   if (!ok) {
     sk_X509_NAME_pop_free(ca_list, X509_NAME_free);

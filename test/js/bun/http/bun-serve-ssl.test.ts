@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "fs";
-import { bunEnv, bunExe, expiredTls, tempDir, tls as tlsCert } from "harness";
+import { bunEnv, bunExe, expiredTls, isWindows, tempDir, tls as tlsCert } from "harness";
 import tls from "node:tls";
 import { join } from "path";
 import privateKey from "../../third_party/jsonwebtoken/priv.pem" with { type: "text" };
@@ -371,5 +371,85 @@ describe("keyFile / certFile / caFile / dhParamsFile", () => {
     };
     expect(listenWith(join(String(dir), "corrupt-second.pem"))).toThrow("Invalid CA file");
     expect(listenWith(join(String(dir), "no-certificate.pem"))).toThrow("Failed to load CA file");
+    // Bun.serve reports the BoringSSL error of the first PEM block instead.
+    expect(() => {
+      Bun.serve({
+        port: 0,
+        tls: {
+          keyFile: join(String(dir), "key.pem"),
+          certFile: join(String(dir), "cert.pem"),
+          caFile: join(String(dir), "no-certificate.pem"),
+        },
+        fetch: () => new Response("unreachable"),
+      });
+    }).toThrow(expect.objectContaining({ code: "ERR_OSSL_PEM_NO_START_LINE" }));
+  });
+
+  test("serverName entries load their file options too", async () => {
+    using dir = tempDir("bun-serve-ssl-sni-files", {
+      "key.pem": tlsCert.key,
+      "cert.pem": tlsCert.cert,
+      "a-directory/.keep": "",
+    });
+    const keyFile = join(String(dir), "key.pem");
+    const certFile = join(String(dir), "cert.pem");
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      tls: [
+        { keyFile, certFile },
+        { serverName: "localhost", keyFile, certFile },
+      ],
+      fetch: () => new Response("SNI-OK"),
+    });
+    const res = await fetch(`https://localhost:${server.port}/`, { keepalive: false, tls: { caFile: certFile } });
+    expect(await res.text()).toBe("SNI-OK");
+
+    const directory = join(String(dir), "a-directory");
+    expect(() => {
+      Bun.serve({
+        port: 0,
+        tls: [
+          { keyFile, certFile },
+          { serverName: "localhost", keyFile: directory, certFile },
+        ],
+        fetch: () => new Response("unreachable"),
+      });
+    }).toThrow(expect.objectContaining({ code: "EISDIR", message: expect.stringContaining(directory) }));
+  });
+
+  test.skipIf(isWindows)("a FIFO works as a file option", async () => {
+    // The file is read with a cursor read(2) loop, as BoringSSL's fopen did, so
+    // a non-seekable file works.
+    using dir = tempDir("bun-serve-ssl-fifo", { "key.pem": tlsCert.key, "cert.pem": tlsCert.cert });
+    expect(Bun.spawnSync({ cmd: ["mkfifo", "key.fifo"], cwd: String(dir) }).exitCode).toBe(0);
+    // The writer blocks in open(2) until the server opens the FIFO for reading.
+    await using writer = Bun.spawn({ cmd: ["sh", "-c", "cat key.pem > key.fifo"], cwd: String(dir) });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const server = Bun.serve({
+            port: 0,
+            hostname: "127.0.0.1",
+            tls: { keyFile: "key.fifo", certFile: "cert.pem" },
+            fetch: () => new Response("FIFO-OK"),
+          });
+          const res = await fetch(server.url, { tls: { caFile: "cert.pem" } });
+          console.log(await res.text());
+          server.stop(true);
+        `,
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("FIFO-OK\n");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    expect(await writer.exited).toBe(0);
   });
 });

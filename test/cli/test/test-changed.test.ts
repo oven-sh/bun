@@ -5,7 +5,8 @@ import { basename, join } from "node:path";
 
 // Each case spawns a full `bun test` process. The slowest case takes about a
 // second under a debug ASAN build; leave room for loaded CI machines.
-setDefaultTimeout(isASAN || isDebug ? 30_000 : 10_000);
+const TEST_TIMEOUT = isASAN || isDebug ? 30_000 : 10_000;
+setDefaultTimeout(TEST_TIMEOUT);
 
 // Keep git from reading the developer's global config and make commits
 // deterministic across machines. Used both for the `git` helper below and
@@ -30,11 +31,20 @@ const gitEnv = {
   GIT_AUTHOR_EMAIL: "test@example.com",
   GIT_COMMITTER_NAME: "Test",
   GIT_COMMITTER_EMAIL: "test@example.com",
-  // Same effect as `git config commit.gpgsign false` in every repo, without
-  // a `git config` process per repo.
-  GIT_CONFIG_COUNT: "1",
+  // Same effect as `git config` in every repo, without a process per key.
+  // commit.gpgsign: no signing. core.excludesFile: the global ignore file
+  // defaults to ~/.config/git/ignore, which GIT_CONFIG_GLOBAL does not
+  // redirect, and a `node_modules/` rule there would hide the fixture under
+  // node_modules from `git add -A`. maintenance.auto: every `git commit`
+  // otherwise spawns a `git maintenance run --auto` child, which on Windows
+  // runs in the foreground.
+  GIT_CONFIG_COUNT: "3",
   GIT_CONFIG_KEY_0: "commit.gpgsign",
   GIT_CONFIG_VALUE_0: "false",
+  GIT_CONFIG_KEY_1: "core.excludesFile",
+  GIT_CONFIG_VALUE_1: emptyGitConfig,
+  GIT_CONFIG_KEY_2: "maintenance.auto",
+  GIT_CONFIG_VALUE_2: "false",
 };
 
 async function git(cwd: string, ...args: string[]): Promise<string> {
@@ -433,6 +443,11 @@ function watchRuns(proc: Bun.Subprocess<"ignore", "ignore", "pipe">) {
   const reader = proc.stderr.getReader();
   const decoder = new TextDecoder();
   const summary = /^Ran \d+ tests? across \d+ files?\. \[[\d.]+m?s\]\n/m;
+  // Give up before bun's own test timeout would. In a concurrent group bun
+  // does not kill a timed-out test's children, so a hung watcher would
+  // outlive the test and the failure would show none of its output. A
+  // rejection here runs the `await using` disposer that kills the child.
+  const deadline = Date.now() + TEST_TIMEOUT * 0.8;
   let buf = "";
   let cursor = 0;
   return {
@@ -440,16 +455,25 @@ function watchRuns(proc: Bun.Subprocess<"ignore", "ignore", "pipe">) {
      *  Resolving on that line means the child is quiescent again (tests
      *  done, watcher seeded) before the caller touches the next file. */
     async next(): Promise<string> {
-      let match: RegExpExecArray | null;
-      while (!(match = summary.exec(buf.slice(cursor)))) {
-        const { value, done } = await reader.read();
-        if (done) throw new Error(`stream closed before the run finished\n${buf}`);
-        buf += decoder.decode(value, { stream: true });
+      const { promise: expired, reject: expire } = Promise.withResolvers<never>();
+      const timer = setTimeout(
+        () => expire(new Error(`the watcher printed no complete run before the deadline\n${buf}`)),
+        deadline - Date.now(),
+      );
+      try {
+        let match: RegExpExecArray | null;
+        while (!(match = summary.exec(buf.slice(cursor)))) {
+          const { value, done } = await Promise.race([reader.read(), expired]);
+          if (done) throw new Error(`stream closed before the run finished\n${buf}`);
+          buf += decoder.decode(value, { stream: true });
+        }
+        const end = cursor + match.index + match[0].length;
+        const run = buf.slice(cursor, end);
+        cursor = end;
+        return run;
+      } finally {
+        clearTimeout(timer);
       }
-      const end = cursor + match.index + match[0].length;
-      const run = buf.slice(cursor, end);
-      cursor = end;
-      return run;
     },
   };
 }

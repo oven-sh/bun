@@ -241,7 +241,6 @@ impl LinkerContext<'_> {
         };
 
         let our_imports_to_bind: &RefImportData = &imports_to_bind[id as usize];
-        let mut bound_member_uses: Vec<(Ref, u32)> = Vec::new();
         // SAFETY: see above.
         for (part_index, part) in unsafe { (*parts_slice).iter_mut().enumerate() } {
             // Now that all files have been parsed, determine which property
@@ -293,34 +292,14 @@ impl LinkerContext<'_> {
                     }
                 }
 
-                // `X.name` bound directly to the export of the namespace `X`
-                // resolved to (`bind_import_property_accesses`): the use
-                // belongs to that binding, not to `X`.
-                if let Some(bindings) = c.graph.import_member_bindings.get(ref_) {
-                    for (name, prop_use) in properties.iter() {
-                        match bindings.get(&**name) {
-                            Some(&binding) => {
-                                bound_member_uses.push((binding, prop_use.count_estimate))
-                            }
-                            None => use_.count_estimate += prop_use.count_estimate,
-                        }
-                    }
-                    if use_.count_estimate == 0 {
-                        let _ = symbol_uses.swap_remove(ref_);
-                    }
-                    for (binding, count) in bound_member_uses.drain(..) {
-                        symbol_uses
-                            .get_or_put_value(binding, SymbolUse::default())
-                            .expect("OOM")
-                            .value_ptr
-                            .count_estimate += count;
-                    }
-                    continue;
-                }
-
                 // Common path: this import isn't a TypeScript enum
                 for prop_use in properties.values() {
                     use_.count_estimate += prop_use.count_estimate;
+                }
+                // Every property read was bound straight to the namespace's
+                // export by `bind_import_property_accesses`.
+                if use_.count_estimate == 0 {
+                    let _ = symbol_uses.swap_remove(ref_);
                 }
             }
 

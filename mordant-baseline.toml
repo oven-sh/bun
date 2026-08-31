@@ -1,7 +1,6 @@
 [bun_ast]
 
 [bun_bundler]
-"defaulted_failure:src/bundler/bundle_v2.rs" = 2
 "narrowed_two_ways:src/bundler/bundle_v2.rs" = 1
 
 [bun_core]

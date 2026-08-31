@@ -4815,14 +4815,17 @@ pub mod bv2_impl {
                                 return;
                             };
                             let mut resolved = resolved;
-                            let Ok(source_index) = this.enqueue_entry_item(
-                                &mut resolved,
-                                true,
-                                target,
-                                resolve.import_record.loader,
-                            ) else {
-                                return;
-                            };
+                            // `enqueue_entry_item` fails only on allocation, after it has
+                            // already counted the pending parse task: a silent return here
+                            // would leave the build waiting for a task that never runs.
+                            let source_index = this
+                                .enqueue_entry_item(
+                                    &mut resolved,
+                                    true,
+                                    target,
+                                    resolve.import_record.loader,
+                                )
+                                .expect("oom");
 
                             // Store the original entry point name for virtual entries that fall back to file resolution
                             if let Some(idx) = source_index {

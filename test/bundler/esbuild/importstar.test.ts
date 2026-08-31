@@ -1554,6 +1554,70 @@ describe("bundler", () => {
     },
     run: { stdout: "object string" },
   });
+  itBundled("importstar/MemberOfExportDefaultImportSnapshot", {
+    // `export default counter` snapshots the value; it must not become a live
+    // alias just because `counter` is an import.
+    files: {
+      "/entry.js": /* js */ `
+        import c, { inc } from './snapshot'
+        import * as ext from './external'
+        inc()
+        console.log(c, ext.counter)
+      `,
+      "/snapshot.js": /* js */ `
+        import { counter, inc } from './external'
+        export default counter
+        export { inc }
+      `,
+      "/external.js": /* js */ `
+        export let counter = 0
+        export function inc() { counter++ }
+      `,
+    },
+    run: { stdout: "0 1" },
+  });
+  itBundled("importstar/MemberOfExportDefaultImportCycleTDZ", {
+    // Reading `index.default` from inside a cycle before `export default z4`
+    // has executed: unbundled this is a TDZ ReferenceError and the old output
+    // read `undefined`; following the alias to the namespace yields the
+    // namespace itself. After evaluation completes everything agrees.
+    files: {
+      "/entry.js": /* js */ `
+        import z from './index'
+        import { early } from './cycle'
+        z.inc()
+        console.log(early, z.object(), z.counter)
+      `,
+      "/index.js": /* js */ `
+        import z4 from './classic'
+        export * from './classic'
+        export default z4
+      `,
+      "/classic.js": /* js */ `
+        import * as z from './external'
+        export * from './external'
+        export { z }
+        export default z
+      `,
+      "/external.js": /* js */ `
+        import './cycle'
+        export function object() { return 'object' }
+        export let counter = 0
+        export function inc() { counter++ }
+        export const unused = 'FAIL'
+      `,
+      "/cycle.js": /* js */ `
+        import z from './index'
+        export let early
+        try { early = typeof z.object } catch (e) { early = e.constructor.name }
+      `,
+    },
+    dce: true,
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("__export");
+    },
+    run: { stdout: "function object 1" },
+  });
   itBundled("importstar/MemberOfExportStarAs", {
     files: {
       "/entry.js": /* js */ `

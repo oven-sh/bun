@@ -4920,7 +4920,10 @@ JSValue SerializedScriptValue::deserialize(JSGlobalObject& lexicalGlobalObject, 
             *didFail = false;
         return jsString(vm, m_fastPathString);
     case FastPath::SimpleObject: {
-        JSObject* object = constructEmptyObject(globalObject, globalObject->objectPrototype(), std::min(static_cast<unsigned>(m_simpleInMemoryPropertyTable.size()), JSFinalObject::maxInlineCapacity));
+        unsigned size = static_cast<unsigned>(m_simpleInMemoryPropertyTable.size());
+        JSObject* object = size
+            ? constructEmptyObject(globalObject, globalObject->objectPrototype(), std::min(size, JSFinalObject::maxInlineCapacity))
+            : constructEmptyObject(globalObject);
         if (scope.exception()) [[unlikely]] {
             if (didFail)
                 *didFail = true;
@@ -5024,8 +5027,9 @@ JSValue SerializedScriptValue::deserialize(JSGlobalObject& lexicalGlobalObject, 
                                                        }
                                                    } else {
                                                        // No cache or shape mismatch → build from scratch
-                                                       newObj = constructEmptyObject(globalObject, globalObject->objectPrototype(),
-                                                           std::min(propCount, JSFinalObject::maxInlineCapacity));
+                                                       newObj = propCount
+                                                           ? constructEmptyObject(globalObject, globalObject->objectPrototype(), std::min(propCount, JSFinalObject::maxInlineCapacity))
+                                                           : constructEmptyObject(globalObject);
                                                        for (unsigned j = 0; j < propCount; j++) {
                                                            const auto& prop = obj.properties[j];
                                                            JSC::Identifier id = JSC::Identifier::fromString(vm, prop.propertyName);

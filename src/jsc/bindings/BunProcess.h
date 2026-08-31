@@ -30,6 +30,9 @@ class Process : public WebCore::JSEventEmitter {
     WriteBarrier<JSObject> m_nextTickFunction;
     // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/internal/bootstrap/switches/does_own_process_state.js#L113-L116
     WriteBarrier<JSString> m_cachedCwd;
+    // Value of the process-wide chdir counter when m_cachedCwd was filled, so a chdir on any
+    // thread invalidates every thread's cache (Node's worker `cwdCounter`).
+    uint32_t m_cachedCwdGeneration { 0 };
     WriteBarrier<Unknown> m_argv;
     WriteBarrier<Unknown> m_execArgv;
     // The JS warning printer (ProcessObjectInternals createOnWarning), built on the first warning.
@@ -85,9 +88,9 @@ public:
     static JSValue emitWarningErrorInstance(JSC::JSGlobalObject* lexicalGlobalObject, JSValue errorInstance);
     static JSValue emitWarning(JSC::JSGlobalObject* lexicalGlobalObject, JSValue warning, JSValue type, JSValue code, JSValue ctor);
 
-    JSString* cachedCwd() { return m_cachedCwd.get(); }
-    void setCachedCwd(JSC::VM& vm, JSString* cwd) { m_cachedCwd.set(vm, this, cwd); }
-    void clearCachedCwd() { m_cachedCwd.clear(); }
+    // process.cwd(): the cached string, re-queried after any thread changes the working
+    // directory. Returns nullptr with an exception pending if it cannot be read.
+    JSString* getCachedCwd(JSGlobalObject*);
 
     JSValue getArgv(JSGlobalObject* globalObject);
     void setArgv(JSGlobalObject* globalObject, JSValue argv);

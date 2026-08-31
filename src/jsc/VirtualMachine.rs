@@ -5069,6 +5069,9 @@ impl VirtualMachine {
     pub fn set_process_cwd(&mut self, to: &bun_core::ZStr) -> bun_sys::Result<()> {
         let fs = self.transpiler.fs_mut();
         bun_sys::chdir(to)?;
+        // The working directory is process-wide: every thread's cached `process.cwd()` string
+        // is now stale, whether or not the getcwd() below succeeds.
+        CWD_GENERATION.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
         let mut buf = bun_paths::PathBuffer::uninit();
         let into_cwd_len = match bun_sys::getcwd(&mut buf[..]) {
             bun_sys::Result::Ok(r) => r,
@@ -7024,4 +7027,20 @@ pub(crate) fn plugin_runner_on_resolve_jsc(
         "{}:{}",
         user_namespace, file_path
     )))))
+}
+
+/// Bumped by [`VirtualMachine::set_process_cwd`] on any thread. Each `Bun::Process` tags its
+/// cached `process.cwd()` string with the value it saw, so a chdir anywhere invalidates every
+/// thread's cache (Node's worker `cwdCounter`). Starts at 1 so a zero-initialized tag is stale.
+///
+/// Both accesses are `Relaxed`: the counter publishes no memory of its own (a reader that sees
+/// a new value re-queries the OS), so only its value matters, and a thread that learns of
+/// another thread's chdir does so through a `postMessage` or similar, whose acquire already
+/// orders the increment before the reader's load. An unsynchronized reader racing the chdir
+/// could equally have read just before it, whatever the ordering.
+static CWD_GENERATION: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(1);
+
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__Process__cwdGeneration() -> u32 {
+    CWD_GENERATION.load(core::sync::atomic::Ordering::Relaxed)
 }

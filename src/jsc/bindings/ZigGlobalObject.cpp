@@ -4428,3 +4428,18 @@ const JSC::ClassInfo GlobalObject::s_info = { "GlobalObject"_s, &Base::s_info, &
     CREATE_METHOD_TABLE(GlobalObject) };
 
 } // namespace Zig
+
+// path.parse() result for src/runtime/node/path.rs: { root, dir, base, ext, name } as
+// [start, end) slices of `path` (an already-resolved JSString); a negative start denotes ''.
+extern "C" JSC::EncodedJSValue PathParsedObject__create(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue path, const int32_t* ranges)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto* string = JSC::asString(JSC::JSValue::decode(path));
+    auto* result = JSC::constructEmptyObject(vm, defaultGlobalObject(globalObject)->pathParsedObjectStructure());
+    for (unsigned i = 0; i < 5; ++i) {
+        int32_t start = ranges[i * 2], end = ranges[i * 2 + 1];
+        JSC::JSString* field = start < 0 ? JSC::jsEmptyString(vm) : JSC::jsSubstringOfResolved(vm, string, static_cast<unsigned>(start), static_cast<unsigned>(end - start));
+        result->putDirectOffset(vm, i, field);
+    }
+    return JSC::JSValue::encode(result);
+}

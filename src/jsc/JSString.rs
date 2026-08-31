@@ -37,6 +37,16 @@ impl JSString {
         Ok(JSStringView { cell: self, view })
     }
 
+    /// `StringPrototypeSlice(this, offset, offset + length)`: a substring cell sharing this
+    /// string's characters. [`view`](Self::view) must have been called on the string first
+    /// (so that any rope is resolved, or is a substring of a resolved base); `offset + length`
+    /// must not exceed its length.
+    #[inline]
+    pub fn substring(&self, global: &JSGlobalObject, offset: u32, length: u32) -> JSValue {
+        debug_assert!(offset as usize + length as usize <= self.length());
+        crate::cpp::JSC__JSString__substring(self, global, offset, length)
+    }
+
     pub fn iterator(&self, global_object: &JSGlobalObject, iter: &mut Iterator) {
         // SAFETY: `self`/`global_object` are valid opaque GC-cell handles; `iter`
         // is a caller-owned `Iterator` (extern struct) passed through to C++.

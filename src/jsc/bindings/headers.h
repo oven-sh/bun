@@ -401,21 +401,6 @@ ZIG_DECL void Zig__GlobalObject__resolve(ErrorableString* arg0, JSC::JSGlobalObj
 
 #endif
 
-#ifdef __cplusplus
-
-extern "C" JSC::EncodedJSValue SYSV_ABI Bun__Path__basename(JSC::JSGlobalObject* arg0, bool arg1, JSC::EncodedJSValue* arg2, uint16_t arg3);
-extern "C" JSC::EncodedJSValue SYSV_ABI Bun__Path__dirname(JSC::JSGlobalObject* arg0, bool arg1, JSC::EncodedJSValue* arg2, uint16_t arg3);
-extern "C" JSC::EncodedJSValue SYSV_ABI Bun__Path__extname(JSC::JSGlobalObject* arg0, bool arg1, JSC::EncodedJSValue* arg2, uint16_t arg3);
-extern "C" JSC::EncodedJSValue SYSV_ABI Bun__Path__format(JSC::JSGlobalObject* arg0, bool arg1, JSC::EncodedJSValue* arg2, uint16_t arg3);
-extern "C" JSC::EncodedJSValue SYSV_ABI Bun__Path__isAbsolute(JSC::JSGlobalObject* arg0, bool arg1, JSC::EncodedJSValue* arg2, uint16_t arg3);
-extern "C" JSC::EncodedJSValue SYSV_ABI Bun__Path__join(JSC::JSGlobalObject* arg0, bool arg1, JSC::EncodedJSValue* arg2, uint16_t arg3);
-extern "C" JSC::EncodedJSValue SYSV_ABI Bun__Path__normalize(JSC::JSGlobalObject* arg0, bool arg1, JSC::EncodedJSValue* arg2, uint16_t arg3);
-extern "C" JSC::EncodedJSValue SYSV_ABI Bun__Path__parse(JSC::JSGlobalObject* arg0, bool arg1, JSC::EncodedJSValue* arg2, uint16_t arg3);
-extern "C" JSC::EncodedJSValue SYSV_ABI Bun__Path__relative(JSC::JSGlobalObject* arg0, bool arg1, JSC::EncodedJSValue* arg2, uint16_t arg3);
-extern "C" JSC::EncodedJSValue SYSV_ABI Bun__Path__resolve(JSC::JSGlobalObject* arg0, bool arg1, JSC::EncodedJSValue* arg2, uint16_t arg3);
-extern "C" JSC::EncodedJSValue SYSV_ABI Bun__Path__toNamespacedPath(JSC::JSGlobalObject* arg0, bool arg1, JSC::EncodedJSValue* arg2, uint16_t arg3);
-
-#endif
 
 CPP_DECL JSC::EncodedJSValue ArrayBufferSink__createObject(JSC::JSGlobalObject* arg0, void* arg1, uintptr_t destructor);
 

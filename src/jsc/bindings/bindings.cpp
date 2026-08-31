@@ -3373,6 +3373,47 @@ BunString JSC__JSString__view(JSC::JSString* str, JSC::JSGlobalObject* global)
     return Bun::toStringView(view.data);
 }
 
+// StringPrototypeSlice on a string `JSString::view()` has been called on, as a substring cell
+// sharing the characters. view() resolves every rope except a substring of a resolved base, which
+// jsSubstringOfResolved slices through that base; so nothing here can throw.
+extern "C" [[ZIG_EXPORT(nothrow)]] JSC::EncodedJSValue JSC__JSString__substring(JSC::JSString* string, JSC::JSGlobalObject* globalObject, uint32_t offset, uint32_t length)
+{
+    ASSERT(!string->isNonSubstringRope());
+    return JSC::JSValue::encode(JSC::jsSubstringOfResolved(globalObject->vm(), string, offset, length));
+}
+
+extern "C++" {
+template<typename CharacterType>
+static JSC::EncodedJSValue toJSStringCopyingSpan(JSC::VM& vm, std::span<const CharacterType> characters)
+{
+    if (characters.empty())
+        return JSC::JSValue::encode(JSC::jsEmptyString(vm));
+    if (characters.size() == 1 && characters[0] <= JSC::maxSingleCharacterString)
+        return JSC::JSValue::encode(vm.smallStrings.singleCharacterString(characters[0]));
+    return JSC::JSValue::encode(JSC::jsString(vm, WTF::String(WTF::StringImpl::create(characters))));
+}
+}
+
+// A new JSString with a copy of the given Latin-1 characters. The Rust caller
+// (JSValue::from_latin1) has already checked `length` against the string limit.
+extern "C" JSC::EncodedJSValue JSC__JSValue__fromLatin1(JSC::JSGlobalObject* globalObject, const Latin1Character* characters, size_t length)
+{
+    return toJSStringCopyingSpan(globalObject->vm(), std::span { characters, length });
+}
+
+// A new JSString with a copy of the given UTF-16 code units. The Rust caller
+// (JSValue::from_utf16) has already checked `length` against the string limit.
+extern "C" JSC::EncodedJSValue JSC__JSValue__fromUTF16(JSC::JSGlobalObject* globalObject, const char16_t* characters, size_t length)
+{
+    return toJSStringCopyingSpan(globalObject->vm(), std::span { characters, length });
+}
+
+// The VM's shared one-character string; never allocates.
+extern "C" JSC::EncodedJSValue JSC__JSValue__jsSingleCharacterString(JSC::JSGlobalObject* globalObject, Latin1Character character)
+{
+    return JSC::JSValue::encode(JSC::jsSingleCharacterString(globalObject->vm(), character));
+}
+
 bool JSC__JSString__is8Bit(const JSC::JSString* arg0) { return arg0->is8Bit(); };
 size_t JSC__JSString__length(const JSC::JSString* arg0) { return arg0->length(); }
 

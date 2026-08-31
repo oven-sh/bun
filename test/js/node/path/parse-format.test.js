@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import assert from "node:assert";
 import path from "node:path";
+import common from "../test/common/index.js";
 
 describe("path.parse", () => {
   test("general", () => {
@@ -89,6 +90,7 @@ describe("path.parse", () => {
       { method: "format", input: [""] },
       { method: "format", input: [true] },
       { method: "format", input: [1] },
+      { method: "format", input: [[]] },
     ];
 
     checkParseFormat(path.win32, winPaths);
@@ -199,19 +201,7 @@ describe("path.parse", () => {
           {
             code: "ERR_INVALID_ARG_TYPE",
             name: "TypeError",
-            // TODO: Make our error messages use util.inspect like Node:
-            // https://github.com/nodejs/node/blob/68885d512640556ba95b18f5ab2e0b9e76013399/lib/internal/errors.js#L1370-L1440
-            // https://github.com/nodejs/node/blob/68885d512640556ba95b18f5ab2e0b9e76013399/test/common/index.js#L815
-            //
-            // Node's error message template is:
-            //  `The "pathObject" argument must be of type object. Received ${inspect(input, { depth: -1 })}`
-            //
-            // For example, when we throw for path.format(null) our error message is:
-            //   The "pathObject" property must be of type object, got object
-            //
-            // While Node's error message is:
-            //   The "pathObject" argument must be of type object. Received null
-            message: `The "pathObject" property must be of type object, got ${typeof pathObject}`,
+            message: `The "pathObject" argument must be of type object.${common.invalidArgTypeHelper(pathObject)}`,
           },
         );
       });
@@ -224,6 +214,21 @@ describe("path.parse", () => {
 });
 
 describe("path.format", () => {
+  // lib/path.js formatExt() tests `ext[0] === '.'`, an indexed read of whatever was passed, and
+  // then stringifies ext. Results checked against node 26.3.0.
+  test("a non-string ext is indexed, not coerced first", () => {
+    for (const ns of [path.posix, path.win32]) {
+      expect([
+        ns.format({ name: "f", ext: [".txt"] }),
+        ns.format({ name: "f", ext: { 0: "x", toString: () => ".js" } }),
+        ns.format({ name: "f", ext: 42 }),
+        ns.format({ name: "f", ext: ["a"] }),
+        ns.format({ name: "f", ext: "txt" }),
+        ns.format({ name: "f", ext: ".txt" }),
+      ]).toEqual(["f..txt", "f..js", "f.42", "f.a", "f.txt", "f.txt"]);
+    }
+  });
+
   test("formats { dir, name, ext } with a dot-less ext when the result exceeds the platform path limit", async () => {
     // When `base` is absent and `ext` does not start with ".", format() inserts the dot itself.
     // The formatted result must stay correct even when the combined length of dir/name/ext is far

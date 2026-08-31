@@ -49,8 +49,6 @@ leak:lshpack_wrapper_init
 leak:jsc.ipc.onData2
 leak:runtime.node.fs_events.InitLibrary
 leak:runtime.node.fs_events.FSEventsLoop._schedule
-leak:Bun__Path__join
-leak:Bun__Path__resolve
 leak:Zig::GlobalObject::moduleLoaderImportModule
 leak:bake.FrameworkRouter.JSFrameworkRouter.getFileIdForRouter
 leak:runtime.webcore.Blob.findOrCreateFileFromPath__anon

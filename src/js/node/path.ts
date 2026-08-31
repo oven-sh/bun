@@ -1,81 +1,151 @@
 // Hardcoded module "node:path"
 const { validateString } = require("internal/validators");
 
-const [bindingPosix, bindingWin32] = $cpp("Path.cpp", "createNodePathBinding");
-const toNamespacedPathPosix = bindingPosix.toNamespacedPath.bind(bindingPosix);
-const toNamespacedPathWin32 = bindingWin32.toNamespacedPath.bind(bindingWin32);
-const posix = {
-  resolve: bindingPosix.resolve.bind(bindingPosix),
-  normalize: bindingPosix.normalize.bind(bindingPosix),
-  isAbsolute: bindingPosix.isAbsolute.bind(bindingPosix),
-  join: bindingPosix.join.bind(bindingPosix),
-  relative: bindingPosix.relative.bind(bindingPosix),
-  toNamespacedPath: toNamespacedPathPosix,
-  dirname: bindingPosix.dirname.bind(bindingPosix),
-  basename: bindingPosix.basename.bind(bindingPosix),
-  extname: bindingPosix.extname.bind(bindingPosix),
-  format: bindingPosix.format.bind(bindingPosix),
-  parse: bindingPosix.parse.bind(bindingPosix),
-  sep: "/",
-  delimiter: ":",
-  win32: undefined as typeof win32,
-  posix: undefined as typeof posix,
-  _makeLong: toNamespacedPathPosix,
-};
-const win32 = {
-  resolve: bindingWin32.resolve.bind(bindingWin32),
-  normalize: bindingWin32.normalize.bind(bindingWin32),
-  isAbsolute: bindingWin32.isAbsolute.bind(bindingWin32),
-  join: bindingWin32.join.bind(bindingWin32),
-  relative: bindingWin32.relative.bind(bindingWin32),
-  toNamespacedPath: toNamespacedPathWin32,
-  dirname: bindingWin32.dirname.bind(bindingWin32),
-  basename: bindingWin32.basename.bind(bindingWin32),
-  extname: bindingWin32.extname.bind(bindingWin32),
-  format: bindingWin32.format.bind(bindingWin32),
-  parse: bindingWin32.parse.bind(bindingWin32),
-  sep: "\\",
-  delimiter: ";",
-  win32: undefined as typeof win32,
-  posix,
-  _makeLong: toNamespacedPathWin32,
-};
-posix.win32 = win32.win32 = win32;
-posix.posix = posix;
+// src/runtime/node/path.rs implements everything except the functions defined
+// below, which are small enough that a native call would cost more than the
+// work they do (or, for format(), that the JIT's inline caches beat native
+// property lookups on the user's object).
+const [nativePosix, nativeWin32] = $rust("path.rs", "createNodePathBinding");
+
+const CHAR_FORWARD_SLASH = 47;
+const CHAR_BACKWARD_SLASH = 92;
+const CHAR_COLON = 58;
+const CHAR_UPPERCASE_A = 65;
+const CHAR_UPPERCASE_Z = 90;
+const CHAR_LOWERCASE_A = 97;
+const CHAR_LOWERCASE_Z = 122;
+
+function isPathSeparator(code) {
+  return code === CHAR_FORWARD_SLASH || code === CHAR_BACKWARD_SLASH;
+}
+
+function isWindowsDeviceRoot(code) {
+  return (
+    (code >= CHAR_UPPERCASE_A && code <= CHAR_UPPERCASE_Z) || (code >= CHAR_LOWERCASE_A && code <= CHAR_LOWERCASE_Z)
+  );
+}
+
+function formatExt(ext) {
+  return ext ? `${ext[0] === "." ? "" : "."}${ext}` : "";
+}
+
+function _format(sep, pathObject) {
+  if (pathObject === null || $isArray(pathObject) || typeof pathObject !== "object") {
+    throw $ERR_INVALID_ARG_TYPE("pathObject", "object", pathObject);
+  }
+  const dir = pathObject.dir || pathObject.root;
+  const base = pathObject.base || `${pathObject.name || ""}${formatExt(pathObject.ext)}`;
+  if (!dir) {
+    return base;
+  }
+  return dir === pathObject.root ? `${dir}${base}` : `${dir}${sep}${base}`;
+}
+
+// posix only; the win32 one is native.
+function toNamespacedPath(path) {
+  // Non-op on posix systems
+  return path;
+}
 
 type Glob = import("bun").Glob;
 
-// the most-recently used glob is memoized in case `matchesGlob` is called in a
-// loop with the same pattern
-let prevGlob: Glob | undefined;
-let prevPattern: string | undefined;
-function matchesGlob(isWindows, path, pattern) {
-  let glob: Glob;
+// The functions each platform defines in JS. They are created inside one
+// factory so both copies keep their Node.js names ("isAbsolute", not
+// "isAbsolute2") after bundling.
+function platformFunctions(isWindows: boolean) {
+  // The most-recently used glob is memoized in case `matchesGlob` is called in
+  // a loop with the same pattern. Each platform keeps its own, since the same
+  // pattern compiles differently for win32 (`\` is a separator there).
+  let prevGlob: Glob | undefined;
+  let prevPattern: string | undefined;
 
-  validateString(path, "path");
-  if (isWindows) path = path.replaceAll("\\", "/");
+  return {
+    isAbsolute: isWindows
+      ? function isAbsolute(path) {
+          validateString(path, "path");
+          const len = path.length;
+          if (len === 0) return false;
 
-  if (prevGlob) {
-    $assert(prevPattern !== undefined);
-    if (prevPattern === pattern) {
-      glob = prevGlob;
-    } else {
-      validateString(pattern, "pattern");
-      if (isWindows) pattern = pattern.replaceAll("\\", "/");
-      glob = prevGlob = new Bun.Glob(pattern);
-      prevPattern = pattern;
-    }
-  } else {
-    validateString(pattern, "pattern");
-    if (isWindows) pattern = pattern.replaceAll("\\", "/");
-    glob = prevGlob = new Bun.Glob(pattern);
-    prevPattern = pattern;
-  }
+          const code = path.charCodeAt(0);
+          return (
+            isPathSeparator(code) ||
+            // Possible device root
+            (len > 2 &&
+              isWindowsDeviceRoot(code) &&
+              path.charCodeAt(1) === CHAR_COLON &&
+              isPathSeparator(path.charCodeAt(2)))
+          );
+        }
+      : function isAbsolute(path) {
+          validateString(path, "path");
+          return path.length > 0 && path.charCodeAt(0) === CHAR_FORWARD_SLASH;
+        },
 
-  return glob.match(path);
+    matchesGlob: function matchesGlob(path, pattern) {
+      validateString(path, "path");
+      if (isWindows) path = path.replaceAll("\\", "/");
+
+      let glob: Glob;
+      if (prevGlob !== undefined && prevPattern === pattern) {
+        glob = prevGlob;
+      } else {
+        validateString(pattern, "pattern");
+        glob = prevGlob = new Bun.Glob(isWindows ? pattern.replaceAll("\\", "/") : pattern);
+        prevPattern = pattern;
+      }
+
+      return glob.match(path);
+    },
+  };
 }
 
-posix.matchesGlob = matchesGlob.bind(null, false);
-win32.matchesGlob = matchesGlob.bind(null, true);
+const posixJs = platformFunctions(false);
+const win32Js = platformFunctions(true);
+
+// Same shape and key order as the objects in Node's lib/path.js.
+const posix = {
+  resolve: nativePosix.resolve,
+  normalize: nativePosix.normalize,
+  isAbsolute: posixJs.isAbsolute,
+  join: nativePosix.join,
+  relative: nativePosix.relative,
+  toNamespacedPath,
+  dirname: nativePosix.dirname,
+  basename: nativePosix.basename,
+  extname: nativePosix.extname,
+  format: _format.bind(null, "/"),
+  parse: nativePosix.parse,
+  matchesGlob: posixJs.matchesGlob,
+  sep: "/",
+  delimiter: ":",
+  win32: null as any,
+  posix: null as any,
+};
+
+const win32 = {
+  resolve: nativeWin32.resolve,
+  normalize: nativeWin32.normalize,
+  isAbsolute: win32Js.isAbsolute,
+  join: nativeWin32.join,
+  relative: nativeWin32.relative,
+  toNamespacedPath: nativeWin32.toNamespacedPath,
+  dirname: nativeWin32.dirname,
+  basename: nativeWin32.basename,
+  extname: nativeWin32.extname,
+  format: _format.bind(null, "\\"),
+  parse: nativeWin32.parse,
+  matchesGlob: win32Js.matchesGlob,
+  sep: "\\",
+  delimiter: ";",
+  win32: null as any,
+  posix: null as any,
+};
+
+posix.win32 = win32.win32 = win32;
+posix.posix = win32.posix = posix;
+
+// Legacy internal API, docs-only deprecated: DEP0080
+(win32 as any)._makeLong = win32.toNamespacedPath;
+(posix as any)._makeLong = posix.toNamespacedPath;
 
 export default (process.platform === "win32" ? win32 : posix) as any as typeof import("node:path");

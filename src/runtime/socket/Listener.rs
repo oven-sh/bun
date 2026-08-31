@@ -30,8 +30,6 @@ use crate::socket::{SSLConfig, SSLConfigFromJs};
 use crate::socket::WindowsNamedPipeContext;
 
 #[cfg(windows)]
-use crate::node::path as node_path;
-#[cfg(windows)]
 use bun_boringssl as boringssl;
 #[cfg(windows)]
 use bun_core::strings;
@@ -1717,13 +1715,13 @@ fn is_valid_pipe_name(pipe_name: &[u8]) -> bool {
     // check for valid pipe names
     // at minimum we need to have \\.\pipe\ or \\?\pipe\ + 1 char that is not a separator
     pipe_name.len() > 9
-        && node_path::is_sep_windows_t::<u8>(pipe_name[0])
-        && node_path::is_sep_windows_t::<u8>(pipe_name[1])
+        && bun_paths::is_sep_any(pipe_name[0])
+        && bun_paths::is_sep_any(pipe_name[1])
         && (pipe_name[2] == b'.' || pipe_name[2] == b'?')
-        && node_path::is_sep_windows_t::<u8>(pipe_name[3])
+        && bun_paths::is_sep_any(pipe_name[3])
         && strings::eql(&pipe_name[4..8], b"pipe")
-        && node_path::is_sep_windows_t::<u8>(pipe_name[8])
-        && !node_path::is_sep_windows_t::<u8>(pipe_name[9])
+        && bun_paths::is_sep_any(pipe_name[8])
+        && !bun_paths::is_sep_any(pipe_name[9])
 }
 
 #[cfg(windows)]

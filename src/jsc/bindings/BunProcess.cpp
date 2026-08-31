@@ -1029,10 +1029,8 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionChdir, (JSC::JSGlobalObject * globalObj
     JSC::JSValue result = JSC::JSValue::decode(Bun__Process__setCwd(globalObject, &str));
     RETURN_IF_EXCEPTION(scope, {});
 
-    auto* processObject = defaultGlobalObject(globalObject)->processObject();
-    // Node clears its cwd cache on chdir (does_own_process_state.js) and lets
-    // the next process.cwd() re-query the OS - do not re-populate it here.
-    processObject->clearCachedCwd();
+    // Node clears its cwd cache on chdir (does_own_process_state.js) and lets the next
+    // process.cwd() re-query the OS; Bun__Process__setCwd bumped the cache generation.
     RELEASE_AND_RETURN(scope, JSC::JSValue::encode(result));
 }
 
@@ -4683,32 +4681,81 @@ JSC_DEFINE_CUSTOM_SETTER(setProcessTitle, (JSC::JSGlobalObject * globalObject, J
 #endif
 }
 
-static inline JSValue getCachedCwd(JSC::JSGlobalObject* globalObject)
+// Bumped whenever any thread changes the working directory (VirtualMachine::set_process_cwd);
+// never 0, so a zero-initialized cache is stale.
+extern "C" uint32_t Bun__Process__cwdGeneration();
+
+// https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/internal/bootstrap/switches/does_own_process_state.js#L142-L146
+// https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/internal/main/worker_thread.js#L114-L129
+JSString* Process::getCachedCwd(JSC::JSGlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/internal/bootstrap/switches/does_own_process_state.js#L142-L146
-    auto* processObject = defaultGlobalObject(globalObject)->processObject();
-    if (auto* cached = processObject->cachedCwd()) {
+    uint32_t generation = Bun__Process__cwdGeneration();
+    if (auto* cached = m_cachedCwd.get(); cached && m_cachedCwdGeneration == generation) [[likely]]
         return cached;
-    }
 
     auto cwd = Bun__Process__getCwd(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
+    RETURN_IF_EXCEPTION(scope, nullptr);
     JSString* cwdStr = uncheckedDowncast<JSString>(JSValue::decode(cwd));
-    processObject->setCachedCwd(vm, cwdStr);
+    m_cachedCwd.set(vm, this, cwdStr);
+    m_cachedCwdGeneration = generation;
     RELEASE_AND_RETURN(scope, cwdStr);
 }
 
-extern "C" EncodedJSValue Process__getCachedCwd(JSC::JSGlobalObject* globalObject)
+static inline JSValue getCachedCwd(JSC::JSGlobalObject* globalObject)
 {
-    return JSValue::encode(getCachedCwd(globalObject));
+    JSString* cwd = defaultGlobalObject(globalObject)->processObject()->getCachedCwd(globalObject);
+    return cwd ? JSValue(cwd) : JSValue();
 }
 
 JSC_DEFINE_HOST_FUNCTION(Process_functionCwd, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     return JSValue::encode(getCachedCwd(globalObject));
+}
+
+// `process.cwd()` as node's lib/ code calls it. Normally this is the cached JSString. If user
+// code has replaced the `cwd` property (e.g. with a test double), the replacement is called
+// instead and its result is converted to a JSString, except that undefined and null are
+// returned unchanged: what lib/path.js does with those depends on the call site
+// (src/runtime/node/path.rs). Returns {} with an exception pending on failure.
+extern "C" EncodedJSValue Bun__Process__getCachedCwd(JSC::JSGlobalObject* lexicalGlobalObject)
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto& vm = JSC::getVM(globalObject);
+    auto* process = globalObject->processObject();
+    // The static-table property is only materialized as an own property once it has been read
+    // or written (and deleting it reifies the whole table first), so an empty slot on a
+    // non-reified object means `cwd` is untouched.
+    const auto& name = builtinNames(vm).cwdPublicName();
+    JSValue direct = process->getDirect(vm, name);
+    if (!direct && process->hasNonReifiedStaticProperties()) [[likely]]
+        return JSValue::encode(getCachedCwd(globalObject));
+    if (direct) {
+        auto* function = dynamicDowncast<JSFunction>(direct);
+        if (function && function->isHostFunction() && function->nativeFunction() == Process_functionCwd)
+            return JSValue::encode(getCachedCwd(globalObject));
+    }
+
+    // Replaced, redefined as an accessor (`direct` is then the raw GetterSetter) or deleted:
+    // `process.cwd` in lib/path.js is a [[Get]], so do the same, and call whatever it finds.
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue custom = process->get(globalObject, name);
+    RETURN_IF_EXCEPTION(scope, {});
+    auto callData = JSC::getCallData(custom);
+    if (callData.type == CallData::Type::None) [[unlikely]] {
+        JSC::throwTypeError(globalObject, scope, "process.cwd is not a function"_s);
+        return {};
+    }
+    JSValue result = JSC::profiledCall(globalObject, ProfilingReason::API, custom, callData, process, JSC::MarkedArgumentBuffer());
+    RETURN_IF_EXCEPTION(scope, {});
+    if (result.isUndefinedOrNull()) [[unlikely]] {
+        return JSValue::encode(result);
+    }
+    auto* string = result.toString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    RELEASE_AND_RETURN(scope, JSValue::encode(string));
 }
 
 #if !OS(WINDOWS)

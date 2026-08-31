@@ -527,6 +527,10 @@ private:
 
 #define CLEAR_IF_EXCEPTION(scope__) (void)scope__.tryClearException();
 
+// node:path (src/runtime/node/path.rs)
+extern "C" JSC::EncodedJSValue Bun__Path__dirname(JSC::JSGlobalObject*, bool isWindows, JSC::EncodedJSValue path);
+extern "C" void Bun__Path__joinString(bool isWindows, const BunString* lhs, const BunString* rhs, BunString* result);
+
 #endif // __cplusplus
 #endif // HEADERS_HANDWRITTEN
 

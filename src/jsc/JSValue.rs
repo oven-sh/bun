@@ -507,6 +507,29 @@ impl JSValue {
     pub fn js_empty_string(global: &JSGlobalObject) -> JSValue {
         JSC__JSValue__jsEmptyString(global)
     }
+    /// The VM's shared one-character string for a Latin-1 character (never allocates).
+    pub fn js_single_character_string(global: &JSGlobalObject, character: u8) -> JSValue {
+        JSC__JSValue__jsSingleCharacterString(global, character)
+    }
+    /// A new JS string with a copy of the given Latin-1 characters (each byte is one code
+    /// unit; this is not UTF-8). Throws `ERR_STRING_TOO_LONG` past
+    /// `bun_core::String::max_length()`.
+    pub fn from_latin1(global: &JSGlobalObject, chars: &[u8]) -> JsResult<JSValue> {
+        if chars.len() > bun_core::String::max_length() {
+            return Err(global.throw_string_too_long());
+        }
+        // SAFETY: ptr/len describe `chars`; the callee copies before returning.
+        Ok(unsafe { JSC__JSValue__fromLatin1(global, chars.as_ptr(), chars.len()) })
+    }
+    /// A new JS string with a copy of the given UTF-16 code units. Throws
+    /// `ERR_STRING_TOO_LONG` past `bun_core::String::max_length()`.
+    pub fn from_utf16(global: &JSGlobalObject, chars: &[u16]) -> JsResult<JSValue> {
+        if chars.len() > bun_core::String::max_length() {
+            return Err(global.throw_string_too_long());
+        }
+        // SAFETY: ptr/len describe `chars`; the callee copies before returning.
+        Ok(unsafe { JSC__JSValue__fromUTF16(global, chars.as_ptr(), chars.len()) })
+    }
     pub fn create_empty_object(global: &JSGlobalObject, len: usize) -> JSValue {
         JSC__JSValue__createEmptyObject(global, len)
     }
@@ -1955,7 +1978,13 @@ unsafe extern "C" {
     safe fn JSC__JSValue__isAnyInt(this: JSValue) -> bool;
     safe fn JSC__JSValue__jsNumberFromDouble(n: f64) -> JSValue;
     safe fn JSC__JSValue__jsEmptyString(global: &JSGlobalObject) -> JSValue;
+    safe fn JSC__JSValue__jsSingleCharacterString(
+        global: &JSGlobalObject,
+        character: u8,
+    ) -> JSValue;
     safe fn JSC__JSValue__createEmptyObject(global: &JSGlobalObject, len: usize) -> JSValue;
+    fn JSC__JSValue__fromLatin1(global: &JSGlobalObject, chars: *const u8, len: usize) -> JSValue;
+    fn JSC__JSValue__fromUTF16(global: &JSGlobalObject, chars: *const u16, len: usize) -> JSValue;
     safe fn JSC__JSValue__createEmptyObjectWithNullPrototype(global: &JSGlobalObject) -> JSValue;
     safe fn JSC__JSValue__createObject2(
         global: &JSGlobalObject,

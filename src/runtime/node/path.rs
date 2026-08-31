@@ -1,3623 +1,3137 @@
-use crate::jsc::rare_data::PathBuf as RarePathBuf;
-use crate::jsc::{
-    JSGlobalObject, JSStringView, JSValue, JsResult, StringJsc as _, SysErrorJsc as _,
-    bun_string_jsc,
-};
-use crate::node::validators::{validate_object, validate_string};
+//! `node:path` — a port of Node.js `lib/path.js` that operates directly on the
+//! Latin-1 / UTF-16 backing store of each JSString.
+//!
+//! Reference: <https://github.com/nodejs/node/blob/v26.3.0/lib/path.js>. Every
+//! function below is a transliteration of the function of the same name there
+//! and keeps its structure (and comments) so the two can be diffed side by side;
+//! the places that were restructured for speed say so and describe why the
+//! observable behaviour is unchanged.
+//!
+//! Inputs are never transcoded. Results that are slices of an input are
+//! returned as JSC substrings sharing the input's buffer; results that have to
+//! be assembled (join, resolve, normalize, relative) are built once in a stack
+//! buffer of the inputs' character width; and a result that turns out to be
+//! identical to an input is returned as that same string cell.
+//!
+//! `isAbsolute`, `format`, posix `toNamespacedPath` and `matchesGlob` live in
+//! `src/js/node/path.ts`.
+
 use bun_collections::smallvec::SmallVec;
-use bun_core::{Utf8Bytes, strings};
-use bun_paths::{self, MAX_PATH_BYTES, Platform};
-use bun_sys;
+use bun_core::strings;
+use bun_paths::PathChar;
 
-/// Create a JS string from a `[T]` slice (T = u8 | u16).
-///
-/// In practice every JS entry point converts to a UTF-8 slice first and
-/// instantiates with `T = u8`, so the `u16` arm is never reached at runtime — but it must still
-/// type-check. Dispatch on `T::IS_U16` and route the cold u16 arm through
-/// a UTF-16 `BunString` clone + `to_js` so the generic body unifies.
-#[inline]
-fn create_js_string_t<T: PathCharCwd>(global: &JSGlobalObject, s: &[T]) -> JsResult<JSValue> {
-    if T::IS_U16 {
-        // T == u16 when IS_U16; bytemuck statically checks the layout.
-        let s16: &[u16] = bytemuck::cast_slice::<T, u16>(s);
-        bun_core::String::clone_utf16(s16).into_js(global)
-    } else {
-        // T == u8 when !IS_U16; bytemuck statically checks the layout.
-        let s8: &[u8] = bytemuck::cast_slice::<T, u8>(s);
-        bun_string_jsc::create_utf8_for_js(global, s8)
+use crate::jsc::{
+    self, CallFrame, JSFunction, JSGlobalObject, JSString, JSValue, JsError, JsResult,
+};
+
+// ───────────────────────────── code units ──────────────────────────────
+
+/// A string code unit: `u8` is a Latin-1 character (an 8-bit JSString) — not
+/// UTF-8 — and `u16` a UTF-16 code unit. Only the encoding-agnostic parts of
+/// [`PathChar`] are used (`as_u32`, `from_u8`, `IS_U16`).
+trait Unit: PathChar + bytemuck::Pod + Default {
+    /// Truncating; callers only narrow values known to fit.
+    fn from_u32(u: u32) -> Self;
+}
+impl Unit for u8 {
+    #[inline(always)]
+    fn from_u32(u: u32) -> Self {
+        debug_assert!(u <= 0xFF);
+        u as u8
+    }
+}
+impl Unit for u16 {
+    #[inline(always)]
+    fn from_u32(u: u32) -> Self {
+        debug_assert!(u <= 0xFFFF);
+        u as u16
     }
 }
 
-/// Pooled path scratch carved from the per-VM [`RarePathBuf`].
-///
-/// JS is single-threaded, so re-using the lazily-allocated tier across calls is
-/// sound. When the request exceeds the largest tier (32 × `MAX_PATH_BYTES`) —
-/// or when `T = u16`, since the pool is byte-typed — we spill to a one-shot
-/// zeroed heap slab instead (`T: Pod`, so the zero-fill is the cost of handing
-/// out a safe `&mut [T]`; consumers are write-before-read so the zeros are
-/// never observed).
-enum PathScratch<'a, T: PathCharCwd> {
-    Pooled(&'a mut [T]),
-    Spill(Box<[T]>),
+#[inline(always)]
+fn ch<C: Unit>(c: u8) -> C {
+    C::from_u8(c)
 }
 
-impl<'a, T: PathCharCwd> PathScratch<'a, T> {
-    /// Largest pool tier in `RarePathBuf` (`32 * MAX_PATH_BYTES`).
-    const POOL_MAX: usize = 32 * MAX_PATH_BYTES;
+/// JS `-1` sentinels and `StringPrototypeSlice` clamping are kept as-is, so
+/// indices are signed.
+type Index = isize;
 
-    #[inline]
-    fn new(pool: &'a mut RarePathBuf, len: usize) -> Self {
-        if !T::IS_U16 && len <= Self::POOL_MAX {
-            // SAFETY-adjacent: `!IS_U16` ⇒ `T == u8`; `cast_slice_mut::<u8, u8>`
-            // is the bytemuck identity cast — never panics, no alignment hazard.
-            let bytes = &mut pool.get(len)[..len];
-            Self::Pooled(bytemuck::cast_slice_mut::<u8, T>(bytes))
-        } else {
-            // `T: Pod` ⇒ `T: Zeroable + Copy`. Spill is rare (u8 only when
-            // >128 KB) or path-sized (u16), so the zero-fill is negligible and
-            // buys a safe `&mut [T]` in `slice()`.
-            Self::Spill(vec![<T as bytemuck::Zeroable>::zeroed(); len].into_boxed_slice())
-        }
-    }
-
-    #[inline]
-    fn slice(&mut self) -> &mut [T] {
-        match self {
-            Self::Pooled(s) => s,
-            Self::Spill(b) => &mut b[..],
-        }
-    }
-}
-
-const PATH_MIN_WIDE: usize = 4096; // 4 KB
-
-/// Canonical path-unit trait — re-export so external callers that named
-/// `crate::node::path::PathChar` keep compiling.
-pub use bun_paths::PathChar;
-
-/// Runtime-only extension over [`PathChar`]: adds the `bun_sys`-coupled
-/// per-width `get_cwd` plus the `bytemuck::Pod`/`Default` bounds this module
-/// needs for `PathScratch`'s `cast_slice` and zero-init. Every generic `_t`
-/// fn here bounds on `PathCharCwd` (only `u8`/`u16` ever instantiate it).
-pub trait PathCharCwd: PathChar + Default + bytemuck::Pod {
-    /// Per-width `get_cwd` — replaces the `IS_U16` runtime dispatch in `get_cwd_t`.
-    fn get_cwd(buf: &mut [Self]) -> bun_sys::Result<&mut [Self]>;
-}
-impl PathCharCwd for u8 {
-    #[inline]
-    fn get_cwd(buf: &mut [u8]) -> bun_sys::Result<&mut [u8]> {
-        get_cwd_u8(buf)
-    }
-}
-impl PathCharCwd for u16 {
-    #[inline]
-    fn get_cwd(buf: &mut [u16]) -> bun_sys::Result<&mut [u16]> {
-        get_cwd_u16(buf)
-    }
-}
-
-/// Yields a `&'static [T]` for an ASCII literal.
-#[inline]
-fn l<T: PathCharCwd>(s: &'static [u8]) -> &'static [T] {
-    T::lit(s)
-}
-
-/// Compares ASCII values case-insensitively, non-ASCII values are compared directly
-fn eql_ignore_case_t<T: PathCharCwd>(a: &[T], b: &[T]) -> bool {
-    if !T::IS_U16 {
-        // T == u8 when !IS_U16; bytemuck statically checks the layout.
-        let a8: &[u8] = bytemuck::cast_slice::<T, u8>(a);
-        let b8: &[u8] = bytemuck::cast_slice::<T, u8>(b);
-        return strings::eql_case_insensitive_ascii(a8, b8, true);
-    }
-    // In practice the only callers instantiate with `T == u8`; provide a sound
-    // u16 compare so
-    // the generic body type-checks and behaves correctly if ever exercised.
-    if a.len() != b.len() {
-        return false;
-    }
-    a.iter()
-        .zip(b.iter())
-        .all(|(x, y)| to_lower_t(*x) == to_lower_t(*y))
-}
-
-/// Lowers ASCII values, non-ASCII values are returned directly
-#[inline]
-fn to_lower_t<T: PathCharCwd>(a_c: T) -> T {
-    if !T::IS_U16 {
-        return T::from_u8(
-            u8::try_from(a_c.as_u32())
-                .expect("int cast")
-                .to_ascii_lowercase(),
-        );
-    }
-    if a_c.as_u32() < 128 {
-        T::from_u8(
-            u8::try_from(a_c.as_u32())
-                .expect("int cast")
-                .to_ascii_lowercase(),
-        )
-    } else {
-        a_c
-    }
-}
-
-// `jsc.Node.Maybe([]T, Syscall.Error)` → bun_sys::Result<&mut [T]>
-type MaybeBuf<'a, T> = bun_sys::Result<&'a mut [T]>;
-// `jsc.Node.Maybe([:0]const T, Syscall.Error)` → bun_sys::Result<&[T]>
-// NUL termination is written into the backing buffer at `buf[len]`; the returned
-// slice itself is `&[T]` (Rust has no `[:0]T` sentinel type).
-type MaybeSlice<'a, T> = bun_sys::Result<&'a [T]>;
-
-// validatePathT is enforced at compile time by the `PathChar` trait bound.
-
-const CHAR_BACKWARD_SLASH: u8 = b'\\';
-const CHAR_COLON: u8 = b':';
 const CHAR_DOT: u8 = b'.';
 const CHAR_FORWARD_SLASH: u8 = b'/';
+const CHAR_BACKWARD_SLASH: u8 = b'\\';
+const CHAR_COLON: u8 = b':';
 const CHAR_QUESTION_MARK: u8 = b'?';
 
-const CHAR_STR_BACKWARD_SLASH: &[u8] = b"\\";
-const CHAR_STR_FORWARD_SLASH: &[u8] = b"/";
-const CHAR_STR_DOT: &[u8] = b".";
-
-/// Based on Node v21.6.1 path.parse:
-/// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L919
-/// The structs returned by parse methods.
-#[derive(Default)]
-pub struct PathParsed<'a, T: PathCharCwd> {
-    pub(crate) root: &'a [T],
-    pub(crate) dir: &'a [T],
-    pub(crate) base: &'a [T],
-    pub(crate) ext: &'a [T],
-    pub name: &'a [T],
+#[inline(always)]
+const fn separator(is_windows: bool) -> u8 {
+    if is_windows {
+        CHAR_BACKWARD_SLASH
+    } else {
+        CHAR_FORWARD_SLASH
+    }
 }
 
-// `&JSGlobalObject` is ABI-identical to a non-null pointer; remaining params are
-// by-value `JSValue`, so no caller-side preconditions remain.
+#[inline(always)]
+fn is_path_separator<const WIN: bool>(code: u32) -> bool {
+    if WIN {
+        code == CHAR_FORWARD_SLASH as u32 || code == CHAR_BACKWARD_SLASH as u32
+    } else {
+        code == CHAR_FORWARD_SLASH as u32
+    }
+}
+
+#[inline(always)]
+fn is_windows_device_root(code: u32) -> bool {
+    ((code | 0x20).wrapping_sub(b'a' as u32)) < 26
+}
+
+/// `isWindowsReservedName(path, colonIndex)` with the
+/// `StringPrototypeSlice(path, 0, colonIndex)` already applied by the caller.
+/// `StringPrototypeToUpperCase` can only produce one of these names from its
+/// ASCII case variants — no non-ASCII code point upper-cases to any of
+/// `A C L M N O P R T U X 1-9`, and U+00B9/U+00B2/U+00B3 (the superscript
+/// digits in `COM¹` etc., lib/path.js `WINDOWS_RESERVED_NAMES`) upper-case to
+/// themselves — so an ASCII case-insensitive comparison is exact.
+fn is_windows_reserved_name<C: Unit>(s: &[C]) -> bool {
+    let up = |i: usize| -> u32 {
+        let c = s[i].as_u32();
+        if (b'a' as u32..=b'z' as u32).contains(&c) {
+            c - 32
+        } else {
+            c
+        }
+    };
+    let is3 = |a: u8, b: u8, c: u8| up(0) == a as u32 && up(1) == b as u32 && up(2) == c as u32;
+    match s.len() {
+        3 => {
+            is3(b'C', b'O', b'N')
+                || is3(b'P', b'R', b'N')
+                || is3(b'A', b'U', b'X')
+                || is3(b'N', b'U', b'L')
+        }
+        4 => {
+            let d = s[3].as_u32();
+            let suffix =
+                (b'1' as u32..=b'9' as u32).contains(&d) || d == 0xB9 || d == 0xB2 || d == 0xB3;
+            suffix && (is3(b'C', b'O', b'M') || is3(b'L', b'P', b'T'))
+        }
+        _ => false,
+    }
+}
+
+/// `StringPrototypeSlice(s, start, end)` index clamping, for the call sites in
+/// lib/path.js that can pass negative or out-of-range indices.
+#[inline]
+fn js_slice<C>(s: &[C], mut start: Index, mut end: Index) -> &[C] {
+    let len = s.len() as Index;
+    start = if start < 0 {
+        (len + start).max(0)
+    } else {
+        start.min(len)
+    };
+    end = if end < 0 {
+        (len + end).max(0)
+    } else {
+        end.min(len)
+    };
+    if end <= start {
+        &[]
+    } else {
+        &s[start as usize..end as usize]
+    }
+}
+
+#[inline]
+fn span_equals<A: Unit, B: Unit>(a: &[A], b: &[B]) -> bool {
+    a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.as_u32() == y.as_u32())
+}
+
+#[inline]
+fn all_ascii<C: Unit>(s: &[C]) -> bool {
+    if C::IS_U16 {
+        strings::first_non_ascii16(bytemuck::cast_slice(s)).is_none()
+    } else {
+        strings::first_non_ascii(bytemuck::cast_slice(s)).is_none()
+    }
+}
+
+/// Copies `src` into the front of `dst`, widening or narrowing as needed
+/// (callers only narrow values known to fit), and returns the count.
+#[inline]
+fn copy_units<D: Unit, S: Unit>(dst: &mut [D], src: &[S]) -> usize {
+    if D::IS_U16 == S::IS_U16 {
+        dst[..src.len()].copy_from_slice(bytemuck::cast_slice(src));
+    } else {
+        for (d, s) in dst.iter_mut().zip(src) {
+            *d = D::from_u32(s.as_u32());
+        }
+    }
+    src.len()
+}
+
+// ────────────────────────────── scanning ────────────────────────────────
+
+/// Index of the first `a` (or, when `TWO`, the first `a` or `b`) in `p[i..]`,
+/// or `p.len()`. Scans a machine word at a time; separators and colons are
+/// searched per path segment, i.e. mostly over spans shorter than a SIMD
+/// register, where an inline word loop beats a library call.
+#[inline]
+fn find_units<const TWO: bool, C: Unit>(p: &[C], mut i: usize, a: u8, b: u8) -> usize {
+    let len = p.len();
+    let units_per_word = 8 / core::mem::size_of::<C>();
+    let bits: u32 = 8 * core::mem::size_of::<C>() as u32;
+    let ones: u64 = if C::IS_U16 {
+        0x0001_0001_0001_0001
+    } else {
+        0x0101_0101_0101_0101
+    };
+    let highs: u64 = ones << (bits - 1);
+    while i + units_per_word <= len {
+        // SAFETY: `i + units_per_word <= len`, so 8 bytes starting at `p[i]` are in bounds.
+        let w = unsafe { core::ptr::read_unaligned(p.as_ptr().add(i).cast::<u64>()) };
+        // The classic has-zero-lane test; exact for the lowest matching lane, which is the only
+        // one consulted (little-endian).
+        let x = w ^ ones.wrapping_mul(a as u64);
+        let mut found = x.wrapping_sub(ones) & !x & highs;
+        if TWO {
+            let y = w ^ ones.wrapping_mul(b as u64);
+            found |= y.wrapping_sub(ones) & !y & highs;
+        }
+        if found != 0 {
+            return i + (found.trailing_zeros() / bits) as usize;
+        }
+        i += units_per_word;
+    }
+    while i < len && p[i].as_u32() != a as u32 && !(TWO && p[i].as_u32() == b as u32) {
+        i += 1;
+    }
+    i
+}
+
+/// Index of the first path separator in `p[i..]`, or `p.len()`.
+#[inline]
+fn find_separator<const WIN: bool, C: Unit>(p: &[C], i: usize) -> usize {
+    find_units::<WIN, C>(p, i, CHAR_FORWARD_SLASH, CHAR_BACKWARD_SLASH)
+}
+
+/// `StringPrototypeIndexOf(s, c, from)`.
+#[inline]
+fn index_of<C: Unit>(s: &[C], c: u8, from: Index) -> Index {
+    let i = find_units::<false, C>(s, from.max(0) as usize, c, c);
+    if i >= s.len() { -1 } else { i as Index }
+}
+
+/// Length of the common prefix of `a[..n]` and `b[..n]`.
+#[inline]
+fn common_prefix_length<C: Unit>(a: &[C], b: &[C], n: usize) -> usize {
+    let units_per_word = 8 / core::mem::size_of::<C>();
+    let bits: u32 = 8 * core::mem::size_of::<C>() as u32;
+    let mut i = 0;
+    while i + units_per_word <= n {
+        // SAFETY: `i + units_per_word <= n <= a.len(), b.len()`.
+        let (wa, wb) = unsafe {
+            (
+                core::ptr::read_unaligned(a.as_ptr().add(i).cast::<u64>()),
+                core::ptr::read_unaligned(b.as_ptr().add(i).cast::<u64>()),
+            )
+        };
+        let diff = wa ^ wb;
+        if diff != 0 {
+            return i + (diff.trailing_zeros() / bits) as usize;
+        }
+        i += units_per_word;
+    }
+    while i < n && a[i] == b[i] {
+        i += 1;
+    }
+    i
+}
+
+// ───────────────────────────── string views ─────────────────────────────
+
+/// The characters of a resolved JSString (or of the process cwd, or of a
+/// scratch buffer standing in for one).
+#[derive(Clone, Copy)]
+enum Chars<'a> {
+    Latin1(&'a [u8]),
+    Utf16(&'a [u16]),
+}
+
+impl<'a> Chars<'a> {
+    #[inline]
+    fn len(&self) -> usize {
+        match self {
+            Chars::Latin1(s) => s.len(),
+            Chars::Utf16(s) => s.len(),
+        }
+    }
+    #[inline]
+    fn is_8bit(&self) -> bool {
+        matches!(self, Chars::Latin1(_))
+    }
+    #[inline]
+    fn at(&self, i: usize) -> u32 {
+        match self {
+            Chars::Latin1(s) => s[i] as u32,
+            Chars::Utf16(s) => s[i] as u32,
+        }
+    }
+    #[inline]
+    fn copy_to<D: Unit>(&self, dst: &mut [D]) -> usize {
+        match self {
+            Chars::Latin1(s) => copy_units(dst, s),
+            Chars::Utf16(s) => copy_units(dst, s),
+        }
+    }
+    #[inline]
+    fn slice_from(&self, start: usize) -> Chars<'a> {
+        match self {
+            Chars::Latin1(s) => Chars::Latin1(&s[start..]),
+            Chars::Utf16(s) => Chars::Utf16(&s[start..]),
+        }
+    }
+    fn eq(&self, other: &Chars<'_>) -> bool {
+        match (self, other) {
+            (Chars::Latin1(a), Chars::Latin1(b)) => a == b,
+            (Chars::Utf16(a), Chars::Utf16(b)) => a == b,
+            (Chars::Latin1(a), Chars::Utf16(b)) => span_equals(a, b),
+            (Chars::Utf16(a), Chars::Latin1(b)) => span_equals(a, b),
+        }
+    }
+    fn of<C: Unit>(s: &'a [C]) -> Chars<'a> {
+        if C::IS_U16 {
+            Chars::Utf16(bytemuck::cast_slice(s))
+        } else {
+            Chars::Latin1(bytemuck::cast_slice(s))
+        }
+    }
+}
+
+/// Run `$body` with `$s: &[u8]` or `$s: &[u16]` bound to the characters.
+macro_rules! with_chars {
+    ($chars:expr, |$s:ident| $body:expr) => {
+        match $chars {
+            Chars::Latin1($s) => $body,
+            Chars::Utf16($s) => $body,
+        }
+    };
+}
+
+/// A string argument (or the cwd) resolved to a flat view. `string` is the
+/// JSString cell the view borrows from, or `ZERO` for synthesized strings.
+#[derive(Clone, Copy)]
+struct Input<'a> {
+    string: JSValue,
+    chars: Chars<'a>,
+}
+
+impl<'a> Input<'a> {
+    #[inline]
+    fn len(&self) -> usize {
+        self.chars.len()
+    }
+    #[inline]
+    fn is_8bit(&self) -> bool {
+        self.chars.is_8bit()
+    }
+    #[inline]
+    fn at(&self, i: usize) -> u32 {
+        self.chars.at(i)
+    }
+    /// Keeps the viewed string reachable up to this point (for the cwd, which
+    /// unlike an argument is not necessarily referenced from anywhere else).
+    #[inline]
+    fn keep_alive(&self) {
+        self.string.ensure_still_alive();
+    }
+}
+
 unsafe extern "C" {
-    safe fn PathParsedObject__create(
+    /// `process.cwd()` as lib/path.js calls it (src/jsc/bindings/BunProcess.cpp): the cached
+    /// JSString or, once user code has replaced `process.cwd`, its result as a JSString, except
+    /// that undefined and null come back as they are.
+    safe fn Bun__Process__getCachedCwd(global: &JSGlobalObject) -> JSValue;
+    /// The parse() result object with its cached structure (src/jsc/bindings/ZigGlobalObject.cpp).
+    fn PathParsedObject__create(
         global: &JSGlobalObject,
-        root: JSValue,
-        dir: JSValue,
-        base: JSValue,
-        ext: JSValue,
-        name: JSValue,
+        path: JSValue,
+        ranges: *const Parsed,
     ) -> JSValue;
 }
 
-impl<'a, T: PathCharCwd> PathParsed<'a, T> {
-    fn to_js_object(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
-        let root = create_js_string_t::<T>(global_object, self.root)?;
-        let dir = create_js_string_t::<T>(global_object, self.dir)?;
-        let base = create_js_string_t::<T>(global_object, self.base)?;
-        let ext = create_js_string_t::<T>(global_object, self.ext)?;
-        let name_val = create_js_string_t::<T>(global_object, self.name)?;
-        Ok(PathParsedObject__create(
-            global_object,
-            root,
-            dir,
-            base,
-            ext,
-            name_val,
-        ))
-    }
-}
-
-const fn max_path_size<T: PathCharCwd>() -> usize {
-    if T::IS_U16 {
-        bun_paths::PATH_MAX_WIDE
-    } else {
-        MAX_PATH_BYTES
-    }
-}
-
-/// Upper bound of `max_path_size::<T>()` across both `T = u8` and `T = u16` on
-/// the current target. Used for sizing stack buffers where the `T`-dependent
-/// array length can't be expressed as a const-generic.
-const MAX_PATH_SIZE_UPPER: usize = if MAX_PATH_BYTES > bun_paths::PATH_MAX_WIDE {
-    MAX_PATH_BYTES
-} else {
-    bun_paths::PATH_MAX_WIDE
-};
-
-const fn path_size<T: PathCharCwd>() -> usize {
-    if T::IS_U16 {
-        PATH_MIN_WIDE
-    } else {
-        MAX_PATH_BYTES
-    }
-}
-
-/// Helper: equal-length copy.
-/// (Rust's borrow rules forbid `&mut [T]`/`&[T]` overlap, so memmove ⇒ memcpy.)
+/// Resolves `value` (already known to be a primitive string) to a flat view.
+/// The view borrows the JSString's storage, which stays alive for as long as
+/// the string is reachable: arguments are on the JS stack for the whole call,
+/// and each entry point keeps a cwd string alive on the native stack until its
+/// result has been built ([`Input::keep_alive`]).
 #[inline]
-fn memmove<T: Copy>(dst: &mut [T], src: &[T]) {
-    dst.copy_from_slice(src);
-}
-
-/// Based on Node v21.6.1 private helper posixCwd:
-/// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L1074
-fn posix_cwd_t<T: PathCharCwd>(buf: &mut [T]) -> MaybeBuf<'_, T> {
-    let cwd = get_cwd_t(buf)?;
-    let len = cwd.len();
-    if len == 0 {
-        return Ok(cwd);
-    }
-    #[cfg(windows)]
-    {
-        // Converts Windows' backslash path separators to POSIX forward slashes
-        // and truncates any drive indicator
-
-        // Translated from the following JS code:
-        //   const cwd = StringPrototypeReplace(process.cwd(), regexp, '/');
-        // cwd already aliases buf, so mutate in place.
-        for i in 0..len {
-            if cwd[i] == T::from_u8(CHAR_BACKWARD_SLASH) {
-                cwd[i] = T::from_u8(CHAR_FORWARD_SLASH);
-            }
-        }
-        let normalized_cwd = &mut cwd[0..len];
-
-        // Translated from the following JS code:
-        //   return StringPrototypeSlice(cwd, StringPrototypeIndexOf(cwd, '/'));
-        let index = strings::index_of_scalar(normalized_cwd, T::from_u8(CHAR_FORWARD_SLASH));
-        // Account for the -1 case of String#slice in JS land
-        if let Some(_index) = index {
-            return Ok(&mut normalized_cwd[_index..len]);
-        }
-        return Ok(&mut normalized_cwd[len - 1..len]);
-    }
-
-    // We're already on POSIX, no need for any transformations
-    #[cfg(not(windows))]
-    Ok(cwd)
-}
-
-#[cfg(windows)]
-#[inline]
-fn without_trailing_slash(s: &[u8]) -> &[u8] {
-    bun_paths::string_paths::without_trailing_slash_windows_path(s)
-}
-#[cfg(not(windows))]
-#[inline]
-fn without_trailing_slash(s: &[u8]) -> &[u8] {
-    strings::without_trailing_slash(s)
-}
-
-pub(crate) fn get_cwd_u8(buf: &mut [u8]) -> MaybeBuf<'_, u8> {
-    let cached_cwd = without_trailing_slash(bun_paths::fs::FileSystem::instance().top_level_dir());
-    buf[0..cached_cwd.len()].copy_from_slice(cached_cwd);
-    Ok(&mut buf[0..cached_cwd.len()])
-}
-
-fn get_cwd_u16(buf: &mut [u16]) -> MaybeBuf<'_, u16> {
-    let result = strings::convert_utf8_to_utf16_in_buffer(
-        buf,
-        without_trailing_slash(bun_paths::fs::FileSystem::instance().top_level_dir()),
-    );
-    Ok(result)
-}
-
-#[inline]
-fn get_cwd_t<T: PathCharCwd>(buf: &mut [T]) -> MaybeBuf<'_, T> {
-    T::get_cwd(buf)
-}
-
-/// Based on Node v21.6.1 path.posix.basename:
-/// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L1309
-pub(crate) fn basename_posix_t<'a, T: PathCharCwd>(path: &'a [T], suffix: Option<&[T]>) -> &'a [T] {
-    // validateString of `path` is performed in pub fn basename.
-    let len = path.len();
-    // Exit early for easier number type use.
-    if len == 0 {
-        return &[];
-    }
-    let mut start: usize = 0;
-    // We use an optional value instead of -1, as in Node code, for easier number type use.
-    let mut end: Option<usize> = None;
-    let mut matched_slash: bool = true;
-
-    let _suffix: &[T] = suffix.unwrap_or(&[]);
-    let _suffix_len = _suffix.len();
-    if suffix.is_some() && _suffix_len > 0 && _suffix_len <= len {
-        if _suffix == path {
-            return &[];
-        }
-        // We use an optional value instead of -1, as in Node code, for easier number type use.
-        let mut ext_idx: Option<usize> = Some(_suffix_len - 1);
-        // We use an optional value instead of -1, as in Node code, for easier number type use.
-        let mut first_non_slash_end: Option<usize> = None;
-        let mut i_i64 = i64::try_from(len - 1).expect("int cast");
-        while i_i64 >= i64::try_from(start).expect("int cast") {
-            let i = usize::try_from(i_i64).expect("int cast");
-            let byte = path[i];
-            if byte == T::from_u8(CHAR_FORWARD_SLASH) {
-                // If we reached a path separator that was not part of a set of path
-                // separators at the end of the string, stop now
-                if !matched_slash {
-                    start = i + 1;
-                    break;
-                }
-            } else {
-                if first_non_slash_end.is_none() {
-                    // We saw the first non-path separator, remember this index in case
-                    // we need it if the extension ends up not matching
-                    matched_slash = false;
-                    first_non_slash_end = Some(i + 1);
-                }
-                if let Some(_ext_ix) = ext_idx {
-                    // Try to match the explicit extension
-                    if byte == _suffix[_ext_ix] {
-                        if _ext_ix == 0 {
-                            // We matched the extension, so mark this as the end of our path
-                            // component
-                            end = Some(i);
-                            ext_idx = None;
-                        } else {
-                            ext_idx = Some(_ext_ix - 1);
-                        }
-                    } else {
-                        // Extension does not match, so our result is the entire path
-                        // component
-                        ext_idx = None;
-                        end = first_non_slash_end;
-                    }
-                }
-            }
-            i_i64 -= 1;
-        }
-
-        if let Some(_end) = end {
-            if start == _end {
-                return &path[start..first_non_slash_end.unwrap()];
-            } else {
-                return &path[start.._end];
-            }
-        }
-        return &path[start..len];
-    }
-
-    let mut i_i64 = i64::try_from(len - 1).expect("int cast");
-    while i_i64 > -1 {
-        let i = usize::try_from(i_i64).expect("int cast");
-        let byte = path[i];
-        if byte == T::from_u8(CHAR_FORWARD_SLASH) {
-            // If we reached a path separator that was not part of a set of path
-            // separators at the end of the string, stop now
-            if !matched_slash {
-                start = i + 1;
-                break;
-            }
-        } else if end.is_none() {
-            // We saw the first non-path separator, mark this as the end of our
-            // path component
-            matched_slash = false;
-            end = Some(i + 1);
-        }
-        i_i64 -= 1;
-    }
-
-    if let Some(_end) = end {
-        &path[start.._end]
-    } else {
-        &[]
-    }
-}
-
-/// Based on Node v21.6.1 path.win32.basename:
-/// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L753
-pub(crate) fn basename_windows_t<'a, T: PathCharCwd>(
-    path: &'a [T],
-    suffix: Option<&[T]>,
-) -> &'a [T] {
-    // validateString of `path` is performed in pub fn basename.
-    let len = path.len();
-    // Exit early for easier number type use.
-    if len == 0 {
-        return &[];
-    }
-
-    let is_sep_t = is_sep_windows_t::<T>;
-
-    let mut start: usize = 0;
-    // We use an optional value instead of -1, as in Node code, for easier number type use.
-    let mut end: Option<usize> = None;
-    let mut matched_slash: bool = true;
-
-    // Check for a drive letter prefix so as not to mistake the following
-    // path separator as an extra separator at the end of the path that can be
-    // disregarded
-    if len >= 2 && is_windows_device_root_t(path[0]) && path[1] == T::from_u8(CHAR_COLON) {
-        start = 2;
-    }
-
-    let _suffix: &[T] = suffix.unwrap_or(&[]);
-    let _suffix_len = _suffix.len();
-    if suffix.is_some() && _suffix_len > 0 && _suffix_len <= len {
-        if _suffix == path {
-            return &[];
-        }
-        // We use an optional value instead of -1, as in Node code, for easier number type use.
-        let mut ext_idx: Option<usize> = Some(_suffix_len - 1);
-        // We use an optional value instead of -1, as in Node code, for easier number type use.
-        let mut first_non_slash_end: Option<usize> = None;
-        let mut i_i64 = i64::try_from(len - 1).expect("int cast");
-        while i_i64 >= i64::try_from(start).expect("int cast") {
-            let i = usize::try_from(i_i64).expect("int cast");
-            let byte = path[i];
-            if is_sep_t(byte) {
-                // If we reached a path separator that was not part of a set of path
-                // separators at the end of the string, stop now
-                if !matched_slash {
-                    start = i + 1;
-                    break;
-                }
-            } else {
-                if first_non_slash_end.is_none() {
-                    // We saw the first non-path separator, remember this index in case
-                    // we need it if the extension ends up not matching
-                    matched_slash = false;
-                    first_non_slash_end = Some(i + 1);
-                }
-                if let Some(_ext_ix) = ext_idx {
-                    // Try to match the explicit extension
-                    if byte == _suffix[_ext_ix] {
-                        if _ext_ix == 0 {
-                            // We matched the extension, so mark this as the end of our path
-                            // component
-                            end = Some(i);
-                            ext_idx = None;
-                        } else {
-                            ext_idx = Some(_ext_ix - 1);
-                        }
-                    } else {
-                        // Extension does not match, so our result is the entire path
-                        // component
-                        ext_idx = None;
-                        end = first_non_slash_end;
-                    }
-                }
-            }
-            i_i64 -= 1;
-        }
-
-        if let Some(_end) = end {
-            if start == _end {
-                return &path[start..first_non_slash_end.unwrap()];
-            } else {
-                return &path[start.._end];
-            }
-        }
-        return &path[start..len];
-    }
-
-    let mut i_i64 = i64::try_from(len - 1).expect("int cast");
-    while i_i64 >= i64::try_from(start).expect("int cast") {
-        let i = usize::try_from(i_i64).expect("int cast");
-        let byte = path[i];
-        if is_sep_t(byte) {
-            if !matched_slash {
-                start = i + 1;
-                break;
-            }
-        } else if end.is_none() {
-            matched_slash = false;
-            end = Some(i + 1);
-        }
-        i_i64 -= 1;
-    }
-
-    if let Some(_end) = end {
-        &path[start.._end]
-    } else {
-        &[]
-    }
-}
-
-pub(crate) fn basename_posix_js_t<T: PathCharCwd>(
-    global_object: &JSGlobalObject,
-    path: &[T],
-    suffix: Option<&[T]>,
-) -> JsResult<JSValue> {
-    create_js_string_t::<T>(global_object, basename_posix_t(path, suffix))
-}
-
-pub(crate) fn basename_windows_js_t<T: PathCharCwd>(
-    global_object: &JSGlobalObject,
-    path: &[T],
-    suffix: Option<&[T]>,
-) -> JsResult<JSValue> {
-    create_js_string_t::<T>(global_object, basename_windows_t(path, suffix))
-}
-
-pub(crate) fn basename_js_t<T: PathCharCwd>(
-    global_object: &JSGlobalObject,
-    is_windows: bool,
-    path: &[T],
-    suffix: Option<&[T]>,
-) -> JsResult<JSValue> {
-    if is_windows {
-        basename_windows_js_t(global_object, path, suffix)
-    } else {
-        basename_posix_js_t(global_object, path, suffix)
-    }
-}
-
-pub(crate) fn basename(
-    global_object: &JSGlobalObject,
-    is_windows: bool,
-    args: &[JSValue],
-) -> JsResult<JSValue> {
-    let args_len = args.len();
-    let suffix_ptr: Option<JSValue> = if args_len > 1 && !args[1].is_undefined() {
-        Some(args[1])
-    } else {
-        None
-    };
-
-    if let Some(_suffix_ptr) = suffix_ptr {
-        validate_string(global_object, _suffix_ptr, format_args!("ext"))?;
-    }
-
-    let path_ptr: JSValue = if args_len > 0 {
-        args[0]
-    } else {
-        JSValue::UNDEFINED
-    };
-    validate_string(global_object, path_ptr, format_args!("path"))?;
-
-    let path_str = path_ptr.to_js_string_view(global_object)?;
-    if path_str.is_empty() {
-        return Ok(path_ptr);
-    }
-
-    let path_slice = path_str.to_utf8();
-
-    let suffix_str = match suffix_ptr {
-        Some(suffix_ptr) => Some(suffix_ptr.to_js_string_view(global_object)?),
-        None => None,
-    };
-    let suffix_slice = suffix_str
-        .as_ref()
-        .filter(|s| !s.is_empty() && s.length() <= path_str.length())
-        .map(|s| s.to_utf8());
-    basename_js_t::<u8>(
-        global_object,
-        is_windows,
-        path_slice.slice(),
-        suffix_slice.as_ref().map(|s| s.slice()),
-    )
-}
-
-/// Based on Node v21.6.1 path.posix.dirname:
-/// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L1278
-fn dirname_posix_t<T: PathCharCwd>(path: &[T]) -> &[T] {
-    // validateString of `path` is performed in pub fn dirname.
-    let len = path.len();
-    if len == 0 {
-        return l::<T>(CHAR_STR_DOT);
-    }
-
-    let has_root = path[0] == T::from_u8(CHAR_FORWARD_SLASH);
-    // We use an optional value instead of -1, as in Node code, for easier number type use.
-    let mut end: Option<usize> = None;
-    let mut matched_slash: bool = true;
-    let mut i: usize = len - 1;
-    while i >= 1 {
-        if path[i] == T::from_u8(CHAR_FORWARD_SLASH) {
-            if !matched_slash {
-                end = Some(i);
-                break;
-            }
+fn view_of<'a>(global: &JSGlobalObject, value: JSValue) -> JsResult<Input<'a>> {
+    debug_assert!(value.is_string_literal());
+    let string: &JSString = value.as_string();
+    let view = string.view(global)?;
+    // SAFETY: the view describes the live JSString's storage (see the doc comment); detach it
+    // from the local `JSStringView` guard's lifetime.
+    let chars = unsafe {
+        if view.is_utf16() {
+            let s = view.utf16();
+            Chars::Utf16(core::slice::from_raw_parts(s.as_ptr(), s.len()))
         } else {
-            // We saw the first non-path separator
-            matched_slash = false;
-        }
-        i -= 1;
-    }
-
-    if let Some(_end) = end {
-        return if has_root && _end == 1 {
-            l::<T>(b"//")
-        } else {
-            &path[0.._end]
-        };
-    }
-    if has_root {
-        l::<T>(CHAR_STR_FORWARD_SLASH)
-    } else {
-        l::<T>(CHAR_STR_DOT)
-    }
-}
-
-/// Based on Node v21.6.1 path.win32.dirname:
-/// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L657
-fn dirname_windows_t<T: PathCharCwd>(path: &[T]) -> &[T] {
-    // validateString of `path` is performed in pub fn dirname.
-    let len = path.len();
-    if len == 0 {
-        return l::<T>(CHAR_STR_DOT);
-    }
-
-    let is_sep_t = is_sep_windows_t::<T>;
-
-    // We use an optional value instead of -1, as in Node code, for easier number type use.
-    let mut root_end: Option<usize> = None;
-    let mut offset: usize = 0;
-    let byte0 = path[0];
-
-    if len == 1 {
-        // `path` contains just a path separator, exit early to avoid
-        // unnecessary work or a dot.
-        return if is_sep_t(byte0) {
-            path
-        } else {
-            l::<T>(CHAR_STR_DOT)
-        };
-    }
-
-    // Try to match a root
-    if is_sep_t(byte0) {
-        // Possible UNC root
-
-        root_end = Some(1);
-        offset = 1;
-
-        if is_sep_t(path[1]) {
-            // Matched double path separator at the beginning
-            let mut j: usize = 2;
-            let mut last: usize = j;
-
-            // Match 1 or more non-path separators
-            while j < len && !is_sep_t(path[j]) {
-                j += 1;
-            }
-
-            if j < len && j != last {
-                // Matched!
-                last = j;
-
-                // Match 1 or more path separators
-                while j < len && is_sep_t(path[j]) {
-                    j += 1;
-                }
-
-                if j < len && j != last {
-                    // Matched!
-                    last = j;
-
-                    // Match 1 or more non-path separators
-                    while j < len && !is_sep_t(path[j]) {
-                        j += 1;
-                    }
-
-                    if j == len {
-                        // We matched a UNC root only
-                        return path;
-                    }
-
-                    if j != last {
-                        // We matched a UNC root with leftovers
-
-                        // Offset by 1 to include the separator after the UNC root to
-                        // treat it as a "normal root" on top of a (UNC) root
-                        offset = j + 1;
-                        root_end = Some(offset);
-                    }
-                }
-            }
-        }
-        // Possible device root
-    } else if is_windows_device_root_t(byte0) && path[1] == T::from_u8(CHAR_COLON) {
-        offset = if len > 2 && is_sep_t(path[2]) { 3 } else { 2 };
-        root_end = Some(offset);
-    }
-
-    // We use an optional value instead of -1, as in Node code, for easier number type use.
-    let mut end: Option<usize> = None;
-    let mut matched_slash: bool = true;
-
-    let mut i_i64 = i64::try_from(len - 1).expect("int cast");
-    while i_i64 >= i64::try_from(offset).expect("int cast") {
-        let i = usize::try_from(i_i64).expect("int cast");
-        if is_sep_t(path[i]) {
-            if !matched_slash {
-                end = Some(i);
-                break;
-            }
-        } else {
-            // We saw the first non-path separator
-            matched_slash = false;
-        }
-        i_i64 -= 1;
-    }
-
-    if let Some(_end) = end {
-        return &path[0.._end];
-    }
-
-    if let Some(_root_end) = root_end {
-        &path[0.._root_end]
-    } else {
-        l::<T>(CHAR_STR_DOT)
-    }
-}
-
-fn dirname_posix_js_t<T: PathCharCwd>(
-    global_object: &JSGlobalObject,
-    path: &[T],
-) -> JsResult<JSValue> {
-    create_js_string_t::<T>(global_object, dirname_posix_t(path))
-}
-
-fn dirname_windows_js_t<T: PathCharCwd>(
-    global_object: &JSGlobalObject,
-    path: &[T],
-) -> JsResult<JSValue> {
-    create_js_string_t::<T>(global_object, dirname_windows_t(path))
-}
-
-fn dirname_js_t<T: PathCharCwd>(
-    global_object: &JSGlobalObject,
-    is_windows: bool,
-    path: &[T],
-) -> JsResult<JSValue> {
-    if is_windows {
-        dirname_windows_js_t(global_object, path)
-    } else {
-        dirname_posix_js_t(global_object, path)
-    }
-}
-
-fn dirname(
-    global_object: &JSGlobalObject,
-    is_windows: bool,
-    args: &[JSValue],
-) -> JsResult<JSValue> {
-    let args_len = args.len();
-    let path_ptr: JSValue = if args_len > 0 {
-        args[0]
-    } else {
-        JSValue::UNDEFINED
-    };
-    validate_string(global_object, path_ptr, format_args!("path"))?;
-
-    let path_str = path_ptr.to_js_string_view(global_object)?;
-    if path_str.is_empty() {
-        return bun_core::String::static_(CHAR_STR_DOT).to_js(global_object);
-    }
-
-    let path_slice = path_str.to_utf8();
-    dirname_js_t::<u8>(global_object, is_windows, path_slice.slice())
-}
-
-/// Based on Node v21.6.1 path.posix.extname:
-/// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L1388
-fn extname_posix_t<T: PathCharCwd>(path: &[T]) -> &[T] {
-    // validateString of `path` is performed in pub fn extname.
-    let len = path.len();
-    // Exit early for easier number type use.
-    if len == 0 {
-        return &[];
-    }
-    // We use an optional value instead of -1, as in Node code, for easier number type use.
-    let mut start_dot: Option<usize> = None;
-    let mut start_part: usize = 0;
-    // We use an optional value instead of -1, as in Node code, for easier number type use.
-    let mut end: Option<usize> = None;
-    let mut matched_slash: bool = true;
-    // Track the state of characters (if any) we see before our first dot and
-    // after any path separator we find
-
-    // We use an optional value instead of -1, as in Node code, for easier number type use.
-    let mut pre_dot_state: Option<usize> = Some(0);
-
-    let mut i_i64 = i64::try_from(len - 1).expect("int cast");
-    while i_i64 > -1 {
-        let i = usize::try_from(i_i64).expect("int cast");
-        let byte = path[i];
-        if byte == T::from_u8(CHAR_FORWARD_SLASH) {
-            // If we reached a path separator that was not part of a set of path
-            // separators at the end of the string, stop now
-            if !matched_slash {
-                start_part = i + 1;
-                break;
-            }
-            i_i64 -= 1;
-            continue;
-        }
-
-        if end.is_none() {
-            // We saw the first non-path separator, mark this as the end of our
-            // extension
-            matched_slash = false;
-            end = Some(i + 1);
-        }
-
-        if byte == T::from_u8(CHAR_DOT) {
-            // If this is our first dot, mark it as the start of our extension
-            if start_dot.is_none() {
-                start_dot = Some(i);
-            } else if pre_dot_state.is_some() && pre_dot_state.unwrap() != 1 {
-                pre_dot_state = Some(1);
-            }
-        } else if start_dot.is_some() {
-            // We saw a non-dot and non-path separator before our dot, so we should
-            // have a good chance at having a non-empty extension
-            pre_dot_state = None;
-        }
-        i_i64 -= 1;
-    }
-
-    let _end = end.unwrap_or(0);
-    let _pre_dot_state = pre_dot_state.unwrap_or(0);
-    let _start_dot = start_dot.unwrap_or(0);
-    if start_dot.is_none()
-        || end.is_none()
-        // We saw a non-dot character immediately before the dot
-        || (pre_dot_state.is_some() && _pre_dot_state == 0)
-        // The (right-most) trimmed path component is exactly '..'
-        || (_pre_dot_state == 1 && _start_dot == _end - 1 && _start_dot == start_part + 1)
-    {
-        return &[];
-    }
-
-    &path[_start_dot.._end]
-}
-
-/// Based on Node v21.6.1 path.win32.extname:
-/// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L840
-fn extname_windows_t<T: PathCharCwd>(path: &[T]) -> &[T] {
-    // validateString of `path` is performed in pub fn extname.
-    let len = path.len();
-    // Exit early for easier number type use.
-    if len == 0 {
-        return &[];
-    }
-    let mut start: usize = 0;
-    // We use an optional value instead of -1, as in Node code, for easier number type use.
-    let mut start_dot: Option<usize> = None;
-    let mut start_part: usize = 0;
-    // We use an optional value instead of -1, as in Node code, for easier number type use.
-    let mut end: Option<usize> = None;
-    let mut matched_slash: bool = true;
-    // Track the state of characters (if any) we see before our first dot and
-    // after any path separator we find
-
-    // We use an optional value instead of -1, as in Node code, for easier number type use.
-    let mut pre_dot_state: Option<usize> = Some(0);
-
-    // Check for a drive letter prefix so as not to mistake the following
-    // path separator as an extra separator at the end of the path that can be
-    // disregarded
-
-    if len >= 2 && path[1] == T::from_u8(CHAR_COLON) && is_windows_device_root_t(path[0]) {
-        start = 2;
-        start_part = start;
-    }
-
-    let mut i_i64 = i64::try_from(len - 1).expect("int cast");
-    while i_i64 >= i64::try_from(start).expect("int cast") {
-        let i = usize::try_from(i_i64).expect("int cast");
-        let byte = path[i];
-        if is_sep_windows_t(byte) {
-            // If we reached a path separator that was not part of a set of path
-            // separators at the end of the string, stop now
-            if !matched_slash {
-                start_part = i + 1;
-                break;
-            }
-            i_i64 -= 1;
-            continue;
-        }
-        if end.is_none() {
-            // We saw the first non-path separator, mark this as the end of our
-            // extension
-            matched_slash = false;
-            end = Some(i + 1);
-        }
-        if byte == T::from_u8(CHAR_DOT) {
-            // If this is our first dot, mark it as the start of our extension
-            if start_dot.is_none() {
-                start_dot = Some(i);
-            } else if let Some(_pre_dot_state) = pre_dot_state {
-                if _pre_dot_state != 1 {
-                    pre_dot_state = Some(1);
-                }
-            }
-        } else if start_dot.is_some() {
-            // We saw a non-dot and non-path separator before our dot, so we should
-            // have a good chance at having a non-empty extension
-            pre_dot_state = None;
-        }
-        i_i64 -= 1;
-    }
-
-    let _end = end.unwrap_or(0);
-    let _pre_dot_state = pre_dot_state.unwrap_or(0);
-    let _start_dot = start_dot.unwrap_or(0);
-    if start_dot.is_none()
-        || end.is_none()
-        // We saw a non-dot character immediately before the dot
-        || (pre_dot_state.is_some() && _pre_dot_state == 0)
-        // The (right-most) trimmed path component is exactly '..'
-        || (_pre_dot_state == 1 && _start_dot == _end - 1 && _start_dot == start_part + 1)
-    {
-        return &[];
-    }
-
-    &path[_start_dot.._end]
-}
-
-pub use bun_paths::resolve_path::is_sep_posix_t;
-// Node `path.win32.isPathSeparator` accepts BOTH `/` and `\` — semantically
-// `is_sep_any_t`, NOT `is_sep_win32_t` (which is `\`-only). Keep the Node name.
-pub use bun_paths::is_sep_any_t as is_sep_windows_t;
-
-/// `'A' <= byte <= 'Z' || 'a' <= byte <= 'z'`
-#[inline]
-fn is_windows_device_root_t<T: PathCharCwd>(byte: T) -> bool {
-    let c = byte.as_u32();
-    (b'A' as u32 <= c && c <= b'Z' as u32) || (b'a' as u32 <= c && c <= b'z' as u32)
-}
-
-/// Based on Node v21.6.1 path.posix.isAbsolute:
-/// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L1159
-#[inline]
-fn is_absolute_posix_t<T: PathCharCwd>(path: &[T]) -> bool {
-    // validateString of `path` is performed in pub fn isAbsolute.
-    !path.is_empty() && path[0] == T::from_u8(CHAR_FORWARD_SLASH)
-}
-
-/// Based on Node v21.6.1 path.win32.isAbsolute:
-/// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L406
-#[inline]
-fn is_absolute_windows_t<T: PathCharCwd>(path: &[T]) -> bool {
-    // validateString of `path` is performed in pub fn isAbsolute.
-    let len = path.len();
-    if len == 0 {
-        return false;
-    }
-    let byte0 = path[0];
-    is_sep_windows_t(byte0)
-        || (len > 2
-            && is_windows_device_root_t(byte0)
-            && path[1] == T::from_u8(CHAR_COLON)
-            && is_sep_windows_t(path[2]))
-}
-
-fn extname_posix_js_t<T: PathCharCwd>(
-    global_object: &JSGlobalObject,
-    path: &[T],
-) -> JsResult<JSValue> {
-    create_js_string_t::<T>(global_object, extname_posix_t(path))
-}
-
-fn extname_windows_js_t<T: PathCharCwd>(
-    global_object: &JSGlobalObject,
-    path: &[T],
-) -> JsResult<JSValue> {
-    create_js_string_t::<T>(global_object, extname_windows_t(path))
-}
-
-fn extname_js_t<T: PathCharCwd>(
-    global_object: &JSGlobalObject,
-    is_windows: bool,
-    path: &[T],
-) -> JsResult<JSValue> {
-    if is_windows {
-        extname_windows_js_t(global_object, path)
-    } else {
-        extname_posix_js_t(global_object, path)
-    }
-}
-
-fn extname(
-    global_object: &JSGlobalObject,
-    is_windows: bool,
-    args: &[JSValue],
-) -> JsResult<JSValue> {
-    let args_len = args.len();
-    let path_ptr: JSValue = if args_len > 0 {
-        args[0]
-    } else {
-        JSValue::UNDEFINED
-    };
-    validate_string(global_object, path_ptr, format_args!("path"))?;
-
-    let path_str = path_ptr.to_js_string_view(global_object)?;
-    if path_str.is_empty() {
-        return Ok(path_ptr);
-    }
-
-    let path_slice = path_str.to_utf8();
-    extname_js_t::<u8>(global_object, is_windows, path_slice.slice())
-}
-
-/// Based on Node v21.6.1 private helper _format:
-/// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L145
-fn format_t<'a, T: PathCharCwd>(
-    path_object: &PathParsed<'a, T>,
-    sep: T,
-    buf: &'a mut [T],
-) -> &'a [T] {
-    // validateObject of `pathObject` is performed in pub fn format.
-    let root = path_object.root;
-    let dir = path_object.dir;
-    let base = path_object.base;
-    let ext = path_object.ext;
-    // Prefix with _ to avoid shadowing the identifier in the outer scope.
-    let _name = path_object.name;
-
-    // Translated from the following JS code:
-    //   const dir = pathObject.dir || pathObject.root;
-    // Compare as `&[T]` so the comparison is correct for `T == u16` too.
-    let dir_is_root = dir.is_empty() || dir == root;
-    let dir_or_root = if dir_is_root { root } else { dir };
-    let dir_len = dir_or_root.len();
-
-    let mut buf_offset: usize;
-    let mut buf_size: usize;
-
-    // Translated from the following JS code:
-    //   const base = pathObject.base ||
-    //     `${pathObject.name || ''}${formatExt(pathObject.ext)}`;
-    let mut base_len = base.len();
-    // Borrowck: track range into buf instead of slice.
-
-    let base_or_name_ext_range: (usize, usize) = if base_len > 0 {
-        memmove(&mut buf[0..base_len], base);
-        (0, base_len)
-    } else {
-        let formatted_ext_len = {
-            // Borrowck: inline format_ext_t to avoid overlapping &mut.
-            let ext_len = ext.len();
-            if ext_len == 0 {
-                0
-            } else if ext[0] == T::from_u8(CHAR_DOT) {
-                memmove(&mut buf[0..ext_len], ext);
-                ext_len
-            } else {
-                buf[0] = T::from_u8(CHAR_DOT);
-                memmove(&mut buf[1..ext_len + 1], ext);
-                ext_len + 1
-            }
-        };
-        let name_len = _name.len();
-        let ext_len = formatted_ext_len;
-        buf_offset = name_len;
-        buf_size = buf_offset + ext_len;
-        if ext_len > 0 {
-            // Move all bytes to the right by _name.len.
-            // Use copy_within because formattedExt and buf overlap.
-            buf.copy_within(0..ext_len, buf_offset);
-        }
-        if name_len > 0 {
-            memmove(&mut buf[0..name_len], _name);
-        }
-        if buf_size > 0 {
-            (0, buf_size)
-        } else {
-            (0, base_len)
+            let s = view.latin1();
+            Chars::Latin1(core::slice::from_raw_parts(s.as_ptr(), s.len()))
         }
     };
-
-    // Translated from the following JS code:
-    //   if (!dir) {
-    //     return base;
-    //   }
-    if dir_len == 0 {
-        return &buf[base_or_name_ext_range.0..base_or_name_ext_range.1];
-    }
-
-    // Translated from the following JS code:
-    //   return dir === pathObject.root ? `${dir}${base}` : `${dir}${sep}${base}`;
-    base_len = base_or_name_ext_range.1 - base_or_name_ext_range.0;
-    if base_len > 0 {
-        buf_offset = if dir_is_root { dir_len } else { dir_len + 1 };
-        // Move all bytes to the right by dirLen + (maybe 1 for the separator).
-        // Use copy_within because baseOrNameExt and buf overlap.
-        buf.copy_within(
-            base_or_name_ext_range.0..base_or_name_ext_range.1,
-            buf_offset,
-        );
-    }
-    memmove(&mut buf[0..dir_len], dir_or_root);
-    buf_size = dir_len + base_len;
-    if !dir_is_root {
-        buf_size += 1;
-        buf[dir_len] = sep;
-    }
-    &buf[0..buf_size]
-}
-
-fn format_posix_js_t<T: PathCharCwd>(
-    global_object: &JSGlobalObject,
-    path_object: &PathParsed<'_, T>,
-    buf: &mut [T],
-) -> JsResult<JSValue> {
-    create_js_string_t::<T>(
-        global_object,
-        format_t(path_object, T::from_u8(CHAR_FORWARD_SLASH), buf),
-    )
-}
-
-fn format_windows_js_t<T: PathCharCwd>(
-    global_object: &JSGlobalObject,
-    path_object: &PathParsed<'_, T>,
-    buf: &mut [T],
-) -> JsResult<JSValue> {
-    create_js_string_t::<T>(
-        global_object,
-        format_t(path_object, T::from_u8(CHAR_BACKWARD_SLASH), buf),
-    )
-}
-
-fn format_js_t<T: PathCharCwd>(
-    global_object: &JSGlobalObject,
-    pool: &mut RarePathBuf,
-    is_windows: bool,
-    path_object: &PathParsed<'_, T>,
-) -> JsResult<JSValue> {
-    let base_len = path_object.base.len();
-    let dir_len = path_object.dir.len();
-    // Add one for the possible separator.
-    let buf_len: usize =
-        (1 + (if dir_len > 0 {
-            dir_len
-        } else {
-            path_object.root.len()
-        }) + (if base_len > 0 {
-            base_len
-        } else {
-            path_object.name.len() + path_object.ext.len() + 1
-        }))
-        .max(path_size::<T>());
-    let mut scratch = PathScratch::<T>::new(pool, buf_len);
-    let buf = scratch.slice();
-    if is_windows {
-        format_windows_js_t(global_object, path_object, buf)
-    } else {
-        format_posix_js_t(global_object, path_object, buf)
-    }
-}
-
-fn format(global_object: &JSGlobalObject, is_windows: bool, args: &[JSValue]) -> JsResult<JSValue> {
-    let args_len = args.len();
-    let path_object_ptr: JSValue = if args_len > 0 {
-        args[0]
-    } else {
-        JSValue::UNDEFINED
-    };
-    validate_object(
-        global_object,
-        path_object_ptr,
-        format_args!("pathObject"),
-        Default::default(),
-    )?;
-
-    let mut root: &[u8] = b"";
-    let root_slice = if let Some(js_value) = path_object_ptr.get_truthy(global_object, "root")? {
-        Some(js_value.to_utf8(global_object)?)
-    } else {
-        None
-    };
-    if let Some(ref slice) = root_slice {
-        root = slice.slice();
-    }
-
-    let mut dir: &[u8] = b"";
-    let dir_slice = if let Some(js_value) = path_object_ptr.get_truthy(global_object, "dir")? {
-        Some(js_value.to_utf8(global_object)?)
-    } else {
-        None
-    };
-    if let Some(ref slice) = dir_slice {
-        dir = slice.slice();
-    }
-
-    let mut base: &[u8] = b"";
-    let base_slice = if let Some(js_value) = path_object_ptr.get_truthy(global_object, "base")? {
-        Some(js_value.to_utf8(global_object)?)
-    } else {
-        None
-    };
-    if let Some(ref slice) = base_slice {
-        base = slice.slice();
-    }
-
-    let mut _name: &[u8] = b"";
-    let _name_slice = if let Some(js_value) = path_object_ptr.get_truthy(global_object, "name")? {
-        Some(js_value.to_utf8(global_object)?)
-    } else {
-        None
-    };
-    if let Some(ref slice) = _name_slice {
-        _name = slice.slice();
-    }
-
-    let mut ext: &[u8] = b"";
-    let ext_slice = if let Some(js_value) = path_object_ptr.get_truthy(global_object, "ext")? {
-        Some(js_value.to_utf8(global_object)?)
-    } else {
-        None
-    };
-    if let Some(ref slice) = ext_slice {
-        ext = slice.slice();
-    }
-
-    let pool = &mut global_object.bun_vm().as_mut().rare_data().path_buf;
-    format_js_t::<u8>(
-        global_object,
-        pool,
-        is_windows,
-        &PathParsed {
-            root,
-            dir,
-            base,
-            ext,
-            name: _name,
-        },
-    )
-}
-
-fn is_absolute_posix_string(path: &bun_core::String) -> bool {
-    let path_trunc = path.trunc(1);
-    if path_trunc.is_utf16() {
-        is_absolute_posix_t::<u16>(path_trunc.utf16())
-    } else {
-        is_absolute_posix_t::<u8>(path_trunc.latin1())
-    }
-}
-
-fn is_absolute_windows_string(path: &bun_core::String) -> bool {
-    if path.is_utf16() {
-        is_absolute_windows_t::<u16>(path.utf16())
-    } else {
-        is_absolute_windows_t::<u8>(path.latin1())
-    }
-}
-
-fn is_absolute(
-    global_object: &JSGlobalObject,
-    is_windows: bool,
-    args: &[JSValue],
-) -> JsResult<JSValue> {
-    let args_len = args.len();
-    let path_ptr: JSValue = if args_len > 0 {
-        args[0]
-    } else {
-        JSValue::UNDEFINED
-    };
-    validate_string(global_object, path_ptr, format_args!("path"))?;
-
-    let path_str = path_ptr.to_js_string_view(global_object)?;
-    if path_str.is_empty() {
-        return Ok(JSValue::FALSE);
-    }
-    if is_windows {
-        return Ok(JSValue::from(is_absolute_windows_string(&path_str)));
-    }
-    Ok(JSValue::from(is_absolute_posix_string(&path_str)))
-}
-
-/// Based on Node v21.6.1 path.posix.join:
-/// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L1169
-fn join_posix_t<'a, T: PathCharCwd>(
-    paths: &[&[T]],
-    buf: &'a mut [T],
-    buf2: &'a mut [T],
-) -> &'a [T] {
-    if paths.is_empty() {
-        return l::<T>(CHAR_STR_DOT);
-    }
-
-    let mut buf_size: usize = 0;
-    let mut buf_offset: usize;
-
-    // Back joined by expandable buf2 in case it is long.
-    // Borrowck: track length instead of slice into buf2.
-    let mut joined_len: usize = 0;
-
-    for path in paths {
-        // validateString of `path is performed in pub fn join.
-        // Back our virtual "joined" string by expandable buf2 in
-        // case it is long.
-        let len = path.len();
-        if len > 0 {
-            // Translated from the following JS code:
-            //   if (joined === undefined)
-            //     joined = arg;
-            //   else
-            //     joined += `/${arg}`;
-            if buf_size != 0 {
-                buf_offset = buf_size;
-                buf_size += 1;
-                buf2[buf_offset] = T::from_u8(CHAR_FORWARD_SLASH);
-            }
-            buf_offset = buf_size;
-            buf_size += len;
-            memmove(&mut buf2[buf_offset..buf_size], path);
-
-            joined_len = buf_size;
-        }
-    }
-    if buf_size == 0 {
-        return l::<T>(CHAR_STR_DOT);
-    }
-    normalize_posix_t(&buf2[0..joined_len], buf)
-}
-
-/// # Safety
-/// `rhs_ptr[..rhs_len]` must be a valid readable slice. Called only from C++.
-#[unsafe(no_mangle)]
-unsafe extern "C" fn Bun__Node__Path_joinWTF(
-    lhs: &bun_core::String,
-    rhs_ptr: *const u8,
-    rhs_len: usize,
-) -> bun_core::String {
-    // SAFETY: caller passes a valid slice from C++.
-    let rhs = unsafe { bun_core::ffi::slice(rhs_ptr, rhs_len) };
-    let mut buf = [0u8; path_size::<u8>()];
-    let mut buf2 = [0u8; path_size::<u8>()];
-    let lhs = lhs.to_utf8();
-    #[cfg(windows)]
-    let joined = join_windows_t::<u8>(&[lhs.slice(), rhs], &mut buf, &mut buf2);
-    #[cfg(not(windows))]
-    let joined = join_posix_t::<u8>(&[lhs.slice(), rhs], &mut buf, &mut buf2);
-    bun_core::String::clone_utf8(joined)
-}
-
-/// Based on Node v21.6.1 path.win32.join:
-/// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L425
-fn join_windows_t<'a, T: PathCharCwd>(
-    paths: &[&[T]],
-    buf: &'a mut [T],
-    buf2: &'a mut [T],
-) -> &'a [T] {
-    if paths.is_empty() {
-        return l::<T>(CHAR_STR_DOT);
-    }
-
-    let is_sep_t = is_sep_windows_t::<T>;
-
-    let mut buf_size: usize = 0;
-    let mut buf_offset: usize;
-
-    // Backed by expandable buf2 in case it is long.
-    // Borrowck: track ranges instead of slices into buf2.
-    let mut joined_len: usize = 0;
-    let mut first_part_len: usize = 0;
-
-    for path in paths {
-        // validateString of `path` is performed in pub fn join.
-        let len = path.len();
-        if len > 0 {
-            // Translated from the following JS code:
-            //   if (joined === undefined)
-            //     joined = firstPart = arg;
-            //   else
-            //     joined += `\\${arg}`;
-            if buf_size == 0 {
-                buf_size = len;
-                memmove(&mut buf2[0..buf_size], path);
-
-                joined_len = buf_size;
-                first_part_len = joined_len;
-            } else {
-                buf_offset = buf_size;
-                buf_size += 1;
-                buf2[buf_offset] = T::from_u8(CHAR_BACKWARD_SLASH);
-                buf_offset = buf_size;
-                buf_size += len;
-                memmove(&mut buf2[buf_offset..buf_size], path);
-
-                joined_len = buf_size;
-            }
-        }
-    }
-    if buf_size == 0 {
-        return l::<T>(CHAR_STR_DOT);
-    }
-
-    // Make sure that the joined path doesn't start with two slashes, because
-    // normalize() will mistake it for a UNC path then.
-    //
-    // This step is skipped when it is very clear that the user actually
-    // intended to point at a UNC path. This is assumed when the first
-    // non-empty string arguments starts with exactly two slashes followed by
-    // at least one more non-slash character.
-    //
-    // Note that for normalize() to treat a path as a UNC path it needs to
-    // have at least 2 components, so we don't filter for that here.
-    // This means that the user can use join to construct UNC paths from
-    // a server name and a share name; for example:
-    //   path.join('//server', 'share') -> '\\\\server\\share\\')
-    let mut needs_replace: bool = true;
-    let mut slash_count: usize = 0;
-    if is_sep_t(buf2[0]) {
-        slash_count += 1;
-        let first_len = first_part_len;
-        if first_len > 1 && is_sep_t(buf2[1]) {
-            slash_count += 1;
-            if first_len > 2 {
-                if is_sep_t(buf2[2]) {
-                    slash_count += 1;
-                } else {
-                    // We matched a UNC path in the first part
-                    needs_replace = false;
-                }
-            }
-        }
-    }
-    if needs_replace {
-        // Find any more consecutive slashes we need to replace
-        while slash_count < buf_size && is_sep_t(buf2[slash_count]) {
-            slash_count += 1;
-        }
-        // Replace the slashes if needed
-        if slash_count >= 2 {
-            // Translated from the following JS code:
-            //   joined = `\\${StringPrototypeSlice(joined, slashCount)}`;
-            buf_offset = 1;
-            buf_size = buf_offset + (buf_size - slash_count);
-            // Move all bytes to the right by slashCount - 1.
-            // Use copy_within because joined and buf2 overlap.
-            buf2.copy_within(slash_count..joined_len, buf_offset);
-            // Prepend the separator.
-            buf2[0] = T::from_u8(CHAR_BACKWARD_SLASH);
-
-            joined_len = buf_size;
-        }
-    }
-    normalize_windows_t(&buf2[0..joined_len], buf)
-}
-
-fn join_posix_js_t<T: PathCharCwd>(
-    global_object: &JSGlobalObject,
-    paths: &[&[T]],
-    buf: &mut [T],
-    buf2: &mut [T],
-) -> JsResult<JSValue> {
-    create_js_string_t::<T>(global_object, join_posix_t(paths, buf, buf2))
-}
-
-fn join_windows_js_t<T: PathCharCwd>(
-    global_object: &JSGlobalObject,
-    paths: &[&[T]],
-    buf: &mut [T],
-    buf2: &mut [T],
-) -> JsResult<JSValue> {
-    create_js_string_t::<T>(global_object, join_windows_t(paths, buf, buf2))
-}
-
-fn join_js_t<T: PathCharCwd>(
-    global_object: &JSGlobalObject,
-    pool: &mut RarePathBuf,
-    is_windows: bool,
-    paths: &[&[T]],
-) -> JsResult<JSValue> {
-    // Adding 8 bytes when Windows for the possible UNC root.
-    let mut buf_len: usize = if is_windows { 8 } else { 0 };
-    for path in paths {
-        buf_len += if !path.is_empty() {
-            path.len() + 1
-        } else {
-            path.len()
-        };
-    }
-    buf_len = buf_len.max(path_size::<T>());
-    let mut scratch = PathScratch::<T>::new(pool, buf_len * 2);
-    let (buf, buf2) = scratch.slice().split_at_mut(buf_len);
-    if is_windows {
-        join_windows_js_t(global_object, paths, buf, buf2)
-    } else {
-        join_posix_js_t(global_object, paths, buf, buf2)
-    }
-}
-
-pub(crate) fn join(
-    global_object: &JSGlobalObject,
-    is_windows: bool,
-    args: &[JSValue],
-) -> JsResult<JSValue> {
-    let args_len = args.len();
-    if args_len == 0 {
-        return bun_core::String::static_(CHAR_STR_DOT).to_js(global_object);
-    }
-
-    // ASCII-only inputs (the common case) borrow the JSString backing without
-    // allocating; only non-ASCII triggers a transcode allocation.
-    let mut views: SmallVec<[JSStringView<'_>; 8]> = SmallVec::with_capacity(args_len);
-
-    for (i, &path_ptr) in args.iter().enumerate() {
-        // Inline the `is_string` fast path; only build `format_args!("paths[{i}]")`
-        // on the cold error branch (it materialises a 48-byte `fmt::Arguments`
-        // every iteration otherwise).
-        if !path_ptr.is_string() {
-            #[cold]
-            #[inline(never)]
-            fn not_a_string(g: &JSGlobalObject, v: JSValue, i: usize) -> crate::jsc::JsError {
-                validate_string(g, v, format_args!("paths[{}]", i)).unwrap_err()
-            }
-            return Err(not_a_string(global_object, path_ptr, i));
-        }
-        let path_str = path_ptr.to_js_string_view(global_object)?;
-        if path_str.is_empty() {
-            continue;
-        }
-        views.push(path_str);
-    }
-    let owned: SmallVec<[Utf8Bytes<'_>; 8]> = views.iter().map(JSStringView::to_utf8).collect();
-    let paths: SmallVec<[&[u8]; 8]> = owned.iter().map(Utf8Bytes::slice).collect();
-    let pool = &mut global_object.bun_vm().as_mut().rare_data().path_buf;
-    join_js_t::<u8>(global_object, pool, is_windows, &paths)
-}
-
-/// Handles a `..` segment for `normalize_string_t`: drops the last segment of
-/// `res` and returns `(res.len, lastSegmentLength)`. Kept out of line so the
-/// per-byte loop in the caller stays call-free.
-#[inline(never)]
-fn pop_last_segment_t<T: PathCharCwd>(res: &[T], separator: T) -> (usize, usize) {
-    match strings::last_index_of_char_t(res, separator) {
-        None => (0, 0),
-        Some(idx) => {
-            // Translated from the following JS code:
-            //   lastSegmentLength =
-            //     res.length - 1 - StringPrototypeLastIndexOf(res, separator);
-            let last_segment_length = match strings::last_index_of_char_t(&res[0..idx], separator) {
-                // Yes (>ლ), Node relies on the -1 result of
-                // StringPrototypeLastIndexOf(res, separator).
-                // A - -1 is a positive 1.
-                // So the code becomes
-                //   lastSegmentLength = res.length - 1 + 1;
-                // or
-                //   lastSegmentLength = res.length;
-                None => idx,
-                Some(sep) => idx - 1 - sep,
-            };
-            (idx, last_segment_length)
-        }
-    }
-}
-
-/// Based on Node v21.6.1 private helper normalizeString:
-/// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L65C1-L66C77
-///
-/// Resolves . and .. elements in a path with directory names
-fn normalize_string_t<T: PathCharCwd, const PLATFORM: Platform>(
-    path: &[T],
-    allow_above_root: bool,
-    separator: T,
-    buf: &mut [T],
-) -> usize {
-    // Returns length into buf (NUL-terminated at buf[len]) instead of `[:0]T` slice,
-    // so callers can re-borrow buf (borrowck).
-    let len = path.len();
-    let is_sep_t: fn(T) -> bool = if matches!(PLATFORM, Platform::Posix) {
-        is_sep_posix_t::<T>
-    } else {
-        is_sep_windows_t::<T>
-    };
-
-    let mut buf_offset: usize;
-    let mut buf_size: usize = 0;
-
-    let mut last_segment_length: usize = 0;
-    // We use an optional value instead of -1, as in Node code, for easier number type use.
-    let mut last_slash: Option<usize> = None;
-    // We use an optional value instead of -1, as in Node code, for easier number type use.
-    let mut dots: Option<usize> = Some(0);
-    let mut byte: T = T::default();
-
-    for i in 0..=len {
-        if i < len {
-            byte = path[i];
-        } else if is_sep_t(byte) {
-            break;
-        } else {
-            byte = T::from_u8(CHAR_FORWARD_SLASH);
-        }
-
-        if is_sep_t(byte) {
-            // Translated from the following JS code:
-            //   if (lastSlash === i - 1 || dots === 1) {
-            if last_slash == i.checked_sub(1) || dots == Some(1) {
-                // NOOP
-            } else if dots == Some(2) {
-                if buf_size < 2
-                    || last_segment_length != 2
-                    || buf[buf_size - 1] != T::from_u8(CHAR_DOT)
-                    || buf[buf_size - 2] != T::from_u8(CHAR_DOT)
-                {
-                    if buf_size > 2 {
-                        (buf_size, last_segment_length) =
-                            pop_last_segment_t(&buf[0..buf_size], separator);
-                        last_slash = Some(i);
-                        dots = Some(0);
-                        continue;
-                    } else if buf_size != 0 {
-                        buf_size = 0;
-                        last_segment_length = 0;
-                        last_slash = Some(i);
-                        dots = Some(0);
-                        continue;
-                    }
-                }
-                if allow_above_root {
-                    // Translated from the following JS code:
-                    //   res += res.length > 0 ? `${separator}..` : '..';
-                    if buf_size > 0 {
-                        buf_offset = buf_size;
-                        buf_size += 1;
-                        buf[buf_offset] = separator;
-                        buf_offset = buf_size;
-                        buf_size += 2;
-                        buf[buf_offset] = T::from_u8(CHAR_DOT);
-                        buf[buf_offset + 1] = T::from_u8(CHAR_DOT);
-                    } else {
-                        buf_size = 2;
-                        buf[0] = T::from_u8(CHAR_DOT);
-                        buf[1] = T::from_u8(CHAR_DOT);
-                    }
-
-                    last_segment_length = 2;
-                }
-            } else {
-                // Translated from the following JS code:
-                //   if (res.length > 0)
-                //     res += `${separator}${StringPrototypeSlice(path, lastSlash + 1, i)}`;
-                //   else
-                //     res = StringPrototypeSlice(path, lastSlash + 1, i);
-                if buf_size > 0 {
-                    buf_offset = buf_size;
-                    buf_size += 1;
-                    buf[buf_offset] = separator;
-                }
-                let slice_start = last_slash.map_or(0, |ls| ls + 1);
-                let slice = &path[slice_start..i];
-
-                buf_offset = buf_size;
-                buf_size += slice.len();
-                memmove(&mut buf[buf_offset..buf_size], slice);
-
-                // Translated from the following JS code:
-                //   lastSegmentLength = i - lastSlash - 1;
-                // `lastSlash` starts at -1 in Node, so the first segment's
-                // length is `i - 0`, i.e. exactly the slice just appended.
-                last_segment_length = slice.len();
-            }
-            last_slash = Some(i);
-            dots = Some(0);
-        } else if byte == T::from_u8(CHAR_DOT) && dots.is_some() {
-            dots = dots.map(|d| d + 1);
-        } else {
-            dots = None;
-        }
-    }
-
-    buf[buf_size] = T::default();
-    buf_size
-}
-
-/// Based on Node v21.6.1 path.posix.normalize
-/// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L1130
-fn normalize_posix_t<'a, T: PathCharCwd>(path: &[T], buf: &'a mut [T]) -> &'a [T] {
-    // validateString of `path` is performed in pub fn normalize.
-    let len = path.len();
-    if len == 0 {
-        return l::<T>(CHAR_STR_DOT);
-    }
-
-    // Prefix with _ to avoid shadowing the identifier in the outer scope.
-    let _is_absolute = path[0] == T::from_u8(CHAR_FORWARD_SLASH);
-    let trailing_separator = path[len - 1] == T::from_u8(CHAR_FORWARD_SLASH);
-
-    // Normalize the path
-    let mut buf_size = normalize_string_t::<T, { Platform::Posix }>(
-        path,
-        !_is_absolute,
-        T::from_u8(CHAR_FORWARD_SLASH),
-        buf,
-    );
-
-    if buf_size == 0 {
-        if _is_absolute {
-            return l::<T>(CHAR_STR_FORWARD_SLASH);
-        }
-        return if trailing_separator {
-            l::<T>(b"./")
-        } else {
-            l::<T>(CHAR_STR_DOT)
-        };
-    }
-
-    let mut buf_offset: usize;
-
-    // Translated from the following JS code:
-    //   if (trailingSeparator)
-    //     path += '/';
-    if trailing_separator {
-        buf_offset = buf_size;
-        buf_size += 1;
-        buf[buf_offset] = T::from_u8(CHAR_FORWARD_SLASH);
-        buf[buf_size] = T::default();
-    }
-
-    // Translated from the following JS code:
-    //   return isAbsolute ? `/${path}` : path;
-    if _is_absolute {
-        buf_offset = 1;
-        let old_size = buf_size;
-        buf_size += 1;
-        // Move all bytes to the right by 1 for the separator.
-        // Use copy_within because normalizedPath and buf overlap.
-        buf.copy_within(0..old_size, buf_offset);
-        // Prepend the separator.
-        buf[0] = T::from_u8(CHAR_FORWARD_SLASH);
-        buf[buf_size] = T::default();
-    }
-    &buf[0..buf_size]
-}
-
-/// Based on Node v21.6.1 path.win32.normalize
-/// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L308
-fn normalize_windows_t<'a, T: PathCharCwd>(path: &[T], buf: &'a mut [T]) -> &'a [T] {
-    // validateString of `path` is performed in pub fn normalize.
-    let len = path.len();
-    if len == 0 {
-        return l::<T>(CHAR_STR_DOT);
-    }
-
-    let is_sep_t = is_sep_windows_t::<T>;
-
-    // Moved `rootEnd`, `device`, and `_isAbsolute` initialization after
-    // the `if (len == 1)` check.
-    let byte0: T = path[0];
-
-    // Try to match a root
-    if len == 1 {
-        // `path` contains just a single char, exit early to avoid
-        // unnecessary work
-        return if is_sep_t(byte0) {
-            l::<T>(CHAR_STR_BACKWARD_SLASH)
-        } else {
-            // Borrowck: copy single char into buf since path may not outlive buf.
-            buf[0] = byte0;
-            &buf[0..1]
-        };
-    }
-
-    let mut root_end: usize = 0;
-    // Backed by buf.
-    // Borrowck: track device length instead of slice into buf.
-    let mut device_len: Option<usize> = None;
-    // Prefix with _ to avoid shadowing the identifier in the outer scope.
-    let mut _is_absolute: bool = false;
-
-    let mut buf_offset: usize;
-    let mut buf_size: usize;
-
-    if is_sep_t(byte0) {
-        // Possible UNC root
-
-        // If we started with a separator, we know we at least have an absolute
-        // path of some kind (UNC or otherwise)
-        _is_absolute = true;
-
-        if is_sep_t(path[1]) {
-            // Matched double path separator at beginning
-            let mut j: usize = 2;
-            let mut last: usize = j;
-            // Match 1 or more non-path separators
-            while j < len && !is_sep_t(path[j]) {
-                j += 1;
-            }
-            if j < len && j != last {
-                let first_part = &path[last..j];
-                // Matched!
-                last = j;
-                // Match 1 or more path separators
-                while j < len && is_sep_t(path[j]) {
-                    j += 1;
-                }
-                if j < len && j != last {
-                    // Matched!
-                    last = j;
-                    // Match 1 or more non-path separators
-                    while j < len && !is_sep_t(path[j]) {
-                        j += 1;
-                    }
-                    if j == len {
-                        // We matched a UNC root only
-                        // Return the normalized version of the UNC root since there
-                        // is nothing left to process
-
-                        // Translated from the following JS code:
-                        //   return `\\\\${firstPart}\\${StringPrototypeSlice(path, last)}\\`;
-                        buf_size = 2;
-                        buf[0] = T::from_u8(CHAR_BACKWARD_SLASH);
-                        buf[1] = T::from_u8(CHAR_BACKWARD_SLASH);
-                        buf_offset = buf_size;
-                        buf_size += first_part.len();
-                        memmove(&mut buf[buf_offset..buf_size], first_part);
-                        buf_offset = buf_size;
-                        buf_size += 1;
-                        buf[buf_offset] = T::from_u8(CHAR_BACKWARD_SLASH);
-                        buf_offset = buf_size;
-                        buf_size += len - last;
-                        memmove(&mut buf[buf_offset..buf_size], &path[last..len]);
-                        buf_offset = buf_size;
-                        buf_size += 1;
-                        buf[buf_offset] = T::from_u8(CHAR_BACKWARD_SLASH);
-                        return &buf[0..buf_size];
-                    }
-                    if j != last {
-                        // We matched a UNC root with leftovers
-
-                        // Translated from the following JS code:
-                        //   device =
-                        //     `\\\\${firstPart}\\${StringPrototypeSlice(path, last, j)}`;
-                        //   rootEnd = j;
-                        buf_size = 2;
-                        buf[0] = T::from_u8(CHAR_BACKWARD_SLASH);
-                        buf[1] = T::from_u8(CHAR_BACKWARD_SLASH);
-                        buf_offset = buf_size;
-                        buf_size += first_part.len();
-                        memmove(&mut buf[buf_offset..buf_size], first_part);
-                        buf_offset = buf_size;
-                        buf_size += 1;
-                        buf[buf_offset] = T::from_u8(CHAR_BACKWARD_SLASH);
-                        buf_offset = buf_size;
-                        buf_size += j - last;
-                        memmove(&mut buf[buf_offset..buf_size], &path[last..j]);
-
-                        device_len = Some(buf_size);
-                        root_end = j;
-                    }
-                }
-            }
-        } else {
-            root_end = 1;
-        }
-    } else if is_windows_device_root_t(byte0) && path[1] == T::from_u8(CHAR_COLON) {
-        // Possible device root
-        buf[0] = byte0;
-        buf[1] = T::from_u8(CHAR_COLON);
-        device_len = Some(2);
-        root_end = 2;
-        if len > 2 && is_sep_t(path[2]) {
-            // Treat separator following drive name as an absolute path
-            // indicator
-            _is_absolute = true;
-            root_end = 3;
-        }
-    }
-
-    buf_offset = device_len.unwrap_or(0) + (_is_absolute as usize);
-    // Backed by buf at an offset of  device.len + 1 if _isAbsolute is true.
-    let mut tail_len = if root_end < len {
-        normalize_string_t::<T, { Platform::Windows }>(
-            &path[root_end..len],
-            !_is_absolute,
-            T::from_u8(CHAR_BACKWARD_SLASH),
-            &mut buf[buf_offset..],
-        )
-    } else {
-        0
-    };
-    if tail_len == 0 && !_is_absolute {
-        buf[buf_offset] = T::from_u8(CHAR_DOT);
-        tail_len = 1;
-    }
-
-    if tail_len > 0 && is_sep_t(path[len - 1]) {
-        // Translated from the following JS code:
-        //   tail += '\\';
-        buf[buf_offset + tail_len] = T::from_u8(CHAR_BACKWARD_SLASH);
-        tail_len += 1;
-    }
-
-    buf_size = buf_offset + tail_len;
-    // Translated from the following JS code:
-    //   if (device === undefined) {
-    //     return isAbsolute ? `\\${tail}` : tail;
-    //   }
-    //   return isAbsolute ? `${device}\\${tail}` : `${device}${tail}`;
-    if _is_absolute {
-        buf_offset -= 1;
-        // Prepend the separator.
-        buf[buf_offset] = T::from_u8(CHAR_BACKWARD_SLASH);
-    }
-    &buf[0..buf_size]
-}
-
-fn normalize_posix_js_t<T: PathCharCwd>(
-    global_object: &JSGlobalObject,
-    path: &[T],
-    buf: &mut [T],
-) -> JsResult<JSValue> {
-    create_js_string_t::<T>(global_object, normalize_posix_t(path, buf))
-}
-
-fn normalize_windows_js_t<T: PathCharCwd>(
-    global_object: &JSGlobalObject,
-    path: &[T],
-    buf: &mut [T],
-) -> JsResult<JSValue> {
-    create_js_string_t::<T>(global_object, normalize_windows_t(path, buf))
-}
-
-fn normalize_js_t<T: PathCharCwd>(
-    global_object: &JSGlobalObject,
-    pool: &mut RarePathBuf,
-    is_windows: bool,
-    path: &[T],
-) -> JsResult<JSValue> {
-    let buf_len = path.len().max(path_size::<T>());
-    // +1 for null terminator
-    let mut scratch = PathScratch::<T>::new(pool, buf_len + 1);
-    let buf = scratch.slice();
-    if is_windows {
-        normalize_windows_js_t(global_object, path, buf)
-    } else {
-        normalize_posix_js_t(global_object, path, buf)
-    }
-}
-
-fn normalize(
-    global_object: &JSGlobalObject,
-    is_windows: bool,
-    args: &[JSValue],
-) -> JsResult<JSValue> {
-    let args_len = args.len();
-    let path_ptr: JSValue = if args_len > 0 {
-        args[0]
-    } else {
-        JSValue::UNDEFINED
-    };
-    validate_string(global_object, path_ptr, format_args!("path"))?;
-    let path_str = path_ptr.to_js_string_view(global_object)?;
-    if path_str.is_empty() {
-        return bun_core::String::static_(CHAR_STR_DOT).to_js(global_object);
-    }
-
-    let path_slice = path_str.to_utf8();
-    let pool = &mut global_object.bun_vm().as_mut().rare_data().path_buf;
-    normalize_js_t::<u8>(global_object, pool, is_windows, path_slice.slice())
-}
-
-// Based on Node v21.6.1 path.posix.parse
-// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L1452
-pub(crate) fn parse_posix_t<T: PathCharCwd>(path: &[T]) -> PathParsed<'_, T> {
-    // validateString of `path` is performed in pub fn parse.
-    let len = path.len();
-    if len == 0 {
-        return PathParsed::default();
-    }
-
-    let mut root: &[T] = &[];
-    let mut dir: &[T] = &[];
-    let mut base: &[T] = &[];
-    let mut ext: &[T] = &[];
-    // Prefix with _ to avoid shadowing the identifier in the outer scope.
-    let mut _name: &[T] = &[];
-    // Prefix with _ to avoid shadowing the identifier in the outer scope.
-    let _is_absolute = path[0] == T::from_u8(CHAR_FORWARD_SLASH);
-    let mut start: usize = 0;
-    if _is_absolute {
-        root = l::<T>(CHAR_STR_FORWARD_SLASH);
-        start = 1;
-    }
-
-    // We use an optional value instead of -1, as in Node code, for easier number type use.
-    let mut start_dot: Option<usize> = None;
-    let mut start_part: usize = 0;
-    // We use an optional value instead of -1, as in Node code, for easier number type use.
-    let mut end: Option<usize> = None;
-    let mut matched_slash = true;
-    let mut i_i64 = i64::try_from(len - 1).expect("int cast");
-
-    // Track the state of characters (if any) we see before our first dot and
-    // after any path separator we find
-
-    // We use an optional value instead of -1, as in Node code, for easier number type use.
-    let mut pre_dot_state: Option<usize> = Some(0);
-
-    // Get non-dir info
-    while i_i64 >= i64::try_from(start).expect("int cast") {
-        let i = usize::try_from(i_i64).expect("int cast");
-        let byte = path[i];
-        if byte == T::from_u8(CHAR_FORWARD_SLASH) {
-            // If we reached a path separator that was not part of a set of path
-            // separators at the end of the string, stop now
-            if !matched_slash {
-                start_part = i + 1;
-                break;
-            }
-            i_i64 -= 1;
-            continue;
-        }
-        if end.is_none() {
-            // We saw the first non-path separator, mark this as the end of our
-            // extension
-            matched_slash = false;
-            end = Some(i + 1);
-        }
-        if byte == T::from_u8(CHAR_DOT) {
-            // If this is our first dot, mark it as the start of our extension
-            if start_dot.is_none() {
-                start_dot = Some(i);
-            } else if let Some(_pre_dot_state) = pre_dot_state {
-                if _pre_dot_state != 1 {
-                    pre_dot_state = Some(1);
-                }
-            }
-        } else if start_dot.is_some() {
-            // We saw a non-dot and non-path separator before our dot, so we should
-            // have a good chance at having a non-empty extension
-            pre_dot_state = None;
-        }
-        i_i64 -= 1;
-    }
-
-    if let Some(_end) = end {
-        let _pre_dot_state = pre_dot_state.unwrap_or(0);
-        let _start_dot = start_dot.unwrap_or(0);
-        start = if start_part == 0 && _is_absolute {
-            1
-        } else {
-            start_part
-        };
-        if start_dot.is_none()
-            // We saw a non-dot character immediately before the dot
-            || (pre_dot_state.is_some() && _pre_dot_state == 0)
-            // The (right-most) trimmed path component is exactly '..'
-            || (_pre_dot_state == 1 && _start_dot == _end - 1 && _start_dot == start_part + 1)
-        {
-            _name = &path[start.._end];
-            base = _name;
-        } else {
-            _name = &path[start.._start_dot];
-            base = &path[start.._end];
-            ext = &path[_start_dot.._end];
-        }
-    }
-
-    if start_part > 0 {
-        dir = &path[0..(start_part - 1)];
-    } else if _is_absolute {
-        dir = l::<T>(CHAR_STR_FORWARD_SLASH);
-    }
-
-    PathParsed {
-        root,
-        dir,
-        base,
-        ext,
-        name: _name,
-    }
-}
-
-// Based on Node v21.6.1 path.win32.parse
-// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L916
-pub(crate) fn parse_windows_t<T: PathCharCwd>(path: &[T]) -> PathParsed<'_, T> {
-    // validateString of `path` is performed in pub fn parse.
-    let mut root: &[T] = &[];
-    let mut dir: &[T] = &[];
-    let mut base: &[T] = &[];
-    let mut ext: &[T] = &[];
-    // Prefix with _ to avoid shadowing the identifier in the outer scope.
-    let mut _name: &[T] = &[];
-
-    let len = path.len();
-    if len == 0 {
-        return PathParsed {
-            root,
-            dir,
-            base,
-            ext,
-            name: _name,
-        };
-    }
-
-    let is_sep_t = is_sep_windows_t::<T>;
-
-    let mut root_end: usize = 0;
-    let mut byte = path[0];
-
-    if len == 1 {
-        if is_sep_t(byte) {
-            // `path` contains just a path separator, exit early to avoid
-            // unnecessary work
-            root = path;
-            dir = path;
-        } else {
-            base = path;
-            _name = path;
-        }
-        return PathParsed {
-            root,
-            dir,
-            base,
-            ext,
-            name: _name,
-        };
-    }
-
-    // Try to match a root
-    if is_sep_t(byte) {
-        // Possible UNC root
-
-        root_end = 1;
-        if is_sep_t(path[1]) {
-            // Matched double path separator at the beginning
-            let mut j: usize = 2;
-            let mut last: usize = j;
-            // Match 1 or more non-path separators
-            while j < len && !is_sep_t(path[j]) {
-                j += 1;
-            }
-            if j < len && j != last {
-                // Matched!
-                last = j;
-                // Match 1 or more path separators
-                while j < len && is_sep_t(path[j]) {
-                    j += 1;
-                }
-                if j < len && j != last {
-                    // Matched!
-                    last = j;
-                    // Match 1 or more non-path separators
-                    while j < len && !is_sep_t(path[j]) {
-                        j += 1;
-                    }
-                    if j == len {
-                        // We matched a UNC root only
-                        root_end = j;
-                    } else if j != last {
-                        // We matched a UNC root with leftovers
-                        root_end = j + 1;
-                    }
-                }
-            }
-        }
-    } else if is_windows_device_root_t(byte) && path[1] == T::from_u8(CHAR_COLON) {
-        // Possible device root
-        if len <= 2 {
-            // `path` contains just a drive root, exit early to avoid
-            // unnecessary work
-            root = path;
-            dir = path;
-            return PathParsed {
-                root,
-                dir,
-                base,
-                ext,
-                name: _name,
-            };
-        }
-        root_end = 2;
-        if is_sep_t(path[2]) {
-            if len == 3 {
-                // `path` contains just a drive root, exit early to avoid
-                // unnecessary work
-                root = path;
-                dir = path;
-                return PathParsed {
-                    root,
-                    dir,
-                    base,
-                    ext,
-                    name: _name,
-                };
-            }
-            root_end = 3;
-        }
-    }
-    if root_end > 0 {
-        root = &path[0..root_end];
-    }
-
-    // We use an optional value instead of -1, as in Node code, for easier number type use.
-    let mut start_dot: Option<usize> = None;
-    let mut start_part = root_end;
-    // We use an optional value instead of -1, as in Node code, for easier number type use.
-    let mut end: Option<usize> = None;
-    let mut matched_slash = true;
-    let mut i_i64 = i64::try_from(len - 1).expect("int cast");
-
-    // Track the state of characters (if any) we see before our first dot and
-    // after any path separator we find
-
-    // We use an optional value instead of -1, as in Node code, for easier number type use.
-    let mut pre_dot_state: Option<usize> = Some(0);
-
-    // Get non-dir info
-    while i_i64 >= i64::try_from(root_end).expect("int cast") {
-        let i = usize::try_from(i_i64).expect("int cast");
-        byte = path[i];
-        if is_sep_t(byte) {
-            // If we reached a path separator that was not part of a set of path
-            // separators at the end of the string, stop now
-            if !matched_slash {
-                start_part = i + 1;
-                break;
-            }
-            i_i64 -= 1;
-            continue;
-        }
-        if end.is_none() {
-            // We saw the first non-path separator, mark this as the end of our
-            // extension
-            matched_slash = false;
-            end = Some(i + 1);
-        }
-        if byte == T::from_u8(CHAR_DOT) {
-            // If this is our first dot, mark it as the start of our extension
-            if start_dot.is_none() {
-                start_dot = Some(i);
-            } else if let Some(_pre_dot_state) = pre_dot_state {
-                if _pre_dot_state != 1 {
-                    pre_dot_state = Some(1);
-                }
-            }
-        } else if start_dot.is_some() {
-            // We saw a non-dot and non-path separator before our dot, so we should
-            // have a good chance at having a non-empty extension
-            pre_dot_state = None;
-        }
-        i_i64 -= 1;
-    }
-
-    if let Some(_end) = end {
-        let _pre_dot_state = pre_dot_state.unwrap_or(0);
-        let _start_dot = start_dot.unwrap_or(0);
-        if start_dot.is_none()
-            // We saw a non-dot character immediately before the dot
-            || (pre_dot_state.is_some() && _pre_dot_state == 0)
-            // The (right-most) trimmed path component is exactly '..'
-            || (_pre_dot_state == 1 && _start_dot == _end - 1 && _start_dot == start_part + 1)
-        {
-            // Prefix with _ to avoid shadowing the identifier in the outer scope.
-            _name = &path[start_part.._end];
-            base = _name;
-        } else {
-            _name = &path[start_part.._start_dot];
-            base = &path[start_part.._end];
-            ext = &path[_start_dot.._end];
-        }
-    }
-
-    // If the directory is the root, use the entire root as the `dir` including
-    // the trailing slash if any (`C:\abc` -> `C:\`). Otherwise, strip out the
-    // trailing slash (`C:\abc\def` -> `C:\abc`).
-    if start_part > 0 && start_part != root_end {
-        dir = &path[0..(start_part - 1)];
-    } else {
-        dir = root;
-    }
-
-    PathParsed {
-        root,
-        dir,
-        base,
-        ext,
-        name: _name,
-    }
-}
-
-pub(crate) fn parse_posix_js_t<T: PathCharCwd>(
-    global_object: &JSGlobalObject,
-    path: &[T],
-) -> JsResult<JSValue> {
-    parse_posix_t(path).to_js_object(global_object)
-}
-
-pub(crate) fn parse_windows_js_t<T: PathCharCwd>(
-    global_object: &JSGlobalObject,
-    path: &[T],
-) -> JsResult<JSValue> {
-    parse_windows_t(path).to_js_object(global_object)
-}
-
-pub(crate) fn parse_js_t<T: PathCharCwd>(
-    global_object: &JSGlobalObject,
-    is_windows: bool,
-    path: &[T],
-) -> JsResult<JSValue> {
-    if is_windows {
-        parse_windows_js_t(global_object, path)
-    } else {
-        parse_posix_js_t(global_object, path)
-    }
-}
-
-pub(crate) fn parse(
-    global_object: &JSGlobalObject,
-    is_windows: bool,
-    args: &[JSValue],
-) -> JsResult<JSValue> {
-    let args_len = args.len();
-    let path_ptr: JSValue = if args_len > 0 {
-        args[0]
-    } else {
-        JSValue::UNDEFINED
-    };
-    crate::node::validators_impl::validate_string(global_object, path_ptr, format_args!("path"))?;
-
-    let path_str = path_ptr.to_js_string_view(global_object)?;
-    if path_str.is_empty() {
-        return PathParsed::<u8>::default().to_js_object(global_object);
-    }
-
-    let path_slice = path_str.to_utf8();
-    parse_js_t::<u8>(global_object, is_windows, path_slice.slice())
-}
-
-/// Based on Node v21.6.1 path.posix.relative:
-/// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L1193
-fn relative_posix_t<'a, T: PathCharCwd>(
-    from: &[T],
-    to: &[T],
-    buf: &'a mut [T],
-    from_buf: &mut [T],
-    tmp_buf: &mut [T],
-) -> MaybeSlice<'a, T> {
-    // validateString of `from` and `to` are performed in pub fn relative.
-    if from == to {
-        return Ok(&[]);
-    }
-
-    // Trim leading forward slashes.
-    // Backed by from_buf.
-    let from_orig = resolve_posix_t(&[from], from_buf, tmp_buf)?;
-    let from_orig_len = from_orig.len();
-    // Backed by buf.
-    // Borrowck: resolve into buf, then operate via raw indices.
-    // resolve_*_t may return a 'static literal (".") instead of a sub-slice of
-    // buf; copy it in so indexing `buf[..to_orig_len]` below observes the
-    // resolved value.
-    let to_orig_len = {
-        let (ptr, len) = {
-            let r = resolve_posix_t(&[to], buf, tmp_buf)?;
-            (r.as_ptr(), r.len())
-        };
-        if ptr != buf.as_ptr() {
-            // SAFETY: ptr is a 'static disjoint from buf, len <= buf.len().
-            unsafe { core::ptr::copy_nonoverlapping(ptr, buf.as_mut_ptr(), len) };
-        }
-        len
-    };
-    let to_orig = &buf[0..to_orig_len];
-
-    if from_orig == to_orig {
-        return Ok(&[]);
-    }
-
-    let from_start = 1usize;
-    let from_end = from_orig_len;
-    let from_len = from_end - from_start;
-    let mut to_start: usize = 1;
-    let to_len = to_orig_len - to_start;
-
-    // Compare paths to find the longest common path from root
-    let smallest_length = from_len.min(to_len);
-    // We use an optional value instead of -1, as in Node code, for easier number type use.
-    let mut last_common_sep: Option<usize> = None;
-
-    let matches_all_of_smallest;
-    // Add a block to isolate `i`.
-    {
-        let mut i: usize = 0;
-        while i < smallest_length {
-            let from_byte = from_orig[from_start + i];
-            if from_byte != to_orig[to_start + i] {
-                break;
-            } else if from_byte == T::from_u8(CHAR_FORWARD_SLASH) {
-                last_common_sep = Some(i);
-            }
-            i += 1;
-        }
-        matches_all_of_smallest = i == smallest_length;
-    }
-    if matches_all_of_smallest {
-        if to_len > smallest_length {
-            if to_orig[to_start + smallest_length] == T::from_u8(CHAR_FORWARD_SLASH) {
-                // We get here if `from` is the exact base path for `to`.
-                // For example: from='/foo/bar'; to='/foo/bar/baz'
-                return Ok(&buf[to_start + smallest_length + 1..to_orig_len]);
-            }
-            if smallest_length == 0 {
-                // We get here if `from` is the root
-                // For example: from='/'; to='/foo'
-                return Ok(&buf[to_start + smallest_length..to_orig_len]);
-            }
-        } else if from_len > smallest_length {
-            if from_orig[from_start + smallest_length] == T::from_u8(CHAR_FORWARD_SLASH) {
-                // We get here if `to` is the exact base path for `from`.
-                // For example: from='/foo/bar/baz'; to='/foo/bar'
-                last_common_sep = Some(smallest_length);
-            } else if smallest_length == 0 {
-                // We get here if `to` is the root.
-                // For example: from='/foo/bar'; to='/'
-                last_common_sep = Some(0);
-            }
-        }
-    }
-
-    let mut buf_offset: usize;
-    let mut buf_size: usize = 0;
-
-    // Backed by tmp_buf.
-    let mut out_len: usize = 0;
-    // Add a block to isolate `i`.
-    {
-        // Generate the relative path based on the path difference between `to`
-        // and `from`.
-
-        // Translated from the following JS code:
-        //  for (i = fromStart + lastCommonSep + 1; i <= fromEnd; ++i) {
-        let mut i: usize = from_start + last_common_sep.map_or(0, |v| v + 1);
-        while i <= from_end {
-            if i == from_end || from_orig[i] == T::from_u8(CHAR_FORWARD_SLASH) {
-                // Translated from the following JS code:
-                //   out += out.length === 0 ? '..' : '/..';
-                if out_len > 0 {
-                    buf_offset = buf_size;
-                    buf_size += 3;
-                    tmp_buf[buf_offset] = T::from_u8(CHAR_FORWARD_SLASH);
-                    tmp_buf[buf_offset + 1] = T::from_u8(CHAR_DOT);
-                    tmp_buf[buf_offset + 2] = T::from_u8(CHAR_DOT);
-                } else {
-                    buf_size = 2;
-                    tmp_buf[0] = T::from_u8(CHAR_DOT);
-                    tmp_buf[1] = T::from_u8(CHAR_DOT);
-                }
-                out_len = buf_size;
-            }
-            i += 1;
-        }
-    }
-
-    // Lastly, append the rest of the destination (`to`) path that comes after
-    // the common path parts.
-
-    // Translated from the following JS code:
-    //   return `${out}${StringPrototypeSlice(to, toStart + lastCommonSep)}`;
-    to_start = last_common_sep.map_or(0, |v| to_start + v);
-    let slice_size = to_orig_len - to_start;
-    buf_size = out_len;
-    if slice_size > 0 {
-        buf_offset = buf_size;
-        buf_size += slice_size;
-        // Use copy_within because toOrig and buf overlap.
-        buf.copy_within(to_start..to_start + slice_size, buf_offset);
-    }
-    if out_len > 0 {
-        memmove(&mut buf[0..out_len], &tmp_buf[0..out_len]);
-    }
-    buf[buf_size] = T::default();
-    Ok(&buf[0..buf_size])
-}
-
-/// Based on Node v21.6.1 path.win32.relative:
-/// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L500
-fn relative_windows_t<'a, T: PathCharCwd>(
-    from: &[T],
-    to: &[T],
-    buf: &'a mut [T],
-    from_buf: &mut [T],
-    tmp_buf: &mut [T],
-) -> MaybeSlice<'a, T> {
-    // validateString of `from` and `to` are performed in pub fn relative.
-    if from == to {
-        return Ok(&[]);
-    }
-
-    // Backed by from_buf.
-    let from_orig = resolve_windows_t(&[from], from_buf, tmp_buf)?;
-    let from_orig_len = from_orig.len();
-    // Backed by buf.
-    // Borrowck: resolve into buf, then operate via raw indices.
-    // resolve_*_t may return a 'static literal (".") instead of a sub-slice of
-    // buf; copy it in so indexing `buf[..to_orig_len]` below observes the
-    // resolved value.
-    let to_orig_len = {
-        let (ptr, len) = {
-            let r = resolve_windows_t(&[to], buf, tmp_buf)?;
-            (r.as_ptr(), r.len())
-        };
-        if ptr != buf.as_ptr() {
-            // SAFETY: ptr is a 'static disjoint from buf, len <= buf.len().
-            unsafe { core::ptr::copy_nonoverlapping(ptr, buf.as_mut_ptr(), len) };
-        }
-        len
-    };
-
-    if from_orig == &buf[0..to_orig_len] || eql_ignore_case_t(from_orig, &buf[0..to_orig_len]) {
-        return Ok(&[]);
-    }
-
-    // Trim leading backslashes
-    let mut from_start: usize = 0;
-    while from_start < from_orig_len && from_orig[from_start] == T::from_u8(CHAR_BACKWARD_SLASH) {
-        from_start += 1;
-    }
-
-    // Trim trailing backslashes (applicable to UNC paths only)
-    let mut from_end = from_orig_len;
-    while from_end - 1 > from_start && from_orig[from_end - 1] == T::from_u8(CHAR_BACKWARD_SLASH) {
-        from_end -= 1;
-    }
-
-    let from_len = from_end - from_start;
-
-    // Trim leading backslashes
-    let mut to_start: usize = 0;
-    while to_start < to_orig_len && buf[to_start] == T::from_u8(CHAR_BACKWARD_SLASH) {
-        to_start += 1;
-    }
-
-    // Trim trailing backslashes (applicable to UNC paths only)
-    let mut to_end = to_orig_len;
-    while to_end - 1 > to_start && buf[to_end - 1] == T::from_u8(CHAR_BACKWARD_SLASH) {
-        to_end -= 1;
-    }
-
-    let to_len = to_end - to_start;
-
-    // Compare paths to find the longest common path from root
-    let smallest_length = from_len.min(to_len);
-    // We use an optional value instead of -1, as in Node code, for easier number type use.
-    let mut last_common_sep: Option<usize> = None;
-
-    let matches_all_of_smallest;
-    // Add a block to isolate `i`.
-    {
-        let mut i: usize = 0;
-        while i < smallest_length {
-            let from_byte = from_orig[from_start + i];
-            if to_lower_t(from_byte) != to_lower_t(buf[to_start + i]) {
-                break;
-            } else if from_byte == T::from_u8(CHAR_BACKWARD_SLASH) {
-                last_common_sep = Some(i);
-            }
-            i += 1;
-        }
-        matches_all_of_smallest = i == smallest_length;
-    }
-
-    // We found a mismatch before the first common path separator was seen, so
-    // return the original `to`.
-    if !matches_all_of_smallest {
-        if last_common_sep.is_none() {
-            return Ok(&buf[0..to_orig_len]);
-        }
-    } else {
-        if to_len > smallest_length {
-            if buf[to_start + smallest_length] == T::from_u8(CHAR_BACKWARD_SLASH) {
-                // We get here if `from` is the exact base path for `to`.
-                // For example: from='C:\foo\bar'; to='C:\foo\bar\baz'
-                return Ok(&buf[to_start + smallest_length + 1..to_orig_len]);
-            }
-            if smallest_length == 2 {
-                // We get here if `from` is the device root.
-                // For example: from='C:\'; to='C:\foo'
-                return Ok(&buf[to_start + smallest_length..to_orig_len]);
-            }
-        }
-        if from_len > smallest_length {
-            if from_orig[from_start + smallest_length] == T::from_u8(CHAR_BACKWARD_SLASH) {
-                // We get here if `to` is the exact base path for `from`.
-                // For example: from='C:\foo\bar'; to='C:\foo'
-                last_common_sep = Some(smallest_length);
-            } else if smallest_length == 2 {
-                // We get here if `to` is the device root.
-                // For example: from='C:\foo\bar'; to='C:\'
-                last_common_sep = Some(3);
-            }
-        }
-        if last_common_sep.is_none() {
-            last_common_sep = Some(0);
-        }
-    }
-
-    let mut buf_offset: usize;
-    let mut buf_size: usize = 0;
-
-    // Backed by tmp_buf.
-    let mut out_len: usize = 0;
-    // Add a block to isolate `i`.
-    {
-        // Generate the relative path based on the path difference between `to`
-        // and `from`.
-        let mut i: usize = from_start + last_common_sep.map_or(0, |v| v + 1);
-        while i <= from_end {
-            if i == from_end || from_orig[i] == T::from_u8(CHAR_BACKWARD_SLASH) {
-                // Translated from the following JS code:
-                //   out += out.length === 0 ? '..' : '\\..';
-                if out_len > 0 {
-                    buf_offset = buf_size;
-                    buf_size += 3;
-                    tmp_buf[buf_offset] = T::from_u8(CHAR_BACKWARD_SLASH);
-                    tmp_buf[buf_offset + 1] = T::from_u8(CHAR_DOT);
-                    tmp_buf[buf_offset + 2] = T::from_u8(CHAR_DOT);
-                } else {
-                    buf_size = 2;
-                    tmp_buf[0] = T::from_u8(CHAR_DOT);
-                    tmp_buf[1] = T::from_u8(CHAR_DOT);
-                }
-                out_len = buf_size;
-            }
-            i += 1;
-        }
-    }
-
-    // Translated from the following JS code:
-    //   toStart += lastCommonSep;
-    if let Some(sep) = last_common_sep {
-        to_start += sep;
-    } else {
-        // If toStart would go negative make it toOrigLen - 1 to
-        // mimic String#slice with a negative start.
-        to_start = if to_start > 0 {
-            to_start - 1
-        } else {
-            to_orig_len - 1
-        };
-    }
-
-    // Lastly, append the rest of the destination (`to`) path that comes after
-    // the common path parts
-    if out_len > 0 {
-        // JS `String.prototype.slice(toStart, toEnd)` yields "" when toStart > toEnd.
-        let slice_size = to_end.saturating_sub(to_start);
-        buf_size = out_len;
-        if slice_size > 0 {
-            buf_offset = buf_size;
-            buf_size += slice_size;
-            // Use copy_within because toOrig and buf overlap.
-            buf.copy_within(to_start..to_start + slice_size, buf_offset);
-        }
-        memmove(&mut buf[0..out_len], &tmp_buf[0..out_len]);
-        buf[buf_size] = T::default();
-        return Ok(&buf[0..buf_size]);
-    }
-
-    // JS `charCodeAt` returns NaN past the end, which never equals '\'.
-    if to_start < to_orig_len && buf[to_start] == T::from_u8(CHAR_BACKWARD_SLASH) {
-        to_start += 1;
-    }
-    Ok(&buf[to_start.min(to_end)..to_end])
-}
-
-fn relative_posix_js_t<T: PathCharCwd>(
-    global_object: &JSGlobalObject,
-    from: &[T],
-    to: &[T],
-    buf: &mut [T],
-    from_buf: &mut [T],
-    tmp_buf: &mut [T],
-) -> JsResult<JSValue> {
-    match relative_posix_t(from, to, buf, from_buf, tmp_buf) {
-        Ok(r) => create_js_string_t::<T>(global_object, r),
-        Err(e) => Ok(e.to_js(global_object)),
-    }
-}
-
-fn relative_windows_js_t<T: PathCharCwd>(
-    global_object: &JSGlobalObject,
-    from: &[T],
-    to: &[T],
-    buf: &mut [T],
-    from_buf: &mut [T],
-    tmp_buf: &mut [T],
-) -> JsResult<JSValue> {
-    match relative_windows_t(from, to, buf, from_buf, tmp_buf) {
-        Ok(r) => create_js_string_t::<T>(global_object, r),
-        Err(e) => Ok(e.to_js(global_object)),
-    }
-}
-
-fn relative_js_t<T: PathCharCwd>(
-    global_object: &JSGlobalObject,
-    pool: &mut RarePathBuf,
-    is_windows: bool,
-    from: &[T],
-    to: &[T],
-) -> JsResult<JSValue> {
-    // Account for CWD (up to MAX_PATH_SIZE) that resolve may prepend, and for
-    // worst-case ".." expansion: each 2-byte path component (e.g. "a/") generates
-    // 3 bytes of output ("/..", ~1.5x). Use 2x as a safe upper bound.
-    let buf_len =
-        ((from.len() + max_path_size::<T>() + 1) * 2 + to.len() + max_path_size::<T>() + 1)
-            .max(path_size::<T>());
-    // +1 for null terminator; ×3 for buf/from_buf/tmp_buf carved from one slab.
-    let mut scratch = PathScratch::<T>::new(pool, (buf_len + 1) * 3);
-    let (buf, rest) = scratch.slice().split_at_mut(buf_len + 1);
-    let (from_buf, tmp_buf) = rest.split_at_mut(buf_len + 1);
-    if is_windows {
-        relative_windows_js_t(global_object, from, to, buf, from_buf, tmp_buf)
-    } else {
-        relative_posix_js_t(global_object, from, to, buf, from_buf, tmp_buf)
-    }
-}
-
-fn relative(
-    global_object: &JSGlobalObject,
-    is_windows: bool,
-    args: &[JSValue],
-) -> JsResult<JSValue> {
-    let args_len = args.len();
-    let from_ptr: JSValue = if args_len > 0 {
-        args[0]
-    } else {
-        JSValue::UNDEFINED
-    };
-    crate::node::validators_impl::validate_string(global_object, from_ptr, format_args!("from"))?;
-    let to_ptr: JSValue = if args_len > 1 {
-        args[1]
-    } else {
-        JSValue::UNDEFINED
-    };
-    crate::node::validators_impl::validate_string(global_object, to_ptr, format_args!("to"))?;
-
-    let from_str = from_ptr.to_js_string_view(global_object)?;
-    let to_str = to_ptr.to_js_string_view(global_object)?;
-    if from_str.is_empty() && to_str.is_empty() {
-        return Ok(from_ptr);
-    }
-
-    let from_slice = from_str.to_utf8();
-    let to_slice_ = to_str.to_utf8();
-    let pool = &mut global_object.bun_vm().as_mut().rare_data().path_buf;
-    relative_js_t::<u8>(
-        global_object,
-        pool,
-        is_windows,
-        from_slice.slice(),
-        to_slice_.slice(),
-    )
-}
-
-/// Based on Node v21.6.1 path.posix.resolve:
-/// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L1095
-fn resolve_posix_t<'a, T: PathCharCwd>(
-    paths: &[&[T]],
-    buf: &'a mut [T],
-    buf2: &mut [T],
-) -> MaybeSlice<'a, T> {
-    // Backed by expandable buf2 because resolvedPath may be long.
-    // We use buf2 here because resolvePosixT is called by other methods and using
-    // buf2 here avoids stepping on others' toes.
-    let mut resolved_path_len: usize = 0;
-    let mut resolved_absolute: bool = false;
-
-    let mut buf_size: usize;
-
-    let mut i_i64: i64 = if paths.is_empty() {
-        -1
-    } else {
-        i64::try_from(paths.len() - 1).expect("int cast")
-    };
-    while i_i64 > -2 && !resolved_absolute {
-        // Borrowck: `path` may borrow from tmp_buf which lives
-        // in this scope; copy into buf2 before reusing.
-        // Sized to the larger of the two T variants.
-        let mut tmp_buf: [T; MAX_PATH_SIZE_UPPER];
-        let path: &[T] = if i_i64 >= 0 {
-            paths[usize::try_from(i_i64).expect("int cast")]
-        } else {
-            // cwd is limited to MAX_PATH_BYTES.
-            tmp_buf = [T::default(); MAX_PATH_SIZE_UPPER];
-            &*posix_cwd_t(&mut tmp_buf)?
-        };
-        // validateString of `path` is performed in pub fn resolve.
-        let len = path.len();
-
-        // Skip empty paths.
-        if len == 0 {
-            i_i64 -= 1;
-            continue;
-        }
-
-        // Translated from the following JS code:
-        //   resolvedPath = `${path}/${resolvedPath}`;
-        if resolved_path_len > 0 {
-            let buf_offset = len + 1;
-            // Move all bytes to the right by path.len + 1 for the separator.
-            // Use copy_within because resolvedPath and buf2 overlap.
-            buf2.copy_within(0..resolved_path_len, buf_offset);
-        }
-        buf_size = len;
-        memmove(&mut buf2[0..buf_size], path);
-        buf_size += 1;
-        buf2[len] = T::from_u8(CHAR_FORWARD_SLASH);
-        buf_size += resolved_path_len;
-
-        buf2[buf_size] = T::default();
-        resolved_path_len = buf_size;
-        resolved_absolute = path[0] == T::from_u8(CHAR_FORWARD_SLASH);
-
-        i_i64 -= 1;
-    }
-
-    // Exit early for empty path.
-    if resolved_path_len == 0 {
-        return Ok(l::<T>(CHAR_STR_DOT));
-    }
-
-    // At this point the path should be resolved to a full absolute path, but
-    // handle relative paths to be safe (might happen when process.cwd() fails)
-
-    // Normalize the path
-    let normalized_len = normalize_string_t::<T, { Platform::Posix }>(
-        &buf2[0..resolved_path_len],
-        !resolved_absolute,
-        T::from_u8(CHAR_FORWARD_SLASH),
-        buf,
-    );
-    // resolvedPath is now backed by buf.
-    resolved_path_len = normalized_len;
-
-    // Translated from the following JS code:
-    //   if (resolvedAbsolute) {
-    //     return `/${resolvedPath}`;
-    //   }
-    if resolved_absolute {
-        buf_size = resolved_path_len + 1;
-        // Use copy_within because resolvedPath and buf overlap.
-        buf.copy_within(0..resolved_path_len, 1);
-        buf[0] = T::from_u8(CHAR_FORWARD_SLASH);
-        buf[buf_size] = T::default();
-        return Ok(&buf[0..buf_size]);
-    }
-    // Translated from the following JS code:
-    //   return resolvedPath.length > 0 ? resolvedPath : '.';
-    Ok(if resolved_path_len > 0 {
-        &buf[0..resolved_path_len]
-    } else {
-        l::<T>(CHAR_STR_DOT)
+    Ok(Input {
+        string: value,
+        chars,
     })
 }
 
-/// Based on Node v21.6.1 path.win32.resolve:
-/// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L162
-fn resolve_windows_t<'a, T: PathCharCwd>(
-    paths: &[&[T]],
-    buf: &'a mut [T],
-    buf2: &mut [T],
-) -> MaybeSlice<'a, T> {
-    let is_sep_t = is_sep_windows_t::<T>;
-    // Sized to the larger of the two T variants.
-    let mut tmp_buf = [T::default(); MAX_PATH_SIZE_UPPER + 1];
+/// `process.cwd()`, with `None` for the undefined a replaced `process.cwd` may
+/// return. lib/path.js indexes into the cwd, which throws for undefined and
+/// null alike, except in the drive-relative branch of win32.resolve()
+/// ([`win32::drive_cwd`]), which substitutes the drive's root for undefined
+/// (but still throws for null, as this does).
+#[inline]
+fn get_cwd_or_undefined<'a>(global: &JSGlobalObject) -> JsResult<Option<Input<'a>>> {
+    let value = jsc::call_zero_is_throw(global, || Bun__Process__getCachedCwd(global))?;
+    if value.is_undefined_or_null() {
+        if value.is_undefined() {
+            return Ok(None);
+        }
+        return Err(throw_nullish_cwd(global, "null"));
+    }
+    view_of(global, value).map(Some)
+}
 
-    // Backed by tmpBuf.
-    // Borrowck: track resolved_device length into tmp_buf.
-    let mut resolved_device_len: usize = 0;
-    // Backed by expandable buf2 because resolvedTail may be long.
-    // We use buf2 here because resolvePosixT is called by other methods and using
-    // buf2 here avoids stepping on others' toes.
-    let mut resolved_tail_len: usize = 0;
-    let mut resolved_absolute: bool = false;
+/// `process.cwd()` everywhere lib/path.js goes on to index into it.
+#[inline]
+fn get_cwd<'a>(global: &JSGlobalObject) -> JsResult<Input<'a>> {
+    match get_cwd_or_undefined(global)? {
+        Some(cwd) => Ok(cwd),
+        None => Err(throw_nullish_cwd(global, "undefined")),
+    }
+}
 
-    let mut buf_offset: usize;
-    let mut buf_size: usize;
-    let mut env_path_len: Option<usize> = None;
+#[cold]
+fn throw_nullish_cwd(global: &JSGlobalObject, which: &str) -> JsError {
+    global.throw_type_error(format_args!("process.cwd() returned {which}"))
+}
 
-    let mut i_i64: i64 = if paths.is_empty() {
-        -1
+/// `validateString(value, name)`.
+#[inline]
+fn validate_string(global: &JSGlobalObject, value: JSValue, name: &str) -> JsResult<()> {
+    if value.is_string_literal() {
+        return Ok(());
+    }
+    Err(global.throw_invalid_argument_type_value(name, "string", value))
+}
+
+// ─────────────────────────────── results ────────────────────────────────
+
+/// `StringPrototypeSlice(input, start, end)` as a JSString sharing `input`'s buffer.
+#[inline]
+fn substring(global: &JSGlobalObject, input: &Input<'_>, start: Index, end: Index) -> JSValue {
+    debug_assert!(input.string.is_string_literal());
+    debug_assert!(start >= 0 && end >= start && end as usize <= input.len());
+    let string: &JSString = input.string.as_string();
+    string.substring(global, start as u32, (end - start) as u32)
+}
+
+/// A result exceeded the maximum JS string length.
+struct TooLong;
+
+/// Guards a total computed from several argument lengths before it is used to
+/// size a buffer; anything past the JS string limit could never be returned.
+#[inline]
+fn check_length(len: usize) -> Result<usize, TooLong> {
+    if len > bun_core::String::max_length() {
+        Err(TooLong)
     } else {
-        i64::try_from(paths.len() - 1).expect("int cast")
-    };
-    while i_i64 > -2 {
-        // Backed by expandable buf2, to not conflict with buf2 backed resolvedTail,
-        // because path may be long.
-        // Borrowck: `path` may alias paths[], tmp_buf, or buf2,
-        // and the loop body subsequently mutates tmp_buf/buf2 while still indexing
-        // `path`. Store as raw (ptr, len) and materialize short-lived slices at use
-        // sites; all overlapping moves go through `ptr::copy` (memmove
-        // semantics).
-        let mut path_ptr: *const T;
-        let mut path_len: usize;
-        macro_rules! path { () => {
-            // SAFETY: (path_ptr, path_len) describes a live region inside paths[]/tmp_buf/buf2;
-            // borrows are short-lived (read-only) and never held across mutation of the same range.
-            unsafe { core::slice::from_raw_parts(path_ptr, path_len) }
-        }; }
-        // Locals that must outlive `path` borrow:
-        let cwd_len: usize;
-        if i_i64 >= 0 {
-            let p = paths[usize::try_from(i_i64).expect("int cast")];
-            // validateString of `path` is performed in pub fn resolve.
+        Ok(len)
+    }
+}
 
-            // Skip empty paths.
-            if p.is_empty() {
-                i_i64 -= 1;
-                continue;
-            }
-            path_ptr = p.as_ptr();
-            path_len = p.len();
-        } else if resolved_device_len == 0 {
-            // cwd is limited to MAX_PATH_BYTES.
-            cwd_len = get_cwd_t(&mut tmp_buf[..])?.len();
-            path_ptr = tmp_buf.as_ptr();
-            path_len = cwd_len;
-        } else {
-            // Translated from the following JS code:
-            //   path = process.env[`=${resolvedDevice}`] || process.cwd();
-            #[cfg(windows)]
+/// A new JSString with the given characters (`ERR_STRING_TOO_LONG` past the
+/// string limit).
+fn to_js<C: Unit>(global: &JSGlobalObject, chars: &[C]) -> JsResult<JSValue> {
+    if C::IS_U16 {
+        JSValue::from_utf16(global, bytemuck::cast_slice(chars))
+    } else {
+        JSValue::from_latin1(global, bytemuck::cast_slice(chars))
+    }
+}
+
+/// When the result turns out to be identical to an input, hand back that cell
+/// instead of allocating a copy.
+fn to_js_reusing<C: Unit>(
+    global: &JSGlobalObject,
+    chars: &[C],
+    input: &Input<'_>,
+) -> JsResult<JSValue> {
+    if !input.string.is_empty() && input.len() == chars.len() && Chars::of(chars).eq(&input.chars) {
+        return Ok(input.string);
+    }
+    to_js(global, chars)
+}
+
+#[inline]
+fn dot_string(global: &JSGlobalObject) -> JSValue {
+    JSValue::js_single_character_string(global, CHAR_DOT)
+}
+
+#[inline]
+fn empty_string(global: &JSGlobalObject) -> JSValue {
+    JSValue::js_empty_string(global)
+}
+
+// ────────────────────────────── buffers ─────────────────────────────────
+
+/// Scratch space for assembled results; spills to the heap past `INLINE` units.
+type Buf<C> = SmallVec<[C; INLINE]>;
+const INLINE: usize = 1024;
+
+/// A buffer of the same unit type as `like` (for use under `with_chars!`).
+#[inline(always)]
+fn buf_like<C: Unit>(_like: &[C]) -> Buf<C> {
+    Buf::new()
+}
+
+/// Sizes `buf` to exactly `len` (zero-filled) and returns it as a slice.
+#[inline]
+fn reserve<C: Unit>(buf: &mut Buf<C>, len: usize) -> &mut [C] {
+    buf.clear();
+    buf.reserve_exact(len);
+    // SAFETY: capacity >= len after reserve_exact; the first `len` units are zeroed before
+    // the length is published, and an all-zero bit pattern is a valid `u8`/`u16`.
+    unsafe {
+        core::ptr::write_bytes(buf.as_mut_ptr(), 0, len);
+        buf.set_len(len);
+    }
+    &mut buf[..]
+}
+
+// ─────────────────────────── normalizeString ────────────────────────────
+
+/// Resolves `.` and `..` elements in a path with directory names.
+///
+/// This is `normalizeString()` from lib/path.js restructured to consume a
+/// segment at a time instead of a code unit at a time: Node's `dots` counter is
+/// exactly "the current segment is `''`, `'.'` or `'..'`", and its
+/// `i === path.length` iteration only skips an empty trailing segment, which is
+/// a no-op here too. `res` must have room for `path.len()` units (every emitted
+/// segment or `..` consumes at least as many input units); returns the length
+/// written.
+fn normalize_string<const WIN: bool, C: Unit>(
+    path: &[C],
+    allow_above_root: bool,
+    res: &mut [C],
+) -> usize {
+    let sep: C = ch(separator(WIN));
+    let len = path.len();
+    let mut res_len = 0usize;
+    let mut last_segment_length = 0usize;
+    let mut i = 0usize;
+    while i <= len {
+        let segment = i;
+        i = find_separator::<WIN, C>(path, i);
+        let segment_length = i - segment;
+        // `i` is now at a separator or at `len`; step over it for the next iteration.
+        i += 1;
+
+        if segment_length == 0 || (segment_length == 1 && path[segment].as_u32() == CHAR_DOT as u32)
+        {
+            // NOOP
+        } else if segment_length == 2
+            && path[segment].as_u32() == CHAR_DOT as u32
+            && path[segment + 1].as_u32() == CHAR_DOT as u32
+        {
+            if res_len < 2
+                || last_segment_length != 2
+                || res[res_len - 1].as_u32() != CHAR_DOT as u32
+                || res[res_len - 2].as_u32() != CHAR_DOT as u32
             {
-                let mut u16_buf = bun_paths::WPathBuffer::uninit();
-                // Storage for the `=X:` fast-path key. Declared here (not inside the
-                // `'brk:` block) so the slice it backs stays live across `getenv_w`.
-                // 4 elements (not 3) so the wchar immediately following the 3-char
-                // key is a guaranteed NUL — `getenv_w` forwards `name.as_ptr()` to
-                // `GetEnvironmentVariableW`, which reads an LPCWSTR until NUL.
-                let fast_key: [u16; 4];
-                // Windows has the concept of drive-specific current working
-                // directories. If we've resolved a drive letter but not yet an
-                // absolute path, get cwd for that drive, or the process cwd if
-                // the drive cwd is not available. We're sure the device is not
-                // a UNC path at this points, because UNC paths are always absolute.
-
-                // Translated from the following JS code:
-                //   process.env[`=${resolvedDevice}`]
-                let key_w: &[u16] = 'brk: {
-                    if resolved_device_len == 2 && tmp_buf[1] == T::from_u8(CHAR_COLON) {
-                        // Fast path for device roots
-                        fast_key = [
-                            b'=' as u16,
-                            u16::try_from(tmp_buf[0].as_u32()).expect("int cast"),
-                            CHAR_COLON as u16,
-                            0,
-                        ];
-                        // Slice the WHOLE 4-element array (not `..3`): `getenv_w`
-                        // forwards `.as_ptr()` to `GetEnvironmentVariableW`, which
-                        // reads index 3 (the NUL). A `..3` slice would not carry
-                        // provenance over that byte under Stacked/Tree Borrows.
-                        break 'brk &fast_key[..];
-                    }
-                    buf_size = 1;
-                    // Reuse buf2 for the env key because it's used to get the path.
-                    buf2[0] = T::from_u8(b'=');
-                    buf_offset = buf_size;
-                    buf_size += resolved_device_len;
-                    memmove(
-                        &mut buf2[buf_offset..buf_size],
-                        &tmp_buf[0..resolved_device_len],
-                    );
-                    if T::IS_U16 {
-                        // `getenv_w` requires the NUL be addressable via the slice's
-                        // pointer (it forwards `.as_ptr()` as LPCWSTR). `buf2` is a
-                        // reused arena buffer with arbitrary prior contents past
-                        // `buf_size`, so write the terminator explicitly.
-                        buf2[buf_size] = T::from_u8(0);
-                        // T == u16 when IS_U16; bytemuck statically checks the layout.
-                        break 'brk bytemuck::cast_slice::<T, u16>(&buf2[..=buf_size]);
-                    }
-                    // T == u8 when !IS_U16; bytemuck statically checks the layout.
-                    let key8: &[u8] = bytemuck::cast_slice::<T, u8>(&buf2[..buf_size]);
-                    // Write the NUL after widening so the LPCWSTR is properly
-                    // terminated regardless of `WPathBuffer::uninit()`'s init
-                    // state — don't rely on `uninit()` happening to zero-fill
-                    // today.
-                    let n = strings::convert_utf8_to_utf16_in_buffer(&mut u16_buf[..], key8).len();
-                    u16_buf[n] = 0;
-                    &u16_buf[..=n]
-                };
-                // TODO: Enable test once spawnResult.stdout works on Windows.
-                // test/js/node/path/resolve.test.js
-                if let Some(r) = bun_sys::windows::getenv_w(key_w) {
-                    // Store in tmp_buf AFTER the device: buf2[0..resolved_tail_len]
-                    // already backs the accumulated tail, so writing there clobbers it.
-                    if T::IS_U16 {
-                        buf_size = r.len().min(tmp_buf.len() - resolved_device_len);
-                        // T == u16 when IS_U16; bytemuck checks the layout at runtime.
-                        let dst: &mut [u16] = bytemuck::cast_slice_mut::<T, u16>(
-                            &mut tmp_buf[resolved_device_len..resolved_device_len + buf_size],
-                        );
-                        memmove(dst, &r[..buf_size]);
+                if res_len > 2 {
+                    // const lastSlashIndex = res.length - lastSegmentLength - 1;
+                    if res_len == last_segment_length {
+                        // lastSlashIndex === -1
+                        res_len = 0;
+                        last_segment_length = 0;
                     } else {
-                        // T == u8 when !IS_U16; bytemuck statically checks the layout.
-                        let dst: &mut [u8] =
-                            bytemuck::cast_slice_mut::<T, u8>(&mut tmp_buf[resolved_device_len..]);
-                        buf_size = strings::convert_utf16_to_utf8_in_buffer(dst, &r).len();
+                        res_len = res_len - last_segment_length - 1;
+                        // lastSegmentLength = res.length - 1 - StringPrototypeLastIndexOf(res, separator);
+                        let mut k = res_len;
+                        while k > 0 && res[k - 1] != sep {
+                            k -= 1;
+                        }
+                        last_segment_length = res_len - k;
                     }
-                    env_path_len = Some(buf_size);
+                    continue;
+                } else if res_len != 0 {
+                    res_len = 0;
+                    last_segment_length = 0;
+                    continue;
                 }
             }
-            if let Some(ep_len) = env_path_len {
-                path_ptr = tmp_buf[resolved_device_len..].as_ptr();
-                path_len = ep_len;
-            } else {
-                // cwd is limited to MAX_PATH_BYTES. Store it AFTER the device:
-                // tmp_buf[0..resolved_device_len] backs resolvedDevice.
-                cwd_len = get_cwd_t(&mut tmp_buf[resolved_device_len..])?.len();
-                path_ptr = tmp_buf[resolved_device_len..].as_ptr();
-                path_len = cwd_len;
-                // We must set envPath here so that it doesn't hit the null check just below.
-                env_path_len = Some(cwd_len);
+            if allow_above_root {
+                if res_len > 0 {
+                    res[res_len] = sep;
+                    res_len += 1;
+                }
+                res[res_len] = ch(CHAR_DOT);
+                res[res_len + 1] = ch(CHAR_DOT);
+                res_len += 2;
+                last_segment_length = 2;
             }
+        } else {
+            if res_len > 0 {
+                res[res_len] = sep;
+                res_len += 1;
+            }
+            res[res_len..res_len + segment_length]
+                .copy_from_slice(&path[segment..segment + segment_length]);
+            res_len += segment_length;
+            last_segment_length = segment_length;
+        }
+    }
+    res_len
+}
 
-            // Verify that a cwd was found and that it actually points
-            // to our drive. If not, default to the drive's root.
+// ─────────────────── shared by posix and win32 verbatim ────────────────────
+//
+// `basename` and `extname` differ between the two objects in lib/path.js only
+// in the separator predicate and in win32's drive-letter prologue, so each is
+// written once against the win32 text (posix's is the same with `start = 0`).
 
-            // Translated from the following JS code:
-            //   if (path === undefined ||
-            //     (StringPrototypeToLowerCase(StringPrototypeSlice(path, 0, 2)) !==
-            //     StringPrototypeToLowerCase(resolvedDevice) &&
-            //     StringPrototypeCharCodeAt(path, 2) === CHAR_BACKWARD_SLASH)) {
-            if env_path_len.is_none()
-                || (path!().get(2).copied() == Some(T::from_u8(CHAR_BACKWARD_SLASH))
-                    && !eql_ignore_case_t(&path!()[0..2], &tmp_buf[0..resolved_device_len]))
+fn basename_impl<const WIN: bool>(
+    global: &JSGlobalObject,
+    path: &Input<'_>,
+    suffix: Option<&Input<'_>>,
+) -> JSValue {
+    with_chars!(path.chars, |p| {
+        let mut start: Index = 0;
+        let mut end: Index = -1;
+        let mut matched_slash = true;
+        let path_length = p.len() as Index;
+
+        // Check for a drive letter prefix so as not to mistake the following
+        // path separator as an extra separator at the end of the path that can be
+        // disregarded
+        if WIN
+            && path_length >= 2
+            && is_windows_device_root(p[0].as_u32())
+            && p[1].as_u32() == CHAR_COLON as u32
+        {
+            start = 2;
+        }
+
+        if let Some(suffix) = suffix.filter(|s| s.len() > 0 && s.len() as Index <= path_length) {
+            return with_chars!(suffix.chars, |s| {
+                if span_equals(s, p) {
+                    return empty_string(global);
+                }
+                let mut ext_idx: Index = s.len() as Index - 1;
+                let mut first_non_slash_end: Index = -1;
+                let mut i: Index = path_length - 1;
+                while i >= start {
+                    let code = p[i as usize].as_u32();
+                    if is_path_separator::<WIN>(code) {
+                        // If we reached a path separator that was not part of a set of path
+                        // separators at the end of the string, stop now
+                        if !matched_slash {
+                            start = i + 1;
+                            break;
+                        }
+                    } else {
+                        if first_non_slash_end == -1 {
+                            // We saw the first non-path separator, remember this index in case
+                            // we need it if the extension ends up not matching
+                            matched_slash = false;
+                            first_non_slash_end = i + 1;
+                        }
+                        if ext_idx >= 0 {
+                            // Try to match the explicit extension
+                            if code == s[ext_idx as usize].as_u32() {
+                                ext_idx -= 1;
+                                if ext_idx == -1 {
+                                    // We matched the extension, so mark this as the end of our path
+                                    // component
+                                    end = i;
+                                }
+                            } else {
+                                // Extension does not match, so our result is the entire path
+                                // component
+                                ext_idx = -1;
+                                end = first_non_slash_end;
+                            }
+                        }
+                    }
+                    i -= 1;
+                }
+
+                if start == end {
+                    end = first_non_slash_end;
+                } else if end == -1 {
+                    end = path_length;
+                }
+                substring(global, path, start, end)
+            });
+        }
+        let mut i: Index = path_length - 1;
+        while i >= start {
+            if is_path_separator::<WIN>(p[i as usize].as_u32()) {
+                // If we reached a path separator that was not part of a set of path
+                // separators at the end of the string, stop now
+                if !matched_slash {
+                    start = i + 1;
+                    break;
+                }
+            } else if end == -1 {
+                // We saw the first non-path separator, mark this as the end of our
+                // path component
+                matched_slash = false;
+                end = i + 1;
+            }
+            i -= 1;
+        }
+
+        if end == -1 {
+            return empty_string(global);
+        }
+        substring(global, path, start, end)
+    })
+}
+
+fn extname_impl<const WIN: bool>(global: &JSGlobalObject, path: &Input<'_>) -> JSValue {
+    with_chars!(path.chars, |p| {
+        let mut start: Index = 0;
+        let mut start_dot: Index = -1;
+        let mut start_part: Index = 0;
+        let mut end: Index = -1;
+        let mut matched_slash = true;
+        // Track the state of characters (if any) we see before our first dot and
+        // after any path separator we find
+        let mut pre_dot_state: Index = 0;
+        let path_length = p.len() as Index;
+
+        // Check for a drive letter prefix so as not to mistake the following
+        // path separator as an extra separator at the end of the path that can be
+        // disregarded
+
+        if WIN
+            && path_length >= 2
+            && p[1].as_u32() == CHAR_COLON as u32
+            && is_windows_device_root(p[0].as_u32())
+        {
+            start = 2;
+            start_part = 2;
+        }
+
+        let mut i: Index = path_length - 1;
+        while i >= start {
+            let code = p[i as usize].as_u32();
+            if is_path_separator::<WIN>(code) {
+                // If we reached a path separator that was not part of a set of path
+                // separators at the end of the string, stop now
+                if !matched_slash {
+                    start_part = i + 1;
+                    break;
+                }
+                i -= 1;
+                continue;
+            }
+            if end == -1 {
+                // We saw the first non-path separator, mark this as the end of our
+                // extension
+                matched_slash = false;
+                end = i + 1;
+            }
+            if code == CHAR_DOT as u32 {
+                // If this is our first dot, mark it as the start of our extension
+                if start_dot == -1 {
+                    start_dot = i;
+                } else if pre_dot_state != 1 {
+                    pre_dot_state = 1;
+                }
+            } else if start_dot != -1 {
+                // We saw a non-dot and non-path separator before our dot, so we should
+                // have a good chance at having a non-empty extension
+                pre_dot_state = -1;
+            }
+            i -= 1;
+        }
+
+        if start_dot == -1
+            || end == -1
+            // We saw a non-dot character immediately before the dot
+            || pre_dot_state == 0
+            // The (right-most) trimmed path component is exactly '..'
+            || (pre_dot_state == 1 && start_dot == end - 1 && start_dot == start_part + 1)
+        {
+            return empty_string(global);
+        }
+        substring(global, path, start_dot, end)
+    })
+}
+
+/// `path.parse()` result as `[start, end)` slices of the input; `[-1, -1]` is `''`.
+/// Mirrors the layout `PathParsedObject__create` reads (five int32 pairs).
+#[repr(C)]
+struct Parsed {
+    root: [i32; 2],
+    dir: [i32; 2],
+    base: [i32; 2],
+    ext: [i32; 2],
+    name: [i32; 2],
+}
+
+impl Parsed {
+    const EMPTY: [i32; 2] = [-1, -1];
+    fn new() -> Self {
+        Self {
+            root: Self::EMPTY,
+            dir: Self::EMPTY,
+            base: Self::EMPTY,
+            ext: Self::EMPTY,
+            name: Self::EMPTY,
+        }
+    }
+    #[inline]
+    fn range(start: Index, end: Index) -> [i32; 2] {
+        // JSString lengths are < 2^31.
+        [start as i32, end as i32]
+    }
+    fn to_js(&self, global: &JSGlobalObject, path: JSValue) -> JSValue {
+        // SAFETY: `path` is a resolved JSString (via view_of); `self` is `#[repr(C)]` five int32 pairs.
+        unsafe { PathParsedObject__create(global, path, self) }
+    }
+}
+
+// ──────────────────────────────── posix ─────────────────────────────────
+
+mod posix {
+    use super::*;
+
+    /// `posixCwd()`: on Windows hosts, converts separators and strips the drive.
+    pub(super) fn cwd<'a>(
+        global: &JSGlobalObject,
+        storage: &'a mut Buf<u16>,
+    ) -> JsResult<Input<'a>> {
+        let out = get_cwd(global)?;
+        #[cfg(windows)]
+        {
+            let len = out.len();
+            let mut first_slash: Index = -1;
             {
-                // Translated from the following JS code:
-                //   path = `${resolvedDevice}\\`;
-                buf_size = resolved_device_len;
-                memmove(&mut buf2[0..buf_size], &tmp_buf[0..resolved_device_len]);
-                buf_offset = buf_size;
-                buf_size += 1;
-                buf2[buf_offset] = T::from_u8(CHAR_BACKWARD_SLASH);
-                path_ptr = buf2.as_ptr();
-                path_len = buf_size;
+                let p = reserve(storage, len);
+                out.chars.copy_to(p);
+                for (i, c) in p.iter_mut().enumerate() {
+                    if *c == CHAR_BACKWARD_SLASH as u16 {
+                        *c = CHAR_FORWARD_SLASH as u16;
+                    }
+                    if first_slash == -1 && *c == CHAR_FORWARD_SLASH as u16 {
+                        first_slash = i as Index;
+                    }
+                }
+            }
+            let storage: &'a Buf<u16> = storage;
+            // StringPrototypeSlice(cwd, StringPrototypeIndexOf(cwd, '/')) — slice(-1) when there is none.
+            return Ok(Input {
+                string: JSValue::ZERO,
+                chars: Chars::Utf16(js_slice(&storage[..len], first_slash, len as Index)),
+            });
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = storage;
+            Ok(out)
+        }
+    }
+
+    /// The predicate of `posix.resolve()`'s "current directory" fast path
+    /// (`args.length === 1 && (args[0] === '' || args[0] === '.')`).
+    #[inline]
+    pub(super) fn is_trivial_arg(arg: &Chars<'_>) -> bool {
+        arg.len() == 0 || (arg.len() == 1 && arg.at(0) == CHAR_DOT as u32)
+    }
+
+    #[inline]
+    fn needs_cwd(path: &Chars<'_>) -> bool {
+        path.len() == 0 || path.at(0) != CHAR_FORWARD_SLASH as u32
+    }
+
+    /// How `posix.resolve(operand)` ended up using `process.cwd()`.
+    pub(super) enum OperandCwd<'a> {
+        /// An absolute operand: not read.
+        NotRead,
+        /// `resolve('')` / `resolve('.')` with an absolute cwd: the result, as read.
+        Returned(Input<'a>),
+        /// What the operand is resolved against.
+        Against(Input<'a>),
+    }
+
+    impl<'a> OperandCwd<'a> {
+        pub(super) fn input(&self) -> Option<&Input<'a>> {
+            match self {
+                OperandCwd::NotRead => None,
+                OperandCwd::Returned(cwd) | OperandCwd::Against(cwd) => Some(cwd),
+            }
+        }
+    }
+
+    /// Reads `process.cwd()` as often, and at the same points, as `posix.resolve(operand)`
+    /// does in lib/path.js: not at all for an absolute operand, once for a relative one, and
+    /// for `''` / `'.'` once in the fast path, which returns the reading if it is absolute,
+    /// plus once more in the fallback if it is not. (Observable when `process.cwd` has been
+    /// replaced by something stateful.)
+    pub(super) fn operand_cwd<'a>(
+        global: &JSGlobalObject,
+        operand: &Chars<'_>,
+        storage: &'a mut Buf<u16>,
+        fallback_storage: &'a mut Buf<u16>,
+    ) -> JsResult<OperandCwd<'a>> {
+        if !needs_cwd(operand) {
+            return Ok(OperandCwd::NotRead);
+        }
+        let first = cwd(global, storage)?;
+        if !is_trivial_arg(operand) {
+            return Ok(OperandCwd::Against(first));
+        }
+        if first.len() > 0 && first.at(0) == CHAR_FORWARD_SLASH as u32 {
+            return Ok(OperandCwd::Returned(first));
+        }
+        first.keep_alive();
+        Ok(OperandCwd::Against(cwd(global, fallback_storage)?))
+    }
+
+    /// `resolve()` once the arguments have been reduced to the strings that
+    /// participate, in call order (cwd first when it was consulted).
+    pub(super) fn resolve<'o, C: Unit>(
+        parts: &[Chars<'_>],
+        out: &'o mut Buf<C>,
+    ) -> Result<&'o [C], TooLong> {
+        let mut joined_len = 0usize;
+        for part in parts {
+            joined_len += part.len() + 1;
+        }
+        let joined_len = check_length(joined_len)?;
+
+        let mut joined: Buf<C> = Buf::new();
+        let j = reserve(&mut joined, joined_len);
+        let mut p = 0;
+        for part in parts {
+            p += part.copy_to(&mut j[p..]);
+            j[p] = ch(CHAR_FORWARD_SLASH);
+            p += 1;
+        }
+
+        let resolved_absolute =
+            !parts.is_empty() && parts[0].len() > 0 && parts[0].at(0) == CHAR_FORWARD_SLASH as u32;
+
+        // Normalize the path
+        let res = reserve(out, joined_len + 1);
+        res[0] = ch(CHAR_FORWARD_SLASH);
+        let len = normalize_string::<false, C>(&joined, !resolved_absolute, &mut res[1..]);
+
+        if resolved_absolute {
+            return Ok(&out[..len + 1]);
+        }
+        if len > 0 {
+            return Ok(&out[1..len + 1]);
+        }
+        out[0] = ch(CHAR_DOT);
+        Ok(&out[..1])
+    }
+
+    /// `posix.resolve(path)` for a single already-validated string and its
+    /// [`operand_cwd`].
+    pub(super) fn resolve1<'o, C: Unit>(
+        path: Chars<'_>,
+        cwd: &OperandCwd<'_>,
+        out: &'o mut Buf<C>,
+    ) -> Result<&'o [C], TooLong> {
+        let mut parts: [Chars<'_>; 2] = [Chars::Latin1(&[]), Chars::Latin1(&[])];
+        let mut n = 0;
+        match cwd {
+            OperandCwd::Returned(cwd) => {
+                // Fast path for current directory: lib/path.js returns `posixCwd()` un-normalized.
+                let o = reserve(out, cwd.len());
+                cwd.chars.copy_to(o);
+                return Ok(&out[..]);
+            }
+            OperandCwd::Against(cwd) => {
+                parts[n] = cwd.chars;
+                n += 1;
+            }
+            OperandCwd::NotRead => {}
+        }
+        if path.len() > 0 {
+            parts[n] = path;
+            n += 1;
+        }
+        resolve::<C>(&parts[..n], out)
+    }
+
+    pub(super) fn normalize<'o, C: Unit>(path: &[C], out: &'o mut Buf<C>) -> &'o [C] {
+        // Caller handles path.length === 0.
+        let is_absolute = path[0].as_u32() == CHAR_FORWARD_SLASH as u32;
+        let trailing_separator = path[path.len() - 1].as_u32() == CHAR_FORWARD_SLASH as u32;
+
+        // Normalize the path
+        let res = reserve(out, path.len() + 2);
+        res[0] = ch(CHAR_FORWARD_SLASH);
+        let mut len = normalize_string::<false, C>(path, !is_absolute, &mut res[1..]);
+
+        if len == 0 {
+            if is_absolute {
+                return &out[..1];
+            }
+            out[0] = ch(CHAR_DOT);
+            out[1] = ch(CHAR_FORWARD_SLASH);
+            return &out[..if trailing_separator { 2 } else { 1 }];
+        }
+        if trailing_separator {
+            out[1 + len] = ch(CHAR_FORWARD_SLASH);
+            len += 1;
+        }
+
+        if is_absolute {
+            &out[..len + 1]
+        } else {
+            &out[1..len + 1]
+        }
+    }
+
+    pub(super) fn join<'o, C: Unit>(
+        paths: &[Chars<'_>],
+        joined: &mut Buf<C>,
+        out: &'o mut Buf<C>,
+    ) -> Result<&'o [C], TooLong> {
+        // Caller has removed empty arguments and handled the none-left case.
+        let mut joined_len = paths.len() - 1;
+        for path in paths {
+            joined_len += path.len();
+        }
+        let joined_len = check_length(joined_len)?;
+        let j = reserve(joined, joined_len);
+        let mut p = 0;
+        for (i, path) in paths.iter().enumerate() {
+            if i != 0 {
+                j[p] = ch(CHAR_FORWARD_SLASH);
+                p += 1;
+            }
+            p += path.copy_to(&mut j[p..]);
+        }
+        Ok(normalize::<C>(joined, out))
+    }
+
+    /// `from_cwd` / `to_cwd` are the [`operand_cwd`]s of the two `resolve()` calls
+    /// lib/path.js makes.
+    pub(super) fn relative<C: Unit>(
+        global: &JSGlobalObject,
+        from_in: Chars<'_>,
+        to_in: Chars<'_>,
+        from_cwd: &OperandCwd<'_>,
+        to_cwd: &OperandCwd<'_>,
+    ) -> JsResult<JSValue> {
+        // Trim leading forward slashes.
+        let mut from_buf: Buf<C> = Buf::new();
+        let mut to_buf: Buf<C> = Buf::new();
+        let from = resolve1::<C>(from_in, from_cwd, &mut from_buf)
+            .map_err(|_| global.throw_string_too_long())?;
+        let to = resolve1::<C>(to_in, to_cwd, &mut to_buf)
+            .map_err(|_| global.throw_string_too_long())?;
+
+        if from == to {
+            return Ok(empty_string(global));
+        }
+
+        let from_start: Index = 1;
+        let from_end: Index = from.len() as Index;
+        let from_len: Index = from_end - from_start;
+        let to_start: Index = 1;
+        let to_len: Index = to.len() as Index - to_start;
+
+        // Compare paths to find the longest common path from root
+        let length: Index = if from_len < to_len { from_len } else { to_len };
+        // Node's loop breaks at the first mismatch and remembers the last '/' before it.
+        let mut i: Index = if length > 0 {
+            common_prefix_length(
+                &from[from_start as usize..],
+                &to[to_start as usize..],
+                length as usize,
+            ) as Index
+        } else {
+            0
+        };
+        let mut last_common_sep: Index = i - 1;
+        while last_common_sep >= 0
+            && from[(from_start + last_common_sep) as usize].as_u32() != CHAR_FORWARD_SLASH as u32
+        {
+            last_common_sep -= 1;
+        }
+        if i == length {
+            if to_len > length {
+                if to[(to_start + i) as usize].as_u32() == CHAR_FORWARD_SLASH as u32 {
+                    // We get here if `from` is the exact base path for `to`.
+                    // For example: from='/foo/bar'; to='/foo/bar/baz'
+                    return to_js(global, &to[(to_start + i + 1) as usize..]);
+                }
+                if i == 0 {
+                    // We get here if `from` is the root
+                    // For example: from='/'; to='/foo'
+                    return to_js(global, &to[(to_start + i) as usize..]);
+                }
+            } else if from_len > length {
+                if from[(from_start + i) as usize].as_u32() == CHAR_FORWARD_SLASH as u32 {
+                    // We get here if `to` is the exact base path for `from`.
+                    // For example: from='/foo/bar/baz'; to='/foo/bar'
+                    last_common_sep = i;
+                } else if i == 0 {
+                    // We get here if `to` is the root.
+                    // For example: from='/foo/bar'; to='/'
+                    last_common_sep = 0;
+                }
             }
         }
 
-        let len = path_len;
-        let mut root_end: usize = 0;
-        // Backed by tmpBuf or an anonymous buffer.
-        let device_buf: [T; 2];
-        // Same raw-ptr trick as `path` — `device` may alias tmp_buf.
-        let mut device_ptr: *const T = core::ptr::NonNull::<T>::dangling().as_ptr().cast_const();
-        let mut device_len: usize = 0;
-        let mut device_in_tmp = false;
-        // Prefix with _ to avoid shadowing the identifier in the outer scope.
-        let mut _is_absolute: bool = false;
-        let byte0 = if len > 0 { path!()[0] } else { T::default() };
+        // Generate the relative path based on the path difference between `to`
+        // and `from`.
+        let mut up = 0usize;
+        i = from_start + last_common_sep + 1;
+        while i <= from_end {
+            if i == from_end || from[i as usize].as_u32() == CHAR_FORWARD_SLASH as u32 {
+                up += 1;
+            }
+            i += 1;
+        }
+
+        // Lastly, append the rest of the destination (`to`) path that comes after
+        // the common path parts.
+        let rest = &to[(to_start + last_common_sep) as usize..];
+        let mut out: Buf<C> = Buf::new();
+        let o = reserve(&mut out, up * 3 + rest.len());
+        let mut p = 0;
+        for k in 0..up {
+            if k != 0 {
+                o[p] = ch(CHAR_FORWARD_SLASH);
+                p += 1;
+            }
+            o[p] = ch(CHAR_DOT);
+            o[p + 1] = ch(CHAR_DOT);
+            p += 2;
+        }
+        p += copy_units(&mut o[p..], rest);
+        to_js(global, &out[..p])
+    }
+
+    pub(super) fn dirname(global: &JSGlobalObject, path: &Input<'_>) -> JSValue {
+        // Caller handles path.length === 0.
+        with_chars!(path.chars, |p| {
+            let len = p.len() as Index;
+            let has_root = p[0].as_u32() == CHAR_FORWARD_SLASH as u32;
+            let mut end: Index = -1;
+            let mut matched_slash = true;
+            let mut i: Index = len - 1;
+            while i >= 1 {
+                if p[i as usize].as_u32() == CHAR_FORWARD_SLASH as u32 {
+                    if !matched_slash {
+                        end = i;
+                        break;
+                    }
+                } else {
+                    // We saw the first non-path separator
+                    matched_slash = false;
+                }
+                i -= 1;
+            }
+
+            if end == -1 {
+                return if has_root {
+                    substring(global, path, 0, 1)
+                } else {
+                    dot_string(global)
+                };
+            }
+            if has_root && end == 1 {
+                // '//': path[0] is '/', and end === 1 was reached at a separator, so path[1] is too.
+                return substring(global, path, 0, 2);
+            }
+            substring(global, path, 0, end)
+        })
+    }
+
+    pub(super) fn parse(path: &Input<'_>, ret: &mut Parsed) {
+        // Caller handles path.length === 0 and pre-fills every field with ''.
+        with_chars!(path.chars, |p| {
+            let is_absolute = p[0].as_u32() == CHAR_FORWARD_SLASH as u32;
+            let start: Index = if is_absolute { 1 } else { 0 };
+            if is_absolute {
+                ret.root = Parsed::range(0, 1);
+            }
+            let mut start_dot: Index = -1;
+            let mut start_part: Index = 0;
+            let mut end: Index = -1;
+            let mut matched_slash = true;
+            let mut i: Index = p.len() as Index - 1;
+
+            // Track the state of characters (if any) we see before our first dot and
+            // after any path separator we find
+            let mut pre_dot_state: Index = 0;
+
+            // Get non-dir info
+            while i >= start {
+                let code = p[i as usize].as_u32();
+                if code == CHAR_FORWARD_SLASH as u32 {
+                    // If we reached a path separator that was not part of a set of path
+                    // separators at the end of the string, stop now
+                    if !matched_slash {
+                        start_part = i + 1;
+                        break;
+                    }
+                    i -= 1;
+                    continue;
+                }
+                if end == -1 {
+                    // We saw the first non-path separator, mark this as the end of our
+                    // extension
+                    matched_slash = false;
+                    end = i + 1;
+                }
+                if code == CHAR_DOT as u32 {
+                    // If this is our first dot, mark it as the start of our extension
+                    if start_dot == -1 {
+                        start_dot = i;
+                    } else if pre_dot_state != 1 {
+                        pre_dot_state = 1;
+                    }
+                } else if start_dot != -1 {
+                    // We saw a non-dot and non-path separator before our dot, so we should
+                    // have a good chance at having a non-empty extension
+                    pre_dot_state = -1;
+                }
+                i -= 1;
+            }
+
+            if end != -1 {
+                let start = if start_part == 0 && is_absolute {
+                    1
+                } else {
+                    start_part
+                };
+                if start_dot == -1
+                    // We saw a non-dot character immediately before the dot
+                    || pre_dot_state == 0
+                    // The (right-most) trimmed path component is exactly '..'
+                    || (pre_dot_state == 1 && start_dot == end - 1 && start_dot == start_part + 1)
+                {
+                    ret.base = Parsed::range(start, end);
+                    ret.name = Parsed::range(start, end);
+                } else {
+                    ret.name = Parsed::range(start, start_dot);
+                    ret.base = Parsed::range(start, end);
+                    ret.ext = Parsed::range(start_dot, end);
+                }
+            }
+
+            if start_part > 0 {
+                ret.dir = Parsed::range(0, start_part - 1);
+            } else if is_absolute {
+                ret.dir = ret.root;
+            }
+        })
+    }
+}
+
+// ──────────────────────────────── win32 ─────────────────────────────────
+
+mod win32 {
+    use super::*;
+
+    pub(super) const W: bool = true;
+
+    /// The `device` string computed while matching a root in resolve()/normalize().
+    /// It is always one of a handful of shapes assembled from slices of `path`
+    /// (UNC ones of arbitrary length), so record the shape and materialize on
+    /// demand — normalize() needs its length before its content.
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    pub(super) enum DeviceKind {
+        /// `''` in resolve(), `undefined` in normalize()
+        None,
+        /// `path.slice(0, 2)`, e.g. `C:`
+        Drive,
+        /// `\\${firstPart}` where firstPart is `.` or `?`, e.g. `\\.`
+        Namespace,
+        /// `\\${firstPart}\${path.slice(last, j)}`, e.g. `\\server\share`
+        Unc,
+        /// `path.slice(a0, a1)`, e.g. `CON:`
+        Reserved,
+        /// `\\?\${path.slice(a0, a1)}`, e.g. `\\?\COM1:`
+        ReservedNamespace,
+    }
+
+    #[derive(Clone, Copy)]
+    pub(super) struct Device<'p, C: Unit> {
+        pub(super) kind: DeviceKind,
+        pub(super) a0: usize,
+        pub(super) a1: usize,
+        pub(super) b0: usize,
+        pub(super) b1: usize,
+        pub(super) path: &'p [C],
+    }
+
+    impl<'p, C: Unit> Device<'p, C> {
+        pub(super) fn none(path: &'p [C]) -> Self {
+            Self {
+                kind: DeviceKind::None,
+                a0: 0,
+                a1: 0,
+                b0: 0,
+                b1: 0,
+                path,
+            }
+        }
+        pub(super) fn is_none(&self) -> bool {
+            self.kind == DeviceKind::None
+        }
+        pub(super) fn len(&self) -> usize {
+            match self.kind {
+                DeviceKind::None => 0,
+                DeviceKind::Drive => 2,
+                DeviceKind::Namespace => 3,
+                DeviceKind::Unc => 2 + (self.a1 - self.a0) + 1 + (self.b1 - self.b0),
+                DeviceKind::Reserved => self.a1 - self.a0,
+                DeviceKind::ReservedNamespace => 4 + (self.a1 - self.a0),
+            }
+        }
+        /// Writes the device into `out[..self.len()]`.
+        pub(super) fn write_to<D: Unit>(&self, out: &mut [D]) -> usize {
+            let bs: D = ch(CHAR_BACKWARD_SLASH);
+            match self.kind {
+                DeviceKind::None => 0,
+                DeviceKind::Drive => copy_units(out, &self.path[..2]),
+                DeviceKind::Namespace => {
+                    out[0] = bs;
+                    out[1] = bs;
+                    out[2] = D::from_u32(self.path[2].as_u32());
+                    3
+                }
+                DeviceKind::Unc => {
+                    out[0] = bs;
+                    out[1] = bs;
+                    let mut n = 2 + copy_units(&mut out[2..], &self.path[self.a0..self.a1]);
+                    out[n] = bs;
+                    n += 1;
+                    n + copy_units(&mut out[n..], &self.path[self.b0..self.b1])
+                }
+                DeviceKind::ReservedNamespace => {
+                    out[0] = bs;
+                    out[1] = bs;
+                    out[2] = ch(CHAR_QUESTION_MARK);
+                    out[3] = bs;
+                    4 + copy_units(&mut out[4..], &self.path[self.a0..self.a1])
+                }
+                DeviceKind::Reserved => copy_units(out, &self.path[self.a0..self.a1]),
+            }
+        }
+    }
+
+    /// Storage for [`to_lower_case`]; owns the ICU result when one was needed.
+    pub(super) struct Lowered<C: Unit> {
+        storage: Buf<C>,
+        wtf: bun_core::String,
+    }
+
+    impl<C: Unit> Lowered<C> {
+        #[inline(always)]
+        pub(super) fn new() -> Self {
+            Self {
+                storage: Buf::new(),
+                wtf: bun_core::String::EMPTY,
+            }
+        }
+    }
+
+    /// `StringPrototypeToLowerCase(s)`, materialized in `into`.
+    pub(super) fn to_lower_case<'s, C: Unit>(s: &[C], into: &'s mut Lowered<C>) -> &'s [C] {
+        if C::IS_U16 && !all_ascii(s) {
+            return to_lower_case_full(s, into);
+        }
+        let p = reserve(&mut into.storage, s.len());
+        for (d, c) in p.iter_mut().zip(s) {
+            let u = c.as_u32();
+            // toLowerCase() restricted to Latin-1 input is 1:1 and stays within Latin-1
+            // (U+0130 is the only BMP code point that lower-cases to a different length).
+            let l = if (b'A' as u32..=b'Z' as u32).contains(&u)
+                || ((0xC0..=0xDE).contains(&u) && u != 0xD7)
+            {
+                u + 0x20
+            } else {
+                u
+            };
+            *d = C::from_u32(l);
+        }
+        &into.storage[..]
+    }
+
+    /// The full Unicode case mapping, for UTF-16 input containing non-ASCII units.
+    #[cold]
+    #[inline(never)]
+    fn to_lower_case_full<'s, C: Unit>(s: &[C], into: &'s mut Lowered<C>) -> &'s [C] {
+        debug_assert!(C::IS_U16);
+        into.wtf = bun_core::String::borrow_utf16(bytemuck::cast_slice(s)).to_lower_case();
+        if into.wtf.is_utf16() {
+            return bytemuck::cast_slice(into.wtf.utf16());
+        }
+        let n = into.wtf.length();
+        let p = reserve(&mut into.storage, n);
+        copy_units(p, into.wtf.latin1());
+        &into.storage[..]
+    }
+
+    /// `StringPrototypeToLowerCase(a) === StringPrototypeToLowerCase(b)`
+    pub(super) fn equals_case_folded<A: Unit, B: Unit>(a: &[A], b: &[B]) -> bool {
+        if all_ascii(a) && all_ascii(b) {
+            return a.len() == b.len()
+                && a.iter().zip(b).all(|(x, y)| {
+                    let (x, y) = (x.as_u32(), y.as_u32());
+                    let lx = if (b'A' as u32..=b'Z' as u32).contains(&x) {
+                        x | 0x20
+                    } else {
+                        x
+                    };
+                    let ly = if (b'A' as u32..=b'Z' as u32).contains(&y) {
+                        y | 0x20
+                    } else {
+                        y
+                    };
+                    lx == ly
+                });
+        }
+        equals_case_folded_full(a, b)
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn equals_case_folded_full<A: Unit, B: Unit>(a: &[A], b: &[B]) -> bool {
+        let mut la = Lowered::<A>::new();
+        let mut lb = Lowered::<B>::new();
+        span_equals(to_lower_case(a, &mut la), to_lower_case(b, &mut lb))
+    }
+
+    /// The "Try to match a root" prologue shared by resolve() and normalize().
+    pub(super) struct Root<'p, C: Unit> {
+        pub(super) root_end: usize,
+        pub(super) is_absolute: bool,
+        pub(super) device: Device<'p, C>,
+    }
+
+    /// win32.resolve()'s prologue verbatim; win32.normalize()'s differs only in
+    /// returning early for a bare UNC root (`j === len`), which it detects
+    /// afterwards as `device.kind == Unc && root_end == len`.
+    #[inline]
+    pub(super) fn match_root<C: Unit>(path: &[C]) -> Root<'_, C> {
+        let mut r = Root {
+            root_end: 0,
+            is_absolute: false,
+            device: Device::none(path),
+        };
+        let len = path.len();
+        let code = path[0].as_u32();
 
         // Try to match a root
         if len == 1 {
-            if is_sep_t(byte0) {
+            if is_path_separator::<W>(code) {
                 // `path` contains just a path separator
-                root_end = 1;
-                _is_absolute = true;
+                r.root_end = 1;
+                r.is_absolute = true;
             }
-        } else if is_sep_t(byte0) {
+            return r;
+        }
+        if is_path_separator::<W>(code) {
             // Possible UNC root
 
             // If we started with a separator, we know we at least have an
             // absolute path of some kind (UNC or otherwise)
-            _is_absolute = true;
+            r.is_absolute = true;
 
-            if is_sep_t(path!()[1]) {
-                // Matched double path separator at the beginning
-                let mut j: usize = 2;
-                let mut last: usize = j;
+            if is_path_separator::<W>(path[1].as_u32()) {
+                // Matched double path separator at beginning
+                let mut j = 2;
+                let mut last = j;
                 // Match 1 or more non-path separators
-                while j < len && !is_sep_t(path!()[j]) {
+                while j < len && !is_path_separator::<W>(path[j].as_u32()) {
                     j += 1;
                 }
                 if j < len && j != last {
-                    let first_part_start = last;
-                    let first_part_end = j;
+                    let (first_part_start, first_part_end) = (last, j);
                     // Matched!
                     last = j;
                     // Match 1 or more path separators
-                    while j < len && is_sep_t(path!()[j]) {
+                    while j < len && is_path_separator::<W>(path[j].as_u32()) {
                         j += 1;
                     }
                     if j < len && j != last {
                         // Matched!
                         last = j;
                         // Match 1 or more non-path separators
-                        while j < len && !is_sep_t(path!()[j]) {
+                        while j < len && !is_path_separator::<W>(path[j].as_u32()) {
                             j += 1;
                         }
                         if j == len || j != last {
-                            // We matched a UNC root
-
-                            if resolved_device_len > 0 {
-                                // resolvedDevice is already set to a drive
-                                // letter (`X:`). A UNC device can never match
-                                // it, and building the UNC string below would
-                                // overwrite tmpBuf which backs resolvedDevice.
-                                i_i64 -= 1;
-                                continue;
+                            let first_part = &path[first_part_start..first_part_end];
+                            if !(first_part.len() == 1
+                                && (first_part[0].as_u32() == CHAR_DOT as u32
+                                    || first_part[0].as_u32() == CHAR_QUESTION_MARK as u32))
+                            {
+                                // We matched a UNC root
+                                r.device = Device {
+                                    kind: DeviceKind::Unc,
+                                    a0: first_part_start,
+                                    a1: first_part_end,
+                                    b0: last,
+                                    b1: j,
+                                    path,
+                                };
+                                r.root_end = j;
+                            } else {
+                                // We matched a device root (e.g. \\\\.\\PHYSICALDRIVE0)
+                                r.device.kind = DeviceKind::Namespace;
+                                r.root_end = 4;
                             }
-
-                            // Translated from the following JS code:
-                            //   device =
-                            //     `\\\\${firstPart}\\${StringPrototypeSlice(path, last, j)}`;
-                            //   rootEnd = j;
-                            // path may alias tmp_buf (cwd branch); use
-                            // ptr::copy (memmove semantics).
-                            buf_size = 2;
-                            tmp_buf[0] = T::from_u8(CHAR_BACKWARD_SLASH);
-                            tmp_buf[1] = T::from_u8(CHAR_BACKWARD_SLASH);
-                            buf_offset = buf_size;
-                            let first_part_len = first_part_end - first_part_start;
-                            buf_size += first_part_len;
-                            if buf_size > tmp_buf.len() {
-                                return Err(bun_sys::Error::from_code(
-                                    bun_sys::E::ENAMETOOLONG,
-                                    bun_sys::Tag::TODO,
-                                ));
-                            }
-                            // SAFETY: src/dst within live buffers; ptr::copy handles overlap.
-                            unsafe {
-                                core::ptr::copy(
-                                    path_ptr.add(first_part_start),
-                                    tmp_buf.as_mut_ptr().add(buf_offset),
-                                    first_part_len,
-                                );
-                            }
-                            buf_offset = buf_size;
-                            buf_size += 1;
-                            tmp_buf[buf_offset] = T::from_u8(CHAR_BACKWARD_SLASH);
-                            let slice_len = j - last;
-                            buf_offset = buf_size;
-                            buf_size += slice_len;
-                            if buf_size > tmp_buf.len() {
-                                return Err(bun_sys::Error::from_code(
-                                    bun_sys::E::ENAMETOOLONG,
-                                    bun_sys::Tag::TODO,
-                                ));
-                            }
-                            // SAFETY: src/dst within live buffers; ptr::copy handles overlap.
-                            unsafe {
-                                core::ptr::copy(
-                                    path_ptr.add(last),
-                                    tmp_buf.as_mut_ptr().add(buf_offset),
-                                    slice_len,
-                                );
-                            }
-
-                            device_ptr = tmp_buf.as_ptr();
-                            device_len = buf_size;
-                            device_in_tmp = true;
-                            root_end = j;
                         }
                     }
                 }
             } else {
-                root_end = 1;
+                r.root_end = 1;
             }
-        } else if is_windows_device_root_t(byte0) && path!()[1] == T::from_u8(CHAR_COLON) {
+        } else if is_windows_device_root(code) && path[1].as_u32() == CHAR_COLON as u32 {
             // Possible device root
-            device_buf = [byte0, T::from_u8(CHAR_COLON)];
-            device_ptr = device_buf.as_ptr();
-            device_len = 2;
-            root_end = 2;
-            if len > 2 && is_sep_t(path!()[2]) {
-                // Treat separator following the drive name as an absolute path
+            r.device.kind = DeviceKind::Drive;
+            r.root_end = 2;
+            if len > 2 && is_path_separator::<W>(path[2].as_u32()) {
+                // Treat separator following drive name as an absolute path
                 // indicator
-                _is_absolute = true;
-                root_end = 3;
+                r.is_absolute = true;
+                r.root_end = 3;
             }
         }
+        r
+    }
 
-        if device_len > 0 {
-            // SAFETY: (device_ptr, device_len) describes a live region in tmp_buf or device_buf.
-            let device = unsafe { bun_core::ffi::slice(device_ptr, device_len) };
-            if resolved_device_len > 0 {
-                // Translated from the following JS code:
-                //   if (StringPrototypeToLowerCase(device) !==
-                //     StringPrototypeToLowerCase(resolvedDevice))
-                if !eql_ignore_case_t(device, &tmp_buf[0..resolved_device_len]) {
-                    // This path points to another device, so it is not applicable
-                    i_i64 -= 1;
-                    continue;
+    #[derive(Clone, Copy)]
+    pub(super) struct ResolvePart<'a> {
+        pub(super) chars: Chars<'a>,
+        pub(super) root_end: usize,
+    }
+
+    pub(super) struct ResolveState<'a> {
+        /// in visit (reverse) order
+        pub(super) parts: SmallVec<[ResolvePart<'a>; 16]>,
+        pub(super) device: SmallVec<[u16; 32]>,
+        pub(super) resolved_absolute: bool,
+        pub(super) all_8bit: bool,
+        /// "Fast path for current directory": the cwd string to return as-is.
+        pub(super) return_cwd: Option<Input<'a>>,
+    }
+
+    impl<'a> ResolveState<'a> {
+        #[inline(always)]
+        pub(super) fn new() -> Self {
+            Self {
+                parts: SmallVec::new(),
+                device: SmallVec::new(),
+                resolved_absolute: false,
+                all_8bit: true,
+                return_cwd: None,
+            }
+        }
+    }
+
+    fn append_device<C: Unit>(out: &mut SmallVec<[u16; 32]>, device: &Device<'_, C>) {
+        let start = out.len();
+        out.resize(start + device.len(), 0);
+        device.write_to(&mut out[start..]);
+    }
+
+    /// `path = process.env[`=${resolvedDevice}`] || process.cwd()`, and the drive check that follows.
+    pub(super) fn drive_cwd<'a>(
+        global: &JSGlobalObject,
+        resolved_device: &[u16],
+        cwd: &mut Option<Input<'a>>,
+        storage: &'a mut Buf<u16>,
+    ) -> JsResult<Input<'a>> {
+        // Windows has the concept of drive-specific current working directories, which
+        // cmd.exe publishes as hidden `=C:` environment variables. They can only exist on
+        // Windows (POSIX environments reject names containing '='), so only look there.
+        #[cfg(windows)]
+        {
+            let mut key: SmallVec<[u16; 40]> = SmallVec::new();
+            key.push(b'=' as u16);
+            key.extend_from_slice(resolved_device);
+            key.push(0);
+            if let Some(value) = bun_sys::windows::getenv_w(&key).filter(|v| !v.is_empty()) {
+                // Verify that it actually points to our drive. If not, default to the
+                // drive's root.
+                let other_drive = value.len() > 2
+                    && value[2] == CHAR_BACKWARD_SLASH as u16
+                    && !equals_case_folded(&value[..2], resolved_device);
+                if other_drive {
+                    return Ok(drive_root(resolved_device, storage));
                 }
-            } else {
-                // Translated from the following JS code:
-                //   resolvedDevice = device;
-                buf_size = device_len;
-                // Copy device over if it's backed by an anonymous buffer.
-                if !device_in_tmp {
-                    memmove(&mut tmp_buf[0..buf_size], device);
-                }
-                resolved_device_len = buf_size;
-            }
-        }
-
-        if resolved_absolute {
-            if resolved_device_len > 0 {
-                break;
-            }
-        } else {
-            // Translated from the following JS code:
-            //   resolvedTail = `${StringPrototypeSlice(path, rootEnd)}\\${resolvedTail}`;
-            let slice_len = len - root_end;
-            if resolved_tail_len > 0 {
-                buf_offset = slice_len + 1;
-                // Move all bytes to the right by path slice.len + 1 for the separator
-                // Use copy_within because resolvedTail and buf2 overlap.
-                buf2.copy_within(0..resolved_tail_len, buf_offset);
-            }
-            buf_size = slice_len;
-            if slice_len > 0 {
-                // path may alias buf2 (drive-mismatch fallback); use ptr::copy.
-                // SAFETY: handles overlap.
-                unsafe {
-                    core::ptr::copy(path_ptr.add(root_end), buf2.as_mut_ptr(), slice_len);
-                }
-            }
-            buf_offset = buf_size;
-            buf_size += 1;
-            buf2[buf_offset] = T::from_u8(CHAR_BACKWARD_SLASH);
-            buf_size += resolved_tail_len;
-
-            resolved_tail_len = buf_size;
-            resolved_absolute = _is_absolute;
-
-            if _is_absolute && resolved_device_len > 0 {
-                break;
-            }
-        }
-        i_i64 -= 1;
-    }
-
-    // Exit early for empty path.
-    if resolved_tail_len == 0 {
-        return Ok(l::<T>(CHAR_STR_DOT));
-    }
-
-    // At this point, the path should be resolved to a full absolute path,
-    // but handle relative paths to be safe (can happen if reading the cwd fails).
-
-    // Normalize the tail path
-    let normalized_len = normalize_string_t::<T, { Platform::Windows }>(
-        &buf2[0..resolved_tail_len],
-        !resolved_absolute,
-        T::from_u8(CHAR_BACKWARD_SLASH),
-        buf,
-    );
-    // resolvedTail is now backed by buf.
-    resolved_tail_len = normalized_len;
-
-    // Translated from the following JS code:
-    //   resolvedAbsolute ? `${resolvedDevice}\\${resolvedTail}`
-    if resolved_absolute {
-        buf_offset = resolved_device_len + 1;
-        buf_size = buf_offset + resolved_tail_len;
-        // Use copy_within because resolvedTail and buf overlap.
-        buf.copy_within(0..resolved_tail_len, buf_offset);
-        buf[resolved_device_len] = T::from_u8(CHAR_BACKWARD_SLASH);
-        memmove(
-            &mut buf[0..resolved_device_len],
-            &tmp_buf[0..resolved_device_len],
-        );
-        buf[buf_size] = T::default();
-        return Ok(&buf[0..buf_size]);
-    }
-    // Translated from the following JS code:
-    //   : `${resolvedDevice}${resolvedTail}` || '.'
-    if (resolved_device_len + resolved_tail_len) > 0 {
-        buf_offset = resolved_device_len;
-        buf_size = buf_offset + resolved_tail_len;
-        // Use copy_within because resolvedTail and buf overlap.
-        buf.copy_within(0..resolved_tail_len, buf_offset);
-        memmove(
-            &mut buf[0..resolved_device_len],
-            &tmp_buf[0..resolved_device_len],
-        );
-        buf[buf_size] = T::default();
-        return Ok(&buf[0..buf_size]);
-    }
-    Ok(l::<T>(CHAR_STR_DOT))
-}
-
-#[cfg(unix)]
-unsafe extern "C" {
-    safe fn Process__getCachedCwd(global: &JSGlobalObject) -> JSValue;
-}
-
-fn resolve_posix_js_t<T: PathCharCwd>(
-    global_object: &JSGlobalObject,
-    paths: &[&[T]],
-    buf: &mut [T],
-    buf2: &mut [T],
-) -> JsResult<JSValue> {
-    match resolve_posix_t(paths, buf, buf2) {
-        Ok(r) => create_js_string_t::<T>(global_object, r),
-        Err(e) => Ok(e.to_js(global_object)),
-    }
-}
-
-fn resolve_windows_js_t<T: PathCharCwd>(
-    global_object: &JSGlobalObject,
-    paths: &[&[T]],
-    buf: &mut [T],
-    buf2: &mut [T],
-) -> JsResult<JSValue> {
-    match resolve_windows_t(paths, buf, buf2) {
-        Ok(r) => create_js_string_t::<T>(global_object, r),
-        Err(e) => Ok(e.to_js(global_object)),
-    }
-}
-
-fn resolve_js_t<T: PathCharCwd>(
-    global_object: &JSGlobalObject,
-    pool: &mut RarePathBuf,
-    is_windows: bool,
-    paths: &[&[T]],
-) -> JsResult<JSValue> {
-    // Adding 8 bytes when Windows for the possible UNC root.
-    let mut buf_len: usize = if is_windows { 8 } else { 0 };
-    for path in paths {
-        buf_len += if buf_len > 0 && !path.is_empty() {
-            path.len() + 1
-        } else {
-            path.len()
-        };
-    }
-    // When no path is absolute, the CWD (up to MAX_PATH_SIZE bytes) is prepended
-    // with a separator. Account for this to prevent buffer overflow.
-    buf_len += max_path_size::<T>() + 1;
-    buf_len = buf_len.max(path_size::<T>());
-    // +2 to account for separator and null terminator during path resolution.
-    // Carve buf/buf2 from one pooled slab.
-    let mut scratch = PathScratch::<T>::new(pool, (buf_len + 2) * 2);
-    let (buf, buf2) = scratch.slice().split_at_mut(buf_len + 2);
-    if is_windows {
-        resolve_windows_js_t(global_object, paths, buf, buf2)
-    } else {
-        resolve_posix_js_t(global_object, paths, buf, buf2)
-    }
-}
-
-fn resolve(
-    global_object: &JSGlobalObject,
-    is_windows: bool,
-    args: &[JSValue],
-) -> JsResult<JSValue> {
-    let args_len = args.len();
-    // Lazily-allocated RareData buffer replaces the old stack_fallback_size_large
-    // on the stack; `PathScratch` spills to the heap for very long paths.
-
-    // Borrow each argument's JSString backing as `Utf8Bytes` (ASCII inputs
-    // borrow in place, only non-ASCII transcodes). Inline-8 keeps the typical
-    // call alloc-free. Walk back-to-front to early-out on the first absolute
-    // POSIX path; reverse the borrowed views before handing to `resolve_*_t`.
-    let mut views: SmallVec<[JSStringView<'_>; 8]> = SmallVec::new();
-    let mut resolved_root = false;
-
-    let mut i = args_len;
-    while i > 0 {
-        i -= 1;
-
-        if resolved_root {
-            break;
-        }
-
-        let path = args[i as usize];
-        validate_string(global_object, path, format_args!("paths[{}]", i))?;
-        let path_str = path.to_js_string_view(global_object)?;
-        if path_str.is_empty() {
-            continue;
-        }
-
-        if !is_windows && path_str.char_at(0) == u16::from(CHAR_FORWARD_SLASH) {
-            resolved_root = true;
-        }
-        views.push(path_str);
-    }
-
-    let owned: SmallVec<[Utf8Bytes<'_>; 8]> = views.iter().map(JSStringView::to_utf8).collect();
-    let paths: SmallVec<[&[u8]; 8]> = owned.iter().rev().map(Utf8Bytes::slice).collect();
-
-    #[cfg(unix)]
-    {
-        if !is_windows {
-            // Micro-optimization #1: avoid creating a new string when passing no arguments or only empty strings.
-            // Micro-optimization #2: path.resolve(".") and path.resolve("./") === process.cwd()
-            if paths.is_empty() || (paths.len() == 1 && (paths[0] == b"." || paths[0] == b"./")) {
-                // Throws when `getcwd` fails (for example, a deleted cwd).
-                return crate::jsc::call_zero_is_throw(global_object, || {
-                    Process__getCachedCwd(global_object)
+                reserve(storage, value.len()).copy_from_slice(&value);
+                let storage: &'a Buf<u16> = storage;
+                return Ok(Input {
+                    string: JSValue::ZERO,
+                    chars: Chars::Utf16(&storage[..]),
                 });
             }
         }
+
+        // Verify that a cwd was found and that it actually points
+        // to our drive. If not, default to the drive's root.
+        let Some(out) = get_cwd_or_undefined(global)? else {
+            return Ok(drive_root(resolved_device, storage));
+        };
+        *cwd = Some(out);
+        let other_drive = with_chars!(out.chars, |p| {
+            p.len() > 2
+                && p[2].as_u32() == CHAR_BACKWARD_SLASH as u32
+                && !equals_case_folded(js_slice(p, 0, 2), resolved_device)
+        });
+        if other_drive {
+            return Ok(drive_root(resolved_device, storage));
+        }
+        Ok(out)
     }
 
-    let pool = &mut global_object.bun_vm().as_mut().rare_data().path_buf;
-    resolve_js_t::<u8>(global_object, pool, is_windows, &paths)
-}
-
-/// Based on Node v21.6.1 path.win32.toNamespacedPath:
-/// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L622
-fn to_namespaced_path_windows_t<'a, T: PathCharCwd>(
-    path: &[T],
-    buf: &'a mut [T],
-    buf2: &mut [T],
-) -> MaybeSlice<'a, T> {
-    // validateString of `path` is performed in pub fn toNamespacedPath.
-    // Backed by buf.
-    // Borrowck: capture length, then re-borrow buf.
-    let resolved_len = resolve_windows_t(&[path], buf, buf2)?.len();
-
-    let len = resolved_len;
-    if len <= 2 {
-        buf[0..path.len()].copy_from_slice(path);
-        buf[path.len()] = T::default();
-        return Ok(&buf[0..path.len()]);
+    /// `${resolvedDevice}\`, built in `storage`.
+    fn drive_root<'a>(resolved_device: &[u16], storage: &'a mut Buf<u16>) -> Input<'a> {
+        let p = reserve(storage, resolved_device.len() + 1);
+        p[..resolved_device.len()].copy_from_slice(resolved_device);
+        p[resolved_device.len()] = CHAR_BACKWARD_SLASH as u16;
+        let storage: &'a Buf<u16> = storage;
+        Input {
+            string: JSValue::ZERO,
+            chars: Chars::Utf16(&storage[..]),
+        }
     }
 
-    let buf_offset: usize;
-    let buf_size: usize;
+    /// The argument-scanning half of `win32.resolve()`. `get_arg(i)` produces
+    /// argument `i` (running validateString for the JS entry point). The
+    /// `process.cwd()` string, if one was read, is recorded in `cwd` so the
+    /// caller can keep it alive until the result has been built.
+    pub(super) fn resolve_scan<'a>(
+        global: &JSGlobalObject,
+        arg_count: Index,
+        mut get_arg: impl FnMut(Index) -> JsResult<Input<'a>>,
+        st: &mut ResolveState<'a>,
+        cwd: &mut Option<Input<'a>>,
+        cwd_storage: &'a mut Buf<u16>,
+    ) -> JsResult<()> {
+        let mut cwd_storage = Some(cwd_storage);
+        // Argument 0 once seen, so the fast-path check need not fetch it again.
+        let mut first_arg: Option<Input<'a>> = None;
+        for i in (-1..arg_count).rev() {
+            let path: Input<'a>;
+            if i >= 0 {
+                path = get_arg(i)?;
+                if i == 0 {
+                    first_arg = Some(path);
+                }
 
-    let byte0 = buf[0];
-    if byte0 == T::from_u8(CHAR_BACKWARD_SLASH) {
-        // Possible UNC root
-        if buf[1] == T::from_u8(CHAR_BACKWARD_SLASH) {
-            let byte2 = buf[2];
-            if byte2 != T::from_u8(CHAR_QUESTION_MARK) && byte2 != T::from_u8(CHAR_DOT) {
-                // Matched non-long UNC root, convert the path to a long UNC path
+                // Skip empty entries
+                if path.len() == 0 {
+                    continue;
+                }
+            } else if st.device.is_empty() {
+                path = get_cwd(global)?;
+                *cwd = Some(path);
+                // Fast path for current directory
+                if arg_count == 0
+                    || (arg_count == 1 && path.len() > 0 && is_path_separator::<W>(path.at(0)))
+                {
+                    let trivial = match first_arg {
+                        None => true, // arg_count == 0
+                        Some(arg) => posix::is_trivial_arg(&arg.chars),
+                    };
+                    if trivial {
+                        st.return_cwd = Some(path);
+                        return Ok(());
+                    }
+                }
+            } else {
+                // Windows has the concept of drive-specific current working
+                // directories. If we've resolved a drive letter but not yet an
+                // absolute path, get cwd for that drive, or the process cwd if
+                // the drive cwd is not available. We're sure the device is not
+                // a UNC path at this points, because UNC paths are always absolute.
+                let device: SmallVec<[u16; 32]> = st.device.clone();
+                path = drive_cwd(
+                    global,
+                    &device,
+                    cwd,
+                    cwd_storage.take().expect("i == -1 is visited once"),
+                )?;
+            }
 
-                // Translated from the following JS code:
-                //   return `\\\\?\\UNC\\${StringPrototypeSlice(resolvedPath, 2)}`;
-                buf_offset = 6;
-                buf_size = len + 6;
-                // Move all bytes to the right by 6 so that the first two bytes are
-                // overwritten by "\\\\?\\UNC\\" which is 8 bytes long.
-                // Use copy_within because resolvedPath and buf overlap.
-                buf.copy_within(0..len, buf_offset);
-                buf[0] = T::from_u8(CHAR_BACKWARD_SLASH);
-                buf[1] = T::from_u8(CHAR_BACKWARD_SLASH);
-                buf[2] = T::from_u8(CHAR_QUESTION_MARK);
-                buf[3] = T::from_u8(CHAR_BACKWARD_SLASH);
-                buf[4] = T::from_u8(b'U');
-                buf[5] = T::from_u8(b'N');
-                buf[6] = T::from_u8(b'C');
-                buf[7] = T::from_u8(CHAR_BACKWARD_SLASH);
-                buf[buf_size] = T::default();
-                return Ok(&buf[0..buf_size]);
+            if path.len() == 0 {
+                // An empty process.cwd(): no root, no device, contributes only a separator.
+                if !st.resolved_absolute {
+                    st.parts.push(ResolvePart {
+                        chars: path.chars,
+                        root_end: 0,
+                    });
+                    st.all_8bit &= path.is_8bit();
+                }
+                continue;
+            }
+
+            let stop = with_chars!(path.chars, |p| {
+                let root = match_root(p);
+
+                if !root.device.is_none() {
+                    if !st.device.is_empty() {
+                        let mut device: SmallVec<[u16; 32]> = SmallVec::new();
+                        append_device(&mut device, &root.device);
+                        if !equals_case_folded(&device[..], &st.device[..]) {
+                            // This path points to another device so it is not applicable
+                            continue;
+                        }
+                    } else {
+                        append_device(&mut st.device, &root.device);
+                        st.all_8bit &= path.is_8bit() || all_ascii(&st.device[..]);
+                    }
+                }
+
+                if st.resolved_absolute {
+                    !st.device.is_empty()
+                } else {
+                    st.parts.push(ResolvePart {
+                        chars: path.chars,
+                        root_end: root.root_end,
+                    });
+                    st.all_8bit &= path.is_8bit();
+                    st.resolved_absolute = root.is_absolute;
+                    root.is_absolute && !st.device.is_empty()
+                }
+            });
+            if stop {
+                break;
             }
         }
-    } else if is_windows_device_root_t(byte0)
-        && buf[1] == T::from_u8(CHAR_COLON)
-        && buf[2] == T::from_u8(CHAR_BACKWARD_SLASH)
-    {
-        // Matched device root, convert the path to a long UNC path
-
-        // Translated from the following JS code:
-        //   return `\\\\?\\${resolvedPath}`
-        buf_offset = 4;
-        buf_size = len + 4;
-        // Move all bytes to the right by 4
-        // Use copy_within because resolvedPath and buf overlap.
-        buf.copy_within(0..len, buf_offset);
-        buf[0] = T::from_u8(CHAR_BACKWARD_SLASH);
-        buf[1] = T::from_u8(CHAR_BACKWARD_SLASH);
-        buf[2] = T::from_u8(CHAR_QUESTION_MARK);
-        buf[3] = T::from_u8(CHAR_BACKWARD_SLASH);
-        buf[buf_size] = T::default();
-        return Ok(&buf[0..buf_size]);
-    }
-    Ok(&buf[0..resolved_len])
-}
-
-fn to_namespaced_path_windows_js_t<T: PathCharCwd>(
-    global_object: &JSGlobalObject,
-    path: &[T],
-    buf: &mut [T],
-    buf2: &mut [T],
-) -> JsResult<JSValue> {
-    match to_namespaced_path_windows_t(path, buf, buf2) {
-        Ok(r) => create_js_string_t::<T>(global_object, r),
-        Err(e) => Ok(e.to_js(global_object)),
-    }
-}
-
-fn to_namespaced_path_js_t<T: PathCharCwd>(
-    global_object: &JSGlobalObject,
-    pool: &mut RarePathBuf,
-    is_windows: bool,
-    path: &[T],
-) -> JsResult<JSValue> {
-    if !is_windows || path.is_empty() {
-        return create_js_string_t::<T>(global_object, path);
-    }
-    // Account for CWD (up to MAX_PATH_SIZE) that resolve may prepend to relative paths.
-    let buf_len = (path.len() + max_path_size::<T>() + 1).max(path_size::<T>());
-    // +8 for possible UNC prefix, +1 for null terminator; ×2 for buf/buf2.
-    let mut scratch = PathScratch::<T>::new(pool, (buf_len + 8 + 1) * 2);
-    let (buf, buf2) = scratch.slice().split_at_mut(buf_len + 8 + 1);
-    to_namespaced_path_windows_js_t(global_object, path, buf, buf2)
-}
-
-fn to_namespaced_path(
-    global_object: &JSGlobalObject,
-    is_windows: bool,
-    args: &[JSValue],
-) -> JsResult<JSValue> {
-    let args_len = args.len();
-    if args_len == 0 {
-        return Ok(JSValue::UNDEFINED);
-    }
-    let path_ptr = args[0];
-
-    // Based on Node v21.6.1 path.win32.toNamespacedPath and path.posix.toNamespacedPath:
-    // https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L624
-    // https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L1269
-    //
-    // Act as an identity function for non-string values and non-Windows platforms.
-    if !is_windows || !path_ptr.is_string() {
-        return Ok(path_ptr);
-    }
-    let path_str = path_ptr.to_js_string_view(global_object)?;
-    if path_str.is_empty() {
-        return Ok(path_ptr);
+        Ok(())
     }
 
-    let path_slice = path_str.to_utf8();
-    let pool = &mut global_object.bun_vm().as_mut().rare_data().path_buf;
-    to_namespaced_path_js_t::<u8>(global_object, pool, is_windows, path_slice.slice())
-}
+    /// The string-building half of `win32.resolve()`.
+    pub(super) fn resolve_build<'o, C: Unit>(
+        st: &ResolveState<'_>,
+        out: &'o mut Buf<C>,
+    ) -> Result<&'o [C], TooLong> {
+        let mut tail_len = 0usize;
+        for part in &st.parts {
+            tail_len += part.chars.len() - part.root_end + 1;
+        }
+        let device_len = st.device.len();
+        check_length(device_len + 1 + tail_len)?;
 
-// Emit the SYSV-ABI thunks locally.
-// Each wrapper forwards `(global, is_windows, args_ptr, args_len)` and routes the
-// `JsResult<JSValue>` through `host_fn::to_js_host_call`.
-//
-// ABI: The C++ side (src/jsc/bindings/Path.cpp) declares these as
-// `SYSV_ABI`, so on Windows-x64 the wrapper MUST be `extern "sysv64"` — using
-// `extern "C"` there would be the Win64 ABI (RCX/RDX/R8/R9 + shadow space) and
-// would mis-read every argument.
-macro_rules! export_path_host_fn {
-    ($( $export:literal => $target:path ),* $(,)?) => {$(
-        const _: () = {
-            #[cfg(all(windows, target_arch = "x86_64"))]
-            #[unsafe(export_name = $export)]
-            extern "sysv64" fn __wrapped(
-                global: &JSGlobalObject,
-                is_windows: bool,
-                args_ptr: *const JSValue,
-                args_len: u16,
-            ) -> JSValue {
-                // SAFETY: `args_ptr` points to `args_len` JSValues from the C++
-                // CallFrame (NodePath.cpp). Borrowed for the synchronous call.
-                // (Body kept in sync with the non-Windows arm below — bughunt
-                // changed the target signature to take a slice but only updated
-                // one cfg arm.)
-                let args = unsafe { bun_core::ffi::slice(args_ptr, args_len as usize) };
-                crate::jsc::host_fn::to_js_host_call(
-                    global,
-                    || $target(global, is_windows, args),
-                )
+        let mut tail: Buf<C> = Buf::new();
+        let t = reserve(&mut tail, tail_len);
+        let mut p = 0;
+        for part in st.parts.iter().rev() {
+            p += part.chars.slice_from(part.root_end).copy_to(&mut t[p..]);
+            t[p] = ch(CHAR_BACKWARD_SLASH);
+            p += 1;
+        }
+
+        // At this point the path should be resolved to a full absolute path,
+        // but handle relative paths to be safe (might happen when process.cwd()
+        // fails)
+
+        let res = reserve(out, device_len + 1 + tail_len + 1);
+        let mut q = copy_units(res, &st.device[..]);
+        if st.resolved_absolute {
+            res[q] = ch(CHAR_BACKWARD_SLASH);
+            q += 1;
+        }
+
+        // Normalize the tail path
+        let len = normalize_string::<W, C>(&tail, !st.resolved_absolute, &mut res[q..]);
+
+        let mut total = q + len;
+        if total == 0 {
+            res[0] = ch(CHAR_DOT);
+            total = 1;
+        }
+        Ok(&out[..total])
+    }
+
+    /// The resolve() fast path's return value as an owned copy: `path` itself on
+    /// Windows, `StringPrototypeReplace(path, /\//g, '\\')` elsewhere.
+    pub(super) fn returned_cwd<'o, C: Unit, S: Unit>(cwd: &[S], out: &'o mut Buf<C>) -> &'o [C] {
+        let o = reserve(out, cwd.len());
+        for (d, c) in o.iter_mut().zip(cwd) {
+            let u = c.as_u32();
+            *d = if !cfg!(windows) && u == CHAR_FORWARD_SLASH as u32 {
+                ch(CHAR_BACKWARD_SLASH)
+            } else {
+                C::from_u32(u)
+            };
+        }
+        &out[..]
+    }
+
+    /// `win32.resolve(path)` for internal callers with an already-validated
+    /// string: scans, then builds into whichever of `out8`/`out16` matches. The
+    /// result is always an owned copy, never a view of the cwd string.
+    pub(super) fn resolve<'o>(
+        global: &JSGlobalObject,
+        path: Chars<'o>,
+        cwd: &mut Option<Input<'o>>,
+        out8: &'o mut Buf<u8>,
+        out16: &'o mut Buf<u16>,
+        cwd_storage: &'o mut Buf<u16>,
+    ) -> JsResult<Chars<'o>> {
+        let mut st = ResolveState::new();
+        resolve_scan(
+            global,
+            1,
+            |_| {
+                Ok(Input {
+                    string: JSValue::ZERO,
+                    chars: path,
+                })
+            },
+            &mut st,
+            cwd,
+            cwd_storage,
+        )?;
+        if let Some(cwd) = st.return_cwd {
+            return Ok(match cwd.chars {
+                Chars::Latin1(s) => Chars::Latin1(returned_cwd(s, out8)),
+                Chars::Utf16(s) => Chars::Utf16(returned_cwd(s, out16)),
+            });
+        }
+        let too_long = |_| global.throw_string_too_long();
+        Ok(if st.all_8bit {
+            Chars::Latin1(resolve_build::<u8>(&st, out8).map_err(too_long)?)
+        } else {
+            Chars::Utf16(resolve_build::<u16>(&st, out16).map_err(too_long)?)
+        })
+    }
+
+    /// `colon_index` is `StringPrototypeIndexOf(path, ':')` when the caller
+    /// already knows it (join()); lib/path.js recomputes it at each use.
+    pub(super) fn normalize<'o, C: Unit>(
+        path: &'o [C],
+        out: &'o mut Buf<C>,
+        colon_index: Option<Index>,
+    ) -> &'o [C] {
+        let len = path.len();
+        // Caller handles len === 0.
+        let code = path[0].as_u32();
+
+        // Try to match a root
+        if len == 1 {
+            // `path` contains just a single char, exit early to avoid
+            // unnecessary work
+            if code == CHAR_FORWARD_SLASH as u32 {
+                let o = reserve(out, 1);
+                o[0] = ch(CHAR_BACKWARD_SLASH);
+                return &out[..];
             }
-            #[cfg(not(all(windows, target_arch = "x86_64")))]
-            #[unsafe(export_name = $export)]
-            extern "C" fn __wrapped(
-                global: &JSGlobalObject,
-                is_windows: bool,
-                args_ptr: *const JSValue,
-                args_len: u16,
-            ) -> JSValue {
-                // SAFETY: `args_ptr` points to `args_len` JSValues from the C++
-                // CallFrame (the caller is `Bun__Path__*` in NodePath.cpp). The
-                // slice is borrowed for the synchronous host-call only.
-                let args = unsafe { bun_core::ffi::slice(args_ptr, args_len as usize) };
-                crate::jsc::host_fn::to_js_host_call(
-                    global,
-                    || $target(global, is_windows, args),
-                )
+            return path;
+        }
+
+        let root = match_root(path);
+        let mut device = root.device;
+        let mut root_end = root.root_end;
+        let is_absolute = root.is_absolute;
+        let colon_index = colon_index.unwrap_or_else(|| index_of(path, CHAR_COLON, 0));
+
+        if device.kind == DeviceKind::Namespace {
+            // Special case: handle \\?\COM1: or similar reserved device paths
+            let possible_device = js_slice(path, 4, colon_index + 1);
+            if is_windows_reserved_name(js_slice(
+                possible_device,
+                0,
+                possible_device.len() as Index - 1,
+            )) {
+                device.kind = DeviceKind::ReservedNamespace;
+                device.a0 = 4;
+                device.a1 = 4 + possible_device.len();
+                root_end = 4 + possible_device.len();
             }
+        } else if device.kind == DeviceKind::Unc && root_end == len {
+            // We matched a UNC root only
+            // Return the normalized version of the UNC root since there
+            // is nothing left to process
+            let o = reserve(out, device.len() + 1);
+            let n = device.write_to(o);
+            o[n] = ch(CHAR_BACKWARD_SLASH);
+            return &out[..n + 1];
+        } else if !is_path_separator::<W>(code) {
+            if colon_index > 0 {
+                if device.kind == DeviceKind::Drive {
+                    // isWindowsDeviceRoot(code) && colonIndex === 1, handled by match_root()
+                } else if is_windows_reserved_name(&path[..colon_index as usize]) {
+                    device.kind = DeviceKind::Reserved;
+                    device.a0 = 0;
+                    device.a1 = colon_index as usize + 1;
+                    root_end = colon_index as usize + 1;
+                }
+            }
+        }
+
+        // Output layout: [.\][device][\][tail][\] — the tail is written first at a fixed
+        // offset and whichever prefix applies is then written immediately before it.
+        let device_len = device.len();
+        let tail_start = 2 + device_len + 1;
+        let buf = reserve(out, tail_start + (len - root_end) + 2);
+        let mut tail_len = if root_end < len {
+            let (_, tail) = buf.split_at_mut(tail_start);
+            normalize_string::<W, C>(&path[root_end..], !is_absolute, tail)
+        } else {
+            0
         };
-    )*};
+        if tail_len == 0 && !is_absolute {
+            buf[tail_start] = ch(CHAR_DOT);
+            tail_len = 1;
+        }
+        if tail_len > 0 && is_path_separator::<W>(path[len - 1].as_u32()) {
+            buf[tail_start + tail_len] = ch(CHAR_BACKWARD_SLASH);
+            tail_len += 1;
+        }
+        let tail_end = tail_start + tail_len;
+
+        let mut head = tail_start;
+        macro_rules! prepend_dot_slash {
+            () => {{
+                head -= 2;
+                buf[head] = ch(CHAR_DOT);
+                buf[head + 1] = ch(CHAR_BACKWARD_SLASH);
+            }};
+        }
+        macro_rules! prepend_device {
+            () => {{
+                head -= device_len;
+                device.write_to(&mut buf[head..]);
+            }};
+        }
+
+        if !is_absolute && device.is_none() && colon_index != -1 {
+            // If the original path was not absolute and if we have not been able to
+            // resolve it relative to a particular device, we need to ensure that the
+            // `tail` has not become something that Windows might interpret as an
+            // absolute path. See CVE-2024-36139.
+            if tail_len >= 2
+                && is_windows_device_root(buf[tail_start].as_u32())
+                && buf[tail_start + 1].as_u32() == CHAR_COLON as u32
+            {
+                prepend_dot_slash!();
+                return &out[head..tail_end];
+            }
+            let mut index = colon_index;
+
+            loop {
+                if index == len as Index - 1
+                    || is_path_separator::<W>(path[index as usize + 1].as_u32())
+                {
+                    prepend_dot_slash!();
+                    return &out[head..tail_end];
+                }
+                index = index_of(path, CHAR_COLON, index + 1);
+                if index == -1 {
+                    break;
+                }
+            }
+        }
+        if is_windows_reserved_name(js_slice(path, 0, colon_index)) {
+            prepend_device!();
+            prepend_dot_slash!();
+            return &out[head..tail_end];
+        }
+        if device.is_none() {
+            if is_absolute {
+                head -= 1;
+                buf[head] = ch(CHAR_BACKWARD_SLASH);
+            }
+            return &out[head..tail_end];
+        }
+        if is_absolute {
+            head -= 1;
+            buf[head] = ch(CHAR_BACKWARD_SLASH);
+        }
+        prepend_device!();
+        &out[head..tail_end]
+    }
+
+    pub(super) fn join<'o, C: Unit>(
+        paths: &[Chars<'_>],
+        joined_buf: &'o mut Buf<C>,
+        out: &'o mut Buf<C>,
+    ) -> Result<&'o [C], TooLong> {
+        // Caller has removed empty arguments and handled the none-left case.
+        let mut joined_len = paths.len() - 1;
+        for path in paths {
+            joined_len += path.len();
+        }
+        let joined_len = check_length(joined_len)?;
+        let base = reserve(joined_buf, joined_len);
+        {
+            let mut p = 0;
+            for (i, path) in paths.iter().enumerate() {
+                if i != 0 {
+                    base[p] = ch(CHAR_BACKWARD_SLASH);
+                    p += 1;
+                }
+                p += path.copy_to(&mut base[p..]);
+            }
+        }
+        let mut joined_start = 0usize;
+        let first_part = paths[0];
+
+        // Make sure that the joined path doesn't start with two slashes, because
+        // normalize() will mistake it for a UNC path then.
+        //
+        // This step is skipped when it is very clear that the user actually
+        // intended to point at a UNC path. This is assumed when the first
+        // non-empty string arguments starts with exactly two slashes followed by
+        // at least one more non-slash character.
+        //
+        // Note that for normalize() to treat a path as a UNC path it needs to
+        // have at least 2 components, so we don't filter for that here.
+        // This means that the user can use join to construct UNC paths from
+        // a server name and a share name; for example:
+        //   path.join('//server', 'share') -> '\\\\server\\share\\')
+        let mut needs_replace = true;
+        let mut slash_count = 0usize;
+        if is_path_separator::<W>(first_part.at(0)) {
+            slash_count += 1;
+            let first_len = first_part.len();
+            if first_len > 1 && is_path_separator::<W>(first_part.at(1)) {
+                slash_count += 1;
+                if first_len > 2 {
+                    if is_path_separator::<W>(first_part.at(2)) {
+                        slash_count += 1;
+                    } else {
+                        // We matched a UNC path in the first part
+                        needs_replace = false;
+                    }
+                }
+            }
+        }
+        if needs_replace {
+            // Find any more consecutive slashes we need to replace
+            while slash_count < joined_len && is_path_separator::<W>(base[slash_count].as_u32()) {
+                slash_count += 1;
+            }
+
+            // Replace the slashes if needed
+            if slash_count >= 2 {
+                // joined = `\\${StringPrototypeSlice(joined, slashCount)}`
+                base[slash_count - 1] = ch(CHAR_BACKWARD_SLASH);
+                joined_start = slash_count - 1;
+            }
+        }
+        let joined = &mut base[joined_start..];
+
+        // Skip normalization when reserved device names are present.
+        // lib/path.js splits `joined` on backslashes and tests each part up to its first colon;
+        // visiting each colon and looking back for the start of its part is equivalent.
+        let first_colon = index_of(joined, CHAR_COLON, 0);
+        let mut colon = first_colon;
+        while colon != -1 {
+            // Reserved names are at most 4 characters, so looking back 5 is enough to decide.
+            let mut part_start = colon as usize;
+            let limit = (colon - 5).max(0) as usize;
+            while part_start > limit
+                && joined[part_start - 1].as_u32() != CHAR_BACKWARD_SLASH as u32
+                && joined[part_start - 1].as_u32() != CHAR_COLON as u32
+            {
+                part_start -= 1;
+            }
+            // Otherwise: an earlier colon in this part, or a part longer than any reserved name.
+            if part_start == 0 || joined[part_start - 1].as_u32() == CHAR_BACKWARD_SLASH as u32 {
+                if is_windows_reserved_name(&joined[part_start..colon as usize]) {
+                    // Replace forward slashes with backslashes
+                    for c in joined.iter_mut() {
+                        if c.as_u32() == CHAR_FORWARD_SLASH as u32 {
+                            *c = ch(CHAR_BACKWARD_SLASH);
+                        }
+                    }
+                    return Ok(&joined_buf[joined_start..joined_len]);
+                }
+            }
+            colon = index_of(joined, CHAR_COLON, colon + 1);
+        }
+
+        Ok(normalize::<C>(
+            &joined_buf[joined_start..joined_len],
+            out,
+            Some(first_colon),
+        ))
+    }
+
+    pub(super) fn relative<C: Unit>(
+        global: &JSGlobalObject,
+        from_orig: &[C],
+        to_orig: &[C],
+    ) -> JsResult<JSValue> {
+        if from_orig == to_orig {
+            return Ok(empty_string(global));
+        }
+
+        let mut from_lower = Lowered::<C>::new();
+        let mut to_lower = Lowered::<C>::new();
+        let from = to_lower_case(from_orig, &mut from_lower);
+        let to = to_lower_case(to_orig, &mut to_lower);
+
+        if from == to {
+            return Ok(empty_string(global));
+        }
+
+        if from_orig.len() != from.len() || to_orig.len() != to.len() {
+            return relative_case_mapped_lengths_differ(global, from_orig, to_orig);
+        }
+
+        // Trim any leading backslashes
+        let mut from_start: Index = 0;
+        while from_start < from.len() as Index
+            && from[from_start as usize].as_u32() == CHAR_BACKWARD_SLASH as u32
+        {
+            from_start += 1;
+        }
+        // Trim trailing backslashes (applicable to UNC paths only)
+        let mut from_end: Index = from.len() as Index;
+        while from_end - 1 > from_start
+            && from[(from_end - 1) as usize].as_u32() == CHAR_BACKWARD_SLASH as u32
+        {
+            from_end -= 1;
+        }
+        let from_len: Index = from_end - from_start;
+
+        // Trim any leading backslashes
+        let mut to_start: Index = 0;
+        while to_start < to.len() as Index
+            && to[to_start as usize].as_u32() == CHAR_BACKWARD_SLASH as u32
+        {
+            to_start += 1;
+        }
+        // Trim trailing backslashes (applicable to UNC paths only)
+        let mut to_end: Index = to.len() as Index;
+        while to_end - 1 > to_start
+            && to[(to_end - 1) as usize].as_u32() == CHAR_BACKWARD_SLASH as u32
+        {
+            to_end -= 1;
+        }
+        let to_len: Index = to_end - to_start;
+
+        // Compare paths to find the longest common path from root
+        let length: Index = if from_len < to_len { from_len } else { to_len };
+        // Node's loop breaks at the first mismatch and remembers the last '\\' before it.
+        let mut i: Index = if length > 0 {
+            common_prefix_length(
+                &from[from_start as usize..],
+                &to[to_start as usize..],
+                length as usize,
+            ) as Index
+        } else {
+            0
+        };
+        let mut last_common_sep: Index = i - 1;
+        while last_common_sep >= 0
+            && from[(from_start + last_common_sep) as usize].as_u32() != CHAR_BACKWARD_SLASH as u32
+        {
+            last_common_sep -= 1;
+        }
+
+        // We found a mismatch before the first common path separator was seen, so
+        // return the original `to`.
+        if i != length {
+            if last_common_sep == -1 {
+                return to_js(global, to_orig);
+            }
+        } else {
+            if to_len > length {
+                if to[(to_start + i) as usize].as_u32() == CHAR_BACKWARD_SLASH as u32 {
+                    // We get here if `from` is the exact base path for `to`.
+                    // For example: from='C:\\foo\\bar'; to='C:\\foo\\bar\\baz'
+                    return to_js(global, &to_orig[(to_start + i + 1) as usize..]);
+                }
+                if i == 2 {
+                    // We get here if `from` is the device root.
+                    // For example: from='C:\\'; to='C:\\foo'
+                    return to_js(global, &to_orig[(to_start + i) as usize..]);
+                }
+            }
+            if from_len > length {
+                if from[(from_start + i) as usize].as_u32() == CHAR_BACKWARD_SLASH as u32 {
+                    // We get here if `to` is the exact base path for `from`.
+                    // For example: from='C:\\foo\\bar'; to='C:\\foo'
+                    last_common_sep = i;
+                } else if i == 2 {
+                    // We get here if `to` is the device root.
+                    // For example: from='C:\\foo\\bar'; to='C:\\'
+                    last_common_sep = 3;
+                }
+            }
+            if last_common_sep == -1 {
+                last_common_sep = 0;
+            }
+        }
+
+        // Generate the relative path based on the path difference between `to` and
+        // `from`
+        let mut up = 0usize;
+        i = from_start + last_common_sep + 1;
+        while i <= from_end {
+            if i == from_end || from[i as usize].as_u32() == CHAR_BACKWARD_SLASH as u32 {
+                up += 1;
+            }
+            i += 1;
+        }
+
+        to_start += last_common_sep;
+
+        // Lastly, append the rest of the destination (`to`) path that comes after
+        // the common path parts
+        if up > 0 {
+            let rest = js_slice(to_orig, to_start, to_end);
+            let mut out: Buf<C> = Buf::new();
+            let o = reserve(&mut out, up * 3 + rest.len());
+            let mut p = 0;
+            for k in 0..up {
+                if k != 0 {
+                    o[p] = ch(CHAR_BACKWARD_SLASH);
+                    p += 1;
+                }
+                o[p] = ch(CHAR_DOT);
+                o[p + 1] = ch(CHAR_DOT);
+                p += 2;
+            }
+            p += copy_units(&mut o[p..], rest);
+            return to_js(global, &out[..p]);
+        }
+
+        if to_start < to_orig.len() as Index
+            && to_orig[to_start as usize].as_u32() == CHAR_BACKWARD_SLASH as u32
+        {
+            to_start += 1;
+        }
+        to_js(global, js_slice(to_orig, to_start, to_end))
+    }
+
+    /// The `fromOrig.length !== from.length || toOrig.length !== to.length`
+    /// branch of win32.relative(): only reachable when case mapping changed a
+    /// length (U+0130), so it compares split segments case-insensitively.
+    #[cold]
+    #[inline(never)]
+    fn relative_case_mapped_lengths_differ<C: Unit>(
+        global: &JSGlobalObject,
+        from_orig: &[C],
+        to_orig: &[C],
+    ) -> JsResult<JSValue> {
+        let split = |s: &[C]| -> SmallVec<[(usize, usize); 32]> {
+            let mut parts: SmallVec<[(usize, usize); 32]> = SmallVec::new();
+            let mut start = 0;
+            for i in 0..=s.len() {
+                if i == s.len() || s[i].as_u32() == CHAR_BACKWARD_SLASH as u32 {
+                    parts.push((start, i));
+                    start = i + 1;
+                }
+            }
+            if let Some(&(a, b)) = parts.last() {
+                if a == b {
+                    parts.pop();
+                }
+            }
+            parts
+        };
+        let from_split = split(from_orig);
+        let to_split = split(to_orig);
+
+        let from_len = from_split.len() as Index;
+        let to_len = to_split.len() as Index;
+        let length = if from_len < to_len { from_len } else { to_len };
+
+        let mut i: Index = 0;
+        while i < length {
+            let (fa, fb) = from_split[i as usize];
+            let (ta, tb) = to_split[i as usize];
+            if !equals_case_folded(&from_orig[fa..fb], &to_orig[ta..tb]) {
+                break;
+            }
+            i += 1;
+        }
+
+        let mut out: Buf<C> = Buf::new();
+        // ArrayPrototypeJoin(ArrayPrototypeSlice(toSplit, k), '\\')
+        let join_to_split_from = |o: &mut [C], mut p: usize, k: Index| -> usize {
+            for m in k..to_len {
+                if m != k {
+                    o[p] = ch(CHAR_BACKWARD_SLASH);
+                    p += 1;
+                }
+                let (ta, tb) = to_split[m as usize];
+                p += copy_units(&mut o[p..], &to_orig[ta..tb]);
+            }
+            p
+        };
+        if i == 0 {
+            return to_js(global, to_orig);
+        } else if i == length {
+            if to_len > length {
+                let o = reserve(&mut out, to_orig.len());
+                let p = join_to_split_from(o, 0, i);
+                return to_js(global, &out[..p]);
+            }
+            if from_len > length {
+                let ups = (from_len - 1 - i) as usize;
+                let o = reserve(&mut out, ups * 3 + 2);
+                let mut p = 0;
+                for _ in 0..ups {
+                    o[p] = ch(CHAR_DOT);
+                    o[p + 1] = ch(CHAR_DOT);
+                    o[p + 2] = ch(CHAR_BACKWARD_SLASH);
+                    p += 3;
+                }
+                o[p] = ch(CHAR_DOT);
+                o[p + 1] = ch(CHAR_DOT);
+                return to_js(global, &out[..p + 2]);
+            }
+            return Ok(empty_string(global));
+        }
+
+        let ups = (from_len - i) as usize;
+        let o = reserve(&mut out, ups * 3 + to_orig.len());
+        let mut p = 0;
+        for _ in 0..ups {
+            o[p] = ch(CHAR_DOT);
+            o[p + 1] = ch(CHAR_DOT);
+            o[p + 2] = ch(CHAR_BACKWARD_SLASH);
+            p += 3;
+        }
+        let p = join_to_split_from(o, p, i);
+        to_js(global, &out[..p])
+    }
+
+    pub(super) fn dirname(global: &JSGlobalObject, path: &Input<'_>) -> JSValue {
+        // Caller handles len === 0.
+        with_chars!(path.chars, |p| {
+            let len = p.len() as Index;
+            let mut root_end: Index = -1;
+            let mut offset: Index = 0;
+            let code = p[0].as_u32();
+
+            if len == 1 {
+                // `path` contains just a path separator, exit early to avoid
+                // unnecessary work or a dot.
+                return if is_path_separator::<W>(code) {
+                    path.string
+                } else {
+                    dot_string(global)
+                };
+            }
+
+            // Try to match a root
+            if is_path_separator::<W>(code) {
+                // Possible UNC root
+
+                root_end = 1;
+                offset = 1;
+
+                if is_path_separator::<W>(p[1].as_u32()) {
+                    // Matched double path separator at beginning
+                    let mut j: Index = 2;
+                    let mut last: Index = j;
+                    // Match 1 or more non-path separators
+                    while j < len && !is_path_separator::<W>(p[j as usize].as_u32()) {
+                        j += 1;
+                    }
+                    if j < len && j != last {
+                        // Matched!
+                        last = j;
+                        // Match 1 or more path separators
+                        while j < len && is_path_separator::<W>(p[j as usize].as_u32()) {
+                            j += 1;
+                        }
+                        if j < len && j != last {
+                            // Matched!
+                            last = j;
+                            // Match 1 or more non-path separators
+                            while j < len && !is_path_separator::<W>(p[j as usize].as_u32()) {
+                                j += 1;
+                            }
+                            if j == len {
+                                // We matched a UNC root only
+                                return path.string;
+                            }
+                            if j != last {
+                                // We matched a UNC root with leftovers
+
+                                // Offset by 1 to include the separator after the UNC root to
+                                // treat it as a "normal root" on top of a (UNC) root
+                                root_end = j + 1;
+                                offset = j + 1;
+                            }
+                        }
+                    }
+                }
+                // Possible device root
+            } else if is_windows_device_root(code) && p[1].as_u32() == CHAR_COLON as u32 {
+                root_end = if len > 2 && is_path_separator::<W>(p[2].as_u32()) {
+                    3
+                } else {
+                    2
+                };
+                offset = root_end;
+            }
+
+            let mut end: Index = -1;
+            let mut matched_slash = true;
+            let mut i: Index = len - 1;
+            while i >= offset {
+                if is_path_separator::<W>(p[i as usize].as_u32()) {
+                    if !matched_slash {
+                        end = i;
+                        break;
+                    }
+                } else {
+                    // We saw the first non-path separator
+                    matched_slash = false;
+                }
+                i -= 1;
+            }
+
+            if end == -1 {
+                if root_end == -1 {
+                    return dot_string(global);
+                }
+
+                end = root_end;
+            }
+            substring(global, path, 0, end)
+        })
+    }
+
+    pub(super) fn parse(path: &Input<'_>, ret: &mut Parsed) {
+        // Caller handles path.length === 0 and pre-fills every field with ''.
+        with_chars!(path.chars, |p| {
+            let len = p.len() as Index;
+            let mut root_end: Index = 0;
+            let mut code = p[0].as_u32();
+
+            if len == 1 {
+                if is_path_separator::<W>(code) {
+                    // `path` contains just a path separator, exit early to avoid
+                    // unnecessary work
+                    ret.root = Parsed::range(0, 1);
+                    ret.dir = Parsed::range(0, 1);
+                    return;
+                }
+                ret.base = Parsed::range(0, 1);
+                ret.name = Parsed::range(0, 1);
+                return;
+            }
+            // Try to match a root
+            if is_path_separator::<W>(code) {
+                // Possible UNC root
+
+                root_end = 1;
+                if is_path_separator::<W>(p[1].as_u32()) {
+                    // Matched double path separator at beginning
+                    let mut j: Index = 2;
+                    let mut last: Index = j;
+                    // Match 1 or more non-path separators
+                    while j < len && !is_path_separator::<W>(p[j as usize].as_u32()) {
+                        j += 1;
+                    }
+                    if j < len && j != last {
+                        // Matched!
+                        last = j;
+                        // Match 1 or more path separators
+                        while j < len && is_path_separator::<W>(p[j as usize].as_u32()) {
+                            j += 1;
+                        }
+                        if j < len && j != last {
+                            // Matched!
+                            last = j;
+                            // Match 1 or more non-path separators
+                            while j < len && !is_path_separator::<W>(p[j as usize].as_u32()) {
+                                j += 1;
+                            }
+                            if j == len {
+                                // We matched a UNC root only
+                                root_end = j;
+                            } else if j != last {
+                                // We matched a UNC root with leftovers
+                                root_end = j + 1;
+                            }
+                        }
+                    }
+                }
+            } else if is_windows_device_root(code) && p[1].as_u32() == CHAR_COLON as u32 {
+                // Possible device root
+                if len <= 2 {
+                    // `path` contains just a drive root, exit early to avoid
+                    // unnecessary work
+                    ret.root = Parsed::range(0, len);
+                    ret.dir = Parsed::range(0, len);
+                    return;
+                }
+                root_end = 2;
+                if is_path_separator::<W>(p[2].as_u32()) {
+                    if len == 3 {
+                        // `path` contains just a drive root, exit early to avoid
+                        // unnecessary work
+                        ret.root = Parsed::range(0, len);
+                        ret.dir = Parsed::range(0, len);
+                        return;
+                    }
+                    root_end = 3;
+                }
+            }
+            if root_end > 0 {
+                ret.root = Parsed::range(0, root_end);
+            }
+
+            let mut start_dot: Index = -1;
+            let mut start_part: Index = root_end;
+            let mut end: Index = -1;
+            let mut matched_slash = true;
+            let mut i: Index = len - 1;
+
+            // Track the state of characters (if any) we see before our first dot and
+            // after any path separator we find
+            let mut pre_dot_state: Index = 0;
+
+            // Get non-dir info
+            while i >= root_end {
+                code = p[i as usize].as_u32();
+                if is_path_separator::<W>(code) {
+                    // If we reached a path separator that was not part of a set of path
+                    // separators at the end of the string, stop now
+                    if !matched_slash {
+                        start_part = i + 1;
+                        break;
+                    }
+                    i -= 1;
+                    continue;
+                }
+                if end == -1 {
+                    // We saw the first non-path separator, mark this as the end of our
+                    // extension
+                    matched_slash = false;
+                    end = i + 1;
+                }
+                if code == CHAR_DOT as u32 {
+                    // If this is our first dot, mark it as the start of our extension
+                    if start_dot == -1 {
+                        start_dot = i;
+                    } else if pre_dot_state != 1 {
+                        pre_dot_state = 1;
+                    }
+                } else if start_dot != -1 {
+                    // We saw a non-dot and non-path separator before our dot, so we should
+                    // have a good chance at having a non-empty extension
+                    pre_dot_state = -1;
+                }
+                i -= 1;
+            }
+
+            if end != -1 {
+                if start_dot == -1
+                    // We saw a non-dot character immediately before the dot
+                    || pre_dot_state == 0
+                    // The (right-most) trimmed path component is exactly '..'
+                    || (pre_dot_state == 1 && start_dot == end - 1 && start_dot == start_part + 1)
+                {
+                    ret.base = Parsed::range(start_part, end);
+                    ret.name = Parsed::range(start_part, end);
+                } else {
+                    ret.name = Parsed::range(start_part, start_dot);
+                    ret.base = Parsed::range(start_part, end);
+                    ret.ext = Parsed::range(start_dot, end);
+                }
+            }
+
+            // If the directory is the root, use the entire root as the `dir` including
+            // the trailing slash if any (`C:\abc` -> `C:\`). Otherwise, strip out the
+            // trailing slash (`C:\abc\def` -> `C:\abc`).
+            if start_part > 0 && start_part != root_end {
+                ret.dir = Parsed::range(0, start_part - 1);
+            } else {
+                ret.dir = ret.root;
+            }
+        })
+    }
 }
-export_path_host_fn! {
-    "Bun__Path__basename" => basename,
-    "Bun__Path__dirname" => dirname,
-    "Bun__Path__extname" => extname,
-    "Bun__Path__format" => format,
-    "Bun__Path__isAbsolute" => is_absolute,
-    "Bun__Path__join" => join,
-    "Bun__Path__normalize" => normalize,
-    "Bun__Path__parse" => parse,
-    "Bun__Path__relative" => relative,
-    "Bun__Path__resolve" => resolve,
-    "Bun__Path__toNamespacedPath" => to_namespaced_path,
+
+// ─────────────────────────────── bindings ───────────────────────────────
+
+fn resolve<const WIN: bool>(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    let args = frame.arguments();
+    let arg_count = args.len() as Index;
+    let paths_i_error = |i: Index, value: JSValue| {
+        global.throw_invalid_argument_type_value(format!("paths[{i}]"), "string", value)
+    };
+
+    if !WIN {
+        let mut fast_cwd_storage: Buf<u16> = Buf::new();
+        // The last argument once viewed, so the fast-path check need not view it again.
+        let mut last_arg: Option<Input<'_>> = None;
+        if arg_count <= 1 {
+            let mut trivial = arg_count == 0;
+            if !trivial && args[0].is_string_literal() {
+                let arg = view_of(global, args[0])?;
+                trivial = posix::is_trivial_arg(&arg.chars);
+                last_arg = Some(arg);
+            }
+            if trivial {
+                let cwd = posix::cwd(global, &mut fast_cwd_storage)?;
+                if cwd.len() > 0 && cwd.at(0) == CHAR_FORWARD_SLASH as u32 {
+                    if !cwd.string.is_empty() {
+                        return Ok(cwd.string);
+                    }
+                    let result = with_chars!(cwd.chars, |s| to_js(global, s));
+                    cwd.keep_alive();
+                    return result;
+                }
+            }
+        }
+        let mut cwd_storage: Buf<u16> = Buf::new();
+        let mut cwd: Option<Input<'_>> = None;
+
+        // in visit (reverse) order
+        let mut stack: SmallVec<[Input<'_>; 16]> = SmallVec::new();
+        let mut all_8bit = true;
+        let mut resolved_absolute = false;
+        let mut i = arg_count - 1;
+        while i >= 0 && !resolved_absolute {
+            let path = match last_arg.take() {
+                Some(arg) => arg,
+                None => {
+                    let value = args[i as usize];
+                    if !value.is_string_literal() {
+                        return Err(paths_i_error(i, value));
+                    }
+                    view_of(global, value)?
+                }
+            };
+            i -= 1;
+
+            // Skip empty entries
+            if path.len() == 0 {
+                continue;
+            }
+
+            stack.push(path);
+            all_8bit &= path.is_8bit();
+            resolved_absolute = path.at(0) == CHAR_FORWARD_SLASH as u32;
+        }
+
+        if !resolved_absolute {
+            let c = posix::cwd(global, &mut cwd_storage)?;
+            stack.push(c);
+            all_8bit &= c.is_8bit();
+            cwd = Some(c);
+        }
+
+        let mut parts: SmallVec<[Chars<'_>; 16]> = SmallVec::with_capacity(stack.len());
+        for input in stack.iter().rev() {
+            parts.push(input.chars);
+        }
+
+        macro_rules! finish {
+            ($C:ty) => {{
+                let mut out: Buf<$C> = Buf::new();
+                match posix::resolve::<$C>(&parts, &mut out) {
+                    Err(TooLong) => Err(global.throw_string_too_long()),
+                    Ok(result) if stack.len() == 1 => to_js_reusing(global, result, &stack[0]),
+                    Ok(result) => to_js(global, result),
+                }
+            }};
+        }
+        let result = if all_8bit { finish!(u8) } else { finish!(u16) };
+        if let Some(cwd) = cwd {
+            cwd.keep_alive();
+        }
+        result
+    } else {
+        let mut cwd_storage: Buf<u16> = Buf::new();
+        let mut cwd: Option<Input<'_>> = None;
+        let mut st = win32::ResolveState::new();
+        let get_arg = |i: Index| -> JsResult<Input<'_>> {
+            let value = args[i as usize];
+            if !value.is_string_literal() {
+                return Err(paths_i_error(i, value));
+            }
+            view_of(global, value)
+        };
+        win32::resolve_scan(
+            global,
+            arg_count,
+            get_arg,
+            &mut st,
+            &mut cwd,
+            &mut cwd_storage,
+        )?;
+        let too_long = |_| global.throw_string_too_long();
+        let result = if let Some(returned) = st.return_cwd {
+            with_chars!(returned.chars, |s| {
+                if cfg!(windows) || index_of(s, CHAR_FORWARD_SLASH, 0) == -1 {
+                    Ok(returned.string)
+                } else {
+                    let mut out = buf_like(s);
+                    to_js(global, win32::returned_cwd(s, &mut out))
+                }
+            })
+        } else if st.all_8bit {
+            let mut out: Buf<u8> = Buf::new();
+            win32::resolve_build::<u8>(&st, &mut out)
+                .map_err(too_long)
+                .and_then(|r| to_js(global, r))
+        } else {
+            let mut out: Buf<u16> = Buf::new();
+            win32::resolve_build::<u16>(&st, &mut out)
+                .map_err(too_long)
+                .and_then(|r| to_js(global, r))
+        };
+        if let Some(cwd) = cwd {
+            cwd.keep_alive();
+        }
+        result
+    }
+}
+
+fn normalize<const WIN: bool>(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    let value = frame.argument(0);
+    validate_string(global, value, "path")?;
+    let path = view_of(global, value)?;
+
+    if path.len() == 0 {
+        return Ok(dot_string(global));
+    }
+
+    with_chars!(path.chars, |p| {
+        let mut out = buf_like(p);
+        let result = if WIN {
+            win32::normalize(p, &mut out, None)
+        } else {
+            posix::normalize(p, &mut out)
+        };
+        to_js_reusing(global, result, &path)
+    })
+}
+
+fn join<const WIN: bool>(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    let args = frame.arguments();
+    if args.is_empty() {
+        return Ok(dot_string(global));
+    }
+
+    let mut paths: SmallVec<[Chars<'_>; 16]> = SmallVec::new();
+    let mut single: Option<Input<'_>> = None;
+    let mut all_8bit = true;
+    for &arg in args {
+        validate_string(global, arg, "path")?;
+        let input = view_of(global, arg)?;
+        if input.len() > 0 {
+            paths.push(input.chars);
+            all_8bit &= input.is_8bit();
+            single = Some(input);
+        }
+    }
+
+    let single = match single {
+        Some(single) => single,
+        None => return Ok(dot_string(global)),
+    };
+
+    macro_rules! finish {
+        ($C:ty) => {{
+            let mut joined: Buf<$C> = Buf::new();
+            let mut out: Buf<$C> = Buf::new();
+            let result = if WIN {
+                win32::join::<$C>(&paths, &mut joined, &mut out)
+            } else {
+                posix::join::<$C>(&paths, &mut joined, &mut out)
+            };
+            let result = result.map_err(|_| global.throw_string_too_long())?;
+            if paths.len() == 1 {
+                return to_js_reusing(global, result, &single);
+            }
+            return to_js(global, result);
+        }};
+    }
+    if all_8bit { finish!(u8) } else { finish!(u16) }
+}
+
+fn relative<const WIN: bool>(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    let from_value = frame.argument(0);
+    let to_value = frame.argument(1);
+    validate_string(global, from_value, "from")?;
+    validate_string(global, to_value, "to")?;
+    let from = view_of(global, from_value)?;
+    let to = view_of(global, to_value)?;
+
+    if from.string == to.string || from.chars.eq(&to.chars) {
+        return Ok(empty_string(global));
+    }
+
+    // lib/path.js resolves the two operands with two independent resolve() calls, each
+    // reading process.cwd() for itself; the reads are hoisted here only to pick the width.
+    let mut from_cwd_storage: Buf<u16> = Buf::new();
+    let mut to_cwd_storage: Buf<u16> = Buf::new();
+    if !WIN {
+        let mut from_fallback_storage: Buf<u16> = Buf::new();
+        let mut to_fallback_storage: Buf<u16> = Buf::new();
+        let from_cwd = posix::operand_cwd(
+            global,
+            &from.chars,
+            &mut from_cwd_storage,
+            &mut from_fallback_storage,
+        )?;
+        let to_cwd = posix::operand_cwd(
+            global,
+            &to.chars,
+            &mut to_cwd_storage,
+            &mut to_fallback_storage,
+        )?;
+        let all_8bit = from.is_8bit()
+            && to.is_8bit()
+            && [&from_cwd, &to_cwd]
+                .into_iter()
+                .filter_map(posix::OperandCwd::input)
+                .all(Input::is_8bit);
+        let result = if all_8bit {
+            posix::relative::<u8>(global, from.chars, to.chars, &from_cwd, &to_cwd)
+        } else {
+            posix::relative::<u16>(global, from.chars, to.chars, &from_cwd, &to_cwd)
+        };
+        for cwd in [&from_cwd, &to_cwd]
+            .into_iter()
+            .filter_map(posix::OperandCwd::input)
+        {
+            cwd.keep_alive();
+        }
+        result
+    } else {
+        // Scan both operands first so both can be built at one width.
+        let mut from_cwd: Option<Input<'_>> = None;
+        let mut to_cwd: Option<Input<'_>> = None;
+        let mut from_st = win32::ResolveState::new();
+        let mut to_st = win32::ResolveState::new();
+        win32::resolve_scan(
+            global,
+            1,
+            |_| Ok(from),
+            &mut from_st,
+            &mut from_cwd,
+            &mut from_cwd_storage,
+        )?;
+        win32::resolve_scan(
+            global,
+            1,
+            |_| Ok(to),
+            &mut to_st,
+            &mut to_cwd,
+            &mut to_cwd_storage,
+        )?;
+        let is_8bit = |st: &win32::ResolveState<'_>| match st.return_cwd {
+            Some(cwd) => cwd.is_8bit(),
+            None => st.all_8bit,
+        };
+        let too_long = |_| global.throw_string_too_long();
+        macro_rules! finish {
+            ($C:ty) => {{
+                let mut from_out: Buf<$C> = Buf::new();
+                let mut to_out: Buf<$C> = Buf::new();
+                let build = |st: &win32::ResolveState<'_>, out| -> JsResult<&[$C]> {
+                    match st.return_cwd {
+                        Some(cwd) => Ok(with_chars!(cwd.chars, |s| win32::returned_cwd(s, out))),
+                        None => win32::resolve_build::<$C>(st, out).map_err(too_long),
+                    }
+                };
+                build(&from_st, &mut from_out)
+                    .and_then(|from_orig| Ok((from_orig, build(&to_st, &mut to_out)?)))
+                    .and_then(|(from_orig, to_orig)| {
+                        win32::relative::<$C>(global, from_orig, to_orig)
+                    })
+            }};
+        }
+        let result = if is_8bit(&from_st) && is_8bit(&to_st) {
+            finish!(u8)
+        } else {
+            finish!(u16)
+        };
+        for cwd in [from_cwd, to_cwd].into_iter().flatten() {
+            cwd.keep_alive();
+        }
+        result
+    }
+}
+
+/// `win32.toNamespacedPath()`; the posix one is the identity and lives in path.ts.
+fn to_namespaced_path(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    let value = frame.argument(0);
+    // Note: this will *probably* throw somewhere.
+    if !value.is_string_literal() {
+        return Ok(value);
+    }
+    let path = view_of(global, value)?;
+    if path.len() == 0 {
+        return Ok(value);
+    }
+
+    let mut out8: Buf<u8> = Buf::new();
+    let mut out16: Buf<u16> = Buf::new();
+    let mut cwd_storage: Buf<u16> = Buf::new();
+    let mut cwd: Option<Input<'_>> = None;
+    let resolved_path = win32::resolve(
+        global,
+        path.chars,
+        &mut cwd,
+        &mut out8,
+        &mut out16,
+        &mut cwd_storage,
+    )?;
+    // `resolved_path` is an owned copy; the cwd string is no longer needed.
+    if let Some(cwd) = cwd {
+        cwd.keep_alive();
+    }
+
+    with_chars!(resolved_path, |r| {
+        if r.len() <= 2 {
+            return Ok(value);
+        }
+
+        if r[0].as_u32() == CHAR_BACKWARD_SLASH as u32 {
+            // Possible UNC root
+            if r[1].as_u32() == CHAR_BACKWARD_SLASH as u32 {
+                let code = r[2].as_u32();
+                if code != CHAR_QUESTION_MARK as u32 && code != CHAR_DOT as u32 {
+                    // Matched non-long UNC root, convert the path to a long UNC path
+                    let mut out = buf_like(r);
+                    let o = reserve(&mut out, 8 + r.len() - 2);
+                    let p = copy_units(o, b"\\\\?\\UNC\\");
+                    copy_units(&mut o[p..], &r[2..]);
+                    return to_js(global, &out[..]);
+                }
+            }
+        } else if is_windows_device_root(r[0].as_u32())
+            && r[1].as_u32() == CHAR_COLON as u32
+            && r[2].as_u32() == CHAR_BACKWARD_SLASH as u32
+        {
+            // Matched device root, convert the path to a long UNC path
+            let mut out = buf_like(r);
+            let o = reserve(&mut out, 4 + r.len());
+            let p = copy_units(o, b"\\\\?\\");
+            copy_units(&mut o[p..], r);
+            return to_js(global, &out[..]);
+        }
+
+        to_js_reusing(global, r, &path)
+    })
+}
+
+fn dirname<const WIN: bool>(global: &JSGlobalObject, value: JSValue) -> JsResult<JSValue> {
+    validate_string(global, value, "path")?;
+    let path = view_of(global, value)?;
+    if path.len() == 0 {
+        return Ok(dot_string(global));
+    }
+    Ok(if WIN {
+        win32::dirname(global, &path)
+    } else {
+        posix::dirname(global, &path)
+    })
+}
+
+fn dirname_host<const WIN: bool>(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    dirname::<WIN>(global, frame.argument(0))
+}
+
+fn basename<const WIN: bool>(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    let path_value = frame.argument(0);
+    let suffix_value = frame.argument(1);
+    let has_suffix = !suffix_value.is_undefined();
+    if has_suffix {
+        validate_string(global, suffix_value, "suffix")?;
+    }
+    validate_string(global, path_value, "path")?;
+    let path = view_of(global, path_value)?;
+    let suffix = if has_suffix {
+        Some(view_of(global, suffix_value)?)
+    } else {
+        None
+    };
+    Ok(basename_impl::<WIN>(global, &path, suffix.as_ref()))
+}
+
+fn extname<const WIN: bool>(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    let value = frame.argument(0);
+    validate_string(global, value, "path")?;
+    let path = view_of(global, value)?;
+    Ok(extname_impl::<WIN>(global, &path))
+}
+
+fn parse<const WIN: bool>(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    let value = frame.argument(0);
+    validate_string(global, value, "path")?;
+    let path = view_of(global, value)?;
+
+    let mut ret = Parsed::new();
+    if path.len() != 0 {
+        if WIN {
+            win32::parse(&path, &mut ret);
+        } else {
+            posix::parse(&path, &mut ret);
+        }
+    }
+    Ok(ret.to_js(global, value))
+}
+
+/// Declares the `#[bun_jsc::host_fn]` entry points for one platform.
+macro_rules! host_fns {
+    ($win:literal: $($name:ident => $imp:ident),* $(,)?) => {
+        $(
+            #[bun_jsc::host_fn]
+            pub fn $name(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+                $imp::<$win>(global, frame)
+            }
+        )*
+    };
+}
+
+host_fns!(false:
+    posix_resolve => resolve, posix_normalize => normalize, posix_join => join,
+    posix_relative => relative, posix_dirname => dirname_host, posix_basename => basename,
+    posix_extname => extname, posix_parse => parse,
+);
+host_fns!(true:
+    win32_resolve => resolve, win32_normalize => normalize, win32_join => join,
+    win32_relative => relative, win32_dirname => dirname_host, win32_basename => basename,
+    win32_extname => extname, win32_parse => parse,
+);
+
+#[bun_jsc::host_fn]
+pub fn win32_to_namespaced_path(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    to_namespaced_path(global, frame)
+}
+
+/// `$rust("path.rs", "createNodePathBinding")`: `[posixFns, win32Fns]`, each an
+/// object of the native functions; path.ts assembles the module objects.
+pub fn create_node_path_binding(global: &JSGlobalObject) -> JsResult<JSValue> {
+    type Entry = (&'static str, jsc::JSHostFn, u32);
+    #[rustfmt::skip]
+    let tables: [&[Entry]; 2] = [
+        &[
+            ("resolve", __jsc_host_posix_resolve, 0),
+            ("normalize", __jsc_host_posix_normalize, 1),
+            ("join", __jsc_host_posix_join, 0),
+            ("relative", __jsc_host_posix_relative, 2),
+            ("dirname", __jsc_host_posix_dirname, 1),
+            ("basename", __jsc_host_posix_basename, 2),
+            ("extname", __jsc_host_posix_extname, 1),
+            ("parse", __jsc_host_posix_parse, 1),
+        ],
+        &[
+            ("resolve", __jsc_host_win32_resolve, 0),
+            ("normalize", __jsc_host_win32_normalize, 1),
+            ("join", __jsc_host_win32_join, 0),
+            ("relative", __jsc_host_win32_relative, 2),
+            ("toNamespacedPath", __jsc_host_win32_to_namespaced_path, 1),
+            ("dirname", __jsc_host_win32_dirname, 1),
+            ("basename", __jsc_host_win32_basename, 2),
+            ("extname", __jsc_host_win32_extname, 1),
+            ("parse", __jsc_host_win32_parse, 1),
+        ],
+    ];
+    let result = JSValue::create_empty_array(global, 2)?;
+    for (i, table) in tables.iter().enumerate() {
+        let object = JSValue::create_empty_object(global, table.len());
+        for &(name, function, length) in table.iter() {
+            let f = JSFunction::create(global, name, function, length, Default::default());
+            object.put(global, name, f);
+        }
+        result.put_index(global, i as u32, object)?;
+    }
+    Ok(result)
+}
+
+// ─────────────────────────── C++ entry points ────────────────────────────
+
+/// `path.dirname(path)` for `__dirname` and `Module._resolveLookupPaths`.
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__Path__dirname(
+    global: &JSGlobalObject,
+    is_windows: bool,
+    path: JSValue,
+) -> JSValue {
+    jsc::host_fn::to_js_host_call(global, || {
+        if is_windows {
+            dirname::<true>(global, path)
+        } else {
+            dirname::<false>(global, path)
+        }
+    })
+}
+
+/// `path.join(lhs, rhs)` for `Module.createRequire`; writes a new +1 string to
+/// `result` (or a dead string if the result would exceed the string limit).
+///
+/// # Safety
+/// `result` must be valid for a write of `bun_core::String` (it may be uninitialized).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Bun__Path__joinString(
+    is_windows: bool,
+    lhs: &bun_core::String,
+    rhs: &bun_core::String,
+    result: *mut bun_core::String,
+) {
+    fn chars_of(s: &bun_core::String) -> Chars<'_> {
+        if s.is_empty() {
+            Chars::Latin1(&[])
+        } else if s.is_utf16() {
+            Chars::Utf16(s.utf16())
+        } else {
+            Chars::Latin1(s.latin1())
+        }
+    }
+    let mut paths: SmallVec<[Chars<'_>; 2]> = SmallVec::new();
+    let mut all_8bit = true;
+    for c in [chars_of(lhs), chars_of(rhs)] {
+        if c.len() > 0 {
+            all_8bit &= c.is_8bit();
+            paths.push(c);
+        }
+    }
+    let joined = if paths.is_empty() {
+        bun_core::String::static_(b".")
+    } else {
+        macro_rules! finish {
+            ($C:ty, $make:ident) => {{
+                let mut joined: Buf<$C> = Buf::new();
+                let mut out: Buf<$C> = Buf::new();
+                let result = if is_windows {
+                    win32::join::<$C>(&paths, &mut joined, &mut out)
+                } else {
+                    posix::join::<$C>(&paths, &mut joined, &mut out)
+                };
+                match result {
+                    Ok(chars) => bun_core::String::$make(chars),
+                    Err(TooLong) => bun_core::String::DEAD,
+                }
+            }};
+        }
+        if all_8bit {
+            finish!(u8, clone_latin1)
+        } else {
+            finish!(u16, clone_utf16)
+        }
+    };
+    // SAFETY: caller contract.
+    unsafe { result.write(joined) };
 }

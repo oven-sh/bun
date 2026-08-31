@@ -472,6 +472,13 @@ extern "C" [[ZIG_EXPORT(nothrow)]] BunString BunString__fromUTF16(const char16_t
     return { BunStringTag::WTFStringImpl, { .wtf = impl.leakRef() } };
 }
 
+// String.prototype.toLowerCase(): a new +1 string (the input itself, re-referenced, when
+// nothing changes).
+extern "C" BunString BunString__toLowerCase(const BunString* string)
+{
+    return Bun::toStringRef(string->toWTFString(BunString::ZeroCopy).convertToLowercaseWithoutLocale());
+}
+
 extern "C" [[ZIG_EXPORT(nothrow)]] BunString BunString__fromBytes(const char* bytes, size_t length)
 {
     ASSERT(length > 0);

@@ -100,6 +100,7 @@ crate::assert_ffi_layout!(String, 24, 8);
 unsafe extern "C" {
     fn BunString__fromBytes(bytes: *const u8, len: usize) -> String;
     fn BunString__fromLatin1(bytes: *const u8, len: usize) -> String;
+    fn BunString__toLowerCase(this: *const String) -> String;
     fn BunString__fromUTF16(bytes: *const u16, len: usize) -> String;
     fn BunString__fromUTF16ToLatin1(bytes: *const u16, len: usize) -> String;
     safe fn BunString__fromLatin1Unitialized(len: usize) -> String;
@@ -247,6 +248,15 @@ impl String {
         // BunString__fromBytes auto-detects all-ASCII → Latin1, else UTF-8.
         // SAFETY: s.as_ptr()/len describe a valid byte slice.
         unsafe { BunString__fromBytes(s.as_ptr(), s.len()) }
+    }
+    /// `String.prototype.toLowerCase()` — a new +1 string (full Unicode case mapping, no
+    /// locale tailoring; may differ in length from `self`).
+    pub fn to_lower_case(&self) -> Self {
+        if self.is_empty() {
+            return Self::EMPTY;
+        }
+        // SAFETY: `self` is a live string; the callee only reads it.
+        unsafe { BunString__toLowerCase(self) }
     }
     pub fn clone_latin1(s: &[u8]) -> Self {
         if s.is_empty() {

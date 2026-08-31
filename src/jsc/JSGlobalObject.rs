@@ -123,20 +123,23 @@ impl JSGlobalObject {
     }
 
     #[cold]
-    pub fn throw_string_too_long(&self) -> JsError {
-        const _: () = assert!(bun_core::string::WTF_STRING_MAX_LENGTH == 2147483647);
-        self.err(
-            crate::ErrorCode::STRING_TOO_LONG,
-            format_args!("Cannot create a string longer than 2147483647 characters"),
-        )
-        .throw()
-    }
-
-    #[cold]
     #[inline(never)]
     pub fn throw_out_of_memory_value(&self) -> JSValue {
         JSGlobalObject__throwOutOfMemoryError(self);
         JSValue::ZERO
+    }
+
+    /// `ERR_STRING_TOO_LONG`: a string would exceed [`bun_core::String::max_length`].
+    #[cold]
+    pub fn throw_string_too_long(&self) -> JsError {
+        self.err(
+            JscError::STRING_TOO_LONG,
+            format_args!(
+                "Cannot create a string longer than {} characters",
+                BunString::max_length()
+            ),
+        )
+        .throw()
     }
 
     #[allow(clippy::too_many_arguments)]

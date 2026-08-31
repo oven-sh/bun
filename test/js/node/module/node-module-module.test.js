@@ -449,6 +449,42 @@ console.log("survived", require("./late.js"));`,
     );
   });
 
+  test("createRequire trailing slash with a path longer than 4 KiB", () => {
+    // Appending the placeholder file name used to go through a 4 KiB buffer.
+    const dir = path.join(import.meta.dir, Buffer.alloc(5000, "a").toString()) + path.sep;
+    expect(createRequire(dir).resolve("../node-module-module.test.js")).toBe(
+      ospath(path.resolve(import.meta.dir, "./node-module-module.test.js")),
+    );
+  });
+
+  test("createRequire trailing slash: joining the placeholder file name past the string length limit throws", async () => {
+    // The limit is process-wide (its floor is 1 MiB), so lower it in a child process.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { createRequire } = require("node:module");
+const { setSyntheticAllocationLimitForTesting } = require("bun:internal-for-testing");
+const limit = 2 * 1024 * 1024;
+setSyntheticAllocationLimitForTesting(limit);
+const root = process.platform === "win32" ? "C:\\\\" : "/";
+console.log(typeof createRequire(root + "dir/"));
+try {
+  createRequire(root + Buffer.alloc(limit - 8, "a").toString() + "/");
+  console.log("no error");
+} catch (e) {
+  console.log(e.code);
+}`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({ stdout: "function\nERR_STRING_TOO_LONG\n", stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
   test("Module exists", () => {
     expect(Module).toBeDefined();
   });

@@ -24,6 +24,12 @@
 #include "GeneratedNodeModuleModule.h"
 #include "ZigGeneratedClasses.h"
 
+#if OS(WINDOWS)
+static constexpr bool isWindows = true;
+#else
+static constexpr bool isWindows = false;
+#endif
+
 namespace Bun {
 
 using namespace JSC;
@@ -221,7 +227,6 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionWrap, (JSC::JSGlobalObject * globalObject, JS
 
     RELEASE_AND_RETURN(scope, JSValue::encode(jsString(globalObject, prefix, code, suffix)));
 }
-extern "C" BunString Bun__Node__Path_joinWTF(const BunString* lhs, const char* rhs, size_t len);
 JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleCreateRequire,
     (JSC::JSGlobalObject * globalObject,
         JSC::CallFrame* callFrame))
@@ -264,8 +269,15 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleCreateRequire,
 
     // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/internal/modules/cjs/loader.js#L1603-L1620
     if (trailingSlash) {
+        String noop = "noop.js"_s;
         BunString lhs = Bun::toString(val);
-        val = Bun__Node__Path_joinWTF(&lhs, "noop.js", sizeof("noop.js") - 1).transferToWTFString();
+        BunString rhs = Bun::toString(noop);
+        BunString result;
+        Bun__Path__joinString(isWindows, &lhs, &rhs, &result);
+        if (result.tag == BunStringTag::Dead) [[unlikely]] {
+            return ERR::STRING_TOO_LONG(scope, globalObject);
+        }
+        val = result.transferToWTFString();
     }
 
     RELEASE_AND_RETURN(
@@ -528,14 +540,8 @@ JSC::JSValue resolveLookupPaths(JSC::JSGlobalObject* globalObject, String reques
 
     JSValue dirname;
     if (parent.filename) {
-        EncodedJSValue encodedFilename = JSValue::encode(parent.filename);
-#if OS(WINDOWS)
-        dirname = JSValue::decode(
-            Bun__Path__dirname(globalObject, true, &encodedFilename, 1));
-#else
-        dirname = JSValue::decode(
-            Bun__Path__dirname(globalObject, false, &encodedFilename, 1));
-#endif
+        dirname = JSValue::decode(Bun__Path__dirname(globalObject, isWindows, JSValue::encode(parent.filename)));
+        RETURN_IF_EXCEPTION(scope, {});
     } else {
         dirname = jsString(vm, String("."_s));
     }

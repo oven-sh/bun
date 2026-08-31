@@ -2871,7 +2871,9 @@ console.log(<div {...obj} key="after" />);`),
     });
 
     it("exponentiation", () => {
-      expectPrinted("(delete x) ** 0", "(delete x) ** 0");
+      // `expectPrinted` wraps the input in `export default (...)`, which is strict
+      // mode, where `delete x` is an error. Use the plain helper for that case.
+      expectPrinted_("(delete x) ** 0", "(delete x) ** 0");
       expectPrinted("(delete x.prop) ** 0", "(delete x.prop) ** 0");
       expectPrinted("(delete x[0]) ** 0", "(delete x[0]) ** 0");
 
@@ -2900,7 +2902,7 @@ console.log(<div {...obj} key="after" />);`),
       expectPrinted("(~1) ** 2", "(~1) ** 2");
       expectPrinted("(!1) ** 2", "false ** 2");
       expectPrinted("(void x) ** 2", "(void x) ** 2");
-      expectPrinted("(delete x) ** 2", "(delete x) ** 2");
+      expectPrinted_("(delete x) ** 2", "(delete x) ** 2");
       expectPrinted("(typeof x) ** 2", "(typeof x) ** 2");
       expectPrinted("undefined ** 2", "undefined ** 2");
 
@@ -2980,10 +2982,8 @@ console.log(<div {...obj} key="after" />);`),
 
       expectPrinted_("async function f() { await delete x }", "async function f() {\n  await delete x;\n}");
 
-      // expectParseError(
-      //   "await delete x",
-      //   "Delete of a bare identifier cannot be used in an ECMAScript module"
-      // );
+      // Top-level await makes the file a module, so this is strict mode.
+      expectParseError("await delete x", '"delete" of a bare identifier cannot be used in strict mode');
     });
 
     it("import assert", () => {
@@ -3750,6 +3750,31 @@ class Foo {
       "var arguments = 1; var package = 2; function eval() {}",
       "var arguments = 1;\nvar package = 2;\nfunction eval() {}",
     );
+  });
+
+  it("delete of a bare identifier in strict mode", () => {
+    const error = '"delete" of a bare identifier cannot be used in strict mode';
+    expectParseError('"use strict"; delete x', error);
+    expectParseError('"use strict"; delete (x)', error);
+    expectParseError('"use strict"; delete ((x))', error);
+    expectParseError("delete x; export {}", error);
+    expectParseError("import './a'; delete x", error);
+    expectParseError("await 1; delete x", error);
+    expectParseError("class A { m() { delete x } }", error);
+    expectParseError("function f() { 'use strict'; delete x }", error);
+
+    // Property access and other operands stay valid in strict mode. A parenthesized
+    // comma or conditional expression is a value, not a reference, so it is not a
+    // bare identifier even when it folds to one.
+    expectPrinted_(
+      "'use strict'; delete x.y; delete x[0]; delete x?.y; delete (0, x); delete (1 ? x : x); delete f()",
+      "delete x.y;\ndelete x[0];\ndelete x?.y;\ndelete (0, x);\ndelete (0, x);\ndelete f()",
+    );
+
+    // Sloppy mode allows it when the transpiler is not bundling.
+    expectPrinted_("var x = 1; delete x", "var x = 1;\ndelete x");
+    expectPrinted_("delete (x)", "delete x");
+    expectPrinted_("function f() { delete x }", "function f() {\n  delete x;\n}");
   });
 
   describe("simplification", () => {

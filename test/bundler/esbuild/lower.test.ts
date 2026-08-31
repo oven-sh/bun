@@ -1528,10 +1528,12 @@ describe.todo("bundler", () => {
       "/delete-3.js": `delete (1 ? z : z)`,
     },
     format: "esm",
-    /* TODO FIX expectedScanLog: `delete-1.js: ERROR: Delete of a bare identifier cannot be used with the "esm" output format due to strict mode
-  delete-2.js: ERROR: Delete of a bare identifier cannot be used with the "esm" output format due to strict mode
-  with.js: ERROR: With statements cannot be used with the "esm" output format due to strict mode
-  `, */
+    // esbuild also reports `with.js: With statements cannot be used with the "esm"
+    // output format due to strict mode`. Bun has no strict-mode check for `with`.
+    bundleErrors: {
+      "/delete-1.js": ['"delete" of a bare identifier cannot be used with the ESM output format due to strict mode'],
+      "/delete-2.js": ['"delete" of a bare identifier cannot be used with the ESM output format due to strict mode'],
+    },
   });
   itBundled("lower/LowerPrivateClassFieldOrder", {
     // GENERATED

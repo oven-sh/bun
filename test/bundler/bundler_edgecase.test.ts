@@ -3277,6 +3277,103 @@ describe("bundler", () => {
       api.expectFile("/out.js").toContain("var arguments = 1;");
     },
   });
+  // `delete x` on a bare identifier is an early SyntaxError in strict mode, and
+  // every ES module is strict. Report it where the source is, like esbuild does,
+  // instead of emitting output that fails to parse.
+  itBundled("edgecase/DeleteBareIdentifierInESModuleIsAnError", {
+    files: {
+      "/entry.js": /* js */ `
+        import { y } from "./y.js";
+        var x = 1;
+        delete x;
+        console.log(x, y);
+      `,
+      "/y.js": /* js */ `
+        export const y = 2;
+      `,
+    },
+    bundleErrors: {
+      "/entry.js": ['"delete" of a bare identifier cannot be used in strict mode'],
+    },
+  });
+  itBundled("edgecase/DeleteBareIdentifierInUseStrictFileIsAnError", {
+    files: {
+      "/entry.js": /* js */ `
+        require("./lib.cjs");
+      `,
+      "/lib.cjs": /* js */ `
+        "use strict";
+        var x = 1;
+        delete x;
+      `,
+    },
+    format: "cjs",
+    bundleErrors: {
+      "/lib.cjs": ['"delete" of a bare identifier cannot be used in strict mode'],
+    },
+  });
+  itBundled("edgecase/SloppyDeleteBareIdentifierESMOutputIsAnError", {
+    files: {
+      "/entry.js": /* js */ `
+        import "./lib.cjs";
+      `,
+      "/lib.cjs": /* js */ `
+        var x = 1;
+        delete x;
+        console.log("del", typeof x);
+      `,
+    },
+    format: "esm",
+    bundleErrors: {
+      "/lib.cjs": ['"delete" of a bare identifier cannot be used with the ESM output format due to strict mode'],
+    },
+  });
+  // The cjs and iife output formats are sloppy, so the statement stays as written.
+  // Node runs the output: bun loads a script with no CommonJS marker as an ES module.
+  itBundled("edgecase/SloppyDeleteBareIdentifierCJSOutput", {
+    files: {
+      "/entry.js": /* js */ `
+        var x = 1;
+        delete x;
+        console.log("del", typeof x);
+      `,
+    },
+    format: "cjs",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("delete x;");
+    },
+    run: { runtime: "node", stdout: "del number" },
+  });
+  itBundled("edgecase/SloppyDeleteBareIdentifierIIFEOutput", {
+    files: {
+      "/entry.js": /* js */ `
+        var x = 1;
+        delete x;
+        console.log("del", typeof x);
+      `,
+    },
+    format: "iife",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("delete x;");
+    },
+    run: { runtime: "node", stdout: "del number" },
+  });
+  // Only a bare identifier is forbidden. A property access, a call, or a
+  // parenthesized comma expression is a value and stays valid in strict mode.
+  itBundled("edgecase/DeleteNonIdentifierOperandsESMOutput", {
+    files: {
+      "/entry.js": /* js */ `
+        import "./lib.cjs";
+      `,
+      "/lib.cjs": /* js */ `
+        var o = { x: 1, y: 2 };
+        var z = 3;
+        console.log(delete o.x, delete o["y"], delete (0, z), delete (1 ? z : z), delete o?.x, typeof z);
+      `,
+    },
+    format: "esm",
+    run: { stdout: "true true true true true number" },
+  });
 });
 
 for (const backend of ["api", "cli"] as const) {

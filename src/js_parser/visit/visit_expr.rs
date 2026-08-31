@@ -1218,6 +1218,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             }
             Op::UnDelete => {
+                if matches!(e_.value.data, Data::EIdentifier(..)) {
+                    p.mark_strict_mode_feature(
+                        StrictModeFeature::DeleteBareName,
+                        js_lexer::range_of_identifier(p.source, e_.value.loc),
+                        b"",
+                    )
+                    .expect("unreachable");
+                }
                 p.visit_expr_in_out(&mut e_.value, ExprIn::default());
             }
             _ => {

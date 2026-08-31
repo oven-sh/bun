@@ -539,16 +539,13 @@ fn run_task_cold(task: Task) {
         task_tag::ShellMvBatchedTask => shell_dispatch!(ShellMvBatchedTask),
         task_tag::ShellMvCheckTargetTask => shell_dispatch!(ShellMvCheckTargetTask),
         task_tag::ShellRmTask => shell_dispatch!(ShellRmTask),
-        task_tag::ShellRmDirTask => {
-            let t = cast_ptr!(ShellRmDirTask);
-            ShellRmDirTask::run_from_main_thread(t);
-        }
+        task_tag::ShellRmDirTask => shell_dispatch!(ShellRmDirTask),
         task_tag::ShellGlobTask => shell_dispatch!(ShellGlobTask),
         task_tag::ShellYesTask => {
-            // SAFETY: §Dispatch — tag identifies pointee; enqueued by
-            // `YesTask::enqueue`, storage lives inside `Box<Yes>` in the
-            // interpreter arena and is stable until the builtin deinits.
-            ShellYesTask::run_from_main_thread(unsafe { &*cast_ptr!(ShellYesTask) });
+            // SAFETY: §Dispatch — tag identifies pointee: the box
+            // `YesTask::enqueue` leaked when posting.
+            let t = unsafe { bun_core::heap::take(cast_ptr!(ShellYesTask)) };
+            t.run();
         }
 
         // ── bake dev-server ──────────────────────────────────────────────

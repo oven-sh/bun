@@ -462,6 +462,32 @@ impl EventLoopHandle {
         EnteredEventLoop(self)
     }
 
+    /// Owning thread: queue `owner` to run once pending I/O has had a turn —
+    /// the JS loop's after-yield queue (delivered by `T::TAG`), or for a mini
+    /// loop one tick of its platform loop, then its task queue (delivered to
+    /// `R`). For work that re-queues itself and would otherwise starve I/O.
+    pub fn enqueue_boxed_after_yield<T, R>(
+        self,
+        owner: Box<T>,
+        node: fn(&mut T) -> &mut AnyTaskWithExtraContext,
+    ) where
+        T: crate::Taskable,
+        R: crate::AnyTaskWithExtraContext::BoxedMiniTaskRunner<T>,
+    {
+        match self {
+            EventLoopHandle::Js { owner: js } => {
+                js.enqueue_task_after_yield(crate::Task::from_boxed(owner));
+            }
+            EventLoopHandle::Mini(mut mini) => {
+                let mini = mini_mut(&mut mini);
+                mini.tick_platform_loop();
+                mini.enqueue_task_concurrent(AnyTaskWithExtraContext::arm_boxed::<T, R>(
+                    owner, node,
+                ));
+            }
+        }
+    }
+
     /// Owning thread: the weak poster other threads use to deliver JS-loop
     /// tasks to this handle's VM; `None` for a mini loop (post to it directly —
     /// it is owned by, and outlives the work of, its thread).

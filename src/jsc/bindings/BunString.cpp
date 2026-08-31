@@ -101,6 +101,25 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue BunString__createUT
     return JSValue::encode(jsString(vm, WTF::move(str)));
 }
 
+namespace Bun {
+#if ASSERT_ENABLED
+// A static Rust string (`String::static_("...")`) allocates a new JSString on
+// every conversion. When its text is already in BunCommonStrings.h, the caller
+// has a cached copy available through `global.common_strings()` and must use it.
+static void assertStaticStringIsNotCommon(EncodedSlice slice)
+{
+    if (Zig::isTaggedUTF16Ptr(slice.ptr))
+        return;
+    std::span<const Latin1Character> literal { Zig::untag(slice.ptr), slice.len };
+    ASSERT_WITH_MESSAGE(!CommonStrings::isCommonStringLiteral(literal),
+        "\"%.*s\" is in BunCommonStrings.h: use global.common_strings() instead of String::static_(..).to_js()",
+        static_cast<int>(literal.size()), reinterpret_cast<const char*>(literal.data()));
+}
+#else
+static inline void assertStaticStringIsNotCommon(EncodedSlice) { }
+#endif
+}
+
 JSC::JSValue BunString::transferToJS(JSC::JSGlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -122,6 +141,8 @@ JSC::JSValue BunString::transferToJS(JSC::JSGlobalObject* globalObject)
     }
 
     // EncodedSlice / StaticEncodedSlice: copies (the bytes are borrowed).
+    if (this->tag == BunStringTag::StaticEncodedSlice)
+        Bun::assertStaticStringIsNotCommon(this->impl.encoded);
     WTF::String str = this->toWTFString();
     *this = { .tag = BunStringTag::Dead };
     return jsString(vm, WTF::move(str));
@@ -190,6 +211,7 @@ JSC::JSString* toJS(JSC::JSGlobalObject* globalObject, BunString bunString)
     }
 
     if (bunString.tag == BunStringTag::StaticEncodedSlice) {
+        assertStaticStringIsNotCommon(bunString.impl.encoded);
         return JSC::jsString(globalObject->vm(), Zig::toStringStatic(bunString.impl.encoded));
     }
 

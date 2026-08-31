@@ -65,6 +65,28 @@ void CommonStrings::visit(Visitor& visitor)
 template void CommonStrings::visit(JSC::AbstractSlotVisitor&);
 template void CommonStrings::visit(JSC::SlotVisitor&);
 
+#if ASSERT_ENABLED
+bool CommonStrings::isCommonStringLiteral(std::span<const Latin1Character> literal)
+{
+    // The builtin-name entries have a null literal above; their text is the name itself.
+#define BUN_COMMON_STRINGS_BUILTIN_NAME_LITERAL(name) #name##_s,
+    static constexpr ASCIILiteral builtinNameLiterals[] = {
+        BUN_COMMON_STRINGS_EACH_NAME(BUN_COMMON_STRINGS_BUILTIN_NAME_LITERAL)
+    };
+#undef BUN_COMMON_STRINGS_BUILTIN_NAME_LITERAL
+
+    for (const auto& entry : commonStringLiterals) {
+        if (!entry.isNull() && equalSpans(entry.span8(), literal))
+            return true;
+    }
+    for (const auto& entry : builtinNameLiterals) {
+        if (equalSpans(entry.span8(), literal))
+            return true;
+    }
+    return false;
+}
+#endif
+
 // Must be kept in sync with src/http_types/Method.rs
 enum class HTTPMethod : uint8_t {
     httpACL = 0,
@@ -163,7 +185,8 @@ extern "C" JSC::EncodedJSValue Bun__HTTPMethod__toJS(HTTPMethod method, Zig::Glo
     return JSValue::encode(toJS(globalObject, method));
 }
 
-enum class CommonStringsForZig : uint8_t {
+// Must be kept in sync with src/jsc/CommonStrings.rs
+enum class CommonStringsForRust : uint8_t {
     IPv4 = 0,
     IPv6 = 1,
     IN4Loopback = 2,
@@ -178,40 +201,70 @@ enum class CommonStringsForZig : uint8_t {
     binaryTypeNodeBuffer = 11,
     binaryTypeUint8Array = 12,
     binaryTypeBlob = 13,
+    unknown = 14,
+    protocolHttp = 15,
+    protocolHttps = 16,
+    alpnH2 = 17,
+    alpnHttp11 = 18,
+    utf8WithDash = 19,
+    quicDatagramAbandoned = 20,
+    quicDatagramAcknowledged = 21,
+    quicDatagramLost = 22,
+    base64 = 23,
 };
 
-static JSC::JSValue toJS(Zig::GlobalObject* globalObject, CommonStringsForZig commonString)
+static JSC::JSValue toJS(Zig::GlobalObject* globalObject, CommonStringsForRust commonString)
 {
     auto& commonStrings = globalObject->commonStrings();
     switch (commonString) {
-    case CommonStringsForZig::IPv4:
+    case CommonStringsForRust::IPv4:
         return commonStrings.IPv4String(globalObject);
-    case CommonStringsForZig::IPv6:
+    case CommonStringsForRust::IPv6:
         return commonStrings.IPv6String(globalObject);
-    case CommonStringsForZig::IN4Loopback:
+    case CommonStringsForRust::IN4Loopback:
         return commonStrings.IN4LoopbackString(globalObject);
-    case CommonStringsForZig::IN6Any:
+    case CommonStringsForRust::IN6Any:
         return commonStrings.IN6AnyString(globalObject);
-    case CommonStringsForZig::ipv4Lower:
+    case CommonStringsForRust::ipv4Lower:
         return commonStrings.ipv4LowerString(globalObject);
-    case CommonStringsForZig::ipv6Lower:
+    case CommonStringsForRust::ipv6Lower:
         return commonStrings.ipv6LowerString(globalObject);
-    case CommonStringsForZig::fetchDefault:
+    case CommonStringsForRust::fetchDefault:
         return globalObject->vm().smallStrings.defaultString();
-    case CommonStringsForZig::fetchError:
+    case CommonStringsForRust::fetchError:
         return commonStrings.fetchErrorString(globalObject);
-    case CommonStringsForZig::fetchInclude:
+    case CommonStringsForRust::fetchInclude:
         return commonStrings.fetchIncludeString(globalObject);
-    case CommonStringsForZig::buffer:
+    case CommonStringsForRust::buffer:
         return commonStrings.bufferString(globalObject);
-    case CommonStringsForZig::binaryTypeArrayBuffer:
+    case CommonStringsForRust::binaryTypeArrayBuffer:
         return commonStrings.binaryTypeArrayBufferString(globalObject);
-    case CommonStringsForZig::binaryTypeNodeBuffer:
+    case CommonStringsForRust::binaryTypeNodeBuffer:
         return commonStrings.binaryTypeNodeBufferString(globalObject);
-    case CommonStringsForZig::binaryTypeUint8Array:
+    case CommonStringsForRust::binaryTypeUint8Array:
         return commonStrings.binaryTypeUint8ArrayString(globalObject);
-    case CommonStringsForZig::binaryTypeBlob:
+    case CommonStringsForRust::binaryTypeBlob:
         return commonStrings.binaryTypeBlobString(globalObject);
+    case CommonStringsForRust::unknown:
+        return commonStrings.unknownString(globalObject);
+    case CommonStringsForRust::protocolHttp:
+        return commonStrings.protocolHttpString(globalObject);
+    case CommonStringsForRust::protocolHttps:
+        return commonStrings.protocolHttpsString(globalObject);
+    case CommonStringsForRust::alpnH2:
+        return commonStrings.alpnH2String(globalObject);
+    case CommonStringsForRust::alpnHttp11:
+        return commonStrings.alpnHttp11String(globalObject);
+    case CommonStringsForRust::utf8WithDash:
+        return commonStrings.utf8WithDashString(globalObject);
+    case CommonStringsForRust::quicDatagramAbandoned:
+        return commonStrings.quicDatagramAbandonedString(globalObject);
+    case CommonStringsForRust::quicDatagramAcknowledged:
+        return commonStrings.quicDatagramAcknowledgedString(globalObject);
+    case CommonStringsForRust::quicDatagramLost:
+        return commonStrings.quicDatagramLostString(globalObject);
+    case CommonStringsForRust::base64:
+        return commonStrings.base64String(globalObject);
     default: {
         ASSERT_NOT_REACHED();
         return jsUndefined();
@@ -219,7 +272,7 @@ static JSC::JSValue toJS(Zig::GlobalObject* globalObject, CommonStringsForZig co
     }
 }
 
-extern "C" JSC::EncodedJSValue Bun__CommonStringsForZig__toJS(CommonStringsForZig commonString, Zig::GlobalObject* globalObject)
+extern "C" JSC::EncodedJSValue Bun__CommonStringsForRust__toJS(CommonStringsForRust commonString, Zig::GlobalObject* globalObject)
 {
     return JSValue::encode(toJS(globalObject, commonString));
 }

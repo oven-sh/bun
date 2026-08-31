@@ -55,6 +55,8 @@
     macro(httpUNLINK, "UNLINK") \
     macro(httpUNLOCK, "UNLOCK") \
     macro(httpUNSUBSCRIBE, "UNSUBSCRIBE") \
+    macro(alpnH2, "h2") \
+    macro(alpnHttp11, "http/1.1") \
     macro(ascii, "ascii") \
     macro(base64, "base64") \
     macro(base64url, "base64url") \
@@ -63,6 +65,10 @@
     macro(binaryTypeNodeBuffer, "nodebuffer") \
     macro(binaryTypeUint8Array, "uint8array") \
     macro(buffer, "buffer") \
+    macro(eventAbort, "abort") \
+    macro(eventChange, "change") \
+    macro(eventClose, "close") \
+    macro(eventRename, "rename") \
     macro(fetchCors, "cors") \
     macro(fetchError, "error") \
     macro(fetchFollow, "follow") \
@@ -79,9 +85,20 @@
     macro(hex, "hex") \
     macro(ipv4Lower, "ipv4") \
     macro(ipv6Lower, "ipv6") \
+    macro(keyTypePrivate, "private") \
+    macro(keyTypePublic, "public") \
+    macro(keyTypeSecret, "secret") \
     macro(latin1, "latin1") \
     macro(lax, "lax") \
+    macro(mockResultIncomplete, "incomplete") \
+    macro(mockResultReturn, "return") \
+    macro(mockResultThrow, "throw") \
     macro(none, "none") \
+    macro(protocolHttp, "http") \
+    macro(protocolHttps, "https") \
+    macro(quicDatagramAbandoned, "abandoned") \
+    macro(quicDatagramAcknowledged, "acknowledged") \
+    macro(quicDatagramLost, "lost") \
     macro(s3Error, "S3Error") \
     macro(strict, "strict") \
     macro(jwkCrv, "crv") \
@@ -102,8 +119,10 @@
     macro(jwkX, "x") \
     macro(jwkY, "y") \
     macro(ucs2, "ucs2") \
+    macro(unknown, "unknown") \
     macro(utf16le, "utf16le") \
-    macro(utf8, "utf8")
+    macro(utf8, "utf8") \
+    macro(utf8WithDash, "utf-8")
 
 // clang-format on
 
@@ -137,6 +156,13 @@ public:
 
     template<typename Visitor>
     void visit(Visitor& visitor);
+
+#if ASSERT_ENABLED
+    // Debug-only: is `literal` the text of one of the strings in this table?
+    // `Bun::toJS(BunString)` asserts this is false for a static Rust string so
+    // that `String::static_("...").to_js()` never bypasses the cached copy.
+    static bool isCommonStringLiteral(std::span<const Latin1Character> literal);
+#endif
 
 private:
     JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSString> m_strings[static_cast<size_t>(Index::Count)];

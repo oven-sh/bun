@@ -1339,12 +1339,7 @@ pub use bun_uws_sys::{ConnectResult, SocketGroup};
 // SocketContext::BunSocketContextOptions
 // ═══════════════════════════════════════════════════════════════════════════
 pub mod SocketContext {
-    /// What `SSLConfig.asUSockets()` produces: TLS material as PEM bytes or as
-    /// the path of a file that holds them. `load_files()` reads the paths into
-    /// the `#[repr(C)]` `RawSocketContextOptions` that `us_ssl_ctx_from_options`
-    /// consumes. The struct body, `Default`, `digest()` and
-    /// `create_ssl_context()` live in `bun_uws_sys`; re-exported so this crate
-    /// and `_sys` share one definition.
+    /// What `SSLConfig.asUSockets()` produces; defined in `bun_uws_sys`.
     pub use bun_uws_sys::BunSocketContextOptions;
 }
 /// Snake-case module alias.

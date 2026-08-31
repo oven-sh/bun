@@ -95,9 +95,7 @@ fn stat_for_digest(path: &bun_core::ZStr) -> Option<[i64; 3]> {
     ])
 }
 
-/// TLS options as the runtime holds them: PEM bytes or the path of a file
-/// that holds them. [`Self::load_files`] reads the paths and produces the
-/// [`RawSocketContextOptions`] usockets takes.
+/// TLS options: PEM bytes, or paths that [`Self::load_files`] reads into [`RawSocketContextOptions`].
 #[derive(Clone, Copy)]
 pub struct BunSocketContextOptions {
     pub key_file_name: *const c_char,
@@ -161,8 +159,7 @@ impl Default for BunSocketContextOptions {
     }
 }
 
-/// `#[repr(C)]` mirror of `us_bun_socket_context_options_t`. TLS material is
-/// PEM bytes only; see [`BunSocketContextOptions::load_files`].
+/// `#[repr(C)]` mirror of `us_bun_socket_context_options_t`; TLS material is PEM bytes only.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct RawSocketContextOptions {
@@ -322,8 +319,7 @@ impl BunSocketContextOptions {
         }
     }
 
-    /// Read each `*_file_name` option into the matching bytes field. A file
-    /// replaces an inline value of the same field.
+    /// Read each `*_file_name` option into the matching bytes field.
     pub fn load_files(&self) -> Result<LoadedOptions, LoadFileError> {
         let mut raw = self.raw();
         let mut files = Vec::new();

@@ -997,10 +997,12 @@ it("close() with in-flight work raises no unhandled rejection", async () => {
 });
 
 it("a failed constructor url navigation fires onNavigationFailed, not an unhandled rejection", async () => {
-  // Subprocess-isolated like the test above. The url is rejected by NSURL
-  // where it is strict (x64: space and <>); where it is lenient (arm64) the
-  // load fails with NXDOMAIN on the RFC-2606 .invalid TLD. onNavigationFailed
-  // fires on either path; the internal constructor promise stays quiet.
+  // Subprocess-isolated like the test above. Both urls fail without touching
+  // the network: "http://[" is structurally invalid (the NSURL-reject host
+  // path, or an immediate bad-URL load error where NSURL is lenient), and
+  // 127.0.0.1 port 1 refuses the connection at once (the delegate failure
+  // path). onNavigationFailed fires on both; the internal constructor
+  // promise stays quiet on both.
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -1008,20 +1010,24 @@ it("a failed constructor url navigation fires onNavigationFailed, not an unhandl
       `
         const unhandled = [];
         process.on("unhandledRejection", e => unhandled.push(e.message));
-        const view = new Bun.WebView({ width: 200, height: 200, url: "http://exa mple.invalid/<>" });
-        const failed = await new Promise(resolve => { view.onNavigationFailed = resolve; });
-        view.close();
+        const results = [];
+        for (const url of ["http://[", "http://127.0.0.1:1/"]) {
+          const view = new Bun.WebView({ width: 200, height: 200, url });
+          const failed = await new Promise(resolve => { view.onNavigationFailed = resolve; });
+          view.close();
+          results.push(failed instanceof Error);
+        }
         // Nothing announces "no unhandled rejection is coming"; this is a
         // bounded window for one to appear (the reject itself ran synchronously).
         await Bun.sleep(100);
-        console.log(JSON.stringify({ isError: failed instanceof Error, unhandled }));
+        console.log(JSON.stringify({ results, unhandled }));
       `,
     ],
     env: bunEnv,
     stderr: "inherit",
   });
   const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-  expect(JSON.parse(stdout)).toEqual({ isError: true, unhandled: [] });
+  expect(JSON.parse(stdout)).toEqual({ results: [true, true], unhandled: [] });
   expect(exitCode).toBe(0);
 });
 

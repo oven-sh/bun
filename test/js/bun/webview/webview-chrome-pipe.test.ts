@@ -308,6 +308,34 @@ test.concurrent("a floating navigate() that genuinely fails still raises an unha
   expect(result).toEqual(["net::ERR_NAME_NOT_RESOLVED"]);
 });
 
+// The navigate slot settles before onNavigationFailed runs, so the callback
+// can retry with navigate() instead of hitting ERR_INVALID_STATE.
+test.concurrent("onNavigationFailed can retry navigate() immediately", async () => {
+  const result = await runScenario(`
+    const view = new Bun.WebView({
+      backend: { ...backend, argv: [...backend.argv, "--navigate-error=net::ERR_NAME_NOT_RESOLVED"] },
+      width: 100,
+      height: 100,
+    });
+    let retried = false;
+    const outcomeStr = await new Promise(resolve => {
+      view.onNavigationFailed = () => {
+        if (retried) return resolve("retry was accepted and failed too");
+        retried = true;
+        try {
+          view.navigate("http://fake/retry").catch(() => {});
+        } catch (err) {
+          resolve("retry threw " + err.code);
+        }
+      };
+      view.navigate("http://fake/first").catch(() => {});
+    });
+    view.close();
+    print(outcomeStr);
+  `);
+  expect(result).toBe("retry was accepted and failed too");
+});
+
 // `bun test --isolate` replaces the global object between files. The transport
 // is bound to the global that spawned the browser, so it has to go with that
 // file: its open views are closed, their pending promises rejected, and the

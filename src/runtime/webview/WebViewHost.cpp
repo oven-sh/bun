@@ -234,10 +234,12 @@ void WebViewHost::navigateIPC(const WTF::String& urlString)
     }
     auto nsurl = objc::NSURL::fromString(objc::NSString::fromWTF(urlString));
     if (!nsurl) {
-        // NavFailEvent first so onNavigationFailed fires; the promise
-        // rejection alone can be silent (a constructor url is marked handled).
-        hostWriter()->sendReplyStr(m_viewId, Reply::NavFailEvent, "invalid URL"_s);
+        // NavFailed settles the slot, then NavFailEvent fires
+        // onNavigationFailed (same order as onNavigationFailed above); the
+        // promise rejection alone can be silent (a constructor url is
+        // marked handled).
         hostWriter()->sendReplyStr(m_viewId, Reply::NavFailed, "invalid URL"_s);
+        hostWriter()->sendReplyStr(m_viewId, Reply::NavFailEvent, "invalid URL"_s);
         return;
     }
     m_navPending = true;
@@ -707,9 +709,12 @@ void WebViewHost::onNavigationFinished()
 
 void WebViewHost::onNavigationFailed(const WTF::String& err)
 {
+    // NavFailed first: the client settles the navigate slot before the
+    // NavFailEvent callback runs, so a retry with navigate() from inside
+    // onNavigationFailed sees an empty slot instead of ERR_INVALID_STATE.
+    if (std::exchange(m_navPending, false))
+        hostWriter()->sendReplyStr(m_viewId, Reply::NavFailed, err);
     hostWriter()->sendReplyStr(m_viewId, Reply::NavFailEvent, err);
-    if (!std::exchange(m_navPending, false)) return;
-    hostWriter()->sendReplyStr(m_viewId, Reply::NavFailed, err);
 }
 
 void WebViewHost::onConsoleMessage(id type, id args)

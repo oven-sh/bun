@@ -404,8 +404,9 @@ void HostClient::handleReply(const Frame& h, Reader r)
         settleSlot(g, view, view->m_pendingNavigate, true, jsUndefined());
         return;
     case Reply::NavFailed:
-        // navigateIPC sends NavFailed directly for invalid URLs — no
-        // NavFailEvent precedes it, so the only m_loading reset path is here.
+        // The host sends NavFailed before NavFailEvent, so the slot is clear
+        // when the callback runs. host_main's invalid-viewId NavFailed has no
+        // event at all, so keep the m_loading reset here too.
         view->m_loading = false;
         settleSlot(g, view, view->m_pendingNavigate, false, createError(g, r.str()));
         return;

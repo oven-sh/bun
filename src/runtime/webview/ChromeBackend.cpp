@@ -655,17 +655,22 @@ static void settle(JSGlobalObject* g, JSWebView* view, PendingSlot slot, bool ok
 }
 
 // Reject one op's slot on a CDP failure. A Navigate-slot failure also fires
-// onNavigationFailed and clears loading, like WebKit's NavFailEvent.
-static void settleFailure(JSGlobalObject* g, JSWebView* view, PendingSlot slot, JSValue errValue)
+// onNavigationFailed and clears loading, like WebKit's NavFailEvent, except
+// for PageTitle: that is the post-load title fetch, and its failure (for
+// example a redirect destroying the context) is not a navigation failure.
+// The slot settles before the callback runs, so a retry with navigate()
+// from inside the callback sees an empty slot instead of ERR_INVALID_STATE.
+static void settleFailure(JSGlobalObject* g, JSWebView* view, PendingSlot slot, Method method, JSValue errValue)
 {
-    if (slot == PendingSlot::Navigate) {
-        view->m_loading = false;
+    bool navigationFailed = slot == PendingSlot::Navigate && method != Method::PageTitle;
+    if (navigationFailed) view->m_loading = false;
+    settle(g, view, slot, false, errValue);
+    if (navigationFailed) {
         if (JSObject* cb = view->m_onNavigationFailed.get()) {
             Bun__EventLoop__runCallback2(g, JSValue::encode(cb), JSValue::encode(jsUndefined()),
                 JSValue::encode(errValue), JSValue::encode(jsUndefined()));
         }
     }
-    settle(g, view, slot, false, errValue);
 }
 
 // Slots, not m_pending: a navigation that Chrome has already answered is
@@ -759,7 +764,7 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         // {"code":-32000,"message":"..."}
         auto msgSlice = jsonString(jsonField(error, { "message", 7 }));
         auto errStr = WTF::String::fromUTF8(std::span<const char>(msgSlice));
-        settleFailure(g, view, entry.slot,
+        settleFailure(g, view, entry.slot, entry.method,
             createError(g, errStr.isEmpty() ? "CDP error"_s : errStr));
         return;
     }
@@ -838,7 +843,7 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         // m_pending, so we just drop here.
         auto err = jsonString(jsonField(result, { "errorText", 9 }));
         if (!err.empty())
-            settleFailure(g, view, entry.slot, createError(g, WTF::String::fromUTF8(err)));
+            settleFailure(g, view, entry.slot, entry.method, createError(g, WTF::String::fromUTF8(err)));
         // Else: don't settle — Page.loadEventFired does.
         return;
     }

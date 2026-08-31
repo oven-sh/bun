@@ -474,10 +474,10 @@ describe("bytecode cache portability", () => {
           "sha256": "2a5d62fb4ca9d107e3a5bb2abe6a73f3c859a6f1a91c6c3d77653cb8c2053361",
         },
         "bun build --bytecode --minify all.js": {
-          "js": "721d67b0c2135aad554c9962b4e4505a4d6856b50da537fee7566d43f6cfdbda",
+          "js": "02f69e5448f525a3f098f06e9da1565b887125621607fcf5ef3d6be4f2642d6f",
           "jsc": {
-            "bytes": 1998992,
-            "sha256": "f2631b3ba2b532e52183d5e6a44a7dbf5c0515b368d95fc692bf0e5ad15eb8f6",
+            "bytes": 1999024,
+            "sha256": "68d66351c6904f530efe9bb3d7d4bec29216cfca84ad0e592cf0f9cc2a6eab7a",
           },
         },
         "bun build --bytecode --minify features.js": {
@@ -502,10 +502,10 @@ describe("bytecode cache portability", () => {
           },
         },
         "bun build --bytecode all.js": {
-          "js": "a2f566b81700f852fef68247aef22af8b916858de30e4dc787846fd874c9e4d2",
+          "js": "3fed52509bcec75d9e29ae544e594c2bd0b656435391c4b25d93b77781e6875d",
           "jsc": {
-            "bytes": 2178656,
-            "sha256": "f743f4e9cff325bfd8d344f2dead6a8ba6b9933393a09c75334429ead924c480",
+            "bytes": 2178664,
+            "sha256": "7e1b891eeadd25c17d7cb0d0b2bbbd6f834c9460d1a52fc1ce80e362d806b919",
           },
         },
         "bun build --bytecode big.js": {
@@ -530,31 +530,31 @@ describe("bytecode cache portability", () => {
           },
         },
         "bun build --bytecode immutable/dist/immutable.es.js": {
-          "js": "c9a2ba9f6b6a662e6bdfd44128bc66284276f5eac2a8875adb4578472328dc9f",
+          "js": "05f0cde57bc6b435ac582d1dd835a4ca534e4463aece6cf8ab0ba804bada4b95",
           "jsc": {
-            "bytes": 280016,
-            "sha256": "2a99c33a2516e2d41187bc322ddd4523318530b51c60c3d9a8bd566d4f2929a1",
+            "bytes": 280032,
+            "sha256": "76e7397e6837de9932399628bf313864cb204fbf0cca6b9c01c8d919778084a6",
           },
         },
         "bun build --bytecode libraries.js": {
-          "js": "f9d0c270d3f41997b904689435104703b1f8b6b1c67ead48dff30e7354890cfd",
+          "js": "d07e6f6b8072d025b5dabc555ae1956f35eb93ae9949f4e28d3241d24454f860",
           "jsc": {
-            "bytes": 23806376,
-            "sha256": "1e2e31a113d8b5ca3e9cd73820d465e678756c0942023480569f785b15987dcf",
+            "bytes": 23806816,
+            "sha256": "b19fb12773cc11afa6e1fa4f2a2a67db4ae8dc9f9faa68f3fba178d9626e522e",
           },
         },
         "bun build --bytecode lodash/lodash.js": {
-          "js": "e372f1aec6b2bba20581abfce3b7273aae0ec4f593ed2aa4aa5c60c66836856d",
+          "js": "d848e69990c2f1f1de4cc4f085b82a68d4f9fe41dec935bc324c3446756638d1",
           "jsc": {
             "bytes": 347488,
-            "sha256": "531d6bb544c53641289a44e72ac096560b19d360c2ee19b77483987c367b9b5e",
+            "sha256": "c0a867e3d08d091010a748af6864b5080040ff6a1fd26450ece8b4e887ea6ba9",
           },
         },
         "bun build --bytecode react-dom/cjs/react-dom.development.js": {
-          "js": "e2cf34c8eb6f5952a33ca91e3949b28786349cf97ea3fbf0b3b8500dbccd4860",
+          "js": "0c1c056e3cf8c745148f5e60449707d9c997a9390ba8740e5d2d3371f9dbb8ae",
           "jsc": {
             "bytes": 980080,
-            "sha256": "32fa8492ad9fdf3ea31395756898d556df9dc6bdfbac9bba07bcafa748ab38ca",
+            "sha256": "1cd131e19ca8feff1cceb2dcbcada6a08656ef0653ad22c40e18f003fca7acf3",
           },
         },
         "bun build --bytecode records.js": {

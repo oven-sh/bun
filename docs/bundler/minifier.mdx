@@ -757,17 +757,19 @@ foo&&bar||baz
 
 **Mode:** `--minify-whitespace`
 
-Removes comments except important license comments.
+Removes comments except legal comments. A legal comment starts with `/*!` or `//!`, or contains the word `@license` or `@preserve`. A longer word such as `@licensee` does not count.
 
 ```ts Input
 // This comment is removed
 /* So is this */
 /*! But this license comment is kept */
+/** @license MIT, and so is this one */
 function test() { /* inline comment */ }
 ```
 
 ```js Output
 /*! But this license comment is kept */
+/** @license MIT, and so is this one */
 function test(){}
 ```
 

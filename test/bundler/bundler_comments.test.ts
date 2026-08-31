@@ -430,3 +430,95 @@ describe("multi-line comments", () => {
     },
   });
 });
+
+describe("legal comments", () => {
+  // Like esbuild, keep a comment that contains the word "@license" or
+  // "@preserve", not only "/*!" and "//!". "@copyright" alone is not legal,
+  // and neither is a longer word such as "@licensee".
+  const legalForms = [
+    "/*! bang block */",
+    "//! bang line",
+    "/* @license MIT Copyright (c) Foo */",
+    "/** @license Apache-2.0 */",
+    "/* @preserve keep this */",
+    "// @license line form",
+    "// @preserve line form",
+    "/**\n * @license BSD-3-Clause\n * Copyright (c) Bar\n */",
+    "/* @license*/",
+    "/* see foo@license for the word boundary */",
+  ];
+  const droppedForms = [
+    "/* @copyright not legal */",
+    "/* plain comment */",
+    "/* the @licensee agrees */",
+    "/* @preserved for posterity */",
+    "// see the @licenses folder",
+    "/* @license_x */",
+    "/* @license9 */",
+  ];
+  const header = legalForms.join("\n") + "\n" + droppedForms.join("\n") + "\n";
+
+  function expectEachFormOnce(output: string) {
+    for (const form of legalForms) {
+      expect(output.split(form)).toHaveLength(2);
+    }
+    for (const form of droppedForms) {
+      expect(output).not.toContain(form);
+    }
+  }
+
+  for (const minify of [false, true]) {
+    itBundled(`@license and @preserve comments are kept ${minify ? "with" : "without"} minification`, {
+      files: {
+        "/entry.js": header + `console.log("hello");\n`,
+      },
+      minifyWhitespace: minify,
+      minifySyntax: minify,
+      minifyIdentifiers: minify,
+      run: {
+        stdout: "hello",
+      },
+      onAfterBundle(api) {
+        const output = api.readFile("/out.js");
+        expectEachFormOnce(output);
+        // The comments stay ahead of the statement they annotate.
+        expect(output.indexOf(legalForms.at(-1)!)).toBeLessThan(output.indexOf("console.log"));
+      },
+    });
+  }
+
+  itBundled("@license comments are kept when the file is transpiled without bundling", {
+    files: {
+      "/entry.ts": header + `export const x: number = 1;\n`,
+    },
+    bundling: false,
+    onAfterBundle(api) {
+      const output = api.readFile("/out.js");
+      expectEachFormOnce(output);
+      expect(output.indexOf(legalForms.at(-1)!)).toBeLessThan(output.indexOf("export const x"));
+    },
+  });
+
+  // Parsing "import(" used to clear every legal comment that was still waiting
+  // for the next statement boundary.
+  itBundled("a legal comment before import() is kept", {
+    files: {
+      "/entry.js": `
+        export const load = /*! before the arrow */ () => import("external-pkg");
+        export const load2 = () => import(/* @license inside the parens */ "external-pkg");
+        export const load3 = () => /* @preserve before import */ import("external-pkg");
+        console.log(typeof load, typeof load2, typeof load3);
+      `,
+    },
+    external: ["external-pkg"],
+    run: {
+      stdout: "function function function",
+    },
+    onAfterBundle(api) {
+      const output = api.readFile("/out.js");
+      expect(output.split("/*! before the arrow */")).toHaveLength(2);
+      expect(output.split("/* @license inside the parens */")).toHaveLength(2);
+      expect(output.split("/* @preserve before import */")).toHaveLength(2);
+    },
+  });
+});

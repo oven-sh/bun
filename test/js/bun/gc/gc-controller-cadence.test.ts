@@ -150,3 +150,52 @@ describe.skipIf(isDebug)("GarbageCollectionController eden cadence", () => {
     expect(eden).toBeLessThan(5);
   });
 });
+
+// After BUN_IDLE_RELEASE_SECONDS during which the process used (almost) no CPU,
+// the controller drops JIT code and CodeBlocks once (they re-tier if the code
+// gets hot again). Idle is judged by process CPU time, not by whether any JS
+// ran: an app parked at a prompt still fires the odd timer and should count as
+// idle; one that keeps a core busy should not.
+describe("idle release", () => {
+  const script = (mode: "idle" | "busy") => `
+    const { heapStats } = require("bun:jsc");
+    const fns = [];
+    for (let i = 0; i < 200; i++) fns.push(new Function("a", "let s = 0; for (let j = 0; j < 100; j++) s += a * " + i + " + j; return s"));
+    for (let r = 0; r < 30; r++) for (const f of fns) f(r);
+    const codeBlocks = () => { const c = heapStats().objectTypeCounts; return (c.FunctionCodeBlock || 0) + (c.CodeBlock || 0); };
+    const before = codeBlocks();
+    ${mode === "busy" ? `const iv = setInterval(() => { const end = performance.now() + 150; while (performance.now() < end) fns[0](1); }, 200);` : ``}
+    setTimeout(() => {
+      ${mode === "busy" ? `clearInterval(iv);` : ``}
+      console.log(JSON.stringify({ before, after: codeBlocks() }));
+    }, 3500);
+  `;
+
+  async function run(mode: "idle" | "busy", seconds: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script(mode)],
+      env: { ...bunEnv, BUN_IDLE_RELEASE_SECONDS: seconds },
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(exitCode).toBe(0);
+    return JSON.parse(stdout.trim()) as { before: number; after: number };
+  }
+
+  test.concurrent("fires once the process has been idle long enough", async () => {
+    const { before, after } = await run("idle", "1");
+    expect(before).toBeGreaterThan(150);
+    expect(after).toBeLessThan(before / 4);
+  });
+
+  test.concurrent("does not fire while the process is busy", async () => {
+    const { before, after } = await run("busy", "1");
+    expect(after).toBeGreaterThanOrEqual(before - 20);
+  });
+
+  test.concurrent("BUN_IDLE_RELEASE_SECONDS=0 disables it", async () => {
+    const { before, after } = await run("idle", "0");
+    expect(after).toBeGreaterThanOrEqual(before - 20);
+  });
+});

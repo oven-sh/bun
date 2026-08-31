@@ -162,11 +162,14 @@ describe("expect()", () => {
     await expect(thenable("reject", 4)).rejects.toBe(4);
 
     if (isBun) {
-      // Should fail with "Received promise that resolved" / "Received promise that rejected"
-      await expectFailure(() => expect(thenable("resolve", 4)).rejects.toBe(4)).toThrow();
-      await expectFailure(() => expect(thenable("reject", 4)).resolves.toBe(4)).toThrow();
-      // A non-callable `then` does not make a thenable. Should fail with "Expected promise"
-      await expectFailure(() => expect({ then: 4 }).resolves.toBe(4)).toThrow();
+      await expectFailure(() => expect(thenable("resolve", 4)).rejects.toBe(4)).toThrow(
+        /Received promise that resolved/,
+      );
+      await expectFailure(() => expect(thenable("reject", 4)).resolves.toBe(4)).toThrow(
+        /Received promise that rejected/,
+      );
+      // A non-callable `then` does not make a thenable.
+      await expectFailure(() => expect({ then: 4 }).resolves.toBe(4)).toThrow(/Expected promise/);
     }
   });
 
@@ -211,8 +214,8 @@ describe("expect()", () => {
       await expect(lazy("reject", 7)).rejects.toBe(7);
 
       if (isBun) {
-        await expectFailure(() => expect(lazy("resolve", 1)).rejects.toBe(1)).toThrow();
-        await expectFailure(() => expect(lazy("reject", 1)).resolves.toBe(1)).toThrow();
+        await expectFailure(() => expect(lazy("resolve", 1)).rejects.toBe(1)).toThrow(/Received promise that resolved/);
+        await expectFailure(() => expect(lazy("reject", 1)).resolves.toBe(1)).toThrow(/Received promise that rejected/);
 
         // expect(fn).toThrow() awaits a promise returned by fn (Bun only)
         expect(() => lazy("reject", new Error("lazy boom"))).toThrow("lazy boom");

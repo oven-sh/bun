@@ -131,14 +131,13 @@ test("expect(lazyPromiseSubclass).rejects settles instead of hanging the run", a
       });
 
       test("Bun.SQL Query", async () => {
-        const sql = new SQL("sqlite://:memory:");
+        await using sql = new SQL("sqlite://:memory:");
         await sql\`CREATE TABLE t (a INTEGER)\`;
         await sql\`INSERT INTO t VALUES (1)\`;
         await expect(sql\`SELECT a FROM t\`).resolves.toEqual([{ a: 1 }]);
         await expect(sql\`SELECT a FROM t\`.values()).resolves.toEqual([[1]]);
         await expect(sql\`SELECT * FROM no_such_table\`).rejects.toThrow(/no such table/);
         expect(() => sql\`SELECT * FROM no_such_table\`).toThrow(/no such table/);
-        await sql.close();
       });
     `,
   });

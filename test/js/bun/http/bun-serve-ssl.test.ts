@@ -256,19 +256,22 @@ describe("Bun.serve per-serverName client certificate policy", () => {
   });
 });
 
-describe("keyFile / certFile / caFile", () => {
+describe("keyFile / certFile / caFile / dhParamsFile", () => {
+  const keysFixtures = join(import.meta.dir, "..", "..", "node", "test", "fixtures", "keys");
+
   test("relative paths resolve against the cwd and non-ASCII paths load", async () => {
     // The directory name is not ASCII: the files are opened from Rust with a
     // wide open on Windows, not by BoringSSL's narrow fopen.
     using dir = tempDir("bun-serve-ssl-ünïcødé", {
       "key.pem": tlsCert.key,
       "cert.pem": tlsCert.cert,
+      "dh.pem": readFileSync(join(keysFixtures, "dh2048.pem"), "utf8"),
       "server.ts": `
         import { join } from "node:path";
         const server = Bun.serve({
           port: 0,
           hostname: "127.0.0.1",
-          tls: { keyFile: "key.pem", certFile: join(process.cwd(), "cert.pem") },
+          tls: { keyFile: "key.pem", certFile: join(process.cwd(), "cert.pem"), dhParamsFile: "dh.pem" },
           fetch: () => new Response("TLS-OK"),
         });
         const res = await fetch(server.url, { tls: { caFile: "cert.pem" } });
@@ -298,5 +301,45 @@ describe("keyFile / certFile / caFile", () => {
         fetch: () => new Response("unreachable"),
       });
     }).toThrow("Unable to access keyFile path");
+  });
+
+  test("a malformed dhParamsFile is rejected by the PEM parser", () => {
+    using dir = tempDir("bun-serve-ssl-dh-malformed", { "key.pem": tlsCert.key, "cert.pem": tlsCert.cert });
+    expect(() => {
+      Bun.serve({
+        port: 0,
+        tls: {
+          keyFile: join(String(dir), "key.pem"),
+          certFile: join(String(dir), "cert.pem"),
+          dhParamsFile: join(keysFixtures, "dherror.pem"),
+        },
+        fetch: () => new Response("unreachable"),
+      });
+    }).toThrow(expect.objectContaining({ code: "ERR_OSSL_PEM_BAD_BASE64_DECODE" }));
+  });
+
+  // A directory passes the parse-time access() probe and fails when the file
+  // is read for the SSL_CTX.
+  test("a file that cannot be read reports which option failed", () => {
+    using dir = tempDir("bun-serve-ssl-unreadable", {
+      "key.pem": tlsCert.key,
+      "cert.pem": tlsCert.cert,
+      "a-directory/.keep": "",
+    });
+    const keyFile = join(String(dir), "key.pem");
+    const certFile = join(String(dir), "cert.pem");
+    const directory = join(String(dir), "a-directory");
+
+    expect(() => {
+      Bun.serve({ port: 0, tls: { keyFile: directory, certFile }, fetch: () => new Response("unreachable") });
+    }).toThrow(expect.objectContaining({ code: "EISDIR", message: expect.stringContaining(directory) }));
+
+    const listenWith = (tls: Record<string, string>) => () => {
+      Bun.listen({ hostname: "127.0.0.1", port: 0, tls, socket: { data() {} } });
+    };
+    expect(listenWith({ keyFile: directory, certFile })).toThrow("Failed to load key file");
+    expect(listenWith({ keyFile, certFile: directory })).toThrow("Failed to load certificate file");
+    expect(listenWith({ keyFile, certFile, caFile: directory })).toThrow("Failed to load CA file");
+    expect(listenWith({ keyFile, certFile, dhParamsFile: directory })).toThrow("Failed to load DH params file");
   });
 });

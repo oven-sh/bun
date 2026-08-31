@@ -143,8 +143,7 @@ pub mod js_fns {
                 Self::OnTestFinished | Self::OnTestFailed => None,
             }
         }
-        /// `onTestFinished`/`onTestFailed` register inside a running test only;
-        /// the describe-scope hooks register during preload or collection.
+        /// True for the hooks that only register inside a running test.
         const fn is_test_scoped(self) -> bool {
             matches!(self, Self::OnTestFinished | Self::OnTestFailed)
         }

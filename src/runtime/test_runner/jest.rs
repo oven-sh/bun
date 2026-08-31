@@ -414,8 +414,6 @@ pub mod Jest {
         module.put(global_object, b"expect", jsc::codegen::js::get_constructor::<Expect>(global_object));
         module.put(global_object, b"expectTypeOf", jsc::codegen::js::get_constructor::<ExpectTypeOf>(global_object));
 
-        // create_mock_objects adds the rest of the properties; the inline
-        // capacity hint above covers both.
         create_mock_objects(global_object, module);
 
         Ok(module)
@@ -463,17 +461,13 @@ pub mod Jest {
             vi.put(global_object, name.as_bytes(), jsc::JSFunction::create(global_object, name, func, arity, Default::default()));
         }
         module.put(global_object, b"vi", vi);
-        // vitest also exports `vi` under the name `vitest`.
         module.put(global_object, b"vitest", vi);
 
-        // `vitest run` collects bench() entries but does not execute them;
-        // match that by registering nothing.
+        // `vitest run` collects bench() entries but never executes them.
         module.put(global_object, b"bench", jsc::JSFunction::create(global_object, "bench", __jsc_host_js_bench_noop, 2, Default::default()));
 
-        // vitest exports that bun:test does not implement. A missing named
-        // export fails the whole file at load with a SyntaxError, so export a
-        // function that throws on call instead: only the tests that use the
-        // member fail, with an error that names it.
+        // Unimplemented vitest exports throw on call. A missing named export
+        // would fail the whole file at load with a SyntaxError instead.
         const UNIMPLEMENTED_VITEST_EXPORTS: &[&str] = &[
             "assert",
             "assertType",
@@ -556,10 +550,8 @@ pub mod Jest {
     }
 
     thread_local! {
-        // Stub registries for vi.stubEnv / vi.stubGlobal: the key bytes plus
-        // the original value. `None` = the property did not exist (or was
-        // undefined), so restore deletes it. Only the first stub of a key
-        // records an original, matching vitest.
+        // vi.stubEnv / vi.stubGlobal registries: key bytes plus the original
+        // value (`None` = absent, so restore deletes). First stub of a key wins.
         static STUBBED_ENVS: RefCell<Vec<(Box<[u8]>, Option<jsc::Strong>)>> = const { RefCell::new(Vec::new()) };
         static STUBBED_GLOBALS: RefCell<Vec<(Box<[u8]>, Option<jsc::Strong>)>> = const { RefCell::new(Vec::new()) };
     }
@@ -626,11 +618,9 @@ pub mod Jest {
         Ok(())
     }
 
-    /// `bun test --isolate` file boundary: restore env vars stubbed with
-    /// `vi.stubEnv` and drop every stored original. The `vi.stubGlobal`
-    /// originals belong to the outgoing realm, which is discarded whole, so
-    /// they are dropped without a restore. Dropping the `Strong`s here also
-    /// keeps them from pinning the outgoing realm.
+    /// `bun test --isolate` file boundary: restore stubbed env vars, and drop
+    /// the stored originals so they cannot pin the outgoing realm. Global-stub
+    /// originals belong to that discarded realm, so they get no restore.
     pub(crate) fn reset_stubs_for_isolation(global_object: &JSGlobalObject) {
         let restored =
             get_process_env(global_object).and_then(|env| unstub_all(global_object, env, &STUBBED_ENVS));

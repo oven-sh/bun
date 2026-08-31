@@ -1423,8 +1423,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] double JSMock__getCurrentUnixTimeMs()
     return WTF::WallTime::now().secondsSinceEpoch().milliseconds();
 }
 
-// Helper function for native code to read the overriden Date.now() time.
-// NaN is the "no override" sentinel (see JSGlobalObject::jsDateNow()).
+// Helper function for native code to read the overriden Date.now() time (NaN = no override)
 extern "C" [[ZIG_EXPORT(nothrow)]] double JSMock__getOverridenDateNow(JSC::JSGlobalObject* globalObject)
 {
     return globalObject->overridenDateNow;

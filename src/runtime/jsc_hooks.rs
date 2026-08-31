@@ -1760,9 +1760,7 @@ fn stop_active_handles(vm: &mut VirtualMachine, reason: StopReason) -> SweepResu
             unsafe { (*all).event_loop_delay.disable() };
         }
     }
-    // vi.stubEnv / vi.stubGlobal state is per-thread, not per-global: restore
-    // the env vars and drop the stored originals so they cannot leak into the
-    // next file or pin the outgoing realm.
+    // vi.stubEnv / vi.stubGlobal state is per-thread, not per-global.
     if reason == StopReason::TestIsolation {
         crate::test_runner::jest::Jest::reset_stubs_for_isolation(vm.global());
     }

@@ -647,10 +647,8 @@ impl Options {
                             }
                         }
                         self.scope = Npm::registry::Scope::from_api(b"", api_registry, env)?;
-                        // The carried credentials went through `$VAR`
-                        // resolution when the previous scope was built. Assign
-                        // them after `from_api` so they are not resolved a
-                        // second time.
+                        // Assigned after `from_api` so the already-resolved
+                        // credentials do not go through `$VAR` resolution twice.
                         if !carried_token.is_empty() {
                             self.scope.token = carried_token;
                         }

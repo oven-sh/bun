@@ -178,11 +178,9 @@ pub mod api {
             !self.token.is_empty() || !self.username.is_empty() || !self.password.is_empty()
         }
 
-        /// Like `has_credentials`, but resolves `$VAR` references first and
-        /// only counts a credential that can produce an Authorization header:
-        /// a token, or a username and password pair. A reference to an unset
-        /// variable resolves to no credential, so other credential sources
-        /// (such as .npmrc) still apply.
+        /// `has_credentials` with `$VAR` references resolved, counting only a
+        /// credential that can produce an Authorization header: a token, or a
+        /// username and password pair.
         pub fn has_resolved_credentials(&self, env: &bun_dotenv::Loader) -> bool {
             !env.get_auto(&self.token).is_empty()
                 || (!env.get_auto(&self.username).is_empty()

@@ -1054,12 +1054,12 @@ impl<'a> Parser<'a> {
         Ok(None)
     }
 
-    fn parse_value<const IS_PROCESS: bool>(&mut self) -> Result<&[u8], AllocError> {
+    fn parse_value<const IS_PROCESS: bool>(&mut self) -> Result<(&[u8], Option<u8>), AllocError> {
         let start = self.pos;
         self.skip_whitespaces();
         let mut end = self.pos;
         if end >= self.src.len() {
-            return Ok(&self.src[self.src.len()..]);
+            return Ok((&self.src[self.src.len()..], None));
         }
         // reshaped for borrowck — `parse_quoted` returns a borrow of
         // `self.value_buffer`; capture only its length, then re-borrow the buffer
@@ -1072,11 +1072,14 @@ impl<'a> Parser<'a> {
         };
         if let Some(len) = quoted_len {
             let value = &self.value_buffer[..len];
-            return Ok(if IS_PROCESS {
-                value
-            } else {
-                &value[1..value.len() - 1]
-            });
+            return Ok((
+                if IS_PROCESS {
+                    value
+                } else {
+                    &value[1..value.len() - 1]
+                },
+                Some(self.src[end]),
+            ));
         }
         end = start;
         while end < self.src.len() {
@@ -1087,7 +1090,7 @@ impl<'a> Parser<'a> {
             end += 1;
         }
         self.pos = end;
-        Ok(strings::trim(&self.src[start..end], WHITESPACE_CHARS))
+        Ok((strings::trim(&self.src[start..end], WHITESPACE_CHARS), None))
     }
 
     fn expand_value(&mut self, map: &Map, value: &[u8]) -> Result<Option<&[u8]>, AllocError> {
@@ -1218,10 +1221,8 @@ impl<'a> Parser<'a> {
                 self.skip_line();
                 continue;
             };
-            self.skip_whitespaces();
-            let should_expand =
-                EXPAND && self.pos < self.src.len() && !matches!(self.src[self.pos], b'\'' | b'"');
-            let value = self.parse_value::<IS_PROCESS>()?;
+            let (value, quote) = self.parse_value::<IS_PROCESS>()?;
+            let should_expand = EXPAND && quote != Some(b'\'');
             // reshaped for borrowck — value borrows self.value_buffer; copy before map mut.
             let value_owned: Box<[u8]> = Box::from(value);
             let entry = map.map.get_or_put(key)?;

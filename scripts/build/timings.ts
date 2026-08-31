@@ -114,5 +114,5 @@ export function printBuildTimings(cfg: Config, output: BunOutput, sinceLine: num
     );
   }
   console.log(`[timing] ${"total (ninja)".padEnd(18)} ${"".padStart(8)} ${"".padStart(8)} ${fmt(total).padStart(8)}`);
-  console.log(`[timing] toolchain: cc=${cfg.cc} rustc=${cfg.rustc ?? "?"}`);
+  console.log(`[timing] toolchain: cc=${cfg.cc} rustc=${cfg.rustc ?? "-"} cargo=${cfg.cargo ?? "-"}`);
 }

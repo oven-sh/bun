@@ -546,8 +546,10 @@ function getBuildBunStep(platform, options) {
       // Trial: compile with the oven-sh/rust bun-toolchain built for this lane (PGO/BOLT-trained on
       // this exact build), baked into the build-host image by scripts/bootstrap.sh
       // install_bun_toolchain, instead of apt LLVM + rustup.
-      BUN_TOOLCHAIN_LLVM: `/opt/bun-toolchain/ci-${getTargetKey(platform)}`,
-      BUN_TOOLCHAIN_RUST: `/opt/bun-toolchain/ci-${getTargetKey(platform)}`,
+      // Baseline measurement: toolchain override off for this commit (stock apt LLVM + rustup on
+      // the same images), so the [timing] lines are comparable. Re-enable by restoring:
+      //   BUN_TOOLCHAIN_LLVM: `/opt/bun-toolchain/ci-${getTargetKey(platform)}`,
+      //   BUN_TOOLCHAIN_RUST: `/opt/bun-toolchain/ci-${getTargetKey(platform)}`,
     },
     command: [...nasmSetup, getBuildCommand(platform, options, "build")],
   };

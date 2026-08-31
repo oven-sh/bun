@@ -700,7 +700,8 @@ describe("onconnect/onclose", () => {
   });
 
   test("failed reconnect attempts fire neither onconnect nor onclose", async () => {
-    const server = await mockServer();
+    // The mid-test dispose makes the scope-exit dispose a harmless second close.
+    await using server = await mockServer();
     const events: string[] = [];
     const dropped = Promise.withResolvers<void>();
     await using sql = new SQL(server.url, {
@@ -721,7 +722,9 @@ describe("onconnect/onclose", () => {
       await closing;
       await dropped.promise;
       // each failed dial logs the retry warning; wait for two attempts
-      while (warnings.length < 2) await Bun.sleep(10);
+      const deadline = Date.now() + 4000;
+      while (warnings.length < 2 && Date.now() < deadline) await Bun.sleep(10);
+      expect(warnings.length).toBeGreaterThanOrEqual(2);
       expect(events).toEqual(["onconnect", "onclose"]);
     } finally {
       console.warn = originalWarn;

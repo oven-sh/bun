@@ -1,12 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDirWithFiles } from "harness";
 import { exec, type ExecException, type ExecOptions } from "node:child_process";
+import path from "node:path";
 
 const SIZE = 262145;
 const EQUALS = Buffer.alloc(SIZE, "=");
 
 const cwd = tempDirWithFiles("child-process-exec", { "equals.txt": EQUALS });
 const readCommand = isWindows ? "type equals.txt" : "cat equals.txt";
+const echoArgvFixture = path.join(import.meta.dir, "fixtures", "child-process-echo-argv.js");
 
 function execAsync(command: string, options: ExecOptions) {
   const { promise, resolve } = Promise.withResolvers<{
@@ -90,8 +92,7 @@ describe.concurrent("child_process.exec", () => {
 });
 
 test.concurrent("exec with verbatim arguments", async () => {
-  const fixture = require.resolve("./fixtures/child-process-echo-argv.js");
-  const { child, promise } = execAsync(`${bunExe()} ${fixture} tasklist /FI "IMAGENAME eq chrome.exe"`, {});
+  const { child, promise } = execAsync(`${bunExe()} ${echoArgvFixture} tasklist /FI "IMAGENAME eq chrome.exe"`, {});
   expect(child.pid).toBeGreaterThan(0);
 
   const { err, stdout, stderr } = await promise;

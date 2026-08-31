@@ -213,16 +213,19 @@ describe.concurrent("bun test --isolate", () => {
       `,
     };
     const files = ["./a-limit.test.ts", "./b-limit.test.ts"];
+    // The second file builds 8 MiB strings, so the runner must start at the
+    // default limit even on a machine that lowers it through the environment.
+    const env = { ...bunEnv, BUN_FEATURE_FLAG_SYNTHETIC_MEMORY_LIMIT: undefined };
 
     using isolated = tempDir("isolate-alloc-limit", limitFixtures);
-    const serial = await runTests(String(isolated), ["--isolate"], files);
+    const serial = await runTests(String(isolated), ["--isolate"], files, env);
     expect(normalizeBunSnapshot(serial.stderr, isolated)).toContain("2 pass");
     expect(serial.exitCode).toBe(0);
 
     using parallel = tempDir("isolate-alloc-limit-parallel", limitFixtures);
     await using proc = Bun.spawn({
       cmd: [bunExe(), "test", "--parallel=2", ...files],
-      env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "60000" },
+      env: { ...env, BUN_TEST_PARALLEL_SCALE_MS: "60000" },
       cwd: String(parallel),
       stderr: "pipe",
       stdout: "pipe",

@@ -43,11 +43,11 @@ import {
   uploadArtifacts,
   verifyOrderFileApplied,
 } from "./build/ci.ts";
-import { ninjaLogMark, printBuildTimings } from "./build/timings.ts";
 import { formatConfig, formatConfigUnchanged, type PartialConfig } from "./build/config.ts";
 import { configure, type ConfigureInput, type ConfigureResult } from "./build/configure.ts";
 import { BuildError } from "./build/error.ts";
 import { STREAM_FD } from "./build/stream.ts";
+import { ninjaLogMark, printBuildTimings } from "./build/timings.ts";
 import { interactive, nameColor, status } from "./build/tty.ts";
 
 // ───────────────────────────────────────────────────────────────────────────

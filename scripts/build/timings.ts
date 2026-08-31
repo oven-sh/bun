@@ -47,18 +47,29 @@ function readEdges(buildDir: string, sinceLine: number): Edge[] {
   return edges;
 }
 
-type Phase = "deps + fetch" | "codegen" | "c/c++ objects" | "cargo" | "archive" | "link" | "strip + post-link" | "other";
+type Phase =
+  | "deps + fetch"
+  | "codegen"
+  | "c/c++ objects"
+  | "cargo"
+  | "archive"
+  | "link"
+  | "strip + post-link"
+  | "other";
 
 function classify(cfg: Config, output: BunOutput, edge: Edge): Phase {
-  const rel = (p: string | undefined) => (p === undefined ? undefined : relative(cfg.buildDir, resolve(cfg.buildDir, p)));
+  const rel = (p: string | undefined) =>
+    p === undefined ? undefined : relative(cfg.buildDir, resolve(cfg.buildDir, p));
   const o = edge.output;
   if (o === rel(output.exe) || o.endsWith(".linker-map")) return "link";
-  if (o === rel(output.strippedExe) || o === rel(output.dsym) || (output.uploadStamps ?? []).map(rel).includes(o)) return "strip + post-link";
+  if (o === rel(output.strippedExe) || o === rel(output.dsym) || (output.uploadStamps ?? []).map(rel).includes(o))
+    return "strip + post-link";
   if (o === rel(output.archive) || /^lib[^/]*\.(a|lib)$/.test(o)) return "archive";
   if (o.startsWith("rust-target/") || output.rustObjects.map(rel).includes(o)) return "cargo";
   if (o.startsWith("obj/") || o.startsWith("pch/")) return "c/c++ objects";
   if (o.startsWith("codegen/")) return "codegen";
-  if (o.startsWith("cache/") || o.startsWith("deps/") || o.startsWith("stamps/") || o.startsWith("../")) return "deps + fetch";
+  if (o.startsWith("cache/") || o.startsWith("deps/") || o.startsWith("stamps/") || o.startsWith("../"))
+    return "deps + fetch";
   return "other";
 }
 
@@ -82,12 +93,25 @@ export function printBuildTimings(cfg: Config, output: BunOutput, sinceLine: num
     phases.set(k, p);
   }
   const total = Math.max(...edges.map(e => e.endMs)) - Math.min(...edges.map(e => e.startMs));
-  const order: Phase[] = ["deps + fetch", "codegen", "c/c++ objects", "cargo", "archive", "link", "strip + post-link", "other"];
-  console.log(`[timing] ${"phase".padEnd(18)} ${"from".padStart(8)} ${"to".padStart(8)} ${"wall".padStart(8)} ${"cpu-sum".padStart(9)}  edges`);
+  const order: Phase[] = [
+    "deps + fetch",
+    "codegen",
+    "c/c++ objects",
+    "cargo",
+    "archive",
+    "link",
+    "strip + post-link",
+    "other",
+  ];
+  console.log(
+    `[timing] ${"phase".padEnd(18)} ${"from".padStart(8)} ${"to".padStart(8)} ${"wall".padStart(8)} ${"cpu-sum".padStart(9)}  edges`,
+  );
   for (const k of order) {
     const p = phases.get(k);
     if (p === undefined) continue;
-    console.log(`[timing] ${k.padEnd(18)} ${fmt(p.start).padStart(8)} ${fmt(p.end).padStart(8)} ${fmt(p.end - p.start).padStart(8)} ${fmt(p.sum).padStart(9)}  ${p.n}`);
+    console.log(
+      `[timing] ${k.padEnd(18)} ${fmt(p.start).padStart(8)} ${fmt(p.end).padStart(8)} ${fmt(p.end - p.start).padStart(8)} ${fmt(p.sum).padStart(9)}  ${p.n}`,
+    );
   }
   console.log(`[timing] ${"total (ninja)".padEnd(18)} ${"".padStart(8)} ${"".padStart(8)} ${fmt(total).padStart(8)}`);
   console.log(`[timing] toolchain: cc=${cfg.cc} rustc=${cfg.rustc ?? "?"}`);

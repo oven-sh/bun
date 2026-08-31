@@ -105,7 +105,7 @@ use bun_jsc::hot_reloader;
 use bun_jsc::jsc_scheduler::JSCDeferredWorkTask;
 
 use crate::bake::dev_server::DevServer;
-use crate::bake::dev_server::HotReloadEvent as BakeHotReloadEvent;
+use crate::bake::dev_server::HotReloadTask as BakeHotReloadTask;
 use crate::bake::dev_server::source_map_store::SourceMapStore;
 
 #[cfg(windows)]
@@ -572,13 +572,9 @@ fn run_task_cold(task: Task) {
 
         // ── bake dev-server ──────────────────────────────────────────────
         task_tag::BakeHotReloadEvent => {
-            // SAFETY: §Dispatch — tag identifies pointee; the event lives in a
-            // heap `WatcherAtomics` that can outlive its `DevServer`. `run`
-            // either re-derives `&mut DevServer` from the BACKREF or (when the
-            // owner has been dropped) only reclaims the heap `WatcherAtomics`,
-            // so pass the raw pointer to avoid materialising an aliasing
-            // `&mut` here.
-            unsafe { BakeHotReloadEvent::run(cast_ptr!(BakeHotReloadEvent)) };
+            // SAFETY: §Dispatch — boxed by `HotReloadShared::watcher_release_and_submit_event`
+            // (`VmHandle::post_boxed`); the arm consumes it.
+            (*unsafe { bun_core::heap::take(cast_ptr!(BakeHotReloadTask)) }).run();
         }
 
         // Any tag the hot path mis-routed: producer bug.
@@ -593,6 +589,17 @@ const _: () = assert!(
     task_tag::COUNT == 61,
     "dispatch::run_task / release_task_unrun arm count out of sync with bun_event_loop::task_tag",
 );
+
+// The dev server's hot-reload task is a plain owned box with safe
+// `run`/`release_unrun`; the raw-pointer reclaim lives here next to the arms
+// that do the same.
+impl bun_event_loop::Taskable for BakeHotReloadTask {
+    const TAG: bun_event_loop::TaskTag = task_tag::BakeHotReloadEvent;
+    unsafe fn release_unrun(this: *mut Self) {
+        // SAFETY: fn contract — the box queued under this tag.
+        (*unsafe { bun_core::heap::take(this) }).release_unrun();
+    }
+}
 
 // ────────────────────────────────────────────────────────────────────────────
 // `tick_queue_with_count` — the full drain loop.
@@ -1087,17 +1094,20 @@ pub(crate) unsafe fn __bun_fire_timer(
                 .timeout_callback())
         }
         EventLoopTimerTag::DevServerSweepSourceMaps => {
-            // `sweep_weak_refs` takes the raw `*EventLoopTimer` and recovers
-            // the store inside.
-            // SAFETY: per fn contract.
-            SourceMapStore::sweep_weak_refs(t, unsafe { &*now });
+            // `t` is `dev.source_maps.weak_ref_sweep_timer`.
+            let store: *mut SourceMapStore = owner!(SourceMapStore, weak_ref_sweep_timer);
+            // SAFETY: per fn contract; `SourceMapStore` is always the
+            // `source_maps` field of a live `DevServer`, and no other borrow
+            // of it is live while its timer fires.
+            unsafe {
+                let dev = bun_core::from_field_ptr!(DevServer, source_maps, store);
+                (*dev).sweep_source_map_weak_refs(&*now)
+            };
             Ok(())
         }
         EventLoopTimerTag::DevServerMemoryVisualizerTick => {
-            // SAFETY: per fn contract; `t` is the `memory_visualizer_timer`
-            // field of a live DevServer.
-            DevServer::emit_memory_visualizer_message_timer(unsafe { &mut *t }, unsafe { &*now });
-            Ok(())
+            timer_arm!(DevServer, memory_visualizer_timer, |c, now, _vm| (*c)
+                .emit_memory_visualizer_message_timer(&*now))
         }
         EventLoopTimerTag::BunTest => {
             let container = owner!(BunTest, timer);
@@ -1227,7 +1237,7 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
             unsafe { bun_jsc::job::release_unrun_erased(task.ptr) }
         }
         task_tag::AsyncModule => release!(bun_jsc::async_module::AsyncModule),
-        task_tag::BakeHotReloadEvent => release!(BakeHotReloadEvent),
+        task_tag::BakeHotReloadEvent => release!(BakeHotReloadTask),
         task_tag::BundleV2DeferredBatchTask => release!(BundleV2DeferredBatchTask),
         task_tag::BundleV2PluginResolve => {
             release!(bun_bundler::bundle_v2::api::JSBundler::Resolve)

@@ -3223,6 +3223,7 @@ pub mod bv2_impl {
             &mut self,
             files: &bake_types::EntryPointList,
             css_data: &mut ArrayHashMap<Index, CssEntryPointMeta>,
+            resolve_failures: &mut Vec<EntryPointResolveFailure>,
         ) -> Result<(), Error> {
             self.enqueue_entry_points_common()?;
             debug_assert!(self.dev_server.is_some());
@@ -3293,22 +3294,25 @@ pub mod bv2_impl {
                 let mut resolved = match unsafe { &mut *transpiler }.resolve_entry_point(abs_path) {
                     Ok(r) => r,
                     Err(err) => {
-                        let dev = self.dev_server.expect("unreachable");
-                        dev.handle_parse_task_failure(
+                        // The dev server handles these once `start_from_bake_dev_server`
+                        // returns; handling them needs `&mut self`, which the dispatch
+                        // handle must not alias.
+                        // SAFETY: `transpiler.log` is the `'a`-owned log; sole writer here.
+                        let log = unsafe { &mut *(*transpiler).log };
+                        let mut taken = bun_ast::Log::init();
+                        taken.level = log.level;
+                        taken.clone_line_text = log.clone_line_text;
+                        core::mem::swap(&mut taken, log);
+                        resolve_failures.push(EntryPointResolveFailure {
                             err,
-                            if flags.client() {
+                            graph: if flags.client() {
                                 bake::Graph::Client
                             } else {
                                 bake::Graph::Server
                             },
-                            abs_path,
-                            // SAFETY: `transpiler` points at one of self's transpilers, live for `'a`.
-                            unsafe { (*transpiler).log }.cast_const(),
-                            std::ptr::from_mut(self),
-                        )
-                        .expect("oom");
-                        // SAFETY: `transpiler.log` is the `'a`-owned log; sole writer here.
-                        unsafe { (*(*transpiler).log).reset() };
+                            abs_path: Box::from(&**abs_path),
+                            log: taken,
+                        });
                         continue;
                     }
                 };
@@ -5421,10 +5425,13 @@ pub mod bv2_impl {
         }
 
         /// Dev Server uses this instead to run a subset of the transpiler, and to run it asynchronously.
+        /// Entry points that failed to resolve are returned for the dev server
+        /// to record (`DevServer::handle_parse_task_failure`, which needs this
+        /// `BundleV2` mutably) rather than reported through the dispatch handle.
         pub fn start_from_bake_dev_server(
             &mut self,
             bake_entry_points: &bake_types::EntryPointList,
-        ) -> Result<DevServerInput, Error> {
+        ) -> Result<(DevServerInput, Vec<EntryPointResolveFailure>), Error> {
             self.unique_key = generate_unique_key();
 
             /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
@@ -5432,11 +5439,16 @@ pub mod bv2_impl {
             let mut ctx = DevServerInput {
                 css_entry_points: ArrayHashMap::new(),
             };
-            self.enqueue_entry_points_dev_server(bake_entry_points, &mut ctx.css_entry_points)?;
+            let mut resolve_failures = Vec::new();
+            self.enqueue_entry_points_dev_server(
+                bake_entry_points,
+                &mut ctx.css_entry_points,
+                &mut resolve_failures,
+            )?;
 
             /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
 
-            Ok(ctx)
+            Ok((ctx, resolve_failures))
         }
 
         // The body has deep DevServer field access (current_bundle.start_data,
@@ -7928,6 +7940,17 @@ pub mod bv2_impl {
     /// The lifetime of this structure is tied to the bundler's arena
     pub struct DevServerInput {
         pub(crate) css_entry_points: ArrayHashMap<Index, CssEntryPointMeta>,
+    }
+
+    /// A dev-server entry point that failed to resolve during
+    /// `start_from_bake_dev_server`.
+    pub struct EntryPointResolveFailure {
+        pub err: Error,
+        pub graph: bake_types::Graph,
+        pub abs_path: Box<[u8]>,
+        /// The resolver's log messages for this failure (taken from the
+        /// transpiler log, which is left empty).
+        pub log: bun_ast::Log,
     }
 
     /// The lifetime of this structure is tied to the bundler's arena

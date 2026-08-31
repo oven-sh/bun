@@ -483,7 +483,7 @@ pub use socket_kind::SocketKind;
 #[cfg(windows)]
 pub use timer::Timer;
 
-pub use body_reader_mixin::BodyReaderMixin;
+pub use body_reader_mixin::{BodyReader, BodyReaderHandler};
 pub use connecting_socket::ConnectingSocket;
 pub use listen_socket::ListenSocket;
 pub use request::{AnyRequest, Request};

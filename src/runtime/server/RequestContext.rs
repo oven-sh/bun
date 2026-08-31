@@ -26,15 +26,13 @@ use crate::webcore::{
 ///
 ///    If it did, it would *overwrite* the user data context pointer (this
 ///    is what it did before), causing segfaults.
-pub struct AdditionalOnAbortCallback {
-    pub cb: fn(*mut c_void),
-    pub(crate) data: NonNull<c_void>,
-    pub(crate) deref_fn: fn(*mut c_void),
-}
+pub struct AdditionalOnAbortCallback(
+    pub(crate) bun_ptr::RefPtr<crate::bake::DevServer::DeferredRequest>,
+);
 
 impl AdditionalOnAbortCallback {
-    pub fn deref(&self) {
-        (self.deref_fn)(self.data.as_ptr());
+    fn fire(&self) {
+        self.0.on_abort_from_request_context();
     }
 }
 
@@ -228,10 +226,13 @@ where
         self.defer_deinit_until_callback_completes.get().is_none()
     }
 
-    pub(crate) fn dev_server(&self) -> Option<&crate::bake::DevServer::DevServer> {
+    /// The dev server this request belongs to, as its cell (for the JS entry
+    /// points that go on to mutate it).
+    pub(crate) fn dev_server_cell(
+        &self,
+    ) -> Option<bun_ptr::BackRef<crate::bake::DevServer::DevServerCell>> {
         let server = self.server.get()?;
-        // SAFETY: BACKREF — the server outlives every context it allocates.
-        unsafe { &*server.as_const_ptr() }.dev_server()
+        server.dev_server_cell()
     }
 }
 
@@ -913,9 +914,7 @@ where
 
         self.request_body_take_unref();
 
-        if let Some(cb) = self.additional_on_abort.replace(None) {
-            cb.deref();
-        }
+        drop(self.additional_on_abort.replace(None));
 
         if let Some(server) = self.server.take() {
             drop(self.pool_slot.take());
@@ -1409,8 +1408,7 @@ where
         this.flags.set_aborted(true);
         let abort = this.additional_on_abort.replace(None);
         if let Some(abort) = abort {
-            (abort.cb)(abort.data.as_ptr());
-            abort.deref();
+            abort.fire();
         }
 
         this.detach_response();

@@ -72,7 +72,22 @@ impl Data {
     }
 }
 
+/// What `DevServer::trace_all_route_imports` needs from a route bundle: which
+/// graph files to start tracing from.
+#[derive(Clone, Copy)]
+pub(crate) enum TraceKey {
+    Framework(framework_router::RouteIndex),
+    Html(incremental_graph::ClientFileIndex),
+}
+
 impl RouteBundle {
+    pub(crate) fn trace_key(&self) -> TraceKey {
+        match &self.data {
+            Data::Framework(fw) => TraceKey::Framework(fw.route_index),
+            Data::Html(html) => TraceKey::Html(html.bundled_file),
+        }
+    }
+
     /// Note: takes `&mut SourceMapStore` rather than `&mut DevServer` —
     /// only `dev.source_maps` is touched, and the two keystone
     /// `DevServer` structs (`dev_server::DevServer` / `dev_server_body::DevServer`)

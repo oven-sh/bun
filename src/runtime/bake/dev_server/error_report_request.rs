@@ -31,92 +31,46 @@ use bun_uws::{self as uws, AnyResponse, Request};
 use bun_uws_sys::body_reader_mixin::{BodyReaderHandler, BodyResponse};
 
 use super::source_map_store::{self, GetResult, Key as SourceMapKey};
-use super::{CLIENT_PREFIX, DevServer};
+use super::{CLIENT_PREFIX, DevServer, DevServerCell};
 use crate::server::StaticRoute;
 use crate::server::static_route::InitFromBytesOptions;
 use bun_core::fmt::parse_hex_to_int;
 
 pub(crate) struct ErrorReportRequest {
-    // BACKREF: heap-allocated request; DevServer owns the server lifecycle and
-    // outlives every in-flight request (BackRef invariant).
-    dev: bun_ptr::BackRef<DevServer, bun_ptr::Mut>,
-    // BodyReaderMixin is a generic helper that stores the buffered body and
-    // dispatches to the two callbacks below.
-    body: uws::BodyReaderMixin<ErrorReportRequest>,
+    dev: bun_ptr::BackRef<DevServerCell>,
+    server: crate::server::AnyServer,
 }
 
-bun_core::intrusive_field!(ErrorReportRequest, body: uws::BodyReaderMixin<ErrorReportRequest>);
 impl BodyReaderHandler for ErrorReportRequest {
-    unsafe fn on_body(this: *mut Self, body: &[u8], resp: AnyResponse) -> bun_uws_sys::Result<()> {
-        // SAFETY: caller (BodyReaderMixin) passes the original heap-allocated
-        // pointer with full-allocation provenance and no live borrows.
-        unsafe { ErrorReportRequest::run_with_body(this, body, resp) }.map_err(Into::into)
+    fn on_body(&mut self, body: &[u8], resp: AnyResponse) -> bun_uws_sys::Result<()> {
+        self.run_with_body(body, resp).map_err(Into::into)
     }
+}
 
-    unsafe fn on_error(this: *mut Self) {
-        // Caller passes the original heap-allocated pointer; finalize
-        // consumes it via heap::take exactly once.
-        ErrorReportRequest::finalize(this)
+impl Drop for ErrorReportRequest {
+    fn drop(&mut self) {
+        self.server.on_static_request_complete();
     }
 }
 
 impl ErrorReportRequest {
     pub(crate) fn run<R: BodyResponse>(dev: &mut DevServer, _req: &mut Request, resp: &mut R) {
-        // Use the caller's `&mut DevServer` directly (matches
-        // `UnrefSourceMapRequest::run`) — no need to re-derive it through the
-        // freshly-allocated ctx's `BackRef` under `unsafe`.
-        dev.server
-            .as_mut()
-            .expect("server bound")
-            .on_pending_request();
-        let ctx = bun_core::heap::into_raw(Box::new(ErrorReportRequest {
-            dev: bun_ptr::BackRef::new_mut(dev),
-            body: uws::BodyReaderMixin::init(),
-        }));
-        uws::BodyReaderMixin::<ErrorReportRequest>::read_body(ctx, resp);
+        dev.server.on_pending_request();
+        uws::BodyReader::read(
+            ErrorReportRequest {
+                dev: bun_ptr::BackRef::new(dev.this().get()),
+                server: dev.server,
+            },
+            resp,
+        );
     }
 
-    /// `ctx` must be the pointer returned by `heap::alloc` in `run`; called
-    /// exactly once (success path here, or via `on_error` on abort/error).
-    fn finalize(ctx: *mut ErrorReportRequest) {
-        // SAFETY: `ctx` is the original Box allocation produced by `run`; no
-        // live borrow of `*ctx` exists (BodyReaderHandler hands us the raw
-        // pointer, never `&mut self`). Only reachable via `on_body`/`on_error`,
-        // both of which uphold this contract.
-        unsafe {
-            (*ctx)
-                .dev
-                .get_mut()
-                .server
-                .as_mut()
-                .unwrap()
-                .on_static_request_complete();
-            drop(bun_core::heap::take(ctx));
-        }
-    }
-
-    /// SAFETY: `ctx` must be the pointer returned by `heap::alloc` in `run`,
-    /// with no live `&`/`&mut` into the allocation. On `Ok(())` return this
-    /// consumes `ctx` via `finalize`; on `Err` the caller (BodyReaderMixin)
-    /// retains ownership and will call `on_error`.
-    unsafe fn run_with_body(
-        ctx: *mut ErrorReportRequest,
-        body: &[u8],
-        r: AnyResponse,
-    ) -> crate::Result<()> {
-        // .finalize has to be called last, but only in the non-error path.
-        // On error return, BodyReaderMixin calls `on_error` → `finalize`, so
-        // here we simply call `finalize` directly at the success tail.
-
+    fn run_with_body(&mut self, body: &[u8], r: AnyResponse) -> crate::Result<()> {
         let mut reader = bun_io::FixedBufferStream::new(body);
 
         let arena = Arena::new();
 
-        // BackRef::get() is safe under the back-reference invariant (DevServer
-        // outlives this request). No `&mut *ctx` is formed for the body of this
-        // fn — `finalize(ctx)` at the tail consumes the original Box pointer.
-        // SAFETY: `ctx` is the live heap allocation from `run` (caller contract).
-        let dev: &DevServer = unsafe { &*ctx }.dev.get();
+        let dev: &DevServer = self.dev.get().get();
 
         // Read payload, assemble ZigException
         let name = sanitize_for_terminal(read_string32(&mut reader)?, &arena);
@@ -320,10 +274,6 @@ impl ErrorReportRequest {
             // `print_externally_remapped_zig_exception` takes a runtime
             // `allow_ansi_color` flag.
             let ansi_colors = Output::enable_ansi_colors_stderr();
-            // `dev.vm` is `*const` (shared-ref provenance from `Options.vm`);
-            // `vm_mut()` recovers `&mut VirtualMachine` via the per-thread
-            // singleton (`VirtualMachine::get() -> *mut`), which carries
-            // mutable provenance. Single JS thread — no aliasing `&mut`.
             let vm = dev.vm_mut();
             let _ = vm.print_externally_remapped_zig_exception(
                 &mut exception,
@@ -389,15 +339,10 @@ impl ErrorReportRequest {
             crate::webcore::blob::Any::from_array_list(out),
             InitFromBytesOptions {
                 mime_type: Some(&bun_http_types::MimeType::OTHER),
-                server: dev.server,
+                server: Some(dev.server),
                 ..Default::default()
             },
         );
-        // `should_finalize_self = true;` — see Note at fn top.
-        // `ctx` is the original heap-allocated pointer (caller contract); the
-        // only borrow derived from it (`dev`) points into a separate DevServer
-        // allocation, so freeing `*ctx` does not invalidate any live reference.
-        ErrorReportRequest::finalize(ctx);
         Ok(())
     }
 }

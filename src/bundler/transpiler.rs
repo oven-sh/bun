@@ -1117,7 +1117,7 @@ fn resolver_bundle_options_subset(
         },
         external: src.external.clone(),
         extra_cjs_extensions: src.extra_cjs_extensions.clone(),
-        framework: src.framework.map(|f| {
+        framework: src.framework.as_deref().map(|f| {
             // Bundler-local `bake_types::BuiltInModule` and
             // `bun_options_types::BuiltInModule` are nominally distinct (the
             // former predates the TYPE_ONLY move-down); convert variant-wise.

@@ -5,8 +5,10 @@ use bun_core::{fmt as bun_fmt, scoped_log};
 use bun_http::MimeType::MimeType;
 use bun_ptr::RefPtr;
 
+use super::incremental_graph::IncrementalGraph;
 use super::memory_cost::{memory_cost_array_hash_map, memory_cost_array_list};
-use super::{ASSET_PREFIX, DevServer, FileKind, Magic};
+use super::{ASSET_PREFIX, DevServer, FileKind};
+use crate::server::AnyServer;
 use crate::server::StaticRoute;
 use crate::server::static_route::InitFromBytesOptions;
 use crate::webcore::AnyBlob;
@@ -29,10 +31,6 @@ pub struct Assets {
     pub(crate) needs_reindex: bool,
 }
 
-// SAFETY: `Assets` is only ever constructed as the `assets` field of
-// `DevServer` (which is `Box`-allocated and never moved post-init).
-bun_core::impl_field_parent! { Assets => DevServer.assets; fn owner; fn mut owner_mut; }
-
 impl Assets {
     pub(crate) fn get_hash(&self, path: &[u8]) -> Option<u64> {
         self.path_map
@@ -44,15 +42,16 @@ impl Assets {
     /// browser caching. The old URL is immediately revoked.
     ///
     /// `abs_path` is not allocated. Ownership of `contents` is transferred to
-    /// this function.
+    /// this function. A new path is also registered in `client_graph`.
     pub(crate) fn replace_path(
         &mut self,
+        client_graph: &mut IncrementalGraph<{ bun_bundler::bake_types::Side::Client }>,
+        server: AnyServer,
         abs_path: &[u8],
         mut contents: AnyBlob,
         mime_type: &MimeType,
         content_hash: u64,
     ) -> Result<EntryIndex, bun_alloc::AllocError> {
-        debug_assert!(self.owner().magic == Magic::Valid);
         // Invariant: `files.count() == refs.len()`, re-checked before each
         // return below.
 
@@ -69,8 +68,7 @@ impl Assets {
             bstr::BStr::new(&*mime_type.value),
         );
 
-        let server = self.owner().server;
-        debug_assert!(server.is_some());
+        let server = Some(server);
 
         // `gop` holds key/value ptrs into `path_map` and cannot stay live
         // across calls that take `&mut self`. Capture `index` /
@@ -90,11 +88,7 @@ impl Assets {
             // `get_or_put` already boxed `abs_path` on insert, so no key
             // reassignment is needed — `insert_empty` is still called for its
             // side effect of registering the file in `client_graph`.
-            let owner = self.owner_mut();
-            // SAFETY: accessing disjoint field `client_graph` via parent ptr; `assets` (self) is
-            // not touched through `owner` for the duration of this borrow.
-            let _ =
-                unsafe { &mut (*owner).client_graph }.insert_empty(abs_path, FileKind::Unknown)?;
+            let _ = client_graph.insert_empty(abs_path, FileKind::Unknown)?;
         } else {
             let entry_index = existing_entry.unwrap();
             // When there is one reference to the asset, the entry can be

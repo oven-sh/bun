@@ -86,6 +86,44 @@ describe("udpSocket()", () => {
     ).toThrow();
   });
 
+  // The bind and the connect option both resolve their hostname with a
+  // synchronous getaddrinfo. A name that cannot be a host name is rejected
+  // before that call, with the resolver error node:dgram reports for it,
+  // instead of a stale errno named as the bind failure.
+  describe.each(["this is not a hostname", "localhost:80", "a..b"])("with %p, which is not a hostname", hostname => {
+    const resolverError = {
+      name: "Error",
+      code: "ENOTFOUND",
+      syscall: "getaddrinfo",
+      hostname,
+      message: `getaddrinfo ENOTFOUND ${hostname}`,
+    };
+    const pick = (e: any) => {
+      const { name, code, syscall, hostname, message } = e ?? {};
+      return { name, code, syscall, hostname, message };
+    };
+
+    test("bind fails with getaddrinfo ENOTFOUND", async () => {
+      let error: any;
+      try {
+        (await udpSocket({ hostname, port: 0 })).close();
+      } catch (e) {
+        error = e;
+      }
+      expect(pick(error)).toEqual(resolverError);
+    });
+
+    test("connect fails with getaddrinfo ENOTFOUND", async () => {
+      let error: any;
+      try {
+        (await udpSocket({ port: 0, connect: { hostname, port: 1234 } })).close();
+      } catch (e) {
+        error = e;
+      }
+      expect(pick(error)).toEqual(resolverError);
+    });
+  });
+
   // Out-of-range connect.port used to be silently rewritten to 0, so send()
   // returned true while every datagram was dropped. The bind path already
   // rejected the same values; connect must too. Values beyond the i32 range

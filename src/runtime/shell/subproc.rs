@@ -1871,6 +1871,17 @@ impl PipeReader {
         // SAFETY: see `arc_as_mut_ptr` + `try_signal_done_to_cmd` contract —
         // raw `*mut`, no `&mut PipeReader` protector across the Cmd re-entry.
         let y = unsafe { Self::try_signal_done_to_cmd(me) };
+        // Once the Cmd has taken the output it detaches this reader (`process`
+        // is `None`) and nothing reads `buffered_output` again. Drop it now
+        // rather than with `guard`: `y` can settle the shell promise, and its
+        // microtask checkpoint must not see a `> ${arraybuffer}` target that
+        // is still pinned.
+        // SAFETY: see `arc_as_mut_ptr`; raw accesses, no borrow held.
+        unsafe {
+            if (*me).process.is_none() {
+                (*me).buffered_output = BufferedOutput::default();
+            }
+        }
         Self::run_yield_with(interp, y);
         if let Some(process) = guard.process {
             // SAFETY: `process` is the heap-allocated `ShellSubprocess` (stable

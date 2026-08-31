@@ -190,9 +190,9 @@ describe.skipIf(!isASAN)("utf8 to utf16 output buffer allocation failure is catc
       { name: "Error", code: "ENOMEM" },
       { name: "Error", code: "ENOMEM" },
       { name: "RangeError", code: undefined },
+      { name: "RangeError", code: "ERR_MEMORY_ALLOCATION_FAILED" },
       { name: "RangeError", code: undefined },
-      { name: "RangeError", code: undefined },
-      { name: "RangeError", code: undefined },
+      { name: "RangeError", code: "ERR_MEMORY_ALLOCATION_FAILED" },
       { name: "RangeError", code: undefined },
     ]);
     expect(exitCode).toBe(0);

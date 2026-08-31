@@ -47,8 +47,8 @@ enum class BunStringTag : uint8_t {
     StaticEncodedSlice = 3,
     Empty = 4,
     // A constructor could not allocate the string. Holds no string, like
-    // Dead, but converts to a JS value as RangeError "Out of memory" instead
-    // of ERR_STRING_TOO_LONG.
+    // Dead, but converts to a JS value as ERR_MEMORY_ALLOCATION_FAILED
+    // instead of ERR_STRING_TOO_LONG.
     OutOfMemory = 5,
 };
 

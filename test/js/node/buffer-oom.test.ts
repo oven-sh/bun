@@ -5,7 +5,14 @@ import { StringDecoder } from "node:string_decoder";
 
 const MiB = 1024 ** 2;
 
-const outOfMemory = { name: "RangeError", message: "Out of memory" };
+// Node's error for a failed allocation (node_errors.h). Node throws it for
+// utf8, latin1 and ucs2 and aborts for hex and base64; Bun throws it for every
+// encoding.
+const allocationFailed = {
+  name: "RangeError",
+  code: "ERR_MEMORY_ALLOCATION_FAILED",
+  message: "Failed to allocate memory",
+};
 
 // `setMaxSingleAllocationSizeForTesting` makes every WTF allocation above the
 // cap fail the way a real out-of-memory does (`tryCreateUninitialized` returns
@@ -27,19 +34,17 @@ function thrownUnderAllocationCap(bytes: number, fn: () => unknown): unknown {
 // 4 MiB cap fails exactly the output string's allocation. The encodings whose
 // output buffer comes from the Rust allocator (which the WTF cap does not
 // reach) are covered by the ASAN block further down.
-describe.skipIf(!isDebug)("a WTF string whose allocation fails is reported as out of memory", () => {
+describe.skipIf(!isDebug)("a WTF string whose allocation fails is reported as a failed allocation", () => {
   const input = Buffer.alloc(16 * MiB, 97);
 
   test.each(["utf8", "hex", "latin1", "ascii", "ucs2"] as const)("Buffer.prototype.toString(%s)", encoding => {
     const error = thrownUnderAllocationCap(4 * MiB, () => input.toString(encoding));
-    expect(error).toMatchObject(outOfMemory);
-    expect(error).not.toHaveProperty("code");
+    expect(error).toMatchObject(allocationFailed);
   });
 
   test("StringDecoder.prototype.write", () => {
     const error = thrownUnderAllocationCap(4 * MiB, () => new StringDecoder("utf8").write(input));
-    expect(error).toMatchObject(outOfMemory);
-    expect(error).not.toHaveProperty("code");
+    expect(error).toMatchObject(allocationFailed);
   });
 
   test("the same conversion succeeds without the cap", () => {
@@ -53,7 +58,7 @@ describe.skipIf(!isDebug)("a WTF string whose allocation fails is reported as ou
 // buffer; both are adopted by JSC afterwards. ASAN's per-allocation cap makes
 // those allocations fail: the 36 MiB input fits under the 40 MiB cap while the
 // 48 MiB base64 and 72 MiB UTF-16 outputs do not.
-describe.skipIf(!isASAN)("a Rust-allocated string whose allocation fails is reported as out of memory", () => {
+describe.skipIf(!isASAN)("a Rust-allocated string whose allocation fails is reported as a failed allocation", () => {
   const SIZE = 36 * MiB;
   const env = {
     ...bunEnv,
@@ -82,7 +87,7 @@ describe.skipIf(!isASAN)("a Rust-allocated string whose allocation fails is repo
           "StringDecoder(base64).write": () => new StringDecoder("base64").write(ascii),
         })) {
           try { results[label] = "unexpected success: " + fn().length; }
-          catch (e) { results[label] = { name: e.name, message: e.message, code: e.code }; }
+          catch (e) { results[label] = { name: e.name, code: e.code, message: e.message }; }
         }
         console.log(JSON.stringify(results));
         `,
@@ -95,11 +100,11 @@ describe.skipIf(!isASAN)("a Rust-allocated string whose allocation fails is repo
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(JSON.parse(stdout.trim() || JSON.stringify({ stdout, stderr, exitCode }))).toEqual({
-      "toString(utf8)": outOfMemory,
-      "toString(base64)": outOfMemory,
-      "toString(base64url)": outOfMemory,
-      "StringDecoder(utf8).write": outOfMemory,
-      "StringDecoder(base64).write": outOfMemory,
+      "toString(utf8)": allocationFailed,
+      "toString(base64)": allocationFailed,
+      "toString(base64url)": allocationFailed,
+      "StringDecoder(utf8).write": allocationFailed,
+      "StringDecoder(base64).write": allocationFailed,
     });
     expect(exitCode).toBe(0);
   });

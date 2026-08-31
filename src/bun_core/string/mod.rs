@@ -71,8 +71,8 @@ pub enum Tag {
     StaticEncodedSlice = 3,
     Empty = 4,
     /// No string: a constructor could not allocate it. Reaches JS as
-    /// `RangeError: Out of memory`. [`String::is_dead`] is true for this tag
-    /// too, so callers that only need "did it fail" treat both alike.
+    /// `ERR_MEMORY_ALLOCATION_FAILED`. [`String::is_dead`] is true for this
+    /// tag too, so callers that only need "did it fail" treat both alike.
     OutOfMemory = 5,
 }
 

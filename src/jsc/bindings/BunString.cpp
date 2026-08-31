@@ -132,8 +132,7 @@ JSC::JSValue BunString::transferToJS(JSC::JSGlobalObject* globalObject)
 
     if (this->tag == BunStringTag::OutOfMemory) [[unlikely]] {
         auto scope = DECLARE_THROW_SCOPE(vm);
-        throwOutOfMemoryError(globalObject, scope);
-        return {};
+        return JSValue::decode(Bun::ERR::MEMORY_ALLOCATION_FAILED(scope, globalObject));
     }
 
     if (this->tag == BunStringTag::WTFStringImpl) [[likely]] {
@@ -207,7 +206,7 @@ JSC::JSString* toJS(JSC::JSGlobalObject* globalObject, BunString bunString)
 
     if (bunString.tag == BunStringTag::OutOfMemory) [[unlikely]] {
         auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-        throwOutOfMemoryError(globalObject, scope);
+        Bun::ERR::MEMORY_ALLOCATION_FAILED(scope, globalObject);
         return nullptr;
     }
 
@@ -380,8 +379,8 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue BunString__toJS(JSC
 
 // `WTF::StringImpl::tryCreateUninitialized` returns null both for a length it
 // refuses and for an allocation that failed. The tag keeps them apart so the
-// JS boundary throws ERR_STRING_TOO_LONG for the first and RangeError "Out of
-// memory" for the second.
+// JS boundary throws ERR_STRING_TOO_LONG for the first and
+// ERR_MEMORY_ALLOCATION_FAILED for the second.
 template<typename CharacterType>
 static BunString uninitializedStringFailure(size_t length)
 {

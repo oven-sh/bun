@@ -1258,6 +1258,15 @@ JSC::EncodedJSValue STRING_TOO_LONG(JSC::ThrowScope& throwScope, JSC::JSGlobalOb
     return {};
 }
 
+// Node's error for a failed allocation (node_errors.h): a RangeError, unlike
+// JSC's own "Out of memory".
+JSC::EncodedJSValue MEMORY_ALLOCATION_FAILED(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject)
+{
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_MEMORY_ALLOCATION_FAILED, "Failed to allocate memory"_s));
+    throwScope.release();
+    return {};
+}
+
 JSC::EncodedJSValue BUFFER_OUT_OF_BOUNDS(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, ASCIILiteral name)
 {
     if (!name.isEmpty()) {

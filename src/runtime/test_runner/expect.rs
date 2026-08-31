@@ -1575,12 +1575,12 @@ impl Expect {
 
         let Some(buntest) = bun_test::clone_active_strong() else {
             return Err(global_this.throw(format_args!(
-                "expect.assertions() must be called within a test"
+                "expect.hasAssertions() must be called within a test"
             )));
         };
         let state_data = buntest.get_current_state_data();
         let Some(execution) = state_data.sequence(&buntest) else {
-            return Err(global_this.throw(format_args!("expect.assertions() is not supported in the describe phase, in concurrent tests, between tests, or after test execution has completed")));
+            return Err(global_this.throw(format_args!("expect.hasAssertions() is not supported in the describe phase, in concurrent tests, between tests, or after test execution has completed")));
         };
         if !matches!(
             execution.expect_assertions.get(),

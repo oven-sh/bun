@@ -195,12 +195,16 @@ describe("idle release", () => {
   }
 
   // The idle signal is process CPU time via getrusage; not implemented on Windows yet.
-  test.skipIf(isWindows).concurrent("fires once the process has been idle long enough", async () => {
-    const { before, after, exitCode } = await run("idle", "1", 30_000);
-    expect(before).toBeGreaterThan(150);
-    expect(after).toBeLessThan(before / 4);
-    expect(exitCode).toBe(0);
-  }, 40_000);
+  test.skipIf(isWindows).concurrent(
+    "fires once the process has been idle long enough",
+    async () => {
+      const { before, after, exitCode } = await run("idle", "1", 30_000);
+      expect(before).toBeGreaterThan(150);
+      expect(after).toBeLessThan(before / 4);
+      expect(exitCode).toBe(0);
+    },
+    40_000,
+  );
 
   test.concurrent("does not fire while the process is busy", async () => {
     const { before, after, exitCode } = await run("busy", "1");

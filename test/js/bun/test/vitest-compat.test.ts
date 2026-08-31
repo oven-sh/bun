@@ -38,13 +38,11 @@ describe("unimplemented exports are throwing stubs, not missing", () => {
     "TestRunner",
   ] as const;
 
-  for (const name of stubNames) {
-    test(`${name} is exported and throws on call with its own name`, () => {
-      const member = (vitestModule as Record<string, unknown>)[name];
-      expect(typeof member).toBe("function");
-      expect(() => (member as () => void)()).toThrow(`${name}() is not yet implemented in bun:test`);
-    });
-  }
+  test.each([...stubNames])("%s is exported and throws on call with its own name", name => {
+    const member = (vitestModule as Record<string, unknown>)[name];
+    expect(typeof member).toBe("function");
+    expect(() => (member as () => void)()).toThrow(`${name}() is not yet implemented in bun:test`);
+  });
 });
 
 test("bench is a no-op that never runs its callback", () => {
@@ -100,39 +98,63 @@ describe("vi members", () => {
   test("vi.stubEnv and vi.unstubAllEnvs", () => {
     process.env.VITEST_COMPAT_EXISTING = "original";
     delete process.env.VITEST_COMPAT_ADDED;
+    try {
+      vi.stubEnv("VITEST_COMPAT_EXISTING", "stubbed");
+      vi.stubEnv("VITEST_COMPAT_EXISTING", "stubbed-twice");
+      vi.stubEnv("VITEST_COMPAT_ADDED", "added");
+      expect(process.env.VITEST_COMPAT_EXISTING).toBe("stubbed-twice");
+      expect(process.env.VITEST_COMPAT_ADDED).toBe("added");
 
-    vi.stubEnv("VITEST_COMPAT_EXISTING", "stubbed");
-    vi.stubEnv("VITEST_COMPAT_EXISTING", "stubbed-twice");
-    vi.stubEnv("VITEST_COMPAT_ADDED", "added");
-    expect(process.env.VITEST_COMPAT_EXISTING).toBe("stubbed-twice");
-    expect(process.env.VITEST_COMPAT_ADDED).toBe("added");
-
-    vi.unstubAllEnvs();
-    expect(process.env.VITEST_COMPAT_EXISTING).toBe("original");
-    expect(process.env.VITEST_COMPAT_ADDED).toBeUndefined();
-    delete process.env.VITEST_COMPAT_EXISTING;
+      vi.unstubAllEnvs();
+      expect(process.env.VITEST_COMPAT_EXISTING).toBe("original");
+      expect(process.env.VITEST_COMPAT_ADDED).toBeUndefined();
+    } finally {
+      vi.unstubAllEnvs();
+      delete process.env.VITEST_COMPAT_EXISTING;
+      delete process.env.VITEST_COMPAT_ADDED;
+    }
   });
 
   test("vi.stubEnv(name, undefined) removes the variable", () => {
     process.env.VITEST_COMPAT_REMOVE = "here";
-    vi.stubEnv("VITEST_COMPAT_REMOVE", undefined);
-    expect(process.env.VITEST_COMPAT_REMOVE).toBeUndefined();
-    vi.unstubAllEnvs();
-    expect(process.env.VITEST_COMPAT_REMOVE).toBe("here");
-    delete process.env.VITEST_COMPAT_REMOVE;
+    try {
+      vi.stubEnv("VITEST_COMPAT_REMOVE", undefined);
+      expect(process.env.VITEST_COMPAT_REMOVE).toBeUndefined();
+      vi.unstubAllEnvs();
+      expect(process.env.VITEST_COMPAT_REMOVE).toBe("here");
+    } finally {
+      vi.unstubAllEnvs();
+      delete process.env.VITEST_COMPAT_REMOVE;
+    }
   });
 
   test("vi.stubGlobal and vi.unstubAllGlobals", () => {
-    vi.stubGlobal("__vitest_compat_new__", 42);
-    expect((globalThis as Record<string, unknown>).__vitest_compat_new__).toBe(42);
-
     const originalFetch = globalThis.fetch;
-    vi.stubGlobal("fetch", "not-a-function");
-    expect(globalThis.fetch as unknown).toBe("not-a-function");
+    try {
+      vi.stubGlobal("__vitest_compat_new__", 42);
+      expect((globalThis as Record<string, unknown>).__vitest_compat_new__).toBe(42);
 
-    vi.unstubAllGlobals();
-    expect("__vitest_compat_new__" in globalThis).toBe(false);
-    expect(globalThis.fetch).toBe(originalFetch);
+      vi.stubGlobal("fetch", "not-a-function");
+      expect(globalThis.fetch as unknown).toBe("not-a-function");
+
+      vi.unstubAllGlobals();
+      expect("__vitest_compat_new__" in globalThis).toBe(false);
+      expect(globalThis.fetch).toBe(originalFetch);
+    } finally {
+      vi.unstubAllGlobals();
+      globalThis.fetch = originalFetch;
+      delete (globalThis as Record<string, unknown>).__vitest_compat_new__;
+    }
+  });
+
+  test("stub calls chain like vitest's utils object", () => {
+    try {
+      expect(vi.stubEnv("VITEST_COMPAT_CHAIN", "1").stubGlobal("__vitest_compat_chain__", 2)).toBe(vi);
+      expect(vi.unstubAllGlobals().unstubAllEnvs()).toBe(vi);
+    } finally {
+      vi.unstubAllEnvs();
+      vi.unstubAllGlobals();
+    }
   });
 
   test("vi.stubEnv rejects a non-string name", () => {
@@ -267,10 +289,46 @@ describe("onTestFailed", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout).toContain("FAILED_HOOK_SYNC");
     expect(stdout).toContain("FINISHED_HOOK");
     expect(stdout).toContain("FAILED_HOOK_ASYNC");
+    expect(stderr).toContain("2 fail");
+    expect(exitCode).toBe(1);
+  });
+
+  test.concurrent("runs for failure modes decided at sequence completion", async () => {
+    using dir = tempDir("vitest-compat-failhook-deferred", {
+      "deferred.test.ts": `
+        import { test, onTestFailed, expect } from "vitest";
+        test("assertion count mismatch", () => {
+          onTestFailed(() => console.log("FAILED_HOOK_ASSERTIONS"));
+          expect.assertions(2);
+          expect(1).toBe(1);
+        });
+        test.fails("test.fails whose body passes", () => {
+          onTestFailed(() => console.log("FAILED_HOOK_FAILS_PASSED"));
+          expect(1).toBe(1);
+        });
+        test.fails("test.fails whose body throws", () => {
+          onTestFailed(() => console.log("FAILED_HOOK_FAILS_THREW"));
+          throw new Error("expected");
+        });
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "deferred.test.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toContain("FAILED_HOOK_ASSERTIONS");
+    expect(stdout).toContain("FAILED_HOOK_FAILS_PASSED");
+    // A test.fails test whose body throws ends up passing, so its hook must not run.
+    expect(stdout).not.toContain("FAILED_HOOK_FAILS_THREW");
+    expect(stderr).toContain("2 fail");
     expect(exitCode).toBe(1);
   });
 
@@ -289,8 +347,9 @@ describe("onTestFailed", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toContain("Cannot call onTestFailed() outside of a test");
+    expect(stdout).not.toContain("never runs");
     expect(exitCode).toBe(1);
   });
 });
@@ -328,7 +387,8 @@ test.concurrent("stub stores reset at the --isolate file boundary", async () => 
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).not.toContain("ISO_LEAK");
   expect(stderr).toContain("2 pass");
   expect(exitCode).toBe(0);
 });
@@ -355,7 +415,33 @@ test.concurrent("a static import of a previously missing export no longer kills 
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).not.toContain("SyntaxError");
+  expect(stdout).not.toContain("SyntaxError");
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("vi.stubEnv outside bun test throws", async () => {
+  using dir = tempDir("vitest-compat-stub-outside", {
+    "stub-outside.ts": `
+      import { vi } from "bun:test";
+      try {
+        vi.stubEnv("X", "1");
+        console.log("NO_THROW");
+      } catch (e) {
+        console.log("THREW:", (e as Error).message);
+      }
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "stub-outside.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toContain("THREW: vi.stubEnv() can only be used in bun test");
+  expect(stderr).toBe("");
   expect(exitCode).toBe(0);
 });

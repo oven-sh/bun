@@ -1,5 +1,4 @@
 use core::ptr::NonNull;
-use std::cell::RefCell;
 use std::io::Write as _;
 
 use crate::cli::command::TestOptions;
@@ -149,8 +148,15 @@ pub struct TestRunner<'a> {
     /// Set once any `node:test` registration API is called; gates `process.on('exit')` dispatch at the end of the run.
     pub(crate) node_test_used: bool,
 
+    /// vi.stubEnv / vi.stubGlobal registries: key bytes plus the original
+    /// value (`None` = absent, so restore deletes). First stub of a key wins.
+    pub(crate) stubbed_envs: StubRegistry,
+    pub(crate) stubbed_globals: StubRegistry,
+
     pub(crate) bun_test_root: bun_test::BunTestRoot,
 }
+
+pub(crate) type StubRegistry = Vec<(Box<[u8]>, Option<jsc::Strong>)>;
 
 impl<'a> TestRunner<'a> {
     pub(crate) fn get_active_timeout(&self) -> bun_core::Timespec {
@@ -549,13 +555,28 @@ pub mod Jest {
         Ok(JSValue::js_number(JSMock__getCurrentUnixTimeMs()))
     }
 
-    thread_local! {
-        // vi.stubEnv / vi.stubGlobal registries: key bytes plus the original
-        // value (`None` = absent, so restore deletes). First stub of a key wins.
-        static STUBBED_ENVS: RefCell<Vec<(Box<[u8]>, Option<jsc::Strong>)>> = const { RefCell::new(Vec::new()) };
-        static STUBBED_GLOBALS: RefCell<Vec<(Box<[u8]>, Option<jsc::Strong>)>> = const { RefCell::new(Vec::new()) };
+    /// Which `TestRunner` stub registry a `vi.stubEnv`/`vi.stubGlobal` call
+    /// uses. The registries live on the runner (per-run state, dropped with
+    /// it on the JS thread), not in a thread-local or process global.
+    #[derive(Copy, Clone)]
+    enum StubKind {
+        Env,
+        Global,
     }
-    type StubStore = std::thread::LocalKey<RefCell<Vec<(Box<[u8]>, Option<jsc::Strong>)>>>;
+    impl StubKind {
+        fn signature(self) -> &'static str {
+            match self {
+                StubKind::Env => "vi.stubEnv",
+                StubKind::Global => "vi.stubGlobal",
+            }
+        }
+        fn registry<'r>(self, runner: &'r mut TestRunner<'static>) -> &'r mut StubRegistry {
+            match self {
+                StubKind::Env => &mut runner.stubbed_envs,
+                StubKind::Global => &mut runner.stubbed_globals,
+            }
+        }
+    }
 
     fn get_process_env(global_object: &JSGlobalObject) -> JsResult<JSValue> {
         let global_this = global_object.to_js_value();
@@ -571,32 +592,38 @@ pub mod Jest {
     fn stub_value(
         global_object: &JSGlobalObject,
         target: JSValue,
-        store: &'static StubStore,
+        kind: StubKind,
         key: JSValue,
         value: JSValue,
-        signature: &str,
     ) -> JsResult<()> {
         if !key.is_string() {
-            return Err(global_object.throw(format_args!("{}() expects a string name", signature)));
+            return Err(global_object.throw(format_args!("{}() expects a string name", kind.signature())));
+        }
+        if runner().is_none() {
+            return Err(global_object.throw(format_args!("{}() can only be used in bun test", kind.signature())));
         }
         let key_utf8 = key.to_utf8(global_object)?;
         let key_bytes = key_utf8.slice();
 
+        // Read the original before the borrow of the runner: the property
+        // access can run user JS (a getter), which may re-enter these fns.
         let original = target.get(global_object, key_bytes)?;
-        store.with(|cell| {
-            let mut stubbed = cell.borrow_mut();
-            if !stubbed.iter().any(|(k, _)| &**k == key_bytes) {
-                stubbed.push((
+        if let Some(runner) = runner() {
+            let registry = kind.registry(runner);
+            if !registry.iter().any(|(k, _)| &**k == key_bytes) {
+                registry.push((
                     Box::<[u8]>::from(key_bytes),
                     original.map(|v| jsc::Strong::create(v, global_object)),
                 ));
             }
-        });
+        }
 
         if value.is_undefined() {
             target.delete_property(global_object, key_bytes)?;
         } else {
-            target.put(global_object, key_bytes, value);
+            // Method-table put: process.env has a custom `put` (value
+            // coercion, Windows case handling) that a putDirect bypasses.
+            target.put_generic(global_object, key_bytes, value)?;
         }
         Ok(())
     }
@@ -604,12 +631,19 @@ pub mod Jest {
     fn unstub_all(
         global_object: &JSGlobalObject,
         target: JSValue,
-        store: &'static StubStore,
+        kind: StubKind,
     ) -> JsResult<()> {
-        let stubbed = store.with(|cell| core::mem::take(&mut *cell.borrow_mut()));
+        // Take the entries out before the restore puts run: a put can run
+        // user JS (a setter), which may re-enter these fns.
+        let stubbed = match runner() {
+            Some(runner) => core::mem::take(kind.registry(runner)),
+            None => return Ok(()),
+        };
         for (key, original) in stubbed {
             match original {
-                Some(strong) => target.put(global_object, &*key, strong.get()),
+                Some(strong) => {
+                    target.put_generic(global_object, &*key, strong.get())?;
+                }
                 None => {
                     target.delete_property(global_object, &*key)?;
                 }
@@ -622,13 +656,15 @@ pub mod Jest {
     /// the stored originals so they cannot pin the outgoing realm. Global-stub
     /// originals belong to that discarded realm, so they get no restore.
     pub(crate) fn reset_stubs_for_isolation(global_object: &JSGlobalObject) {
-        let restored =
-            get_process_env(global_object).and_then(|env| unstub_all(global_object, env, &STUBBED_ENVS));
+        let restored = get_process_env(global_object)
+            .and_then(|env| unstub_all(global_object, env, StubKind::Env));
         if restored.is_err() {
             global_object.clear_exception_except_termination();
-            STUBBED_ENVS.with(|cell| cell.borrow_mut().clear());
         }
-        STUBBED_GLOBALS.with(|cell| cell.borrow_mut().clear());
+        if let Some(runner) = runner() {
+            runner.stubbed_envs.clear();
+            runner.stubbed_globals.clear();
+        }
     }
 
     #[bun_jsc::host_fn]
@@ -642,27 +678,27 @@ pub mod Jest {
             let utf8 = value.to_utf8(global_object)?;
             bun_string_jsc::create_utf8_for_js(global_object, utf8.slice())?
         };
-        stub_value(global_object, env, &STUBBED_ENVS, key, value, "vi.stubEnv")?;
+        stub_value(global_object, env, StubKind::Env, key, value)?;
         Ok(callframe.this())
     }
 
     #[bun_jsc::host_fn]
     fn js_unstub_all_envs(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let env = get_process_env(global_object)?;
-        unstub_all(global_object, env, &STUBBED_ENVS)?;
+        unstub_all(global_object, env, StubKind::Env)?;
         Ok(callframe.this())
     }
 
     #[bun_jsc::host_fn]
     fn js_stub_global(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let [key, value] = callframe.arguments_as_array::<2>();
-        stub_value(global_object, global_object.to_js_value(), &STUBBED_GLOBALS, key, value, "vi.stubGlobal")?;
+        stub_value(global_object, global_object.to_js_value(), StubKind::Global, key, value)?;
         Ok(callframe.this())
     }
 
     #[bun_jsc::host_fn]
     fn js_unstub_all_globals(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        unstub_all(global_object, global_object.to_js_value(), &STUBBED_GLOBALS)?;
+        unstub_all(global_object, global_object.to_js_value(), StubKind::Global)?;
         Ok(callframe.this())
     }
 

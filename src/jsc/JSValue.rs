@@ -1492,6 +1492,20 @@ impl JSValue {
             JSC__JSValue__putMayBeIndex(self, global, key, value)
         })
     }
+    /// Method-table put: runs custom `put` overrides (for example
+    /// `process.env`'s setter). [`Self::put`] is a `putDirect` and bypasses
+    /// them.
+    pub fn put_generic(
+        self,
+        global: &JSGlobalObject,
+        key: impl AsRef<[u8]>,
+        value: JSValue,
+    ) -> JsResult<()> {
+        let key = bun_core::EncodedSlice::from_bytes(key.as_ref());
+        host_fn::from_js_host_call_generic(global, || {
+            JSC__JSValue__putGeneric(self, global, &key, value)
+        })
+    }
     pub fn put_to_property_key(
         target: JSValue,
         global: &JSGlobalObject,
@@ -2075,6 +2089,12 @@ unsafe extern "C" {
         this: JSValue,
         global: &JSGlobalObject,
         key: &bun_core::String,
+        value: JSValue,
+    );
+    safe fn JSC__JSValue__putGeneric(
+        this: JSValue,
+        global: &JSGlobalObject,
+        key: &bun_core::EncodedSlice,
         value: JSValue,
     );
     safe fn JSC__JSValue__putIndex(this: JSValue, global: &JSGlobalObject, i: u32, value: JSValue);

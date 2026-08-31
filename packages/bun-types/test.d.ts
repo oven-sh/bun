@@ -169,7 +169,7 @@ declare module "bun:test" {
   /**
    * Vitest-compatible mocking utilities, for migrating tests from Vitest to Bun.
    */
-  export const vi: {
+  export interface VitestUtils {
     /**
      * Create a mock function
      */
@@ -225,35 +225,44 @@ declare module "bun:test" {
      */
     isMockFunction(value: unknown): value is Mock<(...args: any[]) => any>;
     /**
-     * Type helper for mocked modules. At runtime it returns its argument
-     * unchanged.
+     * Type helper for mocked functions and modules. At runtime it returns its
+     * argument unchanged.
      */
-    mocked<T>(item: T, deep?: boolean): T;
+    mocked<T extends (...args: any[]) => any>(
+      item: T,
+      options?: boolean | { partial?: boolean; deep?: boolean },
+    ): Mock<T>;
+    mocked<T>(item: T, options?: boolean | { partial?: boolean; deep?: boolean }): T;
     /**
      * Sets an environment variable on `process.env` and remembers the
      * original value. Pass `undefined` to remove the variable.
      * Restore with `vi.unstubAllEnvs()`.
      */
-    stubEnv(name: string, value: string | undefined): void;
+    stubEnv(name: string, value: string | undefined): VitestUtils;
     /**
      * Restores every environment variable changed with `vi.stubEnv()`.
      */
-    unstubAllEnvs(): void;
+    unstubAllEnvs(): VitestUtils;
     /**
      * Sets a property on `globalThis` and remembers the original value.
      * Restore with `vi.unstubAllGlobals()`.
      */
-    stubGlobal(name: string, value: unknown): void;
+    stubGlobal(name: string, value: unknown): VitestUtils;
     /**
      * Restores every global changed with `vi.stubGlobal()`.
      */
-    unstubAllGlobals(): void;
-  };
+    unstubAllGlobals(): VitestUtils;
+  }
+
+  /**
+   * Vitest-compatible mocking utilities, for migrating tests from Vitest to Bun.
+   */
+  export const vi: VitestUtils;
 
   /**
    * Alias of {@link vi}, matching the `vitest` export of the vitest module.
    */
-  export const vitest: typeof vi;
+  export const vitest: VitestUtils;
 
   interface FunctionLike {
     readonly name: string;

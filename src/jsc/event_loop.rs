@@ -154,6 +154,48 @@ mod drain_result {
 // the microtask queue through it is interior mutation invisible to Rust.
 unsafe extern "C" {
     safe fn JSC__JSGlobalObject__drainMicrotasks(global: &JSGlobalObject) -> u8;
+    safe fn AsyncContextFrame__suspend(
+        global: &JSGlobalObject,
+        needs_cleanup: &mut bool,
+    ) -> JSValue;
+    safe fn AsyncContextFrame__resume(
+        global: &JSGlobalObject,
+        context: JSValue,
+        needs_cleanup: bool,
+    );
+}
+
+/// The calling JS frame's async context, cleared while native code dispatches
+/// event loop work from inside that frame and reinstalled on drop: work that
+/// was scheduled with no context runs unwrapped and would otherwise see it.
+#[must_use = "the context is reinstalled when this guard drops"]
+pub struct SuspendedAsyncContext<'a> {
+    global: &'a JSGlobalObject,
+    // Protected because the dispatch can GC and nothing else necessarily roots the array.
+    context: jsc::ProtectedJSValue,
+    needs_cleanup: bool,
+}
+
+impl<'a> SuspendedAsyncContext<'a> {
+    pub fn take(global: &'a JSGlobalObject) -> Option<Self> {
+        jsc::mark_binding();
+        let mut needs_cleanup = false;
+        let context = AsyncContextFrame__suspend(global, &mut needs_cleanup);
+        if context.is_undefined() {
+            return None;
+        }
+        Some(Self {
+            global,
+            context: context.protected(),
+            needs_cleanup,
+        })
+    }
+}
+
+impl Drop for SuspendedAsyncContext<'_> {
+    fn drop(&mut self) {
+        AsyncContextFrame__resume(self.global, self.context.value(), self.needs_cleanup);
+    }
 }
 
 impl JSGlobalObject {
@@ -164,6 +206,7 @@ impl JSGlobalObject {
     /// `Err` means the drain met this VM's termination; it is left pending for the caller's landing frame.
     pub fn drain_microtasks_and_next_ticks(&self) -> Result<(), Stopped> {
         jsc::mark_binding();
+        let _caller_context = SuspendedAsyncContext::take(self);
         match JSC__JSGlobalObject__drainMicrotasks(self) {
             drain_result::SUCCESS | drain_result::PENDING_EXCEPTION => Ok(()),
             drain_result::STOPPED => Err(Stopped),
@@ -1105,6 +1148,7 @@ impl EventLoop {
         if promise.status() != PromiseStatus::Pending {
             return Ok(());
         }
+        let _caller_context = SuspendedAsyncContext::take(self.global_ref());
         while promise.status() == PromiseStatus::Pending {
             if jsc_vm.execution_forbidden()
                 || !self.vm_ref().script_allowed()

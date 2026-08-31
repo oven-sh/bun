@@ -329,9 +329,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let loc = p.lexer.loc();
         let mut str_ = p.lexer.to_e_string()?;
         str_.prefer_template = p.lexer.token == T::TNoSubstitutionTemplateLiteral;
+        let has_property_key_comment =
+            p.lexer.has_property_key_comment_before && p.is_mangling_props();
 
-        let expr = p.new_expr(str_, loc);
+        let mut expr = p.new_expr(str_, loc);
         p.lexer.next()?;
+        if has_property_key_comment {
+            expr = p.mangle_property_key_comment_string(expr);
+        }
         Ok(expr)
     }
 
@@ -1186,7 +1191,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.lexer.next()?;
             }
             T::TStringLiteral => {
-                key = p.parse_string_literal()?;
+                let quoted = p.parse_string_literal()?;
+                key = p.mangle_string_as_prop(quoted);
             }
             T::TBigIntegerLiteral => {
                 key = p.new_expr(
@@ -1214,13 +1220,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                 p.lexer.next()?;
 
-                key = p.new_expr(
-                    E::String {
-                        data: name.into(),
-                        ..Default::default()
-                    },
-                    loc,
-                );
+                key = p.property_key_for_name(name, loc);
 
                 if p.lexer.token != T::TColon && p.lexer.token != T::TOpenParen {
                     let ref_ = p.store_name_in_ref(name);

@@ -926,16 +926,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             stmts.reserve(3);
             stmts.push(*stmt);
             let func_name = data.func.name.expect("infallible: name checked");
+            let namespace_member = p.dot_or_mangled_prop(
+                Expr::init_identifier(enclosing_namespace_arg_ref, stmt.loc),
+                original_name,
+                func_name.loc,
+                stmt.loc,
+            );
             stmts.push(Stmt::assign(
-                p.new_expr(
-                    E::Dot {
-                        target: Expr::init_identifier(enclosing_namespace_arg_ref, stmt.loc),
-                        name: original_name.into(),
-                        name_loc: func_name.loc,
-                        ..Default::default()
-                    },
-                    stmt.loc,
-                ),
+                namespace_member,
                 Expr::init_identifier(func_name.ref_, func_name.loc),
             ));
         } else if !mark_as_dead {
@@ -1090,23 +1088,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if was_export_inside_namespace {
             let class_name = data.class.class_name.expect("infallible: name checked");
             let class_name_ref = class_name.ref_;
-            let original_name = p.symbols[class_name_ref.inner_index() as usize]
+            let original_name: &'a [u8] = p.symbols[class_name_ref.inner_index() as usize]
                 .original_name
                 .slice();
+            let namespace_arg = Expr::init_identifier(
+                p.enclosing_namespace_arg_ref
+                    .expect("infallible: in namespace"),
+                stmt.loc,
+            );
+            let namespace_member =
+                p.dot_or_mangled_prop(namespace_arg, original_name, class_name.loc, stmt.loc);
             stmts.push(Stmt::assign(
-                p.new_expr(
-                    E::Dot {
-                        target: Expr::init_identifier(
-                            p.enclosing_namespace_arg_ref
-                                .expect("infallible: in namespace"),
-                            stmt.loc,
-                        ),
-                        name: original_name.into(),
-                        name_loc: class_name.loc,
-                        ..Default::default()
-                    },
-                    stmt.loc,
-                ),
+                namespace_member,
                 Expr::init_identifier(class_name_ref, class_name.loc),
             ));
         }
@@ -2252,8 +2245,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 value.value = Some(p.new_expr(E::Undefined {}, value.loc));
             }
 
-            let is_assign_target =
-                p.options.features.minify_syntax && js_lexer::is_identifier(name);
+            // Non-inlined `Enum.Name` accesses get mangled, so the definition must
+            // be too. The reverse mapping keeps the original name: it is data.
+            let mangled_name = if p.is_mangling_props() {
+                p.mangled_prop_expr(name, value.loc, false)
+            } else {
+                None
+            };
+
+            let is_assign_target = mangled_name.is_none()
+                && p.options.features.minify_syntax
+                && js_lexer::is_identifier(name);
 
             let name_as_e_string = if !is_assign_target || !has_string_value {
                 Some(p.new_expr(value.name_as_e_string(p.arena), value.loc))
@@ -2261,7 +2263,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 None
             };
 
-            let assign_target = if is_assign_target {
+            let assign_target = if let Some(mangled_name) = mangled_name {
+                // "Enum[<mangled>] = value"
+                Expr::assign(
+                    p.new_expr(
+                        E::Index {
+                            target: Expr::init_identifier(data.arg, value.loc),
+                            index: mangled_name,
+                            optional_chain: None,
+                        },
+                        value.loc,
+                    ),
+                    value.value.unwrap(),
+                )
+            } else if is_assign_target {
                 // "Enum.Name = value"
                 Expr::assign(
                     p.new_expr(

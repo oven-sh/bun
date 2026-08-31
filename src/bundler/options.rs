@@ -20,6 +20,7 @@ pub use defines::Define;
 // methods (the canonical types live in `bun_js_parser::defines`); bring the
 // traits into scope so the associated-fn call syntax below resolves.
 use crate::defines::{DefineDataExt as _, DefineExt as _};
+pub use bun_options_types::PropertyMangler;
 pub use bun_options_types::global_cache::GlobalCache;
 pub use bun_options_types::offline_mode::OfflineMode;
 
@@ -1310,6 +1311,8 @@ pub struct BundleOptions<'a> {
     pub minify_syntax: bool,
     pub minify_identifiers: bool,
     pub keep_names: bool,
+    /// Cloned per worker: a compiled regex must not be shared between threads.
+    pub mangle_props: Option<PropertyMangler>,
     pub dead_code_elimination: bool,
     /// REPL mode: transforms code for interactive evaluation with vm.runInContext.
     /// Hoists declarations as var for persistence, wraps code in IIFE, and
@@ -1514,6 +1517,7 @@ impl<'a> BundleOptions<'a> {
             minify_syntax: self.minify_syntax,
             minify_identifiers: self.minify_identifiers,
             keep_names: self.keep_names,
+            mangle_props: self.mangle_props.clone(),
             dead_code_elimination: self.dead_code_elimination,
             repl_mode: self.repl_mode,
             css_chunking: self.css_chunking,
@@ -1760,6 +1764,7 @@ impl<'a> BundleOptions<'a> {
             minify_syntax: false,
             minify_identifiers: false,
             keep_names: false,
+            mangle_props: None,
             dead_code_elimination: true,
             repl_mode: false,
             ignore_dce_annotations: false,

@@ -779,16 +779,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // If this isn't a constant, return a clone of this property access
                     // but with the namespace member data associated with it so that
                     // more property accesses off of this property access are recognized.
-                    let name_static = E::Str::new(name);
-                    let expr = p.new_expr(
-                        E::Dot {
-                            target: *target,
-                            name: name_static,
-                            name_loc,
-                            ..Default::default()
-                        },
-                        loc,
-                    );
+                    let expr = p.dot_or_mangled_prop(*target, name, name_loc, loc);
 
                     p.ts_namespace = crate::p::RecentlyVisitedTSNamespace {
                         expr: expr.data,

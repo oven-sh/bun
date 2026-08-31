@@ -2461,6 +2461,82 @@ impl<'a> LinkerContext<'a> {
         }
     }
 
+    /// `--mangle-props`: merges every file's symbol for a property name into one
+    /// (so use counts add up and all chunks agree) and assigns the names.
+    pub(crate) fn mangle_props(&mut self) -> Result<(), bun_alloc::AllocError> {
+        let all_property_mangling = self.graph.ast.items_property_mangling();
+        if all_property_mangling.iter().all(|file| {
+            file.as_ref()
+                .is_none_or(|file| file.mangled_props.is_empty())
+        }) {
+            return Ok(());
+        }
+        let all_flags = self.graph.ast.items_flags();
+        let all_char_freqs = self.graph.ast.items_char_freq();
+
+        let mut reserved = js_printer::mangle_props::ReservedPropNames::init();
+        // Property name → the symbol every other file's symbol for it is merged into.
+        let mut merged: HashMap<&[u8], Ref> = HashMap::new();
+        let mut char_freq = bun_ast::CharFreq::default();
+
+        for source_index in self.graph.reachable_files.iter() {
+            let source_index = source_index.get() as usize;
+
+            if all_flags[source_index].contains(AstFlags::HAS_CHAR_FREQ) {
+                char_freq.include(&all_char_freqs[source_index]);
+            }
+
+            let Some(file) = all_property_mangling[source_index].as_deref() else {
+                continue;
+            };
+
+            for name in file.reserved_props.keys() {
+                reserved.reserve(name);
+            }
+
+            for (name, &ref_) in file
+                .mangled_props
+                .keys()
+                .iter()
+                .zip(file.mangled_props.values())
+            {
+                let name: &[u8] = name;
+                match merged.get(name) {
+                    Some(&canonical) => {
+                        self.graph.symbols.merge(ref_, canonical);
+                    }
+                    None => {
+                        merged.insert(name, ref_);
+                    }
+                }
+            }
+        }
+
+        let mut candidates: Vec<js_printer::renamer::StableSymbolCount> = merged
+            .values()
+            .map(|&ref_| {
+                let use_count = self
+                    .graph
+                    .symbols
+                    .get_const(ref_)
+                    .expect("mangled prop refs come from the symbol table")
+                    .use_count_estimate;
+                js_printer::mangle_props::mangled_prop_candidate(
+                    ref_,
+                    use_count,
+                    self.graph.stable_source_indices[ref_.source_index() as usize],
+                )
+            })
+            .collect();
+
+        js_printer::mangle_props::assign_mangled_prop_names(
+            &mut candidates,
+            &reserved,
+            &char_freq,
+            &mut self.mangled_props,
+        )
+    }
+
     /// Each chunk's final content hash: its own isolated hash (plus the
     /// asset paths its output pieces reference) and that of every chunk it
     /// transitively reaches through cross-chunk imports or output pieces, so a

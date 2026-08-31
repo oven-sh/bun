@@ -5767,9 +5767,20 @@ describe.concurrent("bundler", () => {
     minifyIdentifiers: true,
     minifySyntax: true,
     bundling: false,
+    onAfterBundle(api) {
+      // "bar", "baz" and "get" all match; only the two property names are
+      // renamed, and the getter stays a getter.
+      expect(api.readFile("/out.js")).toMatchInlineSnapshot(`
+        "class t {
+          static t = { get s() {
+            return 123;
+          } };
+        }
+        "
+      `);
+    },
   });
   itBundled("default/ManglePropsOptionalChain", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         export default function(x) {
@@ -5786,6 +5797,21 @@ describe.concurrent("bundler", () => {
     },
     mangleProps: /_$/,
     bundling: false,
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toMatchInlineSnapshot(`
+        "export default function entry_default(x) {
+          x.a;
+          x.a?.();
+          x?.a;
+          x?.a();
+          x?.a.b;
+          x?.a.b();
+          x?.["foo_"].b;
+          x?.a["bar_"];
+        }
+        "
+      `);
+    },
   });
   itBundled("default/ManglePropsLoweredOptionalChain", {
     // GENERATED
@@ -5807,7 +5833,6 @@ describe.concurrent("bundler", () => {
     bundling: false,
   });
   itBundled("default/ReserveProps", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         export default {
@@ -5817,7 +5842,17 @@ describe.concurrent("bundler", () => {
       `,
     },
     mangleProps: /_$/,
+    reserveProps: /^_/,
     bundling: false,
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toMatchInlineSnapshot(`
+        "export default {
+          a: 0,
+          _bar_: 1
+        };
+        "
+      `);
+    },
   });
   itBundled("default/ManglePropsImportExport", {
     // GENERATED
@@ -5863,10 +5898,62 @@ describe.concurrent("bundler", () => {
     },
     entryPoints: ["/entry-esm.js", "/entry-cjs.js"],
     mangleProps: /_$/,
+    onAfterBundle(api) {
+      // Import and export names are not property names: imports resolve to the
+      // bindings, and `exports.x` in a CommonJS module is an export (unlike in
+      // esbuild, which renames it). Destructuring the result of `require()` is
+      // ordinary property syntax, though, and is renamed just like esbuild does,
+      // so names that cross module boundaries should not match the pattern.
+      const esm = api.readFile("/out/entry-esm.js");
+      expect(esm.slice(esm.indexOf("// cjs.js"))).toMatchInlineSnapshot(`
+        "// cjs.js
+        var require_cjs = __commonJS(function(exports) {
+          exports.cjs_foo_ = "foo";
+        });
+
+        // entry-esm.js
+        var import_cjs = __toESM(require_cjs(), 1);
+        var cjs = __toESM(require_cjs(), 1);
+        var bar_ = [
+          esm_foo_,
+          import_cjs.cjs_foo_,
+          esm_foo_,
+          cjs.cjs_foo_
+        ];
+        export {
+          bar_
+        };
+        "
+      `);
+      const cjs = api.readFile("/out/entry-cjs.js");
+      expect(cjs.slice(cjs.indexOf("// esm.js"))).toMatchInlineSnapshot(`
+        "// esm.js
+        var exports_esm = {};
+        __export(exports_esm, {
+          esm_foo_: () => esm_foo_
+        });
+        var esm_foo_ = "foo";
+
+        // cjs.js
+        var require_cjs = __commonJS(function(exports) {
+          exports.cjs_foo_ = "foo";
+        });
+
+        // entry-cjs.js
+        var { a: esm_foo_2 } = __toCommonJS(exports_esm);
+        var { b: cjs_foo_ } = require_cjs();
+        var $bar_ = [
+          esm_foo_2,
+          cjs_foo_
+        ];
+        export {
+          $bar_ as bar_
+        };
+        "
+      `);
+    },
   });
   itBundled("default/ManglePropsJSXTransform", {
-    // GENERATED
-    todo: true,
     files: {
       "/entry.jsx": /* jsx */ `
         let Foo = {
@@ -5884,7 +5971,34 @@ describe.concurrent("bundler", () => {
         export default <Foo.Bar_ text_={Foo.hello_}></Foo.Bar_>
       `,
     },
+    jsx: { runtime: "classic", factory: "Foo.createElement_", fragment: "Foo.Fragment_" },
     mangleProps: /_$/,
+    onAfterBundle(api) {
+      // The factory and fragment configured for JSX are property accesses into
+      // this code, so they are renamed together with the object literal.
+      expect(api.readFile("/out.js")).toMatchInlineSnapshot(`
+        "// entry.jsx
+        var Foo = {
+          b(props) {
+            return /* @__PURE__ */ Foo.a(Foo.d, null, props.e);
+          },
+          c: "hello, world",
+          a(...args) {
+            console.log("createElement", ...args);
+          },
+          d(...args) {
+            console.log("Fragment", ...args);
+          }
+        };
+        var entry_default = /* @__PURE__ */ Foo.a(Foo.b, {
+          e: Foo.c
+        });
+        export {
+          entry_default as default
+        };
+        "
+      `);
+    },
   });
   itBundled("default/ManglePropsJSXPreserve", {
     // GENERATED
@@ -5904,8 +6018,6 @@ describe.concurrent("bundler", () => {
     mangleProps: /_$/,
   });
   itBundled("default/ManglePropsJSXTransformNamespace", {
-    // GENERATED
-    todo: true,
     files: {
       "/entry.jsx": /* jsx */ `
         export default [
@@ -5914,6 +6026,25 @@ describe.concurrent("bundler", () => {
           <foo KEEP:THIS_ />,
         ]
       `,
+    },
+    jsx: { runtime: "classic", factory: "h" },
+    mangleProps: /_$/,
+    onAfterBundle(api) {
+      // Tag names are not properties, and namespaced attributes are left alone.
+      expect(api.readFile("/out.js")).toMatchInlineSnapshot(`
+        "// entry.jsx
+        var entry_default = [
+          /* @__PURE__ */ h(KEEP_THIS_, null),
+          /* @__PURE__ */ h("KEEP:THIS_", null),
+          /* @__PURE__ */ h("foo", {
+            "KEEP:THIS_": true
+          })
+        ];
+        export {
+          entry_default as default
+        };
+        "
+      `);
     },
   });
   itBundled("default/ManglePropsAvoidCollisions", {
@@ -5929,6 +6060,22 @@ describe.concurrent("bundler", () => {
       `,
     },
     mangleProps: /_$/,
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toMatchInlineSnapshot(`
+        "// entry.js
+        var entry_default = {
+          c: 0,
+          d: 1,
+          a: 2,
+          b: 3,
+          __proto__: {}
+        };
+        export {
+          entry_default as default
+        };
+        "
+      `);
+    },
   });
   itBundled("default/ManglePropsTypeScriptFeatures", {
     files: {
@@ -6011,6 +6158,85 @@ describe.concurrent("bundler", () => {
     },
     entryPoints: ["/parameter-properties.ts", "/namespace-exports.ts", "/enum-values.ts"],
     mangleProps: /_$/,
+    onAfterBundle(api) {
+      expect(api.readFile("/out/parameter-properties.js")).toMatchInlineSnapshot(`
+        "// parameter-properties.ts
+        class Foo {
+          KEEP_FIELD;
+          e;
+          constructor(KEEP_FIELD, MANGLE_FIELD_) {
+            this.KEEP_FIELD = KEEP_FIELD;
+            this.e = MANGLE_FIELD_;
+          }
+        }
+        var foo = new Foo;
+        console.log(foo.KEEP_FIELD, foo.e);
+        "
+      `);
+      // Every kind of namespace export is defined and read under the same
+      // mangled name, from inside the namespace, from outside it, and from a
+      // second block of the same namespace. (`MANGLE_NAMESPACE_` has no
+      // runtime members and is dropped, as it is without mangling.)
+      expect(api.readFile("/out/namespace-exports.js")).toMatchInlineSnapshot(`
+        "// namespace-exports.ts
+        var ns;
+        ((ns) => {
+          ns.b = 1;
+          ns.c = 2;
+          ns.d = 3;
+          ({ k: { a: ns.a } } = 4);
+          function MANGLE_FUNCTION_() {}
+          ns.g = MANGLE_FUNCTION_;
+
+          class MANGLE_CLASS_ {
+          }
+          ns.h = MANGLE_CLASS_;
+          let MANGLE_ENUM_;
+          ((MANGLE_ENUM_2) => {})(MANGLE_ENUM_ = ns.f ||= {});
+          console.log({
+            VAR: ns.b,
+            LET: ns.c,
+            CONST: ns.d,
+            DESTRUCTURING: ns.a,
+            FUNCTION: MANGLE_FUNCTION_,
+            CLASS: MANGLE_CLASS_,
+            NAMESPACE: MANGLE_NAMESPACE_,
+            ENUM: MANGLE_ENUM_
+          });
+        })(ns ||= {});
+        console.log({
+          VAR: ns.b,
+          LET: ns.c,
+          CONST: ns.d,
+          DESTRUCTURING: ns.a,
+          FUNCTION: ns.g,
+          CLASS: ns.h,
+          NAMESPACE: ns.l,
+          ENUM: ns.f
+        });
+        ((ns) => {
+          console.log({
+            VAR: ns.b,
+            LET: ns.c,
+            CONST: ns.d,
+            DESTRUCTURING: ns.a,
+            FUNCTION: ns.g,
+            CLASS: ns.h,
+            NAMESPACE: MANGLE_NAMESPACE_,
+            ENUM: ns.f
+          });
+        })(ns ||= {});
+        "
+      `);
+      expect(api.readFile("/out/enum-values.js")).toMatchInlineSnapshot(`
+        "// enum-values.ts
+        console.log({
+          foo: 0 /* foo_ */,
+          bar: "" /* bar_ */
+        });
+        "
+      `);
+    },
   });
   itBundled("default/ManglePropsShorthand", {
     files: {
@@ -6020,16 +6246,28 @@ describe.concurrent("bundler", () => {
       `,
     },
     mangleProps: /x/,
+    onAfterBundle(api) {
+      // The property is renamed, the variable is not, so the shorthand has to go.
+      expect(api.readFile("/out.js")).toContain("({ a: xxxxx }) => ({ a: xxxxx })");
+    },
   });
   itBundled("default/ManglePropsNoShorthand", {
     files: {
       "/entry.js": /* js */ `
-        // This should print as "({ y }) => ({ y: y })" not "({ y: y }) => ({ y: y })"
         export let yyyyy = ({ xxxxx }) => ({ xxxxx })
       `,
     },
     mangleProps: /x/,
     minifyIdentifiers: true,
+    onAfterBundle(api) {
+      // Property names and variable names are renamed independently. Whatever
+      // names they end up with, the same property must be read and written,
+      // and shorthand may only be used when both names happen to be the same.
+      const [, key, param, returned] = api
+        .readFile("/out.js")
+        .match(/\(\{ (\w+)(?:: (\w+))? \}\) => \(\{ \1(?:: (\w+))? \}\)/)!;
+      expect(param ?? key).toBe(returned ?? key);
+    },
   });
   itBundled("default/ManglePropsLoweredClassFields", {
     files: {
@@ -6056,6 +6294,21 @@ describe.concurrent("bundler", () => {
       `,
     },
     mangleProps: /./,
+    bundling: false,
+    onAfterBundle(api) {
+      // `constructor` and `super()` are not property accesses.
+      expect(api.readFile("/out.js")).toMatchInlineSnapshot(`
+        "class Foo {
+        }
+
+        class Bar extends Foo {
+          constructor() {
+            super();
+          }
+        }
+        "
+      `);
+    },
   });
   itBundled("default/MangleNoQuotedProps", {
     files: {
@@ -6076,6 +6329,22 @@ describe.concurrent("bundler", () => {
     },
     mangleProps: /_/,
     mangleQuoted: false,
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toMatchInlineSnapshot(`
+        "// entry.js
+        x["_doNotMangleThis"];
+        x?.["_doNotMangleThis"];
+        x[y ? "_doNotMangleThis" : z];
+        x?.[y ? "_doNotMangleThis" : z];
+        x[y ? z : "_doNotMangleThis"];
+        x?.[y ? z : "_doNotMangleThis"];
+        var { _doNotMangleThis: x } = y;
+        "_doNotMangleThis" in x;
+        (y ? "_doNotMangleThis" : z) in x;
+        (y ? z : "_doNotMangleThis") in x;
+        "
+      `);
+    },
   });
   itBundled("default/MangleNoQuotedPropsMinifySyntax", {
     // GENERATED
@@ -6098,6 +6367,22 @@ describe.concurrent("bundler", () => {
     mangleProps: /_/,
     mangleQuoted: false,
     minifySyntax: true,
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toMatchInlineSnapshot(`
+        "// entry.js
+        x._doNotMangleThis;
+        x?._doNotMangleThis;
+        x[y ? "_doNotMangleThis" : z];
+        x?.[y ? "_doNotMangleThis" : z];
+        x[y ? z : "_doNotMangleThis"];
+        x?.[y ? z : "_doNotMangleThis"];
+        var { _doNotMangleThis: x } = y;
+        "_doNotMangleThis" in x;
+        (y ? "_doNotMangleThis" : z) in x;
+        (y ? z : "_doNotMangleThis") in x;
+        "
+      `);
+    },
   });
   itBundled("default/MangleQuotedProps", {
     files: {
@@ -6139,6 +6424,47 @@ describe.concurrent("bundler", () => {
     entryPoints: ["/keep.js", "/mangle.js"],
     mangleProps: /_/,
     mangleQuoted: true,
+    onAfterBundle(api) {
+      expect(api.readFile("/out/keep.js")).toMatchInlineSnapshot(`
+        "// keep.js
+        foo("_keepThisProperty");
+        foo((x, "_keepThisProperty"));
+        foo(x ? "_keepThisProperty" : "_keepThisPropertyToo");
+        x[foo("_keepThisProperty")];
+        x?.[foo("_keepThisProperty")];
+        foo("_keepThisProperty") + "";
+        (class {
+          [foo("_keepThisProperty")] = x;
+        });
+        var { [foo("_keepThisProperty")]: x } = y;
+        foo("_keepThisProperty") in x;
+        "
+      `);
+      expect(api.readFile("/out/mangle.js")).toMatchInlineSnapshot(`
+        "// mangle.js
+        x.a;
+        x?.a;
+        x[y ? "a" : z];
+        x?.[y ? "a" : z];
+        x[y ? z : "a"];
+        x?.[y ? z : "a"];
+        x[y, "a"];
+        x?.[y, "a"];
+        "a" + "";
+        (y, "a") + "";
+        (class {
+          [(y, "a")] = x;
+        });
+        var { a: x } = y;
+        var { ["a"]: x } = y;
+        var { [(z, "a")]: x } = y;
+        "a" in x;
+        (y ? "a" : z) in x;
+        (y ? z : "a") in x;
+        (y, "a") in x;
+        "
+      `);
+    },
   });
   itBundled("default/MangleQuotedPropsMinifySyntax", {
     files: {
@@ -6181,6 +6507,45 @@ describe.concurrent("bundler", () => {
     mangleProps: /_/,
     mangleQuoted: true,
     minifySyntax: true,
+    onAfterBundle(api) {
+      expect(api.readFile("/out/keep.js")).toMatchInlineSnapshot(`
+        "// keep.js
+        foo("_keepThisProperty");
+        foo("_keepThisProperty");
+        foo(x ? "_keepThisProperty" : "_keepThisPropertyToo");
+        x[foo("_keepThisProperty")];
+        x?.[foo("_keepThisProperty")];
+        foo("_keepThisProperty") + "";
+        (class {
+          [foo("_keepThisProperty")] = x;
+        });
+        var { [foo("_keepThisProperty")]: x } = y;
+        foo("_keepThisProperty") in x;
+        "
+      `);
+      expect(api.readFile("/out/mangle.js")).toMatchInlineSnapshot(`
+        "// mangle.js
+        x.a;
+        x?.a;
+        x[y ? "a" : z];
+        x?.[y ? "a" : z];
+        x[y ? z : "a"];
+        x?.[y ? z : "a"];
+        x[y, "a"];
+        x?.[y, "a"];
+        "a" + "";
+        (y, "a") + "";
+        (class {
+          [(y, "a")] = x;
+        });
+        var { a: x } = y, { ["a"]: x } = y, { [(z, "a")]: x } = y;
+        "a" in x;
+        (y ? "a" : z) in x;
+        (y ? z : "a") in x;
+        (y, "a") in x;
+        "
+      `);
+    },
   });
   // we dont check debug messages
   // itBundled("default/IndirectRequireMessage", {

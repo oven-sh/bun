@@ -64,7 +64,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             Tag::EIdentifier => Self::e_identifier(self, e, in_),
             Tag::EJsxElement => Self::e_jsx_element(self, e, in_),
             Tag::ETemplate => Self::e_template(self, e, in_),
-            Tag::EBinary => Self::e_binary(self, e),
+            Tag::EBinary => Self::e_binary(self, e, in_),
             Tag::EIndex => Self::e_index(self, e, in_),
             Tag::EUnary => Self::e_unary(self, e, in_),
             Tag::EDot => Self::e_dot(self, e, in_),
@@ -92,9 +92,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // not emitted: it is not necessary and it was causing breakages.
     }
 
-    fn e_string(_: &mut Self, _e: &mut Expr, _: ExprIn) {
-        // If you're using this, you're probably not using 0-prefixed legacy octal notation
-        // if e.LegacyOctalLoc.Start > 0 {
+    fn e_string(p: &mut Self, e: &mut Expr, in_: ExprIn) {
+        if in_.should_mangle_strings_as_props && p.is_mangling_props() {
+            *e = p.mangle_string_as_prop(*e);
+        }
     }
 
     fn e_number(_: &mut Self, _e: &mut Expr, _: ExprIn) {
@@ -798,7 +799,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return;
         }
     }
-    fn e_binary(p: &mut Self, e: &mut Expr) {
+    fn e_binary(p: &mut Self, e: &mut Expr, in_: ExprIn) {
         let expr = *e;
         use crate::visit::visit_binary::BinaryExpressionVisitor;
         let e_ = expr.data.e_binary().expect("infallible: variant checked");
@@ -814,6 +815,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             e: e_,
             loc: expr.loc,
             left_in: ExprIn::default(),
+            should_mangle_strings_as_props: in_.should_mangle_strings_as_props,
         };
 
         // Everything uses a single stack to reduce allocation overhead. This stack
@@ -861,6 +863,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 e: left_binary.unwrap(),
                 loc: left.loc,
                 left_in: ExprIn::default(),
+                // This child is the left operand being visited with `left_in`.
+                should_mangle_strings_as_props: left_in.should_mangle_strings_as_props,
             };
         }
 
@@ -882,7 +886,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let is_delete_target = matches!(p.delete_target, Data::EIndex(dt) if core::ptr::eq(&raw const *e_, &raw const *dt));
 
         // "a['b']" => "a.b"
-        if p.options.features.minify_syntax {
+        //
+        // Not while mangling properties, where `e_dot` would then mangle a quoted
+        // name; the index is handled below instead (and still becomes a dot).
+        if p.options.features.minify_syntax && !p.is_mangling_props() {
             if let Some(mut s) = e_.index.data.e_string() {
                 if !s.is_utf16 && s.is_identifier(p.arena) {
                     let dot = p.new_expr(
@@ -992,10 +999,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 };
             }
             _ => {
-                p.visit_expr(&mut e_.index);
+                p.visit_expr_in_out(
+                    &mut e_.index,
+                    ExprIn {
+                        should_mangle_strings_as_props: true,
+                        ..Default::default()
+                    },
+                );
 
                 let unwrapped = e_.index.unwrap_inlined();
                 if let Some(mut s) = unwrapped.data.e_string() {
+                    if p.is_mangling_props() {
+                        // Inlined constants and enum members never went through `e_string`.
+                        let name = s.slice(p.arena);
+                        p.reserve_prop(name);
+                    }
+
                     if !s.is_utf16 {
                         // "a['b' + '']" => "a.b"
                         // "enum A { B = 'b' }; a[A.B]" => "a.b"
@@ -1454,12 +1473,30 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             }
         }
+
+        if p.is_mangling_props() {
+            if let Some(index) = p.mangled_dot_to_index(expr) {
+                if is_call_target {
+                    p.call_target = index.data;
+                }
+                if is_delete_target {
+                    p.delete_target = index.data;
+                }
+                *e = index;
+            }
+        }
     }
 
-    fn e_if(p: &mut Self, e: &mut Expr, _: ExprIn) {
+    fn e_if(p: &mut Self, e: &mut Expr, in_: ExprIn) {
         let mut e_ = e.data.e_if().expect("infallible: variant checked");
         let is_call_target =
             matches!(p.call_target, Data::EIf(ct) if core::ptr::eq(&raw const *e_, &raw const *ct));
+
+        // Either branch may become the value of the whole expression.
+        let branch_in = ExprIn {
+            should_mangle_strings_as_props: in_.should_mangle_strings_as_props,
+            ..Default::default()
+        };
 
         let prev_in_branch = p.in_branch_condition;
         p.in_branch_condition = true;
@@ -1469,18 +1506,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         e_.test = SideEffects::simplify_boolean(p, e_.test);
 
         let Some(side_effects) = SideEffects::to_boolean(p, &e_.test.data) else {
-            p.visit_expr(&mut e_.yes);
-            p.visit_expr(&mut e_.no);
+            p.visit_expr_in_out(&mut e_.yes, branch_in);
+            p.visit_expr_in_out(&mut e_.no, branch_in);
             return;
         };
 
         // Mark the control flow as dead if the branch is never taken
         if side_effects.value {
             // "true ? live : dead"
-            p.visit_expr(&mut e_.yes);
+            p.visit_expr_in_out(&mut e_.yes, branch_in);
             let old = p.is_control_flow_dead;
             p.is_control_flow_dead = true;
-            p.visit_expr(&mut e_.no);
+            p.visit_expr_in_out(&mut e_.no, branch_in);
             p.is_control_flow_dead = old;
 
             if side_effects.side_effects == SideEffects::CouldHaveSideEffects {
@@ -1505,9 +1542,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // "false ? dead : live"
             let old = p.is_control_flow_dead;
             p.is_control_flow_dead = true;
-            p.visit_expr(&mut e_.yes);
+            p.visit_expr_in_out(&mut e_.yes, branch_in);
             p.is_control_flow_dead = old;
-            p.visit_expr(&mut e_.no);
+            p.visit_expr_in_out(&mut e_.no, branch_in);
 
             // "(a, false) ? b : c" => "a, c"
             if side_effects.side_effects == SideEffects::CouldHaveSideEffects {
@@ -1650,11 +1687,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut has_proto = false;
         for property in e_.properties.slice_mut() {
             if property.kind != G::PropertyKind::Spread {
-                p.visit_expr(
+                let key_in = ExprIn {
+                    should_mangle_strings_as_props: property
+                        .flags
+                        .contains(Flags::Property::IsComputed),
+                    ..Default::default()
+                };
+                p.visit_expr_in_out(
                     property
                         .key
                         .as_mut()
                         .unwrap_or_else(|| panic!("Expected property key")),
+                    key_in,
                 );
                 let key = property.key.expect("infallible: prop has key");
                 // Forbid duplicate "__proto__" properties according to the specification
@@ -1715,16 +1759,25 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         .class_name
                         .is_none()
                     && let Some(key) = property.key
-                    && matches!(key.data, Data::EString(..))
                 {
-                    let key_str = key.data.e_string().expect("infallible: variant checked");
-                    // While E.rs has duplicate impls (E0034), reach the bytes directly
-                    // — class-name keys are parser-produced (UTF-8, no rope).
-                    p.decorator_class_name = if !key_str.is_utf16 {
-                        Some(key_str.data.slice())
-                    } else {
-                        None
-                    };
+                    match key.data {
+                        Data::EString(key_str) => {
+                            p.decorator_class_name = if !key_str.is_utf16 {
+                                Some(key_str.data.slice())
+                            } else {
+                                None
+                            };
+                        }
+                        // A mangled property still keeps its original name.
+                        Data::ENameOfSymbol(name) => {
+                            p.decorator_class_name = Some(
+                                p.symbols[name.ref_.inner_index() as usize]
+                                    .original_name
+                                    .slice(),
+                            );
+                        }
+                        _ => {}
+                    }
                 }
                 p.visit_expr_in_out(
                     value,

@@ -78,6 +78,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 }
                                 let arg_ref = ts.arg_ref;
                                 let new_ref = self.new_symbol(js_ast::symbol::Kind::Other, name);
+                                // The export itself is defined under the mangled name.
+                                let mangled_prop_ref = if self.is_mangled_prop(name) {
+                                    Some(self.symbol_for_mangled_prop(name))
+                                } else {
+                                    None
+                                };
                                 // Re-borrow ts_namespace mutably after &mut self.
                                 let ts_mut = &mut *ts_namespace;
                                 ts_mut.property_accesses.insert(name, new_ref);
@@ -85,6 +91,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     Some(bun_alloc::ast_box(js_ast::NamespaceAlias {
                                         namespace_ref: arg_ref,
                                         alias: js_ast::StoreStr::new(name),
+                                        mangled_prop_ref,
                                         ..Default::default()
                                     }));
                                 break 'brk new_ref;

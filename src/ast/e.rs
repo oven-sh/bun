@@ -24,9 +24,7 @@ pub use crate::StoreStr as Str;
 pub struct NameOfSymbol {
     pub ref_: Ref,
 
-    /// If true, a preceding comment contains "@__KEY__"
-    ///
-    /// Currently not used
+    /// If true, a preceding comment contains "@__KEY__"; the printer emits it again.
     pub has_property_key_comment: bool,
 }
 impl Default for NameOfSymbol {

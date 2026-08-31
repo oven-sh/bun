@@ -16,8 +16,10 @@ use bun_core::strings;
 use bun_core::{self, FeatureFlags, Global, Output, env_var};
 use bun_jsc::RegularExpression;
 use bun_jsc::regular_expression::Flags as RegexFlags;
+use bun_options_types::PropertyMangler;
 use bun_options_types::code_coverage_options::Reporters as CoverageReporters;
 use bun_options_types::context::{Debugger, DebuggerEnable, HotReload, MacroOptions, Shard};
+use bun_options_types::mangle_props::{InvalidPattern as InvalidManglePattern, RegExpSource};
 use bun_options_types::schema::api;
 use bun_paths::resolve_path;
 use bun_paths::{PathBuffer, platform};
@@ -512,6 +514,15 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
         parse_param!("--minify-identifiers             Minify identifiers"),
         parse_param!(
             "--keep-names                     Preserve original function and class names when minifying"
+        ),
+        parse_param!(
+            "--mangle-props <STR>             Rename properties whose names match this regular expression, e.g. --mangle-props='_$'"
+        ),
+        parse_param!(
+            "--reserve-props <STR>            Never rename properties whose names match this regular expression, even if they match --mangle-props"
+        ),
+        parse_param!(
+            "--mangle-quoted                  Also rename matching properties written as string literals, e.g. obj['foo_']"
         ),
         parse_param!(
             "--css-chunking                   Chunk CSS files together to reduce duplicated CSS loaded in a browser. Only has an effect when multiple entrypoints import CSS"
@@ -2080,6 +2091,34 @@ fn parse_build_command_options(
     ctx.bundler_options.minify_whitespace = minify_flag || args.flag(b"--minify-whitespace");
     ctx.bundler_options.minify_identifiers = minify_flag || args.flag(b"--minify-identifiers");
     ctx.bundler_options.keep_names = args.flag(b"--keep-names");
+
+    // Like esbuild, an empty --mangle-props disables mangling, and --reserve-props /
+    // --mangle-quoted do nothing on their own.
+    if let Some(mangle_props) = args.option(b"--mangle-props").filter(|p| !p.is_empty()) {
+        let reserve_props = args.option(b"--reserve-props").filter(|p| !p.is_empty());
+        let regexp = |source: &'static [u8]| RegExpSource { source, flags: b"" };
+        match PropertyMangler::init(
+            regexp(mangle_props),
+            reserve_props.map(regexp),
+            args.flag(b"--mangle-quoted"),
+        ) {
+            Ok(mangler) => ctx.bundler_options.mangle_props = Some(mangler),
+            Err(invalid) => {
+                let (flag, pattern) = match invalid {
+                    InvalidManglePattern::MangleProps => ("--mangle-props", mangle_props),
+                    InvalidManglePattern::ReserveProps => {
+                        ("--reserve-props", reserve_props.unwrap_or_default())
+                    }
+                };
+                bun_core::pretty_errorln!(
+                    "<r><red>error<r>: {} expects a valid regular expression but received {}",
+                    flag,
+                    bun_core::fmt::QuotedFormatter { text: pattern }
+                );
+                Global::crash();
+            }
+        }
+    }
 
     ctx.bundler_options.css_chunking = args.flag(b"--css-chunking");
 

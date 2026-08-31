@@ -12,7 +12,6 @@ use bun_sourcemap::{
 };
 // Note: alias the *module* (not the `ThreadPool` struct) so
 // `ThreadPoolLib::Task` / `ThreadPoolLib::Batch` resolve as nested items.
-use crate::bake_types as bake;
 use bun_ast::{ImportKind, ImportRecord};
 use bun_threading::{WaitGroup, thread_pool as ThreadPoolLib};
 
@@ -64,11 +63,20 @@ pub use crate::linker_context::metafile_builder as MetafileBuilder;
 // do_step5 / create_exports_for_file are inherent methods on LinkerContext (see
 // `linker_context/doStep5.rs`), not free functions — no item re-export.
 pub(crate) use crate::linker_context::compute_cross_chunk_dependencies::compute_cross_chunk_dependencies;
-pub(crate) use crate::linker_context::generate_chunks_in_parallel::generate_chunks_in_parallel;
+pub use crate::linker_context::generate_chunks_in_parallel::generate_chunks_in_parallel;
 pub(crate) use crate::linker_context::post_process_css_chunk::post_process_css_chunk;
 pub(crate) use crate::linker_context::post_process_html_chunk::post_process_html_chunk;
 pub(crate) use crate::linker_context::post_process_js_chunk::post_process_js_chunk;
 pub(crate) use crate::linker_context::rename_symbols_in_chunk::rename_symbols_in_chunk;
+
+/// Subset of the framework config that chunk generation consults, projected
+/// by value when `BundleV2` is set up so the linker holds no backref into the
+/// framework struct.
+#[derive(Copy, Clone)]
+pub(crate) struct FrameworkInfo {
+    pub(crate) has_server_components: bool,
+    pub(crate) is_built_in_react: bool,
+}
 
 pub struct LinkerContext<'a> {
     pub(crate) parse_graph: *mut Graph<'a>,
@@ -116,10 +124,11 @@ pub struct LinkerContext<'a> {
 
     pub(crate) has_any_css_locals: AtomicU32,
 
-    /// Used by Bake to extract []CompileResult before it is joined.
-    /// CYCLEBREAK GENUINE: erased bake::DevServer (see bundle_v2::dispatch).
-    pub dev_server: Option<crate::dispatch::DevServerHandle>,
-    pub(crate) framework: Option<bun_ptr::BackRef<bake::Framework>>,
+    /// True when a dev server is driving this bundle. Chunk generation only
+    /// branches on the fact; all dispatch goes through the erased handle on
+    /// `BundleV2.dev_server`, which is the single owner of that seam.
+    pub has_dev_server: bool,
+    pub(crate) framework: Option<FrameworkInfo>,
 
     pub(crate) mangled_props: MangledProps,
 
@@ -131,7 +140,7 @@ pub struct LinkerContext<'a> {
 
 // SAFETY: `LinkerContext` is shared across the worker pool via `each_ptr` /
 // `SourceMapDataTask`. The raw-pointer fields (`parse_graph`, `resolver`,
-// `r#loop`, `framework`) are backrefs into `BundleV2`/`Transpiler` whose
+// `r#loop`) are backrefs into `BundleV2`/`Transpiler` whose
 // lifetimes strictly outlive every parallel section, and per-thread writes go
 // to disjoint SoA slots (see `compute_line_offsets`).
 unsafe impl<'a> Send for LinkerContext<'a> {}
@@ -157,7 +166,7 @@ impl<'a> Default for LinkerContext<'a> {
             source_maps: Default::default(),
             pending_task_count: AtomicU32::new(0),
             has_any_css_locals: AtomicU32::new(0),
-            dev_server: None,
+            has_dev_server: false,
             framework: None,
             mangled_props: Default::default(),
             cross_chunk_names: Default::default(),
@@ -710,7 +719,7 @@ impl<'a> LinkerContext<'a> {
     /// # Safety
     /// `bundle` must be valid for the call and `self` must be `(*bundle).linker`.
     #[inline(never)]
-    pub(crate) unsafe fn link(
+    pub unsafe fn link(
         &mut self,
         bundle: *mut BundleV2<'a>,
         entry_points: &[Index],
@@ -3050,7 +3059,7 @@ impl<'a> LinkerContext<'a> {
     }
 
     /// `log` is an explicit parameter (not `self.log`) because the dev-server
-    /// caller (`finish_from_bake_dev_server`) runs this *before* `load()` has
+    /// caller (`finish_from_dev_server`) runs this *before* `load()` has
     /// initialized `self.log`, passing a stack-local `Log` instead.
     pub(crate) fn scan_css_imports(
         file_source_index: u32,
@@ -4245,7 +4254,7 @@ impl PartialEq for MatchImport {
 pub struct StmtList {
     // Temporary scratch buffers: plain `Vec`s on the global allocator
     // (cleared/reused per chunk, freed by Drop).
-    pub(crate) inside_wrapper_prefix: InsideWrapperPrefix,
+    pub inside_wrapper_prefix: InsideWrapperPrefix,
     pub(crate) outside_wrapper_prefix: Vec<Stmt>,
     pub(crate) inside_wrapper_suffix: Vec<Stmt>,
     pub(crate) all_stmts: Vec<Stmt>,
@@ -4277,7 +4286,10 @@ impl InsideWrapperPrefix {
 }
 
 impl InsideWrapperPrefix {
-    pub(crate) fn append_non_dependency(&mut self, stmt: Stmt) -> Result<(), AllocError> {
+    // `pub`: also called by the `Format::InternalBakeDev` statement
+    // conversion in `bun_runtime`'s bake module (see
+    // `crate::convert_stmts_for_chunk_hmr`).
+    pub fn append_non_dependency(&mut self, stmt: Stmt) -> Result<(), AllocError> {
         self.stmts.push(stmt);
         Ok(())
     }
@@ -4436,7 +4448,10 @@ impl StmtList {
         }
     }
 
-    pub(crate) fn append(&mut self, list: StmtListWhich, stmt: Stmt) {
+    // `pub`: also called by the `Format::InternalBakeDev` statement
+    // conversion in `bun_runtime`'s bake module (see
+    // `crate::convert_stmts_for_chunk_hmr`).
+    pub fn append(&mut self, list: StmtListWhich, stmt: Stmt) {
         match list {
             StmtListWhich::OutsideWrapperPrefix => self.outside_wrapper_prefix.push(stmt),
             StmtListWhich::InsideWrapperSuffix => self.inside_wrapper_suffix.push(stmt),

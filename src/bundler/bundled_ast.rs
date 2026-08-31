@@ -53,7 +53,7 @@ pub struct BundledAst<'arena> {
 
     /// These are stored at the AST level instead of on individual AST nodes so
     /// they can be manipulated efficiently without a full AST traversal
-    pub(crate) import_records: import_record::List<'arena>,
+    pub import_records: import_record::List<'arena>,
 
     // Ast.hashbang is `StoreStr`; mirror it here so init/to_ast can
     // round-trip.
@@ -68,8 +68,8 @@ pub struct BundledAst<'arena> {
     // Only meaningful when flags.HAS_CHAR_FREQ is set; zero-initialized otherwise.
     pub(crate) char_freq: CharFreq,
     pub(crate) exports_ref: Ref,
-    pub(crate) module_ref: Ref,
-    pub(crate) wrapper_ref: Ref,
+    pub module_ref: Ref,
+    pub wrapper_ref: Ref,
     pub(crate) require_ref: Ref,
     pub(crate) top_level_await_keyword: bun_ast::Range,
     pub tla_check: TlaCheck,

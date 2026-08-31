@@ -14,7 +14,7 @@ import tls from "node:tls";
 import { Duplex, duplexPair } from "stream";
 import http2utils from "./helpers";
 import { nodeEchoServer, TLS_CERT, TLS_OPTIONS } from "./http2-helpers";
-const { describe, expect, it, beforeAll, afterAll, createCallCheckCtx } = createTest(import.meta.path);
+const { describe, expect, it, beforeAll, afterAll, createCallCheckCtx, mock } = createTest(import.meta.path);
 // bun-debug ships with ASAN but isn't named bun-asan, so isASAN is false
 // there; the 10k-request maxSessionMemory stress test takes ~105s under
 // debug+ASAN vs ~2s release, so scale for either.
@@ -4805,6 +4805,183 @@ it("http2 allowHTTP1 fallback omits the Connection header on a close-delimited r
   } finally {
     server.close();
   }
+});
+
+function connectOverHttp1(port) {
+  const { promise, resolve, reject } = Promise.withResolvers();
+  const socket = tls.connect({ host: "localhost", port, ca: TLS_CERT.cert, ALPNProtocols: ["http/1.1"] }, () =>
+    resolve(socket),
+  );
+  socket.on("error", reject);
+  return promise;
+}
+
+// Reads one Content-Length framed response off a raw HTTP/1 connection. Rejects if the
+// connection goes away first, so a wrongly destroyed connection fails instead of hanging.
+function readHttp1Response(socket) {
+  const { promise, resolve, reject } = Promise.withResolvers();
+  let raw = "";
+  function onData(chunk) {
+    raw += chunk.toString("latin1");
+    const headersEnd = raw.indexOf("\r\n\r\n");
+    if (headersEnd === -1) return;
+    const head = raw.slice(0, headersEnd);
+    const contentLength = /\r\ncontent-length: (\d+)/i.exec(head);
+    if (!contentLength) {
+      done();
+      reject(new Error(`expected a Content-Length framed response, got:\n${head}`));
+      return;
+    }
+    const body = raw.slice(headersEnd + 4);
+    if (body.length < Number(contentLength[1])) return;
+    done();
+    resolve({ statusLine: head.slice(0, head.indexOf("\r\n")), body });
+  }
+  function onClose() {
+    done();
+    reject(new Error("connection closed before the response completed"));
+  }
+  function done() {
+    socket.off("data", onData);
+    socket.off("close", onClose);
+  }
+  socket.on("data", onData);
+  socket.on("close", onClose);
+  return promise;
+}
+
+function requestOverSession(session, path) {
+  const { promise, resolve, reject } = Promise.withResolvers();
+  const req = session.request({ ":path": path });
+  let body = "";
+  req.setEncoding("utf8");
+  req.on("data", chunk => (body += chunk));
+  req.on("end", () => resolve(body));
+  req.on("error", reject);
+  req.end();
+  return promise;
+}
+
+it("Http2SecureServer has closeIdleConnections() on its prototype like node, Http2Server does not", () => {
+  const secure = http2.createSecureServer(TLS_CERT);
+  const plain = http2.createServer();
+  expect({
+    secure: typeof secure.closeIdleConnections,
+    ownPrototypeMethod: Object.hasOwn(Object.getPrototypeOf(secure), "closeIdleConnections"),
+    length: secure.closeIdleConnections.length,
+    closeAllConnections: typeof secure.closeAllConnections,
+    plain: typeof plain.closeIdleConnections,
+  }).toEqual({
+    secure: "function",
+    ownPrototypeMethod: true,
+    length: 0,
+    closeAllConnections: "undefined",
+    plain: "undefined",
+  });
+});
+
+it("Http2SecureServer#closeIdleConnections() destroys idle allowHTTP1 connections only", async () => {
+  const holdRequestReceived = Promise.withResolvers();
+  const releaseHeldResponse = Promise.withResolvers();
+  const serverSockets = {};
+  const server = http2.createSecureServer({ ...TLS_CERT, allowHTTP1: true }, (req, res) => {
+    serverSockets[req.url] = req.socket;
+    if (req.url === "/hold") {
+      holdRequestReceived.resolve();
+      releaseHeldResponse.promise.then(() => res.end("held"));
+      return;
+    }
+    res.end("ok");
+  });
+  const serverSessionPromise = new Promise(resolve => server.once("session", resolve));
+  await new Promise(resolve => server.listen(0, resolve));
+  const port = server.address().port;
+  const idle = await connectOverHttp1(port);
+  const busy = await connectOverHttp1(port);
+  const h2 = http2.connect(`https://localhost:${port}`, TLS_OPTIONS);
+  try {
+    // `idle` completes one keep-alive exchange and then sits there.
+    const idleResponse = readHttp1Response(idle);
+    idle.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+    expect(await idleResponse).toEqual({ statusLine: "HTTP/1.1 200 OK", body: "ok" });
+    // `busy` has a request in flight whose response the handler is holding back.
+    busy.write("GET /hold HTTP/1.1\r\nHost: localhost\r\n\r\n");
+    await holdRequestReceived.promise;
+    const serverSession = await serverSessionPromise;
+
+    const idleClosed = new Promise(resolve => idle.once("close", resolve));
+    expect(server.closeIdleConnections()).toBeUndefined();
+    expect({
+      idleDestroyed: serverSockets["/"].destroyed,
+      busyDestroyed: serverSockets["/hold"].destroyed,
+      sessionClosed: serverSession.closed,
+      sessionDestroyed: serverSession.destroyed,
+      listening: server.listening,
+    }).toEqual({
+      idleDestroyed: true,
+      busyDestroyed: false,
+      sessionClosed: false,
+      sessionDestroyed: false,
+      listening: true,
+    });
+    await idleClosed;
+
+    // The held request still completes on its connection and the h2 session is still usable.
+    const heldResponse = readHttp1Response(busy);
+    releaseHeldResponse.resolve();
+    expect(await heldResponse).toEqual({ statusLine: "HTTP/1.1 200 OK", body: "held" });
+    expect(await requestOverSession(h2, "/over-h2")).toBe("ok");
+
+    // With its response finished, the formerly busy connection is idle and goes on the next call.
+    const busyClosed = new Promise(resolve => busy.once("close", resolve));
+    server.closeIdleConnections();
+    expect(serverSockets["/hold"].destroyed).toBe(true);
+    await busyClosed;
+    expect({ sessionClosed: serverSession.closed, sessionDestroyed: serverSession.destroyed }).toEqual({
+      sessionClosed: false,
+      sessionDestroyed: false,
+    });
+  } finally {
+    releaseHeldResponse.resolve();
+    h2.close();
+    idle.destroy();
+    busy.destroy();
+    server.close();
+  }
+});
+
+it("Http2SecureServer#closeIdleConnections() without allowHTTP1 is a no-op that leaves sessions alone", async () => {
+  const server = http2.createSecureServer(TLS_CERT, (req, res) => res.end("ok"));
+  const serverSessionPromise = new Promise(resolve => server.once("session", resolve));
+  await new Promise(resolve => server.listen(0, resolve));
+  const client = http2.connect(`https://localhost:${server.address().port}`, TLS_OPTIONS);
+  try {
+    const serverSession = await serverSessionPromise;
+    expect(server.closeIdleConnections()).toBeUndefined();
+    expect({ closed: serverSession.closed, destroyed: serverSession.destroyed, listening: server.listening }).toEqual({
+      closed: false,
+      destroyed: false,
+      listening: true,
+    });
+    expect(await requestOverSession(client, "/")).toBe("ok");
+  } finally {
+    client.close();
+    server.close();
+  }
+});
+
+// Node's Http2SecureServer#close() runs httpServerPreClose, which calls the server's own
+// closeIdleConnections(), and only does so for an allowHTTP1 server.
+it("Http2SecureServer#close() calls closeIdleConnections() exactly when allowHTTP1 is enabled", async () => {
+  const calls = {};
+  for (const allowHTTP1 of [true, false]) {
+    const server = http2.createSecureServer({ ...TLS_CERT, allowHTTP1 });
+    await new Promise(resolve => server.listen(0, resolve));
+    server.closeIdleConnections = mock(() => {});
+    await new Promise(resolve => server.close(resolve));
+    calls[`allowHTTP1: ${allowHTTP1}`] = server.closeIdleConnections.mock.calls;
+  }
+  expect(calls).toEqual({ "allowHTTP1: true": [[]], "allowHTTP1: false": [] });
 });
 
 // close() must not depend on the peer sending a SETTINGS ACK — Node's kMaybeDestroy

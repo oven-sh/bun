@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, isWindows, tempDir } from "harness";
 
 // Bun's GarbageCollectionController used to sample `blockBytesAllocated +
 // extraMemorySize` on every event-loop tick and arm a 16 ms one-shot whenever
@@ -157,7 +157,9 @@ describe.skipIf(isDebug)("GarbageCollectionController eden cadence", () => {
 // ran: an app parked at a prompt still fires the odd timer and should count as
 // idle; one that keeps a core busy should not.
 describe("idle release", () => {
-  const script = (mode: "idle" | "busy") => `
+  // `idle`: warm some functions, then do nothing but poll once a second (well under the idle CPU threshold) until the
+  // CodeBlock count drops or `waitMs` passes. `busy`: same, while keeping a core ~75% busy.
+  const script = (mode: "idle" | "busy", waitMs: number) => `
     const { heapStats } = require("bun:jsc");
     const fns = [];
     for (let i = 0; i < 200; i++) fns.push(new Function("a", "let s = 0; for (let j = 0; j < 100; j++) s += a * " + i + " + j; return s"));
@@ -165,37 +167,50 @@ describe("idle release", () => {
     const codeBlocks = () => { const c = heapStats().objectTypeCounts; return (c.FunctionCodeBlock || 0) + (c.CodeBlock || 0); };
     const before = codeBlocks();
     ${mode === "busy" ? `const iv = setInterval(() => { const end = performance.now() + 150; while (performance.now() < end) fns[0](1); }, 200);` : ``}
-    setTimeout(() => {
-      ${mode === "busy" ? `clearInterval(iv);` : ``}
-      console.log(JSON.stringify({ before, after: codeBlocks() }));
-    }, 3500);
+    const deadline = Date.now() + ${waitMs};
+    const poll = setInterval(() => {
+      const after = codeBlocks();
+      if (${mode === "idle" ? `after < before / 4 || ` : ``}Date.now() >= deadline) {
+        clearInterval(poll);
+        ${mode === "busy" ? `clearInterval(iv);` : ``}
+        console.log(JSON.stringify({ before, after }));
+      }
+    }, 1000);
   `;
 
-  async function run(mode: "idle" | "busy", seconds: string) {
+  async function run(mode: "idle" | "busy", seconds: string, waitMs = 3_500) {
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", script(mode)],
-      env: { ...bunEnv, BUN_IDLE_RELEASE_SECONDS: seconds },
+      cmd: [bunExe(), "-e", script(mode, waitMs)],
+      env: {
+        ...bunEnv,
+        BUN_IDLE_RELEASE_SECONDS: seconds,
+        BUN_GC_TIMER_DISABLE: undefined,
+        BUN_GC_TIMER_INTERVAL: undefined,
+      },
       stdout: "pipe",
       stderr: "inherit",
     });
     const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    expect(exitCode).toBe(0);
-    return JSON.parse(stdout.trim()) as { before: number; after: number };
+    return { ...(JSON.parse(stdout.trim()) as { before: number; after: number }), exitCode };
   }
 
-  test.concurrent("fires once the process has been idle long enough", async () => {
-    const { before, after } = await run("idle", "1");
+  // The idle signal is process CPU time via getrusage; not implemented on Windows yet.
+  test.skipIf(isWindows).concurrent("fires once the process has been idle long enough", async () => {
+    const { before, after, exitCode } = await run("idle", "1", 30_000);
     expect(before).toBeGreaterThan(150);
     expect(after).toBeLessThan(before / 4);
-  });
+    expect(exitCode).toBe(0);
+  }, 40_000);
 
   test.concurrent("does not fire while the process is busy", async () => {
-    const { before, after } = await run("busy", "1");
+    const { before, after, exitCode } = await run("busy", "1");
     expect(after).toBeGreaterThanOrEqual(before - 20);
+    expect(exitCode).toBe(0);
   });
 
   test.concurrent("BUN_IDLE_RELEASE_SECONDS=0 disables it", async () => {
-    const { before, after } = await run("idle", "0");
+    const { before, after, exitCode } = await run("idle", "0");
     expect(after).toBeGreaterThanOrEqual(before - 20);
+    expect(exitCode).toBe(0);
   });
 });

@@ -648,9 +648,7 @@ impl Options {
                             }
                         }
                         self.scope = Npm::registry::Scope::from_api(b"", api_registry, env)?;
-                        // A credential `from_api` parsed out of the URL's pathname wins over
-                        // the carry. Assigned after `from_api` so the carried values skip
-                        // `$VAR` substitution.
+                        // A credential parsed out of the URL's pathname wins over the carry.
                         if self.scope.token.is_empty() && self.scope.auth.is_empty() {
                             if !carried_token.is_empty() {
                                 self.scope.token = carried_token;

@@ -180,11 +180,9 @@ pub mod api {
             !self.token.is_empty() || (!self.username.is_empty() && !self.password.is_empty())
         }
 
-        /// Resolves `$VAR` credential references in place. A reference to an
-        /// unset variable resolves to no credential, never the literal text.
-        /// Call this once, at the entry points that document `$VAR` support
-        /// (bunfig fields, registry URLs from the env or the CLI). Values from
-        /// other sources (.npmrc) stay literal.
+        /// Resolves `$VAR` credential references in place; a reference to an
+        /// unset variable becomes no credential. Called only at entry points
+        /// that document `$VAR` support; .npmrc values stay literal.
         pub fn resolve_credential_refs(&mut self, env: &bun_dotenv::Loader) {
             for field in [&mut self.token, &mut self.username, &mut self.password] {
                 if field.len() >= 2 && field[0] == b'$' {

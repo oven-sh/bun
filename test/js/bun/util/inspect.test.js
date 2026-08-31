@@ -1042,3 +1042,195 @@ describe.skipIf(!isASAN)("object mutated while being formatted", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+// #37302: once an array wraps onto multiple lines, elements only share a line
+// when they are uniformly short primitives; otherwise one element per line,
+// and multiline elements separate as "},\n{" rather than "}, {".
+describe("multiline array layout", () => {
+  it("prints one string per line when entries are long or uneven", () => {
+    const uuids = [
+      "019fea1c-0817-717e-a1e1",
+      "019fea1c-0817--a50d1f8285a9",
+      "019fea1c-0817",
+      "019fea1c-0817-987b8d4a4cfd",
+      "019fea1c-0817-7182-b91d-8e16cebb79ac",
+      "7183-a888-ea9247e5003d",
+      "019fea1c-0817-7184-bab9-b965c3e14468",
+      "019fea1c-0817-d0ffb600ddc3",
+      "019fea1c-0817-7186-8070-6aeb8a81a5d0",
+      "019fea1c-0817-7187-adb9-c169bf3e7650",
+      "019fea1c-0817",
+      "019fea1c-0817-7189-bca5-22c31e014a39",
+      "718a-9b80-c98ea7731663",
+      "019fea1c-0817-718b-94eb-b67f04ba1ede",
+    ];
+    expect(Bun.inspect(uuids)).toBe(
+      "[\n" +
+        uuids
+          .map(u => `  "${u}",`)
+          .join("\n")
+          .slice(0, -1) +
+        "\n]",
+    );
+  });
+
+  it("wraps long string arrays even when fewer than 10 entries", () => {
+    const strings = Array.from({ length: 8 }, (_, i) => `long-string-number-${i}-aaaaaaaaaaaa`);
+    expect(Bun.inspect(strings)).toBe(
+      "[\n" +
+        strings
+          .map(s => `  "${s}",`)
+          .join("\n")
+          .slice(0, -1) +
+        "\n]",
+    );
+  });
+
+  it("prints one string per line even with six or fewer entries", () => {
+    const six = Array.from({ length: 6 }, (_, i) => `long-string-number-${i}-aaaaaaaaaaaaaaaaaaaa`);
+    expect(Bun.inspect(six)).toBe(
+      "[\n" +
+        six
+          .map(s => `  "${s}",`)
+          .join("\n")
+          .slice(0, -1) +
+        "\n]",
+    );
+  });
+
+  it("measures the escaped width of strings when choosing the layout", () => {
+    // Raw length is 20, but each entry renders as 42 characters of "\n"
+    // escapes plus quotes, so these must not pack several per line.
+    const escaped = Array.from({ length: 8 }, () => Buffer.alloc(20, "\n").toString());
+    const line = `  "${Buffer.alloc(40, "\\n").toString()}"`;
+    expect(Bun.inspect(escaped)).toBe("[\n" + escaped.map((_, i) => line + (i === 7 ? "" : ",")).join("\n") + "\n]");
+  });
+
+  it("measures doubles with scientific notation at their rendered width", () => {
+    expect(Bun.inspect([1e100, 2e100, 3e100, 4e100, 5e100, 6e100, 7e100])).toBe(
+      "[ 1e+100, 2e+100, 3e+100, 4e+100, 5e+100, 6e+100, 7e+100 ]",
+    );
+  });
+
+  it("measures BigInt and Symbol entries at their rendered width", () => {
+    const digits = Buffer.alloc(40, "7").toString();
+    const bigs = Array.from({ length: 7 }, () => BigInt(digits));
+    expect(Bun.inspect(bigs)).toBe("[\n" + bigs.map((_, i) => `  ${digits}n${i === 6 ? "" : ","}`).join("\n") + "\n]");
+
+    const description = `long-symbol-description-${Buffer.alloc(20, "a").toString()}`;
+    const symbols = Array.from({ length: 7 }, () => Symbol(description));
+    expect(Bun.inspect(symbols)).toBe(
+      "[\n" + symbols.map((_, i) => `  Symbol(${description})${i === 6 ? "" : ","}`).join("\n") + "\n]",
+    );
+
+    // short ones still pack
+    expect(Bun.inspect(Array.from({ length: 12 }, (_, i) => BigInt(i)))).toBe(
+      "[\n  0n, 1n, 2n, 3n, 4n, 5n, 6n, 7n, 8n, 9n, 10n, 11n\n]",
+    );
+  });
+
+  it("keeps the packed fallback for boxed primitives", () => {
+    expect(Bun.inspect(Array.from({ length: 12 }, (_, i) => new Number(i)))).toBe(
+      [
+        "[",
+        "  [Number: 0], [Number: 1], [Number: 2], [Number: 3], [Number: 4], [Number: 5], [Number: 6],",
+        "  [Number: 7], [Number: 8], [Number: 9], [Number: 10], [Number: 11]",
+        "]",
+      ].join("\n"),
+    );
+  });
+
+  it("separates multiline objects after a primitive with },\\n{", () => {
+    expect(Bun.inspect([1, { a: 1 }, { b: 2 }])).toBe(
+      ["[ 1, {", "    a: 1,", "  },", "  {", "    b: 2,", "  }", "]"].join("\n"),
+    );
+    // elements that format inline keep the array on one line
+    expect(Bun.inspect([1, [2, 3]])).toBe("[ 1, [ 2, 3 ] ]");
+  });
+
+  it("separates multiline objects with },\\n{ instead of }, {", () => {
+    const objs = [
+      { id: "1ced6c78-1309-49f1-a111-de1010956fc1" },
+      { id: "ef4fcca1-b8ba-4f2c-b9af-0bfaf4f6627e" },
+      { id: "ed673ca8-a0db-4bac-a83c-384d05a17fdc" },
+    ];
+    const out = Bun.inspect(objs);
+    expect(out).not.toContain("}, {");
+    expect(out).toBe(
+      [
+        "[",
+        "  {",
+        '    id: "1ced6c78-1309-49f1-a111-de1010956fc1",',
+        "  },",
+        "  {",
+        '    id: "ef4fcca1-b8ba-4f2c-b9af-0bfaf4f6627e",',
+        "  },",
+        "  {",
+        '    id: "ed673ca8-a0db-4bac-a83c-384d05a17fdc",',
+        "  }",
+        "]",
+      ].join("\n"),
+    );
+  });
+
+  it("still packs arrays of short primitives", () => {
+    const numbers = Array.from({ length: 14 }, (_, i) => i * 1000);
+    expect(Bun.inspect(numbers)).toBe(
+      "[\n  0, 1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000, 11000, 12000, 13000\n]",
+    );
+    const shortStrings = Array.from({ length: 12 }, (_, i) => "str" + i);
+    expect(Bun.inspect(shortStrings)).toBe(
+      '[\n  "str0", "str1", "str2", "str3", "str4", "str5", "str6", "str7", "str8", "str9", "str10", "str11"\n]',
+    );
+    // short arrays stay on a single line
+    expect(Bun.inspect(["a", "b", "c"])).toBe('[ "a", "b", "c" ]');
+    expect(Bun.inspect([1, 2, 3])).toBe("[ 1, 2, 3 ]");
+  });
+
+  it("prints one string per line when the entries sit past index 100 in a sparse array", () => {
+    const sparse = [];
+    for (let i = 100; i < 110; i++) {
+      sparse[i] = `sparse-long-string-entry-${i}-aaaaaaaaaaaa`;
+    }
+    expect(Bun.inspect(sparse)).toBe(
+      [
+        "[",
+        "  100 x empty items,",
+        ...Array.from({ length: 10 }, (_, i) => {
+          const comma = i === 9 ? "" : ",";
+          return `  "sparse-long-string-entry-${i + 100}-aaaaaaaaaaaa"${comma}`;
+        }),
+        "]",
+      ].join("\n"),
+    );
+  });
+
+  it("one string per line inside a nested object", () => {
+    const value = {
+      x: [
+        "019fea1c-0817-717e-a1e1",
+        "019fea1c-0817--a50d1f8285a9",
+        "019fea1c-0817",
+        "019fea1c-0817-987b8d4a4cfd",
+        "019fea1c-0817-7182-b91d-8e16cebb79ac",
+        "7183-a888-ea9247e5003d",
+        "019fea1c-0817-7184-bab9",
+      ],
+    };
+    expect(Bun.inspect(value)).toBe(
+      [
+        "{",
+        "  x: [",
+        '    "019fea1c-0817-717e-a1e1",',
+        '    "019fea1c-0817--a50d1f8285a9",',
+        '    "019fea1c-0817",',
+        '    "019fea1c-0817-987b8d4a4cfd",',
+        '    "019fea1c-0817-7182-b91d-8e16cebb79ac",',
+        '    "7183-a888-ea9247e5003d",',
+        '    "019fea1c-0817-7184-bab9"',
+        "  ],",
+        "}",
+      ].join("\n"),
+    );
+  });
+});

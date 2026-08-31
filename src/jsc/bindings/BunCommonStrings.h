@@ -158,9 +158,7 @@ public:
     void visit(Visitor& visitor);
 
 #if ASSERT_ENABLED
-    // Debug-only: is `literal` the text of one of the strings in this table?
-    // `Bun::toJS(BunString)` asserts this is false for a static Rust string so
-    // that `String::static_("...").to_js()` never bypasses the cached copy.
+    // For the assert in Bun::toJS(BunString): is `literal` one of the strings above?
     static bool isCommonStringLiteral(std::span<const Latin1Character> literal);
 #endif
 

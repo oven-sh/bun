@@ -103,9 +103,6 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue BunString__createUT
 
 namespace Bun {
 #if ASSERT_ENABLED
-// A static Rust string (`String::static_("...")`) allocates a new JSString on
-// every conversion. When its text is already in BunCommonStrings.h, the caller
-// has a cached copy available through `global.common_strings()` and must use it.
 static void assertStaticStringIsNotCommon(EncodedSlice slice)
 {
     if (Zig::isTaggedUTF16Ptr(slice.ptr))

@@ -35,7 +35,11 @@ const script = /* js */ `
       binaryTypes: types,
       responseTypes: [Response.error().type, new Response("x").type],
       credentials: new Request("http://localhost/", { credentials: "include" }).credentials,
+      request: (({ method, mode, cache, redirect }) => [method, mode, cache, redirect])(
+        new Request("http://localhost/", { method: "POST", mode: "cors", cache: "no-store", redirect: "manual" }),
+      ),
       cookie: ["strict", "lax", "none"].map(s => new Bun.Cookie("a", "b", { sameSite: s }).sameSite),
+      requireNames: [require.name, require.resolve.name],
     };
   }
 
@@ -52,7 +56,9 @@ const script = /* js */ `
     binaryTypes: ["blob", "arraybuffer", "nodebuffer"],
     responseTypes: ["error", "default"],
     credentials: "include",
+    request: ["POST", "cors", "no-store", "manual"],
     cookie: ["strict", "lax", "none"],
+    requireNames: ["bound require", "bound resolve"],
   };
 
   function check(where) {

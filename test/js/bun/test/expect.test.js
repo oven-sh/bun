@@ -201,15 +201,16 @@ describe("expect()", () => {
     }
 
     if (isBun) {
-      // The mismatch message names the settled value, not the function.
+      // The mismatch message names the settled value, not the function. A color
+      // code may sit between the label and the value.
       await expectFailure(() => expect(() => Promise.resolve("settled to this")).rejects.toBe(1)).toThrow(
-        /Received promise that resolved: "settled to this"/,
+        /Received promise that resolved: .*"settled to this"/,
       );
       await expectFailure(() => expect(async () => "settled to this").rejects.toBe(1)).toThrow(
-        /Received promise that resolved: "settled to this"/,
+        /Received promise that resolved: .*"settled to this"/,
       );
       await expectFailure(() => expect(() => Promise.reject("settled to this")).resolves.toBe(1)).toThrow(
-        /Received promise that rejected: "settled to this"/,
+        /Received promise that rejected: .*"settled to this"/,
       );
       // A function that returns a non-thenable is a usage error.
       await expectFailure(() => expect(ANY(() => 4)).resolves.toBe(4)).toThrow(

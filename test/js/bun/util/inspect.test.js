@@ -1,5 +1,14 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isASAN, isWindows, normalizeBunSnapshot, tempDir, tmpdirSync, withoutAggressiveGC } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  isASAN,
+  isWindows,
+  normalizeBunSnapshot,
+  tempDir,
+  tmpdirSync,
+  withoutAggressiveGC,
+} from "harness";
 import { join } from "path";
 import util from "util";
 it("prototype", () => {

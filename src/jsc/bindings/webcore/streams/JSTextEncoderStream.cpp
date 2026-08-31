@@ -159,8 +159,9 @@ JSC_DEFINE_HOST_FUNCTION(jsTextEncoderStreamPrototype_inspectCustom, (JSGlobalOb
     // streams classes, whose inspect methods just fault on a bad `this`.
     if (!thisObject) [[unlikely]]
         return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "TextEncoderStream"_s);
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     JSObject* data = constructEmptyObject(lexicalGlobalObject);
-    Bun::putDirectNamed(vm, data, "encoding"_s, jsNontrivialString(vm, "utf-8"_s));
+    Bun::putDirectNamed(vm, data, "encoding"_s, globalObject->commonStrings().utf8WithDashString(globalObject));
     Bun::putDirectNamed(vm, data, "readable"_s, thisObject->m_readable.get() ? JSValue(thisObject->m_readable.get()) : jsUndefined());
     Bun::putDirectNamed(vm, data, "writable"_s, thisObject->m_writable.get() ? JSValue(thisObject->m_writable.get()) : jsUndefined());
     RELEASE_AND_RETURN(scope, Bun::WebStreams::customInspect(lexicalGlobalObject, callFrame, thisValue, "TextEncoderStream"_s, data));
@@ -236,7 +237,8 @@ JSC_DEFINE_CUSTOM_GETTER(jsTextEncoderStreamPrototypeGetter_encoding, (JSGlobalO
     auto* stream = dynamicDowncast<JSTextEncoderStream>(JSValue::decode(thisValue));
     if (!stream) [[unlikely]]
         return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "TextEncoderStream"_s);
-    return JSValue::encode(jsNontrivialString(vm, "utf-8"_s));
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    return JSValue::encode(globalObject->commonStrings().utf8WithDashString(globalObject));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsTextEncoderStreamPrototypeGetter_readable, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))

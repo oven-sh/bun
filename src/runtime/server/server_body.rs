@@ -2598,12 +2598,12 @@ where
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_protocol(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn get_protocol(&self, global: &JSGlobalObject) -> JSValue {
         let _ = self;
         if SSL {
-            BunString::static_("https").to_js(global)
+            global.common_strings().https()
         } else {
-            BunString::static_("http").to_js(global)
+            global.common_strings().http()
         }
     }
 

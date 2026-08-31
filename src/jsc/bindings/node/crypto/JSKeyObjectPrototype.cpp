@@ -70,12 +70,14 @@ JSC_DEFINE_CUSTOM_GETTER(jsKeyObjectPrototype_type, (JSGlobalObject * globalObje
 
     KeyObject& handle = keyObject->handle();
 
+    auto* zigGlobalObject = defaultGlobalObject(globalObject);
+    auto& commonStrings = zigGlobalObject->commonStrings();
     switch (handle.type()) {
     case CryptoKeyType::Secret:
-        return JSValue::encode(jsNontrivialString(vm, "secret"_s));
+        return JSValue::encode(commonStrings.keyTypeSecretString(zigGlobalObject));
     case CryptoKeyType::Public:
-        return JSValue::encode(jsNontrivialString(vm, "public"_s));
+        return JSValue::encode(commonStrings.keyTypePublicString(zigGlobalObject));
     case CryptoKeyType::Private:
-        return JSValue::encode(jsNontrivialString(vm, "private"_s));
+        return JSValue::encode(commonStrings.keyTypePrivateString(zigGlobalObject));
     }
 }

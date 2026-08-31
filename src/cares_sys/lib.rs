@@ -9,10 +9,8 @@ pub mod c_ares_draft;
 pub mod winsock {
     use core::ffi::c_int;
     pub(crate) type socklen_t = c_int; // ws2tcpip.h: `typedef int socklen_t;`
-    // Same nominal type as `bun_sys::posix::sockaddr*`; sin_addr is `in_addr{s_addr}`
-    // (vs the previous `[u8;4]`) but the only caller (c_ares.rs `get_sockaddr`)
-    // takes `&raw mut → cast<c_void>`, so the field's nominal type is transparent.
-    pub(crate) use bun_libuv_sys::{sockaddr, sockaddr_in, sockaddr_in6};
+    // Same nominal types as `bun_sys::posix::sockaddr*` (the ws2def.h mirrors).
+    pub(crate) use bun_libuv_sys::{sockaddr, sockaddr_in, sockaddr_in6, sockaddr_storage};
 }
 
 /// `c_ares` and `c_ares_draft` resolve to the same module.

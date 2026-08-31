@@ -157,7 +157,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 js_ast::ExprData::ERequireString(req) => {
                     // `require("str").foo` — record the alias; the expression is left as-is.
                     if can_track_dynamic_import_member {
-                        if let Some(ns) = p.require_namespace_ref(&req) {
+                        if let Some(ns) = p.require_namespace_ref(req) {
                             p.import_items_for_namespace
                                 .get_mut(&ns)
                                 .unwrap()

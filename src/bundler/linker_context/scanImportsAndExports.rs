@@ -167,6 +167,27 @@ pub(crate) fn scan_imports_and_exports(
                 continue;
             }
 
+            // Export names each static import record of this file binds, bucketed
+            // once so the per-record merge below is O(records + named imports).
+            // `None` = the record binds `* as ns`.
+            let mut static_aliases: Vec<Option<Vec<bun_ast::StoreStr>>> =
+                vec![Some(Vec::new()); col_ref!(import_records_list)[id].len() as usize];
+            for ni in col_ref!(named_imports)[id].values() {
+                let Some(slot) = static_aliases.get_mut(ni.import_record_index as usize) else {
+                    continue;
+                };
+                if ni.alias_is_star {
+                    *slot = None;
+                } else if let (Some(list), Some(alias)) = (slot.as_mut(), ni.alias) {
+                    list.push(alias);
+                }
+            }
+            for &star in col_ref!(export_star_import_records)[id].iter() {
+                if let Some(slot) = static_aliases.get_mut(star as usize) {
+                    *slot = None;
+                }
+            }
+
             for (import_record_index, record) in col_ref!(import_records_list)[id]
                 .as_slice()
                 .iter()
@@ -199,28 +220,14 @@ pub(crate) fn scan_imports_and_exports(
                         ImportKind::Stmt
                             if !record
                                 .flags
-                                .contains(ImportRecordFlags::CONTAINS_IMPORT_STAR)
-                                && !col_ref!(export_star_import_records)[id]
-                                    .contains(&(import_record_index as u32)) =>
+                                .contains(ImportRecordFlags::CONTAINS_IMPORT_STAR) =>
                         {
-                            let mut aliases: Vec<bun_ast::StoreStr> = Vec::new();
-                            let mut all = false;
-                            for ni in col_ref!(named_imports)[id].values() {
-                                if ni.import_record_index != import_record_index as u32 {
-                                    continue;
+                            match &static_aliases[import_record_index] {
+                                None => col!(dyn_ref_aliases)[other_file].merge_all(),
+                                Some(aliases) if !aliases.is_empty() => {
+                                    col!(dyn_ref_aliases)[other_file].merge_partial(aliases)
                                 }
-                                if ni.alias_is_star {
-                                    all = true;
-                                    break;
-                                }
-                                if let Some(alias) = ni.alias {
-                                    aliases.push(alias);
-                                }
-                            }
-                            if all {
-                                col!(dyn_ref_aliases)[other_file].merge_all();
-                            } else if !aliases.is_empty() {
-                                col!(dyn_ref_aliases)[other_file].merge_partial(&aliases);
+                                Some(_) => {}
                             }
                         }
                         ImportKind::Dynamic | ImportKind::Require => {

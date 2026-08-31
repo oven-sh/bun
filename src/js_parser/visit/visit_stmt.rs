@@ -1400,7 +1400,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 js_ast::ExprData::ERequireString(req) => {
                     // A namespace with no recorded use: nothing observed.
-                    let _ = p.require_namespace_ref(&req);
+                    let _ = p.require_namespace_ref(req);
                 }
                 _ => {}
             }

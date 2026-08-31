@@ -1229,7 +1229,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// applies. Mints a namespace ref for the record so
     /// `try_track_dynamic_import_destructure` / `maybe_rewrite_property_access`
     /// can record aliases against it.
-    pub(crate) fn require_namespace_ref(&mut self, req: &E::RequireString) -> Option<Ref> {
+    pub(crate) fn require_namespace_ref(&mut self, req: E::RequireString) -> Option<Ref> {
         if !self.options.bundle || req.unwrapped_id.get().is_some() {
             return None;
         }

@@ -475,7 +475,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     };
                     match decl.binding.data {
                         BData::BObject(obj) => {
-                            let Some(ns) = self.require_namespace_ref(&req) else {
+                            let Some(ns) = self.require_namespace_ref(req) else {
                                 break 'split_require;
                             };
                             if self

@@ -114,9 +114,15 @@ impl LinkerContext<'_> {
         let referenced_filter: Option<&js_meta::DynamicImportReferencedAliases> = {
             let files = c.graph.files.split_raw();
             // SAFETY: read-only per-row access; neither column is mutated in step 5.
-            let entry_point_kinds: &[crate::EntryPoint::Kind] = unsafe { &*files.entry_point_kind };
-            let col: &[js_meta::DynamicImportReferencedAliases] =
-                unsafe { &*meta.dynamic_import_referenced_aliases };
+            let (entry_point_kinds, col): (
+                &[crate::EntryPoint::Kind],
+                &[js_meta::DynamicImportReferencedAliases],
+            ) = unsafe {
+                (
+                    &*files.entry_point_kind,
+                    &*meta.dynamic_import_referenced_aliases,
+                )
+            };
             match &col[id as usize] {
                 js_meta::DynamicImportReferencedAliases::Partial(_)
                     if entry_point_kinds[id as usize] != crate::EntryPoint::Kind::UserSpecified =>

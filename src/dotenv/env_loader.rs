@@ -566,13 +566,17 @@ impl Loader {
         self.map.get(_key)
     }
 
+    /// Resolves a `$VAR` reference to the variable's value. A non-reference
+    /// (no leading `$`) is returned as-is. An unset variable resolves to ""
+    /// rather than the literal `$VAR` text: callers feed the result to
+    /// registries as a credential, and the literal must never reach the wire.
     pub fn get_auto<'b>(&'b self, key: &'b [u8]) -> &'b [u8] {
         // If it's "" or "$", it's not a variable
         if key.len() < 2 || key[0] != b'$' {
             return key;
         }
 
-        self.get(&key[1..]).unwrap_or(key)
+        self.get(&key[1..]).unwrap_or(b"")
     }
 
     // `copyForDefine` moved up into `bun_bundler::defines::copy_env_for_define`

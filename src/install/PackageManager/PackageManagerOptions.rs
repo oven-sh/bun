@@ -629,19 +629,26 @@ impl Options {
                     if !registry_.is_empty()
                         && (registry_.starts_with(b"https://") || registry_.starts_with(b"http://"))
                     {
-                        let mut api_registry = Api::NpmRegistry::from_url(registry_);
+                        let api_registry = Api::NpmRegistry::from_url(registry_);
                         // Credentials in the URL win, as they do for `registry=` in .npmrc.
-                        if !api_registry.has_credentials() {
+                        let mut carried_token: Box<[u8]> = Box::default();
+                        if !api_registry.has_resolved_credentials(env) {
                             let prev_url = self.scope.url.url();
                             let new_url = bun_url::URL::parse(&api_registry.url);
                             if bun_core::without_trailing_slash(new_url.host)
                                 == bun_core::without_trailing_slash(prev_url.host)
                                 && (new_url.is_https() || !prev_url.is_https())
                             {
-                                api_registry.token = core::mem::take(&mut self.scope.token);
+                                carried_token = core::mem::take(&mut self.scope.token);
                             }
                         }
                         self.scope = Npm::registry::Scope::from_api(b"", api_registry, env)?;
+                        // The carried token went through `$VAR` resolution
+                        // when the previous scope was built. Assign it after
+                        // `from_api` so it is not resolved a second time.
+                        if !carried_token.is_empty() {
+                            self.scope.token = carried_token;
+                        }
                         break;
                     }
                 }
@@ -651,7 +658,7 @@ impl Options {
         if let Some(cli) = &maybe_cli {
             if !cli.registry.is_empty() {
                 let api_registry = Api::NpmRegistry::from_url(cli.registry);
-                if api_registry.has_credentials() {
+                if api_registry.has_resolved_credentials(env) {
                     self.scope = Npm::registry::Scope::from_api(b"", api_registry, env)?;
                 } else {
                     let new_url = bun_url::URL::parse(&api_registry.url);

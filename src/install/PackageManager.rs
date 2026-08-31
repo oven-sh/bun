@@ -1962,7 +1962,7 @@ pub fn init(
             ini::load_npmrc_config(&mut install, env, true, &[&*npmrc_local])
         };
 
-        ini::apply_registry_auth(&mut bunfig_install, &registry_auth);
+        ini::apply_registry_auth(&mut bunfig_install, env, &registry_auth);
         overlay_bunfig_install(&mut install, bunfig_install);
         ctx.install = Some(Box::new(install));
     }

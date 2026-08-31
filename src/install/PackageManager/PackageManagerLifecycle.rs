@@ -23,7 +23,7 @@ use crate::lockfile_real::package::scripts::List as ScriptsList;
 use crate::package_manager_real::Command;
 use crate::resolution_real::Tag as ResolutionTag;
 use bun_install::lockfile::{Lockfile, Package};
-use bun_install::{PackageID, PackageManager, PreinstallState, invalid_package_id};
+use bun_install::{Behavior, PackageID, PackageManager, PreinstallState, invalid_package_id};
 
 impl PackageManager {
     pub(crate) fn ensure_preinstall_state_list_capacity(&mut self, count: usize) {
@@ -61,9 +61,11 @@ impl PackageManager {
     /// A separate `lockfile` parameter would always be `manager.lockfile` at every call
     /// site; collapsed onto `self.lockfile` to avoid the
     /// `&mut self` / `&self.lockfile` aliasing borrowck rejects.
+    /// `dependency` is the dependency `pkg` is being resolved for.
     pub fn determine_preinstall_state(
         &mut self,
         pkg: &Package,
+        dependency: Behavior,
         out_name_and_version_hash: &mut Option<u64>,
         out_patchfile_hash: &mut Option<u64>,
     ) -> PreinstallState {
@@ -71,8 +73,21 @@ impl PackageManager {
             PreinstallState::Unknown => {
                 // Do not automatically start downloading packages which are disabled
                 // i.e. don't download all of esbuild's versions or SWCs
-                if pkg.is_disabled(self.options.cpu, self.options.os) {
+                if !pkg.meta.arch.is_match(self.options.cpu)
+                    || !pkg.meta.os.is_match(self.options.os)
+                {
                     self.set_preinstall_state(pkg.meta.id, PreinstallState::Done);
+                    return PreinstallState::Done;
+                }
+                // Nor the other libc's variant of a native package. Unlike os/cpu this only
+                // holds for the dependency at hand (`Libc::for_dependency`): a regular
+                // dependency on the same package resolved later still installs it, and the
+                // installer downloads it at that point because the state is left untouched.
+                if !pkg
+                    .meta
+                    .libc
+                    .is_match(self.options.libc.for_dependency(dependency))
+                {
                     return PreinstallState::Done;
                 }
 
@@ -521,8 +536,14 @@ pub fn get_preinstall_state(this: &PackageManager, package_id: PackageID) -> Pre
 pub fn determine_preinstall_state(
     this: &mut PackageManager,
     pkg: &Package,
+    dependency: Behavior,
     out_name_and_version_hash: &mut Option<u64>,
     out_patchfile_hash: &mut Option<u64>,
 ) -> PreinstallState {
-    this.determine_preinstall_state(pkg, out_name_and_version_hash, out_patchfile_hash)
+    this.determine_preinstall_state(
+        pkg,
+        dependency,
+        out_name_and_version_hash,
+        out_patchfile_hash,
+    )
 }

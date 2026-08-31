@@ -514,6 +514,7 @@ impl Queue {
 
                     let package = pm.lockfile.packages.get(package_id as usize);
                     debug_assert!(package.resolution.tag != install::resolution::Tag::Root);
+                    let dependency = pm.lockfile.buffers.dependencies[root_id as usize].behavior;
 
                     let mut name_and_version_hash: Option<u64> = None;
                     let mut patchfile_hash: Option<u64> = None;
@@ -522,6 +523,7 @@ impl Queue {
                     // `&mut self`/`&self.lockfile` aliasing borrowck rejects.
                     match pm.determine_preinstall_state(
                         &package,
+                        dependency,
                         &mut name_and_version_hash,
                         &mut patchfile_hash,
                     ) {

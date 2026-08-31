@@ -281,12 +281,14 @@ impl PatchTask {
             let pkg_name = pkg.name;
             let pkg_resolution_tag = pkg.resolution.tag;
             let name_and_version_hash = calc_hash.name_and_version_hash;
+            let dep_behavior = manager.lockfile.buffers.dependencies[dep_id as usize].behavior;
 
             let mut out_name_and_version_hash: Option<u64> = None;
             let mut out_patchfile_hash: Option<u64> = None;
             manager.set_preinstall_state(pkg_meta_id, PreinstallState::Unknown);
             match manager.determine_preinstall_state(
                 &pkg,
+                dep_behavior,
                 &mut out_name_and_version_hash,
                 &mut out_patchfile_hash,
             ) {
@@ -323,9 +325,7 @@ impl PatchTask {
                         TaskId::for_npm_package(manager.lockfile.str(&pkg_name), pkg_npm_version);
                     debug_assert!(!manager.network_dedupe_map.contains_key(&task_id));
 
-                    let is_required = manager.lockfile.buffers.dependencies[dep_id as usize]
-                        .behavior
-                        .is_required();
+                    let is_required = dep_behavior.is_required();
                     let pkg_again: Package = *manager.lockfile.packages.get(pkg_id as usize);
                     let network_task: *mut crate::NetworkTask =
                         match package_manager::generate_network_task_for_tarball(

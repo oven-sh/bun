@@ -1916,6 +1916,40 @@ test.concurrent.each([["--os=aix"], ["--cpu=s390x"]])(
   },
 );
 
+// native-libc-glibc and native-libc-musl differ only in their `libc` field. The libc is passed
+// explicitly throughout because the default differs per host (and non-Linux hosts do not filter).
+test.concurrent("--libc removes the variant of the other libc, pruning for the installed libc keeps it", async () => {
+  const { packageDir: dir, packageJson } = await registry.createTestDir();
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "foo",
+      optionalDependencies: { "native-libc-glibc": "1.0.0", "native-libc-musl": "1.0.0" },
+    }),
+  );
+  expect(await install(dir, "--libc=glibc")).toContain("+ native-libc-glibc@1.0.0");
+  const nm = join(dir, "node_modules");
+  const glibc = join(nm, "native-libc-glibc", "package.json");
+  const musl = join(nm, "native-libc-musl", "package.json");
+  expect([existsSync(glibc), existsSync(musl)]).toStrictEqual([true, false]);
+
+  const same = await prune(dir, "--libc=glibc");
+  expect(out(same.stdout)).toEndWith(NOTHING(1, 1));
+  expect(same.exitCode).toBe(0);
+  expect(existsSync(glibc)).toBeTrue();
+
+  const other = await prune(dir, "--libc=musl");
+  expect(lines(other.stdout)).toStrictEqual([BANNER, "", "- native-libc-glibc@1.0.0", REMOVED(1, 1)]);
+  expect(other.exitCode).toBe(0);
+  expect(existsSync(glibc)).toBeFalse();
+
+  expect(await install(dir, "--libc=musl")).toContain("+ native-libc-musl@1.0.0");
+  expect([existsSync(glibc), existsSync(musl)]).toStrictEqual([false, true]);
+  const musl2 = await prune(dir, "--libc=musl");
+  expect(out(musl2.stdout)).toEndWith(NOTHING(1, 1));
+  expect(musl2.exitCode).toBe(0);
+});
+
 test.concurrent.each(["hoisted", "isolated"] as Linker[])(
   "%s: an npm: alias is kept under its alias name",
   async linker => {
@@ -3357,6 +3391,7 @@ test.concurrent("--help lists every flag; -F is --filter, -p is --production", a
           --dry-run         Print what would be removed without deleting anything
           --os=<val>        Prune for a different operating system than the current one
           --cpu=<val>       Prune for a different CPU architecture than the current one
+          --libc=<val>      Prune for a different libc than the current one
           --linker=<val>    Prune a node_modules installed with the given linker (one of "isolated" or "hoisted")
       -F, --filter=<val>    Only prune the node_modules folders of the matching workspaces
           --silent          Don't log anything

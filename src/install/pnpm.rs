@@ -1375,7 +1375,9 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                 if let Some(cpu_expr) = package_obj.get(b"cpu") {
                     pkg.meta.arch = npm::negatable_from_json::<npm::Architecture>(&cpu_expr)?;
                 }
-                // TODO: libc
+                if let Some(libc_expr) = package_obj.get(b"libc") {
+                    pkg.meta.libc = npm::negatable_from_json::<npm::Libc>(&libc_expr)?;
+                }
 
                 let (off, len, has_unbound_peers) = parse_append_package_dependencies(
                     lockfile,

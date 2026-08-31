@@ -48,6 +48,27 @@ let server: Server;
 export let root_url: string;
 export let check_npm_auth_type = { check: true };
 
+/** What `bun install` sends for a regular dependency: the abbreviated document. */
+export const ABBREVIATED_MANIFEST_ACCEPT = "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*";
+/** Sent for optional dependencies (and with `minimumReleaseAge`): the full document. */
+export const FULL_MANIFEST_ACCEPT = "application/json, */*";
+
+/**
+ * Like registry.npmjs.org, the abbreviated document has no `libc` field, so a
+ * test that gives a version `libc` only sees it filtered if bun asked for the
+ * full document.
+ */
+function manifestVersionInfo(request: Request, info: any) {
+  const accept = request.headers.get("accept");
+  // Only `toBe` exists on the stand-in `expect` of the standalone registry below.
+  expect(accept === ABBREVIATED_MANIFEST_ACCEPT || accept === FULL_MANIFEST_ACCEPT).toBe(true);
+  if (accept === ABBREVIATED_MANIFEST_ACCEPT && "libc" in info) {
+    const { libc, ...abbreviated } = info;
+    return abbreviated;
+  }
+  return info;
+}
+
 // ============================================================================
 // Concurrent Test Context Support
 // ============================================================================
@@ -191,9 +212,6 @@ export function dummyRegistryForContext(
     if (url.endsWith(".tgz")) {
       return new Response(file(join(import.meta.dir, basename(url).toLowerCase())), { status });
     }
-    expect(request.headers.get("accept")).toBe(
-      "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*",
-    );
     if (check_npm_auth_type.check) {
       expect(request.headers.get("npm-auth-type")).toBe(null);
     }
@@ -214,7 +232,7 @@ export function dummyRegistryForContext(
         dist: {
           tarball: `${ctx.registry_url}${name}-${info[version].as ?? version}.tgz`,
         },
-        ...info[version],
+        ...manifestVersionInfo(request, info[version]),
       };
     }
 
@@ -268,9 +286,6 @@ export function dummyRegistry(
       const tgzPath = join(tgzDir ?? import.meta.dir, basename(url).toLowerCase());
       return new Response(file(tgzPath), { status });
     }
-    expect(request.headers.get("accept")).toBe(
-      "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*",
-    );
     if (check_npm_auth_type.check) {
       expect(request.headers.get("npm-auth-type")).toBe(null);
     }
@@ -287,7 +302,7 @@ export function dummyRegistry(
         dist: {
           tarball: `${url}-${info[version].as ?? version}.tgz`,
         },
-        ...info[version],
+        ...manifestVersionInfo(request, info[version]),
       };
     }
 

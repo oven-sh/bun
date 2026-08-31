@@ -858,6 +858,13 @@ negatable_names! { OperatingSystem: u16, OPERATING_SYSTEM_NAMES => [
 
 // ──────────────────────────────────────────────────────────────────────────
 
+/// https://docs.npmjs.com/cli/v10/configuring-npm/package-json#libc
+///
+/// Unlike `os`/`cpu`, the zero value does not mean "matches nothing": it is
+/// what a package without a `libc` field gets, and what every manifest cache
+/// entry, `bun.lockb` and `bun.lock` written before this field was read
+/// contains. [`is_match`](Self::is_match) treats it as "not declared", so
+/// such packages install on every libc.
 #[repr(transparent)]
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub struct Libc(pub u8);
@@ -871,11 +878,52 @@ impl Libc {
 
     pub(crate) const ALL_VALUE: u8 = Self::GLIBC | Self::MUSL;
 
-    // TODO: runtime libc detection
+    /// The libc that packages are filtered against by default. Bun is
+    /// statically tied to one libc (the musl build is a separate binary, see
+    /// `bun_core::Environment::IS_MUSL`), so the build target is the host libc.
+    /// Other operating systems have no libc in the npm sense, so nothing is
+    /// filtered there.
+    #[cfg(all(target_os = "linux", target_env = "musl"))]
+    pub const CURRENT: Self = Self(Self::MUSL);
+    #[cfg(all(target_os = "linux", not(target_env = "musl")))]
+    pub const CURRENT: Self = Self(Self::GLIBC);
+    #[cfg(not(target_os = "linux"))]
+    pub const CURRENT: Self = Self::ALL;
 
+    /// `self` is the package's declaration, `target` the libc being installed for.
+    #[inline]
+    pub fn is_match(self, target: Self) -> bool {
+        self.0 == 0 || (self.0 & target.0) != 0
+    }
+
+    /// The libc to filter a package against when it is reached through a
+    /// dependency with `behavior`, `self` being the target libc (`--libc`).
+    ///
+    /// A package's `libc` is only requested from the registry for optional
+    /// dependencies (the abbreviated manifest used for everything else does not
+    /// carry it), so it is also only enforced on them. Through a regular
+    /// dependency a package installs on every libc, whether or not its `libc`
+    /// happens to be known from an optional edge, a migrated lockfile or the
+    /// manifest cache; otherwise what gets installed would depend on that.
+    #[inline]
+    pub fn for_dependency(self, behavior: Behavior) -> Self {
+        if behavior.is_optional() {
+            self
+        } else {
+            Self::ALL
+        }
+    }
     #[inline]
     pub(crate) fn has(self, other: u8) -> bool {
         (self.0 & other) != 0
+    }
+    /// The declared libc when the package is restricted to exactly one
+    /// (`"glibc"` / `"musl"`); `None` when undeclared or unrestricted.
+    pub fn single_name(self) -> Option<&'static [u8]> {
+        Self::NAME_MAP_KVS
+            .iter()
+            .find(|(_, bit)| *bit == self.0)
+            .map(|(name, _)| *name)
     }
 }
 

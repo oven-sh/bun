@@ -726,14 +726,13 @@ impl Lockfile {
         meta: &package::Meta,
         cpu: Npm::Architecture,
         os: Npm::OperatingSystem,
+        libc: Npm::Libc,
     ) -> bool {
-        if meta.is_disabled(cpu, os) {
-            return true;
-        }
-
         let dep = &self.buffers.dependencies[dep_id as usize];
 
-        dep.behavior.is_bundled() || !dep.behavior.is_enabled(features)
+        meta.is_disabled(cpu, os, libc.for_dependency(dep.behavior))
+            || dep.behavior.is_bundled()
+            || !dep.behavior.is_enabled(features)
     }
 
     pub fn resolve_catalog_dependency(&self, dep: &Dependency) -> Option<DependencyVersion> {
@@ -1557,6 +1556,9 @@ impl Lockfile {
                         }
                         if pkg_meta.arch == Npm::Architecture::ALL {
                             pkg_meta.arch = pkg.package.cpu;
+                        }
+                        if pkg_meta.libc == Npm::Libc::NONE {
+                            pkg_meta.libc = pkg.package.libc;
                         }
                     }
                 }

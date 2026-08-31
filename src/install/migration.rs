@@ -419,7 +419,7 @@ fn migrate_npm_lockfile<'a>(
     }))
 }
 
-/// A fresh resolve only records `os`/`cpu` for the root and npm registry
+/// A fresh resolve only records `os`/`cpu`/`libc` for the root and npm registry
 /// packages (`Package::from_npm`); folder, tarball, git, and workspace packages
 /// install unconditionally, so a migrated lockfile must not constrain them.
 pub(crate) fn clear_non_registry_platform_constraints(lockfile: &mut Lockfile) {
@@ -430,6 +430,7 @@ pub(crate) fn clear_non_registry_platform_constraints(lockfile: &mut Lockfile) {
                 let meta = &mut lockfile.packages.items_meta_mut()[i];
                 meta.arch = Npm::Architecture::ALL;
                 meta.os = Npm::OperatingSystem::ALL;
+                meta.libc = Npm::Libc::NONE;
             }
         }
     }

@@ -210,6 +210,71 @@ describe.concurrent("native binlink optimization", () => {
     });
   }
 
+  // test-native-binlink-libc has a glibc and a musl platform package with identical os/cpu
+  // lists (the shape of @anthropic-ai/claude-code, which is on the default list). Only the one
+  // matching the target libc is installed, so the bin has to be linked to that one and not to
+  // whichever comes first.
+  for (const linker of ["hoisted", "isolated"]) {
+    for (const libc of ["glibc", "musl"]) {
+      test(`links the bin to the ${libc} platform package with linker ${linker}`, async () => {
+        const env = { ...bunEnv };
+        const { packageDir, packageJson } = await verdaccio.createTestDir();
+        env.BUN_INSTALL_CACHE_DIR = join(packageDir, ".bun-cache");
+        env.BUN_TMPDIR = env.TMPDIR = env.TEMP = join(packageDir, ".bun-tmp");
+
+        await writeFile(
+          join(packageDir, "bunfig.toml"),
+          Bun.TOML.stringify({
+            install: {
+              cache: join(packageDir, ".bun-cache"),
+              registry: verdaccio.registryUrl(),
+              linker,
+            },
+          }),
+        );
+        await writeFile(
+          packageJson,
+          JSON.stringify({
+            name: "test-app",
+            version: "1.0.0",
+            dependencies: { "test-native-binlink-libc": "1.0.0" },
+            nativeDependencies: ["test-native-binlink-libc"],
+            trustedDependencies: ["test-native-binlink-libc"],
+          }),
+        );
+
+        const install = spawn({
+          cmd: [bunExe(), "install", "--libc", libc],
+          cwd: packageDir,
+          stdout: "ignore",
+          stdin: "ignore",
+          stderr: "pipe",
+          env,
+        });
+        const [installStderr, installExitCode] = await Promise.all([install.stderr.text(), install.exited]);
+        expect(installStderr).not.toContain("error:");
+        expect(installExitCode).toBe(0);
+
+        const binDir = join(packageDir, "node_modules", ".bin");
+        expect(readBinTarget(binDir, "test-binlink-libc-cmd")).toContain(
+          join(`test-native-binlink-libc-${libc}`, "bin", "main.js"),
+        );
+
+        const bin = spawn({
+          cmd: [binEntry(binDir, "test-binlink-libc-cmd")],
+          cwd: packageDir,
+          stdout: "pipe",
+          stdin: "ignore",
+          stderr: "inherit",
+          env,
+        });
+        const [binStdout, binExitCode] = await Promise.all([bin.stdout.text(), bin.exited]);
+        expect(binStdout).toContain(`SUCCESS: Using test-native-binlink-libc-${libc}`);
+        expect(binExitCode).toBe(0);
+      });
+    }
+  }
+
   // The postinstall skip must apply to every copy of a nativeDependencies
   // package in the tree, not just the hoisted one. Previously a second,
   // differently-versioned esbuild nested under a transitive dependent would

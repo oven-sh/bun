@@ -446,13 +446,6 @@ impl<SemverIntType: VersionInt> Alphabetizer<SemverIntType> {
     }
 }
 
-impl<SemverIntType: VersionInt> Package<SemverIntType> {
-    #[inline]
-    pub(crate) fn is_disabled(&self, cpu: Npm::Architecture, os: Npm::OperatingSystem) -> bool {
-        self.meta.is_disabled(cpu, os)
-    }
-}
-
 // `clone` / `from_package_json` / `from_npm` / `parse*` all interact
 // with `Lockfile`, whose package list is concretely `MultiArrayList<Package<u64>>`.
 // `Package<SemverIntType>` is only ever instantiated at `u64` for these
@@ -850,6 +843,7 @@ impl Package<u64> {
 
             package.meta.arch = package_version.cpu;
             package.meta.os = package_version.os;
+            package.meta.libc = package_version.libc;
             package.meta.integrity = package_version.integrity;
             package
                 .meta

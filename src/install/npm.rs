@@ -732,7 +732,9 @@ pub struct PackageVersion {
     /// `"cpu"` field in package.json
     pub(crate) cpu: Architecture,
 
-    /// `"libc"` field in package.json
+    /// `"libc"` field in package.json. The abbreviated registry document omits
+    /// it, so this is only populated when the manifest was fetched with
+    /// `has_extended_manifest` (`Libc::NONE` = not declared).
     pub(crate) libc: Libc,
 
     /// `hasInstallScript` field in registry API.
@@ -863,7 +865,9 @@ pub struct NpmPackage {
     pub(crate) versions_buf: VersionSlice,
     pub(crate) string_lists_buf: ExternalStringList,
 
-    // Flag to indicate if we have timestamp data from extended manifest
+    /// Fetched with `Accept: application/json` (the full document) rather than
+    /// the abbreviated one, so `publish_timestamp_ms` and `PackageVersion.libc`
+    /// are populated. See `PackageManager::needs_extended_manifest`.
     pub(crate) has_extended_manifest: bool,
     pub(crate) _padding_tail: [u8; 7],
 }

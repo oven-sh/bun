@@ -1642,6 +1642,7 @@ impl Task {
                                     pkg_metas,
                                     manager.options.cpu,
                                     manager.options.os,
+                                    manager.options.libc,
                                 )
                         {
                             break 'enqueue_lifecycle_scripts;
@@ -2206,12 +2207,14 @@ impl<'a> Installer<'a> {
                     let manager = self.manager();
                     let target_cpu = manager.options.cpu;
                     let target_os = manager.options.os;
+                    let target_libc = manager.options.libc;
                     if let Some(replacement_pkg_id) =
                         postinstall_optimizer::PostinstallOptimizer::get_native_binlink_replacement_package_id(
                             pkg_resolutions_lists[pkg_id as usize].get(pkg_resolutions_buffer),
                             pkg_metas,
                             target_cpu,
                             target_os,
+                            target_libc,
                         )
                     {
                         for (new_entry_id, new_node_id) in entry_node_ids.iter().enumerate() {

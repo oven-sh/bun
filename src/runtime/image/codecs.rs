@@ -402,14 +402,23 @@ pub(crate) fn probe(bytes: &[u8], max_pixels: u64) -> Result<Probe, Error> {
             h = u16::from_le_bytes(bytes[8..10].try_into().expect("infallible: size matches"))
                 as u32;
         }
-        Format::Tiff => {
-            // IFD walk would be a full TIFF parser; defer to whoever
-            // actually decodes it (system backend on mac/win, else error).
-            return Err(Error::UnsupportedOnPlatform);
-        }
-        Format::Heic | Format::Avif => {
-            // System backend handles these; fall through to a full decode if
-            // available, otherwise UnsupportedOnPlatform.
+        Format::Tiff | Format::Heic | Format::Avif => {
+            // ImageIO reads the dimensions from the container; the codec only runs in decode().
+            #[cfg(target_os = "macos")]
+            if use_system() {
+                match system_backend::BackendError::split(system_backend::probe(bytes, max_pixels))
+                {
+                    Ok(Some((pw, ph))) => {
+                        return Ok(Probe {
+                            format: fmt,
+                            width: pw,
+                            height: ph,
+                        });
+                    }
+                    Ok(None) => return Err(Error::UnsupportedOnPlatform),
+                    Err(e) => return Err(e),
+                }
+            }
             return Err(Error::UnsupportedOnPlatform);
         }
     }

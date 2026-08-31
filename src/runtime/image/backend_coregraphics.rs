@@ -100,6 +100,26 @@ fn map_err(rc: i32) -> BackendError {
     }
 }
 
+/// Dimensions only: ImageIO parses the container header without running the codec.
+pub(crate) fn probe(bytes: &[u8], max_pixels: u64) -> Result<(u32, u32), BackendError> {
+    let mut w: u32 = 0;
+    let mut h: u32 = 0;
+    // SAFETY: bytes is a valid slice; out=null signals "probe only" to the shim.
+    match unsafe {
+        bun_coregraphics_decode(
+            bytes.as_ptr(),
+            bytes.len(),
+            max_pixels,
+            &raw mut w,
+            &raw mut h,
+            core::ptr::null_mut(),
+        )
+    } {
+        CG_OK => Ok((w, h)),
+        rc => Err(map_err(rc)),
+    }
+}
+
 pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, BackendError> {
     let mut w: u32 = 0;
     let mut h: u32 = 0;

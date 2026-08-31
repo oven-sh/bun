@@ -378,11 +378,11 @@ describe("Bun.Transpiler", () => {
       );
 
       // A legal comment scanned between "?" and "(" waits in the lexer for the
-      // next statement. The attempt's block body or import() takes it. The real
-      // parse must still get it.
+      // next statement. The attempt's block body takes it. The real parse must
+      // still get it, and import() must not discard it.
       exp("x = a ? /*! L */ (b) : T => { let y = 1 } : c", "x = a ? (b) => {\n  /*! L */\n  let y = 1;\n} : c;\n");
       exp("x = a ? /*! L */ (b) : c => { return d }", "x = a ? b : (c) => {\n  /*! L */\n  return d;\n};\n");
-      exp('x = a ? /*! L */ (b) : T => import("m") : c', 'x = a ? (b) => import("m") : c;\n');
+      exp('x = a ? /*! L */ (b) : T => import("m") : c', 'x = a ? (b) => import("m") : c;\n/*! L */');
 
       // The attempt parses the body, so an attempt nested in the body must not
       // run again when the body is parsed for real: 2^40 parses would hang.
@@ -4873,6 +4873,59 @@ console.log("boop");
     ).toBe(
       `console.log("boop");
 `,
+    );
+  });
+
+  it("keeps @license and @preserve comments like /*! comments", () => {
+    const input = `/* @license MIT */
+/** @license Apache-2.0 */
+/* @preserve keep */
+// @license line
+// @preserve line
+/**
+ * @license BSD-3-Clause
+ * Copyright (c) Foo
+ */
+/* @license*/
+/* foo@license */
+/* @copyright not legal */
+/* the @licensee agrees */
+/* @preserved for posterity */
+// see the @licenses folder
+/* @license_x */
+// plain
+console.log("boop");
+`;
+    const output = `/* @license MIT */
+/** @license Apache-2.0 */
+/* @preserve keep */
+// @license line
+// @preserve line
+/**
+ * @license BSD-3-Clause
+ * Copyright (c) Foo
+ */
+/* @license*/
+/* foo@license */
+console.log("boop");
+`;
+    expect(new Bun.Transpiler().transformSync(input)).toBe(output);
+    expect(new Bun.Transpiler({ minifyWhitespace: true }).transformSync(input)).toBe(
+      `/* @license MIT *//** @license Apache-2.0 *//* @preserve keep */// @license line
+// @preserve line
+/**
+ * @license BSD-3-Clause
+ * Copyright (c) Foo
+ *//* @license*//* foo@license */console.log("boop");`,
+    );
+  });
+
+  it("import() does not discard a waiting legal comment", () => {
+    expect(new Bun.Transpiler().transformSync(`const load = /*! L */ () => import("m");\n`)).toBe(
+      `const load = () => import("m");\n/*! L */\n`,
+    );
+    expect(new Bun.Transpiler().transformSync(`const load = () => import(/* @license L */ "m");\n`)).toBe(
+      `const load = () => import("m");\n/* @license L */\n`,
     );
   });
 

@@ -42,13 +42,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let old_allow_in = p.allow_in;
         p.allow_in = true;
 
-        p.lexer.preserve_all_comments_before = true;
         p.lexer.expect(T::TOpenParen)?;
-
-        // const comments = try p.lexer.comments_to_preserve_before.toOwnedSlice();
-        p.lexer.comments_to_preserve_before.clear();
-
-        p.lexer.preserve_all_comments_before = false;
 
         let mut value = p.parse_expr(Level::Comma)?;
 
@@ -98,12 +92,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        // _ = comments; // TODO: leading_interior comments
-
         Ok(p.new_expr(
             E::Import {
                 expr: value,
-                // .leading_interior_comments = comments,
                 import_record_index: u32::MAX,
                 options: import_options,
             },

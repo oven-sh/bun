@@ -150,7 +150,6 @@ pub struct LexerSnapshot<'a> {
     pub(crate) has_pure_comment_before: bool,
     pub(crate) has_react_hooks_suppression_before: bool,
     pub(crate) has_react_hooks_block_suppression: bool,
-    pub(crate) preserve_all_comments_before: bool,
     pub(crate) is_legacy_octal_literal: bool,
     pub(crate) is_log_disabled: bool,
     pub(crate) code_point: CodePoint,
@@ -219,7 +218,6 @@ pub struct Lexer<'a> {
     /// `eslint-disable` (no `-next-line` suffix). Never cleared by the
     /// parser, so it applies to every subsequent function in the file.
     pub(crate) has_react_hooks_block_suppression: bool,
-    pub(crate) preserve_all_comments_before: bool,
     pub(crate) is_legacy_octal_literal: bool,
     pub(crate) is_log_disabled: bool,
     pub(crate) comments_to_preserve_before: Vec<js_ast::G::Comment>,
@@ -335,7 +333,6 @@ impl<'a> Lexer<'a> {
             has_pure_comment_before: self.has_pure_comment_before,
             has_react_hooks_suppression_before: self.has_react_hooks_suppression_before,
             has_react_hooks_block_suppression: self.has_react_hooks_block_suppression,
-            preserve_all_comments_before: self.preserve_all_comments_before,
             is_legacy_octal_literal: self.is_legacy_octal_literal,
             is_log_disabled: self.is_log_disabled,
             code_point: self.code_point,
@@ -373,7 +370,6 @@ impl<'a> Lexer<'a> {
         self.has_pure_comment_before = original.has_pure_comment_before;
         self.has_react_hooks_suppression_before = original.has_react_hooks_suppression_before;
         self.has_react_hooks_block_suppression = original.has_react_hooks_block_suppression;
-        self.preserve_all_comments_before = original.preserve_all_comments_before;
         self.is_legacy_octal_literal = original.is_legacy_octal_literal;
         self.is_log_disabled = original.is_log_disabled;
         self.code_point = original.code_point;
@@ -1892,7 +1888,7 @@ impl<'a> Lexer<'a> {
 
     fn scan_comment_text(&mut self, for_pragma: bool) {
         let text = &self.contents[self.start..self.end];
-        let has_legal_annotation = text.len() > 2 && text[2] == b'!';
+        let has_legal_annotation = is_legal_comment(text);
         let is_multiline_comment = text.len() > 1 && text[1] == b'*';
 
         if self.track_comments {
@@ -1937,11 +1933,7 @@ impl<'a> Lexer<'a> {
             }
         }
 
-        if has_legal_annotation || self.preserve_all_comments_before {
-            if is_multiline_comment {
-                // text = lexer.removeMultilineCommentIndent(lexer.source.contents[0..lexer.start], text);
-            }
-
+        if has_legal_annotation {
             self.comments_to_preserve_before.push(js_ast::G::Comment {
                 text: text.into(),
                 loc: self.loc(),
@@ -2227,7 +2219,6 @@ impl<'a> Lexer<'a> {
             has_pure_comment_before: false,
             has_react_hooks_suppression_before: false,
             has_react_hooks_block_suppression: false,
-            preserve_all_comments_before: false,
             is_legacy_octal_literal: false,
             is_log_disabled: false,
             comments_to_preserve_before: Vec::new(),
@@ -3329,6 +3320,26 @@ pub(crate) fn is_whitespace(codepoint: CodePoint) -> bool {
     // ECMAScript `WhiteSpace`: TAB VT FF SP ZWNBSP + Unicode Zs.
     matches!(codepoint, 0x0009 | 0x000B | 0x000C | 0x0020 | 0xFEFF)
         || strings::is_unicode_space_separator(codepoint as u32)
+}
+
+/// A legal comment is kept in the output: `/*! ... */`, `//! ...`, or any
+/// comment that contains the word `@license` or `@preserve` (the same rule
+/// as esbuild, so `@licensee` does not count). `text` is the whole comment
+/// including its `//` or `/*` opener.
+pub(crate) fn is_legal_comment(text: &[u8]) -> bool {
+    if text.len() > 2 && text[2] == b'!' {
+        return true;
+    }
+    let mut rest = text;
+    while let Some(i) = strings::index_of_char_usize(rest, b'@') {
+        rest = &rest[i + 1..];
+        if strings::has_prefix_with_word_boundary(rest, b"license")
+            || strings::has_prefix_with_word_boundary(rest, b"preserve")
+        {
+            return true;
+        }
+    }
+    false
 }
 
 pub use bun_core::identifier::{is_identifier, is_identifier_utf16};

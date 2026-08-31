@@ -996,6 +996,35 @@ it("close() with in-flight work raises no unhandled rejection", async () => {
   expect(exitCode).toBe(0);
 });
 
+it("a failed constructor url navigation fires onNavigationFailed, not an unhandled rejection", async () => {
+  // Subprocess-isolated like the test above. The url is rejected by NSURL
+  // where it is strict (x64: space and <>); where it is lenient (arm64) the
+  // load fails with NXDOMAIN on the RFC-2606 .invalid TLD. onNavigationFailed
+  // fires on either path; the internal constructor promise stays quiet.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const unhandled = [];
+        process.on("unhandledRejection", e => unhandled.push(e.message));
+        const view = new Bun.WebView({ width: 200, height: 200, url: "http://exa mple.invalid/<>" });
+        const failed = await new Promise(resolve => { view.onNavigationFailed = resolve; });
+        view.close();
+        // Nothing announces "no unhandled rejection is coming"; this is a
+        // bounded window for one to appear (the reject itself ran synchronously).
+        await Bun.sleep(100);
+        console.log(JSON.stringify({ isError: failed instanceof Error, unhandled }));
+      `,
+    ],
+    env: bunEnv,
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(JSON.parse(stdout)).toEqual({ isError: true, unhandled: [] });
+  expect(exitCode).toBe(0);
+});
+
 it("WebView.closeAll() kills the host subprocess and pending promises reject", async () => {
   // Subprocess-isolated — closeAll() SIGKILLs the one shared WKWebView host,
   // which would break subsequent tests. ensureSpawned respawns on the next

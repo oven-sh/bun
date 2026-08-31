@@ -654,6 +654,22 @@ static void settle(JSGlobalObject* g, JSWebView* view, PendingSlot slot, bool ok
     settleSlot(g, view, slotFor(view, slot), ok, v);
 }
 
+// Reject one op's slot on a CDP failure. A Navigate-slot failure also fires
+// onNavigationFailed and clears loading: the constructor-url promise is
+// marked handled, so the callback can be the failure's only signal. Matches
+// WebKit, where NavFailEvent precedes NavFailed.
+static void settleFailure(JSGlobalObject* g, JSWebView* view, PendingSlot slot, JSValue errValue)
+{
+    if (slot == PendingSlot::Navigate) {
+        view->m_loading = false;
+        if (JSObject* cb = view->m_onNavigationFailed.get()) {
+            Bun__EventLoop__runCallback2(g, JSValue::encode(cb), JSValue::encode(jsUndefined()),
+                JSValue::encode(errValue), JSValue::encode(jsUndefined()));
+        }
+    }
+    settle(g, view, slot, false, errValue);
+}
+
 // Slots, not m_pending: a navigation that Chrome has already answered is
 // waiting for Page.loadEventFired and exists only in its slot.
 static void rejectViewSlots(JSGlobalObject* g, JSWebView* view, JSValue err)
@@ -747,7 +763,7 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         // {"code":-32000,"message":"..."}
         auto msgSlice = jsonString(jsonField(error, { "message", 7 }));
         auto errStr = WTF::String::fromUTF8(std::span<const char>(msgSlice));
-        settle(g, view, entry.slot, false,
+        settleFailure(g, view, entry.slot,
             createError(g, errStr.isEmpty() ? "CDP error"_s : errStr));
         return;
     }
@@ -825,18 +841,8 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         // sessionId — actually the event handler uses m_sessions, not
         // m_pending, so we just drop here.
         auto err = jsonString(jsonField(result, { "errorText", 9 }));
-        if (!err.empty()) {
-            view->m_loading = false;
-            JSValue errValue = createError(g, WTF::String::fromUTF8(err));
-            // Same failure signal WebKit sends via NavFailEvent. The
-            // constructor-url navigation promise is marked handled, so
-            // without this callback a bad `url:` would fail silently.
-            if (JSObject* cb = view->m_onNavigationFailed.get()) {
-                Bun__EventLoop__runCallback2(g, JSValue::encode(cb), JSValue::encode(jsUndefined()),
-                    JSValue::encode(errValue), JSValue::encode(jsUndefined()));
-            }
-            settle(g, view, entry.slot, false, errValue);
-        }
+        if (!err.empty())
+            settleFailure(g, view, entry.slot, createError(g, WTF::String::fromUTF8(err)));
         // Else: don't settle — Page.loadEventFired does.
         return;
     }

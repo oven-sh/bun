@@ -3866,8 +3866,8 @@ pub mod bv2_impl {
             source_without_index: bun_ast::Source,
         ) -> Result<IndexInt, AllocError> {
             let mut new_source = source_without_index;
-            let source_index = self.graph.input_files.len();
-            new_source.index = bun_ast::Index(source_index as u32);
+            let source_index = Index::init(self.graph.input_files.len());
+            new_source.index = source_index;
             // `bun_ast::Source: !Clone` — manually dup the (all-Clone) fields.
             let task_source = bun_ast::Source {
                 path: new_source.path,
@@ -3912,7 +3912,7 @@ pub mod bv2_impl {
                     core::ptr::addr_of_mut!((*task).task)
                 }));
 
-            Ok(u32::try_from(source_index).expect("int cast"))
+            Ok(source_index.get())
         }
     }
 

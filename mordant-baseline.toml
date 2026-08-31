@@ -1,8 +1,5 @@
-[bun_ast]
-
 [bun_bundler]
-"defaulted_failure:src/bundler/bundle_v2.rs" = 2
-"narrowed_two_ways:src/bundler/bundle_v2.rs" = 1
+"defaulted_failure:src/bundler/bundle_v2.rs" = 1
 
 [bun_core]
 "defaulted_failure:src/bun_core/string/immutable.rs" = 1
@@ -42,8 +39,6 @@
 "unchecked_construction:src/runtime/cli/pack_command.rs" = 2
 "unchecked_construction:src/runtime/server/HTMLBundle.rs" = 2
 "unchecked_construction:src/runtime/server/server_body.rs" = 5
-
-[bun_sql_jsc]
 
 [bun_sys]
 "error_collapsed_to_bool:src/sys/lib.rs" = 4

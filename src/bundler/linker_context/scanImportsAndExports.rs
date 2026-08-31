@@ -224,20 +224,25 @@ pub(crate) fn scan_imports_and_exports(
                             }
                         }
                         ImportKind::Dynamic | ImportKind::Require => {
-                            match col_ref!(dynamic_import_aliases)[id].get(&(import_record_index as u32)) {
+                            match col_ref!(dynamic_import_aliases)[id]
+                                .get(&(import_record_index as u32))
+                            {
                                 None => col!(dyn_ref_aliases)[other_file].merge_all(),
                                 Some(aliases) => {
-                                    col!(dyn_ref_aliases)[other_file].merge_partial(aliases.slice());
+                                    col!(dyn_ref_aliases)[other_file]
+                                        .merge_partial(aliases.slice());
                                     // Observed without being named: `await import()`
                                     // resolves through a `then` export, and `require()`
                                     // of an ES module returns its `module.exports`
                                     // export when it has one.
                                     col!(dyn_ref_aliases)[other_file].merge_partial(&[
-                                        bun_ast::StoreStr::new(if record.kind == ImportKind::Require {
-                                            b"module.exports"
-                                        } else {
-                                            b"then"
-                                        }),
+                                        bun_ast::StoreStr::new(
+                                            if record.kind == ImportKind::Require {
+                                                b"module.exports"
+                                            } else {
+                                                b"then"
+                                            },
+                                        ),
                                     ]);
                                 }
                             }

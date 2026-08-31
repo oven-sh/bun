@@ -320,6 +320,13 @@ pub(crate) unsafe fn rename_symbols_in_chunk(
 
     let mut sorted: Vec<u32> = Vec::new();
 
+    // Nested scopes are renamed only after every top-level symbol in the
+    // chunk has been added to the root scope. Interleaving the two lets a
+    // nested local take a name that a later part's top-level symbol keeps,
+    // so the local shadows it (#41054). esbuild does the same two-phase
+    // split in renameSymbolsInChunk.
+    let mut nested_scopes: Vec<(u32, *const bun_ast::Scope)> = Vec::new();
+
     for &source_index in files_in_order {
         let wrap = all_flags[source_index as usize].wrap;
         // Need `&mut [Part]` for `add_top_level_declared_symbols`.
@@ -398,16 +405,10 @@ pub(crate) unsafe fn rename_symbols_in_chunk(
                         }
                     }
                 }
-                // Reshaped for borrowck — `&mut r.root` while `r` is the
-                // `&mut self` receiver. Take a raw pointer; `assign_names_*` does
-                // not touch `self.root` through `self`.
-                let root: *mut renamer::NumberScope = core::ptr::addr_of_mut!(r.root);
-                r.assign_names_recursive_with_number_scope(
-                    root,
-                    &all_module_scopes[source_index as usize],
+                nested_scopes.push((
                     source_index,
-                    &mut sorted,
-                );
+                    &raw const all_module_scopes[source_index as usize],
+                ));
                 continue;
             }
 
@@ -441,16 +442,8 @@ pub(crate) unsafe fn rename_symbols_in_chunk(
             r.add_top_level_declared_symbols(&mut part.declared_symbols);
             // `Part.scopes: StoreSlice<*mut Scope>` — safe `Deref` to `&[*mut Scope]`.
             for scope in part.scopes.iter() {
-                let root: *mut renamer::NumberScope = core::ptr::addr_of_mut!(r.root);
-                // SAFETY: each `*mut Scope` is a valid arena-allocated scope.
-                r.assign_names_recursive_with_number_scope(
-                    root,
-                    unsafe { &**scope },
-                    source_index,
-                    &mut sorted,
-                );
+                nested_scopes.push((source_index, (*scope).cast_const()));
             }
-            r.number_scope_pool.hive.used = bun_collections::hive_array::HiveBitSet::init_empty();
         }
     }
 
@@ -458,6 +451,23 @@ pub(crate) unsafe fn rename_symbols_in_chunk(
     // copy takes the numbered one.
     for &copy in entry_point_cjs_export_copies {
         r.add_top_level_symbol(copy);
+    }
+
+    for &(source_index, scope) in &nested_scopes {
+        // Reshaped for borrowck — `&mut r.root` while `r` is the
+        // `&mut self` receiver. Take a raw pointer; `assign_names_*` does
+        // not touch `self.root` through `self`.
+        let root: *mut renamer::NumberScope = core::ptr::addr_of_mut!(r.root);
+        // SAFETY: each pointer is a valid arena-allocated scope (a CJS
+        // module scope or a part scope) collected in the loop above; nothing
+        // mutates those scopes between collection and this deref.
+        r.assign_names_recursive_with_number_scope(
+            root,
+            unsafe { &*scope },
+            source_index,
+            &mut sorted,
+        );
+        r.number_scope_pool.hive.used = bun_collections::hive_array::HiveBitSet::init_empty();
     }
 
     Ok(ChunkRenamer::Number(r))

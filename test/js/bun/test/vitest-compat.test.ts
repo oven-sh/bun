@@ -1,0 +1,301 @@
+// Tests for the vitest compatibility surface of bun:test (issue #40990).
+// `bun test` aliases the "vitest" specifier to "bun:test", so this file
+// imports through the alias on purpose.
+import { suite, vitest, vi, test, describe, expect, onTestFailed, onTestFinished, bench } from "vitest";
+import * as vitestModule from "vitest";
+import { bunEnv, bunExe, tempDir } from "harness";
+
+suite("suite is describe", () => {
+  test("suite registers a describe block", () => {
+    expect(suite).toBe(describe as unknown as typeof suite);
+  });
+});
+
+suite.each([[1], [2]])("suite.each %i", n => {
+  test("runs", () => {
+    expect(n).toBeGreaterThan(0);
+  });
+});
+
+test("vitest is an alias of vi", () => {
+  expect(vitest).toBe(vi);
+});
+
+describe("unimplemented exports are throwing stubs, not missing", () => {
+  const stubNames = [
+    "assert",
+    "assertType",
+    "aroundAll",
+    "aroundEach",
+    "BenchmarkRunner",
+    "chai",
+    "createExpect",
+    "EvaluatedModules",
+    "inject",
+    "recordArtifact",
+    "should",
+    "Snapshots",
+    "TestRunner",
+  ] as const;
+
+  for (const name of stubNames) {
+    test(`${name} is exported and throws on call with its own name`, () => {
+      const member = (vitestModule as Record<string, unknown>)[name];
+      expect(typeof member).toBe("function");
+      expect(() => (member as () => void)()).toThrow(`${name}() is not yet implemented in bun:test`);
+    });
+  }
+});
+
+test("bench is a no-op that never runs its callback", () => {
+  expect(typeof bench).toBe("function");
+  expect(() => bench("name", () => {
+    throw new Error("bench callback must not run");
+  })).not.toThrow();
+});
+
+describe("vi members", () => {
+  test("vi.setSystemTime and vi.getMockedSystemTime", () => {
+    expect(vi.getMockedSystemTime()).toBeNull();
+    vi.setSystemTime(new Date("2020-01-01T00:00:00Z"));
+    try {
+      expect(Date.now()).toBe(1577836800000);
+      const mocked = vi.getMockedSystemTime();
+      expect(mocked).toBeInstanceOf(Date);
+      expect(mocked!.getTime()).toBe(1577836800000);
+    } finally {
+      vi.setSystemTime();
+    }
+    expect(vi.getMockedSystemTime()).toBeNull();
+  });
+
+  test("vi.getRealSystemTime ignores the mocked clock", () => {
+    vi.setSystemTime(new Date("2020-01-01T00:00:00Z"));
+    try {
+      const real = vi.getRealSystemTime();
+      expect(typeof real).toBe("number");
+      expect(real).toBeGreaterThan(1577836800000);
+    } finally {
+      vi.setSystemTime();
+    }
+  });
+
+  test("vi.isMockFunction", () => {
+    expect(vi.isMockFunction(vi.fn())).toBe(true);
+    expect(vi.isMockFunction(vi.spyOn({ a() {} }, "a"))).toBe(true);
+    expect(vi.isMockFunction(() => {})).toBe(false);
+    expect(vi.isMockFunction(undefined)).toBe(false);
+    expect(vi.isMockFunction(42)).toBe(false);
+  });
+
+  test("vi.mocked returns its argument", () => {
+    const fn = vi.fn();
+    expect(vi.mocked(fn)).toBe(fn);
+    const plain = {};
+    expect(vi.mocked(plain)).toBe(plain);
+  });
+
+  test("vi.stubEnv and vi.unstubAllEnvs", () => {
+    process.env.VITEST_COMPAT_EXISTING = "original";
+    delete process.env.VITEST_COMPAT_ADDED;
+
+    vi.stubEnv("VITEST_COMPAT_EXISTING", "stubbed");
+    vi.stubEnv("VITEST_COMPAT_EXISTING", "stubbed-twice");
+    vi.stubEnv("VITEST_COMPAT_ADDED", "added");
+    expect(process.env.VITEST_COMPAT_EXISTING).toBe("stubbed-twice");
+    expect(process.env.VITEST_COMPAT_ADDED).toBe("added");
+
+    vi.unstubAllEnvs();
+    expect(process.env.VITEST_COMPAT_EXISTING).toBe("original");
+    expect(process.env.VITEST_COMPAT_ADDED).toBeUndefined();
+    delete process.env.VITEST_COMPAT_EXISTING;
+  });
+
+  test("vi.stubEnv(name, undefined) removes the variable", () => {
+    process.env.VITEST_COMPAT_REMOVE = "here";
+    vi.stubEnv("VITEST_COMPAT_REMOVE", undefined);
+    expect(process.env.VITEST_COMPAT_REMOVE).toBeUndefined();
+    vi.unstubAllEnvs();
+    expect(process.env.VITEST_COMPAT_REMOVE).toBe("here");
+    delete process.env.VITEST_COMPAT_REMOVE;
+  });
+
+  test("vi.stubGlobal and vi.unstubAllGlobals", () => {
+    vi.stubGlobal("__vitest_compat_new__", 42);
+    expect((globalThis as Record<string, unknown>).__vitest_compat_new__).toBe(42);
+
+    const originalFetch = globalThis.fetch;
+    vi.stubGlobal("fetch", "not-a-function");
+    expect(globalThis.fetch as unknown).toBe("not-a-function");
+
+    vi.unstubAllGlobals();
+    expect("__vitest_compat_new__" in globalThis).toBe(false);
+    expect(globalThis.fetch).toBe(originalFetch);
+  });
+
+  test("vi.stubEnv rejects a non-string name", () => {
+    expect(() => (vi.stubEnv as (k: unknown, v: unknown) => void)(42, "x")).toThrow("vi.stubEnv() expects a string name");
+  });
+});
+
+describe("async fake timer variants", () => {
+  test("advanceTimersByTimeAsync flushes an awaiting callback", async () => {
+    vi.useFakeTimers();
+    try {
+      let done = false;
+      setTimeout(async () => {
+        await Promise.resolve();
+        done = true;
+      }, 100);
+      await vi.advanceTimersByTimeAsync(100);
+      expect(done).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("runAllTimersAsync and friends resolve", async () => {
+    vi.useFakeTimers();
+    try {
+      let count = 0;
+      setTimeout(() => count++, 1);
+      setTimeout(() => count++, 2);
+      await vi.runAllTimersAsync();
+      expect(count).toBe(2);
+
+      setTimeout(() => count++, 1);
+      await vi.advanceTimersToNextTimerAsync();
+      expect(count).toBe(3);
+
+      setTimeout(() => count++, 1);
+      await vi.runOnlyPendingTimersAsync();
+      expect(count).toBe(4);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("jest object also has the async variants", () => {
+    const { jest } = vitestModule as unknown as { jest: Record<string, unknown> };
+    expect(typeof jest.advanceTimersByTimeAsync).toBe("function");
+    expect(typeof jest.runAllTimersAsync).toBe("function");
+    expect(typeof jest.runOnlyPendingTimersAsync).toBe("function");
+    expect(typeof jest.advanceTimersToNextTimerAsync).toBe("function");
+  });
+});
+
+describe("test and describe modifiers", () => {
+  test.fails("test.fails expects the test to fail", () => {
+    throw new Error("expected failure");
+  });
+
+  test.runIf(true)("test.runIf(true) runs", () => {
+    expect(true).toBe(true);
+  });
+
+  test.runIf(false)("test.runIf(false) skips", () => {
+    throw new Error("must not run");
+  });
+
+  describe.sequential("describe.sequential works", () => {
+    test("runs", () => {
+      expect(true).toBe(true);
+    });
+  });
+
+  test.sequential("test.sequential runs", () => {
+    expect(true).toBe(true);
+  });
+});
+
+describe("onTestFailed", () => {
+  let passHookRan = false;
+  test("does not run after a passing test", () => {
+    onTestFailed(() => {
+      passHookRan = true;
+    });
+    expect(true).toBe(true);
+  });
+  test("(checked in the next test)", () => {
+    expect(passHookRan).toBe(false);
+  });
+
+  test.concurrent("runs after a failing test, in registration context", async () => {
+    using dir = tempDir("vitest-compat-failhook", {
+      "failhook.test.ts": `
+        import { test, onTestFailed, onTestFinished, expect } from "vitest";
+        test("fails sync", () => {
+          onTestFailed(() => console.log("FAILED_HOOK_SYNC"));
+          onTestFinished(() => console.log("FINISHED_HOOK"));
+          expect(1).toBe(2);
+        });
+        test("fails async", async () => {
+          onTestFailed(async () => {
+            await Promise.resolve();
+            console.log("FAILED_HOOK_ASYNC");
+          });
+          throw new Error("boom");
+        });
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "failhook.test.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toContain("FAILED_HOOK_SYNC");
+    expect(stdout).toContain("FINISHED_HOOK");
+    expect(stdout).toContain("FAILED_HOOK_ASYNC");
+    expect(exitCode).toBe(1);
+  });
+
+  test.concurrent("cannot be called outside of a test", async () => {
+    using dir = tempDir("vitest-compat-failhook-outside", {
+      "outside.test.ts": `
+        import { test, onTestFailed } from "vitest";
+        onTestFailed(() => {});
+        test("never runs", () => {});
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "outside.test.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("Cannot call onTestFailed() outside of a test");
+    expect(exitCode).toBe(1);
+  });
+});
+
+test.concurrent("a static import of a previously missing export no longer kills the file", async () => {
+  using dir = tempDir("vitest-compat-static-import", {
+    "static-import.test.ts": `
+      import { test, suite, vitest, onTestFailed, assert, chai } from "vitest";
+      suite("loads", () => {
+        test("passes", () => {
+          vitest.fn();
+          // assert and chai are importable; only calling them throws.
+          void assert;
+          void chai;
+          void onTestFailed;
+        });
+      });
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "static-import.test.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(stderr).not.toContain("SyntaxError");
+  expect(exitCode).toBe(0);
+});

@@ -826,6 +826,10 @@ export default [
         getter: "getFailing",
         cache: true,
       },
+      fails: {
+        getter: "getFails",
+        cache: true,
+      },
       concurrent: {
         getter: "getConcurrent",
         cache: true,
@@ -834,12 +838,20 @@ export default [
         getter: "getSerial",
         cache: true,
       },
+      sequential: {
+        getter: "getSequential",
+        cache: true,
+      },
       only: {
         getter: "getOnly",
         cache: true,
       },
       if: {
         fn: "fnIf",
+        length: 1,
+      },
+      runIf: {
+        fn: "fnRunIf",
         length: 1,
       },
       skipIf: {

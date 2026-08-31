@@ -1423,6 +1423,18 @@ extern "C" [[ZIG_EXPORT(nothrow)]] double JSMock__getCurrentUnixTimeMs()
     return WTF::WallTime::now().secondsSinceEpoch().milliseconds();
 }
 
+// Helper function for native code to read the overriden Date.now() time.
+// NaN is the "no override" sentinel (see JSGlobalObject::jsDateNow()).
+extern "C" [[ZIG_EXPORT(nothrow)]] double JSMock__getOverridenDateNow(JSC::JSGlobalObject* globalObject)
+{
+    return globalObject->overridenDateNow;
+}
+
+extern "C" [[ZIG_EXPORT(nothrow)]] bool JSMock__isMockFunction(JSC::EncodedJSValue encodedValue)
+{
+    return !!dynamicDowncast<JSMockFunction>(JSC::JSValue::decode(encodedValue));
+}
+
 BUN_DEFINE_HOST_FUNCTION(JSMock__jsNow, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
 {
     return JSValue::encode(jsNumber(globalObject->jsDateNow()));

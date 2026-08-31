@@ -1004,6 +1004,11 @@ fn step_sequence_one(
     Execution::on_entry_started(next_item);
 
     if let Some(cb) = next_item.callback.as_ref() {
+        if next_item.only_on_failure && !sequence.result.is_fail() {
+            // onTestFailed() callback on a sequence that did not fail: skip it.
+            Execution::advance_sequence(buntest_ptr, sequence_ptr, group);
+            return Ok(None); // run again
+        }
         group_log::log(format_args!("runSequence queued callback"));
 
         let entry_data = EntryData {

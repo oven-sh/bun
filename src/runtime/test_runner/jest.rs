@@ -1,4 +1,5 @@
 use core::ptr::NonNull;
+use std::cell::RefCell;
 use std::io::Write as _;
 
 use crate::cli::command::TestOptions;
@@ -331,7 +332,7 @@ pub mod Jest {
     }
 
     fn create_test_module(global_object: &JSGlobalObject) -> JsResult<JSValue> {
-        let module = JSValue::create_empty_object(global_object, 23);
+        let module = JSValue::create_empty_object(global_object, 44);
 
         let test_scope_functions = create_bound(
             global_object,
@@ -361,6 +362,8 @@ pub mod Jest {
             "describe",
         )?;
         module.put(global_object, b"describe", describe_scope_functions);
+        // vitest alias for `describe`.
+        module.put(global_object, b"suite", describe_scope_functions);
 
         let xdescribe_scope_functions = create_bound(
             global_object,
@@ -400,13 +403,19 @@ pub mod Jest {
         );
         module.put(
             global_object,
+            b"onTestFailed",
+            jsc::JSFunction::create(global_object, "onTestFailed", generic_hook::__jsc_host_on_test_failed, 1, Default::default()),
+        );
+        module.put(
+            global_object,
             b"setDefaultTimeout",
             jsc::JSFunction::create(global_object, "setDefaultTimeout", __jsc_host_js_set_default_timeout, 1, Default::default()),
         );
         module.put(global_object, b"expect", jsc::codegen::js::get_constructor::<Expect>(global_object));
         module.put(global_object, b"expectTypeOf", jsc::codegen::js::get_constructor::<ExpectTypeOf>(global_object));
 
-        // will add more 9 properties in the module here so we need to allocate 23 properties
+        // create_mock_objects adds the rest of the properties; the inline
+        // capacity hint above covers both.
         create_mock_objects(global_object, module);
 
         Ok(module)
@@ -442,20 +451,221 @@ pub mod Jest {
         module.put(global_object, b"spyOn", spy_on);
         module.put(global_object, b"expect", jsc::codegen::js::get_constructor::<Expect>(global_object));
 
-        let vi = JSValue::create_empty_object(global_object, 6 + fake_timers::TIMER_FNS_COUNT);
+        let vi = JSValue::create_empty_object(global_object, 15 + fake_timers::TIMER_FNS_COUNT);
         vi.put(global_object, b"fn", mock_fn);
         vi.put(global_object, b"mock", mock_module_fn);
         vi.put(global_object, b"spyOn", spy_on);
         vi.put(global_object, b"restoreAllMocks", restore_all_mocks);
         vi.put(global_object, b"resetAllMocks", reset_all_mocks);
         vi.put(global_object, b"clearAllMocks", clear_all_mocks);
+        vi.put(global_object, b"setSystemTime", set_system_time);
+        for &(name, arity, func) in VI_FNS {
+            vi.put(global_object, name.as_bytes(), jsc::JSFunction::create(global_object, name, func, arity, Default::default()));
+        }
         module.put(global_object, b"vi", vi);
+        // vitest also exports `vi` under the name `vitest`.
+        module.put(global_object, b"vitest", vi);
+
+        // `vitest run` collects bench() entries but does not execute them;
+        // match that by registering nothing.
+        module.put(global_object, b"bench", jsc::JSFunction::create(global_object, "bench", __jsc_host_js_bench_noop, 2, Default::default()));
+
+        // vitest exports that bun:test does not implement. A missing named
+        // export fails the whole file at load with a SyntaxError, so export a
+        // function that throws on call instead: only the tests that use the
+        // member fail, with an error that names it.
+        const UNIMPLEMENTED_VITEST_EXPORTS: &[&str] = &[
+            "assert",
+            "assertType",
+            "aroundAll",
+            "aroundEach",
+            "BenchmarkRunner",
+            "chai",
+            "createExpect",
+            "EvaluatedModules",
+            "inject",
+            "recordArtifact",
+            "should",
+            "Snapshots",
+            "TestRunner",
+        ];
+        for &name in UNIMPLEMENTED_VITEST_EXPORTS {
+            let stub = jsc::JSFunction::create(global_object, name, __jsc_host_js_vitest_unimplemented, 0, Default::default());
+            module.put(global_object, name.as_bytes(), stub);
+        }
 
         fake_timers::put_timers_fns(global_object, jest, vi);
     }
 
+    // `#[bun_jsc::host_fn]` emits a `__jsc_host_{name}` shim with the raw
+    // `JSHostFn` ABI, which is what `JSFunction::create` expects.
+    const VI_FNS: &[(&str, u32, jsc::JSHostFn)] = &[
+        ("isMockFunction", 1, __jsc_host_js_is_mock_function),
+        ("mocked", 1, __jsc_host_js_vi_mocked),
+        ("stubEnv", 2, __jsc_host_js_stub_env),
+        ("unstubAllEnvs", 0, __jsc_host_js_unstub_all_envs),
+        ("stubGlobal", 2, __jsc_host_js_stub_global),
+        ("unstubAllGlobals", 0, __jsc_host_js_unstub_all_globals),
+        ("getMockedSystemTime", 0, __jsc_host_js_get_mocked_system_time),
+        ("getRealSystemTime", 0, __jsc_host_js_get_real_system_time),
+    ];
+
+    #[bun_jsc::host_fn]
+    fn js_vitest_unimplemented(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        let name = callframe
+            .callee()
+            .get(global_object, "name")?
+            .unwrap_or(JSValue::UNDEFINED);
+        let name_utf8 = name.to_utf8(global_object)?;
+        Err(global_object.throw(format_args!(
+            "{}() is not yet implemented in bun:test",
+            bstr::BStr::new(name_utf8.slice())
+        )))
+    }
+
+    #[bun_jsc::host_fn]
+    fn js_bench_noop(_global_object: &JSGlobalObject, _callframe: &CallFrame) -> JsResult<JSValue> {
+        Ok(JSValue::UNDEFINED)
+    }
+
+    #[bun_jsc::host_fn]
+    fn js_is_mock_function(_global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        let [value] = callframe.arguments_as_array::<1>();
+        Ok(JSValue::from(JSMock__isMockFunction(value)))
+    }
+
+    #[bun_jsc::host_fn]
+    fn js_vi_mocked(_global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        // vi.mocked() is a TypeScript-level cast; at runtime it returns its argument.
+        Ok(callframe.arguments_as_array::<1>()[0])
+    }
+
+    #[bun_jsc::host_fn]
+    fn js_get_mocked_system_time(global_object: &JSGlobalObject, _callframe: &CallFrame) -> JsResult<JSValue> {
+        // NaN is `JSGlobalObject::overridenDateNow`'s "no override" sentinel.
+        let ms = JSMock__getOverridenDateNow(global_object);
+        if ms.is_nan() {
+            return Ok(JSValue::NULL);
+        }
+        Ok(JSValue::from_date_number(global_object, ms))
+    }
+
+    #[bun_jsc::host_fn]
+    fn js_get_real_system_time(_global_object: &JSGlobalObject, _callframe: &CallFrame) -> JsResult<JSValue> {
+        Ok(JSValue::js_number(JSMock__getCurrentUnixTimeMs()))
+    }
+
+    thread_local! {
+        // Stub registries for vi.stubEnv / vi.stubGlobal: the key bytes plus
+        // the original value. `None` = the property did not exist (or was
+        // undefined), so restore deletes it. Only the first stub of a key
+        // records an original, matching vitest.
+        static STUBBED_ENVS: RefCell<Vec<(Box<[u8]>, Option<jsc::Strong>)>> = const { RefCell::new(Vec::new()) };
+        static STUBBED_GLOBALS: RefCell<Vec<(Box<[u8]>, Option<jsc::Strong>)>> = const { RefCell::new(Vec::new()) };
+    }
+    type StubStore = std::thread::LocalKey<RefCell<Vec<(Box<[u8]>, Option<jsc::Strong>)>>>;
+
+    fn get_process_env(global_object: &JSGlobalObject) -> JsResult<JSValue> {
+        let global_this = global_object.to_js_value();
+        let Some(process) = global_this.get(global_object, "process")? else {
+            return Err(global_object.throw(format_args!("process is not available")));
+        };
+        let Some(env) = process.get(global_object, "env")? else {
+            return Err(global_object.throw(format_args!("process.env is not available")));
+        };
+        Ok(env)
+    }
+
+    fn stub_value(
+        global_object: &JSGlobalObject,
+        target: JSValue,
+        store: &'static StubStore,
+        key: JSValue,
+        value: JSValue,
+        signature: &str,
+    ) -> JsResult<()> {
+        if !key.is_string() {
+            return Err(global_object.throw(format_args!("{}() expects a string name", signature)));
+        }
+        let key_utf8 = key.to_utf8(global_object)?;
+        let key_bytes = key_utf8.slice();
+
+        let original = target.get(global_object, key_bytes)?;
+        store.with(|cell| {
+            let mut stubbed = cell.borrow_mut();
+            if !stubbed.iter().any(|(k, _)| &**k == key_bytes) {
+                stubbed.push((
+                    Box::<[u8]>::from(key_bytes),
+                    original.map(|v| jsc::Strong::create(v, global_object)),
+                ));
+            }
+        });
+
+        if value.is_undefined() {
+            target.delete_property(global_object, key_bytes)?;
+        } else {
+            target.put(global_object, key_bytes, value);
+        }
+        Ok(())
+    }
+
+    fn unstub_all(
+        global_object: &JSGlobalObject,
+        target: JSValue,
+        store: &'static StubStore,
+    ) -> JsResult<()> {
+        let stubbed = store.with(|cell| core::mem::take(&mut *cell.borrow_mut()));
+        for (key, original) in stubbed {
+            match original {
+                Some(strong) => target.put(global_object, &*key, strong.get()),
+                None => {
+                    target.delete_property(global_object, &*key)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[bun_jsc::host_fn]
+    fn js_stub_env(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        let [key, value] = callframe.arguments_as_array::<2>();
+        let env = get_process_env(global_object)?;
+        // process.env values are strings; coerce like an env assignment does.
+        let value = if value.is_undefined() {
+            value
+        } else {
+            let utf8 = value.to_utf8(global_object)?;
+            bun_string_jsc::create_utf8_for_js(global_object, utf8.slice())?
+        };
+        stub_value(global_object, env, &STUBBED_ENVS, key, value, "vi.stubEnv")?;
+        Ok(callframe.this())
+    }
+
+    #[bun_jsc::host_fn]
+    fn js_unstub_all_envs(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        let env = get_process_env(global_object)?;
+        unstub_all(global_object, env, &STUBBED_ENVS)?;
+        Ok(callframe.this())
+    }
+
+    #[bun_jsc::host_fn]
+    fn js_stub_global(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        let [key, value] = callframe.arguments_as_array::<2>();
+        stub_value(global_object, global_object.to_js_value(), &STUBBED_GLOBALS, key, value, "vi.stubGlobal")?;
+        Ok(callframe.this())
+    }
+
+    #[bun_jsc::host_fn]
+    fn js_unstub_all_globals(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        unstub_all(global_object, global_object.to_js_value(), &STUBBED_GLOBALS)?;
+        Ok(callframe.this())
+    }
+
     unsafe extern "C" {
         pub(crate) safe fn Bun__Jest__testModuleObject(global: &JSGlobalObject) -> JSValue;
+        safe fn JSMock__isMockFunction(value: JSValue) -> bool;
+        safe fn JSMock__getOverridenDateNow(global: &JSGlobalObject) -> f64;
+        safe fn JSMock__getCurrentUnixTimeMs() -> f64;
     }
     bun_jsc::jsc_abi_extern! {
         pub(crate) fn JSMock__jsMockFn(global: *mut JSGlobalObject, frame: *mut CallFrame) -> JSValue;

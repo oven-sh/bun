@@ -16,10 +16,14 @@ setDefaultTimeout(isASAN || isDebug ? 30_000 : 10_000);
 // GIT_CONFIG_GLOBAL must point at a real (empty) file: pointing at the
 // null device works on most platforms, but git on some Windows builds
 // rejects "NUL" with "unable to access 'NUL': Invalid argument".
+//
+// LC_ALL=C keeps git's messages in English: the error case below pins the
+// git stderr that `bun test --changed` relays.
 const emptyGitConfig = join(tmpdirSync(), "empty.gitconfig");
 writeFileSync(emptyGitConfig, "");
 const gitEnv = {
   ...bunEnv,
+  LC_ALL: "C",
   GIT_CONFIG_NOSYSTEM: "1",
   GIT_CONFIG_GLOBAL: emptyGitConfig,
   GIT_AUTHOR_NAME: "Test",

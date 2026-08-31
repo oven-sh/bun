@@ -32850,12 +32850,6 @@
     "musl": 30,
     "windows": 80
   },
-  "regression/issue/27465.test.ts": {
-    "default": 1710,
-    "asan": 3560,
-    "musl": 1250,
-    "windows": 0
-  },
   "regression/issue/27478.test.ts": {
     "default": 30,
     "asan": 210,

@@ -4024,6 +4024,7 @@ JSC::JSPromise* JSC__JSPromise__resolvedPromise(JSC::JSGlobalObject* globalObjec
         return nullptr;
     JSC::JSPromise* promise = JSC::JSPromise::resolvedPromise(globalObject, value);
     RETURN_IF_EXCEPTION(scope, nullptr);
+    ASSERT(promise);
     if (JSC::JSValue(promise) == value)
         return promise;
     // The caller observes the adopter; a `then` getter that threw already rejected it.

@@ -139,8 +139,8 @@ pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, B
         CG_OK => {}
         rc => return Err(map_err(rc)),
     }
-    // PERF: vec![0u8; n] zero-fills — profile if hot.
-    let mut out = vec![0u8; (w as usize) * (h as usize) * 4];
+    let n = (w as usize) * (h as usize) * 4;
+    let mut out: Vec<u8> = Vec::with_capacity(n);
     // Phase 2: render. The C side re-creates the CGImageSource (cheap — the
     // header parse is the only repeated work) so we don't have to thread an
     // opaque handle across the boundary.
@@ -158,6 +158,8 @@ pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, B
         CG_OK => {}
         rc => return Err(map_err(rc)),
     }
+    // SAFETY: the shim returned CG_OK only after writing all n bytes.
+    unsafe { out.set_len(n) };
     Ok(codecs::Decoded {
         rgba: out,
         width: w,

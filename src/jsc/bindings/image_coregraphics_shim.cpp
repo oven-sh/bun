@@ -4,17 +4,17 @@
 // prologues natively, and the FFI boundary is two extern-C entry points with
 // only scalar/pointer args.
 //
-// Decode converts the decoded pixels to RGBA via vImage rather than
-// CGBitmapContext+DrawImage: CGBitmapContext refuses non-premultiplied alpha,
-// so the old draw-then-unpremultiply path lost ±1 LSB on RGB wherever α<255 —
-// and worse, the default source-over blend composited the image *over*
-// whatever the caller's uninitialised buffer held. vImageConvert_AnyToAny
+// Decode renders to RGBA via vImage rather than CGBitmapContext+DrawImage:
+// CGBitmapContext refuses non-premultiplied alpha, so the old draw-then-
+// unpremultiply path lost ±1 LSB on RGB wherever α<255 — and worse, the
+// default source-over blend composited the image *over* whatever the caller's
+// uninitialised buffer held. vImageBuffer_InitWithCGImage
 // converts to a caller-chosen pixel format directly — including straight
-// alpha — so PNG round-trip stays byte-exact. The bitmap-context path stays
-// only as a fallback for layouts vImage cannot convert. Encode likewise wraps
-// the straight-alpha buffer in a CGImage via CGImageCreate(kCGImageAlphaLast)
-// instead of bouncing through a premultiplied bitmap context, dropping the
-// per-pixel premultiply scratch copy.
+// alpha — so PNG round-trip stays byte-exact and we drop the manual unpremul
+// loop; the bitmap context survives only as a fallback for layouts vImage
+// rejects. Encode likewise wraps the straight-alpha buffer in a CGImage via
+// CGImageCreate(kCGImageAlphaLast) instead of bouncing through a premultiplied
+// bitmap context, dropping the per-pixel premultiply scratch copy.
 //
 // Symbol resolution stays lazy (dlsym), so the binary still has no
 // CoreGraphics/ImageIO/Accelerate load command.
@@ -82,13 +82,7 @@ struct Syms {
     CFRef (*CGImageCreate)(size_t, size_t, size_t, size_t, size_t, CFRef, uint32_t, CFRef, const double*, bool, int32_t);
     size_t (*CGImageGetWidth)(CFRef);
     size_t (*CGImageGetHeight)(CFRef);
-    size_t (*CGImageGetBitsPerComponent)(CFRef);
-    size_t (*CGImageGetBitsPerPixel)(CFRef);
-    size_t (*CGImageGetBytesPerRow)(CFRef);
-    CFRef (*CGImageGetColorSpace)(CFRef);
-    uint32_t (*CGImageGetBitmapInfo)(CFRef);
-    const double* (*CGImageGetDecode)(CFRef);
-    int32_t (*CGImageGetRenderingIntent)(CFRef);
+    uint32_t (*CGImageGetAlphaInfo)(CFRef);
     CFRef (*CGImageGetDataProvider)(CFRef);
     void (*CGImageRelease)(CFRef);
     CFRef (*CGDataProviderCreateWithData)(void*, const void*, size_t, void*);
@@ -104,9 +98,7 @@ struct Syms {
     void (*CGImageDestinationAddImage)(CFRef, CFRef, CFRef);
     bool (*CGImageDestinationFinalize)(CFRef);
     // Accelerate / vImage
-    CFRef (*vImageConverter_CreateWithCGImageFormat)(const VFmt*, const VFmt*, const double*, uint32_t, long*);
-    long (*vImageConvert_AnyToAny)(CFRef, const VBuf*, VBuf*, void*, uint32_t);
-    void (*vImageConverter_Release)(CFRef);
+    long (*vImageBuffer_InitWithCGImage)(VBuf*, VFmt*, const double*, CFRef, uint32_t);
     long (*vImageUnpremultiplyData_RGBA8888)(const VBuf*, const VBuf*, uint32_t);
     long (*vImageScale_ARGB8888)(const VBuf*, const VBuf*, void*, uint32_t);
     long (*vImageRotate90_ARGB8888)(const VBuf*, const VBuf*, uint8_t, const uint8_t*, uint32_t);
@@ -143,13 +135,7 @@ constexpr struct {
     SYM(CGImageCreate),
     SYM(CGImageGetWidth),
     SYM(CGImageGetHeight),
-    SYM(CGImageGetBitsPerComponent),
-    SYM(CGImageGetBitsPerPixel),
-    SYM(CGImageGetBytesPerRow),
-    SYM(CGImageGetColorSpace),
-    SYM(CGImageGetBitmapInfo),
-    SYM(CGImageGetDecode),
-    SYM(CGImageGetRenderingIntent),
+    SYM(CGImageGetAlphaInfo),
     SYM(CGImageGetDataProvider),
     SYM(CGImageRelease),
     SYM(CGDataProviderCreateWithData),
@@ -163,9 +149,7 @@ constexpr struct {
     SYM(CGImageDestinationCreateWithData),
     SYM(CGImageDestinationAddImage),
     SYM(CGImageDestinationFinalize),
-    SYM(vImageConverter_CreateWithCGImageFormat),
-    SYM(vImageConvert_AnyToAny),
-    SYM(vImageConverter_Release),
+    SYM(vImageBuffer_InitWithCGImage),
     SYM(vImageUnpremultiplyData_RGBA8888),
     SYM(vImageScale_ARGB8888),
     SYM(vImageRotate90_ARGB8888),
@@ -212,6 +196,9 @@ const Syms* load()
 // anonymous-namespace shadow is ambiguous at the use site.
 constexpr uint32_t kBunCGImageAlphaLast = 3; // straight RGBA, A in byte 3
 constexpr uint32_t kBunCGImageAlphaPremultipliedLast = 1;
+constexpr uint32_t kBunCGImageAlphaNone = 0;
+constexpr uint32_t kBunCGImageAlphaNoneSkipLast = 5;
+constexpr uint32_t kBunCGImageAlphaNoneSkipFirst = 6;
 constexpr uint32_t kBunCFStringEncodingUTF8 = 0x08000100;
 constexpr int kBunCFNumberDoubleType = 13;
 // vImage_Flags — values copied verbatim from <Accelerate/vImage_Types.h>;
@@ -220,6 +207,7 @@ constexpr uint32_t kBunVImageEdgeExtend = 8;
 constexpr uint32_t kBunVImageDoNotTile = 16;
 // (kvImageHighQualityResampling = 32 — unused; default kernel is already
 // Lanczos-3, which is what we route here.)
+constexpr uint32_t kBunVImageNoAllocate = 512;
 
 // RAII pool so every early-return drains. Declared first in each entry point —
 // the framework calls beneath autorelease into it, and the WorkPool thread has
@@ -305,18 +293,17 @@ int32_t bun_coregraphics_decode(const uint8_t* bytes, size_t len, uint64_t max_p
     if (!data) return CG_DECODE_FAILED;
     struct R {
         const Syms* s;
-        CFRef d, src, img, px, cs, conv, ctx;
+        CFRef d, src, img, cs, ctx, px;
         ~R()
         {
-            if (ctx) s->CGContextRelease(ctx);
-            if (conv) s->vImageConverter_Release(conv);
-            if (cs) s->CGColorSpaceRelease(cs);
             if (px) s->CFRelease(px);
+            if (ctx) s->CGContextRelease(ctx);
+            if (cs) s->CGColorSpaceRelease(cs);
             if (img) s->CGImageRelease(img);
             if (src) s->CFRelease(src);
             if (d) s->CFRelease(d);
         }
-    } r { s, data, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr };
+    } r { s, data, nullptr, nullptr, nullptr, nullptr, nullptr };
 
     r.src = s->CGImageSourceCreateWithData(data, nullptr);
     if (!r.src) return CG_DECODE_FAILED;
@@ -338,41 +325,36 @@ int32_t bun_coregraphics_decode(const uint8_t* bytes, size_t len, uint64_t max_p
     // *out_w × *out_h from phase 1; refuse to draw past it.
     if (w != *out_w || h != *out_h) return CG_DECODE_FAILED;
 
-    // ImageIO decodes lazily: a CGImage whose codec (eg HEVC) fails draws as zeros, and only CopyData reports it.
-    r.px = s->CGDataProviderCopyData(s->CGImageGetDataProvider(r.img));
-    if (!r.px) return CG_DECODE_FAILED;
-    size_t bpp = s->CGImageGetBitsPerPixel(r.img);
-    size_t row = s->CGImageGetBytesPerRow(r.img);
-    if (bpp == 0 || row < (w * bpp + 7) / 8 || static_cast<size_t>(s->CFDataGetLength(r.px)) < row * (h - 1) + (w * bpp + 7) / 8)
-        return CG_DECODE_FAILED;
-
     r.cs = s->CGColorSpaceCreateDeviceRGB();
     if (!r.cs) return CG_UNAVAILABLE;
-    VBuf dst { out, h, w, w * 4 };
-    VFmt dstFmt { 8, 32, r.cs, kBunCGImageAlphaLast, 0, nullptr, 0 };
-    VFmt srcFmt {
-        static_cast<uint32_t>(s->CGImageGetBitsPerComponent(r.img)),
-        static_cast<uint32_t>(bpp),
-        s->CGImageGetColorSpace(r.img),
-        s->CGImageGetBitmapInfo(r.img),
-        0,
-        s->CGImageGetDecode(r.img),
-        s->CGImageGetRenderingIntent(r.img),
-    };
-    long err = 0;
-    // vImage accepts packed 10-bit layouts (kCGImagePixelFormatMask bits, 10-bit HEVC) but converts them wrong.
-    bool packed = (srcFmt.bitmapInfo & 0xF0000) != 0 || (srcFmt.bitsPerComponent != 8 && srcFmt.bitsPerComponent != 16);
-    if (!packed)
-        r.conv = s->vImageConverter_CreateWithCGImageFormat(&srcFmt, &dstFmt, nullptr, kBunVImageDoNotTile, &err);
-    if (r.conv) {
-        VBuf src { const_cast<uint8_t*>(s->CFDataGetBytePtr(r.px)), h, w, row };
-        if (s->vImageConvert_AnyToAny(r.conv, &src, &dst, nullptr, kBunVImageDoNotTile) == 0) return CG_OK;
+    // vImage converts directly to the requested format — including
+    // non-premultiplied alpha, which CGBitmapContext refuses — so the result
+    // is straight RGBA with no premul→unpremul quantisation. kvImageNoAllocate
+    // makes it write into the caller's bun.default_allocator buffer.
+    VBuf buf { out, h, w, w * 4 };
+    VFmt fmt { 8, 32, r.cs, kBunCGImageAlphaLast, 0, nullptr, 0 };
+    auto rc = s->vImageBuffer_InitWithCGImage(&buf, &fmt, nullptr, r.img, kBunVImageNoAllocate);
+    if (rc != 0 || buf.data != out) {
+        // vImage rejects the packed 10-bit layout ImageIO returns for 10-bit HEVC; CoreGraphics still draws it.
+        std::memset(out, 0, w * h * 4);
+        r.ctx = s->CGBitmapContextCreate(out, w, h, 8, w * 4, r.cs, kBunCGImageAlphaPremultipliedLast);
+        if (!r.ctx) return CG_DECODE_FAILED;
+        s->CGContextDrawImage(r.ctx, BunRect { 0, 0, static_cast<double>(w), static_cast<double>(h) }, r.img);
+        if (s->vImageUnpremultiplyData_RGBA8888(&buf, &buf, kBunVImageDoNotTile) != 0) return CG_DECODE_FAILED;
     }
-    r.ctx = s->CGBitmapContextCreate(out, w, h, 8, w * 4, r.cs, kBunCGImageAlphaPremultipliedLast);
-    if (!r.ctx) return CG_DECODE_FAILED;
-    s->CGContextDrawImage(r.ctx, BunRect { 0, 0, static_cast<double>(w), static_cast<double>(h) }, r.img);
-    if (s->vImageUnpremultiplyData_RGBA8888(&dst, &dst, kBunVImageDoNotTile) != 0) return CG_DECODE_FAILED;
-    return CG_OK;
+    // ImageIO decodes lazily and a codec failure (eg HEVC) draws every byte as 0 without an error.
+    uint32_t alpha = s->CGImageGetAlphaInfo(r.img);
+    bool opaque = alpha == kBunCGImageAlphaNone || alpha == kBunCGImageAlphaNoneSkipLast || alpha == kBunCGImageAlphaNoneSkipFirst;
+    uint8_t all = 0xFF, any = 0;
+    for (size_t i = 3, n = w * h * 4; i < n; i += 4) {
+        all &= out[i];
+        any |= out[i];
+    }
+    if (opaque) return all == 0xFF ? CG_OK : CG_DECODE_FAILED;
+    if (any) return CG_OK;
+    // Fully transparent output from an alpha source: only the provider copy tells "all clear" from "failed".
+    r.px = s->CGDataProviderCopyData(s->CGImageGetDataProvider(r.img));
+    return r.px ? CG_OK : CG_DECODE_FAILED;
 }
 
 // Encode RGBA8 → format. format: 0=jpeg, 1=png, 2=webp, 3=heic, 4=avif.

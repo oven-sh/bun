@@ -649,10 +649,11 @@ impl InitCommand {
             true
         };
 
-        // SAFETY: `fields.object` was set above either from the parsed JSON
-        // (arena-owned, lives for the duration of `exec`) or from a freshly
-        // allocated `Expr.init` from the AST store (also lives until process exit).
-        let object = unsafe { &mut *fields.object.unwrap().as_ptr() };
+        // `fields.object` was set above either from the parsed JSON (arena-owned,
+        // lives for the duration of `exec`) or from a freshly allocated
+        // `Expr.init` from the AST store (also lives until process exit).
+        let mut object_ref = fields.object.unwrap();
+        let object: &mut bun_ast::E::Object = &mut object_ref;
 
         if !minimal {
             if !fields.name.is_empty() {
@@ -1377,8 +1378,9 @@ impl Template {
             head: bun_ast::Expr::init(bun_ast::E::String::init(b"scripts"), bun_ast::Loc::EMPTY),
             next: core::ptr::null_mut(),
         });
-        // SAFETY: object is arena-allocated and live for the command duration.
-        let object = unsafe { &mut *fields.object.unwrap().as_ptr() };
+        // Arena-allocated and live for the command duration.
+        let mut object_ref = fields.object.unwrap();
+        let object: &mut bun_ast::E::Object = &mut object_ref;
         let mut scripts_json = object.get_or_put_object(key, bump).map_err(|e| match e {
             bun_ast::E::SetError::OutOfMemory => Error::Alloc(bun_alloc::AllocError),
             bun_ast::E::SetError::Clobber => Error::Unexpected,

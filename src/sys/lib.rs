@@ -3087,6 +3087,24 @@ mod posix_impl {
     // (Darwin defines MSG_NOSIGNAL=0x80000).
     #[cfg(unix)]
     pub(crate) const SEND_FLAGS_NONBLOCK: i32 = libc::MSG_DONTWAIT | libc::MSG_NOSIGNAL;
+    /// `setsockopt(2)` with an `int` option value.
+    pub fn setsockopt_int(fd: Fd, level: i32, optname: i32, value: i32) -> Maybe<()> {
+        // SAFETY: `value` lives for the call and `optlen` is its exact size.
+        let rc = unsafe {
+            libc::setsockopt(
+                fd.native(),
+                level,
+                optname,
+                core::ptr::from_ref(&value).cast(),
+                core::mem::size_of::<libc::c_int>() as libc::socklen_t,
+            )
+        };
+        if rc != 0 {
+            return Err(Error::from_code_int(last_errno(), Tag::setsockopt));
+        }
+        Ok(())
+    }
+
     /// `fcntl(F_GETFD)` then OR in `FD_CLOEXEC`.
     pub fn set_close_on_exec(fd: Fd) -> Maybe<()> {
         let fl = fcntl(fd, libc::F_GETFD, 0)?;
@@ -6203,6 +6221,9 @@ pub struct WindowsOpenDirOptions {
     pub iterable: bool,
     pub no_follow: bool,
     pub can_rename_or_delete: bool,
+    /// Open without `FILE_SHARE_DELETE`, so others cannot rename/delete the
+    /// directory while this handle is open.
+    pub deny_delete: bool,
     pub op: WindowsOpenDirOp,
 }
 #[cfg(windows)]
@@ -6724,7 +6745,11 @@ pub(crate) fn open_dir_at_windows_nt_path(
             &mut io,
             core::ptr::null_mut(),
             0,
-            FILE_SHARE,
+            if options.deny_delete {
+                w::FILE_SHARE_READ | w::FILE_SHARE_WRITE
+            } else {
+                FILE_SHARE
+            },
             match options.op {
                 WindowsOpenDirOp::OnlyOpen => w::FILE_OPEN,
                 WindowsOpenDirOp::OnlyCreate => w::FILE_CREATE,
@@ -7747,6 +7772,73 @@ pub(crate) fn make_path_w(dir: Fd, sub_path: &[u16]) -> Maybe<()> {
 // `poll`, `dl_iterate_phdr` etc. We re-export the errno stub
 // and layer the libc bits on top so `bun_sys::posix::*` is the single import.
 // ──────────────────────────────────────────────────────────────────────────
+/// Turn Ctrl+C (SIGINT / `CTRL_C_EVENT`) into a flag store, for CLI loops
+/// that want to wind down their children before exiting.
+pub mod ctrl_c {
+    use core::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
+
+    static FLAG: AtomicPtr<AtomicBool> = AtomicPtr::new(core::ptr::null_mut());
+
+    fn store_flag() {
+        let flag = FLAG.load(Ordering::SeqCst);
+        if !flag.is_null() {
+            // SAFETY: only ever set from a `&'static AtomicBool` in `set_flag_once`.
+            unsafe { (*flag).store(true, Ordering::SeqCst) };
+        }
+    }
+
+    #[cfg(unix)]
+    extern "C" fn posix_handler(
+        _sig: i32,
+        _info: *const super::posix::siginfo_t,
+        _: *const core::ffi::c_void,
+    ) {
+        store_flag();
+    }
+
+    #[cfg(windows)]
+    extern "system" fn windows_handler(ctrl_type: super::windows::DWORD) -> super::windows::BOOL {
+        if ctrl_type == super::windows::CTRL_C_EVENT {
+            store_flag();
+            return super::windows::TRUE;
+        }
+        super::windows::FALSE
+    }
+
+    /// From now on a Ctrl+C stores `true` into `flag` instead of killing the
+    /// process. POSIX: one-shot (`SA_RESETHAND`), so a second Ctrl+C takes the
+    /// default action. Returns `false` if the handler could not be installed.
+    pub fn set_flag_once(flag: &'static AtomicBool) -> bool {
+        FLAG.store(core::ptr::from_ref(flag).cast_mut(), Ordering::SeqCst);
+        #[cfg(unix)]
+        {
+            // SAFETY: all-zero is a valid `sigaction`; the handler only performs
+            // an atomic store (async-signal-safe); pointers are to stack locals.
+            unsafe {
+                let mut action: super::posix::Sigaction = bun_core::ffi::zeroed();
+                action.sa_sigaction = posix_handler as *const () as usize;
+                libc::sigemptyset(&raw mut action.sa_mask);
+                action.sa_flags = (libc::SA_SIGINFO | libc::SA_RESTART | libc::SA_RESETHAND) as _;
+                super::posix::sigaction(libc::SIGINT, &raw const action, core::ptr::null_mut()) == 0
+            }
+        }
+        #[cfg(windows)]
+        {
+            super::windows::SetConsoleCtrlHandler(Some(windows_handler), super::windows::TRUE) != 0
+        }
+    }
+
+    /// Give Ctrl+C back its default action. Only Windows needs this; the POSIX
+    /// handler resets itself after one delivery.
+    pub fn restore_default() {
+        #[cfg(windows)]
+        {
+            let _ =
+                super::windows::SetConsoleCtrlHandler(Some(windows_handler), super::windows::FALSE);
+        }
+    }
+}
+
 pub mod posix {
     pub use bun_errno::posix::*;
     use core::ffi::c_int;

@@ -3240,23 +3240,19 @@ static COMPRESSED_DATA: &[u8] = &[
     202, 29, 34, 136, 103, 39, 79, 14, 221, 51, 130, 152, 229, 68,
 ];
 
-struct Table {
-    _decompressed: Vec<u8>,
-    packages: Vec<&'static [u8]>,
-}
+static DATA: Once<Vec<u8>> = <Once<Vec<u8>>>::new();
+static TABLE: Once<Vec<&'static [u8]>> = <Once<Vec<&'static [u8]>>>::new();
 
-static TABLE: Once<Table> = <Once<Table>>::new();
-
-fn build_table() -> Table {
+fn decompress() -> Vec<u8> {
     let decompressed = bun_zstd::decompress_alloc(COMPRESSED_DATA)
         .expect("add_completions: zstd decompress failed");
     debug_assert_eq!(decompressed.len(), UNCOMPRESSED_SIZE);
+    decompressed
+}
 
-    // SAFETY: the decompressed Vec is moved into TABLE (a process-lifetime
-    // Once) and never dropped or reallocated, so its storage is valid for
-    // 'static. The package slices below borrow this storage.
-    let data: &'static [u8] =
-        unsafe { core::slice::from_raw_parts(decompressed.as_ptr(), decompressed.len()) };
+fn build_table() -> Vec<&'static [u8]> {
+    // `DATA` is a process-lifetime `Once`, so its storage is `'static`.
+    let data: &'static [u8] = DATA.get_or_init(decompress);
 
     let total = u32::from_le_bytes([data[0], data[1], data[2], data[3]]) as usize;
     let mut packages: Vec<&'static [u8]> = Vec::with_capacity(total);
@@ -3268,10 +3264,7 @@ fn build_table() -> Table {
         pos += len;
     }
 
-    Table {
-        _decompressed: decompressed,
-        packages,
-    }
+    packages
 }
 
 /// Decompress the package-name table. Idempotent.
@@ -3286,5 +3279,5 @@ pub(crate) fn get_packages(letter: FirstLetter) -> &'static [&'static [u8]] {
     if length == 0 {
         return &[];
     }
-    &table.packages[offset..offset + length]
+    &table[offset..offset + length]
 }

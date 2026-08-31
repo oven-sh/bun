@@ -1104,7 +1104,7 @@ impl Bunfig {
         // bunfig load; single-threaded CLI startup invariant. The raw pointer
         // is copied out so the resulting `&mut Log` does not borrow `ctx`
         // (Parser later needs `&mut ctx` alongside `&mut log`).
-        let log_ptr: *mut bun_ast::Log = ctx.log;
+        let log_ptr: *mut bun_ast::Log = ctx.log_ptr();
         debug_assert!(!log_ptr.is_null());
         // SAFETY: `log_ptr` is non-null (asserted above) and points to the Log
         // owned by single-threaded CLI startup; Parser only touches the log via

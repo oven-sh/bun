@@ -543,6 +543,68 @@ pub use bun_windows_sys::externs::GetHostNameW;
 /// https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-gettemppathw
 pub use bun_windows_sys::externs::GetTempPathW;
 
+/// `GetTempPathW` into `buf`: the number of WCHARs written (excluding the
+/// NUL), or 0 on failure / if `buf` is too small.
+pub fn get_temp_path_w(buf: &mut [u16]) -> usize {
+    // SAFETY: `buf` is writable for `buf.len()` WCHARs, the capacity passed.
+    let cap = DWORD::try_from(buf.len()).unwrap_or(DWORD::MAX);
+    let len = unsafe { GetTempPathW(cap, buf.as_mut_ptr()) } as usize;
+    // On a too-small buffer the return value is the required size.
+    if len > buf.len() { 0 } else { len }
+}
+
+/// `GetCurrentDirectoryW` into `buf`: the number of WCHARs written (excluding
+/// the NUL), or 0 on failure / if `buf` is too small.
+pub fn get_current_directory_w(buf: &mut [u16]) -> usize {
+    // SAFETY: `buf` is writable for `buf.len()` WCHARs, the capacity passed.
+    let cap = DWORD::try_from(buf.len()).unwrap_or(DWORD::MAX);
+    let len = unsafe { kernel32::GetCurrentDirectoryW(cap, buf.as_mut_ptr()) } as usize;
+    // On a too-small buffer the return value is the required size (incl. NUL).
+    if len > buf.len() { 0 } else { len }
+}
+
+/// `NtQueryInformationFile(FileBasicInformation)`: timestamps + attributes of
+/// an open handle.
+pub fn query_file_basic_information(handle: HANDLE) -> Result<FILE_BASIC_INFORMATION, NTSTATUS> {
+    let mut io_status_block: IO_STATUS_BLOCK = bun_core::ffi::zeroed();
+    let mut info: FILE_BASIC_INFORMATION = bun_core::ffi::zeroed();
+    // SAFETY: both out-pointers are live stack locals sized for the class
+    // requested; an invalid handle makes the call fail rather than misbehave.
+    let rc = unsafe {
+        ntdll::NtQueryInformationFile(
+            handle,
+            &mut io_status_block,
+            core::ptr::from_mut(&mut info).cast(),
+            size_of::<FILE_BASIC_INFORMATION>() as u32,
+            FILE_INFORMATION_CLASS::FileBasicInformation,
+        )
+    };
+    if rc == NTSTATUS::SUCCESS {
+        Ok(info)
+    } else {
+        Err(rc)
+    }
+}
+
+/// `CopyFileW`; `false` on failure (see `GetLastError`).
+pub fn copy_file_w(from: &bun_core::WStr, to: &bun_core::WStr, fail_if_exists: bool) -> bool {
+    // SAFETY: `WStr` guarantees NUL-terminated, readable wide strings.
+    unsafe { CopyFileW(from.as_ptr(), to.as_ptr(), BOOL::from(fail_if_exists)) != FALSE }
+}
+
+/// `CreateDirectoryExW` with default security; `false` on failure (see `GetLastError`).
+pub fn create_directory_ex_w(template: &bun_core::WStr, new_directory: &bun_core::WStr) -> bool {
+    // SAFETY: `WStr` guarantees NUL-terminated, readable wide strings; a null
+    // SECURITY_ATTRIBUTES selects the default descriptor.
+    unsafe {
+        CreateDirectoryExW(
+            template.as_ptr(),
+            new_directory.as_ptr(),
+            core::ptr::null_mut(),
+        ) != FALSE
+    }
+}
+
 /// `GetCurrentProcessId` (processthreadsapi.h) — current PID. Safe wrapper:
 /// the underlying call has no preconditions and never fails.
 #[inline]

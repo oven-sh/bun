@@ -91,6 +91,22 @@ pub trait BufferedReaderParent {
     }
 }
 
+impl BufferedReader {
+    /// [`read`](Self::read) on a reader its parent keeps in a [`JsCell`]
+    /// (for parents that embed more than one reader). The parent's callbacks
+    /// may touch the cell again; `read` holds no reference across them.
+    ///
+    /// [`JsCell`]: bun_ptr::JsCell
+    #[inline]
+    pub fn read_cell(reader: &bun_ptr::JsCell<BufferedReader>) {
+        // SAFETY: the caller's borrow obliges it to keep the cell (and the
+        // parent embedding it) allocated for the whole call; `as_ptr` carries
+        // the cell's interior-mutable provenance and `read` holds no reference
+        // across the parent callbacks.
+        unsafe { Self::read(reader.as_ptr()) }
+    }
+}
+
 impl BufferedReaderVTable {
     fn init<T: BufferedReaderParent>() -> BufferedReaderVTable {
         BufferedReaderVTable {

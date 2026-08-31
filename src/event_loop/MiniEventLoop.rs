@@ -99,6 +99,13 @@ pub fn init_global(
     env: Option<&'static mut DotEnvLoader>,
     cwd: Option<&[u8]>,
 ) -> *mut MiniEventLoop {
+    init_global_with(env.map(bun_ptr::BackRef::new_mut), cwd)
+}
+
+fn init_global_with(
+    env: Option<bun_ptr::BackRef<DotEnvLoader, bun_ptr::Mut>>,
+    cwd: Option<&[u8]>,
+) -> *mut MiniEventLoop {
     if GLOBAL_INITIALIZED.with(|g| g.get()) {
         // Already initialized: hand back the stored raw pointer. No `&mut` is
         // materialized here (see fn doc — avoids aliased `&'static mut` UB).
@@ -132,7 +139,7 @@ pub fn init_global(
 
     // The process-global loader is stored as `AtomicPtr<Loader>`.
     global.env = env
-        .map(NonNull::from)
+        .map(Into::into)
         .or_else(|| NonNull::new(dotenv::INSTANCE.load(core::sync::atomic::Ordering::Acquire)));
     if global.env.is_none() {
         // Thread-lifetime singleton.
@@ -163,6 +170,87 @@ pub fn init_global(
     GLOBAL.with(|g| g.set(global_ptr));
     GLOBAL_INITIALIZED.with(|g| g.set(true));
     global_ptr
+}
+
+/// This thread's [`MiniEventLoop`] singleton (see [`init_global`]): allocated
+/// once per thread and never freed, so the handle is `Copy` and every method
+/// takes its own call-scoped borrow of the loop — the same contract
+/// `EventLoopHandle::Mini` dispatch runs under (`AnyEventLoop::mini_mut`).
+/// `!Send`: the loop belongs to the thread that created it.
+#[derive(Clone, Copy)]
+pub struct GlobalMiniEventLoop(bun_ptr::BackRef<MiniEventLoop, bun_ptr::Mut>);
+
+impl GlobalMiniEventLoop {
+    /// [`init_global`]: create the thread's loop on first call, return it after.
+    /// On that first call `env` becomes the loop's loader (what the shell and
+    /// spawned children snapshot, see `EventLoopHandle::env`).
+    ///
+    /// Holder obligation: the `BackRef`'s loader must outlive the thread's
+    /// loop, i.e. be one of the process-lifetime singletons
+    /// (`dotenv::INSTANCE`, the package manager's, a CLI-arena `Transpiler`'s).
+    pub fn init(
+        env: Option<bun_ptr::BackRef<DotEnvLoader, bun_ptr::Mut>>,
+        cwd: Option<&[u8]>,
+    ) -> Self {
+        let ptr = init_global_with(env, cwd);
+        // SAFETY: `init_global` returns the live thread-lifetime singleton
+        // (heap-allocated once, never freed), with root provenance.
+        Self(unsafe { bun_ptr::BackRef::from_raw_mut(ptr) })
+    }
+
+    #[inline]
+    fn with<R>(self, f: impl FnOnce(&mut MiniEventLoop) -> R) -> R {
+        let mut r = self.0;
+        // SAFETY: thread-lifetime singleton on its owning thread (`!Send`);
+        // the borrow lasts for one method call, exactly as
+        // `AnyEventLoop::mini_mut` does for `EventLoopHandle::Mini` dispatch.
+        f(unsafe { r.get_mut() })
+    }
+
+    #[inline]
+    pub fn handle(self) -> EventLoopHandle {
+        EventLoopHandle::Mini(self.0)
+    }
+
+    #[inline]
+    pub fn as_ptr(self) -> *mut MiniEventLoop {
+        self.0.as_ptr()
+    }
+
+    /// The C-owned uws loop this event loop wraps (see [`MiniEventLoop::loop_ptr`]).
+    #[inline]
+    pub fn loop_ptr(self) -> *mut UwsLoop {
+        // SAFETY: the thread-lifetime singleton pointer (non-null, never freed);
+        // no `&`/`&mut` is formed, so this may be called from inside `tick_once`.
+        unsafe { (*self.as_ptr()).loop_ }
+    }
+
+    #[inline]
+    pub fn event_loop_ctx(self) -> bun_io::EventLoopCtx {
+        // SAFETY: the thread-lifetime singleton pointer (non-null, never freed);
+        // no `&mut` is formed, so this may be called from inside `tick_once`.
+        unsafe { bun_io::EventLoopCtx::new(bun_io::EventLoopCtxKind::Mini, self.as_ptr()) }
+    }
+
+    pub fn set_top_level_dir(self, dir: &[u8]) {
+        self.with(|mini| mini.top_level_dir = Box::<[u8]>::from(dir));
+    }
+
+    /// See [`MiniEventLoop::tick_once`]; `context` is handed to the queued tasks.
+    #[inline]
+    pub fn tick_once(self, context: *mut c_void) {
+        self.with(|mini| mini.tick_once(context))
+    }
+
+    /// See [`MiniEventLoop::tick`].
+    pub fn tick<F>(self, context: *mut c_void, is_done: F)
+    where
+        F: Fn(*mut c_void) -> bool,
+    {
+        while !is_done(context) {
+            self.tick_once(context);
+        }
+    }
 }
 
 impl MiniEventLoop {

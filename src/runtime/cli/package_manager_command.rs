@@ -118,21 +118,10 @@ impl PackageManagerCommand {
         };
 
         let log_level = pm.options.log_level;
-        // Reshaped for borrowck — `pm.lockfile.load_from_bytes(pm, …)`
-        // is a self-referential split borrow. Derive both halves through `pm`
-        // (not the raw `pm_ptr`) so the outer borrow stays on the stack.
-        let pm_raw: *mut PackageManager = pm;
-        // SAFETY: `pm.lockfile` is `Box<Lockfile>` whose pointee lives in a
-        // separate heap allocation; `&mut Lockfile` and `&mut PackageManager`
-        // cannot alias. `load_from_bytes` reads `manager.options`/`manager.log`
-        // only and never re-projects `manager.lockfile`.
-        let load_lockfile = unsafe {
-            let lockfile: *mut Lockfile = &raw mut *(*pm_raw).lockfile;
-            let log: *mut bun_ast::Log = (*pm_raw).log;
-            (*lockfile).load_from_bytes(Some(&mut *pm_raw), bytes, &mut *log)
-        };
-
-        Self::handle_load_lockfile_errors_for(&load_lockfile, log_level, "hash");
+        {
+            let load_lockfile = pm.load_lockfile_from_bytes(bytes);
+            Self::handle_load_lockfile_errors_for(&load_lockfile, log_level, "hash");
+        }
 
         Output::flush();
         Output::disable_buffering();
@@ -284,11 +273,6 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             }
         };
 
-        // Reshaped for borrowck — `pm: &mut PackageManager`;
-        // several call sites need `pm` and `pm.lockfile` simultaneously. Hold a
-        // raw pointer for those re-entry points.
-        let pm_ptr: *mut PackageManager = pm;
-
         let mut subcommand: &[u8] = if is_direct_whoami {
             b"whoami"
         } else {
@@ -396,14 +380,12 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             return Ok(());
         } else if strings::eql_comptime(subcommand, b"hash") {
             let log_level = pm.options.log_level;
-            let load_lockfile = pm.load_lockfile_from_cwd::<true>();
-            Self::handle_load_lockfile_errors_for(&load_lockfile, log_level, "hash");
-
-            // SAFETY: pm_ptr is the unique owner; lockfile borrow released above.
-            let pm = unsafe { &mut *pm_ptr };
-            let _ = pm
-                .lockfile
-                .has_meta_hash_changed(false, pm.lockfile.packages.len())?;
+            {
+                let load_lockfile = pm.load_lockfile_from_cwd::<true>();
+                Self::handle_load_lockfile_errors_for(&load_lockfile, log_level, "hash");
+            }
+            let packages_len = pm.lockfile.packages.len();
+            let _ = pm.lockfile.has_meta_hash_changed(false, packages_len)?;
 
             Output::flush();
             Output::disable_buffering();
@@ -412,8 +394,10 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"hash-print") {
             let log_level = pm.options.log_level;
-            let load_lockfile = pm.load_lockfile_from_cwd::<true>();
-            Self::handle_load_lockfile_errors_for(&load_lockfile, log_level, "hash");
+            {
+                let load_lockfile = pm.load_lockfile_from_cwd::<true>();
+                Self::handle_load_lockfile_errors_for(&load_lockfile, log_level, "hash");
+            }
 
             Output::flush();
             Output::disable_buffering();
@@ -422,14 +406,12 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"hash-string") {
             let log_level = pm.options.log_level;
-            let load_lockfile = pm.load_lockfile_from_cwd::<true>();
-            Self::handle_load_lockfile_errors_for(&load_lockfile, log_level, "hash");
-
-            // SAFETY: pm_ptr is the unique owner; lockfile borrow released above.
-            let pm = unsafe { &mut *pm_ptr };
-            let _ = pm
-                .lockfile
-                .has_meta_hash_changed(true, pm.lockfile.packages.len())?;
+            {
+                let load_lockfile = pm.load_lockfile_from_cwd::<true>();
+                Self::handle_load_lockfile_errors_for(&load_lockfile, log_level, "hash");
+            }
+            let packages_len = pm.lockfile.packages.len();
+            let _ = pm.lockfile.has_meta_hash_changed(true, packages_len)?;
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"cache") {
             if pm.options.positionals.len() > 1
@@ -489,9 +471,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                     let mut prefix: Vec<u8> = Vec::new();
                     #[cfg(unix)]
                     {
-                        // SAFETY: getuid(2) is always-successful with no preconditions.
-                        write!(&mut prefix, "bunx-{}-", unsafe { libc::getuid() })
-                            .expect("unreachable");
+                        write!(&mut prefix, "bunx-{}-", bun_sys::c::getuid()).expect("unreachable");
                     }
                     #[cfg(not(unix))]
                     {
@@ -716,47 +696,18 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                 }
             }
             let log_level = pm.options.log_level;
-            // Reshaped for borrowck —
-            // `detect_and_load_other_lockfile(&pm.lockfile, .cwd(), pm, ctx.log)`
-            // is a self-referential split borrow. Derive both halves through
-            // `pm` (not the raw `pm_ptr`) so the outer borrow stays on the
-            // Stacked-Borrows stack.
-            let pm_raw: *mut PackageManager = pm;
-            // SAFETY: `pm.lockfile` is `Box<Lockfile>` whose pointee lives in a
-            // separate heap allocation; `&mut Lockfile` and `&mut PackageManager`
-            // cannot alias. `detect_and_load_other_lockfile` reads
-            // `manager.options`/`manager.log` only and never re-projects
-            // `manager.lockfile`.
-            let mut load_lockfile = unsafe {
-                let lockfile: *mut Lockfile = &raw mut *(*pm_raw).lockfile;
-                let log: *mut bun_ast::Log = (*pm_raw).log;
-                migration::detect_and_load_other_lockfile(
-                    &mut *lockfile,
-                    Fd::cwd(),
-                    &mut *pm_raw,
-                    &mut *log,
-                )
+            let load_meta = {
+                let load_lockfile = pm.migrate_other_lockfile(Fd::cwd());
+                if matches!(load_lockfile, LoadResult::NotFound) {
+                    bun_core::pretty_errorln!(
+                        "<r><red>error<r>: could not find any other lockfile"
+                    );
+                    Global::exit(1);
+                }
+                Self::handle_load_lockfile_errors(&load_lockfile, log_level);
+                load_lockfile.meta()
             };
-            if matches!(load_lockfile, LoadResult::NotFound) {
-                bun_core::pretty_errorln!("<r><red>error<r>: could not find any other lockfile");
-                Global::exit(1);
-            }
-            Self::handle_load_lockfile_errors(&load_lockfile, log_level);
-            // Reshaped for borrowck — `save_to_disk` needs
-            // `&mut Lockfile` (self) and `&LoadResult` simultaneously, but
-            // `LoadResultOk.lockfile` already holds the only `&mut` into the
-            // boxed lockfile. Project that field to a raw pointer (no second
-            // Box-deref) so both arguments share one Stacked-Borrows lineage.
-            let lf: *mut Lockfile = &raw mut *load_lockfile.ok_mut().lockfile;
-            // SAFETY: `load_lockfile` is `Ok` (errors exited above). `lf` is a
-            // reborrow of `ok.lockfile`; `save_to_disk` reads `load_result` only
-            // for `save_format()` / `loaded_from_binary_lockfile()` (scalar
-            // `format`/`migrated` fields) and never dereferences `ok.lockfile`,
-            // so `&mut *lf` remains the sole live mutable view of the heap
-            // lockfile. `options` is read via `pm_raw` (disjoint allocation).
-            unsafe {
-                (*lf).save_to_disk(&load_lockfile, &(*pm_raw).options);
-            }
+            pm.lockfile.save_to_disk(load_meta, &pm.options);
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"version") {
             let positionals: &[&[u8]] = pm.options.positionals;
@@ -764,7 +715,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"why") {
             let positionals: &[&[u8]] = pm.options.positionals;
-            PmWhyCommand::exec(&&mut *ctx, pm, positionals)?;
+            PmWhyCommand::exec(pm, positionals)?;
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"diff") {
             let positionals: Vec<&[u8]> = pm.options.positionals.to_vec();
@@ -776,7 +727,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"pkg") {
             let positionals: &[&[u8]] = pm.options.positionals;
-            PmPkgCommand::exec(&&mut *ctx, pm, positionals, &cwd)?;
+            PmPkgCommand::exec(pm, positionals, &cwd)?;
             Global::exit(0);
         }
 

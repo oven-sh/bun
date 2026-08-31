@@ -311,14 +311,13 @@ impl WhyCommand {
                 Self::print_usage();
                 Global::exit(1);
             }
-            return Self::exec_with_manager(ctx, pm, positionals[1], top_only);
+            return Self::exec_with_manager(pm, positionals[1], top_only);
         }
 
-        Self::exec_with_manager(ctx, pm, positionals[0], top_only)
+        Self::exec_with_manager(pm, positionals[0], top_only)
     }
 
     pub(crate) fn exec_from_pm(
-        ctx: command::Context,
         pm: &mut PackageManager,
         positionals: &[&[u8]],
     ) -> Result<(), crate::Error> {
@@ -327,11 +326,10 @@ impl WhyCommand {
             Global::exit(1);
         }
 
-        Self::exec_with_manager(ctx, pm, positionals[1], pm.options.top_only)
+        Self::exec_with_manager(pm, positionals[1], pm.options.top_only)
     }
 
     fn exec_with_manager(
-        ctx: command::Context,
         pm: &mut PackageManager,
         package_pattern: &[u8],
         top_only: bool,
@@ -342,11 +340,7 @@ impl WhyCommand {
         // up front so we never need `pm` again once `lockfile` is borrowed.
         let depth_opt = pm.options.depth;
         let log_level = pm.options.log_level;
-        // SAFETY: CLI dispatch is single-threaded and `log`'s last use is the
-        // `load_from_cwd` call below, which receives it as the sole `&mut Log`;
-        // no other path (`pm`, `ctx`) reborrows the process-static `Log` while
-        // this reference is live.
-        let log = unsafe { ctx.log_mut() };
+        let log = pm.log_mut();
 
         let mut lockfile_box: Box<Lockfile> = core::mem::take(&mut pm.lockfile);
         let load_lockfile = lockfile_box.load_from_cwd::<true>(Some(pm), log);

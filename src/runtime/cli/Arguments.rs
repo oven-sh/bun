@@ -1661,11 +1661,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             api::MessageLevel::Warn => bun_ast::Level::Warn,
             _ => bun_ast::Level::Err,
         });
-        // SAFETY: `ctx.log` is the CLI log, owned by the caller and not yet
-        // shared with another thread.
-        unsafe {
-            (*ctx.log).level = bun_ast::DEFAULT_LOG_LEVEL.load();
-        }
+        ctx.log_mut().level = bun_ast::DEFAULT_LOG_LEVEL.load();
     }
 
     if args.flag(b"--no-macros") {

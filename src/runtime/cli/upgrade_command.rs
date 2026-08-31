@@ -47,10 +47,10 @@ fn spawn_windows_options() -> crate::api::bun::process::WindowsOptions {
 // the un-exported `fs_full` module. Shim it locally — open
 // `RealFS::tmpdir_path()` as a `sys::Dir`, mirroring `RealFS::open_tmp_dir`.
 pub(crate) trait FileSystemTmpdirExt {
-    fn tmpdir(&mut self) -> crate::Result<sys::Dir>;
+    fn tmpdir(&self) -> crate::Result<sys::Dir>;
 }
 impl FileSystemTmpdirExt for fs::FileSystem {
-    fn tmpdir(&mut self) -> crate::Result<sys::Dir> {
+    fn tmpdir(&self) -> crate::Result<sys::Dir> {
         sys::Dir::open(fs::RealFS::tmpdir_path()).map_err(Into::into)
     }
 }
@@ -179,8 +179,7 @@ impl UpgradeCommand {
 
     pub(crate) fn get_latest_version<const SILENT: bool>(
         env_loader: &mut DotEnv::Loader,
-        refresher: Option<&mut Progress::Progress>,
-        mut progress: Option<&mut Progress::Node>,
+        mut refresher: Option<&mut Progress::Progress>,
         use_profile: bool,
     ) -> crate::Result<Option<Version>> {
         let mut headers_buf: Vec<u8> = Self::DEFAULT_GITHUB_HEADERS.to_vec();
@@ -273,7 +272,8 @@ impl UpgradeCommand {
             // `progress_node` stores an untracked NonNull borrow of the caller's
             // `progress`; sound because `send_sync` below completes before this
             // frame returns, so the pointee outlives every use.
-            async_http.client.progress_node = Some(NonNull::from(progress.as_deref_mut().unwrap()));
+            async_http.client.progress_node =
+                Some(NonNull::from(&mut refresher.as_deref_mut().unwrap().root));
         }
         let response = async_http.send_sync(metadata_body)?;
 
@@ -297,8 +297,9 @@ impl UpgradeCommand {
             Ok(e) => e,
             Err(err) => {
                 if !SILENT {
-                    progress.expect("infallible: progress active").end();
-                    refresher.expect("infallible: progress active").refresh();
+                    let refresher = refresher.expect("infallible: progress active");
+                    refresher.root.end();
+                    refresher.refresh();
 
                     if log.errors > 0 {
                         let _ = log.print(std::ptr::from_mut(Output::error_writer()));
@@ -318,8 +319,9 @@ impl UpgradeCommand {
 
         if log.errors > 0 {
             if !SILENT {
-                progress.expect("infallible: progress active").end();
-                refresher.expect("infallible: progress active").refresh();
+                let refresher = refresher.expect("infallible: progress active");
+                refresher.root.end();
+                refresher.refresh();
 
                 let _ = log.print(std::ptr::from_mut(Output::error_writer()));
                 Global::exit(1);
@@ -337,8 +339,9 @@ impl UpgradeCommand {
 
         if !expr.is_object() {
             if !SILENT {
-                progress.expect("infallible: progress active").end();
-                refresher.expect("infallible: progress active").refresh();
+                let refresher = refresher.expect("infallible: progress active");
+                refresher.root.end();
+                refresher.refresh();
 
                 bun_core::pretty_errorln!(
                     "JSON error - expected an object but received {:?}",
@@ -358,8 +361,9 @@ impl UpgradeCommand {
 
         if version.tag.is_empty() {
             if !SILENT {
-                progress.expect("infallible: progress active").end();
-                refresher.expect("infallible: progress active").refresh();
+                let refresher = refresher.expect("infallible: progress active");
+                refresher.root.end();
+                refresher.refresh();
 
                 bun_core::pretty_errorln!(
                     "JSON Error parsing releases from GitHub: <r><red>tag_name<r> is missing?\n{}",
@@ -452,8 +456,9 @@ impl UpgradeCommand {
         }
 
         if !SILENT {
-            progress.expect("infallible: progress active").end();
-            refresher.expect("infallible: progress active").refresh();
+            let refresher = refresher.expect("infallible: progress active");
+            refresher.root.end();
+            refresher.refresh();
             if let Some(name) = version.name() {
                 bun_core::pretty_errorln!(
                     "Bun v{} is out, but not for this platform ({}) yet.",
@@ -536,8 +541,8 @@ impl UpgradeCommand {
     fn _exec(ctx: Command::Context) -> crate::Result<()> {
         HTTP::http_thread::init(&Default::default());
 
-        // SAFETY: FileSystem::init returns the process-global singleton; valid for 'static.
-        let filesystem = unsafe { &mut *fs::FileSystem::init(None)? };
+        fs::FileSystem::init(None)?;
+        let filesystem = fs::FileSystem::get();
         let mut env_loader = DotEnv::Loader::init();
         env_loader.load_process()?;
 
@@ -556,33 +561,22 @@ impl UpgradeCommand {
         let use_profile = argv_contains(b"--profile");
 
         let mut version: Version = if !use_canary {
-            // `Progress::start` returns `&mut Node` borrowing `refresher`;
-            // leak the Progress and use raw pointers so we can pass both
-            // `&mut refresher` and `&mut progress` to `get_latest_version`.
-            let refresher: *mut Progress::Progress =
-                bun_core::heap::into_raw(Box::new(Progress::Progress::default()));
-            // SAFETY: refresher is a fresh leaked allocation.
-            let progress: *mut Progress::Node =
-                unsafe { (*refresher).start(b"Fetching version tags", 0) };
+            // `Progress::start` returns `&mut refresher.root`; boxed so the
+            // self-pointers `start` installs stay valid.
+            let mut refresher = Box::new(Progress::Progress::default());
+            refresher.start(b"Fetching version tags", 0);
 
             let Some(version) = Self::get_latest_version::<false>(
                 &mut env_loader,
-                // SAFETY: refresher/progress point into the same leaked allocation;
-                // `get_latest_version` only touches them on the !SILENT error
-                // path (no overlapping live borrows).
-                Some(unsafe { &mut *refresher }),
-                // SAFETY: progress points into the same leaked allocation (see above).
-                Some(unsafe { &mut *progress }),
+                Some(&mut refresher),
                 use_profile,
             )?
             else {
                 return Ok(());
             };
 
-            // SAFETY: see above.
-            unsafe { (*progress).end() };
-            // SAFETY: refresher is a leaked Box (process-lifetime); no other &mut is live.
-            unsafe { (*refresher).refresh() };
+            refresher.root.end();
+            refresher.refresh();
 
             if !Environment::IS_CANARY {
                 if version.name().is_some() && version.is_current() {
@@ -636,15 +630,11 @@ impl UpgradeCommand {
         let http_proxy = env_loader.get_http_proxy_for(&zip_url);
 
         {
-            let refresher: *mut Progress::Progress =
-                bun_core::heap::into_raw(Box::new(Progress::Progress::default()));
-            // SAFETY: refresher is a fresh leaked allocation.
-            let progress: *mut Progress::Node =
-                unsafe { (*refresher).start(b"Downloading", version.size as usize) };
-            // SAFETY: see above.
-            unsafe { (*progress).unit = Progress::Unit::Bytes };
-            // SAFETY: refresher is a leaked Box (process-lifetime); no other &mut is live.
-            unsafe { (*refresher).refresh() };
+            // Boxed so the self-pointers `start` installs stay valid.
+            let mut refresher = Box::new(Progress::Progress::default());
+            refresher.start(b"Downloading", version.size as usize);
+            refresher.root.unit = Progress::Unit::Bytes;
+            refresher.refresh();
             // Store in the process-lifetime CLI arena.
             let zip_file_buffer: &'static mut MutableString = crate::cli::cli_arena()
                 .alloc(MutableString::init(version.size.max(1024) as usize)?);
@@ -658,10 +648,8 @@ impl UpgradeCommand {
                 http_proxy,
                 HTTP::FetchRedirect::Follow,
             ));
-            // `progress` is intentionally leaked (process-lifetime), so the
-            // untracked NonNull stored in `progress_node` can never dangle.
-            async_http.client.progress_node =
-                Some(NonNull::new(progress).expect("leaked Box is non-null"));
+            // `refresher` outlives `async_http` (dropped below, before `refresher`).
+            async_http.client.progress_node = Some(NonNull::from(&mut refresher.root));
             async_http.client.flags.reject_unauthorized = env_loader.get_tls_reject_unauthorized();
 
             let response = async_http.send_sync(zip_file_buffer)?;
@@ -690,10 +678,8 @@ impl UpgradeCommand {
 
             let bytes = zip_file_buffer.slice();
 
-            // SAFETY: refresher/progress are leaked allocations.
-            unsafe { (*progress).end() };
-            // SAFETY: refresher is a leaked Box (process-lifetime); no other &mut is live.
-            unsafe { (*refresher).refresh() };
+            refresher.root.end();
+            refresher.refresh();
 
             if bytes.is_empty() {
                 bun_core::pretty_errorln!(
@@ -1086,50 +1072,14 @@ impl UpgradeCommand {
             if destination_executable.len() >= bun_paths::MAX_PATH_BYTES {
                 return Err(crate::Error::PathTooLong);
             }
-            // Reshaped for borrowck — use stack-local buffer.
-            // Stacked Borrows: take ONE `*mut u8` over the buffer up front and
-            // route every read/write through it. Indexing the `PathBuffer`
-            // directly (via Deref/DerefMut) would materialize a fresh `&[u8]`
-            // or `&mut [u8]` over the *whole* array, retagging it and
-            // invalidating the raw-pointer-derived `&ZStr` views below. The
-            // single `buf_ptr` is the shared provenance root.
-            let mut current_executable_buf = PathBuffer::uninit();
-            let buf_ptr: *mut u8 = current_executable_buf.as_mut_ptr();
-            // SAFETY: `buf_ptr` covers `MAX_PATH_BYTES`; `destination_executable`
-            // came from `self_exe_path()` which is bounded by that.
-            unsafe {
-                core::ptr::copy_nonoverlapping(
-                    destination_executable.as_ptr(),
-                    buf_ptr,
-                    destination_executable.len(),
-                );
-                *buf_ptr.add(destination_executable.len()) = 0;
-            }
-
-            let target_filename_ = bun_paths::basename(destination_executable);
-            // SAFETY: buf[destination_executable.len()] == 0 written above; the
-            // view is derived from `buf_ptr` so later disjoint writes through
-            // `buf_ptr` (at `target_dir_len`, outside this range) don't pop it.
-            let target_filename = unsafe {
-                ZStr::from_raw(
-                    buf_ptr.add(destination_executable.len() - target_filename_.len()),
-                    target_filename_.len(),
-                )
-            };
-            let target_dir_ = bun_core::dirname(destination_executable)
-                .ok_or(crate::Error::UpgradeFailedBecauseOfMissingExecutableDir)?;
-            // safe because the slash will no longer be in use
-            let target_dir_len = target_dir_.len();
-            // SAFETY: in-bounds; write is at the separator byte between dirname
-            // and basename, disjoint from both `&ZStr` views' ranges.
-            unsafe { *buf_ptr.add(target_dir_len) = 0 };
-            // SAFETY: buf[target_dir_len]==0 (just written). Derived from
-            // `buf_ptr`; the Windows block below toggles the byte at
-            // `target_dir_len` (outside `[0, target_dir_len)`) through the same
-            // raw pointer, so this view's provenance stays valid across those
-            // writes. Each mutation re-establishes the NUL before
-            // `target_dirname` is read again.
-            let target_dirname = unsafe { ZStr::from_raw(buf_ptr, target_dir_len) };
+            let target_filename =
+                bun_core::ZBox::from_bytes(bun_paths::basename(destination_executable));
+            let target_filename: &ZStr = &target_filename;
+            let target_dirname = bun_core::ZBox::from_bytes(
+                bun_core::dirname(destination_executable)
+                    .ok_or(crate::Error::UpgradeFailedBecauseOfMissingExecutableDir)?,
+            );
+            let target_dirname: &ZStr = &target_dirname;
             let target_dir_it = match sys::Dir::open(target_dirname.as_bytes()) {
                 Ok(d) => d,
                 Err(err) => {
@@ -1241,10 +1191,6 @@ impl UpgradeCommand {
                     // On Windows, we cannot replace the running executable directly.
                     // we rename the old executable to a temporary name, and then move the new executable to the old name.
                     // This is because Windows locks the executable while it's running.
-                    // SAFETY: see `buf_ptr` note above — write through the shared
-                    // raw provenance root, not via DerefMut (which would retag
-                    // the whole buffer and invalidate `target_filename`/`target_dirname`).
-                    unsafe { *buf_ptr.add(target_dir_len) = b'\\' };
                     let mut buf = Vec::new();
                     write!(
                         &mut buf,
@@ -1266,8 +1212,6 @@ impl UpgradeCommand {
                         );
                         Global::exit(1);
                     }
-                    // SAFETY: restore NUL via `buf_ptr` (see aliasing note above).
-                    unsafe { *buf_ptr.add(target_dir_len) = 0 };
                 }
 
                 if let Err(err) =
@@ -1387,10 +1331,9 @@ pub(crate) mod upgrade_js_bindings {
 
     // Process-global, not threadlocal: if open/close are invoked from different
     // threads (main vs worker VM) a `thread_local!` would make the close see
-    // `None` and leak the HANDLE. Use a `RacyCell`; access is test-only and
-    // effectively single-threaded.
+    // `None` and leak the HANDLE.
     #[cfg(windows)]
-    static TEMPDIR_FD: bun_core::RacyCell<Option<sys::Fd>> = bun_core::RacyCell::new(None);
+    static TEMPDIR_FD: bun_threading::Guarded<Option<sys::Fd>> = bun_threading::Guarded::new(None);
 
     pub(crate) fn generate(global: &JSGlobalObject) -> JSValue {
         let obj = JSValue::create_empty_object(global, 2);
@@ -1434,70 +1377,17 @@ pub(crate) mod upgrade_js_bindings {
         }
         #[cfg(windows)]
         {
-            use sys::windows as w;
-
-            let mut buf = bun_paths::WPathBuffer::uninit();
             let tmpdir_path = fs::RealFS::get_default_temp_dir();
-            let mut wtmp = bun_paths::WPathBuffer::uninit();
-            let tmpdir_w = bun_core::convert_utf8_to_utf16_in_buffer(&mut wtmp[..], tmpdir_path);
-            let path = match sys::normalize_path_windows(sys::Fd::INVALID, tmpdir_w, &mut buf[..]) {
-                sys::Result::Err(_) => return Ok(JSValue::UNDEFINED),
-                sys::Result::Ok(norm) => norm,
-            };
-
-            let path_len_bytes: u16 = (path.len() * 2) as u16;
-            let mut nt_name = w::UNICODE_STRING {
-                Length: path_len_bytes,
-                MaximumLength: path_len_bytes,
-                Buffer: path.as_ptr().cast_mut().cast::<u16>(),
-            };
-
-            let mut attr = w::OBJECT_ATTRIBUTES {
-                Length: core::mem::size_of::<w::OBJECT_ATTRIBUTES>() as u32,
-                RootDirectory: core::ptr::null_mut(),
-                Attributes: 0,
-                ObjectName: &mut nt_name,
-                SecurityDescriptor: core::ptr::null_mut(),
-                SecurityQualityOfService: core::ptr::null_mut(),
-            };
-
-            let flags: u32 = w::STANDARD_RIGHTS_READ
-                | w::FILE_READ_ATTRIBUTES
-                | w::FILE_READ_EA
-                | w::SYNCHRONIZE
-                | w::FILE_TRAVERSE;
-
-            let mut fd: w::HANDLE = w::INVALID_HANDLE_VALUE;
-            let mut io: w::IO_STATUS_BLOCK = bun_core::ffi::zeroed();
-
-            // SAFETY: FFI call to NtCreateFile with valid pointers
-            let rc = unsafe {
-                w::ntdll::NtCreateFile(
-                    &mut fd,
-                    flags,
-                    &mut attr,
-                    &mut io,
-                    core::ptr::null_mut(),
-                    0,
-                    w::FILE_SHARE_READ | w::FILE_SHARE_WRITE,
-                    w::FILE_OPEN,
-                    w::FILE_DIRECTORY_FILE
-                        | w::FILE_SYNCHRONOUS_IO_NONALERT
-                        | w::FILE_OPEN_FOR_BACKUP_INTENT,
-                    core::ptr::null_mut(),
-                    0,
-                )
-            };
-
-            match sys::windows::Win32Error::from_nt_status(rc) {
-                sys::windows::Win32Error::SUCCESS => {
-                    // System-kind handle on Windows.
-                    // SAFETY: test-only helper; access is single-threaded (JS thread).
-                    unsafe {
-                        TEMPDIR_FD.write(Some(sys::Fd::from_system(fd)));
-                    }
-                }
-                _ => {}
+            if let Ok(fd) = sys::open_dir_at_windows_a(
+                sys::Fd::INVALID,
+                tmpdir_path,
+                sys::WindowsOpenDirOptions {
+                    iterable: false,
+                    deny_delete: true,
+                    ..Default::default()
+                },
+            ) {
+                *TEMPDIR_FD.lock() = Some(fd);
             }
 
             Ok(JSValue::UNDEFINED)
@@ -1513,10 +1403,9 @@ pub(crate) mod upgrade_js_bindings {
         #[cfg(windows)]
         {
             use bun_sys::FdExt as _;
-            // SAFETY: test-only helper; access is single-threaded (JS thread).
             // Consume (`take`) the stored fd so a repeat call cannot
             // `CloseHandle` a stale, possibly-reissued HANDLE value.
-            if let Some(fd) = unsafe { core::mem::take(&mut *TEMPDIR_FD.get()) } {
+            if let Some(fd) = TEMPDIR_FD.lock().take() {
                 fd.close();
             }
 

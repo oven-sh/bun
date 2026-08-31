@@ -43,8 +43,8 @@ use super::override_map::ScopedOverride;
 use super::override_selector::{PackageSelector, parse_package_segment};
 use super::package::{Meta, PackageColumns as _, value_loc_of};
 use super::{
-    CatalogMap, DependencySlice, LoadResult, Lockfile as BinaryLockfile, OverrideMap, Package,
-    PackageIndexMap, PatchedDep, TrustedDependenciesSet, VersionHashMap, tree,
+    CatalogMap, DependencySlice, Lockfile as BinaryLockfile, OverrideMap, Package, PackageIndexMap,
+    PatchedDep, TrustedDependenciesSet, VersionHashMap, tree,
 };
 
 use bun_io::AsFmt;
@@ -305,7 +305,7 @@ impl Stringifier {
 
     pub(crate) fn save_from_binary(
         lockfile: &mut BinaryLockfile,
-        load_result: &LoadResult,
+        load_result: crate::lockfile::LoadMeta,
         options: &PackageManagerOptions,
         writer: &mut Writer,
     ) -> Result<(), WriteError> {

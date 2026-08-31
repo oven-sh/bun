@@ -62,10 +62,7 @@ impl BuildCommand {
             long_running: true,
             ..Default::default()
         });
-        let log = ctx.log;
-        // SAFETY: `ctx.log` is a long-lived `*mut Log` set up during CLI init
-        // and never freed for the duration of the command body.
-        let log_ref: &mut bun_ast::Log = unsafe { &mut *log };
+        let log = ctx.log_ptr();
         let user_requested_browser_target =
             ctx.args.target.is_some() && ctx.args.target.unwrap() == api::Target::Browser;
         if ctx.bundler_options.compile || ctx.bundler_options.bytecode {
@@ -449,8 +446,10 @@ impl BuildCommand {
             .clone_from(&ctx.bundler_options.env_prefix);
 
         if ctx.bundler_options.production {
-            // SAFETY: `env` is a process-lifetime singleton set in `Transpiler::init`.
-            unsafe { (*this_transpiler.env).map.put(b"NODE_ENV", b"production")? };
+            this_transpiler
+                .env_mut()
+                .map
+                .put(b"NODE_ENV", b"production")?;
         }
 
         this_transpiler.configure_defines()?;
@@ -464,8 +463,7 @@ impl BuildCommand {
         {
             match bun_standalone_module_graph::StandaloneModuleGraph::target_builtins(
                 &ctx.bundler_options.compile_target,
-                // SAFETY: `env` is a process-lifetime singleton.
-                unsafe { &mut *this_transpiler.env },
+                this_transpiler.env(),
                 ctx.bundler_options.compile_executable_path.as_deref(),
             ) {
                 Ok(Some(section)) => options::CompileTargetBuiltins::Target(section),
@@ -555,7 +553,10 @@ impl BuildCommand {
                         }
                         let drop: Vec<&[u8]> = ctx.args.drop.iter().map(|d| d.as_ref()).collect();
                         Some(bun_bundler::defines::DefineData::from_input(
-                            &raw, &drop, log_ref, arena,
+                            &raw,
+                            &drop,
+                            this_transpiler.log_mut(),
+                            arena,
                         )?)
                     }
                     None => None,
@@ -611,7 +612,7 @@ impl BuildCommand {
         let opt_output_format = this_transpiler.options.output_format;
         let opt_source_map = this_transpiler.options.source_map;
         let opt_transform_only = this_transpiler.options.transform_only;
-        let env_ptr = this_transpiler.env;
+        let env: &bun_dotenv::Loader = this_transpiler.env();
 
         let mut output_files: Vec<options::OutputFile> = 'brk: {
             if ctx.bundler_options.transform_only {
@@ -620,12 +621,13 @@ impl BuildCommand {
                 this_transpiler.resolver.opts.allow_runtime = false;
 
                 // TODO: refactor this .transform function
-                let result = this_transpiler.transform(ctx.log, ctx.args.clone())?;
+                let result = this_transpiler.transform(log, ctx.args.clone())?;
 
-                if log_ref.has_errors() {
-                    log_ref.print(std::ptr::from_mut::<bun_core::io::Writer>(
-                        Output::error_writer(),
-                    ))?;
+                if ctx.log_ref().has_errors() {
+                    ctx.log_ref()
+                        .print(std::ptr::from_mut::<bun_core::io::Writer>(
+                            Output::error_writer(),
+                        ))?;
 
                     if !result.errors.is_empty() || result.output_files.is_empty() {
                         Output::flush();
@@ -672,10 +674,11 @@ impl BuildCommand {
             ) {
                 Ok(r) => r,
                 Err(err) => {
-                    if !log_ref.msgs.is_empty() {
-                        log_ref.print(std::ptr::from_mut::<bun_core::io::Writer>(
-                            Output::error_writer(),
-                        ))?;
+                    if !ctx.log_ref().msgs.is_empty() {
+                        ctx.log_ref()
+                            .print(std::ptr::from_mut::<bun_core::io::Writer>(
+                                Output::error_writer(),
+                            ))?;
                     } else {
                         write!(Output::error_writer(), "error: {}", err.name())?;
                     }
@@ -684,6 +687,11 @@ impl BuildCommand {
                     exit_or_watch(1, ctx.debug.hot_reload == HotReload::Watch);
                 }
             };
+
+            // A dependency scan produces no output; its `on_analyze` has run.
+            if fetcher.is_some() {
+                return Ok(());
+            }
 
             // Write metafile if requested
             if let Some(metafile_json) = build_result.metafile.as_deref() {
@@ -914,8 +922,7 @@ impl BuildCommand {
                     root_dir.fd,
                     &opt_public_path,
                     outfile,
-                    // SAFETY: `env` is a process-lifetime singleton.
-                    unsafe { &mut *env_ptr },
+                    env,
                     opt_output_format,
                     &ctx.bundler_options.windows,
                     ctx.bundler_options
@@ -1063,7 +1070,7 @@ impl BuildCommand {
                 break 'dump;
             }
 
-            if log_ref.errors == 0 {
+            if ctx.log_ref().errors == 0 {
                 if opt_transform_only {
                     bun_core::prettyln!(
                         "<green>Transpiled file in {}ms<r>",
@@ -1182,9 +1189,10 @@ impl BuildCommand {
             Output::flush();
         }
 
-        log_ref.print(std::ptr::from_mut::<bun_core::io::Writer>(
-            Output::error_writer(),
-        ))?;
+        ctx.log_ref()
+            .print(std::ptr::from_mut::<bun_core::io::Writer>(
+                Output::error_writer(),
+            ))?;
         exit_or_watch(
             if had_err { 1 } else { 0 },
             ctx.debug.hot_reload == HotReload::Watch,

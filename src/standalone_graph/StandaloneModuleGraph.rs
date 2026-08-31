@@ -164,6 +164,11 @@ impl StandaloneModuleGraph {
         &mut self.files.values_mut()[self.entry_point_id as usize]
     }
 
+    /// The entry point module's path in the embedded filesystem.
+    pub fn entry_point_name(&self) -> &[u8] {
+        self.files.values()[self.entry_point_id as usize].name
+    }
+
     // by normalized file path
     pub fn find(&mut self, name: &[u8]) -> Option<&mut File> {
         if !is_bun_standalone_file_path(name) {
@@ -2216,7 +2221,7 @@ pub use bun_options_types::compile_target::CompileTarget;
 /// two `download*` fns below in this crate.
 pub(crate) fn download_to_path(
     target: &CompileTarget,
-    env: &mut bun_dotenv::Loader,
+    env: &bun_dotenv::Loader,
     dest_z: &ZStr,
 ) -> crate::Result<()> {
     bun_http::http_thread::init(&Default::default());
@@ -2375,7 +2380,7 @@ pub(crate) fn download_to_path(
 /// host target, otherwise the cached download of that platform's bun at this version (fetched now if missing).
 pub fn target_executable(
     target: &CompileTarget,
-    env: &mut bun_dotenv::Loader,
+    env: &bun_dotenv::Loader,
     self_exe_path: Option<&[u8]>,
 ) -> Result<bun_core::ZBox, CompileError> {
     Ok(if let Some(path) = self_exe_path {
@@ -2438,7 +2443,7 @@ pub fn target_executable(
 /// can read; builtin bytecode is skipped then.
 pub fn target_builtins(
     target: &CompileTarget,
-    env: &mut bun_dotenv::Loader,
+    env: &bun_dotenv::Loader,
     self_exe_path: Option<&[u8]>,
 ) -> Result<Option<std::sync::Arc<[u8]>>, CompileError> {
     use bun_exe_format::builtins::{Builtins, BuiltinsError, find_section};
@@ -2474,7 +2479,7 @@ pub fn to_executable(
     root_dir: Fd,
     module_prefix: &[u8],
     outfile: &[u8],
-    env: &mut bun_dotenv::Loader,
+    env: &bun_dotenv::Loader,
     output_format: Format,
     windows_options: &WindowsOptions,
     compile_exec_argv: &[u8],

@@ -107,7 +107,7 @@ impl CurrentFile {
 /// `test_command::exec` (as part of `CommandLineReporter`) and reached from JS
 /// host functions through [`Jest::runner`], so it is `&self`-only; everything
 /// mutated after registration is a `Cell`/`RefCell`.
-pub struct TestRunner<'a> {
+pub struct TestRunner {
     pub(crate) current_file: RefCell<CurrentFile>,
     pub(crate) files: RefCell<FileList>,
     pub(crate) index: RefCell<FileMap>,
@@ -118,10 +118,8 @@ pub struct TestRunner<'a> {
     /// shuffle PRNG from hash(seed, file_path) so within-file test order is
     /// independent of which worker (and which prior files) ran it.
     pub(crate) randomize_seed: Option<u32>,
-    /// Borrowed view over `ctx.test_options.concurrent_test_glob` (owned
-    /// `Vec<Box<[u8]>>` with process lifetime); see the detach in
-    /// `test_command.rs` where this is populated.
-    pub(crate) concurrent_test_glob: Option<&'a [&'a [u8]]>,
+    /// `--concurrent-test-glob` patterns (`ctx.test_options.concurrent_test_glob`).
+    pub(crate) concurrent_test_glob: Option<Vec<Box<[u8]>>>,
     pub(crate) bail: u32,
     pub(crate) max_concurrency: u32,
 
@@ -132,7 +130,7 @@ pub struct TestRunner<'a> {
     /// from `setDefaultTimeout() or jest.setTimeout()`. maxInt(u32) means override not set.
     pub(crate) default_timeout_override: Cell<u32>,
 
-    pub(crate) test_options: &'a TestOptions,
+    pub(crate) test_options: TestOptions,
 
     /// Used for --test-name-pattern to reduce allocations. An `opaque_ffi!`
     /// Yarr handle owned by the CLI context for the process lifetime.
@@ -147,7 +145,7 @@ pub struct TestRunner<'a> {
     pub(crate) bun_test_root: bun_test::BunTestRoot,
 }
 
-impl<'a> TestRunner<'a> {
+impl TestRunner {
     /// The registered source path for `file_id`.
     pub(crate) fn file_path(&self, file_id: FileId) -> bun_paths::fs::Path<'static> {
         self.files.borrow().items_source()[file_id as usize].path
@@ -216,7 +214,7 @@ impl<'a> TestRunner<'a> {
         }
 
         // If no glob patterns are set, don't run concurrently
-        let Some(glob_patterns) = self.concurrent_test_glob else {
+        let Some(glob_patterns) = &self.concurrent_test_glob else {
             return false;
         };
 
@@ -311,14 +309,14 @@ pub mod Jest {
 
     /// The registered runner; bound to the thread that runs `bun test`
     /// (`test_command::exec`), so Workers and other threads see `None`.
-    static RUNNER: bun_core::ThreadBound<&'static TestRunner<'static>> =
+    static RUNNER: bun_core::ThreadBound<&'static TestRunner> =
         bun_core::ThreadBound::new();
 
-    pub(crate) fn runner() -> Option<&'static TestRunner<'static>> {
+    pub(crate) fn runner() -> Option<&'static TestRunner> {
         RUNNER.get()
     }
 
-    pub(crate) fn set_runner(runner: Option<&'static TestRunner<'static>>) {
+    pub(crate) fn set_runner(runner: Option<&'static TestRunner>) {
         RUNNER.set(runner);
     }
 

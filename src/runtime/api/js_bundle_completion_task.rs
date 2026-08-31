@@ -410,9 +410,8 @@ impl JSBundleCompletionTask {
             module_prefix,
             outfile_for_executable,
             // SAFETY: `self.env` is the per-VM `DotEnv.Loader` stashed at
-            // construction; valid for the lifetime of the VirtualMachine, and
-            // nothing inside `to_executable` reaches it otherwise.
-            unsafe { &mut *self.env },
+            // construction; valid for the lifetime of the VirtualMachine.
+            unsafe { &*self.env },
             self.config.format,
             &WindowsOptions {
                 hide_console: compile_options.windows_hide_console,

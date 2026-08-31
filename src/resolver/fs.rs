@@ -99,7 +99,7 @@ impl strings::Appender for FilenameStoreAppender {
 /// to `RealFS::kind`.
 pub trait EntryKindResolver {
     fn resolve_kind(
-        &mut self,
+        &self,
         dir: &[u8],
         base: &[u8],
         existing_fd: Fd,
@@ -144,7 +144,8 @@ pub struct Entry {
     pub mutex: Mutex,
     pub need_stat: AtomicBool,
 
-    pub abs_path: Interned,
+    /// Lazily-filled absolute path; `Cell` under the same discipline as `cache`.
+    abs_path: core::cell::Cell<Interned>,
 }
 
 impl Entry {
@@ -191,41 +192,28 @@ impl Entry {
     /// `Interned` is `Copy`.
     #[inline]
     pub fn abs_path(&self) -> Interned {
-        self.abs_path
+        self.abs_path.get()
     }
 
     #[inline]
-    pub fn set_abs_path(&mut self, p: Interned) {
-        self.abs_path = p;
+    pub fn set_abs_path(&self, p: Interned) {
+        self.abs_path.set(p);
     }
 
-    /// Stat-on-first-use.
-    ///
-    /// # Safety
-    /// `fs` must point to a live `EntryKindResolver` (the process-global
-    /// `RealFS` singleton in practice). `resolve_kind` must not re-enter
-    /// this entry's `mutex` (it only performs syscalls and string interning).
+    /// Stat-on-first-use. `resolve_kind` must not re-enter this entry's
+    /// `mutex` (it only performs syscalls and string interning).
     // `Entry` lives in the EntryStore BSSMap singleton. The lazy-stat rewrite
     // of `need_stat` / `cache` is serialized on the per-entry `mutex` here
-    // (double-checked: the cached fast path stays lock-free). `fs` is `*mut`
-    // so the call site does not require a second exclusive `&mut RealFS`
-    // borrow while a `&mut Entry` (borrowed out of `RealFS.entries`) is live.
+    // (double-checked: the cached fast path stays lock-free).
     // Generic over `R: EntryKindResolver` so this block is independent of
     // which `RealFS` copy `fs` points at (see file-top comment).
-    pub unsafe fn kind<R: EntryKindResolver>(&self, fs: *mut R, store_fd: bool) -> EntryKind {
+    pub fn kind<R: EntryKindResolver + ?Sized>(&self, fs: &R, store_fd: bool) -> EntryKind {
         if self.need_stat.load(Ordering::Acquire) {
             let _guard = self.mutex.lock_guard();
             // Relaxed: every write happens under `mutex`, which we hold.
             if self.need_stat.load(Ordering::Relaxed) {
                 // This is technically incorrect, but we are choosing not to handle errors here
-                // SAFETY: `fs` points at the process-global RealFS singleton; `resolve_kind`
-                // only does syscalls + string interning, so the short `&mut` cannot alias.
-                match unsafe { &mut *fs }.resolve_kind(
-                    self.dir,
-                    self.base(),
-                    self.cache().fd,
-                    store_fd,
-                ) {
+                match fs.resolve_kind(self.dir, self.base(), self.cache().fd, store_fd) {
                     Ok(c) => self.cache.set(c),
                     Err(_) => {
                         self.need_stat.store(false, Ordering::Release);
@@ -241,13 +229,10 @@ impl Entry {
         self.cache().kind
     }
 
-    ///
-    /// # Safety
-    /// `fs` must point to a live `EntryKindResolver` (the process-global
-    /// `RealFS` singleton in practice). See [`Entry::kind`].
-    pub(crate) unsafe fn symlink<R: EntryKindResolver>(
+    /// See [`Entry::kind`].
+    pub(crate) fn symlink<R: EntryKindResolver + ?Sized>(
         &self,
-        fs: *mut R,
+        fs: &R,
         store_fd: bool,
     ) -> &'static [u8] {
         if self.need_stat.load(Ordering::Acquire) {
@@ -256,13 +241,7 @@ impl Entry {
             if self.need_stat.load(Ordering::Relaxed) {
                 // This error can happen if the file was deleted between the time the directory
                 // was scanned and the time it was read
-                // SAFETY: see the note on `Entry::kind`.
-                match unsafe { &mut *fs }.resolve_kind(
-                    self.dir,
-                    self.base(),
-                    self.cache().fd,
-                    store_fd,
-                ) {
+                match fs.resolve_kind(self.dir, self.base(), self.cache().fd, store_fd) {
                     Ok(c) => self.cache.set(c),
                     Err(_) => {
                         self.need_stat.store(false, Ordering::Release);
@@ -359,22 +338,24 @@ pub mod dir_entry {
     }
 }
 
-/// Per-entry hook invoked by `add_entry`/`readdir`.
+/// Per-entry hook invoked by `add_entry`/`readdir`. `fs` is the `RealFS`
+/// doing the read, for `Entry::kind`/`symlink` — the hook runs while that
+/// `RealFS` is mutably borrowed, so it must not reach it through the singleton.
 pub trait DirEntryIterator {
     const IS_VOID: bool = false;
-    fn next(&self, entry: &mut Entry, fd: Fd);
+    fn next(&self, fs: &dyn EntryKindResolver, entry: &mut Entry, fd: Fd);
 }
 
 impl DirEntryIterator for () {
     const IS_VOID: bool = true;
-    fn next(&self, _entry: &mut Entry, _fd: Fd) {}
+    fn next(&self, _fs: &dyn EntryKindResolver, _entry: &mut Entry, _fd: Fd) {}
 }
 
 impl<T: DirEntryIterator + ?Sized> DirEntryIterator for &T {
     const IS_VOID: bool = T::IS_VOID;
     #[inline]
-    fn next(&self, entry: &mut Entry, fd: Fd) {
-        (**self).next(entry, fd)
+    fn next(&self, fs: &dyn EntryKindResolver, entry: &mut Entry, fd: Fd) {
+        (**self).next(fs, entry, fd)
     }
 }
 
@@ -404,6 +385,7 @@ impl DirEntry {
 
     pub(crate) fn add_entry_with_store<I: DirEntryIterator>(
         &mut self,
+        fs: &dyn EntryKindResolver,
         prev_map: Option<&mut dir_entry::EntryMap>,
         entry: &bun_sys::dir_iterator::IteratorResult,
         filename_store: &mut FilenameStoreAppender,
@@ -545,7 +527,7 @@ impl DirEntry {
                     kind: found_kind.unwrap_or(EntryKind::File),
                     fd: Fd::INVALID,
                 }));
-                addr_of_mut!((*p).abs_path).write(Interned::EMPTY);
+                addr_of_mut!((*p).abs_path).write(core::cell::Cell::new(Interned::EMPTY));
                 p
             }
         };
@@ -570,7 +552,7 @@ impl DirEntry {
         self.data.put_static_key_hashed(name_hash, key, stored)?;
 
         if !I::IS_VOID {
-            iterator.next(stored_ref, self.fd);
+            iterator.next(fs, stored_ref, self.fd);
         }
 
         Ok(())
@@ -625,6 +607,16 @@ impl DirEntry {
             entry: result_ptr,
             _marker: core::marker::PhantomData,
         })
+    }
+
+    /// Every cached entry of this directory (unordered). Like [`Self::get`], the
+    /// caller must hold `entries_mutex` while iterating.
+    pub fn entries(&self) -> impl Iterator<Item = &Entry> + '_ {
+        Self::debug_assert_entries_mutex_held();
+        // SAFETY: ARENA — every value is a slot in the process-lifetime
+        // `EntryStore` (see `EntryLookup::entry`); never freed, and `Entry`'s
+        // mutable state is `Cell`-backed so a shared borrow cannot alias.
+        self.data.values().map(|&e| unsafe { &*e })
     }
 
     /// True if a cached entry exists for the given already-lowercase name.

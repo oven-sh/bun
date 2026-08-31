@@ -192,6 +192,7 @@ impl ProcessHandle {
         self.process_mut().on_exit(status, rusage)
     }
 
+    /// See [`Process::kill`].
     pub fn kill(&self, signal: u8) -> Maybe<()> {
         self.process_mut().kill(signal)
     }
@@ -199,6 +200,74 @@ impl ProcessHandle {
     /// The process's address, for identity checks in exit callbacks.
     pub fn as_ptr(&self) -> *mut Process {
         self.0.as_ptr()
+    }
+
+    /// See [`Process::watch`].
+    pub fn watch(&self) -> bun_sys::Result<()> {
+        self.process_mut().watch()
+    }
+
+    /// See [`Process::wait`]; may synchronously run the exit handler.
+    pub fn wait(&self, sync_: bool) {
+        self.process_mut().wait(sync_)
+    }
+
+    /// See [`Process::close`].
+    pub fn close(&self) {
+        self.process_mut().close()
+    }
+
+    /// See [`Process::detach`]: closes the poller and clears the exit handler
+    /// now; the owned ref is still released on drop.
+    pub fn detach(&self) {
+        self.process_mut().detach()
+    }
+
+    pub fn enable_keeping_event_loop_alive(&self) {
+        self.process_mut().enable_keeping_event_loop_alive()
+    }
+
+    pub fn disable_keeping_event_loop_alive(&self) {
+        self.process_mut().disable_keeping_event_loop_alive()
+    }
+
+    /// `uv_getrusage` on the live `uv_process_t`, if this process is still
+    /// polled through libuv.
+    #[cfg(windows)]
+    pub fn uv_rusage(&self) -> Option<Rusage> {
+        match &mut self.process_mut().poller {
+            Poller::Uv(uv_proc) => Some(uv_getrusage(uv_proc)),
+            _ => None,
+        }
+    }
+}
+
+// Read accessors return by value: no `&Process` may be held across the
+// `&mut`-projecting calls above.
+impl ProcessHandle {
+    #[inline]
+    pub fn pid(&self) -> PidT {
+        self.0.pid
+    }
+
+    pub fn status(&self) -> Status {
+        self.0.status.clone()
+    }
+
+    pub fn has_killed(&self) -> bool {
+        self.0.has_killed()
+    }
+
+    pub fn signal_code(&self) -> Option<bun_core::SignalCode> {
+        self.0.signal_code()
+    }
+
+    pub fn has_exit_handler(&self) -> bool {
+        self.0.exit_handler.is_some()
+    }
+
+    pub fn memory_cost(&self) -> usize {
+        self.0.memory_cost()
     }
 }
 

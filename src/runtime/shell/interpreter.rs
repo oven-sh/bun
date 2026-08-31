@@ -630,7 +630,7 @@ impl Interpreter {
     /// not bumping `standalone_shell` analytics.
     pub(crate) fn init_and_run_from_file(
         ctx: &mut bun_options_types::context::ContextData,
-        mini: &'static mut bun_event_loop::MiniEventLoop::MiniEventLoop,
+        mini: bun_event_loop::MiniEventLoop::GlobalMiniEventLoop,
         path: &[u8],
         src: &[u8],
     ) -> crate::Result<ExitCode> {
@@ -647,7 +647,7 @@ impl Interpreter {
     /// without a diagnostic.
     pub(crate) fn init_and_run_from_source(
         ctx: &mut bun_options_types::context::ContextData,
-        mini: &'static mut bun_event_loop::MiniEventLoop::MiniEventLoop,
+        mini: bun_event_loop::MiniEventLoop::GlobalMiniEventLoop,
         path_for_errors: &[u8],
         src: &[u8],
         cwd: Option<&[u8]>,
@@ -661,7 +661,7 @@ impl Interpreter {
     /// the two entrypoints.
     fn init_and_run_impl(
         ctx: &mut bun_options_types::context::ContextData,
-        mini: &'static mut bun_event_loop::MiniEventLoop::MiniEventLoop,
+        mini: bun_event_loop::MiniEventLoop::GlobalMiniEventLoop,
         label: &[u8],
         src: &[u8],
         cwd: Option<&[u8]>,
@@ -717,7 +717,7 @@ impl Interpreter {
         shargs.set_script_ast(script);
 
         // ── init ───────────────────────────────────────────────────────────
-        let evtloop = EventLoopHandle::init_mini(std::ptr::from_mut(mini));
+        let evtloop = mini.handle();
         let interp = match Self::init(
             std::ptr::from_mut(ctx),
             evtloop,
@@ -744,15 +744,7 @@ impl Interpreter {
         }
 
         // ── tick until done ────────────────────────────────────────────────
-        // The closure captures a raw pointer so borrowck doesn't see an
-        // overlap with `tick`'s `&mut self` on `mini`.
-        let interp_ptr: *const Interpreter = &raw const *interp;
-        mini.tick(core::ptr::null_mut(), |_ctx| {
-            // SAFETY: `interp` lives in this stack frame for the whole tick
-            // loop; `flags` is `Cell<InterpreterFlags>` (interior-mutable), so
-            // the read is sound even while tasks `tick` drains mutate it.
-            unsafe { (*interp_ptr).flags.get().done() }
-        });
+        mini.tick(core::ptr::null_mut(), |_ctx| interp.flags.get().done());
 
         let code = interp.exit_code.get().expect("exit_code set by finish()");
         interp.deinit_from_exec();

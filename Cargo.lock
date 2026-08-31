@@ -223,6 +223,7 @@ version = "0.0.0"
 dependencies = [
  "bun_core",
  "bun_opaque",
+ "bun_ptr",
 ]
 
 [[package]]
@@ -1536,6 +1537,7 @@ dependencies = [
  "bun_collections",
  "bun_core",
  "bun_event_loop",
+ "bun_http",
  "bun_io",
  "bun_jsc",
  "bun_opaque",

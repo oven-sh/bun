@@ -13,23 +13,10 @@ use crate::command::Context;
 pub(crate) struct ExecCommand;
 
 /// Process-lifetime arena for the exec command's `Transpiler`; threads an
-/// `&'static Arena` per PORTING.md §AST crates. Same `Once`-guarded
-/// `RacyCell<MaybeUninit>` shape as `run_command::runner_arena` (Bump is
-/// `!Sync`, so `OnceLock` cannot hold it directly).
+/// `&'static Arena` per PORTING.md §AST crates. Routes through the shared
+/// `cli::cli_arena()` like `run_command::runner_arena`.
 fn exec_arena() -> &'static bun_alloc::Arena {
-    static ONCE: std::sync::Once = std::sync::Once::new();
-    // PORTING.md §Global mutable state: `Once`-guarded init; RacyCell because
-    // `Bump` is `!Sync` so `OnceLock<Arena>` can't be used.
-    static ARENA: bun_core::RacyCell<::core::mem::MaybeUninit<bun_alloc::Arena>> =
-        bun_core::RacyCell::new(::core::mem::MaybeUninit::uninit());
-    ONCE.call_once(|| {
-        // SAFETY: one-time init under `Once`; no concurrent writer.
-        unsafe { (*ARENA.get()).write(bun_alloc::Arena::new()) };
-    });
-    // SAFETY: initialized exactly once above; `bun exec` is a single-shot CLI
-    // command on the dispatch thread, so the `!Sync` Bump is never observed
-    // concurrently.
-    unsafe { (*ARENA.get()).assume_init_ref() }
+    crate::cli::cli_arena()
 }
 
 impl ExecCommand {
@@ -40,7 +27,7 @@ impl ExecCommand {
         // this is a hack: make dummy bundler so we can use its `.runEnvLoader()` function to populate environment variables probably should split out the functionality
         let mut bundle = Transpiler::init(
             exec_arena(),
-            ctx.log,
+            ctx.log_ptr(),
             {
                 let mut args = ctx.args.clone();
                 args.write = Some(false);
@@ -60,36 +47,25 @@ impl ExecCommand {
                 Global::exit(1);
             }
         };
-        // SAFETY: `Transpiler::init` always populates `env` (caller-supplied,
-        // process singleton, or freshly `heap::alloc`'d) — never null. The
-        // loader is a thread-/process-lifetime singleton, so `&'static mut` is
-        // sound for the single CLI dispatch thread.
-        let env = unsafe { &mut *bundle.env };
-        let mini = bun_event_loop::MiniEventLoop::init_global(Some(env), Some(cwd));
+        let mini = bun_event_loop::MiniEventLoop::GlobalMiniEventLoop::init(
+            Some(bun_ptr::BackRef::new_mut(bundle.env_mut())),
+            Some(cwd),
+        );
         let parts: [&[u8]; 2] = [cwd, b"[eval]"];
         let script_path = bun_paths::resolve_path::join::<bun_paths::platform::Auto>(&parts);
 
-        // SAFETY: `init_global` returns the thread-local singleton raw pointer;
-        // reborrow `&'static mut` for the duration of the interpreter run (no
-        // other live `&mut` to the same `MiniEventLoop` on this thread).
-        let mini_ref = unsafe { &mut *mini };
-        let code = match Interpreter::init_and_run_from_source(
-            ctx,
-            mini_ref,
-            script_path,
-            &script,
-            None,
-        ) {
-            Ok(c) => c,
-            Err(err) => {
-                Output::err(
-                    err,
-                    "failed to run script <b>{}<r>",
-                    (BStr::new(script_path),),
-                );
-                Global::exit(1);
-            }
-        };
+        let code =
+            match Interpreter::init_and_run_from_source(ctx, mini, script_path, &script, None) {
+                Ok(c) => c,
+                Err(err) => {
+                    Output::err(
+                        err,
+                        "failed to run script <b>{}<r>",
+                        (BStr::new(script_path),),
+                    );
+                    Global::exit(1);
+                }
+            };
 
         Global::exit(u32::from(code));
     }

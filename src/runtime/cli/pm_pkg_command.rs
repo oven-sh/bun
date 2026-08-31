@@ -1,8 +1,7 @@
 use std::io::Write as _;
 
 use crate::Error;
-use crate::cli::command::Context;
-use bun_ast::{E, Expr, ExprData, G};
+use bun_ast::{E, Expr, ExprData};
 use bun_ast::{Loc, Log, Source};
 use bun_collections::{StringArrayHashMap, VecExt};
 use bun_core::strings;
@@ -50,7 +49,6 @@ struct PackageJson {
 
 impl PmPkgCommand {
     pub(crate) fn exec(
-        ctx: &Context,
         pm: &mut PackageManager,
         positionals: &[&[u8]],
         cwd: &[u8],
@@ -70,10 +68,10 @@ impl PmPkgCommand {
         };
 
         match subcommand {
-            SubCommand::Get => Self::exec_get(ctx, pm, &positionals[2..], cwd)?,
-            SubCommand::Set => Self::exec_set(ctx, pm, &positionals[2..], cwd)?,
-            SubCommand::Delete => Self::exec_delete(ctx, pm, &positionals[2..], cwd)?,
-            SubCommand::Fix => Self::exec_fix(ctx, pm, cwd)?,
+            SubCommand::Get => Self::exec_get(pm, &positionals[2..], cwd)?,
+            SubCommand::Set => Self::exec_set(pm, &positionals[2..], cwd)?,
+            SubCommand::Delete => Self::exec_delete(pm, &positionals[2..], cwd)?,
+            SubCommand::Fix => Self::exec_fix(pm, cwd)?,
             SubCommand::Help => Self::print_help(),
         }
         Ok(())
@@ -142,7 +140,7 @@ impl PmPkgCommand {
         Global::exit(1);
     }
 
-    fn load_package_json(ctx: &Context, path: &[u8]) -> Result<PackageJson, Error> {
+    fn load_package_json(log: &mut Log, path: &[u8]) -> Result<PackageJson, Error> {
         let contents: Box<[u8]> = match bun_sys::File::read_from(bun_sys::Fd::cwd(), path) {
             Ok(b) => b.into(),
             Err(e) => {
@@ -159,9 +157,7 @@ impl PmPkgCommand {
         // so the returned `Expr` (which may reference arena-owned nodes)
         // outlives this frame. CLI is one-shot.
         let bump: &'static bun_alloc::Arena = crate::cli::cli_arena();
-        // SAFETY: CLI dispatch is single-threaded; no other borrow of
-        // `ctx.log` is live while `log` is passed to the JSON parser below.
-        let log: &mut Log = unsafe { ctx.log_mut() };
+
         let result = match json::parse_package_json_utf8_with_opts(
             json::JSONOptions {
                 json_warn_duplicate_keys: false,
@@ -187,15 +183,10 @@ impl PmPkgCommand {
         })
     }
 
-    fn exec_get(
-        ctx: &Context,
-        _pm: &mut PackageManager,
-        args: &[&[u8]],
-        cwd: &[u8],
-    ) -> Result<(), Error> {
+    fn exec_get(pm: &mut PackageManager, args: &[&[u8]], cwd: &[u8]) -> Result<(), Error> {
         let path = Self::find_package_json(cwd)?;
 
-        let pkg = Self::load_package_json(ctx, &path)?;
+        let pkg = Self::load_package_json(pm.log_mut(), &path)?;
 
         if !matches!(pkg.root.data, ExprData::EObject(_)) {
             Output::err_generic("package.json root must be an object", ());
@@ -272,12 +263,7 @@ impl PmPkgCommand {
         Ok(())
     }
 
-    fn exec_set(
-        ctx: &Context,
-        pm: &mut PackageManager,
-        args: &[&[u8]],
-        cwd: &[u8],
-    ) -> Result<(), Error> {
+    fn exec_set(pm: &mut PackageManager, args: &[&[u8]], cwd: &[u8]) -> Result<(), Error> {
         if args.is_empty() {
             Output::err_generic(
                 "<blue>bun pm pkg set<r> expects a key=value pair of args",
@@ -290,7 +276,7 @@ impl PmPkgCommand {
 
         let path = Self::find_package_json(cwd)?;
 
-        let pkg = Self::load_package_json(ctx, &path)?;
+        let pkg = Self::load_package_json(pm.log_mut(), &path)?;
 
         let mut root = pkg.root;
         if !matches!(root.data, ExprData::EObject(_)) {
@@ -331,12 +317,7 @@ impl PmPkgCommand {
         Ok(())
     }
 
-    fn exec_delete(
-        ctx: &Context,
-        _pm: &mut PackageManager,
-        args: &[&[u8]],
-        cwd: &[u8],
-    ) -> Result<(), Error> {
+    fn exec_delete(pm: &mut PackageManager, args: &[&[u8]], cwd: &[u8]) -> Result<(), Error> {
         if args.is_empty() {
             Output::err_generic("<blue>bun pm pkg <b>delete<r> expects key args", ());
             Global::exit(1);
@@ -344,7 +325,7 @@ impl PmPkgCommand {
 
         let path = Self::find_package_json(cwd)?;
 
-        let pkg = Self::load_package_json(ctx, &path)?;
+        let pkg = Self::load_package_json(pm.log_mut(), &path)?;
 
         let mut root = pkg.root;
         if !matches!(root.data, ExprData::EObject(_)) {
@@ -374,10 +355,10 @@ impl PmPkgCommand {
         Ok(())
     }
 
-    fn exec_fix(ctx: &Context, _pm: &mut PackageManager, cwd: &[u8]) -> Result<(), Error> {
+    fn exec_fix(pm: &mut PackageManager, cwd: &[u8]) -> Result<(), Error> {
         let path = Self::find_package_json(cwd)?;
 
-        let pkg = Self::load_package_json(ctx, &path)?;
+        let pkg = Self::load_package_json(pm.log_mut(), &path)?;
 
         let mut root = pkg.root;
         if !matches!(root.data, ExprData::EObject(_)) {
@@ -801,26 +782,13 @@ impl PmPkgCommand {
         if !found {
             return Ok(false);
         }
-        let old_len = old_props.len();
-        // G::Property is !Copy/!Clone: take the
-        // old list, ptr::read kept entries into the new list, then forget the
-        // old buffer (CLI is one-shot — leak is intentional, see
-        // load_package_json).
-        let old = core::mem::ManuallyDrop::new(bun_alloc::AstAlloc::take(&mut e_obj.properties));
-        let mut new_props: G::PropertyList = G::PropertyList::init_capacity(old_len - 1);
-        for prop in old.slice() {
-            if let Some(k) = &prop.key {
-                if let ExprData::EString(s) = &k.data {
-                    if strings::eql(&s.data, key) {
-                        continue;
-                    }
-                }
-            }
-            // SAFETY: `old` is wrapped in `ManuallyDrop` so each Property is
-            // moved (not duplicated) into `new_props`.
-            new_props.append_assume_capacity(unsafe { core::ptr::read(prop) });
-        }
-        e_obj.properties = new_props;
+        e_obj.properties.retain(|prop| match &prop.key {
+            Some(k) => match &k.data {
+                ExprData::EString(s) => !strings::eql(&s.data, key),
+                _ => true,
+            },
+            None => true,
+        });
 
         Ok(true)
     }

@@ -76,7 +76,7 @@ impl PmVersionCommand {
         let package_json_dir = Self::find_package_dir(original_cwd)?;
 
         if positionals.len() <= 1 {
-            Self::show_help(ctx, pm, &package_json_dir)?;
+            Self::show_help(pm, &package_json_dir)?;
             return Ok(());
         }
 
@@ -113,10 +113,7 @@ impl PmVersionCommand {
                 ..JSON::PACKAGE_JSON_OPTS
             },
             &package_json_source,
-            // SAFETY: single-threaded CLI dispatch; the returned `&mut Log` is
-            // passed straight into this parse call and no other borrow of the
-            // process-static `Log` (via `ctx` or `pm`) is live for its duration.
-            unsafe { ctx.log_mut() },
+            pm.log_mut(),
             &json_bump,
         ) {
             Ok(r) => r,
@@ -338,7 +335,7 @@ impl PmVersionCommand {
         Global::exit(1);
     }
 
-    fn get_current_version(ctx: &command::ContextData, cwd: &[u8]) -> Option<Vec<u8>> {
+    fn get_current_version(pm: &PackageManager, cwd: &[u8]) -> Option<Vec<u8>> {
         // Returns an owned Vec<u8> (no borrow of the package.json bytes).
         let mut path_buf = PathBuffer::uninit();
         let package_json_path = path::join_abs_string_buf_z::<path_platform::Auto>(
@@ -357,14 +354,9 @@ impl PmVersionCommand {
             &*package_json_contents,
         );
         let json_bump = Arena::new();
-        let Ok(json) = JSON::parse_package_json_utf8(
-            &package_json_source,
-            // SAFETY: single-threaded CLI dispatch; the returned `&mut Log` is
-            // passed straight into this parse call and no other borrow of the
-            // process-static `Log` is live for its duration.
-            unsafe { ctx.log_mut() },
-            &json_bump,
-        ) else {
+        let Ok(json) =
+            JSON::parse_package_json_utf8(&package_json_source, pm.log_mut(), &json_bump)
+        else {
             return None;
         };
 
@@ -377,12 +369,8 @@ impl PmVersionCommand {
         None
     }
 
-    fn show_help(
-        ctx: &command::ContextData,
-        pm: &PackageManager,
-        cwd: &[u8],
-    ) -> Result<(), AllocError> {
-        let _current_version = Self::get_current_version(ctx, cwd);
+    fn show_help(pm: &PackageManager, cwd: &[u8]) -> Result<(), AllocError> {
+        let _current_version = Self::get_current_version(pm, cwd);
         let current_version: &[u8] = _current_version.as_deref().unwrap_or(b"1.0.0");
 
         bun_core::prettyln!(

@@ -20,12 +20,12 @@ use crate::offline_mode::OfflineMode;
 pub struct ContextData {
     pub start_time: i128,
     pub args: api::TransformOptions,
-    /// Raw pointer (not `&mut`) so `Default` works and so the
-    /// process-global `CONTEXT_DATA` static can be zero-initialized before
-    /// `create_context_data()` writes the real `&mut Log` into it.
-    // SAFETY: written exactly once in single-threaded CLI startup; thereafter
-    // always non-null for the process lifetime. Callers deref via `ctx.log()`.
-    pub log: *mut bun_ast::Log,
+    /// The CLI's process-lifetime diagnostic log, installed by
+    /// [`ContextData::set_log`] (`None` only before that). Kept as the root raw
+    /// pointer: the transpiler/bundler/install subsystems hold copies of it
+    /// ([`ContextData::log_ptr`]) under their own aliasing contracts, so no
+    /// long-lived `&mut` may sit above them.
+    log: Option<core::ptr::NonNull<bun_ast::Log>>,
     pub positionals: Vec<Box<[u8]>>,
     pub passthrough: Vec<Box<[u8]>>,
     pub install: Option<Box<api::BunInstall>>,
@@ -68,7 +68,7 @@ impl Default for ContextData {
         Self {
             start_time: 0,
             args: api::TransformOptions::default(),
-            log: core::ptr::null_mut(),
+            log: None,
             positionals: Vec::new(),
             passthrough: Vec::new(),
             install: None,
@@ -89,93 +89,53 @@ impl Default for ContextData {
 }
 
 impl ContextData {
-    /// Deref the process-lifetime `*mut Log` set in `create_context_data()`.
-    ///
-    /// Takes `&mut self` (not `&self`) so the borrow checker ties the returned
-    /// `&mut Log` to an exclusive borrow of the `ContextData` — a
-    /// `&self -> &mut Log` accessor would let two
-    /// live `&mut Log` overlap (UB). Note this is *necessary but not
-    /// sufficient*: the same `*Log` is borrowed (not owned) from the CLI
-    /// caller and is also fanned out to and stored by the transpiler/bundler
-    /// options, the install pipeline (migration,
-    /// `PackageManagerOptions`), JSON parsing,
-    /// etc. Exclusive `self` does NOT exclude those
-    /// aliases — see `# Safety` for the full precondition.
-    ///
-    /// # Safety
-    /// - `self.log` must have been populated by `create_context_data()` (i.e.
-    ///   this `ContextData` is the global CLI context) and remain valid for the
-    ///   lifetime of the returned reference.
-    /// - No other reference (`&` or `&mut`) to the pointed-to `Log` — including
-    ///   any derived from the CLI caller's original `*Log` or from copies held
-    ///   by the transpiler/bundler/install/JSON subsystems — may be live for
-    ///   the lifetime of the returned `&mut`.
+    /// Hand over the unique borrow of the process-lifetime CLI `Log`
+    /// (`create_context_data()`).
     #[inline]
-    pub unsafe fn log(&mut self) -> &mut bun_ast::Log {
-        debug_assert!(!self.log.is_null());
-        // SAFETY: single-threaded CLI startup writes a process-lifetime pointer
-        // and never invalidates it; the caller's `# Safety` contract guarantees
-        // no overlapping borrow of the same `Log` (which is aliased elsewhere —
-        // `&mut self` alone cannot prove exclusivity here).
-        unsafe { &mut *self.log }
+    pub fn set_log(&mut self, log: &'static mut bun_ast::Log) {
+        self.log = Some(core::ptr::NonNull::from(log));
     }
 
-    /// Mutable accessor for the process-lifetime CLI `Log`.
+    /// The CLI's diagnostic `Log`.
     ///
-    /// `self.log` is the `*mut bun_ast::Log` written exactly once by
-    /// `create_context_data()` during single-threaded CLI startup, pointing at
-    /// the static `Cli::LOG_` storage. Other subsystems that copy the same
-    /// `*mut Log` (transpiler, install) reborrow it via their own raw-pointer
-    /// accessors. Centralizing the deref here removes ~20 identical
-    /// `unsafe { &mut *ctx.log }` blocks at call sites.
-    ///
-    /// Takes `&self` (not `&mut self`) because several CLI entry points hold
-    /// `&Context<'_>` (= `&&mut ContextData`) and a `&mut self` receiver could
-    /// not prove exclusivity over the `Log` anyway — the pointer is aliased
-    /// outside `ContextData` (see `Transpiler::log_mut`,
-    /// `PackageManager::log_mut`). Note that a `&self` receiver provides **no**
-    /// static guarantee against interleaving two `log_mut()` results — shared
-    /// borrows do not exclude one another — hence this function is `unsafe`.
-    ///
-    /// # Safety
-    /// The caller must ensure that for the lifetime of the returned `&mut Log`
-    /// no other reference to the same `Log` exists: no second `log_mut()`
-    /// borrow, no overlapping [`log_ref`] borrow, and no live `&mut Log`
-    /// obtained via any other aliasing path (`Transpiler::log_mut`,
-    /// `PackageManager::log_mut`, etc.). CLI dispatch is single-threaded, so
-    /// this reduces to "do not hold the result across a call that may itself
-    /// reborrow the log".
+    /// The transpiler/bundler/install subsystems keep raw copies of this log
+    /// ([`log_ptr`](Self::log_ptr)) and reborrow it under their own contracts
+    /// (`Transpiler::log_mut`, `PackageManager::log_mut`); CLI dispatch is
+    /// single-threaded, so do not hold the result across a call into one of
+    /// those that may itself write to the log.
     ///
     /// # Panics
-    /// If `self.log` is null (i.e. `create_context_data()` has not run).
+    /// Before `create_context_data()` has run.
     #[track_caller]
     #[inline]
-    #[allow(clippy::mut_from_ref)]
-    pub unsafe fn log_mut(&self) -> &mut bun_ast::Log {
-        assert!(
-            !self.log.is_null(),
-            "ContextData::log_mut() before create_context_data()"
-        );
-        // SAFETY: `self.log` is non-null (asserted) and points at the
-        // process-static `Cli::LOG_` (`'static`); the caller's `# Safety`
-        // contract guarantees no overlapping borrow of the same `Log`.
-        unsafe { &mut *self.log }
+    pub fn log_mut(&mut self) -> &mut bun_ast::Log {
+        let mut log = self
+            .log
+            .expect("ContextData::log_mut() before create_context_data()");
+        // SAFETY: process-lifetime `Log` from `set_log`; CLI dispatch is
+        // single-threaded and `&mut self` scopes this reborrow (see doc above).
+        unsafe { log.as_mut() }
     }
 
-    /// Shared-ref counterpart of [`log_mut`] for read-only inspection
-    /// (`has_errors()`, `print()`).
+    /// Shared-ref counterpart of [`log_mut`](Self::log_mut) for read-only
+    /// inspection (`has_errors()`, `print()`).
     #[track_caller]
     #[inline]
     pub fn log_ref(&self) -> &bun_ast::Log {
-        assert!(
-            !self.log.is_null(),
-            "ContextData::log_ref() before create_context_data()"
-        );
-        // SAFETY: `self.log` is non-null (asserted) and points at the
-        // process-static `Cli::LOG_`; shared `&` may freely alias other
-        // shared borrows. Callers of `log_mut` are obligated not to hold a
-        // live `&mut Log` overlapping this.
-        unsafe { &*self.log }
+        let log = self
+            .log
+            .expect("ContextData::log_ref() before create_context_data()");
+        // SAFETY: as in `log_mut`; shared reborrow scoped by `&self`.
+        unsafe { log.as_ref() }
+    }
+
+    /// The log as the `*mut Log` the transpiler / VM / install options store.
+    #[track_caller]
+    #[inline]
+    pub fn log_ptr(&mut self) -> *mut bun_ast::Log {
+        self.log
+            .expect("ContextData::log_ptr() before create_context_data()")
+            .as_ptr()
     }
 }
 
@@ -301,24 +261,35 @@ pub type Context<'a> = &'a mut ContextData;
 // `bun_runtime::cli::command::CONTEXT_DATA`), but lower-tier crates such as
 // `bun_jsc` need read access to parsed runtime options (e.g.
 // `runtime_options.console_depth`) without taking a forward dep on
-// `bun_runtime`. The CLI publishes its pointer here via `set_global` during
+// `bun_runtime`. The CLI publishes its pointer here via `init_global` during
 // single-threaded startup; readers use `try_get`.
 static GLOBAL_CLI_CTX: core::sync::atomic::AtomicPtr<ContextData> =
     core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
 
-/// Publish the process-global CLI context. Called once from
-/// `bun_runtime::cli::command::create_context_data` during single-threaded
-/// startup.
+/// Allocate the process-lifetime CLI context (`create_context_data`, once,
+/// during single-threaded startup), publish it for [`try_get`] readers, and
+/// hand the CLI dispatch its `&mut`.
 ///
-/// # Safety
-/// `ctx` must outlive the process (it points into a `static`).
-#[inline]
-pub unsafe fn set_global(ctx: *mut ContextData) {
+/// Contract (pre-existing, see `try_get`): readers below `bun_runtime` only
+/// inspect options that are frozen once command dispatch begins, on the CLI
+/// thread or after startup; the returned `&mut` is the only writer.
+pub fn init_global(log: &'static mut bun_ast::Log, start_time: i128) -> &'static mut ContextData {
+    // One `ContextData::default()` is constructed and boxed, then the two
+    // non-default fields are patched on the live storage — avoids the second
+    // `Default` temporary (and its drop) that `..Default::default()` would build.
+    let mut ctx = Box::new(ContextData::default());
+    ctx.set_log(log);
+    ctx.start_time = start_time;
+    // Publish only once fully initialised.
+    let ctx: *mut ContextData = Box::into_raw(ctx);
     GLOBAL_CLI_CTX.store(ctx, core::sync::atomic::Ordering::Release);
+    // SAFETY: freshly leaked allocation; this is the root pointer and the
+    // returned `&mut` is its only mutable user (contract above).
+    unsafe { &mut *ctx }
 }
 
 /// Raw pointer to the process-global CLI context (null before
-/// `set_global`). Higher-tier crates that need a `&mut` view should go
+/// `init_global`). Higher-tier crates that need a `&mut` view should go
 /// through this single source of truth rather than keeping a parallel static.
 #[inline]
 pub fn global_ptr() -> *mut ContextData {
@@ -331,8 +302,8 @@ pub fn global_ptr() -> *mut ContextData {
 #[inline]
 pub fn try_get<'a>() -> Option<&'a ContextData> {
     let p = GLOBAL_CLI_CTX.load(core::sync::atomic::Ordering::Acquire);
-    // SAFETY: pointer was published from a process-lifetime `static` in
-    // single-threaded startup; treated as read-only here.
+    // SAFETY: pointer was published from a leaked process-lifetime allocation
+    // in single-threaded startup; treated as read-only here.
     unsafe { p.as_ref() }
 }
 
@@ -401,6 +372,7 @@ pub enum HotReload {
     Watch,
 }
 
+#[derive(Clone)]
 pub struct TestOptions {
     pub default_timeout_ms: u32,
     pub update_snapshots: bool,

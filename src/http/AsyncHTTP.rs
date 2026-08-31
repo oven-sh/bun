@@ -639,7 +639,126 @@ impl<'a> AsyncHTTP<'a> {
         };
         Ok(metadata)
     }
+}
 
+// ──────────────────────────────────────────────────────────────────────────
+// get_many_sync
+// ──────────────────────────────────────────────────────────────────────────
+
+/// One completed request from [`get_many_sync`].
+#[derive(Default)]
+pub struct SyncResponse {
+    pub fail: Option<crate::Error>,
+    pub metadata: Option<crate::HTTPResponseMetadata>,
+    pub body: Vec<u8>,
+}
+
+struct MultiHTTPChannel {
+    state: bun_threading::Guarded<MultiHTTPState>,
+    cv: bun_threading::Condvar,
+}
+
+struct MultiHTTPState {
+    remaining: usize,
+    responses: Vec<SyncResponse>,
+}
+
+struct MultiHTTPRequest<'a> {
+    // Late-init: `AsyncHTTP::init` needs this allocation's address for its
+    // callback context, so it is written once the allocation exists.
+    async_http: Option<AsyncHTTP<'a>>,
+    index: usize,
+    channel: *const MultiHTTPChannel,
+}
+
+fn get_many_sync_callback(
+    this: *mut MultiHTTPRequest<'static>,
+    _: *mut AsyncHTTP<'static>,
+    mut result: HTTPClientResult<'_>,
+) {
+    // As in `send_sync_callback`: no progress signals are set, so this is the
+    // terminal (only) callback for the request.
+    debug_assert!(!result.has_more);
+    // SAFETY: `this` is one of the `OwnedThis` `get_many_sync` keeps alive until every
+    // request has reported; `channel` points at its stack frame, which is
+    // blocked in the wait loop below until `remaining` reaches zero.
+    let (index, channel) = unsafe { ((*this).index, &*(*this).channel) };
+    let mut response = SyncResponse {
+        fail: result.fail,
+        metadata: result.metadata.take(),
+        body: Vec::new(),
+    };
+    result.body_into(&mut response.body);
+    let mut state = channel.state.lock();
+    state.responses[index] = response;
+    state.remaining -= 1;
+    channel.cv.notify_one();
+}
+
+/// GET every URL on the HTTP thread concurrently and block until all of them
+/// have completed. Results are in `urls` order; a request that could not be
+/// made reports through `SyncResponse::fail` / a missing `metadata`.
+pub fn get_many_sync(urls: &[&[u8]], redirect: FetchRedirect) -> Vec<SyncResponse> {
+    if urls.is_empty() {
+        return Vec::new();
+    }
+    crate::http_thread::init(&Default::default());
+
+    let channel = MultiHTTPChannel {
+        state: bun_threading::Guarded::new(MultiHTTPState {
+            remaining: urls.len(),
+            responses: urls.iter().map(|_| SyncResponse::default()).collect(),
+        }),
+        cv: bun_threading::Condvar::new(),
+    };
+
+    // `OwnedThis` (not `Box`) so moving the owner into `requests` does not
+    // retag the allocation the HTTP thread's callback context points into.
+    let mut requests: Vec<bun_ptr::OwnedThis<MultiHTTPRequest<'_>>> =
+        Vec::with_capacity(urls.len());
+    let mut batch = Batch::default();
+    for (index, url) in urls.iter().enumerate() {
+        let request = bun_ptr::OwnedThis::new(MultiHTTPRequest {
+            async_http: None,
+            index,
+            channel: &raw const channel,
+        });
+        let ctx: *mut MultiHTTPRequest<'_> = request.this_ptr().as_ptr();
+        // SAFETY: freshly allocated and not yet shared; `ctx` carries the
+        // allocation's root provenance, and no `&`/`&mut` to it is live.
+        unsafe {
+            (*ctx)
+                .async_http
+                .insert(AsyncHTTP::init(
+                    Method::GET,
+                    URL::parse(url),
+                    headers::EntryList::default(),
+                    b"",
+                    b"",
+                    HTTPClientResultCallback::new::<MultiHTTPRequest<'static>>(
+                        ctx.cast(),
+                        get_many_sync_callback,
+                    ),
+                    redirect,
+                    Options::default(),
+                ))
+                .schedule(&mut batch);
+        }
+        requests.push(request);
+    }
+    crate::HTTPThread::schedule(batch);
+
+    let mut state = channel.state.lock();
+    while state.remaining != 0 {
+        channel.cv.wait_guarded(&mut state);
+    }
+    // Every callback has run to completion (each decrements under the lock), so
+    // the HTTP thread holds no pointer into `requests` or `channel` any more.
+    drop(requests);
+    core::mem::take(&mut state.responses)
+}
+
+impl<'a> AsyncHTTP<'a> {
     // ──────────────────────────────────────────────────────────────────────
     // on_result
     // ──────────────────────────────────────────────────────────────────────

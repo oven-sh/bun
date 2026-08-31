@@ -14,7 +14,6 @@ use core::ffi::{c_int, c_void};
 use core::ptr::NonNull;
 
 use bun_uws::{ConnectingSocket, NewSocketHandler};
-use bun_uws_sys::thunk;
 use bun_uws_sys::thunk::ExtSlot;
 use bun_uws_sys::vtable::Handler as VHandler;
 use bun_uws_sys::{CloseCode, us_bun_verify_error_t, us_socket_t};
@@ -336,42 +335,48 @@ impl LiftJsResult for JsResult<()> {
 macro_rules! impl_ns_socket_events_forward {
     ($Owner:ty, $Handler:ty) => {
         impl<const SSL: bool> NsSocketEvents<$Owner, SSL> for $Handler {
-            fn on_open(this: &mut $Owner, s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
+            fn on_open(this: ThisPtr<$Owner>, s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
                 Self::on_open(this, s).lift()
             }
             fn on_data(
-                this: &mut $Owner,
+                this: ThisPtr<$Owner>,
                 s: NewSocketHandler<SSL>,
                 data: &[u8],
             ) -> bun_jsc::JsResult<()> {
                 Self::on_data(this, s, data).lift()
             }
-            fn on_writable(this: &mut $Owner, s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
+            fn on_writable(
+                this: ThisPtr<$Owner>,
+                s: NewSocketHandler<SSL>,
+            ) -> bun_jsc::JsResult<()> {
                 Self::on_writable(this, s).lift()
             }
             fn on_close(
-                this: &mut $Owner,
+                this: ThisPtr<$Owner>,
                 s: NewSocketHandler<SSL>,
                 code: i32,
                 reason: Option<*mut c_void>,
             ) -> bun_jsc::JsResult<()> {
                 Self::on_close(this, s, code, reason).lift()
             }
-            fn on_timeout(this: &mut $Owner, s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
+            fn on_timeout(
+                this: ThisPtr<$Owner>,
+                s: NewSocketHandler<SSL>,
+            ) -> bun_jsc::JsResult<()> {
                 Self::on_timeout(this, s).lift()
             }
-            fn on_end(this: &mut $Owner, s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
+            fn on_end(this: ThisPtr<$Owner>, s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
                 Self::on_end(this, s).lift()
             }
             fn on_connect_error(
-                this: &mut $Owner,
+                this: ThisPtr<$Owner>,
                 s: NewSocketHandler<SSL>,
                 code: i32,
             ) -> bun_jsc::JsResult<()> {
                 Self::on_connect_error(this, s, code).lift()
             }
             fn on_handshake(
-                this: &mut $Owner,
+                this: ThisPtr<$Owner>,
                 s: NewSocketHandler<SSL>,
                 ok: i32,
                 err: us_bun_verify_error_t,
@@ -495,46 +500,49 @@ where
 
 /// The callbacks live on a separate namespace `H` (the driver's pre-existing
 /// `SocketHandler(ssl)` adapter) rather than as methods on the owner type
-/// itself. Ext stores `*Owner`; it is optional because a connect/accept can
+/// itself. Ext stores the owner's `ThisPtr` (written by the driver's connect
+/// path from its root pointer); it is optional because a connect/accept can
 /// fail and dispatch `on_close` / `on_connect_error` BEFORE the caller has
 /// had a chance to stash `this` in the freshly-calloc'd ext slot.
 ///
 /// In Rust the "separate namespace" becomes a trait `NsSocketEvents` whose
-/// methods take `&mut Owner` as the first parameter; each driver's
-/// `SocketHandler<SSL>` zero-sized type implements it.
+/// methods take the owner as a [`ThisPtr`] (the drivers are refcounted and a
+/// handler may release the last ref or re-enter through the same socket, so no
+/// `&mut Owner` may span the call); each driver's `SocketHandler<SSL>`
+/// zero-sized type implements it.
 trait NsSocketEvents<Owner, const SSL: bool> {
-    fn on_open(_this: &mut Owner, _s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
+    fn on_open(_this: ThisPtr<Owner>, _s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
         Ok(())
     }
     fn on_data(
-        _this: &mut Owner,
+        _this: ThisPtr<Owner>,
         _s: NewSocketHandler<SSL>,
         _data: &[u8],
     ) -> bun_jsc::JsResult<()> {
         Ok(())
     }
-    fn on_writable(_this: &mut Owner, _s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
+    fn on_writable(_this: ThisPtr<Owner>, _s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
         Ok(())
     }
     fn on_close(
-        _this: &mut Owner,
+        _this: ThisPtr<Owner>,
         _s: NewSocketHandler<SSL>,
         _code: i32,
         _reason: Option<*mut c_void>,
     ) -> bun_jsc::JsResult<()> {
         Ok(())
     }
-    fn on_timeout(_this: &mut Owner, _s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
+    fn on_timeout(_this: ThisPtr<Owner>, _s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
         Ok(())
     }
-    fn on_long_timeout(_this: &mut Owner, _s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
+    fn on_long_timeout(_this: ThisPtr<Owner>, _s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
         Ok(())
     }
-    fn on_end(_this: &mut Owner, _s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
+    fn on_end(_this: ThisPtr<Owner>, _s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
         Ok(())
     }
     fn on_connect_error(
-        _this: &mut Owner,
+        _this: ThisPtr<Owner>,
         _s: NewSocketHandler<SSL>,
         _code: i32,
     ) -> bun_jsc::JsResult<()> {
@@ -542,7 +550,7 @@ trait NsSocketEvents<Owner, const SSL: bool> {
     }
     /// Default no-op covers adapters that leave the handshake slot unbound.
     fn on_handshake(
-        _this: &mut Owner,
+        _this: ThisPtr<Owner>,
         _s: NewSocketHandler<SSL>,
         _ok: i32,
         _err: us_bun_verify_error_t,
@@ -558,7 +566,7 @@ where
     Owner: 'static,
     H: NsSocketEvents<Owner, SSL> + 'static,
 {
-    type Ext = ExtSlot<Owner>;
+    type Ext = Option<ThisPtr<Owner>>;
 
     const HAS_ON_OPEN: bool = true;
     const HAS_ON_DATA: bool = true;
@@ -572,50 +580,45 @@ where
     const HAS_ON_HANDSHAKE: bool = true;
 
     fn on_open(ext: &mut Self::Ext, s: *mut us_socket_t, _is_client: bool, _ip: &[u8]) {
-        let Some(this) = ext.owner_mut() else { return };
+        let Some(this) = *ext else { return };
         fold(H::on_open(this, wrap::<SSL>(s)));
     }
     fn on_data(ext: &mut Self::Ext, s: *mut us_socket_t, data: &[u8]) {
-        let Some(this) = ext.owner_mut() else { return };
+        let Some(this) = *ext else { return };
         fold(H::on_data(this, wrap::<SSL>(s), data));
     }
     fn on_writable(ext: &mut Self::Ext, s: *mut us_socket_t) {
-        let Some(this) = ext.owner_mut() else { return };
+        let Some(this) = *ext else { return };
         fold(H::on_writable(this, wrap::<SSL>(s)));
     }
     fn on_close(ext: &mut Self::Ext, s: *mut us_socket_t, code: i32, reason: Option<*mut c_void>) {
-        let Some(this) = ext.owner_mut() else { return };
+        let Some(this) = *ext else { return };
         fold(H::on_close(this, wrap::<SSL>(s), code, reason));
     }
     fn on_timeout(ext: &mut Self::Ext, s: *mut us_socket_t) {
-        let Some(this) = ext.owner_mut() else { return };
+        let Some(this) = *ext else { return };
         fold(H::on_timeout(this, wrap::<SSL>(s)));
     }
     fn on_long_timeout(ext: &mut Self::Ext, s: *mut us_socket_t) {
-        let Some(this) = ext.owner_mut() else { return };
+        let Some(this) = *ext else { return };
         fold(H::on_long_timeout(this, wrap::<SSL>(s)));
     }
     fn on_end(ext: &mut Self::Ext, s: *mut us_socket_t) {
-        let Some(this) = ext.owner_mut() else { return };
+        let Some(this) = *ext else { return };
         fold(H::on_end(this, wrap::<SSL>(s)));
     }
     fn on_connect_error(ext: &mut Self::Ext, s: *mut us_socket_t, code: i32) {
         // Close before notify — see RawPtrHandler::on_connect_error.
-        let this = ext.get();
+        let this = *ext;
         // `us_socket_t` is an `opaque_ffi!` ZST — `opaque_mut` is the safe
         // deref (`s` is a live socket passed by the trampoline).
         us_socket_t::opaque_mut(s).close(CloseCode::failure);
-        // SAFETY: snapshot of the ext slot taken before close; unique heap
-        // owner, single-threaded dispatch (same contract as `ExtSlot::owner_mut`).
-        if let Some(t) = unsafe { thunk::ext_owner(&this) } {
+        if let Some(t) = this {
             fold(H::on_connect_error(t, wrap::<SSL>(s), code));
         }
     }
     fn on_connecting_error(c: *mut ConnectingSocket, code: i32) {
-        let Some(this) = ConnectingSocket::opaque_mut(c)
-            .ext::<ExtSlot<Owner>>()
-            .owner_mut()
-        else {
+        let Some(this) = *ConnectingSocket::opaque_mut(c).ext::<Option<ThisPtr<Owner>>>() else {
             return;
         };
         fold(H::on_connect_error(
@@ -630,7 +633,7 @@ where
         ok: bool,
         err: us_bun_verify_error_t,
     ) {
-        let Some(this) = ext.owner_mut() else { return };
+        let Some(this) = *ext else { return };
         fold(H::on_handshake(this, wrap::<SSL>(s), ok as i32, err));
     }
 }

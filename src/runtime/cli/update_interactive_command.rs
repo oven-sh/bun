@@ -510,10 +510,7 @@ impl UpdateInteractiveCommand {
         manager: &mut PackageManager,
         groups: UpdateGroups,
     ) -> crate::Result<()> {
-        // Reshaped for borrowck — capture `log_level` / `ctx.log`
-        // before borrowing `&mut manager.lockfile`.
         let not_silent = manager.options.log_level != LogLevel::Silent;
-        let ctx_log_ptr: *mut bun_ast::Log = ctx.log;
 
         match manager.load_lockfile_from_cwd::<true>() {
             LoadResult::NotFound => {
@@ -545,10 +542,7 @@ impl UpdateInteractiveCommand {
                             (cause.value.name(),),
                         ),
                     }
-                    // SAFETY: `ctx.log` is set by `Command::create_context_data`
-                    // for every subcommand and is non-null for the command's
-                    // lifetime.
-                    if unsafe { (*ctx_log_ptr).has_errors() } {
+                    if ctx.log_ref().has_errors() {
                         manager
                             .log_mut()
                             .print(std::ptr::from_mut(Output::error_writer()))?;
@@ -1107,47 +1101,15 @@ impl UpdateInteractiveCommand {
     }
 
     fn get_terminal_size() -> TerminalSize {
-        // Try to get terminal size
-        #[cfg(unix)]
-        {
-            // TIOCGWINSZ on stdout, routed through the output sink (bun_sys).
-            if let Some(size) = bun_core::output::File::from(bun_core::Fd::stdout()).winsize() {
-                // Reserve space for prompt (1 line) + scroll indicators (2 lines) + some buffer
-                let usable_height = if size.row > 6 { size.row - 4 } else { 20 };
-                return TerminalSize {
-                    height: usable_height as usize,
-                    width: size.col as usize,
-                };
-            }
-        }
-        #[cfg(windows)]
-        {
-            use bun_sys::windows;
-            let handle = match windows::GetStdHandle(windows::STD_OUTPUT_HANDLE) {
-                Some(h) => h,
-                None => {
-                    return TerminalSize {
-                        height: 20,
-                        width: 80,
-                    };
-                }
+        // TIOCGWINSZ / GetConsoleScreenBufferInfo (visible window) on stdout,
+        // routed through the output sink (bun_sys).
+        if let Some(size) = bun_core::output::File::from(bun_core::Fd::stdout()).winsize() {
+            // Reserve space for prompt (1 line) + scroll indicators (2 lines) + some buffer
+            let usable_height = if size.row > 6 { size.row - 4 } else { 20 };
+            return TerminalSize {
+                height: usable_height as usize,
+                width: size.col as usize,
             };
-
-            // SAFETY: all-zero is a valid CONSOLE_SCREEN_BUFFER_INFO (#[repr(C)] POD).
-            let mut csbi: windows::CONSOLE_SCREEN_BUFFER_INFO = bun_core::ffi::zeroed();
-            // SAFETY: handle is valid; csbi is a valid out-ptr.
-            if unsafe { windows::kernel32::GetConsoleScreenBufferInfo(handle, &mut csbi) }
-                != windows::FALSE
-            {
-                let width = csbi.srWindow.Right - csbi.srWindow.Left + 1;
-                let height = csbi.srWindow.Bottom - csbi.srWindow.Top + 1;
-                // Reserve space for prompt + scroll indicators + buffer
-                let usable_height = if height > 6 { height - 4 } else { 20 };
-                return TerminalSize {
-                    height: usize::try_from(usable_height).expect("int cast"),
-                    width: usize::try_from(width).expect("int cast"),
-                };
-            }
         }
         TerminalSize {
             height: 20,
@@ -2294,12 +2256,10 @@ fn update_default_catalog(
     let mut fresh_obj = E::Object::default();
     let (existing, source) = find_catalog_object(package_json, b"catalog");
     {
-        let catalog_obj: &mut E::Object = match existing {
-            Some(mut o) => {
-                // SAFETY: `StoreRef` derefs into the live arena slot for the
-                // duration of this block; no other `&mut` to it is live.
-                unsafe { &mut *core::ptr::addr_of_mut!(*o) }
-            }
+        // `StoreRef` derefs into the live arena slot.
+        let mut existing = existing;
+        let catalog_obj: &mut E::Object = match existing.as_mut() {
+            Some(o) => &mut **o,
             None => &mut fresh_obj,
         };
 
@@ -2380,11 +2340,9 @@ fn update_named_catalog(
     let mut fresh_catalogs = E::Object::default();
     let (existing_catalogs, source) = find_catalog_object(package_json, b"catalogs");
     {
-        let catalogs_obj: &mut E::Object = match existing_catalogs {
-            Some(mut o) => {
-                // SAFETY: arena slot live for fn duration; no aliasing `&mut`.
-                unsafe { &mut *core::ptr::addr_of_mut!(*o) }
-            }
+        let mut existing_catalogs = existing_catalogs;
+        let catalogs_obj: &mut E::Object = match existing_catalogs.as_mut() {
+            Some(o) => &mut **o,
             None => &mut fresh_catalogs,
         };
 
@@ -2393,11 +2351,9 @@ fn update_named_catalog(
         let existing_catalog: Option<bun_ast::StoreRef<E::Object>> = catalogs_obj
             .get(catalog_name)
             .and_then(|e| e.data.e_object());
-        let catalog_obj: &mut E::Object = match existing_catalog {
-            Some(mut o) => {
-                // SAFETY: arena slot live for fn duration; no aliasing `&mut`.
-                unsafe { &mut *core::ptr::addr_of_mut!(*o) }
-            }
+        let mut existing_catalog_ref = existing_catalog;
+        let catalog_obj: &mut E::Object = match existing_catalog_ref.as_mut() {
+            Some(o) => &mut **o,
             None => &mut fresh_catalog,
         };
 

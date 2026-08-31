@@ -256,15 +256,15 @@ impl LinkerContext<'_> {
                 None => Vec::new(),
                 Some(m) => m.keys().to_vec(),
             };
+            let symbol_uses = &mut part.symbol_uses;
             for ref_ in &prop_use_refs {
-                // Re-fetch each iteration to avoid overlapping &mut.
-                let properties: *const _ = part
+                let properties = part
                     .import_symbol_property_uses
                     .as_ref()
                     .unwrap()
                     .get(ref_)
                     .unwrap();
-                let use_: &mut SymbolUse = part.symbol_uses.get_ptr_mut(ref_).unwrap();
+                let use_: &mut SymbolUse = symbol_uses.get_ptr_mut(ref_).unwrap();
 
                 // Rare path: this import is a TypeScript enum
                 if let Some(import_data) = our_imports_to_bind.get(ref_) {
@@ -274,10 +274,7 @@ impl LinkerContext<'_> {
                             if let Some(enum_data) = c.graph.ts_enums.get(&import_ref) {
                                 let mut found_non_inlined_enum = false;
 
-                                // SAFETY: `properties` points into
-                                // `part.import_symbol_property_uses` which is not
-                                // mutated for the lifetime of this borrow.
-                                for (name, prop_use) in unsafe { (*properties).iter() } {
+                                for (name, prop_use) in properties.iter() {
                                     if enum_data.get(name).is_none() {
                                         found_non_inlined_enum = true;
                                         use_.count_estimate += prop_use.count_estimate;
@@ -286,7 +283,7 @@ impl LinkerContext<'_> {
 
                                 if !found_non_inlined_enum {
                                     if use_.count_estimate == 0 {
-                                        let _ = part.symbol_uses.swap_remove(ref_);
+                                        let _ = symbol_uses.swap_remove(ref_);
                                     }
                                     continue;
                                 }
@@ -296,9 +293,13 @@ impl LinkerContext<'_> {
                 }
 
                 // Common path: this import isn't a TypeScript enum
-                // SAFETY: see above.
-                for prop_use in unsafe { (*properties).values() } {
+                for prop_use in properties.values() {
                     use_.count_estimate += prop_use.count_estimate;
+                }
+                // Every property read was bound straight to the namespace's
+                // export by `bind_import_property_accesses`.
+                if use_.count_estimate == 0 {
+                    let _ = symbol_uses.swap_remove(ref_);
                 }
             }
 
@@ -565,7 +566,7 @@ impl LinkerContext<'_> {
         // "__export(exports, { foo: () => foo })"
         let mut export_ref = Ref::NONE;
         if !properties.is_empty() {
-            export_ref = self.runtime_function(b"__export");
+            export_ref = self.runtime_function(self.export_runtime_function());
             // `bumpalo::Vec` → `Vec` via the global heap;
             // `G::PropertyList` is `Vec<Property>` and currently has no
             // arena-backed `move_from_list`, so re-own.

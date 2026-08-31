@@ -506,6 +506,9 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
         parse_param!(
             "--emit-dce-annotations           Re-emit DCE annotations in bundles. Enabled by default unless --minify-whitespace is passed."
         ),
+        parse_param!(
+            "--no-deprecated-namespace-object-setters  Make bundled module namespace objects getter-only (the default in a future release)"
+        ),
         parse_param!("--minify                         Enable all minification flags"),
         parse_param!("--minify-syntax                  Minify syntax and inline data"),
         parse_param!("--minify-whitespace              Minify whitespace"),
@@ -2085,6 +2088,8 @@ fn parse_build_command_options(
 
     ctx.bundler_options.emit_dce_annotations =
         args.flag(b"--emit-dce-annotations") || !ctx.bundler_options.minify_whitespace;
+    ctx.bundler_options.deprecated_namespace_object_setters =
+        !args.flag(b"--no-deprecated-namespace-object-setters");
 
     if !args.options(b"--external").is_empty() {
         opts.external = slice_to_owned(args.options(b"--external"));

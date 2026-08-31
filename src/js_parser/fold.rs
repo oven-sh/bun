@@ -558,26 +558,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         });
                     }
                 }
-                js_ast::ExprData::EImportIdentifier(id) => {
-                    // Symbol uses due to a property access off of an imported symbol are tracked
-                    // specially. This lets us do tree shaking for cross-file TypeScript enums.
-                    if p.options.bundle && !p.is_control_flow_dead {
-                        let use_ = p.symbol_uses.get_mut(&id.ref_).unwrap();
-                        use_.count_estimate = use_.count_estimate.saturating_sub(1);
-                        // note: this use is not removed as we assume it exists later
-
-                        // Add a special symbol use instead
-                        let gop = p
-                            .import_symbol_property_uses
-                            .get_or_put_value(id.ref_, Default::default())
-                            .expect("unreachable");
-                        let inner_use = gop
-                            .value_ptr
-                            .get_or_put_value(name, Default::default())
-                            .expect("unreachable");
-                        inner_use.count_estimate += 1;
-                    }
-                }
                 // EDot and EIndex are handled with structurally identical arms.
                 js_ast::ExprData::EDot(data) => {
                     if matches!(p.ts_namespace.expr, js_ast::ExprData::EDot(ns_data) if data.as_ptr() == ns_data.as_ptr())

@@ -51,6 +51,11 @@ pub struct Ast<'a> {
     // them under the same lifetime-erased contract as `StoreRef`.
     pub hashbang: StoreStr,
     pub directive: Option<StoreStr>,
+    /// `export default X` where `X` is an import binding in this file. When
+    /// `X` resolves to a module namespace the linker binds importers of
+    /// `default` through `X` (a namespace never changes identity, so the
+    /// default's snapshot of it is the live value).
+    pub export_default_alias_of_import: Ref,
     pub parts: PartList<'a>,
     // This list may be mutated later, so we should store the capacity
     pub symbols: SymbolList<'a>,
@@ -110,6 +115,7 @@ impl<'a> Ast<'a> {
             import_records: ImportRecordList::new_in(arena),
             hashbang: StoreStr::EMPTY,
             directive: None,
+            export_default_alias_of_import: Ref::NONE,
             parts: PartList::new_in(arena),
             symbols: SymbolList::new_in(arena),
             module_scope: Scope::default(),
@@ -152,6 +158,11 @@ pub type NamedExports = StringArrayHashMap<NamedExport, StringContext, AstAlloc>
 pub type ConstValuesMap = ArrayHashMap<Ref, Expr, AutoContext, AstAlloc>;
 pub type TsEnumsMap =
     ArrayHashMap<Ref, StringHashMap<InlinedEnumValue, AstAlloc>, AutoContext, AstAlloc>;
+/// `import X ...; X.name` where `X` resolved to a module namespace while
+/// linking: `X` -> `name` -> the generated import symbol bound to that export.
+/// The printer emits that symbol in place of the property access.
+pub type ImportMemberBindings =
+    ArrayHashMap<Ref, StringHashMap<Ref, AstAlloc>, AutoContext, AstAlloc>;
 
 impl<'a> Ast<'a> {
     pub fn from_parts(parts: Box<[Part]>, arena: &'a bun_alloc::MimallocArena) -> Ast<'a> {

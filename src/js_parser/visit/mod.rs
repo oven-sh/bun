@@ -1144,6 +1144,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         target: this_target,
                                         index: key,
                                         optional_chain: None,
+                                        is_import_property_use: false,
                                     },
                                     key.loc,
                                 ),

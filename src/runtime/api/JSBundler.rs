@@ -125,6 +125,7 @@ pub mod js_bundler {
         pub(crate) no_macros: bool,
         pub(crate) ignore_dce_annotations: bool,
         pub(crate) emit_dce_annotations: Option<bool>,
+        pub(crate) deprecated_namespace_object_setters: bool,
         pub(crate) tree_shaking: Option<bool>,
         pub(crate) names: Names,
         pub(crate) external: StringSet,
@@ -191,6 +192,7 @@ pub mod js_bundler {
                 no_macros: false,
                 ignore_dce_annotations: false,
                 emit_dce_annotations: None,
+                deprecated_namespace_object_setters: true,
                 tree_shaking: None,
                 names: Names::default(),
                 external: StringSet::default(),
@@ -863,6 +865,11 @@ pub mod js_bundler {
                 this.files = file_map_from_js(global_this, JSValue::from_cell(files_obj))?;
             }
 
+            if let Some(flag) =
+                config.get_boolean_loose(global_this, "deprecatedNamespaceObjectSetters")?
+            {
+                this.deprecated_namespace_object_setters = flag;
+            }
             if let Some(flag) = config.get_boolean_loose(global_this, "emitDCEAnnotations")? {
                 this.emit_dce_annotations = Some(flag);
             }

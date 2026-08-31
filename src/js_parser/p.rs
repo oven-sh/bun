@@ -448,6 +448,8 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) enclosing_class_keyword: bun_ast::Range,
     pub(crate) import_items_for_namespace: HashMap<Ref, ImportItemForNamespaceMap>,
     pub(crate) is_import_item: RefMap,
+    /// See `Ast::export_default_alias_of_import`.
+    pub(crate) export_default_alias_of_import: Ref,
     pub(crate) named_imports: NamedImportsType<'a>,
     pub(crate) named_exports: bun_ast::ast_result::NamedExports,
 
@@ -4874,12 +4876,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             ) {
                 value = rewrote;
             } else {
+                let is_import_property_use =
+                    self.record_import_property_use(&value, part, IdentifierOpts::default());
                 value = self.new_expr(
                     E::Dot {
                         target: value,
                         name: (*part).into(),
                         name_loc: loc,
                         can_be_removed_if_unused: self.options.features.dead_code_elimination,
+                        is_import_property_use,
                         ..Default::default()
                     },
                     loc,
@@ -5815,6 +5820,47 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         kind
     }
 
+    /// `X.name` / `X["name"]` on an import: count it as a use of the property
+    /// rather than of `X` itself, so that cross-file enum inlining and
+    /// namespace-member binding in the linker can drop `X` when every use was
+    /// resolved that way. Returns whether it was recorded; the caller marks the
+    /// node (`E::Dot::is_import_property_use`) so the printer knows the two agree.
+    pub(crate) fn record_import_property_use(
+        &mut self,
+        target: &Expr,
+        name: &[u8],
+        opts: IdentifierOpts,
+    ) -> bool {
+        let js_ast::ExprData::EImportIdentifier(id) = target.data else {
+            return false;
+        };
+        if !self.options.bundle
+            || self.is_control_flow_dead
+            || opts.assign_target() != js_ast::AssignTarget::None
+            || opts.is_delete_target()
+        {
+            return false;
+        }
+        // Same node visited again (const inlining); already counted.
+        if self.is_revisit_for_substitution {
+            return true;
+        }
+        let use_ = self.symbol_uses.get_mut(&id.ref_).unwrap();
+        use_.count_estimate = use_.count_estimate.saturating_sub(1);
+        // note: this use is not removed as we assume it exists later
+
+        let gop = self
+            .import_symbol_property_uses
+            .get_or_put_value(id.ref_, Default::default())
+            .expect("unreachable");
+        let inner_use = gop
+            .value_ptr
+            .get_or_put_value(name, Default::default())
+            .expect("unreachable");
+        inner_use.count_estimate += 1;
+        true
+    }
+
     pub(crate) fn ignore_usage(&mut self, r#ref: Ref) {
         if !self.is_control_flow_dead && !self.is_revisit_for_substitution {
             debug_assert!((r#ref.inner_index() as usize) < self.symbols.len());
@@ -6618,6 +6664,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     target,
                                     index: key,
                                     optional_chain: None,
+                                    is_import_property_use: false,
                                 },
                                 key.loc,
                             ),
@@ -8527,6 +8574,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             has_import_meta: self.has_import_meta,
 
             hashbang: hashbang.into(),
+            export_default_alias_of_import: self.export_default_alias_of_import,
             // TODO: cross-module constant inlining
             // const_values: self.const_values,
             ts_enums,
@@ -8889,6 +8937,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             enclosing_class_keyword: bun_ast::Range::NONE,
             import_items_for_namespace: Default::default(),
             is_import_item: Default::default(),
+            export_default_alias_of_import: Ref::NONE,
             scope_order_to_visit: &[],
             module_scope_directive_loc: bun_ast::Loc::default(),
             is_control_flow_dead: false,

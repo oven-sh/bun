@@ -95,7 +95,9 @@ fn stat_for_digest(path: &bun_core::ZStr) -> Option<[i64; 3]> {
     ])
 }
 
-#[repr(C)]
+/// TLS options as the runtime holds them: PEM bytes or the path of a file
+/// that holds them. [`Self::load_files`] reads the paths and produces the
+/// [`RawSocketContextOptions`] usockets takes.
 #[derive(Clone, Copy)]
 pub struct BunSocketContextOptions {
     pub key_file_name: *const c_char,
@@ -124,10 +126,6 @@ pub struct BunSocketContextOptions {
     pub allow_partial_trust_chain: i32,
     pub sigalgs: *const c_char,
     pub ecdh_curve: *const c_char,
-    /// PEM-encoded DH parameters; takes precedence over `dh_params_file_name`.
-    pub dh_params: *const c_char,
-    /// The bytes of `ca_file_name`; takes precedence over it.
-    pub ca_file: *const c_char,
 }
 
 impl Default for BunSocketContextOptions {
@@ -159,14 +157,42 @@ impl Default for BunSocketContextOptions {
             allow_partial_trust_chain: 0,
             sigalgs: ptr::null(),
             ecdh_curve: ptr::null(),
-            dh_params: ptr::null(),
-            ca_file: ptr::null(),
         }
     }
 }
 
+/// `#[repr(C)]` mirror of `us_bun_socket_context_options_t`. TLS material is
+/// PEM bytes only; see [`BunSocketContextOptions::load_files`].
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RawSocketContextOptions {
+    pub passphrase: *const c_char,
+    pub ssl_ciphers: *const c_char,
+    pub ssl_prefer_low_memory_usage: i32,
+    pub key: *const *const c_char,
+    pub key_count: u32,
+    pub cert: *const *const c_char,
+    pub cert_count: u32,
+    pub ca: *const *const c_char,
+    pub ca_count: u32,
+    pub secure_options: u32,
+    pub ssl_min_version: i32,
+    pub ssl_max_version: i32,
+    pub reject_unauthorized: i32,
+    pub request_cert: i32,
+    pub client_renegotiation_limit: u32,
+    pub client_renegotiation_window: u32,
+    pub session_timeout: i32,
+    pub crl: *const *const c_char,
+    pub crl_count: u32,
+    pub allow_partial_trust_chain: i32,
+    pub sigalgs: *const c_char,
+    pub ecdh_curve: *const c_char,
+    pub dh_params: *const c_char,
+}
+
 /// The `*_file_name` option a read failure belongs to.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug)]
 pub enum TlsFile {
     Key,
     Cert,
@@ -194,7 +220,7 @@ impl LoadFileError {
 
 struct LoadedFile {
     bytes: bun_core::ZBox,
-    /// What `key` / `cert` points at.
+    /// What `key` / `cert` / `ca` points at.
     array: Box<[*const c_char; 1]>,
 }
 
@@ -223,10 +249,9 @@ impl Drop for LoadedFile {
     }
 }
 
-/// [`BunSocketContextOptions`] with the `*_file_name` options read into memory.
+/// [`RawSocketContextOptions`] plus the buffers its pointers borrow.
 pub struct LoadedOptions {
-    options: BunSocketContextOptions,
-    /// Owns the buffers `options` points at.
+    raw: RawSocketContextOptions,
     _files: Vec<LoadedFile>,
 }
 
@@ -234,17 +259,17 @@ impl Default for LoadedOptions {
     /// [`BunSocketContextOptions::default`]: no TLS material, nothing to read.
     fn default() -> Self {
         Self {
-            options: BunSocketContextOptions::default(),
+            raw: BunSocketContextOptions::default().raw(),
             _files: Vec::new(),
         }
     }
 }
 
 impl core::ops::Deref for LoadedOptions {
-    type Target = BunSocketContextOptions;
+    type Target = RawSocketContextOptions;
     #[inline]
-    fn deref(&self) -> &BunSocketContextOptions {
-        &self.options
+    fn deref(&self) -> &RawSocketContextOptions {
+        &self.raw
     }
 }
 
@@ -263,45 +288,69 @@ impl LoadedOptions {
         // is a valid out-param, and `self._files` keeps every buffer the options
         // point at alive for the call. A non-null return carries the +1 from
         // `SSL_CTX_new`.
-        unsafe { OwnedSslCtx::from_raw(c::us_ssl_ctx_from_options(self.options, err)) }
+        unsafe { OwnedSslCtx::from_raw(c::us_ssl_ctx_from_options(self.raw, err)) }
     }
 }
 
 impl BunSocketContextOptions {
-    /// Read each `*_file_name` option into the matching bytes field.
+    /// The fields usockets takes, with no TLS material read yet.
+    fn raw(&self) -> RawSocketContextOptions {
+        RawSocketContextOptions {
+            passphrase: self.passphrase,
+            ssl_ciphers: self.ssl_ciphers,
+            ssl_prefer_low_memory_usage: self.ssl_prefer_low_memory_usage,
+            key: self.key,
+            key_count: self.key_count,
+            cert: self.cert,
+            cert_count: self.cert_count,
+            ca: self.ca,
+            ca_count: self.ca_count,
+            secure_options: self.secure_options,
+            ssl_min_version: self.ssl_min_version,
+            ssl_max_version: self.ssl_max_version,
+            reject_unauthorized: self.reject_unauthorized,
+            request_cert: self.request_cert,
+            client_renegotiation_limit: self.client_renegotiation_limit,
+            client_renegotiation_window: self.client_renegotiation_window,
+            session_timeout: self.session_timeout,
+            crl: self.crl,
+            crl_count: self.crl_count,
+            allow_partial_trust_chain: self.allow_partial_trust_chain,
+            sigalgs: self.sigalgs,
+            ecdh_curve: self.ecdh_curve,
+            dh_params: ptr::null(),
+        }
+    }
+
+    /// Read each `*_file_name` option into the matching bytes field. A file
+    /// replaces an inline value of the same field.
     pub fn load_files(&self) -> Result<LoadedOptions, LoadFileError> {
-        let mut options = *self;
+        let mut raw = self.raw();
         let mut files = Vec::new();
         if !self.key_file_name.is_null() {
             let file = LoadedFile::read(TlsFile::Key, self.key_file_name)?;
-            options.key = file.array.as_ptr();
-            options.key_count = 1;
-            options.key_file_name = ptr::null();
+            raw.key = file.array.as_ptr();
+            raw.key_count = 1;
             files.push(file);
         }
         if !self.cert_file_name.is_null() {
             let file = LoadedFile::read(TlsFile::Cert, self.cert_file_name)?;
-            options.cert = file.array.as_ptr();
-            options.cert_count = 1;
-            options.cert_file_name = ptr::null();
+            raw.cert = file.array.as_ptr();
+            raw.cert_count = 1;
             files.push(file);
         }
-        if self.ca_file.is_null() && !self.ca_file_name.is_null() {
+        if !self.ca_file_name.is_null() {
             let file = LoadedFile::read(TlsFile::Ca, self.ca_file_name)?;
-            options.ca_file = file.bytes.as_ptr();
-            options.ca_file_name = ptr::null();
+            raw.ca = file.array.as_ptr();
+            raw.ca_count = 1;
             files.push(file);
         }
-        if self.dh_params.is_null() && !self.dh_params_file_name.is_null() {
+        if !self.dh_params_file_name.is_null() {
             let file = LoadedFile::read(TlsFile::DhParams, self.dh_params_file_name)?;
-            options.dh_params = file.bytes.as_ptr();
-            options.dh_params_file_name = ptr::null();
+            raw.dh_params = file.bytes.as_ptr();
             files.push(file);
         }
-        Ok(LoadedOptions {
-            options,
-            _files: files,
-        })
+        Ok(LoadedOptions { raw, _files: files })
     }
 
     /// [`Self::load_files`] then [`LoadedOptions::create_ssl_context`].
@@ -399,8 +448,6 @@ impl BunSocketContextOptions {
         h.update(bun_core::bytes_of(&self.allow_partial_trust_chain));
         feed_z(&mut h, self.sigalgs);
         feed_z(&mut h, self.ecdh_curve);
-        feed_z(&mut h, self.dh_params);
-        feed_z(&mut h, self.ca_file);
         let mut out = [0u8; 32];
         h.final_(&mut out);
         out
@@ -464,7 +511,7 @@ pub mod c {
     use super::*;
     unsafe extern "C" {
         pub(crate) fn us_ssl_ctx_from_options(
-            options: BunSocketContextOptions,
+            options: RawSocketContextOptions,
             err: *mut create_bun_socket_error_t,
         ) -> *mut SSL_CTX;
         // safe: no args; reads a process-global counter — no preconditions.

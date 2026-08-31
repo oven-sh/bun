@@ -343,46 +343,45 @@ describe("keyFile / certFile / caFile / dhParamsFile", () => {
     expect(listenWith({ keyFile, certFile, dhParamsFile: directory })).toThrow("Failed to load DH params file");
   });
 
-  test("caFile keeps the PEM rules of the file loader", async () => {
+  test("caFile loads the file the way ca loads its bytes", async () => {
     using server = Bun.serve({ port: 0, hostname: "127.0.0.1", tls: tlsCert, fetch: () => new Response("OK") });
-    const asTrusted = tlsCert.cert.replaceAll("CERTIFICATE-----", "TRUSTED CERTIFICATE-----");
     const crl = readFileSync(join(keysFixtures, "ca2-crl.pem"), "utf8");
     using dir = tempDir("bun-serve-ssl-cafile-pem", {
-      "key.pem": tlsCert.key,
-      "cert.pem": tlsCert.cert,
-      "trusted-second.pem": `${expiredTls.cert}\n${asTrusted}`,
+      "trusts-server.pem": tlsCert.cert,
+      "other-ca.pem": expiredTls.cert,
       "with-crl.pem": `${tlsCert.cert}\n${crl}`,
       "corrupt-second.pem": `${tlsCert.cert}\n-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----\n`,
       "no-certificate.pem": tlsCert.key,
     });
-    // TRUSTED CERTIFICATE and X509 CRL blocks are loaded into the trust store.
-    for (const name of ["trusted-second.pem", "with-crl.pem"]) {
-      const res = await fetch(server.url, { keepalive: false, tls: { caFile: join(String(dir), name) } });
-      expect(await res.text()).toBe("OK");
-    }
-    // A corrupt block fails the whole file. A file with no certificate is not a CA file.
-    const listenWith = (caFile: string) => () => {
-      Bun.listen({
-        hostname: "127.0.0.1",
-        port: 0,
-        tls: { keyFile: join(String(dir), "key.pem"), certFile: join(String(dir), "cert.pem"), caFile },
-        socket: { data() {} },
-      });
+    const attempt = async (tls: Record<string, string>) => {
+      try {
+        const res = await fetch(server.url, { keepalive: false, tls });
+        return await res.text();
+      } catch (error) {
+        return (error as { code: string }).code;
+      }
     };
-    expect(listenWith(join(String(dir), "corrupt-second.pem"))).toThrow("Invalid CA file");
-    expect(listenWith(join(String(dir), "no-certificate.pem"))).toThrow("Failed to load CA file");
-    // Bun.serve reports the BoringSSL error of the first PEM block instead.
-    expect(() => {
-      Bun.serve({
-        port: 0,
-        tls: {
-          keyFile: join(String(dir), "key.pem"),
-          certFile: join(String(dir), "cert.pem"),
-          caFile: join(String(dir), "no-certificate.pem"),
-        },
-        fetch: () => new Response("unreachable"),
-      });
-    }).toThrow(expect.objectContaining({ code: "ERR_OSSL_PEM_NO_START_LINE" }));
+    const outcomes: Record<string, { caFile: string; ca: string }> = {};
+    for (const name of [
+      "trusts-server.pem",
+      "other-ca.pem",
+      "with-crl.pem",
+      "corrupt-second.pem",
+      "no-certificate.pem",
+    ]) {
+      const path = join(String(dir), name);
+      outcomes[name] = {
+        caFile: await attempt({ caFile: path }),
+        ca: await attempt({ ca: readFileSync(path, "utf8") }),
+      };
+    }
+    expect(outcomes).toEqual({
+      "trusts-server.pem": { caFile: "OK", ca: "OK" },
+      "other-ca.pem": { caFile: "DEPTH_ZERO_SELF_SIGNED_CERT", ca: "DEPTH_ZERO_SELF_SIGNED_CERT" },
+      "with-crl.pem": { caFile: "OK", ca: "OK" },
+      "corrupt-second.pem": { caFile: "OK", ca: "OK" },
+      "no-certificate.pem": { caFile: "DEPTH_ZERO_SELF_SIGNED_CERT", ca: "DEPTH_ZERO_SELF_SIGNED_CERT" },
+    });
   });
 
   test("serverName entries load their file options too", async () => {

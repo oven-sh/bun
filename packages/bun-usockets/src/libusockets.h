@@ -485,12 +485,10 @@ const char *us_socket_sni_servername(struct us_socket_t *s);
  * from sockets entirely. Build once per SecureContext / config, share across
  * every connect/listen/upgrade. */
 
+/* TLS material arrives as PEM bytes; callers that take file paths read them
+ * before building the options. */
 struct us_bun_socket_context_options_t {
-    const char *key_file_name;
-    const char *cert_file_name;
     const char *passphrase;
-    const char *dh_params_file_name;
-    const char *ca_file_name;
     const char *ssl_ciphers;
     int ssl_prefer_low_memory_usage;
     const char * const *key;
@@ -519,12 +517,8 @@ struct us_bun_socket_context_options_t {
     const char *sigalgs;
     /* Colon-separated named-group list applied via SSL_CTX_set1_groups_list. */
     const char *ecdh_curve;
-    /* PEM-encoded DH parameters; takes precedence over dh_params_file_name. */
+    /* PEM-encoded DH parameters. */
     const char *dh_params;
-    /* The bytes of ca_file_name, loaded with the same rules as the file
-     * (CERTIFICATE, TRUSTED CERTIFICATE and CRL blocks); takes precedence
-     * over ca_file_name. */
-    const char *ca_file;
 };
 
 enum create_bun_socket_error_t {

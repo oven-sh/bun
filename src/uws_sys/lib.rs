@@ -496,7 +496,9 @@ pub use listen_socket::ListenSocket;
 pub use request::{AnyRequest, Request};
 pub use response::c::uws_res;
 pub use response::{AnyResponse, SocketAddress, WebSocketUpgradeContext};
-pub use socket_context::{BunSocketContextOptions, LoadFileError, LoadedOptions, TlsFile};
+pub use socket_context::{
+    BunSocketContextOptions, LoadFileError, LoadedOptions, RawSocketContextOptions, TlsFile,
+};
 pub use socket_group::ConnectResult;
 pub use socket_group::SocketGroup;
 pub use us_socket::{CloseCode, UsIoVec, us_socket_stream_buffer_t, us_socket_t};

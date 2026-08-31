@@ -7,7 +7,7 @@ use core::ptr;
 
 use crate::SocketAddress;
 use crate::response::{State, WriteResult};
-use crate::socket_context::{BunSocketContextOptions, LoadedOptions};
+use crate::socket_context::{LoadedOptions, RawSocketContextOptions};
 use crate::thunk;
 use crate::{AnyRequest, AnyResponse};
 use bun_ptr::ThisPtr;
@@ -592,7 +592,7 @@ mod c {
     // Shims with (ptr,len), nullable raw, *mut c_void ctx stay unsafe.
     unsafe extern "C" {
         pub(super) fn uws_h3_create_app(
-            opts: BunSocketContextOptions,
+            opts: RawSocketContextOptions,
             idle_timeout_s: u32,
         ) -> *mut App;
         pub(super) fn uws_h3_app_destroy(app: *mut App);
@@ -601,7 +601,7 @@ mod c {
         pub(super) fn uws_h3_app_add_server_name(
             app: *mut App,
             hostname: *const c_char,
-            opts: BunSocketContextOptions,
+            opts: RawSocketContextOptions,
         ) -> bool;
         pub(super) safe fn uws_h3_res_write_continue(res: &mut Response);
         pub(super) fn uws_h3_app_get(

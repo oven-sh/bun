@@ -6,7 +6,7 @@ use bun_core::ZStr;
 use bun_http_types::Method::Method;
 
 use crate::response::Response;
-use crate::socket_context::{BunSocketContextOptions, LoadedOptions};
+use crate::socket_context::{LoadedOptions, RawSocketContextOptions};
 use crate::web_socket::c::uws_ws;
 use crate::{
     AnyRequest, AnyResponse, ListenSocket as UwsListenSocket, Opcode, Request, SendStatus,
@@ -535,7 +535,7 @@ pub mod c {
             handler: extern "C" fn(*mut c_void, c_int, *mut us_socket_t, u8, *mut u8, c_int),
             user_data: *mut c_void,
         );
-        pub(crate) fn uws_create_app(ssl: i32, options: BunSocketContextOptions) -> *mut uws_app_t;
+        pub(crate) fn uws_create_app(ssl: i32, options: RawSocketContextOptions) -> *mut uws_app_t;
         pub(crate) fn uws_app_destroy(ssl: i32, app: *mut uws_app_t);
         pub(crate) safe fn uws_app_set_flags(
             ssl: i32,
@@ -670,7 +670,7 @@ pub mod c {
             ssl: i32,
             app: *mut uws_app_t,
             hostname_pattern: *const c_char,
-            options: BunSocketContextOptions,
+            options: RawSocketContextOptions,
             apply_client_cert_policy: c_int,
         ) -> i32;
         pub(crate) safe fn uws_filter(

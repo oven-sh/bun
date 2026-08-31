@@ -70,13 +70,13 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_isASANEnabled, (JSC::JSGlobalObject * global
 #endif
 }
 
-// Caps every `tryFastMalloc` (so `WTF::StringImpl::tryCreateUninitialized`
-// too) at `bytes`: a larger request returns null, exactly as a failed
-// allocation does. `Infinity` lifts the cap. Debug WTF only; returns false on
-// a release build, where `WTF::fastSetMaxSingleAllocationSize` does not exist.
-// A non-`try` fastMalloc over the cap asserts, so keep the window small.
+// Caps every `tryFastMalloc` at `bytes`: a larger request returns null, as a
+// failed allocation does. `Infinity` lifts the cap. Returns false on a release
+// build, where WTF does not define `fastSetMaxSingleAllocationSize`. A
+// non-`try` fastMalloc over the cap asserts, so keep the window small.
 JSC_DEFINE_HOST_FUNCTION(jsFunction_setMaxSingleAllocationSizeForTesting, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
+    // Same guard as the declaration in wtf/FastMalloc.h.
 #if !defined(NDEBUG)
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);

@@ -446,8 +446,7 @@ fn encode_base64_to_bun_string(input: &[u8], url_safe: bool) -> BunString {
     }
 
     // `create_external_globally_allocated_latin1` would reject this length
-    // after the encode; checking first keeps a failed `try_reserve_exact`
-    // below a true out-of-memory.
+    // after the encode; checked first so a failed reserve below is a true OOM.
     if to_len > BunString::max_length() {
         return BunString::DEAD;
     }

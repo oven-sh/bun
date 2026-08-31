@@ -62,17 +62,15 @@ pub use wtf::{WTFStringImpl, WTFStringImplExt, WTFStringImplStruct};
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Tag {
-    /// No string: moved out, never set, or a constructor refused the request
-    /// (over [`String::max_length`], invalid input). Reaches JS as
-    /// `ERR_STRING_TOO_LONG`.
+    /// No string: moved out, never set, or refused by a constructor (over
+    /// [`String::max_length`], invalid input). Reaches JS as `ERR_STRING_TOO_LONG`.
     Dead = 0,
     WTFStringImpl = 1,
     EncodedSlice = 2,
     StaticEncodedSlice = 3,
     Empty = 4,
     /// No string: a constructor could not allocate it. Reaches JS as
-    /// `ERR_MEMORY_ALLOCATION_FAILED`. [`String::is_dead`] is true for this
-    /// tag too, so callers that only need "did it fail" treat both alike.
+    /// `ERR_MEMORY_ALLOCATION_FAILED`. [`String::is_dead`] covers this tag too.
     OutOfMemory = 5,
 }
 
@@ -500,12 +498,11 @@ impl String {
         }
     }
 
-    /// The result of a UTF-8 → UTF-16 transcode of `utf8` whose output could
-    /// not be allocated: `DEAD` when the result could not have fit in a string
-    /// anyway (the answer a successful allocation would have given),
-    /// `OUT_OF_MEMORY` otherwise. UTF-16 never has more units than UTF-8 has
-    /// bytes, so the exact count is only taken past the limit.
+    /// A UTF-8 → UTF-16 transcode of `utf8` whose output could not be
+    /// allocated: `DEAD` when the result could not have fit in a string anyway,
+    /// `OUT_OF_MEMORY` otherwise.
     pub fn utf16_transcode_failure(utf8: &[u8]) -> Self {
+        // UTF-16 never has more units than UTF-8 has bytes.
         if utf8.len() > Self::max_length()
             && strings::element_length_utf8_into_utf16(utf8) > Self::max_length()
         {

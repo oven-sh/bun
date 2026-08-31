@@ -377,10 +377,8 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue BunString__toJS(JSC
     return JSValue::encode(result);
 }
 
-// `WTF::StringImpl::tryCreateUninitialized` returns null both for a length it
-// refuses and for an allocation that failed. The tag keeps them apart so the
-// JS boundary throws ERR_STRING_TOO_LONG for the first and
-// ERR_MEMORY_ALLOCATION_FAILED for the second.
+// `tryCreateUninitialized` returns null both for a length it refuses and for a
+// failed allocation; the tag tells transferToJS/toJS which error to throw.
 template<typename CharacterType>
 static BunString uninitializedStringFailure(size_t length)
 {

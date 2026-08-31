@@ -658,11 +658,7 @@ export const structuredCloneAdvanced: (
 
 export const isASANEnabled: () => boolean = $newCppFunction("InternalForTesting.cpp", "jsFunction_isASANEnabled", 0);
 
-/**
- * Makes every WTF `try*` allocation larger than `bytes` fail (return null),
- * the way a real out-of-memory does. `Infinity` lifts the cap. Returns false
- * on a release build, where the cap does not exist.
- */
+/** Fails every WTF `try*` allocation above `bytes`; `Infinity` lifts the cap. False on a release build. */
 export const setMaxSingleAllocationSizeForTesting: (bytes: number) => boolean = $newCppFunction(
   "InternalForTesting.cpp",
   "jsFunction_setMaxSingleAllocationSizeForTesting",

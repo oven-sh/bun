@@ -1,5 +1,3 @@
-[bun_ast]
-
 [bun_bundler]
 "defaulted_failure:src/bundler/bundle_v2.rs" = 2
 "narrowed_two_ways:src/bundler/bundle_v2.rs" = 1
@@ -30,7 +28,6 @@
 "defaulted_failure:src/runtime/server/RequestContext.rs" = 1
 "defaulted_failure:src/runtime/test_runner/pretty_format.rs" = 4
 "error_collapsed_to_bool:src/runtime/api/bun/Terminal.rs" = 1
-"error_collapsed_to_bool:src/runtime/api/bun/h2_frame_parser.rs" = 32
 "error_collapsed_to_bool:src/runtime/ffi/ffi_body.rs" = 1
 "field_valid_only_when:src/runtime/shell/builtin/rm.rs" = 1
 "reimplemented_helper:src/runtime/api/bun/Terminal.rs" = 1
@@ -42,8 +39,6 @@
 "unchecked_construction:src/runtime/cli/pack_command.rs" = 2
 "unchecked_construction:src/runtime/server/HTMLBundle.rs" = 2
 "unchecked_construction:src/runtime/server/server_body.rs" = 5
-
-[bun_sql_jsc]
 
 [bun_sys]
 "error_collapsed_to_bool:src/sys/lib.rs" = 4

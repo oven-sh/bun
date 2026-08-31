@@ -351,13 +351,13 @@ impl UInt31WithReserved {
         self.0
     }
     #[inline]
-    fn write(self, writer: &mut impl WireWriter) -> bool {
+    fn write(self, writer: &mut impl WireWriter) -> bun_io::Result<()> {
         let mut value: u32 = self.uint31();
         if self.reserved() {
             value |= 0x8000_0000;
         }
         value = value.swap_bytes();
-        writer.write_all(&value.to_ne_bytes()).is_ok()
+        writer.write_all(&value.to_ne_bytes())
     }
 }
 
@@ -377,10 +377,10 @@ const _: () = assert!(core::mem::size_of::<StreamPriority>() == StreamPriority::
 impl StreamPriority {
     pub(crate) const BYTE_SIZE: usize = 5;
     #[inline]
-    fn write(self, writer: &mut impl WireWriter) -> bool {
+    fn write(self, writer: &mut impl WireWriter) -> bun_io::Result<()> {
         let mut swap = self;
         swap.stream_identifier = swap.stream_identifier.swap_bytes();
-        writer.write_all(bytemuck::bytes_of(&swap)).is_ok()
+        writer.write_all(bytemuck::bytes_of(&swap))
     }
 }
 
@@ -397,7 +397,7 @@ pub struct FrameHeader {
 impl FrameHeader {
     pub const BYTE_SIZE: usize = 9;
     #[inline]
-    fn write(&self, writer: &mut impl WireWriter, frames_sent: &Cell<u64>) -> bool {
+    fn write(&self, writer: &mut impl WireWriter, frames_sent: &Cell<u64>) -> bun_io::Result<()> {
         frames_sent.set(frames_sent.get() + 1);
         let mut buf = [0u8; Self::BYTE_SIZE];
         buf[0] = ((self.length >> 16) & 0xFF) as u8;
@@ -406,7 +406,7 @@ impl FrameHeader {
         buf[3] = self.type_;
         buf[4] = self.flags;
         buf[5..9].copy_from_slice(&self.stream_identifier.to_be_bytes());
-        writer.write_all(&buf).is_ok()
+        writer.write_all(&buf)
     }
     /// Decode a complete 9-byte big-endian frame header.
     ///
@@ -1468,7 +1468,9 @@ impl Stream {
                     length: 0,
                 };
                 owned_frame = Some(frame);
-                break 'brk data_header.write(&mut writer, &client.frames_sent_legacy);
+                break 'brk data_header
+                    .write(&mut writer, &client.frames_sent_legacy)
+                    .is_ok();
             } else {
                 let max_size = frame_remaining
                     .min(

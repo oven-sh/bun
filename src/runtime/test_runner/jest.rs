@@ -608,9 +608,18 @@ pub mod Jest {
         // Read the original before the borrow of the runner: the property
         // access can run user JS (a getter), which may re-enter these fns.
         let original = target.get(global_object, key_bytes)?;
+        // Windows env names are ASCII-case-insensitive: PATH and Path are one
+        // variable, so they must share one registry entry.
+        let same_key = |k: &[u8]| -> bool {
+            if cfg!(windows) && matches!(kind, StubKind::Env) {
+                k.eq_ignore_ascii_case(key_bytes)
+            } else {
+                k == key_bytes
+            }
+        };
         if let Some(runner) = runner() {
             let registry = kind.registry(runner);
-            if !registry.iter().any(|(k, _)| &**k == key_bytes) {
+            if !registry.iter().any(|(k, _)| same_key(k)) {
                 registry.push((
                     Box::<[u8]>::from(key_bytes),
                     original.map(|v| jsc::Strong::create(v, global_object)),

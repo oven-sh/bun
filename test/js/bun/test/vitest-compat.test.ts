@@ -1,7 +1,7 @@
 // Tests for the vitest compatibility surface of bun:test (issue #40990).
 // `bun test` aliases the "vitest" specifier to "bun:test", so this file
 // imports through the alias on purpose.
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import * as vitestModule from "vitest";
 import { bench, describe, expect, onTestFailed, suite, test, vi, vitest } from "vitest";
 
@@ -144,6 +144,20 @@ describe("vi members", () => {
       vi.unstubAllGlobals();
       globalThis.fetch = originalFetch;
       delete (globalThis as Record<string, unknown>).__vitest_compat_new__;
+    }
+  });
+
+  test.skipIf(!isWindows)("vi.stubEnv dedups names case-insensitively on Windows", () => {
+    process.env.VITEST_COMPAT_CASE = "original";
+    try {
+      vi.stubEnv("VITEST_COMPAT_CASE", "one");
+      vi.stubEnv("vitest_compat_case", "two");
+      expect(process.env.VITEST_COMPAT_CASE).toBe("two");
+      vi.unstubAllEnvs();
+      expect(process.env.VITEST_COMPAT_CASE).toBe("original");
+    } finally {
+      vi.unstubAllEnvs();
+      delete process.env.VITEST_COMPAT_CASE;
     }
   });
 

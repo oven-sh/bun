@@ -82,6 +82,7 @@ pub struct BundledAst<'arena> {
     pub(crate) named_imports: NamedImports,
     pub(crate) named_exports: NamedExports,
     pub(crate) export_star_import_records: bun_alloc::AstVec<u32>,
+    pub(crate) dynamic_import_aliases: bun_ast::ast_result::DynamicImportAliases,
 
     pub(crate) top_level_symbols_to_parts: TopLevelSymbolToParts,
 
@@ -123,6 +124,7 @@ bun_collections::multi_array_columns! {
         named_imports: NamedImports,
         named_exports: NamedExports,
         export_star_import_records: bun_alloc::AstVec<u32>,
+        dynamic_import_aliases: bun_ast::ast_result::DynamicImportAliases,
         top_level_symbols_to_parts: TopLevelSymbolToParts,
         commonjs_named_exports: CommonJSNamedExports,
         redirect_import_record_index: u32,
@@ -179,6 +181,7 @@ impl<'arena> BundledAst<'arena> {
             named_imports: NamedImports::default(),
             named_exports: NamedExports::default(),
             export_star_import_records: bun_alloc::AstAlloc::vec(),
+            dynamic_import_aliases: Default::default(),
             top_level_symbols_to_parts: TopLevelSymbolToParts::default(),
             commonjs_named_exports: CommonJSNamedExports::default(),
             redirect_import_record_index: u32::MAX,
@@ -223,6 +226,7 @@ impl<'arena> BundledAst<'arena> {
             named_imports: self.named_imports,
             named_exports: self.named_exports,
             export_star_import_records: self.export_star_import_records,
+            dynamic_import_aliases: self.dynamic_import_aliases,
 
             top_level_symbols_to_parts: self.top_level_symbols_to_parts,
 
@@ -317,6 +321,7 @@ impl<'arena> BundledAst<'arena> {
             named_imports: ast.named_imports,
             named_exports: ast.named_exports,
             export_star_import_records: ast.export_star_import_records,
+            dynamic_import_aliases: ast.dynamic_import_aliases,
 
             // arena: ast.arena,
             top_level_symbols_to_parts: ast.top_level_symbols_to_parts,

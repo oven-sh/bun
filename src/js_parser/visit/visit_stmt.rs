@@ -1131,11 +1131,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.cur_scope().is_after_const_local_prefix = was_after_after_const_local_prefix;
 
         // visit_decls returns the surviving decl count; truncate `data.decls.len` to it.
-        let was_const = data.kind == S::Kind::KConst;
         let new_len = if !(data.is_export && p.options.features.replace_exports.entries.len() > 0) {
-            p.visit_decls::<false>(data.decls.slice_mut(), was_const)
+            p.visit_decls::<false>(data.decls.slice_mut(), data.kind, data.is_export)
         } else {
-            p.visit_decls::<true>(data.decls.slice_mut(), was_const)
+            p.visit_decls::<true>(data.decls.slice_mut(), data.kind, data.is_export)
         };
         // Drop the whole statement when every decl was
         // eliminated; otherwise we'd emit an empty `var;`/`let;`/`const;`.
@@ -1380,6 +1379,34 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.visit_expr(&mut data.value);
         p.react_compiler_candidate_name = None;
         p.react_compiler_in_react_hoc = false;
+
+        // `import(x);` / `await import(x);` / `[await] import(x).catch(..);` /
+        // `require(x);` / `await require(x);` as a statement: the namespace is
+        // never looked at (an awaited `require()` result only has its `then`
+        // read), so the importee is loaded for its side effects only.
+        if p.options.bundle {
+            match bare_statement_namespace(data.value.data) {
+                BareStatementNamespace::Import(ns) => p.note_tracked_namespace_use(ns),
+                BareStatementNamespace::Require(req, awaited) => {
+                    if let Some(ns) = p.require_namespace_ref(req)
+                        && awaited
+                    {
+                        p.import_items_for_namespace
+                            .get_mut(&ns)
+                            .unwrap()
+                            .put(
+                                b"then",
+                                js_ast::LocRef {
+                                    loc: stmt.loc,
+                                    ref_: js_ast::Ref::NONE,
+                                },
+                            )
+                            .expect("oom");
+                    }
+                }
+                BareStatementNamespace::None => {}
+            }
+        }
 
         // `p.stmt_expr_value` is reset to EMissing at every return below.
         macro_rules! restore_stmt_expr {
@@ -1690,6 +1717,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.in_branch_condition = true;
         p.visit_expr(&mut data.test);
         p.in_branch_condition = prev_in_branch;
+        p.ignore_namespace_local_test_use(&data.test);
 
         if p.options.features.minify_syntax {
             data.test = SideEffects::simplify_boolean(p, data.test);
@@ -2390,5 +2418,37 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             false,
         )?;
         Ok(())
+    }
+}
+
+enum BareStatementNamespace {
+    None,
+    /// `import(x);`, `await import(x);`, `[await] import(x).catch/finally(..);`
+    Import(js_ast::Ref),
+    /// `require(x);` / `await require(x);` (the bool: awaited)
+    Require(E::RequireString, bool),
+}
+
+/// Classify an expression statement whose value is a discarded
+/// `import()` / `require()` result.
+fn bare_statement_namespace(value: js_ast::ExprData) -> BareStatementNamespace {
+    let (awaited, mut e) = match value {
+        js_ast::ExprData::EAwait(aw) => (true, aw.value.data),
+        e => (false, e),
+    };
+    // `.catch` / `.finally` on the import() promise, not on a namespace.
+    if let js_ast::ExprData::ECall(call) = e
+        && let js_ast::ExprData::EDot(dot) = call.target.data
+        && matches!(dot.name.slice(), b"catch" | b"finally")
+        && matches!(dot.target.data, js_ast::ExprData::EImport(_))
+    {
+        e = dot.target.data;
+    }
+    match e {
+        js_ast::ExprData::EImport(im) if im.namespace_ref.is_valid() => {
+            BareStatementNamespace::Import(im.namespace_ref)
+        }
+        js_ast::ExprData::ERequireString(req) => BareStatementNamespace::Require(req, awaited),
+        _ => BareStatementNamespace::None,
     }
 }

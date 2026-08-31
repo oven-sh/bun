@@ -106,6 +106,33 @@ impl LinkerContext<'_> {
             &[js_meta::ProbablyTypescriptType],
         ) = unsafe { (&*meta.imports_to_bind, &*meta.probably_typescript_type) };
 
+        // Every importer's view of this file's exports was accounted for in
+        // step 1 (named imports, tracked `import()` / `require()` accesses):
+        // drop the exports none of them can observe so the namespace object
+        // (or the chunk's export clause when splitting) stops keeping them
+        // alive. A user-specified entry point exports everything.
+        let referenced_filter: Option<&js_meta::DynamicImportReferencedAliases> = {
+            let files = c.graph.files.split_raw();
+            // SAFETY: read-only per-row access; neither column is mutated in step 5.
+            let (entry_point_kinds, col): (
+                &[crate::EntryPoint::Kind],
+                &[js_meta::DynamicImportReferencedAliases],
+            ) = unsafe {
+                (
+                    &*files.entry_point_kind,
+                    &*meta.dynamic_import_referenced_aliases,
+                )
+            };
+            match &col[id as usize] {
+                js_meta::DynamicImportReferencedAliases::Partial(_)
+                    if entry_point_kinds[id as usize] != crate::EntryPoint::Kind::UserSpecified =>
+                {
+                    Some(&col[id as usize])
+                }
+                _ => None,
+            }
+        };
+
         // Now that all exports have been resolved, sort and filter them to create
         // something we can iterate over later.
         // SAFETY: SoA column pointers stay valid for the worker step (no realloc).
@@ -154,6 +181,13 @@ impl LinkerContext<'_> {
                 // do is to silently omit them from the export list.
                 if probably_typescript_type[this_id as usize].contains(&export_.data.import_ref) {
                     continue;
+                }
+                if let Some(js_meta::DynamicImportReferencedAliases::Partial(set)) =
+                    referenced_filter
+                {
+                    if !set.contains(&alias) {
+                        continue;
+                    }
                 }
                 re_exports_count += inner_count;
 

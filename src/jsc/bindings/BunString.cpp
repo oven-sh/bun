@@ -116,7 +116,7 @@ static void assertStaticStringIsNotCommon(EncodedSlice slice)
         static_cast<int>(literal.size()), reinterpret_cast<const char*>(literal.data()));
 }
 #else
-static inline void assertStaticStringIsNotCommon(EncodedSlice) { }
+static inline void assertStaticStringIsNotCommon(EncodedSlice) {}
 #endif
 }
 

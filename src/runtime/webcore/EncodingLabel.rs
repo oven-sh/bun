@@ -3,8 +3,6 @@ use bun_jsc::{EncodedSliceJsc as _, JSGlobalObject, JSValue};
 
 /// Every encoding the Encoding Standard defines, keyed by its canonical name.
 /// https://encoding.spec.whatwg.org/#names-and-labels
-///
-/// `repr(u8)`: `JSTextDecoderStream` (C++) stores one as a byte.
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum EncodingLabel {

@@ -297,7 +297,7 @@ impl HmrSocket {
             }
             if field.contains(HmrTopic::MemoryVisualizer.as_bit()) {
                 dev.emit_memory_visualizer_events -= 1;
-                if dev.emit_incremental_visualizer_events == 0
+                if dev.emit_memory_visualizer_events == 0
                     && dev.memory_visualizer_timer.state == EventLoopTimerState::ACTIVE
                 {
                     crate::jsc_hooks::timer_all_mut().remove(&raw mut dev.memory_visualizer_timer);

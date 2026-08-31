@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "fs";
-import { bunEnv, bunExe, tempDir, tls as tlsCert } from "harness";
+import { bunEnv, bunExe, expiredTls, tempDir, tls as tlsCert } from "harness";
 import tls from "node:tls";
 import { join } from "path";
 import privateKey from "../../third_party/jsonwebtoken/priv.pem" with { type: "text" };
@@ -341,5 +341,35 @@ describe("keyFile / certFile / caFile / dhParamsFile", () => {
     expect(listenWith({ keyFile, certFile: directory })).toThrow("Failed to load certificate file");
     expect(listenWith({ keyFile, certFile, caFile: directory })).toThrow("Failed to load CA file");
     expect(listenWith({ keyFile, certFile, dhParamsFile: directory })).toThrow("Failed to load DH params file");
+  });
+
+  test("caFile keeps the PEM rules of the file loader", async () => {
+    using server = Bun.serve({ port: 0, hostname: "127.0.0.1", tls: tlsCert, fetch: () => new Response("OK") });
+    const asTrusted = tlsCert.cert.replaceAll("CERTIFICATE-----", "TRUSTED CERTIFICATE-----");
+    const crl = readFileSync(join(keysFixtures, "ca2-crl.pem"), "utf8");
+    using dir = tempDir("bun-serve-ssl-cafile-pem", {
+      "key.pem": tlsCert.key,
+      "cert.pem": tlsCert.cert,
+      "trusted-second.pem": `${expiredTls.cert}\n${asTrusted}`,
+      "with-crl.pem": `${tlsCert.cert}\n${crl}`,
+      "corrupt-second.pem": `${tlsCert.cert}\n-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----\n`,
+      "no-certificate.pem": tlsCert.key,
+    });
+    // TRUSTED CERTIFICATE and X509 CRL blocks are loaded into the trust store.
+    for (const name of ["trusted-second.pem", "with-crl.pem"]) {
+      const res = await fetch(server.url, { keepalive: false, tls: { caFile: join(String(dir), name) } });
+      expect(await res.text()).toBe("OK");
+    }
+    // A corrupt block fails the whole file. A file with no certificate is not a CA file.
+    const listenWith = (caFile: string) => () => {
+      Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        tls: { keyFile: join(String(dir), "key.pem"), certFile: join(String(dir), "cert.pem"), caFile },
+        socket: { data() {} },
+      });
+    };
+    expect(listenWith(join(String(dir), "corrupt-second.pem"))).toThrow("Invalid CA file");
+    expect(listenWith(join(String(dir), "no-certificate.pem"))).toThrow("Failed to load CA file");
   });
 });

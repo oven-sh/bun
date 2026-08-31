@@ -88,6 +88,7 @@ namespace uWS {
         const char *sigalgs = nullptr;
         const char *ecdh_curve = nullptr;
         const char *dh_params = nullptr;
+        const char *ca_file = nullptr;
 
         /* Conversion operator used internally */
         operator struct us_bun_socket_context_options_t() const {

@@ -521,6 +521,10 @@ struct us_bun_socket_context_options_t {
     const char *ecdh_curve;
     /* PEM-encoded DH parameters; takes precedence over dh_params_file_name. */
     const char *dh_params;
+    /* The bytes of ca_file_name, loaded with the same rules as the file
+     * (CERTIFICATE, TRUSTED CERTIFICATE and CRL blocks); takes precedence
+     * over ca_file_name. */
+    const char *ca_file;
 };
 
 enum create_bun_socket_error_t {

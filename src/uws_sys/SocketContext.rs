@@ -126,6 +126,8 @@ pub struct BunSocketContextOptions {
     pub ecdh_curve: *const c_char,
     /// PEM-encoded DH parameters; takes precedence over `dh_params_file_name`.
     pub dh_params: *const c_char,
+    /// The bytes of `ca_file_name`; takes precedence over it.
+    pub ca_file: *const c_char,
 }
 
 impl Default for BunSocketContextOptions {
@@ -158,6 +160,7 @@ impl Default for BunSocketContextOptions {
             sigalgs: ptr::null(),
             ecdh_curve: ptr::null(),
             dh_params: ptr::null(),
+            ca_file: ptr::null(),
         }
     }
 }
@@ -190,9 +193,8 @@ impl LoadFileError {
 }
 
 struct LoadedFile {
-    file: TlsFile,
     bytes: bun_core::ZBox,
-    /// What `key` / `cert` / `ca` points at.
+    /// What `key` / `cert` points at.
     array: Box<[*const c_char; 1]>,
 }
 
@@ -202,15 +204,16 @@ impl LoadedFile {
         let len = unsafe { bun_core::ffi::cstr(path) }.to_bytes().len();
         // SAFETY: `path[len] == 0` (CStr invariant) and `path[..len]` is readable.
         let path = unsafe { bun_core::ZStr::from_raw(path.cast::<u8>(), len) };
-        let contents = bun_sys::File::open(path, bun_sys::O::RDONLY, 0)
-            .and_then(|f| f.read_to_end())
+        let mut contents = Vec::new();
+        bun_sys::File::open(path, bun_sys::O::RDONLY | bun_sys::O::CLOEXEC, 0)
+            .and_then(|f| f.read_to_end_into(&mut contents))
             .map_err(|err| LoadFileError {
                 file,
                 err: err.with_path(path.as_bytes()),
             })?;
         let bytes = bun_core::ZBox::from_vec(contents);
         let array = Box::new([bytes.as_ptr()]);
-        Ok(Self { file, bytes, array })
+        Ok(Self { bytes, array })
     }
 }
 
@@ -223,7 +226,8 @@ impl Drop for LoadedFile {
 /// [`BunSocketContextOptions`] with the `*_file_name` options read into memory.
 pub struct LoadedOptions {
     options: BunSocketContextOptions,
-    files: Vec<LoadedFile>,
+    /// Owns the buffers `options` points at.
+    _files: Vec<LoadedFile>,
 }
 
 impl Default for LoadedOptions {
@@ -231,7 +235,7 @@ impl Default for LoadedOptions {
     fn default() -> Self {
         Self {
             options: BunSocketContextOptions::default(),
-            files: Vec::new(),
+            _files: Vec::new(),
         }
     }
 }
@@ -256,17 +260,10 @@ impl LoadedOptions {
     /// CertificateRequest unless these options asked it to.
     pub fn create_ssl_context(&self, err: &mut create_bun_socket_error_t) -> Option<OwnedSslCtx> {
         // SAFETY: FFI call; the options are `#[repr(C)]` and passed by value, `err`
-        // is a valid out-param, and `self.files` keeps every buffer the options
+        // is a valid out-param, and `self._files` keeps every buffer the options
         // point at alive for the call. A non-null return carries the +1 from
         // `SSL_CTX_new`.
-        let ctx = unsafe { OwnedSslCtx::from_raw(c::us_ssl_ctx_from_options(self.options, err)) };
-        if ctx.is_none()
-            && *err == create_bun_socket_error_t::invalid_ca
-            && self.files.iter().any(|f| f.file == TlsFile::Ca)
-        {
-            *err = create_bun_socket_error_t::invalid_ca_file;
-        }
-        ctx
+        unsafe { OwnedSslCtx::from_raw(c::us_ssl_ctx_from_options(self.options, err)) }
     }
 }
 
@@ -289,10 +286,9 @@ impl BunSocketContextOptions {
             options.cert_file_name = ptr::null();
             files.push(file);
         }
-        if !self.ca_file_name.is_null() {
+        if self.ca_file.is_null() && !self.ca_file_name.is_null() {
             let file = LoadedFile::read(TlsFile::Ca, self.ca_file_name)?;
-            options.ca = file.array.as_ptr();
-            options.ca_count = 1;
+            options.ca_file = file.bytes.as_ptr();
             options.ca_file_name = ptr::null();
             files.push(file);
         }
@@ -302,7 +298,10 @@ impl BunSocketContextOptions {
             options.dh_params_file_name = ptr::null();
             files.push(file);
         }
-        Ok(LoadedOptions { options, files })
+        Ok(LoadedOptions {
+            options,
+            _files: files,
+        })
     }
 
     /// [`Self::load_files`] then [`LoadedOptions::create_ssl_context`].
@@ -401,6 +400,7 @@ impl BunSocketContextOptions {
         feed_z(&mut h, self.sigalgs);
         feed_z(&mut h, self.ecdh_curve);
         feed_z(&mut h, self.dh_params);
+        feed_z(&mut h, self.ca_file);
         let mut out = [0u8; 32];
         h.final_(&mut out);
         out

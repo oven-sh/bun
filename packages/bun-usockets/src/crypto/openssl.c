@@ -1093,6 +1093,43 @@ static int us_install_ca_buffers(SSL_CTX *ctx, X509_STORE *store, STACK_OF(CRYPT
   return ok;
 }
 
+/* The bytes of a `caFile`, loaded as the file loaders load the path: the
+ * client-CA list the way SSL_load_client_CA_file builds it, then the trust
+ * store the way X509_STORE_load_locations fills it (PEM_X509_INFO_read_bio:
+ * CERTIFICATE, TRUSTED CERTIFICATE and X509 CRL blocks, any corrupt block
+ * fails the whole file). */
+static enum create_bun_socket_error_t us_ssl_ctx_use_ca_file_content(SSL_CTX *ctx, const char *content) {
+  BIO *in = BIO_new_mem_buf(content, -1);
+  STACK_OF(X509_NAME) *ca_list = in ? sk_X509_NAME_new_null() : NULL;
+  int ok = ca_list && SSL_add_bio_cert_subjects_to_stack(ca_list, in) && sk_X509_NAME_num(ca_list) > 0;
+  BIO_free(in);
+  if (!ok) {
+    sk_X509_NAME_pop_free(ca_list, X509_NAME_free);
+    return CREATE_BUN_SOCKET_ERROR_LOAD_CA_FILE;
+  }
+  SSL_CTX_set_client_CA_list(ctx, ca_list);
+
+  in = BIO_new_mem_buf(content, -1);
+  STACK_OF(X509_INFO) *inf = in ? PEM_X509_INFO_read_bio(in, NULL, NULL, NULL) : NULL;
+  BIO_free(in);
+  if (!inf) return CREATE_BUN_SOCKET_ERROR_INVALID_CA_FILE;
+  X509_STORE *store = SSL_CTX_get_cert_store(ctx);
+  int count = 0;
+  for (size_t i = 0; ok && i < sk_X509_INFO_num(inf); i++) {
+    X509_INFO *itmp = sk_X509_INFO_value(inf, i);
+    if (itmp->x509) {
+      ok = X509_STORE_add_cert(store, itmp->x509);
+      count++;
+    }
+    if (ok && itmp->crl) {
+      ok = X509_STORE_add_crl(store, itmp->crl);
+      count++;
+    }
+  }
+  sk_X509_INFO_pop_free(inf, X509_INFO_free);
+  return ok && count > 0 ? CREATE_BUN_SOCKET_ERROR_NONE : CREATE_BUN_SOCKET_ERROR_INVALID_CA_FILE;
+}
+
 static int add_ca_cert_to_ctx_store(SSL_CTX *ctx, const char *content, X509_STORE *store) {
   X509 *x = NULL;
   ERR_clear_error();
@@ -1348,24 +1385,33 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
    * everywhere downstream — no special "owner" path. */
   ssl_ctx_drop_passphrase(ssl_context);
 
-  if (options.ca_file_name) {
+  if (options.ca_file || options.ca_file_name) {
     /* An explicit CA replaces the default trust store (Node.js semantics):
      * chains must validate exclusively against the supplied CAs. The SSL_CTX
-     * already owns a fresh, empty X509_STORE from SSL_CTX_new(), so
-     * SSL_CTX_load_verify_locations below populates only the user's CAs. */
-    STACK_OF(X509_NAME) *ca_list = SSL_load_client_CA_file(options.ca_file_name);
-    if (ca_list == NULL) {
-      *err = CREATE_BUN_SOCKET_ERROR_LOAD_CA_FILE;
-      ssl_ctx_build_fail(ssl_context);
-      return NULL;
-    }
-    SSL_CTX_set_client_CA_list(ssl_context, ca_list);
+     * already owns a fresh, empty X509_STORE from SSL_CTX_new(), so the loaders
+     * below populate only the user's CAs. */
     us_ex_idx_ensure();
     SSL_CTX_set_ex_data(ssl_context, us_ctx_user_ca_ex_idx, (void *)1);
-    if (SSL_CTX_load_verify_locations(ssl_context, options.ca_file_name, NULL) != 1) {
-      *err = CREATE_BUN_SOCKET_ERROR_INVALID_CA_FILE;
-      ssl_ctx_build_fail(ssl_context);
-      return NULL;
+    if (options.ca_file) {
+      enum create_bun_socket_error_t ca_err = us_ssl_ctx_use_ca_file_content(ssl_context, options.ca_file);
+      if (ca_err != CREATE_BUN_SOCKET_ERROR_NONE) {
+        *err = ca_err;
+        ssl_ctx_build_fail(ssl_context);
+        return NULL;
+      }
+    } else {
+      STACK_OF(X509_NAME) *ca_list = SSL_load_client_CA_file(options.ca_file_name);
+      if (ca_list == NULL) {
+        *err = CREATE_BUN_SOCKET_ERROR_LOAD_CA_FILE;
+        ssl_ctx_build_fail(ssl_context);
+        return NULL;
+      }
+      SSL_CTX_set_client_CA_list(ssl_context, ca_list);
+      if (SSL_CTX_load_verify_locations(ssl_context, options.ca_file_name, NULL) != 1) {
+        *err = CREATE_BUN_SOCKET_ERROR_INVALID_CA_FILE;
+        ssl_ctx_build_fail(ssl_context);
+        return NULL;
+      }
     }
     SSL_CTX_set_verify(ssl_context,
         options.reject_unauthorized ? (SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT)

@@ -445,6 +445,62 @@ describe("bundler", () => {
     },
   });
 
+  // `const mod = COND ? require(x) : null` with `mod?.f()`, `if (mod)`, `mod &&`
+  // — the gated-module pattern. With a build-time COND the conditional folds
+  // before the declaration is analyzed; a runtime COND binds the local to each
+  // branch's namespace.
+  for (const [label, cond, defines] of [
+    ["BuildTimeTrue", "FEATURE_ON", { FEATURE_ON: "true" }],
+    ["Runtime", "globalThis.on !== false", {}],
+  ] as const) {
+    itBundled(`dynamic_import_dce/GatedRequire${label}`, {
+      files: {
+        "/entry.ts": /* ts */ `
+          const mod = ${cond} ? require("./impl.ts") : null;
+          const alt = ${cond} ? require("./a.ts") : require("./b.ts");
+          const lazy = ${cond} ? await import("./lazy.ts") : undefined;
+          export function run() {
+            if (!mod) return "off";
+            const T = mod && mod.Tool;
+            return [mod?.render(), T.name, typeof mod, mod != null, alt.which, lazy ? lazy.v : 0].join(",");
+          }
+          console.log(run());
+        `,
+        "/impl.ts": `export function render() { return "r"; } export const Tool = { name: "t" }; export const unusedImpl = "DROP_IMPL";`,
+        "/a.ts": `export const which = "a"; export const unusedA = "DROP_A";`,
+        "/b.ts": `export const which = "b"; export const unusedB = "DROP_B";`,
+        "/lazy.ts": `export const v = 7; export const unusedLazy = "DROP_LAZY";`,
+      },
+      define: defines,
+      target: "bun",
+      splitting: true,
+      format: "esm",
+      outdir: "/out",
+      run: { file: "/out/entry.js", stdout: "r,t,object,true,a,7" },
+      onAfterBundle(api) {
+        expect(readAllOutputs(api.outdir)).not.toContain("DROP_");
+      },
+    });
+  }
+
+  // `mod || x` / `mod ?? x` can yield the namespace itself: those escape.
+  itBundled("dynamic_import_dce/GatedRequireOrEscapes", {
+    files: {
+      "/entry.ts": /* ts */ `
+        const mod = globalThis.on !== false ? require("./impl.ts") : null;
+        const m = mod || {};
+        const n = (globalThis.on !== false ? require("./impl2.ts") : null) ?? {};
+        console.log(JSON.stringify(Object.keys(m).sort()), JSON.stringify(Object.keys(n).sort()));
+      `,
+      "/impl.ts": `export const a = 1, b = 2;`,
+      "/impl2.ts": `export const c = 1, d = 2;`,
+    },
+    target: "bun",
+    format: "esm",
+    outdir: "/out",
+    run: { file: "/out/entry.js", stdout: '["a","b"] ["c","d"]' },
+  });
+
   // The value of a bare statement is discarded, but `return import(x)` and an
   // arrow expression body hand the namespace on: those keep everything.
   itBundled("dynamic_import_dce/ReturnedImportKeepsAll", {

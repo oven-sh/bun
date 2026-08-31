@@ -1731,6 +1731,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.in_branch_condition = true;
         p.visit_expr(&mut data.test);
         p.in_branch_condition = prev_in_branch;
+        p.ignore_namespace_local_test_use(&data.test);
 
         if p.options.features.minify_syntax {
             data.test = SideEffects::simplify_boolean(p, data.test);

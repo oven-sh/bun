@@ -448,6 +448,38 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
 
+                // `const ns = cond ? require("./a") : null` — a local bound to one
+                // of several namespaces (or nothing).
+                'conditional: {
+                    if !self.options.bundle || is_export || kind == LocalKind::KVar {
+                        break 'conditional;
+                    }
+                    let (ExprData::EIf(_), BData::BIdentifier(id)) = (val.data, decl.binding.data)
+                    else {
+                        break 'conditional;
+                    };
+                    let mut records = Vec::new();
+                    if self
+                        .conditional_namespace_records(val, &mut records)
+                        .is_none()
+                    {
+                        // `await import()` branches already consumed above must escape.
+                        for r in records {
+                            self.dynamic_import_escaped_records.insert(r, ());
+                        }
+                        break 'conditional;
+                    }
+                    if !records.is_empty()
+                        && !self.import_items_for_namespace.contains_key(&id.r#ref)
+                    {
+                        self.register_dynamic_import_namespace_local_multi(
+                            id.r#ref,
+                            decl.binding.loc,
+                            &records,
+                        );
+                    }
+                }
+
                 // `const [{a}, ns] = await Promise.all([import("a"), import("b")])`
                 'promise_all: {
                     if !self.options.bundle || is_export || kind == LocalKind::KVar {

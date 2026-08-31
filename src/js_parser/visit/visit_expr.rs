@@ -1175,6 +1175,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     },
                 );
                 let id_after = matches!(e_.value.data, Data::EIdentifier(..));
+                p.ignore_namespace_local_test_use(&e_.value);
 
                 // The expression "typeof (0, x)" must not become "typeof x" if "x"
                 // is unbound because that could suppress a ReferenceError from "x"
@@ -1237,6 +1238,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // Post-process the unary expression
                 match e_.op {
                     Op::UnNot => {
+                        p.ignore_namespace_local_test_use(&e_.value);
                         if p.options.features.minify_syntax {
                             e_.value = SideEffects::simplify_boolean(p, e_.value);
                         }
@@ -1429,6 +1431,26 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return;
         }
 
+        // `ns?.foo` on an import()/require() namespace local reads `foo`.
+        if e_.optional_chain == Some(js_ast::OptionalChain::Start)
+            && let Data::EIdentifier(id) = e_.target.data
+            && p.dynamic_import_namespace_locals.contains_key(&id.ref_)
+            && in_.assign_target == js_ast::AssignTarget::None
+            && !is_delete_target
+        {
+            if let Some(map) = p.import_items_for_namespace.get_mut(&id.ref_) {
+                map.put(
+                    e_.name.slice(),
+                    js_ast::LocRef {
+                        loc: e_.name_loc,
+                        ref_: js_ast::Ref::NONE,
+                    },
+                )
+                .expect("oom");
+                p.ignore_usage(id.ref_);
+            }
+        }
+
         if e_.optional_chain.is_none() {
             let opts = IdentifierOpts::default()
                 .with_is_call_target(is_call_target)
@@ -1478,6 +1500,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.in_branch_condition = true;
         p.visit_expr(&mut e_.test);
         p.in_branch_condition = prev_in_branch;
+        p.ignore_namespace_local_test_use(&e_.test);
 
         e_.test = SideEffects::simplify_boolean(p, e_.test);
 

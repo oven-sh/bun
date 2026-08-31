@@ -1125,26 +1125,86 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         loc: bun_ast::Loc,
         import_record_id: u32,
     ) {
-        // One local, two namespaces (`var {..., ...r} = ` twice, or an
-        // unwrap-cjs require local): accesses can't be attributed, both escape.
+        self.register_dynamic_import_namespace_local_multi(local, loc, &[import_record_id]);
+    }
+
+    /// One declaration binding `local` to any of `records` (a conditional
+    /// initializer); its accesses are attributed to every one of them.
+    pub(crate) fn register_dynamic_import_namespace_local_multi(
+        &mut self,
+        local: Ref,
+        loc: bun_ast::Loc,
+        records: &[u32],
+    ) {
+        // One local re-bound to another namespace later (`var {..., ...r} = `
+        // twice, or an unwrap-cjs require local): accesses can't be
+        // attributed, all escape.
         if self.import_items_for_namespace.contains_key(&local) {
             if let Some(&other) = self.dynamic_import_namespace_locals.get(&local) {
                 self.dynamic_import_escaped_records.insert(other, ());
             }
-            self.dynamic_import_escaped_records
-                .insert(import_record_id, ());
+            for &r in records {
+                self.dynamic_import_escaped_records.insert(r, ());
+            }
             return;
         }
+        let Some(&first) = records.first() else {
+            return;
+        };
         self.import_items_for_namespace
             .insert(local, ImportItemForNamespaceMap::default());
-        self.dynamic_import_namespace_locals
-            .insert(local, import_record_id);
-        self.imports_to_convert_from_dynamic_import
-            .push(DeferredImportNamespace {
-                namespace: LocRef { loc, ref_: local },
-                import_record_id,
-                scope: Some(self.current_scope),
-            });
+        self.dynamic_import_namespace_locals.insert(local, first);
+        for &import_record_id in records {
+            self.imports_to_convert_from_dynamic_import
+                .push(DeferredImportNamespace {
+                    namespace: LocRef { loc, ref_: local },
+                    import_record_id,
+                    scope: Some(self.current_scope),
+                });
+        }
+    }
+
+    /// `ns` in a position that only tests it for null/truthiness (`if (ns)`,
+    /// `!ns`, `ns ? a : b`, `ns && …`, `ns == null`, `typeof ns`): no export is
+    /// observed, so the use does not make the namespace escape.
+    pub(crate) fn ignore_namespace_local_test_use(&mut self, expr: &Expr) {
+        if let js_ast::ExprData::EIdentifier(id) = expr.data
+            && self.dynamic_import_namespace_locals.contains_key(&id.ref_)
+        {
+            self.ignore_usage(id.ref_);
+        }
+    }
+
+    /// `const ns = cond ? require("./a") : cond2 ? await import("./b") : null` —
+    /// collect the import records of the branches; `None` if any branch is
+    /// something else.
+    pub(crate) fn conditional_namespace_records(
+        &mut self,
+        expr: Expr,
+        out: &mut Vec<u32>,
+    ) -> Option<()> {
+        match expr.data {
+            js_ast::ExprData::EIf(e) => {
+                self.conditional_namespace_records(e.yes, out)?;
+                self.conditional_namespace_records(e.no, out)
+            }
+            js_ast::ExprData::ERequireString(req)
+                if self.options.bundle && req.unwrapped_id.get().is_none() =>
+            {
+                out.push(req.import_record_index);
+                Some(())
+            }
+            js_ast::ExprData::EAwait(aw) => match aw.value.data {
+                js_ast::ExprData::EImport(im) if im.namespace_ref.is_valid() => {
+                    self.ignore_usage(im.namespace_ref);
+                    out.push(im.import_record_index);
+                    Some(())
+                }
+                _ => None,
+            },
+            js_ast::ExprData::ENull(_) | js_ast::ExprData::EUndefined(_) => Some(()),
+            _ => None,
+        }
     }
 
     /// `Promise.all([import("a"), import("b"), other])` — returns the array

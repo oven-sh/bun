@@ -2054,7 +2054,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         js_ast::binding::Data::BObject(obj) => {
                             if p.try_track_dynamic_import_destructure(
                                 im.namespace_ref,
-                                im.import_record_index,
+                                &[im.import_record_index],
                                 obj.properties(),
                                 false,
                             )

@@ -321,7 +321,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// `ns.foo` records the alias and the access is left as written.
     /// Membership distinguishes these from unwrap_commonjs
     /// `const x = require()` locals in `maybe_rewrite_property_access`.
-    pub(crate) dynamic_import_namespace_locals: HashMap<Ref, u32>,
+    pub(crate) dynamic_import_namespace_locals: HashMap<Ref, Vec<u32>>,
     /// Import records whose namespace is known to escape regardless of use
     /// counts (one local bound to two records).
     pub(crate) dynamic_import_escaped_records: HashMap<u32, ()>,
@@ -1045,7 +1045,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     pub(crate) fn try_track_dynamic_import_destructure(
         &mut self,
         namespace_ref: Ref,
-        import_record_id: u32,
+        records: &[u32],
         properties: &[bun_ast::B::Property],
         keep_all: bool,
     ) -> Option<()> {
@@ -1104,19 +1104,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             .expect("oom");
         }
         if let Some((rest, loc)) = rest_ref {
-            self.register_dynamic_import_namespace_local(rest, loc, import_record_id);
+            self.register_dynamic_import_namespace_local_multi(rest, loc, records);
         }
         // The destructured locals live in this scope: a direct `eval` here can
         // read them (or the namespace) by name.
-        self.imports_to_convert_from_dynamic_import
-            .push(DeferredImportNamespace {
-                namespace: LocRef {
-                    loc: bun_ast::Loc::EMPTY,
-                    ref_: namespace_ref,
-                },
-                import_record_id,
-                scope: Some(self.current_scope),
-            });
+        for &import_record_id in records {
+            self.imports_to_convert_from_dynamic_import
+                .push(DeferredImportNamespace {
+                    namespace: LocRef {
+                        loc: bun_ast::Loc::EMPTY,
+                        ref_: namespace_ref,
+                    },
+                    import_record_id,
+                    scope: Some(self.current_scope),
+                });
+        }
         Some(())
     }
 
@@ -1144,20 +1146,23 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // twice, or an unwrap-cjs require local): accesses can't be
         // attributed, all escape.
         if self.import_items_for_namespace.contains_key(&local) {
-            if let Some(&other) = self.dynamic_import_namespace_locals.get(&local) {
-                self.dynamic_import_escaped_records.insert(other, ());
+            if let Some(others) = self.dynamic_import_namespace_locals.get(&local) {
+                for r in others.clone() {
+                    self.dynamic_import_escaped_records.insert(r, ());
+                }
             }
             for &r in records {
                 self.dynamic_import_escaped_records.insert(r, ());
             }
             return;
         }
-        let Some(&first) = records.first() else {
+        if records.is_empty() {
             return;
-        };
+        }
         self.import_items_for_namespace
             .insert(local, ImportItemForNamespaceMap::default());
-        self.dynamic_import_namespace_locals.insert(local, first);
+        self.dynamic_import_namespace_locals
+            .insert(local, records.to_vec());
         for &import_record_id in records {
             self.imports_to_convert_from_dynamic_import
                 .push(DeferredImportNamespace {
@@ -1299,7 +1304,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     if self
                         .try_track_dynamic_import_destructure(
                             im.namespace_ref,
-                            im.import_record_index,
+                            &[im.import_record_index],
                             obj.properties(),
                             false,
                         )
@@ -1339,7 +1344,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.import_items_for_namespace
             .insert(ns, ImportItemForNamespaceMap::default());
         self.dynamic_import_namespace_locals
-            .insert(ns, req.import_record_index);
+            .insert(ns, vec![req.import_record_index]);
         self.imports_to_convert_from_dynamic_import
             .push(DeferredImportNamespace {
                 namespace: LocRef {

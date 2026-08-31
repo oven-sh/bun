@@ -1240,7 +1240,8 @@ impl<'a> Parser<'a> {
             let mut by_record: bun_collections::ArrayHashMap<u32, PerRecord> = Default::default();
             // A namespace ref is listed once per registration and once per
             // destructure of it; its alias map only needs one walk.
-            let mut seen_namespace: bun_collections::HashMap<bun_ast::Ref, ()> = Default::default();
+            let mut seen_namespace: bun_collections::HashMap<(bun_ast::Ref, u32), ()> =
+                Default::default();
             let arena = p.arena;
             for i in 0..p.imports_to_convert_from_dynamic_import.len() {
                 let (ns_ref, import_record_id, scope) = {
@@ -1275,7 +1276,11 @@ impl<'a> Parser<'a> {
                 }
                 let rec = entry.value_ptr;
                 rec.escaped |= escaped;
-                if rec.escaped || seen_namespace.insert(ns_ref, ()).is_some() {
+                if rec.escaped
+                    || seen_namespace
+                        .insert((ns_ref, import_record_id), ())
+                        .is_some()
+                {
                     continue;
                 }
                 let Some(map) = p.import_items_for_namespace.get(&ns_ref) else {

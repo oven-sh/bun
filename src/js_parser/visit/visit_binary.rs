@@ -131,23 +131,6 @@ impl BinaryExpressionVisitor {
             }
         }
 
-        // `ns && …` never yields the namespace (it is truthy); `ns == null` /
-        // `ns !== undefined` only test it.
-        match e_.op {
-            Op::Code::BinLogicalAnd => p.ignore_namespace_local_test_use(&e_.left),
-            Op::Code::BinLooseEq
-            | Op::Code::BinLooseNe
-            | Op::Code::BinStrictEq
-            | Op::Code::BinStrictNe => {
-                if matches!(e_.right.data, ExprData::ENull(_) | ExprData::EUndefined(_)) {
-                    p.ignore_namespace_local_test_use(&e_.left);
-                } else if matches!(e_.left.data, ExprData::ENull(_) | ExprData::EUndefined(_)) {
-                    p.ignore_namespace_local_test_use(&e_.right);
-                }
-            }
-            _ => {}
-        }
-
         // Mark the control flow as dead if the branch is never taken
         match e_.op {
             Op::Code::BinLogicalOr => {
@@ -188,6 +171,23 @@ impl BinaryExpressionVisitor {
             }
         }
         p.decorator_class_name = prev_decorator_class_name;
+
+        // `ns && …` never yields the namespace (it is truthy); `ns == null` /
+        // `ns !== undefined` only test it.
+        match e_.op {
+            Op::Code::BinLogicalAnd => p.ignore_namespace_local_test_use(&e_.left),
+            Op::Code::BinLooseEq
+            | Op::Code::BinLooseNe
+            | Op::Code::BinStrictEq
+            | Op::Code::BinStrictNe => {
+                if matches!(e_.right.data, ExprData::ENull(_) | ExprData::EUndefined(_)) {
+                    p.ignore_namespace_local_test_use(&e_.left);
+                } else if matches!(e_.left.data, ExprData::ENull(_) | ExprData::EUndefined(_)) {
+                    p.ignore_namespace_local_test_use(&e_.right);
+                }
+            }
+            _ => {}
+        }
 
         // Always put constants on the right for equality comparisons to help
         // reduce the number of cases we have to check during pattern matching. We

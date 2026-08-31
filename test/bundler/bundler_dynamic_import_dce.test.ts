@@ -483,6 +483,33 @@ describe("bundler", () => {
     });
   }
 
+  // Both branches of a conditional namespace receive the local's reads —
+  // member access, body destructure, `...rest` — and `x !== undefined` /
+  // `null == x` count as tests whichever side the literal is on.
+  itBundled("dynamic_import_dce/GatedRequireBothBranchesNarrowAlike", {
+    files: {
+      "/entry.ts": /* ts */ `
+        function pick(useA: boolean) {
+          const alt = useA ? require("./a.ts") : require("./b.ts");
+          const { which, ...rest } = alt;
+          if (alt !== undefined && null != alt) return [alt.tag, which, rest.other].join(",");
+          return "none";
+        }
+        console.log(pick(true), pick(false));
+      `,
+      "/a.ts": `export const tag = "A", which = "a", other = "ao", dropA = "DROP_A";`,
+      "/b.ts": `export const tag = "B", which = "b", other = "bo", dropB = "DROP_B";`,
+    },
+    target: "bun",
+    splitting: true,
+    format: "esm",
+    outdir: "/out",
+    run: { file: "/out/entry.js", stdout: "A,a,ao B,b,bo" },
+    onAfterBundle(api) {
+      expect(readAllOutputs(api.outdir)).not.toContain("DROP_");
+    },
+  });
+
   // `mod || x` / `mod ?? x` can yield the namespace itself: those escape.
   itBundled("dynamic_import_dce/GatedRequireOrEscapes", {
     files: {

@@ -641,14 +641,14 @@ mod _impl {
                     // (zygote/run-as), return a usable default rather than throwing.
                     #[cfg(target_os = "android")]
                     {
-                        Ok(BunString::static_("/data/local/tmp"))
+                        return Ok(BunString::static_("/data/local/tmp"));
                     }
                     // in uv__getpwuid_r, null result throws UV_ENOENT.
                     #[cfg(not(target_os = "android"))]
-                    Err(global.throw_value(
+                    return Err(global.throw_value(
                         bun_sys::Error::from_code(bun_sys::E::ENOENT, bun_sys::Tag::uv_os_homedir)
                             .to_js(global),
-                    ))
+                    ));
                 }
                 Ok(Some(dir)) if dir.is_empty() => Ok(BunString::EMPTY),
                 Ok(Some(dir)) => Ok(BunString::clone_utf8(&dir)),

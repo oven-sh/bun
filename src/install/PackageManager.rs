@@ -2258,6 +2258,7 @@ pub fn init(
             env,
             Some(cli),
             ctx.install.as_deref(),
+            false,
             subcommand,
         )?;
 
@@ -2668,7 +2669,7 @@ fn init_with_runtime_once(
 
     match manager
         .options
-        .load(log, env, Some(cli), bun_install, Subcommand::Install)
+        .load(log, env, Some(cli), bun_install, true, Subcommand::Install)
     {
         Ok(()) => {}
         Err(e) => {

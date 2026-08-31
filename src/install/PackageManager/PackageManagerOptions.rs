@@ -427,6 +427,10 @@ impl Options {
         // Taking `&` (not `&mut`) keeps provenance coherent with the bundler/
         // resolver storage (`Option<NonNull<api::BunInstall>>`).
         bun_install_: Option<&Api::BunInstall>,
+        // True when `bun_install_` is the raw bunfig config (the runtime
+        // auto-install path). The CLI install path resolves `$VAR` credential
+        // references before the .npmrc merge and passes false.
+        resolve_bunfig_credential_refs: bool,
         subcommand: Subcommand,
     ) -> Result<(), bun_alloc::AllocError> {
         let mut base = Api::NpmRegistry::default();
@@ -434,6 +438,9 @@ impl Options {
         if let Some(config) = bun_install_ref {
             if let Some(registry) = &config.default_registry {
                 base = registry.clone();
+                if resolve_bunfig_credential_refs {
+                    base.resolve_credential_refs(env);
+                }
             }
             if let Some(link_workspace_packages) = config.link_workspace_packages {
                 self.link_workspace_packages = link_workspace_packages;
@@ -458,6 +465,9 @@ impl Options {
                 for (name, registry_) in scoped.scopes.keys().iter().zip(scoped.scopes.values()) {
                     debug_assert_eq!(scoped.scopes.keys().len(), scoped.scopes.values().len());
                     let mut registry = registry_.clone();
+                    if resolve_bunfig_credential_refs {
+                        registry.resolve_credential_refs(env);
+                    }
                     if registry.url.is_empty() {
                         registry.url.clone_from(&base.url);
                     }

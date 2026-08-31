@@ -916,6 +916,37 @@ describe("registry credentials from $VAR env references", () => {
     expect(exitCode).not.toBe(0);
   });
 
+  // The runtime auto-install path feeds the raw bunfig config to the
+  // package manager and must resolve $VAR references too.
+  test.concurrent("runtime auto-install does not send an unset $VAR token", async () => {
+    const auths: (string | null)[] = [];
+    await using server = authLoggingRegistry(auths);
+    using dir = tempDir("bunfig-auto-install-unset", {
+      "index.ts": `import "@myscope/no-deps";`,
+      "bunfig.toml": `[install.scopes]\nmyscope = { url = "http://127.0.0.1:${server.port}/", token = "$UNSET_TOKEN_41044" }\n`,
+    });
+    const testEnv: Record<string, string | undefined> = {
+      ...env,
+      http_proxy: "",
+      https_proxy: "",
+      HTTP_PROXY: "",
+      HTTPS_PROXY: "",
+      BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache"),
+    };
+    delete testEnv.UNSET_TOKEN_41044;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "index.ts"],
+      cwd: String(dir),
+      env: testEnv as Record<string, string>,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(auths).toEqual([null]);
+    // The registry answers 401, so the run fails to resolve the import.
+    expect(exitCode).not.toBe(0);
+  });
+
   // .npmrc values never go through $VAR substitution: a decoded _password
   // that happens to start with "$" is a literal.
   test.concurrent("a .npmrc _password that decodes to a $-prefixed value is sent verbatim", async () => {

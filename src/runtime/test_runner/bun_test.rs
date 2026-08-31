@@ -275,20 +275,29 @@ pub mod js_fns {
                             }
                         }
                         GenericHookTag::OnTestFinished | GenericHookTag::OnTestFailed => 'blk: {
-                            // Find the last entry in the sequence
-                            let Some(mut last_entry) = sequence_ref.active_entry.map(|p| p.as_ptr()) else {
+                            let Some(mut append_point) = sequence_ref.active_entry.map(|p| p.as_ptr()) else {
                                 return Err(global_this.throw(format_args!(
                                     "Cannot call {}() here. Call it inside a test instead.",
                                     tag_name
                                 )));
                             };
+                            // onTestFailed entries append at the tail.
+                            // onTestFinished entries splice before that gated
+                            // tail, whatever the registration order, so every
+                            // finished callback runs (and can still fail the
+                            // test) before the failure gate is evaluated.
+                            let keep_before_gated = tag == GenericHookTag::OnTestFinished;
                             // SAFETY: intrusive linked-list traversal
                             unsafe {
-                                while let Some(next_entry) = (*last_entry).next {
-                                    last_entry = next_entry;
+                                let mut cursor = (*append_point).next;
+                                while let Some(entry) = cursor {
+                                    if !(keep_before_gated && (*entry).only_on_failure) {
+                                        append_point = entry;
+                                    }
+                                    cursor = (*entry).next;
                                 }
                             }
-                            break 'blk last_entry;
+                            break 'blk append_point;
                         }
                         _ => {
                             return Err(global_this.throw(format_args!(
@@ -309,6 +318,10 @@ pub mod js_fns {
                     let new_item_ptr = bun_core::heap::into_raw(new_item);
                     // SAFETY: append_point is a valid linked-list node; new_item_ptr just allocated
                     unsafe {
+                        // A hook entry that fails skips only itself, so the
+                        // remaining onTestFinished/onTestFailed entries still
+                        // run (and the failure gate sees the failed result).
+                        (*new_item_ptr).failure_skip_past = Some(new_item_ptr);
                         (*new_item_ptr).next = (*append_point).next;
                         (*append_point).next = Some(new_item_ptr);
                     }

@@ -397,6 +397,12 @@ describe("onTestFailed", () => {
           onTestFailed(() => console.log("FAILED_HOOK_FAILS_THREW"));
           throw new Error("expected");
         });
+        test("onTestFinished failure still triggers an earlier onTestFailed", () => {
+          onTestFailed(() => console.log("FAILED_AFTER_FINISHED"));
+          onTestFinished(() => {
+            throw new Error("finished boom");
+          });
+        });
       `,
     });
     await using proc = Bun.spawn({
@@ -411,7 +417,8 @@ describe("onTestFailed", () => {
     expect(stdout).toContain("FAILED_HOOK_FAILS_PASSED");
     // A test.fails test whose body throws ends up passing, so its hook must not run.
     expect(stdout).not.toContain("FAILED_HOOK_FAILS_THREW");
-    expect(stderr).toContain("2 fail");
+    expect(stdout).toContain("FAILED_AFTER_FINISHED");
+    expect(stderr).toContain("3 fail");
     expect(exitCode).toBe(1);
   });
 

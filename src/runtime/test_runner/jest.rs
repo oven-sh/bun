@@ -608,7 +608,13 @@ pub mod Jest {
 
         // Read the original before the borrow of the runner: the property
         // access can run user JS (a getter), which may re-enter these fns.
-        let original = target.get_encoded(global_object, &key_slice)?;
+        let mut original = target.get_encoded(global_object, &key_slice)?;
+        if matches!(kind, StubKind::Env) {
+            // Env values are strings, and the Windows env map reports a missing
+            // name as `undefined`: treat `undefined` as absent so restore
+            // deletes instead of writing the string "undefined".
+            original = original.filter(|v| !v.is_undefined());
+        }
         // Windows env names are ASCII-case-insensitive: PATH and Path are one
         // variable, so they must share one registry entry.
         let same_key = |k: &[u8]| -> bool {

@@ -914,16 +914,17 @@ describe("symbol names that are array indexes", () => {
           : "libc.musl-x86_64.so.1"
         : "libc.so.6";
 
-  // Subprocess: a debug build of the unfixed code aborts on a JSC assertion.
-  it.concurrent.each([
+  describe.each([
     ["linkSymbols", "linkSymbols(map)"],
     ["dlopen", `dlopen(${JSON.stringify(systemLib)}, map)`],
-  ])("%s stores them as indexed properties", async (_, open) => {
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `import { dlopen, linkSymbols, JSCallback } from "bun:ffi";
+  ])("%s", (_, open) => {
+    // Subprocess: a debug build of the unfixed code aborts on a JSC assertion.
+    it.concurrent("stores them as indexed properties", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `import { dlopen, linkSymbols, JSCallback } from "bun:ffi";
         const cb = new JSCallback(() => 42, { returns: "int32_t", args: [] });
         const fn = { ptr: cb.ptr, returns: "int32_t", args: [] };
         // 4294967295 is 2^32 - 1, the first integer that is not an array index.
@@ -941,23 +942,24 @@ describe("symbol names that are array indexes", () => {
         );
         lib.close();
         cb.close();`,
-      ],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ result: JSON.parse(stdout.trim() || "null"), stderr, exitCode }).toEqual({
-      result: {
-        // Index keys come first, in ascending order. The rest keep insertion order.
-        keys: ["0", "2023", "named", "4294967295"],
-        types: ["function", "function", "function", "function"],
-        has: [true, true, true, true],
-        sameFunction: true,
-        results: [42, 42, 42, 42],
-      },
-      stderr: "",
-      exitCode: 0,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ result: JSON.parse(stdout.trim() || "null"), stderr, exitCode }).toEqual({
+        result: {
+          // Index keys come first, in ascending order. The rest keep insertion order.
+          keys: ["0", "2023", "named", "4294967295"],
+          types: ["function", "function", "function", "function"],
+          has: [true, true, true, true],
+          sameFunction: true,
+          results: [42, 42, 42, 42],
+        },
+        stderr: "",
+        exitCode: 0,
+      });
     });
   });
 });

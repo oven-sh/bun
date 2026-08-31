@@ -663,6 +663,73 @@ describe("reconnect", () => {
   });
 });
 
+describe("onconnect/onclose", () => {
+  test("fire for the listen connection on connect, drop, and reconnect", async () => {
+    await using server = await mockServer();
+    const events: string[] = [];
+    const reconnected = gate();
+    await using sql = new SQL(server.url, {
+      max: 1,
+      onconnect: (err: Error | null) => events.push(`onconnect ${err === null ? "null" : err.message}`),
+      onclose: (err: Error) => events.push(`onclose ${err.message}`),
+    });
+    await sql.listen("orders", () => {}, reconnected.after(2));
+    expect(events).toEqual(["onconnect null"]);
+
+    server.dropConnections();
+    await reconnected; // the second onlisten marks the reconnect
+    expect(events).toEqual(["onconnect null", "onclose Connection closed", "onconnect null"]);
+  });
+
+  test("sql.close() fires onclose for the listen connection", async () => {
+    await using server = await mockServer();
+    const events: string[] = [];
+    const closed = Promise.withResolvers<void>();
+    const sql = new SQL(server.url, {
+      max: 1,
+      onconnect: () => events.push("onconnect"),
+      onclose: (err: Error) => {
+        events.push(`onclose ${err.message}`);
+        closed.resolve();
+      },
+    });
+    await sql.listen("orders", () => {});
+    await sql.close();
+    await closed.promise;
+    expect(events).toEqual(["onconnect", "onclose Connection closed"]);
+  });
+
+  test("failed reconnect attempts fire neither onconnect nor onclose", async () => {
+    const server = await mockServer();
+    const events: string[] = [];
+    const dropped = Promise.withResolvers<void>();
+    await using sql = new SQL(server.url, {
+      max: 1,
+      onconnect: () => events.push("onconnect"),
+      onclose: () => {
+        events.push("onclose");
+        dropped.resolve();
+      },
+    });
+    const warnings: string[] = [];
+    const originalWarn = console.warn;
+    console.warn = (...args: unknown[]) => void warnings.push(args.join(" "));
+    try {
+      await sql.listen("orders", () => {});
+      const closing = server[Symbol.asyncDispose](); // stop accepting, so every retry dial fails
+      server.dropConnections();
+      await closing;
+      await dropped.promise;
+      // each failed dial logs the retry warning; wait for two attempts
+      while (warnings.length < 2) await Bun.sleep(10);
+      expect(events).toEqual(["onconnect", "onclose"]);
+    } finally {
+      console.warn = originalWarn;
+    }
+  });
+
+});
+
 describe("close()", () => {
   test("tears down the listen connection and rejects an in-flight listen()", async () => {
     await using server = await mockServer();
@@ -926,6 +993,23 @@ describe("in a subprocess", () => {
         ].join("\n"),
       ),
     );
+  });
+
+  test("a throwing onconnect surfaces as uncaughtException and does not break the subscription", async () => {
+    const result = await run(`
+      process.on("uncaughtException", err => console.log("uncaught: " + err.message));
+      const sql2 = new SQL("postgres://u@127.0.0.1:" + port + "/db", {
+        max: 1,
+        onconnect: () => { throw new Error("onconnect failed"); },
+      });
+      const subscription = await sql2.listen("ch", payload => {
+        console.log("got " + payload);
+        subscription.unlisten();
+      });
+      console.log("subscribed");
+      notifyMany([["ch", "wake"]]);
+    `);
+    expect(result).toEqual(clean("uncaught: onconnect failed\nsubscribed\ngot wake\n"));
   });
 
   test("delivering many notifications retains nothing", async () => {

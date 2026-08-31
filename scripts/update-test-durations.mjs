@@ -37,11 +37,16 @@ if (!token) {
 // windows and musl get their own columns because process-spawn cost and
 // per-test skip behaviour differ enough from the glibc lane to leave
 // 150-300s of shard spread when packed with the debian timings.
+// windows-aarch64 is split from windows because its serial files run about
+// 2x slower than on x64 and not uniformly (bundler_compile.test.ts is 222s vs
+// 48s); packed with the x64 column its slowest shard carried 920s of work
+// against a 610s mean, and that lane is the last to finish in most builds.
 const lanes = {
   default: "linux-x64-debian-13-test-bun",
   asan: "linux-x64-asan-debian-13-test-bun",
   musl: "linux-x64-musl-alpine-323-test-bun",
   windows: "windows-x64-2019-test-bun",
+  "windows-aarch64": "windows-aarch64-11-test-bun",
 };
 
 const api = async path => {
@@ -66,6 +71,10 @@ const api = async path => {
 // prints the bare form. For that concurrent phase the gap is an inter-dispatch
 // delta, not wall clock; we clamp it so the last-dispatched file on each shard
 // does not absorb the N-wide tail drain or a sibling's 5-15 s retry backoff.
+// The `bun test --parallel` bucket opens as `--- [A-B/M] K files in parallel`
+// and reports each file afterwards as `[N/M] <path> (X.XXs)`. The bucket
+// header has to close the preceding serial span, or the file that happens to
+// run right before the bucket is charged the whole bucket's wall time.
 function parseLog(raw) {
   const out = [];
   const lines = raw.replace(/\x1b\[[0-9;]*m/g, "").split(/\r?\n/);
@@ -81,11 +90,12 @@ function parseLog(raw) {
     const m = /^\x1b_bk;t=(\d+)\x07(.*)$/.exec(line);
     const ts = m ? Number(m[1]) : null;
     const text = m ? m[2] : line;
-    const hdr = /^(--- )?\[\d+\/\d+\] (.+)$/.exec(text);
+    const hdr = /^(--- )?\[\d+(?:-\d+)?\/\d+\] (.+)$/.exec(text);
     if (hdr) {
       emit(ts);
-      // Retry/error headers (`... - code 1`, `... [attempt #2]`) are not file
-      // paths; treat them as a delimiter so the preceding span closes cleanly.
+      // Retry/error headers (`... - code 1`, `... [attempt #2]`) and the
+      // `[A-B/M] K files in parallel` bucket header are not file paths; treat
+      // them as a delimiter so the preceding span closes cleanly.
       const title = hdr[2].trim();
       const timed = /^(.+\.(?:[cm]?[jt]sx?|json)) \((\d+(?:\.\d+)?)s\)$/.exec(title);
       if (timed) {

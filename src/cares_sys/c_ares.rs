@@ -445,10 +445,6 @@ impl Default for hostent_with_ttls {
 }
 
 pub trait HostentWithTtlsHandler: Sized {
-    /// `hostent_with_ttls::parse_a` or `parse_aaaa` — selects the c-ares reply
-    /// parser for [`hostent_with_ttls::callback_wrapper`].
-    const PARSE: fn(&[u8]) -> Result<Box<hostent_with_ttls>, Error>;
-
     fn on_hostent_with_ttls(
         &mut self,
         status: Option<Error>,
@@ -460,7 +456,41 @@ pub trait HostentWithTtlsHandler: Sized {
 impl hostent_with_ttls {
     // toJSResponse alias deleted — lives in bun_runtime::dns_jsc.
 
-    pub unsafe extern "C" fn callback_wrapper<T: HostentWithTtlsHandler>(
+    pub unsafe extern "C" fn callback_wrapper_a<T: HostentWithTtlsHandler>(
+        ctx: *mut c_void,
+        status: c_int,
+        timeouts: c_int,
+        buffer: *mut u8,
+        buffer_length: c_int,
+    ) {
+        // SAFETY: forwarded from the ares callback contract.
+        unsafe {
+            Self::on_callback::<T>(Self::parse_a, ctx, status, timeouts, buffer, buffer_length)
+        }
+    }
+
+    pub unsafe extern "C" fn callback_wrapper_aaaa<T: HostentWithTtlsHandler>(
+        ctx: *mut c_void,
+        status: c_int,
+        timeouts: c_int,
+        buffer: *mut u8,
+        buffer_length: c_int,
+    ) {
+        // SAFETY: forwarded from the ares callback contract.
+        unsafe {
+            Self::on_callback::<T>(
+                Self::parse_aaaa,
+                ctx,
+                status,
+                timeouts,
+                buffer,
+                buffer_length,
+            )
+        }
+    }
+
+    unsafe fn on_callback<T: HostentWithTtlsHandler>(
+        parse: fn(&[u8]) -> Result<Box<hostent_with_ttls>, Error>,
         ctx: *mut c_void,
         status: c_int,
         timeouts: c_int,
@@ -477,7 +507,7 @@ impl hostent_with_ttls {
         let buffer = unsafe {
             core::slice::from_raw_parts(buffer, usize::try_from(buffer_length).unwrap_or(0))
         };
-        match (T::PARSE)(buffer) {
+        match parse(buffer) {
             Ok(result) => this.on_hostent_with_ttls(None, timeouts, Some(result)),
             Err(err) => this.on_hostent_with_ttls(Some(err), timeouts, None),
         }
@@ -688,22 +718,9 @@ pub trait ChannelContainer: Sized {
     fn set_channel(&self, channel: *mut Channel);
 }
 
-/// Trait for `Channel::resolve`: ties a lookup-name string to its NSType and
-/// the `extern "C"` parse-thunk used as the ares_callback.
-/// The dns_jsc consumer impls it per (T, record-type).
-pub trait ResolveHandler: Sized {
-    const LOOKUP_NAME: &'static [u8];
-    const NS_TYPE: NSType;
-    /// The `ares_callback`-compatible thunk that parses the reply and forwards
-    /// to `Self`.
-    unsafe extern "C" fn raw_callback(
-        ctx: *mut c_void,
-        status: c_int,
-        timeouts: c_int,
-        buffer: *mut u8,
-        buffer_length: c_int,
-    );
-}
+/// An `ares_callback`-compatible thunk that parses a raw reply and forwards it
+/// to the `ctx` it was registered with.
+pub type AresCallback = unsafe extern "C" fn(*mut c_void, c_int, c_int, *mut u8, c_int);
 
 /// Copy `src` into the caller-owned stack `buf`, NUL-terminate, and return a
 /// `*const c_char` suitable for c-ares FFI. Truncates silently at
@@ -822,21 +839,26 @@ impl Channel {
         }
     }
 
-    pub fn resolve<T: ResolveHandler>(&mut self, name: &[u8], ctx: &mut T) {
+    /// Issue `ares_query` for `name`; `raw_callback` receives `ctx` back.
+    ///
+    /// # Safety
+    /// `ctx` must be what `raw_callback` expects and stay live until it is called
+    /// (which may happen synchronously, before this returns).
+    pub unsafe fn resolve(
+        &mut self,
+        name: &[u8],
+        ns_type: NSType,
+        raw_callback: AresCallback,
+        ctx: *mut c_void,
+    ) {
+        // The empty name is the root zone, which only NS and SOA can ask about.
+        let allows_empty_name = matches!(ns_type, NSType::ns_t_ns | NSType::ns_t_soa);
         if name.len() >= 1023
             || bun_core::strings::contains_char(name, 0)
-            || (name.is_empty() && !(T::LOOKUP_NAME == b"ns" || T::LOOKUP_NAME == b"soa"))
+            || (name.is_empty() && !allows_empty_name)
         {
             // SAFETY: thunk handles ARES_EBADNAME path.
-            unsafe {
-                T::raw_callback(
-                    std::ptr::from_mut::<T>(ctx).cast::<c_void>(),
-                    ARES_EBADNAME,
-                    0,
-                    ptr::null_mut(),
-                    0,
-                )
-            };
+            unsafe { raw_callback(ctx, ARES_EBADNAME, 0, ptr::null_mut(), 0) };
             return;
         }
 
@@ -849,9 +871,9 @@ impl Channel {
                 self,
                 name_ptr,
                 NSClass::ns_c_in,
-                T::NS_TYPE,
-                Some(T::raw_callback),
-                std::ptr::from_mut::<T>(ctx).cast::<c_void>(),
+                ns_type,
+                Some(raw_callback),
+                ctx,
             );
         }
     }

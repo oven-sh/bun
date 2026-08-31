@@ -1029,3 +1029,256 @@ describe("pending cache", () => {
     expect(results).toEqual(Array(8).fill({ address: "127.0.0.1", family: 4 }));
   });
 });
+
+// Every resolve*() record type, answered offline by a fake server. The resolver
+// has one table entry per record type (RR type on the wire, reply decoder,
+// syscall named in errors, pending-cache slot); each test below checks one of
+// those columns for every type at once.
+describe("resolve record types", () => {
+  const NAME = "rr.example.test";
+
+  function wireName(name) {
+    return Buffer.concat([
+      ...(name === ""
+        ? []
+        : name.split(".").map(label => Buffer.concat([Buffer.from([label.length]), Buffer.from(label)]))),
+      Buffer.from([0]),
+    ]);
+  }
+  function u16(n) {
+    const b = Buffer.alloc(2);
+    b.writeUInt16BE(n);
+    return b;
+  }
+  function u32(n) {
+    const b = Buffer.alloc(4);
+    b.writeUInt32BE(n);
+    return b;
+  }
+  function charString(s) {
+    return Buffer.concat([Buffer.from([s.length]), Buffer.from(s)]);
+  }
+  // One answer RR: <owner> 60 IN <type> <rdata>
+  function rr(owner, type, rdata) {
+    return Buffer.concat([wireName(owner), u16(type), u16(1), u32(60), u16(rdata.length), rdata]);
+  }
+
+  const aRdata = Buffer.from([10, 0, 0, 1]);
+  const mxRdata = Buffer.concat([u16(10), wireName("mx.example.test")]);
+  const soaRdata = Buffer.concat([
+    wireName("ns1.example.test"),
+    wireName("hostmaster.example.test"),
+    u32(2024010101),
+    u32(7200),
+    u32(900),
+    u32(1209600),
+    u32(300),
+  ]);
+
+  // `method` is the type's own resolveX(); `expected` is what both it and
+  // resolve(name, rrtype) return, unless `methodExpected` says otherwise.
+  const cases = [
+    {
+      rrtype: "A",
+      qtype: 1,
+      syscall: "queryA",
+      answers: owner => [rr(owner, 1, aRdata)],
+      method: (r, name) => r.resolve4(name, { ttl: true }),
+      expected: ["10.0.0.1"],
+      methodExpected: [{ address: "10.0.0.1", ttl: 60 }],
+    },
+    {
+      rrtype: "AAAA",
+      qtype: 28,
+      syscall: "queryAaaa",
+      answers: owner => [rr(owner, 28, Buffer.from("20010db8000000000000000000000001", "hex"))],
+      method: (r, name) => r.resolve6(name, { ttl: true }),
+      expected: ["2001:db8::1"],
+      methodExpected: [{ address: "2001:db8::1", ttl: 60 }],
+    },
+    {
+      rrtype: "CNAME",
+      qtype: 5,
+      syscall: "queryCname",
+      answers: owner => [rr(owner, 5, wireName("canonical.example.test")), rr("canonical.example.test", 1, aRdata)],
+      method: (r, name) => r.resolveCname(name),
+      expected: ["canonical.example.test"],
+    },
+    {
+      rrtype: "NS",
+      qtype: 2,
+      syscall: "queryNs",
+      answers: owner => [rr(owner, 2, wireName("ns1.example.test")), rr(owner, 2, wireName("ns2.example.test"))],
+      method: (r, name) => r.resolveNs(name),
+      expected: ["ns1.example.test", "ns2.example.test"],
+    },
+    {
+      rrtype: "PTR",
+      qtype: 12,
+      syscall: "queryPtr",
+      answers: owner => [rr(owner, 12, wireName("host.example.test"))],
+      method: (r, name) => r.resolvePtr(name),
+      expected: ["host.example.test"],
+    },
+    {
+      rrtype: "MX",
+      qtype: 15,
+      syscall: "queryMx",
+      answers: owner => [rr(owner, 15, mxRdata)],
+      method: (r, name) => r.resolveMx(name),
+      expected: [{ priority: 10, exchange: "mx.example.test" }],
+    },
+    {
+      rrtype: "TXT",
+      qtype: 16,
+      syscall: "queryTxt",
+      answers: owner => [rr(owner, 16, charString("v=spf1 -all"))],
+      method: (r, name) => r.resolveTxt(name),
+      expected: [["v=spf1 -all"]],
+    },
+    {
+      rrtype: "SRV",
+      qtype: 33,
+      syscall: "querySrv",
+      answers: owner => [rr(owner, 33, Buffer.concat([u16(10), u16(5), u16(8080), wireName("srv.example.test")]))],
+      method: (r, name) => r.resolveSrv(name),
+      expected: [{ name: "srv.example.test", priority: 10, weight: 5, port: 8080 }],
+    },
+    {
+      rrtype: "NAPTR",
+      qtype: 35,
+      syscall: "queryNaptr",
+      answers: owner => [
+        rr(
+          owner,
+          35,
+          Buffer.concat([u16(1), u16(12), charString("S"), charString("SIP+D2T"), charString(""), wireName("")]),
+        ),
+      ],
+      method: (r, name) => r.resolveNaptr(name),
+      expected: [{ flags: "S", service: "SIP+D2T", regexp: "", replacement: "", order: 1, preference: 12 }],
+    },
+    {
+      rrtype: "SOA",
+      qtype: 6,
+      syscall: "querySoa",
+      answers: owner => [rr(owner, 6, soaRdata)],
+      method: (r, name) => r.resolveSoa(name),
+      expected: {
+        nsname: "ns1.example.test",
+        hostmaster: "hostmaster.example.test",
+        serial: 2024010101,
+        refresh: 7200,
+        retry: 900,
+        expire: 1209600,
+        minttl: 300,
+      },
+    },
+    {
+      rrtype: "CAA",
+      qtype: 257,
+      syscall: "queryCaa",
+      answers: owner => [
+        rr(owner, 257, Buffer.concat([Buffer.from([0]), charString("issue"), Buffer.from("ca.example.test")])),
+      ],
+      method: (r, name) => r.resolveCaa(name),
+      expected: [{ critical: 0, issue: "ca.example.test" }],
+    },
+    {
+      rrtype: "ANY",
+      qtype: 255,
+      syscall: "queryAny",
+      answers: owner => [rr(owner, 1, aRdata), rr(owner, 15, mxRdata)],
+      method: (r, name) => r.resolveAny(name),
+      expected: [
+        { address: "10.0.0.1", ttl: 60, type: "A" },
+        { priority: 10, exchange: "mx.example.test", type: "MX" },
+      ],
+    },
+  ];
+  const byQtype = new Map(cases.map(c => [c.qtype, c]));
+
+  // Answers by QTYPE from `cases`; anything under "nxdomain." gets NXDOMAIN.
+  // Every query received is recorded as "<qtype> <qname>".
+  async function startFakeServer() {
+    const socket = dgram.createSocket("udp4");
+    const queries = [];
+    socket.on("message", (query, rinfo) => {
+      const labels = [];
+      let off = 12;
+      while (query[off] !== 0) {
+        labels.push(query.toString("latin1", off + 1, off + 1 + query[off]));
+        off += query[off] + 1;
+      }
+      const qtype = query.readUInt16BE(off + 1);
+      const question = query.subarray(12, off + 5);
+      const qname = labels.join(".");
+      queries.push(`${qtype} ${qname || "."}`);
+
+      const answers = labels[0] === "nxdomain" ? [] : byQtype.get(qtype).answers(qname);
+      const rcode = answers.length ? 0x80 : 0x83;
+      const header = Buffer.from([query[0], query[1], 0x81, rcode, 0, 1, 0, answers.length, 0, 0, 0, 0]);
+      socket.send(Buffer.concat([header, question, ...answers]), rinfo.port, rinfo.address);
+    });
+    socket.bind(0, "127.0.0.1");
+    await once(socket, "listening");
+    const resolver = new dns_promises.Resolver({ timeout: 5000, tries: 1 });
+    resolver.setServers(["127.0.0.1:" + socket.address().port]);
+    return { socket, queries, resolver };
+  }
+
+  test.concurrent("each type goes out as its own RR type and decodes into its own shape", async () => {
+    const { socket, queries, resolver } = await startFakeServer();
+    try {
+      // Both entry points of every type at once, all for the same name: the two
+      // calls of a type share one wire query, and since the types only differ in
+      // their pending-cache slot here, a shared slot would settle one type with
+      // another type's reply.
+      const results = await Promise.all(
+        cases.map(async c => {
+          // resolve() does not accept "NAPTR"; that type goes through its method twice.
+          const viaResolve = c.rrtype === "NAPTR" ? c.method(resolver, NAME) : resolver.resolve(NAME, c.rrtype);
+          return [c.rrtype, await Promise.all([viaResolve, c.method(resolver, NAME)])];
+        }),
+      );
+      expect(Object.fromEntries(results)).toEqual(
+        Object.fromEntries(cases.map(c => [c.rrtype, [c.expected, c.methodExpected ?? c.expected]])),
+      );
+      expect(queries.sort()).toEqual(cases.map(c => `${c.qtype} ${NAME}`).sort());
+    } finally {
+      socket.close();
+    }
+  });
+
+  test.concurrent("each type names its own syscall in errors", async () => {
+    const { socket, queries, resolver } = await startFakeServer();
+    const name = "nxdomain." + NAME;
+    try {
+      const errors = await Promise.all(
+        cases.map(c =>
+          c.method(resolver, name).then(
+            result => result,
+            err => ({ code: err.code, syscall: err.syscall, hostname: err.hostname }),
+          ),
+        ),
+      );
+      expect(errors).toEqual(cases.map(c => ({ code: "ENOTFOUND", syscall: c.syscall, hostname: name })));
+      expect(queries.sort()).toEqual(cases.map(c => `${c.qtype} ${name}`).sort());
+    } finally {
+      socket.close();
+    }
+  });
+
+  // The empty name is only let through to c-ares for these two RR types.
+  test.concurrent("resolveNs('') and resolveSoa('') query the root zone", async () => {
+    const { socket, queries, resolver } = await startFakeServer();
+    try {
+      const [ns, soa] = await Promise.all([resolver.resolveNs(""), resolver.resolveSoa("")]);
+      expect(ns).toEqual(byQtype.get(2).expected);
+      expect(soa).toEqual(byQtype.get(6).expected);
+      expect(queries.sort()).toEqual(["2 .", "6 ."]);
+    } finally {
+      socket.close();
+    }
+  });
+});

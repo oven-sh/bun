@@ -337,89 +337,108 @@ fn normalize_dns_name<'a>(name: &'a [u8], backend: &mut GetAddrInfoBackend) -> &
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// ResolveInfoRequest<T> — generic c-ares record request (SRV/SOA/TXT/…)
+// ResolveInfoRequest — c-ares record request (SRV/SOA/TXT/…)
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Each c-ares reply struct implements this with its record-type tag.
-pub trait CAresRecordType: Sized {
-    const TYPE_NAME: &'static str;
-    /// `"query" + ucfirst(TYPE_NAME)` — each impl carries the precomputed
-    /// literal so error paths report the right syscall.
-    const SYSCALL: &'static str;
-    /// `"pending_{TYPE_NAME}_cache_cares"` — used to reach the matching HiveArray on `Resolver`.
-    const CACHE_FIELD: PendingCacheField;
+/// Everything that distinguishes one `dns.resolve*` record type from another.
+/// One static per record type (see `record_kind`); the request machinery is
+/// shared and reads these at run time instead of being stamped out per type.
+pub(crate) struct CAresRecordKind {
+    pub type_name: &'static str,
+    /// `"query" + ucfirst(type_name)`, reported as the syscall in errors.
+    pub syscall: &'static str,
+    /// The `pending_*_cache_cares` HiveArray on `Resolver` that holds this
+    /// type's in-flight lookups.
+    pub pending_cache: fn(&Resolver) -> &JsCell<ResolvePendingCache>,
     /// The DNS RR type passed to `ares_query`.
-    const NS_TYPE: c_ares::NSType;
+    pub ns_type: c_ares::NSType,
     /// The `ares_callback` thunk that parses raw reply bytes for this record type
-    /// and forwards to `ResolveInfoRequest<Self>::on_cares_complete`. Used as
-    /// `ResolveHandler::raw_callback` for the generic `Channel::resolve` dispatch.
-    const RAW_CALLBACK: unsafe extern "C" fn(*mut c_void, c_int, c_int, *mut u8, c_int);
+    /// and forwards to `ResolveInfoRequest::on_cares_complete`.
+    pub raw_callback: c_ares::AresCallback,
+}
+
+/// The parsed reply of one query; freed on drop.
+pub(crate) enum CAresReply {
+    Srv(NonNull<c_ares::struct_ares_srv_reply>),
+    Soa(NonNull<c_ares::struct_ares_soa_reply>),
+    Txt(NonNull<c_ares::struct_ares_txt_reply>),
+    Naptr(NonNull<c_ares::struct_ares_naptr_reply>),
+    Mx(NonNull<c_ares::struct_ares_mx_reply>),
+    Caa(NonNull<c_ares::struct_ares_caa_reply>),
+    /// From an `ares_parse_*_reply` wrapper, so ours to free (unlike the hostent
+    /// `ares_gethostbyaddr` lends to `GetHostByAddrInfoRequest`).
+    Hostent(NonNull<c_ares::struct_hostent>),
+    HostentWithTtls(Box<c_ares::hostent_with_ttls>),
+    Any(Box<c_ares::struct_any_reply>),
+}
+
+impl CAresReply {
     fn to_js_response(
         &mut self,
         global: &JSGlobalObject,
         type_name: &'static str,
-    ) -> JsResult<JSValue>;
-    /// Free a reply; called once per reply, by `OwnedReply<Self>`'s `Drop`.
-    /// SAFETY: `this` must be the pointer an `OwnedReply<Self>` adopted; not aliased.
-    unsafe fn destroy(this: *mut Self);
-}
-
-/// The parsed reply of one query, freed by `T::destroy` when dropped.
-#[repr(transparent)]
-pub(crate) struct OwnedReply<T: CAresRecordType>(NonNull<T>);
-
-impl<T: CAresRecordType> OwnedReply<T> {
-    /// SAFETY: `reply` must be a live reply that `T::destroy` frees, and the
-    /// caller must give up every other use of it.
-    unsafe fn adopt(reply: NonNull<T>) -> Self {
-        Self(reply)
+    ) -> JsResult<JSValue> {
+        use super::cares_jsc as js;
+        let type_name = type_name.as_bytes();
+        // SAFETY: each pointer variant is the only handle to a live reply until `drop`.
+        unsafe {
+            match self {
+                Self::Srv(p) => js::srv_reply_to_js_response(p.as_mut(), global, type_name),
+                Self::Soa(p) => js::soa_reply_to_js_response(p.as_mut(), global, type_name),
+                Self::Txt(p) => js::txt_reply_to_js_response(p.as_mut(), global, type_name),
+                Self::Naptr(p) => js::naptr_reply_to_js_response(p.as_mut(), global, type_name),
+                Self::Mx(p) => js::mx_reply_to_js_response(p.as_mut(), global, type_name),
+                Self::Caa(p) => js::caa_reply_to_js_response(p.as_mut(), global, type_name),
+                Self::Hostent(p) => js::hostent_to_js_response(p.as_mut(), global, type_name),
+                Self::HostentWithTtls(b) => {
+                    js::hostent_with_ttls_to_js_response(b, global, type_name)
+                }
+                Self::Any(b) => js::any_reply_to_js_response(b, global, type_name),
+            }
+        }
     }
 }
 
-impl<T: CAresRecordType> core::ops::Deref for OwnedReply<T> {
-    type Target = T;
-    fn deref(&self) -> &T {
-        // SAFETY: `adopt` took the only handle to a live reply; only `drop` frees it.
-        unsafe { self.0.as_ref() }
-    }
-}
-
-impl<T: CAresRecordType> core::ops::DerefMut for OwnedReply<T> {
-    fn deref_mut(&mut self) -> &mut T {
-        // SAFETY: as in `deref`; `&mut self` rules out any other live borrow.
-        unsafe { self.0.as_mut() }
-    }
-}
-
-impl<T: CAresRecordType> Drop for OwnedReply<T> {
+impl Drop for CAresReply {
     fn drop(&mut self) {
-        // SAFETY: `adopt`'s contract; no borrow handed out by `deref` outlives `self`.
-        unsafe { T::destroy(self.0.as_ptr()) }
+        let data: *mut c_void = match self {
+            Self::Srv(p) => p.as_ptr().cast(),
+            Self::Soa(p) => p.as_ptr().cast(),
+            Self::Txt(p) => p.as_ptr().cast(),
+            Self::Naptr(p) => p.as_ptr().cast(),
+            Self::Mx(p) => p.as_ptr().cast(),
+            Self::Caa(p) => p.as_ptr().cast(),
+            // SAFETY: the parse thunk handed this hostent over; nothing else frees it.
+            Self::Hostent(p) => return unsafe { c_ares::struct_hostent::destroy(p.as_ptr()) },
+            Self::HostentWithTtls(_) | Self::Any(_) => return,
+        };
+        // SAFETY: `data` is the `ares_parse_*_reply` allocation this variant adopted.
+        unsafe { c_ares::ares_free_data(data) }
     }
 }
 
-pub(crate) struct ResolveInfoRequest<T: CAresRecordType> {
+pub(crate) struct ResolveInfoRequest {
     // TODO: should be Option<&'a Resolver> (struct gets <'a>); raw ptr until reconciled with intrusive RC
     pub resolver_for_caching: Option<*mut Resolver>,
     /// Slot this request owns in the resolver's pending cache, which same-name
     /// lookups chain onto until completion drains it; `None` when the cache was full.
     pub pending_slot: Option<u8>,
-    pub head: CAresLookup<T>,
-    pub tail: *mut CAresLookup<T>, // INTRUSIVE — points at `head` or last appended node
+    pub head: CAresLookup,
+    pub tail: *mut CAresLookup, // INTRUSIVE — points at `head` or last appended node
 }
 
 pub mod resolve_info_request {
     use super::*;
 
-    pub struct PendingCacheKey<T: CAresRecordType> {
+    pub struct PendingCacheKey {
         pub(crate) hash: u64,
         pub(crate) len: u16,
         pub name: Box<[u8]>,
-        pub(crate) lookup: *mut ResolveInfoRequest<T>,
+        pub(crate) lookup: *mut ResolveInfoRequest,
     }
 
-    impl<T: CAresRecordType> PendingCacheKey<T> {
-        pub(crate) fn append(&mut self, cares_lookup: *mut CAresLookup<T>) {
+    impl PendingCacheKey {
+        pub(crate) fn append(&mut self, cares_lookup: *mut CAresLookup) {
             // SAFETY: lookup/tail are valid while request is in the pending cache
             unsafe {
                 let tail = (*self.lookup).tail;
@@ -440,13 +459,13 @@ pub mod resolve_info_request {
     }
 }
 
-impl<T: CAresRecordType> ResolveInfoRequest<T> {
+impl ResolveInfoRequest {
     fn init(
         cache: LookupCacheHit<Self>,
         resolver: Option<*mut Resolver>,
         name: &[u8],
         global_this: &JSGlobalObject,
-        cache_field: PendingCacheField,
+        kind: &'static CAresRecordKind,
     ) -> *mut Self {
         let mut poll_ref = KeepAlive::init();
         poll_ref.ref_(js_event_loop_ctx());
@@ -462,7 +481,7 @@ impl<T: CAresRecordType> ResolveInfoRequest<T> {
                 allocated: false,
                 next: None,
                 name: Box::<[u8]>::from(name),
-                _marker: core::marker::PhantomData,
+                kind,
             },
             // tail set to &head below
             tail: ptr::null_mut(),
@@ -474,7 +493,7 @@ impl<T: CAresRecordType> ResolveInfoRequest<T> {
             unsafe {
                 (*request).resolver_for_caching = resolver;
                 let pos = (*resolver.unwrap())
-                    .pending_cache_for::<T>(cache_field)
+                    .pending_cache_for(kind)
                     .index_of(new)
                     .unwrap();
                 (*request).pending_slot = Some(pos as u8);
@@ -484,47 +503,29 @@ impl<T: CAresRecordType> ResolveInfoRequest<T> {
         request
     }
 
+    #[inline(never)]
     fn on_cares_complete(
         this: *mut Self,
         err_: Option<c_ares::Error>,
         timeout: i32,
-        result: Option<OwnedReply<T>>,
+        result: Option<CAresReply>,
     ) {
         // SAFETY: this is the heap-allocated request c-ares calls back with
         unsafe {
             if let Some(resolver) = (*this).resolver_for_caching {
                 scopeguard::defer! { (*resolver).request_completed() };
                 if let Some(pos) = (*this).pending_slot {
-                    (*resolver).drain_pending_cares::<T>(pos, err_, timeout, result);
+                    (*resolver).drain_pending_cares((*this).head.kind, pos, err_, timeout, result);
                     return;
                 }
             }
 
             // Consume the request and move `head` out by value; `ptr::read`
-            // + `heap::take` would double-Drop `CAresLookup<T>` (impls Drop).
+            // + `heap::take` would double-Drop `CAresLookup` (impls Drop).
             let owned = *bun_core::heap::take(this);
             let mut head = owned.head;
-            CAresLookup::<T>::process_resolve(&raw mut head, err_, timeout, result);
+            CAresLookup::process_resolve(&raw mut head, err_, timeout, result);
         }
-    }
-}
-
-// Wires `ResolveInfoRequest<T>` into `Channel::resolve` — the per-record
-// `T::RAW_CALLBACK` parses the raw DNS reply and calls back into
-// `on_cares_complete`.
-impl<T: CAresRecordType> c_ares::ResolveHandler for ResolveInfoRequest<T> {
-    const LOOKUP_NAME: &'static [u8] = T::TYPE_NAME.as_bytes();
-    const NS_TYPE: c_ares::NSType = T::NS_TYPE;
-    unsafe extern "C" fn raw_callback(
-        ctx: *mut c_void,
-        status: c_int,
-        timeouts: c_int,
-        buffer: *mut u8,
-        buffer_length: c_int,
-    ) {
-        // SAFETY: `ctx` is the `*mut ResolveInfoRequest<T>` handed to `ares_query`
-        // by `Channel::resolve`; the callback owns it for this call.
-        unsafe { (T::RAW_CALLBACK)(ctx, status, timeouts, buffer, buffer_length) }
     }
 }
 
@@ -575,7 +576,7 @@ pub mod get_host_by_addr_info_request {
 
 impl GetHostByAddrInfoRequest {
     /// Reverse lookups always cache through `pending_addr_cache_cares`, so no
-    /// `cache_field` selector is needed (unlike `ResolveInfoRequest::<T>::init`).
+    /// `cache_field` selector is needed (unlike `ResolveInfoRequest::init`).
     fn init(
         cache: LookupCacheHit<Self>,
         resolver: Option<*mut Resolver>,
@@ -1556,21 +1557,21 @@ impl Drop for CAresReverse {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// CAresLookup<T>
+// CAresLookup
 // ──────────────────────────────────────────────────────────────────────────
 
-pub(crate) struct CAresLookup<T: CAresRecordType> {
+pub(crate) struct CAresLookup {
     pub resolver: Option<RefPtr<Resolver>>,
     pub global_this: bun_ptr::BackRef<JSGlobalObject>, // JSC_BORROW (BACKREF — JSGlobalObject outlives the request)
     pub promise: JSPromiseStrong,
     pub poll_ref: KeepAlive,
     pub allocated: bool,
-    pub next: Option<NonNull<CAresLookup<T>>>, // INTRUSIVE
+    pub next: Option<NonNull<CAresLookup>>, // INTRUSIVE
     pub name: Box<[u8]>,
-    _marker: core::marker::PhantomData<T>,
+    pub kind: &'static CAresRecordKind,
 }
 
-impl<T: CAresRecordType> CAresLookup<T> {
+impl CAresLookup {
     fn new(data: Self) -> *mut Self {
         debug_assert!(data.allocated); // deinit will not free this otherwise
         bun_core::heap::into_raw(Box::new(data))
@@ -1580,6 +1581,7 @@ impl<T: CAresRecordType> CAresLookup<T> {
         resolver: Option<*mut Resolver>,
         global_this: &JSGlobalObject,
         name: &[u8],
+        kind: &'static CAresRecordKind,
     ) -> *mut Self {
         let mut poll_ref = KeepAlive::init();
         poll_ref.ref_(js_event_loop_ctx());
@@ -1592,7 +1594,7 @@ impl<T: CAresRecordType> CAresLookup<T> {
             allocated: true,
             next: None,
             name: Box::<[u8]>::from(name),
-            _marker: core::marker::PhantomData,
+            kind,
         })
     }
 
@@ -1614,14 +1616,11 @@ impl<T: CAresRecordType> CAresLookup<T> {
         this: *mut Self,
         err_: Option<c_ares::Error>,
         _timeout: i32,
-        result: Option<OwnedReply<T>>,
+        result: Option<CAresReply>,
     ) {
-        // syscall = "query" + ucfirst(TYPE_NAME); each `CAresRecordType` impl
-        // carries the precomputed literal.
-        let syscall = T::SYSCALL; // e.g. "querySrv"
-
         // SAFETY: caller contract — `this` is live; JSGlobalObject outlives the request.
         unsafe {
+            let syscall = (*this).kind.syscall; // e.g. "querySrv"
             let global_this = (*this).global_this();
             if let Some(err) = err_ {
                 error_to_deferred(
@@ -1646,7 +1645,10 @@ impl<T: CAresRecordType> CAresLookup<T> {
                 return;
             };
 
-            let array = Outcome::of(global_this, node.to_js_response(global_this, T::TYPE_NAME));
+            let array = Outcome::of(
+                global_this,
+                node.to_js_response(global_this, (*this).kind.type_name),
+            );
             Self::on_complete(this, array);
         }
     }
@@ -1680,7 +1682,7 @@ impl<T: CAresRecordType> CAresLookup<T> {
     }
 }
 
-impl<T: CAresRecordType> Drop for CAresLookup<T> {
+impl Drop for CAresLookup {
     fn drop(&mut self) {
         let _ = self.global_this();
         self.poll_ref.unref(js_event_loop_ctx());
@@ -3324,320 +3326,128 @@ pub use internal::Request as InternalDNSRequest;
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Field selector for the `pending_*` cache fields on `Resolver` — Rust
-/// cannot index struct fields by name string.
+/// cannot index struct fields by name string. The `dns.resolve*` record types
+/// select theirs through `CAresRecordKind::pending_cache` instead.
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum PendingCacheField {
     PendingHostCacheCares,
     PendingHostCacheNative,
-    PendingSrvCacheCares,
-    PendingSoaCacheCares,
-    PendingTxtCacheCares,
-    PendingNaptrCacheCares,
-    PendingMxCacheCares,
-    PendingCaaCacheCares,
-    PendingNsCacheCares,
-    PendingPtrCacheCares,
-    PendingCnameCacheCares,
-    PendingACacheCares,
-    PendingAaaaCacheCares,
-    PendingAnyCacheCares,
     PendingAddrCacheCares,
     PendingNameinfoCacheCares,
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// CAresRecordType impls — each (struct, tag) pair is modeled as a
-// trait impl. ns/ptr/cname share `struct_hostent` and a/aaaa share
-// `hostent_with_ttls`, so those get `#[repr(transparent)]` newtype wrappers to
-// keep the per-record monomorphizations (and pending caches) distinct.
+// Record-kind tables + the c-ares reply thunks that feed `on_cares_complete`.
 // ──────────────────────────────────────────────────────────────────────────
 
-macro_rules! impl_cares_record_type {
-    (
-        $ty:ty, $tag:literal, $syscall:literal, $field:ident, $ns_type:ident,
-        $to_js:path
-    ) => {
-        impl CAresRecordType for $ty {
-            const TYPE_NAME: &'static str = $tag;
-            const SYSCALL: &'static str = $syscall;
-            const CACHE_FIELD: PendingCacheField = PendingCacheField::$field;
-            const NS_TYPE: c_ares::NSType = c_ares::NSType::$ns_type;
-            const RAW_CALLBACK: unsafe extern "C" fn(*mut c_void, c_int, c_int, *mut u8, c_int) =
-                c_ares::ares_reply_callback::<$ty, ResolveInfoRequest<$ty>>;
-            fn to_js_response(
-                &mut self,
-                global: &JSGlobalObject,
-                type_name: &'static str,
-            ) -> JsResult<JSValue> {
-                $to_js(self, global, type_name.as_bytes())
-            }
-            unsafe fn destroy(this: *mut Self) {
-                // SAFETY: caller contract — `this` is the c-ares-allocated reply pointer
-                // handed to the completion callback; not aliased. All six reply structs
-                // are freed identically via `ares_free_data`.
-                unsafe { c_ares::ares_free_data(this.cast::<core::ffi::c_void>()) }
-            }
-        }
-        // Generic reply handler — forwards to `on_cares_complete`.
-        impl c_ares::ReplyHandler<$ty> for ResolveInfoRequest<$ty> {
+macro_rules! reply_handler {
+    ($($ty:ident => $variant:ident),* $(,)?) => {$(
+        impl c_ares::ReplyHandler<c_ares::$ty> for ResolveInfoRequest {
             fn on_reply(
                 &mut self,
                 status: Option<c_ares::Error>,
                 timeouts: i32,
-                results: *mut $ty,
+                results: *mut c_ares::$ty,
             ) {
-                // SAFETY: `ares_reply_callback` hands over the `ares_parse_*_reply`
-                // allocation, which `destroy` frees.
-                let result = NonNull::new(results).map(|reply| unsafe { OwnedReply::adopt(reply) });
+                let result = NonNull::new(results).map(CAresReply::$variant);
                 Self::on_cares_complete(core::ptr::from_mut(self), status, timeouts, result);
             }
         }
-    };
+    )*};
 }
 
-impl_cares_record_type!(
-    c_ares::struct_ares_srv_reply,
-    "srv",
-    "querySrv",
-    PendingSrvCacheCares,
-    ns_t_srv,
-    super::cares_jsc::srv_reply_to_js_response
-);
-impl_cares_record_type!(
-    c_ares::struct_ares_soa_reply,
-    "soa",
-    "querySoa",
-    PendingSoaCacheCares,
-    ns_t_soa,
-    super::cares_jsc::soa_reply_to_js_response
-);
-impl_cares_record_type!(
-    c_ares::struct_ares_txt_reply,
-    "txt",
-    "queryTxt",
-    PendingTxtCacheCares,
-    ns_t_txt,
-    super::cares_jsc::txt_reply_to_js_response
-);
-impl_cares_record_type!(
-    c_ares::struct_ares_naptr_reply,
-    "naptr",
-    "queryNaptr",
-    PendingNaptrCacheCares,
-    ns_t_naptr,
-    super::cares_jsc::naptr_reply_to_js_response
-);
-impl_cares_record_type!(
-    c_ares::struct_ares_mx_reply,
-    "mx",
-    "queryMx",
-    PendingMxCacheCares,
-    ns_t_mx,
-    super::cares_jsc::mx_reply_to_js_response
-);
-impl_cares_record_type!(
-    c_ares::struct_ares_caa_reply,
-    "caa",
-    "queryCaa",
-    PendingCaaCacheCares,
-    ns_t_caa,
-    super::cares_jsc::caa_reply_to_js_response
-);
-
-// `any` — handler receives `Option<Box<struct_any_reply>>` (parser allocates the
-// aggregate); release it via `heap::into_raw_nn` so the rest of the pipeline sees a
-// uniform `OwnedReply<T>` and `CAresRecordType::destroy` reclaims it with `heap::take`.
-impl CAresRecordType for c_ares::struct_any_reply {
-    const TYPE_NAME: &'static str = "any";
-    const SYSCALL: &'static str = "queryAny";
-    const CACHE_FIELD: PendingCacheField = PendingCacheField::PendingAnyCacheCares;
-    const NS_TYPE: c_ares::NSType = c_ares::NSType::ns_t_any;
-    const RAW_CALLBACK: unsafe extern "C" fn(*mut c_void, c_int, c_int, *mut u8, c_int) =
-        c_ares::struct_any_reply::callback_wrapper::<ResolveInfoRequest<c_ares::struct_any_reply>>;
-    fn to_js_response(
-        &mut self,
-        global: &JSGlobalObject,
-        type_name: &'static str,
-    ) -> JsResult<JSValue> {
-        super::cares_jsc::any_reply_to_js_response(self, global, type_name.as_bytes())
-    }
-    unsafe fn destroy(this: *mut Self) {
-        // SAFETY: `this` was released by `heap::into_raw_nn` in `on_any` below; Drop
-        // frees inner replies.
-        unsafe { drop(bun_core::heap::take(this)) }
-    }
+reply_handler! {
+    struct_ares_srv_reply => Srv,
+    struct_ares_soa_reply => Soa,
+    struct_ares_txt_reply => Txt,
+    struct_ares_naptr_reply => Naptr,
+    struct_ares_mx_reply => Mx,
+    struct_ares_caa_reply => Caa,
 }
-impl c_ares::AnyHandler for ResolveInfoRequest<c_ares::struct_any_reply> {
+
+impl c_ares::AnyHandler for ResolveInfoRequest {
     fn on_any(
         &mut self,
         status: Option<c_ares::Error>,
         timeouts: i32,
         results: Option<Box<c_ares::struct_any_reply>>,
     ) {
-        // SAFETY: `destroy` re-boxes the allocation released here.
-        let result =
-            results.map(|reply| unsafe { OwnedReply::adopt(bun_core::heap::into_raw_nn(reply)) });
-        Self::on_cares_complete(std::ptr::from_mut::<Self>(self), status, timeouts, result);
+        let result = results.map(CAresReply::Any);
+        Self::on_cares_complete(core::ptr::from_mut(self), status, timeouts, result);
     }
 }
 
-/// Transparent newtype over `struct_hostent` carrying the per-record-type `type_name` tag.
-macro_rules! hostent_newtype {
-    ($name:ident, $tag:literal, $syscall:literal, $field:ident, $ns_type:ident, $wrapper:ident) => {
-        #[repr(transparent)]
-        pub(crate) struct $name(pub c_ares::struct_hostent);
-        impl CAresRecordType for $name {
-            const TYPE_NAME: &'static str = $tag;
-            const SYSCALL: &'static str = $syscall;
-            const CACHE_FIELD: PendingCacheField = PendingCacheField::$field;
-            const NS_TYPE: c_ares::NSType = c_ares::NSType::$ns_type;
-            const RAW_CALLBACK: unsafe extern "C" fn(*mut c_void, c_int, c_int, *mut u8, c_int) =
-                c_ares::struct_hostent::$wrapper::<ResolveInfoRequest<$name>>;
-            fn to_js_response(
-                &mut self,
-                global: &JSGlobalObject,
-                type_name: &'static str,
-            ) -> JsResult<JSValue> {
-                super::cares_jsc::hostent_to_js_response(&mut self.0, global, type_name.as_bytes())
-            }
-            unsafe fn destroy(this: *mut Self) {
-                // SAFETY: `#[repr(transparent)]` — `*mut Self` is `*mut struct_hostent`.
-                unsafe { c_ares::struct_hostent::destroy(this.cast::<c_ares::struct_hostent>()) }
-            }
-        }
-        impl c_ares::HostentHandler for ResolveInfoRequest<$name> {
-            fn on_hostent(
-                &mut self,
-                status: Option<c_ares::Error>,
-                timeouts: i32,
-                results: *mut c_ares::struct_hostent,
-            ) {
-                let hostent = NonNull::new(results.cast::<$name>());
-                // SAFETY: `RAW_CALLBACK` is an `ares_parse_*_reply` wrapper, so this hostent
-                // is handed over for `destroy` to free (unlike the one `ares_gethostbyaddr`
-                // lends to `GetHostByAddrInfoRequest`); `#[repr(transparent)]` makes the
-                // cast sound.
-                let result = hostent.map(|reply| unsafe { OwnedReply::adopt(reply) });
-                Self::on_cares_complete(core::ptr::from_mut(self), status, timeouts, result);
-            }
-        }
-    };
+// ns/ptr/cname: `raw_callback` is an `ares_parse_*_reply` wrapper, so the hostent
+// is handed over for `CAresReply` to free.
+impl c_ares::HostentHandler for ResolveInfoRequest {
+    fn on_hostent(
+        &mut self,
+        status: Option<c_ares::Error>,
+        timeouts: i32,
+        results: *mut c_ares::struct_hostent,
+    ) {
+        let result = NonNull::new(results).map(CAresReply::Hostent);
+        Self::on_cares_complete(core::ptr::from_mut(self), status, timeouts, result);
+    }
 }
 
-/// Transparent newtype over `hostent_with_ttls` for A/AAAA records.
-macro_rules! hostent_ttls_newtype {
-    ($name:ident, $tag:literal, $syscall:literal, $field:ident, $ns_type:ident, $parse:ident) => {
-        #[repr(transparent)]
-        pub(crate) struct $name(pub c_ares::hostent_with_ttls);
-        impl CAresRecordType for $name {
-            const TYPE_NAME: &'static str = $tag;
-            const SYSCALL: &'static str = $syscall;
-            const CACHE_FIELD: PendingCacheField = PendingCacheField::$field;
-            const NS_TYPE: c_ares::NSType = c_ares::NSType::$ns_type;
-            const RAW_CALLBACK: unsafe extern "C" fn(*mut c_void, c_int, c_int, *mut u8, c_int) =
-                c_ares::hostent_with_ttls::callback_wrapper::<ResolveInfoRequest<$name>>;
-            fn to_js_response(
-                &mut self,
-                global: &JSGlobalObject,
-                type_name: &'static str,
-            ) -> JsResult<JSValue> {
-                super::cares_jsc::hostent_with_ttls_to_js_response(
-                    &mut self.0,
-                    global,
-                    type_name.as_bytes(),
-                )
-            }
-            unsafe fn destroy(this: *mut Self) {
-                // SAFETY: `#[repr(transparent)]`; released by `heap::into_raw_nn` in
-                // `on_hostent_with_ttls` below. Drop calls `ares_free_hostent`.
-                unsafe {
-                    drop(bun_core::heap::take(
-                        this.cast::<c_ares::hostent_with_ttls>(),
-                    ))
-                }
-            }
-        }
-        impl c_ares::HostentWithTtlsHandler for ResolveInfoRequest<$name> {
-            const PARSE: fn(&[u8]) -> Result<Box<c_ares::hostent_with_ttls>, c_ares::Error> =
-                c_ares::hostent_with_ttls::$parse;
-            fn on_hostent_with_ttls(
-                &mut self,
-                status: Option<c_ares::Error>,
-                timeouts: i32,
-                results: Option<Box<c_ares::hostent_with_ttls>>,
-            ) {
-                // SAFETY: `destroy` casts back and re-boxes the allocation released here;
-                // `#[repr(transparent)]` makes the cast sound.
-                let result = results.map(|reply| unsafe {
-                    OwnedReply::adopt(bun_core::heap::into_raw_nn(reply).cast::<$name>())
-                });
-                Self::on_cares_complete(core::ptr::from_mut(self), status, timeouts, result);
-            }
-        }
-    };
+impl c_ares::HostentWithTtlsHandler for ResolveInfoRequest {
+    fn on_hostent_with_ttls(
+        &mut self,
+        status: Option<c_ares::Error>,
+        timeouts: i32,
+        results: Option<Box<c_ares::hostent_with_ttls>>,
+    ) {
+        let result = results.map(CAresReply::HostentWithTtls);
+        Self::on_cares_complete(core::ptr::from_mut(self), status, timeouts, result);
+    }
 }
 
-hostent_newtype!(
-    NsHostent,
-    "ns",
-    "queryNs",
-    PendingNsCacheCares,
-    ns_t_ns,
-    callback_wrapper_ns
-);
-hostent_newtype!(
-    PtrHostent,
-    "ptr",
-    "queryPtr",
-    PendingPtrCacheCares,
-    ns_t_ptr,
-    callback_wrapper_ptr
-);
-hostent_newtype!(
-    CnameHostent,
-    "cname",
-    "queryCname",
-    PendingCnameCacheCares,
-    ns_t_cname,
-    callback_wrapper_cname
-);
-hostent_ttls_newtype!(
-    AHostentWithTtls,
-    "a",
-    "queryA",
-    PendingACacheCares,
-    ns_t_a,
-    parse_a
-);
-hostent_ttls_newtype!(
-    AaaaHostentWithTtls,
-    "aaaa",
-    "queryAaaa",
-    PendingAaaaCacheCares,
-    ns_t_aaaa,
-    parse_aaaa
-);
+pub(crate) mod record_kind {
+    use super::*;
+
+    macro_rules! kinds {
+        ($($name:ident: $tag:literal, $syscall:literal, $cache:ident, $ns_type:ident, $cb:expr;)*) => {$(
+            pub(crate) static $name: CAresRecordKind = CAresRecordKind {
+                type_name: $tag,
+                syscall: $syscall,
+                pending_cache: |resolver| &resolver.$cache,
+                ns_type: c_ares::NSType::$ns_type,
+                raw_callback: $cb,
+            };
+        )*};
+    }
+
+    kinds! {
+        SRV: "srv", "querySrv", pending_srv_cache_cares, ns_t_srv,
+            c_ares::ares_reply_callback::<c_ares::struct_ares_srv_reply, ResolveInfoRequest>;
+        SOA: "soa", "querySoa", pending_soa_cache_cares, ns_t_soa,
+            c_ares::ares_reply_callback::<c_ares::struct_ares_soa_reply, ResolveInfoRequest>;
+        TXT: "txt", "queryTxt", pending_txt_cache_cares, ns_t_txt,
+            c_ares::ares_reply_callback::<c_ares::struct_ares_txt_reply, ResolveInfoRequest>;
+        NAPTR: "naptr", "queryNaptr", pending_naptr_cache_cares, ns_t_naptr,
+            c_ares::ares_reply_callback::<c_ares::struct_ares_naptr_reply, ResolveInfoRequest>;
+        MX: "mx", "queryMx", pending_mx_cache_cares, ns_t_mx,
+            c_ares::ares_reply_callback::<c_ares::struct_ares_mx_reply, ResolveInfoRequest>;
+        CAA: "caa", "queryCaa", pending_caa_cache_cares, ns_t_caa,
+            c_ares::ares_reply_callback::<c_ares::struct_ares_caa_reply, ResolveInfoRequest>;
+        ANY: "any", "queryAny", pending_any_cache_cares, ns_t_any,
+            c_ares::struct_any_reply::callback_wrapper::<ResolveInfoRequest>;
+        NS: "ns", "queryNs", pending_ns_cache_cares, ns_t_ns,
+            c_ares::struct_hostent::callback_wrapper_ns::<ResolveInfoRequest>;
+        PTR: "ptr", "queryPtr", pending_ptr_cache_cares, ns_t_ptr,
+            c_ares::struct_hostent::callback_wrapper_ptr::<ResolveInfoRequest>;
+        CNAME: "cname", "queryCname", pending_cname_cache_cares, ns_t_cname,
+            c_ares::struct_hostent::callback_wrapper_cname::<ResolveInfoRequest>;
+        A: "a", "queryA", pending_a_cache_cares, ns_t_a,
+            c_ares::hostent_with_ttls::callback_wrapper_a::<ResolveInfoRequest>;
+        AAAA: "aaaa", "queryAaaa", pending_aaaa_cache_cares, ns_t_aaaa,
+            c_ares::hostent_with_ttls::callback_wrapper_aaaa::<ResolveInfoRequest>;
+    }
+}
 
 pub type PendingCache = HiveArray<get_addr_info_request::PendingCacheKey, 32>;
-type SrvPendingCache =
-    HiveArray<resolve_info_request::PendingCacheKey<c_ares::struct_ares_srv_reply>, 32>;
-type SoaPendingCache =
-    HiveArray<resolve_info_request::PendingCacheKey<c_ares::struct_ares_soa_reply>, 32>;
-type TxtPendingCache =
-    HiveArray<resolve_info_request::PendingCacheKey<c_ares::struct_ares_txt_reply>, 32>;
-type NaptrPendingCache =
-    HiveArray<resolve_info_request::PendingCacheKey<c_ares::struct_ares_naptr_reply>, 32>;
-type MxPendingCache =
-    HiveArray<resolve_info_request::PendingCacheKey<c_ares::struct_ares_mx_reply>, 32>;
-type CaaPendingCache =
-    HiveArray<resolve_info_request::PendingCacheKey<c_ares::struct_ares_caa_reply>, 32>;
-type NSPendingCache = HiveArray<resolve_info_request::PendingCacheKey<NsHostent>, 32>;
-type PtrPendingCache = HiveArray<resolve_info_request::PendingCacheKey<PtrHostent>, 32>;
-type CnamePendingCache = HiveArray<resolve_info_request::PendingCacheKey<CnameHostent>, 32>;
-type APendingCache = HiveArray<resolve_info_request::PendingCacheKey<AHostentWithTtls>, 32>;
-type AAAAPendingCache = HiveArray<resolve_info_request::PendingCacheKey<AaaaHostentWithTtls>, 32>;
-type AnyPendingCache =
-    HiveArray<resolve_info_request::PendingCacheKey<c_ares::struct_any_reply>, 32>;
+type ResolvePendingCache = HiveArray<resolve_info_request::PendingCacheKey, 32>;
 type AddrPendingCache = HiveArray<get_host_by_addr_info_request::PendingCacheKey, 32>;
 type NameInfoPendingCache = HiveArray<get_name_info_request::PendingCacheKey, 32>;
 
@@ -3668,18 +3478,18 @@ pub struct Resolver {
 
     pub(crate) pending_host_cache_cares: JsCell<PendingCache>,
     pub(crate) pending_host_cache_native: JsCell<PendingCache>,
-    pub(crate) pending_srv_cache_cares: JsCell<SrvPendingCache>,
-    pub(crate) pending_soa_cache_cares: JsCell<SoaPendingCache>,
-    pub(crate) pending_txt_cache_cares: JsCell<TxtPendingCache>,
-    pub(crate) pending_naptr_cache_cares: JsCell<NaptrPendingCache>,
-    pub(crate) pending_mx_cache_cares: JsCell<MxPendingCache>,
-    pub(crate) pending_caa_cache_cares: JsCell<CaaPendingCache>,
-    pub(crate) pending_ns_cache_cares: JsCell<NSPendingCache>,
-    pub(crate) pending_ptr_cache_cares: JsCell<PtrPendingCache>,
-    pub(crate) pending_cname_cache_cares: JsCell<CnamePendingCache>,
-    pub(crate) pending_a_cache_cares: JsCell<APendingCache>,
-    pub(crate) pending_aaaa_cache_cares: JsCell<AAAAPendingCache>,
-    pub(crate) pending_any_cache_cares: JsCell<AnyPendingCache>,
+    pub(crate) pending_srv_cache_cares: JsCell<ResolvePendingCache>,
+    pub(crate) pending_soa_cache_cares: JsCell<ResolvePendingCache>,
+    pub(crate) pending_txt_cache_cares: JsCell<ResolvePendingCache>,
+    pub(crate) pending_naptr_cache_cares: JsCell<ResolvePendingCache>,
+    pub(crate) pending_mx_cache_cares: JsCell<ResolvePendingCache>,
+    pub(crate) pending_caa_cache_cares: JsCell<ResolvePendingCache>,
+    pub(crate) pending_ns_cache_cares: JsCell<ResolvePendingCache>,
+    pub(crate) pending_ptr_cache_cares: JsCell<ResolvePendingCache>,
+    pub(crate) pending_cname_cache_cares: JsCell<ResolvePendingCache>,
+    pub(crate) pending_a_cache_cares: JsCell<ResolvePendingCache>,
+    pub(crate) pending_aaaa_cache_cares: JsCell<ResolvePendingCache>,
+    pub(crate) pending_any_cache_cares: JsCell<ResolvePendingCache>,
     pub(crate) pending_addr_cache_cares: JsCell<AddrPendingCache>,
     pub(crate) pending_nameinfo_cache_cares: JsCell<NameInfoPendingCache>,
 }
@@ -3747,10 +3557,12 @@ impl<R: HasPendingCacheKey> Copy for LookupCacheHit<R> {}
 /// field on `Resolver`.
 pub(crate) trait HasPendingCacheKey {
     type PendingCacheKey;
+    /// What a caller passes to pick the field when the request type has more
+    /// than one pending cache on `Resolver` (one per record type for
+    /// `ResolveInfoRequest`).
+    type CacheSelector: Copy;
 
     /// Return the per-request-type pending HiveArray field on `Resolver`.
-    /// `field` is the runtime tag selecting which field (some request types are reachable
-    /// via more than one field, e.g. `pending_host_cache_{cares,native}`).
     ///
     /// R-2: takes `&Resolver` and projects `&mut` via the field's `JsCell`.
     /// Callers hold the borrow only for a short, non-reentrant window
@@ -3758,7 +3570,7 @@ pub(crate) trait HasPendingCacheKey {
     #[allow(clippy::mut_from_ref)]
     fn pending_cache(
         resolver: &Resolver,
-        field: PendingCacheField,
+        selector: Self::CacheSelector,
     ) -> &mut HiveArray<Self::PendingCacheKey, 32>;
 
     /// `key.hash` — all `PendingCacheKey` shapes carry `{ hash: u64, len: u16, lookup: *mut _ }`.
@@ -3775,15 +3587,16 @@ pub(crate) trait HasPendingCacheKey {
     fn key_new(key: &Self::PendingCacheKey) -> Self::PendingCacheKey;
 }
 
-impl<T: CAresRecordType> HasPendingCacheKey for ResolveInfoRequest<T> {
-    type PendingCacheKey = resolve_info_request::PendingCacheKey<T>;
+impl HasPendingCacheKey for ResolveInfoRequest {
+    type PendingCacheKey = resolve_info_request::PendingCacheKey;
+    type CacheSelector = &'static CAresRecordKind;
 
     #[inline]
-    fn pending_cache(
-        resolver: &Resolver,
-        field: PendingCacheField,
-    ) -> &mut HiveArray<Self::PendingCacheKey, 32> {
-        resolver.pending_cache_for::<T>(field)
+    fn pending_cache<'r>(
+        resolver: &'r Resolver,
+        kind: &'static CAresRecordKind,
+    ) -> &'r mut HiveArray<Self::PendingCacheKey, 32> {
+        resolver.pending_cache_for(kind)
     }
     #[inline]
     fn key_hash(key: &Self::PendingCacheKey) -> u64 {
@@ -3810,6 +3623,7 @@ impl<T: CAresRecordType> HasPendingCacheKey for ResolveInfoRequest<T> {
 
 impl HasPendingCacheKey for GetHostByAddrInfoRequest {
     type PendingCacheKey = get_host_by_addr_info_request::PendingCacheKey;
+    type CacheSelector = PendingCacheField;
 
     #[inline]
     fn pending_cache(
@@ -3845,6 +3659,7 @@ impl HasPendingCacheKey for GetHostByAddrInfoRequest {
 
 impl HasPendingCacheKey for GetNameInfoRequest {
     type PendingCacheKey = get_name_info_request::PendingCacheKey;
+    type CacheSelector = PendingCacheField;
 
     #[inline]
     fn pending_cache(
@@ -4189,54 +4004,15 @@ impl Resolver {
         }
     }
 
-    /// Dispatch to a typed ResolveInfoRequest cache by record type.
-    // Each per-record cache is a distinct monomorphization of
-    // `HiveArray<resolve_info_request::PendingCacheKey<_>, 32>`; `PendingCacheKey<T>` is
-    // layout-identical for all `T` (only the `*mut ResolveInfoRequest<T>` payload's pointee
-    // type differs), so reinterpreting the field reference at the caller's `T` is sound when
-    // `T::CACHE_FIELD` selects the matching field.
+    /// The ResolveInfoRequest cache of one record type.
+    ///
+    /// R-2: returns `&mut` from `&self` via `JsCell::get_mut`; see
+    /// `pending_host_cache` for the borrow discipline.
     #[allow(clippy::mut_from_ref)]
-    fn pending_cache_for<T: CAresRecordType>(
-        &self,
-        _field: PendingCacheField,
-    ) -> &mut HiveArray<resolve_info_request::PendingCacheKey<T>, 32> {
-        macro_rules! field {
-            ($f:ident) => {
-                // SAFETY: the matched arm guarantees `self.$f` *is*
-                // `JsCell<HiveArray<PendingCacheKey<T>, 32>>` for this `T::CACHE_FIELD`;
-                // the cast is an identity transmute (same layout, same lifetime).
-                // R-2: `JsCell::as_ptr` projects `&mut` from `&self`; caller
-                // holds the borrow only for a short, non-reentrant window
-                // (see `pending_host_cache` doc).
-                unsafe {
-                    &mut *self
-                        .$f
-                        .as_ptr()
-                        .cast::<HiveArray<resolve_info_request::PendingCacheKey<T>, 32>>()
-                }
-            };
-        }
-        match T::CACHE_FIELD {
-            PendingCacheField::PendingSrvCacheCares => field!(pending_srv_cache_cares),
-            PendingCacheField::PendingSoaCacheCares => field!(pending_soa_cache_cares),
-            PendingCacheField::PendingTxtCacheCares => field!(pending_txt_cache_cares),
-            PendingCacheField::PendingNaptrCacheCares => field!(pending_naptr_cache_cares),
-            PendingCacheField::PendingMxCacheCares => field!(pending_mx_cache_cares),
-            PendingCacheField::PendingCaaCacheCares => field!(pending_caa_cache_cares),
-            PendingCacheField::PendingNsCacheCares => field!(pending_ns_cache_cares),
-            PendingCacheField::PendingPtrCacheCares => field!(pending_ptr_cache_cares),
-            PendingCacheField::PendingCnameCacheCares => field!(pending_cname_cache_cares),
-            PendingCacheField::PendingACacheCares => field!(pending_a_cache_cares),
-            PendingCacheField::PendingAaaaCacheCares => field!(pending_aaaa_cache_cares),
-            PendingCacheField::PendingAnyCacheCares => field!(pending_any_cache_cares),
-            // host/addr/nameinfo caches use distinct key types and have their own helpers.
-            PendingCacheField::PendingHostCacheCares
-            | PendingCacheField::PendingHostCacheNative
-            | PendingCacheField::PendingAddrCacheCares
-            | PendingCacheField::PendingNameinfoCacheCares => {
-                unreachable!()
-            }
-        }
+    fn pending_cache_for(&self, kind: &CAresRecordKind) -> &mut ResolvePendingCache {
+        // SAFETY: single-JS-thread invariant; caller holds the borrow only for
+        // a short, non-reentrant window (see fn doc).
+        unsafe { (kind.pending_cache)(self).get_mut() }
     }
 
     // Monomorphic helpers used by the drain* fns below.
@@ -4268,18 +4044,19 @@ impl Resolver {
         })
     }
 
-    pub(crate) fn drain_pending_cares<T: CAresRecordType>(
+    #[inline(never)]
+    pub(crate) fn drain_pending_cares(
         &self,
+        kind: &'static CAresRecordKind,
         index: u8,
         err: Option<c_ares::Error>,
         timeout: i32,
-        result: Option<OwnedReply<T>>,
+        result: Option<CAresReply>,
     ) {
-        // cache_name = format!("pending_{}_cache_cares", T::TYPE_NAME)
         let _guard = self.ref_guard();
 
         let key = {
-            let cache = self.pending_cache_for::<T>(T::CACHE_FIELD);
+            let cache = self.pending_cache_for(kind);
             // SAFETY: slot at `index` was alloc'd by `get_or_put_into_resolve_pending_cache`.
             unsafe { cache.box_at(index as usize) }
                 .expect("pending DNS slot")
@@ -4291,7 +4068,7 @@ impl Resolver {
             // pending-cache slot; consumed via `heap::take` below.
             unsafe {
                 let mut pending = (*key.lookup).head.next;
-                CAresLookup::<T>::process_resolve(
+                CAresLookup::process_resolve(
                     ptr::addr_of_mut!((*key.lookup).head),
                     err,
                     timeout,
@@ -4301,7 +4078,7 @@ impl Resolver {
 
                 while let Some(value) = pending {
                     pending = (*value.as_ptr()).next;
-                    CAresLookup::<T>::process_resolve(value.as_ptr(), err, timeout, None);
+                    CAresLookup::process_resolve(value.as_ptr(), err, timeout, None);
                 }
             }
             return;
@@ -4312,10 +4089,12 @@ impl Resolver {
         unsafe {
             let mut pending = (*key.lookup).head.next;
             let mut prev_global = (*key.lookup).head.global_this();
-            let mut array =
-                Outcome::of(prev_global, addr.to_js_response(prev_global, T::TYPE_NAME));
+            let mut array = Outcome::of(
+                prev_global,
+                addr.to_js_response(prev_global, kind.type_name),
+            );
             keep_alive(&array);
-            CAresLookup::<T>::on_complete(ptr::addr_of_mut!((*key.lookup).head), array);
+            CAresLookup::on_complete(ptr::addr_of_mut!((*key.lookup).head), array);
             drop(bun_core::heap::take(key.lookup));
 
             keep_alive(&array);
@@ -4323,13 +4102,14 @@ impl Resolver {
             while let Some(value) = pending {
                 let new_global = (*value.as_ptr()).global_this();
                 if !core::ptr::eq(prev_global, new_global) {
-                    array = Outcome::of(new_global, addr.to_js_response(new_global, T::TYPE_NAME));
+                    array =
+                        Outcome::of(new_global, addr.to_js_response(new_global, kind.type_name));
                     prev_global = new_global;
                 }
                 pending = (*value.as_ptr()).next;
 
                 keep_alive(&array);
-                CAresLookup::<T>::on_complete(value.as_ptr(), array);
+                CAresLookup::on_complete(value.as_ptr(), array);
                 keep_alive(&array);
             }
         }
@@ -4612,11 +4392,11 @@ impl Resolver {
     pub(crate) fn get_or_put_into_resolve_pending_cache<R: HasPendingCacheKey>(
         &self,
         key: &R::PendingCacheKey,
-        field: PendingCacheField,
+        selector: R::CacheSelector,
     ) -> LookupCacheHit<R> {
         // Dispatch via `HasPendingCacheKey::pending_cache`; the body is
         // identical across all `R`.
-        let cache = R::pending_cache(self, field);
+        let cache = R::pending_cache(self, selector);
         let mut inflight_iter = cache.used.iter_set();
 
         while let Some(index) = inflight_iter.next() {
@@ -4997,31 +4777,21 @@ impl Resolver {
         }
 
         match record_type {
-            RecordType::A => self.do_resolve_cares::<AHostentWithTtls>(name.slice(), global_this),
+            RecordType::A => self.do_resolve_cares(&record_kind::A, name.slice(), global_this),
             RecordType::AAAA => {
-                self.do_resolve_cares::<AaaaHostentWithTtls>(name.slice(), global_this)
+                self.do_resolve_cares(&record_kind::AAAA, name.slice(), global_this)
             }
-            RecordType::ANY => {
-                self.do_resolve_cares::<c_ares::struct_any_reply>(name.slice(), global_this)
+            RecordType::ANY => self.do_resolve_cares(&record_kind::ANY, name.slice(), global_this),
+            RecordType::CAA => self.do_resolve_cares(&record_kind::CAA, name.slice(), global_this),
+            RecordType::CNAME => {
+                self.do_resolve_cares(&record_kind::CNAME, name.slice(), global_this)
             }
-            RecordType::CAA => {
-                self.do_resolve_cares::<c_ares::struct_ares_caa_reply>(name.slice(), global_this)
-            }
-            RecordType::CNAME => self.do_resolve_cares::<CnameHostent>(name.slice(), global_this),
-            RecordType::MX => {
-                self.do_resolve_cares::<c_ares::struct_ares_mx_reply>(name.slice(), global_this)
-            }
-            RecordType::NS => self.do_resolve_cares::<NsHostent>(name.slice(), global_this),
-            RecordType::PTR => self.do_resolve_cares::<PtrHostent>(name.slice(), global_this),
-            RecordType::SOA => {
-                self.do_resolve_cares::<c_ares::struct_ares_soa_reply>(name.slice(), global_this)
-            }
-            RecordType::SRV => {
-                self.do_resolve_cares::<c_ares::struct_ares_srv_reply>(name.slice(), global_this)
-            }
-            RecordType::TXT => {
-                self.do_resolve_cares::<c_ares::struct_ares_txt_reply>(name.slice(), global_this)
-            }
+            RecordType::MX => self.do_resolve_cares(&record_kind::MX, name.slice(), global_this),
+            RecordType::NS => self.do_resolve_cares(&record_kind::NS, name.slice(), global_this),
+            RecordType::PTR => self.do_resolve_cares(&record_kind::PTR, name.slice(), global_this),
+            RecordType::SOA => self.do_resolve_cares(&record_kind::SOA, name.slice(), global_this),
+            RecordType::SRV => self.do_resolve_cares(&record_kind::SRV, name.slice(), global_this),
+            RecordType::TXT => self.do_resolve_cares(&record_kind::TXT, name.slice(), global_this),
         }
     }
 
@@ -5231,7 +5001,7 @@ impl Resolver {
 }
 
 macro_rules! resolve_record_fn {
-    ($global:ident, $method:ident, $jsname:literal, $ty:ty, $allow_empty:expr) => {
+    ($global:ident, $method:ident, $jsname:literal, $kind:ident, $allow_empty:expr) => {
         // JSC-ABI shim emitted by `export_host_fn!` at module scope (see `global_resolve`).
         pub fn $global(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
             global_resolver(global_this).$method(global_this, callframe)
@@ -5261,7 +5031,7 @@ macro_rules! resolve_record_fn {
                     "non-empty string",
                 ));
             }
-            self.do_resolve_cares::<$ty>(name.slice(), global_this)
+            self.do_resolve_cares(&record_kind::$kind, name.slice(), global_this)
         }
     };
 }
@@ -5301,120 +5071,75 @@ impl Resolver {
 }
 
 impl Resolver {
-    resolve_record_fn!(
-        global_resolve_srv,
-        resolve_srv,
-        "resolveSrv",
-        c_ares::struct_ares_srv_reply,
-        false
-    );
-    resolve_record_fn!(
-        global_resolve_soa,
-        resolve_soa,
-        "resolveSoa",
-        c_ares::struct_ares_soa_reply,
-        true
-    );
-    resolve_record_fn!(
-        global_resolve_caa,
-        resolve_caa,
-        "resolveCaa",
-        c_ares::struct_ares_caa_reply,
-        false
-    );
-    resolve_record_fn!(global_resolve_ns, resolve_ns, "resolveNs", NsHostent, true);
-    resolve_record_fn!(
-        global_resolve_ptr,
-        resolve_ptr,
-        "resolvePtr",
-        PtrHostent,
-        false
-    );
+    resolve_record_fn!(global_resolve_srv, resolve_srv, "resolveSrv", SRV, false);
+    resolve_record_fn!(global_resolve_soa, resolve_soa, "resolveSoa", SOA, true);
+    resolve_record_fn!(global_resolve_caa, resolve_caa, "resolveCaa", CAA, false);
+    resolve_record_fn!(global_resolve_ns, resolve_ns, "resolveNs", NS, true);
+    resolve_record_fn!(global_resolve_ptr, resolve_ptr, "resolvePtr", PTR, false);
     resolve_record_fn!(
         global_resolve_cname,
         resolve_cname,
         "resolveCname",
-        CnameHostent,
+        CNAME,
         false
     );
-    resolve_record_fn!(
-        global_resolve_mx,
-        resolve_mx,
-        "resolveMx",
-        c_ares::struct_ares_mx_reply,
-        false
-    );
+    resolve_record_fn!(global_resolve_mx, resolve_mx, "resolveMx", MX, false);
     resolve_record_fn!(
         global_resolve_naptr,
         resolve_naptr,
         "resolveNaptr",
-        c_ares::struct_ares_naptr_reply,
+        NAPTR,
         false
     );
-    resolve_record_fn!(
-        global_resolve_txt,
-        resolve_txt,
-        "resolveTxt",
-        c_ares::struct_ares_txt_reply,
-        false
-    );
-    resolve_record_fn!(
-        global_resolve_any,
-        resolve_any,
-        "resolveAny",
-        c_ares::struct_any_reply,
-        false
-    );
+    resolve_record_fn!(global_resolve_txt, resolve_txt, "resolveTxt", TXT, false);
+    resolve_record_fn!(global_resolve_any, resolve_any, "resolveAny", ANY, false);
 
-    pub(crate) fn do_resolve_cares<T: CAresRecordType>(
+    pub(crate) fn do_resolve_cares(
         &self,
+        kind: &'static CAresRecordKind,
         name: &[u8],
         global_this: &JSGlobalObject,
     ) -> JsResult<JSValue> {
         let channel: *mut c_ares::Channel = match self.get_channel() {
             ChannelResult::Result(res) => res,
             ChannelResult::Err(err) => {
-                // syscall = "query" + ucfirst(TYPE_NAME) — precomputed per record type.
                 return Err(
                     global_this.throw_value(super::cares_jsc::error_to_js_with_syscall(
                         err,
                         global_this,
-                        T::SYSCALL.as_bytes(),
+                        kind.syscall.as_bytes(),
                     )?),
                 );
             }
         };
 
-        let cache_field = T::CACHE_FIELD; // "pending_{TYPE_NAME}_cache_cares"
+        let key = resolve_info_request::PendingCacheKey::init(name);
 
-        let key = resolve_info_request::PendingCacheKey::<T>::init(name);
-
-        let cache =
-            self.get_or_put_into_resolve_pending_cache::<ResolveInfoRequest<T>>(&key, cache_field);
+        let cache = self.get_or_put_into_resolve_pending_cache::<ResolveInfoRequest>(&key, kind);
         if let LookupCacheHit::Inflight(inflight) = cache {
             // CAresLookup will have the name ownership
-            let cares_lookup = CAresLookup::<T>::init(Some(self.as_ctx_ptr()), global_this, name);
+            let cares_lookup = CAresLookup::init(Some(self.as_ctx_ptr()), global_this, name, kind);
             // SAFETY: `inflight` points into the resolver's pending-cache HiveArray slot.
             unsafe { (*inflight).append(cares_lookup) };
             // SAFETY: `cares_lookup` was just heap-allocated; owned by the inflight list.
             return Ok(unsafe { (*cares_lookup).promise.value() });
         }
 
-        let request = ResolveInfoRequest::<T>::init(
+        let request = ResolveInfoRequest::init(
             cache,
             Some(self.as_ctx_ptr()),
             name, // CAresLookup will have the ownership
             global_this,
-            cache_field,
+            kind,
         );
         // SAFETY: `request` just heap-allocated in `init()`; `tail` points at its inline `head`.
         let promise = unsafe { (*(*request).tail).promise.value() };
 
         // SAFETY: `channel` is the live c-ares channel owned by `self`; `request`
         // is the freshly heap-allocated ResolveInfoRequest. c-ares stores the ctx
-        // pointer and calls `T::RAW_CALLBACK` (→ `on_cares_complete`) which
-        // consumes the request, so the `&mut` borrow is not held past this call.
-        unsafe { (*channel).resolve(name, &mut *request) };
+        // pointer and calls `kind.raw_callback` (→ `on_cares_complete`) which
+        // consumes the request.
+        unsafe { (*channel).resolve(name, kind.ns_type, kind.raw_callback, request.cast()) };
 
         // SAFETY: bun_vm() returns a live VM pointer for the duration of the call.
         self.request_sent(global_this.bun_vm());

@@ -253,6 +253,7 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
   const kWriteToConsole = Symbol("kWriteToConsole");
   const kBindProperties = Symbol("kBindProperties");
   const kBindStreamsEager = Symbol("kBindStreamsEager");
+  const kBindStreamsLazy = Symbol("kBindStreamsLazy");
   const kUseStdout = Symbol("kUseStdout");
   const kUseStderr = Symbol("kUseStderr");
 
@@ -349,6 +350,41 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
         Object.defineProperties(this, {
           "_stdout": { ...consolePropAttributes, value: stdout },
           "_stderr": { ...consolePropAttributes, value: stderr },
+        });
+      },
+    },
+    [kBindStreamsLazy]: {
+      ...consolePropAttributes,
+      // Lazily load the stdout and stderr from an object so we don't
+      // create the stdio streams when they are not even accessed
+      value: function (object) {
+        let stdout;
+        let stderr;
+        Object.defineProperties(this, {
+          "_stdout": {
+            enumerable: false,
+            configurable: true,
+            get() {
+              if (!stdout) stdout = object.stdout;
+              return stdout;
+            },
+            set(value) {
+              stdout = value;
+            },
+          },
+          "_stderr": {
+            enumerable: false,
+            configurable: true,
+            get() {
+              if (!stderr) {
+                stderr = object.stderr;
+              }
+              return stderr;
+            },
+            set(value) {
+              stderr = value;
+            },
+          },
         });
       },
     },

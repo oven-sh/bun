@@ -1,7 +1,7 @@
 //! YAML parser.
 //!
-//! `Encoding` is modeled as a trait with an associated `Unit` type (`u8` or
-//! `u16`), and `Parser<Enc>` is generic over `Enc: Encoding`.
+//! `Encoding` is modeled as a trait with an associated `Unit` type, and
+//! `Parser<Enc>` is generic over `Enc: Encoding`. `Utf8` is its only impl.
 //!
 //! Several scanners are state-machine loops written as
 //! `let mut __c = x; loop { match __c { ... } }` with `__c = y; continue;`.
@@ -557,8 +557,6 @@ pub enum ParseError {
     OutOfMemory,
     #[error("UnexpectedToken")]
     UnexpectedToken,
-    #[error("UnexpectedEof")]
-    UnexpectedEof,
     #[error("InvalidDirective")]
     InvalidDirective,
     #[error("UnexpectedCharacter")]
@@ -1854,9 +1852,6 @@ impl ParseResultError {
             ParseError::OutOfMemory => ParseResultError::Oom,
             ParseError::StackOverflow => ParseResultError::StackOverflow,
             ParseError::UnexpectedToken => ParseResultError::UnexpectedToken {
-                pos: parser.token.start,
-            },
-            ParseError::UnexpectedEof => ParseResultError::UnexpectedEof {
                 pos: parser.token.start,
             },
             ParseError::TabIndentation => ParseResultError::TabIndentation {

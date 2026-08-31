@@ -443,7 +443,7 @@ impl<'h, T, const CAPACITY: usize> HiveSlot<'h, T, CAPACITY> {
 
     /// Move `value` into the slot and return the stable initialized pointer.
     /// Consumes the token (its `Drop` does not run).
-    #[inline]
+    #[inline(always)]
     pub fn write(self, value: T) -> NonNull<T> {
         let this = ManuallyDrop::new(self);
         let p = this.slot.cast::<T>();
@@ -587,10 +587,9 @@ impl<T, const CAPACITY: usize> Fallback<T, CAPACITY> {
     /// buffer is left untouched (uninitialized bytes are a valid bit-pattern
     /// for `MaybeUninit`).
     ///
-    /// The returned allocation is leaked — callers stash it in a per-thread
-    /// static for the process lifetime.
+    /// Callers typically `Box::leak` the result into a per-thread static.
     #[inline]
-    pub fn new_boxed() -> NonNull<Self> {
+    pub fn new_boxed() -> Box<Self> {
         let mut boxed = Box::<Self>::new_uninit();
         // SAFETY: `boxed` is a fresh heap allocation — non-null, aligned for
         // `Self`, and valid for writes of `size_of::<Self>()` bytes.
@@ -598,7 +597,19 @@ impl<T, const CAPACITY: usize> Fallback<T, CAPACITY> {
         // SAFETY: `init_in_place` fully initialized `hive.used`; `hive.buffer`
         // is `[MaybeUninit<T>; CAPACITY]`, for which uninitialized bytes are a
         // valid representation. Every field of `Self` is therefore valid.
-        NonNull::from(Box::leak(unsafe { boxed.assume_init() }))
+        unsafe { boxed.assume_init() }
+    }
+
+    /// Claim a slot, build its value from the slot's (stable) address, and
+    /// return the owning handle. Infallible like [`claim`](Self::claim).
+    #[inline(always)]
+    pub fn claim_init(&self, init: impl FnOnce(NonNull<T>) -> T) -> Pooled<'_, T, CAPACITY> {
+        let slot = self.claim();
+        let value = init(slot.addr());
+        Pooled {
+            slot: slot.write(value),
+            owner: self,
+        }
     }
 
     /// One-shot claim + write. Preferred entry point — no uninit window.
@@ -645,6 +656,40 @@ impl<T, const CAPACITY: usize> Fallback<T, CAPACITY> {
         // `get()` (it is not in the hive), and the caller has since fully
         // initialized it. `destroy` reconstructs the `Box<T>` and runs `T::drop`.
         unsafe { bun_core::heap::destroy(value) };
+    }
+}
+
+/// Owning handle to an initialized [`Fallback`] slot (inline or heap spill):
+/// `Drop` runs `T::drop` and returns the slot to the pool. Single-owner, so it
+/// only lends `&T`; the stable address is available via [`as_ptr`](Self::as_ptr)
+/// for registration as callback user-data.
+pub struct Pooled<'a, T, const CAPACITY: usize> {
+    slot: NonNull<T>,
+    owner: &'a Fallback<T, CAPACITY>,
+}
+
+impl<T, const CAPACITY: usize> Pooled<'_, T, CAPACITY> {
+    #[inline]
+    pub fn as_ptr(&self) -> NonNull<T> {
+        self.slot
+    }
+}
+
+impl<T, const CAPACITY: usize> Deref for Pooled<'_, T, CAPACITY> {
+    type Target = T;
+    #[inline]
+    fn deref(&self) -> &T {
+        // SAFETY: `slot` was initialized by `claim_init` and is owned by this handle.
+        unsafe { self.slot.as_ref() }
+    }
+}
+
+impl<T, const CAPACITY: usize> Drop for Pooled<'_, T, CAPACITY> {
+    #[inline]
+    fn drop(&mut self) {
+        // SAFETY: `slot` is an initialized `T` claimed from `owner` by
+        // `claim_init`; this handle is its sole owner, so it is put exactly once.
+        unsafe { self.owner.put(self.slot.as_ptr()) };
     }
 }
 
@@ -961,10 +1006,9 @@ mod tests {
     fn fallback_new_boxed_and_init_in_place() {
         const CAP: usize = 4;
 
-        let boxed = Fallback::<u64, CAP>::new_boxed();
-        // SAFETY: `new_boxed` returns a valid heap allocation.
+        let f = Fallback::<u64, CAP>::new_boxed();
+        // SAFETY: every pointer read/put below is a slot `get_init` just filled.
         unsafe {
-            let f = &*boxed.as_ptr();
             for i in 0..CAP {
                 let p = f.get_init(i as u64 * 10);
                 assert!(f.hive.index_of(p.as_ptr()).is_some());
@@ -974,9 +1018,12 @@ mod tests {
             let p = f.get_init(999);
             assert!(f.hive.index_of(p.as_ptr()).is_none());
             f.put(p.as_ptr());
-            // `new_boxed` is leaked by design; reclaim for the test.
-            drop(Box::from_raw(boxed.as_ptr()));
         }
+        // `claim_init` hands back an owning slot that puts itself.
+        let pooled = f.claim_init(|_| 7);
+        assert!(f.hive.index_of(pooled.as_ptr().as_ptr()).is_none());
+        assert_eq!(*pooled, 7);
+        drop(pooled);
     }
 
     #[test]

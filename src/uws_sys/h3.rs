@@ -4,6 +4,7 @@
 
 use core::ffi::{c_char, c_int, c_void};
 use core::ptr;
+use core::ptr::NonNull;
 
 use crate::SocketAddress;
 use crate::response::{State, WriteResult};
@@ -529,24 +530,23 @@ impl App {
         Self::route_this::<U, H>(RouteKind::Any, self, p, this);
     }
 
-    pub fn listen_with_config<UD, H>(&mut self, ud: *mut UD, _handler: H, config: &ListenConfig)
-    where
-        H: Fn(&mut UD, Option<&mut ListenSocket>) + Copy + 'static,
+    /// Listen with `config`; the (synchronous) handler receives `this` and the
+    /// listen socket (`None` on failure).
+    pub fn listen_with_config_this<U: 'static, H>(
+        &mut self,
+        this: ThisPtr<U>,
+        _handler: H,
+        config: &ListenConfig,
+    ) where
+        H: Fn(ThisPtr<U>, Option<NonNull<ListenSocket>>) + Copy + 'static,
     {
-        // Safe fn item: nested local thunk, only coerced to the C-ABI
-        // fn-pointer type passed to C; body wraps its raw-ptr ops explicitly.
-        extern "C" fn cb<UD, H>(ls: *mut ListenSocket, p: *mut c_void)
+        extern "C" fn cb<U: 'static, H>(ls: *mut ListenSocket, p: *mut c_void)
         where
-            H: Fn(&mut UD, Option<&mut ListenSocket>) + Copy + 'static,
+            H: Fn(ThisPtr<U>, Option<NonNull<ListenSocket>>) + Copy + 'static,
         {
-            // SAFETY: uWS callback contract — `p` is the registered `*mut UD`;
-            // `ls` (when non-null) is a live listen-socket for this call.
-            unsafe {
-                let Some(ud) = thunk::user_mut::<UD>(p) else {
-                    return;
-                };
-                thunk::zst::<H>()(ud, ls.as_mut());
-            }
+            // SAFETY: `p` is the `ThisPtr<U>` handed to `listen_with_config_this`, live across this synchronous callback.
+            let this = unsafe { ThisPtr::new(p.cast::<U>()) };
+            thunk::zst::<H>()(this, NonNull::new(ls));
         }
         // SAFETY: self is a live FFI handle; config fields valid; trampoline is `extern "C"`
         unsafe {
@@ -555,10 +555,34 @@ impl App {
                 config.host,
                 config.port,
                 config.options,
-                Some(cb::<UD, H>),
-                ud.cast(),
+                Some(cb::<U, H>),
+                this.as_ptr().cast(),
             )
         }
+    }
+}
+
+/// Owning handle to an HTTP/3 `App`: dropping it destroys the app (and every
+/// route registration with it).
+pub struct OwnedApp(NonNull<App>);
+
+impl OwnedApp {
+    pub fn create(opts: &BunSocketContextOptions, idle_timeout_s: u32) -> Option<Self> {
+        App::create(opts, idle_timeout_s)
+            .and_then(NonNull::new)
+            .map(Self)
+    }
+
+    #[inline]
+    pub fn as_ptr(&self) -> *mut App {
+        self.0.as_ptr()
+    }
+}
+
+impl Drop for OwnedApp {
+    fn drop(&mut self) {
+        // SAFETY: `self.0` came from `App::create` and is destroyed exactly once, here.
+        unsafe { App::destroy(self.0.as_ptr()) }
     }
 }
 

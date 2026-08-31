@@ -496,6 +496,34 @@ impl App {
     }
 }
 
+/// Owning handle to an HTTP/2 `App`: dropping it destroys the app (and every
+/// route registration with it) and detaches it from its parent.
+pub struct OwnedApp(ptr::NonNull<App>);
+
+impl OwnedApp {
+    pub fn create<const SSL: bool>(
+        parent: &mut crate::app::App<SSL>,
+        allow_http1: bool,
+        idle_timeout_s: u32,
+    ) -> Option<Self> {
+        App::create::<SSL>(parent, allow_http1, idle_timeout_s)
+            .and_then(ptr::NonNull::new)
+            .map(Self)
+    }
+
+    #[inline]
+    pub fn as_ptr(&self) -> *mut App {
+        self.0.as_ptr()
+    }
+}
+
+impl Drop for OwnedApp {
+    fn drop(&mut self) {
+        // SAFETY: `self.0` came from `App::create` and is destroyed exactly once, here.
+        unsafe { App::destroy(self.0.as_ptr()) }
+    }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // extern "C"
 // ──────────────────────────────────────────────────────────────────────────

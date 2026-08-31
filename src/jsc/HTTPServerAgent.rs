@@ -86,16 +86,15 @@ bun_opaque::opaque_ffi! {
 // `[[ZIG_EXPORT(nothrow)]]` — declared once in `crate::cpp::raw` (cppbind),
 // called below with explicit casts to the codegen's opaque param types.
 impl InspectorHTTPServerAgent {
-    /// # Safety
-    /// `server_instance` is forwarded to C++ as an opaque token; caller must
-    /// ensure it remains valid for the duration of the FFI call.
-    pub unsafe fn notify_server_started(
+    /// `server_instance` is forwarded to C++ as an opaque token (never
+    /// dereferenced there).
+    pub fn notify_server_started(
         agent: *mut InspectorHTTPServerAgent,
         server_id: ServerId,
         hot_reload_id: HotReloadId,
         address: &BunString,
         start_time: f64,
-        server_instance: *mut c_void,
+        server_instance: usize,
     ) {
         // `opaque_mut` is the centralised ZST-handle deref proof (panics on
         // null). The C++ side never reads `server_instance` as anything but an
@@ -110,7 +109,7 @@ impl InspectorHTTPServerAgent {
                 hot_reload_id as _,
                 address,
                 start_time,
-                server_instance,
+                server_instance as *mut c_void,
             );
         }
     }

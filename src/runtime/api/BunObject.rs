@@ -1421,10 +1421,15 @@ fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVa
             if let Some(entry) = hot.get_entry(&config.id) {
                 macro_rules! reload {
                     ($T:ty) => {{
-                        // SAFETY: tag was matched; ptr was inserted as `*mut $T` below.
-                        let server: &mut $T = unsafe { &mut *entry.ptr.cast::<$T>() };
+                        // SAFETY: tag was matched; ptr was inserted as `*mut $T` below
+                        // and the entry is removed (`stop()`) before the server frees.
+                        let server: &$T = unsafe { &*entry.ptr.cast::<$T>() };
                         server.on_reload_from_zig(&mut config, global_object);
-                        return Ok(server.js_value.try_get().unwrap_or(JSValue::UNDEFINED));
+                        return Ok(server
+                            .js_value
+                            .get()
+                            .try_get()
+                            .unwrap_or(JSValue::UNDEFINED));
                     }};
                 }
                 match entry.tag {
@@ -1443,19 +1448,24 @@ fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVa
     }
 
     macro_rules! serve_with {
-        ($ServerType:ty, $tag:expr) => {{
+        ($ServerType:ty, $tag:ident) => {{
             let server = <$ServerType>::init(&mut config, global_object)?;
             if global_object.has_exception() {
+                drop(server);
                 return Ok(JSValue::ZERO);
             }
-            // SAFETY: `init` returned a live heap-allocated server pointer.
-            let server_ref: &mut $ServerType = unsafe { &mut *server };
-            // SAFETY: `server` is the live heap-allocated server returned by `init`.
-            let route_list_object = <$ServerType>::listen(server);
+            let route_list_object = <$ServerType>::listen(server.this_ptr());
             if global_object.has_exception() {
+                drop(server);
                 return Ok(JSValue::ZERO);
             }
+            let any = AnyServer::from(&*server);
+            // The JS wrapper takes over our ref; `any` (like every route the
+            // server registered) is a back-reference it outlives.
             let obj = <$ServerType>::ptr_to_js(server, global_object);
+            let AnyServer::$tag(server_ref) = any else {
+                unreachable!()
+            };
             if route_list_object != JSValue::ZERO {
                 // NOTE: `ServerType.js.routeListSetCached` (codegen
                 // `.classes.ts`) — routed through the typed helper in
@@ -1467,64 +1477,40 @@ fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVa
             // / `Handler` only hold raw `JSValue` shadows for hot-path dispatch.
             // The async-context wrap is applied here (not in `from_js`) so the
             // freshly-allocated wrapper fn is rooted by the slot immediately.
-            crate::server::wrap_handler_slot(
-                &mut server_ref.config.on_request,
-                obj,
-                global_object,
-                <$ServerType>::js_gc_on_request_set,
-            );
-            crate::server::wrap_handler_slot(
-                &mut server_ref.config.on_error,
-                obj,
-                global_object,
-                <$ServerType>::js_gc_on_error_set,
-            );
-            crate::server::wrap_handler_slot(
-                &mut server_ref.config.on_node_http_request,
-                obj,
-                global_object,
-                <$ServerType>::js_gc_on_node_http_request_set,
-            );
+            server_ref.write_request_handler_slots(obj, global_object);
             // Skip the 7-slot write when there's no websocket config: the
             // slots default ZERO so `write_ws_handler_slots`'s clear path
             // would be 7 wasted FFI calls.
-            if server_ref.config.websocket.is_some() {
+            if server_ref.config().websocket.is_some() {
                 server_ref.write_ws_handler_slots(obj, global_object);
             }
-            server_ref.js_value.set_strong(obj, global_object);
+            server_ref
+                .js_value
+                .with_mut(|v| v.set_strong(obj, global_object));
             // Slots are rooted; release the scoped gcProtects and run the
             // "server just started" GC nudge split out of `listen()`.
             drop(_handler_pins);
             server_ref.gc_hint_after_listen();
 
-            if let Some(handles) = crate::jsc_hooks::active_handles() {
-                bun_core::handle_oom(handles.put(
-                    crate::jsc_hooks::ActiveHandle::Server(AnyServer::from(server.cast_const())),
-                    (),
-                ));
-            }
+            crate::jsc_hooks::ActiveHandle::Server(any).register();
 
             // `init` moved `config` into the server (`mem::take`), so the
             // local `config` is defaulted from here on — read `allow_hot`
             // and `id` from the server's own config or the registration is
             // keyed on the wrong (empty) id.
-            if server_ref.config.allow_hot {
-                // SAFETY: same VM pointer; re-borrow after the earlier `vm` mut
-                // borrow was released by the `hot_map()` arm above.
+            if server_ref.config().allow_hot {
                 if let Some(hot) = global_object.bun_vm().as_mut().hot_map() {
                     hot.insert_raw(
-                        &server_ref.config.id,
+                        &server_ref.config().id,
                         HotMapEntry {
-                            tag: $tag as u8,
-                            ptr: server.cast::<()>(),
+                            tag: AnyServerTag::$tag as u8,
+                            ptr: any.as_opaque_ptr(),
                         },
                     );
                 }
             }
 
-            // SAFETY: bun_vm() returns the live thread-local VM.
             if let Some(debugger) = global_object.bun_vm().as_mut().debugger.as_deref_mut() {
-                let any = AnyServer::from(server.cast_const());
                 crate::server::http_server_agent::notify_server_started(
                     &mut debugger.http_server_agent,
                     any,
@@ -1545,10 +1531,10 @@ fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVa
     let has_ssl_config = config.ssl_config.is_some();
     let development = config.is_development();
     match (development, has_ssl_config) {
-        (true, true) => serve_with!(crate::api::DebugHTTPSServer, AnyServerTag::DebugHTTPSServer),
-        (true, false) => serve_with!(crate::api::DebugHTTPServer, AnyServerTag::DebugHTTPServer),
-        (false, true) => serve_with!(crate::api::HTTPSServer, AnyServerTag::HTTPSServer),
-        (false, false) => serve_with!(crate::api::HTTPServer, AnyServerTag::HTTPServer),
+        (true, true) => serve_with!(crate::api::DebugHTTPSServer, DebugHTTPSServer),
+        (true, false) => serve_with!(crate::api::DebugHTTPServer, DebugHTTPServer),
+        (false, true) => serve_with!(crate::api::HTTPSServer, HTTPSServer),
+        (false, false) => serve_with!(crate::api::HTTPServer, HTTPServer),
     }
 }
 

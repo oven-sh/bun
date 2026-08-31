@@ -201,8 +201,10 @@ test.concurrent("close() rejects a held navigate() catchably and a floating one 
 // is the opposite: a crash is not a requested teardown, so its rejection
 // must stay loud. --no-title-reply keeps the Navigate slot pending past
 // onNavigated, like a real browser whose title fetch has not come back yet.
-test.concurrent("a browser death is quiet for the constructor url promise and loud for a floating evaluate", async () => {
-  const result = await runScenario(`
+test.concurrent(
+  "a browser death is quiet for the constructor url promise and loud for a floating evaluate",
+  async () => {
+    const result = await runScenario(`
     const unhandled = [];
     process.on("unhandledRejection", e => unhandled.push(e.message));
     const view = new Bun.WebView({
@@ -220,8 +222,9 @@ test.concurrent("a browser death is quiet for the constructor url promise and lo
     await Bun.sleep(50);
     print(unhandled);
   `);
-  expect(result).toEqual([expect.stringMatching(/^Chrome (process closed the pipe|exited|killed by signal \d+)$/)]);
-});
+    expect(result).toEqual([expect.stringMatching(/^Chrome (process closed the pipe|exited|killed by signal \d+)$/)]);
+  },
+);
 
 // A genuine navigation failure (Chrome answers Page.navigate with errorText)
 // stays observable: a held navigate() rejects with that text, and the

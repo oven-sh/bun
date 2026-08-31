@@ -144,8 +144,7 @@ test("cyclic imports with async dependencies should generate async wrappers", as
     var exports_BaseElement = {};
     __export(exports_BaseElement, {
       BaseElement: () => BaseElement,
-      formValue: () => formValue,
-      listValue: () => listValue
+      formValue: () => formValue
     });
     function BaseElement() {
       console.log("BaseElement called", BaseElementImport());
@@ -180,7 +179,7 @@ test("cyclic imports with async dependencies should generate async wrappers", as
     var { AsyncEntryPoint: AsyncEntryPoint2 } = await Promise.resolve().then(() => exports_AsyncEntryPoint);
     AsyncEntryPoint2();
 
-    //# debugId=CA2065B5CEC4A98364756E2164756E21
+    //# debugId=CDA89BED21DB7D2D64756E2164756E21
     //# sourceMappingURL=entryBuild.js.map
     "
   `);

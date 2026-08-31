@@ -14,7 +14,7 @@ import { NODEJS_ABI_VERSION, NODEJS_V8_VERSION, NODEJS_VERSION } from "./deps/no
 import { WEBKIT_VERSION } from "./deps/webkit.ts";
 import { assert, BuildError } from "./error.ts";
 import { resolveMacosSdkPath } from "./macos-sdk.ts";
-import { clangTargetArch } from "./tools.ts";
+import { clangTargetArch, toolchainOverride } from "./tools.ts";
 import { cyan, dim, green } from "./tty.ts";
 
 export type OS = "linux" | "darwin" | "windows" | "freebsd";
@@ -276,6 +276,8 @@ export interface Config {
    * would otherwise pick up that worktree's pin).
    */
   rustToolchain: string | undefined;
+  /** Explicit rustc for cargo to drive (BUN_TOOLCHAIN_RUST); undefined = cargo's own resolution (rustup proxy). */
+  rustc: string | undefined;
   /** Windows: MSVC link.exe path (to avoid Git's /usr/bin/link shadowing). */
   msvcLinker: string | undefined;
   /** Windows: llvm-rc for nested cmake (CMAKE_RC_COMPILER). */
@@ -1252,7 +1254,9 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     cargo: toolchain.cargo,
     cargoHome: toolchain.cargoHome,
     rustupHome: toolchain.rustupHome,
-    rustToolchain: readRustToolchainChannel(cwd),
+    rustToolchain: toolchainOverride.rust !== undefined ? undefined : readRustToolchainChannel(cwd),
+    rustc:
+      toolchainOverride.rust !== undefined ? join(toolchainOverride.rust, "bin", `rustc${host.exeSuffix}`) : undefined,
     // Cargo-driven links (the bun_shim_impl.exe edge, any future target
     // cdylib) must keep using a real lld-link/link.exe, not the gcc-ld/
     // lld-link wrapper `ld` may have been swapped to above: rustc treats a

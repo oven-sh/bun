@@ -15,15 +15,14 @@ static constexpr PropertyOffset portOffset = 2;
 
 JSObject* create(Zig::GlobalObject* globalObject, JSString* value, int32_t port, bool isIPv6)
 {
-    static const NeverDestroyed<String> IPv4 = MAKE_STATIC_STRING_IMPL("IPv4");
-    static const NeverDestroyed<String> IPv6 = MAKE_STATIC_STRING_IMPL("IPv6");
-
     VM& vm = globalObject->vm();
 
+    auto* family = isIPv6 ? globalObject->commonStrings().IPv6String(globalObject) : globalObject->commonStrings().IPv4String(globalObject);
+
     JSObject* thisObject = constructEmptyObject(vm, globalObject->JSSocketAddressDTOStructure());
-    thisObject->putDirectOffset(vm, 0, value);
-    thisObject->putDirectOffset(vm, 1, isIPv6 ? jsString(vm, IPv6) : jsString(vm, IPv4));
-    thisObject->putDirectOffset(vm, 2, jsNumber(port));
+    thisObject->putDirectOffset(vm, addressOffset, value);
+    thisObject->putDirectOffset(vm, familyOffset, family);
+    thisObject->putDirectOffset(vm, portOffset, jsNumber(port));
 
     return thisObject;
 }

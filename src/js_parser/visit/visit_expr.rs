@@ -106,12 +106,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             *e = exp;
             return;
         }
-
-        //                 // Capture "this" inside arrow functions that will be lowered into normal
-        // // function expressions for older language environments
-        // if p.fnOrArrowDataVisit.isArrow && p.options.unsupportedJSFeatures.Has(compat.Arrow) && p.fnOnlyDataVisit.isThisNested {
-        //     return js_ast.Expr{Loc: expr.Loc, Data: &js_ast.EIdentifier{Ref: p.captureThis()}}, exprOut{}
-        // }
     }
 
     fn e_spread(p: &mut Self, e: &mut Expr, _: ExprIn) {
@@ -252,7 +246,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.commonjs_module_exports_assigned_deoptimized = true;
             }
 
-            p.symbols[result.r#ref.inner_index() as usize].set_has_been_assigned_to(true);
+            p.record_assignment(result.r#ref);
         }
 
         let mut original_name: Option<&[u8]> = None;

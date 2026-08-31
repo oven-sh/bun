@@ -257,6 +257,9 @@ pub mod Runtime {
         /// in watch/dev-server mode.
         pub bundler_feature_flags: Option<Box<StringSet>>,
 
+        /// `Define::user_hash` of this parse's define table (runtime transpiler cache key).
+        pub define_hash: Option<u64>,
+
         /// REPL mode: transforms code for interactive evaluation
         /// - Wraps lone object literals `{...}` in parentheses
         /// - Hoists variable declarations for REPL persistence
@@ -304,6 +307,7 @@ pub mod Runtime {
                 runtime_transpiler_cache: None,
                 lower_using: true,
                 bundler_feature_flags: None,
+                define_hash: None,
                 repl_mode: false,
                 jsx_optimization_inline: false,
             }
@@ -390,6 +394,12 @@ pub mod Runtime {
                     hasher.update(flag);
                     hasher.update(b"\x00");
                 }
+            }
+
+            // Define pairs and `--drop` entries. `None` adds nothing, like an empty flag set.
+            if let Some(define_hash) = self.define_hash {
+                hasher.update(b"define");
+                hasher.update(&define_hash.to_le_bytes());
             }
         }
 
@@ -1177,6 +1187,7 @@ impl<'arena> ScopeOrder<'arena> {
 pub struct ParenExprOpts {
     pub(crate) is_async: bool,
     pub(crate) force_arrow_fn: bool,
+    pub(crate) is_after_question_and_before_colon: bool,
 }
 
 #[repr(u8)]
@@ -1688,6 +1699,7 @@ pub fn new_lazy_export_ast_impl<'bump>(
         define,
         source,
         log: log_ptr,
+        orig_error_count: 0,
     };
     let result = match parser.to_lazy_export_ast(expr, runtime_api_call, symbols) {
         Ok(r) => r,

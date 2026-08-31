@@ -1199,7 +1199,7 @@ impl QuicSession {
                     return Ok(());
                 }
                 let id_js = JSValue::from_uint64_no_truncate(global, id)?;
-                let status_js = bun_core::String::static_("abandoned").to_js(global)?;
+                let status_js = global.common_strings().quic_datagram_abandoned();
                 if let Some(cb) = callbacks::get(global, "onSessionDatagramStatus") {
                     let vm = global.bun_vm().as_mut();
                     vm.event_loop_ref().run_callback(
@@ -1228,10 +1228,10 @@ impl QuicSession {
                 }
             }
             SessionEvent::DatagramAckStatus { count, acked } => {
-                let status = if acked {
-                    b"acknowledged".as_slice()
+                let status_js = if acked {
+                    global.common_strings().quic_datagram_acknowledged()
                 } else {
-                    b"lost".as_slice()
+                    global.common_strings().quic_datagram_lost()
                 };
                 // Every acknowledged/lost datagram is popped and counted even
                 // when its status cannot be delivered.
@@ -1248,11 +1248,8 @@ impl QuicSession {
                     if !self.has_listener(LISTENER_FLAG_DATAGRAM_STATUS) || undelivered.is_err() {
                         continue;
                     }
-                    let args = JSValue::from_uint64_no_truncate(global, id).and_then(|id_js| {
-                        Ok([id_js, bun_core::String::static_(status).to_js(global)?])
-                    });
-                    let [id_js, status_js] = match args {
-                        Ok(args) => args,
+                    let id_js = match JSValue::from_uint64_no_truncate(global, id) {
+                        Ok(id_js) => id_js,
                         Err(err) => {
                             undelivered = Err(err);
                             continue;
@@ -2100,7 +2097,7 @@ impl QuicSession {
             return Ok(());
         }
         let id_js = JSValue::from_uint64_no_truncate(global, id)?;
-        let status_js = bun_core::String::static_("abandoned").to_js(global)?;
+        let status_js = global.common_strings().quic_datagram_abandoned();
         if let Some(cb) = callbacks::get(global, "onSessionDatagramStatus") {
             let vm = global.bun_vm().as_mut();
             vm.event_loop_ref()
@@ -2323,12 +2320,6 @@ impl QuicSession {
         };
         Self::transport_params_to_js(global, &tp)
     }
-
-    #[expect(
-        clippy::boxed_local,
-        reason = "codegen's host_fn_finalize calls this as `|b| QuicSession::finalize(b)` and requires `self: Box<Self>`"
-    )]
-    pub(crate) fn finalize(self: Box<Self>) {}
 }
 
 lsquic_callback! {

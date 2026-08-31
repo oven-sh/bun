@@ -355,13 +355,15 @@ describe("bundler", () => {
       .filter(f => f.endsWith(".js"))
       .sort();
 
-  // The chunk holding secret.ts, which must be separate from the entry point.
-  const secretChunk = (api: BundlerTestBundleAPI) => {
-    const chunk = jsFilesIn(api).find(f => api.readFile("/out/" + f).includes("internal only"));
+  // The non-entry chunk whose code contains `marker`.
+  const chunkContaining = (api: BundlerTestBundleAPI, marker: string) => {
+    const chunk = jsFilesIn(api).find(f => api.readFile("/out/" + f).includes(marker));
     expect(chunk).toBeDefined();
     expect(chunk).not.toBe("main.js");
     return chunk!;
   };
+  // The chunk holding secret.ts, which must be separate from the entry point.
+  const secretChunk = (api: BundlerTestBundleAPI) => chunkContaining(api, "internal only");
 
   for (const backend of ["cli", "api"] as const) {
     itBundled(`splitting/DeadDynamicImportTargetGetsNoChunk-${backend}`, {
@@ -794,6 +796,31 @@ describe("bundler", () => {
       expect(readdirSync(api.outdir).filter(f => f.endsWith(".js"))).toHaveLength(2);
     },
   });
+  // A file whose every part was tree-shaken gets no chunk: two such files
+  // reached by different sets of entries used to become two empty chunks
+  // with the same content hash ("Multiple files share the same output path").
+  itBundled("splitting/NoChunkForFilesWithNoLiveParts", {
+    files: {
+      "/entry.js": `await import('./a.js'); await import('./b.js'); await import('./e.js')`,
+      "/a.js": `import './c.js'; import './d.js'; console.log('a')`,
+      "/b.js": `import './c.js'; import './shared.js'; console.log('b')`,
+      "/e.js": `import './d.js'; console.log('e')`,
+      "/c.js": `export function dead() {}`,
+      // only live part is a bare import of an unwrapped file: prints nothing either
+      "/d.js": `import './shared.js'; export function dead() {}`,
+      "/shared.js": `console.log('shared')`,
+    },
+    entryPoints: ["/entry.js"],
+    splitting: true,
+    minifySyntax: true,
+    outdir: "/out",
+    chunkNaming: "chunk-[hash].[ext]",
+    onAfterBundle(api) {
+      // entry + the three import() targets + shared.js's chunk; nothing for c.js / d.js
+      expect(readdirSync(api.outdir).filter(f => f.endsWith(".js"))).toHaveLength(5);
+    },
+    run: { file: "/out/entry.js", stdout: "shared\na\nb\ne" },
+  });
   // An entry point with exports of its own keeps its module namespace as
   // written: shared code is not folded into it (which would add exports),
   // but the chunks that are always loaded with it still fold into one.
@@ -928,6 +955,51 @@ describe("bundler", () => {
       { file: "/out/a.js", stdout: "lib\na 1" },
       { file: "/out/c.js", stdout: "c 2" },
     ],
+  });
+
+  // The chunks an output file imports, in statement order.
+  const chunkImportsIn = (api: BundlerTestBundleAPI, name: string) =>
+    [...api.readFile("/out/" + name).matchAll(/^import\b[^;]*?"\.\/([^"]+)";$/gms)].map(m => m[1]);
+
+  // Two shared chunks are imported in the order the entry first reaches
+  // them, not in chunk index order.
+  itBundled("splitting/EvaluationOrderOfSharedChunkImports", {
+    files: {
+      "/e1.js": /* js */ `
+        import { b } from './b.js'
+        import { a } from './a.js'
+        console.log('e1', a + b, JSON.stringify(globalThis.log))
+      `,
+      "/e2.js": /* js */ `
+        import { a } from './a.js'
+        console.log('e2', a)
+      `,
+      "/e3.js": /* js */ `
+        import { b } from './b.js'
+        console.log('e3', b)
+      `,
+      "/a.js": /* js */ `
+        (globalThis.log ||= []).push('a')
+        export const a = 'a'
+      `,
+      "/b.js": /* js */ `
+        (globalThis.log ||= []).push('b')
+        export const b = 'b'
+      `,
+    },
+    entryPoints: ["/e1.js", "/e2.js", "/e3.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      // Three entries and a chunk each for a.js and b.js; nothing had to be cut.
+      expect(jsFilesIn(api)).toHaveLength(5);
+      const imports = chunkImportsIn(api, "e1.js");
+      expect(imports).toHaveLength(2);
+      expect(api.readFile("/out/" + imports[0])).toContain('push("b")');
+      expect(api.readFile("/out/" + imports[1])).toContain('push("a")');
+    },
+    run: { file: "/out/e1.js", stdout: 'e1 ab ["b","a"]' },
   });
 
   // import() of another chunk is printed as import(); it does not pull the
@@ -1117,7 +1189,7 @@ describe("bundler", () => {
       api.expectFile("/out/entry1.js").toContain(`"./${pureChunk}"`);
     },
     run: [
-      { file: "/out/entry1.js", stdout: "impure evaluated\ncommon evaluated\nentry1 2\nlazy 42" },
+      { file: "/out/entry1.js", stdout: "common evaluated\nimpure evaluated\nentry1 2\nlazy 42" },
       { file: "/out/entry2.js", stdout: "common evaluated\nentry2 40\nimpure evaluated\nlazy 42" },
     ],
   });
@@ -1189,6 +1261,96 @@ describe("bundler", () => {
       expect(jsOutput(api, "d")).not.toContain('from "./main.js"');
     },
     run: { file: "/out/b.js", stdout: "b\nd 42" },
+  });
+
+  // `cmd` is import()ed from main and from `sub`, which only repl loads, so
+  // whichever way it loads, main or repl came first: the {main, repl, cmd}
+  // chunk is loaded exactly when the {main, repl} chunk is and folds into it,
+  // even though no single entry precedes `cmd` on every path.
+  itBundled("splitting/FoldsChunkWhoseImportersTheKeyCovers", {
+    files: {
+      "/main.js": /* js */ `
+        import { shared } from './shared.js'
+        import { common } from './common.js'
+        console.log('main', shared(), common())
+        import('./cmd.js').then(m => console.log('cmd', m.cmd()))
+      `,
+      "/repl.js": /* js */ `
+        import { shared } from './shared.js'
+        import { common } from './common.js'
+        console.log('repl', shared(), common())
+        import('./sub.js')
+      `,
+      "/sub.js": /* js */ `
+        console.log('sub')
+        import('./cmd.js').then(m => console.log('cmd', m.cmd()))
+      `,
+      "/cmd.js": /* js */ `
+        import { shared } from './shared.js'
+        export function cmd() { return shared() + 1 }
+      `,
+      "/shared.js": /* js */ `
+        console.log('shared evaluated')
+        export function shared() { return 41 }
+      `,
+      "/common.js": /* js */ `
+        export function common() { return 'common' }
+      `,
+    },
+    entryPoints: ["/main.js", "/repl.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      // main, repl, sub, cmd, and one {main, repl} chunk holding common.js
+      // and shared.js.
+      expect(jsFilesIn(api)).toHaveLength(5);
+      const sharedChunk = chunkContaining(api, "shared evaluated");
+      api.expectFile("/out/" + sharedChunk).toContain("common");
+      expect(jsOutput(api, "cmd")).toContain(`from "./${sharedChunk}"`);
+    },
+    run: [
+      { file: "/out/main.js", stdout: "shared evaluated\nmain 41 common\ncmd 42" },
+      { file: "/out/repl.js", stdout: "shared evaluated\nrepl 41 common\nsub\ncmd 42" },
+    ],
+  });
+
+  // Lazy modules that import() each other: `d` is only reached through `x`,
+  // which `main` or `y` loads, and `y` only through `x`, so `main` always
+  // comes first and the {main, d} chunk folds into main.js.
+  itBundled("splitting/FoldsChunkBehindDynamicImportCycle", {
+    files: {
+      "/main.js": /* js */ `
+        import { shared } from './shared.js'
+        console.log('main', shared())
+        import('./x.js')
+      `,
+      "/x.js": /* js */ `
+        console.log('x')
+        export const y = () => import('./y.js')
+        import('./d.js').then(m => console.log('d', m.d()))
+      `,
+      "/y.js": /* js */ `
+        export const x = () => import('./x.js')
+      `,
+      "/d.js": /* js */ `
+        import { shared } from './shared.js'
+        export function d() { return shared() + 1 }
+      `,
+      "/shared.js": /* js */ `
+        export function shared() { return 41 }
+      `,
+    },
+    entryPoints: ["/main.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      expect(jsOutputs(api)).toEqual(["d.js", "main.js", "x.js", "y.js"]);
+      api.expectFile("/out/main.js").toContain("41");
+      expect(jsOutput(api, "d")).toContain('from "./main.js"');
+    },
+    run: { file: "/out/main.js", stdout: "main 41\nx\nd 42" },
   });
 
   // Folding a chunk with side effects into a pure one (rule 1) makes the
@@ -1343,6 +1505,253 @@ describe("bundler", () => {
       expect(api.readFile("/out/main.js").length).toBeGreaterThan(12000);
     },
     run: { file: "/out/main.js", stdout: "main 12000" },
+  });
+
+  // With target bun, a require() of a bundled ES module becomes a chunk of its
+  // own, loaded synchronously with import.meta.require() when the call runs.
+  const splitRequireFiles = {
+    "/main.ts": /* ts */ `
+      import { getTool } from './registry.ts'
+      console.log("main")
+      console.log(getTool().name)
+    `,
+    "/registry.ts": /* ts */ `
+      export function getTool() {
+        return require('./tool.ts').Tool
+      }
+    `,
+    "/tool.ts": /* ts */ `
+      import { helper } from './helper.ts'
+      console.log("tool evaluated")
+      export const Tool = { name: "tool:" + helper() }
+    `,
+    "/helper.ts": /* ts */ `
+      export function helper() { return "helped" }
+    `,
+  };
+
+  const toolChunk = (api: BundlerTestBundleAPI) => chunkContaining(api, "tool evaluated");
+
+  for (const backend of ["cli", "api"] as const) {
+    itBundled(`splitting/SplitRequireEmitsChunk-${backend}`, {
+      files: splitRequireFiles,
+      entryPoints: ["/main.ts"],
+      splitting: true,
+      target: "bun",
+      outdir: "/out",
+      format: "esm",
+      metafile: true,
+      backend,
+      assertNotPresent: { "/out/main.js": "tool evaluated" },
+      onAfterBundle(api) {
+        const chunk = toolChunk(api);
+        api.expectFile("/out/main.js").toContain(`import.meta.require("./${chunk}")`);
+        const metafile = JSON.parse(api.readFile("/metafile.json"));
+        const output = (name: string) =>
+          Object.entries<any>(metafile.outputs).find(([k]) => k.endsWith("/" + name))![1];
+        expect(output("main.js").imports.map((i: any) => i.kind)).toEqual(["require-call"]);
+        expect(output("main.js").imports[0].path.endsWith("/" + chunk)).toBe(true);
+        expect(Object.keys(output(chunk).inputs).some(k => k.endsWith("tool.ts"))).toBe(true);
+      },
+      run: { file: "/out/main.js", stdout: "main\ntool evaluated\ntool:helped" },
+    });
+  }
+
+  itBundled("splitting/SplitRequireOffKeepsWrapper", {
+    files: splitRequireFiles,
+    entryPoints: ["/main.ts"],
+    splitting: true,
+    splitRequire: false,
+    target: "bun",
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      expect(jsFilesIn(api)).toEqual(["main.js"]);
+      api.expectFile("/out/main.js").not.toContain("import.meta.require");
+    },
+    run: { file: "/out/main.js", stdout: "main\ntool evaluated\ntool:helped" },
+  });
+
+  // The require() is inside a function that tree shaking removes: no chunk,
+  // the same as a dead import().
+  itBundled("splitting/SplitRequireDeadTargetGetsNoChunk", {
+    files: {
+      ...splitRequireFiles,
+      "/main.ts": /* ts */ `
+        import { getTool } from './registry.ts'
+        if (FEATURE_TOOL) console.log(getTool().name)
+        console.log("main")
+      `,
+    },
+    entryPoints: ["/main.ts"],
+    splitting: true,
+    target: "bun",
+    outdir: "/out",
+    format: "esm",
+    define: { FEATURE_TOOL: "false" },
+    onAfterBundle(api) {
+      expect(jsFilesIn(api)).toEqual(["main.js"]);
+      api.expectFile("/out/main.js").not.toContain("tool evaluated");
+    },
+    run: { file: "/out/main.js", stdout: "main" },
+  });
+
+  // A CommonJS target keeps the in-chunk wrapper: require() must keep
+  // returning module.exports, not a namespace.
+  itBundled("splitting/SplitRequireLeavesCommonJSTargetInline", {
+    files: {
+      "/main.ts": /* ts */ `
+        console.log(require('./cjs.js').value, require('./cjs.js')())
+      `,
+      "/cjs.js": /* js */ `
+        module.exports = function () { return "called" }
+        module.exports.value = "cjs value"
+      `,
+    },
+    entryPoints: ["/main.ts"],
+    splitting: true,
+    target: "bun",
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      expect(jsFilesIn(api)).toEqual(["main.js"]);
+    },
+    run: { file: "/out/main.js", stdout: "cjs value called" },
+  });
+
+  // A top-level require() in a module that the required chunk imports back
+  // (the registry ↔ tool shape): the chunk is evaluated while the entry is
+  // still evaluating and sees the entry's hoisted functions through live
+  // bindings, the same as the in-chunk wrapper did.
+  itBundled("splitting/SplitRequireCycleDuringEvaluation", {
+    files: {
+      "/main.ts": /* ts */ `
+        import { tools } from './registry.ts'
+        console.log(tools.map(t => t.name).join(","))
+      `,
+      "/registry.ts": /* ts */ `
+        export function buildTool(name: string) { return { name } }
+        export const tools = [require('./tool.ts').Tool, require('./tool2.ts').Tool]
+      `,
+      "/tool.ts": /* ts */ `
+        import { buildTool } from './registry.ts'
+        export const Tool = buildTool("tool")
+      `,
+      "/tool2.ts": /* ts */ `
+        import { buildTool } from './registry.ts'
+        import { Tool as Other } from './tool.ts'
+        export const Tool = buildTool("tool2-sees-" + Other.name)
+      `,
+    },
+    entryPoints: ["/main.ts"],
+    splitting: true,
+    target: "bun",
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      expect(jsFilesIn(api).length).toBeGreaterThan(1);
+    },
+    run: { file: "/out/main.js", stdout: "tool,tool2-sees-tool" },
+  });
+
+  // A file shared by the entry and a require()d chunk must not fold into the
+  // entry chunk: the require() runs while the entry is still evaluating, so
+  // code placed after the call site would be uninitialized when the chunk
+  // reads it. An import() target, by contrast, only runs after the entry.
+  itBundled("splitting/SplitRequireKeepsSharedCodeOutOfRequirer", {
+    files: {
+      "/main.ts": /* ts */ `
+        import { tools } from './registry.ts'
+        import { shared } from './shared.ts'
+        console.log(tools[0].name, shared.name)
+      `,
+      "/registry.ts": /* ts */ `
+        export const tools = [require('./tool.ts').Tool]
+      `,
+      "/tool.ts": /* ts */ `
+        import { shared } from './shared.ts'
+        export const Tool = { name: "tool:" + shared.name }
+      `,
+      "/shared.ts": /* ts */ `
+        export const shared = { name: "shared" }
+      `,
+    },
+    entryPoints: ["/main.ts"],
+    splitting: true,
+    target: "bun",
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      api.expectFile("/out/main.js").not.toContain('name: "shared"');
+      api.expectFile("/out/" + chunkContaining(api, "tool:")).not.toContain('from "./main.js"');
+    },
+    run: { file: "/out/main.js", stdout: "tool:shared shared" },
+  });
+
+  // Browser-side files of a server build (an imported HTML page's scripts)
+  // cannot call import.meta.require; their require() keeps the wrapper.
+  itBundled("splitting/SplitRequireLeavesBrowserFilesOfServerBuildAlone", {
+    files: {
+      "/main.ts": /* ts */ `
+        import page from './index.html'
+        console.log(typeof page, require('./server-helper.ts').value)
+      `,
+      "/server-helper.ts": /* ts */ `export const value = "server"`,
+      "/index.html": /* html */ `<script src="./client.ts"></script>`,
+      "/client.ts": /* ts */ `console.log(require('./client-helper.ts').value)`,
+      "/client-helper.ts": /* ts */ `export const value = "client"`,
+    },
+    entryPoints: ["/main.ts"],
+    splitting: true,
+    target: "bun",
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      api.expectFile("/out/main.js").toContain("import.meta.require(");
+      const client = jsFilesIn(api).find(f => api.readFile("/out/" + f).includes('"client"'));
+      expect(client).toBeDefined();
+      api.expectFile("/out/" + client!).not.toContain("import.meta.require");
+    },
+  });
+
+  // require() and import() of the same file share one chunk and one namespace.
+  itBundled("splitting/SplitRequireSharesChunkWithDynamicImport", {
+    files: {
+      "/main.ts": /* ts */ `
+        const sync = require('./tool.ts')
+        import('./tool.ts').then(ns => console.log(ns === sync, ns.Tool === sync.Tool))
+      `,
+      "/tool.ts": /* ts */ `
+        console.log("tool evaluated")
+        export const Tool = { name: "tool" }
+      `,
+    },
+    entryPoints: ["/main.ts"],
+    splitting: true,
+    target: "bun",
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      const chunk = toolChunk(api);
+      api.expectFile("/out/main.js").toContain(`import.meta.require("./${chunk}")`);
+      api.expectFile("/out/main.js").toContain(`import("./${chunk}")`);
+    },
+    run: { file: "/out/main.js", stdout: "tool evaluated\ntrue true" },
+  });
+
+  // Other targets cannot call import.meta.require: require() keeps the wrapper.
+  itBundled("splitting/SplitRequireIsBunTargetOnly", {
+    files: splitRequireFiles,
+    entryPoints: ["/main.ts"],
+    splitting: true,
+    target: "node",
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      expect(jsFilesIn(api)).toEqual(["main.js"]);
+      api.expectFile("/out/main.js").not.toContain("import.meta.require");
+    },
+    run: { file: "/out/main.js", stdout: "main\ntool evaluated\ntool:helped" },
   });
 
   // N same-named cross-chunk exports must get unique aliases in O(N) total

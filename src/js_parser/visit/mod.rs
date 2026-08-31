@@ -426,7 +426,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 )
                                 .is_some()
                             {
-                                self.ignore_usage(namespace_ref);
+                                self.note_tracked_namespace_use(namespace_ref);
                             }
                         }
                         // `var ns` redeclaration resolves to the same ref;
@@ -442,7 +442,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 decl.binding.loc,
                                 import_record_index,
                             );
-                            self.ignore_usage(namespace_ref);
+                            self.note_tracked_namespace_use(namespace_ref);
                         }
                         _ => {}
                     }
@@ -519,9 +519,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 )
                                 .is_none()
                             {
-                                // Untrackable shape: a recorded use marks the
-                                // namespace escaped so the linker keeps every export.
-                                self.record_usage(ns);
+                                self.dynamic_import_escaped_records
+                                    .insert(req.import_record_index, ());
                             }
                         }
                         BData::BIdentifier(id) if kind != LocalKind::KVar && !is_export => {
@@ -1902,10 +1901,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     if symbol.use_count_estimate == 1
                         && p.substitute_single_use_symbol_in_stmt(stmt, id, replacement)
                     {
-                        // `const ns = await import(x); return ns` — the one use that
-                        // marked the namespace escaped just moved into `replacement`.
-                        if let Some(&record) = p.dynamic_import_namespace_locals.get(&id) {
-                            p.dynamic_import_escaped_records.insert(record, ());
+                        // `const ns = await import(x); return ns` — the single use just
+                        // moved into `replacement`; unless it was an accounted-for read
+                        // (`f(ns.a)`), the namespace escapes there.
+                        if p.dynamic_import_namespace_locals.contains_key(&id)
+                            && p.namespace_tracked_uses.get(&id).copied().unwrap_or(0) == 0
+                        {
+                            // Read as "more uses than accounted for" when finalizing.
+                            p.namespace_tracked_uses.insert(id, u32::MAX);
                         }
                         match local.decls.len_u32() {
                             1 => {

@@ -1255,8 +1255,15 @@ impl<'a> Parser<'a> {
                     // linked symbol was merged with another declaration (a
                     // hoisted `var`, a parameter), so its own use count says
                     // nothing.
-                    symbol.use_count_estimate > 0
-                        || symbol.must_not_be_renamed()
+                    let tracked = p.namespace_tracked_uses.get(&ns_ref).copied().unwrap_or(0);
+                    // A source-visible local escapes when it has uses nobody
+                    // accounted for; the synthetic per-`import()` ref (never
+                    // referenced in source) escapes when its one consumer did not.
+                    (if p.dynamic_import_namespace_locals.contains_key(&ns_ref) {
+                        symbol.use_count_estimate > tracked || tracked == u32::MAX
+                    } else {
+                        tracked == 0
+                    }) || symbol.must_not_be_renamed()
                         || symbol.has_link()
                         || scope.is_some_and(|s| s.contains_direct_eval)
                         || p.dynamic_import_escaped_records

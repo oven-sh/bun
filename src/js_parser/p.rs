@@ -323,9 +323,13 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// `const x = require()` locals in `maybe_rewrite_property_access`.
     pub(crate) dynamic_import_namespace_locals: HashMap<Ref, u32>,
     /// Import records whose namespace is known to escape regardless of use
-    /// counts (a namespace local inlined by the minifier, or one local bound
-    /// to two records).
+    /// counts (one local bound to two records).
     pub(crate) dynamic_import_escaped_records: HashMap<u32, ()>,
+    /// Per namespace ref, how many of its `use_count_estimate` uses were an
+    /// accounted-for read (`ns.a`, a destructure, a truthiness test). Kept
+    /// beside the real count rather than decremented from it so the minifier's
+    /// single-use substitution still sees every use.
+    pub(crate) namespace_tracked_uses: HashMap<Ref, u32>,
     pub(crate) unwrap_all_requires: bool,
 
     pub(crate) commonjs_named_exports: bun_ast::ast_result::CommonJSNamedExports,
@@ -1164,6 +1168,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
+    /// One use of `ns` (counted by `record_usage`) is an accounted-for read.
+    pub(crate) fn note_tracked_namespace_use(&mut self, ns: Ref) {
+        if self.is_revisit_for_substitution || self.is_control_flow_dead {
+            return;
+        }
+        let n = self.namespace_tracked_uses.entry(ns).or_default();
+        *n = n.saturating_add(1);
+    }
+
     /// `ns` in a position that only tests it for null/truthiness (`if (ns)`,
     /// `!ns`, `ns ? a : b`, `ns && …`, `ns == null`, `typeof ns`): no export is
     /// observed, so the use does not make the namespace escape.
@@ -1171,7 +1184,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if let js_ast::ExprData::EIdentifier(id) = expr.data
             && self.dynamic_import_namespace_locals.contains_key(&id.ref_)
         {
-            self.ignore_usage(id.ref_);
+            self.note_tracked_namespace_use(id.ref_);
         }
     }
 
@@ -1196,7 +1209,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             js_ast::ExprData::EAwait(aw) => match aw.value.data {
                 js_ast::ExprData::EImport(im) if im.namespace_ref.is_valid() => {
-                    self.ignore_usage(im.namespace_ref);
+                    self.note_tracked_namespace_use(im.namespace_ref);
                     out.push(im.import_record_index);
                     Some(())
                 }
@@ -1272,14 +1285,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 continue;
             }
             let Some(b) = bindings.get(i) else {
-                self.ignore_usage(im.namespace_ref);
+                self.note_tracked_namespace_use(im.namespace_ref);
                 continue;
             };
             if b.default_value.is_some() {
                 continue;
             }
             match b.binding.data {
-                bun_ast::binding::Data::BMissing(_) => self.ignore_usage(im.namespace_ref),
+                bun_ast::binding::Data::BMissing(_) => {
+                    self.note_tracked_namespace_use(im.namespace_ref)
+                }
                 bun_ast::binding::Data::BObject(obj) => {
                     if self
                         .try_track_dynamic_import_destructure(
@@ -1290,7 +1305,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         )
                         .is_some()
                     {
-                        self.ignore_usage(im.namespace_ref);
+                        self.note_tracked_namespace_use(im.namespace_ref);
                     }
                 }
                 bun_ast::binding::Data::BIdentifier(id) => {
@@ -1303,7 +1318,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         b.binding.loc,
                         im.import_record_index,
                     );
-                    self.ignore_usage(im.namespace_ref);
+                    self.note_tracked_namespace_use(im.namespace_ref);
                 }
                 _ => {}
             }
@@ -1370,10 +1385,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             // Mint a namespace symbol for this import() so that property
             // accesses / destructuring of the awaited result can be recorded
-            // and the importee's unobserved exports tree-shaken. The single
-            // recorded usage marks the namespace as "escaped" until a consumer
-            // (`s_local`, `maybe_rewrite_property_access`, `.then`) accounts
-            // for it via `ignore_usage`.
+            // and the importee's unobserved exports tree-shaken. It counts as
+            // escaped unless exactly the consumer of this expression (`s_local`,
+            // `maybe_rewrite_property_access`, `.then`, …) notes a tracked use.
             let namespace_ref = if self.options.bundle
                 && self.options.output_format != options::Format::InternalBakeDev
             {
@@ -1389,7 +1403,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 VecExt::append(&mut self.module_scope_mut().generated, ns);
                 self.import_items_for_namespace
                     .insert(ns, ImportItemForNamespaceMap::default());
-                self.record_usage(ns);
                 self.imports_to_convert_from_dynamic_import
                     .push(DeferredImportNamespace {
                         namespace: LocRef {
@@ -9273,6 +9286,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             dynamic_import_aliases: Default::default(),
             dynamic_import_namespace_locals: Default::default(),
             dynamic_import_escaped_records: Default::default(),
+            namespace_tracked_uses: Default::default(),
             unwrap_all_requires,
             commonjs_named_exports: Default::default(),
             commonjs_module_exports_assigned_deoptimized: false,

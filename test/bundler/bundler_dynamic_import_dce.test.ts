@@ -545,6 +545,37 @@ describe("bundler", () => {
     });
   }
 
+  // A tracked access must not hide a use from the minifier: with one tracked
+  // read and one escaping use, single-use substitution must not inline the
+  // declaration away from under the second use.
+  for (const minify of [false, true]) {
+    itBundled(`dynamic_import_dce/TrackedAccessThenEscape${minify ? "Minify" : ""}`, {
+      files: {
+        "/entry.ts": /* ts */ `
+          export function f() {
+            const mod = require("./c.ts");
+            const t = mod.T;
+            if (t !== "v1") throw new Error("trip " + t);
+            return mod;
+          }
+          export async function g() {
+            const ns = await import("./c.ts");
+            const t = ns.T;
+            if (t !== "v1") throw new Error("trip " + t);
+            return ns;
+          }
+          console.log(JSON.stringify(Object.keys(f()).sort()), JSON.stringify(Object.keys(await g()).sort()));
+        `,
+        "/c.ts": `export const T = "v1"; export const other = "o";`,
+      },
+      target: "bun",
+      minifySyntax: minify,
+      format: "esm",
+      outdir: "/out",
+      run: { file: "/out/entry.js", stdout: '["T","other"] ["T","other"]' },
+    });
+  }
+
   // Locals merged by hoisting (duplicate `var`, `var` over a parameter) share
   // one symbol; their exports stay.
   itBundled("dynamic_import_dce/HoistedVarDestructureKeepsBoth", {

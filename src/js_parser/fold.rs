@@ -150,7 +150,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     },
                                 )
                                 .expect("oom");
-                            p.ignore_usage(im.namespace_ref);
+                            p.note_tracked_namespace_use(im.namespace_ref);
                         }
                     }
                 }
@@ -188,7 +188,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     },
                                 )
                                 .expect("oom");
-                                p.ignore_usage(id.ref_);
+                                p.note_tracked_namespace_use(id.ref_);
                             }
                         }
                         break 'sw;

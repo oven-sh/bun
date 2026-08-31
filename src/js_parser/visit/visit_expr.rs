@@ -1447,7 +1447,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     },
                 )
                 .expect("oom");
-                p.ignore_usage(id.ref_);
+                p.note_tracked_namespace_use(id.ref_);
             }
         }
 
@@ -1983,7 +1983,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     for item in items.items.slice() {
                         if let Data::EImport(im) = item.data {
                             if im.namespace_ref.is_valid() {
-                                p.ignore_usage(im.namespace_ref);
+                                p.note_tracked_namespace_use(im.namespace_ref);
                             }
                         }
                     }
@@ -2034,7 +2034,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             match arrow.args.slice().first() {
                 None => {
                     // `.then(() => …)` — no exports observed.
-                    p.ignore_usage(im.namespace_ref);
+                    p.note_tracked_namespace_use(im.namespace_ref);
                 }
                 Some(first_param) => {
                     if first_param.default.is_some() {
@@ -2050,7 +2050,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             )
                             .is_some()
                             {
-                                p.ignore_usage(im.namespace_ref);
+                                p.note_tracked_namespace_use(im.namespace_ref);
                             }
                         }
                         js_ast::binding::Data::BIdentifier(id) => {
@@ -2061,7 +2061,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 first_param.binding.loc,
                                 im.import_record_index,
                             );
-                            p.ignore_usage(im.namespace_ref);
+                            p.note_tracked_namespace_use(im.namespace_ref);
                         }
                         _ => {}
                     }

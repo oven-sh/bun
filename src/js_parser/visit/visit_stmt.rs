@@ -1399,7 +1399,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             match e {
                 js_ast::ExprData::EImport(im) if im.namespace_ref.is_valid() => {
-                    p.ignore_usage(im.namespace_ref)
+                    p.note_tracked_namespace_use(im.namespace_ref)
                 }
                 js_ast::ExprData::ERequireString(req) => {
                     if let Some(ns) = p.require_namespace_ref(req)

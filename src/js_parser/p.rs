@@ -5841,6 +5841,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         {
             return false;
         }
+        // Same node visited again (const inlining); already counted.
+        if self.is_revisit_for_substitution {
+            return true;
+        }
         let use_ = self.symbol_uses.get_mut(&id.ref_).unwrap();
         use_.count_estimate = use_.count_estimate.saturating_sub(1);
         // note: this use is not removed as we assume it exists later

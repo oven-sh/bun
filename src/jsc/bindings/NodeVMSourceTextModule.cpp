@@ -112,7 +112,8 @@ NodeVMSourceTextModule* NodeVMSourceTextModule::create(VM& vm, JSGlobalObject* g
         WTF::move(sourceCode), moduleWrapper, initializeImportMeta);
     ptr->finishCreation(vm);
 
-    if (cachedData.isEmpty()) {
+    // Node treats a provided-but-empty cachedData buffer as rejected, not absent.
+    if (cachedDataValue.isUndefined()) {
         return ptr;
     }
 
@@ -124,10 +125,12 @@ NodeVMSourceTextModule* NodeVMSourceTextModule::create(VM& vm, JSGlobalObject* g
     }
 
     ptr->m_cachedExecutable.set(vm, ptr, executable);
-    LexicallyScopedFeatures lexicallyScopedFeatures = StrictModeLexicallyScopedFeature;
-    SourceCodeKey key(ptr->sourceCode(), {}, SourceCodeType::ModuleType, lexicallyScopedFeatures, JSParserScriptMode::Module, DerivedContextType::None, EvalContextType::None, false, {}, std::nullopt);
-    Ref<CachedBytecode> cachedBytecode = CachedBytecode::create(std::span(cachedData), nullptr, {});
-    UnlinkedModuleProgramCodeBlock* unlinkedBlock = decodeCodeBlock<UnlinkedModuleProgramCodeBlock>(vm, key, WTF::move(cachedBytecode));
+    UnlinkedModuleProgramCodeBlock* unlinkedBlock = nullptr;
+    if (RefPtr<CachedBytecode> cachedBytecode = unwrapCachedData(ptr->sourceCode(), std::span(cachedData))) {
+        LexicallyScopedFeatures lexicallyScopedFeatures = StrictModeLexicallyScopedFeature;
+        SourceCodeKey key(ptr->sourceCode(), {}, SourceCodeType::ModuleType, lexicallyScopedFeatures, JSParserScriptMode::Module, DerivedContextType::None, EvalContextType::None, false, {}, std::nullopt);
+        unlinkedBlock = decodeCodeBlock<UnlinkedModuleProgramCodeBlock>(vm, key, cachedBytecode.releaseNonNull());
+    }
 
     if (unlinkedBlock) {
         JSScope* jsScope = globalObject->globalScope();
@@ -509,8 +512,12 @@ JSUint8Array* NodeVMSourceTextModule::cachedData(JSGlobalObject* globalObject)
     if (!m_cachedBytecodeBuffer) {
         RefPtr<CachedBytecode> cachedBytecode = bytecode(globalObject);
         RETURN_IF_EXCEPTION(scope, nullptr);
-        std::span<const uint8_t> bytes = cachedBytecode->span();
-        JSUint8Array* buffer = WebCore::createBuffer(globalObject, bytes);
+        // getBytecode can return null without throwing (serialization failure).
+        if (!cachedBytecode) [[unlikely]] {
+            throwVMError(globalObject, scope, "createCachedData failed"_s);
+            return nullptr;
+        }
+        JSUint8Array* buffer = createCachedDataBuffer(globalObject, m_sourceCode, cachedBytecode->span());
         RETURN_IF_EXCEPTION(scope, nullptr);
         m_cachedBytecodeBuffer.set(vm, this, buffer);
     }

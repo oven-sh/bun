@@ -1031,6 +1031,108 @@ describe("Script compiles its source once and links that in every context it run
   });
 });
 
+test("rejects corrupted cachedData instead of crashing", async () => {
+  // Corrupting, truncating, or extending createCachedData() output must set
+  // cachedDataRejected (or throw ERR_VM_MODULE_CACHED_DATA_REJECTED for modules)
+  // and recompile from source, like Node. Runs in a child process since the
+  // broken behavior is a process crash: a truncated tail leaves embedded
+  // self-relative offsets pointing past the copied buffer, which JSC's decoder
+  // dereferences without a bounds check.
+  const code = /* js */ `
+    const vm = require("node:vm");
+    const assert = require("node:assert");
+
+    function corruptions(good) {
+      const variants = [];
+      // Truncations: len-1, len/2, 16, 1. The len/2 case is the one that
+      // reliably reached the decoder's wild pointer arithmetic before the
+      // envelope check was added.
+      for (const cut of [good.length - 1, good.length >> 1, 16, 1]) {
+        variants.push(["truncate:" + cut, good.subarray(0, cut)]);
+      }
+      // 20 single-byte flips seeded deterministically across the buffer.
+      for (let i = 0; i < 20; i++) {
+        const copy = Buffer.from(good);
+        const off = Math.floor((i * (good.length - 1)) / 19);
+        copy[off] ^= 0xff;
+        variants.push(["flip@" + off, copy]);
+      }
+      variants.push(["extend", Buffer.concat([good, Buffer.from([0xde, 0xad])])]);
+      variants.push(["empty", Buffer.alloc(0)]);
+      variants.push(["zeros", Buffer.alloc(good.length)]);
+      variants.push(["fill", Buffer.alloc(good.length, 0x2a)]);
+      variants.push(["random", Buffer.from("fhqwhgads")]);
+      return variants;
+    }
+
+    {
+      const source = "function f(){return 1234} f()";
+      const good = new vm.Script(source).createCachedData();
+      for (const [label, cachedData] of corruptions(good)) {
+        const script = new vm.Script(source, { cachedData });
+        assert.strictEqual(script.cachedDataRejected, true, label);
+        assert.strictEqual(script.runInThisContext(), 1234, label);
+      }
+      const intact = new vm.Script(source, { cachedData: good });
+      assert.strictEqual(intact.cachedDataRejected, false);
+      assert.strictEqual(intact.runInThisContext(), 1234);
+      // Intact bytecode for a different source is also rejected (sourceHash).
+      const other = new vm.Script("1 + 1", { cachedData: good });
+      assert.strictEqual(other.cachedDataRejected, true);
+      assert.strictEqual(other.runInThisContext(), 2);
+      console.log("script ok");
+    }
+
+    {
+      const params = ["a"];
+      const source = "return a + 1234;";
+      const good = vm.compileFunction(source, params, { produceCachedData: true }).cachedData;
+      assert.ok(good.length > 0);
+      for (const [label, cachedData] of corruptions(good)) {
+        const fn = vm.compileFunction(source, params, { cachedData });
+        assert.strictEqual(fn.cachedDataRejected, true, label);
+        assert.strictEqual(fn(1), 1235, label);
+      }
+      const intact = vm.compileFunction(source, params, { cachedData: good });
+      assert.strictEqual(intact.cachedDataRejected, false);
+      assert.strictEqual(intact(1), 1235);
+      const other = vm.compileFunction("return a + 1;", params, { cachedData: good });
+      assert.strictEqual(other.cachedDataRejected, true);
+      assert.strictEqual(other(1), 2);
+      console.log("compileFunction ok");
+    }
+
+    {
+      const source = "export const value = 1234;";
+      const good = new vm.SourceTextModule(source).createCachedData();
+      for (const [label, cachedData] of corruptions(good)) {
+        assert.throws(() => new vm.SourceTextModule(source, { cachedData }), {
+          code: "ERR_VM_MODULE_CACHED_DATA_REJECTED",
+        }, label);
+      }
+      assert.throws(() => new vm.SourceTextModule("export const value = 5678;", { cachedData: good }), {
+        code: "ERR_VM_MODULE_CACHED_DATA_REJECTED",
+      });
+      new vm.SourceTextModule(source, { cachedData: good });
+      console.log("module ok");
+    }
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", code],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+    stdout: "script ok\ncompileFunction ok\nmodule ok\n",
+    stderr: "",
+    exitCode: 0,
+    signalCode: null,
+  });
+});
+
 describe("codeGeneration options", () => {
   test("disabling codeGeneration.strings should block eval and Function constructor", () => {
     const context = createContext(

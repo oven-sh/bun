@@ -1174,10 +1174,10 @@ install_bun_toolchain() {
 	# clang/lld + rustc/cargo built by oven-sh/rust's bun-toolchain workflow (PGO/BOLT-trained on
 	# building Bun). The build steps opt into it with BUN_TOOLCHAIN_LLVM/BUN_TOOLCHAIN_RUST
 	# (.buildkite/ci.mjs); the apt LLVM and rustup installs above stay for everything else.
-	toolchain_release="bun-toolchain-nightly-2026-07-20-bun-9e7de126"
+	toolchain_release="bun-toolchain-nightly-2026-07-20-bun-062fecb5"
 	case "$arch" in
-	x64) toolchain_sha256="4a1bc883846dc9a86cecc2c94148e567d18db902a393faa2c92db2326cf9ead8" ;;
-	aarch64) toolchain_sha256="8fb7ecd34b560d943ca93b6dc08c8d313dff9a3f8f8831469e4bc6486938009c" ;;
+	x64) toolchain_sha256="95cfe91535ca2f57e92db96c3f9d6e2598f2c7b9435f109efedd0b10ac42d1b4" ;;
+	aarch64) toolchain_sha256="1c9c2484e14fa3723f9a67bda8994146b9bb628a73b884f6b4bdecdf232d9b06" ;;
 	*) error "no bun toolchain for $arch" ;;
 	esac
 	if ! [ -f "$(which zstd)" ]; then install_packages zstd; fi

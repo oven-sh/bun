@@ -661,7 +661,7 @@ describe("bundler", () => {
 
   // The note names the switch that fits the entry point: the CLI flag for
   // `bun build`, the config key for `Bun.build()`.
-  describe("top-level await format error note", () => {
+  describe.each(["cjs", "iife"])("top-level await format error note (%s)", format => {
     const files = {
       "entry.mjs": `export const v = await Promise.resolve("TLA-OK");`,
       "build.mjs": /* js */ `
@@ -678,7 +678,7 @@ describe("bundler", () => {
       `,
     };
 
-    test.concurrent.each(["cjs", "iife"])("bun build --format=%s suggests --format=esm", async format => {
+    test.concurrent("bun build suggests --format=esm", async () => {
       using dir = tempDir("tla-format-note-cli", files);
       await using proc = Bun.spawn({
         cmd: [bunExe(), "build", "entry.mjs", `--format=${format}`],
@@ -701,7 +701,7 @@ note: Use --format=esm to allow top-level await`,
       expect(exitCode).toBe(1);
     });
 
-    test.concurrent.each(["cjs", "iife"])('Bun.build({ format: "%s" }) suggests format: "esm"', async format => {
+    test.concurrent('Bun.build() suggests format: "esm"', async () => {
       using dir = tempDir("tla-format-note-api", files);
       await using proc = Bun.spawn({
         cmd: [bunExe(), "build.mjs", format],

@@ -982,6 +982,8 @@ it("close() with in-flight work raises no unhandled rejection", async () => {
         view.close();
         const ctor = new Bun.WebView({ width: 200, height: 200, url: "data:text/html,bye" });
         ctor.close();
+        // Nothing announces "no unhandled rejection is coming"; this is a
+        // bounded window for one to appear (the reject itself ran synchronously).
         await Bun.sleep(100);
         console.log(JSON.stringify(unhandled));
       `,

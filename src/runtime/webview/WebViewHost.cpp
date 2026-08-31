@@ -234,6 +234,10 @@ void WebViewHost::navigateIPC(const WTF::String& urlString)
     }
     auto nsurl = objc::NSURL::fromString(objc::NSString::fromWTF(urlString));
     if (!nsurl) {
+        // NavFailEvent before NavFailed, same order as onNavigationFailed:
+        // the constructor-url navigate promise is marked handled, so the
+        // onNavigationFailed callback is the only signal a bad `url:` has.
+        hostWriter()->sendReplyStr(m_viewId, Reply::NavFailEvent, "invalid URL"_s);
         hostWriter()->sendReplyStr(m_viewId, Reply::NavFailed, "invalid URL"_s);
         return;
     }

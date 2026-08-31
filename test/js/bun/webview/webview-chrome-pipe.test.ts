@@ -169,6 +169,8 @@ test.concurrent("close() during the constructor url navigation raises no unhandl
     process.on("unhandledRejection", e => unhandled.push(e.message));
     const view = new Bun.WebView({ backend, width: 100, height: 100, url: "http://fake/initial" });
     view.close();
+    // Nothing announces "no unhandled rejection is coming"; this is a
+    // bounded window for one to appear (the reject itself ran synchronously).
     await Bun.sleep(50);
     print(unhandled);
   `);
@@ -186,6 +188,8 @@ test.concurrent("close() rejects a held navigate() catchably and a floating one 
     const second = newView();
     second.navigate("http://fake/floating");
     second.close();
+    // Nothing announces "no unhandled rejection is coming"; this is a
+    // bounded window for one to appear (the reject itself ran synchronously).
     await Bun.sleep(50);
     print({ heldOutcome, unhandled });
   `);
@@ -208,6 +212,8 @@ test.concurrent("a browser death during the constructor url navigation raises no
     });
     await new Promise(resolve => { view.onNavigated = resolve; });
     const death = await outcome(view.evaluate("__fake_exit(3)"));
+    // Nothing announces "no unhandled rejection is coming"; this is a
+    // bounded window for one to appear (the reject itself ran synchronously).
     await Bun.sleep(50);
     print({ death, unhandled });
   `);
@@ -230,6 +236,8 @@ test.concurrent("a navigation that Chrome fails with errorText rejects and fires
     const failed = await new Promise(resolve => { ctor.onNavigationFailed = resolve; });
     const loadingAfterFail = ctor.loading;
     ctor.close();
+    // Nothing announces "no unhandled rejection is coming"; this is a
+    // bounded window for one to appear (the reject itself ran synchronously).
     await Bun.sleep(50);
     print({ held, failedMessage: failed.message, loadingAfterFail, unhandled });
   `);

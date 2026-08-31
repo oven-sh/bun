@@ -153,6 +153,8 @@ test("expect(lazyPromiseSubclass).rejects settles instead of hanging the run", a
 
   const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+  // A hang is reported as the timeout kill, not as missing output.
+  expect(proc.signalCode).toBeNull();
   expect(stderr).toContain("3 pass");
   expect(exitCode).toBe(0);
 });

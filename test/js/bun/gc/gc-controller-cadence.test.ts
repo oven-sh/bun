@@ -164,6 +164,7 @@ describe("idle release", () => {
     const fns = [];
     for (let i = 0; i < 200; i++) fns.push(new Function("a", "let s = 0; for (let j = 0; j < 100; j++) s += a * " + i + " + j; return s"));
     for (let r = 0; r < 30; r++) for (const f of fns) f(r);
+    globalThis.fns = fns; // keep the functions (and so their CodeBlocks) reachable; only the idle release should drop them
     const codeBlocks = () => { const c = heapStats().objectTypeCounts; return (c.FunctionCodeBlock || 0) + (c.CodeBlock || 0); };
     const before = codeBlocks();
     ${mode === "busy" ? `const iv = setInterval(() => { const end = performance.now() + 150; while (performance.now() < end) fns[0](1); }, 200);` : ``}

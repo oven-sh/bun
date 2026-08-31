@@ -1367,10 +1367,10 @@ Property reads on an import that turns out to be a module namespace are linked s
 
 ```ts title="lib/index.ts" icon="/icons/typescript.svg"
 import * as z from "./external";
-export { z };            // import { z } from "lib";  z.object()
-export default z;        // import z from "lib";      z.object()
-export * as ns from "./external";   // import { ns } from "lib"; ns.object()
-export * as default from ".";       // import lib from "lib";    lib.object()
+export { z }; // import { z } from "lib";  z.object()
+export default z; // import z from "lib";      z.object()
+export * as ns from "./external"; // import { ns } from "lib"; ns.object()
+export * as default from "."; // import lib from "lib";    lib.object()
 ```
 
 In each case `z.object()` compiles to a direct reference to `object`, the `exports` object for `./external` is not created unless something else uses the namespace as a value (`Object.keys(z)`, `{ ...z }`, passing `z` around), and the exports you don't touch are tree-shaken. One level is resolved (`ns.a.b` binds `a`). Calling a function this way passes `undefined` as `this`, as with `import * as ns; ns.fn()`.

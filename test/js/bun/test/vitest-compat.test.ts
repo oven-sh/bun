@@ -1,9 +1,9 @@
 // Tests for the vitest compatibility surface of bun:test (issue #40990).
 // `bun test` aliases the "vitest" specifier to "bun:test", so this file
 // imports through the alias on purpose.
-import { suite, vitest, vi, test, describe, expect, onTestFailed, onTestFinished, bench } from "vitest";
-import * as vitestModule from "vitest";
 import { bunEnv, bunExe, tempDir } from "harness";
+import * as vitestModule from "vitest";
+import { bench, describe, expect, onTestFailed, suite, test, vi, vitest } from "vitest";
 
 suite("suite is describe", () => {
   test("suite registers a describe block", () => {
@@ -49,9 +49,11 @@ describe("unimplemented exports are throwing stubs, not missing", () => {
 
 test("bench is a no-op that never runs its callback", () => {
   expect(typeof bench).toBe("function");
-  expect(() => bench("name", () => {
-    throw new Error("bench callback must not run");
-  })).not.toThrow();
+  expect(() =>
+    bench("name", () => {
+      throw new Error("bench callback must not run");
+    }),
+  ).not.toThrow();
 });
 
 describe("vi members", () => {
@@ -134,7 +136,9 @@ describe("vi members", () => {
   });
 
   test("vi.stubEnv rejects a non-string name", () => {
-    expect(() => (vi.stubEnv as (k: unknown, v: unknown) => void)(42, "x")).toThrow("vi.stubEnv() expects a string name");
+    expect(() => (vi.stubEnv as (k: unknown, v: unknown) => void)(42, "x")).toThrow(
+      "vi.stubEnv() expects a string name",
+    );
   });
 });
 

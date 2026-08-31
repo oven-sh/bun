@@ -669,7 +669,10 @@ impl<T> OwnedThis<T> {
         OwnedThis(core::ptr::NonNull::from(Box::leak(Box::new(value))))
     }
 
-    /// A dispatch handle to the pointee (root provenance).
+    /// A dispatch handle to the pointee (root provenance). Like every
+    /// [`ThisPtr`], it and its copies are valid only while this `OwnedThis`
+    /// lives: whoever it is handed to takes on that holder obligation (the
+    /// [`BackRef`] contract), which is what makes this safe to call.
     #[inline]
     pub fn this_ptr(&self) -> ThisPtr<T> {
         ThisPtr(self.0)

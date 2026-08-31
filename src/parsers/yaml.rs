@@ -342,13 +342,6 @@ impl Line {
 // Encoding trait
 // ───────────────────────────────────────────────────────────────────────────
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum EncodingKind {
-    Latin1,
-    Utf8,
-    Utf16,
-}
-
 /// Stack buffer for an ASCII literal widened to `Enc::Unit`. Rust cannot do
 /// const transcoding behind a trait method, so the literal is widened at the
 /// call site into this inline buffer instead.
@@ -382,11 +375,9 @@ impl<U: Copy + Default> AsRef<[U]> for EncLit<U> {
     }
 }
 
-/// Code-unit encoding of the parser input; `Unit` is `u8` or `u16`.
+/// Code-unit encoding of the parser input.
 pub trait Encoding: Copy + 'static {
     type Unit: Copy + Eq + Ord + Default + fmt::Debug + Into<u32> + 'static;
-
-    const KIND: EncodingKind;
 
     /// Zero unit (used as EOF sentinel).
     const NUL: Self::Unit;
@@ -407,27 +398,10 @@ pub trait Encoding: Copy + 'static {
     /// Number of leading units to skip if `input` starts with [3] c-byte-order-mark.
     fn bom_len(input: &[Self::Unit]) -> usize;
 
-    /// Reinterpret a `&[Unit]` slice as `&[u8]` for `StringHashMap` keying
-    /// (`anchors` / `tag_handles`). `StringHashMap` is keyed by `&[u8]`, so we
-    /// route through this
-    /// method — identity for `u8` encodings, byte-reinterpret (`len * 2`) for
-    /// `Utf16`. Byte-reinterpret preserves key uniqueness; do **not** use this
-    /// for text (see `NodeScalar::to_expr` for the encoding-aware string path).
+    /// Reinterpret a `&[Unit]` slice as `&[u8]`, for `StringHashMap` keying
+    /// (`anchors` / `tag_handles`) and for the `&[u8]` consumers of scalar
+    /// text. Identity for `Utf8`.
     fn key_bytes(s: &[Self::Unit]) -> &[u8];
-
-    /// Construct a Unit from a `u16` code unit. Only meaningful for `Utf16`
-    /// (identity); the `u8` encodings mark this `unreachable!()` because every
-    /// call site is gated on `Enc::KIND == EncodingKind::Utf16`.
-    fn unit_from_u16(u: u16) -> Self::Unit;
-
-    /// Reinterpret `&[Unit]` as `&[u16]`. Identity for `Utf16`; the `u8`
-    /// encodings keep this default `unreachable!()` because every call site is
-    /// gated on `Enc::KIND == EncodingKind::Utf16` (same pattern as
-    /// `unit_from_u16`). Feeds [`bun_core::strings::narrow_ascii_u16`].
-    #[inline]
-    fn as_u16_slice(_s: &[Self::Unit]) -> &[u16] {
-        unreachable!("as_u16_slice on u8 encoding")
-    }
 }
 
 #[inline]
@@ -442,41 +416,10 @@ fn byte_literal(s: &'static [u8]) -> EncLit<u8> {
 }
 
 #[derive(Clone, Copy)]
-pub struct Latin1;
-#[derive(Clone, Copy)]
 pub struct Utf8;
-#[derive(Clone, Copy)]
-pub struct Utf16;
-
-impl Encoding for Latin1 {
-    type Unit = u8;
-    const KIND: EncodingKind = EncodingKind::Latin1;
-    const NUL: u8 = 0;
-    fn ch(c: u8) -> u8 {
-        c
-    }
-    #[inline]
-    fn literal(s: &'static [u8]) -> EncLit<u8> {
-        byte_literal(s)
-    }
-    #[inline]
-    fn key_bytes(s: &[u8]) -> &[u8] {
-        s
-    }
-    #[inline]
-    fn unit_from_u16(_u: u16) -> u8 {
-        // Only reachable from `EncodingKind::Utf16`-gated arms.
-        unreachable!("unit_from_u16 on Latin1")
-    }
-    #[inline]
-    fn bom_len(_input: &[u8]) -> usize {
-        0
-    }
-}
 
 impl Encoding for Utf8 {
     type Unit = u8;
-    const KIND: EncodingKind = EncodingKind::Utf8;
     const NUL: u8 = 0;
     fn ch(c: u8) -> u8 {
         c
@@ -488,11 +431,6 @@ impl Encoding for Utf8 {
     #[inline]
     fn key_bytes(s: &[u8]) -> &[u8] {
         s
-    }
-    #[inline]
-    fn unit_from_u16(_u: u16) -> u8 {
-        // Only reachable from `EncodingKind::Utf16`-gated arms.
-        unreachable!("unit_from_u16 on Utf8")
     }
     #[inline]
     fn bom_len(input: &[u8]) -> usize {
@@ -504,56 +442,12 @@ impl Encoding for Utf8 {
     }
 }
 
-impl Encoding for Utf16 {
-    type Unit = u16;
-    const KIND: EncodingKind = EncodingKind::Utf16;
-    const NUL: u16 = 0;
-    fn ch(c: u8) -> u16 {
-        c as u16
-    }
-    #[inline]
-    fn literal(s: &'static [u8]) -> EncLit<u16> {
-        // All call sites pass ASCII, so widen byte-by-byte into the inline buffer.
-        debug_assert!(s.len() <= 8, "Enc::literal: bump EncLit cap");
-        let mut buf = [0u16; 8];
-        let mut i = 0;
-        while i < s.len() {
-            debug_assert!(s[i] < 0x80, "Enc::literal expects ASCII");
-            buf[i] = s[i] as u16;
-            i += 1;
-        }
-        EncLit {
-            buf,
-            len: s.len() as u8,
-        }
-    }
-    #[inline]
-    fn key_bytes(s: &[u16]) -> &[u8] {
-        // Reinterpret `&[u16]` as `&[u8]` of `len * 2` for byte-keyed hashing.
-        // Uniqueness is preserved (equal u16 slices ⇔ equal byte slices). Same
-        // pattern as `bun_ast::E::EString::hash()` for the utf16 arm.
-        bytemuck::cast_slice(s)
-    }
-    #[inline]
-    fn unit_from_u16(u: u16) -> u16 {
-        u
-    }
-    #[inline]
-    fn bom_len(input: &[u16]) -> usize {
-        if input.first() == Some(&0xFEFF) { 1 } else { 0 }
-    }
-    #[inline]
-    fn as_u16_slice(s: &[u16]) -> &[u16] {
-        s
-    }
-}
-
 // ───────────────────────────────────────────────────────────────────────────
 // chars — character classification
 // ───────────────────────────────────────────────────────────────────────────
 
 pub(crate) mod chars {
-    use super::{Encoding, EncodingKind};
+    use super::Encoding;
 
     pub(crate) fn is_ns_dec_digit<Enc: Encoding>(c: Enc::Unit) -> bool {
         matches!(Enc::wide(c), 0x30..=0x39)
@@ -572,34 +466,14 @@ pub(crate) mod chars {
     }
 
     pub(crate) fn is_ns_char<Enc: Encoding>(c: Enc::Unit) -> bool {
-        let cw = Enc::wide(c);
-        match Enc::KIND {
-            EncodingKind::Utf8 => match cw {
-                0x20 /* ' ' */ | 0x09 /* '\t' */ => false,
-                0x0A | 0x0D => false,
-                // TODO: exclude BOM
-                0x21..=0x7E => true,
-                0x80..=0xFF => true,
-                // TODO: include 0x85, [0xa0 - 0xd7ff], [0xe000 - 0xfffd], [0x010000 - 0x10ffff]
-                _ => false,
-            },
-            EncodingKind::Utf16 => match cw {
-                0x20 | 0x09 => false,
-                0x0A | 0x0D => false,
-                // TODO: exclude BOM
-                0x21..=0x7E => true,
-                0x85 => true,
-                0xA0..=0xD7FF => true,
-                0xE000..=0xFFFD => true,
-                // TODO: include [0x010000 - 0x10ffff]
-                _ => false,
-            },
-            EncodingKind::Latin1 => match cw {
-                0x20 | 0x09 => false,
-                0x0A | 0x0D => false,
-                // TODO: !!!!
-                _ => true,
-            },
+        match Enc::wide(c) {
+            0x20 /* ' ' */ | 0x09 /* '\t' */ => false,
+            0x0A | 0x0D => false,
+            // TODO: exclude BOM
+            0x21..=0x7E => true,
+            0x80..=0xFF => true,
+            // TODO: include 0x85, [0xa0 - 0xd7ff], [0xe000 - 0xfffd], [0x010000 - 0x10ffff]
+            _ => false,
         }
     }
 
@@ -1481,40 +1355,18 @@ fn is_core_schema_number<Enc: Encoding>(s: &[Enc::Unit], first_char: FirstChar) 
 }
 
 /// Port of `bun.jsc.wtf.parseDouble(slice)` over an encoding-generic slice.
-/// `bun_core::wtf::parse_double` takes `&[u8]`; for `Utf8`/`Latin1` we narrow
-/// via `Enc::key_bytes` (identity). For `Utf16` the lexer guarantees the
-/// slice is ASCII-only, so it is narrowed via
-/// [`bun_core::strings::narrow_ascii_u16`].
+/// `bun_core::wtf::parse_double` takes `&[u8]`, so the slice is narrowed via
+/// `Enc::key_bytes` (identity for `Utf8`).
 fn parse_double_generic<Enc: Encoding>(s: &[Enc::Unit]) -> Result<f64, ()> {
-    match Enc::KIND {
-        EncodingKind::Utf8 | EncodingKind::Latin1 => {
-            bun_core::wtf::parse_double(Enc::key_bytes(s)).map_err(|_| ())
-        }
-        EncodingKind::Utf16 => {
-            let mut buf = vec![0u8; s.len()];
-            bun_core::strings::narrow_ascii_u16(Enc::as_u16_slice(s), &mut buf)
-                .expect("lexer guarantees ASCII");
-            bun_core::wtf::parse_double(&buf).map_err(|_| ())
-        }
-    }
+    bun_core::wtf::parse_double(Enc::key_bytes(s)).map_err(|_| ())
 }
 
 /// Parses a `u64` from an encoding-generic slice with radix
 /// auto-detection: `0x`/`0X` (hex), `0o`/`0O` (oct), `0b`/`0B`
-/// (bin), else decimal; `_` is a digit separator. Utf8/Latin1 narrow via
-/// `Enc::key_bytes`; Utf16 narrows via [`bun_core::strings::narrow_ascii_u16`].
+/// (bin), else decimal; `_` is a digit separator. The slice is narrowed via
+/// `Enc::key_bytes`.
 fn parse_unsigned_radix0<Enc: Encoding>(s: &[Enc::Unit]) -> Result<u64, ()> {
-    match Enc::KIND {
-        EncodingKind::Utf8 | EncodingKind::Latin1 => {
-            bun_core::fmt::parse_unsigned::<u64>(Enc::key_bytes(s), 0).map_err(|_| ())
-        }
-        EncodingKind::Utf16 => {
-            let mut buf = vec![0u8; s.len()];
-            bun_core::strings::narrow_ascii_u16(Enc::as_u16_slice(s), &mut buf)
-                .expect("lexer guarantees ASCII");
-            bun_core::fmt::parse_unsigned::<u64>(&buf, 0).map_err(|_| ())
-        }
-    }
+    bun_core::fmt::parse_unsigned::<u64>(Enc::key_bytes(s), 0).map_err(|_| ())
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -1575,8 +1427,6 @@ impl<Enc: Encoding> NodeScalar<Enc> {
             NodeScalar::Boolean(value) => Expr::init(E::Boolean { value: *value }, pos.loc()),
             NodeScalar::Number(value) => Expr::init(E::Number::new(*value), pos.loc()),
             NodeScalar::String(value) => {
-                // For `Utf16` we route through `E::String::init_utf16`.
-                //
                 // LIFETIME: `YamlString::List` is a global-alloc `Vec` that is
                 // dropped with the local `scalar` immediately after this
                 // returns — the resulting `EString.data` would dangle. Dupe
@@ -1587,19 +1437,7 @@ impl<Enc: Encoding> NodeScalar<Enc> {
                     YamlString::Range(range) => range.slice(input),
                     YamlString::List(list) => bump.alloc_slice_copy(list.as_slice()),
                 };
-                let estring = match Enc::KIND {
-                    EncodingKind::Utf16 => {
-                        // SAFETY: `Enc::Unit == u16` when `KIND == Utf16`;
-                        // reinterpret with the same element count for
-                        // `E::String::init_utf16` (which sets `is_utf16`).
-                        let s16 = unsafe {
-                            core::slice::from_raw_parts(s.as_ptr().cast::<u16>(), s.len())
-                        };
-                        E::String::init_utf16(s16)
-                    }
-                    _ => E::String::init(Enc::key_bytes(s)),
-                };
-                Expr::init(estring, pos.loc())
+                Expr::init(E::String::init(Enc::key_bytes(s)), pos.loc())
             }
         }
     }
@@ -5423,26 +5261,10 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         0x2F /* '/' */ => text.push(Enc::ch(b'/')),
                         0x5C /* '\\' */ => text.push(Enc::ch(b'\\')),
 
-                        0x4E /* 'N' */ => match Enc::KIND {
-                            EncodingKind::Utf8 => text.extend_from_slice(&Enc::literal(&[0xC2, 0x85])),
-                            EncodingKind::Utf16 => text.push(Enc::unit_from_u16(0x0085)),
-                            EncodingKind::Latin1 => return Err(ParseError::UnexpectedCharacter),
-                        },
-                        0x5F /* '_' */ => match Enc::KIND {
-                            EncodingKind::Utf8 => text.extend_from_slice(&Enc::literal(&[0xC2, 0xA0])),
-                            EncodingKind::Utf16 => text.push(Enc::unit_from_u16(0x00A0)),
-                            EncodingKind::Latin1 => return Err(ParseError::UnexpectedCharacter),
-                        },
-                        0x4C /* 'L' */ => match Enc::KIND {
-                            EncodingKind::Utf8 => text.extend_from_slice(&Enc::literal(&[0xE2, 0x80, 0xA8])),
-                            EncodingKind::Utf16 => text.push(Enc::unit_from_u16(0x2028)),
-                            EncodingKind::Latin1 => return Err(ParseError::UnexpectedCharacter),
-                        },
-                        0x50 /* 'P' */ => match Enc::KIND {
-                            EncodingKind::Utf8 => text.extend_from_slice(&Enc::literal(&[0xE2, 0x80, 0xA9])),
-                            EncodingKind::Utf16 => text.push(Enc::unit_from_u16(0x2029)),
-                            EncodingKind::Latin1 => return Err(ParseError::UnexpectedCharacter),
-                        },
+                        0x4E /* 'N' */ => text.extend_from_slice(&Enc::literal(&[0xC2, 0x85])),
+                        0x5F /* '_' */ => text.extend_from_slice(&Enc::literal(&[0xC2, 0xA0])),
+                        0x4C /* 'L' */ => text.extend_from_slice(&Enc::literal(&[0xE2, 0x80, 0xA8])),
+                        0x50 /* 'P' */ => text.extend_from_slice(&Enc::literal(&[0xE2, 0x80, 0xA9])),
 
                         0x78 /* 'x' */ => self.decode_hex_code_point(Escape::X, &mut text)?,
                         0x75 /* 'u' */ => self.decode_hex_code_point(Escape::LowerU, &mut text)?,
@@ -5502,30 +5324,11 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             cp = bun_core::strings::u16_get_supplementary(cp as u16, low as u16);
         }
 
-        match Enc::KIND {
-            EncodingKind::Utf8 => {
-                let ch = char::from_u32(cp).ok_or(ParseError::UnexpectedCharacter)?;
-                let mut buf = [0u8; 4];
-                let s = ch.encode_utf8(&mut buf);
-                for b in s.bytes() {
-                    text.push(Enc::ch(b));
-                }
-            }
-            EncodingKind::Utf16 => {
-                if cp < 0x10000 {
-                    text.push(Enc::unit_from_u16(cp as u16));
-                } else {
-                    let [hi, lo] = bun_core::strings::encode_surrogate_pair(cp);
-                    text.push(Enc::unit_from_u16(hi));
-                    text.push(Enc::unit_from_u16(lo));
-                }
-            }
-            EncodingKind::Latin1 => {
-                if cp > 0xFF {
-                    return Err(ParseError::UnexpectedCharacter);
-                }
-                text.push(Enc::ch(u8::try_from(cp).expect("int cast")));
-            }
+        let ch = char::from_u32(cp).ok_or(ParseError::UnexpectedCharacter)?;
+        let mut buf = [0u8; 4];
+        let s = ch.encode_utf8(&mut buf);
+        for b in s.bytes() {
+            text.push(Enc::ch(b));
         }
         Ok(())
     }

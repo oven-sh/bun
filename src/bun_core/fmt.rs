@@ -1131,16 +1131,6 @@ pub struct URLFormatter<'a> {
     pub port: Option<u16>,
 }
 
-impl Default for URLFormatter<'_> {
-    fn default() -> Self {
-        Self {
-            proto: URLProto::Http,
-            hostname: None,
-            port: None,
-        }
-    }
-}
-
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum URLProto {
     Http,

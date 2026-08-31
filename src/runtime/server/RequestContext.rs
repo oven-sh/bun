@@ -3277,9 +3277,13 @@ where
 
                 if lock.on_receive_value.is_some() || lock.task.is_some() {
                     // someone else is waiting for the stream or waiting for `onStartStreaming`
-                    let Ok(readable) = value.to_readable_stream(global_this) else {
-                        return;
-                    }; // TODO: properly propagate exception upwards
+                    let readable = match value.to_readable_stream(global_this) {
+                        Ok(readable) => readable,
+                        Err(err) => {
+                            this.run_error_handler(global_this.take_exception(err));
+                            return;
+                        }
+                    };
                     readable.ensure_still_alive();
                     this.do_render_with_body(std::ptr::from_mut(value), None);
                     return;

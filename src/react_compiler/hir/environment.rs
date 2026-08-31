@@ -246,6 +246,13 @@ impl Environment {
         id
     }
 
+    /// Name the unnamed temporary `identifier_id` `#t<n>` after its
+    /// declaration id, so it is kept as a variable in the output.
+    pub fn promote_temporary(&mut self, identifier_id: IdentifierId) {
+        let identifier = &mut self.identifiers[identifier_id.0 as usize];
+        identifier.name = Some(IdentifierName::promoted(b't', identifier.declaration_id.0));
+    }
+
     /// Allocate a new ReactiveScope in the arena, returns its ScopeId.
     pub fn next_scope_id(&mut self) -> ScopeId {
         let id = ScopeId(self.next_scope_id_counter);

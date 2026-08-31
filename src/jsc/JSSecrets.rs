@@ -1,4 +1,13 @@
+use std::sync::OnceLock;
+
+use bun_threading::ThreadPool;
+use bun_threading::thread_pool::{Config, DEFAULT_THREAD_STACK_SIZE};
+
 use crate::{JSGlobalObject, JSValue, JsResult, Strong};
+
+/// A keyring call can wait without bound (an unlock prompt nobody answers), so
+/// the calls get a small pool of their own instead of the shared `WorkPool`.
+const SECRETS_POOL_THREADS: u32 = 4;
 
 // Opaque pointer to C++ SecretsJobOptions struct
 bun_opaque::opaque_ffi! { pub struct SecretsJobOptions; }
@@ -37,6 +46,16 @@ pub(crate) struct SecretsJob {
 impl crate::JobContext for SecretsJob {
     type OffThread = Self;
     type Js = Strong;
+
+    fn pool() -> &'static ThreadPool {
+        static POOL: OnceLock<ThreadPool> = OnceLock::new();
+        POOL.get_or_init(|| {
+            ThreadPool::init(Config {
+                max_threads: SECRETS_POOL_THREADS,
+                stack_size: DEFAULT_THREAD_STACK_SIZE,
+            })
+        })
+    }
 
     fn run(this: &mut Self, done: crate::Completion<Self>) -> Option<crate::Completion<Self>> {
         Bun__SecretsJobOptions__runTask(SecretsJobOptions::opaque_mut(this.options.0));

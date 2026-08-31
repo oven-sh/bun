@@ -84,13 +84,19 @@ fn global_resolver(global_this: &JSGlobalObject) -> &Resolver {
     &gd.resolver
 }
 
-/// Send-wrapper for raw pointers handed to the threaded work pool. The DNS
-/// `Request` is heap-allocated and only touched under `global_cache().lock()`,
-/// so crossing threads is sound — Rust just can't see that through `*mut T`.
-#[repr(transparent)]
-struct SendPtr<T>(*mut T);
-// SAFETY: see type doc — synchronization is provided by `global_cache()`.
-unsafe impl<T> Send for SendPtr<T> {}
+/// The pool every blocking `getaddrinfo` runs on, the size of the shared
+/// `WorkPool`. A call waits out the resolver timeout when nothing answers, so
+/// lookups against a dead resolver stall only each other, never file I/O.
+fn getaddrinfo_pool() -> &'static bun_threading::ThreadPool {
+    use bun_threading::thread_pool::{Config, DEFAULT_THREAD_STACK_SIZE};
+    static POOL: std::sync::OnceLock<bun_threading::ThreadPool> = std::sync::OnceLock::new();
+    POOL.get_or_init(|| {
+        bun_threading::ThreadPool::init(Config {
+            max_threads: u32::from(bun::get_thread_count()),
+            stack_size: DEFAULT_THREAD_STACK_SIZE,
+        })
+    })
+}
 
 /// Bridge the JS-thread `VirtualMachine` to the aio-level `EventLoopCtx` used
 /// by `KeepAlive` / `FilePoll`. The DNS resolver always runs on the JS event
@@ -969,6 +975,11 @@ pub mod get_addr_info_request {
     impl bun_jsc::JobContext for LibcLookup {
         type OffThread = Self;
         type Js = LibcRequest;
+
+        fn pool() -> &'static bun_threading::ThreadPool {
+            getaddrinfo_pool()
+        }
+
         fn run(
             this: &mut Self,
             done: bun_jsc::Completion<Self>,
@@ -2113,6 +2124,8 @@ pub mod internal {
     }
 
     pub struct Request {
+        /// The `getaddrinfo` of this entry, queued on [`getaddrinfo_pool`].
+        pub(crate) work_task: bun_threading::WorkPoolTask,
         pub(crate) key: RequestKeyOwned,
         pub(crate) result: Option<RequestResult>,
         /// Owns the `[ResultEntry; N]` packed by `process_results`; `result.info`
@@ -2138,6 +2151,10 @@ pub mod internal {
     impl Request {
         pub(crate) fn new(key: RequestKeyOwned, refcount: u32, created_at: u32) -> *mut Self {
             bun_core::heap::into_raw(Box::new(Self {
+                work_task: bun_threading::WorkPoolTask {
+                    node: Default::default(),
+                    callback: run_from_pool,
+                },
                 key,
                 result: None,
                 result_buf: None,
@@ -3102,14 +3119,24 @@ pub mod internal {
         Some(req)
     }
 
-    /// getaddrinfo() on the work pool; the result reaches every waiter through
-    /// the global cache, whichever thread asked. Also how a lookup whose
+    /// getaddrinfo() on the getaddrinfo pool; the result reaches every waiter
+    /// through the global cache, whichever thread asked. Also how a lookup whose
     /// per-thread mDNSResponder connection went away with its thread is
     /// finished (see `SharedConnection::close_for_terminate`).
     pub(super) fn run_on_work_pool(req: *mut Request) {
-        let _ = bun_threading::work_pool::WorkPool::go(SendPtr(req), |r: SendPtr<Request>| {
-            work_pool_callback(r.0)
-        });
+        // SAFETY: `req` is a live heap cache entry that is queued at most once at
+        // a time; it holds no VM state (every reader goes through `global_cache()`).
+        unsafe {
+            getaddrinfo_pool().schedule(bun_threading::thread_pool::Batch::from(
+                &raw mut (*req).work_task,
+            ))
+        };
+    }
+
+    unsafe fn run_from_pool(task: *mut bun_threading::WorkPoolTask) {
+        // SAFETY: only reachable through the `work_task.callback` slot set in
+        // `Request::new`; the pool calls back with exactly that field.
+        work_pool_callback(unsafe { bun_core::from_field_ptr!(Request, work_task, task) });
     }
 
     #[host_fn]

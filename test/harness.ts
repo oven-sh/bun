@@ -2067,6 +2067,31 @@ export async function readdirSorted(path: string): Promise<string[]> {
 }
 
 /**
+ * Reads `stream` until `enough(text)` holds or the stream ends, and returns the
+ * text read so far. Releases the reader, so the rest of the stream stays
+ * readable. For a subprocess pipe whose writer never closes: read up to a
+ * marker line, then act.
+ */
+export async function readUntil(
+  stream: ReadableStream<Uint8Array>,
+  enough: (text: string) => boolean,
+): Promise<string> {
+  const decoder = new TextDecoder();
+  const reader = stream.getReader();
+  let text = "";
+  try {
+    while (!enough(text)) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      text += decoder.decode(value, { stream: true });
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  return text;
+}
+
+/**
  * Helper function for making automatically lazily-executed promises.
  *
  * The difference is that the promise has not already started to be evaluated when it is created,

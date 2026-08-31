@@ -472,8 +472,7 @@ impl Expect {
     }
 
     /// The promise `wait_for_promise` polls for `value`'s outcome, or `None` for a non-thenable.
-    /// A pending promise or a plain thenable is adopted by a fresh native promise so that the
-    /// value's own `then()` runs, as under `await`. Bun.SQL's `Query` starts its work there.
+    /// A pending promise or a thenable is adopted through `resolve`, which calls its own `then()`.
     fn thenable_to_wait_for(global_this: &JSGlobalObject, value: JSValue) -> JsResult<Option<AnyPromise>> {
         if let Some(promise) = value.as_any_promise() {
             promise.set_handled(global_this.vm());

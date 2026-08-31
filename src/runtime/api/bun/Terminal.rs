@@ -377,12 +377,12 @@ impl Terminal {
             #[cfg(windows)]
             hpcon: JsCell::new(Some(pty_result.hpcon)),
             cols: Cell::new(if cfg!(windows) {
-                u16::try_from(clamp_to_coord(options.cols)).expect("int cast")
+                u16::try_from(sys::pty::clamp_to_coord(options.cols)).expect("int cast")
             } else {
                 options.cols
             }),
             rows: Cell::new(if cfg!(windows) {
-                u16::try_from(clamp_to_coord(options.rows)).expect("int cast")
+                u16::try_from(sys::pty::clamp_to_coord(options.rows)).expect("int cast")
             } else {
                 options.rows
             }),
@@ -905,12 +905,6 @@ fn create_pty_windows(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError>
     })
 }
 
-/// COORD.X/Y are i16; clamp the u16 cols/rows to its range.
-#[inline]
-fn clamp_to_coord(v: u16) -> i16 {
-    i16::try_from(v.min(u16::try_from(i16::MAX).expect("int cast"))).unwrap()
-}
-
 #[derive(Clone, Copy, PartialEq, Eq, core::marker::ConstParamTy)]
 enum TermiosField {
     Iflag,
@@ -1171,12 +1165,12 @@ impl Terminal {
         }
 
         self.cols.set(if cfg!(windows) {
-            u16::try_from(clamp_to_coord(new_cols)).expect("int cast")
+            u16::try_from(sys::pty::clamp_to_coord(new_cols)).expect("int cast")
         } else {
             new_cols
         });
         self.rows.set(if cfg!(windows) {
-            u16::try_from(clamp_to_coord(new_rows)).expect("int cast")
+            u16::try_from(sys::pty::clamp_to_coord(new_rows)).expect("int cast")
         } else {
             new_rows
         });

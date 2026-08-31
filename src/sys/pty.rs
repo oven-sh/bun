@@ -5,6 +5,12 @@ pub use posix::*;
 #[cfg(windows)]
 pub use win::*;
 
+/// ConPTY's `COORD.X/Y` are i16; clamp the u16 cols/rows to its range.
+#[inline]
+pub fn clamp_to_coord(v: u16) -> i16 {
+    i16::try_from(v.min(i16::MAX as u16)).unwrap()
+}
+
 #[cfg(unix)]
 mod posix {
     use core::ffi::c_int;
@@ -139,6 +145,7 @@ mod posix {
 
 #[cfg(windows)]
 mod win {
+    use super::clamp_to_coord;
     use core::sync::atomic::{AtomicU32, Ordering};
 
     use crate::Fd;
@@ -206,12 +213,6 @@ mod win {
             // SAFETY: `self.0` is an open HPCON, consumed here.
             unsafe { windows::ClosePseudoConsole(self.0) };
         }
-    }
-
-    /// COORD.X/Y are i16; clamp the u16 cols/rows to its range.
-    #[inline]
-    pub fn clamp_to_coord(v: u16) -> i16 {
-        i16::try_from(v.min(i16::MAX as u16)).unwrap()
     }
 
     pub struct ConPty {

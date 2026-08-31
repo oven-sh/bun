@@ -1887,6 +1887,7 @@ fn codegen_base_instruction_value(
                         expr: it.next().unwrap_or(orig.expr),
                         options: it.next().unwrap_or(Expr::EMPTY),
                         import_record_index: orig.import_record_index,
+                        namespace_ref: orig.namespace_ref,
                     },
                     loc,
                 ));

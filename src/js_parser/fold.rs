@@ -126,11 +126,73 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let p = self;
         let name_static = E::Str::new(name);
 
+        let can_track_dynamic_import_member = identifier_opts.assign_target()
+            == js_ast::AssignTarget::None
+            && !identifier_opts.is_delete_target();
+
         // Loop + match with mutable scrutinee (a restartable switch).
         let mut sw_data = target.data;
         'sw: loop {
             match sw_data {
+                js_ast::ExprData::EAwait(aw) => {
+                    // `(await import("str")).foo` — record the alias; the
+                    // expression is left as written.
+                    if let js_ast::ExprData::EImport(im) = aw.value.data {
+                        if im.namespace_ref.is_valid() && can_track_dynamic_import_member {
+                            p.import_items_for_namespace
+                                .get_mut(&im.namespace_ref)
+                                .unwrap()
+                                .put(
+                                    name,
+                                    LocRef {
+                                        loc: name_loc,
+                                        ref_: bun_ast::Ref::NONE,
+                                    },
+                                )
+                                .expect("oom");
+                            p.ignore_usage(im.namespace_ref);
+                        }
+                    }
+                }
+                js_ast::ExprData::ERequireString(req) => {
+                    // `require("str").foo` — record the alias; the expression is left as-is.
+                    if can_track_dynamic_import_member {
+                        if let Some(ns) = p.require_namespace_ref(&req) {
+                            p.import_items_for_namespace
+                                .get_mut(&ns)
+                                .unwrap()
+                                .put(
+                                    name,
+                                    LocRef {
+                                        loc: name_loc,
+                                        ref_: bun_ast::Ref::NONE,
+                                    },
+                                )
+                                .expect("oom");
+                        }
+                    }
+                }
                 js_ast::ExprData::EIdentifier(id) => {
+                    // Dynamic-import / require namespace local: record the alias so
+                    // the importee can drop unreferenced exports and leave the
+                    // access intact. An assign/delete target leaves the use
+                    // counted (namespace escapes).
+                    if p.dynamic_import_namespace_locals.contains_key(&id.ref_) {
+                        if can_track_dynamic_import_member {
+                            if let Some(map) = p.import_items_for_namespace.get_mut(&id.ref_) {
+                                map.put(
+                                    name,
+                                    LocRef {
+                                        loc: name_loc,
+                                        ref_: bun_ast::Ref::NONE,
+                                    },
+                                )
+                                .expect("oom");
+                                p.ignore_usage(id.ref_);
+                            }
+                        }
+                        break 'sw;
+                    }
                     // Rewrite property accesses on explicit namespace imports as an identifier.
                     // This lets us replace them easily in the printer to rebind them to
                     // something else without paying the cost of a whole-tree traversal during

@@ -125,6 +125,10 @@ pub(crate) fn scan_imports_and_exports(
     let sorted_aliases: *mut [js_meta::SortedAndFilteredExportAliases] =
         meta.sorted_and_filtered_export_aliases;
     let cjs_export_copies: *mut [js_meta::CjsExportCopies] = meta.cjs_export_copies;
+    let dynamic_import_aliases: *mut [bun_ast::ast_result::DynamicImportAliases] =
+        ast.dynamic_import_aliases;
+    let dyn_ref_aliases: *mut [js_meta::DynamicImportReferencedAliases] =
+        meta.dynamic_import_referenced_aliases;
 
     {
         // Step 1: Figure out what modules must be CommonJS
@@ -163,7 +167,11 @@ pub(crate) fn scan_imports_and_exports(
                 continue;
             }
 
-            for record in col_ref!(import_records_list)[id].as_slice() {
+            for (import_record_index, record) in col_ref!(import_records_list)[id]
+                .as_slice()
+                .iter()
+                .enumerate()
+            {
                 if !record.source_index.is_valid() {
                     continue;
                 }
@@ -175,6 +183,68 @@ pub(crate) fn scan_imports_and_exports(
                     continue;
                 }
                 let other_kind = col_ref!(exports_kind)[other_file];
+
+                // Union, per importee, of the export names its importers can
+                // observe: named static imports contribute their aliases, a
+                // tracked `import()` / `require()` its recorded ones, anything
+                // else (`import *`, `export *`, an untracked namespace) all of
+                // them. Step 5 narrows a lazily loaded ES module's export object
+                // (or its chunk's exports when splitting) to this set. CJS
+                // importees synthesize `default` from the filtered list itself,
+                // so they always keep everything.
+                if other_kind != ExportsKind::Esm {
+                    col!(dyn_ref_aliases)[other_file].merge_all();
+                } else {
+                    match record.kind {
+                        ImportKind::Stmt
+                            if !record
+                                .flags
+                                .contains(ImportRecordFlags::CONTAINS_IMPORT_STAR)
+                                && !col_ref!(export_star_import_records)[id]
+                                    .contains(&(import_record_index as u32)) =>
+                        {
+                            let mut aliases: Vec<bun_ast::StoreStr> = Vec::new();
+                            let mut all = false;
+                            for ni in col_ref!(named_imports)[id].values() {
+                                if ni.import_record_index != import_record_index as u32 {
+                                    continue;
+                                }
+                                if ni.alias_is_star {
+                                    all = true;
+                                    break;
+                                }
+                                if let Some(alias) = ni.alias {
+                                    aliases.push(alias);
+                                }
+                            }
+                            if all {
+                                col!(dyn_ref_aliases)[other_file].merge_all();
+                            } else if !aliases.is_empty() {
+                                col!(dyn_ref_aliases)[other_file].merge_partial(&aliases);
+                            }
+                        }
+                        ImportKind::Dynamic | ImportKind::Require => {
+                            match col_ref!(dynamic_import_aliases)[id].get(&(import_record_index as u32)) {
+                                None => col!(dyn_ref_aliases)[other_file].merge_all(),
+                                Some(aliases) => {
+                                    col!(dyn_ref_aliases)[other_file].merge_partial(aliases.slice());
+                                    // Observed without being named: `await import()`
+                                    // resolves through a `then` export, and `require()`
+                                    // of an ES module returns its `module.exports`
+                                    // export when it has one.
+                                    col!(dyn_ref_aliases)[other_file].merge_partial(&[
+                                        bun_ast::StoreStr::new(if record.kind == ImportKind::Require {
+                                            b"module.exports"
+                                        } else {
+                                            b"then"
+                                        }),
+                                    ]);
+                                }
+                            }
+                        }
+                        _ => col!(dyn_ref_aliases)[other_file].merge_all(),
+                    }
+                }
 
                 match record.kind {
                     ImportKind::Stmt => {

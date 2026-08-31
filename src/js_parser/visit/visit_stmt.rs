@@ -1131,11 +1131,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.cur_scope().is_after_const_local_prefix = was_after_after_const_local_prefix;
 
         // visit_decls returns the surviving decl count; truncate `data.decls.len` to it.
-        let was_const = data.kind == S::Kind::KConst;
         let new_len = if !(data.is_export && p.options.features.replace_exports.entries.len() > 0) {
-            p.visit_decls::<false>(data.decls.slice_mut(), was_const)
+            p.visit_decls::<false>(data.decls.slice_mut(), data.kind, data.is_export)
         } else {
-            p.visit_decls::<true>(data.decls.slice_mut(), was_const)
+            p.visit_decls::<true>(data.decls.slice_mut(), data.kind, data.is_export)
         };
         // Drop the whole statement when every decl was
         // eliminated; otherwise we'd emit an empty `var;`/`let;`/`const;`.
@@ -1380,6 +1379,32 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.visit_expr(&mut data.value);
         p.react_compiler_candidate_name = None;
         p.react_compiler_in_react_hoc = false;
+
+        // `import(x);` / `await import(x);` / `await import(x).catch(..);` /
+        // `require(x);` as a statement: the namespace is never looked at, so the
+        // importee is loaded for its side effects only.
+        if p.options.bundle {
+            let mut e = data.value.data;
+            if let js_ast::ExprData::EAwait(aw) = e {
+                e = aw.value.data;
+            }
+            if let js_ast::ExprData::ECall(call) = e
+                && let js_ast::ExprData::EDot(dot) = call.target.data
+                && matches!(dot.name.slice(), b"catch" | b"finally")
+            {
+                e = dot.target.data;
+            }
+            match e {
+                js_ast::ExprData::EImport(im) if im.namespace_ref.is_valid() => {
+                    p.ignore_usage(im.namespace_ref)
+                }
+                js_ast::ExprData::ERequireString(req) => {
+                    // A namespace with no recorded use: nothing observed.
+                    let _ = p.require_namespace_ref(&req);
+                }
+                _ => {}
+            }
+        }
 
         // `p.stmt_expr_value` is reset to EMissing at every return below.
         macro_rules! restore_stmt_expr {

@@ -257,8 +257,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     pub(crate) fn visit_decls<const IS_POSSIBLY_DECL_TO_REMOVE: bool>(
         &mut self,
         decls: &mut [G::Decl],
-        was_const: bool,
+        kind: LocalKind,
+        is_export: bool,
     ) -> usize {
+        let was_const = kind == LocalKind::KConst;
         let mut j: usize = 0;
         // Iterate by index so kept entries can be written back through `decls[j]`
         // while scanning ahead.
@@ -384,6 +386,127 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 }
                             }
                         }
+                    }
+                }
+
+                // `const|let|var <binding> = await import("str")` — record which
+                // exports of the importee are observed so the linker can drop
+                // the rest from its namespace. The statement is left as written.
+                'dyn_import_await: {
+                    if !self.options.bundle {
+                        break 'dyn_import_await;
+                    }
+                    // `await import(x)`, or a local already holding a tracked
+                    // namespace (`const ns = await import(x); const { a } = ns`).
+                    let (namespace_ref, import_record_index) = match val.data {
+                        ExprData::EAwait(aw) => match aw.value.data {
+                            ExprData::EImport(im) if im.namespace_ref.is_valid() => {
+                                (im.namespace_ref, im.import_record_index)
+                            }
+                            _ => break 'dyn_import_await,
+                        },
+                        ExprData::EIdentifier(id) => {
+                            match self.dynamic_import_namespace_locals.get(&id.ref_) {
+                                Some(&record) if matches!(decl.binding.data, BData::BObject(_)) => {
+                                    (id.ref_, record)
+                                }
+                                _ => break 'dyn_import_await,
+                            }
+                        }
+                        _ => break 'dyn_import_await,
+                    };
+                    match decl.binding.data {
+                        BData::BObject(obj) => {
+                            if self
+                                .try_track_dynamic_import_destructure(
+                                    namespace_ref,
+                                    import_record_index,
+                                    obj.properties(),
+                                    is_export,
+                                )
+                                .is_some()
+                            {
+                                self.ignore_usage(namespace_ref);
+                            }
+                        }
+                        // `var ns` redeclaration resolves to the same ref;
+                        // accesses after the second decl would be tracked
+                        // against the FIRST decl's record.
+                        BData::BIdentifier(id) if kind != LocalKind::KVar && !is_export => {
+                            let local = id.r#ref;
+                            if self.import_items_for_namespace.contains_key(&local) {
+                                break 'dyn_import_await;
+                            }
+                            self.register_dynamic_import_namespace_local(
+                                local,
+                                decl.binding.loc,
+                                import_record_index,
+                            );
+                            self.ignore_usage(namespace_ref);
+                        }
+                        _ => {}
+                    }
+                }
+
+                // `const [{a}, ns] = await Promise.all([import("a"), import("b")])`
+                'promise_all: {
+                    if !self.options.bundle || is_export || kind == LocalKind::KVar {
+                        break 'promise_all;
+                    }
+                    let ExprData::EAwait(aw) = val.data else {
+                        break 'promise_all;
+                    };
+                    let ExprData::ECall(call) = aw.value.data else {
+                        break 'promise_all;
+                    };
+                    let BData::BArray(pattern) = decl.binding.data else {
+                        break 'promise_all;
+                    };
+                    let Some(items) = self.promise_all_import_items(&call) else {
+                        break 'promise_all;
+                    };
+                    self.track_promise_all_destructure(items, &pattern);
+                }
+
+                // `const {x} = require("str")` / `const ns = require("str")`
+                'split_require: {
+                    let ExprData::ERequireString(req) = val.data else {
+                        break 'split_require;
+                    };
+                    match decl.binding.data {
+                        BData::BObject(obj) => {
+                            let Some(ns) = self.require_namespace_ref(&req) else {
+                                break 'split_require;
+                            };
+                            if self
+                                .try_track_dynamic_import_destructure(
+                                    ns,
+                                    req.import_record_index,
+                                    obj.properties(),
+                                    is_export,
+                                )
+                                .is_none()
+                            {
+                                // Untrackable shape: a recorded use marks the
+                                // namespace escaped so the linker keeps every export.
+                                self.record_usage(ns);
+                            }
+                        }
+                        BData::BIdentifier(id) if kind != LocalKind::KVar && !is_export => {
+                            let local = id.r#ref;
+                            if self.import_items_for_namespace.contains_key(&local)
+                                || !self.options.bundle
+                                || req.unwrapped_id.get().is_some()
+                            {
+                                break 'split_require;
+                            }
+                            self.register_dynamic_import_namespace_local(
+                                local,
+                                decl.binding.loc,
+                                req.import_record_index,
+                            );
+                        }
+                        _ => {}
                     }
                 }
 

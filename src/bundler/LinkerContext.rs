@@ -3343,9 +3343,14 @@ impl<'a> LinkerContext<'a> {
 
     /// Follows one step of an import chain: resolves what `tracker`'s import
     /// points to in the target file and reports the match status.
+    /// `namespace_source`: when the import is a generated `X.alias` member
+    /// (`NamedImport::is_namespace_member`) and `X` resolved to the namespace
+    /// of that file, look `alias` up there instead of following the import
+    /// record.
     pub(crate) fn advance_import_tracker(
         &mut self,
         tracker: &ImportTracker,
+        namespace_source: Option<crate::IndexInt>,
     ) -> ImportTrackerIterator {
         let id = tracker.source_index.get();
         // Note: read `named_import` out first, then borrow the rest.
@@ -3366,27 +3371,33 @@ impl<'a> LinkerContext<'a> {
         let exports_kind: &[ExportsKind] = self.graph.ast.items_exports_kind();
         let ast_flags = self.graph.ast.items_flags();
 
-        // Is this an external file?
-        let record: &ImportRecord = &import_records[named_import.import_record_index as usize];
-        if !record.source_index.is_valid() {
-            return ImportTrackerIterator {
-                value: Default::default(),
-                status: ImportTrackerStatus::External,
-                ..Default::default()
-            };
-        }
+        let other_source_index = match namespace_source {
+            Some(source_index) => source_index,
+            None => {
+                // Is this an external file?
+                let record: &ImportRecord =
+                    &import_records[named_import.import_record_index as usize];
+                if !record.source_index.is_valid() {
+                    return ImportTrackerIterator {
+                        value: Default::default(),
+                        status: ImportTrackerStatus::External,
+                        ..Default::default()
+                    };
+                }
 
-        // Barrel optimization: deferred import records point to empty ASTs
-        if record.flags.contains(bun_ast::ImportRecordFlags::IS_UNUSED) {
-            return ImportTrackerIterator {
-                value: Default::default(),
-                status: ImportTrackerStatus::External,
-                ..Default::default()
-            };
-        }
+                // Barrel optimization: deferred import records point to empty ASTs
+                if record.flags.contains(bun_ast::ImportRecordFlags::IS_UNUSED) {
+                    return ImportTrackerIterator {
+                        value: Default::default(),
+                        status: ImportTrackerStatus::External,
+                        ..Default::default()
+                    };
+                }
+                record.source_index.get()
+            }
+        };
 
         // Is this a disabled file?
-        let other_source_index = record.source_index.get();
         let other_id = other_source_index;
 
         if other_id as usize > self.graph.ast.len()
@@ -3396,7 +3407,7 @@ impl<'a> LinkerContext<'a> {
         {
             return ImportTrackerIterator {
                 value: ImportTracker {
-                    source_index: record.source_index,
+                    source_index: crate::Index::init(other_source_index),
                     ..Default::default()
                 },
                 status: ImportTrackerStatus::Disabled,
@@ -3455,6 +3466,7 @@ impl<'a> LinkerContext<'a> {
                             .potentially_ambiguous_export_star_refs
                             .slice(),
                     ),
+                    ..Default::default()
                 };
             }
         }
@@ -3468,6 +3480,13 @@ impl<'a> LinkerContext<'a> {
                     .slice(),
             )
         {
+            let default_alias_of = if matching_export.data.source_index.get() == other_id {
+                self.graph.ast.items_named_exports()[other_id as usize]
+                    .get(named_import.alias.unwrap().slice())
+                    .map_or(Ref::NONE, |export| export.alias_of_import)
+            } else {
+                Ref::NONE
+            };
             // Check to see if this is a re-export of another import
             return ImportTrackerIterator {
                 value: ImportTracker {
@@ -3481,6 +3500,7 @@ impl<'a> LinkerContext<'a> {
                         .potentially_ambiguous_export_star_refs
                         .slice(),
                 ),
+                default_alias_of,
             };
         }
 
@@ -3530,6 +3550,17 @@ impl<'a> LinkerContext<'a> {
         init_tracker: ImportTracker,
         re_exports: &mut bun_alloc::AstVec<Dependency>,
     ) -> MatchImport {
+        self.match_import_with_export_inner(init_tracker, None, re_exports)
+    }
+
+    /// `member_namespace_source`: see `advance_import_tracker`; applies to the
+    /// first hop only.
+    fn match_import_with_export_inner(
+        &mut self,
+        init_tracker: ImportTracker,
+        mut member_namespace_source: Option<crate::IndexInt>,
+        re_exports: &mut bun_alloc::AstVec<Dependency>,
+    ) -> MatchImport {
         let cycle_detector_top = self.cycle_detector.len();
         // Note: `cycle_detector` is restored by an explicit
         // `truncate` after the `'loop_` below — the only
@@ -3541,6 +3572,11 @@ impl<'a> LinkerContext<'a> {
         let mut tracker = init_tracker;
         let mut ambiguous_results: Vec<MatchImport> = Vec::new();
         let mut result: MatchImport = MatchImport::default();
+        // `export default X` with `X` an import: keep following `X`, but only
+        // keep that answer if it ends at a module namespace (whose identity is
+        // fixed, so the default's snapshot of it is the live value). Otherwise
+        // restore the binding to the `default` variable itself.
+        let mut default_alias_checkpoint: Option<(MatchImport, usize)> = None;
 
         'loop_: loop {
             // Make sure we avoid infinite loops trying to resolve cycles:
@@ -3571,9 +3607,10 @@ impl<'a> LinkerContext<'a> {
             self.cycle_detector.push(tracker);
 
             // Resolve the import by one step
-            let advanced = self.advance_import_tracker(&tracker);
+            let advanced = self.advance_import_tracker(&tracker, member_namespace_source.take());
             let next_tracker = advanced.value;
             let status = advanced.status;
+            let default_alias_of = advanced.default_alias_of;
             // `advanced.import_data` borrows
             // `graph.meta[..].resolved_exports[..].potentially_ambiguous_export_star_refs`;
             // that storage is never reallocated while this loop runs (only
@@ -3835,6 +3872,18 @@ impl<'a> LinkerContext<'a> {
                         tracker = next_tracker;
                         continue 'loop_;
                     }
+
+                    if default_alias_of.is_valid() {
+                        if default_alias_checkpoint.is_none() {
+                            default_alias_checkpoint = Some((result.clone(), re_exports.len()));
+                        }
+                        tracker = ImportTracker {
+                            source_index: next_tracker.source_index,
+                            import_ref: default_alias_of,
+                            name_loc: next_tracker.name_loc,
+                        };
+                        continue 'loop_;
+                    }
                 }
             }
 
@@ -3844,6 +3893,15 @@ impl<'a> LinkerContext<'a> {
         // Spec `defer`: restore cycle_detector to its entry length now that the
         // loop is done. All remaining exit paths are below this point.
         self.cycle_detector.truncate(cycle_detector_top);
+
+        if let Some((default_result, re_exports_len)) = default_alias_checkpoint
+            && !(result.kind == MatchImportKind::Normal
+                && self.is_esm_namespace_ref(result.source_index, result.r#ref))
+        {
+            result = default_result;
+            re_exports.truncate(re_exports_len);
+            ambiguous_results.clear();
+        }
 
         // If there is a potential ambiguity, all results must be the same
         for ambig in &ambiguous_results {
@@ -3875,6 +3933,19 @@ impl<'a> LinkerContext<'a> {
 
     /// Resolves every named import in one file to its matching export,
     /// recording the bindings in `imports_to_bind`.
+    /// Is `ref_` the `exports` object of ES module `source_index` (i.e. an
+    /// import that resolved here is that module's namespace)?
+    fn is_esm_namespace_ref(&self, source_index: crate::IndexInt, ref_: Ref) -> bool {
+        let id = source_index as usize;
+        id < self.graph.ast.len()
+            && ref_ == self.graph.ast.items_exports_ref()[id]
+            && matches!(
+                self.graph.ast.items_exports_kind()[id],
+                ExportsKind::Esm | ExportsKind::EsmWithDynamicFallback
+            )
+            && self.graph.meta.items_flags()[id].wrap != WrapKind::Cjs
+    }
+
     pub(crate) fn match_imports_with_exports_for_file(
         &mut self,
         named_imports_ptr: *const crate::bundled_ast::NamedImports,
@@ -3919,14 +3990,42 @@ impl<'a> LinkerContext<'a> {
             self.cycle_detector.clear();
 
             let mut re_exports: bun_alloc::AstVec<Dependency> = bun_alloc::AstAlloc::vec();
-            let result = self.match_import_with_export(
+
+            // `X.alias`: only bind it directly when `X` turned out to be the
+            // namespace object of an ES module. Otherwise leave the symbol
+            // unbound; `do_step5` then counts its uses as uses of `X` and the
+            // printer emits a property access on `X`.
+            let mut member_namespace_source: Option<crate::IndexInt> = None;
+            if named_import.is_namespace_member {
+                let Some(base) = imports_to_bind.get(&named_import.namespace_ref) else {
+                    continue;
+                };
+                let target = base.data;
+                if !self.is_esm_namespace_ref(target.source_index.get(), target.import_ref) {
+                    continue;
+                }
+                re_exports.extend_from_slice(base.re_exports.slice());
+                member_namespace_source = Some(target.source_index.get());
+            }
+
+            let result = self.match_import_with_export_inner(
                 ImportTracker {
                     source_index: crate::Index::init(source_index),
                     import_ref,
                     ..Default::default()
                 },
+                member_namespace_source,
                 &mut re_exports,
             );
+
+            if member_namespace_source.is_some()
+                && !matches!(
+                    result.kind,
+                    MatchImportKind::Normal | MatchImportKind::NormalAndNamespace
+                )
+            {
+                continue;
+            }
 
             match result.kind {
                 MatchImportKind::Normal => {

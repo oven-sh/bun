@@ -1176,12 +1176,22 @@ pub struct NamedImport {
     /// It's useful to flag exported imports because if they are in a TypeScript
     /// file, we can't tell if they are a type or a value.
     pub is_exported: bool,
+
+    /// Generated from `X.alias` where `X` (= `namespace_ref`) is itself an
+    /// import binding rather than a module namespace. The linker resolves `X`
+    /// first and binds this symbol to the export `alias` of whatever module
+    /// namespace `X` turns out to be, or leaves it as a property access.
+    pub is_namespace_member: bool,
 }
 
 #[derive(Copy, Clone)]
 pub struct NamedExport {
     pub ref_: Ref,
     pub alias_loc: crate::Loc,
+    /// `export default X` where `X` is an import binding. When `X` resolves to
+    /// a module namespace the linker binds importers of `default` through `X`
+    /// (a namespace never changes identity, so the snapshot is the live value).
+    pub alias_of_import: Ref,
 }
 
 #[repr(u8)]

@@ -469,7 +469,7 @@ pub(crate) fn schedule_barrel_deferred_imports(
 
     // Read-only deref — valid through Phase 2 (see the raw-read note above).
     for ni in file_named_imports.values() {
-        if ni.import_record_index as usize >= file_import_records.len() {
+        if ni.import_record_index as usize >= file_import_records.len() || ni.is_namespace_member {
             continue;
         }
         named_ir_indices.set(ni.import_record_index as usize);
@@ -557,7 +557,7 @@ pub(crate) fn schedule_barrel_deferred_imports(
 
     // Read-only deref — valid through Phase 2 (see the raw-read note above).
     for ni in file_named_imports.values() {
-        if ni.import_record_index as usize >= file_import_records.len() {
+        if ni.import_record_index as usize >= file_import_records.len() || ni.is_namespace_member {
             continue;
         }
         let ir = &file_import_records.as_slice()[ni.import_record_index as usize];

@@ -1476,6 +1476,202 @@ describe("bundler", () => {
       stdout: '{"a":1,"b":2,"default":"dflt"}',
     },
   });
+  // `X.foo` where X is a default/named import that resolves to a module
+  // namespace is bound directly to `foo`, so the namespace object is not
+  // materialized and unused exports are tree-shaken.
+  itBundled("importstar/MemberOfExportStarAsDefaultFromSelf", {
+    files: {
+      "/entry.js": /* js */ `
+        import HooksHost from './hooks'
+        console.log(HooksHost.load(), HooksHost["other"])
+      `,
+      "/hooks.js": /* js */ `
+        export function load() { return 'load' }
+        export const other = 'other'
+        export const unused = 'FAIL'
+        export * as default from './hooks'
+      `,
+    },
+    dce: true,
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("__export");
+    },
+    run: { stdout: "load other" },
+  });
+  itBundled("importstar/MemberOfReExportedImportStar", {
+    files: {
+      "/entry.js": /* js */ `
+        import { z } from './zod'
+        import zd from './zod'
+        console.log(z.object(), zd.string())
+      `,
+      "/zod.js": /* js */ `
+        import * as z from './external'
+        export * from './external'
+        export { z }
+        export default z
+      `,
+      "/external.js": /* js */ `
+        export function object() { return 'object' }
+        export function string() { return 'string' }
+        export function number() { return 'FAIL' }
+      `,
+    },
+    dce: true,
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("__export");
+    },
+    run: { stdout: "object string" },
+  });
+  itBundled("importstar/MemberOfExportDefaultImportChain", {
+    files: {
+      "/entry.js": /* js */ `
+        import z from './v4'
+        import { z as z2 } from './v4'
+        console.log(z.object(), z2.string())
+      `,
+      // mirrors zod/v4: index -> classic/index -> classic/external
+      "/v4.js": /* js */ `
+        import z4 from './classic'
+        export * from './classic'
+        export default z4
+      `,
+      "/classic.js": /* js */ `
+        import * as z from './external'
+        export { z }
+        export * from './external'
+        export default z
+      `,
+      "/external.js": /* js */ `
+        export function object() { return 'object' }
+        export function string() { return 'string' }
+        export function number() { return 'FAIL' }
+      `,
+    },
+    dce: true,
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("__export");
+    },
+    run: { stdout: "object string" },
+  });
+  itBundled("importstar/MemberOfExportStarAsNested", {
+    files: {
+      "/entry.js": /* js */ `
+        import { ns } from './reexport'
+        console.log(ns.a, ns.nested.deep, ns.nested.missing)
+      `,
+      "/reexport.js": `export * as ns from './target'`,
+      "/target.js": /* js */ `
+        export const a = 'a'
+        export const b = 'FAIL'
+        export * as nested from './nested'
+      `,
+      "/nested.js": /* js */ `
+        export const deep = 'deep'
+        export const other = 'FAIL'
+      `,
+    },
+    dce: true,
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("__export");
+    },
+    run: { stdout: "a deep undefined" },
+  });
+  itBundled("importstar/MemberOfImportFallbacks", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import { obj } from './plain'
+        import cjs from './cjs.cjs'
+        import { E } from './enum'
+        import data from './data.json'
+        import { dyn } from './reexport-dyn'
+        import ext from 'ext'
+        console.log(obj.y(), cjs.foo, cjs.bar.baz, typeof cjs.bar.nope, E.A, E.B, data.k, dyn.named, dyn.fromCjs, ext.deep.value)
+        obj.x = 5
+        console.log(obj.y())
+      `,
+      "/plain.js": `export const obj = { x: 1, y() { return this.x + 1 } }`,
+      "/cjs.cjs": `module.exports = { foo: 'foo', bar: { baz: 'baz' } }`,
+      "/enum.ts": `export enum E { A = 1, B = 'b' }`,
+      "/data.json": `{ "k": "v" }`,
+      "/reexport-dyn.js": `export * as dyn from './dyn'`,
+      "/dyn.js": /* js */ `
+        export * from './leaf.cjs'
+        export const named = 'named'
+      `,
+      "/leaf.cjs": `exports.fromCjs = 'fromCjs'`,
+    },
+    runtimeFiles: {
+      "/node_modules/ext/index.js": `module.exports = { deep: { value: 'ext' } }`,
+    },
+    external: ["ext"],
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("1 /* A */");
+    },
+    run: { stdout: "2 foo baz undefined 1 b v named fromCjs ext\n6" },
+  });
+  itBundled("importstar/MemberOfImportNamespaceStillCaptured", {
+    files: {
+      "/entry.js": /* js */ `
+        import ns from './lib'
+        console.log(ns.a, Object.keys(ns).join())
+        export { ns }
+      `,
+      "/lib.js": /* js */ `
+        export const a = 'a'
+        export const b = 'b'
+        export * as default from './lib'
+      `,
+    },
+    run: { stdout: "a a,b,default" },
+  });
+  itBundled("importstar/MemberOfImportSplitting", {
+    files: {
+      "/a.js": /* js */ `
+        import lib from './lib'
+        console.log('a', lib.shared())
+      `,
+      "/b.js": /* js */ `
+        import { ns } from './reexport'
+        console.log('b', ns.shared())
+      `,
+      "/reexport.js": `export * as ns from './lib'`,
+      "/lib.js": /* js */ `
+        export function shared() { return 'shared' }
+        export const unused = 'FAIL'
+        export * as default from './lib'
+      `,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    splitting: true,
+    outdir: "/out",
+    dce: true,
+    run: [
+      { file: "/out/a.js", stdout: "a shared" },
+      { file: "/out/b.js", stdout: "b shared" },
+    ],
+  });
+  itBundled("importstar/MemberOfImportFormatCjs", {
+    files: {
+      "/entry.js": /* js */ `
+        import lib from './lib'
+        import ext from 'ext'
+        console.log(lib.a, ext.deep.value)
+      `,
+      "/lib.js": /* js */ `
+        export const a = 'a'
+        export const b = 'FAIL'
+        export * as default from './lib'
+      `,
+    },
+    format: "cjs",
+    external: ["ext"],
+    runtimeFiles: {
+      "/node_modules/ext/index.js": `module.exports = { deep: { value: 'ext' } }`,
+    },
+    dce: true,
+    run: { stdout: "a ext" },
+  });
   itBundled("importstar/CjsEntryPointExportsSorted", {
     files: {
       "/entry.js": /* js */ `

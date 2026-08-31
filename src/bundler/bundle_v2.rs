@@ -7900,6 +7900,9 @@ pub mod bv2_impl {
         /// so the single read site in `match_import_with_export` is a safe `Deref`;
         /// the pointee slab is never reallocated while the iterator is live.
         pub(crate) import_data: bun_ptr::BackRef<[crate::ImportData]>,
+        /// `Found` an `export default X` where `X` is an import in that file
+        /// (`NamedExport::alias_of_import`).
+        pub(crate) default_alias_of: bun_ast::Ref,
     }
 
     impl Default for ImportTrackerIterator {
@@ -7908,6 +7911,7 @@ pub mod bv2_impl {
                 status: ImportTrackerStatus::default(),
                 value: crate::ImportTracker::default(),
                 import_data: bun_ptr::BackRef::new(&[] as &[crate::ImportData]),
+                default_alias_of: bun_ast::Ref::NONE,
             }
         }
     }

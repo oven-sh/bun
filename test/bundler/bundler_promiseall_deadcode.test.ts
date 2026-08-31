@@ -76,17 +76,12 @@ describe("bundler", () => {
 
       expect(bundled).toMatchInlineSnapshot(`
         "var __defProp = Object.defineProperty;
-        var __returnValue = (v) => v;
-        function __exportSetter(name, newValue) {
-          this[name] = __returnValue.bind(null, newValue);
-        }
         var __export = (target, all) => {
           for (var name in all)
             __defProp(target, name, {
               get: all[name],
               enumerable: true,
-              configurable: true,
-              set: __exportSetter.bind(all, name)
+              configurable: true
             });
         };
         var __esm = (fn, res) => () => (fn && (res = fn(fn = 0)), res);
@@ -164,7 +159,7 @@ describe("bundler", () => {
         var { AsyncEntryPoint: AsyncEntryPoint2 } = await Promise.resolve().then(() => exports_AsyncEntryPoint);
         AsyncEntryPoint2();
 
-        //# debugId=19FD1E5354FE6B6564756E2164756E21
+        //# debugId=928521937E9382CA64756E2164756E21
         //# sourceMappingURL=out.js.map
         "
       `);
@@ -341,17 +336,12 @@ describe("bundler", () => {
 
       expect(bundled).toMatchInlineSnapshot(`
         "var __defProp = Object.defineProperty;
-        var __returnValue = (v) => v;
-        function __exportSetter(name, newValue) {
-          this[name] = __returnValue.bind(null, newValue);
-        }
         var __export = (target, all) => {
           for (var name in all)
             __defProp(target, name, {
               get: all[name],
               enumerable: true,
-              configurable: true,
-              set: __exportSetter.bind(all, name)
+              configurable: true
             });
         };
         var __esm = (fn, res) => () => (fn && (res = fn(fn = 0)), res);
@@ -410,7 +400,7 @@ describe("bundler", () => {
         var { AsyncEntryPoint: AsyncEntryPoint2 } = await Promise.resolve().then(() => exports_AsyncEntryPoint);
         AsyncEntryPoint2();
 
-        //# debugId=EA1AA30E1BD7B08E64756E2164756E21
+        //# debugId=A2D3876B09CE0CFF64756E2164756E21
         //# sourceMappingURL=out.js.map
         "
       `);

@@ -346,6 +346,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
                                     alias_is_star: false,
                                     is_exported: false,
                                     local_parts_with_uses: bun_alloc::AstAlloc::vec(),
+                                    is_namespace_member: false,
                                 },
                             )?;
                         }
@@ -499,6 +500,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
                                     alias_is_star: false,
                                     is_exported: false,
                                     local_parts_with_uses: bun_alloc::AstAlloc::vec(),
+                                    is_namespace_member: false,
                                 },
                             )?;
                         }
@@ -585,6 +587,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
                 NamedExport {
                     alias_loc: Loc::EMPTY,
                     ref_,
+                    alias_of_import: Ref::NONE,
                 },
             )?;
         }

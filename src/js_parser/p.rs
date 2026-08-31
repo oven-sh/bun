@@ -447,6 +447,10 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) esm_export_keyword: bun_ast::Range,
     pub(crate) enclosing_class_keyword: bun_ast::Range,
     pub(crate) import_items_for_namespace: HashMap<Ref, ImportItemForNamespaceMap>,
+    /// `X.foo` where `X` is a default/named import (or another entry of this
+    /// map): the generated import symbols for each property, keyed by `X`.
+    /// The linker binds them directly when `X` resolves to a module namespace.
+    pub(crate) import_namespace_member_items: HashMap<Ref, ImportItemForNamespaceMap>,
     pub(crate) is_import_item: RefMap,
     pub(crate) named_imports: NamedImportsType<'a>,
     pub(crate) named_exports: bun_ast::ast_result::NamedExports,
@@ -1473,6 +1477,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 js_ast::NamedExport {
                     alias_loc: loc,
                     ref_: r#ref,
+                    alias_of_import: Ref::NONE,
                 },
             )?;
         }
@@ -1807,6 +1812,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 local_parts_with_uses: bun_alloc::AstAlloc::vec(),
                 alias_is_star: false,
                 is_exported: false,
+                is_namespace_member: false,
             },
         )?;
 
@@ -1943,6 +1949,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     local_parts_with_uses: bun_alloc::AstAlloc::vec(),
                     alias_is_star: false,
                     is_exported: false,
+                    is_namespace_member: false,
                 },
             )?;
         }
@@ -2084,6 +2091,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         local_parts_with_uses: bun_alloc::AstAlloc::vec(),
                         alias_is_star: false,
                         is_exported: false,
+                        is_namespace_member: false,
                     },
                 )?;
             }
@@ -5815,6 +5823,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         kind
     }
 
+    pub(crate) fn has_import_namespace_member_items(&self, base: Ref) -> bool {
+        self.import_namespace_member_items
+            .get(&base)
+            .is_some_and(|m| m.count() > 0)
+    }
+
     pub(crate) fn ignore_usage(&mut self, r#ref: Ref) {
         if !self.is_control_flow_dead && !self.is_revisit_for_substitution {
             debug_assert!((r#ref.inner_index() as usize) < self.symbols.len());
@@ -8888,6 +8902,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             esm_export_keyword: bun_ast::Range::NONE,
             enclosing_class_keyword: bun_ast::Range::NONE,
             import_items_for_namespace: Default::default(),
+            import_namespace_member_items: Default::default(),
             is_import_item: Default::default(),
             scope_order_to_visit: &[],
             module_scope_directive_loc: bun_ast::Loc::default(),

@@ -40,6 +40,9 @@ pub struct Expansion {
     /// Whether the in-flight command substitution was `"$(...)"` (no IFS
     /// splitting on its result). Only meaningful while `state == CmdSubst`.
     pub(crate) cmd_subst_quoted: bool,
+    /// The atom is an assignment value (`A=v`, `export A=v`), so
+    /// command-substitution output is not field split (POSIX 2.9.1).
+    pub(crate) assign_ctx: bool,
     /// Set when a `""`/`''` literal
     /// was seen so an *empty* expansion is still pushed as an argv word.
     /// Without this, `$unset` and `""` are indistinguishable in
@@ -87,6 +90,7 @@ impl Expansion {
         shell: *mut ShellExecEnv,
         node: *const ast::Atom,
         parent: NodeId,
+        assign_ctx: bool,
     ) -> NodeId {
         interp.alloc_node(Node::Expansion(Expansion {
             base: Base::new(parent, shell),
@@ -103,6 +107,7 @@ impl Expansion {
             meta_offsets: Vec::new(),
             child_script: None,
             cmd_subst_quoted: false,
+            assign_ctx,
             has_quoted_empty: false,
             out_exit_code: 0,
         }))
@@ -613,13 +618,16 @@ impl Expansion {
             ast::Atom::Simple(ast::SimpleAtom::CmdSubst(_))
         );
 
-        let quoted = interp.as_expansion(this).cmd_subst_quoted;
+        let no_split = {
+            let me = interp.as_expansion(this);
+            me.cmd_subst_quoted || me.assign_ctx
+        };
         {
             let me = interp.as_expansion_mut(this);
             if exit_code != 0 && sole_cmd_subst {
                 me.out_exit_code = exit_code;
             }
-            if quoted {
+            if no_split {
                 let mut hi = stdout.len();
                 while hi > 0 && matches!(stdout[hi - 1], b' ' | b'\n' | b'\r' | b'\t') {
                     hi -= 1;

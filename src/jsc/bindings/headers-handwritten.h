@@ -137,9 +137,9 @@ typedef struct ResolvedSource {
     bool bytecode_cache_persistent;
     // Owned; Zig::SourceProvider takes it (nulling the field).
     bun_ModuleInfoDeserialized* module_info;
-    // File path used as source origin for bytecode cache validation.
-    // Converted to file:// URL. If empty, origin is derived from source_url.
-    BunString bytecode_origin_path;
+    // File path whose file:// URL is the source origin (what import() resolves against, what a bytecode cache is
+    // validated against). If empty, origin is derived from source_url.
+    BunString origin_path;
 } ResolvedSource;
 static_assert(sizeof(ResolvedSource) == 136, "ResolvedSource layout is mirrored in src/jsc/ResolvedSource.rs");
 inline constexpr uint32_t ResolvedSourceTagPackageJSONTypeModule = 1;
@@ -163,7 +163,7 @@ public:
             return;
         result.value.source_code.deref();
         result.value.source_url.deref();
-        result.value.bytecode_origin_path.deref();
+        result.value.origin_path.deref();
         if (result.value.bytecode_cache_owned && result.value.bytecode_cache)
             ResolvedSource__freeBytecode(result.value.bytecode_cache);
         if (result.value.module_info)

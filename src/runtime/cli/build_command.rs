@@ -1302,16 +1302,7 @@ pub(crate) fn collect_compile_assets(
             skipped_main_entry = true;
             continue;
         }
-        let key = strings::remove_leading_dot_slash(&f.dest_path);
-        #[cfg(windows)]
-        let _ = seen.put(
-            &key.iter()
-                .map(|&b| if b == b'\\' { b'/' } else { b })
-                .collect::<Vec<u8>>(),
-            (),
-        );
-        #[cfg(not(windows))]
-        let _ = seen.put(key, ());
+        let _ = seen.put(strings::remove_leading_dot_slash(&f.dest_path), ());
     }
     let mut push =
         |out: &mut Vec<options::OutputFile>, asset: &[u8], dest: Vec<u8>, bytes: Vec<u8>| {

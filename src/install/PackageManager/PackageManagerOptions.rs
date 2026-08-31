@@ -629,12 +629,13 @@ impl Options {
                     if !registry_.is_empty()
                         && (registry_.starts_with(b"https://") || registry_.starts_with(b"http://"))
                     {
-                        let api_registry = Api::NpmRegistry::from_url(registry_);
+                        let mut api_registry = Api::NpmRegistry::from_url(registry_);
+                        api_registry.resolve_credential_refs(env);
                         // Credentials in the URL win, as they do for `registry=` in .npmrc.
                         let mut carried_token: Box<[u8]> = Box::default();
                         let mut carried_auth: Box<[u8]> = Box::default();
                         let mut carried_user: Box<[u8]> = Box::default();
-                        if !api_registry.has_resolved_credentials(env) {
+                        if !api_registry.has_usable_credentials() {
                             let prev_url = self.scope.url.url();
                             let new_url = bun_url::URL::parse(&api_registry.url);
                             if bun_core::without_trailing_slash(new_url.host)
@@ -647,9 +648,9 @@ impl Options {
                             }
                         }
                         self.scope = Npm::registry::Scope::from_api(b"", api_registry, env)?;
-                        // A credential `from_api` parsed out of the URL's pathname wins over the
-                        // carry. Assigned after `from_api` so already-resolved credentials are
-                        // not resolved twice.
+                        // A credential `from_api` parsed out of the URL's pathname wins over
+                        // the carry. Assigned after `from_api` so the carried values skip
+                        // `$VAR` substitution.
                         if self.scope.token.is_empty() && self.scope.auth.is_empty() {
                             if !carried_token.is_empty() {
                                 self.scope.token = carried_token;
@@ -667,8 +668,9 @@ impl Options {
 
         if let Some(cli) = &maybe_cli {
             if !cli.registry.is_empty() {
-                let api_registry = Api::NpmRegistry::from_url(cli.registry);
-                if api_registry.has_resolved_credentials(env) {
+                let mut api_registry = Api::NpmRegistry::from_url(cli.registry);
+                api_registry.resolve_credential_refs(env);
+                if api_registry.has_usable_credentials() {
                     self.scope = Npm::registry::Scope::from_api(b"", api_registry, env)?;
                 } else {
                     let new_url = bun_url::URL::parse(&api_registry.url);

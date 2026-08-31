@@ -916,6 +916,27 @@ describe("registry credentials from $VAR env references", () => {
     expect(exitCode).not.toBe(0);
   });
 
+  // .npmrc values never go through $VAR substitution: a decoded _password
+  // that happens to start with "$" is a literal.
+  test.concurrent("a .npmrc _password that decodes to a $-prefixed value is sent verbatim", async () => {
+    const auths: (string | null)[] = [];
+    await using server = authLoggingRegistry(auths);
+    using dir = tempDir("npmrc-dollar-password", {
+      "package.json": JSON.stringify({
+        name: "app",
+        version: "1.0.0",
+        dependencies: { "@myscope/no-deps": "1.0.0" },
+      }),
+      "bunfig.toml": `[install.scopes]\nmyscope = { url = "http://127.0.0.1:${server.port}/" }\n`,
+      ".npmrc":
+        `//127.0.0.1:${server.port}/:username=alice\n` +
+        `//127.0.0.1:${server.port}/:_password=${btoa("$uperSecret")}\n`,
+    });
+    const exitCode = await install(String(dir), {});
+    expect(auths).toEqual([`Basic ${btoa("alice:$uperSecret")}`]);
+    expect(exitCode).not.toBe(0);
+  });
+
   // An unresolvable token must not shadow the scope's own username/password pair.
   test.concurrent("an unset $VAR token next to a resolved username/password pair sends Basic auth", async () => {
     const auths: (string | null)[] = [];

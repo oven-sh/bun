@@ -1290,16 +1290,12 @@ mod draft {
         configs
     }
 
-    pub fn apply_registry_auth(
-        install: &mut BunInstall,
-        env: &DotEnvLoader,
-        auth: &[RegistryAuth],
-    ) {
+    pub fn apply_registry_auth(install: &mut BunInstall, auth: &[RegistryAuth]) {
         if auth.is_empty() {
             return;
         }
         if let Some(registry) = install.default_registry.as_mut() {
-            if !registry.has_resolved_credentials(env) {
+            if !registry.has_usable_credentials() {
                 for item in auth {
                     let matched = item.matches(if registry.url.is_empty() {
                         bun_install_types::NodeLinker::npm::Registry::DEFAULT_URL.as_bytes()
@@ -1314,7 +1310,7 @@ mod draft {
         }
         if let Some(scoped) = install.scoped.as_mut() {
             for registry in scoped.scopes.values_mut() {
-                if registry.has_resolved_credentials(env) {
+                if registry.has_usable_credentials() {
                     continue;
                 }
                 for item in auth {

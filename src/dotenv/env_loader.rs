@@ -566,14 +566,14 @@ impl Loader {
         self.map.get(_key)
     }
 
-    /// Resolves a leading `$VAR` reference; an unset variable resolves to "", never the literal text.
+    /// Substitutes a leading `$VAR` reference when the variable is set; otherwise returns the input unchanged.
     pub fn get_auto<'b>(&'b self, key: &'b [u8]) -> &'b [u8] {
         // If it's "" or "$", it's not a variable
         if key.len() < 2 || key[0] != b'$' {
             return key;
         }
 
-        self.get(&key[1..]).unwrap_or(b"")
+        self.get(&key[1..]).unwrap_or(key)
     }
 
     // `copyForDefine` moved up into `bun_bundler::defines::copy_env_for_define`

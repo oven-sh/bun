@@ -174,14 +174,24 @@ pub mod api {
             registry
         }
 
-        /// True after `$VAR` resolution for a credential that can produce an
-        /// Authorization header: a token, or a username+password pair.
-        pub fn has_resolved_credentials(&self, env: &bun_dotenv::Loader) -> bool {
-            !env.get_auto(&self.token).is_empty()
-                || (!env.get_auto(&self.username).is_empty()
-                    && !env.get_auto(&self.password).is_empty())
+        /// True for a credential that can produce an Authorization header:
+        /// a token, or a username+password pair.
+        pub fn has_usable_credentials(&self) -> bool {
+            !self.token.is_empty() || (!self.username.is_empty() && !self.password.is_empty())
         }
 
+        /// Resolves `$VAR` credential references in place. A reference to an
+        /// unset variable resolves to no credential, never the literal text.
+        /// Call this once, at the entry points that document `$VAR` support
+        /// (bunfig fields, registry URLs from the env or the CLI). Values from
+        /// other sources (.npmrc) stay literal.
+        pub fn resolve_credential_refs(&mut self, env: &bun_dotenv::Loader) {
+            for field in [&mut self.token, &mut self.username, &mut self.password] {
+                if field.len() >= 2 && field[0] == b'$' {
+                    *field = env.get(field).map_or_else(Box::default, Box::from);
+                }
+            }
+        }
     }
 
     /// Per-scope npm registry overrides, keyed by scope name.

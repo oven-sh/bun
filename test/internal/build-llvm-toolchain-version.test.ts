@@ -32,30 +32,57 @@ function fakeTool(version: string): string {
   return `#!/bin/sh\nprintf 'version %s\\n' '${version}'\n`;
 }
 
-test.skipIf(isWindows)("clang++ is version-checked so cc and cxx come from the same LLVM major", () => {
-  // Two installs visible through one bin dir, as on gentoo in #41000: the
-  // bare names are a newer default install, the suffixed names the pinned one.
+/**
+ * A bin dir with two installs visible through it, as on gentoo in #41000:
+ * the bare clang/clang++ are a newer default install, the suffixed names
+ * the pinned one. `extra` adds the tools a given target also requires.
+ */
+function fakeToolchain(extra: string[]): Record<string, string> {
   const tools: Record<string, string> = {
     "bin/clang": fakeTool("99.0.0"),
     [`bin/clang-${llvmMajor}`]: fakeTool(LLVM_VERSION),
     "bin/clang++": fakeTool("99.0.0"),
     [`bin/clang++-${llvmMajor}`]: fakeTool(LLVM_VERSION),
-    "bin/ld.lld": fakeTool(LLVM_VERSION),
     "bin/llvm-ar": fakeTool(LLVM_VERSION),
     "bin/llvm-ranlib": fakeTool(LLVM_VERSION),
     "bin/strip": fakeTool(LLVM_VERSION),
   };
-  using dir = tempDir("build-llvm-version", tools);
-  const bin = join(String(dir), "bin");
-  for (const name of Object.keys(tools)) chmodSync(join(String(dir), name), 0o755);
+  for (const name of extra) tools[`bin/${name}`] = fakeTool(LLVM_VERSION);
+  return tools;
+}
+
+function useFakeToolchain(dir: string, tools: Record<string, string>): string {
+  const bin = join(dir, "bin");
+  for (const name of Object.keys(tools)) chmodSync(join(dir, name), 0o755);
   process.env.PATH = bin;
   // Keep findRustLld() away from the machine's real rustc.
-  process.env.CARGO_HOME = String(dir);
+  process.env.CARGO_HOME = dir;
+  return bin;
+}
+
+test.skipIf(isWindows)("clang++ is version-checked so cc and cxx come from the same LLVM major", () => {
+  const tools = fakeToolchain(["ld.lld"]);
+  using dir = tempDir("build-llvm-version", tools);
+  const bin = useFakeToolchain(String(dir), tools);
 
   const llvm = resolveLlvmToolchain("linux", "x64", "linux", [bin]);
   expect({ cc: llvm.cc, cxx: llvm.cxx, clangVersion: llvm.clangVersion }).toEqual({
     cc: join(bin, `clang-${llvmMajor}`),
     cxx: join(bin, `clang++-${llvmMajor}`),
     clangVersion: LLVM_VERSION,
+  });
+});
+
+test.skipIf(isWindows)("hostCc and hostCxx are version-checked for unix-to-windows cross builds", () => {
+  const tools = fakeToolchain(["clang-cl", "lld-link", "llvm-lib", "llvm-rc"]);
+  using dir = tempDir("build-llvm-cross", tools);
+  const bin = useFakeToolchain(String(dir), tools);
+
+  const llvm = resolveLlvmToolchain("linux", "x64", "windows", [bin]);
+  expect({ cc: llvm.cc, cxx: llvm.cxx, hostCc: llvm.hostCc, hostCxx: llvm.hostCxx }).toEqual({
+    cc: join(bin, "clang-cl"),
+    cxx: join(bin, "clang-cl"),
+    hostCc: join(bin, `clang-${llvmMajor}`),
+    hostCxx: join(bin, `clang++-${llvmMajor}`),
   });
 });

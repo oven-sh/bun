@@ -152,6 +152,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 return;
             }
         }
+
+        // The parent EDot/EIndex inlines known properties of this replacement
+        // via `maybe_rewrite_import_meta_property`.
+        if p.options.lower_import_meta {
+            *e = p.value_for_import_meta(expr.loc);
+        }
     }
 
     fn e_identifier(p: &mut Self, e: &mut Expr, in_: ExprIn) {

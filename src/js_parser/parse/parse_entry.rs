@@ -96,6 +96,11 @@ pub struct Options<'a> {
     pub import_meta_main_value: Option<bool>,
     pub lower_import_meta_main_for_node_js: bool,
 
+    /// The output format is not an ES module, so `import.meta` is inlined
+    /// where its value is known and otherwise rewritten to a per-file
+    /// `var import_meta = {}` (`P::value_for_import_meta`). Bundler only.
+    pub lower_import_meta: bool,
+
     /// When using react fast refresh or server components, the framework is
     /// able to customize what import sources are used.
     pub framework: Option<&'a options::Framework>, // TYPE_ONLY: was bun_runtime::bake::Framework
@@ -142,6 +147,7 @@ impl<'a> Default for Options<'a> {
             transform_only: false,
             import_meta_main_value: None,
             lower_import_meta_main_for_node_js: false,
+            lower_import_meta: false,
             framework: None,
             repl_mode: false,
             lower_toml_datetimes: false,
@@ -228,6 +234,7 @@ impl<'a> Options<'a> {
             transform_only: self.transform_only,
             import_meta_main_value: self.import_meta_main_value,
             lower_import_meta_main_for_node_js: self.lower_import_meta_main_for_node_js,
+            lower_import_meta: self.lower_import_meta,
             framework: self.framework,
             repl_mode: self.repl_mode,
             lower_toml_datetimes: self.lower_toml_datetimes,
@@ -301,6 +308,7 @@ impl<'a> Options<'a> {
             transform_only: false,
             import_meta_main_value: None,
             lower_import_meta_main_for_node_js: false,
+            lower_import_meta: false,
             framework: None,
             repl_mode: false,
             lower_toml_datetimes: loader == options::Loader::Toml,
@@ -1217,6 +1225,68 @@ impl<'a> Parser<'a> {
                 });
                 uses_dirname = false;
                 uses_filename = false;
+            }
+        }
+
+        // `options.lower_import_meta`: declare the `var import_meta = {}` that
+        // non-inlined `import.meta` references point at, as a part that tree
+        // shaking can remove.
+        if p.options.lower_import_meta
+            && !p.import_meta_ref.is_empty()
+            && p.symbols.as_slice()[p.import_meta_ref.inner_index() as usize].use_count_estimate > 0
+        {
+            let import_meta_ref = p.import_meta_ref;
+            let binding = p.b(
+                B::Identifier {
+                    r#ref: import_meta_ref,
+                },
+                bun_ast::Loc::EMPTY,
+            );
+            let empty_object = p.new_expr(E::Object::default(), bun_ast::Loc::EMPTY);
+            let part_stmts = p.arena.alloc_slice_fill_with(1, |_| {
+                p.s(
+                    S::Local {
+                        kind: js_ast::LocalKind::KVar,
+                        decls: G::DeclList::init_one(G::Decl {
+                            binding,
+                            value: Some(empty_object),
+                        }),
+                        ..Default::default()
+                    },
+                    bun_ast::Loc::EMPTY,
+                )
+            });
+            let mut declared_symbols =
+                bun_ast::DeclaredSymbolList::init_capacity(1).expect("unreachable");
+            declared_symbols.append_assume_capacity(DeclaredSymbol {
+                ref_: import_meta_ref,
+                is_top_level: true,
+            });
+            before.push(js_ast::Part {
+                stmts: part_stmts.into(),
+                declared_symbols,
+                can_be_removed_if_unused: true,
+                ..Default::default()
+            });
+
+            let format_name = p.options.output_format.name();
+            for i in 0..p.empty_import_meta_locs.len() {
+                let loc = p.empty_import_meta_locs[i];
+                // Cover both tokens of `import.meta` when spelled normally.
+                let range = match p.source.contents.get(loc.to_usize()..) {
+                    Some(rest) if rest.starts_with(b"import.meta") => bun_ast::Range {
+                        loc,
+                        len: "import.meta".len() as i32,
+                    },
+                    _ => js_lexer::range_of_identifier(p.source, loc),
+                };
+                p.log().add_range_warning_fmt(
+                    Some(p.source),
+                    range,
+                    format_args!(
+                        "\"import.meta\" is not available with the \"{format_name}\" output format and will be empty"
+                    ),
+                );
             }
         }
 

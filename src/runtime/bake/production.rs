@@ -1,17 +1,13 @@
 //! Implements building a Bake application to production
 
 use bun_paths::strings;
-use core::cell::UnsafeCell;
-use core::mem::MaybeUninit;
 use core::ptr::NonNull;
 use std::io::Write as _;
-use std::sync::OnceLock;
 
 use bstr::BStr;
 
 use super::PatternBuffer;
 use crate::bake;
-use crate::bake::bake_body;
 use crate::bake::framework_router::{self, FrameworkRouter, OpaqueFileId};
 use bun_alloc::Arena;
 use bun_bundler::BundleV2;
@@ -61,16 +57,6 @@ fn side_name(s: bun_bundler::options::Side) -> &'static str {
     }
 }
 
-/// Process-lifetime backing storage for the dotenv singleton; `OnceLock` owns
-/// the allocation.
-struct DotenvSingleton {
-    loader: UnsafeCell<dotenv::Loader>,
-}
-// SAFETY: `build_command` runs single-threaded during CLI init; the singleton
-// is set exactly once before any reader exists.
-unsafe impl Sync for DotenvSingleton {}
-static DOTENV_SINGLETON: OnceLock<DotenvSingleton> = OnceLock::new();
-
 pub fn build_command(ctx: Context) -> crate::Result<()> {
     bake::print_warning();
 
@@ -103,27 +89,20 @@ pub fn build_command(ctx: Context) -> crate::Result<()> {
 
     let mut arena = Arena::new();
 
-    let vm_ptr = VirtualMachine::init_bake(jsc::virtual_machine::Options {
-        // arena: arena — dropped per §Allocators (global mimalloc)
+    // Installs the per-thread VM that `VirtualMachine::get{,_mut}` return below.
+    VirtualMachine::init_bake(jsc::virtual_machine::Options {
         log: NonNull::new(ctx.log),
         args: ctx.args.clone(),
         smol: ctx.runtime_options.smol,
         ..Default::default()
     })?;
-    // SAFETY: `init_bake` returns a freshly-allocated VM owned by this thread;
-    // unique access for the rest of this function.
-    let vm = unsafe { &mut *vm_ptr };
-    // Note: pass `vm_ptr` by value into the guard so the drop closure does
-    // not borrow the local (`defer!` would capture `&vm_ptr`, which under
-    // edition-2024 disjoint-capture rules collides with the `&mut *vm_ptr`
-    // re-borrows on the JSError path).
-    let _vm_guard = scopeguard::guard(vm_ptr, |p| {
-        // SAFETY: p is the unique live VM on this thread; its loop is alive, so
-        // queued work is released here rather than by a thread teardown.
-        unsafe {
-            (*p).release_queued_work();
-            (*p).destroy()
-        };
+    let vm = VirtualMachine::get_mut();
+    let _vm_guard = scopeguard::guard((), |()| {
+        // The loop is alive, so queued work is released here rather than by a
+        // thread teardown.
+        let vm = VirtualMachine::get_mut();
+        vm.release_queued_work();
+        vm.destroy();
     });
 
     // A special global object is used to allow registering virtual modules
@@ -197,33 +176,19 @@ pub fn build_command(ctx: Context) -> crate::Result<()> {
     vm.is_main_thread = true;
     jsc::virtual_machine::IS_MAIN_THREAD_VM.set(true);
 
-    // SAFETY: vm.jsc_vm is the live JSC::VM* set in `VirtualMachine::init_bake`;
-    // raw-ptr deref yields an unbounded `&VM` so the `ApiLock<'_>` does not
-    // borrow `vm` (the VirtualMachine) and the body below can keep using it.
-    //
     // Declaration order matters: `_api_lock` is bound before `pt` so LIFO drop
     // detaches `pt` (a JSC FFI call) *while the API lock is still held*, then
-    // releases the lock.
-    let _api_lock = unsafe { (*vm.jsc_vm).get_api_lock() };
-
-    // Note: `PerThread` owns its data. Start with an empty placeholder so Drop
-    // (which detaches the C++-side per-thread pointer) runs in this frame's
-    // LIFO order — under the API lock, before the VM is destroyed.
-    let mut pt = PerThread::placeholder(vm_ptr);
+    // releases the lock — before the VM is destroyed.
+    let _api_lock = VirtualMachine::get().jsc_vm().get_api_lock();
+    let mut pt: Option<AttachedPerThread> = None;
 
     match build_with_vm(ctx, &cwd, &mut pt) {
         Ok(()) => {}
         Err(crate::Error::JSError) => {
-            // SAFETY: vm.global is live for VM lifetime.
-            let global = unsafe { &*(*vm_ptr).global };
+            let vm = VirtualMachine::get_mut();
+            let global = vm.global();
             let err_value = global.take_exception(jsc::JsError::Thrown);
-            // SAFETY: see above.
-            unsafe {
-                (*vm_ptr)
-                    .print_error_like_object_to_console(err_value.to_error().unwrap_or(err_value))
-            };
-            // SAFETY: see above.
-            let vm = unsafe { &mut *vm_ptr };
+            vm.print_error_like_object_to_console(err_value.to_error().unwrap_or(err_value));
             if vm.exit_handler.exit_code == 0 {
                 vm.exit_handler.exit_code = 1;
             }
@@ -275,12 +240,12 @@ fn write_sourcemap_to_disk(
     Ok(())
 }
 
-fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<()> {
-    // `pt.vm` is the live per-thread VM's BackRef set in `build_command`;
-    // `as_ptr()` is `Copy` and does not borrow `pt`.
-    let vm_ptr: *mut VirtualMachine = pt.vm.as_ptr();
-    // SAFETY: exclusive access on this thread for the duration of the call.
-    let vm = unsafe { &mut *vm_ptr };
+fn build_with_vm(
+    ctx: Context,
+    cwd: &[u8],
+    pt_slot: &mut Option<AttachedPerThread>,
+) -> crate::Result<()> {
+    let vm = VirtualMachine::get_mut();
     // Load and evaluate the configuration module. `global()` returns
     // `&'static`, decoupled from `vm` so later `&mut vm` reborrows are allowed.
     let global = vm.global();
@@ -392,7 +357,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
                 ))));
             };
 
-            bake_body::UserOptions::from_js(app, global).map_err(js_err)?
+            bake::UserOptions::from_js(app, global).map_err(js_err)?
         }
         Unwrapped::Rejected(err) => {
             return Err(js_err(global.throw_value(err.to_error().unwrap_or(err))));
@@ -408,77 +373,57 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
         .unwrap_or(false);
 
     // this is probably wrong
-    // Note: process-lifetime dotenv singleton owned via `OnceLock`
-    // (PORTING.md §Forbidden: no leaking).
-    let backing = DOTENV_SINGLETON.get_or_init(|| DotenvSingleton {
-        loader: UnsafeCell::new(dotenv::Loader::init()),
-    });
-    // SAFETY: single-threaded CLI init; `get_or_init` guarantees one-time
-    // setup and `backing` is never moved (static storage).
-    let loader = unsafe { &mut *backing.loader.get() };
+    let mut loader = Box::new(dotenv::Loader::init());
     loader.map.put(b"NODE_ENV", b"production")?;
-    dotenv::set_instance(std::ptr::from_mut::<dotenv::Loader>(loader));
+    // Process-lifetime singleton: the global `INSTANCE` becomes its owner.
+    dotenv::set_instance(bun_core::heap::into_raw(loader));
 
-    // In-place init via `MaybeUninit` (`init_transpiler_with_options`
-    // keeps the out-param shape shared with the dev-server path).
-    let mut client_transpiler = MaybeUninit::<Transpiler>::uninit();
-    let mut server_transpiler = MaybeUninit::<Transpiler>::uninit();
-    let mut ssr_transpiler = MaybeUninit::<Transpiler>::uninit();
     // `vm.log` is set from `ctx.log` (non-null, process-lifetime);
     // `log_mut()` is the safe accessor encapsulating the NonNull deref.
     let vm_log = vm.log_mut().unwrap();
-    framework.init_transpiler_with_options(
+    let mut server_transpiler = framework.init_transpiler_with_options(
         &options.arena,
         vm_log,
-        bake_body::Mode::ProductionStatic,
-        bake_body::Graph::Server,
-        &mut server_transpiler,
+        bake::Mode::ProductionStatic,
+        bake::Graph::Server,
         &options.bundler_options.server,
         SourceMapOption::from_api(Some(options.bundler_options.server.source_map)),
         options.bundler_options.server.minify_whitespace,
         options.bundler_options.server.minify_syntax,
         options.bundler_options.server.minify_identifiers,
     )?;
-    framework.init_transpiler_with_options(
+    let mut client_transpiler = framework.init_transpiler_with_options(
         &options.arena,
         vm_log,
-        bake_body::Mode::ProductionStatic,
-        bake_body::Graph::Client,
-        &mut client_transpiler,
+        bake::Mode::ProductionStatic,
+        bake::Graph::Client,
         &options.bundler_options.client,
         SourceMapOption::from_api(Some(options.bundler_options.client.source_map)),
         options.bundler_options.client.minify_whitespace,
         options.bundler_options.client.minify_syntax,
         options.bundler_options.client.minify_identifiers,
     )?;
-    if separate_ssr_graph {
-        framework.init_transpiler_with_options(
+    let mut ssr_transpiler = if separate_ssr_graph {
+        Some(framework.init_transpiler_with_options(
             &options.arena,
             vm_log,
-            bake_body::Mode::ProductionStatic,
-            bake_body::Graph::Ssr,
-            &mut ssr_transpiler,
+            bake::Mode::ProductionStatic,
+            bake::Graph::Ssr,
             &options.bundler_options.ssr,
             SourceMapOption::from_api(Some(options.bundler_options.ssr.source_map)),
             options.bundler_options.ssr.minify_whitespace,
             options.bundler_options.ssr.minify_syntax,
             options.bundler_options.ssr.minify_identifiers,
-        )?;
-    }
-    // SAFETY: written above by init_transpiler_with_options.
-    let server_transpiler = unsafe { server_transpiler.assume_init_mut() };
-    // SAFETY: written above by init_transpiler_with_options.
-    let client_transpiler = unsafe { client_transpiler.assume_init_mut() };
-    // `ssr_transpiler` stays `MaybeUninit` and is only `assume_init_mut()`'d
-    // inside `if separate_ssr_graph` blocks below — Rust forbids forming
-    // `&mut T` to uninitialized memory regardless of later use.
+        )?)
+    } else {
+        None
+    };
 
     if ctx.bundler_options.bake_debug_disable_minify {
         let mut targets: Vec<&mut Transpiler> =
             vec![&mut *client_transpiler, &mut *server_transpiler];
-        if separate_ssr_graph {
-            // SAFETY: written above by init_transpiler_with_options when separate_ssr_graph.
-            targets.push(unsafe { ssr_transpiler.assume_init_mut() });
+        if let Some(ssr) = &mut ssr_transpiler {
+            targets.push(ssr);
         }
         for transpiler in targets {
             transpiler.options.minify_syntax = false;
@@ -499,27 +444,24 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     // these share pointers right now, so setting NODE_ENV == production on one should affect all
     debug_assert!(core::ptr::eq(server_transpiler.env, client_transpiler.env));
 
-    *framework = match framework.resolve(
-        &mut server_transpiler.resolver,
-        &mut client_transpiler.resolver,
-        &options.arena,
-    ) {
-        Ok(f) => f,
-        Err(_) => {
-            if framework.is_built_in_react {
-                // SAFETY: `server_transpiler.log` is the process-lifetime ctx.log.
-                bake_body::Framework::add_react_install_command_note(unsafe {
-                    &mut *server_transpiler.log
-                })?;
-            }
-            bun_core::err_generic!("Failed to resolve all imports required by the framework");
-            Output::flush();
-            let _ = server_transpiler
-                .log()
-                .print(std::ptr::from_mut(Output::error_writer()));
-            Global::crash();
+    if framework
+        .resolve(
+            &mut server_transpiler.resolver,
+            &mut client_transpiler.resolver,
+            &options.arena,
+        )
+        .is_err()
+    {
+        if framework.is_built_in_react {
+            bake::Framework::add_react_install_command_note(server_transpiler.log_mut());
         }
-    };
+        bun_core::err_generic!("Failed to resolve all imports required by the framework");
+        Output::flush();
+        let _ = server_transpiler
+            .log()
+            .print(std::ptr::from_mut(Output::error_writer()));
+        Global::crash();
+    }
 
     bun_core::pretty_errorln!("Bundling routes");
     Output::flush();
@@ -545,7 +487,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     };
 
     for fsr in &framework.file_system_router_types {
-        let joined_root = resolve_path::join_abs::<platform::Auto>(cwd, fsr.root);
+        let joined_root = resolve_path::join_abs::<platform::Auto>(cwd, &fsr.root);
         let Some(entry) = server_transpiler
             .resolver
             .read_dir_info_ignore_error(joined_root)
@@ -553,8 +495,8 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
             continue;
         };
         let server_file =
-            entry_points.get_or_put_entry_point(fsr.entry_server, bake::Side::Server)?;
-        let client_file = if let Some(client) = fsr.entry_client {
+            entry_points.get_or_put_entry_point(&fsr.entry_server, bake::Side::Server)?;
+        let client_file = if let Some(client) = &fsr.entry_client {
             Some(entry_points.get_or_put_entry_point(client, bake::Side::Client)?)
         } else {
             None
@@ -567,12 +509,12 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
             ignore_dirs: fsr
                 .ignore_dirs
                 .iter()
-                .map(|s| Box::<[u8]>::from(*s))
+                .map(|s| Box::<[u8]>::from(&**s))
                 .collect(),
             extensions: fsr
                 .extensions
                 .iter()
-                .map(|s| Box::<[u8]>::from(*s))
+                .map(|s| Box::<[u8]>::from(&**s))
                 .collect(),
             // `Style` is `Clone` (the `JavascriptDefined` arm panics inside
             // `clone()`).
@@ -590,28 +532,16 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
         framework_router::InsertionContext::wrap(&mut entry_points),
     )?;
 
-    // `bake_body::Framework` is the runtime-side superset; the bundler reads only
-    // `built_in_modules` / `server_components` / `react_fast_refresh` /
-    // `is_built_in_react` via its lower-tier `bake_types::Framework` view.
-    // Project once here via the shared helper so the field-shape (e.g.
-    // `BuiltInModule` `&'static [u8]` → `Box<[u8]>`) stays in one place.
-    // (The two Framework types could only merge if `FileSystemRouterType` /
-    // `framework_router::Style` moved down to bun_bundler.)
+    // The bundler reads only `built_in_modules` / `server_components` /
+    // `react_fast_refresh` / `is_built_in_react` via its lower-tier
+    // `bake_types::Framework` view.
     let bundler_framework = framework.as_bundler_view();
 
     let bundled_outputs_list: Vec<OutputFile> = {
-        // Transpiler pointers — reborrow via raw to sidestep the
-        // `&'a mut Transpiler<'a>` invariant lifetime on the bundler API.
-        // SAFETY: the three transpilers live in this stack frame and outlive
-        // the bundle call; `BundleV2` does not retain them past return.
-        let server_ptr: *mut Transpiler = &raw mut *server_transpiler;
-        let client_ptr: *mut Transpiler = &raw mut *client_transpiler;
-        let ssr_ptr: *mut Transpiler = if separate_ssr_graph {
-            // SAFETY: written above by init_transpiler_with_options when separate_ssr_graph.
-            core::ptr::from_mut(unsafe { ssr_transpiler.assume_init_mut() })
-        } else {
-            server_ptr
-        };
+        // The three boxed transpilers outlive the bundle call; `BundleV2`
+        // holds them as non-exclusive back-references.
+        let client_ptr = NonNull::from(&mut *client_transpiler);
+        let ssr_ptr = ssr_transpiler.as_deref_mut().map(NonNull::from);
 
         // Construct the `AnyEventLoop` enum
         // value (NOT a pointer-cast: the bundler matches on its discriminant).
@@ -624,12 +554,11 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
         // (in the bundler), not a user-facing diagnostic to swallow.
         BundleV2::generate_from_bake_production_cli(
             &entry_points,
-            // SAFETY: see `server_ptr` comment above.
-            unsafe { &mut *server_ptr },
+            bun_ptr::ParentRef::from_ref_mut(&mut *server_transpiler),
             bun_bundler::bundle_v2::BakeOptions {
                 framework: bundler_framework,
-                client_transpiler: NonNull::new(client_ptr).expect("stack-owned transpiler"),
-                ssr_transpiler: NonNull::new(ssr_ptr).expect("stack-owned transpiler"),
+                client_transpiler: client_ptr,
+                ssr_transpiler: ssr_ptr,
                 plugins: options.bundler_options.plugin,
             },
             &options.arena,
@@ -808,15 +737,18 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
         }
     }
 
-    *pt = PerThread::init(
-        vm_ptr,
-        entry_points,
-        bundled_outputs_list,
-        module_keys,
-        output_module_map,
-        source_maps,
-    )?;
-    pt.attach();
+    debug_assert!(pt_slot.is_none());
+    let pt: &mut PerThread = pt_slot.insert(
+        Box::new(PerThread::init(
+            vm,
+            entry_points,
+            bundled_outputs_list,
+            module_keys,
+            output_module_map,
+            source_maps,
+        )?)
+        .attach(),
+    );
 
     // Static site generator
     let server_render_funcs =
@@ -991,8 +923,8 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
         let mut next: Option<framework_router::RouteIndex> = Some(route_index);
         while let Some(current_index) = next {
             let current = router.route_ptr(current_index);
-            pattern.prepend_part(current.part);
-            match current.part {
+            pattern.prepend_part(current.part.get());
+            match current.part.get() {
                 framework_router::Part::Param(name) | framework_router::Part::CatchAll(name) => {
                     params_buf.push(name);
                 }
@@ -1159,28 +1091,24 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
             .map_err(js_err)?;
     }
 
-    // SAFETY: C++ never returns null (allocates a `JSPromise` on the GC heap);
-    // `JSPromise` is an opaque `UnsafeCell`-backed handle so `&mut *` is sound.
-    let render_promise = unsafe {
-        &mut *BakeRenderRoutesForProdStatic(
-            global,
-            &BunString::from_bytes(&root_dir_path),
-            pt.all_server_files.as_ref().unwrap().get(),
-            server_render_funcs,
-            server_param_funcs,
-            client_entry_urls,
-            route_patterns,
-            route_nested_files,
-            route_type_and_flags,
-            route_source_files,
-            route_param_info,
-            route_style_references,
-        )
-    };
+    // C++ never returns null (allocates a `JSPromise` on the GC heap).
+    let render_promise = JSPromise::opaque_mut(BakeRenderRoutesForProdStatic(
+        global,
+        &BunString::from_bytes(&root_dir_path),
+        pt.all_server_files.as_ref().unwrap().get(),
+        server_render_funcs,
+        server_param_funcs,
+        client_entry_urls,
+        route_patterns,
+        route_nested_files,
+        route_type_and_flags,
+        route_source_files,
+        route_param_info,
+        route_style_references,
+    ));
     render_promise.set_handled();
-    // Rebind from the raw pointer: `PerThread::init`/`attach`/`load_bundled_module`
-    // above accessed the same allocation through `vm_ptr`, invalidating the
-    // earlier `&mut` under Stacked Borrows.
+    // Rebind: `load_bundled_module` above went through the VM singleton,
+    // invalidating the earlier `&mut` under Stacked Borrows.
     let vm = VirtualMachine::get().as_mut();
     vm.wait_for_promise(AnyPromise::Normal(render_promise))
         .map_err(|stopped| js_err(stopped.throw(vm.global())))?;
@@ -1199,13 +1127,9 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     Ok(())
 }
 
-/// unsafe function, must be run outside of the event loop
-/// quits the process on exception
-fn load_module(
-    vm: *mut VirtualMachine,
-    global: &JSGlobalObject,
-    key: JSValue,
-) -> crate::Result<JSValue> {
+/// Must be run outside of the event loop.
+/// Quits the process on exception.
+fn load_module(global: &JSGlobalObject, key: JSValue) -> crate::Result<JSValue> {
     let promise_value = BakeLoadModuleByKey(global, key);
     let promise: *mut jsc::JSInternalPromise = match promise_value.as_any_promise().unwrap() {
         AnyPromise::Internal(p) => p,
@@ -1214,11 +1138,6 @@ fn load_module(
     // S012: `JSInternalPromise` (= `JSPromise`) is an `opaque_ffi!` ZST —
     // safe `*mut → &mut` deref via the const-asserted accessor.
     jsc::JSInternalPromise::opaque_mut(promise).set_handled();
-    // Note: we take `*mut VirtualMachine` (not `&VirtualMachine`) so the provenance
-    // permits mutation — casting a `&T` to `*mut T` and writing through it is
-    // UB. The raw pointer flows from `VirtualMachine::init_bake` unchanged.
-    //
-    let _ = vm;
     let vm_ref = VirtualMachine::get();
     vm_ref
         .as_mut()
@@ -1252,19 +1171,18 @@ fn bake_get_on_module_namespace(
     property: &[u8],
 ) -> Option<JSValue> {
     unsafe extern "C" {
-        // PRECONDITION: `ptr` must be readable for `len` bytes (C++ builds an
-        // `Identifier` from the slice). Cannot be `safe fn` — raw ptr+len pair
-        // carries a caller-side validity precondition.
-        #[link_name = "BakeGetOnModuleNamespace"]
-        fn f(global: *const JSGlobalObject, module: JSValue, ptr: *const u8, len: usize)
-        -> JSValue;
+        safe fn BakeGetOnModuleNamespace(
+            global: &JSGlobalObject,
+            module: JSValue,
+            key: bun_core::ffi::FfiSlice<'_, u8>,
+        ) -> JSValue;
     }
-    // SAFETY: `global` is a live `&JSGlobalObject`, `module` is a stack-held
-    // `JSValue`, and `property.as_ptr()`/`len()` describe a valid borrowed
-    // `&[u8]` for the call duration — discharges the ptr+len precondition above.
-    let result: JSValue = unsafe { f(global, module, property.as_ptr(), property.len()) };
-    debug_assert!(!result.is_empty());
-    Some(result)
+    let result = BakeGetOnModuleNamespace(global, module, property.into());
+    if result.is_empty() {
+        None
+    } else {
+        Some(result)
+    }
 }
 
 // Renders all routes for static site generation by calling the JavaScript implementation.
@@ -1299,8 +1217,8 @@ unsafe extern "C" {
     ) -> *mut JSPromise;
 }
 
-#[unsafe(no_mangle)]
-extern "C" fn BakeToWindowsPath(input: &BunString) -> BunString {
+// HOST_EXPORT(BakeToWindowsPath, c)
+pub fn bake_to_windows_path(input: &BunString) -> BunString {
     #[cfg(unix)]
     {
         let _ = input;
@@ -1316,8 +1234,8 @@ extern "C" fn BakeToWindowsPath(input: &BunString) -> BunString {
     }
 }
 
-#[unsafe(no_mangle)]
-extern "C" fn BakeProdResolve(
+// HOST_EXPORT(BakeProdResolve, c)
+pub fn bake_prod_resolve(
     global: &JSGlobalObject,
     a_str: &BunString,
     specifier_str: &BunString,
@@ -1416,9 +1334,6 @@ impl framework_router::InsertionHandler for EntryPointMap {
 
 /// Data used on each rendering thread. Contains all information in the bundle needed to render.
 /// This is referred to as `pt` in variable/field naming, and Bake::ProductionPerThread in C++
-///
-/// Owns the backing storage so the value can outlive `build_with_vm` in the
-/// caller's frame without dangling references.
 pub struct PerThread {
     // Shared Data (owned)
     /// Owns `input_files` (keys) and `output_indexes` (values).
@@ -1431,34 +1346,49 @@ pub struct PerThread {
     pub(crate) source_maps: StringArrayHashMap<OutputFileIndex>,
 
     // Thread-local
-    pub(crate) vm: bun_ptr::BackRef<VirtualMachine, bun_ptr::Mut>,
+    pub(crate) vm: bun_ptr::BackRef<VirtualMachine>,
     /// Indexed by entry point index (OpaqueFileId)
     pub(crate) loaded_files: AutoBitSet,
     /// JSArray of JSString, indexed by entry point index (OpaqueFileId)
-    // Strong is required for JSValue struct fields. `None` is the pre-init
-    // state; `PerThread::init` fills it. Strong's Drop releases the GC root.
+    // Strong is required for JSValue struct fields. Strong's Drop releases the
+    // GC root.
     pub(crate) all_server_files: Option<bun_jsc::Strong>,
-    /// `attach()` was called and Drop should detach. The placeholder created in
-    /// `build_command` before `init` must not call into C++ on drop.
-    attached: bool,
 }
 
-// C++ treats `PerThread` as an opaque pointer (Bake::ProductionPerThread*); the Rust
-// layout is irrelevant across the FFI boundary, so silence the improper_ctypes lint.
-// C++ stores `pt` opaquely on the global (never dereferenced C++-side; null
-// detaches), so the call has no precondition beyond a live `&JSGlobalObject`
-// — declare `safe fn`.
+// C++ stores `pt` opaquely on the global and hands it back to `BakeProdLoad`
+// while attached; null detaches.
 #[allow(improper_ctypes)]
 unsafe extern "C" {
-    safe fn BakeGlobalObject__attachPerThreadData(global: &JSGlobalObject, pt: *mut PerThread);
+    safe fn BakeGlobalObject__attachPerThreadData(global: &JSGlobalObject, pt: *const PerThread);
+}
+
+/// A heap-allocated [`PerThread`] whose address is registered with the C++
+/// global (see `BakeProdLoad`); dropping it detaches before the allocation is
+/// freed.
+pub struct AttachedPerThread(Box<PerThread>);
+
+impl core::ops::Deref for AttachedPerThread {
+    type Target = PerThread;
+    fn deref(&self) -> &PerThread {
+        &self.0
+    }
+}
+
+impl core::ops::DerefMut for AttachedPerThread {
+    fn deref_mut(&mut self) -> &mut PerThread {
+        &mut self.0
+    }
+}
+
+impl Drop for AttachedPerThread {
+    fn drop(&mut self) {
+        BakeGlobalObject__attachPerThreadData(self.0.global(), core::ptr::null());
+    }
 }
 
 impl PerThread {
-    /// Safe `&VirtualMachine` accessor for the JSC_BORROW `vm` back-pointer.
     #[inline]
     pub(crate) fn vm(&self) -> &VirtualMachine {
-        // BackRef invariant: VM outlives `PerThread` (set in `init`/`placeholder`
-        // from `init_bake`).
         self.vm.get()
     }
 
@@ -1468,26 +1398,10 @@ impl PerThread {
         self.vm().global()
     }
 
-    /// Empty placeholder used in `build_command` before `build_with_vm` fills it.
-    fn placeholder(vm: *mut VirtualMachine) -> PerThread {
-        PerThread {
-            entry_points: EntryPointMap::default(),
-            bundled_outputs: Vec::new(),
-            module_keys: Vec::new(),
-            module_map: StringArrayHashMap::default(),
-            source_maps: StringArrayHashMap::default(),
-            // SAFETY: `vm` is the live per-thread VM from `init_bake` (non-null,
-            // write provenance); outlives `PerThread`.
-            vm: unsafe { bun_ptr::BackRef::from_raw_mut(vm) },
-            loaded_files: AutoBitSet::init_empty(0).expect("unreachable"),
-            all_server_files: None,
-            attached: false,
-        }
-    }
-
-    /// After initializing, call `attach`
+    /// After initializing, call `attach`. `vm` is the per-thread VM, which
+    /// outlives `PerThread`.
     pub(crate) fn init(
-        vm: *mut VirtualMachine,
+        vm: &VirtualMachine,
         entry_points: EntryPointMap,
         bundled_outputs: Vec<OutputFile>,
         module_keys: Vec<BunString>,
@@ -1496,11 +1410,8 @@ impl PerThread {
     ) -> crate::Result<PerThread> {
         let n = entry_points.files.count();
         let loaded_files = AutoBitSet::init_empty(n)?;
-        // errdefer loaded_files.deinit() — handled by Drop on error path
 
-        // SAFETY: BackRef invariant — vm is the live per-thread VM from `init_bake`
-        // (non-null, write provenance); outlives PerThread.
-        let vm = unsafe { bun_ptr::BackRef::from_raw_mut(vm) };
+        let vm = bun_ptr::BackRef::new(vm);
         let global = vm.global();
         let all_server_files = Some(bun_jsc::Strong::create(
             JSValue::create_empty_array(global, n).map_err(js_err)?,
@@ -1516,18 +1427,12 @@ impl PerThread {
             vm,
             loaded_files,
             all_server_files,
-            attached: false,
         })
     }
 
-    pub(crate) fn attach(&mut self) {
-        // `self.global()` derefs the JSC_BORROW `vm` back-pointer (live for the
-        // VM lifetime); C++ stores `pt` opaquely and hands it back via
-        // `BakeProdResolve`, so passing `from_mut(self)` is just identity —
-        // detached in Drop.
-        let global = self.global();
-        BakeGlobalObject__attachPerThreadData(global, std::ptr::from_mut::<PerThread>(self));
-        self.attached = true;
+    pub(crate) fn attach(self: Box<Self>) -> AttachedPerThread {
+        BakeGlobalObject__attachPerThreadData(self.global(), &raw const *self);
+        AttachedPerThread(self)
     }
 
     pub(crate) fn output_index(&self, id: OpaqueFileId) -> OutputFileIndex {
@@ -1546,7 +1451,6 @@ impl PerThread {
     pub(crate) fn load_bundled_module(&self, id: OpaqueFileId) -> crate::Result<JSValue> {
         let global = self.global();
         load_module(
-            self.vm.as_ptr(),
             global,
             self.module_keys[id.get() as usize]
                 .to_js(global)
@@ -1578,23 +1482,10 @@ impl PerThread {
     }
 }
 
-impl Drop for PerThread {
-    fn drop(&mut self) {
-        if self.attached {
-            // Passing null detaches the previously-attached pointer; `global()`
-            // goes through the safe `vm()` accessor (VM outlives PerThread).
-            BakeGlobalObject__attachPerThreadData(self.global(), core::ptr::null_mut());
-        }
-        // `all_server_files: Strong` is dropped automatically, releasing the GC root.
-    }
-}
-
-/// Given a key, returns the source code to load.
-#[unsafe(no_mangle)]
-extern "C" fn BakeProdLoad(pt: *mut PerThread, key: &BunString) -> BunString {
-    // SAFETY: `pt` is the non-null pointer previously attached via
-    // BakeGlobalObject__attachPerThreadData; C++ only calls this while attached.
-    let pt = unsafe { &*pt };
+/// Given a key, returns the source code to load. `pt` is the pointer
+/// attached via `PerThread::attach`; C++ only calls this while attached.
+// HOST_EXPORT(BakeProdLoad, c)
+pub fn bake_prod_load(pt: &crate::bake::production_body::PerThread, key: &BunString) -> BunString {
     let utf8 = key.to_utf8();
     log!("BakeProdLoad: {}\n", BStr::new(utf8.slice()));
     if let Some(value) = pt.module_map.get(utf8.slice()) {

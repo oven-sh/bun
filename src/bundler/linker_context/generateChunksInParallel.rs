@@ -786,7 +786,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
     }
 
     // Don't write to disk if compile mode is enabled - we need buffer values for compilation
-    let is_compile = bundler.transpiler.options.compile_mode.is_executable();
+    let is_compile = bundler.transpiler().options.compile_mode.is_executable();
     if root_path.len() > 0 && !is_compile {
         write_output_files_to_disk(
             c,

@@ -140,15 +140,23 @@ extern "C" JSC::EncodedJSValue BakeGetDefaultExportFromModule(
   return JSC::JSValue::encode(uncheckedDowncast<JSC::JSModuleNamespaceObject>(JSC::JSValue::decode(BakeGetModuleNamespace(global, keyValue)))->get(global, vm.propertyNames->defaultKeyword));
 }
 
-// There were issues when trying to use JSValue.get from zig
+// `bun_core::ffi::FfiSlice<u8>`.
+struct BakeModuleNamespaceKey {
+  const unsigned char* ptr;
+  size_t len;
+};
+
 extern "C" JSC::EncodedJSValue BakeGetOnModuleNamespace(
   JSC::JSGlobalObject* global,
-  JSC::JSModuleNamespaceObject* moduleNamespace,
-  const unsigned char* key,
-  size_t keyLength
+  JSC::EncodedJSValue moduleNamespaceValue,
+  BakeModuleNamespaceKey key
 ) {
+  auto* moduleNamespace = dynamicDowncast<JSC::JSModuleNamespaceObject>(JSC::JSValue::decode(moduleNamespaceValue));
+  if (!moduleNamespace) {
+    return {};
+  }
   auto& vm = JSC::getVM(global);
-  const auto propertyString = String(StringImpl::createWithoutCopying({ key, keyLength }));
+  const auto propertyString = String(StringImpl::createWithoutCopying({ key.ptr, key.len }));
   const auto identifier = JSC::Identifier::fromString(vm, propertyString);
   const auto property = JSC::PropertyName(identifier);
   return JSC::JSValue::encode(moduleNamespace->get(global, property));

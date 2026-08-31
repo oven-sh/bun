@@ -118,11 +118,10 @@ impl BuildCommand {
         // `exec` never returns until process exit (`exit_or_watch` diverges),
         // so use the shared CLI arena instead of allocating a fresh one.
         let arena: &'static bun_alloc::Arena = crate::cli::cli_arena();
-        // Note: `generate_from_cli` takes `&'a mut Transpiler<'a>`, which
-        // borrows the transpiler for its full lifetime — dropck then rejects a
-        // stack local because the borrow would still be live in its destructor.
-        // Allocate in the process-lifetime arena (same rationale as `arena`;
-        // `exec` diverges so this is never dropped).
+        // The bundle keeps a back-reference to the transpiler (under `--watch`
+        // for the rest of the process), so allocate it in the process-lifetime
+        // arena (same rationale as `arena`; `exec` diverges so this is never
+        // dropped).
         let this_transpiler: &mut transpiler::Transpiler<'static> = arena.alloc(
             transpiler::Transpiler::init(arena, log, ctx.args.clone(), None)?,
         );
@@ -599,10 +598,9 @@ impl BuildCommand {
         let mut minify_duration: u64 = 0;
         let mut input_code_length: u64 = 0;
 
-        // Note: `BundleV2::generate_from_cli` takes `&'a mut Transpiler<'a>`,
-        // which (with `'a = 'static` from the leaked arena) borrows
-        // `this_transpiler` for the rest of its life. Snapshot every options
-        // field read after that point so the borrow checker is satisfied.
+        // `BundleV2::generate_from_cli` keeps a back-reference to
+        // `this_transpiler` (under `--watch` for the rest of the process), so
+        // snapshot the options fields read after that point up front.
         let opt_output_dir: Box<[u8]> = this_transpiler.options.output_dir.clone();
         let opt_minify_identifiers = this_transpiler.options.minify_identifiers;
         let opt_minify_whitespace = this_transpiler.options.minify_whitespace;
@@ -661,7 +659,7 @@ impl BuildCommand {
             let mut event_loop = bun_event_loop::AnyEventLoop::init();
 
             let build_result = match BundleV2::generate_from_cli(
-                this_transpiler,
+                bun_ptr::ParentRef::from_ref_mut(this_transpiler),
                 arena,
                 Some(core::ptr::NonNull::from(&mut event_loop)),
                 ctx.debug.hot_reload == HotReload::Watch,

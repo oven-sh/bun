@@ -865,3 +865,36 @@ devTest("barrel optimization: namespace re-export cycle through a star-exported 
     await c.expectMessage("result: object Y KEEP DEEP OTHER");
   },
 });
+devTest("fileSystemRouterTypes[n].ignoreDirs skips route files under ignored directories", {
+  framework: {
+    ...minimalFramework,
+    fileSystemRouterTypes: [
+      {
+        ...minimalFramework.fileSystemRouterTypes[0],
+        ignoreDirs: ["ignored"],
+      },
+    ],
+  },
+  files: {
+    "routes/index.ts": `
+      export default function (req, meta) {
+        return new Response('index');
+      }
+    `,
+    "routes/kept/index.ts": `
+      export default function (req, meta) {
+        return new Response('kept');
+      }
+    `,
+    "routes/ignored/index.ts": `
+      export default function (req, meta) {
+        return new Response('should not be routed');
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("index");
+    await dev.fetch("/kept").equals("kept");
+    await dev.fetch("/ignored").expect404();
+  },
+});

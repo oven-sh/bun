@@ -133,12 +133,12 @@ class SlotVisitor;
 
 #define BUN_COMMON_STRINGS_INDEX_ENTRY(name, ...) name,
 #define BUN_COMMON_STRINGS_SLOT(name, ...) JSC::JSString* m_##name { nullptr };
-#define BUN_COMMON_STRINGS_ACCESSOR(name, ...)  \
-    JSC::JSString* name##String()               \
-    {                                           \
-        if (!m_##name) [[unlikely]]             \
-            initialize(m_##name, Index::name);  \
-        return m_##name;                        \
+#define BUN_COMMON_STRINGS_ACCESSOR(name, ...) \
+    JSC::JSString* name##String()              \
+    {                                          \
+        if (!m_##name) [[unlikely]]            \
+            initialize(m_##name, Index::name); \
+        return m_##name;                       \
     }
 
 namespace Bun {

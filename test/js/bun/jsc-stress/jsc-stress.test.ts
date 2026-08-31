@@ -121,6 +121,8 @@ const jsFixtures = [
   "varargs-inlined-simple-exit.js",
   "loop-unrolling.js",
   "licm-no-pre-header.js",
+  // Runtime
+  "json-stringify-cyclic-depth-limit.js",
 ];
 
 const wasmFixtures = [

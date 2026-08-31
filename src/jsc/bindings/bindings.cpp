@@ -4014,9 +4014,28 @@ JSC::JSPromise* JSC__JSPromise__resolvedPromise(JSC::JSGlobalObject* globalObjec
     promise->markAsHandled();
 }
 
-[[ZIG_EXPORT(nothrow)]] bool JSC__JSPromise__isThenFastAndNonObservable(JSC::JSPromise* promise)
+// The coercion `await` applies to a value, spec PromiseResolve(%Promise%, value): a promise
+// whose constructor is %Promise% is returned as is, so no then() call is observable on it
+// even when Promise.prototype.then is patched. Anything else is adopted by a fresh promise
+// whose resolve steps read the value's `then` once and call it. Returns nullptr when the
+// value is not a thenable (`then` is not callable): the caller already holds the outcome.
+[[ZIG_EXPORT(check_slow)]] JSC::JSPromise* JSC__JSPromise__awaitable(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedValue)
 {
-    return promise->isThenFastAndNonObservable();
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSC::JSValue value = JSC::JSValue::decode(encodedValue);
+    if (!value.isObject())
+        return nullptr;
+    JSC::JSPromise* promise = JSC::JSPromise::resolvedPromise(globalObject, value);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    if (JSC::JSValue(promise) == value)
+        return promise;
+    // The adopter's outcome is the caller's to observe. A `then` getter that threw has
+    // already rejected it, so the unhandled rejection tracker must not report it.
+    promise->markAsHandled();
+    if (promise->status() == JSC::JSPromise::Status::Fulfilled)
+        return nullptr;
+    return promise;
 }
 
 #pragma mark - JSC::JSInternalPromise (now aliased to JSPromise)

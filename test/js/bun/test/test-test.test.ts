@@ -839,6 +839,22 @@ describe.concurrent("thenable test callbacks", () => {
           return { then: null };
         });
 
+        // A native promise is awaited the way \`await\` awaits it: without a then()
+        // call, even while Promise.prototype.then is replaced (the WPT streams
+        // suite does this inside a test body).
+        test("a plain promise is awaited without calling a patched then()", async () => {
+          const then = Promise.prototype.then;
+          Promise.prototype.then = () => {
+            throw new Error("patched then() called");
+          };
+          try {
+            await new Promise(resolve => setImmediate(resolve));
+            order.push("patched");
+          } finally {
+            Promise.prototype.then = then;
+          }
+        });
+
         test("every value settled before the next test started", () => {
           expect(order).toEqual([
             "beforeEach", "subclass",
@@ -847,6 +863,7 @@ describe.concurrent("thenable test callbacks", () => {
             "beforeEach",
             "beforeEach", "then read", "thenable",
             "beforeEach", "done",
+            "beforeEach", "patched",
             "beforeEach",
           ]);
         });
@@ -877,12 +894,13 @@ describe.concurrent("thenable test callbacks", () => {
       (pass) a Bun.$ shell promise returned directly is run and awaited
       (pass) a plain thenable is awaited
       (pass) a non-thenable object does not complete the test
+      (pass) a plain promise is awaited without calling a patched then()
       (pass) every value settled before the next test started
 
-       7 pass
+       8 pass
        0 fail
        2 expect() calls
-      Ran 7 tests across 1 file."
+      Ran 8 tests across 1 file."
       ,
         "stdout": "bun test <version> (<revision>)",
       }

@@ -1155,6 +1155,27 @@ impl BunTest {
 
         done_callback.ensure_still_alive();
 
+        // Drain unhandled promise rejections.
+        loop {
+            // Prevent the user's Promise rejection from going into the uncaught promise rejection queue.
+            if !result.is_empty() {
+                if let Some(promise) = result.as_promise() {
+                    // SAFETY: `as_promise` returned a non-null GC-managed JSPromise.
+                    unsafe {
+                        if (*promise).status() == PromiseStatus::Rejected {
+                            (*promise).set_handled();
+                        }
+                    }
+                }
+            }
+
+            let prev_unhandled_count = vm.unhandled_error_counter;
+            let _ = global_this.handle_rejected_promises();
+            if vm.unhandled_error_counter == prev_unhandled_count {
+                break;
+            }
+        }
+
         // A lazy `Promise` subclass (Bun.SQL's `Query`) or a plain thenable is awaited
         // through its own `then()`; `JSValue::then` alone would never start its work.
         let mut awaited: Option<&mut bun_jsc::JSPromise> = None;
@@ -1163,27 +1184,11 @@ impl BunTest {
                 Ok(promise) => awaited = promise,
                 Err(_) => {
                     global_this.clear_termination_exception();
-                    // SAFETY: re-derive after the `then` getter ran JS; no outer `&mut` was held across it.
+                    // SAFETY: re-derive after the `constructor`/`then` getter ran JS; no outer `&mut` was held across it.
                     unsafe { (*this).on_uncaught_exception(global_this, global_this.try_take_exception(), false, &cfg_data) };
                     bun_core::scoped_log!(bun_test_group, "callTestCallback -> thenable adoption threw");
                     result = JSValue::ZERO;
                 }
-            }
-        }
-
-        // Drain unhandled promise rejections.
-        loop {
-            // Prevent the user's Promise rejection from going into the uncaught promise rejection queue.
-            if let Some(promise) = awaited.as_deref_mut() {
-                if promise.status() == PromiseStatus::Rejected {
-                    promise.set_handled();
-                }
-            }
-
-            let prev_unhandled_count = vm.unhandled_error_counter;
-            let _ = global_this.handle_rejected_promises();
-            if vm.unhandled_error_counter == prev_unhandled_count {
-                break;
             }
         }
 

@@ -13,7 +13,10 @@ use super::{
 };
 use crate::lockfile_real as lockfile;
 use crate::package_manager_real::package_manager_options::Options as PackageManagerOptions;
-use crate::{Aligner, DependencyID, PackageID, PackageManager, dependency, invalid_package_id};
+use crate::{
+    Aligner, DependencyID, PackageID, PackageManager, dependency, invalid_dependency_id,
+    invalid_package_id,
+};
 
 #[derive(Default)]
 pub struct Buffers {
@@ -370,7 +373,7 @@ impl Buffers {
     ) -> crate::Result<DependencyID> {
         match package_id {
             0 => return Ok(tree::ROOT_DEP_ID),
-            id if id == invalid_package_id => return Ok(invalid_package_id),
+            id if id == invalid_package_id => return Ok(invalid_dependency_id),
             _ => {
                 // `dependency_visited` is captured once outside the loop
                 // instead of re-matched per iteration (borrowck).

@@ -53,14 +53,14 @@ impl Default for Tree {
 pub type Id = u32;
 
 const EXTERNAL_SIZE: usize = core::mem::size_of::<Id>()
-    + core::mem::size_of::<PackageID>()
+    + core::mem::size_of::<DependencyID>()
     + core::mem::size_of::<Id>()
     + core::mem::size_of::<DependencyIDSlice>();
 
 pub(crate) type External = [u8; EXTERNAL_SIZE];
 pub type List = Vec<Tree>;
 
-pub(crate) const ROOT_DEP_ID: DependencyID = invalid_package_id - 1;
+pub(crate) const ROOT_DEP_ID: DependencyID = invalid_dependency_id - 1;
 pub(crate) const INVALID_ID: Id = Id::MAX;
 
 impl Tree {

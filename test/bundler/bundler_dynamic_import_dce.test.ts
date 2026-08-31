@@ -576,6 +576,33 @@ describe("bundler", () => {
     });
   }
 
+  // The minifier substitutes a single-use `const x = cond ? (await import()).a() : b`
+  // into its use and re-visits it; the re-visit must not mint a second,
+  // untracked record for the same import().
+  itBundled("dynamic_import_dce/MinifyRevisitDoesNotDuplicateRecord", {
+    files: {
+      "/entry.ts": /* ts */ `
+        async function main() {
+          const warm = process.argv.includes("--warm");
+          const pin = !warm && process.env.X ? (await import("./s.ts")).pin() : undefined;
+          const label = pin ? "pinned:" + pin : "unpinned";
+          return label;
+        }
+        console.log(await main());
+      `,
+      "/s.ts": `export function pin() { return "p"; } export function other() { return "DROPPED"; }`,
+    },
+    minifySyntax: true,
+    splitting: true,
+    target: "bun",
+    format: "esm",
+    outdir: "/out",
+    run: { file: "/out/entry.js", env: { X: "1" }, stdout: "pinned:p" },
+    onAfterBundle(api) {
+      expect(readAllOutputs(api.outdir)).not.toContain("DROPPED");
+    },
+  });
+
   // Locals merged by hoisting (duplicate `var`, `var` over a parameter) share
   // one symbol; their exports stay.
   itBundled("dynamic_import_dce/HoistedVarDestructureKeepsBoth", {

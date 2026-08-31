@@ -1839,6 +1839,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.visit_expr(&mut e_.expr);
         p.visit_expr(&mut e_.options);
 
+        // Already transposed (this is a re-visit, e.g. after the minifier
+        // substituted the expression into a later use): the import record and
+        // its namespace tracking stand; transposing again would mint a second
+        // record for the same call.
+        if e_.import_record_index != u32::MAX {
+            p.should_fold_typescript_constant_expressions =
+                prev_should_fold_typescript_constant_expressions;
+            return;
+        }
+
         // Import transposition is able to duplicate the options structure, so
         // only perform it if the expression is side effect free.
         //

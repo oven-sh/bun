@@ -1478,6 +1478,25 @@ interface BuildMetafile {
 }
 ```
 
+## Glob imports
+
+A `require()` or `import()` whose argument is a relative path built from a template literal or string concatenation is bundled like in [esbuild](https://esbuild.github.io/api/#glob). The static parts become a glob pattern, every file that matches is bundled, and the call becomes a lookup in a map from specifier to module:
+
+```ts title="index.ts" icon="/icons/typescript.svg"
+const lang = process.env.LANG ?? "en";
+const messages = require(`./locales/${lang}.json`); // bundles every ./locales/**/*.json
+```
+
+The rules:
+
+- The path must start with `./` or `../` and name a directory or file prefix before the first `${}` or `+`. A bare `require("./" + name)` is left alone.
+- Static text that contains a glob metacharacter (`*`, `?`, `[`, `{`, `!`, or `\`), or a `.`, `..`, or empty path segment past the leading `./` or `../`, leaves the call as a runtime call.
+- A placeholder right after a `/` matches across directories (`**/*`). Anywhere else it matches one path segment (`*`).
+- A `const` whose initializer is such a template or concatenation is followed, so ``const file = `./bin/${arch}/addon.node`; require(file)`` is bundled too.
+- When the path ends in a placeholder, each file can also be reached without its extension: `require("./src/" + name)` finds `./src/cat.js` for `"cat"`.
+- A specifier that is not in the map falls back to the runtime `require()` or `import()`. With `allowUnresolved: []` (or `--reject-unresolved`) the map is a closed set and a miss throws `MODULE_NOT_FOUND`.
+- A pattern that matches no files, or more than 1024 files, leaves the call as a runtime call.
+
 ## Outputs
 
 The `Bun.build` function returns a `Promise<BuildOutput>`, defined as:

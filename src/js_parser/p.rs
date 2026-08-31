@@ -608,6 +608,10 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
 
     pub(crate) const_values: bun_ast::ast_result::ConstValuesMap,
 
+    /// `const x = <relative-path template>` initializers, consulted by
+    /// `append_dynamic_specifier_shape` so `require(x)` can glob.
+    pub(crate) glob_specifier_values: bun_ast::ast_result::ConstValuesMap,
+
     // These are backed by stack fallback allocators in _parse, and are uninitialized until then.
     pub(crate) binary_expression_stack: ListManaged<'a, BinaryExpressionVisitor>,
     // Reusable stack for `SideEffects::simplify_unused_binary_comma_expr`;
@@ -827,6 +831,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 }
 
+/// How a sub-expression contributes to a dynamic specifier shape.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ShapePart {
+    /// The expression's static shape was appended to the buffer (it may
+    /// contain placeholders from nested dynamic parts).
+    Appended,
+    /// Unknown at compile time: the caller adds one placeholder for it.
+    Opaque,
+    /// A literal NUL would be confused with the placeholder marker, so the
+    /// whole specifier cannot be shaped.
+    Poison,
+}
+
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     pub(crate) const ALLOW_MACROS: bool = !cfg!(target_family = "wasm");
 
@@ -839,35 +856,467 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     /// Extracts a matchable "shape" from a dynamic import argument.
-    /// Template literals: static parts joined by \x00 placeholders.
-    /// Everything else: empty string.
+    /// Template literals and string concatenation: static parts joined by
+    /// \x00 placeholders. Everything else: empty string.
     fn extract_dynamic_specifier_shape<'b>(
         &mut self,
         arg: Expr,
         buf: &'b mut BumpVec<'a, u8>,
     ) -> Result<&'b [u8], crate::Error> {
-        if let Some(tmpl) = arg.data.e_template() {
-            if tmpl.tag.is_some() {
-                return Ok(b""); // tagged template — opaque
-            }
-            match &tmpl.head {
-                js_ast::e::TemplateContents::Cooked(head) => {
-                    buf.extend_from_slice(head.string(self.arena)?);
-                }
-                js_ast::e::TemplateContents::Raw(_) => return Ok(b""), // shouldn't happen post-visit but be safe
-            }
-            for part in tmpl.parts().iter() {
-                buf.push(0); // \x00 placeholder per interpolation
-                match &part.tail {
-                    js_ast::e::TemplateContents::Cooked(tail) => {
-                        buf.extend_from_slice(tail.string(self.arena)?);
-                    }
-                    js_ast::e::TemplateContents::Raw(_) => return Ok(b""), // raw tail — treat as opaque
-                }
-            }
-            return Ok(buf.as_slice());
+        if self.append_dynamic_specifier_shape(arg, buf, 0)? == ShapePart::Appended {
+            Ok(buf.as_slice())
+        } else {
+            buf.clear();
+            Ok(b"")
         }
-        Ok(b"")
+    }
+
+    fn append_estring_rope(
+        &self,
+        s: &js_ast::e::EString,
+        buf: &mut BumpVec<'a, u8>,
+    ) -> Result<bool, crate::Error> {
+        let start = buf.len();
+        let mut cur: Option<&js_ast::e::EString> = Some(s);
+        while let Some(seg) = cur {
+            let bytes = seg.string(self.arena)?;
+            // A literal NUL would be confused with the placeholder marker.
+            if strings::contains_char(bytes, 0) {
+                buf.truncate(start);
+                return Ok(false);
+            }
+            buf.extend_from_slice(bytes);
+            cur = seg.next.as_ref().map(|r| r.get());
+        }
+        Ok(true)
+    }
+
+    /// Appends `arg`'s static shape to `buf`. On `Opaque` and `Poison`
+    /// nothing is appended (`buf` is truncated back to its entry length).
+    fn append_dynamic_specifier_shape(
+        &mut self,
+        arg: Expr,
+        buf: &mut BumpVec<'a, u8>,
+        depth: u32,
+    ) -> Result<ShapePart, crate::Error> {
+        use ShapePart::{Appended, Opaque, Poison};
+        if depth >= 32 {
+            return Ok(Opaque);
+        }
+        let start = buf.len();
+        let part = match &arg.data {
+            js_ast::ExprData::EString(s) => {
+                if self.append_estring_rope(s, buf)? {
+                    Appended
+                } else {
+                    Poison
+                }
+            }
+            js_ast::ExprData::ETemplate(tmpl) => 'tmpl: {
+                if tmpl.tag.is_some() {
+                    break 'tmpl Opaque;
+                }
+                match &tmpl.head {
+                    js_ast::e::TemplateContents::Cooked(head) => {
+                        if !self.append_estring_rope(head, buf)? {
+                            break 'tmpl Poison;
+                        }
+                    }
+                    js_ast::e::TemplateContents::Raw(_) => break 'tmpl Opaque,
+                }
+                let mut out = Appended;
+                for part in tmpl.parts().iter() {
+                    let value = part.value;
+                    match self.append_dynamic_specifier_shape(value, buf, depth + 1)? {
+                        Appended => {}
+                        Opaque => buf.push(0),
+                        Poison => {
+                            out = Poison;
+                            break;
+                        }
+                    }
+                    match &part.tail {
+                        js_ast::e::TemplateContents::Cooked(tail) => {
+                            if !self.append_estring_rope(tail, buf)? {
+                                out = Poison;
+                                break;
+                            }
+                        }
+                        js_ast::e::TemplateContents::Raw(_) => {
+                            out = Opaque;
+                            break;
+                        }
+                    }
+                }
+                out
+            }
+            js_ast::ExprData::EBinary(bin) if bin.op == js_ast::Op::Code::BinAdd => 'add: {
+                let (l, r) = (bin.left, bin.right);
+                let part_l = self.append_dynamic_specifier_shape(l, buf, depth + 1)?;
+                if part_l == Poison {
+                    break 'add Poison;
+                }
+                if part_l == Opaque {
+                    buf.push(0);
+                }
+                let part_r = self.append_dynamic_specifier_shape(r, buf, depth + 1)?;
+                if part_r == Poison {
+                    break 'add Poison;
+                }
+                if part_r == Opaque {
+                    buf.push(0);
+                }
+                if part_l == Opaque && part_r == Opaque {
+                    Opaque
+                } else {
+                    Appended
+                }
+            }
+            js_ast::ExprData::EIdentifier(id) => {
+                let ref_ = id.ref_;
+                if ref_.source_index() == self.source.index.0
+                    && self.symbols[ref_.inner_index() as usize].kind
+                        == js_ast::symbol::Kind::Constant
+                {
+                    // Taken out while recursing so a self-referential
+                    // initializer (const a = `./x/${a}`) terminates.
+                    if let Some(init) = self.glob_specifier_values.remove(&ref_) {
+                        let r = self.append_dynamic_specifier_shape(init, buf, depth + 1);
+                        self.glob_specifier_values.put(ref_, init).expect("oom");
+                        return r;
+                    }
+                }
+                Opaque
+            }
+            _ => Opaque,
+        };
+        if part != Appended {
+            buf.truncate(start);
+        }
+        Ok(part)
+    }
+
+    /// Relative, has a placeholder, and the static text before the first
+    /// placeholder names a path component: `./${x}` would otherwise glob the
+    /// importer's whole directory tree.
+    fn glob_shape_is_eligible(shape: &[u8]) -> bool {
+        if !(shape.starts_with(b"./") || shape.starts_with(b"../")) {
+            return false;
+        }
+        let Some(first_placeholder) = strings::index_of_char_usize(shape, 0) else {
+            return false;
+        };
+        if !shape[..first_placeholder]
+            .iter()
+            .any(|&b| b != b'.' && b != b'/')
+        {
+            return false;
+        }
+        if shape.last() == Some(&b'/') {
+            return false;
+        }
+        // Past the leading relative prefix, a `.`, `..`, or empty segment in
+        // the static text is normalized away in the map keys, so the runtime
+        // string could never equal a key and every lookup would miss.
+        let mut rest = shape;
+        if let Some(s) = rest.strip_prefix(b"./") {
+            rest = s;
+        } else {
+            while let Some(s) = rest.strip_prefix(b"../") {
+                rest = s;
+            }
+        }
+        for seg in strings::split(rest, b"/") {
+            if seg.is_empty() || strings::eql(seg, b".") || strings::eql(seg, b"..") {
+                return false;
+            }
+        }
+        // Glob metacharacters in the literal text would change the match.
+        strings::index_of_any(shape, b"*?[{!\\").is_none()
+    }
+
+    /// Like esbuild, a placeholder right after `/` becomes `**/*` (it may
+    /// span directories); anywhere else it becomes `*` (one path segment).
+    fn glob_shape_to_pattern(shape: &[u8], out: &mut Vec<u8>) {
+        out.clear();
+        let mut i = 0;
+        while i < shape.len() {
+            let b = shape[i];
+            if b != 0 {
+                out.push(b);
+                i += 1;
+                continue;
+            }
+            while i < shape.len() && shape[i] == 0 {
+                i += 1;
+            }
+            if out.last() == Some(&b'/') {
+                out.extend_from_slice(b"**/*");
+            } else {
+                out.push(b'*');
+            }
+        }
+    }
+
+    /// A stem key (`./src/cat` for `./src/cat.js`) resolves like a
+    /// hand-written `require("./src/cat")`, so the extension must be in the
+    /// effective resolver order or the probe could not find the file.
+    fn glob_resolvable_stem<'k>(key: &'k [u8], extension_order: &[Box<[u8]>]) -> Option<&'k [u8]> {
+        let base_start = strings::last_index_of_char(key, b'/').map_or(0, |i| i + 1);
+        let base = &key[base_start..];
+        let dot = strings::last_index_of_char(base, b'.')?;
+        if dot == 0 {
+            return None;
+        }
+        let ext = &base[dot..];
+        if !extension_order.iter().any(|e| strings::eql(e, ext)) {
+            return None;
+        }
+        Some(&key[..base_start + dot])
+    }
+
+    /// Record `const x = <template>` so `require(x)` can glob. Lookup gates on
+    /// `Kind::Constant`, so non-const entries stored here are simply ignored.
+    pub(crate) fn maybe_track_glob_specifier(&mut self, ref_: Ref, value: Option<Expr>) {
+        if self.options.glob_resolver.is_none() {
+            return;
+        }
+        let Some(val) = value else { return };
+        match val.data {
+            js_ast::ExprData::ETemplate(ref t) if t.tag.is_none() => {}
+            js_ast::ExprData::EBinary(ref b) if b.op == js_ast::Op::Code::BinAdd => {}
+            _ => return,
+        }
+        let mut shape_buf = BumpVec::new_in(self.arena);
+        let shape = match self.extract_dynamic_specifier_shape(val, &mut shape_buf) {
+            Ok(s) => s,
+            Err(_) => return,
+        };
+        if shape.starts_with(b"./") || shape.starts_with(b"../") {
+            self.glob_specifier_values.put(ref_, val).expect("oom");
+        }
+    }
+
+    /// Rewrite `require(arg)` / `import(arg)` whose argument is a relative-path
+    /// template or concatenation into
+    /// `__glob({ "./a.js": () => require("./a.js"), ... }, fallback)(arg)`,
+    /// bundling every file the shape can name (https://esbuild.github.io/api/#glob).
+    /// `import_state` is `None` for `require()`. `None` means the call does not
+    /// qualify and the caller keeps the runtime `require`/`import()`.
+    pub(crate) fn try_glob_dynamic_require(
+        &mut self,
+        arg: Expr,
+        import_state: Option<&TransposeState>,
+    ) -> Option<Expr> {
+        if !self.options.bundle || !self.options.features.allow_runtime || self.is_control_flow_dead
+        {
+            return None;
+        }
+        let resolver = self.options.glob_resolver?;
+        let kind = if import_state.is_some() {
+            ImportKind::Dynamic
+        } else {
+            ImportKind::Require
+        };
+
+        let mut shape_buf = BumpVec::new_in(self.arena);
+        let shape = self
+            .extract_dynamic_specifier_shape(arg, &mut shape_buf)
+            .ok()?;
+        if !Self::glob_shape_is_eligible(shape) {
+            return None;
+        }
+
+        // Only the `file` namespace has a directory to walk.
+        if !self.source.path.is_file() {
+            return None;
+        }
+        let source_dir = self.source.path.source_dir();
+        if source_dir.is_empty() {
+            return None;
+        }
+
+        let mut pattern = Vec::with_capacity(shape.len() + 4);
+        Self::glob_shape_to_pattern(shape, &mut pattern);
+
+        let loc = arg.loc;
+        let mut matches = resolver(source_dir, &pattern);
+        // Zero matches falls through so `check_dynamic_specifier` still runs
+        // and files created at runtime keep loading as before.
+        if matches.is_empty() {
+            return None;
+        }
+        const GLOB_MATCH_CAP: usize = 1024;
+        if matches.len() > GLOB_MATCH_CAP {
+            self.log().add_debug_fmt(
+                Some(self.source),
+                loc,
+                format_args!(
+                    "This dynamic specifier will not be bundled because its pattern \"{}\" matches more than {} files",
+                    bstr::BStr::new(&pattern),
+                    GLOB_MATCH_CAP
+                ),
+            );
+            return None;
+        }
+        matches.sort();
+        matches.dedup();
+
+        let mut keys: Vec<(&'a [u8], bool)> = Vec::with_capacity(matches.len() * 2);
+        for m in matches.iter() {
+            keys.push((self.arena.alloc_slice_copy(m), false));
+        }
+        // `require("./src/" + name)` passes the stem `./src/cat` for
+        // `./src/cat.js`, so also alias each stem the runtime string can
+        // produce (it must end with the static text after the last placeholder).
+        let static_suffix = &shape[strings::last_index_of_char(shape, 0).map_or(0, |i| i + 1)..];
+        let stem_order =
+            self.options.glob_stem_extension_orders[(kind == ImportKind::Dynamic) as usize];
+        for i in 0..matches.len() {
+            let Some(stem) = Self::glob_resolvable_stem(keys[i].0, stem_order) else {
+                continue;
+            };
+            if !stem.ends_with(static_suffix) || keys.iter().any(|&(k, _)| k == stem) {
+                continue;
+            }
+            keys.push((stem, true));
+        }
+        keys.sort();
+
+        let in_try = self.fn_or_arrow_data_visit.try_body_count != 0;
+        let handles_import_errors = match import_state {
+            None => in_try,
+            Some(s) => (s.is_await_target && in_try) || s.is_then_catch_target,
+        };
+        let import_options = import_state.map_or(Expr::EMPTY, |s| s.import_options);
+
+        let arena = self.arena;
+        let mut properties: BumpVec<'_, G::Property> = BumpVec::with_capacity_in(keys.len(), arena);
+        for (key, is_stem) in keys {
+            let import_record_index = self.add_import_record(kind, loc, key);
+            {
+                let record = &mut self.import_records.items_mut()[import_record_index as usize];
+                // A stem is a speculative alias the parser invented. When the
+                // configured extension order cannot resolve it, disable the
+                // entry instead of failing the build.
+                record.flags.set(
+                    bun_ast::ImportRecordFlags::HANDLES_IMPORT_ERRORS,
+                    handles_import_errors || is_stem,
+                );
+                if let Some(state) = import_state {
+                    if let Some(loader) = state.import_loader {
+                        record.loader = Some(loader);
+                    }
+                    if let Some(tag) = state.import_record_tag {
+                        record.tag = tag;
+                    }
+                }
+            }
+            self.import_records_for_current_part
+                .push(import_record_index);
+
+            let value_expr = if kind == ImportKind::Dynamic {
+                let path_str = self.new_expr(E::String::init(key), loc);
+                self.new_expr(
+                    E::Import {
+                        expr: path_str,
+                        import_record_index,
+                        options: import_options,
+                    },
+                    loc,
+                )
+            } else {
+                self.new_expr(
+                    E::RequireString {
+                        import_record_index,
+                        ..Default::default()
+                    },
+                    loc,
+                )
+            };
+
+            let body = bun_core::handle_oom(G::FnBody::init_return_expr(arena, value_expr));
+            let thunk = self.new_expr(
+                E::Arrow {
+                    body,
+                    prefer_expr: true,
+                    ..Default::default()
+                },
+                loc,
+            );
+            properties.push(G::Property {
+                key: Some(self.new_expr(E::String::init(key), loc)),
+                value: Some(thunk),
+                ..Default::default()
+            });
+        }
+
+        let map_obj = self.new_expr(
+            E::Object {
+                properties: G::PropertyList::from_bump_vec(properties),
+                ..Default::default()
+            },
+            loc,
+        );
+
+        // On a map miss `__glob` falls back to the runtime `require`/`import()`.
+        // That is runtime resolution, so no fallback is emitted when
+        // `allowUnresolved` forbids the shape; a miss then throws.
+        let fallback = if !self.options.allow_unresolved.allows(shape) {
+            None
+        } else if kind == ImportKind::Require {
+            self.record_usage_of_runtime_require();
+            Some(self.value_for_require(loc))
+        } else {
+            let param_ref = self.new_symbol(js_ast::symbol::Kind::Other, b"specifier");
+            VecExt::append(&mut self.current_scope_mut().generated, param_ref);
+            self.record_declared_symbol(param_ref);
+            let import_expr = self.new_expr(
+                E::Import {
+                    expr: Expr::init_identifier(param_ref, loc),
+                    import_record_index: u32::MAX,
+                    options: import_options,
+                },
+                loc,
+            );
+            let body = bun_core::handle_oom(G::FnBody::init_return_expr(arena, import_expr));
+            let args = bun_ast::StoreSlice::new_mut(arena.alloc_slice_fill_iter([G::Arg {
+                binding: self.b(B::Identifier { r#ref: param_ref }, loc),
+                ..Default::default()
+            }]));
+            Some(self.new_expr(
+                E::Arrow {
+                    args,
+                    body,
+                    prefer_expr: true,
+                    ..Default::default()
+                },
+                loc,
+            ))
+        };
+
+        let glob_args = match fallback {
+            Some(fallback) => ExprNodeList::from_slice(&[map_obj, fallback]),
+            // Native `import()` rejects instead of throwing, so a miss with no
+            // fallback must reach `.catch()`. The third argument tells
+            // `__glob` to return a rejected Promise.
+            None if kind == ImportKind::Dynamic => {
+                let undef = self.new_expr(E::Undefined {}, loc);
+                let reject = self.new_expr(E::Number::new(1.0), loc);
+                ExprNodeList::from_slice(&[map_obj, undef, reject])
+            }
+            None => ExprNodeList::init_one(map_obj),
+        };
+        let glob_call = self.call_runtime(loc, b"__glob", glob_args);
+
+        Some(self.new_expr(
+            E::Call {
+                target: glob_call,
+                args: ExprNodeList::init_one(arg),
+                ..Default::default()
+            },
+            loc,
+        ))
     }
 
     pub(crate) fn check_dynamic_specifier(
@@ -1054,6 +1503,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 },
                 state.loc,
             );
+        }
+
+        if let Some(glob) = self.try_glob_dynamic_require(arg, Some(state)) {
+            return glob;
         }
 
         if self.options.warn_about_unbundled_modules {
@@ -1282,6 +1735,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 )
             }
             _ => {
+                // Also reached for each branch of a ternary argument split
+                // apart by `maybe_transpose_if_require`.
+                if let Some(glob) = self.try_glob_dynamic_require(arg, None) {
+                    return glob;
+                }
                 let _ = self.check_dynamic_specifier(arg, arg.loc, "require()");
                 self.record_usage_of_runtime_require();
                 self.new_expr(
@@ -8902,6 +9360,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             relocated_top_level_vars: BumpVec::new_in(arena),
             after_arrow_body_loc: bun_ast::Loc::EMPTY,
             const_values: Default::default(),
+            glob_specifier_values: Default::default(),
             binary_expression_stack: BumpVec::new_in(arena),
             binary_expression_simplify_stack: BumpVec::new_in(arena),
             ref_to_ts_namespace_member: Default::default(),

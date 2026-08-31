@@ -2029,7 +2029,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         *e = p.transpose_known_to_be_if_require(first, &state);
                         return;
                     }
-                    _ => {}
+                    _ => {
+                        if let Some(glob) = p.try_glob_dynamic_require(first, None) {
+                            *e = glob;
+                            return;
+                        }
+                    }
                 }
             }
 

@@ -87,6 +87,16 @@ pub struct Options<'a> {
 
     pub allow_unresolved: &'a options::AllowUnresolved,
 
+    /// Enables the `__glob({...})(arg)` rewrite for template-literal
+    /// `require()`/`import()`.
+    pub glob_resolver: Option<options::GlobResolver>,
+
+    /// Effective resolver extension orders for glob stem aliases:
+    /// `[require, dynamic import]`. The bundler injects them with
+    /// `glob_resolver`. An extension outside the order for the call's kind
+    /// gets no stem alias.
+    pub glob_stem_extension_orders: [&'a [Box<[u8]>]; 2],
+
     pub module_type: options::ModuleType,
     pub output_format: options::Format,
 
@@ -137,6 +147,8 @@ impl<'a> Default for Options<'a> {
             macro_context: None,
             warn_about_unbundled_modules: true,
             allow_unresolved: &options::AllowUnresolved::DEFAULT,
+            glob_resolver: None,
+            glob_stem_extension_orders: [&[], &[]],
             module_type: options::ModuleType::Unknown,
             output_format: options::Format::Esm,
             transform_only: false,
@@ -223,6 +235,8 @@ impl<'a> Options<'a> {
             macro_context: None,
             warn_about_unbundled_modules: self.warn_about_unbundled_modules,
             allow_unresolved: self.allow_unresolved,
+            glob_resolver: self.glob_resolver,
+            glob_stem_extension_orders: self.glob_stem_extension_orders,
             module_type: self.module_type,
             output_format: self.output_format,
             transform_only: self.transform_only,
@@ -296,6 +310,8 @@ impl<'a> Options<'a> {
             macro_context: None,
             warn_about_unbundled_modules: true,
             allow_unresolved: &options::AllowUnresolved::DEFAULT,
+            glob_resolver: None,
+            glob_stem_extension_orders: [&[], &[]],
             module_type: options::ModuleType::Unknown,
             output_format: options::Format::Esm,
             transform_only: false,

@@ -39,6 +39,7 @@ bun_collections.workspace = true
 bun_css.workspace = true
 bun_dotenv.workspace = true
 bun_event_loop.workspace = true
+bun_glob.workspace = true
 bun_http_types.workspace = true
 bun_parsers.workspace = true
 bun_io.workspace = true

@@ -78,6 +78,54 @@ pub(crate) fn validate_path(
 // `&transpiler.options.allow_unresolved` straight through.
 pub use bun_js_parser::options::AllowUnresolved;
 
+/// `glob_resolver` for the parser's template-literal `require()` / `import()`
+/// support: every file under `source_dir` matching `pattern`, each as the
+/// `./`- or `../`-prefixed POSIX-separated relative specifier the runtime
+/// string would have to equal. Hidden entries are skipped (`dot: false`).
+pub fn parser_glob_resolver(source_dir: &[u8], pattern: &[u8]) -> Vec<Box<[u8]>> {
+    let mut out: Vec<Box<[u8]>> = Vec::new();
+    if !(pattern.starts_with(b"./") || pattern.starts_with(b"../")) {
+        return out;
+    }
+
+    let walker = match bun_glob::BunGlobWalker::init_with_cwd(
+        pattern, source_dir, /* dot */ false, /* absolute */ true,
+        /* follow_symlinks */ true, /* error_on_broken_symlinks */ false,
+        /* only_files */ true, None,
+    ) {
+        Ok(Ok(w)) => w,
+        _ => return out,
+    };
+    let mut walker = Box::new(walker);
+    let mut iter = bun_glob::walk::Iterator::new(&mut *walker);
+    if iter.init().map(|m| m.is_err()).unwrap_or(true) {
+        return out;
+    }
+    loop {
+        match iter.next() {
+            Ok(Ok(Some(abs))) => {
+                // `Loose` emits `/` separators, so the key matches the
+                // string the source builds at runtime on every platform.
+                let rel = bun_paths::resolve_path::relative_platform::<
+                    bun_paths::resolve_path::platform::Loose,
+                    false,
+                >(source_dir, &abs);
+                let mut key: Vec<u8> = Vec::with_capacity(rel.len() + 2);
+                if !(rel.starts_with(b"./") || rel.starts_with(b"../")) {
+                    key.extend_from_slice(b"./");
+                }
+                key.extend_from_slice(rel);
+                out.push(key.into_boxed_slice());
+            }
+            Ok(Ok(None)) => break,
+            // A mid-walk failure would otherwise emit a partial map whose
+            // keys can never cover the runtime specifier.
+            Ok(Err(_)) | Err(_) => return Vec::new(),
+        }
+    }
+    out
+}
+
 // Canonical defs live in `bun_resolver::options` (lower tier; resolver is the
 // runtime consumer of `.patterns`/`.abs_paths`/`.node_modules`). Re-export so
 // `BundleOptions.external` and `Resolver.opts.external` are the SAME nominal

@@ -109,6 +109,19 @@ var __moduleCache;
 // When you do know the module is CJS
 export var __commonJS = (cb, mod) => () => (mod || cb((mod = { exports: {} }).exports, mod), mod.exports);
 
+// require("./dir/" + x) bundled as a lookup map. `fallback` is the runtime
+// require/import for a specifier that is not in the bundle; it is absent when
+// the build forbids runtime resolution (--reject-unresolved). `reject` makes
+// a miss return a rejected Promise, matching native import().
+export var __glob = (map, fallback, reject) => path => {
+  if (__hasOwnProp.call(map, path)) return map[path]();
+  if (fallback) return fallback(path);
+  var e = new Error("Cannot find module '" + path + "' in bundle. Known: " + Object.keys(map).join(", "));
+  e.code = "MODULE_NOT_FOUND";
+  if (reject) return Promise.reject(e);
+  throw e;
+};
+
 export var __name = (target, name) => {
   Object.defineProperty(target, "name", {
     value: name,

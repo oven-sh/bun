@@ -3254,9 +3254,16 @@ declare module "bun" {
      * - `["*"]` (default) — allow all dynamic specifiers
      * - `[]` — fail the build on any dynamic specifier
      * - `["./locales/*.json", ...]` — allow only specifiers whose static
-     *   template parts match one of these glob patterns
+     *   parts match one of these glob patterns
      *
+     * The static parts come from a template literal, a string concatenation,
+     * or a `const` bound to one of those; each dynamic part becomes `*`.
      * Add `""` to the list to allow fully opaque specifiers like `import(fn())`.
+     *
+     * A relative template or concatenation that matches files on disk is
+     * bundled as a glob map and always passes. The map keeps a runtime
+     * fallback for specifiers it does not contain only when this option
+     * allows the shape; with `[]` a miss throws `MODULE_NOT_FOUND`.
      *
      * @default ["*"]
      */

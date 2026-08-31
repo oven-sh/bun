@@ -22,6 +22,7 @@
 "generic_body_not_generic:src/dotenv/env_loader.rs" = 1
 
 [bun_http]
+"generic_body_not_generic:src/http/HTTPContext.rs" = 1
 "generic_body_not_generic:src/http/lib.rs" = 3
 
 [bun_http_jsc]
@@ -94,6 +95,7 @@
 "error_collapsed_to_bool:src/runtime/api/bun/Terminal.rs" = 1
 "error_collapsed_to_bool:src/runtime/api/bun/h2_frame_parser.rs" = 31
 "error_collapsed_to_bool:src/runtime/ffi/ffi_body.rs" = 1
+"field_valid_only_when:src/runtime/shell/builtin/rm.rs" = 1
 "generic_body_not_generic:src/runtime/api/bun/h2_frame_parser.rs" = 1
 "generic_body_not_generic:src/runtime/api/cron.rs" = 1
 "generic_body_not_generic:src/runtime/api/html_rewriter.rs" = 1
@@ -109,7 +111,7 @@
 "generic_body_not_generic:src/runtime/node/node_fs.rs" = 4
 "generic_body_not_generic:src/runtime/node/node_net_binding.rs" = 1
 "generic_body_not_generic:src/runtime/server/NodeHTTPResponse.rs" = 1
-"generic_body_not_generic:src/runtime/server/RequestContext.rs" = 7
+"generic_body_not_generic:src/runtime/server/RequestContext.rs" = 8
 "generic_body_not_generic:src/runtime/server/mod.rs" = 2
 "generic_body_not_generic:src/runtime/server/server_body.rs" = 2
 "generic_body_not_generic:src/runtime/shell/Builtin.rs" = 1

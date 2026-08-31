@@ -162,6 +162,7 @@ describe("vi members", () => {
   });
 
   test("vi.stubEnv('TZ', ...) fires the timezone side effect", () => {
+    const originalTZ = process.env.TZ;
     process.env.TZ = "Etc/UTC";
     try {
       vi.stubEnv("TZ", "Etc/GMT-2");
@@ -170,7 +171,11 @@ describe("vi members", () => {
       expect(new Date(0).getTimezoneOffset()).toBe(0);
     } finally {
       vi.unstubAllEnvs();
-      process.env.TZ = "Etc/UTC";
+      if (originalTZ === undefined) {
+        delete process.env.TZ;
+      } else {
+        process.env.TZ = originalTZ;
+      }
     }
   });
 
@@ -185,6 +190,23 @@ describe("vi members", () => {
     } finally {
       vi.unstubAllGlobals();
       globalThis.structuredClone = original;
+    }
+  });
+
+  test("restore keeps a global that was already undefined", () => {
+    const g = globalThis as Record<string, unknown>;
+    try {
+      g.__vitest_compat_undef__ = undefined;
+      vi.stubGlobal("__vitest_compat_undef__", "stubbed");
+      expect(g.__vitest_compat_undef__).toBe("stubbed");
+      vi.unstubAllGlobals();
+      // The property existed with the value undefined, so restore keeps it
+      // instead of deleting it.
+      expect("__vitest_compat_undef__" in g).toBe(true);
+      expect(g.__vitest_compat_undef__).toBeUndefined();
+    } finally {
+      vi.unstubAllGlobals();
+      delete g.__vitest_compat_undef__;
     }
   });
 

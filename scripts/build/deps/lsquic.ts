@@ -141,13 +141,14 @@ export const lsquic: Dependency = {
     // and 15 are STREAM_HEAD_IN_FIN and STREAM_FRAMES_ELIDED. Marking a session
     // corrupted lsquic's record of the request, and the WebTransport test
     // answered yes for any request whose frames had been elided.
-    // https://github.com/litespeedtech/lsquic/issues/674
+    // Reported as https://github.com/litespeedtech/lsquic/issues/674 and
+    // merged upstream (litespeedtech/lsquic#676, first release 4.9.4), so
+    // this patch dies at the next lsquic bump.
     //
-    // Upstream's draft PR #629 deletes these accessors and the two flags
-    // outright, replacing them with a session/switch-stream abstraction, and
-    // drops LSQUIC_WEBTRANSPORT_SERVER_SUPPORT with them. So this patch is
-    // dead the day we take #629 -- and taking it is a rewrite of our side,
-    // not a version bump.
+    // Separately, upstream's draft PR #629 deletes these accessors and the
+    // two flags outright, replacing them with a session/switch-stream
+    // abstraction, and drops LSQUIC_WEBTRANSPORT_SERVER_SUPPORT with them --
+    // taking that is a rewrite of our side, not a version bump.
     "patches/lsquic/webtransport-stream-flags.patch",
   ],
 

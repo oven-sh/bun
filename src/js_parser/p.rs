@@ -322,6 +322,10 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// Membership distinguishes these from unwrap_commonjs
     /// `const x = require()` locals in `maybe_rewrite_property_access`.
     pub(crate) dynamic_import_namespace_locals: HashMap<Ref, u32>,
+    /// Import records whose namespace is known to escape regardless of use
+    /// counts (a namespace local inlined by the minifier, or one local bound
+    /// to two records).
+    pub(crate) dynamic_import_escaped_records: HashMap<u32, ()>,
     pub(crate) unwrap_all_requires: bool,
 
     pub(crate) commonjs_named_exports: bun_ast::ast_result::CommonJSNamedExports,
@@ -1044,7 +1048,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut rest_ref: Option<(Ref, bun_ast::Loc)> = None;
         for (i, prop) in properties.iter().enumerate() {
             if prop.flags.contains(bun_ast::flags::Property::IsSpread) {
-                if i + 1 != properties.len() {
+                // An exported `...rest` is observed whole by importers of this file.
+                if i + 1 != properties.len() || keep_all {
                     return None;
                 }
                 let bun_ast::binding::Data::BIdentifier(id) = prop.value.data else {
@@ -1097,6 +1102,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if let Some((rest, loc)) = rest_ref {
             self.register_dynamic_import_namespace_local(rest, loc, import_record_id);
         }
+        // The destructured locals live in this scope: a direct `eval` here can
+        // read them (or the namespace) by name.
+        self.imports_to_convert_from_dynamic_import
+            .push(DeferredImportNamespace {
+                namespace: LocRef {
+                    loc: bun_ast::Loc::EMPTY,
+                    ref_: namespace_ref,
+                },
+                import_record_id,
+                scope: Some(self.current_scope),
+            });
         Some(())
     }
 
@@ -1109,6 +1125,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         loc: bun_ast::Loc,
         import_record_id: u32,
     ) {
+        // One local, two namespaces (`var {..., ...r} = ` twice, or an
+        // unwrap-cjs require local): accesses can't be attributed, both escape.
+        if self.import_items_for_namespace.contains_key(&local) {
+            if let Some(&other) = self.dynamic_import_namespace_locals.get(&local) {
+                self.dynamic_import_escaped_records.insert(other, ());
+            }
+            self.dynamic_import_escaped_records
+                .insert(import_record_id, ());
+            return;
+        }
         self.import_items_for_namespace
             .insert(local, ImportItemForNamespaceMap::default());
         self.dynamic_import_namespace_locals
@@ -9186,6 +9212,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             imports_to_convert_from_dynamic_import: BumpVec::new_in(arena),
             dynamic_import_aliases: Default::default(),
             dynamic_import_namespace_locals: Default::default(),
+            dynamic_import_escaped_records: Default::default(),
             unwrap_all_requires,
             commonjs_named_exports: Default::default(),
             commonjs_module_exports_assigned_deoptimized: false,

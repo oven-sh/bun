@@ -505,6 +505,31 @@ describe("bundler", () => {
     run: { stdout: "ok" },
   });
 
+  itBundled("edgecase/TSConfigPathAbsoluteTemplateNormalized", {
+    // An absolute target template (here via ${configDir}) must be normalized
+    // after substitution so it resolves to the same module instance as a
+    // relative import of the file (no `/proj//src/...` duplicate).
+    files: {
+      "/entry.ts": /* ts */ `
+        import { inc } from "@lib/state";
+        import { count } from "./src/lib/state";
+        inc();
+        console.log(count);
+      `,
+      "/tsconfig.json": /* json */ `
+        { "compilerOptions": { "paths": { "@lib/*": ["\${configDir}//src/lib/*"], "@up/*": ["\${configDir}/src/../src/lib/*"] } } }
+      `,
+      "/src/lib/state.ts": `export let count = 0; export function inc() { count++; } console.log("evaluated");`,
+      "/entry2.ts": `import { inc } from "@up/state"; import { count } from "./src/lib/state"; inc(); console.log(count);`,
+    },
+    entryPoints: ["/entry.ts", "/entry2.ts"],
+    outdir: "/out",
+    run: [
+      { file: "/out/entry.js", stdout: "evaluated\n1" },
+      { file: "/out/entry2.js", stdout: "evaluated\n1" },
+    ],
+  });
+
   itBundled("edgecase/StaticClassNameIssue2806", {
     files: {
       "/entry.ts": /* ts */ `

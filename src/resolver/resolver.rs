@@ -4894,23 +4894,23 @@ impl<'a> Resolver<'a> {
                         original_path
                     };
 
-                // Only skip the baseUrl join when the *template* is absolute —
-                // a relative template whose substituted text happens to start
-                // with a separator (e.g. key "~*" → target "*", import
-                // "~/util" → matched_text "/util") must still join. The path
-                // joiner resets on a rooted second part, so strip leading
-                // separators from the substituted text before joining.
-                let mut absolute_original_path: &[u8] = substituted;
-                if !bun_paths::is_absolute(original_path) {
-                    let parts: [&[u8]; 2] = [abs_base_url, strings::trim_left(substituted, b"/\\")];
-                    let Some(joined) = self
-                        .fs_ref()
-                        .abs_buf_checked(&parts, bufs!(tsconfig_match_full_buf))
-                    else {
-                        continue;
-                    };
-                    absolute_original_path = joined;
-                }
+                // An absolute template (e.g. an expanded `${configDir}/src/*`)
+                // is normalized on its own; a relative one joins `baseUrl` —
+                // even when the substituted text happens to start with a
+                // separator (key "~*" → target "*", import "~/util" →
+                // matched_text "/util"), so strip leading separators first
+                // since the joiner resets on a rooted part.
+                let parts: [&[u8]; 2] = if bun_paths::is_absolute(original_path) {
+                    [substituted, b""]
+                } else {
+                    [abs_base_url, strings::trim_left(substituted, b"/\\")]
+                };
+                let Some(absolute_original_path) = self
+                    .fs_ref()
+                    .abs_buf_checked(&parts, bufs!(tsconfig_match_full_buf))
+                else {
+                    continue;
+                };
 
                 if self
                     .load_as_file_or_directory(absolute_original_path, kind, out)

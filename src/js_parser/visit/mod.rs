@@ -1870,6 +1870,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     if symbol.use_count_estimate == 1
                         && p.substitute_single_use_symbol_in_stmt(stmt, id, replacement)
                     {
+                        // `const ns = await import(x); return ns` — the one use that
+                        // marked the namespace escaped just moved into `replacement`.
+                        if let Some(&record) = p.dynamic_import_namespace_locals.get(&id) {
+                            p.dynamic_import_escaped_records.insert(record, ());
+                        }
                         match local.decls.len_u32() {
                             1 => {
                                 local.decls.clear();

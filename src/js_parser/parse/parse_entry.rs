@@ -1248,10 +1248,16 @@ impl<'a> Parser<'a> {
                     let symbol = &p.symbols[ns_ref.inner_index() as usize];
                     // `must_not_be_renamed` / `contains_direct_eval` cover
                     // direct `eval()` (or `with`) in scope, which can read the
-                    // namespace by name without a tracked property access.
+                    // namespace by name without a tracked property access. A
+                    // linked symbol was merged with another declaration (a
+                    // hoisted `var`, a parameter), so its own use count says
+                    // nothing.
                     symbol.use_count_estimate > 0
                         || symbol.must_not_be_renamed()
+                        || symbol.has_link()
                         || scope.is_some_and(|s| s.contains_direct_eval)
+                        || p.dynamic_import_escaped_records
+                            .contains_key(&import_record_id)
                 };
                 let entry = bun_core::handle_oom(by_record.get_or_put(import_record_id));
                 if !entry.found_existing {
@@ -1268,11 +1274,16 @@ impl<'a> Parser<'a> {
                 for key in map.keys().iter() {
                     let local = map.get(key).unwrap().ref_;
                     // A destructured local that is never read does not keep
-                    // its export alive.
-                    if local.is_valid()
-                        && p.symbols[local.inner_index() as usize].use_count_estimate == 0
-                    {
-                        continue;
+                    // its export alive — unless it was merged with another
+                    // declaration or a direct `eval` can read it by name.
+                    if local.is_valid() {
+                        let symbol = &p.symbols[local.inner_index() as usize];
+                        if symbol.use_count_estimate == 0
+                            && !symbol.has_link()
+                            && !symbol.must_not_be_renamed()
+                        {
+                            continue;
+                        }
                     }
                     rec.aliases
                         .push(bun_ast::StoreStr::new(arena.alloc_slice_copy(key)));

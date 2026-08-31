@@ -443,6 +443,127 @@ describe("bundler", () => {
     run: { file: "/out/entry.js", stdout: '["a1","a2"] ["b1","b2"]' },
   });
 
+  // The minifier inlines a single-use `const ns = await import(x)` into its
+  // use; that use is what makes the namespace escape.
+  for (const shape of ["return q", "throw q", "globalThis.z = q", "return [q]", "return { ...q }"]) {
+    itBundled(`dynamic_import_dce/MinifyInlinedNamespaceLocalEscapes ${shape}`, {
+      files: {
+        "/entry.js": /* js */ `
+          async function f() { const q = await import("./x.js"); ${shape}; }
+          async function g() { let r = require("./x.js"); return r; }
+          let v;
+          try { v = await f(); } catch (e) { v = e; }
+          v = globalThis.z ?? v;
+          if (Array.isArray(v)) v = v[0];
+          console.log(JSON.stringify(Object.keys(v).sort()), JSON.stringify(Object.keys(await g()).sort()));
+        `,
+        "/x.js": `export const a = "A"; export const b = "B";`,
+      },
+      minifySyntax: true,
+      splitting: true,
+      target: "bun",
+      format: "esm",
+      outdir: "/out",
+      run: { file: "/out/entry.js", stdout: '["a","b"] ["a","b"]' },
+    });
+  }
+
+  // Locals merged by hoisting (duplicate `var`, `var` over a parameter) share
+  // one symbol; their exports stay.
+  itBundled("dynamic_import_dce/HoistedVarDestructureKeepsBoth", {
+    files: {
+      "/entry.js": /* js */ `
+        async function f(c) {
+          if (c) { var { a } = await import("./xa.js"); } else { var { a } = await import("./ya.js"); }
+          return a();
+        }
+        function g(c) {
+          if (c) { var { a } = require("./xa.js"); } else { var { a } = require("./ya.js"); }
+          return a();
+        }
+        var { v } = await import("./xa.js"); const v1 = v; var { v } = await import("./ya.js");
+        await import("./xa.js").then(({ w }) => { var w; globalThis.W = w; });
+        function h() { var m = 1; { var { a, ...m } = require("./xa.js"); } return m.z; }
+        console.log(await f(1), await f(0), g(1), g(0), v1, v, W, h());
+      `,
+      "/xa.js": `export function a() { return "XA"; } export const v = "XV"; export const w = "XW"; export const z = "XZ";`,
+      "/ya.js": `export function a() { return "YA"; } export const v = "YV";`,
+    },
+    splitting: true,
+    target: "bun",
+    format: "esm",
+    outdir: "/out",
+    run: { file: "/out/entry.js", stdout: "XA YA XA YA XV YV XW XZ" },
+  });
+
+  // One local re-bound as the rest of two different imports: neither narrows.
+  itBundled("dynamic_import_dce/RestLocalReboundKeepsAll", {
+    files: {
+      "/entry.js": /* js */ `
+        var { a, ...r } = await import("./x.js"); const z1 = r.z;
+        var { b, ...r } = await import("./y.js");
+        console.log(a, b, z1, r.z, JSON.stringify(Object.keys(r).sort()));
+      `,
+      "/x.js": `export const a = "XA"; export const z = "XZ"; export const q = "XQ";`,
+      "/y.js": `export const b = "YB"; export const z = "YZ"; export const q = "YQ";`,
+    },
+    splitting: true,
+    format: "esm",
+    outdir: "/out",
+    run: { file: "/out/entry.js", stdout: 'XA YB XZ YZ ["q","z"]' },
+  });
+
+  // `export const { a, ...rest }` — importers of this file observe `rest` whole.
+  for (const splitting of [true, false]) {
+    itBundled(`dynamic_import_dce/ExportedRestKeepsAll${splitting ? "Splitting" : "NoSplit"}`, {
+      files: {
+        "/mid.js": `export const { a, ...rest } = await import("./x.js");`,
+        "/entry.js": `import { a, rest } from "./mid.js"; console.log(a, JSON.stringify(Object.keys(rest).sort()));`,
+        "/x.js": `export const a = "A"; export const b = "B"; export const c = "C";`,
+      },
+      entryPoints: ["/entry.js"],
+      splitting,
+      format: "esm",
+      outdir: "/out",
+      run: { file: "/out/entry.js", stdout: 'A ["b","c"]' },
+    });
+  }
+
+  // Direct `eval` can read a destructured local by name.
+  itBundled("dynamic_import_dce/EvalReadsDestructuredLocal", {
+    files: {
+      "/entry.js": /* js */ `
+        const { a } = await import("./x.js");
+        const { b } = require("./x.js");
+        console.log(eval("a"), eval("b"));
+      `,
+      "/x.js": `export const a = "A"; export const b = "B"; export const c = "C";`,
+    },
+    target: "bun",
+    format: "esm",
+    outdir: "/out",
+    run: { file: "/out/entry.js", stdout: "A B" },
+  });
+
+  // Accepted divergence (rolldown and esbuild's static `import * as ns; ns.f()`
+  // behave the same): a method called through the namespace receives the
+  // narrowed namespace as `this`.
+  itBundled("dynamic_import_dce/MethodCallThisIsNarrowedNamespace", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log((await import("./x.js")).who(), typeof (await import("./x.js")).self().other);
+      `,
+      "/x.js": `export function who() { return "who"; } export function self() { return this; } export const other = "DROPPED";`,
+    },
+    splitting: true,
+    format: "esm",
+    outdir: "/out",
+    run: { file: "/out/entry.js", stdout: "who undefined" },
+    onAfterBundle(api) {
+      expect(readAllOutputs(api.outdir)).not.toContain("DROPPED");
+    },
+  });
+
   // rolldown: tree_shaking/dynamic_import_body_destructure — destructuring a
   // namespace local in a later statement narrows the same as `ns.foo`; keys
   // accumulate across statements and merge with member accesses; a

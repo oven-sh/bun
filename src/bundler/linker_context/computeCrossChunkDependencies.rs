@@ -175,6 +175,9 @@ impl<'a, 'bump> CrossChunkDependencies<'a, 'bump> {
                         // which outlives the link pass.
                         import_record.path.text = _chunks[other_chunk_index as usize].unique_key;
                         import_record.source_index = Index::INVALID;
+                        import_record
+                            .flags
+                            .insert(bun_ast::ImportRecordFlags::IMPORTS_CHUNK);
 
                         // Track this cross-chunk dynamic import so we make sure to
                         // include its hash when we're calculating the hashes of all

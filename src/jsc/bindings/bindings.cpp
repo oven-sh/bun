@@ -5405,7 +5405,7 @@ static void JSC__JSValue__forEachPropertyImpl(JSC::EncodedJSValue JSValue0, JSC:
     }
     auto* propertyNames = vm.propertyNames;
     auto& builtinNames = WebCore::builtinNames(vm);
-    WTF::Vector<Identifier, 6> visitedProperties;
+    JSC::IdentifierSet visitedProperties;
 
 restart:
     if (fast) {
@@ -5440,10 +5440,8 @@ restart:
             if (builtinNames.bunNativePtrPrivateName() == prop)
                 return true;
 
-            if (visitedProperties.contains(Identifier::fromUid(vm, prop))) {
+            if (!visitedProperties.add(prop).isNewEntry)
                 return true;
-            }
-            visitedProperties.append(Identifier::fromUid(vm, prop));
 
             JSC::JSValue propertyValue = JSValue();
             if (objectToUse == object) {
@@ -5546,9 +5544,8 @@ restart:
                         continue;
                 }
 
-                if (visitedProperties.contains(property))
+                if (!visitedProperties.add(property.impl()).isNewEntry)
                     continue;
-                visitedProperties.append(property);
 
                 EncodedSlice key = toEncodedSlice(property.isSymbol() && !property.isPrivateName() ? property.impl() : property.string());
 

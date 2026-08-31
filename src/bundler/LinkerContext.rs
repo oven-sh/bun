@@ -1891,9 +1891,7 @@ impl<'a> LinkerContext<'a> {
         hasher.digest()
     }
 
-    /// The cjs and iife output formats run the entry point as a synchronous
-    /// function body, so a top-level `await` cannot be represented. Report
-    /// one error per file, at the `await`, with the format switch that fixes it.
+    /// One error per file with a top-level `await`, pointing at the `await`.
     fn reject_top_level_await(&self, format_name: &str, from_js_api: bool) {
         let parse_graph = self.parse_graph();
         let tla_keywords = parse_graph.ast.items_top_level_await_keyword();

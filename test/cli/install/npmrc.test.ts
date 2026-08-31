@@ -924,8 +924,7 @@ describe("registry credentials from $VAR env references", () => {
     using dir = tempDir("bunfig-unset-token-npmrc-pair", {
       ...scopeFiles(server.port!, `token = "$UNSET_TOKEN_41044"`, false),
       ".npmrc":
-        `//127.0.0.1:${server.port}/:username=bob\n` +
-        `//127.0.0.1:${server.port}/:_password=${btoa("s3cret")}\n`,
+        `//127.0.0.1:${server.port}/:username=bob\n` + `//127.0.0.1:${server.port}/:_password=${btoa("s3cret")}\n`,
     });
     const exitCode = await install(String(dir), {});
     expect(auths).toEqual([`Basic ${btoa("bob:s3cret")}`]);

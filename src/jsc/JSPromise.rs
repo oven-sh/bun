@@ -271,11 +271,8 @@ impl JSPromise {
         JSC__JSPromise__setHandled(self)
     }
 
-    /// The promise `await value` would wait on, or `None` when `value` is not a thenable.
-    /// Spec `PromiseResolve`: a promise whose constructor is `Promise` is returned as is.
-    /// Anything else (a subclass with its own `then()`, a plain thenable) is adopted by a
-    /// fresh promise that calls `value.then()`. `JSValue::then` never does, so a lazy
-    /// subclass such as Bun.SQL's `Query` would never start. The adopter is marked handled.
+    /// Spec `PromiseResolve(%Promise%, value)`: the promise `await value` waits on, with the
+    /// value's own `then()` called for a subclass or a thenable. `None`: not a thenable.
     pub fn awaitable(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<&mut JSPromise>> {
         let promise = crate::cpp::JSC__JSPromise__awaitable(global, value)?;
         Ok((!promise.is_null()).then(|| JSPromise::opaque_mut(promise)))

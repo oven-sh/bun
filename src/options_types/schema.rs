@@ -178,9 +178,7 @@ pub mod api {
             !self.token.is_empty() || !self.username.is_empty() || !self.password.is_empty()
         }
 
-        /// `has_credentials` with `$VAR` references resolved, counting only a
-        /// credential that can produce an Authorization header: a token, or a
-        /// username and password pair.
+        /// `has_credentials` with `$VAR` resolved; counts only a token or a username+password pair.
         pub fn has_resolved_credentials(&self, env: &bun_dotenv::Loader) -> bool {
             !env.get_auto(&self.token).is_empty()
                 || (!env.get_auto(&self.username).is_empty()

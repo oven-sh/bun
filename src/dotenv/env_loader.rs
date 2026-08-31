@@ -566,9 +566,7 @@ impl Loader {
         self.map.get(_key)
     }
 
-    /// Resolves a `$VAR` reference; a non-reference passes through. An unset
-    /// variable resolves to "", never the literal `$VAR` text: callers send
-    /// the result as a registry credential.
+    /// Resolves a leading `$VAR` reference; an unset variable resolves to "", never the literal text.
     pub fn get_auto<'b>(&'b self, key: &'b [u8]) -> &'b [u8] {
         // If it's "" or "$", it's not a variable
         if key.len() < 2 || key[0] != b'$' {

@@ -634,11 +634,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         TsIdentKind::Normal => {
                             if GET_METADATA {
                                 let ident = self.lexer.identifier;
-                                let find_result = self.find_symbol(bun_ast::Loc::EMPTY, ident)?;
+                                let r#ref = self.find_symbol_for_ts_metadata(ident)?;
                                 **result
                                     .as_mut()
                                     .expect("infallible: GET_METADATA implies Some") =
-                                    Metadata::MIdentifier(find_result.r#ref);
+                                    Metadata::MIdentifier(r#ref);
                             }
 
                             self.lexer.next()?;
@@ -797,10 +797,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     self.lexer.next()?;
 
                     if GET_METADATA {
-                        let mut left = (**result
+                        let mut left = **result
                             .as_mut()
-                            .expect("infallible: GET_METADATA implies Some"))
-                        .clone();
+                            .expect("infallible: GET_METADATA implies Some");
                         if let Some(final_) =
                             Metadata::finish_union(&mut left, |r| self.load_name_from_ref(r))
                         {
@@ -842,10 +841,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     self.lexer.next()?;
 
                     if GET_METADATA {
-                        let mut left = (**result
+                        let mut left = **result
                             .as_mut()
-                            .expect("infallible: GET_METADATA implies Some"))
-                        .clone();
+                            .expect("infallible: GET_METADATA implies Some");
                         if let Some(final_) =
                             Metadata::finish_intersection(&mut left, |r| self.load_name_from_ref(r))
                         {
@@ -907,17 +905,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         match r {
                             Metadata::MIdentifier(id_ref) => {
                                 let id_ref = *id_ref;
-                                let mut dot: Vec<Ref> = Vec::with_capacity(2);
-                                dot.push(id_ref);
-                                let find_result = self.find_symbol(bun_ast::Loc::EMPTY, ident)?;
-                                dot.push(find_result.r#ref);
-                                *r = Metadata::MDot(dot);
+                                let next = self.find_symbol_for_ts_metadata(ident)?;
+                                let dot = self.arena.alloc_slice_copy(&[id_ref, next]);
+                                *r = Metadata::MDot(bun_ast::StoreSlice::new(dot));
                             }
                             Metadata::MDot(dot) => {
                                 if self.lexer.is_identifier_or_keyword() {
-                                    let find_result =
-                                        self.find_symbol(bun_ast::Loc::EMPTY, ident)?;
-                                    dot.push(find_result.r#ref);
+                                    let prev = *dot;
+                                    let next = self.find_symbol_for_ts_metadata(ident)?;
+                                    let grown =
+                                        self.arena.alloc_slice_fill_copy(prev.len() + 1, Ref::NONE);
+                                    grown[..prev.len()].copy_from_slice(&prev);
+                                    grown[prev.len()] = next;
+                                    *r = Metadata::MDot(bun_ast::StoreSlice::new(grown));
                                 }
                             }
                             _ => {}

@@ -482,7 +482,6 @@ impl<'a> LinkerGraph<'a> {
     /// produced by the symbol table itself). Thin wrapper over
     /// [`symbol::Map::get_const`]; callers previously open-coded
     /// `unsafe { &*graph.symbols.get(r).expect(..) }`.
-    #[cfg(debug_assertions)]
     #[inline]
     pub(crate) fn symbol(&self, ref_: Ref) -> &Symbol {
         self.symbols

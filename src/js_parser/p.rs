@@ -448,6 +448,12 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) enclosing_class_keyword: bun_ast::Range,
     pub(crate) import_items_for_namespace: HashMap<Ref, ImportItemForNamespaceMap>,
     pub(crate) is_import_item: RefMap,
+    /// Maps a named/default import's local ref to `(namespace_ref, alias)` so
+    /// `serialize_metadata` can emit `ns.alias` instead of the named binding.
+    pub(crate) import_namespace_of_item: HashMap<Ref, (Ref, js_ast::StoreStr)>,
+    /// How many uses of an import ref sit inside a metadata `typeof` guard;
+    /// the guarded-missing-export flag is only set when that is all of them.
+    pub(crate) decorator_metadata_guarded_uses: HashMap<Ref, u32>,
     pub(crate) named_imports: NamedImportsType<'a>,
     pub(crate) named_exports: bun_ast::ast_result::NamedExports,
 
@@ -3722,13 +3728,27 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // TODO: not sure how to handle macro remappings for namespace imports
         } else {
             let path_name = fs::PathName::init(path.text);
-            let name: &'a [u8] = bun_alloc::arena_format!(
-                in self.arena,
-                "import_{}",
-                bun_core::fmt::fmt_identifier(path_name.non_unique_name_string_base())
-            )
-            .into_bump_str()
-            .as_bytes();
+            // Under NoOpRenamer this name can surface as a real `* as name`
+            // binding for decorator metadata, so make it unique there.
+            let name: &'a [u8] =
+                if self.options.features.emit_decorator_metadata && !self.options.bundle {
+                    let hash =
+                        bun_wyhash::hash_with_seed(u64::from(stmt.import_record_index), path.text);
+                    bun_alloc::arena_format!(
+                        in self.arena,
+                        "import_{}_{}",
+                        bun_core::fmt::fmt_identifier(path_name.non_unique_name_string_base()),
+                        bun_core::fmt::truncated_hash32(hash),
+                    )
+                } else {
+                    bun_alloc::arena_format!(
+                        in self.arena,
+                        "import_{}",
+                        bun_core::fmt::fmt_identifier(path_name.non_unique_name_string_base())
+                    )
+                }
+                .into_bump_str()
+                .as_bytes();
             stmt.namespace_ref = self.new_symbol(js_ast::symbol::Kind::Other, name);
             VecExt::append(&mut self.current_scope_mut().generated, stmt.namespace_ref);
         }
@@ -3753,6 +3773,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     self.declare_symbol(js_ast::symbol::Kind::Import, name_loc.loc, name)?;
                 name_loc.ref_ = r#ref;
                 self.is_import_item.insert(r#ref, ());
+                if self.options.features.emit_decorator_metadata && !self.options.bundle {
+                    self.import_namespace_of_item.insert(
+                        r#ref,
+                        (stmt.namespace_ref, js_ast::StoreStr::new(b"default")),
+                    );
+                }
 
                 // ensure every e_import_identifier holds the namespace
                 if self.options.features.hot_module_reloading {
@@ -3834,6 +3860,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // `ClauseItem.alias` is an arena-owned `StoreStr` valid for 'a.
             let alias: &'a [u8] = item.alias.slice();
             self.check_for_non_bmp_code_point(item.alias_loc, alias);
+            if self.options.features.emit_decorator_metadata && !self.options.bundle {
+                self.import_namespace_of_item
+                    .insert(r#ref, (stmt.namespace_ref, item.alias));
+            }
 
             // ensure every e_import_identifier holds the namespace
             if self.options.features.hot_module_reloading {
@@ -5837,6 +5867,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // the value is ignored because that's what the TypeScript compiler does.
     }
 
+    /// `find_symbol` without recording a use. `serialize_metadata` records
+    /// uses for what it actually emits; a type annotation alone is not one.
+    pub(crate) fn find_symbol_for_ts_metadata(
+        &mut self,
+        name: &'a [u8],
+    ) -> Result<Ref, crate::Error> {
+        let r#ref = self.find_symbol(bun_ast::Loc::EMPTY, name)?.r#ref;
+        self.ignore_usage(r#ref);
+        if TYPESCRIPT {
+            let slot = &mut self.ts_use_counts[r#ref.inner_index() as usize];
+            *slot = slot.saturating_sub(1);
+        }
+        Ok(r#ref)
+    }
+
     pub(crate) fn ignore_usage_of_identifier_in_dot_chain(&mut self, expr: Expr) {
         let mut current = expr;
         loop {
@@ -6771,7 +6816,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     .alloc_slice_fill_default::<Expr>(constructor_args.len());
                                 for (i, ca) in constructor_args.iter().enumerate() {
                                     param_array[i] = self
-                                        .serialize_metadata(ca.ts_metadata.clone())
+                                        .serialize_metadata(ca.ts_metadata)
                                         .expect("unreachable");
                                 }
                                 let items = ExprNodeList::from_arena_slice(param_array);
@@ -6863,7 +6908,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 {
                     // design:type
                     let v = self
-                        .serialize_metadata(prop.ts_metadata.clone())
+                        .serialize_metadata(prop.ts_metadata)
                         .expect("unreachable");
                     push_metadata!(b"design:type", v);
                 }
@@ -6882,7 +6927,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 .alloc_slice_fill_default::<Expr>(method_args.len());
                             for (entry, method_arg) in args_array.iter_mut().zip(method_args) {
                                 *entry = self
-                                    .serialize_metadata(method_arg.ts_metadata.clone())
+                                    .serialize_metadata(method_arg.ts_metadata)
                                     .expect("unreachable");
                             }
                             let items = ExprNodeList::from_arena_slice(args_array);
@@ -6897,7 +6942,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
                         {
                             let v = self
-                                .serialize_metadata(func.func.return_ts_metadata.clone())
+                                .serialize_metadata(func.func.return_ts_metadata)
                                 .expect("unreachable");
                             push_metadata!(b"design:returntype", v);
                         }
@@ -6914,7 +6959,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             .expect("infallible: variant checked");
                         {
                             let v = self
-                                .serialize_metadata(func.func.return_ts_metadata.clone())
+                                .serialize_metadata(func.func.return_ts_metadata)
                                 .expect("unreachable");
                             push_metadata!(b"design:type", v);
                         }
@@ -6949,7 +6994,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 .alloc_slice_fill_default::<Expr>(method_args.len());
                             for (entry, method_arg) in args_array.iter_mut().zip(method_args) {
                                 *entry = self
-                                    .serialize_metadata(method_arg.ts_metadata.clone())
+                                    .serialize_metadata(method_arg.ts_metadata)
                                     .expect("unreachable");
                             }
                             let items = ExprNodeList::from_arena_slice(args_array);
@@ -6964,7 +7009,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
                         if !method_args.is_empty() {
                             let v = self
-                                .serialize_metadata(method_args[0].ts_metadata.clone())
+                                .serialize_metadata(method_args[0].ts_metadata)
                                 .expect("unreachable");
                             push_metadata!(b"design:type", v);
                         }
@@ -7011,8 +7056,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             M::MPromise => ident!(b"Promise"),
             M::MIdentifier(ref_) => {
+                if let Some(e) = self.serialize_metadata_import_item(ref_)? {
+                    return Ok(e);
+                }
                 self.record_usage(ref_);
                 let e = if self.is_import_item.contains_key(&ref_) {
+                    self.record_decorator_metadata_guarded_use(ref_);
                     self.new_expr(
                         E::ImportIdentifier {
                             ref_,
@@ -7027,7 +7076,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             M::MDot(refs) => {
                 debug_assert!(refs.len() >= 2);
-                // (refs.deinit(p.arena) — arena-backed; nothing to free in Rust)
 
                 macro_rules! ref_name {
                     ($r:expr) => {
@@ -7076,7 +7124,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     i -= 1;
                 }
 
-                if self.is_import_item.contains_key(&refs[0]) {
+                if let Some(root) = self.metadata_root_for_import_item(refs[0]) {
+                    *current_expr = root;
+                } else if self.is_import_item.contains_key(&refs[0]) {
+                    self.record_usage(refs[0]);
+                    self.record_decorator_metadata_guarded_use(refs[0]);
                     *current_expr = self.new_expr(
                         E::ImportIdentifier {
                             ref_: refs[0],
@@ -7085,6 +7137,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         bun_ast::Loc::EMPTY,
                     );
                 } else {
+                    self.record_usage(refs[0]);
                     *current_expr =
                         self.new_expr(E::Identifier::init(refs[0]), bun_ast::Loc::EMPTY);
                 }
@@ -7160,6 +7213,57 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 return Ok(root);
             }
         })
+    }
+
+    /// Build `ns.alias` for a named/default import referenced from decorator
+    /// metadata so a type-only export degrades to `undefined` instead of
+    /// failing to link. Bundle mode routes through the named import and the
+    /// linker instead.
+    fn metadata_root_for_import_item(&mut self, ref_: Ref) -> Option<Expr> {
+        let &(namespace_ref, alias) = self.import_namespace_of_item.get(&ref_)?;
+        self.record_usage(namespace_ref);
+        let target = self.new_expr(E::Identifier::init(namespace_ref), bun_ast::Loc::EMPTY);
+        Some(self.new_expr(
+            E::Dot {
+                target,
+                name: alias,
+                name_loc: bun_ast::Loc::EMPTY,
+                ..Default::default()
+            },
+            bun_ast::Loc::EMPTY,
+        ))
+    }
+
+    fn serialize_metadata_import_item(&mut self, ref_: Ref) -> Result<Option<Expr>, crate::Error> {
+        let Some(dot) = self.metadata_root_for_import_item(ref_) else {
+            return Ok(None);
+        };
+        self.maybe_defined_helper(dot).map(Some)
+    }
+
+    /// Mirrors `record_usage`'s liveness checks so the guarded count can be
+    /// compared against `use_count_estimate` when the visit is done.
+    fn record_decorator_metadata_guarded_use(&mut self, ref_: Ref) {
+        if !self.is_revisit_for_substitution && !self.is_control_flow_dead {
+            *self
+                .decorator_metadata_guarded_uses
+                .get_or_put(ref_)
+                .expect("unreachable")
+                .value_ptr += 1;
+        }
+    }
+
+    /// A missing export is only tolerable when every use of the import is a
+    /// metadata `typeof` guard; a real value use must keep the linker error.
+    fn flag_fully_guarded_metadata_imports(&mut self) {
+        for (ref_, guarded_uses) in self.decorator_metadata_guarded_uses.iter() {
+            let symbol = &mut self.symbols[ref_.inner_index() as usize];
+            if symbol.use_count_estimate == *guarded_uses
+                && symbol.import_item_status == js_ast::ImportItemStatus::None
+            {
+                symbol.import_item_status = js_ast::ImportItemStatus::MetadataGuarded;
+            }
+        }
     }
 
     #[cold]
@@ -7963,6 +8067,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) -> Result<Box<js_ast::Ast<'a>>, crate::Error> {
         use crate::lower::lower_esm_exports_hmr::ConvertESMExportsForHmr;
         use crate::scan::scan_imports::ImportScanner;
+
+        self.flag_fully_guarded_metadata_imports();
 
         let arena = self.arena;
 
@@ -8889,6 +8995,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             enclosing_class_keyword: bun_ast::Range::NONE,
             import_items_for_namespace: Default::default(),
             is_import_item: Default::default(),
+            import_namespace_of_item: Default::default(),
+            decorator_metadata_guarded_uses: Default::default(),
             scope_order_to_visit: &[],
             module_scope_directive_loc: bun_ast::Loc::default(),
             is_control_flow_dead: false,

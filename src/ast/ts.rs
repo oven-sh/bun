@@ -150,7 +150,7 @@ impl Data {
 // Data-only; the parser-state predicates that depend on `P` stay in
 // `bun_js_parser::typescript`.
 
-#[derive(Clone, Default)]
+#[derive(Copy, Clone, Default)]
 pub enum Metadata {
     #[default]
     MNone,
@@ -171,13 +171,24 @@ pub enum Metadata {
     MSymbol,
     MPromise,
     MIdentifier(Ref),
-    // A heap `Vec` is used here because `Metadata` is lifetime-free.
-    // Decorator metadata is rare and the lists are tiny.
-    MDot(Vec<Ref>),
+    // Arena-backed so `Metadata` stays lifetime-free plain data; a heap `Vec`
+    // here leaks when the owning AST node is bulk-freed without `Drop`.
+    MDot(crate::nodes::StoreSlice<Ref>),
 }
 
 impl Metadata {
     pub const DEFAULT: Self = Metadata::MNone;
+
+    /// Cross-arena clone: `MDot` points into its source arena, so a plain
+    /// copy would dangle once that arena resets.
+    pub fn deep_clone(self, bump: &bun_alloc::Arena) -> Self {
+        match self {
+            Metadata::MDot(refs) => {
+                Metadata::MDot(crate::nodes::StoreSlice::new(bump.alloc_slice_copy(&refs)))
+            }
+            other => other,
+        }
+    }
 
     // the logic in finish_union, merge_union, finish_intersection and merge_intersection is
     // translated from:

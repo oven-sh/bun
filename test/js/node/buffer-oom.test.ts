@@ -37,9 +37,11 @@ function thrownUnderAllocationCap(bytes: number, fn: () => unknown): unknown {
 describe.skipIf(!isDebug)("a WTF string whose allocation fails is reported as a failed allocation", () => {
   const input = Buffer.alloc(16 * MiB, 97);
 
-  test.each(["utf8", "hex", "latin1", "ascii", "ucs2"] as const)("Buffer.prototype.toString(%s)", encoding => {
-    const error = thrownUnderAllocationCap(4 * MiB, () => input.toString(encoding));
-    expect(error).toMatchObject(allocationFailed);
+  describe.each(["utf8", "hex", "latin1", "ascii", "ucs2"] as const)("Buffer.prototype.toString(%s)", encoding => {
+    test("throws ERR_MEMORY_ALLOCATION_FAILED", () => {
+      const error = thrownUnderAllocationCap(4 * MiB, () => input.toString(encoding));
+      expect(error).toMatchObject(allocationFailed);
+    });
   });
 
   test("StringDecoder.prototype.write", () => {

@@ -1,5 +1,5 @@
 #!/bin/sh
-# Version: 42
+# Version: 43
 
 # A script that installs the dependencies needed to build and test Bun.
 # This should work on macOS and Linux with a POSIX shell.
@@ -1171,28 +1171,58 @@ install_build_essentials() {
 }
 
 install_bun_toolchain() {
-	# clang/lld + rustc/cargo built by oven-sh/rust's bun-toolchain workflow (PGO/BOLT-trained on
-	# building Bun). The build steps opt into it with BUN_TOOLCHAIN_LLVM/BUN_TOOLCHAIN_RUST
-	# (.buildkite/ci.mjs); the apt LLVM and rustup installs above stay for everything else.
-	toolchain_release="bun-toolchain-nightly-2026-07-20-bun-062fecb5"
-	case "$arch" in
-	x64) toolchain_sha256="95cfe91535ca2f57e92db96c3f9d6e2598f2c7b9435f109efedd0b10ac42d1b4" ;;
-	aarch64) toolchain_sha256="1c9c2484e14fa3723f9a67bda8994146b9bb628a73b884f6b4bdecdf232d9b06" ;;
-	*) error "no bun toolchain for $arch" ;;
-	esac
+	# clang/lld + rustc/cargo built by oven-sh/rust's bun-toolchain workflow, one pair per CI build
+	# lane, each PGO/BOLT-trained on that lane's build ("ci-<target key>", matching getTargetKey in
+	# .buildkite/ci.mjs). Unpacked to /opt/bun-toolchain/<variant>; the build steps opt into theirs
+	# with BUN_TOOLCHAIN_LLVM/BUN_TOOLCHAIN_RUST (.buildkite/ci.mjs). The apt LLVM and rustup
+	# installs above stay for everything else. All lanes build on linux-aarch64, so only that
+	# host's toolchains exist.
+	[ "$arch" = "aarch64" ] || error "bun toolchains are built for the linux-aarch64 build host only"
+	toolchain_release="bun-toolchain-nightly-2026-07-20-bun-73225d32"
+	toolchain_root="/opt/bun-toolchain"
 	if ! [ -f "$(which zstd)" ]; then install_packages zstd; fi
-	toolchain_dir="/opt/bun-toolchain"
-	toolchain_tar="$(download_and_verify_file "https://github.com/oven-sh/rust/releases/download/$toolchain_release/bun-toolchain-linux-$arch.tar.zst" "$toolchain_sha256")"
-	execute_sudo rm -rf "$toolchain_dir"
-	create_directory "$toolchain_dir"
-	execute_sudo tar -I zstd -xf "$toolchain_tar" -C "$toolchain_dir" --strip-components=1
-	execute_sudo rm -f "$toolchain_tar"
-	if ! [ -x "$toolchain_dir/bin/clang" ] || ! [ -x "$toolchain_dir/bin/rustc" ]; then
-		error "bun toolchain did not unpack into $toolchain_dir"
-	fi
-	execute "$toolchain_dir/bin/clang" --version
-	execute "$toolchain_dir/bin/rustc" -vV
-	grant_to_user "$toolchain_dir"
+	execute_sudo rm -rf "$toolchain_root"
+	while read -r variant half sha256; do
+		dir="$toolchain_root/$variant"
+		tarball="$(download_and_verify_file "https://github.com/oven-sh/rust/releases/download/$toolchain_release/bun-toolchain-linux-$arch-$variant-$half.tar.zst" "$sha256")"
+		create_directory "$dir"
+		execute_sudo tar -I zstd -xf "$tarball" -C "$dir" --strip-components=1
+		execute_sudo rm -f "$tarball"
+		case "$half" in
+		llvm) [ -x "$dir/bin/clang" ] || error "$variant llvm toolchain did not unpack into $dir" ;;
+		rust) [ -x "$dir/bin/rustc" ] || error "$variant rust toolchain did not unpack into $dir" ;;
+		esac
+	done <<-EOF
+		ci-darwin-aarch64 llvm 9ec112becb395bc3d17a0402905bf8d9c533a94f99469024411e949b4d2c1595
+		ci-darwin-aarch64 rust 6dba6abd33a20fd3e3010e75dc6b3a1369950c9d81d5adca2d6cf70802628adc
+		ci-darwin-x64 llvm c1e9f5c418dd7ad90c30eb3f699cc8ac25bf99df84dd28c742785cb7fc285224
+		ci-darwin-x64 rust b39d1bdb36551fde2fa371ee3331c5701a4abd01c4044d42336afc2e71d993a6
+		ci-freebsd-aarch64 llvm e5a428c462f76e157f84eeb586fb654cee53b23d5b1a9d46310154d580b9d3ff
+		ci-freebsd-aarch64 rust d7eb341f836afb945f9cb4fe1ac22e7ef2d941f0362730e511f810cfbf55ab88
+		ci-freebsd-x64 llvm df9bc381bf60b600d5c101781fff04a8db8b6830cdcbec200ca6c75d7c347dd3
+		ci-freebsd-x64 rust 9c60c6d8041fa43f89174a9a55afd9c9a9916aeefdb6c9ef8f06e77a17618e15
+		ci-linux-aarch64 llvm f8f6e150e69fa4da987c402aabbe81fbba472adb0ea06ab90dc9a693e50e78fd
+		ci-linux-aarch64 rust 0efeff7c95568c7e52f6d37094fc0a3ebb1b649bdc75055ca5123a27f0bef2dc
+		ci-linux-aarch64-android llvm 64ef98c00ebb2ebcc12b46ff9bde4c785c1d39dca5a15ed213c385393191d3bc
+		ci-linux-aarch64-android rust d4de8bfe605985154b7ece9ae4db55fe20c7c8062c1226e03e8758c48346f070
+		ci-linux-aarch64-musl llvm 844f2c9000c324bf21c22a3c449f9f071cf3fbd11c69961138ded49bf46473bb
+		ci-linux-aarch64-musl rust 42b2a44792588b9eb1507718171391bfb1768cb0ae254ee6eede91aad714d6c8
+		ci-linux-x64 llvm 9d65e68a1cdb80acf05a11196d81d6bfc056fae8f4a60e48fdc175ed33b74987
+		ci-linux-x64 rust 57556886fc1142059cdd7a0539c954dd7de8bd3a7227d55be79d2f3ae73174c3
+		ci-linux-x64-android llvm 2289846286844d344272c00d90480b0009f97ecd2e867b6264138d8a269593bf
+		ci-linux-x64-android rust 9bf26414c7377b36f038dd5f0fe237f32a8d02501382b8e08e274e761e80a048
+		ci-linux-x64-asan llvm 02c6cb73e5053fdbe3f284860f4745aa62936656a2449e97723bb140d15e5798
+		ci-linux-x64-asan rust e7a0d651e394e668398a3539b67138088f61e0c9f16de7341e4adc73df5bc451
+		ci-linux-x64-musl llvm d27f4e568b65604e8fb60900e8f207f753d63bcd5b38fe39a5bb18103667d8d4
+		ci-linux-x64-musl rust 7c06788c00c3c37edda317e9f205c37eb023e94d473cf6c17145798e56ada9fe
+		ci-windows-aarch64 llvm 18815ae84a8689552eefb52658a42547bf67e1df1fe60f8f745e90658935ec9b
+		ci-windows-aarch64 rust 9c22dae56b529b497e4c6316fb294c247703c127539c69f6fb725b9bb1a6d642
+		ci-windows-x64 llvm 08eae6ff2d637fdbfea4c83028b40d16bbbb4a2b2b1ea064cd6cfd7419c86ef4
+		ci-windows-x64 rust 49275fe8b0dfcc8e20c5afbaa9362eb06ea0ce141cfed2c647baa3717e5f1c58
+	EOF
+	execute "$toolchain_root/ci-linux-aarch64/bin/clang" --version
+	execute "$toolchain_root/ci-linux-aarch64/bin/rustc" -vV
+	grant_to_user "$toolchain_root"
 }
 
 is_ci_build_host() {
@@ -1615,8 +1645,8 @@ install_linux_musl_sysroot() {
 		execute_sudo rm -rf "$sysroot"
 		execute_sudo mkdir -p "$sysroot"
 		execute_sudo "$apk" --arch "$ml_arch" --root "$sysroot" \
-			--repository "$cdn/main" --allow-untrusted --no-cache --initdb \
-			add musl-dev libc-dev linux-headers g++ libstdc++-dev
+			--repository "$cdn/main" --allow-untrusted --no-cache \
+			add --initdb musl-dev libc-dev linux-headers g++ libstdc++-dev
 		if ! [ -f "$sysroot/usr/lib/libc.so" ]; then
 			error "$sysroot not populated (required for linux-musl cross-arch builds)"
 		fi

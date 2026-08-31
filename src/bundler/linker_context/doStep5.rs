@@ -33,14 +33,14 @@ impl LinkerContext<'_> {
     ///
     // CONCURRENCY: `each` callback — runs on worker threads, one task per
     // `source_index`. Writes: `graph.{ast,meta}[source_index]` SoA cells
-    // (per-row disjoint). Reads `graph.symbols`/`options`/`ts_enums` shared.
+    // (per-row disjoint). Reads `graph.symbols`/`options`/`ts_enums`/`import_member_bindings` shared.
     // Never forms `&mut LinkerContext`; per-row writes via `split_raw()` raw
     // pointers (root provenance). See `# Safety` for full invariant.
     /// # Safety
     ///
     /// Runs concurrently on worker-pool threads (one task per `source_index`).
     /// The body never materializes `&mut LinkerContext` — it derefs `this` to a
-    /// shared `&LinkerContext` for read-only access (`symbols`, `ts_enums`,
+    /// shared `&LinkerContext` for read-only access (`symbols`, `ts_enums`, `import_member_bindings`,
     /// `top_level_symbols_to_parts`, options) and writes only to its own
     /// `source_index` row of the `graph.{ast,meta}` SoA columns via raw
     /// per-row pointers obtained from `split_raw()` (root provenance, no

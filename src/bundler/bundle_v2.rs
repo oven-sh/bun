@@ -7903,7 +7903,7 @@ pub mod bv2_impl {
         /// the pointee slab is never reallocated while the iterator is live.
         pub(crate) import_data: bun_ptr::BackRef<[crate::ImportData]>,
         /// `Found` an `export default X` where `X` is an import in that file
-        /// (`NamedExport::alias_of_import`).
+        /// (`Ast::export_default_alias_of_import`).
         pub(crate) default_alias_of: bun_ast::Ref,
     }
 

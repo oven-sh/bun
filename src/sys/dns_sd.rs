@@ -21,16 +21,10 @@ pub const PROTOCOL_IPV4: DNSServiceProtocol = 0x01;
 pub const PROTOCOL_IPV6: DNSServiceProtocol = 0x02;
 
 pub const ERR_NO_ERROR: DNSServiceErrorType = 0;
-pub const ERR_NO_SUCH_NAME: DNSServiceErrorType = -65538;
 pub const ERR_NO_MEMORY: DNSServiceErrorType = -65539;
-pub const ERR_REFUSED: DNSServiceErrorType = -65553;
 pub const ERR_NO_SUCH_RECORD: DNSServiceErrorType = -65554;
-pub const ERR_SERVICE_NOT_RUNNING: DNSServiceErrorType = -65563;
-pub const ERR_NO_ROUTER: DNSServiceErrorType = -65566;
 pub const ERR_TIMEOUT: DNSServiceErrorType = -65568;
 pub const ERR_DEFUNCT_CONNECTION: DNSServiceErrorType = -65569;
-pub const ERR_POLICY_DENIED: DNSServiceErrorType = -65570;
-pub const ERR_NOT_PERMITTED: DNSServiceErrorType = -65571;
 
 bun_opaque::opaque_ffi! {
     /// `struct _DNSServiceRef_t`.

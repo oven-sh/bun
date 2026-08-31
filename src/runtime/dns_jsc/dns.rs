@@ -2,6 +2,7 @@
 
 use core::cell::Cell;
 use core::ffi::{CStr, c_int, c_void};
+use core::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use bun_collections::ArrayHashMap;
@@ -22,7 +23,6 @@ use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSPromiseStrong, JSValue, JsCell, JsResult,
     SystemError, host_fn,
 };
-use bun_paths::MAX_PATH_BYTES;
 use bun_ptr::{BackRef, RefPtr, ThisPtr};
 #[cfg(windows)]
 use bun_sys::windows::libuv;
@@ -51,6 +51,8 @@ pub(crate) mod netc {
 pub(crate) mod netc {
     pub(crate) use bun_libuv_sys::{addrinfo, sockaddr_in, sockaddr_in6, sockaddr_storage};
     pub(crate) use bun_sys::windows::ws2_32::{AF_INET, AF_INET6, AF_UNSPEC, SOCK_STREAM};
+    /// The libuv spelling: `c_ares::Error::init_eai` reads UV_EAI_* codes on Windows.
+    pub(crate) const EAI_NONAME: core::ffi::c_int = bun_libuv_sys::UV_EAI_NONAME;
 }
 type SockaddrStorage = netc::sockaddr_storage;
 type AddrInfo = netc::addrinfo;
@@ -69,6 +71,24 @@ fn global_resolver(global_this: &JSGlobalObject) -> ThisPtr<Resolver> {
 #[inline]
 fn c_str(z: &bun::ZStr) -> &CStr {
     CStr::from_bytes_until_nul(z.as_bytes_with_nul()).expect("ZStr ends in NUL")
+}
+
+/// Stack NUL-termination for a name `do_lookup` admitted (`is_valid_hostname`:
+/// at most 254 bytes, no NUL). `NI_MAXHOST`-sized so it never truncates one.
+struct HostnameBuf([u8; 1025]);
+
+impl HostnameBuf {
+    #[inline]
+    fn new() -> Self {
+        Self([0; 1025])
+    }
+
+    fn z(&mut self, name: &[u8]) -> &CStr {
+        let len = name.len().min(self.0.len() - 1);
+        self.0[..len].copy_from_slice(&name[..len]);
+        self.0[len] = 0;
+        CStr::from_bytes_until_nul(&self.0[..=len]).expect("NUL written above")
+    }
 }
 
 /// Bridge the JS-thread `VirtualMachine` to the aio-level `EventLoopCtx` used
@@ -212,16 +232,10 @@ pub(crate) mod lib_uv_backend {
         let request = GetAddrInfoRequest::init(cache, Some(this), global_this);
 
         let hints = query.options.to_libc();
-        let mut port_buf = [0u8; 128];
-        let port_len = bun_fmt::print_int(&mut port_buf, query.port);
-        port_buf[port_len] = 0;
-        let port_z = CStr::from_bytes_until_nul(&port_buf).expect("NUL written above");
-
-        // `do_lookup` rejects names of `MAX_PATH_BYTES` or more and names
-        // containing NUL, so this always fits and terminates.
-        let mut hostname = vec![0u8; query.name.len() + 1];
-        hostname[..query.name.len()].copy_from_slice(&query.name);
-        let host = CStr::from_bytes_until_nul(&hostname).expect("NUL written above");
+        let mut port_buf = [0u8; 21];
+        let port_z = bun_fmt::itoa_z(&mut port_buf, u64::from(query.port));
+        let mut host_buf = HostnameBuf::new();
+        let host = host_buf.z(&query.name);
 
         let promise = request.head.promise.value();
         match libuv::getaddrinfo(this.vm().uv_loop(), request, host, port_z, hints.as_ref()) {
@@ -277,26 +291,23 @@ fn normalize_dns_name<'a>(name: &'a [u8], backend: &mut GetAddrInfoBackend) -> &
 const PENDING_CACHE_CAPACITY: usize = 32;
 
 /// The identity of a lookup for the pending cache.
-pub struct PendingCacheKey {
+pub struct PendingCacheKey<'a> {
     hash: u64,
-    len: u16,
-    name: Box<[u8]>,
+    name: &'a [u8],
 }
 
-impl PendingCacheKey {
-    pub(crate) fn init(query: &GetAddrInfo) -> Self {
+impl<'a> PendingCacheKey<'a> {
+    pub(crate) fn init(query: &'a GetAddrInfo) -> Self {
         Self {
             hash: query.hash(),
-            len: query.name.len() as u16,
-            name: query.name.clone(),
+            name: &query.name,
         }
     }
 
-    pub(crate) fn from_name(name: &[u8]) -> Self {
+    pub(crate) fn from_name(name: &'a [u8]) -> Self {
         Self {
             hash: wyhash(name),
-            len: name.len() as u16,
-            name: Box::<[u8]>::from(name),
+            name,
         }
     }
 }
@@ -305,7 +316,6 @@ impl PendingCacheKey {
 /// completion drains the slot.
 struct PendingEntry<L> {
     hash: u64,
-    len: u16,
     name: Box<[u8]>,
     /// The lookups that joined after the one that owns the slot, in order.
     waiters: Vec<L>,
@@ -351,11 +361,11 @@ impl<L> PendingCache<L> {
         }
     }
 
-    fn get_or_put(&self, key: &PendingCacheKey) -> CacheHit {
+    fn get_or_put(&self, key: &PendingCacheKey<'_>) -> CacheHit {
         self.slots.with_mut(|slots| {
             for (i, slot) in slots.iter().enumerate() {
                 if let Some(entry) = slot {
-                    if entry.hash == key.hash && entry.len == key.len && entry.name == key.name {
+                    if entry.hash == key.hash && *entry.name == *key.name {
                         return CacheHit::Inflight(i as u8);
                     }
                 }
@@ -366,8 +376,7 @@ impl<L> PendingCache<L> {
             }
             let entry = PendingEntry {
                 hash: key.hash,
-                len: key.len,
-                name: key.name.clone(),
+                name: Box::from(key.name),
                 waiters: Vec::new(),
                 #[cfg(windows)]
                 uv_inflight: None,
@@ -453,18 +462,9 @@ impl<T: CAresRecordType> ResolveInfoRequest<T> {
         name: &[u8],
         global_this: &JSGlobalObject,
     ) -> Box<Self> {
-        let mut poll_ref = KeepAlive::init();
-        poll_ref.ref_(js_event_loop_ctx());
         Box::new(Self {
             pending_slot: cache.new_slot(),
-            head: CAresLookup {
-                resolver: resolver.map(RefPtr::from_this),
-                global_this: BackRef::new(global_this),
-                promise: JSPromiseStrong::init(global_this),
-                poll_ref,
-                name: Box::<[u8]>::from(name),
-                _marker: core::marker::PhantomData,
-            },
+            head: CAresLookup::init(resolver, global_this, name),
         })
     }
 
@@ -522,17 +522,9 @@ impl GetHostByAddrInfoRequest {
         name: &[u8],
         global_this: &JSGlobalObject,
     ) -> Box<Self> {
-        let mut poll_ref = KeepAlive::init();
-        poll_ref.ref_(js_event_loop_ctx());
         Box::new(Self {
             pending_slot: cache.new_slot(),
-            head: CAresReverse {
-                resolver: resolver.map(RefPtr::from_this),
-                global_this: BackRef::new(global_this),
-                promise: JSPromiseStrong::init(global_this),
-                poll_ref,
-                name: Box::<[u8]>::from(name),
-            },
+            head: CAresReverse::init(resolver, global_this, name),
         })
     }
 
@@ -789,23 +781,13 @@ pub mod get_addr_info_request {
             };
             let query_name = core::mem::take(&mut query.name); // freed at end of scope
             let hints = query.options.to_libc();
-            let mut port_buf = [0u8; 128];
-            let port_len = bun_fmt::print_int(&mut port_buf, query.port);
-            port_buf[port_len] = 0;
-            let port_z = CStr::from_bytes_until_nul(&port_buf).expect("NUL written above");
-
-            // `do_lookup` rejects names of `MAX_PATH_BYTES` or more and names
-            // containing NUL, so this always terminates where expected.
-            let mut hostname = Vec::with_capacity(query_name.len() + 1);
-            hostname.extend_from_slice(&query_name);
-            hostname.push(0);
-            let host = CStr::from_bytes_until_nul(&hostname).expect("NUL written above");
+            let mut port_buf = [0u8; 21];
+            let port_z = bun_fmt::itoa_z(&mut port_buf, u64::from(query.port));
+            let mut host_buf = HostnameBuf::new();
+            let host = host_buf.z(&query_name);
             let debug_timer = Output::DebugTimer::start();
-            let result = bun_sys::net::AddrInfoList::lookup(
-                Some(host),
-                if port_len > 0 { Some(port_z) } else { None },
-                hints.as_ref(),
-            );
+            let result =
+                bun_sys::net::AddrInfoList::lookup(Some(host), Some(port_z), hints.as_ref());
             bun_sys::syslog!(
                 "getaddrinfo({}, {}) = {} ({})",
                 bstr::BStr::new(&query_name),
@@ -845,7 +827,7 @@ impl GetAddrInfoRequest {
             let status = if !results.is_empty() {
                 0
             } else {
-                query.empty_status()
+                dns_sd::EMPTY_STATUS
             };
             (results, status)
         });
@@ -1276,19 +1258,10 @@ impl Outcome {
     }
 }
 
-#[inline]
-fn keep_alive(outcome: &Outcome) {
-    outcome.keep_alive();
-}
-
 impl Drop for DNSLookup {
     fn drop(&mut self) {
         bun_output::scoped_log!(DNSLookup, "deinit");
-        // DNSLookup is always created on the JS event loop (it holds a JSGlobalObject),
-        // so the Js-arm vtable is the correct EventLoopCtx for KeepAlive::unref.
-        self.poll_ref.unref(Async::posix_event_loop::get_vm_ctx(
-            Async::AllocatorType::Js,
-        ));
+        self.poll_ref.unref(js_event_loop_ctx());
         drop(self.resolver.take());
     }
 }
@@ -1326,7 +1299,7 @@ impl Resolver {
     /// Windows: `uv_getaddrinfo` requests are uv *requests* on this thread's
     /// loop, which the teardown drains before closing the loop; cancel the ones
     /// still in flight so that drain is prompt (each completes through its
-    /// callback with UV_ECANCELED against the still-live VM).
+    /// callback with UV_EAI_CANCELED against the still-live VM).
     #[cfg(windows)]
     pub(crate) fn cancel_pending_uv_requests_for_teardown(&self) {
         for entry in self.pending_host_cache_native.slots.get().iter().flatten() {
@@ -1614,8 +1587,7 @@ pub mod internal {
                     if entry.is_expired(timestamp_to_store) {
                         bun_output::scoped_log!(dns, "get: expired entry");
                         if entry.refcount() == 0 {
-                            let len = self.cache.len();
-                            self.delete_entry_at(len, i);
+                            self.delete_entry_at(i);
                         }
                         // An expired entry that is still referenced is now
                         // invalid, so the next pass over `i` skips it.
@@ -1641,10 +1613,10 @@ pub mod internal {
             self.cache.len() * 5 >= MAX_ENTRIES * 4
         }
 
-        /// Free entry `i` of `len` (swap-remove).
-        fn delete_entry_at(&mut self, len: usize, i: usize) {
-            DNS_CACHE_SIZE.store(len - 1, Ordering::Relaxed);
+        /// Free entry `i` (swap-remove).
+        fn delete_entry_at(&mut self, i: usize) {
             drop(self.cache.swap_remove(i));
+            DNS_CACHE_SIZE.store(self.cache.len(), Ordering::Relaxed);
         }
 
         /// Free `entry` (a cached request or an orphan).
@@ -1652,8 +1624,7 @@ pub mod internal {
             let is =
                 |e: &bun_ptr::OwnedThis<Request>| core::ptr::eq(&raw const **e, entry.as_ptr());
             if let Some(i) = self.cache.iter().position(is) {
-                let len = self.cache.len();
-                self.delete_entry_at(len, i);
+                self.delete_entry_at(i);
             } else {
                 self.remove_orphan(entry);
             }
@@ -1743,6 +1714,51 @@ pub mod internal {
         hints_copy
     }
 
+    /// Chrome's `IsLocalHostname` (RFC 6761 §6.3): `localhost` or `*.localhost`, ASCII case-insensitive, one trailing dot allowed.
+    fn is_localhost_name(host: &[u8]) -> bool {
+        const DOT_LOCALHOST: &[u8] = b".localhost";
+        let host = host.strip_suffix(b".").unwrap_or(host);
+        strings::eql_case_insensitive_ascii(host, b"localhost", true)
+            || (host.len() >= DOT_LOCALHOST.len()
+                && strings::eql_case_insensitive_ascii(
+                    &host[host.len() - DOT_LOCALHOST.len()..],
+                    DOT_LOCALHOST,
+                    true,
+                ))
+    }
+
+    /// Chrome's `ServeLocalhost`: a localhost name is `[::1, 127.0.0.1]` without asking the resolver, narrowed like every other lookup by the family feature flags.
+    fn localhost_results(port: u16) -> AddrInfoResult {
+        #[cfg(not(windows))]
+        let family = get_hints().ai_family;
+        #[cfg(windows)]
+        let family = netc::AF_UNSPEC;
+        let nodes: Vec<_> = [
+            IpAddr::V6(Ipv6Addr::LOCALHOST),
+            IpAddr::V4(Ipv4Addr::LOCALHOST),
+        ]
+        .into_iter()
+        .filter(move |ip| family == netc::AF_UNSPEC || ip.is_ipv6() == (family == netc::AF_INET6))
+        .map(move |ip| synthetic_node(&bun_dns::Address::from_ip(ip, port)))
+        .collect();
+        process_results(nodes, 0)
+    }
+
+    /// Chrome's `IsAllLocalhostOfOneFamily`: every address is loopback and only one family is present, the shape glibc's AI_ADDRCONFIG produces for a hosts-file loopback name (crbug 42058 / 49024).
+    fn is_all_loopback_of_one_family(
+        addresses: impl Iterator<Item = Option<bun_dns::Address>>,
+    ) -> bool {
+        let (mut saw_v4, mut saw_v6) = (false, false);
+        for address in addresses {
+            match address.and_then(|a| a.ip()) {
+                Some(IpAddr::V4(ip)) if ip.is_loopback() => saw_v4 = true,
+                Some(IpAddr::V6(ip)) if ip.is_loopback() => saw_v6 = true,
+                _ => return false,
+            }
+        }
+        saw_v4 != saw_v6
+    }
+
     pub enum DNSRequestOwner {
         Socket(DnsWaitingSocket),
         Prefetch,
@@ -1777,34 +1793,32 @@ pub mod internal {
         );
     }
 
-    /// The `ai_family`/`ai_socktype`/`ai_addrlen` header for a synthesized
-    /// result entry.
-    fn synthetic_addrinfo(family: c_int) -> AddrInfo {
-        let mut n: AddrInfo = bun_core::ffi::zeroed();
-        n.ai_family = family;
-        n.ai_socktype = netc::SOCK_STREAM;
-        n.ai_addrlen = if family == netc::AF_INET6 {
+    /// One getaddrinfo()-shaped node: the `addrinfo` header and, if the node
+    /// has one, the socket address it points at.
+    type Node = (AddrInfo, Option<SockaddrStorage>);
+
+    /// A synthesized node for `address` (`SOCK_STREAM`, `ai_addrlen` by family).
+    fn synthetic_node(address: &bun_dns::Address) -> Node {
+        let family = address.family();
+        let mut info: AddrInfo = bun_core::ffi::zeroed();
+        info.ai_family = family;
+        info.ai_socktype = netc::SOCK_STREAM;
+        info.ai_addrlen = if family == netc::AF_INET6 {
             core::mem::size_of::<netc::sockaddr_in6>() as _
         } else {
             core::mem::size_of::<netc::sockaddr_in>() as _
         };
-        n
+        (info, Some(address.into_storage()))
     }
 
     // Pack getaddrinfo results into one allocation with address families
     // interleaved (RFC 8305 §4) so an unroutable family can never fill all
     // CONCURRENT_CONNECTIONS parallel connect attempts. See #4938 / #33278.
-    fn process_results(
-        nodes: impl Iterator<Item = (AddrInfo, Option<SockaddrStorage>)> + Clone,
-        err: c_int,
-    ) -> AddrInfoResult {
+    fn process_results(nodes: Vec<Node>, err: c_int) -> AddrInfoResult {
         let first_family = nodes
-            .clone()
-            .next()
+            .first()
             .map_or(netc::AF_UNSPEC, |(info, _)| info.ai_family);
-        let is_first = move |info: &AddrInfo| info.ai_family == first_family;
-        let count = nodes.clone().count();
-        let entry = |(info, addr): (AddrInfo, Option<SockaddrStorage>)| {
+        let entry = |(info, addr): Node| {
             // Windows getaddrinfo may return non-null ai_addr with families other
             // than AF_INET/AF_INET6; those entries keep a (zeroed) `addr`.
             let addr = addr.map(|a| {
@@ -1818,8 +1832,11 @@ pub mod internal {
         };
 
         // first, other, first, other, … then whatever is left of the longer run.
-        let mut firsts = nodes.clone().filter(move |(info, _)| is_first(info));
-        let mut others = nodes.filter(move |(info, _)| !is_first(info));
+        let count = nodes.len();
+        let (firsts, others): (Vec<Node>, Vec<Node>) = nodes
+            .into_iter()
+            .partition(|(info, _)| info.ai_family == first_family);
+        let (mut firsts, mut others) = (firsts.into_iter(), others.into_iter());
         let mut results: Vec<addrinfo_result_entry> = Vec::with_capacity(count);
         loop {
             match (firsts.next(), others.next()) {
@@ -1840,7 +1857,8 @@ pub mod internal {
         let result = match result {
             Ok(Some(list)) => process_results(
                 list.iter()
-                    .map(|e| (*e.raw(), e.address().map(bun_dns::Address::into_storage))),
+                    .map(|e| (*e.raw(), e.address().map(bun_dns::Address::into_storage)))
+                    .collect(),
                 0,
             ),
             Ok(None) => AddrInfoResult::new(Vec::new(), 0),
@@ -1893,12 +1911,20 @@ pub mod internal {
         let result = {
             let mut hints = get_hints();
             let mut result = bun_sys::net::AddrInfoList::lookup(host, service, Some(&hints));
-            // optional fallback
-            if result.as_ref().err() == Some(&netc::EAI_NONAME)
-                && (hints.ai_flags & netc::AI_ADDRCONFIG) != 0
+            // Chrome's retries: AI_ADDRCONFIG left nothing, or only one family's loopback.
+            if (hints.ai_flags & netc::AI_ADDRCONFIG) != 0
+                && match &result {
+                    Err(err) => *err == netc::EAI_NONAME,
+                    Ok(list) => is_all_loopback_of_one_family(
+                        list.iter().flat_map(|l| l.iter()).map(|e| e.address()),
+                    ),
+                }
             {
                 hints.ai_flags &= !netc::AI_ADDRCONFIG;
-                result = bun_sys::net::AddrInfoList::lookup(host, service, Some(&hints));
+                let unfiltered = bun_sys::net::AddrInfoList::lookup(host, service, Some(&hints));
+                if unfiltered.is_ok() || result.is_err() {
+                    result = unfiltered;
+                }
             }
             result
         };
@@ -1936,25 +1962,23 @@ pub mod internal {
     /// Complete an internal request: build an addrinfo chain and reuse `process_results` (happy-eyeballs order).
     #[cfg(target_os = "macos")]
     pub(super) fn dns_sd_complete(req: BackRef<Request, bun_ptr::Root>) {
-        let (results, empty_status) = req
-            .dns_sd
-            .with_mut(|query| (query.take_results(), query.empty_status()));
+        let results = req.dns_sd.with_mut(|query| query.take_results());
         let port = req.key.port;
         let req = req.this_ptr();
 
         if results.is_empty() {
-            after_result_entries(req, AddrInfoResult::new(Vec::new(), empty_status));
+            after_result_entries(req, AddrInfoResult::new(Vec::new(), dns_sd::EMPTY_STATUS));
             return;
         }
 
-        let nodes = results.iter().map(|r| {
-            let mut address = r.address;
-            address.set_port(port);
-            (
-                synthetic_addrinfo(address.family()),
-                Some(address.into_storage()),
-            )
-        });
+        let nodes = results
+            .iter()
+            .map(|r| {
+                let mut address = r.address;
+                address.set_port(port);
+                synthetic_node(&address)
+            })
+            .collect();
         after_result_entries(req, process_results(nodes, 0));
     }
 
@@ -2003,6 +2027,58 @@ pub mod internal {
         Ok(object)
     }
 
+    /// The `addresses: string[]` argument of the testing hooks below.
+    fn addresses_for_testing(
+        global: &JSGlobalObject,
+        addresses: JSValue,
+    ) -> JsResult<Vec<bun_dns::Address>> {
+        if !addresses.is_array() {
+            return Err(
+                global.throw_invalid_arguments(format_args!("expected addresses: string[]"))
+            );
+        }
+        let len = addresses.get_length(global)? as usize;
+        if len > 64 {
+            return Err(global
+                .throw_invalid_arguments(format_args!("addresses must have at most 64 entries")));
+        }
+        (0..len)
+            .map(|i| {
+                let address = addresses.get_index(global, i as u32)?.to_utf8(global)?;
+                match bun_core::ip_address::to_ip_address(address.slice()) {
+                    Some(ip) => Ok(bun_dns::Address::from_ip(ip, 0)),
+                    None => Err(global.throw_invalid_arguments(format_args!(
+                        "addresses[{i}] is not an IPv4 or IPv6 literal"
+                    ))),
+                }
+            })
+            .collect()
+    }
+
+    /// `bun:internal-for-testing`: [`is_localhost_name`] for one hostname.
+    pub(crate) fn is_localhost_name_for_testing(
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let hostname = frame.argument(0);
+        if !hostname.is_string() {
+            return Err(global.throw_invalid_arguments(format_args!("expected (hostname: string)")));
+        }
+        let hostname = hostname.to_utf8(global)?;
+        Ok(JSValue::js_boolean(is_localhost_name(hostname.slice())))
+    }
+
+    /// `bun:internal-for-testing`: [`is_all_loopback_of_one_family`] over `addresses` laid out as a getaddrinfo() answer.
+    pub(crate) fn is_all_loopback_of_one_family_for_testing(
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let addrs = addresses_for_testing(global, frame.argument(0))?;
+        Ok(JSValue::js_boolean(is_all_loopback_of_one_family(
+            addrs.into_iter().map(Some),
+        )))
+    }
+
     /// `bun:internal-for-testing`: seed the connect-path DNS cache for `hostname`
     /// by running `addresses` through the real [`process_results`] interleave and
     /// storing the result, so a real `fetch()` / `Bun.connect()` consumes it.
@@ -2011,42 +2087,17 @@ pub mod internal {
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
         let args = frame.arguments();
-        if args.len() < 2 || !args[0].is_string() || !args[1].is_array() {
+        if args.len() < 2 || !args[0].is_string() {
             return Err(global.throw_invalid_arguments(format_args!(
                 "expected (hostname: string, addresses: string[])"
             )));
         }
         let hostname_slice = args[0].to_utf8(global)?;
-        let len = args[1].get_length(global)? as usize;
-        if len == 0 || len > 64 {
-            return Err(
-                global.throw_invalid_arguments(format_args!("addresses must have 1..=64 entries"))
-            );
+        let addrs = addresses_for_testing(global, args[1])?;
+        if addrs.is_empty() {
+            return Err(global.throw_invalid_arguments(format_args!("addresses must not be empty")));
         }
-
-        let mut nodes: Vec<(AddrInfo, Option<SockaddrStorage>)> = Vec::with_capacity(len);
-        for i in 0..len {
-            let addr_slice = args[1].get_index(global, i as u32)?.to_utf8(global)?;
-            let addr_z = bun::ZBox::from_bytes(addr_slice.slice());
-            let mut octets = [0u8; 16];
-            let ip: std::net::IpAddr =
-                if c_ares::inet_pton(netc::AF_INET, c_str(&addr_z), &mut octets) > 0 {
-                    std::net::Ipv4Addr::new(octets[0], octets[1], octets[2], octets[3]).into()
-                } else if c_ares::inet_pton(netc::AF_INET6, c_str(&addr_z), &mut octets) > 0 {
-                    std::net::Ipv6Addr::from(octets).into()
-                } else {
-                    return Err(global.throw_invalid_arguments(format_args!(
-                        "addresses[{i}] is not an IPv4 or IPv6 literal"
-                    )));
-                };
-            let address = bun_dns::Address::from_ip(ip, 0);
-            nodes.push((
-                synthetic_addrinfo(address.family()),
-                Some(address.into_storage()),
-            ));
-        }
-
-        let results = process_results(nodes.iter().copied(), 0);
+        let results = process_results(addrs.iter().map(synthetic_node).collect(), 0);
 
         let out = JSValue::create_empty_array(global, results.entries().len())?;
         for (i, entry) in (0u32..).zip(results.entries().iter()) {
@@ -2138,6 +2189,32 @@ pub mod internal {
         DNS_CACHE_MISSES.fetch_add(1, Ordering::Relaxed);
         DNS_CACHE_SIZE.store(guard.len(), Ordering::Relaxed);
         drop(guard);
+
+        if host.is_some_and(|h| !bun_dns::is_valid_hostname(h)) {
+            bun_output::scoped_log!(
+                dns,
+                "getaddrinfo({}) = cache miss (not a hostname)",
+                bstr::BStr::new(host.unwrap_or(b""))
+            );
+            after_result_entries(req, AddrInfoResult::new(Vec::new(), netc::EAI_NONAME));
+            if let Some(is_cache_hit) = is_cache_hit {
+                *is_cache_hit = true;
+            }
+            return Some(req);
+        }
+
+        if host.is_some_and(is_localhost_name) {
+            bun_output::scoped_log!(
+                dns,
+                "getaddrinfo({}) = cache miss (localhost)",
+                bstr::BStr::new(host.unwrap_or(b""))
+            );
+            after_result_entries(req, localhost_results(port));
+            if let Some(is_cache_hit) = is_cache_hit {
+                *is_cache_hit = true;
+            }
+            return Some(req);
+        }
 
         #[cfg(target_os = "macos")]
         {
@@ -2824,10 +2901,10 @@ impl Resolver {
             &prev_global,
             T::reply_to_js(&addr, &prev_global, T::TYPE_NAME),
         );
-        keep_alive(&array);
+        array.keep_alive();
         head.on_complete(array);
 
-        keep_alive(&array);
+        array.keep_alive();
 
         for waiter in waiters {
             let new_global = waiter.global_this;
@@ -2839,9 +2916,9 @@ impl Resolver {
                 prev_global = new_global;
             }
 
-            keep_alive(&array);
+            array.keep_alive();
             waiter.on_complete(array);
-            keep_alive(&array);
+            array.keep_alive();
         }
     }
 
@@ -2872,10 +2949,10 @@ impl Resolver {
             &prev_global,
             super::cares_jsc::addr_info_to_js_array(&addr, &prev_global),
         );
-        keep_alive(&array);
+        array.keep_alive();
         head.on_complete_with_array(array);
 
-        keep_alive(&array);
+        array.keep_alive();
 
         for waiter in waiters {
             let new_global = waiter.global_this;
@@ -2887,9 +2964,9 @@ impl Resolver {
                 prev_global = new_global;
             }
 
-            keep_alive(&array);
+            array.keep_alive();
             waiter.on_complete_with_array(array);
-            keep_alive(&array);
+            array.keep_alive();
         }
         // `addr` (the c-ares `ares_addrinfo`) is freed once, after all consumers ran.
     }
@@ -2923,9 +3000,9 @@ impl Resolver {
         let mut prev_global = head.global_this;
 
         {
-            keep_alive(&array);
+            array.keep_alive();
             head.on_complete_with_array(array);
-            keep_alive(&array);
+            array.keep_alive();
         }
 
         for waiter in waiters {
@@ -2938,9 +3015,9 @@ impl Resolver {
                 prev_global = new_global;
             }
 
-            keep_alive(&array);
+            array.keep_alive();
             waiter.on_complete_with_array(array);
-            keep_alive(&array);
+            array.keep_alive();
         }
     }
 
@@ -2972,10 +3049,10 @@ impl Resolver {
             &prev_global,
             super::cares_jsc::hostent_to_js_response(addr, &prev_global, b""),
         );
-        keep_alive(&array);
+        array.keep_alive();
         head.on_complete(array);
 
-        keep_alive(&array);
+        array.keep_alive();
 
         for waiter in waiters {
             let new_global = waiter.global_this;
@@ -2987,9 +3064,9 @@ impl Resolver {
                 prev_global = new_global;
             }
 
-            keep_alive(&array);
+            array.keep_alive();
             waiter.on_complete(array);
-            keep_alive(&array);
+            array.keep_alive();
         }
     }
 
@@ -3019,10 +3096,10 @@ impl Resolver {
             &prev_global,
             super::cares_jsc::nameinfo_to_js_response(&name_info, &prev_global),
         );
-        keep_alive(&array);
+        array.keep_alive();
         head.on_complete(array);
 
-        keep_alive(&array);
+        array.keep_alive();
 
         for waiter in waiters {
             let new_global = waiter.global_this;
@@ -3034,9 +3111,9 @@ impl Resolver {
                 prev_global = new_global;
             }
 
-            keep_alive(&array);
+            array.keep_alive();
             waiter.on_complete(array);
-            keep_alive(&array);
+            array.keep_alive();
         }
     }
 
@@ -3461,12 +3538,7 @@ impl Resolver {
         options: GetAddrInfoOptions,
         global_this: &JSGlobalObject,
     ) -> JsResult<JSValue> {
-        // The system backends copy the hostname into a NUL-terminated buffer.
-        // Reject anything that cannot fit a `bun.PathBuffer` (the historical
-        // bound) or embeds a NUL. RFC 1035 caps hostnames at 253 octets and
-        // NI_MAXHOST is 1025, so this never rejects a name that could have
-        // resolved.
-        if name.len() >= MAX_PATH_BYTES || strings::contains_char(name, 0) {
+        if !bun_dns::is_valid_hostname(name) {
             let mut promise = JSPromiseStrong::init(global_this);
             let promise_value = promise.value();
             error_to_deferred(
@@ -4280,6 +4352,20 @@ pub fn get_runtime_default_result_order_option(
 // HOST_EXPORT(JS2Rust___src_runtime_dns_jsc_dns_rs__internal_seedCacheForTesting)
 pub fn seed_cache_for_testing(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     internal::seed_cache_for_testing(global, frame)
+}
+// HOST_EXPORT(JS2Rust___src_runtime_dns_jsc_dns_rs__internal_isLocalhostNameForTesting)
+pub fn is_localhost_name_for_testing(
+    global: &JSGlobalObject,
+    frame: &CallFrame,
+) -> JsResult<JSValue> {
+    internal::is_localhost_name_for_testing(global, frame)
+}
+// HOST_EXPORT(JS2Rust___src_runtime_dns_jsc_dns_rs__internal_isAllLoopbackOfOneFamilyForTesting)
+pub fn is_all_loopback_of_one_family_for_testing(
+    global: &JSGlobalObject,
+    frame: &CallFrame,
+) -> JsResult<JSValue> {
+    internal::is_all_loopback_of_one_family_for_testing(global, frame)
 }
 
 /// `bun_dns::internal::prefetch` — declared `extern "C"` in the lower-tier

@@ -1350,13 +1350,10 @@ fn is_core_schema_number<Enc: Encoding>(s: &[Enc::Unit], first_char: FirstChar) 
     i == len
 }
 
-/// `bun_core::wtf::parse_double` over an encoding-generic slice.
 fn parse_double_generic<Enc: Encoding>(s: &[Enc::Unit]) -> Result<f64, ()> {
     bun_core::wtf::parse_double(Enc::key_bytes(s)).map_err(|_| ())
 }
 
-/// Parses a `u64` with radix auto-detection (`0x`, `0o`, `0b`, else decimal);
-/// `_` is a digit separator.
 fn parse_unsigned_radix0<Enc: Encoding>(s: &[Enc::Unit]) -> Result<u64, ()> {
     bun_core::fmt::parse_unsigned::<u64>(Enc::key_bytes(s), 0).map_err(|_| ())
 }

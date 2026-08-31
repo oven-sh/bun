@@ -1683,6 +1683,58 @@ describe("bundler", () => {
     },
     run: { stdout: "a deep undefined" },
   });
+  // Shapes taken from rolldown's tree_shaking fixtures.
+  itBundled("importstar/MemberOfNamespaceMemberTwoLevels", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as ns from './shared'
+        console.log(ns.a.b, ns.a['a'])
+      `,
+      "/shared.js": `import { c } from './c'; export { c as a }`,
+      "/c.js": `export * as c from './a'`,
+      "/a.js": `export const c = 'FAIL'; export const b = 500; export const a = 100`,
+    },
+    dce: true,
+    run: { stdout: "500 100" },
+  });
+  itBundled("importstar/MemberOfNamespaceDynamicKeyKeepsAll", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as ns from './shared'
+        let q = 'a'
+        console.log(ns.a[q], Object.keys(ns.a).length)
+      `,
+      "/shared.js": `import { c } from './c'; export { c as a }`,
+      "/c.js": `export * as c from './a'`,
+      "/a.js": `export const c = 1000; export const b = 500; export const a = 100`,
+    },
+    run: { stdout: "100 3" },
+  });
+  itBundled("importstar/MemberOfNamespaceOptionalChain", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as h from './state'
+        import { ns } from './lib'
+        console.log(h.app?.user?.name ?? 'ok', h['app']?.['user']?.['name'] ?? 'ok', ns.obj?.x, ns?.obj?.missing?.y)
+      `,
+      "/state.js": `export const app = { user: null }`,
+      "/lib.js": `export * as ns from './t'`,
+      "/t.js": `export const obj = { x: 1 }`,
+    },
+    run: { stdout: "ok ok 1 undefined" },
+  });
+  itBundled("importstar/MemberOfNamespaceAssignThroughMember", {
+    files: {
+      "/entry.js": /* js */ `
+        import { ns } from './lib'
+        ns.data.search = 'overridden'
+        console.log(ns.data.search)
+      `,
+      "/lib.js": `export * as ns from './t'`,
+      "/t.js": `export const data = { search: 'orig' }`,
+    },
+    run: { stdout: "overridden" },
+  });
   itBundled("importstar/MemberOfImportFallbacks", {
     files: {
       "/entry.ts": /* ts */ `

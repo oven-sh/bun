@@ -1735,6 +1735,95 @@ describe("bundler", () => {
     },
     run: { stdout: "overridden" },
   });
+  // Shapes taken from webpack's parsing/harmony-deep-exports and
+  // side-effects/{nested-namespace-reexport,star-reexport-passthrough} cases.
+  itBundled("importstar/MemberOfReExportedNamespaceLiveBindings", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as C from "./reexport-namespace.js";
+        import { counter } from "./reexport-namespace.js";
+        import * as C2 from "./reexport-namespace-again.js";
+        const out = [];
+        (0, counter.reset)(); out.push(counter.counter); (0, counter.increment)(); out.push(counter.counter);
+        (0, C.counter.reset)(); out.push(C.counter.counter); (0, C.counter.increment)(); out.push(C.counter.counter);
+        (0, C2.CC.counter.reset)(); out.push(C2.CC.counter.counter); (0, C2.CC.counter.increment)(); out.push(C2.CC.counter.counter);
+        C2.CC.counter.increment(); out.push(counter.counter, C.counter.counter === C2.CC.counter.counter);
+        console.log(JSON.stringify(out));
+      `,
+      "/counter.js": /* js */ `
+        export let counter = 0;
+        export const increment = () => { counter++; };
+        export function reset() { counter = 0; }
+      `,
+      "/reexport-namespace.js": /* js */ `
+        import * as counter from "./counter.js";
+        export { counter };
+        import * as counter2 from "./counter.js";
+        export { counter2 };
+      `,
+      "/reexport-namespace-again.js": /* js */ `
+        import * as CC from "./reexport-namespace.js";
+        export { CC };
+      `,
+    },
+    run: { stdout: "[0,1,0,1,0,1,2,true]" },
+  });
+  itBundled("importstar/MemberOfNestedNamespaceReexportSideEffectsFalse", {
+    files: {
+      "/entry.js": /* js */ `
+        import { ns } from "chain/ns.js";
+        console.log(ns.y);
+      `,
+      "/node_modules/chain/package.json": `{"name":"chain","version":"0.0.1","sideEffects":false}`,
+      "/node_modules/chain/ns.js": `export * as ns from "./inner.js";`,
+      "/node_modules/chain/inner.js": `export { y } from "./real.js";`,
+      "/node_modules/chain/real.js": `export const y = 42; export const other = "FAIL";`,
+    },
+    dce: true,
+    run: { stdout: "42" },
+  });
+  itBundled("importstar/MemberOfStarReexportPassthroughSideEffectsFalse", {
+    files: {
+      "/entry.js": /* js */ `
+        import { foo, bar } from "./named.js";
+        import * as ns from "lib";
+        console.log(JSON.stringify([foo(), bar(), ns.foo(), ns.bar(), ns.baz(), Object.keys(ns).sort()]));
+      `,
+      "/named.js": `export { foo, bar } from "lib";`,
+      "/node_modules/lib/package.json": `{"name":"lib","version":"0.0.1","sideEffects":false}`,
+      "/node_modules/lib/index.js": `export * from "./mid.js";`,
+      "/node_modules/lib/mid.js": `export * from "./real.js";`,
+      "/node_modules/lib/real.js": /* js */ `
+        export function foo() { return 1; }
+        export function bar() { return 2; }
+        export function baz() { return 3; }
+      `,
+    },
+    run: { stdout: `[1,2,1,2,3,["bar","baz","foo"]]` },
+  });
+  // Shapes taken from rollup's function/samples/namespace-member-side-effects.
+  itBundled("importstar/MemberOfNamespaceInsideExportedObject", {
+    files: {
+      "/entry.js": /* js */ `
+        import api from './api/index.js';
+        import { sideEffects } from './api/sideEffects.js';
+        api.namespace.sideEffectFunction();
+        let threw = false;
+        try { api.namespace.missing.foo } catch { threw = true }
+        console.log(JSON.stringify(sideEffects), threw);
+      `,
+      "/api/index.js": /* js */ `
+        import * as namespace from './namespace.js';
+        export default { namespace };
+      `,
+      "/api/namespace.js": /* js */ `
+        import { sideEffects } from './sideEffects.js';
+        export function sideEffectFunction() { sideEffects.push('fn called'); }
+      `,
+      "/api/sideEffects.js": `export const sideEffects = [];`,
+    },
+    run: { stdout: `["fn called"] true` },
+  });
   itBundled("importstar/MemberOfImportFallbacks", {
     files: {
       "/entry.ts": /* ts */ `

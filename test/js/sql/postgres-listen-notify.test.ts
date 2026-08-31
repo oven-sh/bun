@@ -678,7 +678,9 @@ describe("onconnect/onclose", () => {
 
     server.dropConnections();
     await reconnected; // the second onlisten marks the reconnect
-    expect(events).toEqual(["onconnect null", "onclose Connection closed", "onconnect null"]);
+    // The drop error depends on how the peer close surfaces (FIN vs RST), so
+    // only the event order is pinned.
+    expect(events).toEqual(["onconnect null", expect.stringMatching(/^onclose .+/), "onconnect null"]);
   });
 
   test("sql.close() fires onclose for the listen connection", async () => {

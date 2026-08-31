@@ -5,8 +5,8 @@
 //!
 //! The task is run on a thread pool and then the result is returned to the main JavaScript thread.
 //!
-//! If `auto_delete` is true, the task is automatically deallocated when it's finished.
-//! Otherwise, it's expected that the containing struct will deallocate the task.
+//! A heap carrier (`create*`) is deallocated by the event loop once its task is
+//! dispatched; an intrusive one is part of the struct that owns it.
 
 use crate::ManagedTask;
 use bun_threading::UnboundedQueue;
@@ -119,6 +119,7 @@ pub mod task_tag {
         ShellAsyncCpTask,
         StreamPending,
         ThreadSafeFunction,
+        ThreadSafeFunctionFinalize,
         ValkeyDeferredClose,
         WindowsNamedPipeContext,
         Write,
@@ -164,6 +165,58 @@ pub trait Taskable {
     unsafe fn release_unrun(this: *mut Self);
 }
 
+/// A task whose queued pointer is a [`ThisPtr`](bun_ptr::ThisPtr) to
+/// `Target`, which keeps itself alive for the task; the dispatcher runs it or
+/// releases it through here. A zero-sized hop type per tag, declared next to
+/// `Target` with its own `unsafe impl` stating the ref protocol.
+///
+/// # Safety
+/// `TAG` is dispatched (in `bun_runtime::dispatch`) to this impl and no other
+/// task type uses it; and `Target`'s protocol keeps the pointee of every
+/// [`task`](Self::task) it queues alive until `run` / `release_unrun` (a
+/// `RefPtr` slot held for the queued task, or an owner that outlives the queue).
+pub unsafe trait TaskHop {
+    type Target;
+    /// The tag constant from [`task_tag`]; the `bun_runtime::dispatch` match
+    /// arms MUST agree.
+    const TAG: TaskTag;
+    fn run(this: bun_ptr::ThisPtr<Self::Target>) -> crate::JsResult<()>;
+    /// As [`Taskable::release_unrun`].
+    fn release_unrun(this: bun_ptr::ThisPtr<Self::Target>);
+
+    #[inline]
+    fn task(this: bun_ptr::ThisPtr<Self::Target>) -> Task {
+        Task::new(Self::TAG, this.as_ptr().cast::<()>())
+    }
+}
+
+/// A task that owns its payload: queued as the `Box<Self>` leaked into
+/// [`Task::ptr`], handed back as that box when the dispatcher runs or
+/// releases it.
+///
+/// # Safety
+/// `TAG` is dispatched (in `bun_runtime::dispatch`) to this impl and no other
+/// task type uses it, so the dispatcher's `Box::<Self>::from_raw` gets back
+/// what [`into_task`](Self::into_task) leaked.
+pub unsafe trait BoxedTask: Sized {
+    /// The tag constant from [`task_tag`]; the `bun_runtime::dispatch` match
+    /// arms MUST agree.
+    const TAG: TaskTag;
+    fn run(self: Box<Self>) -> crate::JsResult<()>;
+    /// As [`Taskable::release_unrun`].
+    fn release_unrun(self: Box<Self>);
+    /// A weak post was refused: the VM this was for has closed (any thread;
+    /// its heap may be gone). Free the task without touching that VM.
+    fn refused(self: Box<Self>);
+
+    /// The JS thread's own enqueue (`EventLoop::enqueue_task`), which cannot
+    /// be refused; off-thread posts go through `ConcurrentTask::create_boxed`.
+    #[inline]
+    fn into_task(self: Box<Self>) -> Task {
+        Task::new(Self::TAG, Box::into_raw(self).cast::<()>())
+    }
+}
+
 impl TaskTag {
     /// The tag's identifier, for diagnostics.
     pub fn name(self) -> &'static str {
@@ -205,6 +258,10 @@ impl Taskable for crate::ManagedTask::ManagedTask {
 }
 // ────────────────────────────────────────────────────────────────────────────
 
+/// How a heap carrier (`ConcurrentTask::create*`) frees itself, and the
+/// payload if the carrier owns it, when a weak post is refused.
+type ReleaseRefused = unsafe fn(core::ptr::NonNull<ConcurrentTask>);
+
 #[repr(C)]
 pub struct ConcurrentTask {
     pub task: Task,
@@ -212,10 +269,13 @@ pub struct ConcurrentTask {
     /// path (`atomic_store_next`, called once per completed work-pool task via
     /// `enqueue_task_concurrent`) is a single release-store — no read-modify-write.
     pub next: Link<ConcurrentTask>,
-    /// If `true`, the task is heap-owned and freed by the event loop after
-    /// dispatch. Immutable after construction; read only on the consumer thread,
-    /// so it does not need to share a word with the contended `next` link.
-    pub auto_delete: bool,
+    /// `Some` on a heap carrier (`create*`): the event loop frees the carrier
+    /// after dispatching its task, and a refused weak post frees carrier and
+    /// owned payload through it ([`ConcurrentTask::release_refused`]). `None`
+    /// on an intrusive carrier, which belongs to its container. Immutable after
+    /// construction; read only on the consumer thread, so it does not need to
+    /// share a word with the contended `next` link.
+    release_refused: Option<ReleaseRefused>,
 }
 
 impl Default for ConcurrentTask {
@@ -225,12 +285,12 @@ impl Default for ConcurrentTask {
             // byte + raw pointer); caller must set a real task before use.
             task: unsafe { bun_core::ffi::zeroed_unchecked() },
             next: Link::new(),
-            auto_delete: false,
+            release_refused: None,
         }
     }
 }
 
-// `auto_delete` is deliberately its own field rather than packed into bit 0
+// `release_refused` is deliberately its own field rather than packed into bit 0
 // of `next`: `Task` is already two words here (tag is not packed into the
 // pointer), so the struct was never 16B, and profiling (build/create-next
 // benches) showed
@@ -241,7 +301,7 @@ impl Default for ConcurrentTask {
 const _: () = assert!(
     core::mem::size_of::<ConcurrentTask>()
         == core::mem::size_of::<Task>() + 2 * core::mem::size_of::<usize>(),
-    "ConcurrentTask = Task + next ptr + auto_delete (padded)"
+    "ConcurrentTask = Task + next ptr + release_refused"
 );
 
 // SAFETY: `link()` always projects to the same embedded `next: Link<Self>`
@@ -258,12 +318,6 @@ unsafe impl Linked for ConcurrentTask {
 }
 pub type Queue = UnboundedQueue<ConcurrentTask>;
 
-#[derive(Copy, Clone, Eq, PartialEq)]
-pub enum AutoDeinit {
-    ManualDeinit,
-    AutoDeinit,
-}
-
 impl ConcurrentTask {
     /// Heap-allocate a ConcurrentTask and return a raw pointer.
     /// The pointer is intrusive (linked into `Queue`), so we use `heap::alloc` rather than `Box<T>`.
@@ -272,11 +326,55 @@ impl ConcurrentTask {
         bun_core::heap::into_raw(Box::new(init))
     }
 
+    /// A heap carrier for `task`, whose payload the carrier does not own
+    /// (intrusive, or freed by whoever posts it) — except a `ManagedTask`,
+    /// which it does.
     pub fn create(task: Task) -> core::ptr::NonNull<ConcurrentTask> {
+        /// # Safety
+        /// `this` is a refused heap carrier.
+        unsafe fn carrier_only(this: core::ptr::NonNull<ConcurrentTask>) {
+            // SAFETY: fn contract; `create*` boxed it.
+            drop(unsafe { bun_core::heap::take(this.as_ptr()) });
+        }
+        /// # Safety
+        /// `this` is a refused heap carrier whose payload is a `ManagedTask`.
+        unsafe fn managed(this: core::ptr::NonNull<ConcurrentTask>) {
+            // SAFETY: fn contract; refused ⇒ both boxes are ours.
+            unsafe {
+                let task = bun_core::heap::take(this.as_ptr()).task;
+                crate::ManagedTask::ManagedTask::release(task.ptr.cast());
+            }
+        }
+        let release: ReleaseRefused = if task.tag == task_tag::ManagedTask {
+            managed
+        } else {
+            carrier_only
+        };
+        Self::create_with(task, release)
+    }
+
+    /// A heap carrier owning the boxed `task`: a refused weak post hands it to
+    /// [`BoxedTask::refused`].
+    pub fn create_boxed<T: BoxedTask>(task: Box<T>) -> core::ptr::NonNull<ConcurrentTask> {
+        /// # Safety
+        /// `this` is a refused heap carrier built by `create_boxed::<T>`.
+        unsafe fn boxed<T: BoxedTask>(this: core::ptr::NonNull<ConcurrentTask>) {
+            // SAFETY: fn contract; refused ⇒ both boxes are ours, and the
+            // payload is the `Box<T>` `into_task` leaked.
+            let task = unsafe {
+                let task = bun_core::heap::take(this.as_ptr()).task;
+                Box::from_raw(task.ptr.cast::<T>())
+            };
+            T::refused(task);
+        }
+        Self::create_with(task.into_task(), boxed::<T>)
+    }
+
+    fn create_with(task: Task, release: ReleaseRefused) -> core::ptr::NonNull<ConcurrentTask> {
         let raw = ConcurrentTask::new(ConcurrentTask {
             task,
             next: Link::new(),
-            auto_delete: true,
+            release_refused: Some(release),
         });
         // SAFETY: `new` heap-allocates via `heap::into_raw` — never null.
         unsafe { core::ptr::NonNull::new_unchecked(raw) }
@@ -297,17 +395,24 @@ impl ConcurrentTask {
         Self::create(ManagedTask::ManagedTask::new(ptr, callback))
     }
 
-    pub fn from<T: Taskable>(
-        &mut self,
-        of: *mut T,
-        auto_deinit: AutoDeinit,
-    ) -> &mut ConcurrentTask {
-        bun_core::mark_binding!();
-        *self = ConcurrentTask {
-            task: Task::init(of),
+    /// Load this intrusive carrier with `of`'s task, ready to post.
+    pub fn from<T: Taskable>(&mut self, of: *mut T) -> &mut ConcurrentTask {
+        self.from_task(Task::init(of))
+    }
+
+    /// An intrusive carrier loaded with `task`, ready to post.
+    pub const fn intrusive(task: Task) -> ConcurrentTask {
+        ConcurrentTask {
+            task,
             next: Link::new(),
-            auto_delete: auto_deinit == AutoDeinit::AutoDeinit,
-        };
+            release_refused: None,
+        }
+    }
+
+    /// Load this intrusive carrier with `task`, ready to post.
+    pub fn from_task(&mut self, task: Task) -> &mut ConcurrentTask {
+        bun_core::mark_binding!();
+        *self = Self::intrusive(task);
         self
     }
 
@@ -328,25 +433,78 @@ impl ConcurrentTask {
     }
 
     /// A weak poster got `task` back because the target VM has closed: free
-    /// it if it is a heap task (`create*`); an intrusive one belongs to its
-    /// container.
+    /// it if it is a heap carrier (`create*`), with the payload if the carrier
+    /// owns it; an intrusive one belongs to its container.
     ///
     /// # Safety
     /// `task` was just refused and is not queued anywhere.
     pub unsafe fn release_refused(task: core::ptr::NonNull<ConcurrentTask>) {
-        // SAFETY: fn contract.
-        let inner = unsafe { Self::into_task(task) };
-        // A callback task (`from_callback`, `ManagedTask::new*`) owns a heap
-        // `ManagedTask` behind `task.ptr` as well.
-        if inner.tag == crate::task_tag::ManagedTask {
-            // SAFETY: as above; refused ⇒ ours.
-            unsafe { crate::ManagedTask::ManagedTask::release(inner.ptr.cast()) };
+        // SAFETY: fn contract; `release_refused` was installed by the
+        // constructor that knows the carrier's and payload's ownership.
+        unsafe {
+            if let Some(release) = task.as_ref().release_refused {
+                release(task);
+            }
         }
     }
 
-    /// Returns whether this task should be automatically deallocated after execution.
+    /// Whether this is a heap carrier (`create*`) the event loop frees after
+    /// dispatching its task.
     #[inline]
     pub fn auto_delete(&self) -> bool {
-        self.auto_delete
+        self.release_refused.is_some()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use core::sync::atomic::{AtomicUsize, Ordering};
+
+    static REFUSED: AtomicUsize = AtomicUsize::new(0);
+    static DROPPED: AtomicUsize = AtomicUsize::new(0);
+
+    struct Payload {
+        _buf: Box<[u8; 64]>,
+    }
+    impl Drop for Payload {
+        fn drop(&mut self) {
+            DROPPED.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+    // SAFETY: test-only; never dispatched, so the borrowed tag cannot collide.
+    unsafe impl BoxedTask for Payload {
+        const TAG: TaskTag = task_tag::NapiFinalizerTask;
+        fn run(self: Box<Self>) -> crate::JsResult<()> {
+            Ok(())
+        }
+        fn release_unrun(self: Box<Self>) {}
+        fn refused(self: Box<Self>) {
+            REFUSED.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    #[test]
+    fn refused_boxed_carrier_releases_its_payload() {
+        let carrier = ConcurrentTask::create_boxed(Box::new(Payload {
+            _buf: Box::new([7; 64]),
+        }));
+        // SAFETY: never queued; ours.
+        unsafe { ConcurrentTask::release_refused(carrier) };
+        assert_eq!(REFUSED.load(Ordering::SeqCst), 1);
+        assert_eq!(DROPPED.load(Ordering::SeqCst), 1);
+
+        let mut intrusive = ConcurrentTask::intrusive(
+            Box::new(Payload {
+                _buf: Box::new([7; 64]),
+            })
+            .into_task(),
+        );
+        // SAFETY: never queued; an intrusive carrier is left alone.
+        unsafe { ConcurrentTask::release_refused(core::ptr::NonNull::from(&mut intrusive)) };
+        assert_eq!(DROPPED.load(Ordering::SeqCst), 1);
+        // SAFETY: the payload leaked into the intrusive carrier above.
+        drop(unsafe { Box::from_raw(intrusive.task.ptr.cast::<Payload>()) });
+        assert_eq!(DROPPED.load(Ordering::SeqCst), 2);
     }
 }

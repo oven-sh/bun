@@ -805,7 +805,7 @@ impl CompileC {
                 state
                     .add_symbol(
                         zstr!("Bun__thisFFIModuleNapiEnv"),
-                        global_this.make_napi_env_for_ffi().cast_const(),
+                        core::ptr::from_ref(global_this.make_napi_env_for_ffi()).cast::<c_void>(),
                     )
                     .map_err(|_| crate::Error::DeferredErrors)?;
                 break;
@@ -2520,26 +2520,16 @@ impl CompilerRT {
         state
             .add_symbol(zstr!("memcpy"), Self::memcpy as *const c_void)
             .expect("unreachable");
-        // Re-declare the C++ NapiHandleScope hooks locally — the canonical
-        // declarations live in `crate::napi::napi_body` which is private, and
-        // we only need the symbol addresses to hand to TCC. The canonical
-        // signatures use `*mut NapiHandleScope` (an opaque type not re-exported
-        // here); `*mut c_void` is ABI-identical for address-taking purposes.
-        #[allow(clashing_extern_declarations)]
-        unsafe extern "C" {
-            fn NapiHandleScope__open(env: *mut napi::NapiEnv, escapable: bool) -> *mut c_void;
-            fn NapiHandleScope__close(env: *mut napi::NapiEnv, current: *mut c_void);
-        }
         state
             .add_symbol(
                 zstr!("NapiHandleScope__open"),
-                NapiHandleScope__open as *const c_void,
+                bun_jsc::napi::NapiHandleScope__open as *const c_void,
             )
             .expect("unreachable");
         state
             .add_symbol(
                 zstr!("NapiHandleScope__close"),
-                NapiHandleScope__close as *const c_void,
+                bun_jsc::napi::NapiHandleScope__close as *const c_void,
             )
             .expect("unreachable");
 
@@ -2594,20 +2584,13 @@ pub(crate) fn bun__ffi__cc(global: &JSGlobalObject, callframe: &CallFrame) -> Js
     FFI::bun_ffi_cc(global, callframe)
 }
 
-fn make_napi_env_if_needed<'a>(
+fn make_napi_env_if_needed<'a, 'g>(
     functions: impl IntoIterator<Item = &'a Function>,
-    global_this: &JSGlobalObject,
-) -> Option<&'static napi::NapiEnv> {
-    // Return is `'static`, not `'a` — the env is heap-allocated by C++
-    // (`makeNapiEnvForFFI`) and owned by the VM for process lifetime; tying it
-    // to `'a` (the iterator borrow) is over-restrictive and blocks the
-    // immediate-after `values_mut()` loop at every call site.
+    global_this: &'g JSGlobalObject,
+) -> Option<&'g napi::NapiEnv> {
     for function in functions {
         if function.needs_napi_env() {
-            // SAFETY: C++ returns a non-null fresh NapiEnv; we hand back a shared `&` only.
-            // `bun_jsc` exposes `*mut c_void` to avoid an upward dep on
-            // `bun_runtime::napi`; the concrete type lives here, so cast at the boundary.
-            return Some(unsafe { &*global_this.make_napi_env_for_ffi().cast::<napi::NapiEnv>() });
+            return Some(global_this.make_napi_env_for_ffi());
         }
     }
     None

@@ -115,11 +115,8 @@
   },
   "src/runtime/napi/napi_body.rs": {
     "WorkPool::schedule*": 1,
-    "intrusive_work_task!": [
+    "unsafe impl SharedWorkTask": [
       "napi_async_work"
-    ],
-    "unsafe impl Sync": [
-      "napi_node_version"
     ]
   },
   "src/runtime/node/fs_events.rs": {

@@ -926,6 +926,19 @@ impl VirtualMachine {
         unsafe { &mut *self.event_loop }
     }
 
+    /// [`Self::event_loop_mut`] for the loop of the given kind rather than the
+    /// current one (what an off-thread completion recorded with
+    /// [`Self::current_loop_kind`]). Same single-JS-thread contract.
+    #[inline]
+    #[allow(clippy::mut_from_ref)]
+    pub fn event_loop_of(&self, kind: crate::LoopKind) -> &mut EventLoop {
+        let vm = self.as_mut();
+        match kind {
+            crate::LoopKind::Regular => &mut vm.regular_event_loop,
+            crate::LoopKind::Macro => &mut vm.macro_event_loop,
+        }
+    }
+
     /// Safe `&EventLoop` accessor — shared variant of [`Self::event_loop_mut`].
     /// Prefer when only reading event-loop fields (queue lengths, pending
     /// refs) to avoid minting an unnecessary `&mut`.

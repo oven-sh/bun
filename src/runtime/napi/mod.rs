@@ -1,27 +1,15 @@
 //! Node-API (N-API) implementation.
 //!
-//! The full implementation lives in `napi_body.rs` and depends on
-//! `bun_jsc::{ConcurrentTask, Debugger, EventLoop, Strong, Task,
-//! VirtualMachine}` method surface, `bun_collections::LinearFifo`,
-//! `bun_threading::{Condvar, Mutex, WorkPool}`, `bun_output` macros.
+//! The implementation lives in `napi_body.rs`; the FFI glue for the C++
+//! `napi_env` / handle-scope objects is `bun_jsc::napi`.
 
 #[path = "napi_body.rs"]
-pub(crate) mod napi_body;
+pub mod napi_body;
+pub(crate) use bun_jsc::napi::NapiEnv;
 pub use napi_body::NapiStatus;
 pub(crate) use napi_body::{
-    NapiFinalizerTask, ThreadSafeFunction, fix_dead_code_elimination, napi_async_work,
+    AsyncWorkCompletion, NapiFinalizerTask, TsfnDispatch, TsfnFinalize, fix_dead_code_elimination,
 };
 
-pub(crate) mod libc_check;
-
-// ─── compiling free items ────────────────────────────────────────────────────
-
-bun_opaque::opaque_ffi! {
-    /// This is `struct napi_env__` from napi.h
-    pub(crate) struct NapiEnv;
-}
-
-// ─── opaque type surface ─────────────────────────────────────────────────────
-// TODO(blocked): bun_jsc::EventLoop (method surface)
-// TODO(blocked): bun_collections::LinearFifo
-// TODO(blocked): bun_threading::Condvar
+pub mod libc_check;
+mod link_symbols;

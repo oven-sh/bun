@@ -165,6 +165,12 @@ impl EntropyCache {
 // cast/deref locally, so invoking the pointer carries no caller-side precondition.
 pub(crate) type CleanupHookFunction = extern "C" fn(*mut c_void);
 
+/// The context of a [`RareData::push_owned_cleanup_hook`].
+pub trait OwnedCleanupHook: Sized + 'static {
+    /// JS thread, VM exiting (script forbidden, JSC heap alive).
+    fn run(self: Box<Self>);
+}
+
 #[derive(Clone, Copy)]
 pub struct CleanupHook {
     pub ctx: *mut c_void,
@@ -799,6 +805,22 @@ impl RareData {
     ) {
         self.cleanup_hooks
             .push(CleanupHook::from(global_this, ctx, func));
+    }
+
+    /// A cleanup hook that owns `ctx`: [`OwnedCleanupHook::run`] gets it back
+    /// when the hooks run (once, at VM exit), or it leaks with the list if they
+    /// never do.
+    pub fn push_owned_cleanup_hook<T: OwnedCleanupHook>(
+        &mut self,
+        global_this: &JSGlobalObject,
+        ctx: Box<T>,
+    ) {
+        extern "C" fn run<T: OwnedCleanupHook>(ctx: *mut c_void) {
+            // SAFETY: only installed below, with the `Box<T>` leaked beside it;
+            // a hook is taken off the list before it runs, so this runs once.
+            T::run(unsafe { Box::from_raw(ctx.cast::<T>()) });
+        }
+        self.push_cleanup_hook(global_this, Box::into_raw(ctx).cast(), run::<T>);
     }
 
     pub fn spawn_sync_event_loop(&mut self, vm: &mut VirtualMachine) -> &mut SpawnSyncEventLoop {

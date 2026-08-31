@@ -38,6 +38,88 @@ pub unsafe trait IntrusiveWorkTask: bun_core::IntrusiveField<Task> {
     }
 }
 
+/// A refcounted `T` that stays shared (`&T`) while the pool holds its embedded
+/// [`SharedWorkNode`]: [`WorkPool::schedule_shared`] moves one reference into
+/// the pool, and the pool hands that reference to
+/// [`run_work_task`](Self::run_work_task) on a pool thread, concurrently with
+/// whatever other holders still do to `T`. Name the node's field with
+/// `bun_core::intrusive_field!(T, field: SharedWorkNode)` and write the
+/// `unsafe impl` yourself, stating the confinement below next to it.
+///
+/// # Safety
+/// Every field of `T` is either confined to one side (the pool's
+/// `run_work_task`, or the other holders) while the node is queued, or
+/// synchronized — `T` need not be `Sync` otherwise, so the type system does not
+/// check this; and wherever `run_work_task` lets its reference go must be a
+/// thread `T` may be freed on.
+pub unsafe trait SharedWorkTask:
+    bun_ptr::AnyRefCounted + bun_core::IntrusiveField<SharedWorkNode>
+{
+    /// Pool thread. `this` is the reference `schedule_shared` was given.
+    fn run_work_task(this: bun_ptr::RefPtr<Self>);
+}
+
+/// The pool's node inside a [`SharedWorkTask`], stored in the field its
+/// `IntrusiveField` impl names.
+#[repr(C)]
+pub struct SharedWorkNode {
+    task: core::cell::UnsafeCell<Task>,
+    /// Set from `schedule_shared` until the pool thread picks the node up.
+    queued: core::sync::atomic::AtomicBool,
+}
+
+impl SharedWorkNode {
+    pub fn new<T: SharedWorkTask>() -> SharedWorkNode {
+        /// # Safety
+        /// Only installed by [`SharedWorkNode::new`], so `task` is the node
+        /// embedded in a live `T` that [`WorkPool::schedule_shared`] queued
+        /// together with one reference, reached through a pointer with the
+        /// whole `T`'s provenance.
+        unsafe fn run<T: SharedWorkTask>(task: *mut Task) {
+            // SAFETY: fn contract; `task` is `SharedWorkNode`'s first field
+            // (repr(C), `UnsafeCell` is transparent). Raw projections only, so
+            // the pointer keeps the allocation's provenance for `from_raw`.
+            let this = unsafe {
+                let node = task.cast::<SharedWorkNode>();
+                (*core::ptr::addr_of!((*node).queued))
+                    .store(false, core::sync::atomic::Ordering::Release);
+                bun_ptr::RefPtr::from_raw(T::from_field_ptr(node))
+            };
+            T::run_work_task(this);
+        }
+        SharedWorkNode {
+            task: core::cell::UnsafeCell::new(Task {
+                node: Default::default(),
+                callback: run::<T>,
+            }),
+            queued: core::sync::atomic::AtomicBool::new(false),
+        }
+    }
+
+    /// Move `this` into its node for the pool: the node's `Task` to hand to
+    /// the pool (its callback takes the reference back out), or `None` if the
+    /// node is already queued (a bug: asserts in debug; the reference is dropped).
+    pub fn arm<T: SharedWorkTask>(this: bun_ptr::RefPtr<T>) -> Option<*mut Task> {
+        let this = bun_ptr::RefPtr::into_raw(this);
+        // SAFETY: `this` is live (the reference just unwrapped). Raw
+        // projections only, so the `Task` pointer the pool gets keeps the
+        // whole allocation's provenance for the callback's container-of.
+        unsafe {
+            let node: *mut SharedWorkNode = T::field_of(this);
+            if (*core::ptr::addr_of!((*node).queued))
+                .swap(true, core::sync::atomic::Ordering::AcqRel)
+            {
+                debug_assert!(false, "SharedWorkTask scheduled while already queued");
+                drop(bun_ptr::RefPtr::from_raw(this));
+                return None;
+            }
+            Some(core::cell::UnsafeCell::raw_get(core::ptr::addr_of!(
+                (*node).task
+            )))
+        }
+    }
+}
+
 /// An [`IntrusiveWorkTask`] that the [`WorkPool`] takes ownership of by value
 /// (`Box<Self>`). [`WorkPool::schedule_owned`] performs the `Box` →
 /// raw-pointer hand-off and [`__callback`](OwnedTask::__callback) recovers
@@ -150,6 +232,15 @@ impl WorkPool {
         Self::get().schedule(Batch::from(task));
     }
 
+    /// Queue `this`'s embedded [`SharedWorkNode`]; the pool owns `this` until
+    /// [`SharedWorkTask::run_work_task`] receives it. Scheduling a node that is
+    /// already queued is a bug: it asserts in debug and is otherwise a no-op.
+    pub fn schedule_shared<T: SharedWorkTask>(this: bun_ptr::RefPtr<T>) {
+        if let Some(task) = SharedWorkNode::arm(this) {
+            Self::schedule(task);
+        }
+    }
+
     /// Schedule a heap-allocated task by value. The pool takes ownership of
     /// the `Box`; [`OwnedTask::run`] receives it back on a worker thread.
     /// Replaces the open-coded `Box::into_raw` + `&raw mut (*p).task` +
@@ -206,5 +297,69 @@ impl WorkPool {
         // SAFETY: task_ is a valid Box-allocated TaskType<C>; .task is its first field.
         Self::schedule(unsafe { &raw mut (*task_).task });
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use core::cell::Cell;
+    use core::sync::atomic::{AtomicUsize, Ordering};
+
+    static RUNS: AtomicUsize = AtomicUsize::new(0);
+    static DROPS: AtomicUsize = AtomicUsize::new(0);
+
+    #[derive(bun_ptr::ThreadSafeRefCounted)]
+    struct Work {
+        ref_count: bun_ptr::ThreadSafeRefCount<Work>,
+        before: Cell<u32>,
+        task: SharedWorkNode,
+        after: Cell<u32>,
+    }
+    bun_core::intrusive_field!(Work, task: SharedWorkNode);
+    // SAFETY: single-threaded test; `run_work_task` touches only `Cell`s the
+    // holder is not touching at that moment, and `Work` may drop anywhere.
+    unsafe impl SharedWorkTask for Work {
+        fn run_work_task(this: bun_ptr::RefPtr<Self>) {
+            this.after.set(this.before.get() + this.after.get());
+            RUNS.fetch_add(1, Ordering::SeqCst);
+            drop(this);
+        }
+    }
+    impl Drop for Work {
+        fn drop(&mut self) {
+            DROPS.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    /// The pool's part: invoke the node's callback with the `Task` pointer.
+    fn fake_pool(task: *mut Task) {
+        // SAFETY: `task` came from `SharedWorkNode::arm`.
+        unsafe { ((*task).callback)(task) };
+    }
+
+    #[test]
+    fn shared_work_task_round_trip() {
+        let work = bun_ptr::RefPtr::new(Work {
+            ref_count: bun_ptr::ThreadSafeRefCount::init(),
+            before: Cell::new(7),
+            task: SharedWorkNode::new::<Work>(),
+            after: Cell::new(1),
+        });
+        let task = SharedWorkNode::arm(work.clone()).expect("not queued");
+        // Other holders keep using the value while it is queued.
+        work.before.set(41);
+        fake_pool(task);
+        assert_eq!(work.after.get(), 42);
+        assert_eq!(RUNS.load(Ordering::SeqCst), 1);
+        assert_eq!(DROPS.load(Ordering::SeqCst), 0);
+
+        // Re-armed after the callback cleared `queued`; the pool's reference
+        // is the last one this time.
+        let task = SharedWorkNode::arm(work).expect("not queued");
+        assert_eq!(DROPS.load(Ordering::SeqCst), 0);
+        fake_pool(task);
+        assert_eq!(RUNS.load(Ordering::SeqCst), 2);
+        assert_eq!(DROPS.load(Ordering::SeqCst), 1);
     }
 }

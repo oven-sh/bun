@@ -5,10 +5,7 @@ use core::sync::atomic::{AtomicBool, Ordering};
 use bun_boringssl as boringssl;
 use bun_cares_sys::c_ares_draft as c_ares;
 use bun_core::{MutableString, String as BunString};
-use bun_event_loop::{
-    ConcurrentTask::{AutoDeinit, ConcurrentTask},
-    Task, Taskable,
-};
+use bun_event_loop::{ConcurrentTask::ConcurrentTask, Task, Taskable};
 use bun_http as http;
 use bun_http::Method;
 use bun_http::{
@@ -2459,11 +2456,7 @@ impl FetchTasklet {
             }
         }
         // will deinit when done with the http client (when is_done = true)
-        let ct = core::ptr::NonNull::from(
-            task_ref
-                .concurrent_task
-                .from(task, AutoDeinit::ManualDeinit),
-        );
+        let ct = core::ptr::NonNull::from(task_ref.concurrent_task.from(task));
         // `ct` is the inline `concurrent_task` field of the heap tasklet; the
         // queue takes ownership of its `next` link. This thread's ref keeps the
         // tasklet (and the ticket in it) alive across the post.

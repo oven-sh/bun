@@ -96,7 +96,7 @@ use crate::api::native_promise_context::DeferredDerefTask as NativePromiseContex
 #[cfg(not(windows))]
 use bun_spawn::static_pipe_writer::Poll as StaticPipeWriterPoll;
 
-use crate::napi::{NapiFinalizerTask, ThreadSafeFunction, napi_async_work};
+use crate::napi::{AsyncWorkCompletion, NapiFinalizerTask, TsfnDispatch, TsfnFinalize};
 
 use bun_jsc::PosixSignalTask;
 use bun_jsc::RuntimeTranspilerStore;
@@ -188,6 +188,26 @@ pub(crate) fn run_task(
         ($ty:ty) => {
             task.ptr.cast::<$ty>()
         };
+    }
+    /// `<$hop as TaskHop>::run` on the queued `ThisPtr`, SAFETY spelled once.
+    macro_rules! hop {
+        ($hop:ty) => {{
+            // SAFETY: §Dispatch — `task.tag` is `<$hop>::TAG`, set together with
+            // `task.ptr` from a `ThisPtr` whose pointee keeps itself alive for
+            // the queued task; not touched here after the call.
+            <$hop as bun_event_loop::TaskHop>::run(unsafe {
+                bun_ptr::ThisPtr::new(cast_ptr!(<$hop as bun_event_loop::TaskHop>::Target))
+            })
+        }};
+    }
+    /// `<$ty as BoxedTask>::run` on the queued box, SAFETY spelled once.
+    macro_rules! boxed {
+        ($ty:ty) => {{
+            // SAFETY: §Dispatch — `task.tag` is `<$ty as BoxedTask>::TAG`, set by
+            // `BoxedTask::into_task` together with the `Box<$ty>` it leaked into
+            // `task.ptr`; reclaimed exactly once, here.
+            <$ty as bun_event_loop::BoxedTask>::run(unsafe { Box::from_raw(cast_ptr!($ty)) })
+        }};
     }
     /// `CompressionStream::<T>::run_from_js_thread` takes `*mut T` (full
     /// allocation provenance — R-2) so its trailing `T::deref()` may free the box.
@@ -354,15 +374,10 @@ pub(crate) fn run_task(
         }
 
         // ── napi ─────────────────────────────────────────────────────────
-        task_tag::NapiAsyncWork => {
-            cast!(napi_async_work).run_from_js(global)?;
-        }
-        task_tag::ThreadSafeFunction => {
-            ThreadSafeFunction::on_dispatch(cast_ptr!(ThreadSafeFunction));
-        }
-        task_tag::NapiFinalizerTask => {
-            NapiFinalizerTask::run_on_js_thread(cast_ptr!(NapiFinalizerTask))?;
-        }
+        task_tag::NapiAsyncWork => hop!(AsyncWorkCompletion)?,
+        task_tag::ThreadSafeFunction => hop!(TsfnDispatch)?,
+        task_tag::ThreadSafeFunctionFinalize => hop!(TsfnFinalize)?,
+        task_tag::NapiFinalizerTask => boxed!(NapiFinalizerTask)?,
 
         // ── JSC scheduler / module loader ────────────────────────────────
         task_tag::JSCDeferredWorkTask => {
@@ -589,7 +604,7 @@ fn run_task_cold(task: Task) {
 /// `release_task_unrun` track `bun_event_loop::task_tag::COUNT`. Bump when
 /// adding a variant — and give it an arm in both.
 const _: () = assert!(
-    task_tag::COUNT == 61,
+    task_tag::COUNT == 62,
     "dispatch::run_task / release_task_unrun arm count out of sync with bun_event_loop::task_tag",
 );
 
@@ -1219,6 +1234,25 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
             unsafe { <$ty as Taskable>::release_unrun(task.ptr.cast::<$ty>()) }
         }};
     }
+    /// `<$hop as TaskHop>::release_unrun` on the queued `ThisPtr`, SAFETY spelled once.
+    macro_rules! release_hop {
+        ($hop:ty) => {{
+            // SAFETY: as `release!`; the tag is `<$hop>::TAG`.
+            <$hop as bun_event_loop::TaskHop>::release_unrun(unsafe {
+                bun_ptr::ThisPtr::new(task.ptr.cast::<<$hop as bun_event_loop::TaskHop>::Target>())
+            })
+        }};
+    }
+    /// `<$ty as BoxedTask>::release_unrun` on the queued box, SAFETY spelled once.
+    macro_rules! release_boxed {
+        ($ty:ty) => {{
+            // SAFETY: as `release!`; the tag is `<$ty as BoxedTask>::TAG` and
+            // `task.ptr` the `Box<$ty>` `into_task` leaked.
+            <$ty as bun_event_loop::BoxedTask>::release_unrun(unsafe {
+                Box::from_raw(task.ptr.cast::<$ty>())
+            })
+        }};
+    }
     match task.tag {
         task_tag::AnyTaskJob => {
             // The one erased tag: every payload is a `Job<C>` reached through its header.
@@ -1248,8 +1282,9 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         }
         task_tag::JSCDeferredWorkTask => release!(JSCDeferredWorkTask),
         task_tag::ManagedTask => release!(ManagedTask),
-        task_tag::NapiAsyncWork => release!(napi_async_work),
-        task_tag::NapiFinalizerTask => release!(NapiFinalizerTask),
+        task_tag::NapiAsyncWork => release_hop!(AsyncWorkCompletion),
+        task_tag::NapiFinalizerTask => release_boxed!(NapiFinalizerTask),
+        task_tag::ThreadSafeFunctionFinalize => release_hop!(TsfnFinalize),
         task_tag::NativePromiseContextDeferredDerefTask => {
             release!(NativePromiseContextDeferredDerefTask)
         }
@@ -1289,7 +1324,7 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         task_tag::AsyncCpTask => release!(crate::node::fs::AsyncCpTask),
         task_tag::ShellAsyncCpTask => release!(crate::node::fs::ShellAsyncCpTask),
         task_tag::StreamPending => release!(StreamPending),
-        task_tag::ThreadSafeFunction => release!(ThreadSafeFunction),
+        task_tag::ThreadSafeFunction => release_hop!(TsfnDispatch),
         task_tag::ValkeyDeferredClose => {
             release!(crate::valkey_jsc::js_valkey::ValkeyDeferredClose)
         }

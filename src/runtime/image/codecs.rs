@@ -404,22 +404,23 @@ pub(crate) fn probe(bytes: &[u8], max_pixels: u64) -> Result<Probe, Error> {
         }
         Format::Tiff | Format::Heic | Format::Avif => {
             // ImageIO reads the dimensions from the container; the codec only runs in decode().
+            #[cfg(not(target_os = "macos"))]
+            return Err(Error::UnsupportedOnPlatform);
             #[cfg(target_os = "macos")]
-            if use_system() {
+            {
+                if !use_system() {
+                    return Err(Error::UnsupportedOnPlatform);
+                }
                 match system_backend::BackendError::split(system_backend::probe(bytes, max_pixels))
                 {
                     Ok(Some((pw, ph))) => {
-                        return Ok(Probe {
-                            format: fmt,
-                            width: pw,
-                            height: ph,
-                        });
+                        w = pw;
+                        h = ph;
                     }
                     Ok(None) => return Err(Error::UnsupportedOnPlatform),
                     Err(e) => return Err(e),
                 }
             }
-            return Err(Error::UnsupportedOnPlatform);
         }
     }
     // The PNG/JPEG/BMP specs all cap each dimension at 2³¹−1; a header with

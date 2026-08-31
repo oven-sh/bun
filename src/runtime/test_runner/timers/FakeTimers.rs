@@ -474,11 +474,14 @@ fn run_all_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValu
     Ok(frame.this())
 }
 
-// The `*Async` variants run the timers synchronously like their sync
-// counterparts, then resolve. The value of the promise shape: a caller that
-// `await`s gets a microtask checkpoint, so continuations of async timer
-// callbacks (the part after their first `await`) run before the test resumes.
-// They do not yet interleave a microtask flush between individual timers.
+// The `*Async` variants run the timers like their sync counterparts, then
+// resolve. A microtask flush happens between individual fired timers either
+// way: `EventLoopTimer::fire` wraps each callback in the event-loop
+// enter/exit pair, and the exit drains microtasks. The async variants must
+// keep that between-timer flush (vitest semantics, pinned by the chained
+// timer test in test/js/bun/test/vitest-compat.test.ts), so any future
+// change that suppresses microtask drains for the sync jest APIs belongs in
+// the four sync host functions, not in the shared execute paths.
 
 #[bun_jsc::host_fn]
 fn advance_timers_by_time_async(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {

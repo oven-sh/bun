@@ -626,6 +626,21 @@ pub mod Jest {
         Ok(())
     }
 
+    /// `bun test --isolate` file boundary: restore env vars stubbed with
+    /// `vi.stubEnv` and drop every stored original. The `vi.stubGlobal`
+    /// originals belong to the outgoing realm, which is discarded whole, so
+    /// they are dropped without a restore. Dropping the `Strong`s here also
+    /// keeps them from pinning the outgoing realm.
+    pub(crate) fn reset_stubs_for_isolation(global_object: &JSGlobalObject) {
+        let restored =
+            get_process_env(global_object).and_then(|env| unstub_all(global_object, env, &STUBBED_ENVS));
+        if restored.is_err() {
+            global_object.clear_exception_except_termination();
+            STUBBED_ENVS.with(|cell| cell.borrow_mut().clear());
+        }
+        STUBBED_GLOBALS.with(|cell| cell.borrow_mut().clear());
+    }
+
     #[bun_jsc::host_fn]
     fn js_stub_env(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let [key, value] = callframe.arguments_as_array::<2>();

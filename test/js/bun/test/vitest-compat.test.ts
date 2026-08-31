@@ -154,6 +154,24 @@ describe("async fake timer variants", () => {
     }
   });
 
+  test("advanceTimersByTimeAsync flushes microtasks between timers", async () => {
+    // Pins vitest semantics: timer A's continuation (after an await) schedules
+    // timer B inside the advanced window, and B must fire in the same advance.
+    vi.useFakeTimers();
+    try {
+      const order: string[] = [];
+      setTimeout(async () => {
+        order.push("A");
+        await Promise.resolve();
+        setTimeout(() => order.push("B"), 50);
+      }, 100);
+      await vi.advanceTimersByTimeAsync(200);
+      expect(order).toEqual(["A", "B"]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   test("runAllTimersAsync and friends resolve", async () => {
     vi.useFakeTimers();
     try {
@@ -271,6 +289,44 @@ describe("onTestFailed", () => {
     expect(stderr).toContain("Cannot call onTestFailed() outside of a test");
     expect(exitCode).toBe(1);
   });
+});
+
+test.concurrent("stub stores reset at the --isolate file boundary", async () => {
+  using dir = tempDir("vitest-compat-isolate-stubs", {
+    "a.test.ts": `
+      import { test, vi, expect } from "vitest";
+      test("stub env and global, never unstub", () => {
+        process.env.ISO_LEAK = "original";
+        vi.stubEnv("ISO_LEAK", "stubbed");
+        vi.stubGlobal("structuredClone", "broken");
+        expect(process.env.ISO_LEAK).toBe("stubbed");
+      });
+    `,
+    "b.test.ts": `
+      import { test, vi, expect } from "vitest";
+      test("previous file's stub records are gone", () => {
+        // The realm swap rebuilt process.env, and the boundary cleared the
+        // stub stores: unstubAll* must be no-ops, not restore stale values
+        // recorded in the previous file's realm.
+        const cloneBefore = globalThis.structuredClone;
+        expect(typeof cloneBefore).toBe("function");
+        vi.unstubAllEnvs();
+        vi.unstubAllGlobals();
+        expect(process.env.ISO_LEAK).toBeUndefined();
+        expect(globalThis.structuredClone).toBe(cloneBefore);
+      });
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--isolate", "a.test.ts", "b.test.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("2 pass");
+  expect(exitCode).toBe(0);
 });
 
 test.concurrent("a static import of a previously missing export no longer kills the file", async () => {

@@ -2237,6 +2237,9 @@ impl<'a> LinkerContext<'a> {
         // the duration of this call; the printer only reads from them.
         let ts_enums: &bun_ast::ast_result::TsEnumsMap =
             unsafe { bun_ptr::detach_lifetime_ref(&self.graph.ts_enums) };
+        // SAFETY: as for `ts_enums`.
+        let import_member_bindings: &bun_ast::ast_result::ImportMemberBindings =
+            unsafe { bun_ptr::detach_lifetime_ref(&self.graph.import_member_bindings) };
         // SAFETY: `graph.files` SoA columns are stable heap allocations valid for this
         // call (see above); the printer only reads from this slot.
         let line_offset_table: &bun_sourcemap::line_offset_table::List<bun_alloc::AstAlloc> = unsafe {
@@ -2266,6 +2269,7 @@ impl<'a> LinkerContext<'a> {
                 .contains(AstFlags::COMMONJS_MODULE_EXPORTS_ASSIGNED_DEOPTIMIZED),
             // .const_values = c.graph.const_values,
             ts_enums: Some(ts_enums),
+            import_member_bindings: Some(import_member_bindings),
 
             minify_whitespace: self.options.minify_whitespace,
             minify_syntax: self.options.minify_syntax,
@@ -3993,42 +3997,14 @@ impl<'a> LinkerContext<'a> {
             self.cycle_detector.clear();
 
             let mut re_exports: bun_alloc::AstVec<Dependency> = bun_alloc::AstAlloc::vec();
-
-            // `X.alias`: only bind it directly when `X` turned out to be the
-            // namespace object of an ES module. Otherwise leave the symbol
-            // unbound; `do_step5` then counts its uses as uses of `X` and the
-            // printer emits a property access on `X`.
-            let mut member_namespace_source: Option<crate::IndexInt> = None;
-            if named_import.is_namespace_member {
-                let Some(base) = imports_to_bind.get(&named_import.namespace_ref) else {
-                    continue;
-                };
-                let target = base.data;
-                if !self.is_esm_namespace_ref(target.source_index.get(), target.import_ref) {
-                    continue;
-                }
-                re_exports.extend_from_slice(base.re_exports.slice());
-                member_namespace_source = Some(target.source_index.get());
-            }
-
-            let result = self.match_import_with_export_inner(
+            let result = self.match_import_with_export(
                 ImportTracker {
                     source_index: crate::Index::init(source_index),
                     import_ref,
                     ..Default::default()
                 },
-                member_namespace_source,
                 &mut re_exports,
             );
-
-            if member_namespace_source.is_some()
-                && !matches!(
-                    result.kind,
-                    MatchImportKind::Normal | MatchImportKind::NormalAndNamespace
-                )
-            {
-                continue;
-            }
 
             match result.kind {
                 MatchImportKind::Normal => {
@@ -4141,6 +4117,135 @@ impl<'a> LinkerContext<'a> {
                 }
                 MatchImportKind::Ignore => {}
             }
+        }
+
+        self.bind_import_property_accesses(source_index, imports_to_bind);
+    }
+
+    /// `import X from './a'; X.foo` where `X` resolved to the namespace of an
+    /// ES module (`export * as X`, `import * as X; export { X }`,
+    /// `export default X`, `export * as default from '.'`): bind `X.foo` to
+    /// that module's export `foo` as if it had been a named import, so the
+    /// namespace object need not be materialized and unused exports still
+    /// tree-shake. The parser recorded these accesses per part in
+    /// `import_symbol_property_uses`; `do_step5` moves their use counts from
+    /// `X` to the new symbol and the printer substitutes it at the `E::Dot`.
+    fn bind_import_property_accesses(
+        &mut self,
+        source_index: crate::IndexInt,
+        imports_to_bind: &mut crate::RefImportData,
+    ) {
+        if self.options.output_format == Format::InternalBakeDev {
+            return;
+        }
+        let id = source_index as usize;
+        let mut accesses: Vec<(Ref, bun_ast::StoreStr)> = Vec::new();
+        for part in self.graph.ast.items_parts()[id].as_slice() {
+            let Some(uses) = part.import_symbol_property_uses.as_ref() else {
+                continue;
+            };
+            for (base, properties) in uses.keys().iter().zip(uses.values()) {
+                let Some(import_data) = imports_to_bind.get(base) else {
+                    continue;
+                };
+                let target = import_data.data;
+                if !self.is_esm_namespace_ref(target.source_index.get(), target.import_ref) {
+                    continue;
+                }
+                for name in properties.keys() {
+                    let name: &[u8] = self.graph.arena().alloc_slice_copy(name);
+                    accesses.push((*base, bun_ast::StoreStr::new(name)));
+                }
+            }
+        }
+
+        for (base, name) in accesses {
+            if let Some(bound) = self.graph.import_member_bindings.get(&base)
+                && bound.contains_key(name.slice())
+            {
+                continue;
+            }
+            let import_data = imports_to_bind.get(&base).unwrap();
+            let target_source = import_data.data.source_index.get();
+            let mut re_exports: bun_alloc::AstVec<Dependency> = bun_alloc::AstAlloc::vec();
+            re_exports.extend_from_slice(import_data.re_exports.slice());
+
+            // Not a static export of the target (missing, ambiguous, or only
+            // reachable through `export *` from CommonJS): keep the property access.
+            if !self.graph.meta.items_resolved_exports()[target_source as usize]
+                .contains(name.slice())
+            {
+                continue;
+            }
+
+            let (import_record_index, alias_loc) = {
+                let base_import = self.graph.ast.items_named_imports()[id].get(&base).unwrap();
+                (base_import.import_record_index, base_import.alias_loc)
+            };
+            let r#ref = self.graph.generate_new_symbol(
+                source_index,
+                bun_ast::symbol::Kind::Import,
+                name.slice(),
+            );
+            self.graph.ast.items_named_imports_mut()[id]
+                .put(
+                    r#ref,
+                    NamedImport {
+                        alias: Some(name),
+                        alias_loc,
+                        namespace_ref: Ref::NONE,
+                        import_record_index,
+                        local_parts_with_uses: bun_alloc::AstAlloc::vec(),
+                        alias_is_star: false,
+                        is_exported: false,
+                    },
+                )
+                .expect("OOM");
+
+            self.cycle_detector.clear();
+            let result = self.match_import_with_export_inner(
+                ImportTracker {
+                    source_index: crate::Index::init(source_index),
+                    import_ref: r#ref,
+                    ..Default::default()
+                },
+                Some(target_source),
+                &mut re_exports,
+            );
+            match result.kind {
+                MatchImportKind::Normal | MatchImportKind::NormalAndNamespace => {
+                    imports_to_bind
+                        .put(
+                            r#ref,
+                            crate::ImportData {
+                                re_exports,
+                                data: ImportTracker {
+                                    source_index: crate::Index::init(result.source_index),
+                                    import_ref: result.r#ref,
+                                    ..Default::default()
+                                },
+                            },
+                        )
+                        .expect("OOM");
+                    if result.kind == MatchImportKind::NormalAndNamespace {
+                        // SAFETY: freshly generated symbol; no other borrow of its slot is live.
+                        unsafe { self.graph.symbol_mut(r#ref) }.namespace_alias =
+                            Some(bun_alloc::ast_box(G::NamespaceAlias {
+                                namespace_ref: result.namespace_ref,
+                                alias: result.alias,
+                                ..Default::default()
+                            }));
+                    }
+                }
+                _ => continue,
+            }
+            self.graph
+                .import_member_bindings
+                .get_or_put_value(base, Default::default())
+                .expect("OOM")
+                .value_ptr
+                .put(name.slice(), r#ref)
+                .expect("OOM");
         }
     }
 

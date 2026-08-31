@@ -2091,7 +2091,6 @@ impl<'a> Parser<'a> {
                                         local_parts_with_uses: bun_alloc::AstAlloc::vec(),
                                         alias_is_star: false,
                                         is_exported: false,
-                                        is_namespace_member: false,
                                     },
                                 )?;
                             }

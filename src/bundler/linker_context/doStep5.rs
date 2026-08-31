@@ -241,71 +241,9 @@ impl LinkerContext<'_> {
         };
 
         let our_imports_to_bind: &RefImportData = &imports_to_bind[id as usize];
-        // SAFETY: `named_imports` is a stable column pointer (see above).
-        let has_namespace_members = !named_imports_is_empty
-            && unsafe { (*named_imports).values() }
-                .iter()
-                .any(|ni| ni.is_namespace_member);
-        let mut unbound_member_uses: Vec<(Ref, u32)> = Vec::new();
+        let mut bound_member_uses: Vec<(Ref, u32)> = Vec::new();
         // SAFETY: see above.
         for (part_index, part) in unsafe { (*parts_slice).iter_mut().enumerate() } {
-            // `X.alias` member symbols that step 4 did not bind directly are
-            // printed as a property access on `X`, so count them as uses of `X`
-            // (or of the nearest enclosing member that was bound).
-            if has_namespace_members {
-                for (r, use_) in part
-                    .symbol_uses
-                    .keys()
-                    .iter()
-                    .zip(part.symbol_uses.values())
-                {
-                    // SAFETY: stable column pointer; row `id` is ours.
-                    if unsafe { (*named_imports).get(r) }.is_some_and(|ni| ni.is_namespace_member)
-                        && !our_imports_to_bind.contains(r)
-                    {
-                        unbound_member_uses.push((*r, use_.count_estimate));
-                    }
-                }
-                for (member, count) in unbound_member_uses.drain(..) {
-                    // Provably `undefined`; printed as such.
-                    if c.graph
-                        .symbols
-                        .get_const(member)
-                        .unwrap()
-                        .import_item_status
-                        == bun_ast::ImportItemStatus::Missing
-                    {
-                        continue;
-                    }
-                    // SAFETY: as above.
-                    let named_import = unsafe { (*named_imports).get(&member) }.unwrap();
-                    let alias = named_import.alias.unwrap();
-                    let mut target = named_import.namespace_ref;
-                    // SAFETY: as above.
-                    while let Some(ni) = unsafe { (*named_imports).get(&target) }
-                        && ni.is_namespace_member
-                        && !our_imports_to_bind.contains(&target)
-                    {
-                        target = ni.namespace_ref;
-                    }
-                    // `E.A` on an imported TypeScript enum is inlined by the printer
-                    if target == named_import.namespace_ref
-                        && let Some(import_data) = our_imports_to_bind.get(&target)
-                        && let Some(symbol) = c.graph.symbols.get_const(import_data.data.import_ref)
-                        && symbol.kind == bun_ast::symbol::Kind::TsEnum
-                        && let Some(enum_data) = c.graph.ts_enums.get(&import_data.data.import_ref)
-                        && enum_data.get(alias.slice()).is_some()
-                    {
-                        continue;
-                    }
-                    part.symbol_uses
-                        .get_or_put_value(target, SymbolUse::default())
-                        .expect("OOM")
-                        .value_ptr
-                        .count_estimate += count;
-                }
-            }
-
             // Now that all files have been parsed, determine which property
             // accesses off of imported symbols are inlined enum values and
             // which ones aren't
@@ -356,6 +294,32 @@ impl LinkerContext<'_> {
                             }
                         }
                     }
+                }
+
+                // `X.name` bound directly to the export of the namespace `X`
+                // resolved to (`bind_import_property_accesses`): the use
+                // belongs to that binding, not to `X`.
+                if let Some(bindings) = c.graph.import_member_bindings.get(ref_) {
+                    // SAFETY: see above.
+                    for (name, prop_use) in unsafe { (*properties).iter() } {
+                        match bindings.get(&**name) {
+                            Some(&binding) => {
+                                bound_member_uses.push((binding, prop_use.count_estimate))
+                            }
+                            None => use_.count_estimate += prop_use.count_estimate,
+                        }
+                    }
+                    if use_.count_estimate == 0 {
+                        let _ = part.symbol_uses.swap_remove(ref_);
+                    }
+                    for (binding, count) in bound_member_uses.drain(..) {
+                        part.symbol_uses
+                            .get_or_put_value(binding, SymbolUse::default())
+                            .expect("OOM")
+                            .value_ptr
+                            .count_estimate += count;
+                    }
+                    continue;
                 }
 
                 // Common path: this import isn't a TypeScript enum

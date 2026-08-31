@@ -158,9 +158,7 @@ impl<'a> ImportScanner<'a> {
                             }
 
                             // Remove the symbol if it's never used outside a dead code region
-                            if symbol.use_count_estimate == 0
-                                && !p.has_import_namespace_member_items(default_name.ref_)
-                            {
+                            if symbol.use_count_estimate == 0 {
                                 st.default_name = None;
                             }
                         }
@@ -224,9 +222,7 @@ impl<'a> ImportScanner<'a> {
                                 }
 
                                 // Remove the symbol if it's never used outside a dead code region
-                                if symbol.use_count_estimate != 0
-                                    || p.has_import_namespace_member_items(ref_)
-                                {
+                                if symbol.use_count_estimate != 0 {
                                     // ClauseItem isn't `Copy`; bitwise-move it
                                     // (its fields are all POD; arena-owned, never dropped).
                                     if items_end != idx {
@@ -406,7 +402,6 @@ impl<'a> ImportScanner<'a> {
                                         local_parts_with_uses: bun_alloc::AstAlloc::vec(),
                                         alias_is_star: false,
                                         is_exported: false,
-                                        is_namespace_member: false,
                                     },
                                 ));
 
@@ -440,57 +435,6 @@ impl<'a> ImportScanner<'a> {
                             }
                         }
 
-                        if !p.import_namespace_member_items.is_empty() {
-                            let mut bases: Vec<Ref> = Vec::new();
-                            if let Some(default) = st.default_name {
-                                bases.push(default.ref_);
-                            }
-                            for item in st_items {
-                                bases.push(item.name.ref_);
-                            }
-                            if let Some(existing) = existing_items {
-                                bases.extend(existing.values().iter().map(|item| item.ref_));
-                            }
-                            while let Some(base) = bases.pop() {
-                                let Some(members) = p.import_namespace_member_items.get(&base)
-                                else {
-                                    continue;
-                                };
-                                handle_oom(p.named_imports.ensure_unused_capacity(members.count()));
-                                for (alias, item) in members.keys().iter().zip(members.values()) {
-                                    let alias =
-                                        js_ast::StoreStr::new(p.arena.alloc_slice_copy(alias));
-                                    p.named_imports.put_assume_capacity(
-                                        item.ref_,
-                                        js_ast::NamedImport {
-                                            alias: Some(alias),
-                                            alias_loc: item.loc,
-                                            namespace_ref: base,
-                                            import_record_index: st.import_record_index,
-                                            local_parts_with_uses: bun_alloc::AstAlloc::vec(),
-                                            alias_is_star: false,
-                                            is_exported: false,
-                                            is_namespace_member: true,
-                                        },
-                                    );
-                                    p.symbols[item.ref_.inner_index() as usize].namespace_alias =
-                                        Some(bun_alloc::ast_box(G::NamespaceAlias {
-                                            namespace_ref: base,
-                                            alias,
-                                            import_record_index: st.import_record_index,
-                                            was_originally_property_access: false,
-                                        }));
-                                    p.declared_symbols
-                                        .append(js_ast::DeclaredSymbol {
-                                            ref_: item.ref_,
-                                            is_top_level: true,
-                                        })
-                                        .expect("unreachable");
-                                    bases.push(item.ref_);
-                                }
-                            }
-                        }
-
                         handle_oom(p.named_imports.ensure_unused_capacity(
                             st_items.len()
                                 + usize::from(st.default_name.is_some())
@@ -511,7 +455,6 @@ impl<'a> ImportScanner<'a> {
                                     import_record_index: st.import_record_index,
                                     local_parts_with_uses: bun_alloc::AstAlloc::vec(),
                                     is_exported: false,
-                                    is_namespace_member: false,
                                 },
                             );
                         }
@@ -530,7 +473,6 @@ impl<'a> ImportScanner<'a> {
                                     local_parts_with_uses: bun_alloc::AstAlloc::vec(),
                                     alias_is_star: false,
                                     is_exported: false,
-                                    is_namespace_member: false,
                                 },
                             );
                         }
@@ -549,7 +491,6 @@ impl<'a> ImportScanner<'a> {
                                     local_parts_with_uses: bun_alloc::AstAlloc::vec(),
                                     alias_is_star: false,
                                     is_exported: false,
-                                    is_namespace_member: false,
                                 },
                             );
                         }
@@ -581,7 +522,6 @@ impl<'a> ImportScanner<'a> {
                                     local_parts_with_uses: bun_alloc::AstAlloc::vec(),
                                     alias_is_star: false,
                                     is_exported: false,
-                                    is_namespace_member: false,
                                 },
                             )?;
 
@@ -820,7 +760,6 @@ impl<'a> ImportScanner<'a> {
                                 import_record_index: st.import_record_index,
                                 is_exported: true,
                                 local_parts_with_uses: bun_alloc::AstAlloc::vec(),
-                                is_namespace_member: false,
                             },
                         )?;
                         let original: &'p [u8] = alias.original_name.slice();
@@ -856,7 +795,6 @@ impl<'a> ImportScanner<'a> {
                                 import_record_index: st.import_record_index,
                                 is_exported: true,
                                 local_parts_with_uses: bun_alloc::AstAlloc::vec(),
-                                is_namespace_member: false,
                             },
                         )?;
                         // SAFETY: arena-owned alias slice valid for 'p.

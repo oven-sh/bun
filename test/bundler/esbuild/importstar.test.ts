@@ -1554,7 +1554,7 @@ describe("bundler", () => {
     },
     run: { stdout: "object string" },
   });
-  itBundled("importstar/MemberOfExportStarAsNested", {
+  itBundled("importstar/MemberOfExportStarAs", {
     files: {
       "/entry.js": /* js */ `
         import { ns } from './reexport'
@@ -1563,17 +1563,18 @@ describe("bundler", () => {
       "/reexport.js": `export * as ns from './target'`,
       "/target.js": /* js */ `
         export const a = 'a'
-        export const b = 'FAIL'
+        export const b = 'DROP'
         export * as nested from './nested'
       `,
       "/nested.js": /* js */ `
         export const deep = 'deep'
-        export const other = 'FAIL'
       `,
     },
-    dce: true,
     onAfterBundle(api) {
-      api.expectFile("/out.js").not.toContain("__export");
+      // `ns` itself is never materialized (so `b` is dropped); only the
+      // directly-accessed level is bound, so `nested` still is.
+      api.expectFile("/out.js").not.toContain("DROP");
+      api.expectFile("/out.js").not.toContain("exports_target");
     },
     run: { stdout: "a deep undefined" },
   });

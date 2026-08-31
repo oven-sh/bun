@@ -313,6 +313,12 @@ pub struct Dot {
     /// unwrapped if the resulting value is unused. Unwrapping means discarding
     /// the call target but keeping any arguments with side effects.
     pub call_can_be_unwrapped_if_unused: CallUnwrap,
+
+    /// `target` is an `EImportIdentifier` and this read was counted in
+    /// `Part::import_symbol_property_uses` instead of as a use of the import,
+    /// so the linker may bind it straight to the export it names
+    /// (`LinkerGraph::import_member_binding`).
+    pub is_import_property_use: bool,
 }
 impl Default for Dot {
     fn default() -> Self {
@@ -323,6 +329,7 @@ impl Default for Dot {
             optional_chain: None,
             can_be_removed_if_unused: false,
             call_can_be_unwrapped_if_unused: CallUnwrap::Never,
+            is_import_property_use: false,
         }
     }
 }
@@ -330,6 +337,8 @@ pub struct Index {
     pub index: ExprNodeIndex,
     pub target: ExprNodeIndex,
     pub optional_chain: Option<OptionalChain>,
+    /// See `Dot::is_import_property_use`.
+    pub is_import_property_use: bool,
 }
 
 pub struct Arrow {

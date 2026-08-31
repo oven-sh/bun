@@ -213,6 +213,7 @@ pub struct LinkerGraph<'a> {
     // const_values: bun_ast::Ast::ConstValuesMap,
     /// This is for cross-module inlining of TypeScript enum constants
     pub(crate) ts_enums: bun_ast::ast_result::TsEnumsMap,
+    pub(crate) import_member_bindings: bun_ast::ast_result::ImportMemberBindings,
 }
 
 // SAFETY: `LinkerGraph` is shared read-mostly across worker threads during
@@ -273,6 +274,7 @@ impl Default for LinkerGraph<'_> {
             stable_source_indices: Vec::new(),
             is_scb_bitset: BitSet::default(),
             ts_enums: bun_ast::ast_result::TsEnumsMap::default(),
+            import_member_bindings: bun_ast::ast_result::ImportMemberBindings::default(),
         }
     }
 }

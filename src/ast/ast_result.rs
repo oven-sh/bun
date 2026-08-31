@@ -152,6 +152,11 @@ pub type NamedExports = StringArrayHashMap<NamedExport, StringContext, AstAlloc>
 pub type ConstValuesMap = ArrayHashMap<Ref, Expr, AutoContext, AstAlloc>;
 pub type TsEnumsMap =
     ArrayHashMap<Ref, StringHashMap<InlinedEnumValue, AstAlloc>, AutoContext, AstAlloc>;
+/// `import X ...; X.name` where `X` resolved to a module namespace while
+/// linking: `X` -> `name` -> the generated import symbol bound to that export.
+/// The printer emits that symbol in place of the property access.
+pub type ImportMemberBindings =
+    ArrayHashMap<Ref, StringHashMap<Ref, AstAlloc>, AutoContext, AstAlloc>;
 
 impl<'a> Ast<'a> {
     pub fn from_parts(parts: Box<[Part]>, arena: &'a bun_alloc::MimallocArena) -> Ast<'a> {

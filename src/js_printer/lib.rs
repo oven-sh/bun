@@ -1362,6 +1362,9 @@ pub struct Options<'a> {
     /// Borrowed from `LinkerGraph.ts_enums` (one shared map for the whole
     /// bundle); the printer only reads from it.
     pub ts_enums: Option<&'a TsEnumsMap>,
+    /// Borrowed from `LinkerGraph.import_member_bindings`: `X.name` property
+    /// reads the linker bound straight to an export (see `E::Dot::is_import_property_use`).
+    pub import_member_bindings: Option<&'a js_ast::ast_result::ImportMemberBindings>,
 
     // If we're writing out a source map, this table of line start indices lets
     // us do binary search on to figure out what line a given AST node came from
@@ -1422,6 +1425,7 @@ impl<'a> Default for Options<'a> {
             input_module_type: bundle_opts::ModuleType::Unknown,
             module_type: bundle_opts::Format::Esm,
             ts_enums: None,
+            import_member_bindings: None,
             line_offset_tables: None,
             mangled_props: None,
         }
@@ -3652,6 +3656,12 @@ pub(crate) mod __gated_printer {
                             self.print_inlined_enum(inlined, &e.name, level);
                             return;
                         }
+                        if e.is_import_property_use
+                            && let Some(binding) = self.import_member_binding(e.target, &e.name)
+                        {
+                            self.print_expr(binding, level, flags);
+                            return;
+                        }
                     } else {
                         if flags.contains(ExprFlag::HasNonOptionalChainParent) {
                             wrap = true;
@@ -3702,6 +3712,13 @@ pub(crate) mod __gated_printer {
                                     self.try_to_get_imported_enum_value(e.target, str.slice8())
                                 {
                                     self.print_inlined_enum(value, str.slice8(), level);
+                                    return;
+                                }
+                                if e.is_import_property_use
+                                    && let Some(binding) =
+                                        self.import_member_binding(e.target, str.slice8())
+                                {
+                                    self.print_expr(binding, level, flags);
                                     return;
                                 }
                             }
@@ -4295,15 +4312,6 @@ pub(crate) mod __gated_printer {
                         if !did_print {
                             did_print = true;
 
-                            // `E.A` where `E` resolved to a TypeScript enum in another file
-                            if let Some(inlined) = self.try_to_get_enum_value(
-                                namespace.namespace_ref,
-                                namespace.alias.slice(),
-                            ) {
-                                self.print_inlined_enum(inlined, namespace.alias.slice(), level);
-                                return;
-                            }
-
                             let wrap = if let Some(target) = &self.call_target {
                                 e.was_originally_identifier()
                                     && matches!(target, ExprData::EIdentifier(id) if id.ref_.eql(e.ref_))
@@ -4317,7 +4325,7 @@ pub(crate) mod __gated_printer {
 
                             self.print_space_before_identifier();
                             self.add_source_mapping(expr.loc);
-                            self.print_namespace_ref(namespace.namespace_ref, ref_);
+                            self.print_symbol(namespace.namespace_ref);
                             let alias = namespace.alias.slice();
                             if lexer::is_identifier(alias) {
                                 self.print(b".");
@@ -4559,33 +4567,6 @@ pub(crate) mod __gated_printer {
             } else {
                 self.print_string_characters_utf8(str.slice8(), c);
             }
-        }
-
-        /// `namespace_ref` may itself be an import that became a property
-        /// access (`X.a.b` where `X` is `import_x.default`), so unroll the chain.
-        fn print_namespace_ref(&mut self, namespace_ref: Ref, member_ref: Ref) {
-            let ref_ = self.symbols().follow(namespace_ref);
-            let symbol = BackRef::<Symbol>::new(self.symbols().get_const(ref_).unwrap());
-            if let Some(namespace) = &symbol.namespace_alias
-                && !ref_.eql(member_ref)
-                && !self.symbols().follow(namespace.namespace_ref).eql(ref_)
-            {
-                self.print_namespace_ref(namespace.namespace_ref, ref_);
-                let alias = namespace.alias.slice();
-                if alias.is_empty() {
-                    return;
-                }
-                if lexer::is_identifier(alias) {
-                    self.print(b".");
-                    self.print_identifier(alias);
-                } else {
-                    self.print(b"[");
-                    self.print_string_literal_utf8(alias, false);
-                    self.print(b"]");
-                }
-                return;
-            }
-            self.print_symbol(namespace_ref);
         }
 
         pub(crate) fn print_namespace_alias(
@@ -6560,26 +6541,40 @@ pub(crate) mod __gated_printer {
             }
         }
 
+        /// `X.name` where the linker bound the access straight to an export
+        /// (`LinkerGraph::import_member_bindings`): the import identifier to
+        /// print in its place.
+        fn import_member_binding(&self, target: Expr, name: &[u8]) -> Option<Expr> {
+            let ExprData::EImportIdentifier(id) = &target.data else {
+                return None;
+            };
+            let binding = *self
+                .options
+                .import_member_bindings?
+                .get(&id.ref_)?
+                .get(name)?;
+            Some(Expr::init(
+                E::ImportIdentifier::new(binding, false),
+                target.loc,
+            ))
+        }
+
         pub(crate) fn try_to_get_imported_enum_value(
             &self,
             target: Expr,
             name: &[u8],
         ) -> Option<js_ast::InlinedEnumValueDecoded> {
             if let ExprData::EImportIdentifier(id) = &target.data {
-                return self.try_to_get_enum_value(id.ref_, name);
-            }
-            None
-        }
-
-        fn try_to_get_enum_value(
-            &self,
-            enum_ref: Ref,
-            name: &[u8],
-        ) -> Option<js_ast::InlinedEnumValueDecoded> {
-            let ref_ = self.symbols().follow(enum_ref);
-            let symbol = self.symbols().get_const(ref_)?;
-            if symbol.kind == js_ast::symbol::Kind::TsEnum {
-                return Some(self.options.ts_enums?.get(&ref_)?.get(name)?.decode());
+                let ref_ = self.symbols().follow(id.ref_);
+                if let Some(symbol) = self.symbols().get_const(ref_) {
+                    if symbol.kind == js_ast::symbol::Kind::TsEnum {
+                        if let Some(enum_value) = self.options.ts_enums.and_then(|m| m.get(&ref_)) {
+                            if let Some(value) = enum_value.get(name) {
+                                return Some(value.decode());
+                            }
+                        }
+                    }
+                }
             }
             None
         }

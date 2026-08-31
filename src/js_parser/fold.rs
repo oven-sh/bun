@@ -5,7 +5,7 @@ use bun_core::feature_flags as FeatureFlags;
 use crate::p::P;
 use crate::parser::{self as js_parser, IdentifierOpts, RelocateVars, RelocateVarsMode};
 use bun_ast::ast_result::CommonJSNamedExport;
-use bun_ast::{self as js_ast, Binding, E, Expr, Flags, G, LocRef, Ref, S};
+use bun_ast::{self as js_ast, Binding, E, Expr, Flags, G, LocRef, S};
 
 // ── local EString shims ────────────────────────────────────────────────────
 // E.rs currently carries two `impl EString` blocks (live + round-C draft) with
@@ -47,14 +47,6 @@ fn e_string_eql_bytes(s: &E::EString, other: &[u8]) -> bool {
 }
 
 // File-split mixin pattern: a direct `impl P` block.
-
-#[derive(Clone, Copy)]
-enum MemberOf {
-    /// `ns.foo` for `import * as ns`
-    Namespace,
-    /// `X.foo` for `import X` / `import {X}` / another generated member
-    Import,
-}
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     pub(crate) fn maybe_relocate_vars_to_top_level(
@@ -145,13 +137,74 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // module linking just to rewrite these EDot expressions.
                     if p.options.bundle {
                         if p.import_items_for_namespace.contains_key(&id.ref_) {
-                            return Some(p.rewrite_import_property_access(
-                                MemberOf::Namespace,
-                                id.ref_,
-                                name,
-                                name_loc,
-                                identifier_opts,
-                            ));
+                            // Note: split into lookup → (maybe new_symbol) → re-borrow for borrowck.
+                            let existing = p
+                                .import_items_for_namespace
+                                .get(&id.ref_)
+                                .unwrap()
+                                .get(name)
+                                .copied();
+                            let ref_ = match existing {
+                                Some(loc_ref) => loc_ref.ref_,
+                                None => {
+                                    // Generate a new import item symbol in the module scope
+                                    let new_ref = p.new_symbol(js_ast::symbol::Kind::Import, name);
+                                    let new_item = LocRef {
+                                        loc: name_loc,
+                                        ref_: new_ref,
+                                    };
+                                    // SAFETY: module_scope is arena-owned and valid for the parser lifetime.
+                                    VecExt::append(&mut p.module_scope_mut().generated, new_ref);
+
+                                    p.import_items_for_namespace
+                                        .get_mut(&id.ref_)
+                                        .unwrap()
+                                        .put(name, new_item)
+                                        .expect("unreachable");
+                                    p.is_import_item.insert(new_ref, ());
+
+                                    let symbol = &mut p.symbols[new_ref.inner_index() as usize];
+
+                                    // Mark this as generated in case it's missing. We don't want to
+                                    // generate errors for missing import items that are automatically
+                                    // generated.
+                                    symbol.import_item_status =
+                                        bun_ast::ImportItemStatus::Generated;
+
+                                    new_ref
+                                }
+                            };
+
+                            // Undo the usage count for the namespace itself. This is used later
+                            // to detect whether the namespace symbol has ever been "captured"
+                            // or whether it has just been used to read properties off of.
+                            //
+                            // The benefit of doing this is that if both this module and the
+                            // imported module end up in the same module group and the namespace
+                            // symbol has never been captured, then we don't need to generate
+                            // any code for the namespace at all.
+                            p.ignore_usage(id.ref_);
+
+                            // Track how many times we've referenced this symbol
+                            p.record_usage(ref_);
+
+                            return Some(
+                                p.handle_identifier(
+                                    name_loc,
+                                    E::Identifier {
+                                        ref_,
+                                        ..Default::default()
+                                    },
+                                    Some(name),
+                                    IdentifierOpts::new()
+                                        .with_assign_target(identifier_opts.assign_target())
+                                        .with_is_call_target(identifier_opts.is_call_target())
+                                        .with_is_delete_target(identifier_opts.is_delete_target())
+                                        // If this expression is used as the target of a call expression, make
+                                        // sure the value of "this" is preserved.
+                                        .with_was_originally_identifier(false),
+                                ),
+                            );
                         }
                     }
 
@@ -505,46 +558,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         });
                     }
                 }
-                js_ast::ExprData::EImportIdentifier(id) => {
-                    // `X.foo` where `X` is a default/named import: `X` may turn out to be a
-                    // re-exported module namespace (`export * as X`, `import * as X; export {X}`),
-                    // in which case the linker binds `foo` directly instead of materializing
-                    // the namespace object. Falls back to a property access otherwise.
-                    if p.options.bundle
-                        && !p.options.features.hot_module_reloading
-                        && identifier_opts.assign_target() == js_ast::AssignTarget::None
-                        && !identifier_opts.is_delete_target()
-                        && p.is_import_item.contains_key(&id.ref_)
-                        && !p.macro_.refs.contains_key(&id.ref_)
-                    {
-                        return Some(p.rewrite_import_property_access(
-                            MemberOf::Import,
-                            id.ref_,
-                            name,
-                            name_loc,
-                            identifier_opts,
-                        ));
-                    }
-
-                    // Symbol uses due to a property access off of an imported symbol are tracked
-                    // specially. This lets us do tree shaking for cross-file TypeScript enums.
-                    if p.options.bundle && !p.is_control_flow_dead {
-                        let use_ = p.symbol_uses.get_mut(&id.ref_).unwrap();
-                        use_.count_estimate = use_.count_estimate.saturating_sub(1);
-                        // note: this use is not removed as we assume it exists later
-
-                        // Add a special symbol use instead
-                        let gop = p
-                            .import_symbol_property_uses
-                            .get_or_put_value(id.ref_, Default::default())
-                            .expect("unreachable");
-                        let inner_use = gop
-                            .value_ptr
-                            .get_or_put_value(name, Default::default())
-                            .expect("unreachable");
-                        inner_use.count_estimate += 1;
-                    }
-                }
+                // EImportIdentifier: see `record_import_property_use` (the callers
+                // need to mark the E::Dot/E::Index node, so it is done there).
                 // EDot and EIndex are handled with structurally identical arms.
                 js_ast::ExprData::EDot(data) => {
                     if matches!(p.ts_namespace.expr, js_ast::ExprData::EDot(ns_data) if data.as_ptr() == ns_data.as_ptr())
@@ -712,78 +727,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         None
-    }
-
-    fn rewrite_import_property_access(
-        &mut self,
-        of: MemberOf,
-        base: Ref,
-        name: &'a [u8],
-        name_loc: bun_ast::Loc,
-        identifier_opts: IdentifierOpts,
-    ) -> Expr {
-        let p = self;
-        let map = match of {
-            MemberOf::Namespace => p.import_items_for_namespace.get_mut(&base).unwrap(),
-            MemberOf::Import => p.import_namespace_member_items.entry(base).or_default(),
-        };
-        let ref_ = match map.get(name).copied() {
-            Some(loc_ref) => loc_ref.ref_,
-            None => {
-                // Generate a new import item symbol in the module scope
-                let new_ref = p.new_symbol(js_ast::symbol::Kind::Import, name);
-                let new_item = LocRef {
-                    loc: name_loc,
-                    ref_: new_ref,
-                };
-                VecExt::append(&mut p.module_scope_mut().generated, new_ref);
-
-                let map = match of {
-                    MemberOf::Namespace => p.import_items_for_namespace.get_mut(&base),
-                    MemberOf::Import => p.import_namespace_member_items.get_mut(&base),
-                };
-                map.unwrap().put(name, new_item).expect("unreachable");
-                p.is_import_item.insert(new_ref, ());
-
-                let symbol = &mut p.symbols[new_ref.inner_index() as usize];
-
-                // Mark this as generated in case it's missing. We don't want to
-                // generate errors for missing import items that are automatically
-                // generated.
-                symbol.import_item_status = bun_ast::ImportItemStatus::Generated;
-
-                new_ref
-            }
-        };
-
-        // Undo the usage count for the namespace itself. This is used later
-        // to detect whether the namespace symbol has ever been "captured"
-        // or whether it has just been used to read properties off of.
-        //
-        // The benefit of doing this is that if both this module and the
-        // imported module end up in the same module group and the namespace
-        // symbol has never been captured, then we don't need to generate
-        // any code for the namespace at all.
-        p.ignore_usage(base);
-
-        // Track how many times we've referenced this symbol
-        p.record_usage(ref_);
-
-        p.handle_identifier(
-            name_loc,
-            E::Identifier {
-                ref_,
-                ..Default::default()
-            },
-            Some(name),
-            IdentifierOpts::new()
-                .with_assign_target(identifier_opts.assign_target())
-                .with_is_call_target(identifier_opts.is_call_target())
-                .with_is_delete_target(identifier_opts.is_delete_target())
-                // If this expression is used as the target of a call expression, make
-                // sure the value of "this" is preserved.
-                .with_was_originally_identifier(false),
-        )
     }
 
     fn maybe_rewrite_property_access_for_namespace(

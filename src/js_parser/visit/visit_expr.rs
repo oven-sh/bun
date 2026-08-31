@@ -1028,20 +1028,23 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         // Reminder that this can only be done after
                         // `target` is visited.
                         if e_.optional_chain.is_none() {
+                            let opts = IdentifierOpts::default()
+                                .with_is_call_target(is_call_target)
+                                // .is_template_tag = is_template_tag,
+                                .with_is_delete_target(is_delete_target)
+                                .with_assign_target(in_.assign_target);
                             if let Some(rewrite) = p.maybe_rewrite_property_access(
                                 expr.loc,
                                 e_.target,
                                 s.data.slice(),
                                 unwrapped.loc,
-                                IdentifierOpts::default()
-                                    .with_is_call_target(is_call_target)
-                                    // .is_template_tag = is_template_tag,
-                                    .with_is_delete_target(is_delete_target)
-                                    .with_assign_target(in_.assign_target),
+                                opts,
                             ) {
                                 *e = rewrite;
                                 return;
                             }
+                            e_.is_import_property_use =
+                                p.record_import_property_use(&e_.target, s.data.slice(), opts);
                         }
                     }
                 }
@@ -1420,20 +1423,23 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         if e_.optional_chain.is_none() {
+            let opts = IdentifierOpts::default()
+                .with_is_call_target(is_call_target)
+                .with_assign_target(in_.assign_target)
+                .with_is_delete_target(is_delete_target);
             if let Some(_expr) = p.maybe_rewrite_property_access(
                 expr.loc,
                 e_.target,
                 e_.name.slice(),
                 e_.name_loc,
-                IdentifierOpts::default()
-                    .with_is_call_target(is_call_target)
-                    .with_assign_target(in_.assign_target)
-                    .with_is_delete_target(is_delete_target),
+                opts,
                 // .is_template_tag = p.template_tag != null,
             ) {
                 *e = _expr;
                 return;
             }
+            e_.is_import_property_use =
+                p.record_import_property_use(&e_.target, e_.name.slice(), opts);
 
             if Self::ALLOW_MACROS {
                 if !p.options.features.is_macro_runtime {

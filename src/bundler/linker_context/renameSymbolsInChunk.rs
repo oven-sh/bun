@@ -251,22 +251,7 @@ pub(crate) unsafe fn rename_symbols_in_chunk(
                     stable_source_indices,
                 )?;
 
-                let named_imports = &c.graph.ast.items_named_imports()[source_index as usize];
                 for declared_ref in part.declared_symbols.refs() {
-                    // `X.foo` member symbols print through `X` (or whatever they
-                    // were bound to); they are never a declaration of their own.
-                    if c.graph
-                        .symbols
-                        .get_const(*declared_ref)
-                        .unwrap()
-                        .namespace_alias
-                        .is_some()
-                        && named_imports
-                            .get(declared_ref)
-                            .is_some_and(|ni| ni.is_namespace_member)
-                    {
-                        continue;
-                    }
                     minify_renamer.accumulate_symbol_use_count(
                         &mut top_level_symbols,
                         *declared_ref,

@@ -447,10 +447,6 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) esm_export_keyword: bun_ast::Range,
     pub(crate) enclosing_class_keyword: bun_ast::Range,
     pub(crate) import_items_for_namespace: HashMap<Ref, ImportItemForNamespaceMap>,
-    /// `X.foo` where `X` is a default/named import (or another entry of this
-    /// map): the generated import symbols for each property, keyed by `X`.
-    /// The linker binds them directly when `X` resolves to a module namespace.
-    pub(crate) import_namespace_member_items: HashMap<Ref, ImportItemForNamespaceMap>,
     pub(crate) is_import_item: RefMap,
     pub(crate) named_imports: NamedImportsType<'a>,
     pub(crate) named_exports: bun_ast::ast_result::NamedExports,
@@ -1812,7 +1808,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 local_parts_with_uses: bun_alloc::AstAlloc::vec(),
                 alias_is_star: false,
                 is_exported: false,
-                is_namespace_member: false,
             },
         )?;
 
@@ -1949,7 +1944,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     local_parts_with_uses: bun_alloc::AstAlloc::vec(),
                     alias_is_star: false,
                     is_exported: false,
-                    is_namespace_member: false,
                 },
             )?;
         }
@@ -2091,7 +2085,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         local_parts_with_uses: bun_alloc::AstAlloc::vec(),
                         alias_is_star: false,
                         is_exported: false,
-                        is_namespace_member: false,
                     },
                 )?;
             }
@@ -4882,12 +4875,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             ) {
                 value = rewrote;
             } else {
+                let is_import_property_use =
+                    self.record_import_property_use(&value, part, IdentifierOpts::default());
                 value = self.new_expr(
                     E::Dot {
                         target: value,
                         name: (*part).into(),
                         name_loc: loc,
                         can_be_removed_if_unused: self.options.features.dead_code_elimination,
+                        is_import_property_use,
                         ..Default::default()
                     },
                     loc,
@@ -5823,10 +5819,41 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         kind
     }
 
-    pub(crate) fn has_import_namespace_member_items(&self, base: Ref) -> bool {
-        self.import_namespace_member_items
-            .get(&base)
-            .is_some_and(|m| m.count() > 0)
+    /// `X.name` / `X["name"]` on an import: count it as a use of the property
+    /// rather than of `X` itself, so that cross-file enum inlining and
+    /// namespace-member binding in the linker can drop `X` when every use was
+    /// resolved that way. Returns whether it was recorded; the caller marks the
+    /// node (`E::Dot::is_import_property_use`) so the printer knows the two agree.
+    pub(crate) fn record_import_property_use(
+        &mut self,
+        target: &Expr,
+        name: &[u8],
+        opts: IdentifierOpts,
+    ) -> bool {
+        let js_ast::ExprData::EImportIdentifier(id) = target.data else {
+            return false;
+        };
+        if !self.options.bundle
+            || self.is_control_flow_dead
+            || opts.assign_target() != js_ast::AssignTarget::None
+            || opts.is_delete_target()
+        {
+            return false;
+        }
+        let use_ = self.symbol_uses.get_mut(&id.ref_).unwrap();
+        use_.count_estimate = use_.count_estimate.saturating_sub(1);
+        // note: this use is not removed as we assume it exists later
+
+        let gop = self
+            .import_symbol_property_uses
+            .get_or_put_value(id.ref_, Default::default())
+            .expect("unreachable");
+        let inner_use = gop
+            .value_ptr
+            .get_or_put_value(name, Default::default())
+            .expect("unreachable");
+        inner_use.count_estimate += 1;
+        true
     }
 
     pub(crate) fn ignore_usage(&mut self, r#ref: Ref) {
@@ -6632,6 +6659,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     target,
                                     index: key,
                                     optional_chain: None,
+                                    is_import_property_use: false,
                                 },
                                 key.loc,
                             ),
@@ -8902,7 +8930,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             esm_export_keyword: bun_ast::Range::NONE,
             enclosing_class_keyword: bun_ast::Range::NONE,
             import_items_for_namespace: Default::default(),
-            import_namespace_member_items: Default::default(),
             is_import_item: Default::default(),
             scope_order_to_visit: &[],
             module_scope_directive_loc: bun_ast::Loc::default(),

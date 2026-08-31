@@ -1,5 +1,14 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isASAN, isWindows, normalizeBunSnapshot, tempDir, tmpdirSync } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  isASAN,
+  isWindows,
+  normalizeBunSnapshot,
+  tempDir,
+  tmpdirSync,
+  withoutAggressiveGC,
+} from "harness";
 import { join } from "path";
 import util from "util";
 it("prototype", () => {
@@ -98,6 +107,58 @@ it("when prototype defines the same property, don't print the same property twic
   var obj = Object.create(base);
   obj.foo = "456";
   expect(Bun.inspect(obj).trim()).toBe('{\n  foo: "456",\n}'.trim());
+});
+
+describe("objects with many properties", () => {
+  function makeWide(n) {
+    const o = {};
+    for (let i = 0; i < n; i++) o["p" + i] = i;
+    return o;
+  }
+
+  it("prints a property shadowed from a wide prototype once", () => {
+    const proto = makeWide(5000);
+    const obj = Object.create(proto);
+    obj.p0 = "own0";
+    obj.p2500 = "own2500";
+    obj.p4999 = "own4999";
+    const lines = Bun.inspect(obj).split("\n");
+    // 5000 distinct keys, plus the braces: no key is printed twice.
+    expect(lines).toHaveLength(5002);
+    expect(lines.filter(line => /^ {2}p(0|2500|4999):/.test(line))).toEqual([
+      '  p0: "own0",',
+      '  p2500: "own2500",',
+      '  p4999: "own4999",',
+    ]);
+    expect(lines).toContain("  p1: 1,");
+    expect(lines).toContain("  p4998: 4998,");
+  });
+
+  it("scales linearly with the property count", () => {
+    const small = makeWide(3000);
+    const large = makeWide(30000);
+
+    // The best of three runs, so one GC or scheduler hiccup cannot fail the
+    // test. The per-property cost must stay about constant as n grows 10x.
+    // The visited-property dedup used to be a linear scan of a Vector, which
+    // made the walk O(n^2) and this ratio about 10.
+    function perPropertyCost(o, n) {
+      let best = Infinity;
+      for (let run = 0; run < 3; run++) {
+        const t0 = performance.now();
+        Bun.inspect(o);
+        best = Math.min(best, performance.now() - t0);
+      }
+      return best / n;
+    }
+
+    withoutAggressiveGC(() => {
+      expect(Bun.inspect(large)).toContain("p29999: 29999");
+      const costSmall = perPropertyCost(small, 3000);
+      const costLarge = perPropertyCost(large, 30000);
+      expect(costLarge / costSmall).toBeLessThan(3);
+    });
+  });
 });
 
 it("Blob inspect", () => {

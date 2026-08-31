@@ -587,7 +587,7 @@ impl LinkerContext<'_> {
         // "__export(exports, { foo: () => foo })"
         let mut export_ref = Ref::NONE;
         if !properties.is_empty() {
-            export_ref = self.runtime_function(b"__export");
+            export_ref = self.runtime_function(self.export_runtime_function());
             // `bumpalo::Vec` → `Vec` via the global heap;
             // `G::PropertyList` is `Vec<Property>` and currently has no
             // arena-backed `move_from_list`, so re-own.

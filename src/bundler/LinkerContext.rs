@@ -1291,6 +1291,7 @@ pub struct LinkerOptions {
     pub(crate) output_format: Format,
     pub(crate) ignore_dce_annotations: bool,
     pub(crate) emit_dce_annotations: bool,
+    pub(crate) deprecated_namespace_object_setters: bool,
     pub(crate) tree_shaking: bool,
     pub(crate) minify_whitespace: bool,
     pub(crate) minify_syntax: bool,
@@ -1337,6 +1338,7 @@ impl Default for LinkerOptions {
             output_format: Format::Esm,
             ignore_dce_annotations: false,
             emit_dce_annotations: true,
+            deprecated_namespace_object_setters: true,
             tree_shaking: true,
             minify_whitespace: false,
             minify_syntax: false,
@@ -3934,6 +3936,14 @@ impl<'a> LinkerContext<'a> {
         }
 
         result
+    }
+
+    pub(crate) fn export_runtime_function(&self) -> &'static [u8] {
+        if self.options.deprecated_namespace_object_setters {
+            b"__export"
+        } else {
+            b"__exportGetters"
+        }
     }
 
     /// Is `ref_` the `exports` object of ES module `source_index` (i.e. an

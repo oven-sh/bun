@@ -92,12 +92,17 @@ test("cyclic imports with async dependencies should generate async wrappers", as
 
   expect(bundled).toMatchInlineSnapshot(`
     "var __defProp = Object.defineProperty;
+    var __returnValue = (v) => v;
+    function __exportSetter(name, newValue) {
+      this[name] = __returnValue.bind(null, newValue);
+    }
     var __export = (target, all) => {
       for (var name in all)
         __defProp(target, name, {
           get: all[name],
           enumerable: true,
-          configurable: true
+          configurable: true,
+          set: __exportSetter.bind(all, name)
         });
     };
     var __esm = (fn, res) => () => (fn && (res = fn(fn = 0)), res);
@@ -175,7 +180,7 @@ test("cyclic imports with async dependencies should generate async wrappers", as
     var { AsyncEntryPoint: AsyncEntryPoint2 } = await Promise.resolve().then(() => exports_AsyncEntryPoint);
     AsyncEntryPoint2();
 
-    //# debugId=4FCBFBA1F105A65E64756E2164756E21
+    //# debugId=CA2065B5CEC4A98364756E2164756E21
     //# sourceMappingURL=entryBuild.js.map
     "
   `);

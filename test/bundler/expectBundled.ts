@@ -227,6 +227,7 @@ export interface BundlerTestInput {
   bytecode?: boolean;
   bytecodeDepth?: number;
   emitDCEAnnotations?: boolean;
+  deprecatedNamespaceObjectSetters?: boolean;
   inject?: string[];
   jsx?: {
     runtime?: "automatic" | "classic";
@@ -550,6 +551,7 @@ function expectBundled(
     bytecode = false,
     bytecodeDepth,
     emitDCEAnnotations,
+    deprecatedNamespaceObjectSetters,
     production,
     // @ts-expect-error
     _referenceFn,
@@ -877,6 +879,7 @@ function expectBundled(
               footer && `--footer="${footer}"`,
               ignoreDCEAnnotations && `--ignore-dce-annotations`,
               emitDCEAnnotations && `--emit-dce-annotations`,
+              deprecatedNamespaceObjectSetters === false && `--no-deprecated-namespace-object-setters`,
               // inject && inject.map(x => ["--inject", path.join(root, x)]),
               // jsx.preserve && "--jsx=preserve",
               // legalComments && `--legal-comments=${legalComments}`,
@@ -1248,6 +1251,7 @@ function expectBundled(
           bytecodeDepth,
           publicPath,
           emitDCEAnnotations,
+          deprecatedNamespaceObjectSetters,
           ignoreDCEAnnotations,
           drop,
           features,

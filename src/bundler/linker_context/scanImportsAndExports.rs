@@ -675,7 +675,8 @@ pub(crate) fn scan_imports_and_exports(
             // parallel and can't safely mutate the "importsToBind" map of another file.
             if flag.needs_export_symbol_from_runtime {
                 if !runtime_export_symbol_ref.is_valid() {
-                    runtime_export_symbol_ref = this.runtime_function(b"__export");
+                    runtime_export_symbol_ref =
+                        this.runtime_function(this.export_runtime_function());
                 }
 
                 debug_assert!(runtime_export_symbol_ref.is_valid());

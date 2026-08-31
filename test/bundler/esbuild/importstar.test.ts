@@ -1673,6 +1673,23 @@ describe("bundler", () => {
     dce: true,
     run: { stdout: "a ext" },
   });
+  for (const deprecatedNamespaceObjectSetters of [true, false]) {
+    itBundled(`importstar/NamespaceObjectSetters${deprecatedNamespaceObjectSetters ? "Deprecated" : "Off"}`, {
+      files: {
+        "/entry.js": /* js */ `
+          import * as ns from './lib'
+          const obj = ns
+          const desc = Object.getOwnPropertyDescriptor(obj, 'x')
+          let threw = false
+          try { obj.x = 2 } catch { threw = true }
+          console.log(typeof desc.get, typeof desc.set, desc.configurable, threw, obj.x)
+        `,
+        "/lib.js": `export let x = 1`,
+      },
+      deprecatedNamespaceObjectSetters,
+      run: { stdout: deprecatedNamespaceObjectSetters ? "function function true false 1" : "function undefined true true 1" },
+    });
+  }
   itBundled("importstar/CjsEntryPointExportsSorted", {
     files: {
       "/entry.js": /* js */ `

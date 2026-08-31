@@ -471,19 +471,13 @@ impl Expect {
         }
     }
 
-    /// Returns the promise that `wait_for_promise` polls for `value`'s outcome, or `None`
-    /// when `value` is not a thenable.
+    /// The promise `wait_for_promise` polls for `value`'s outcome, or `None` for a non-thenable.
     ///
-    /// `wait_for_promise` reads a promise's internal state and never calls `then()`. A
-    /// `Promise` subclass that starts its work inside an overridden `then()` (Bun.SQL's
-    /// `Query`, `Bun.$`'s `ShellPromise`) never settles that way, and a plain thenable has no
-    /// internal state at all. A pending promise or a thenable is therefore adopted by a fresh
-    /// native promise through the spec resolve steps, which call the value's own `then()`,
-    /// the same as `await value`. JSC skips that call for a promise whose `then` is the
-    /// built-in one. A settled promise already holds its outcome and is returned as is.
-    ///
-    /// Nothing but the pending `then()` callbacks refer to the adopter, so the caller keeps
-    /// the returned promise on the stack across the wait.
+    /// `wait_for_promise` never calls `then()`, so a `Promise` subclass that starts its work
+    /// there (Bun.SQL's `Query`, `Bun.$`'s `ShellPromise`) would never settle. A pending promise
+    /// or a plain thenable is adopted by a fresh native promise, whose resolve steps call the
+    /// value's own `then()` as `await` does. The caller holds the result on the stack across
+    /// the wait: nothing else roots the adopter.
     fn thenable_to_wait_for(global_this: &JSGlobalObject, value: JSValue) -> JsResult<Option<AnyPromise>> {
         if let Some(promise) = value.as_any_promise() {
             promise.set_handled(global_this.vm());

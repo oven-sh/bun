@@ -1151,24 +1151,42 @@ pub mod disposition {
 /// unwind (not search) phase of frame-based dispatch.
 pub const EXCEPTION_UNWIND: u32 = 0x66;
 
-/// `[base, base + SizeOfImage)` of the process executable, read once from the
-/// mapped PE header. The crash handler uses this to tell first-chance
-/// exceptions raised inside Bun's own code from those raised inside foreign
-/// modules.
+/// The address range of Bun's own code and data in the process executable, read
+/// once from the mapped PE header. The crash handler uses this to tell
+/// first-chance exceptions raised inside Bun's own code from those raised inside
+/// foreign code, which includes the `.node` addons `bun build --compile` merges
+/// into the exe as sections after Bun's own (`.bnN`, `.bunL`, then `.bun`): the
+/// range ends at the first of those.
 pub fn exe_image_range() -> core::ops::Range<usize> {
-    // SAFETY: null module name returns the exe's HMODULE, which on Windows is
-    // its mapped base address. The IMAGE_DOS_HEADER at `base` and
-    // IMAGE_NT_HEADERS at `base + e_lfanew` are part of the loader-mapped
-    // image and remain valid for the process lifetime.
+    // SAFETY: null module name returns the exe's HMODULE, its mapped base
+    // address; the headers and section table there stay mapped for the process
+    // lifetime.
     unsafe {
         let base = bun_windows_sys::kernel32::GetModuleHandleW(ptr::null()) as usize;
-        let e_lfanew = *(base as *const u8).add(0x3C).cast::<u32>() as usize;
-        // IMAGE_NT_HEADERS64: Signature(4) + IMAGE_FILE_HEADER(20) +
-        // IMAGE_OPTIONAL_HEADER64.SizeOfImage at offset 56.
-        let size_of_image = *(base as *const u8)
-            .add(e_lfanew + 4 + 20 + 56)
-            .cast::<u32>() as usize;
-        base..base + size_of_image
+        let image = base as *const u8;
+        let nt = image.add(*image.add(0x3C).cast::<u32>() as usize);
+        // IMAGE_NT_HEADERS64: Signature(4), then IMAGE_FILE_HEADER(20) with
+        // NumberOfSections at +2 and SizeOfOptionalHeader at +16, then the
+        // optional header with SizeOfImage at +56.
+        let number_of_sections = nt.add(4 + 2).cast::<u16>().read_unaligned() as usize;
+        let size_of_optional_header = nt.add(4 + 16).cast::<u16>().read_unaligned() as usize;
+        let size_of_image = nt.add(4 + 20 + 56).cast::<u32>().read_unaligned() as usize;
+
+        let mut end = size_of_image;
+        let sections = nt.add(4 + 20 + size_of_optional_header);
+        for i in 0..number_of_sections {
+            // IMAGE_SECTION_HEADER (40 bytes): Name[8] at +0, VirtualAddress at +12.
+            let header = sections.add(i * 40);
+            let name = core::slice::from_raw_parts(header, 8);
+            let appended = name.starts_with(b".bun\0")
+                || name.starts_with(b".bunL\0")
+                || (name.starts_with(b".bn") && name[3].is_ascii_digit());
+            if appended {
+                let va = header.add(12).cast::<u32>().read_unaligned() as usize;
+                end = end.min(va);
+            }
+        }
+        base..base + end
     }
 }
 

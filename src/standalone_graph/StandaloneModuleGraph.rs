@@ -1666,6 +1666,64 @@ impl CompileResult {
     }
 }
 
+/// Merges embedded `.node` files into `pe_file` and appends `.bunL`; the rest extract at runtime.
+fn link_native_addons_for_windows(
+    pe_file: &mut bun_pe::PEFile,
+    output_files: &[OutputFile],
+    module_prefix: &[u8],
+) -> Result<(), bun_pe::Error> {
+    if bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_PE_ADDON_LINK::get() == Some(true)
+    {
+        return Ok(());
+    }
+    // A template without the trampoline predates the merge; leave its addons to the tempfile path.
+    let Some(exception_handler) = pe_file.export_rva(bun_pe::LINKED_ADDON_EXCEPTION_HANDLER) else {
+        return Ok(());
+    };
+
+    let mut addons: Vec<bun_pe::LinkedAddon> = Vec::new();
+    let mut idx: u32 = 0;
+    for of in output_files {
+        if of.loader != Loader::Napi {
+            continue;
+        }
+        let options::OutputFileValue::Buffer { bytes: contents } = &of.value else {
+            continue;
+        };
+        if !of.output_kind.is_file_in_standalone_mode() {
+            continue;
+        }
+        if !bun_pe::is_pe(contents) {
+            continue;
+        }
+
+        // Must produce the same name `to_bytes` stores, since that is what process.dlopen receives.
+        let dest_path = bun_core::strings::remove_leading_dot_slash(&of.dest_path);
+        let mut vpath = Vec::with_capacity(module_prefix.len() + dest_path.len());
+        vpath.extend_from_slice(module_prefix);
+        vpath.extend_from_slice(dest_path);
+        #[cfg(windows)]
+        path::resolve_path::platform_to_posix_in_place::<u8>(&mut vpath[module_prefix.len()..]);
+
+        let linked = match pe_file.add_linked_addon(contents, idx, &vpath, exception_handler) {
+            // Out of section headers: the remaining addons extract at runtime instead.
+            Err(bun_pe::Error::InsufficientHeaderSpace | bun_pe::Error::TooManySections) => break,
+            Err(e) => return Err(e),
+            Ok(None) => continue,
+            Ok(Some(linked)) => linked,
+        };
+        addons.push(linked);
+        idx += 1;
+    }
+
+    if addons.is_empty() {
+        return Ok(());
+    }
+
+    // add_linked_addon reserved the headers for `.bunL` and `.bun`, so this cannot run out of room.
+    pe_file.add_linked_addon_section(&addons)
+}
+
 /// The temp copy of the executable that `inject` wrote the module graph into:
 /// its open fd plus the absolute path it was created at, which the caller
 /// renames into place (an fd cannot be mapped back to a path on every
@@ -1697,6 +1755,8 @@ pub(crate) fn inject<'a>(
     self_exe: &ZStr,
     inject_options: &InjectOptions,
     target: &CompileTarget,
+    output_files: &[OutputFile],
+    module_prefix: &[u8],
     temp_path_buf: &'a mut PathBuffer,
 ) -> Option<Injected<'a>> {
     let mut cwd_buf = bun_paths::path_buffer_pool::get();
@@ -2015,6 +2075,16 @@ pub(crate) fn inject<'a>(
                     return None;
                 }
             }
+
+            // Before add_bun_section, which finalizes the headers and checksum over the whole image.
+            if let Err(e) =
+                link_native_addons_for_windows(&mut pe_file, output_files, module_prefix)
+            {
+                bun_core::pretty_errorln!("Error linking native addon into PE file: {}", e);
+                cleanup(zname, cloned_executable_fd);
+                return None;
+            }
+
             // Always strip authenticode when adding .bun section for --compile
             if let Err(e) = pe_file.add_bun_section(bytes) {
                 bun_core::pretty_errorln!("Error adding Bun section to PE file: {}", e);
@@ -2515,6 +2585,8 @@ pub fn to_executable(
         &self_exe,
         windows_options,
         target,
+        output_files,
+        module_prefix,
         &mut temp_path_buf,
     ) else {
         // inject() has already printed the specific error.

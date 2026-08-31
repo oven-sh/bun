@@ -32,6 +32,31 @@
             ],
         },
         {
+            "target_name": "unwind_addon",
+            "sources": ["unwind_addon.c"],
+            "include_dirs": ["<!@(node -p \"require('node-addon-api').include\")"],
+            "libraries": [],
+            "dependencies": ["<!(node -p \"require('node-addon-api').gyp\")"],
+            "defines": [
+                "NAPI_DISABLE_CPP_EXCEPTIONS",
+                "NODE_API_EXPERIMENTAL_NOGC_ENV_OPT_OUT=1",
+            ],
+        },
+        {
+            # C++ exceptions on, unlike the rest of the fixture: see cxx_eh_addon.cpp.
+            "target_name": "cxx_eh_addon",
+            "sources": ["cxx_eh_addon.cpp"],
+            "cflags!": ["-fno-exceptions"],
+            "cflags_cc!": ["-fno-exceptions"],
+            "cflags_cc": ["-fexceptions"],
+            "xcode_settings": {"GCC_ENABLE_CPP_EXCEPTIONS": "YES"},
+            "msvs_settings": {"VCCLCompilerTool": {"ExceptionHandling": "1"}},
+            "include_dirs": ["<!@(node -p \"require('node-addon-api').include\")"],
+            "libraries": [],
+            "dependencies": ["<!(node -p \"require('node-addon-api').gyp\")"],
+            "defines": ["NODE_API_EXPERIMENTAL_NOGC_ENV_OPT_OUT=1"],
+        },
+        {
             "target_name": "nullptr_addon",
             "sources": ["null_addon.cpp"],
             "include_dirs": ["<!@(node -p \"require('node-addon-api').include\")"],

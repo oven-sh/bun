@@ -157,6 +157,21 @@ export const memfd_create: (size: number) => number = $newRustFunction(
   1,
 );
 
+// Runs PEFile::add_linked_addon (src/exe_format/pe.rs) on the given images; `output` is the host afterwards.
+// `exceptionHandlerRva` stands in for the exe's exported trampoline (0 / omitted = the host has none).
+export const peLinkAddon: (
+  host: Uint8Array,
+  addon: Uint8Array,
+  name: string,
+  exceptionHandlerRva?: number,
+) => {
+  skipped?: boolean;
+  error?: string;
+  output?: Buffer;
+  metadata?: Buffer;
+  rvaBase?: number;
+} = $newRustFunction("exe_format/pe.rs", "TestingAPIs.linkAddon", 3);
+
 export const createStatsForIno: (ino: bigint, big: boolean) => any = $newRustFunction(
   "Stat.rs",
   "createStatsForIno",

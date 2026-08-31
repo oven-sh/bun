@@ -1213,6 +1213,9 @@ extern "C" uint64_t* Bun__getStandaloneModuleGraphELFVaddr()
 
 static uint64_t* pe_section_size = nullptr;
 static uint8_t* pe_section_data = nullptr;
+// .bunL holds the merged `.node` addon metadata (pe.rs LinkedAddon); it is absent unless addons were merged.
+static uint64_t* pe_linked_size = nullptr;
+static uint8_t* pe_linked_data = nullptr;
 
 // Helper function to find and map the .bun section
 static bool initializePESection()
@@ -1237,12 +1240,15 @@ static bool initializePESection()
             BYTE* sectionData = (BYTE*)hModule + sectionHeader->VirtualAddress;
             pe_section_size = (uint64_t*)sectionData;
             pe_section_data = sectionData + sizeof(uint64_t); // Skip size (8)
-            return true;
+        } else if (memcmp(sectionHeader->Name, ".bunL\0\0\0", 8) == 0) {
+            BYTE* sectionData = (BYTE*)hModule + sectionHeader->VirtualAddress;
+            pe_linked_size = (uint64_t*)sectionData;
+            pe_linked_data = sectionData + sizeof(uint64_t);
         }
         sectionHeader++;
     }
 
-    return false;
+    return pe_section_size != nullptr;
 }
 
 extern "C" uint64_t Bun__getStandaloneModuleGraphPELength()
@@ -1255,6 +1261,18 @@ extern "C" uint8_t* Bun__getStandaloneModuleGraphPEData()
 {
     if (!initializePESection()) return nullptr;
     return pe_section_data;
+}
+
+extern "C" uint64_t Bun__getLinkedAddonsPELength()
+{
+    if (!initializePESection()) return 0;
+    return pe_linked_size ? *pe_linked_size : 0;
+}
+
+extern "C" uint8_t* Bun__getLinkedAddonsPEData()
+{
+    if (!initializePESection()) return nullptr;
+    return pe_linked_data;
 }
 
 #endif

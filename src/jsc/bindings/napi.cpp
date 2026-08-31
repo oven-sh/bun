@@ -793,13 +793,15 @@ void Napi::executePendingNapiModule(Zig::GlobalObject* globalObject)
         return;
     }
 
-    auto* meta = new Bun::NapiModuleMeta(globalObject->m_pendingNapiModuleDlopenHandle);
+    // Null for an addon merged into the Windows exe (see dlopenHandleForMeta in BunProcess.cpp): nothing GetProcAddress can walk, so no meta.
+    if (globalObject->m_pendingNapiModuleDlopenHandle) {
+        // No finalizer: napi modules are never unloaded.
+        auto* meta = new Bun::NapiModuleMeta(globalObject->m_pendingNapiModuleDlopenHandle);
+        Bun::NapiExternal* napi_external = Bun::NapiExternal::create(vm, globalObject->NapiExternalStructure(), meta, nullptr, nullptr, env.ptr());
 
-    // TODO: think about the finalizer here
-    Bun::NapiExternal* napi_external = Bun::NapiExternal::create(vm, globalObject->NapiExternalStructure(), meta, nullptr, nullptr, env.ptr());
-
-    bool success = resultValue.getObject()->putDirect(vm, WebCore::builtinNames(vm).napiDlopenHandlePrivateName(), napi_external, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
-    ASSERT(success);
+        bool success = resultValue.getObject()->putDirect(vm, WebCore::builtinNames(vm).napiDlopenHandlePrivateName(), napi_external, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
+        ASSERT(success);
+    }
 
     globalObject->m_pendingNapiModuleDlopenHandle = nullptr;
 

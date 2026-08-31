@@ -2872,7 +2872,7 @@ JSC::EncodedJSValue SystemError__toErrorInstanceWithInfoObject(const SystemError
     auto message = makeString("A system error occurred: "_s, syscallString, " returned "_s, codeString, " ("_s, messageString, ")"_s);
 
     JSC::JSObject* result = JSC::ErrorInstance::create(vm, JSC::ErrorInstance::createStructure(vm, globalObject, globalObject->errorPrototype()), message, {});
-    JSC::JSObject* info = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 0);
+    JSC::JSObject* info = JSC::constructEmptyObject(globalObject);
 
     auto clientData = WebCore::clientData(vm);
 
@@ -2900,7 +2900,9 @@ JSC::EncodedJSValue
 JSC__JSObject__create(JSC::JSGlobalObject* globalObject, size_t initialCapacity, void* arg2,
     void (*ArgFn3)(void* arg0, JSC::JSObject* arg1, JSC::JSGlobalObject* arg2))
 {
-    JSC::JSObject* object = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), std::min(static_cast<unsigned>(initialCapacity), JSFinalObject::maxInlineCapacity));
+    JSC::JSObject* object = initialCapacity
+        ? JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), static_cast<unsigned>(std::min(initialCapacity, static_cast<size_t>(JSFinalObject::maxInlineCapacity))))
+        : JSC::constructEmptyObject(globalObject);
 
     ArgFn3(arg2, object, globalObject);
 
@@ -2929,8 +2931,12 @@ JSC::EncodedJSValue JSC__JSValue__createEmptyObjectWithNullPrototype(JSC::JSGlob
 JSC::EncodedJSValue JSC__JSValue__createEmptyObject(JSC::JSGlobalObject* globalObject,
     size_t initialCapacity)
 {
+    // 0 means "unsized", not "zero inline slots": JSC's spread fast path
+    // (tryCreateObjectViaCloning) asserts hasInlineStorage() on the source.
+    if (!initialCapacity)
+        return JSC::JSValue::encode(JSC::constructEmptyObject(globalObject));
     return JSC::JSValue::encode(
-        JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), std::min(static_cast<unsigned int>(initialCapacity), JSFinalObject::maxInlineCapacity)));
+        JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), static_cast<unsigned>(std::min(initialCapacity, static_cast<size_t>(JSFinalObject::maxInlineCapacity)))));
 }
 
 extern "C" uint64_t Bun__Blob__getSizeForBindings(void* blob);

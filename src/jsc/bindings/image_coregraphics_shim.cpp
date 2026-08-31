@@ -334,7 +334,8 @@ int32_t bun_coregraphics_decode(const uint8_t* bytes, size_t len, uint64_t max_p
     VBuf buf { out, h, w, w * 4 };
     VFmt fmt { 8, 32, r.cs, kBunCGImageAlphaLast, 0, nullptr, 0 };
     auto rc = s->vImageBuffer_InitWithCGImage(&buf, &fmt, nullptr, r.img, kBunVImageNoAllocate);
-    if (rc != 0 || buf.data != out) {
+    if (rc == 0 && buf.data != out) return CG_DECODE_FAILED;
+    if (rc != 0) {
         // vImage rejects the packed 10-bit layout ImageIO returns for 10-bit HEVC; CoreGraphics still draws it.
         std::memset(out, 0, w * h * 4);
         r.ctx = s->CGBitmapContextCreate(out, w, h, 8, w * 4, r.cs, kBunCGImageAlphaPremultipliedLast);

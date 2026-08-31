@@ -1,4 +1,4 @@
-//! Idle GC timer: JSC's own `GCActivityCallback` (via `WTFTimer`) paces eden/full against allocation rate; this only adds a 1 s / 30 s idle `collect_async()` so a process that stops allocating still releases memory, and — once per idle period, after `BUN_IDLE_RELEASE_SECONDS` (default 30, 0 = off) of the process using under 2% CPU — drops JIT code and pages out a standalone executable's embedded module graph (main thread only). Knobs: `BUN_GC_TIMER_INTERVAL` (ms), `BUN_GC_TIMER_DISABLE`. One per JS thread, not thread-safe.
+//! Idle GC timer: JSC's own `GCActivityCallback` (via `WTFTimer`) paces eden/full against allocation rate; this only adds a 1 s / 30 s idle `collect_async()` so a process that stops allocating still releases memory, and — once per idle period, after `BUN_IDLE_RELEASE_SECONDS` (default 30, 0 = off) of the process using under 2% CPU — requests a few full collections (so JSC can age out code that is no longer running) and pages out a standalone executable's embedded module graph (main thread only). Knobs: `BUN_GC_TIMER_INTERVAL` (ms), `BUN_GC_TIMER_DISABLE`. One per JS thread, not thread-safe.
 
 use core::cell::Cell;
 use core::ffi::c_int;
@@ -21,10 +21,13 @@ pub struct GarbageCollectionController {
     pub(crate) gc_repeating_timer_fast: Cell<bool>,
     pub(crate) disabled: Cell<bool>,
     /// Idle release: process CPU time (µs) at the last fire, how long the process has stayed under the idle CPU
-    /// threshold, CPU time at the last release (`u64::MAX` = armed), and the configured delay (0 = off).
+    /// threshold, when (in quiet ms) and how many idle full GCs were requested this idle period, and the configured
+    /// delay (0 = off).
     idle_last_cpu_us: Cell<u64>,
     idle_quiet_ms: Cell<u32>,
-    idle_released_at_cpu_us: Cell<u64>,
+    idle_last_gc_at_quiet_ms: Cell<u32>,
+    idle_full_gcs: Cell<u8>,
+    idle_requested_gc: Cell<bool>,
     idle_release_after_ms: Cell<u32>,
 }
 
@@ -44,7 +47,9 @@ impl Default for GarbageCollectionController {
             disabled: Cell::new(false),
             idle_last_cpu_us: Cell::new(0),
             idle_quiet_ms: Cell::new(0),
-            idle_released_at_cpu_us: Cell::new(u64::MAX),
+            idle_last_gc_at_quiet_ms: Cell::new(0),
+            idle_full_gcs: Cell::new(0),
+            idle_requested_gc: Cell::new(false),
             idle_release_after_ms: Cell::new(0),
         }
     }
@@ -109,9 +114,13 @@ impl GarbageCollectionController {
 
     /// Called on every repeating-timer fire with the interval that just elapsed. "Idle" is judged by process CPU
     /// time rather than by whether any JS ran: an interactive app sitting at a prompt still fires the odd timer.
+    /// While idle, ask for a full collection now and then (at most `IDLE_FULL_GCS` per idle period, at least
+    /// `IDLE_FULL_GC_SPACING_MS` apart): that is what lets JSC age out code that is no longer running and return the
+    /// memory. The first one also pages out a standalone executable's embedded module graph.
     fn note_tick_for_idle_release(&self, vm: &VirtualMachine, elapsed_ms: i32) {
         const IDLE_CPU_PERCENT: u64 = 2;
-        const REARM_AFTER_CPU_US: u64 = 250_000;
+        const IDLE_FULL_GCS: u8 = 6;
+        const IDLE_FULL_GC_SPACING_MS: u32 = 30_000;
         let after = self.idle_release_after_ms.get();
         if after == 0 {
             return;
@@ -120,31 +129,37 @@ impl GarbageCollectionController {
             return;
         };
         let elapsed_ms = elapsed_ms.max(1) as u64;
-        let busy = cpu_us.saturating_sub(self.idle_last_cpu_us.get()) * 100
-            >= elapsed_ms * 1000 * IDLE_CPU_PERCENT;
+        // Our own collections burn CPU; don't let the one we requested last tick count as activity.
+        let busy = !self.idle_requested_gc.replace(false)
+            && cpu_us.saturating_sub(self.idle_last_cpu_us.get()) * 100
+                >= elapsed_ms * 1000 * IDLE_CPU_PERCENT;
         self.idle_last_cpu_us.set(cpu_us);
         if busy {
             self.idle_quiet_ms.set(0);
+            self.idle_full_gcs.set(0);
             return;
         }
         let quiet = self.idle_quiet_ms.get().saturating_add(elapsed_ms as u32);
         self.idle_quiet_ms.set(quiet);
-        let released_at = self.idle_released_at_cpu_us.get();
-        let armed =
-            released_at == u64::MAX || cpu_us.saturating_sub(released_at) >= REARM_AFTER_CPU_US;
-        if quiet >= after && armed && !vm.is_inspector_enabled() {
-            // A fresh BUN_IDLE_RELEASE_SECONDS of quiet is needed before the next release, not just re-arming.
-            self.idle_quiet_ms.set(0);
-            vm.jsc_vm().release_memory_for_idle();
+        if quiet < after || vm.is_inspector_enabled() {
+            return;
+        }
+        let done = self.idle_full_gcs.get();
+        let since_last = quiet - self.idle_last_gc_at_quiet_ms.get().min(quiet);
+        if done >= IDLE_FULL_GCS || (done > 0 && since_last < IDLE_FULL_GC_SPACING_MS) {
+            return;
+        }
+        if done == 0 {
             if let Some(graph) = vm.standalone_module_graph {
                 let _ = std::thread::Builder::new()
                     .name("idle page-out".into())
                     .spawn(move || graph.page_out());
             }
-            // Read again so the release's own work does not count towards re-arming.
-            self.idle_released_at_cpu_us
-                .set(process_cpu_time_us().unwrap_or(cpu_us));
         }
+        self.idle_full_gcs.set(done + 1);
+        self.idle_last_gc_at_quiet_ms.set(quiet);
+        self.idle_requested_gc.set(true);
+        vm.jsc_vm().collect_async_full();
     }
 
     /// Idempotent. Must run before JSC teardown: `~RunLoop::Timer` frees the

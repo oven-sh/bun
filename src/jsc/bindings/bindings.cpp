@@ -4998,11 +4998,9 @@ void JSC__VM__shrinkFootprint(JSC::VM* arg0)
     arg0->shrinkFootprintWhenIdle();
 }
 
-void JSC__VM__releaseMemoryForIdle(JSC::VM* vm)
+void JSC__VM__collectAsyncFull(JSC::VM* vm)
 {
     JSC::JSLockHolder lock(*vm);
-    JSC::sanitizeStackForVM(*vm);
-    vm->deleteAllCode(JSC::DeleteAllCodeIfNotCollecting);
     vm->heap.collectAsync(JSC::CollectionScope::Full);
 }
 

@@ -151,71 +151,55 @@ describe.skipIf(isDebug)("GarbageCollectionController eden cadence", () => {
   });
 });
 
-// After BUN_IDLE_RELEASE_SECONDS during which the process used (almost) no CPU,
-// the controller drops JIT code and CodeBlocks once (they re-tier if the code
-// gets hot again). Idle is judged by process CPU time, not by whether any JS
-// ran: an app parked at a prompt still fires the odd timer and should count as
-// idle; one that keeps a core busy should not.
+// After BUN_IDLE_RELEASE_SECONDS during which the process used (almost) no CPU, the
+// controller starts requesting full collections (so JSC can age out code that no
+// longer runs and return memory). Idle is judged by process CPU time, not by
+// whether any JS ran: an app parked at a prompt still fires the odd timer and
+// should count as idle; one that keeps a core busy should not.
 describe("idle release", () => {
-  // `idle`: warm some functions, then do nothing but poll once a second (well under the idle CPU threshold) until the
-  // CodeBlock count drops or `waitMs` passes. `busy`: same, while keeping a core ~75% busy.
-  const script = (mode: "idle" | "busy", waitMs: number) => `
-    import { heapStats } from "bun:jsc";
-    const fns = [];
-    for (let i = 0; i < 200; i++) fns.push(new Function("a", "let s = 0; for (let j = 0; j < 100; j++) s += a * " + i + " + j; return s"));
-    for (let r = 0; r < 30; r++) for (const f of fns) f(r);
-    globalThis.fns = fns; // keep the functions (and so their CodeBlocks) reachable; only the idle release should drop them
-    const codeBlocks = () => { const c = heapStats().objectTypeCounts; return (c.FunctionCodeBlock || 0) + (c.CodeBlock || 0); };
-    const before = codeBlocks();
-    ${mode === "busy" ? `const iv = setInterval(() => { const end = performance.now() + 150; while (performance.now() < end) fns[0](1); }, 200);` : ``}
-    const deadline = Date.now() + ${waitMs};
-    const poll = setInterval(() => {
-      const after = codeBlocks();
-      if (${mode === "idle" ? `after < before / 4 || ` : ``}Date.now() >= deadline) {
-        clearInterval(poll);
-        ${mode === "busy" ? `clearInterval(iv);` : ``}
-        console.log(JSON.stringify({ before, after }));
-      }
-    }, 1000);
+  // Count FullCollection lines from BUN_JSC_logGC=1 while the script sits idle (or spins) for a few seconds. Nothing
+  // allocates in that window, so a full collection there is the idle one.
+  const script = (mode: "idle" | "busy") => `
+    setTimeout(() => console.error("MARK"), 1200);
+    ${mode === "busy" ? `const iv = setInterval(() => { const end = performance.now() + 150; while (performance.now() < end) {} }, 200);` : ``}
+    setTimeout(() => { ${mode === "busy" ? `clearInterval(iv);` : ``} console.error("DONE"); }, 4200);
   `;
 
-  async function run(mode: "idle" | "busy", seconds: string, waitMs = 3_500) {
+  async function run(mode: "idle" | "busy", seconds: string) {
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", script(mode, waitMs)],
+      cmd: [bunExe(), "-e", script(mode)],
       env: {
         ...bunEnv,
         BUN_IDLE_RELEASE_SECONDS: seconds,
+        BUN_JSC_logGC: "1",
         BUN_GC_TIMER_DISABLE: undefined,
         BUN_GC_TIMER_INTERVAL: undefined,
       },
       stdout: "pipe",
-      stderr: "inherit",
+      stderr: "pipe",
     });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    return { ...(JSON.parse(stdout.trim()) as { before: number; after: number }), exitCode };
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    // Startup may do a collection of its own; only count what happens after the marker.
+    const fulls = (stderr.slice(stderr.indexOf("MARK")).match(/FullCollection/g) || []).length;
+    return { fulls, exitCode };
   }
 
   // The idle signal is process CPU time via getrusage; not implemented on Windows yet.
-  test.skipIf(isWindows).concurrent(
-    "fires once the process has been idle long enough",
-    async () => {
-      const { before, after, exitCode } = await run("idle", "1", 30_000);
-      expect(before).toBeGreaterThan(150);
-      expect(after).toBeLessThan(before / 4);
-      expect(exitCode).toBe(0);
-    },
-    40_000,
-  );
+  test.skipIf(isWindows).concurrent("requests full collections once the process has been idle long enough", async () => {
+    const { fulls, exitCode } = await run("idle", "2");
+    expect(fulls).toBeGreaterThanOrEqual(1);
+    expect(exitCode).toBe(0);
+  });
 
-  test.concurrent("does not fire while the process is busy", async () => {
-    const { before, after, exitCode } = await run("busy", "1");
-    expect(after).toBeGreaterThanOrEqual(before - 20);
+  test.concurrent("does not while the process is busy", async () => {
+    const { fulls, exitCode } = await run("busy", "2");
+    expect(fulls).toBe(0);
     expect(exitCode).toBe(0);
   });
 
   test.concurrent("BUN_IDLE_RELEASE_SECONDS=0 disables it", async () => {
-    const { before, after, exitCode } = await run("idle", "0");
-    expect(after).toBeGreaterThanOrEqual(before - 20);
+    const { fulls, exitCode } = await run("idle", "0");
+    expect(fulls).toBe(0);
     expect(exitCode).toBe(0);
   });
 });

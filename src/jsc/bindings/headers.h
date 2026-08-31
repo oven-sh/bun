@@ -279,7 +279,7 @@ CPP_DECL void JSC__VM__releaseWeakRefs(JSC::VM* arg0);
 CPP_DECL size_t JSC__VM__runGC(JSC::VM* arg0, bool arg1);
 CPP_DECL void JSC__VM__enableControlFlowProfiler(JSC::VM* arg0);
 CPP_DECL void JSC__VM__shrinkFootprint(JSC::VM* arg0);
-CPP_DECL void JSC__VM__releaseMemoryForIdle(JSC::VM* arg0);
+CPP_DECL void JSC__VM__collectAsyncFull(JSC::VM* arg0);
 CPP_DECL void JSC__VM__throwError(JSC::VM* arg0, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2);
 CPP_DECL void JSC__VM__throwError(JSC::VM* arg0, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2);
 

@@ -1,26 +1,9 @@
 const { isIPv4 } = require("internal/net/isIP");
 
-const {
-  getHeader,
-  setHeader,
-  Headers,
-  assignHeaders: assignHeadersFast,
-  setRequestTimeout,
-  headersTuple,
-  webRequestOrResponseHasBodyValue,
-  setServerCustomOptions,
-  setServerAppFlags,
-  getCompleteWebRequestOrResponseBodyValueAsArrayBuffer,
-  drainMicrotasks,
-  setServerIdleTimeout,
-} = $cpp("NodeHTTP.cpp", "createNodeHTTPInternalBinding") as {
-  getHeader: (headers: Headers, name: string) => string | undefined;
-  setHeader: (headers: Headers, name: string, value: string) => void;
-  Headers: (typeof globalThis)["Headers"];
-  assignHeaders: (object: any, req: Request, headersTuple: any) => boolean;
-  setRequestTimeout: (req: Request, timeout: number) => boolean;
-  headersTuple: any;
-  webRequestOrResponseHasBodyValue: (arg: any) => boolean;
+const { setServerCustomOptions, setServerAppFlags, drainMicrotasks } = $cpp(
+  "NodeHTTP.cpp",
+  "createNodeHTTPInternalBinding",
+) as {
   setServerCustomOptions: (
     server: any,
     requireHostHeader: boolean,
@@ -37,76 +20,26 @@ const {
     lenientHttpFlags: number,
     httpAllowHalfOpen: boolean,
   ) => void;
-  getCompleteWebRequestOrResponseBodyValueAsArrayBuffer: (arg: any) => ArrayBuffer | undefined;
   drainMicrotasks: () => void;
-  setServerIdleTimeout: (server: any, timeout: number) => void;
 };
 
-const getRawKeys = $newCppFunction("JSFetchHeaders.cpp", "jsFetchHeaders_getRawKeys", 0);
-
-const kDeprecatedReplySymbol = Symbol("deprecatedReply");
-const kBodyChunks = Symbol("bodyChunks");
-const kPath = Symbol("path");
-const kPort = Symbol("port");
-const kMethod = Symbol("method");
-const kHost = Symbol("host");
-const kProtocol = Symbol("protocol");
-const kAgent = Symbol("agent");
-const kFetchRequest = Symbol("fetchRequest");
-const kTls = Symbol("tls");
-const kUseDefaultPort = Symbol("useDefaultPort");
-const kRes = Symbol("res");
-const kUpgradeOrConnect = Symbol("upgradeOrConnect");
-const kParser = Symbol("parser");
-const kMaxHeadersCount = Symbol("maxHeadersCount");
-const kReusedSocket = Symbol("reusedSocket");
-const kTimeoutTimer = Symbol("timeoutTimer");
-const kOptions = Symbol("options");
-const kSocketPath = Symbol("socketPath");
-const kSignal = Symbol("signal");
-const kMaxHeaderSize = Symbol("maxHeaderSize");
 const abortedSymbol = Symbol("aborted");
-const kClearTimeout = Symbol("kClearTimeout");
-
 const headerStateSymbol = Symbol("headerState");
-// used for pretending to emit events in the right order
-const kEmitState = Symbol("emitState");
-
-const bodyStreamSymbol = Symbol("bodyStream");
-const controllerSymbol = Symbol("controller");
-const runSymbol = Symbol("run");
-const deferredSymbol = Symbol("deferred");
 const eofInProgress = Symbol("eofInProgress");
 const fakeSocketSymbol = Symbol("fakeSocket");
-const firstWriteSymbol = Symbol("firstWrite");
-const headersSymbol = Symbol("headers");
 const isTlsSymbol = Symbol("is_tls");
 const kHandle = Symbol("handle");
 const kRealListen = Symbol("kRealListen");
 const noBodySymbol = Symbol("noBody");
 const optionsSymbol = Symbol("options");
-const reqSymbol = Symbol("req");
-const timeoutTimerSymbol = Symbol("timeoutTimer");
 const tlsSymbol = Symbol("tls");
 const typeSymbol = Symbol("type");
-const webRequestOrResponse = Symbol("FetchAPI");
-const statusCodeSymbol = Symbol("statusCode");
 const kAbortController = Symbol.for("kAbortController");
-const statusMessageSymbol = Symbol("statusMessage");
 const kInternalSocketData = Symbol.for("::bunternal::");
 const serverSymbol = Symbol.for("::bunternal::");
 const kPendingCallbacks = Symbol("pendingCallbacks");
 const kRequest = Symbol("request");
 const kCloseCallback = Symbol("closeCallback");
-
-const kEmptyObject = Object.freeze(Object.create(null));
-
-export const enum ClientRequestEmitState {
-  socket = 1,
-  prefinish = 2,
-  finish = 3,
-  response = 4,
-}
 
 export const enum NodeHTTPResponseAbortEvent {
   none = 0,
@@ -157,20 +90,6 @@ function emitErrorNextTickIfErrorListener(self, err, cb) {
   }
 }
 
-// TODO: make this more robust.
-function isAbortError(err) {
-  return err?.name === "AbortError";
-}
-
-// This lets us skip some URL parsing
-let isNextIncomingMessageHTTPS = false;
-function getIsNextIncomingMessageHTTPS() {
-  return isNextIncomingMessageHTTPS;
-}
-function setIsNextIncomingMessageHTTPS(value) {
-  isNextIncomingMessageHTTPS = value;
-}
-
 function callCloseCallback(self) {
   if (self[kCloseCallback]) {
     self[kCloseCallback]();
@@ -184,15 +103,6 @@ function emitCloseNT(self) {
     callCloseCallback(self);
     self.emit("close");
   }
-}
-function emitCloseNTAndComplete(self) {
-  if (!self._closed) {
-    self._closed = true;
-    callCloseCallback(self);
-    self.emit("close");
-  }
-
-  self.complete = true;
 }
 
 function emitEOFIncomingMessageOuter(self) {
@@ -578,105 +488,44 @@ function checkShouldUseProxy(proxyConfig: ProxyConfig, reqOptions: any) {
   return proxyConfig.shouldUseProxy(reqOptions.host || "localhost", reqOptions.port);
 }
 
-function filterEnvForProxies(env) {
-  return {
-    http_proxy: env.http_proxy,
-    HTTP_PROXY: env.HTTP_PROXY,
-    https_proxy: env.https_proxy,
-    HTTPS_PROXY: env.HTTPS_PROXY,
-    no_proxy: env.no_proxy,
-    NO_PROXY: env.NO_PROXY,
-  };
-}
-
 export {
-  Headers,
   METHODS,
   STATUS_CODES,
   abortedSymbol,
-  assignHeadersFast,
-  bodyStreamSymbol,
   callCloseCallback,
   checkShouldUseProxy,
-  controllerSymbol,
-  deferredSymbol,
   drainMicrotasks,
   emitCloseNT,
-  emitCloseNTAndComplete,
   emitEOFIncomingMessage,
   emitErrorNextTickIfErrorListenerNT,
   eofInProgress,
   fakeSocketSymbol,
-  filterEnvForProxies,
-  firstWriteSymbol,
-  getCompleteWebRequestOrResponseBodyValueAsArrayBuffer,
-  getHeader,
-  getIsNextIncomingMessageHTTPS,
   getMaxHTTPHeaderSize,
-  getRawKeys,
   hasServerResponseFinished,
   headerStateSymbol,
-  headersSymbol,
-  headersTuple,
-  isAbortError,
   isTlsSymbol,
   kAbortController,
-  kAgent,
-  kBodyChunks,
-  kClearTimeout,
   kCloseCallback,
-  kDeprecatedReplySymbol,
-  kEmitState,
-  kEmptyObject,
-  kFetchRequest,
   kHandle,
-  kHost,
   kInternalSocketData,
-  kMaxHeaderSize,
-  kMaxHeadersCount,
-  kMethod,
   kNeedDrain,
-  kOptions,
   kOutHeaders,
-  kParser,
-  kPath,
   kPendingCallbacks,
-  kPort,
-  kProtocol,
   kProxyConfig,
   kRealListen,
   kRequest,
-  kRes,
-  kReusedSocket,
-  kSignal,
-  kSocketPath,
-  kTimeoutTimer,
-  kTls,
-  kUpgradeOrConnect,
-  kUseDefaultPort,
   kWaitForProxyTunnel,
   noBodySymbol,
   onDataIncomingMessage,
   optionsSymbol,
   parseProxyConfigFromEnv,
   parseProxyUrl,
-  reqSymbol,
-  runSymbol,
   serverSymbol,
-  setHeader,
-  setIsNextIncomingMessageHTTPS,
   setMaxHTTPHeaderSize,
-  setRequestTimeout,
   setServerAppFlags,
   setServerCustomOptions,
-  setServerIdleTimeout,
-  statusCodeSymbol,
-  statusMessageSymbol,
-  timeoutTimerSymbol,
   tlsSymbol,
   typeSymbol,
   utcDate,
   validateMsecs,
-  webRequestOrResponse,
-  webRequestOrResponseHasBodyValue,
 };

@@ -2,6 +2,7 @@
 //! `NodeId` of its owning Cmd and every method takes `&Interpreter`.
 
 use bun_collections::VecExt;
+use bun_jsc::PinnedArrayBuffer;
 use core::ffi::c_char;
 use std::sync::Arc;
 
@@ -219,7 +220,6 @@ impl Kind {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum IoKind {
-    Stdin,
     Stdout,
     Stderr,
 }
@@ -247,7 +247,7 @@ pub enum BuiltinIO {
     /// stderr aimed at stdout's buffer.
     Buf(IoKind),
     ArrayBuf {
-        buf: PinnedArrayBuf,
+        buf: PinnedArrayBuffer,
         i: u32,
     },
     Blob(Arc<BuiltinBlob>),
@@ -257,36 +257,9 @@ pub enum BuiltinIO {
 /// Input stream of a builtin.
 pub enum BuiltinInput {
     Fd(Arc<IOReader>),
-    ArrayBuf { buf: PinnedArrayBuf, i: u32 },
+    ArrayBuf { buf: PinnedArrayBuffer, i: u32 },
     Blob(Arc<BuiltinBlob>),
     Ignore,
-}
-
-pub struct PinnedArrayBuf {
-    buf: crate::jsc::array_buffer::ArrayBufferStrong,
-    pinned: bool,
-}
-
-impl core::ops::Deref for PinnedArrayBuf {
-    type Target = crate::jsc::array_buffer::ArrayBufferStrong;
-
-    fn deref(&self) -> &Self::Target {
-        &self.buf
-    }
-}
-
-impl core::ops::DerefMut for PinnedArrayBuf {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.buf
-    }
-}
-
-impl Drop for PinnedArrayBuf {
-    fn drop(&mut self) {
-        if self.pinned {
-            self.buf.array_buffer.unpin();
-        }
-    }
 }
 
 /// Refcounted wrapper around a `webcore.Blob`. `Arc` provides the refcount;
@@ -370,7 +343,7 @@ impl BuiltinIO {
                 unsafe {
                     let captured = match *target {
                         IoKind::Stdout => (*shell).buffered_stdout(),
-                        IoKind::Stderr | IoKind::Stdin => (*shell).buffered_stderr(),
+                        IoKind::Stderr => (*shell).buffered_stderr(),
                     };
                     (*captured).append_slice(buf)
                 };
@@ -381,7 +354,7 @@ impl BuiltinIO {
                 // computed at usize width and cannot overflow; only the
                 // stored cursor is u32.
                 let idx = *i as usize;
-                let total = arraybuf.array_buffer.byte_len as usize;
+                let total = arraybuf.byte_len;
                 if idx >= total {
                     return Err(bun_sys::Error::from_code(
                         bun_sys::E::ENOSPC,
@@ -450,6 +423,23 @@ impl Builtin {
     #[inline]
     pub(crate) fn args_slice(&self) -> &[*const c_char] {
         &self.args
+    }
+
+    /// `PinnedArrayBuffer::drop`'s unpin would write to a `JSC::ArrayBuffer`
+    /// impl the heap sweep already deleted; see
+    /// `ShellSubprocess::defuse_array_buffer_unpins`. VM-shutdown finalizer
+    /// only.
+    #[cfg(not(windows))]
+    pub(crate) fn defuse_array_buf_pins(&mut self) {
+        if let BuiltinInput::ArrayBuf { buf, .. } = &mut self.stdin {
+            buf.defuse();
+        }
+        if let BuiltinIO::ArrayBuf { buf, .. } = &mut self.stdout {
+            buf.defuse();
+        }
+        if let BuiltinIO::ArrayBuf { buf, .. } = &mut self.stderr {
+            buf.defuse();
+        }
     }
 
     /// Borrow `argv[1..][idx]` as `&[u8]` (NUL excluded).
@@ -703,28 +693,33 @@ impl Builtin {
                 };
                 let jsval = interp.jsobjs[idx];
 
-                if let Some(buf) = jsval.as_array_buffer(global) {
-                    // Each slot gets its own Strong (sharing one would
-                    // double-free on Drop).
-                    let mk = || {
-                        let pinned = jsval.as_pinned_arraybuffer(global);
-                        PinnedArrayBuf {
-                            buf: crate::jsc::array_buffer::ArrayBufferStrong {
-                                array_buffer: pinned.unwrap_or(buf),
-                                held: crate::jsc::StrongOptional::create(buf.value, global),
-                            },
-                            pinned: pinned.is_some(),
+                if jsval.js_type().is_array_buffer_like() {
+                    // Each slot gets its own pin + GC root; `None` has thrown OOM.
+                    let root = || {
+                        let buf = PinnedArrayBuffer::root(global, jsval);
+                        if buf.is_none() {
+                            let _ = global.throw_out_of_memory();
                         }
+                        buf
                     };
                     let me = Self::of_mut(interp, cmd);
                     if redirect.stdin() {
-                        me.stdin = BuiltinInput::ArrayBuf { buf: mk(), i: 0 };
+                        let Some(buf) = root() else {
+                            return Some(Yield::failed());
+                        };
+                        me.stdin = BuiltinInput::ArrayBuf { buf, i: 0 };
                     }
                     if redirect.stdout() {
-                        me.stdout = BuiltinIO::ArrayBuf { buf: mk(), i: 0 };
+                        let Some(buf) = root() else {
+                            return Some(Yield::failed());
+                        };
+                        me.stdout = BuiltinIO::ArrayBuf { buf, i: 0 };
                     }
                     if redirect.stderr() {
-                        me.stderr = BuiltinIO::ArrayBuf { buf: mk(), i: 0 };
+                        let Some(buf) = root() else {
+                            return Some(Yield::failed());
+                        };
+                        me.stderr = BuiltinIO::ArrayBuf { buf, i: 0 };
                     }
                 } else if let Some(body) =
                     crate::webcore::body::Value::from_request_or_response(jsval)
@@ -908,7 +903,6 @@ impl Builtin {
         let out: &mut BuiltinIO = match io_kind {
             IoKind::Stdout => &mut me.stdout,
             IoKind::Stderr => &mut me.stderr,
-            IoKind::Stdin => return Ok(0),
         };
         // SAFETY: `shell` is `cmd_node.base.shell`, live for the Cmd's lifetime.
         unsafe { out.write_no_io_to(shell, buf) }
@@ -992,18 +986,6 @@ impl Builtin {
                 }
             }
             ShellErr::Custom(s) => Self::fmt_error_arena(
-                interp,
-                cmd,
-                Some(kind),
-                format_args!("{}\n", bstr::BStr::new(s)),
-            ),
-            ShellErr::InvalidArguments { val } => Self::fmt_error_arena(
-                interp,
-                cmd,
-                Some(kind),
-                format_args!("{}\n", bstr::BStr::new(val)),
-            ),
-            ShellErr::Todo(s) => Self::fmt_error_arena(
                 interp,
                 cmd,
                 Some(kind),
@@ -1109,6 +1091,6 @@ impl Builtin {
 
 // Cleanup: every `Impl` variant owns its state via `Box`/`Vec`/`Arc`, and
 // `BuiltinIO`/`BuiltinInput` hold `Arc<IOWriter>` / `Arc<IOReader>` /
-// `ArrayBufferStrong` / `Arc<BuiltinBlob>` whose `Drop` already decrements
+// `PinnedArrayBuffer` / `Arc<BuiltinBlob>` whose `Drop` already decrements
 // the refcount. So cleanup is fully covered by `Drop` on `Box<Builtin>`
 // (called from `Cmd::deinit`). No explicit deinit needed.

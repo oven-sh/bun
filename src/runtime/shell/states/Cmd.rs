@@ -253,7 +253,7 @@ impl Cmd {
                     match &n.redirect_file {
                         Some(ast::Redirect::Atom(atom)) if idx == 0 => {
                             let atom: *const ast::Atom = atom;
-                            let child = Expansion::init(interp, shell, atom, this);
+                            let child = Expansion::init(interp, shell, atom, this, false);
                             return Expansion::start(interp, child);
                         }
                         // JsBuf redirects don't need expansion; nor does the
@@ -269,8 +269,11 @@ impl Cmd {
                         interp.as_cmd_mut(this).state = CmdState::Exec;
                         continue;
                     }
+                    let assign_ctx = idx > 0
+                        && is_declaration_utility(&args[0])
+                        && is_assignment_word(&args[idx as usize]);
                     let atom: *const ast::Atom = &raw const args[idx as usize];
-                    let child = Expansion::init(interp, shell, atom, this);
+                    let child = Expansion::init(interp, shell, atom, this, assign_ctx);
                     return Expansion::start(interp, child);
                 }
                 CmdState::Exec => {
@@ -533,7 +536,13 @@ impl Cmd {
 
         // Apply file/jsbuf/`2>&1` redirects on
         // top of the IO-derived stdio.
-        match Self::init_subproc_redirections(interp, this, &mut spawn_args.stdio) {
+        match Self::init_subproc_redirections(
+            interp,
+            this,
+            &mut spawn_args.stdio,
+            &mut spawn_args.redirect_stdout,
+            &mut spawn_args.redirect_stderr,
+        ) {
             Ok(None) => {}
             Ok(Some(y)) => {
                 drop(spawn_args);
@@ -669,6 +678,8 @@ impl Cmd {
         interp: &Interpreter,
         this: NodeId,
         stdio: &mut [Stdio; 3],
+        redirect_stdout: &mut Option<crate::jsc::PinnedArrayBuffer>,
+        redirect_stderr: &mut Option<crate::jsc::PinnedArrayBuffer>,
     ) -> crate::jsc::JsResult<Option<Yield>> {
         const STDIN_NO: usize = 0;
         const STDOUT_NO: usize = 1;
@@ -709,13 +720,6 @@ impl Cmd {
                 let jsval = interp.jsobjs[idx];
 
                 if let Some(buf) = jsval.as_array_buffer(global) {
-                    let mk_out = || {
-                        let pinned = jsval.as_pinned_arraybuffer(global);
-                        Stdio::ArrayBuffer(crate::jsc::array_buffer::ArrayBufferStrong {
-                            array_buffer: pinned.unwrap_or(buf),
-                            held: crate::jsc::StrongOptional::create(buf.value, global),
-                        })
-                    };
                     if flags.stdin() {
                         let bytes = buf.byte_slice();
                         // An empty buffer delivers EOF immediately; `Stdio::Ignore`
@@ -726,16 +730,21 @@ impl Cmd {
                             Stdio::Blob(crate::webcore::blob::Any::from_owned_slice(bytes.to_vec()))
                         };
                     }
-                    if flags.duplicate_out() {
-                        stdio[STDOUT_NO] = mk_out();
-                        stdio[STDERR_NO] = mk_out();
-                    } else {
-                        if flags.stdout() {
-                            stdio[STDOUT_NO] = mk_out();
-                        }
-                        if flags.stderr() {
-                            stdio[STDERR_NO] = mk_out();
-                        }
+                    let mut redirect_out =
+                        |fd: usize, slot: &mut Option<crate::jsc::PinnedArrayBuffer>| {
+                            let Some(buf) = crate::jsc::PinnedArrayBuffer::root(global, jsval)
+                            else {
+                                return Err(global.throw_out_of_memory());
+                            };
+                            stdio[fd] = Stdio::Pipe;
+                            *slot = Some(buf);
+                            Ok(())
+                        };
+                    if flags.duplicate_out() || flags.stdout() {
+                        redirect_out(STDOUT_NO, redirect_stdout)?;
+                    }
+                    if flags.duplicate_out() || flags.stderr() {
+                        redirect_out(STDERR_NO, redirect_stderr)?;
                     }
                 } else if let Some(blob_ref) = jsval.as_class_ref::<crate::webcore::Blob>() {
                     let blob = blob_ref.dupe();
@@ -850,37 +859,61 @@ impl Cmd {
         Yield::Next(this)
     }
 
-    /// Main-thread re-entry for a subprocess exit posted from off-thread —
-    /// equivalent to [`Self::on_exec_done`] but drives the trampoline itself
-    /// since the dispatcher discards the [`Yield`].
-    pub(crate) fn on_subprocess_done(interp: &Interpreter, this: NodeId, exit_code: ExitCode) {
-        Self::on_exec_done(interp, this, exit_code).run(interp);
+    /// [`Self::deinit`] for the VM-shutdown finalizer: defuses the
+    /// `> ${arraybuffer}` unpins first — the heap sweep already deleted the
+    /// `JSC::ArrayBuffer` impls they would write to.
+    #[cfg(not(windows))]
+    pub(crate) fn deinit_from_finalizer(interp: &Interpreter, this: NodeId) {
+        {
+            let me = interp.as_cmd_mut(this);
+            match &mut me.exec {
+                Exec::Builtin(b) => b.defuse_array_buf_pins(),
+                Exec::Subproc(sub) if !sub.child.is_null() => {
+                    // SAFETY: `child` is the live heap::alloc'd subprocess;
+                    // the call only writes its own fields.
+                    unsafe { ShellSubprocess::defuse_array_buffer_unpins(sub.child) };
+                }
+                _ => {}
+            }
+        }
+        Self::deinit(interp, this);
     }
 
     pub(crate) fn deinit(interp: &Interpreter, this: NodeId) {
         log!("Cmd {} deinit", this);
-        let me = interp.as_cmd_mut(this);
-        me.args.clear();
-        me.redirection_file.clear();
-        if let Some(fd) = me.redirection_fd.take() {
-            // SAFETY: `fd` is the +1 ref held in `me.redirection_fd`.
-            CowFd::deref(fd);
-        }
-        // Tear down the running exec.
-        match core::mem::take(&mut me.exec) {
+        let exec = {
+            let me = interp.as_cmd_mut(this);
+            me.args.clear();
+            me.redirection_file.clear();
+            if let Some(fd) = me.redirection_fd.take() {
+                // SAFETY: `fd` is the +1 ref held in `me.redirection_fd`.
+                CowFd::deref(fd);
+            }
+            core::mem::take(&mut me.exec)
+        };
+        // `me`'s borrow ended above: the teardown below re-enters this Cmd
+        // via stdin `on_close_io` → `buffered_input_close` (a no-op once
+        // `exec` is taken).
+        match exec {
             Exec::None => {}
             Exec::Builtin(b) => drop(b),
             Exec::Subproc(sub) if !sub.child.is_null() => {
-                // SAFETY: `child` was set by `initSubproc` from a
+                // SAFETY: `child` was set by `spawn_async` from a
                 // `heap::alloc(ShellSubprocess)` and stays valid until this
                 // drop. Single-threaded. Reclaiming the box runs
                 // `ShellSubprocess::drop` → `finalize_sync` (closes stdio).
-                let mut child = unsafe { bun_core::heap::take(sub.child) };
-                if !child.has_exited() {
-                    let _ = child.try_kill(9);
+                unsafe {
+                    let child = sub.child;
+                    if !(*child).has_exited() {
+                        let _ = (*child).try_kill(9);
+                    }
+                    (*child).unref::<true>();
+                    // Stop any still-active stdio before the drop (only the
+                    // VM-shutdown path reaches here in flight).
+                    #[cfg(not(windows))]
+                    ShellSubprocess::deinit_in_flight_io(child);
+                    drop(bun_core::heap::take(child));
                 }
-                child.unref::<true>();
-                drop(child);
                 // `sub.buffered_closed` drops here, freeing any captured
                 // `Vec<u8>`s (spec `buffered_closed.deinit()`).
             }
@@ -891,7 +924,6 @@ impl Cmd {
         // Argv/env are heap-owned `Vec`s; there is no spawn arena to free.
         // `base.shell` is borrowed (or, when parent is Pipeline, freed by
         // `Pipeline::child_done` before this runs) — never freed here.
-        me.base.end_scope();
     }
 
     // ── Subprocess callbacks (legacy `*Cmd` backref shape) ────────────────
@@ -1051,6 +1083,39 @@ impl Cmd {
             Yield::Next(this_id).run(unsafe { &*interp });
         }
     }
+}
+
+/// True when argv0 is the literal word `export`, the only declaration
+/// builtin the Bun shell has.
+fn is_declaration_utility(argv0: &ast::Atom) -> bool {
+    matches!(argv0, ast::Atom::Simple(ast::SimpleAtom::Text(t)) if **t == b"export"[..])
+}
+
+/// True when the word starts with a literal `NAME=` prefix where `NAME` is a
+/// valid shell identifier. A name produced by an expansion does not count,
+/// like in bash.
+fn is_assignment_word(atom: &ast::Atom) -> bool {
+    let first = match atom {
+        ast::Atom::Simple(s) => s,
+        ast::Atom::Compound(c) => match c.atoms.first() {
+            Some(s) => s,
+            None => return false,
+        },
+    };
+    let ast::SimpleAtom::Text(text) = first else {
+        return false;
+    };
+    let Some(eq) = bun_core::strings::index_of_char_usize(text, b'=') else {
+        return false;
+    };
+    let name = &text[..eq];
+    let Some(&head) = name.first() else {
+        return false;
+    };
+    (head.is_ascii_alphabetic() || head == b'_')
+        && name[1..]
+            .iter()
+            .all(|&b| b.is_ascii_alphanumeric() || b == b'_')
 }
 
 fn set_stdio_from_redirect(stdio: &mut [Stdio; 3], flags: ast::RedirectFlags, fd: bun_sys::Fd) {

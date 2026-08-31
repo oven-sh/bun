@@ -22,7 +22,7 @@ describe("process.binding", () => {
     expect(uv.errname(uv.UV_EINTR - 1.9 + Number("1.9"))).toBe("EINTR");
     expect(uv.errname(uv.UV_EINTR)).toBe("EINTR");
 
-    expect(uv.errname(5)).toBe("Unknown system error: 5");
+    expect(uv.errname(5)).toBe("Unknown system error 5");
 
     const map = uv.getErrorMap();
     expect(map).toBeDefined();

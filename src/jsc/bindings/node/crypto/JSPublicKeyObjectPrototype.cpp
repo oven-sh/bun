@@ -28,7 +28,7 @@ static const JSC::HashTableValue JSPublicKeyObjectPrototypeTableValues[] = {
 void JSPublicKeyObjectPrototype::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSPublicKeyObjectPrototype::info(), JSPublicKeyObjectPrototypeTableValues, *this);
+    Bun::reifyStaticPropertyTable(vm, JSPublicKeyObjectPrototype::info(), JSPublicKeyObjectPrototypeTableValues, *this);
 
     // intentionally inherit KeyObject's toStringTag
     // https://github.com/nodejs/node/blob/95b0f9d448832eeb75586c89fab0777a1a4b0610/lib/internal/crypto/keys.js#L146
@@ -66,5 +66,5 @@ JSC_DEFINE_HOST_FUNCTION(jsPublicKeyObjectPrototype_toCryptoKey, (JSGlobalObject
     JSValue extractableValue = callFrame->argument(1);
     JSValue keyUsagesValue = callFrame->argument(2);
 
-    return JSValue::encode(handle.toCryptoKey(globalObject, scope, algorithmValue, extractableValue, keyUsagesValue));
+    RELEASE_AND_RETURN(scope, JSValue::encode(handle.toCryptoKey(globalObject, scope, algorithmValue, extractableValue, keyUsagesValue)));
 }

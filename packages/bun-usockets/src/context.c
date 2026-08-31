@@ -35,15 +35,6 @@
 
 // clang-format off
 
-/* Forward-declared so this file does not depend on OpenSSL headers. */
-/* Opaque SSL_CTX ref helpers — defined in crypto/openssl.c so this file
- * stays free of OpenSSL headers. */
-
-int us_internal_raw_root_certs(struct us_cert_string_t** out);
-int us_raw_root_certs(struct us_cert_string_t**out){
-    return us_internal_raw_root_certs(out);
-}
-
 /* ── Group lifecycle ────────────────────────────────────────────────────── */
 
 void us_socket_group_init(struct us_socket_group_t *group, struct us_loop_t *loop,
@@ -364,6 +355,7 @@ static void us_internal_init_listen_socket(struct us_listen_socket_t *ls,
     s->flags.adopted = 0;
     s->flags.allow_half_open = (options & LIBUS_SOCKET_ALLOW_HALF_OPEN);
     s->unclassified_send_failures = 0;
+    s->read_eof = 0;
     s->next = 0;
     s->prev = 0;
     s->connect_state = NULL;
@@ -377,6 +369,7 @@ static void us_internal_init_listen_socket(struct us_listen_socket_t *ls,
     ls->on_server_name = NULL;
     ls->socket_ext_size = socket_ext_size;
     ls->deferred_accept = 0;
+    ls->accept_paused = (options & LIBUS_SOCKET_OPEN_PAUSED) && !ssl_ctx;
 
     /* Link into the group so close_all() / test-isolation can find it. */
     ls->next = group->head_listen_sockets;
@@ -411,6 +404,40 @@ struct us_listen_socket_t *us_socket_group_listen(struct us_socket_group_t *grou
 
     if (options & LIBUS_LISTEN_DEFER_ACCEPT) {
         ls->deferred_accept = bsd_set_defer_accept(listen_socket_fd);
+    }
+
+    return ls;
+}
+
+struct us_listen_socket_t *us_socket_group_listen_fd(struct us_socket_group_t *group,
+        unsigned char kind, struct ssl_ctx_st *ssl_ctx,
+        LIBUS_SOCKET_DESCRIPTOR fd, int backlog, int options, int socket_ext_size, int *error) {
+    /* Validate with listen(2) before touching the descriptor's flags: on failure the caller keeps
+     * the fd (it may be its stdio), and a non-socket must come back untouched. */
+    if (listen(fd, backlog > 0 ? backlog : 512)) {
+        int listen_err = LIBUS_ERR;
+        if (!bsd_socket_listen_error_is_benign(fd)) {
+            *error = listen_err;
+            return 0;
+        }
+    }
+    apple_no_sigpipe(fd);
+    bsd_set_nonblocking(fd);
+
+    struct us_poll_t *p = us_create_poll(group->loop, 0, sizeof(struct us_listen_socket_t));
+    us_poll_init(p, fd, POLL_TYPE_SEMI_SOCKET);
+    if (us_poll_start_rc(p, group->loop, LIBUS_SOCKET_READABLE) != 0) {
+        int saved_errno = LIBUS_ERR;
+        us_poll_free(p, group->loop);
+        *error = saved_errno;
+        return 0;
+    }
+
+    struct us_listen_socket_t *ls = (struct us_listen_socket_t *) p;
+    us_internal_init_listen_socket(ls, group, kind, ssl_ctx, options, socket_ext_size);
+
+    if (options & LIBUS_LISTEN_DEFER_ACCEPT) {
+        ls->deferred_accept = bsd_set_defer_accept(fd);
     }
 
     return ls;
@@ -508,6 +535,7 @@ static inline void us_internal_init_connect_socket(struct us_socket_t *s,
     s->flags.adopted = 0;
     s->flags.last_write_failed = 0;
     s->unclassified_send_failures = 0;
+    s->read_eof = 0;
     s->connect_state = NULL;
     s->connect_next = NULL;
 }

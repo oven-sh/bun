@@ -40,11 +40,6 @@ export type Field =
   | { value: string }
   | ({ setter: string; this?: boolean } & PropertyAttribute)
   | ({
-      accessor: { getter: string; setter: string };
-      cache?: true | string;
-      this?: boolean;
-    } & PropertyAttribute)
-  | ({
       fn: string;
 
       /**
@@ -153,40 +148,26 @@ export class ClassDefinition {
    */
   forBind?: boolean;
   /**
-   * ## IMPORTANT
-   * You _must_ free the pointer to your native class!
-   *
-   * Example for pointers only owned by JavaScript classes:
-   * ```rust
-   * impl NativeClass {
-   *     pub fn constructor(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<Box<Self>> {
-   *         // do stuff
-   *         Ok(Box::new(NativeClass {
-   *             // ...
-   *         }))
-   *     }
-   *
-   *     pub fn finalize(self: Box<Self>) {
-   *         // free allocations owned by this class; Box drop frees the struct itself.
-   *     }
-   * }
-   * ```
-   * Example with ref counting:
-   * ```rust
-   * impl RefCountedNativeClass {
-   *     pub fn constructor(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<*mut Self> {
-   *         // do stuff; refcount starts at 1
-   *         Ok(Self::new(...).into_raw())
-   *     }
-   *
-   *     pub fn finalize(&mut self) {
-   *         self.deref(); // GC drops its ref; frees when the count hits zero.
-   *     }
-   * }
-   * ```
+   * Parent of the generated prototype object. "Error" puts Error.prototype in
+   * the chain so instances satisfy `instanceof Error`. Default: Object.prototype.
+   */
+  prototypeBase?: "Error";
+  /**
+   * The JS wrapper owns the payload: when it is collected the payload is
+   * handed to `fn finalize(self: Box<Self>)` (an inherent method if the type
+   * has one, else `bun_jsc::JsFinalize`'s default, which drops the Box).
+   * For a payload the wrapper only holds one ref on, set `refCounted` instead.
    * @todo remove this and require all classes to implement `finalize`.
    */
   finalize?: boolean;
+  /**
+   * The payload is intrusively refcounted (`CellRefCounted` /
+   * `ThreadSafeRefCounted` / `RefCounted`) and the JS wrapper holds one ref.
+   * Collection runs `fn finalize(&self)` (inherent if present — e.g. to clear
+   * a `this_value` — else `bun_jsc::JsFinalizeRefCounted`'s no-op) and then drops
+   * the wrapper's ref; the payload's `Drop` runs when the last ref goes.
+   */
+  refCounted?: boolean;
   overridesToJS?: boolean;
   /**
    * Static properties and methods.
@@ -196,10 +177,6 @@ export class ClassDefinition {
    * properties and methods on the prototype.
    */
   proto: Record<string, Field>;
-  /**
-   * Properties and methods attached to the instance itself.
-   */
-  own: Record<string, string>;
   values?: string[];
   /**
    * When true, the class will accept a MarkedArgumentBuffer* to create a
@@ -238,40 +215,19 @@ export class ClassDefinition {
   memoryCost?: boolean;
   hasPendingActivity?: boolean;
   isEventEmitter?: boolean;
-  supportsObjectCreate?: boolean;
-
-  custom?: Record<string, CustomField>;
 
   configurable?: boolean;
   enumerable?: boolean;
   structuredClone?: { transferable: boolean; tag: number; storable: boolean };
   inspectCustom?: boolean;
 
-  callbacks?: Record<string, string>;
-
   constructor(options: Partial<ClassDefinition>) {
     this.name = options.name ?? "";
     this.klass = options.klass ?? {};
     this.proto = options.proto ?? {};
-    this.own = options.own ?? {};
 
     Object.assign(this, options);
   }
-
-  hasOwnProperties() {
-    for (const key in this.own) {
-      return true;
-    }
-
-    return false;
-  }
-}
-
-export interface CustomField {
-  header?: string;
-  extraHeaderIncludes?: string[];
-  impl?: string;
-  type?: string;
 }
 
 /**
@@ -282,7 +238,6 @@ export function define(
   {
     klass = {},
     proto = {},
-    own = {},
     values = [],
     overridesToJS = false,
     estimatedSize = false,
@@ -303,13 +258,14 @@ export function define(
   }
   return new ClassDefinition({
     ...rest,
+    // `refCounted` is a kind of finalize as far as the C++ wrapper is concerned.
+    finalize: rest.finalize || rest.refCounted,
     call,
     overridesToJS,
     construct,
     estimatedSize,
     structuredClone,
     values,
-    own: own || {},
     klass: Object.fromEntries(
       Object.entries(klass)
         .sort(([a], [b]) => a.localeCompare(b))

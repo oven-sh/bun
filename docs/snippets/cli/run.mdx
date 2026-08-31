@@ -65,7 +65,7 @@ bun run <file or script>
 <ParamField path="--interactive" type="boolean">
   Open the Node.js-compatible REPL (<code>node:repl</code>). When combined with <code>-e</code>, starts the REPL and
   then evaluates the script. Under <code>--interactive</code>, <code>-e</code> is raw JavaScript (matching{" "}
-  <code>node -i -e</code>); use <code>bun repl</code> for TypeScript. Distinct from <code>bun repl</code>, which is
+  <code>node -i -e</code>). Use <code>bun repl</code> for TypeScript. Distinct from <code>bun repl</code>, which is
   Bun's native REPL.
 </ParamField>
 
@@ -78,11 +78,11 @@ bun run <file or script>
 </ParamField>
 
 <ParamField path="--no-deprecation" type="boolean">
-  Suppress all reporting of the custom deprecation
+  Silence all deprecation warnings
 </ParamField>
 
 <ParamField path="--throw-deprecation" type="boolean">
-  Determine whether deprecation warnings result in errors
+  Throw deprecation warnings as errors
 </ParamField>
 
 <ParamField path="--title" type="string">
@@ -94,7 +94,12 @@ bun run <file or script>
 </ParamField>
 
 <ParamField path="--no-addons" type="boolean">
-  Throw an error if <code>process.dlopen</code> is called, and disable export condition <code>node-addons</code>
+  Throw an error if <code>process.dlopen</code> or <code>bun:ffi</code> <code>cc()</code> is called, and disable export
+  condition <code>node-addons</code>
+</ParamField>
+
+<ParamField path="--no-ffi-cc" type="boolean">
+  Throw an error if <code>bun:ffi</code> <code>cc()</code> is called (disables the C compiler)
 </ParamField>
 
 <ParamField path="--unhandled-rejections" type="string">
@@ -110,6 +115,10 @@ bun run <file or script>
 
 <ParamField path="--watch" type="boolean">
   Automatically restart the process on file change
+</ParamField>
+
+<ParamField path="--watch-kill-signal" type="string" default="SIGTERM">
+  Signal whose handlers run when --watch restarts the process
 </ParamField>
 
 <ParamField path="--hot" type="boolean">
@@ -137,7 +146,7 @@ bun run <file or script>
 ### Dependency &amp; Module Resolution
 
 <ParamField path="--preload" type="string">
-  Import a module before other modules are loaded. Alias: <code>-r</code>
+  Import a module before Bun loads other modules. Alias: <code>-r</code>
 </ParamField>
 
 <ParamField path="--require" type="string">
@@ -174,7 +183,7 @@ bun run <file or script>
 </ParamField>
 
 <ParamField path="--main-fields" type="string">
-  Main fields to lookup in <code>package.json</code>. Defaults to --target dependent
+  Main fields to lookup in <code>package.json</code>
 </ParamField>
 
 <ParamField path="--preserve-symlinks" type="boolean">
@@ -185,8 +194,8 @@ bun run <file or script>
   Preserve symlinks when resolving the main entry point
 </ParamField>
 
-<ParamField path="--extension-order" type="string" default=".tsx,.ts,.jsx,.js,.json">
-  Defaults to: <code>.tsx,.ts,.jsx,.js,.json</code>
+<ParamField path="--extension-order" type="string" default=".tsx,.ts,.jsx,.cts,.cjs,.js,.mjs,.mts,.json,.node">
+  Defaults to: <code>.tsx,.ts,.jsx,.cts,.cjs,.js,.mjs,.mts,.json,.node</code>
 </ParamField>
 
 ### Transpilation &amp; Language Features
@@ -196,7 +205,7 @@ bun run <file or script>
 </ParamField>
 
 <ParamField path="--define" type="string">
-  Substitute K:V while parsing, e.g. <code>--define process.env.NODE_ENV:"development"</code>. Values are parsed as
+  Substitute K:V while parsing, e.g. <code>--define process.env.NODE_ENV:"development"</code>. Bun parses values as
   JSON. Alias: <code>-d</code>
 </ParamField>
 
@@ -211,7 +220,7 @@ bun run <file or script>
 </ParamField>
 
 <ParamField path="--no-macros" type="boolean">
-  Disable macros from being executed in the bundler, transpiler and runtime
+  Disable macro execution in the bundler, transpiler and runtime
 </ParamField>
 
 <ParamField path="--jsx-factory" type="string">
@@ -288,7 +297,7 @@ bun run <file or script>
 </ParamField>
 
 <ParamField path="--cwd" type="string">
-  Absolute path to resolve files &amp; entrypoints from. This just changes the process' cwd
+  Absolute path to resolve files &amp; entrypoints from. This only changes the process' cwd
 </ParamField>
 
 <ParamField path="--config" type="string">

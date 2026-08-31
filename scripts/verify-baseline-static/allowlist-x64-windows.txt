@@ -437,7 +437,7 @@ ctiMasmProbeTrampolineAVX  [AVX]
 
 # ----------------------------------------------------------------------------
 # Highway. MSVC-mangled bun::N_AVX* names.
-# (243 symbols)
+# (271 symbols)
 # ----------------------------------------------------------------------------
 bun::N_AVX10_2::ContainsNewlineOrNonASCIIOrQuoteImpl                 [AVX, AVX512BW, AVX512F]
 bun::N_AVX10_2::CopyAsciiPrefixImpl                                  [AVX, AVX512BW, AVX512F, AVX512VL]
@@ -472,7 +472,7 @@ bun::N_AVX10_2::IndexOfNewlineOrNonASCIIOrHashOrAtImpl               [AVX, AVX51
 bun::N_AVX10_2::IndexOfSpaceOrNewlineOrNonASCIIImpl                  [AVX, AVX512BW, AVX512F]
 bun::N_AVX10_2::LowerAscii16Impl                                              [AVX, AVX512BW, AVX512F, AVX512VL]
 bun::N_AVX10_2::LowerAsciiImpl                                                [AVX, AVX512BW, AVX512F, AVX512VL]
-bun::N_AVX10_2::MemMemImpl                                           [AVX, AVX512BW, AVX512F, BMI1]
+bun::N_AVX10_2::MemMemImpl                                           [AVX, AVX512BW, AVX512F, BMI1, BMI2]
 bun::N_AVX10_2::VisibleLatin1WidthExcludeANSIImpl                    [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2]
 bun::N_AVX10_2::VisibleLatin1WidthImpl                               [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
 bun::N_AVX10_2::VisibleUTF16WidthImpl                                [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2]
@@ -509,11 +509,13 @@ bun::N_AVX2::IndexOfNewlineOrNonASCIIOrHashOrAtImpl                  [AVX, AVX2]
 bun::N_AVX2::IndexOfSpaceOrNewlineOrNonASCIIImpl                     [AVX, AVX2]
 bun::N_AVX2::LowerAscii16Impl                                                 [AVX, AVX2]
 bun::N_AVX2::LowerAsciiImpl                                                   [AVX, AVX2]
-bun::N_AVX2::MemMemImpl                                              [AVX, AVX2]
+bun::N_AVX2::MemMemImpl                                              [AVX, AVX2, BMI2]
 bun::N_AVX2::MemRMemImpl                                             [AVX, AVX2]
 bun::N_AVX2::MemMem16Impl                                            [AVX, AVX2, BMI2]
 bun::N_AVX2::MemRMem16Impl                                           [AVX, AVX2, BMI2]
 bun::N_AVX2::JsonIndexImpl                                           [AVX, AVX2, BMI1, BMI2]
+bun::N_AVX2::XmlIndexImpl                                             [AVX, AVX2, BMI1, BMI2]
+bun::N_AVX2::XmlIndex16Impl                                           [AVX, AVX2, BMI1, BMI2]
 bun::N_AVX2::VisibleLatin1WidthExcludeANSIImpl                       [AVX, AVX2, BMI1, BMI2]
 bun::N_AVX2::VisibleLatin1WidthImpl                                  [AVX, AVX2]
 bun::N_AVX2::VisibleUTF16WidthImpl                                   [AVX, AVX2, BMI1, BMI2]
@@ -550,12 +552,13 @@ bun::N_AVX3::IndexOfNewlineOrNonASCIIOrHashOrAtImpl                  [AVX, AVX51
 bun::N_AVX3::IndexOfSpaceOrNewlineOrNonASCIIImpl                     [AVX, AVX512BW, AVX512F]
 bun::N_AVX3::LowerAscii16Impl                                                 [AVX, AVX512BW, AVX512F, AVX512VL]
 bun::N_AVX3::LowerAsciiImpl                                                   [AVX, AVX512BW, AVX512F, AVX512VL]
-bun::N_AVX3::MemMemImpl                                              [AVX, AVX512BW, AVX512F, BMI1]
-bun::N_AVX3::MemRMemImpl                                             [AVX, AVX512BW, AVX512F, BMI2]
-bun::N_AVX3::MemMem16Impl                                            [AVX, AVX512BW, AVX512F, BMI1]
+bun::N_AVX3::MemMemImpl                                                        [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, BMI1, BMI2]
+bun::N_AVX3::MemRMemImpl                                                       [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2]
+bun::N_AVX3::MemMem16Impl                                            [AVX, AVX512BW, AVX512F, BMI1, BMI2]
 bun::N_AVX3::MemRMem16Impl                                           [AVX, AVX512F]
-bun::N_AVX3::MemMemReverse<unsigned short>                           [AVX, AVX512BW, AVX512F, BMI2]
 bun::N_AVX3::JsonIndexImpl                                           [AVX, AVX512BW, AVX512F, AVX512VL, BMI1, BMI2]
+bun::N_AVX3::XmlIndexImpl                                             [AVX, AVX512BW, AVX512F, AVX512VL, BMI1, BMI2]
+bun::N_AVX3::XmlIndex16Impl                                           [AVX, AVX512BW, AVX512F, AVX512VL, BMI1, BMI2]
 bun::N_AVX3::VisibleLatin1WidthExcludeANSIImpl                       [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2]
 bun::N_AVX3::VisibleLatin1WidthImpl                                  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
 bun::N_AVX3::VisibleUTF16WidthImpl                                   [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2]
@@ -592,11 +595,13 @@ bun::N_AVX3_DL::IndexOfNewlineOrNonASCIIOrHashOrAtImpl               [AVX, AVX51
 bun::N_AVX3_DL::IndexOfSpaceOrNewlineOrNonASCIIImpl                  [AVX, AVX512BW, AVX512F]
 bun::N_AVX3_DL::LowerAscii16Impl                                              [AVX, AVX512BW, AVX512F, AVX512VL]
 bun::N_AVX3_DL::LowerAsciiImpl                                                [AVX, AVX512BW, AVX512F, AVX512VL]
-bun::N_AVX3_DL::MemMemImpl                                           [AVX, AVX512BW, AVX512F, BMI1]
-bun::N_AVX3_DL::MemRMemImpl                                          [AVX, AVX512BW, AVX512F, BMI2]
-bun::N_AVX3_DL::MemMem16Impl                                         [AVX, AVX512BW, AVX512F, BMI1]
+bun::N_AVX3_DL::MemMemImpl                                                     [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, BMI1, BMI2]
+bun::N_AVX3_DL::MemRMemImpl                                                    [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2]
+bun::N_AVX3_DL::MemMem16Impl                                         [AVX, AVX512BW, AVX512F, BMI1, BMI2]
 bun::N_AVX3_DL::MemRMem16Impl                                        [AVX, AVX512F]
 bun::N_AVX3_DL::JsonIndexImpl                                        [AVX, AVX512BW, AVX512F, AVX512VL, BMI1, BMI2, GFNI]
+bun::N_AVX3_DL::XmlIndexImpl                                          [AVX, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI, AVX512_VBMI2, BMI1, BMI2, GFNI]
+bun::N_AVX3_DL::XmlIndex16Impl                                        [AVX, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI, AVX512_VBMI2, BMI1, BMI2, GFNI]
 bun::N_AVX3_DL::VisibleLatin1WidthExcludeANSIImpl                    [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2]
 bun::N_AVX3_DL::VisibleLatin1WidthImpl                               [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
 bun::N_AVX3_DL::VisibleUTF16WidthImpl                                [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2]
@@ -633,11 +638,13 @@ bun::N_AVX3_SPR::IndexOfNewlineOrNonASCIIOrHashOrAtImpl              [AVX, AVX51
 bun::N_AVX3_SPR::IndexOfSpaceOrNewlineOrNonASCIIImpl                 [AVX, AVX512BW, AVX512F]
 bun::N_AVX3_SPR::LowerAscii16Impl                                             [AVX, AVX512BW, AVX512F, AVX512VL]
 bun::N_AVX3_SPR::LowerAsciiImpl                                               [AVX, AVX512BW, AVX512F, AVX512VL]
-bun::N_AVX3_SPR::MemMemImpl                                          [AVX, AVX512BW, AVX512F, BMI1]
-bun::N_AVX3_SPR::MemRMemImpl                                         [AVX, AVX512BW, AVX512F, BMI2]
-bun::N_AVX3_SPR::MemMem16Impl                                        [AVX, AVX512BW, AVX512F, BMI1]
+bun::N_AVX3_SPR::MemMemImpl                                                    [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, BMI1, BMI2]
+bun::N_AVX3_SPR::MemRMemImpl                                                   [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2]
+bun::N_AVX3_SPR::MemMem16Impl                                        [AVX, AVX512BW, AVX512F, BMI1, BMI2]
 bun::N_AVX3_SPR::MemRMem16Impl                                       [AVX, AVX512F]
 bun::N_AVX3_SPR::JsonIndexImpl                                       [AVX, AVX512BW, AVX512F, AVX512VL, BMI1, BMI2, GFNI]
+bun::N_AVX3_SPR::XmlIndexImpl                                         [AVX, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI, AVX512_VBMI2, BMI1, BMI2, GFNI]
+bun::N_AVX3_SPR::XmlIndex16Impl                                       [AVX, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI, AVX512_VBMI2, BMI1, BMI2, GFNI]
 bun::N_AVX3_SPR::VisibleLatin1WidthExcludeANSIImpl                   [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2]
 bun::N_AVX3_SPR::VisibleLatin1WidthImpl                              [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
 bun::N_AVX3_SPR::VisibleUTF16WidthImpl                               [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2]
@@ -674,19 +681,40 @@ bun::N_AVX3_ZEN4::IndexOfNewlineOrNonASCIIOrHashOrAtImpl             [AVX, AVX51
 bun::N_AVX3_ZEN4::IndexOfSpaceOrNewlineOrNonASCIIImpl                [AVX, AVX512BW, AVX512F]
 bun::N_AVX3_ZEN4::LowerAscii16Impl                                            [AVX, AVX512BW, AVX512F, AVX512VL]
 bun::N_AVX3_ZEN4::LowerAsciiImpl                                              [AVX, AVX512BW, AVX512F, AVX512VL]
-bun::N_AVX3_ZEN4::MemMemImpl                                         [AVX, AVX512BW, AVX512F, BMI1]
-bun::N_AVX3_ZEN4::MemRMemImpl                                        [AVX, AVX512BW, AVX512F, BMI2]
-bun::N_AVX3_ZEN4::MemMem16Impl                                       [AVX, AVX512BW, AVX512F, BMI1]
+bun::N_AVX3_ZEN4::MemMemImpl                                                   [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, BMI1, BMI2]
+bun::N_AVX3_ZEN4::MemRMemImpl                                                  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2]
+bun::N_AVX3_ZEN4::MemMem16Impl                                       [AVX, AVX512BW, AVX512F, BMI1, BMI2]
 bun::N_AVX3_ZEN4::MemRMem16Impl                                      [AVX, AVX512F]
 bun::N_AVX3_ZEN4::JsonIndexImpl                                      [AVX, AVX512BW, AVX512F, AVX512VL, BMI1, BMI2, GFNI]
+bun::N_AVX3_ZEN4::XmlIndexImpl                                        [AVX, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI, AVX512_VBMI2, BMI1, BMI2, GFNI]
+bun::N_AVX3_ZEN4::XmlIndex16Impl                                      [AVX, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI, AVX512_VBMI2, BMI1, BMI2, GFNI]
 bun::N_AVX3_ZEN4::VisibleLatin1WidthExcludeANSIImpl                  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2]
 bun::N_AVX3_ZEN4::VisibleLatin1WidthImpl                             [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
 bun::N_AVX3_ZEN4::VisibleUTF16WidthImpl                              [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2]
+bun::N_AVX2::BSwap16Impl                                                       [AVX, AVX2]
+bun::N_AVX2::BSwap32Impl                                                       [AVX, AVX2]
+bun::N_AVX2::BSwap64Impl                                                       [AVX, AVX2]
+bun::N_AVX2::MemMemSearch<0,unsigned short>                                    [AVX, AVX2, BMI2]
+bun::N_AVX2::MemMemSearch<1,unsigned short>                                    [AVX, AVX2, BMI2]
+bun::N_AVX3::BSwap16Impl                                                       [AVX, AVX512BW, AVX512F]
+bun::N_AVX3::BSwap32Impl                                                       [AVX, AVX2, AVX512BW, AVX512F, AVX512VL]
+bun::N_AVX3::BSwap64Impl                                                       [AVX, AVX2, AVX512BW, AVX512F, AVX512VL]
+bun::N_AVX3::MemMemSearch<0,unsigned short>                                    [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2]
+bun::N_AVX3::MemMemSearch<1,unsigned short>                                    [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2]
+bun::N_AVX3_DL::BSwap16Impl                                                    [AVX, AVX512BW, AVX512F]
+bun::N_AVX3_DL::BSwap32Impl                                                    [AVX, AVX2, AVX512BW, AVX512F, AVX512VL]
+bun::N_AVX3_DL::BSwap64Impl                                                    [AVX, AVX2, AVX512BW, AVX512F, AVX512VL]
+bun::N_AVX3_SPR::BSwap16Impl                                                   [AVX, AVX512BW, AVX512F]
+bun::N_AVX3_SPR::BSwap32Impl                                                   [AVX, AVX2, AVX512BW, AVX512F, AVX512VL]
+bun::N_AVX3_SPR::BSwap64Impl                                                   [AVX, AVX2, AVX512BW, AVX512F, AVX512VL]
+bun::N_AVX3_ZEN4::BSwap16Impl                                                  [AVX, AVX512BW, AVX512F]
+bun::N_AVX3_ZEN4::BSwap32Impl                                                  [AVX, AVX2, AVX512BW, AVX512F, AVX512VL]
+bun::N_AVX3_ZEN4::BSwap64Impl                                                  [AVX, AVX2, AVX512BW, AVX512F, AVX512VL]
 
 
 # ----------------------------------------------------------------------------
 # Bun source-map VLQ decoder (src/jsc/bindings/highway_sourcemap.cpp).
-# Gate: HWY_DYNAMIC_DISPATCH via hwy::SupportedTargets. (12 symbols)
+# Gate: BUN_HWY_DISPATCH (highway_dispatch.h) via hwy::SupportedTargets. (12 symbols)
 # ----------------------------------------------------------------------------
 bun::N_AVX2::CountDelimsImpl                                         [AVX, AVX2]
 bun::N_AVX2::ParseMappingsImpl                                       [AVX, AVX2, BMI1, BMI2]
@@ -841,9 +869,20 @@ blake2b_simd::avx2::compress1_loop  [AVX, AVX2]
 
 
 # ----------------------------------------------------------------------------
-# MSVC STL vectorized algorithms. Gate: __isa_available.
-# (13 symbols)
+# BoringSSL Keccak x4 (ML-KEM batch SHAKE). __attribute__((target("avx2"))); only reached when
+# BORINGSSL_have_keccak_x4() -> CRYPTO_is_AVX2_capable() (crypto/fipsmodule/keccak/internal.h).
+# (3 symbols)
 # ----------------------------------------------------------------------------
+keccak_f_x4                        [AVX, AVX2]
+bssl::BORINGSSL_keccak_short_x4    [AVX, AVX2]
+bssl::BORINGSSL_keccak_squeeze_x4  [AVX, AVX2]
+
+
+# ----------------------------------------------------------------------------
+# MSVC STL vectorized algorithms. Gate: __isa_available.
+# (15 symbols)
+# ----------------------------------------------------------------------------
+__std_mismatch_1                                                                                          [AVX, AVX2]
 __std_reverse_copy_trivially_copyable_1                                                                   [AVX, AVX2]
 __std_reverse_trivially_swappable_1                                                                       [AVX, AVX2]
 __std_reverse_trivially_swappable_2                                                                       [AVX, AVX2]
@@ -866,6 +905,7 @@ __std_find_trivial_4                                                            
 __std_find_trivial_8                                                                                       [AVX, AVX2, LZCNT]
 __std_min_8u                                                                                               [AVX, AVX2, AVX512F, AVX512VL]
 __std_minmax_8i                                                                                            [AVX, AVX2]
+__std_search_1                                                                                             [AVX, AVX2]
 
 
 # ----------------------------------------------------------------------------
@@ -1019,7 +1059,7 @@ crc32_fold_vpclmulqdq_reset  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, 
 
 
 # ----------------------------------------------------------------------------
-# Bun xxHash3 windows-x64. Gate: HWY_DYNAMIC_DISPATCH -> hwy::SupportedTargets() via CPUID. (6 symbols)
+# Bun xxHash3 windows-x64. Gate: BUN_HWY_DISPATCH -> hwy::SupportedTargets() via CPUID. (6 symbols)
 # (PDB demangles to bun::xxh3::N_*::HashLong; unmaterialized variants show up as STALE.)
 # ----------------------------------------------------------------------------
 bun::xxh3::N_AVX2::HashLong       [AVX, AVX2, BMI2]
@@ -1031,7 +1071,7 @@ bun::xxh3::N_AVX10_2::HashLong    [AVX, AVX2, AVX512DQ, AVX512F, BMI2]
 
 
 # ----------------------------------------------------------------------------
-# Bun.Image highway kernels (image_resize.cpp). Gate: HWY_DYNAMIC_DISPATCH ->
+# Bun.Image highway kernels (image_resize.cpp). Gate: BUN_HWY_DISPATCH ->
 # hwy::SupportedTargets() via CPUID. Same gate as the highway_strings block.
 # (40 symbols; PDB demangles these to bun_image::N_*::*)
 # ----------------------------------------------------------------------------
@@ -1126,3 +1166,51 @@ PredictorSub10_AVX2  [AVX, AVX2]
 PredictorSub11_AVX2  [AVX, AVX2]
 PredictorSub12_AVX2  [AVX, AVX2]
 PredictorSub13_AVX2  [AVX, AVX2]
+
+
+# ----------------------------------------------------------------------------
+# libjpeg-turbo x86_64 AVX2 kernels (vendor/libjpeg-turbo/simd/x86_64/*-avx2.asm).
+# Gate: jpeg_simd_cpu_support() in simd/x86_64/jsimdcpu.asm checks CPUID leaf 7
+# AVX2 and XGETBV YMM state and sets JSIMD_AVX2; simd/x86_64/jsimd.c only
+# dispatches to a jsimd_*_avx2 kernel when init_simd() saw that bit. The SSE2
+# kernels are baseline and need no entries.
+# (38 symbols)
+# ----------------------------------------------------------------------------
+jsimd_convsamp_avx2                      [AVX, AVX2]
+jsimd_extbgr_gray_convert_avx2           [AVX, AVX2]
+jsimd_extbgr_ycc_convert_avx2            [AVX, AVX2]
+jsimd_extbgrx_gray_convert_avx2          [AVX, AVX2]
+jsimd_extbgrx_ycc_convert_avx2           [AVX, AVX2]
+jsimd_extrgb_gray_convert_avx2           [AVX, AVX2]
+jsimd_extrgb_ycc_convert_avx2            [AVX, AVX2]
+jsimd_extrgbx_gray_convert_avx2          [AVX, AVX2]
+jsimd_extrgbx_ycc_convert_avx2           [AVX, AVX2]
+jsimd_extxbgr_gray_convert_avx2          [AVX, AVX2]
+jsimd_extxbgr_ycc_convert_avx2           [AVX, AVX2]
+jsimd_extxrgb_gray_convert_avx2          [AVX, AVX2]
+jsimd_extxrgb_ycc_convert_avx2           [AVX, AVX2]
+jsimd_fdct_islow_avx2                    [AVX, AVX2]
+jsimd_h2v1_downsample_avx2               [AVX, AVX2]
+jsimd_h2v1_extbgr_merged_upsample_avx2   [AVX, AVX2]
+jsimd_h2v1_extbgrx_merged_upsample_avx2  [AVX, AVX2]
+jsimd_h2v1_extrgb_merged_upsample_avx2   [AVX, AVX2]
+jsimd_h2v1_extrgbx_merged_upsample_avx2  [AVX, AVX2]
+jsimd_h2v1_extxbgr_merged_upsample_avx2  [AVX, AVX2]
+jsimd_h2v1_extxrgb_merged_upsample_avx2  [AVX, AVX2]
+jsimd_h2v1_fancy_upsample_avx2           [AVX, AVX2]
+jsimd_h2v1_merged_upsample_avx2          [AVX, AVX2]
+jsimd_h2v1_upsample_avx2                 [AVX, AVX2]
+jsimd_h2v2_downsample_avx2               [AVX, AVX2]
+jsimd_h2v2_fancy_upsample_avx2           [AVX, AVX2]
+jsimd_h2v2_upsample_avx2                 [AVX, AVX2]
+jsimd_idct_islow_avx2                    [AVX, AVX2]
+jsimd_quantize_avx2                      [AVX, AVX2]
+jsimd_rgb_gray_convert_avx2              [AVX, AVX2]
+jsimd_rgb_ycc_convert_avx2               [AVX, AVX2]
+jsimd_ycc_extbgr_convert_avx2            [AVX, AVX2]
+jsimd_ycc_extbgrx_convert_avx2           [AVX, AVX2]
+jsimd_ycc_extrgb_convert_avx2            [AVX, AVX2]
+jsimd_ycc_extrgbx_convert_avx2           [AVX, AVX2]
+jsimd_ycc_extxbgr_convert_avx2           [AVX, AVX2]
+jsimd_ycc_extxrgb_convert_avx2           [AVX, AVX2]
+jsimd_ycc_rgb_convert_avx2               [AVX, AVX2]

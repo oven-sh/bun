@@ -1,0 +1,44 @@
+{
+	"name": "bundled-optional-peer",
+	"versions": {
+		"1.0.0": {
+			"name": "bundled-optional-peer",
+			"version": "1.0.0",
+			"dependencies": {
+				"optional-peer-deps": "1.0.0"
+			},
+			"bundleDependencies": [
+				"optional-peer-deps"
+			],
+			"_id": "bundled-optional-peer@1.0.0",
+			"integrity": "sha512-4Gc/aWTtJ9ePN9UqxA9tPkIMZKHyDoSQ2dmx5us9rBGUPWpz6+9ChrKV3i/zsfd3Hb/kjav9YTnZAOu0Fz6NZA==",
+			"shasum": "b0afca067791d99523e6e378f52cbd7f128ef730",
+			"dist": {
+				"integrity": "sha512-4Gc/aWTtJ9ePN9UqxA9tPkIMZKHyDoSQ2dmx5us9rBGUPWpz6+9ChrKV3i/zsfd3Hb/kjav9YTnZAOu0Fz6NZA==",
+				"shasum": "b0afca067791d99523e6e378f52cbd7f128ef730",
+				"tarball": "http://localhost:4873/bundled-optional-peer/-/bundled-optional-peer-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2024-12-30T18:14:22.143Z",
+		"created": "2024-12-30T18:14:22.143Z",
+		"1.0.0": "2024-12-30T18:14:22.143Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"bundled-optional-peer-1.0.0.tgz": {
+			"shasum": "b0afca067791d99523e6e378f52cbd7f128ef730",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "",
+	"_id": "bundled-optional-peer",
+	"readme": ""
+}

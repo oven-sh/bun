@@ -108,19 +108,6 @@ void HkdfJobCtx::deinit()
     delete this;
 }
 
-extern "C" HkdfJob* Bun__HkdfJob__create(JSGlobalObject* globalObject, HkdfJobCtx* ctx, EncodedJSValue callback);
-HkdfJob* HkdfJob::create(JSGlobalObject* globalObject, HkdfJobCtx&& ctx, JSValue callback)
-{
-    HkdfJobCtx* ctxCopy = new HkdfJobCtx(WTF::move(ctx));
-    return Bun__HkdfJob__create(globalObject, ctxCopy, JSValue::encode(callback));
-}
-
-extern "C" void Bun__HkdfJob__schedule(HkdfJob* job);
-void HkdfJob::schedule()
-{
-    Bun__HkdfJob__schedule(this);
-}
-
 extern "C" void Bun__HkdfJob__createAndSchedule(JSGlobalObject* globalObject, HkdfJobCtx* ctx, EncodedJSValue callback);
 void HkdfJob::createAndSchedule(JSGlobalObject* globalObject, HkdfJobCtx&& ctx, JSValue callback)
 {
@@ -149,6 +136,7 @@ KeyObject prepareKey(JSGlobalObject* globalObject, ThrowScope& scope, JSValue ke
 
         BufferEncodingType encoding = BufferEncodingType::utf8;
         JSValue buffer = JSValue::decode(WebCore::constructFromEncoding(globalObject, keyView, encoding));
+        RETURN_IF_EXCEPTION(scope, {});
         auto* view = dynamicDowncast<JSC::JSArrayBufferView>(buffer);
 
         Vector<uint8_t> copy;

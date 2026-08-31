@@ -31,6 +31,7 @@
 
 #include "BunClientData.h"
 #include "EventNames.h"
+#include "GlobalEventScope.h"
 #include "JSMessagePort.h"
 #include "MessageEvent.h"
 #include "MessagePortPipe.h"
@@ -41,24 +42,24 @@
 
 extern "C" void Bun__Process__emitWarning(Zig::GlobalObject*, JSC::EncodedJSValue warning, JSC::EncodedJSValue type, JSC::EncodedJSValue code, JSC::EncodedJSValue ctor);
 
-extern "C" void Bun__eventLoop__incrementRefConcurrently(void* bunVM, int delta);
-
 namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(MessagePort);
 
 Ref<MessagePort> MessagePort::create(ScriptExecutionContext& context, Ref<MessagePortPipe>&& pipe, uint8_t side)
 {
-    return adoptRef(*new MessagePort(context, WTF::move(pipe), side));
+    auto messagePort = adoptRef(*new MessagePort(context, WTF::move(pipe), side));
+    messagePort->suspendIfNeeded();
+    return messagePort;
 }
 
 MessagePort::MessagePort(ScriptExecutionContext& context, Ref<MessagePortPipe>&& pipe, uint8_t side)
-    : ContextDestructionObserver(&context)
+    : ActiveDOMObject(&context)
     , m_pipe(WTF::move(pipe))
     , m_side(side)
 {
     // The WeakPtrFactory must be initialized on the owning thread.
-    initializeWeakPtrFactory();
+    EventTarget::initializeWeakPtrFactory();
     // Any port with a 'message' listener refs the event loop (matching node: a
     // listening port keeps its thread alive until closed or unref'd); otherwise a
     // buffered message could be lost if its listener is added late.
@@ -136,6 +137,7 @@ ExceptionOr<void> MessagePort::postMessage(JSC::JSGlobalObject& state, JSC::JSVa
                 JSC::JSValue::encode(JSC::jsUndefined()));
             CLEAR_IF_EXCEPTION(warnScope);
             close();
+            RETURN_IF_EXCEPTION(warnScope, Exception { ExistingExceptionError });
             return {};
         }
     }
@@ -144,17 +146,35 @@ ExceptionOr<void> MessagePort::postMessage(JSC::JSGlobalObject& state, JSC::JSVa
     return {};
 }
 
+void MessagePort::entrySettled()
+{
+    if (!std::exchange(m_startDeferredUntilEntrySettled, false))
+        return;
+    start();
+}
+
 void MessagePort::start()
 {
     if (m_started || !isEntangled())
         return;
+    // A node worker's parentPort delivers nothing until the entry module has evaluated; keep the
+    // request and let entrySettled() perform it. Messages stay buffered in the pipe meanwhile.
+    if (auto* context = scriptExecutionContext()) {
+        if (auto* jsGlobal = context->globalObject()) {
+            auto* globalObject = defaultGlobalObject(jsGlobal);
+            if (globalObject->nodeParentPort() == this && !globalObject->nodeWorkerEntrySettled()) {
+                m_startDeferredUntilEntrySettled = true;
+                return;
+            }
+        }
+    }
     m_started = true;
 
     auto* context = scriptExecutionContext();
     ASSERT(context);
     // From the pipe's point of view "attached" means "ready to have drains
     // scheduled on my behalf" — that is exactly what start() promises.
-    m_pipe->attach(m_side, context->identifier(), ThreadSafeWeakPtr<MessagePort> { *this });
+    m_pipe->attach(m_side, *context, ThreadSafeWeakPtr<MessagePort> { *this });
 }
 
 void MessagePort::flushQueuedMessagesBeforeClose()
@@ -162,20 +182,14 @@ void MessagePort::flushQueuedMessagesBeforeClose()
     auto* context = scriptExecutionContext();
     if (!context || !context->globalObject())
         return;
-    // During worker teardown contextDestroyed() runs from ~ScriptExecutionContext
-    // inside ~VM's lastChanceToFinalize, where allocating a MessageEvent wrapper
-    // asserts (the heap is being finalized). markTerminating() precedes ~VM, and
-    // the Rust-side scriptExecutionStatus still reports Running at that point.
-    if (context->isTerminating())
-        return;
     auto* globalObject = defaultGlobalObject(context->globalObject());
-    // Only deliver while JS can run; during teardown the queue is left for
+    // Only deliver while JS can run; otherwise the queue is left for
     // m_pipe->close() to drop (it unwinds nested port chains iteratively).
     if (Zig::GlobalObject::scriptExecutionStatus(globalObject, globalObject) != ScriptExecutionStatus::Running)
         return;
 
-    // Cap iterations like drainAndDispatch() so a 'message' handler re-injecting
-    // into this closing port (via its entangled peer) can't starve the loop.
+    // Cap iterations (whatever was queued, at least 1000) so a 'message' handler
+    // re-injecting into this closing port (via its entangled peer) can't starve the loop.
     size_t limit = std::max<size_t>(MessagePortPipe::queuedCount(m_pipe->state(m_side)), 1000);
     for (size_t i = 0; i < limit; ++i) {
         // A handler (or a microtask it queued) may have transferred this port; the
@@ -213,11 +227,7 @@ void MessagePort::close()
 
     // Release the self-reference taken by jsRef() (set when .onmessage is
     // assigned or .ref() is called from JS). The JS .close() binding calls
-    // jsUnref() first, so m_hasRef is already false on that path; we only
-    // reach this branch when close() runs without a preceding jsUnref() —
-    // most importantly from contextDestroyed() during Worker teardown.
-    // Without this, the self-ref pins the MessagePort past the JS wrapper
-    // sweep and it leaks forever.
+    // jsUnref() first; stop() and contextDestroyed() do not.
     if (m_hasRef) {
         m_hasRef = false;
         if (auto* context = scriptExecutionContext())
@@ -234,20 +244,15 @@ void MessagePort::close()
 
     // Defer 'close' to a task (node fires it at uv close-callback timing, i.e.
     // after sync code and microtasks), so a listener added after close() still
-    // observes it and close(cb) interleaves with other listeners. Never while the
-    // context is terminating: contextDestroyed() runs after the loop's queue was
-    // drained for shutdown, so the task would never run and would outlive the VM.
-    auto* context = scriptExecutionContext();
-    if (context && !context->isTerminating()) {
-        m_closeEventPending.store(true, std::memory_order_release);
-        context->postTask([protectedThis = Ref { *this }](ScriptExecutionContext&) {
-            protectedThis->dispatchCloseEvent();
-            protectedThis->removeAllEventListeners();
-            protectedThis->m_closeEventPending.store(false, std::memory_order_release);
-        });
-    } else {
+    // observes it and close(cb) interleaves with other listeners.
+    if (isContextStopped()) {
         removeAllEventListeners();
+        return;
     }
+    queueTaskKeepingObjectAlive(*this, TaskSource::PostedMessageQueue, [](MessagePort& port) {
+        port.dispatchCloseEvent();
+        port.removeAllEventListeners();
+    });
 }
 
 void MessagePort::dispatchCloseEvent()
@@ -257,9 +262,6 @@ void MessagePort::dispatchCloseEvent()
     m_closeEventDispatched = true;
     auto* context = scriptExecutionContext();
     if (!context || !context->globalObject())
-        return;
-    // No JS may run during worker teardown (see flushQueuedMessagesBeforeClose).
-    if (context->isTerminating())
         return;
     auto* globalObject = defaultGlobalObject(context->globalObject());
     // Bypass the m_isDetached guard in MessagePort::dispatchEvent — the deferred
@@ -279,7 +281,7 @@ void MessagePort::peerClosed()
     // Deliver whatever the peer sent before it closed, then fire 'close'. Node orders
     // them that way, and registerCloseContext()'s retroactive notify can land before any
     // drain is scheduled -- e.g. on('close') registered before on('message').
-    if (m_started && m_hasMessageEventListener)
+    if (m_started && hasMessageEventListener())
         flushQueuedMessagesBeforeClose();
     // Fire 'close' (guarded against a double dispatch) and release this side's loop refs
     // so the loop can idle, matching node.
@@ -328,8 +330,11 @@ TransferredMessagePort MessagePort::disentangle()
     m_isDetached = true;
     m_started = false;
 
-    if (auto* context = scriptExecutionContext())
+    // We can't receive any messages or generate any events after this, so remove ourselves from the list of active ports.
+    if (auto* context = scriptExecutionContext()) {
+        context->willDestroyActiveDOMObject(*this);
         context->willDestroyDestructionObserver(*this);
+    }
     observeContext(nullptr);
 
     return TransferredMessagePort { m_pipe.copyRef(), m_side };
@@ -362,12 +367,22 @@ void MessagePort::dispatchOneMessage(ScriptExecutionContext& context, MessageWit
         return;
     }
 
+    // https://html.spec.whatwg.org/multipage/web-messaging.html#message-port-post-message-steps (7.3): if
+    // deserializing throws, catch it and fire messageerror instead.
     auto event = MessageEvent::create(*context.jsGlobalObject(), message.message.releaseNonNull(), {}, {}, {}, WTF::move(ports));
-    dispatchEvent(event.event);
+    if (scope.exception()) [[unlikely]] {
+        if (vm->hasPendingTerminationException())
+            return;
+        scope.clearException();
+        dispatchEvent(MessageEvent::create(eventNames().messageerrorEvent, MessageEvent::Init { {}, jsNull() }, MessageEvent::IsTrusted::Yes));
+        return;
+    }
+    dispatchEvent(event->event);
 }
 
-JSValue MessagePort::tryTakeMessage(JSGlobalObject* lexicalGlobalObject)
+JSValue MessagePort::tryTakeMessage(JSGlobalObject* lexicalGlobalObject, bool& hadMessage)
 {
+    hadMessage = false;
     if (!isEntangled())
         return jsUndefined();
 
@@ -379,6 +394,7 @@ JSValue MessagePort::tryTakeMessage(JSGlobalObject* lexicalGlobalObject)
     if (!message)
         return jsUndefined();
 
+    hadMessage = true;
     auto ports = MessagePort::entanglePorts(*context, WTF::move(message->transferredPorts));
     return message->message.releaseNonNull()->deserialize(*lexicalGlobalObject, lexicalGlobalObject, WTF::move(ports), SerializationErrorMode::NonThrowing);
 }
@@ -392,17 +408,13 @@ void MessagePort::dispatchEvent(Event& event)
 
 void MessagePort::contextDestroyed()
 {
-    // close() releases the jsRef() self-reference, which may be the last
-    // strong ref if the JS wrapper was already swept. Protect across the
-    // call so we can cleanly detach from the dying ScriptExecutionContext
-    // first — otherwise ~ContextDestructionObserver() would call back into
-    // it while it is mid-destruction.
-    Ref protectedThis { *this };
+    ASSERT(scriptExecutionContext());
+
     close();
-    ContextDestructionObserver::contextDestroyed();
+    ActiveDOMObject::contextDestroyed();
 }
 
-bool MessagePort::hasPendingActivity() const
+bool MessagePort::virtualHasPendingActivity() const
 {
     // Called from the GC thread concurrently with the mutator; must be
     // lockless. m_pipe is a Ref<> held for the port's whole lifetime, so
@@ -410,11 +422,6 @@ bool MessagePort::hasPendingActivity() const
     // atomic loads. The plain bool reads can observe stale values but
     // cannot crash — at worst the wrapper is collected one cycle early
     // or late, which is the same tolerance as before this refactor.
-    // close() sets m_isDetached before queueing the deferred close task, and a port
-    // with only a 'close' listener has no message listener — so this must precede
-    // both gates or the wrapper is collected before the task dispatches.
-    if (m_closeEventPending.load(std::memory_order_acquire))
-        return true;
     if (!scriptExecutionContext() || m_isDetached)
         return false;
     // A 'close' listener must outlive a GC until the event lands: notifyPeerClosed()
@@ -422,6 +429,9 @@ bool MessagePort::hasPendingActivity() const
     // the context dies; node retains more — it never collects an entangled port at all.
     if (m_hasCloseEventListener.load(std::memory_order_acquire) && !m_closeEventDispatched)
         return true;
+    // The port's own listeners only: a parentPort delivering to `self.onmessage` (the global-scope
+    // count hasMessageEventListener() adds) is rooted by the worker global for the worker's life, and
+    // this GC-thread path stays a single plain-bool read.
     if (!m_hasMessageEventListener)
         return false;
 
@@ -521,7 +531,7 @@ bool MessagePort::addEventListener(const AtomString& eventType, Ref<EventListene
         // pause re-schedules the drain for messages buffered meanwhile.
         if (m_started && isEntangled()) {
             if (auto* context = scriptExecutionContext())
-                m_pipe->attach(m_side, context->identifier(), ThreadSafeWeakPtr<MessagePort> { *this });
+                m_pipe->attach(m_side, *context, ThreadSafeWeakPtr<MessagePort> { *this });
         }
     } else if (eventType == eventNames().closeEvent) {
         m_hasCloseEventListener.store(true, std::memory_order_release);
@@ -529,7 +539,7 @@ bool MessagePort::addEventListener(const AtomString& eventType, Ref<EventListene
             // Record our context with the pipe so the peer's close() can deliver a
             // 'close' event even if we never started (no 'message' listener).
             if (auto* context = scriptExecutionContext())
-                m_pipe->registerCloseContext(m_side, context->identifier(), ThreadSafeWeakPtr<MessagePort> { *this });
+                m_pipe->registerCloseContext(m_side, *context, ThreadSafeWeakPtr<MessagePort> { *this });
         }
     }
     return EventTarget::addEventListener(eventType, WTF::move(listener), options);
@@ -572,7 +582,7 @@ void MessagePort::jsRef(JSGlobalObject* lexicalGlobalObject)
     if (!m_hasRef) {
         m_hasRef = true;
         ref();
-        Bun__eventLoop__incrementRefConcurrently(WebCore::clientData(lexicalGlobalObject->vm())->bunVM, 1);
+        Bun__eventLoop__refKeepAlive(WebCore::clientData(lexicalGlobalObject->vm())->bunVM, 1);
     }
 }
 
@@ -587,7 +597,7 @@ void MessagePort::jsUnref(JSGlobalObject* lexicalGlobalObject)
     if (m_hasRef) {
         m_hasRef = false;
         deref();
-        Bun__eventLoop__incrementRefConcurrently(WebCore::clientData(lexicalGlobalObject->vm())->bunVM, -1);
+        Bun__eventLoop__refKeepAlive(WebCore::clientData(lexicalGlobalObject->vm())->bunVM, -1);
     }
 }
 

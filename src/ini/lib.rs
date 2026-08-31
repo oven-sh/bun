@@ -1,11 +1,7 @@
 #![warn(unused_must_use)]
 #![forbid(unsafe_code)]
-use core::fmt;
 
-use bun_alloc::AllocError;
-use bun_ast::{Loc, Log, Source};
-
-type OOM<T> = Result<T, AllocError>;
+use bun_ast::Loc;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Pure-byte helpers. They touch no parser state; exposed as free fns so
@@ -95,12 +91,6 @@ pub enum ConfigOpt {
     Keyfile,
 }
 
-impl ConfigOpt {
-    pub(crate) fn is_base64_encoded(self) -> bool {
-        matches!(self, ConfigOpt::_Auth | ConfigOpt::_Password)
-    }
-}
-
 // ──────────────────────────────────────────────────────────────────────────
 // ConfigItem
 // ──────────────────────────────────────────────────────────────────────────
@@ -110,62 +100,7 @@ pub struct ConfigItem {
     pub(crate) optname: ConfigOpt,
     pub(crate) value: Box<[u8]>,
     pub(crate) loc: Loc,
-}
-
-impl ConfigItem {
-    /// Duplicate ConfigIterator.Item
-    pub(crate) fn dupe(&self) -> OOM<Option<ConfigItem>> {
-        Ok(Some(ConfigItem {
-            registry_url: Box::<[u8]>::from(&*self.registry_url),
-            optname: self.optname,
-            value: Box::<[u8]>::from(&*self.value),
-            loc: self.loc,
-        }))
-    }
-
-    /// Duplicate the value, decoding it if it is base64 encoded.
-    pub(crate) fn dupe_value_decoded(
-        &self,
-        log: &mut Log,
-        source: &Source,
-    ) -> OOM<Option<Box<[u8]>>> {
-        if self.optname.is_base64_encoded() {
-            if self.value.is_empty() {
-                return Ok(Some(Box::default()));
-            }
-            let len = bun_base64::decode_len(&self.value);
-            let mut slice = vec![0u8; len].into_boxed_slice();
-            let result = bun_base64::decode(&mut slice[..], &self.value);
-            if !result.is_successful() {
-                log.add_error_fmt_opts(
-                    format_args!("{} is not valid base64", <&'static str>::from(self.optname)),
-                    bun_ast::AddErrorOptions {
-                        source: Some(source),
-                        loc: self.loc,
-                        redact_sensitive_information: true,
-                        ..Default::default()
-                    },
-                );
-                return Ok(None);
-            }
-            return Ok(Some(Box::<[u8]>::from(&slice[..result.count])));
-        }
-        Ok(Some(Box::<[u8]>::from(&*self.value)))
-    }
-
-    // deinit -> Drop: Box<[u8]> fields drop automatically.
-}
-
-impl fmt::Display for ConfigItem {
-    fn fmt(&self, writer: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            writer,
-            "//{}:{}={}",
-            bstr::BStr::new(&self.registry_url),
-            <&'static str>::from(self.optname),
-            bstr::BStr::new(&self.value),
-        )
-    }
+    pub(crate) optname_loc: Loc,
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -186,12 +121,9 @@ bun_core::comptime_string_map! {
 }
 
 pub use draft::{
-    ConfigIterator, Parser, ScopeItem, ScopeIterator, ToStringFormatter, load_npmrc,
-    load_npmrc_config,
+    ConfigIterator, Parser, RegistryAuth, ScopeItem, ScopeIterator, ToStringFormatter,
+    apply_registry_auth, load_npmrc, load_npmrc_config,
 };
-pub mod config_iterator {
-    pub use super::ConfigItem as Item;
-}
 
 mod draft {
 
@@ -203,7 +135,7 @@ mod draft {
     use bun_ast::E::Rope;
     use bun_ast::{E, Expr, ExprData, StoreRef};
     use bun_ast::{Loc, Log, Source};
-    use bun_collections::{ArrayHashMap, VecExt};
+    use bun_collections::VecExt;
     use bun_core::ZStr;
     use bun_core::{Global, Output};
     use bun_dotenv::Loader as DotEnvLoader;
@@ -405,21 +337,8 @@ mod draft {
                     line_offset,
                 )?
                 .into_key();
-                let is_array: bool = {
-                    key_raw.len() > 2 && bun_core::strings::ends_with(key_raw, b"[]")
-                    // Commenting out because options are not supported but we might
-                    // support them.
-                    // if (this.opts.bracked_array) {
-                    //     break :brk key_raw.len > 2 and bun.strings.endsWith(key_raw, "[]");
-                    // } else {
-                    //     // const gop = try duplicates.getOrPut(allocator, key_raw);
-                    //     // if (gop.found_existing) {
-                    //     //     gop.value_ptr.* = 1;
-                    //     // } else gop.value_ptr.* += 1;
-                    //     // break :brk gop.value_ptr.* > 1;
-                    //     @panic("We don't support this right now");
-                    // }
-                };
+                let is_array: bool =
+                    key_raw.len() > 2 && bun_core::strings::ends_with(key_raw, b"[]");
 
                 let key = if is_array && bun_core::strings::ends_with(key_raw, b"[]") {
                     &key_raw[..key_raw.len() - 2]
@@ -1128,11 +1047,21 @@ mod draft {
                                 let url_part = &key[2..index];
                                 if let Some(value_expr) = prop.value {
                                     if let Some(value) = value_expr.as_utf8_string_literal() {
+                                        // `put` stamps the key with the value's loc, so walk back over `<key>=` to the option name.
+                                        let optname_loc = match keyexpr.loc.to_nullable() {
+                                            Some(loc) => Loc {
+                                                start: loc.start
+                                                    - i32::try_from(key.len() - index)
+                                                        .expect("int cast"),
+                                            },
+                                            None => keyexpr.loc,
+                                        };
                                         return Some(IniOption::Some(ConfigItem {
                                             registry_url: Box::<[u8]>::from(url_part),
                                             value: Box::<[u8]>::from(value),
                                             optname: opt,
                                             loc: keyexpr.loc,
+                                            optname_loc,
                                         }));
                                     }
                                 }
@@ -1143,6 +1072,103 @@ mod draft {
             }
 
             Some(IniOption::None)
+        }
+    }
+
+    // ──────────────────────────────────────────────────────────────────────────
+    // RegistryAuth
+    // ──────────────────────────────────────────────────────────────────────────
+
+    pub struct RegistryAuth {
+        host: Box<[u8]>,
+        pathname: Box<[u8]>,
+        credential: RegistryCredential,
+    }
+
+    enum RegistryCredential {
+        Token(Box<[u8]>),
+        Username(Box<[u8]>),
+        Password(Box<[u8]>),
+        UsernamePassword {
+            username: Box<[u8]>,
+            password: Box<[u8]>,
+        },
+        Email(Box<[u8]>),
+    }
+
+    impl RegistryAuth {
+        pub(crate) fn from_config_item(
+            item: ConfigItem,
+            log: &mut Log,
+            source: &Source,
+        ) -> Option<RegistryAuth> {
+            let ConfigItem {
+                registry_url,
+                optname,
+                value,
+                loc,
+                optname_loc: _,
+            } = item;
+            let credential = match optname {
+                ConfigOpt::_AuthToken => RegistryCredential::Token(value),
+                ConfigOpt::Username => RegistryCredential::Username(value),
+                ConfigOpt::Email => RegistryCredential::Email(value),
+                ConfigOpt::_Password => {
+                    if value.is_empty() {
+                        RegistryCredential::Password(Box::default())
+                    } else {
+                        let mut decoded = vec![0u8; bun_base64::decode_len(&value)];
+                        let result = bun_base64::decode(&mut decoded[..], &value);
+                        if !result.is_successful() {
+                            log.add_error_fmt_opts(
+                                format_args!(
+                                    "{} is not valid base64",
+                                    <&'static str>::from(optname)
+                                ),
+                                bun_ast::AddErrorOptions {
+                                    source: Some(source),
+                                    loc,
+                                    redact_sensitive_information: true,
+                                    ..Default::default()
+                                },
+                            );
+                            return None;
+                        }
+                        decoded.truncate(result.count);
+                        RegistryCredential::Password(decoded.into_boxed_slice())
+                    }
+                }
+                ConfigOpt::_Auth => {
+                    let (username, password) = parse_auth(&value, loc, log, source)?;
+                    RegistryCredential::UsernamePassword { username, password }
+                }
+                ConfigOpt::Certfile | ConfigOpt::Keyfile => return None,
+            };
+            let url = URL::parse(&registry_url);
+            Some(RegistryAuth {
+                host: bun_core::without_trailing_slash(url.host).into(),
+                pathname: bun_core::without_trailing_slash(url.pathname).into(),
+                credential,
+            })
+        }
+
+        pub(crate) fn matches(&self, registry_url: &[u8]) -> bool {
+            let url = URL::parse(registry_url);
+            bun_core::without_trailing_slash(url.host) == &*self.host
+                && bun_core::without_trailing_slash(url.pathname) == &*self.pathname
+        }
+
+        pub(crate) fn apply_to(&self, registry: &mut NpmRegistry) {
+            match &self.credential {
+                RegistryCredential::Token(token) => registry.token.clone_from(token),
+                RegistryCredential::Username(username) => registry.username.clone_from(username),
+                RegistryCredential::Password(password) => registry.password.clone_from(password),
+                RegistryCredential::UsernamePassword { username, password } => {
+                    registry.username.clone_from(username);
+                    registry.password.clone_from(password);
+                }
+                RegistryCredential::Email(email) => registry.email.clone_from(email),
+            }
         }
     }
 
@@ -1214,13 +1240,10 @@ mod draft {
         env: &DotEnvLoader,
         auto_loaded: bool,
         npmrc_paths: &[&ZStr],
-    ) {
+    ) -> Vec<RegistryAuth> {
         let mut log = Log::init();
 
-        // npmrc registry configurations are shared between all npmrc files
-        // so we need to collect them as we go for the final registry map
-        // to be created at the end.
-        let mut configs: Vec<ConfigItem> = Vec::new();
+        let mut configs: Vec<RegistryAuth> = Vec::new();
 
         for &npmrc_path in npmrc_paths {
             let source = match bun_ast::source_from_file(
@@ -1264,6 +1287,40 @@ mod draft {
                 Output::error_writer(),
             ));
         }
+        configs
+    }
+
+    pub fn apply_registry_auth(install: &mut BunInstall, auth: &[RegistryAuth]) {
+        if auth.is_empty() {
+            return;
+        }
+        if let Some(registry) = install.default_registry.as_mut() {
+            if !registry.has_credentials() {
+                for item in auth {
+                    let matched = item.matches(if registry.url.is_empty() {
+                        bun_install_types::NodeLinker::npm::Registry::DEFAULT_URL.as_bytes()
+                    } else {
+                        &registry.url
+                    });
+                    if matched {
+                        item.apply_to(registry);
+                    }
+                }
+            }
+        }
+        if let Some(scoped) = install.scoped.as_mut() {
+            for registry in scoped.scopes.values_mut() {
+                if registry.has_credentials() {
+                    continue;
+                }
+                for item in auth {
+                    let matched = item.matches(&registry.url);
+                    if matched {
+                        item.apply_to(registry);
+                    }
+                }
+            }
+        }
     }
 
     pub fn load_npmrc(
@@ -1271,7 +1328,7 @@ mod draft {
         env: &DotEnvLoader,
         log: &mut Log,
         source: &Source,
-        configs: &mut Vec<ConfigItem>,
+        configs: &mut Vec<RegistryAuth>,
     ) -> OOM<()> {
         let arena = Arena::new();
         let bump = &arena;
@@ -1430,8 +1487,7 @@ mod draft {
                 match pnpm_matcher_from_expr(&public_hoist_pattern_expr, log, source, bump) {
                     Ok(v) => Some(v),
                     Err(FromExprError::OutOfMemory) => return Err(AllocError),
-                    Err(_) => {
-                        // error.InvalidRegExp, error.UnexpectedExpr
+                    Err(FromExprError::UnexpectedExpr) => {
                         log.reset();
                         None
                     }
@@ -1443,8 +1499,7 @@ mod draft {
                 match pnpm_matcher_from_expr(&hoist_pattern_expr, log, source, bump) {
                     Ok(v) => Some(v),
                     Err(FromExprError::OutOfMemory) => return Err(AllocError),
-                    Err(_) => {
-                        // error.InvalidRegExp, error.UnexpectedExpr
+                    Err(FromExprError::UnexpectedExpr) => {
                         log.reset();
                         None
                     }
@@ -1502,75 +1557,7 @@ mod draft {
             }
         }
 
-        // Process registry configuration
-        'out: {
-            let count = {
-                let mut count: usize = configs.len();
-                for prop in out_obj.properties.slice() {
-                    if let Some(keyexpr) = &prop.key {
-                        if let Some(key) = keyexpr.as_utf8_string_literal() {
-                            if bun_core::has_prefix(key, b"//") {
-                                count += 1;
-                            }
-                        }
-                    }
-                }
-                count
-            };
-
-            if count == 0 {
-                break 'out;
-            }
-
-            // `URL<'a>` borrows its input; a borrow of
-            // `install.default_registry.url` would conflict with the loop below
-            // mutating that same field. Copy the two fields we compare against so
-            // the borrow ends before the `install.default_registry` mutation.
-            let (default_registry_host, default_registry_pathname): (Box<[u8]>, Box<[u8]>) = 'brk: {
-                if let Some(dr) = &install.default_registry {
-                    let u = URL::parse(&dr.url);
-                    break 'brk (Box::from(u.host), Box::from(u.pathname));
-                }
-                let u = URL::parse(
-                    bun_install_types::NodeLinker::npm::Registry::DEFAULT_URL.as_bytes(),
-                );
-                (Box::from(u.host), Box::from(u.pathname))
-            };
-
-            // I don't like having to do this but we'll need a mapping of scope -> bun.URL
-            // Because we need to check different parts of the URL, for instance in this
-            // example .npmrc:
-            let _ = r#"
- @myorg:registry=https://somewhere-else.com/myorg
- @another:registry=https://somewhere-else.com/another
-
- //somewhere-else.com/myorg/:_authToken=MYTOKEN1
-
- //somewhere-else.com/:username=foobar
-
-"#;
-            // The line that sets the auth token should only apply to the @myorg scope
-            // The line that sets the username would apply to both @myorg and @another
-            let url_map = {
-                // `URL<'a>`
-                // borrows `v.url` (inside `registry_map.scopes`), which would alias the
-                // `values_mut()` iteration below. Store the owned URL bytes instead and
-                // re-parse per lookup (URL::parse is a cheap slice scan).
-                let mut url_map: ArrayHashMap<Box<[u8]>, Box<[u8]>> =
-                    ArrayHashMap::with_capacity(registry_map.scopes.keys().len());
-
-                for (k, v) in registry_map
-                    .scopes
-                    .keys()
-                    .iter()
-                    .zip(registry_map.scopes.values())
-                {
-                    url_map.put(Box::<[u8]>::from(&**k), Box::<[u8]>::from(&*v.url))?;
-                }
-
-                url_map
-            };
-
+        {
             let mut iter = ConfigIterator {
                 config: out_obj,
                 log,
@@ -1578,152 +1565,47 @@ mod draft {
             };
 
             while let Some(val) = iter.next() {
-                if let Some(conf_item_) = val.get() {
-                    // `conf_item` will look like:
-                    //
-                    // - localhost:4873/
-                    // - somewhere-else.com/myorg/
-                    //
-                    // Scoped registries are set like this:
-                    // - @myorg:registry=https://somewhere-else.com/myorg
-                    let conf_item: &ConfigItem = &conf_item_;
-                    match conf_item.optname {
-                        ConfigOpt::Certfile | ConfigOpt::Keyfile => {
-                            bun_ast::add_warning_pretty!(
-                                iter.log,
-                                Some(source),
-                                iter.config
-                                    .properties
-                                    .at(iter.prop_idx - 1)
-                                    .key
-                                    .as_ref()
-                                    .unwrap()
-                                    .loc,
-                                "The following .npmrc registry option was not applied:\n\n  <b>{}<r>\n\nBecause we currently don't support the <b>{}<r> option.",
-                                conf_item,
-                                <&'static str>::from(conf_item.optname),
-                            );
-                            continue;
-                        }
-                        _ => {}
-                    }
-                    if let Some(x) = conf_item_.dupe()? {
-                        configs.push(x);
-                    }
+                let Some(conf_item) = val.get() else {
+                    continue;
+                };
+                if matches!(conf_item.optname, ConfigOpt::Certfile | ConfigOpt::Keyfile) {
+                    bun_ast::add_warning_pretty!(
+                        iter.log,
+                        Some(source),
+                        conf_item.optname_loc,
+                        "<b>{}<r> is not supported; ignoring this .npmrc option",
+                        <&'static str>::from(conf_item.optname),
+                    );
+                    continue;
+                }
+                if let Some(auth) = RegistryAuth::from_config_item(conf_item, iter.log, source) {
+                    configs.push(auth);
                 }
             }
 
-            for conf_item in configs.iter() {
-                let conf_item_url = URL::parse(&conf_item.registry_url);
-
-                if bun_core::without_trailing_slash(&default_registry_host)
-                    == bun_core::without_trailing_slash(conf_item_url.host)
-                    && bun_core::without_trailing_slash(&default_registry_pathname)
-                        == bun_core::without_trailing_slash(conf_item_url.pathname)
-                {
-                    // Apply config to default registry
-                    let v: &mut NpmRegistry = 'brk: {
-                        if let Some(r) = install.default_registry.as_mut() {
-                            break 'brk r;
-                        }
-                        install.default_registry = Some(NpmRegistry {
-                            password: Box::default(),
-                            token: Box::default(),
-                            username: Box::default(),
-                            url: Box::<[u8]>::from(
-                                bun_install_types::NodeLinker::npm::Registry::DEFAULT_URL
-                                    .as_bytes(),
-                            ),
-                            email: Box::default(),
-                        });
-                        install.default_registry.as_mut().unwrap()
-                    };
-
-                    match conf_item.optname {
-                        ConfigOpt::_AuthToken => {
-                            if let Some(x) = conf_item.dupe_value_decoded(log, source)? {
-                                v.token = x;
+            if !configs.is_empty() {
+                for auth in configs.iter() {
+                    let matched = auth.matches(install.default_registry.as_ref().map_or(
+                        bun_install_types::NodeLinker::npm::Registry::DEFAULT_URL.as_bytes(),
+                        |r| &*r.url,
+                    ));
+                    if matched {
+                        auth.apply_to(install.default_registry.get_or_insert_with(|| {
+                            NpmRegistry {
+                                url: bun_install_types::NodeLinker::npm::Registry::DEFAULT_URL
+                                    .as_bytes()
+                                    .into(),
+                                ..Default::default()
                             }
-                        }
-                        ConfigOpt::Username => {
-                            if let Some(x) = conf_item.dupe_value_decoded(log, source)? {
-                                v.username = x;
-                            }
-                        }
-                        ConfigOpt::_Password => {
-                            if let Some(x) = conf_item.dupe_value_decoded(log, source)? {
-                                v.password = x;
-                            }
-                        }
-                        ConfigOpt::_Auth => {
-                            handle_auth(v, conf_item, log, source)?;
-                        }
-                        ConfigOpt::Email => {
-                            if let Some(x) = conf_item.dupe_value_decoded(log, source)? {
-                                v.email = x;
-                            }
-                        }
-                        ConfigOpt::Certfile | ConfigOpt::Keyfile => unreachable!(),
+                        }));
                     }
-                }
-
-                // `keys()`/`values_mut()` on the same map alias; since
-                // `url_map` was filled in lockstep with `registry_map.scopes` (same
-                // ArrayHashMap insertion order), zip its values directly instead
-                // of looking each one up by key.
-                for (url_bytes, v) in url_map
-                    .values()
-                    .iter()
-                    .zip(registry_map.scopes.values_mut())
-                {
-                    let url = URL::parse(url_bytes);
-
-                    if bun_core::without_trailing_slash(url.host)
-                        == bun_core::without_trailing_slash(conf_item_url.host)
-                        && bun_core::without_trailing_slash(url.pathname)
-                            == bun_core::without_trailing_slash(conf_item_url.pathname)
-                    {
-                        if !conf_item_url.hostname.is_empty() {
-                            if bun_core::without_trailing_slash(url.hostname)
-                                != bun_core::without_trailing_slash(conf_item_url.hostname)
-                            {
-                                continue;
-                            }
+                    for registry in registry_map.scopes.values_mut() {
+                        if auth.matches(&registry.url) {
+                            auth.apply_to(registry);
                         }
-                        // Apply config to scoped registry
-                        match conf_item.optname {
-                            ConfigOpt::_AuthToken => {
-                                if let Some(x) = conf_item.dupe_value_decoded(log, source)? {
-                                    v.token = x;
-                                }
-                            }
-                            ConfigOpt::Username => {
-                                if let Some(x) = conf_item.dupe_value_decoded(log, source)? {
-                                    v.username = x;
-                                }
-                            }
-                            ConfigOpt::_Password => {
-                                if let Some(x) = conf_item.dupe_value_decoded(log, source)? {
-                                    v.password = x;
-                                }
-                            }
-                            ConfigOpt::_Auth => {
-                                handle_auth(v, conf_item, log, source)?;
-                            }
-                            ConfigOpt::Email => {
-                                if let Some(x) = conf_item.dupe_value_decoded(log, source)? {
-                                    v.email = x;
-                                }
-                            }
-                            ConfigOpt::Certfile | ConfigOpt::Keyfile => unreachable!(),
-                        }
-                        // We have to keep going as it could match multiple scopes
-                        continue;
                     }
                 }
             }
-
-            drop(url_map);
         }
 
         // The single write-back happens here, after the registry-config loop
@@ -1736,8 +1618,8 @@ mod draft {
     }
 
     use bun_install_types::NodeLinker::{
-        Behavior as PnpmBehavior, CreateMatcherError, FromExprError, Matcher as PnpmMatcherEntry,
-        PnpmMatcher, create_matcher,
+        Behavior as PnpmBehavior, FromExprError, Matcher as PnpmMatcherEntry, PnpmMatcher,
+        create_matcher,
     };
 
     /// `PnpmMatcher.fromExpr` operating on
@@ -1754,11 +1636,6 @@ mod draft {
         source: &Source,
         bump: &Arena,
     ) -> Result<PnpmMatcher, FromExprError> {
-        let mut buf: Vec<u8> = Vec::new();
-
-        // bun.jsc.initialize(false) is performed lazily inside the regex vtable
-        // compile hook (tier-6 owns it).
-
         let mut matchers: Vec<PnpmMatcherEntry> = Vec::new();
         let mut has_include = false;
         let mut has_exclude = false;
@@ -1766,23 +1643,7 @@ mod draft {
         match &expr.data {
             ExprData::EString(s) => {
                 let mut s = *s;
-                let pattern = s.slice(bump);
-                let matcher = match create_matcher(pattern, &mut buf) {
-                    Ok(m) => m,
-                    Err(CreateMatcherError::OutOfMemory) => return Err(FromExprError::OutOfMemory),
-                    Err(CreateMatcherError::InvalidRegExp) => {
-                        log.add_error_fmt_opts(
-                            format_args!("Invalid regex: {}", bstr::BStr::new(pattern)),
-                            bun_ast::AddErrorOptions {
-                                loc: expr.loc,
-                                redact_sensitive_information: true,
-                                source: Some(source),
-                                ..Default::default()
-                            },
-                        );
-                        return Err(FromExprError::InvalidRegExp);
-                    }
-                };
+                let matcher = create_matcher(s.slice(bump));
                 has_include = has_include || !matcher.is_exclude;
                 has_exclude = has_exclude || matcher.is_exclude;
                 matchers.push(matcher);
@@ -1790,24 +1651,7 @@ mod draft {
             ExprData::EArray(patterns) => {
                 for pattern_expr in patterns.items.slice() {
                     if let Some(pattern) = pattern_expr.as_string_cloned(bump)? {
-                        let matcher = match create_matcher(pattern, &mut buf) {
-                            Ok(m) => m,
-                            Err(CreateMatcherError::OutOfMemory) => {
-                                return Err(FromExprError::OutOfMemory);
-                            }
-                            Err(CreateMatcherError::InvalidRegExp) => {
-                                log.add_error_fmt_opts(
-                                    format_args!("Invalid regex: {}", bstr::BStr::new(pattern)),
-                                    bun_ast::AddErrorOptions {
-                                        loc: pattern_expr.loc,
-                                        redact_sensitive_information: true,
-                                        source: Some(source),
-                                        ..Default::default()
-                                    },
-                                );
-                                return Err(FromExprError::InvalidRegExp);
-                            }
-                        };
+                        let matcher = create_matcher(pattern);
                         has_include = has_include || !matcher.is_exclude;
                         has_exclude = has_exclude || matcher.is_exclude;
                         matchers.push(matcher);
@@ -1853,38 +1697,37 @@ mod draft {
         })
     }
 
-    fn handle_auth(
-        v: &mut NpmRegistry,
-        conf_item: &ConfigItem,
+    fn parse_auth(
+        value: &[u8],
+        loc: Loc,
         log: &mut Log,
         source: &Source,
-    ) -> OOM<()> {
-        if conf_item.value.is_empty() {
+    ) -> Option<(Box<[u8]>, Box<[u8]>)> {
+        if value.is_empty() {
             log.add_error_opts(
-            b"invalid _auth value, expected base64 encoded \"<username>:<password>\", received an empty string",
-            bun_ast::AddErrorOptions {
-                source: Some(source),
-                loc: conf_item.loc,
-                redact_sensitive_information: true,
-                ..Default::default()
-            },
-        );
-            return Ok(());
+                b"invalid _auth value, expected base64 encoded \"<username>:<password>\", received an empty string",
+                bun_ast::AddErrorOptions {
+                    source: Some(source),
+                    loc,
+                    redact_sensitive_information: true,
+                    ..Default::default()
+                },
+            );
+            return None;
         }
-        let decode_len = bun_base64::decode_len(&conf_item.value);
-        let mut decoded = vec![0u8; decode_len].into_boxed_slice();
-        let result = bun_base64::decode(&mut decoded[..], &conf_item.value);
+        let mut decoded = vec![0u8; bun_base64::decode_len(value)];
+        let result = bun_base64::decode(&mut decoded[..], value);
         if !result.is_successful() {
             log.add_error_opts(
                 b"invalid _auth value, expected valid base64",
                 bun_ast::AddErrorOptions {
                     source: Some(source),
-                    loc: conf_item.loc,
+                    loc,
                     redact_sensitive_information: true,
                     ..Default::default()
                 },
             );
-            return Ok(());
+            return None;
         }
         let username_password = &decoded[..result.count];
         let Some(colon_idx) = bun_core::strings::index_of_char_usize(username_password, b':')
@@ -1893,29 +1736,28 @@ mod draft {
                 b"invalid _auth value, expected base64 encoded \"<username>:<password>\"",
                 bun_ast::AddErrorOptions {
                     source: Some(source),
-                    loc: conf_item.loc,
+                    loc,
                     redact_sensitive_information: true,
                     ..Default::default()
                 },
             );
-            return Ok(());
+            return None;
         };
-        let username = &username_password[..colon_idx];
         if colon_idx + 1 >= username_password.len() {
             log.add_error_opts(
                 b"invalid _auth value, expected base64 encoded \"<username>:<password>\"",
                 bun_ast::AddErrorOptions {
                     source: Some(source),
-                    loc: conf_item.loc,
+                    loc,
                     redact_sensitive_information: true,
                     ..Default::default()
                 },
             );
-            return Ok(());
+            return None;
         }
-        let password = &username_password[colon_idx + 1..];
-        v.username = Box::<[u8]>::from(username);
-        v.password = Box::<[u8]>::from(password);
-        Ok(())
+        Some((
+            username_password[..colon_idx].into(),
+            username_password[colon_idx + 1..].into(),
+        ))
     }
 } // mod draft

@@ -1,18 +1,24 @@
 import { $ as Shell, fileURLToPath } from "bun";
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, isDebug, makeTree } from "harness";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { cp, mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join, relative } from "node:path";
+import { basename, dirname, join, relative } from "node:path";
 
 import ts from "typescript";
+
+// beforeAll packs bun-types and installs it from the registry, and each case below copies
+// a fixture and type-checks it for several seconds, so everything here outlives the 5s
+// default that a plain `bun test <this file>` (CLAUDE.md, .github/workflows/bun-types.yml)
+// runs with; only the CI runner passes a larger --timeout. This call has to precede the
+// registrations: each hook/test captures the default when it is declared.
+setDefaultTimeout(1000 * 60 * 2);
 
 const BUN_REPO_ROOT = fileURLToPath(import.meta.resolve("../../../"));
 const BUN_TYPES_PACKAGE_ROOT = join(BUN_REPO_ROOT, "packages", "bun-types");
 const FIXTURE_SOURCE_DIR = fileURLToPath(import.meta.resolve("./fixture"));
 const TSCONFIG_SOURCE_PATH = join(BUN_REPO_ROOT, "src/cli/init/tsconfig.default.json");
-const BUN_TYPES_PACKAGE_JSON_PATH = join(BUN_TYPES_PACKAGE_ROOT, "package.json");
 const BUN_VERSION = (process.env.BUN_VERSION ?? Bun.version ?? process.versions.bun).replace(/^.*v/, "");
 const BUN_TYPES_TARBALL_NAME = `bun-types-${BUN_VERSION}.tgz`;
 
@@ -26,39 +32,38 @@ const DEFAULT_COMPILER_OPTIONS = ts.parseJsonConfigFileContent(
 
 const $ = Shell.cwd(BUN_REPO_ROOT);
 
+// What `bun run build` generates. beforeAll builds into a copy of the package under
+// TEMP_DIR, so none of this may change in the checkout (it used to be built in place,
+// with package.json restored afterwards, which left the tree dirty whenever beforeAll
+// was interrupted).
+function snapshotBunTypesCheckout() {
+  return {
+    "package.json": readFileSync(join(BUN_TYPES_PACKAGE_ROOT, "package.json"), "utf8"),
+    "CLAUDE.md": existsSync(join(BUN_TYPES_PACKAGE_ROOT, "CLAUDE.md")),
+    "docs": existsSync(join(BUN_TYPES_PACKAGE_ROOT, "docs")),
+  };
+}
+
+const bunTypesCheckoutBeforeSetup = snapshotBunTypesCheckout();
+
 let TEMP_DIR: string;
 let BASE_FIXTURE_DIR: string;
 
 beforeAll(async () => {
   TEMP_DIR = await mkdtemp(join(tmpdir(), "bun-types-test-"));
   BASE_FIXTURE_DIR = join(TEMP_DIR, "base-fixture");
+  const bunTypesBuildDir = join(TEMP_DIR, "bun-types");
 
   try {
-    await $`mkdir -p ${BASE_FIXTURE_DIR}`.quiet();
-
     await cp(FIXTURE_SOURCE_DIR, BASE_FIXTURE_DIR, { recursive: true });
+    await cp(BUN_TYPES_PACKAGE_ROOT, bunTypesBuildDir, {
+      recursive: true,
+      filter: source => basename(source) !== "node_modules",
+    });
 
-    await $`
-      cd ${BUN_TYPES_PACKAGE_ROOT}
-      bun install --no-cache
-      cp package.json package.json.backup
-    `.quiet();
-
-    const pkg = await Bun.file(BUN_TYPES_PACKAGE_JSON_PATH).json();
-
-    await Bun.write(BUN_TYPES_PACKAGE_JSON_PATH, JSON.stringify({ ...pkg, version: BUN_VERSION }, null, 2));
-
-    await $`
-      cd ${BUN_TYPES_PACKAGE_ROOT}
-      BUN_VERSION=${BUN_VERSION} bun run build
-      bun pm pack --destination ${BASE_FIXTURE_DIR}
-      rm -f CLAUDE.md
-      mv package.json.backup package.json
-
-      cd ${BASE_FIXTURE_DIR}
-      bun add bun-types@${BUN_TYPES_TARBALL_NAME}
-      rm ${BUN_TYPES_TARBALL_NAME}
-    `.quiet();
+    await $`cd ${BUN_TYPES_PACKAGE_ROOT} && BUN_VERSION=${BUN_VERSION} bun run build ${bunTypesBuildDir}`.quiet();
+    await $`cd ${bunTypesBuildDir} && bun pm pack --destination ${BASE_FIXTURE_DIR}`.quiet();
+    await $`cd ${BASE_FIXTURE_DIR} && bun add bun-types@${BUN_TYPES_TARBALL_NAME} && rm ${BUN_TYPES_TARBALL_NAME}`.quiet();
 
     const atTypesBunDir = join(BASE_FIXTURE_DIR, "node_modules", "@types", "bun");
 
@@ -311,6 +316,10 @@ afterAll(async () => {
 });
 
 describe("@types/bun integration test", () => {
+  test("building and packing bun-types leaves packages/bun-types untouched", () => {
+    expect(snapshotBunTypesCheckout()).toEqual(bunTypesCheckoutBeforeSetup);
+  });
+
   test("packed bun-types includes CLAUDE.md", async () => {
     const claude = Bun.file(join(BASE_FIXTURE_DIR, "node_modules", "bun-types", "CLAUDE.md"));
     expect(await claude.exists()).toBe(true);
@@ -374,6 +383,183 @@ describe("@types/bun integration test", () => {
            Bun.mmap("./data.bin", { offset: 4096 }) satisfies Uint8Array<ArrayBuffer>;
            Bun.mmap("./data.bin", { size: 1024 }) satisfies Uint8Array<ArrayBuffer>;`,
       });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), join(BASE_FIXTURE_DIR, "node_modules", "typescript", "bin", "tsc"), "-p", "."],
+        env: bunEnv,
+        cwd: checkDir,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr.trim()).toBe("");
+      expect(stdout.trim()).toBe("");
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  // Runs on debug builds too, same as the Bun.mmap block above.
+  describe("TextDecoder", () => {
+    test("accepts the encoding labels the runtime supports", async () => {
+      const checkDir = join(TEMP_DIR, "text-decoder-encoding-check");
+      const tsconfig = structuredClone(sourceTsconfig);
+      tsconfig.include = ["text-decoder-encodings.ts"];
+      tsconfig.compilerOptions.typeRoots = [join(BASE_FIXTURE_DIR, "node_modules", "@types")];
+      await mkdir(checkDir, { recursive: true });
+      await makeTree(checkDir, {
+        "tsconfig.json": JSON.stringify(tsconfig, null, 2),
+        "text-decoder-encodings.ts": `new TextDecoder("windows-1251");
+           new TextDecoder("shift_jis");
+           new TextDecoder("utf8");
+           new TextDecoder("latin1");
+           new TextDecoder("gb18030", { fatal: true, ignoreBOM: true });
+           // @ts-expect-error - the TextDecoder constructor rejects the replacement encoding
+           "hz-gb-2312" satisfies Bun.Encoding;
+           // @ts-expect-error - not a label the Encoding Standard defines
+           "utf-99" satisfies Bun.Encoding;`,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), join(BASE_FIXTURE_DIR, "node_modules", "typescript", "bin", "tsc"), "-p", "."],
+        env: bunEnv,
+        cwd: checkDir,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr.trim()).toBe("");
+      expect(stdout.trim()).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    // tsc cannot read the runtime's label table in
+    // src/runtime/webcore/EncodingLabel.rs, so the fixture carries a literal
+    // copy. This check ties that copy to the running binary: every fixture
+    // label must construct, and the replacement labels must throw.
+    test("the fixture label table matches the runtime", () => {
+      const fixture = readFileSync(join(FIXTURE_SOURCE_DIR, "text-encode-decoder.ts"), "utf8");
+      const arrayStart = fixture.indexOf("const labels = [");
+      const arrayEnd = fixture.indexOf("] as const;", arrayStart);
+      expect(arrayStart).toBeGreaterThan(-1);
+      expect(arrayEnd).toBeGreaterThan(arrayStart);
+
+      const labels = [...fixture.slice(arrayStart, arrayEnd).matchAll(/"([^"]+)"/g)].map(m => m[1]);
+      expect(labels).toHaveLength(222);
+      expect(new Set(labels).size).toBe(labels.length);
+
+      const rejected = labels.filter(label => {
+        try {
+          new TextDecoder(label as Bun.Encoding);
+          return false;
+        } catch {
+          return true;
+        }
+      });
+      expect(rejected).toEqual([]);
+
+      for (const label of [
+        "csiso2022kr",
+        "hz-gb-2312",
+        "iso-2022-cn",
+        "iso-2022-cn-ext",
+        "iso-2022-kr",
+        "replacement",
+      ]) {
+        expect(() => new TextDecoder(label as Bun.Encoding)).toThrow(RangeError);
+      }
+    });
+  });
+
+  // Runs on debug builds too, same as the Bun.mmap block above.
+  describe("Event and EventTarget", () => {
+    async function checkEventFixture(name: string, lib: string[], source: string) {
+      const checkDir = join(TEMP_DIR, name);
+      const tsconfig = structuredClone(sourceTsconfig);
+      tsconfig.include = ["event-check.ts"];
+      tsconfig.compilerOptions.lib = lib;
+      tsconfig.compilerOptions.typeRoots = [join(BASE_FIXTURE_DIR, "node_modules", "@types")];
+      await mkdir(checkDir, { recursive: true });
+      await makeTree(checkDir, {
+        "tsconfig.json": JSON.stringify(tsconfig, null, 2),
+        "event-check.ts": source,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), join(BASE_FIXTURE_DIR, "node_modules", "typescript", "bin", "tsc"), "-p", "."],
+        env: bunEnv,
+        cwd: checkDir,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr.trim()).toBe("");
+      expect(stdout.trim()).toBe("");
+      expect(exitCode).toBe(0);
+    }
+
+    test("lib.dom's composedPath() declaration wins when lib.dom is loaded", async () => {
+      await checkEventFixture(
+        "event-lib-dom-check",
+        ["ESNext", "DOM"],
+        `// lib.dom declares composedPath(): EventTarget[]. The Node-style tuple
+         // declaration must not merge into it (#40574).
+         declare const fullPath: EventTarget[];
+         export const composed: ReturnType<Event["composedPath"]> = fullPath;`,
+      );
+    });
+
+    test("the Node-style composedPath() tuple applies without lib.dom", async () => {
+      await checkEventFixture(
+        "event-no-lib-dom-check",
+        ["ESNext"],
+        `declare const e: Event;
+         export const composed: [EventTarget?] = e.composedPath();`,
+      );
+    });
+  });
+
+  // Also runs on debug builds: spawned tsc over a single file, like the
+  // Bun.mmap check above. @types/node@24 declares `off`/`removeListener` only
+  // on EventEmitter, not on `Process`, so the `memoryPressure` overloads in
+  // overrides.d.ts used to hide the inherited signatures and reject every
+  // other event name (#40003). @types/node >= 26 declares them on `Process`
+  // directly, which masks the bug, so this check pins @types/node@24 instead
+  // of reusing the base fixture.
+  describe("process event methods with @types/node@24", () => {
+    test("removeListener and off accept other event names", async () => {
+      const checkDir = join(TEMP_DIR, "types-node-24-check");
+      const tsconfig = structuredClone(sourceTsconfig);
+      tsconfig.include = ["index.ts"];
+      await mkdir(checkDir, { recursive: true });
+      await makeTree(checkDir, {
+        "package.json": JSON.stringify({ name: "types-node-24-check", private: true }),
+        "tsconfig.json": JSON.stringify(tsconfig, null, 2),
+        "index.ts": `process.removeListener("SIGINT", () => {});
+           process.off("unhandledRejection", () => {});
+           process.removeListener("memoryPressure", () => {});
+           process.on("memoryPressure", level => {
+             level satisfies "warning" | "critical";
+           });`,
+      });
+      await $`cd ${checkDir} && bun add @types/node@24`.quiet();
+      await cp(join(BASE_FIXTURE_DIR, "node_modules", "bun-types"), join(checkDir, "node_modules", "bun-types"), {
+        recursive: true,
+      });
+      await cp(
+        join(BASE_FIXTURE_DIR, "node_modules", "@types", "bun"),
+        join(checkDir, "node_modules", "@types", "bun"),
+        { recursive: true },
+      );
+
+      // Guard against resolution drift silently checking the wrong major.
+      const nodeTypesPkg = await Bun.file(join(checkDir, "node_modules", "@types", "node", "package.json")).json();
+      expect(nodeTypesPkg.version).toStartWith("24.");
 
       await using proc = Bun.spawn({
         cmd: [bunExe(), join(BASE_FIXTURE_DIR, "node_modules", "typescript", "bin", "tsc"), "-p", "."],

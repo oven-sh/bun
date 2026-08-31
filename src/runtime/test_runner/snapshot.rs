@@ -16,44 +16,60 @@ use bun_wyhash::hash;
 use super::diff_format::DiffFormatter;
 use super::expect::Expect;
 use super::jest::{FileColumns as _, Jest};
+use bun_collections::index_sort;
 
 // TestRunner.File.ID — concrete alias from jest.rs (`pub type FileId = u32`).
 type FileId = super::jest::FileId;
 
 bun_core::declare_scope!(inline_snapshot, visible);
 
-pub struct Snapshots<'a> {
+pub struct Snapshots {
     pub(crate) update_snapshots: bool,
     pub(crate) total: usize,
     pub(crate) added: usize,
     pub(crate) passed: usize,
     pub(crate) failed: usize,
 
-    pub(crate) file_buf: &'a mut Vec<u8>,
+    file_buf: Vec<u8>,
     // LIFETIMES.tsv said `HashMap<usize, String>`; overridden per §Strings (data is bytes) → Box<[u8]>.
     // Key is u64 to match `bun.hash`'s return type (avoids a narrowing cast).
-    pub(crate) values: &'a mut HashMap<u64, Box<[u8]>>,
-    pub(crate) counts: &'a mut StringHashMap<usize>,
-    pub(crate) _current_file: Option<File>,
-    /// Read-only backref into `Jest::RUNNER.files[..].source.path` (not owned
-    /// here, never freed): the runner is process-global and its files are
-    /// never freed mid-run, so the pointee outlives `self`. Only dereferenced
-    /// via `as_ref()` in `get_snapshot_file` (see the SAFETY comments there).
-    pub(crate) snapshot_dir_path: Option<core::ptr::NonNull<[u8]>>,
-    pub(crate) inline_snapshots_to_write: &'a mut IndexMap<FileId, Vec<InlineSnapshotToWrite>>,
+    values: HashMap<u64, Box<[u8]>>,
+    counts: StringHashMap<usize>,
+    _current_file: Option<File>,
+    /// Directory whose `__snapshots__/` was last created (or found existing);
+    /// borrowed from the runner's `File::source.path`, a `Path<'static>`.
+    snapshot_dir_path: Option<&'static [u8]>,
+    inline_snapshots_to_write: IndexMap<FileId, Vec<InlineSnapshotToWrite>>,
     pub(crate) last_error_snapshot_name: Option<Box<[u8]>>,
 }
 
 // Re-export the TSV-mandated container name so the field type matches verbatim.
 pub use bun_collections::ArrayHashMap as IndexMap;
 
-impl<'a> Snapshots<'a> {
+impl Snapshots {
     const FILE_HEADER: &'static [u8] = b"// Bun Snapshot v1, https://bun.sh/docs/test/snapshots\n";
 
     #[cfg(windows)]
     const SNAPSHOTS_DIR_NAME: &'static [u8] = b"__snapshots__\\";
     #[cfg(not(windows))]
     const SNAPSHOTS_DIR_NAME: &'static [u8] = b"__snapshots__/";
+
+    pub(crate) fn init(update_snapshots: bool) -> Snapshots {
+        Snapshots {
+            update_snapshots,
+            total: 0,
+            added: 0,
+            passed: 0,
+            failed: 0,
+            file_buf: Vec::new(),
+            values: HashMap::new(),
+            counts: StringHashMap::new(),
+            _current_file: None,
+            snapshot_dir_path: None,
+            inline_snapshots_to_write: IndexMap::new(),
+            last_error_snapshot_name: None,
+        }
+    }
 }
 
 // hoisted out of `impl Snapshots` — inherent associated types are unstable.
@@ -93,7 +109,7 @@ pub struct File {
     pub(crate) file: bun_sys::File,
 }
 
-impl<'a> Snapshots<'a> {
+impl Snapshots {
     /// Reset per-run snapshot counters to 0. Keys stay owned by the map until
     /// `writeSnapshotFile` tears them down on file switch.
     pub(crate) fn reset_counts(&mut self) {
@@ -332,7 +348,7 @@ impl<'a> Snapshots<'a> {
     pub(crate) fn write_snapshot_file(&mut self) -> Result<(), Error> {
         if let Some(file) = self._current_file.take() {
             file.file
-                .write_all(self.file_buf)
+                .write_all(&self.file_buf)
                 .map_err(|_| crate::Error::FailedToWriteSnapshotFile)?;
             let _ = file.file.close();
             self.file_buf.clear();
@@ -389,7 +405,7 @@ impl<'a> Snapshots<'a> {
             });
 
             // 1. sort ils_info by row, col
-            ils_info.sort_by(|a, b| {
+            index_sort::sort_slice_by(ils_info, |a, b| {
                 if InlineSnapshotToWrite::less_than_fn(a, b) {
                     core::cmp::Ordering::Less
                 } else if InlineSnapshotToWrite::less_than_fn(b, a) {
@@ -458,14 +474,7 @@ impl<'a> Snapshots<'a> {
                             },
                             format_args!(
                                 "Failed to update inline snapshot: Multiple inline snapshots on the same line must all have the same value:\n{}",
-                                DiffFormatter {
-                                    received_string: Some(&ils.value),
-                                    expected_string: Some(last_value),
-                                    global_this: Some(vm.global()),
-                                    received: None,
-                                    expected: None,
-                                    not: false,
-                                },
+                                DiffFormatter::from_strings(&ils.value, last_value, false),
                             ),
                         );
                     }
@@ -845,25 +854,18 @@ impl<'a> Snapshots<'a> {
                 .copy_from_slice(Self::SNAPSHOTS_DIR_NAME);
             pos += Self::SNAPSHOTS_DIR_NAME.len();
 
-            // SAFETY: snapshot_dir_path is a BACKREF into Jest::runner().files[..].source.path,
-            // which outlives self (runner is process-global; files are never freed mid-run).
-            let cached_dir = self.snapshot_dir_path.map(|p| unsafe { p.as_ref() });
+            let cached_dir = self.snapshot_dir_path;
             if cached_dir.is_none() || !strings::eql_long(dir_path, cached_dir.unwrap(), true) {
                 buf[pos] = 0;
                 // SAFETY: buf[pos] == 0 written above
                 let snapshot_dir_path = ZStr::from_buf(&buf[..], pos);
                 match bun_sys::mkdir(snapshot_dir_path, 0o777) {
                     bun_sys::Result::Ok(()) => {
-                        // SAFETY: read-only backref into Jest::RUNNER.files[..].source.path
-                        // (process-global; outlives self). Never written through — only
-                        // dereferenced via `.as_ref()` above. `NonNull::from(&_)` avoids
-                        // the `*const _ as *mut _` cast while preserving provenance.
-                        self.snapshot_dir_path = Some(core::ptr::NonNull::from(dir_path));
+                        self.snapshot_dir_path = Some(dir_path);
                     }
                     bun_sys::Result::Err(err) => match err.get_errno() {
                         bun_sys::Errno::EEXIST => {
-                            // SAFETY: see above — read-only backref, never written through.
-                            self.snapshot_dir_path = Some(core::ptr::NonNull::from(dir_path));
+                            self.snapshot_dir_path = Some(dir_path);
                         }
                         _ => return Ok(bun_sys::Result::Err(err)),
                     },

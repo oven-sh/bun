@@ -1,0 +1,43 @@
+name: Deploy bun.com
+
+# bun.com (oven-sh/site) bakes a slice of this repository into its build:
+# docs/** and guides (rendered natively), packages/bun-types (API reference),
+# and the install scripts. Nothing on the site side watches this repo, so a
+# push that only touches those paths would otherwise sit unpublished until the
+# next unrelated site deploy. Poke the site's Vercel deploy hook instead.
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "docs/**"
+      - "packages/bun-types/**"
+      - "src/runtime/cli/install.sh"
+      - "src/runtime/cli/install.ps1"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: deploy-site
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    if: github.repository == 'oven-sh/bun'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Trigger Vercel deployment
+        env:
+          VERCEL_DEPLOY_HOOK: ${{ secrets.SITE_VERCEL_DEPLOY_HOOK }}
+        run: |
+          if [ -z "$VERCEL_DEPLOY_HOOK" ]; then
+            echo "::error::SITE_VERCEL_DEPLOY_HOOK secret is not set"
+            exit 1
+          fi
+          curl --fail --silent --show-error \
+            --connect-timeout 10 \
+            --max-time 60 \
+            -X POST "$VERCEL_DEPLOY_HOOK"
+          echo "Vercel deployment triggered"

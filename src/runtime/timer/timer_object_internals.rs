@@ -100,6 +100,7 @@ impl TimerObjectInternals {
     /// lives in exactly one place.
     #[inline]
     fn parent_ptr(&self) -> TimerParent {
+        bun_core::assert_not_freeze!(TimerObjectInternals, TimerParent);
         let this = std::ptr::from_ref::<Self>(self).cast_mut();
         match self.flags.get().kind() {
             // SAFETY: `kind == SetImmediate` ⇒ `self` is the `internals` field
@@ -309,7 +310,7 @@ impl TimerObjectInternals {
                 unreachable!()
             };
             // SAFETY: `vm` is the live per-thread VM. Low tier stores `*mut ()`
-            // (PORTING.md §Dispatch); `run_immediate_task_hook` casts it back
+            // (PORTING.md §Dispatch); `__bun_run_immediate_task` casts it back
             // to `*mut ImmediateObject`.
             unsafe { (*vm).enqueue_immediate_task(parent.cast()) };
             self.set_enable_keeping_event_loop_alive(vm, true);
@@ -366,7 +367,10 @@ impl TimerObjectInternals {
         // `s.deref()` below; `*this` may be freed only after that point.
         let s = unsafe { &*this };
         let cleared = s.flags.get().has_cleared_timer()
+            // The VM's stop was requested: nothing more enters script (as `fire`).
             // SAFETY: `vm` is the live per-thread VM (hook contract).
+            || unsafe { (*vm).script_execution_status() } != ScriptExecutionStatus::Running
+            // SAFETY: as above.
             || s.generation != unsafe { (*vm).test_isolation_generation }
             // unref'd setImmediate callbacks should only run if there are things
             // keeping the event loop alive other than setImmediates
@@ -799,18 +803,11 @@ impl TimerObjectInternals {
         }
     }
 
-    /// Final teardown invoked by the
-    /// parent container's intrusive-refcount destructor (`{Timeout,Immediate}
-    /// Object::deref` when the count hits zero). Unlinks the parent from every
-    /// `Timer::All` data structure it may still be reachable from so the
-    /// imminent `heap::take` free cannot leave a dangling
+    /// Final teardown, invoked from the parent container's `Drop` (count hit
+    /// zero). Unlinks the parent from every `Timer::All` data structure it may
+    /// still be reachable from so the free cannot leave a dangling
     /// `*mut EventLoopTimer` in the heap or a leaked keep-alive count.
-    ///
-    /// Note: an explicit `this_value` release is intentionally NOT
-    /// done here — `JsRef: Drop` runs when the parent `Box` is reclaimed
-    /// immediately after this returns, performing the same release.
-    /// `ref_count.assertNoRefs()` is likewise omitted: the only caller is the
-    /// `n == 1` branch of `deref`, so the count is provably zero.
+    /// `this_value` is released by `JsRef: Drop` right after.
     ///
     /// # Safety
     /// `self` is the `internals` field of a live heap-allocated
@@ -835,7 +832,7 @@ impl TimerObjectInternals {
 
         // (c) `vm.timer.maps.get(kind).swapRemove(id)` if
         //     `has_accessed_primitive` — drops the i32→*mut EventLoopTimer
-        //     entry minted by `toPrimitive`. Swap-remove: the id map is only
+        //     entry minted by `to_primitive`. Swap-remove: the id map is only
         //     ever keyed into, never iterated in order, and `deinit` runs for
         //     every id-accessed timer a GC sweep collects, so the ordered
         //     remove's O(n) shift + index rebuild here was O(n²) across a
@@ -858,7 +855,7 @@ impl TimerObjectInternals {
             } else if kind == Kind::SetInterval {
                 // A `setTimeout` promoted to a `setInterval` by
                 // `convert_to_interval()` keeps the entry minted by
-                // `toPrimitive` in `maps.set_timeout`. Remove it from there
+                // `to_primitive` in `maps.set_timeout`. Remove it from there
                 // too, or `remove_timer_by_id` would hand out a dangling
                 // `*mut EventLoopTimer` after the parent is freed.
                 // SAFETY: as above.
@@ -1049,7 +1046,6 @@ impl TimerObjectInternals {
     /// `JSValue`/`Strong` content here.
     pub fn finalize(&self) {
         self.this_value.with_mut(|r| r.finalize());
-        self.deref();
     }
 
     /// `clearTimeout`/`clearInterval`

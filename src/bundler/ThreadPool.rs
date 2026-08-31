@@ -4,7 +4,7 @@
 //!
 //! `Worker::create` / `initialize_transpiler` build the per-worker
 //! `Transpiler` via `Transpiler::for_worker` (per-field deep clone — no
-//! bitwise struct copy); the `linker.resolver` backref is wired by
+//! bitwise struct copy); the self-referential `linker` backrefs are wired by
 //! `Transpiler::wire_after_move` once the value is at its final address.
 
 use core::mem::{ManuallyDrop, MaybeUninit};
@@ -237,7 +237,7 @@ impl ThreadPool {
     pub(crate) fn worker_pool(&self) -> &ThreadPoolLib::ThreadPool {
         debug_assert!(!self.worker_pool.is_null());
         // SAFETY: `worker_pool` is initialized before any caller can observe
-        // `self` and lives until `deinit_v2`; all driver methods take `&self`.
+        // `self` and lives until `deinit`; all driver methods take `&self`.
         unsafe { &*self.worker_pool }
     }
 

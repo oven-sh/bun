@@ -367,6 +367,45 @@ describe("CONTINUATION (checklist §3,§7)", () => {
     expect(goawayErrorCode(goaway)).toBe(ErrorCode.PROTOCOL_ERROR);
     c.destroy();
   });
+
+  test("a header block spanning HEADERS and two CONTINUATION frames is reassembled (§6.10)", async () => {
+    const seen: Record<string, unknown>[] = [];
+    const server = http2.createServer();
+    server.on("stream", (stream: any, headers: any) => {
+      seen.push({ path: headers[":path"], a: headers["x-a"], b: headers["x-b"] });
+      stream.respond({ ":status": 200 });
+      stream.end("ok");
+    });
+    server.listen(0);
+    await once(server, "listening");
+    const c = await RawH2.connect((server.address() as net.AddressInfo).port);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      // Two literal fields (new name, not indexed), split mid-instruction between the CONTINUATIONs
+      // so the block only decodes if all three fragments are concatenated in order.
+      const tail = Buffer.concat([
+        Buffer.from([0x00]),
+        hpackLiteral("x-a"),
+        hpackLiteral("1"),
+        Buffer.from([0x00]),
+        hpackLiteral("x-b"),
+        hpackLiteral("2"),
+      ]);
+      c.sendFrame(FrameType.HEADERS, 0x1 /* END_STREAM, no END_HEADERS */, 1, requestHeaderBlock("GET"));
+      c.sendFrame(FrameType.CONTINUATION, 0, 1, tail.subarray(0, 3));
+      c.sendFrame(FrameType.CONTINUATION, 0x4 /* END_HEADERS */, 1, tail.subarray(3));
+      const resp = await c.waitFor(
+        f => (f.type === FrameType.HEADERS && f.streamId === 1) || f.type === FrameType.GOAWAY,
+      );
+      expect(resp.type).toBe(FrameType.HEADERS);
+      expect(c.frames.find(f => f.type === FrameType.GOAWAY)).toBeUndefined();
+      expect(seen).toEqual([{ path: "/", a: "1", b: "2" }]);
+    } finally {
+      c.destroy();
+      server.close();
+    }
+  });
 });
 
 describe("SETTINGS value ranges (checklist §6.5.2)", () => {
@@ -1250,6 +1289,33 @@ describe("request pseudo-header requirements (RFC 9113 §8.3.1)", () => {
   });
 });
 
+// A stream nothing references any more can still survive a bounded number of collections: JSC scans
+// the machine stack conservatively and honors interior pointers, so a stale word left in a native
+// frame (seen on x64 as cell+0x84 in the microtask-drain frames; near-deterministic on aarch64) pins
+// one object until that slot is overwritten. The leaks these tests guard against retain every stream,
+// so they open many streams and tolerate a few stragglers instead of demanding exactly zero.
+const GC_STRAGGLERS = 3;
+
+/**
+ * Collects until every one of `refs` is gone, giving up after 50 passes or once the count has not
+ * moved for 10 passes, and resolves to how many survived.
+ */
+async function liveCount(refs: WeakRef<object>[]): Promise<number> {
+  const live = () => refs.filter(ref => ref.deref() !== undefined).length;
+  // A completed stream's JS teardown is spread over a few immediates (rstNextTick, deferred
+  // destroy), and a WeakRef target survives the job that dereferenced it, so every pass gets a
+  // fresh turn before collecting.
+  let last = live();
+  for (let pass = 0, stuck = 0; pass < 50 && last > 0 && stuck < 10; pass++) {
+    await new Promise(resolve => setImmediate(resolve));
+    await gcTick();
+    const now = live();
+    stuck = now === last ? stuck + 1 : 0;
+    last = now;
+  }
+  return last;
+}
+
 describe("inbound stream lifecycle", () => {
   test("releases server stream objects once the peer resets their streams", async () => {
     const total = 32;
@@ -1283,16 +1349,7 @@ describe("inbound stream lifecycle", () => {
         c.sendFrame(FrameType.RST_STREAM, 0, 1 + 2 * i, cancel);
       }
       await allClosed.promise;
-      // The streams' native release rides the deferred teardown chain
-      // (setImmediate: rstNextTick / delayed destroy), so drain an immediate
-      // turn before each GC pass - gcTick's Bun.sleep(0) alone leaves the
-      // release pending on slow FinalizationRegistry lanes (alpine/musl
-      // needed a retry at 20 passes; collection is late there, not stuck).
-      for (let i = 0; i < 50 && refs.some(ref => ref.deref() !== undefined); i++) {
-        await new Promise(resolve => setImmediate(resolve));
-        await gcTick();
-      }
-      expect(refs.filter(ref => ref.deref() !== undefined).length).toBe(0);
+      expect(await liveCount(refs)).toBeLessThanOrEqual(GC_STRAGGLERS);
     } finally {
       c.destroy();
       server.close();
@@ -1619,6 +1676,217 @@ describe("inbound stream lifecycle", () => {
       expect(seen).toEqual([{ path: "/" }, { path: "/", sync: "1" }]);
     } finally {
       c.destroy();
+      server.close();
+    }
+  });
+});
+
+// A DATA frame that cannot be written right away (the peer's flow-control window is used up, the
+// socket has backpressure, or another stream on the session already has frames waiting) is put on
+// the session's outbound queue and written later, when a WINDOW_UPDATE or a writable socket drains
+// the queue. Writing the last queued frame of a stream whose peer half is already closed completes
+// the stream, and, exactly like the direct-write path, has to release it (the JS stream object and
+// the native entry) while the session lives on. Node releases these streams too; a stream that is
+// only released at session teardown is a per-request leak on a long-lived session. END_STREAM can
+// ride on the queued frame that carries the last of the body or on an empty frame queued by itself
+// (end() without a body, or the empty frame that follows a body once no trailers are coming); the
+// queue writes the two through different branches, so both shapes are covered below.
+describe("stream release after a queued END_STREAM", () => {
+  // Well above GC_STRAGGLERS: without the release every one of these survives.
+  const STREAMS = 16;
+  // The peer advertises a 1 KiB stream window: a 4 KiB body cannot be written in one go, so its
+  // tail (the frame carrying END_STREAM) is queued and flushed as the peer's WINDOW_UPDATEs arrive.
+  const WINDOW = 1024;
+  const BODY = Buffer.alloc(4 * WINDOW, "x");
+  // Far more than the default window plus the receiving stream's readable buffer can hold, so a
+  // response of this size that the client never reads stays partly queued on the server for good.
+  const STALLED_BODY = Buffer.alloc(256 * 1024, "s");
+
+  async function listen(server: http2.Http2Server): Promise<string> {
+    server.listen(0);
+    await once(server, "listening");
+    return `http://127.0.0.1:${(server.address() as net.AddressInfo).port}`;
+  }
+
+  /**
+   * Sends one request and resolves once the client stream has closed, reporting how many response
+   * body bytes arrived and how many frames the client session still had queued when the response
+   * headers came in.
+   */
+  function roundTrip(client: http2.ClientHttp2Session, headers: http2.OutgoingHttpHeaders, body?: Buffer) {
+    const { promise, resolve, reject } = Promise.withResolvers<{ received: number; queuedAtResponse: number }>();
+    const req = client.request(headers);
+    let received = 0;
+    let queuedAtResponse = -1;
+    req.on("error", reject);
+    req.on("response", () => {
+      queuedAtResponse = client.state.outboundQueueSize!;
+    });
+    req.on("data", (chunk: Buffer) => {
+      received += chunk.length;
+    });
+    req.on("close", () => resolve({ received, queuedAtResponse }));
+    req.end(body);
+    return { ref: new WeakRef<object>(req), closed: promise };
+  }
+
+  test("server streams whose response outgrew the client's window are released", async () => {
+    const refs: WeakRef<object>[] = [];
+    const queuedAfterEnd: number[] = [];
+    const server = http2.createServer();
+    server.on("stream", stream => {
+      refs.push(new WeakRef(stream));
+      stream.respond({ ":status": 200 });
+      stream.end(BODY);
+      queuedAfterEnd.push(stream.session!.state.outboundQueueSize!);
+    });
+    const client = http2.connect(await listen(server), { settings: { initialWindowSize: WINDOW } });
+    try {
+      const received: number[] = [];
+      for (let i = 0; i < STREAMS; i++) {
+        received.push((await roundTrip(client, { ":path": "/" }).closed).received);
+      }
+      // The premise: each response left part of its body queued, and the queue then delivered it.
+      expect({ tailQueued: queuedAfterEnd.map(n => n > 0), received }).toEqual({
+        tailQueued: Array(STREAMS).fill(true),
+        received: Array(STREAMS).fill(BODY.length),
+      });
+      expect(await liveCount(refs)).toBeLessThanOrEqual(GC_STRAGGLERS);
+    } finally {
+      client.close();
+      server.close();
+    }
+  });
+
+  /**
+   * Stalls one response on a fresh session (never read on the client: once the client's readable
+   * buffer is full it stops replenishing that stream's window, so the server keeps the rest of the
+   * response, and with it a non-empty outbound queue, until the session goes away), then runs
+   * STREAMS ordinary requests on the same session. `server` must answer "/stalled" with
+   * STALLED_BODY and report through `stalledFinished` whether that response ever finished; every
+   * other request must register its stream in `refs`. Resolves to how many of `refs` survived GC.
+   */
+  async function liveAfterRequestsBehindStalledResponse(
+    server: http2.Http2Server,
+    refs: WeakRef<object>[],
+    stalledFinished: () => boolean,
+  ): Promise<number> {
+    const client = http2.connect(await listen(server));
+    try {
+      const stalled = client.request({ ":path": "/stalled" });
+      let stalledError: Error | null = null;
+      stalled.on("error", err => (stalledError = err));
+      await once(stalled, "response");
+      for (let i = 0; i < STREAMS; i++) {
+        await roundTrip(client, { ":path": "/" }).closed;
+      }
+      expect(refs).toHaveLength(STREAMS);
+      const live = await liveCount(refs);
+      // The premise: the stalled stream is still open (not errored or reset into releasing the
+      // queue) and its response was still queued while the other requests were answered.
+      expect(stalledError).toBeNull();
+      expect(stalledFinished()).toBe(false);
+      stalled.close();
+      return live;
+    } finally {
+      client.close();
+      server.close();
+    }
+  }
+
+  test.each([
+    ['end("ok")', (stream: http2.ServerHttp2Stream) => stream.end("ok")],
+    ["end() without a body", (stream: http2.ServerHttp2Stream) => stream.end()],
+  ])("server streams answered with %s behind another stream's stalled response are released", async (_, finish) => {
+    const refs: WeakRef<object>[] = [];
+    let stalledFinished = false;
+    const server = http2.createServer();
+    server.on("stream", (stream, headers) => {
+      if (headers[":path"] === "/stalled") {
+        stream.once("finish", () => {
+          stalledFinished = true;
+        });
+        stream.respond({ ":status": 200 });
+        stream.end(STALLED_BODY);
+        return;
+      }
+      refs.push(new WeakRef(stream));
+      stream.resume();
+      // Answer once the request's END_STREAM has been processed, like a handler that consumes the
+      // request body does: the queued response is then the only thing the stream still waits for.
+      stream.on("end", () => {
+        stream.respond({ ":status": 200 });
+        finish(stream);
+      });
+    });
+    expect(await liveAfterRequestsBehindStalledResponse(server, refs, () => stalledFinished)).toBeLessThanOrEqual(
+      GC_STRAGGLERS,
+    );
+  });
+
+  // The compat API's responses wait for trailers, so after the body END_STREAM always goes out on an
+  // empty DATA frame of its own.
+  test("server streams answered through the compat API behind another stream's stalled response are released", async () => {
+    const refs: WeakRef<object>[] = [];
+    let stalledFinished = false;
+    const server = http2.createServer((req, res) => {
+      if (req.url === "/stalled") {
+        res.stream.once("finish", () => {
+          stalledFinished = true;
+        });
+        res.end(STALLED_BODY);
+        return;
+      }
+      refs.push(new WeakRef(res.stream));
+      req.resume();
+      req.on("end", () => res.end("ok"));
+    });
+    expect(await liveAfterRequestsBehindStalledResponse(server, refs, () => stalledFinished)).toBeLessThanOrEqual(
+      GC_STRAGGLERS,
+    );
+  });
+
+  test("client streams whose request body outgrew the server's window are released", async () => {
+    const refs: WeakRef<object>[] = [];
+    const uploaded: Promise<number>[] = [];
+    const server = http2.createServer({ settings: { initialWindowSize: WINDOW } });
+    server.on("stream", stream => {
+      // Answer as soon as the headers arrive, so the server's END_STREAM reaches the client while
+      // the client still has the body's tail queued, and keep reading the body so that tail really
+      // is flushed from the queue (an upload nobody reads gets reset instead, and a reset releases
+      // the stream through a different path).
+      uploaded.push(
+        new Promise((resolve, reject) => {
+          let bytes = 0;
+          stream.on("data", (chunk: Buffer) => {
+            bytes += chunk.length;
+          });
+          stream.on("end", () => resolve(bytes));
+          stream.on("error", reject);
+        }),
+      );
+      stream.respond({ ":status": 200 });
+      stream.end();
+    });
+    const client = http2.connect(await listen(server));
+    try {
+      // The server's window applies to requests opened after its SETTINGS frame has been received.
+      await once(client, "remoteSettings");
+      const queuedAtResponse: number[] = [];
+      for (let i = 0; i < STREAMS; i++) {
+        const { ref, closed } = roundTrip(client, { ":method": "POST", ":path": "/" }, BODY);
+        refs.push(ref);
+        queuedAtResponse.push((await closed).queuedAtResponse);
+      }
+      // The premise: each response arrived while the request's tail was still queued, and the queue
+      // then delivered that tail.
+      expect({ tailQueued: queuedAtResponse.map(n => n > 0), uploaded: await Promise.all(uploaded) }).toEqual({
+        tailQueued: Array(STREAMS).fill(true),
+        uploaded: Array(STREAMS).fill(BODY.length),
+      });
+      expect(await liveCount(refs)).toBeLessThanOrEqual(GC_STRAGGLERS);
+    } finally {
+      client.close();
       server.close();
     }
   });

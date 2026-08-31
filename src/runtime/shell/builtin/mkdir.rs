@@ -298,6 +298,7 @@ impl ShellMkdirTask {
         use bun_paths::{Platform, platform, resolve_path};
         // We have to give an absolute path to our mkdir implementation for it
         // to work with cwd.
+        let mut spill = Vec::new();
         let filepath: &bun_core::ZStr = if Platform::AUTO.is_absolute(&this.filepath) {
             // Owned `Vec<u8>`; ensure NUL-terminated.
             if this.filepath.last() != Some(&0) {
@@ -305,15 +306,25 @@ impl ShellMkdirTask {
             }
             bun_core::ZStr::from_buf(&this.filepath, this.filepath.len() - 1)
         } else {
-            resolve_path::join_z::<platform::Auto>(&[&this.cwd_path, &this.filepath])
+            resolve_path::join_z_spill::<platform::Auto>(
+                &mut spill,
+                &[&this.cwd_path, &this.filepath],
+            )
         };
+
+        // `NodeFS` expects the `Valid::path_too_long` bound its JS callers
+        // enforce; past it, `PathLike::slice_z` yields "" and mkdir reports ENOENT.
+        if filepath.len() >= bun_paths::MAX_PATH_BYTES {
+            this.err = Some(
+                bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::mkdir)
+                    .with_path(filepath.as_bytes()),
+            );
+            return;
+        }
 
         let mut node_fs = NodeFS::default();
         let args = fs_args::Mkdir {
-            path: PathLike::String(bun_ptr::cow_slice::CowSlice::init_unchecked(
-                filepath.as_bytes(),
-                false,
-            )),
+            path: PathLike::borrowed(filepath.as_bytes()),
             recursive: this.opts.parents,
             mode: fs_args::Mkdir::DEFAULT_MODE,
             always_return_none: true,
@@ -361,6 +372,15 @@ impl ShellMkdirTask {
 
 impl bun_event_loop::Taskable for ShellMkdirTask {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellMkdirTask;
+    /// A pool completion that will not run: drop the keep-alive and the box
+    /// (nothing else frees an unrun one).
+    unsafe fn release_unrun(this: *mut Self) {
+        // SAFETY: fn contract — the box the builtin scheduled.
+        unsafe {
+            (*this).task.unref_unrun();
+            drop(bun_core::heap::take(this));
+        }
+    }
 }
 
 /// Collects each created directory into

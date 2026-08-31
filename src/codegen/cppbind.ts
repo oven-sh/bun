@@ -451,12 +451,13 @@ const rustSharedTypes: Record<string, string> = {
 
   // JSC / Bun
   "BunString": "bun_core::String",
+  "JSC::TemporalType": "crate::TemporalType",
   "JSC::EncodedJSValue": "crate::JSValue",
   "EncodedJSValue": "crate::JSValue",
   "JSC::JSGlobalObject": "crate::JSGlobalObject",
   "Zig::GlobalObject": "crate::JSGlobalObject",
   "ZigException": "crate::zig_exception::ZigException",
-  "ZigString": "bun_core::ZigString",
+  "EncodedSlice": "bun_core::EncodedSlice",
   "JSC::VM": "crate::VM",
   "JSC::JSPromise": "crate::JSPromise",
   "JSC::JSMap": "crate::JSMap",
@@ -739,7 +740,7 @@ function generateRustFn(fn: CppFn, rustRaw: string[], rustWrap: string[]): void 
     `    // any raw-pointer args are forwarded under the wrapper's own \`unsafe fn\` contract.`,
     `    let __v = unsafe { raw::${fn.name}(${callArgsStr}) };`,
     `    __scope.assert_exception_presence_matches(${errCond});`,
-    `    if ${errCond} { Err(crate::JsError::Thrown) } else { Ok(${okExpr}) }`,
+    `    if ${errCond} { Err(crate::top_exception_scope::thrown(${gname})) } else { Ok(${okExpr}) }`,
     `}`,
   );
 }
@@ -900,9 +901,6 @@ async function renderError(position: Srcloc, message: string, label: string, col
   console.error(`\x1b[m${" ".repeat(Bun.stringWidth(before))}${color}^${"~".repeat(Math.max(length - 1, 0))}\x1b[m`);
 }
 
-type Cfg = {
-  dstDir: string;
-};
 async function readFileOrEmpty(file: string): Promise<string> {
   try {
     const fileContents = await Bun.file(file).text();

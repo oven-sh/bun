@@ -14,7 +14,6 @@
 
 use core::cell::Cell;
 use core::ffi::{CStr, c_uint, c_void};
-use core::ptr::NonNull;
 
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{CallFrame, GlobalRef, JSGlobalObject, JSValue, JsCell, JsResult, host_fn};
@@ -189,6 +188,10 @@ impl UpgradedDuplex {
                 .map(Into::into),
         });
         (this.handlers.on_handshake)(this.handlers.ctx, handshake_success, ssl_error);
+        // Retry writes parked during the handshake, like openssl.c's `ssl_write_wants_read`.
+        if handshake_success && !this.is_shutdown() {
+            (this.handlers.on_writable)(this.handlers.ctx);
+        }
     }
 
     fn on_close(this: *mut Self) {
@@ -212,12 +215,8 @@ impl UpgradedDuplex {
     }
 
     fn call_write_or_end(&self, data: Option<&[u8]>, msg_more: bool) {
-        // `vm` is always set via `from()`; `None` only in the zeroed placeholder
-        // state, which never reaches here.
-        let Some(vm) = self.vm else { return };
-        if vm.is_shutting_down() {
-            return;
-        }
+        // No JS duplex to talk to: the zeroed placeholder, or the owning
+        // socket's finalizer abandoned it (`abandon_js_side`).
         let duplex = self.origin.get();
         if duplex.is_empty() {
             return;
@@ -249,18 +248,18 @@ impl UpgradedDuplex {
             let buffer = match bun_jsc::array_buffer::BinaryType::Buffer.to_js(data, &global) {
                 Ok(b) => b,
                 Err(err) => {
-                    (self.handlers.on_error)(self.handlers.ctx, global.take_exception(err));
+                    (self.handlers.on_error)(self.handlers.ctx, global.take_error(err));
                     return;
                 }
             };
             buffer.ensure_still_alive();
 
             if let Err(err) = write_or_end.call(&global, duplex, &[buffer]) {
-                (self.handlers.on_error)(self.handlers.ctx, global.take_exception(err));
+                (self.handlers.on_error)(self.handlers.ctx, global.take_error(err));
             }
         } else {
             if let Err(err) = write_or_end.call(&global, duplex, &[JSValue::NULL]) {
-                (self.handlers.on_error)(self.handlers.ctx, global.take_exception(err));
+                (self.handlers.on_error)(self.handlers.ctx, global.take_error(err));
             }
         }
     }
@@ -489,26 +488,16 @@ impl UpgradedDuplex {
         Ok(())
     }
 
-    /// Adopts `ctx` (one ref) — freed on both success (via `wrapper.deinit`) and
-    /// error. Mirrors `start_tls` but skips the
+    /// Mirrors `start_tls` but skips the
     /// `SSLConfig.asUSockets() → us_ssl_ctx_from_options()` round-trip so a
     /// memoised `SecureContext` can be reused on the duplex/named-pipe path.
     pub(crate) fn start_tls_with_ctx(
         &self,
-        ctx: *mut bun_boringssl_sys::SSL_CTX,
+        ctx: bun_boringssl_sys::OwnedSslCtx,
         is_client: bool,
         verify: ServerVerify,
     ) -> Result<(), crate::Error> {
-        // errdefer SSL_CTX_free(ctx) — free the adopted ref on the error path only.
-        let ctx_guard = scopeguard::guard(ctx, |ctx| {
-            // SAFETY: ctx is a valid SSL_CTX* with one ref adopted by this fn.
-            unsafe { bun_boringssl_sys::SSL_CTX_free(ctx) };
-        });
-        let ctx_nn =
-            NonNull::new(ctx).expect("caller passes a non-null SSL_CTX* with one adopted ref");
-        let wrapper = WrapperType::init_with_ctx(ctx_nn, is_client, self.wrapper_handlers())?;
-        // Success: disarm the errdefer.
-        scopeguard::ScopeGuard::into_inner(ctx_guard);
+        let wrapper = WrapperType::init_with_ctx(ctx, is_client, self.wrapper_handlers())?;
         self.install_and_start(wrapper, verify);
         Ok(())
     }
@@ -527,6 +516,15 @@ impl UpgradedDuplex {
     pub(crate) fn raw_write(&self, encoded_data: &[u8]) -> i32 {
         self.write_encrypted(encoded_data);
         i32::try_from(encoded_data.len()).expect("int cast")
+    }
+
+    /// The owning socket wrapper is being finalized: the JS duplex may be dead
+    /// too and a finalizer dispatches nothing, so the SSL shutdown that
+    /// follows writes no close_notify and ends nothing — it only unwinds the
+    /// native side.
+    #[uws_callback(export = "UpgradedDuplex__abandon_js_side", no_catch)]
+    pub(crate) fn abandon_js_side(&self) {
+        self.origin.set(JSValue::ZERO);
     }
 
     #[uws_callback(export = "UpgradedDuplex__close")]
@@ -550,14 +548,16 @@ impl UpgradedDuplex {
         }
     }
 
+    /// `None` means `start_tls` has not run yet (teardown never clears the slot), not shut down.
     #[uws_callback(export = "UpgradedDuplex__is_shutdown", no_catch)]
     pub(crate) fn is_shutdown(&self) -> bool {
-        self.wrapper_ref().is_none_or(|w| w.is_shutdown())
+        self.wrapper_ref().is_some_and(|w| w.is_shutdown())
     }
 
+    /// See [`Self::is_shutdown`] for the not-yet-started case.
     #[uws_callback(export = "UpgradedDuplex__is_closed", no_catch)]
     pub(crate) fn is_closed(&self) -> bool {
-        self.wrapper_ref().is_none_or(|w| w.is_closed())
+        self.wrapper_ref().is_some_and(|w| w.is_closed())
     }
 
     #[uws_callback(export = "UpgradedDuplex__is_established", no_catch)]
@@ -602,7 +602,7 @@ impl UpgradedDuplex {
         // Note: `EventLoopTimer.next` is the lower-tier `ElTimespec` stub;
         // bridge from `bun_core::Timespec` until the lower tier switches.
         let next =
-            bun_core::Timespec::ms_from_now(bun_core::TimespecMockMode::AllowMockedTime, ms as i64);
+            bun_core::Timespec::ms_from_now(bun_core::TimespecMockMode::ForceRealTime, ms as i64);
         self.event_loop_timer.with_mut(|t| {
             t.next = ElTimespec {
                 sec: next.sec,

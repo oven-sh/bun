@@ -4,6 +4,8 @@
 #include <atomic>
 #include <cassert>
 #include <chrono>
+#include <cstdint>
+#include <cstdio>
 #include <mutex>
 #include <thread>
 #include <vector>
@@ -513,7 +515,146 @@ create_threadsafe_function_after_teardown(const Napi::CallbackInfo &info) {
   return info.Env().Undefined();
 }
 
+// A finalizer that runs while the env drains its finalizers at teardown and
+// registers another one: it creates an external buffer with a finalize_cb.
+// That late finalizer must run in the same teardown. Counted process-wide so
+// the parent thread can read it after the worker is gone.
+static std::atomic<int> late_finalizer_runs{0};
+
+static void late_buffer_finalizer(napi_env env, void *data, void *hint) {
+  late_finalizer_runs.fetch_add(1);
+  free(data);
+}
+
+static void finalizer_that_creates_external_buffer(napi_env env, void *data,
+                                                   void *hint) {
+  free(data);
+  void *bytes = malloc(16);
+  napi_value buffer;
+  // Script is refused during teardown, but N-API object creation is not: this
+  // registers `late_buffer_finalizer` with the env from inside its cleanup.
+  napi_status status = napi_create_external_buffer(
+      env, 16, bytes, late_buffer_finalizer, nullptr, &buffer);
+  if (status != napi_ok) {
+    free(bytes);
+  }
+}
+
+// napi_wrap's finalizer is env-bound: for an object still alive when the
+// worker exits it runs from the env's cleanup (heap alive), not from GC.
+napi_value
+create_object_whose_finalizer_creates_external_buffer(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  napi_value object;
+  NODE_API_CALL(env, napi_create_object(env, &object));
+  NODE_API_CALL(env, napi_wrap(env, object, malloc(1),
+                               finalizer_that_creates_external_buffer, nullptr,
+                               nullptr));
+  return object;
+}
+
+napi_value late_finalizer_run_count(const Napi::CallbackInfo &info) {
+  return Napi::Number::New(info.Env(), late_finalizer_runs.load());
+}
+
+// What happens to the items still queued on a threadsafe function when it
+// stops being dispatched: process exit, the creating worker's exit or
+// termination, or napi_tsfn_abort. Everything is printed from here (not from
+// JS: a worker's console.log reaches stdout asynchronously) and compared with
+// node's output. `data` carries the item number.
+static napi_threadsafe_function queued_items_tsfn = nullptr;
+static bool queued_items_tsfn_print_finalize = false;
+static bool queued_items_tsfn_finalized = false;
+
+static void queued_items_call_js(napi_env env, napi_value js_callback,
+                                 void *context, void *data) {
+  int item = static_cast<int>(reinterpret_cast<intptr_t>(data));
+  if (env == nullptr) {
+    // The napi_threadsafe_function_call_js contract for an item that will
+    // never run: free it. js_callback is null along with env.
+    printf("call_js: item %d, env null, js_callback %s\n", item,
+           js_callback == nullptr ? "null" : "set");
+    fflush(stdout);
+    return;
+  }
+  printf("call_js: item %d, env live, js_callback %s\n", item,
+         js_callback == nullptr ? "null" : "set");
+  fflush(stdout);
+  if (js_callback == nullptr) {
+    return;
+  }
+  napi_value undefined;
+  if (napi_get_undefined(env, &undefined) != napi_ok) {
+    printf("call_js: item %d, napi_get_undefined failed\n", item);
+    fflush(stdout);
+    return;
+  }
+  // Refused (napi_cannot_run_js, 23, for this addon's Node-API version) once
+  // the env is being torn down. In one test the JS callback exits the process,
+  // and this does not return.
+  napi_status status =
+      napi_call_function(env, undefined, js_callback, 0, nullptr, nullptr);
+  printf("call_js: item %d, call_function %d\n", item,
+         static_cast<int>(status));
+  fflush(stdout);
+}
+
+static void queued_items_finalize(napi_env env, void *data, void *hint) {
+  queued_items_tsfn_finalized = true;
+  if (queued_items_tsfn_print_finalize) {
+    printf("finalize: env %s\n", env == nullptr ? "null" : "live");
+    fflush(stdout);
+  }
+}
+
+// queue_threadsafe_function_items(js_callback, count, print_finalize): creates
+// the function (one thread reference, which is never released) and queues
+// `count` items from this thread. They sit in the queue until the caller
+// returns to the event loop. Node runs no finalizer on process.exit() and bun
+// does, so the tests that exit the process do not print it.
+napi_value queue_threadsafe_function_items(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  int count = info[1].As<Napi::Number>().Int32Value();
+  queued_items_tsfn_print_finalize = info[2].As<Napi::Boolean>().Value();
+  queued_items_tsfn_finalized = false;
+  napi_value name;
+  NODE_API_CALL(env, napi_create_string_utf8(env, "napitests::queued_items",
+                                             NAPI_AUTO_LENGTH, &name));
+  NODE_API_CALL(env, napi_create_threadsafe_function(
+                         env, info[0], nullptr, name,
+                         /* max_queue_size (unlimited) */ 0,
+                         /* initial_thread_count */ 1,
+                         /* thread_finalize_data */ nullptr,
+                         queued_items_finalize, /* context */ nullptr,
+                         queued_items_call_js, &queued_items_tsfn));
+  for (intptr_t item = 1; item <= count; item++) {
+    NODE_API_CALL(env, napi_call_threadsafe_function(
+                           queued_items_tsfn, reinterpret_cast<void *>(item),
+                           napi_tsfn_nonblocking));
+  }
+  return info.Env().Undefined();
+}
+
+napi_value
+abort_threadsafe_function_with_queued_items(const Napi::CallbackInfo &info) {
+  napi_status status =
+      napi_release_threadsafe_function(queued_items_tsfn, napi_tsfn_abort);
+  queued_items_tsfn = nullptr;
+  return Napi::Number::New(info.Env(), static_cast<double>(status));
+}
+
+napi_value threadsafe_function_with_queued_items_finalized(
+    const Napi::CallbackInfo &info) {
+  return Napi::Boolean::New(info.Env(), queued_items_tsfn_finalized);
+}
+
 void register_async_tests(Napi::Env env, Napi::Object exports) {
+  REGISTER_FUNCTION(env, exports, queue_threadsafe_function_items);
+  REGISTER_FUNCTION(env, exports, abort_threadsafe_function_with_queued_items);
+  REGISTER_FUNCTION(env, exports,
+                    threadsafe_function_with_queued_items_finalized);
+  REGISTER_FUNCTION(env, exports, create_object_whose_finalizer_creates_external_buffer);
+  REGISTER_FUNCTION(env, exports, late_finalizer_run_count);
   REGISTER_FUNCTION(env, exports, create_promise);
   REGISTER_FUNCTION(env, exports, create_promise_with_napi_cpp);
   REGISTER_FUNCTION(env, exports, create_promise_with_threadsafe_function);

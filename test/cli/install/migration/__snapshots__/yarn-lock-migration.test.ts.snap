@@ -195,7 +195,7 @@ exports[`yarn.lock migration basic yarn.lock with npm aliases: aliases-yarn-migr
 
 exports[`yarn.lock migration basic yarn.lock with resolutions: resolutions-yarn-migration 1`] = `
 "{
-  "lockfileVersion": 2,
+  "lockfileVersion": 3,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -207,6 +207,9 @@ exports[`yarn.lock migration basic yarn.lock with resolutions: resolutions-yarn-
   },
   "overrides": {
     "acorn": "8.11.3",
+    "webpack": {
+      "acorn": "8.11.2",
+    },
   },
   "packages": {
     "acorn": ["acorn@8.11.3", "", { "bin": { "acorn": "bin/acorn" } }, "sha512-Y9rRfJG5jcKOE0CLisYbojUjIrIEE7AGMzA/Sm4BslANhbS+cDMpgBdcPT91oJ7OuJ9hYJBx59RjbhxVnrF8Xg=="],
@@ -272,15 +275,15 @@ exports[`yarn.lock migration basic migration with realistic complex yarn.lock: c
     "": {
       "name": "complex-app",
       "dependencies": {
+        "@babel/core": "^7.20.0",
         "react": "^18.2.0",
         "react-dom": "^18.2.0",
-        "@babel/core": "^7.20.0",
         "webpack": "^5.75.0",
       },
       "devDependencies": {
         "@types/react": "^18.0.0",
-        "typescript": "^4.9.0",
         "eslint": "^8.0.0",
+        "typescript": "^4.9.0",
       },
       "optionalDependencies": {
         "fsevents": "^2.3.2",
@@ -3153,7 +3156,7 @@ exports[`bun pm migrate for existing yarn.lock yarn-stuff: yarn-stuff 1`] = `
 
     "remote": ["abbrev@https://registry.npmjs.org/abbrev/-/abbrev-1.1.1.tgz#f8f2c887ad10bf67f634f005b6987fed3179aac8", {}],
 
-    "symlink": ["symlink@file:./abbrev-link-target", {}],
+    "symlink": ["symlink@file:abbrev-link-target", {}],
 
     "tarball": ["tarball@abbrev-1.1.1.tgz", {}],
   }
@@ -3183,8 +3186,8 @@ exports[`bun pm migrate for existing yarn.lock yarn.lock with packages that have
     "": {
       "name": "os-cpu-test",
       "dependencies": {
-        "fsevents": "^2.3.2",
         "esbuild": "^0.17.0",
+        "fsevents": "^2.3.2",
       },
     },
   },

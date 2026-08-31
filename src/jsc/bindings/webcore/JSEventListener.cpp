@@ -49,16 +49,38 @@ JSEventListener::JSEventListener(JSObject* function, JSObject* wrapper, bool isA
     , m_wasCreatedFromMarkup(createdFromMarkup == CreatedFromMarkup::Yes)
     , m_isInitialized(false)
     , m_wrapper(wrapper)
-    , m_isolatedWorld(isolatedWorld)
+    , m_isolatedWorld(&isolatedWorld)
 {
     if (function) {
         ASSERT(wrapper);
         m_jsFunction = JSC::Weak<JSC::JSObject>(function);
         m_isInitialized = true;
     }
+    auto* clientData = WebCore::clientData(isolatedWorld.vm());
+    if (clientData->isWorkerVM())
+        clientData->addClient(*this);
 }
 
-JSEventListener::~JSEventListener() = default;
+JSEventListener::~JSEventListener()
+{
+    // Still linked ⇒ the VM is alive (its teardown unlinks before invalidating).
+    if (isOnList())
+        remove();
+}
+
+void JSEventListener::invalidate()
+{
+    m_jsFunction.clear();
+    m_wrapper.clear();
+    m_isInitialized = false;
+    m_isolatedWorld = nullptr;
+}
+
+// ~JSVMClientData, after unlinking: the heap these handles point into is going.
+void JSEventListener::willDestroyVM()
+{
+    invalidate();
+}
 
 Ref<JSEventListener> JSEventListener::create(JSC::JSObject& listener, JSC::JSObject& wrapper, bool isAttribute, DOMWrapperWorld& world)
 {
@@ -144,7 +166,10 @@ void JSEventListener::handleEvent(ScriptExecutionContext& scriptExecutionContext
     if (!jsFunction)
         return;
 
-    JSDOMGlobalObject* globalObject = toJSDOMGlobalObject(scriptExecutionContext, m_isolatedWorld);
+    if (!m_isolatedWorld) [[unlikely]]
+        return;
+
+    JSDOMGlobalObject* globalObject = toJSDOMGlobalObject(scriptExecutionContext, *m_isolatedWorld);
     if (!globalObject)
         return;
 
@@ -255,7 +280,7 @@ bool JSEventListener::operator==(const EventListener& listener) const
 
 String JSEventListener::functionName() const
 {
-    if (!m_wrapper || !m_jsFunction)
+    if (!m_wrapper || !m_jsFunction || !m_isolatedWorld)
         return {};
 
     auto& vm = m_isolatedWorld->vm();

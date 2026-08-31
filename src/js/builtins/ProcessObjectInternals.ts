@@ -115,6 +115,20 @@ export function getStdioWriteStream(
   return [stream, underlyingSink];
 }
 
+// node:worker_threads worker: process.stdout/stderr write to the parent Worker over a
+// MessagePort; process.stdin reads from one for { stdin: true }, else is already ended.
+export function getNodeWorkerStdioStream(process: typeof globalThis.process, fd: number, ports: any) {
+  const stdio = require("internal/worker/stdio");
+  if (fd === 0) {
+    return ports.stdin ? stdio.makePortReadable(ports.stdin, true) : stdio.makeEndedReadable();
+  }
+  const stream = stdio.makePortWritable(fd === 1 ? ports.stdout : ports.stderr);
+  // A synchronous exit leaves no loop turn for the reader's ack; complete the parked
+  // writev so buffered chunks are posted before the thread goes away (node's flushSync).
+  process.on("exit", stream[stdio.kFlushSync]);
+  return stream;
+}
+
 export function getStdinStream(
   process: typeof globalThis.process,
   fd: number,
@@ -448,7 +462,7 @@ export function windowsEnv(
   envMapList: Array<string>,
   editWindowsEnvVar: EditWindowsEnvVarCb,
   coerceForWrite,
-  resetTZ,
+  resetForDelete,
 ) {
   (internalEnv as any)[Bun.inspect.custom] = () => {
     let o = {};
@@ -541,10 +555,9 @@ export function windowsEnv(
         envMapList.splice(i, 1);
       }
       editWindowsEnvVar(k, null);
-      // Node's RealEnvStore::Delete resets Date caches for TZ; internalEnv
-      // is a plain object here so `delete internalEnv[k]` never reaches the
-      // TZ setter — fire the reset explicitly.
-      if (k === "TZ") resetTZ();
+      // internalEnv is a plain object here so `delete internalEnv[k]` never
+      // reaches the CustomAccessor — undo the native side effect explicitly.
+      if (k === "TZ" || k === "NODE_TLS_REJECT_UNAUTHORIZED") resetForDelete(k);
       return delete internalEnv[k];
     },
     defineProperty(_, p, attributes) {
@@ -632,9 +645,10 @@ export function rawDebug() {
   } catch {}
 }
 
-export function installOnWarningListener(process, redirectPath, disabledArr) {
-  // Port of https://github.com/nodejs/node/blob/main/lib/internal/process/warning.js onWarning,
-  // registered as a real 'warning' listener so removeAllListeners('warning') silences it.
+// Port of https://github.com/nodejs/node/blob/main/lib/internal/process/warning.js onWarning.
+// The 'warning' listener itself is a native trampoline registered when `process` is created
+// (BunProcess.cpp); this builds the printer it forwards to on the first warning.
+export function createOnWarning(process, redirectPath, disabledArr) {
   const appendFileSync = redirectPath ? require("node:fs").appendFileSync : undefined;
   // --disable-warning names/codes as a Set: matches Node's SafeSet lookup
   // and avoids an FFI + utf8() encode per emit.
@@ -658,7 +672,7 @@ export function installOnWarningListener(process, redirectPath, disabledArr) {
     process.stderr.write(message + "\n");
   }
 
-  function onWarning(warning) {
+  return function onWarning(warning) {
     if (!(warning instanceof Error)) return;
     const name = warning.name || "Warning";
     const isDeprecation = name === "DeprecationWarning";
@@ -689,11 +703,7 @@ export function installOnWarningListener(process, redirectPath, disabledArr) {
         `(Use \`${basename(process.argv0 || "node")} --trace-warnings ...\` to show where the warning was created)`,
       );
     }
-  }
-
-  // prependListener: user listeners added before the first emitWarning must
-  // still fire *after* the print, matching Node's bootstrap ordering.
-  process.prependListener("warning", onWarning);
+  };
 }
 
 export function loadEnvFile(path) {

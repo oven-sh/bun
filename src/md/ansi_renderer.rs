@@ -47,20 +47,6 @@ pub struct Theme<'a> {
     pub image_base_dir: Option<&'a [u8]>,
 }
 
-impl<'a> Default for Theme<'a> {
-    fn default() -> Self {
-        Self {
-            light: false,
-            columns: 80,
-            colors: true,
-            hyperlinks: false,
-            kitty_graphics: false,
-            remote_image_paths: None,
-            image_base_dir: None,
-        }
-    }
-}
-
 /// Renderer that only collects image URLs — no output. Used by the CLI
 /// pre-scan pass to decide which remote images to download.
 #[derive(Default)]
@@ -123,11 +109,8 @@ struct AnsiRenderer<'a> {
     list_indent_cols: u32,
     /// Currently open span styles (bit flags).
     span_flags: u32,
-    /// Non-null when we're inside a link span; the href to emit in OSC 8.
-    /// Always allocator-owned when non-null (freed in leaveSpan).
-    link_href: Option<Box<[u8]>>,
-    /// Depth of enclosing link spans (brackets can nest in markdown parsers).
-    link_depth: u32,
+    /// The outermost open link span, if we're inside one.
+    link: Option<OpenLink>,
     /// Depth of enclosing image spans — text inside images becomes alt text
     /// rather than normal output.
     image_depth: u32,
@@ -171,6 +154,13 @@ struct AnsiRenderer<'a> {
     /// no content has been written since. Used to dedup back-to-back
     /// ensureBlankLine() calls (e.g. enter-quote followed by enter-para).
     blank_emitted: bool,
+}
+
+struct OpenLink {
+    /// Enclosing link spans including this one (brackets can nest in markdown parsers).
+    depth: u32,
+    /// The href to emit in OSC 8.
+    href: Box<[u8]>,
 }
 
 struct BlockContext {
@@ -273,8 +263,7 @@ impl<'a> AnsiRenderer<'a> {
             quote_depth: 0,
             list_indent_cols: 0,
             span_flags: 0,
-            link_href: None,
-            link_depth: 0,
+            link: None,
             image_depth: 0,
             image_alt: Vec::new(),
             image_src: None,
@@ -564,20 +553,21 @@ impl<'a> AnsiRenderer<'a> {
                 self.write_styled(code_span_open(self.theme.light), b"");
             }
             SpanType::A => {
-                self.link_depth += 1;
-                if self.link_depth == 1 {
+                if let Some(link) = &mut self.link {
+                    link.depth += 1;
+                } else {
                     // Resolve final href (prefixes for autolinks).
-                    self.link_href = Some(resolve_href(&detail));
-                    if self.theme.colors && self.theme.hyperlinks {
-                        if let Some(href) = &self.link_href {
-                            // OSC 8 hyperlink start
-                            // Clone the bytes so write_raw_no_color(&mut self)
-                            // doesn't alias `&self.link_href`.
-                            let href = href.clone();
-                            self.write_raw_no_color(b"\x1b]8;;");
-                            self.write_raw_no_color(&href);
-                            self.write_raw_no_color(b"\x1b\\");
-                        }
+                    let href = resolve_href(&detail);
+                    // Clone the bytes so write_raw_no_color(&mut self)
+                    // doesn't alias `&self.link`.
+                    let osc8_href =
+                        (self.theme.colors && self.theme.hyperlinks).then(|| href.clone());
+                    self.link = Some(OpenLink { depth: 1, href });
+                    if let Some(href) = osc8_href {
+                        // OSC 8 hyperlink start
+                        self.write_raw_no_color(b"\x1b]8;;");
+                        self.write_raw_no_color(&href);
+                        self.write_raw_no_color(b"\x1b\\");
                     }
                     self.write_styled(ansi_b::BLUE, b"");
                     self.write_styled(ansi_b::UNDERLINE, b"");
@@ -625,39 +615,34 @@ impl<'a> AnsiRenderer<'a> {
                 self.write_styled(b"\x1b[39m\x1b[49m", b"");
                 self.reapply_styles();
             }
-            SpanType::A => {
-                if self.link_depth == 1 {
-                    // Decrement BEFORE reapplyStyles so it doesn't re-emit
-                    // blue+underline for text after the link.
-                    self.link_depth = 0;
-                    let had_href = self.link_href.is_some();
+            // Taken BEFORE reapplyStyles so it doesn't re-emit
+            // blue+underline for text after the link.
+            SpanType::A => match self.link.take() {
+                Some(OpenLink { depth: 1, href }) => {
                     // Underline off, default fg; reapply outer styles so a
                     // link inside **bold** doesn't drop the bold.
                     self.write_styled(b"\x1b[24m\x1b[39m", b"");
                     self.reapply_styles();
                     if self.theme.colors && self.theme.hyperlinks {
-                        // Only emit the OSC 8 terminator if we emitted the
-                        // opening sequence (which required link_href).
-                        if had_href {
-                            self.write_raw_no_color(b"\x1b]8;;\x1b\\");
-                        }
-                    } else if let Some(href) = self.link_href.take() {
-                        if !href.is_empty() && self.image_depth == 0 {
-                            // Show URL in parens for non-hyperlink terminals.
-                            // image_depth==0 keeps " (url)" out of image alt
-                            // text when a link sits inside an image span.
-                            self.write_styled(ansi_b::DIM, b" (");
-                            self.write_styled(b"", &href);
-                            self.write_styled(ansi_b::DIM, b")");
-                            self.write_styled(b"\x1b[39m\x1b[22m", b"");
-                            self.reapply_styles();
-                        }
+                        // OSC 8 terminator
+                        self.write_raw_no_color(b"\x1b]8;;\x1b\\");
+                    } else if !href.is_empty() && self.image_depth == 0 {
+                        // Show URL in parens for non-hyperlink terminals.
+                        // image_depth==0 keeps " (url)" out of image alt
+                        // text when a link sits inside an image span.
+                        self.write_styled(ansi_b::DIM, b" (");
+                        self.write_styled(b"", &href);
+                        self.write_styled(ansi_b::DIM, b")");
+                        self.write_styled(b"\x1b[39m\x1b[22m", b"");
+                        self.reapply_styles();
                     }
-                    self.link_href = None;
-                } else if self.link_depth > 0 {
-                    self.link_depth -= 1;
                 }
-            }
+                Some(mut link) => {
+                    link.depth -= 1;
+                    self.link = Some(link);
+                }
+                None => {}
+            },
             SpanType::Img => {
                 if self.image_depth == 1 {
                     self.emit_image();
@@ -1043,7 +1028,7 @@ impl<'a> AnsiRenderer<'a> {
     /// indent stay clean, newline, re-emit indent, then reapply the
     /// active span styles so the continuation keeps its color.
     fn wrap_break(&mut self) {
-        let has_style = self.span_flags != 0 || self.link_depth > 0;
+        let has_style = self.span_flags != 0 || self.link.is_some();
         if self.theme.colors && has_style {
             self.out.write(b"\x1b[39m\x1b[49m");
         }
@@ -1136,7 +1121,7 @@ impl<'a> AnsiRenderer<'a> {
         if self.span_flags & SPAN_CODE != 0 {
             self.emit_inline(code_span_open(self.theme.light));
         }
-        if self.link_depth > 0 {
+        if self.link.is_some() {
             self.emit_inline(ansi_b::BLUE);
             self.emit_inline(ansi_b::UNDERLINE);
         }
@@ -1933,7 +1918,7 @@ impl<'a> AnsiRenderer<'a> {
         let link_ok = self.theme.colors
             && self.theme.hyperlinks
             && has_src
-            && self.link_depth == 0
+            && self.link.is_none()
             && !src.as_deref().unwrap().starts_with(b"data:");
         if link_ok {
             self.write_raw_no_color(b"\x1b]8;;");
@@ -2436,10 +2421,23 @@ fn resolve_href(detail: &SpanDetail) -> Box<[u8]> {
 // Theme detection helpers (callable from the runner)
 // ========================================
 
-/// Detect whether the terminal background is light. Preference order:
-/// 1. `COLORFGBG` env var (set by rxvt, xterm, Konsole, iTerm2 in some modes)
-/// 2. Dark mode (default)
+/// Detect whether the terminal background is light from the environment alone (`COLORFGBG`, set by rxvt, xterm,
+/// Konsole, iTerm2 in some modes); dark otherwise. Never touches the tty, so it is safe from any context.
 pub fn detect_light_background() -> bool {
+    colorfgbg_light().unwrap_or(false)
+}
+
+/// Like `detect_light_background`, but when the environment says nothing and we own the tty, asks the terminal
+/// (OSC 11). Reads a reply from stdin, so only for commands that are the interactive foreground, never from a
+/// JS-visible API. The answer is cached.
+pub fn detect_light_background_probing() -> bool {
+    static CACHED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *CACHED.get_or_init(|| {
+        colorfgbg_light().unwrap_or_else(|| probe_background_luminance().is_some_and(|l| l > 0.5))
+    })
+}
+
+fn colorfgbg_light() -> Option<bool> {
     if let Some(value) = bun_core::getenv_z(bun_core::zstr!("COLORFGBG")) {
         // Format: "fg;bg" or "fg;default;bg" — only 7 (white) and 15
         // (bright white) are light terminal backgrounds. Bright colors
@@ -2449,14 +2447,91 @@ pub fn detect_light_background() -> bool {
             last = part;
         }
         if !last.is_empty() {
-            let bg = match bun_core::fmt::parse_int::<u8>(last, 10).ok() {
-                Some(n) => n,
-                None => return false,
-            };
-            return bg == 7 || bg == 15;
+            let bg = bun_core::fmt::parse_int::<u8>(last, 10).ok()?;
+            return Some(bg == 7 || bg == 15);
         }
     }
-    false
+    None
+}
+
+/// OSC 11 (`ESC ] 11 ; ? BEL`): the terminal answers with its background as `rgb:RRRR/GGGG/BBBB`. xterm, iTerm2,
+/// Terminal.app, GNOME/VTE, Konsole, kitty, WezTerm, Alacritty, Ghostty, Windows Terminal and tmux (3.4+) all
+/// answer; anything else stays silent and we give up after a short wait. Returns relative luminance in 0..=1.
+fn probe_background_luminance() -> Option<f32> {
+    #[cfg(not(unix))]
+    {
+        None
+    }
+    #[cfg(unix)]
+    {
+        if !bun_core::Output::is_stdin_tty() {
+            return None;
+        }
+        // The reply comes back on the tty regardless of where stdout points, so `| less` still gets a theme.
+        let out = if bun_core::Output::is_stdout_tty() {
+            bun_sys::Fd::stdout()
+        } else if bun_core::Output::is_stderr_tty() {
+            bun_sys::Fd::stderr()
+        } else {
+            return None;
+        };
+        if let Some(term) = bun_core::getenv_z(bun_core::zstr!("TERM")) {
+            if strings::eql_case_insensitive_ascii(term, b"dumb", true) {
+                return None;
+            }
+        }
+        let saved_termios = bun_sys::posix::tcgetattr(0).ok()?;
+        let mut tty_state = bun_core::tty::State::new();
+        let _ = tty_state.set_mode(
+            0,
+            bun_core::tty::Mode::Raw,
+            bun_core::tty::SetAttrWhen::Drain,
+        );
+        let _restore = scopeguard::guard((saved_termios, tty_state), |(saved, mut state)| {
+            if bun_sys::posix::tcsetattr(0, bun_sys::posix::TCSA::Now, &saved).is_err() {
+                let _ = state.set_mode(
+                    0,
+                    bun_core::tty::Mode::Normal,
+                    bun_core::tty::SetAttrWhen::Drain,
+                );
+            }
+        });
+        bun_sys::write(out, b"\x1b]11;?\x07").ok()?;
+        let mut buf = [0u8; 64];
+        let mut len = 0usize;
+        // Replies arrive within a frame; allow a couple of short reads for terminals that dribble bytes.
+        for _ in 0..4 {
+            let mut pfd = [bun_sys::posix::PollFd {
+                fd: 0,
+                events: bun_sys::posix::POLL_IN,
+                revents: 0,
+            }];
+            if bun_sys::posix::poll(&mut pfd, 60).ok()? <= 0 {
+                break;
+            }
+            len += bun_sys::read(bun_sys::Fd::stdin(), &mut buf[len..]).ok()?;
+            if strings::contains_char(&buf[..len], 0x07)
+                || strings::index_of(&buf[..len], b"\x1b\\").is_some()
+                || len == buf.len()
+            {
+                break;
+            }
+        }
+        let reply = &buf[..len];
+        let at = strings::index_of(reply, b"rgb:")? + 4;
+        let mut channels = [0f32; 3];
+        let mut parts = strings::split(&reply[at..], b"/");
+        for c in &mut channels {
+            let part = parts.next()?;
+            let hex: &[u8] = &part[..part.iter().take_while(|b| b.is_ascii_hexdigit()).count()];
+            if hex.is_empty() || hex.len() > 4 {
+                return None;
+            }
+            let v = u32::from_str_radix(core::str::from_utf8(hex).ok()?, 16).ok()?;
+            *c = v as f32 / ((1u32 << (4 * hex.len())) - 1) as f32;
+        }
+        Some(0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2])
+    }
 }
 
 /// Detect whether the current terminal likely supports the Kitty
@@ -2718,7 +2793,7 @@ pub fn render_to_ansi<'a>(
     let mut renderer = AnsiRenderer::init(text, theme);
     match root::render_with_renderer(text, options, renderer.renderer()) {
         Ok(()) => {}
-        Err(ParserError::JSError) | Err(ParserError::JSTerminated) => return Ok(None),
+        Err(ParserError::JSError) => return Ok(None),
         Err(e) => return Err(e),
     }
     if renderer.out.oom {

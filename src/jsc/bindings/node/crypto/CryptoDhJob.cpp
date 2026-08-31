@@ -61,19 +61,6 @@ JSCallbackArgs DhJobCtx::runFromJS(JSGlobalObject* lexicalGlobalObject)
     return { jsNull(), result };
 }
 
-extern "C" DhJob* Bun__DhJob__create(JSGlobalObject* globalObject, DhJobCtx* ctx, EncodedJSValue callback);
-DhJob* DhJob::create(JSGlobalObject* globalObject, DhJobCtx&& ctx, JSValue callback)
-{
-    DhJobCtx* ctxCopy = new DhJobCtx(WTF::move(ctx));
-    return Bun__DhJob__create(globalObject, ctxCopy, JSValue::encode(callback));
-}
-
-extern "C" void Bun__DhJob__schedule(DhJob* job);
-void DhJob::schedule()
-{
-    Bun__DhJob__schedule(this);
-}
-
 extern "C" void Bun__DhJob__createAndSchedule(JSGlobalObject* globalObject, DhJobCtx* ctx, EncodedJSValue callback);
 void DhJob::createAndSchedule(JSGlobalObject* globalObject, DhJobCtx&& ctx, JSValue callback)
 {

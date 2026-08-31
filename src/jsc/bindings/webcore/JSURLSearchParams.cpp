@@ -46,14 +46,20 @@
 #include <JavaScriptCore/JSArray.h>
 
 #include <JavaScriptCore/JSDestructibleObjectHeapCellType.h>
+#include <JavaScriptCore/ObjectConstructor.h>
+#include <JavaScriptCore/PropertyNameArray.h>
 #include <JavaScriptCore/SlotVisitorMacros.h>
 #include <JavaScriptCore/SubspaceInlines.h>
 #include "ScriptExecutionContext.h"
 #include "WebCoreJSClientData.h"
+#include "ZigGlobalObject.h"
+#include "streams/WebStreamsInspectCustom.h"
 #include <wtf/GetPtr.h>
 #include <wtf/PointerPreparations.h>
 #include <wtf/URL.h>
 #include <wtf/Vector.h>
+#include <wtf/text/MakeString.h>
+#include <wtf/text/StringBuilder.h>
 #include <variant>
 #include "GCDefferalContext.h"
 #include "wtf/StdLibExtras.h"
@@ -76,6 +82,7 @@ static JSC_DECLARE_HOST_FUNCTION(jsURLSearchParamsPrototypeFunction_keys);
 static JSC_DECLARE_HOST_FUNCTION(jsURLSearchParamsPrototypeFunction_values);
 static JSC_DECLARE_HOST_FUNCTION(jsURLSearchParamsPrototypeFunction_forEach);
 static JSC_DECLARE_HOST_FUNCTION(jsURLSearchParamsPrototypeFunction_toString);
+static JSC_DECLARE_HOST_FUNCTION(jsURLSearchParamsPrototypeFunction_inspectCustom);
 
 // Attributes
 
@@ -86,7 +93,7 @@ public:
     using Base = JSC::JSNonFinalObject;
     static JSURLSearchParamsPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSURLSearchParamsPrototype* ptr = new (NotNull, JSC::allocateCell<JSURLSearchParamsPrototype>(vm)) JSURLSearchParamsPrototype(vm, globalObject, structure);
+        JSURLSearchParamsPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSURLSearchParamsPrototype))) JSURLSearchParamsPrototype(vm, globalObject, structure);
         ptr->finishCreation(vm);
         return ptr;
     }
@@ -100,7 +107,7 @@ public:
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
 private:
@@ -147,11 +154,7 @@ template<> JSValue JSURLSearchParamsDOMConstructor::prototypeForStructure(JSC::V
 
 template<> void JSURLSearchParamsDOMConstructor::initializeProperties(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    putDirect(vm, vm.propertyNames->length, jsNumber(0), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    JSString* nameString = jsNontrivialString(vm, "URLSearchParams"_s);
-    m_originalName.set(vm, this, nameString);
-    putDirect(vm, vm.propertyNames->name, nameString, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    putDirect(vm, vm.propertyNames->prototype, JSURLSearchParams::prototype(vm, globalObject), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
+    initializeBaseProperties(vm, 0, "URLSearchParams"_s, JSURLSearchParams::prototype(vm, globalObject));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsURLSearchParamsPrototype_getLength, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
@@ -187,12 +190,146 @@ static const HashTableValue JSURLSearchParamsPrototypeTableValues[] = {
 
 const ClassInfo JSURLSearchParamsPrototype::s_info = { "URLSearchParams"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSURLSearchParamsPrototype) };
 
+JSC_DEFINE_HOST_FUNCTION(jsURLSearchParamsPrototypeFunction_inspectCustom, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue thisValue = callFrame->thisValue();
+    auto* thisObject = dynamicDowncast<JSURLSearchParams>(thisValue);
+    if (!thisObject) [[unlikely]]
+        return JSValue::encode(thisValue);
+
+    JSValue depthValue = callFrame->argument(0);
+    JSValue optionsValue = callFrame->argument(1);
+
+    double depth = depthValue.toNumber(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    JSObject* options = optionsValue.isObject() ? asObject(optionsValue) : nullptr;
+    if (depth < 0) {
+        if (options) {
+            JSValue stylize = options->get(lexicalGlobalObject, Identifier::fromString(vm, "stylize"_s));
+            RETURN_IF_EXCEPTION(scope, {});
+            auto callData = JSC::getCallData(stylize);
+            if (callData.type != CallData::Type::None) {
+                MarkedArgumentBuffer args;
+                args.append(jsNontrivialString(vm, "[Object]"_s));
+                args.append(jsNontrivialString(vm, "special"_s));
+                ASSERT(!args.hasOverflowed());
+                RELEASE_AND_RETURN(scope, JSValue::encode(JSC::profiledCall(lexicalGlobalObject, ProfilingReason::API, stylize, callData, optionsValue, args)));
+            }
+        }
+        return JSValue::encode(jsNontrivialString(vm, "[Object]"_s));
+    }
+
+    JSObject* opts = constructEmptyObject(lexicalGlobalObject);
+    JSValue childDepth = jsNull();
+    if (options) {
+        PropertyNameArrayBuilder names(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
+        options->getPropertyNames(lexicalGlobalObject, names, DontEnumPropertiesMode::Exclude);
+        RETURN_IF_EXCEPTION(scope, {});
+        for (size_t i = 0; i < names.size(); ++i) {
+            JSValue v = options->get(lexicalGlobalObject, names[i]);
+            RETURN_IF_EXCEPTION(scope, {});
+            opts->putDirect(vm, names[i], v, 0);
+        }
+        if (!depthValue.isUndefinedOrNull())
+            childDepth = jsNumber(depth - 1);
+    }
+    opts->putDirect(vm, Identifier::fromString(vm, "depth"_s), childDepth, 0);
+
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    JSFunction* utilInspect = globalObject->utilInspectFunction();
+    RETURN_IF_EXCEPTION(scope, {});
+    auto inspectCallData = JSC::getCallData(utilInspect);
+
+    // node measures removeColors(output[i]).length before comparing to
+    // breakLength, so ANSI escapes (ESC[ ... letter) don't count towards the
+    // single/multi-line layout decision.
+    auto visibleLengthOf = [](const String& s) -> size_t {
+        StringView view { s };
+        size_t count = 0;
+        for (unsigned i = 0; i < view.length();) {
+            char16_t c = view[i];
+            if (c == 0x1B && i + 1 < view.length() && view[i + 1] == '[') {
+                i += 2;
+                while (i < view.length()) {
+                    char16_t t = view[i++];
+                    if ((t >= 'A' && t <= 'Z') || (t >= 'a' && t <= 'z'))
+                        break;
+                }
+                continue;
+            }
+            count++;
+            i++;
+        }
+        return count;
+    };
+
+    auto& impl = thisObject->wrapped();
+    auto iter = impl.createIterator();
+    Vector<String> output;
+    size_t totalLength = 0;
+    for (auto entry = iter.next(); entry.has_value(); entry = iter.next()) {
+        MarkedArgumentBuffer keyArgs;
+        keyArgs.append(jsString(vm, entry.value().key));
+        keyArgs.append(opts);
+        ASSERT(!keyArgs.hasOverflowed());
+        JSValue keyInspected = JSC::profiledCall(lexicalGlobalObject, ProfilingReason::API, utilInspect, inspectCallData, jsUndefined(), keyArgs);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto keyStr = keyInspected.toWTFString(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+
+        MarkedArgumentBuffer valueArgs;
+        valueArgs.append(jsString(vm, entry.value().value));
+        valueArgs.append(opts);
+        ASSERT(!valueArgs.hasOverflowed());
+        JSValue valueInspected = JSC::profiledCall(lexicalGlobalObject, ProfilingReason::API, utilInspect, inspectCallData, jsUndefined(), valueArgs);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto valueStr = valueInspected.toWTFString(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+
+        auto line = makeString(keyStr, " => "_s, valueStr);
+        totalLength += visibleLengthOf(line);
+        output.append(WTF::move(line));
+    }
+    if (output.size() > 1)
+        totalLength += (output.size() - 1) * 2;
+
+    double breakLength = 128;
+    if (options) {
+        JSValue breakLengthValue = options->get(lexicalGlobalObject, Identifier::fromString(vm, "breakLength"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+        if (breakLengthValue.isNumber())
+            breakLength = breakLengthValue.asNumber();
+    }
+
+    auto name = Bun::WebStreams::constructorNameOf(lexicalGlobalObject, thisValue, "URLSearchParams"_s);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (output.isEmpty())
+        return JSValue::encode(jsString(vm, makeString(name, " {}"_s)));
+
+    const bool multiLine = static_cast<double>(totalLength) > breakLength;
+    StringBuilder builder;
+    builder.append(name);
+    builder.append(multiLine ? " {\n  "_s : " { "_s);
+    ASCIILiteral separator = multiLine ? ",\n  "_s : ", "_s;
+    for (size_t i = 0; i < output.size(); ++i) {
+        if (i)
+            builder.append(separator);
+        builder.append(output[i]);
+    }
+    builder.append(" }"_s);
+    return JSValue::encode(jsString(vm, builder.toString()));
+}
+
 void JSURLSearchParamsPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSURLSearchParams::info(), JSURLSearchParamsPrototypeTableValues, *this);
+    Bun::reifyStaticPropertyTable(vm, JSURLSearchParams::info(), JSURLSearchParamsPrototypeTableValues, *this);
     putDirect(vm, vm.propertyNames->iteratorSymbol, getDirect(vm, vm.propertyNames->builtinNames().entriesPublicName()), static_cast<unsigned>(JSC::PropertyAttribute::DontEnum));
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::WebStreams::installInspectCustom(vm, this, jsURLSearchParamsPrototypeFunction_inspectCustom);
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 const ClassInfo JSURLSearchParams::s_info = { "URLSearchParams"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSURLSearchParams) };
@@ -448,7 +585,7 @@ static void putIntoObject(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject,
 
             if constexpr (hasIndex) {
                 obj->putDirectIndex(lexicalGlobalObject, index.value(), array);
-                throwScope.assertNoException(); // not a proxy.
+                RETURN_IF_EXCEPTION(throwScope, ); // not a proxy: OOM / termination only
             } else {
                 obj->putDirect(vm, ident, array);
             }
@@ -463,7 +600,7 @@ static void putIntoObject(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject,
         seenKeys.add(key);
         if constexpr (hasIndex) {
             obj->putDirectIndex(lexicalGlobalObject, index.value(), stringValue);
-            throwScope.assertNoException(); // not a proxy.
+            RETURN_IF_EXCEPTION(throwScope, ); // not a proxy: OOM / termination only
         } else {
             obj->putDirect(vm, ident, stringValue);
         }
@@ -537,17 +674,12 @@ public:
     {
         if constexpr (mode == JSC::SubspaceAccess::Concurrently)
             return nullptr;
-        return WebCore::subspaceForImpl<URLSearchParamsIterator, UseCustomHeapCellType::No>(
-            vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForURLSearchParamsIterator.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForURLSearchParamsIterator = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForURLSearchParamsIterator.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForURLSearchParamsIterator = std::forward<decltype(space)>(space); });
+        return WebCore::subspaceForImpl<URLSearchParamsIterator, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForURLSearchParamsIterator, m_subspaceForURLSearchParamsIterator));
     }
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
     static URLSearchParamsIterator* create(JSC::VM& vm, JSC::Structure* structure, JSURLSearchParams& iteratedObject, IterationKind kind)
@@ -562,6 +694,9 @@ private:
         : Base(structure, iteratedObject, kind)
     {
     }
+};
+template<> struct DOMStructureSlotOf<URLSearchParamsIterator> {
+    static constexpr DOMStructureSlot value = DOMStructureSlot::URLSearchParamsIterator;
 };
 
 using URLSearchParamsIteratorPrototype = JSDOMIteratorPrototype<JSURLSearchParams, URLSearchParamsIteratorTraits>;
@@ -616,12 +751,7 @@ JSC_DEFINE_HOST_FUNCTION(jsURLSearchParamsPrototypeFunction_forEach, (JSC::JSGlo
 
 JSC::GCClient::IsoSubspace* JSURLSearchParams::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSURLSearchParams, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForURLSearchParams.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForURLSearchParams = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForURLSearchParams.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForURLSearchParams = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSURLSearchParams, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForURLSearchParams, m_subspaceForURLSearchParams));
 }
 
 void JSURLSearchParams::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
@@ -631,21 +761,6 @@ void JSURLSearchParams::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     // if (thisObject->scriptExecutionContext())
     //     analyzer.setLabelForCell(cell, makeString("url "_s, thisObject->scriptExecutionContext()->url().string()));
     Base::analyzeHeap(cell, analyzer);
-}
-
-bool JSURLSearchParamsOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, AbstractSlotVisitor& visitor, ASCIILiteral* reason)
-{
-    UNUSED_PARAM(handle);
-    UNUSED_PARAM(visitor);
-    UNUSED_PARAM(reason);
-    return false;
-}
-
-void JSURLSearchParamsOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
-{
-    auto* jsURLSearchParams = static_cast<JSURLSearchParams*>(handle.slot()->asCell());
-    auto& world = *static_cast<DOMWrapperWorld*>(context);
-    uncacheWrapper(world, &jsURLSearchParams->wrapped(), jsURLSearchParams);
 }
 
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<URLSearchParams>&& impl)

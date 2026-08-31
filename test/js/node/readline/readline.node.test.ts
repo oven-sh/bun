@@ -1332,7 +1332,10 @@ describe("readline.Interface", () => {
     assert.strictEqual(getStringWidth("你好"), 4);
     assert.strictEqual(getStringWidth("안녕하세요"), 10);
     assert.strictEqual(getStringWidth("A\ud83c\ude00BC"), 5);
-    assert.strictEqual(getStringWidth("👨‍👩‍👦‍👦"), 2);
+    // Node v26.3.0 measures each emoji in a ZWJ sequence individually:
+    // internalBinding("icu").getStringWidth's expand_emoji_sequence defaults
+    // on (src/node_i18n.cc:649), so the family emoji is 2+0+2+0+2+0+2.
+    assert.strictEqual(getStringWidth("👨‍👩‍👦‍👦"), 8);
     assert.strictEqual(getStringWidth("🐕𐐷あ💻😀"), 9);
     // TODO(BridgeAR): This should have a width of 4.
     assert.strictEqual(getStringWidth("⓬⓪"), 2);

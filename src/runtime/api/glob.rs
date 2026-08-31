@@ -3,11 +3,11 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 use bun_alloc::Arena;
 use bun_core::String as BunString;
 use bun_glob::BunGlobWalker as GlobWalker;
+use bun_glob::walk;
 use bun_jsc::bun_string_jsc;
-use bun_jsc::concurrent_promise_task::{ConcurrentPromiseTask, ConcurrentPromiseTaskContext};
 use bun_jsc::{
-    ArgumentsSlice, CallFrame, JSGlobalObject, JSPromise, JSValue, JsResult, JsTerminated,
-    StringJsc as _, SysErrorJsc as _,
+    ArgumentsSlice, CallFrame, JSGlobalObject, JSPromiseStrong, JSValue, Job, JobContext, JsPtr,
+    JsResult, JsThread, StringJsc as _, SysErrorJsc as _,
 };
 use bun_paths::resolve_path::join_string_buf;
 use bun_paths::{self as resolve_path, MAX_PATH_BYTES, PathBuffer, platform};
@@ -38,13 +38,13 @@ impl ScanOpts {
         absolute: bool,
         fn_name: &'static str,
     ) -> JsResult<Box<[u8]>> {
-        let cwd_string = bun_core::OwnedString::new(BunString::from_js(cwd_val, global_this)?);
+        let cwd_string = BunString::from_js(cwd_val, global_this)?;
         if cwd_string.is_empty() {
             return Ok(Box::default());
         }
 
         let cwd_str: Box<[u8]> = 'cwd_str: {
-            let cwd_utf8 = cwd_string.to_utf8_without_ref();
+            let cwd_utf8 = cwd_string.to_utf8();
 
             if cwd_utf8.slice().len() > MAX_PATH_BYTES {
                 return Err(global_this.throw(format_args!(
@@ -192,12 +192,203 @@ impl ScanOpts {
     }
 }
 
-pub(crate) struct WalkTask<'a> {
-    // `Box<GlobWalker>` drop runs `GlobWalker::Drop` then frees the box.
-    walker: Box<GlobWalker>,
+/// `bun_glob::walk::Accessor` over the standalone module graph, so `Glob.scan`
+/// can walk the embedded `/$bunfs/` tree. Up-tier from the trait on purpose,
+/// like `bun_resolver::DirEntryAccessor`.
+pub(crate) mod standalone_accessor {
+    use bun_core::ZStr;
+    use bun_glob::walk::{Accessor, AccessorDirEntry, AccessorDirIter, AccessorHandle};
+    use bun_paths::{PathBuffer, Platform, platform, resolve_path};
+    use bun_standalone_graph::Graph;
+    use bun_sys::{E, Error as SysError, FileKind, Result as Maybe, Stat, Tag};
+
+    pub(crate) struct StandaloneAccessor;
+
+    #[derive(Clone, Copy)]
+    pub(crate) struct StandaloneHandle {
+        /// The opened directory's `Graph::dir_key` (`'static`: the graph is
+        /// the immortal process singleton).
+        dir: Option<&'static [u8]>,
+    }
+
+    impl AccessorHandle for StandaloneHandle {
+        const EMPTY: Self = StandaloneHandle { dir: None };
+
+        fn is_empty(self) -> bool {
+            self.dir.is_none()
+        }
+
+        fn eql(self, other: Self) -> bool {
+            match (self.dir, other.dir) {
+                (Some(a), Some(b)) => a == b,
+                (None, None) => true,
+                _ => false,
+            }
+        }
+    }
+
+    /// `path` resolved against the handle's directory when relative.
+    fn resolve<'a>(handle: StandaloneHandle, path: &'a [u8], buf: &'a mut PathBuffer) -> &'a [u8] {
+        if Platform::AUTO.is_absolute(path) {
+            return path;
+        }
+        let Some(dir) = handle.dir else { return path };
+        resolve_path::join_string_buf::<platform::Auto>(buf, &[dir, path])
+    }
+
+    fn open_resolved(path: &[u8]) -> Maybe<StandaloneHandle> {
+        let Some(graph) = Graph::get_ref() else {
+            return Err(SysError::from_code(E::ENOENT, Tag::open));
+        };
+        match graph.dir_key(path) {
+            Ok(key) => Ok(StandaloneHandle { dir: Some(key) }),
+            Err(code) => Err(SysError::from_code(code, Tag::open)),
+        }
+    }
+
+    pub(crate) struct StandaloneDirEntry {
+        name: Box<[u8]>,
+        is_dir: bool,
+    }
+
+    impl AccessorDirEntry for StandaloneDirEntry {
+        fn name_slice(&self) -> &[u8] {
+            &self.name
+        }
+        fn kind(&self) -> FileKind {
+            if self.is_dir {
+                FileKind::Directory
+            } else {
+                FileKind::File
+            }
+        }
+    }
+
+    pub(crate) struct StandaloneDirIter {
+        entries: std::vec::IntoIter<(Box<[u8]>, bool)>,
+    }
+
+    impl AccessorDirIter for StandaloneDirIter {
+        type Handle = StandaloneHandle;
+        type Entry = StandaloneDirEntry;
+
+        fn next(&mut self) -> Maybe<Option<StandaloneDirEntry>> {
+            Ok(self
+                .entries
+                .next()
+                .map(|(name, is_dir)| StandaloneDirEntry { name, is_dir }))
+        }
+
+        fn iterate(dir: StandaloneHandle) -> Self {
+            // `readdir` only misses for the EMPTY handle: `open_resolved`
+            // proved the directory.
+            let entries = dir
+                .dir
+                .and_then(|key| Graph::get_ref()?.readdir(key, false))
+                .unwrap_or_default();
+            StandaloneDirIter {
+                entries: entries.into_iter(),
+            }
+        }
+    }
+
+    impl Accessor for StandaloneAccessor {
+        const COUNT_FDS: bool = false;
+        type Handle = StandaloneHandle;
+        type DirIter = StandaloneDirIter;
+
+        fn open(path: &ZStr) -> Result<Maybe<StandaloneHandle>, bun_core::Error> {
+            Ok(open_resolved(path.as_bytes()))
+        }
+
+        fn openat(
+            handle: StandaloneHandle,
+            path: &ZStr,
+        ) -> Result<Maybe<StandaloneHandle>, bun_core::Error> {
+            // Pooled: a stack `PathBuffer` is ~64 KB on Windows.
+            let mut buf = bun_paths::path_buffer_pool::get();
+            Ok(open_resolved(resolve(handle, path.as_bytes(), &mut buf)))
+        }
+
+        fn statat(handle: StandaloneHandle, path: &ZStr) -> Maybe<Stat> {
+            let mut buf = bun_paths::path_buffer_pool::get();
+            let resolved = resolve(handle, path.as_bytes(), &mut buf);
+            Graph::get_ref()
+                .and_then(|graph| graph.stat(resolved))
+                .ok_or_else(|| SysError::from_code(E::ENOENT, Tag::fstatat))
+        }
+
+        fn lstatat(handle: StandaloneHandle, path: &ZStr) -> Maybe<Stat> {
+            // The embedded graph has no symlinks, so lstat == stat.
+            Self::statat(handle, path)
+        }
+
+        fn close(_handle: StandaloneHandle) -> Option<SysError> {
+            None
+        }
+    }
+}
+use standalone_accessor::StandaloneAccessor;
+
+type StandaloneGlobWalker = walk::GlobWalker<StandaloneAccessor, false>;
+
+/// The accessor is picked at init time: embedded-graph walks for a cwd or
+/// pattern under the standalone virtual path, syscalls for everything else.
+pub(crate) enum AnyGlobWalker {
+    Fs(Box<GlobWalker>),
+    Standalone(Box<StandaloneGlobWalker>),
+}
+
+impl AnyGlobWalker {
+    fn walk(&mut self) -> Result<bun_sys::Result<()>, bun_core::Error> {
+        match self {
+            AnyGlobWalker::Fs(walker) => walker.walk(),
+            AnyGlobWalker::Standalone(walker) => walker.walk(),
+        }
+    }
+
+    fn result_to_js(&self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+        match self {
+            AnyGlobWalker::Fs(walker) => glob_walk_result_to_js(walker, global_this),
+            AnyGlobWalker::Standalone(walker) => glob_walk_result_to_js(walker, global_this),
+        }
+    }
+}
+
+/// `Glob.scan()` off the JS thread.
+pub(crate) struct WalkTask {
+    // Dropping the enum runs `GlobWalker::Drop` then frees the box.
+    walker: AnyGlobWalker,
     err: Option<WalkTaskErr>,
-    global: &'a JSGlobalObject,
-    has_pending_activity: &'a AtomicUsize,
+}
+// SAFETY: the walker owns its pattern/arena; nothing in it is thread-affine.
+unsafe impl Send for WalkTask {}
+
+/// While a scan is pending the `Glob` wrapper reports `hasPendingActivity`
+/// (so it is not collected); released on the JS thread with the completion.
+pub(crate) struct PendingScan(JsPtr<AtomicUsize>);
+// SAFETY: a counter inside the Glob's native part, which its wrapper owns.
+unsafe impl bun_jsc::job::JsAffine for PendingScan {}
+impl PendingScan {
+    fn new(counter: &AtomicUsize) -> Self {
+        let _ = counter.fetch_add(1, Ordering::SeqCst);
+        // SAFETY: the Glob's m_ctx, kept alive by hasPendingActivity while > 0.
+        Self(unsafe { JsPtr::new(core::ptr::NonNull::from(counter)) })
+    }
+}
+impl Drop for PendingScan {
+    fn drop(&mut self) {
+        // Only ever dropped on the JS thread (a job's Js side); the pointer is
+        // live because the count we hold kept the wrapper alive.
+        // SAFETY: as above.
+        let _ = unsafe { &*self.0.as_ptr() }.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+#[derive(bun_jsc::JsAffine)]
+pub(crate) struct WalkJs {
+    promise: JSPromiseStrong,
+    _pending: PendingScan,
 }
 
 pub(crate) enum WalkTaskErr {
@@ -216,68 +407,41 @@ impl WalkTaskErr {
     }
 }
 
-pub(crate) type AsyncGlobWalkTask<'a> = ConcurrentPromiseTask<'a, WalkTask<'a>>;
+impl JobContext for WalkTask {
+    type OffThread = Self;
+    type Js = WalkJs;
 
-impl<'a> WalkTask<'a> {
-    fn create(
-        global_this: &'a JSGlobalObject,
-        glob_walker: Box<GlobWalker>,
-        has_pending_activity: &'a AtomicUsize,
-    ) -> Box<AsyncGlobWalkTask<'a>> {
-        let walk_task = Box::new(WalkTask {
-            walker: glob_walker,
-            global: global_this,
-            err: None,
-            has_pending_activity,
-        });
-        AsyncGlobWalkTask::create_on_js_thread(global_this, walk_task)
-    }
-}
-
-impl<'a> ConcurrentPromiseTaskContext for WalkTask<'a> {
-    const TASK_TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::AsyncGlobWalkTask;
-    fn run(&mut self) {
-        let guard = scopeguard::guard(self.has_pending_activity, |hpa| {
-            decr_pending_activity_flag(hpa);
-        });
-        let result = match self.walker.walk() {
+    fn run(this: &mut Self, done: bun_jsc::Completion<Self>) -> Option<bun_jsc::Completion<Self>> {
+        let result = match this.walker.walk() {
             Ok(r) => r,
             Err(err) => {
-                self.err = Some(WalkTaskErr::Unknown(err.into()));
-                drop(guard);
-                return;
+                this.err = Some(WalkTaskErr::Unknown(err.into()));
+                return Some(done);
             }
         };
-        match result {
-            bun_sys::Result::Err(err) => {
-                self.err = Some(WalkTaskErr::Syscall(err));
-            }
-            bun_sys::Result::Ok(()) => {}
+        if let bun_sys::Result::Err(err) = result {
+            this.err = Some(WalkTaskErr::Syscall(err));
         }
-        drop(guard);
+        Some(done)
     }
 
-    fn then(&mut self, promise: &mut JSPromise) -> Result<(), JsTerminated> {
-        // Ownership of `Box<WalkTask>` is held by `ConcurrentPromiseTask.ctx`; the wrapper is
-        // freed via `ConcurrentPromiseTask::destroy` on the `.manual_deinit` path
-        // after `run_from_js` returns, which drops `ctx` (and thus `walker`).
-
-        if let Some(err) = &self.err {
-            promise.reject_with_async_stack(self.global, err.to_js(self.global))?;
+    fn then(this: Self, mut js: WalkJs, cx: &JsThread<'_>) -> JsResult<()> {
+        let global = cx.global();
+        let promise = js.promise.swap();
+        if let Some(err) = &this.err {
+            promise.reject_with_async_stack(global, err.to_js(global))?;
             return Ok(());
         }
-
-        let js_strings = match glob_walk_result_to_js(&mut self.walker, self.global) {
+        let js_strings = match this.walker.result_to_js(global) {
             Ok(v) => v,
-            // `reject()` pulls the pending exception off the VM.
-            Err(e) => return promise.reject(self.global, Err(e)),
+            Err(e) => return promise.reject(global, Err(e)),
         };
-        promise.resolve(self.global, js_strings)
+        promise.resolve(global, js_strings)
     }
 }
 
-fn glob_walk_result_to_js(
-    glob_walk: &mut GlobWalker,
+fn glob_walk_result_to_js<A: walk::Accessor>(
+    glob_walk: &walk::GlobWalker<A, false>,
     global_this: &JSGlobalObject,
 ) -> JsResult<JSValue> {
     let keys = glob_walk.matched_paths.keys();
@@ -300,57 +464,72 @@ impl Glob {
         arguments: &mut ArgumentsSlice,
         fn_name: &'static str,
         arena: &mut Arena,
-    ) -> JsResult<Option<Box<GlobWalker>>> {
+    ) -> JsResult<Option<AnyGlobWalker>> {
         let Some(match_opts) = ScanOpts::from_js(global_this, arguments, fn_name, arena)? else {
             return Ok(None);
         };
-        let cwd = match_opts.cwd;
-        let dot = match_opts.dot;
-        let absolute = match_opts.absolute;
-        let follow_symlinks = match_opts.follow_symlinks;
-        let error_on_broken_symlinks = match_opts.error_on_broken_symlinks;
-        let only_files = match_opts.only_files;
 
         let _ = arena; // arena ownership is no longer threaded through GlobWalker init.
 
-        if let Some(cwd) = cwd {
-            let glob_walker = match GlobWalker::init_with_cwd(
-                &self.pattern,
-                &cwd,
-                dot,
-                absolute,
-                follow_symlinks,
-                error_on_broken_symlinks,
-                only_files,
-                None,
-            )
-            .map_err(crate::Error::from)?
-            {
-                bun_sys::Result::Err(err) => {
-                    return Err(global_this.throw_value(err.to_js(global_this)));
-                }
-                bun_sys::Result::Ok(gw) => Box::new(gw),
+        fn init_walker<A: walk::Accessor>(
+            global_this: &JSGlobalObject,
+            pattern: &[u8],
+            opts: &ScanOpts,
+        ) -> JsResult<Box<walk::GlobWalker<A, false>>> {
+            let result = match &opts.cwd {
+                Some(cwd) => walk::GlobWalker::<A, false>::init_with_cwd(
+                    pattern,
+                    cwd,
+                    opts.dot,
+                    opts.absolute,
+                    opts.follow_symlinks,
+                    opts.error_on_broken_symlinks,
+                    opts.only_files,
+                    None,
+                ),
+                None => walk::GlobWalker::<A, false>::init(
+                    pattern,
+                    opts.dot,
+                    opts.absolute,
+                    opts.follow_symlinks,
+                    opts.error_on_broken_symlinks,
+                    opts.only_files,
+                    None,
+                ),
             };
-            return Ok(Some(glob_walker));
+            match result.map_err(crate::Error::from)? {
+                bun_sys::Result::Err(err) => Err(global_this.throw_value(err.to_js(global_this))),
+                bun_sys::Result::Ok(gw) => Ok(Box::new(gw)),
+            }
         }
 
-        let glob_walker = match GlobWalker::init(
-            &self.pattern,
-            dot,
-            absolute,
-            follow_symlinks,
-            error_on_broken_symlinks,
-            only_files,
-            None,
-        )
-        .map_err(crate::Error::from)?
-        {
-            bun_sys::Result::Err(err) => {
-                return Err(global_this.throw_value(err.to_js(global_this)));
-            }
-            bun_sys::Result::Ok(gw) => Box::new(gw),
-        };
-        Ok(Some(glob_walker))
+        // Match the walker's root choice (`Iterator::init`): an absolute
+        // pattern roots at its literal prefix and ignores the cwd, a relative
+        // pattern roots at the cwd. A `/$bunfs/` root walks the graph.
+        let pattern_is_absolute = resolve_path::is_absolute(&self.pattern)
+            || (cfg!(windows) && resolve_path::is_absolute_posix(&self.pattern));
+        let in_standalone_graph = bun_standalone_graph::Graph::get_ref().is_some()
+            && if pattern_is_absolute {
+                bun_standalone_graph::is_bun_standalone_file_path(&self.pattern)
+            } else {
+                match_opts
+                    .cwd
+                    .as_deref()
+                    .is_some_and(bun_standalone_graph::is_bun_standalone_file_path)
+            };
+
+        if in_standalone_graph {
+            return Ok(Some(AnyGlobWalker::Standalone(init_walker::<
+                StandaloneAccessor,
+            >(
+                global_this,
+                &self.pattern,
+                &match_opts,
+            )?)));
+        }
+        Ok(Some(AnyGlobWalker::Fs(
+            init_walker::<walk::SyscallAccessor>(global_this, &self.pattern, &match_opts)?,
+        )))
     }
 
     // No `#[bun_jsc::host_fn]` here — the `#[bun_jsc::JsClass]` derive on
@@ -377,8 +556,8 @@ impl Glob {
         }
 
         let pat_str: Box<[u8]> = pat_arg
-            .to_slice_clone(global_this)?
-            .into_vec()
+            .to_bun_string(global_this)?
+            .to_owned_slice()
             .into_boxed_slice();
 
         Ok(Box::new(Glob {
@@ -394,14 +573,6 @@ impl Glob {
     pub(crate) fn has_pending_activity(&self) -> bool {
         self.has_pending_activity.load(Ordering::SeqCst) > 0
     }
-}
-
-fn incr_pending_activity_flag(has_pending_activity: &AtomicUsize) {
-    let _ = has_pending_activity.fetch_add(1, Ordering::SeqCst);
-}
-
-fn decr_pending_activity_flag(has_pending_activity: &AtomicUsize) {
-    let _ = has_pending_activity.fetch_sub(1, Ordering::SeqCst);
 }
 
 impl Glob {
@@ -436,18 +607,21 @@ impl Glob {
                 Ok(Some(gw)) => gw,
             };
 
-        incr_pending_activity_flag(&self.has_pending_activity);
-        let mut task = WalkTask::create(global_this, glob_walker, &self.has_pending_activity);
-        let promise = task.promise.value();
-        task.schedule();
-        // Ownership passes to the work pool / event loop; freed via
-        // `ConcurrentPromiseTask::destroy` on the `.manual_deinit` path.
-        // WalkTask<'_> borrows `&self.has_pending_activity`
-        // and `global_this`. Both referents outlive the task: `Glob` is GC-rooted
-        // via `hasPendingActivity()`, and `JSGlobalObject` lives until VM teardown.
-        // `into_raw` erases the stack-tied `'_` once the heap allocation escapes.
-        let _ = bun_core::heap::into_raw(task);
-        Ok(promise)
+        let cx = global_this.js_thread();
+        let promise = JSPromiseStrong::init(global_this);
+        let value = promise.value();
+        Job::<WalkTask>::schedule(
+            &cx,
+            WalkTask {
+                walker: glob_walker,
+                err: None,
+            },
+            WalkJs {
+                promise,
+                _pending: PendingScan::new(&self.has_pending_activity),
+            },
+        );
+        Ok(value)
     }
 
     #[bun_jsc::host_fn(method)]
@@ -481,7 +655,7 @@ impl Glob {
             bun_sys::Result::Ok(()) => {}
         }
 
-        glob_walk_result_to_js(&mut glob_walker, global_this)
+        glob_walker.result_to_js(global_this)
     }
 
     #[bun_jsc::host_fn(method)]
@@ -504,8 +678,7 @@ impl Glob {
             )));
         }
 
-        let str = str_arg.to_slice(global_this)?;
-        // `str` drops at scope exit.
+        let str = str_arg.to_utf8(global_this)?;
 
         Ok(JSValue::from(
             bun_glob::r#match(&self.pattern, str.slice()).matches(),

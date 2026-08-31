@@ -92,6 +92,9 @@ pub struct BundleV2<'a> {
     pub bun_watcher: Option<NonNull<bun_watcher::Watcher>>,
     pub plugins: Option<NonNull<JSBundlerPlugin>>,
     pub completion: Option<dispatch::CompletionHandle>,
+    /// When this bundle's owning loop is a JS event loop (bake / dev server):
+    /// how parse worker threads deliver work back to it.
+    pub js_poster: Option<bun_event_loop::JsPoster>,
     /// CYCLEBREAK GENUINE: erased `bake::DevServer` (see `dispatch::DevServerHandle`).
     /// Populated from `transpiler.options.dev_server` + the runtime-registered vtable at
     /// construction. All ~15 DevServer call sites go through this.
@@ -335,7 +338,7 @@ pub mod bv2_impl {
     use crate::Error;
     use bun_ast::server_component_boundary;
     use bun_ast::{Binding, E, Expr, G, S};
-    use bun_ast::{ImportKind, ImportRecord};
+    use bun_ast::{ExportsKind, ImportKind, ImportRecord};
     use bun_collections::{ArrayHashMap, DynamicBitSet, DynamicBitSetUnmanaged, VecExt};
     use bun_core::strings;
     use bun_core::{FeatureFlags, Output};
@@ -413,6 +416,8 @@ pub mod bv2_impl {
             pub(crate) const SSR: u8 = 1 << 2;
             /// When set, `.CLIENT` is also set.
             pub(crate) const CSS: u8 = 1 << 3;
+            /// The html file of a route. When set, `.CLIENT` is also set.
+            pub(crate) const HTML: u8 = 1 << 4;
             #[inline]
             pub(crate) fn client(self) -> bool {
                 self.0 & Self::CLIENT != 0
@@ -428,6 +433,10 @@ pub mod bv2_impl {
             #[inline]
             pub(crate) fn css(self) -> bool {
                 self.0 & Self::CSS != 0
+            }
+            #[inline]
+            pub(crate) fn html(self) -> bool {
+                self.0 & Self::HTML != 0
             }
         }
 
@@ -447,7 +456,7 @@ pub mod bv2_impl {
 
         /// TYPE_ONLY subset of the `Framework` fields
         /// the bundler/parser actually consult; `file_system_router_types`
-        /// stays in T6 because only `bake::FrameworkRouter` reads it.
+        /// stays in T6 because only `bake::framework_router` reads it.
         #[non_exhaustive]
         pub struct Framework {
             pub(crate) built_in_modules: bun_collections::StringArrayHashMap<BuiltInModule>,
@@ -511,6 +520,19 @@ pub mod bv2_impl {
         /// Alias used at the crate root (`crate::HmrRuntimeSide`); identical to `Side`.
         pub(crate) type HmrRuntimeSide = Side;
 
+        /// `bake.client.js`, the dev-server client runtime. It is shipped to the
+        /// browser rather than run by Bun, so release builds embed it compressed;
+        /// this is the one place it is inflated (`bake` reads it through here too).
+        pub fn bake_client_js() -> &'static [u8] {
+            let with_nul = bake_client_js_with_nul();
+            &with_nul[..with_nul.len() - 1]
+        }
+
+        /// [`bake_client_js`] followed by a NUL byte.
+        pub fn bake_client_js_with_nul() -> &'static [u8] {
+            bun_zstd::embed_compressed!(codegen_nul "bake.client.js")
+        }
+
         /// MOVE_DOWN bake→bundler:
         /// the codegen'd `bake.client.js` / `bake.server.js` are loaded via
         /// `bun_core::runtime_embed_file!` (same per-site `OnceLock<String>` cache
@@ -525,11 +547,7 @@ pub mod bv2_impl {
             static CLIENT: std::sync::OnceLock<HmrRuntime> = std::sync::OnceLock::new();
             static SERVER: std::sync::OnceLock<HmrRuntime> = std::sync::OnceLock::new();
             match side {
-                Side::Client => *CLIENT.get_or_init(|| {
-                    HmrRuntime::init(
-                        bun_core::runtime_embed_file!(CodegenEager, "bake.client.js").as_bytes(),
-                    )
-                }),
+                Side::Client => *CLIENT.get_or_init(|| HmrRuntime::init(bake_client_js())),
                 // Server runtime is loaded once; non-eager.
                 Side::Server => *SERVER.get_or_init(|| {
                     HmrRuntime::init(
@@ -801,7 +819,7 @@ pub mod bv2_impl {
                     is_on_load: bool,
                 ) -> bool {
                     let mut namespace_string = if path.is_file() {
-                        BunString::empty()
+                        BunString::EMPTY
                     } else {
                         BunString::clone_utf8(path.namespace)
                     };
@@ -824,7 +842,7 @@ pub mod bv2_impl {
                 ) {
                     let _tracer = bun_core::perf::trace("JSBundler.matchOnLoad");
                     let mut namespace_string = if namespace.is_empty() {
-                        BunString::static_(b"file")
+                        BunString::static_("file")
                     } else {
                         BunString::clone_utf8(namespace)
                     };
@@ -849,7 +867,7 @@ pub mod bv2_impl {
                 ) {
                     let _tracer = bun_core::perf::trace("JSBundler.matchOnResolve");
                     let mut namespace_string = if namespace.is_empty() || namespace == b"file" {
-                        BunString::static_(b"file")
+                        BunString::static_("file")
                     } else {
                         BunString::clone_utf8(namespace)
                     };
@@ -1050,6 +1068,8 @@ pub mod bv2_impl {
                 pub(crate) import_record_index: u32,
                 pub(crate) range: bun_ast::Range,
                 pub(crate) original_target: Target,
+                /// Set for the html file of a dev server route, see `BundleV2::requested_file_loader`.
+                pub(crate) loader: Option<Loader>,
             }
 
             /// Mirrors `JSBundler.Resolve.Value.success` payload.
@@ -1076,6 +1096,23 @@ pub mod bv2_impl {
                 }
             }
 
+            fn cancelled_msg(file: &[u8]) -> bun_ast::Msg {
+                bun_ast::Msg {
+                    data: bun_ast::Data {
+                        text: std::borrow::Cow::Borrowed(
+                            b"Bun.build was cancelled: the VM that owns its plugins shut down",
+                        ),
+                        location: Some(bun_ast::Location {
+                            file: std::borrow::Cow::Owned(file.to_vec()),
+                            line: -1,
+                            column: -1,
+                            ..Default::default()
+                        }),
+                    },
+                    ..Default::default()
+                }
+            }
+
             /// Both `js_task` and `task`
             /// are the real lower-tier `bun_event_loop` types, so `dispatch()` /
             /// `run_on_js_thread()` are implemented inherently (no T6 hook).
@@ -1099,6 +1136,13 @@ pub mod bv2_impl {
             impl bun_event_loop::Taskable for Resolve {
                 const TAG: bun_event_loop::TaskTag =
                     bun_event_loop::task_tag::BundleV2PluginResolve;
+                /// The hop to the plugins' VM was released unrun by that VM's teardown (its thread): the
+                /// plugins will never see the request, so it is answered here — as cancelled — and handed
+                /// back to the bundle thread, which is waiting for it.
+                unsafe fn release_unrun(this: *mut Self) {
+                    // SAFETY: released ⇒ the hop never ran; the request is ours alone on this thread.
+                    unsafe { (*this).answer_cancelled() };
+                }
             }
             impl Resolve {
                 pub(crate) fn init(bv2: &mut BundleV2<'_>, record: MiniImportRecord) -> Self {
@@ -1111,14 +1155,32 @@ pub mod bv2_impl {
                     task: bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext::default(),
                 }
                 }
-                /// Hops to the JS thread to call the `onResolve` plugin chain.
+                /// Hands the request over to the plugins' (JS) thread, which answers it exactly once — the
+                /// `onResolve` chain's answer, or "cancelled" once that VM is shutting down — unless the pass
+                /// is already cancelled: then it is never handed over and the bundle thread answers it itself,
+                /// through its own queue like every other answer (not here, mid-caller).
                 pub(crate) fn dispatch(&mut self) {
-                    let task = bun_event_loop::ConcurrentTask::ConcurrentTask::create(
-                        bun_event_loop::Task::init(std::ptr::from_mut::<Self>(self)),
-                    );
                     // SAFETY: `bv2` is a valid backref set by `init`; plugins is
                     // Some (asserted by `enqueue_on_js_loop_for_plugins`).
-                    unsafe { (*self.bv2).enqueue_on_js_loop_for_plugins(task) };
+                    unsafe {
+                        let bv2 = &mut *self.bv2;
+                        if bv2.graph.cancelled {
+                            self.answer_cancelled();
+                            return;
+                        }
+                        let task = bun_event_loop::ConcurrentTask::ConcurrentTask::create(
+                            bun_event_loop::Task::init(std::ptr::from_mut::<Self>(self)),
+                        );
+                        bv2.enqueue_on_js_loop_for_plugins(task);
+                    }
+                }
+                /// The plugins can no longer answer this request (their VM is shutting down, or the pass
+                /// was cancelled before it was handed over): answer it as cancelled, from whichever thread
+                /// holds it, through the bundle thread's queue like every other answer.
+                pub fn answer_cancelled(&mut self) {
+                    self.value = ResolveValue::Err(cancelled_msg(&self.import_record.source_file));
+                    // SAFETY: `bv2` outlives every request of its pass (it cannot finish before this answer).
+                    unsafe { &mut *self.bv2 }.on_resolve_async(self);
                 }
                 pub fn run_on_js_thread(&mut self) {
                     let kind = self.import_record.kind;
@@ -1174,14 +1236,18 @@ pub mod bv2_impl {
                 pub(crate) namespace: Box<[u8]>,
                 pub value: LoadValue,
                 pub parse_task: bun_ptr::BackRef<ParseTask, bun_ptr::Mut>,
-                /// Faster path: skip the extra threadpool dispatch when the file is not found.
-                pub was_file: bool,
                 /// Defer may only be called once.
                 pub called_defer: bool,
-                /// `jsc.AnyEventLoop.Task` — intrusive node for the Mini-loop queue
-                /// (used by `onDefer` to notify the bundler thread when it runs
-                /// under a `MiniEventLoop`).
+                /// `.defer()`ed during this `Graph::defer_epoch`: until that epoch's batch is drained (or
+                /// this load's answer arrives first) its scan-counter unit sits in
+                /// `Graph::deferred_pending`. Bundle thread only.
+                pub(crate) deferred_in: Option<u32>,
+                /// Intrusive node for the Mini-loop queue: carries this load's answer back to the bundle
+                /// thread (`on_load_async`).
                 pub task: bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext,
+                /// A second node for `.defer()`'s notification: it can still be queued when the plugin
+                /// answers, and one node cannot sit in the queue twice.
+                pub defer_task: bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext,
             }
             impl Load {
                 pub(crate) fn init(bv2: &mut BundleV2<'_>, parse: &mut ParseTask) -> Self {
@@ -1197,9 +1263,10 @@ pub mod bv2_impl {
                     value: LoadValue::Pending,
                     path: parse.path.text.to_vec().into_boxed_slice(),
                     namespace: parse.path.namespace.to_vec().into_boxed_slice(),
-                    was_file: false,
                     called_defer: false,
+                    deferred_in: None,
                     task: bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext::default(),
+                    defer_task: bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext::default(),
                 }
                 }
                 /// Shared access to the heap-allocated `ParseTask` this load wraps.
@@ -1227,16 +1294,29 @@ pub mod bv2_impl {
                 pub(crate) fn bake_graph(&self) -> crate::bake_types::Graph {
                     self.parse_task().known_target.bake_graph()
                 }
-                /// Hops to the JS thread to call the `onLoad` plugin chain.
+                /// Hops to the JS thread to call the `onLoad` plugin chain —
+                /// unless the pass is already cancelled: see `Resolve::dispatch`.
                 pub(crate) fn dispatch(&mut self) {
-                    let concurrent_task = bun_event_loop::ConcurrentTask::ConcurrentTask::create(
-                        bun_event_loop::Task::init(std::ptr::from_mut::<Self>(self)),
-                    );
                     // SAFETY: `bv2` is a valid backref; plugins is Some (asserted
                     // by `enqueue_on_js_loop_for_plugins`).
                     unsafe {
-                        (*self.bv2).enqueue_on_js_loop_for_plugins(concurrent_task);
+                        let bv2 = &mut *self.bv2;
+                        if bv2.graph.cancelled {
+                            self.answer_cancelled();
+                            return;
+                        }
+                        let concurrent_task =
+                            bun_event_loop::ConcurrentTask::ConcurrentTask::create(
+                                bun_event_loop::Task::init(std::ptr::from_mut::<Self>(self)),
+                            );
+                        bv2.enqueue_on_js_loop_for_plugins(concurrent_task);
                     }
+                }
+                /// As `Resolve::answer_cancelled`.
+                pub fn answer_cancelled(&mut self) {
+                    self.value = LoadValue::Err(cancelled_msg(&self.path));
+                    // SAFETY: as `Resolve::answer_cancelled`.
+                    unsafe { &mut *self.bv2 }.on_load_async(self);
                 }
                 pub fn run_on_js_thread(&mut self) {
                     let is_server_side = self.bake_graph() != crate::bake_types::Graph::Client;
@@ -1262,6 +1342,11 @@ pub mod bv2_impl {
             }
             impl bun_event_loop::Taskable for Load {
                 const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::BundleV2PluginLoad;
+                /// As `Resolve::release_unrun`.
+                unsafe fn release_unrun(this: *mut Self) {
+                    // SAFETY: as `Resolve::release_unrun`.
+                    unsafe { (*this).answer_cancelled() };
+                }
             }
         }
     }
@@ -1313,6 +1398,9 @@ pub mod bv2_impl {
             }
         }
 
+        /// Opaque `JSC::EncoderStringTable` — one instance shared by every chunk's `encodeCodeBlock` in a `--compile --bytecode` build.
+        pub(crate) enum EncoderStringTable {}
+
         unsafe extern "Rust" {
             /// Defined `#[no_mangle]` in `bun_jsc::cached_bytecode`. Generic
             /// "generate JSC bytecode off the main JS thread" helper — marks the
@@ -1323,8 +1411,40 @@ pub mod bv2_impl {
             safe fn __bun_jsc_generate_cached_bytecode(
                 format: crate::options_impl::Format,
                 source: &[u8],
-                source_provider_url: &mut bun_core::String,
+                source_provider_url: &bun_core::String,
+                depth: u32,
+                external_strings: Option<core::ptr::NonNull<EncoderStringTable>>,
             ) -> Option<Box<[u8]>>;
+
+            /// Defined `#[no_mangle]` in `bun_jsc::cached_bytecode`: this executable's builtins section
+            /// (`bun_exe_format::builtins`).
+            safe fn __bun_jsc_host_builtins() -> &'static [u8];
+            /// Bytecode for this executable's internal module `id`, as InternalModuleRegistry consumes it.
+            safe fn __bun_jsc_generate_internal_module_bytecode(
+                id: u32,
+                depth: u32,
+                external_strings: Option<core::ptr::NonNull<EncoderStringTable>>,
+            ) -> Option<Box<[u8]>>;
+            /// Same, for another executable's internal module given its source, registry name, url and source stamp.
+            safe fn __bun_jsc_generate_internal_module_bytecode_from_source(
+                source: &[u8],
+                name: &[u8],
+                url: &[u8],
+                source_stamp: u32,
+                depth: u32,
+                external_strings: Option<core::ptr::NonNull<EncoderStringTable>>,
+            ) -> Option<Box<[u8]>>;
+
+            safe fn __bun_jsc_encoder_string_table_new() -> core::ptr::NonNull<EncoderStringTable>;
+            pub(crate) safe fn __bun_jsc_destroy_bytecode_cache_vm();
+            safe fn __bun_jsc_encoder_string_table_take(
+                table: core::ptr::NonNull<EncoderStringTable>,
+            ) -> Box<[u8]>;
+            /// The runtime-resolvable slot for one module-info string (`EncoderStringTable::slot_for_wtf8`).
+            safe fn __bun_jsc_encoder_string_table_slot(
+                table: core::ptr::NonNull<EncoderStringTable>,
+                wtf8: &[u8],
+            ) -> u32;
         }
 
         unsafe extern "Rust" {
@@ -1361,9 +1481,83 @@ pub mod bv2_impl {
         pub(crate) fn generate_cached_bytecode(
             format: crate::options_impl::Format,
             source: &[u8],
-            source_provider_url: &mut bun_core::String,
+            source_provider_url: &bun_core::String,
+            depth: u32,
+            external_strings: Option<core::ptr::NonNull<EncoderStringTable>>,
         ) -> Option<Box<[u8]>> {
-            __bun_jsc_generate_cached_bytecode(format, source, source_provider_url)
+            // A CJS chunk is wrapped in `(function(exports, require, module, ...) {})`, so the module's top level is one function deep.
+            let depth = match format {
+                crate::options_impl::Format::Cjs => depth.saturating_add(1),
+                _ => depth,
+            };
+            __bun_jsc_generate_cached_bytecode(
+                format,
+                source,
+                source_provider_url,
+                depth,
+                external_strings,
+            )
+        }
+
+        /// Owns a `JSC::EncoderStringTable` for one link; `take()` serializes and frees it, `Drop` frees it on early return.
+        pub(crate) struct EncoderStringTableHandle(Option<core::ptr::NonNull<EncoderStringTable>>);
+
+        impl EncoderStringTableHandle {
+            #[inline]
+            pub(crate) fn new() -> Self {
+                Self(Some(__bun_jsc_encoder_string_table_new()))
+            }
+            #[inline]
+            pub(crate) fn get(&self) -> Option<core::ptr::NonNull<EncoderStringTable>> {
+                self.0
+            }
+            #[inline]
+            pub(crate) fn take(mut self) -> Box<[u8]> {
+                __bun_jsc_encoder_string_table_take(self.0.take().expect("taken once"))
+            }
+            #[inline]
+            pub(crate) fn slot(&self, wtf8: &[u8]) -> u32 {
+                __bun_jsc_encoder_string_table_slot(self.0.expect("not yet taken"), wtf8)
+            }
+        }
+
+        impl Drop for EncoderStringTableHandle {
+            fn drop(&mut self) {
+                if let Some(table) = self.0.take() {
+                    drop(__bun_jsc_encoder_string_table_take(table));
+                }
+            }
+        }
+
+        #[inline]
+        pub(crate) fn host_builtins() -> &'static [u8] {
+            __bun_jsc_host_builtins()
+        }
+
+        #[inline]
+        pub(crate) fn generate_internal_module_bytecode(
+            id: u32,
+            depth: u32,
+            external_strings: Option<core::ptr::NonNull<EncoderStringTable>>,
+        ) -> Option<Box<[u8]>> {
+            __bun_jsc_generate_internal_module_bytecode(id, depth, external_strings)
+        }
+
+        #[inline]
+        pub(crate) fn generate_internal_module_bytecode_from_source(
+            module: &bun_exe_format::builtins::Module<'_>,
+            source_stamp: u32,
+            depth: u32,
+            external_strings: Option<core::ptr::NonNull<EncoderStringTable>>,
+        ) -> Option<Box<[u8]>> {
+            __bun_jsc_generate_internal_module_bytecode_from_source(
+                module.source,
+                module.name,
+                module.url,
+                source_stamp,
+                depth,
+                external_strings,
+            )
         }
 
         /// CYCLEBREAK GENUINE: `JSBundleCompletionTask` — the
@@ -1373,8 +1567,9 @@ pub mod bv2_impl {
         /// enqueue), so the high tier hands the bundler an erased owner +
         /// `&'static` vtable pair (same shape as [`DevServerHandle`]).
         pub struct CompletionDispatch {
-            /// Whether the completion result is an error.
-            pub result_is_err: unsafe fn(core::ptr::NonNull<super::JSBundleCompletionTask>) -> bool,
+            /// Whether the VM that owns the plugins is shutting down: stop
+            /// waiting for their answers and fail the build (any thread).
+            pub is_cancelled: unsafe fn(core::ptr::NonNull<super::JSBundleCompletionTask>) -> bool,
             /// Folds the event-loop field access + enqueue so the bundler
             /// needn't name the JSC event-loop type.
             pub enqueue_task_concurrent: unsafe fn(
@@ -1392,7 +1587,7 @@ pub mod bv2_impl {
         // cross-thread call and it goes through `jsc::EventLoop`'s lock-free queue.
         unsafe impl Send for CompletionHandle {}
         // Intentionally not `Sync`: the opaque owner (`JSBundleCompletionTask`)
-        // is modeled as `!Sync`, and this wrapper exposes `result_is_err(&self)`
+        // is modeled as `!Sync`, and this wrapper exposes `is_cancelled(&self)`
         // in addition to the lock-free enqueue path, so blanket `&CompletionHandle`
         // sharing across threads is not justified. The handle only needs to *move*
         // to the bundle thread (`Send`), not be shared. If a cross-thread `&` ever
@@ -1400,9 +1595,9 @@ pub mod bv2_impl {
         // type `Sync`.
         impl CompletionHandle {
             #[inline]
-            pub(crate) fn result_is_err(&self) -> bool {
+            pub(crate) fn is_cancelled(&self) -> bool {
                 // SAFETY: vtable contract.
-                unsafe { (self.vtable.result_is_err)(self.owner) }
+                unsafe { (self.vtable.is_cancelled)(self.owner) }
             }
             #[inline]
             pub(crate) fn enqueue_task_concurrent(
@@ -1471,20 +1666,22 @@ pub mod bv2_impl {
         ) {
             debug_assert!(self.plugins.is_some());
             if let Some(completion) = self.completion {
-                // From Bun.build — `completion.jsc_event_loop.enqueueTaskConcurrent(task)`.
+                // From Bun.build — the completion posts it to its VM (through its ticket, via the vtable).
                 completion.enqueue_task_concurrent(task);
                 return;
             }
             // From bake where the loop running the bundle is also the loop running
             // the plugins.
             // `any_loop_mut` centralises the BACKREF deref of `linker.r#loop`.
-            match &*self.any_loop_mut() {
-                bun_event_loop::AnyEventLoop::Js { owner } => {
-                    owner.enqueue_task_concurrent(task);
-                }
-                bun_event_loop::AnyEventLoop::Mini(_) => {
-                    panic!("No JavaScript event loop for transpiler plugins to run on");
-                }
+            let poster = self
+                .js_poster
+                .as_ref()
+                .expect("No JavaScript event loop for transpiler plugins to run on");
+            if let bun_event_loop::Posted::Refused(task) = poster.post(task) {
+                // The JS VM running the plugins was torn down mid-bundle; the
+                // plugin hop will never run. Free the task if it is heap-owned.
+                // SAFETY: refused ⇒ still ours.
+                unsafe { bun_event_loop::ConcurrentTask::ConcurrentTask::release_refused(task) };
             }
         }
 
@@ -1616,6 +1813,9 @@ pub mod bv2_impl {
         pub(crate) all_urls_for_css: &'a [&'a [u8]],
         pub(crate) redirects: &'a [u32],
         pub(crate) dynamic_import_entry_points: &'a mut ArrayHashMap<IndexInt, ()>,
+        pub(crate) split_require: bool,
+        pub(crate) all_exports_kinds: &'a [ExportsKind],
+        pub(crate) all_targets: &'a [Target],
         /// Files which are Server Component Boundaries
         pub(crate) scb_bitset: Option<DynamicBitSetUnmanaged>,
         pub(crate) scb_list: server_component_boundary::Slice<'a>,
@@ -1770,9 +1970,9 @@ pub mod bv2_impl {
                                 redirect_count += 1;
                             }
 
-                            let import_record = &self.all_import_records
+                            let import_record = &mut self.all_import_records
                                 [import_record_list_id.get() as usize]
-                                .as_slice()[ir_idx];
+                                .as_mut_slice()[ir_idx];
                             // Mark if the file is imported by JS and its URL is inlined for CSS
                             let is_inlined = import_record.source_index.is_valid()
                                 && !self.all_urls_for_css
@@ -1787,10 +1987,28 @@ pub mod bv2_impl {
                             }
 
                             let next_source = import_record.source_index;
-                            let kind_is_dynamic = import_record.kind == ImportKind::Dynamic;
+                            // The importing file's own target decides: a server
+                            // build's browser-side files cannot call `import.meta.require`.
+                            let target_is_bun = self.split_require
+                                && self.all_targets[source_index.get() as usize].is_bun();
+                            let mut was_dynamic_import = CHECK_DYNAMIC_IMPORTS
+                                && import_record.kind.can_be_lazy_chunk(target_is_bun);
+                            // A `require()` splits only when it targets another ES
+                            // module; the flag is the linker's and printer's signal.
+                            if was_dynamic_import && import_record.kind == ImportKind::Require {
+                                was_dynamic_import = next_source.is_valid()
+                                    && next_source != import_record_list_id
+                                    && self.all_exports_kinds[next_source.get() as usize]
+                                        == ExportsKind::Esm;
+                                if was_dynamic_import {
+                                    import_record
+                                        .flags
+                                        .insert(bun_ast::ImportRecordFlags::CROSS_CHUNK_REQUIRE);
+                                }
+                            }
                             self.stack.push(ReachFrame::Enter {
                                 source_index: next_source,
-                                was_dynamic_import: CHECK_DYNAMIC_IMPORTS && kind_is_dynamic,
+                                was_dynamic_import,
                             });
                         }
                     }
@@ -1884,6 +2102,8 @@ pub mod bv2_impl {
             let all_import_records: &mut [import_record::List<'_>] =
                 ast_slice.split_mut().import_records;
             let all_urls_for_css = self.graph.ast.items_url_for_css();
+            let all_exports_kinds = self.graph.ast.items_exports_kind();
+            let all_targets = self.graph.ast.items_target();
 
             let mut visitor = ReachableFileVisitor {
                 reachable: Vec::with_capacity(self.graph.entry_points.len() + 1),
@@ -1893,6 +2113,9 @@ pub mod bv2_impl {
                 all_loaders: self.graph.input_files.items_loader(),
                 all_urls_for_css,
                 dynamic_import_entry_points: &mut self.dynamic_import_entry_points,
+                split_require: self.transpiler.options.split_require,
+                all_exports_kinds,
+                all_targets,
                 scb_bitset,
                 scb_list,
                 additional_files_imported_by_js_and_inlined_in_css:
@@ -1972,6 +2195,19 @@ pub mod bv2_impl {
         fn is_done(&mut self) -> bool {
             self.thread_lock.assert_locked();
 
+            if !self.graph.cancelled && self.completion.as_ref().is_some_and(|c| c.is_cancelled()) {
+                // The VM that owns the plugins is shutting down. It answers every request the plugins still
+                // hold — and every hop that never reached them — as cancelled, on its own thread like any
+                // other answer; the pass keeps consuming answers until none is pending, hands nothing further
+                // to that VM (`dispatch()`), and fails as a whole at its next checkpoint.
+                self.graph.cancelled = true;
+                self.transpiler.log_mut().add_error(
+                    None,
+                    bun_ast::Loc::EMPTY,
+                    &b"Bun.build was cancelled: the VM that owns its plugins shut down"[..],
+                );
+            }
+
             if self.graph.pending_items == 0 {
                 let this: *mut Self = self;
                 // reshaped for borrowck — `&self.graph` and
@@ -2013,6 +2249,19 @@ pub mod bv2_impl {
                 self.graph.input_files.len(),
                 self.graph.ast.len()
             );
+        }
+
+        /// Callers require an entry point, so none after parsing means one was dropped without an error.
+        fn fail_if_no_entry_points(&self) -> Result<(), Error> {
+            if !self.graph.entry_points.is_empty() {
+                return Ok(());
+            }
+            self.transpiler.log_mut().add_error(
+                None,
+                bun_ast::Loc::EMPTY,
+                "None of the entry points could be bundled",
+            );
+            Err(crate::Error::BuildFailed)
         }
 
         /// `BUN_THREADPOOL_STATS=1` instrumentation hook — dump aggregate worker
@@ -2454,10 +2703,12 @@ pub mod bv2_impl {
             }
         }
 
+        /// `loader`: see `requested_file_loader`.
         pub fn enqueue_file_from_dev_server_incremental_graph_invalidation(
             &mut self,
             path_slice: &[u8],
             target: options::Target,
+            loader: Option<Loader>,
         ) -> Result<(), Error> {
             // TODO: plugins with non-file namespaces
             // borrowck: get-then-put (instead of a single get-or-put) so the map
@@ -2479,9 +2730,7 @@ pub mod bv2_impl {
             let mut path = result.path_pair.primary;
             self.increment_scan_counter();
             let source_index = Index::source(self.graph.input_files.len() as u32);
-            let loader = path
-                .loader(&self.transpiler.options.loaders)
-                .unwrap_or(Loader::File);
+            let loader = self.requested_file_loader(&path, loader);
 
             path = self.path_with_pretty_initialized(&path, target)?;
             path.assert_pretty_is_valid();
@@ -2511,16 +2760,11 @@ pub mod bv2_impl {
             let task: &mut ParseTask = self.arena_create(task_val);
             task.loader = Some(loader);
             task.task.node.next = core::ptr::null_mut();
-            task.tree_shaking = self.linker.options.tree_shaking;
             task.known_target = target;
-            {
-                let t = self.transpiler_for_target(target);
-                task.jsx.development = match t.options.force_node_env {
-                    options::ForceNodeEnv::Development => true,
-                    options::ForceNodeEnv::Production => false,
-                    options::ForceNodeEnv::Unspecified => t.options.jsx.development,
-                };
-            }
+            task.jsx.development = self
+                .transpiler_for_target(target)
+                .options
+                .forced_jsx_development();
 
             // Handle onLoad plugins as entry points
             if !self.enqueue_on_load_plugin_if_needed(task) {
@@ -2540,19 +2784,28 @@ pub mod bv2_impl {
             Ok(())
         }
 
+        /// The dev server passes `Loader::Html` for the html file of a route: its extension need not be `.html`.
+        fn requested_file_loader(&self, path: &Fs::Path<'_>, loader: Option<Loader>) -> Loader {
+            loader.unwrap_or_else(|| {
+                path.loader(&self.transpiler.options.loaders)
+                    .unwrap_or(Loader::File)
+            })
+        }
+
+        /// `loader`: see `requested_file_loader`.
         pub(crate) fn enqueue_entry_item(
             &mut self,
             resolve: &mut _resolver::Result,
             is_entry_point: bool,
             target: options::Target,
+            loader: Option<Loader>,
         ) -> Result<Option<IndexInt>, Error> {
             let result = &mut *resolve;
             // borrowck: clone the active path out so we don't hold a `&mut`
             // into `result` across the `&mut self` calls below.
-            let mut path: Fs::Path<'static> = match result.path() {
-                Some(p) => *p,
-                None => return Ok(None),
-            };
+            let mut path: Fs::Path<'static> = *result.path().expect(
+                "resolve_entry_point rejects disabled results and FileMap results have a path",
+            );
 
             path.assert_file_path_is_absolute();
             // borrowck: get-then-put instead of a single get-or-put.
@@ -2566,9 +2819,7 @@ pub mod bv2_impl {
             self.increment_scan_counter();
             let source_index = Index::source(self.graph.input_files.len() as u32);
 
-            let loader = path
-                .loader(&self.transpiler.options.loaders)
-                .unwrap_or(Loader::File);
+            let loader = self.requested_file_loader(&path, loader);
 
             // SAFETY: `path_with_pretty_initialized` allocates into `self.graph.heap`, which
             // outlives the bundle pass; erase the arena lifetime back to the resolver's
@@ -2620,17 +2871,12 @@ pub mod bv2_impl {
             let task: &mut ParseTask = self.arena_create(task_val);
             task.loader = Some(loader);
             task.task.node.next = core::ptr::null_mut();
-            task.tree_shaking = self.linker.options.tree_shaking;
             task.is_entry_point = is_entry_point;
             task.known_target = target;
-            {
-                let bundler = self.transpiler_for_target(target);
-                task.jsx.development = match bundler.options.force_node_env {
-                    options::ForceNodeEnv::Development => true,
-                    options::ForceNodeEnv::Production => false,
-                    options::ForceNodeEnv::Unspecified => bundler.options.jsx.development,
-                };
-            }
+            task.jsx.development = self
+                .transpiler_for_target(target)
+                .options
+                .forced_jsx_development();
 
             // Handle onLoad plugins as entry points
             if !self.enqueue_on_load_plugin_if_needed(task) {
@@ -2700,6 +2946,9 @@ pub mod bv2_impl {
                 bun_watcher: None,
                 plugins: None,
                 completion: None,
+                // SAFETY: `event_loop`, when set, points at the caller's live loop
+                // (owning thread == this thread).
+                js_poster: event_loop.and_then(|l| unsafe { l.as_ref() }.js_poster()),
                 dev_server: None,
                 file_map: None,
                 source_code_length: 0,
@@ -2790,6 +3039,7 @@ pub mod bv2_impl {
             // SAFETY: same `'a`-owned `Transpiler` field as `banner` above.
             this.linker.options.footer = unsafe { interned_slice(&this.transpiler.options.footer) };
             this.linker.options.css_chunking = this.transpiler.options.css_chunking;
+            this.linker.options.min_chunk_size = this.transpiler.options.min_chunk_size;
             this.linker.options.source_maps = this.transpiler.options.source_map;
             this.linker.options.tree_shaking = this.transpiler.options.tree_shaking;
             // SAFETY: same `'a`-owned `Transpiler` field as `banner` above.
@@ -2798,6 +3048,20 @@ pub mod bv2_impl {
             this.linker.options.target = this.transpiler.options.target;
             this.linker.options.output_format = this.transpiler.options.output_format;
             this.linker.options.generate_bytecode_cache = this.transpiler.options.bytecode;
+            this.linker.options.generate_internal_module_bytecode =
+                this.transpiler.options.bytecode
+                    && !matches!(
+                        this.transpiler.options.compile_target_builtins,
+                        crate::options::CompileTargetBuiltins::None
+                    );
+            this.linker.options.target_builtins =
+                match &this.transpiler.options.compile_target_builtins {
+                    crate::options::CompileTargetBuiltins::Target(section) => {
+                        Some(std::sync::Arc::clone(section))
+                    }
+                    _ => None,
+                };
+            this.linker.options.bytecode_depth = this.transpiler.options.bytecode_depth;
             this.linker.options.compile_mode = this.transpiler.options.compile_mode;
             this.linker.options.metafile = this.transpiler.options.metafile;
             // SAFETY: same `'a`-owned `Transpiler` field as `banner` above.
@@ -2861,6 +3125,7 @@ pub mod bv2_impl {
 
         pub(crate) fn decrement_scan_counter(&mut self) {
             self.thread_lock.assert_locked();
+            debug_assert!(self.graph.pending_items > 0);
             self.graph.pending_items -= 1;
             bun_core::scoped_log!(
                 scan_counter,
@@ -2910,6 +3175,7 @@ pub mod bv2_impl {
                 if self.enqueue_entry_point_on_resolve_plugin_if_needed(
                     entry_point,
                     self.transpiler.options.target,
+                    None,
                 ) {
                     continue;
                 }
@@ -2922,6 +3188,7 @@ pub mod bv2_impl {
                             &mut { file_map_result },
                             true,
                             self.transpiler.options.target,
+                            None,
                         )?;
                         continue;
                     }
@@ -2947,7 +3214,7 @@ pub mod bv2_impl {
                     }
                     break 'brk main_target;
                 };
-                let _ = self.enqueue_entry_item(&mut resolved, true, target)?;
+                let _ = self.enqueue_entry_item(&mut resolved, true, target, None)?;
             }
             Ok(())
         }
@@ -2979,23 +3246,28 @@ pub mod bv2_impl {
                         &raw mut *self.transpiler
                     };
                 let server_target = self.transpiler.options.target;
+                let client_loader = flags.html().then_some(Loader::Html);
 
                 struct TargetCheck {
                     should_dispatch: bool,
                     target: options::Target,
+                    loader: Option<Loader>,
                 }
                 let targets_to_check = [
                     TargetCheck {
                         should_dispatch: flags.client(),
                         target: Target::Browser,
+                        loader: client_loader,
                     },
                     TargetCheck {
                         should_dispatch: flags.server(),
                         target: server_target,
+                        loader: None,
                     },
                     TargetCheck {
                         should_dispatch: flags.ssr(),
                         target: Target::ServerComponentsSsr,
+                        loader: None,
                     },
                 ];
 
@@ -3005,6 +3277,7 @@ pub mod bv2_impl {
                         if self.enqueue_entry_point_on_resolve_plugin_if_needed(
                             abs_path,
                             target_info.target,
+                            target_info.loader,
                         ) {
                             any_plugin_matched = true;
                         }
@@ -3042,8 +3315,12 @@ pub mod bv2_impl {
 
                 if flags.client() {
                     'brk: {
-                        let Some(source_index) =
-                            self.enqueue_entry_item(&mut resolved, true, Target::Browser)?
+                        let Some(source_index) = self.enqueue_entry_item(
+                            &mut resolved,
+                            true,
+                            Target::Browser,
+                            client_loader,
+                        )?
                         else {
                             break 'brk;
                         };
@@ -3062,11 +3339,16 @@ pub mod bv2_impl {
                         &mut resolved,
                         true,
                         self.transpiler.options.target,
+                        None,
                     )?;
                 }
                 if flags.ssr() {
-                    let _ =
-                        self.enqueue_entry_item(&mut resolved, true, Target::ServerComponentsSsr)?;
+                    let _ = self.enqueue_entry_item(
+                        &mut resolved,
+                        true,
+                        Target::ServerComponentsSsr,
+                        None,
+                    )?;
                 }
             }
             Ok(())
@@ -3092,7 +3374,7 @@ pub mod bv2_impl {
                     bake::Side::Server => self.transpiler.options.target,
                 };
 
-                if self.enqueue_entry_point_on_resolve_plugin_if_needed(abs_path, target) {
+                if self.enqueue_entry_point_on_resolve_plugin_if_needed(abs_path, target, None) {
                     continue;
                 }
 
@@ -3103,7 +3385,7 @@ pub mod bv2_impl {
                 };
 
                 // TODO: wrap client files so the exports arent preserved.
-                let Some(_) = self.enqueue_entry_item(&mut resolved, true, target)? else {
+                let Some(_) = self.enqueue_entry_item(&mut resolved, true, target, None)? else {
                     continue;
                 };
             }
@@ -3136,9 +3418,7 @@ pub mod bv2_impl {
                 let ctx_mut = bun_ptr::ParentRef::from_raw_mut(
                     std::ptr::from_mut(self).cast::<BundleV2<'static>>(),
                 );
-                (*runtime_parse_task).ctx = Some(ctx_mut.shared());
-                (*runtime_parse_task).completion_ctx = Some(ctx_mut);
-                (*runtime_parse_task).tree_shaking = true;
+                (*runtime_parse_task).ctx = Some(ctx_mut);
                 (*runtime_parse_task).loader = Some(Loader::Js);
             }
             self.increment_scan_counter();
@@ -3459,7 +3739,6 @@ pub mod bv2_impl {
             task.jsx = self.transpiler_for_target(known_target).options.jsx.clone();
             task.task.node.next = core::ptr::null_mut();
             task.io_task.node.next = core::ptr::null_mut();
-            task.tree_shaking = self.linker.options.tree_shaking;
             task.known_target = known_target;
 
             self.increment_scan_counter();
@@ -3532,7 +3811,6 @@ pub mod bv2_impl {
             } else {
                 self.transpiler_for_target(known_target).options.jsx.clone()
             };
-            let tree_shaking = self.linker.options.tree_shaking;
             // SAFETY: arena (`self.graph.heap`) outlives the bundle pass; coerce the
             // `&mut ParseTask` to `*mut` immediately so the `&self` borrow from
             // `arena()` ends before we take `&mut self` below.
@@ -3546,7 +3824,6 @@ pub mod bv2_impl {
                 emit_decorator_metadata: false, // TODO
                 package_version: bun_ast::StoreStr::EMPTY,
                 loader: Some(loader),
-                tree_shaking,
                 known_target,
                 ..Default::default()
             });
@@ -3556,8 +3833,7 @@ pub mod bv2_impl {
                 let ctx_mut = bun_ptr::ParentRef::from_raw_mut(
                     std::ptr::from_mut(self).cast::<BundleV2<'static>>(),
                 );
-                (*task).ctx = Some(ctx_mut.shared());
-                (*task).completion_ctx = Some(ctx_mut);
+                (*task).ctx = Some(ctx_mut);
                 (*task).task.node.next = core::ptr::null_mut();
                 (*task).io_task.node.next = core::ptr::null_mut();
             }
@@ -3765,10 +4041,7 @@ pub mod bv2_impl {
                 // sidestep for the `&mut self` overlap.
                 this.enqueue_entry_points_normal(unsafe { &*entry_points })?;
 
-                if this.transpiler.log().has_errors() {
-                    return Err(crate::Error::BuildFailed);
-                }
-
+                // Like `run_from_js_in_new_thread`: drain the pool, then report entry point errors.
                 this.wait_for_parse();
                 this.dump_pool_stats("parse");
 
@@ -3780,6 +4053,7 @@ pub mod bv2_impl {
                 if this.transpiler.log().has_errors() {
                     return Err(crate::Error::BuildFailed);
                 }
+                this.fail_if_no_entry_points()?;
 
                 this.scan_for_secondary_paths();
 
@@ -3939,10 +4213,7 @@ pub mod bv2_impl {
 
                 this.enqueue_entry_points_bake_production(entry_points)?;
 
-                if this.transpiler.log().has_errors() {
-                    return Err(crate::Error::BuildFailed);
-                }
-
+                // Drain the pool, then report entry point errors (as `generate_from_cli` does).
                 this.wait_for_parse();
 
                 if this.transpiler.log().has_errors() {
@@ -4064,28 +4335,36 @@ pub mod bv2_impl {
                     let index = reachable_source.get() as usize;
                     let key: &[u8] = &unique_key_for_additional_files[index];
                     if !key.is_empty() {
-                        let mut template: options::PathTemplate =
-                            if self.graph.html_imports.server_source_indices.len() != 0
-                                && self.transpiler.options.asset_naming.is_empty()
-                            {
-                                options::PathTemplate::ASSET_WITH_TARGET.into()
-                            } else {
-                                options::PathTemplate::ASSET.into()
-                            };
-
+                        let loader = loaders[index];
                         let target = targets[index];
-                        // SAFETY: see `self_ptr` note above — `transpiler_for_target` needs
-                        // `&mut self` only to pick between two stored `*mut Transpiler`s; it
-                        // never touches `graph.input_files`.
-                        let asset_naming = unsafe {
-                            &(*self_ptr)
-                                .transpiler_for_target(target)
-                                .options
-                                .asset_naming
+                        let mut template: options::PathTemplate = if loader == Loader::Text {
+                            // Text modules ignore `--asset-naming`: without `[hash]`
+                            // two same-named files would share one path.
+                            options::PathTemplate::ASSET.into()
+                        } else {
+                            let mut template: options::PathTemplate =
+                                if self.graph.html_imports.server_source_indices.len() != 0
+                                    && self.transpiler.options.asset_naming.is_empty()
+                                {
+                                    options::PathTemplate::ASSET_WITH_TARGET.into()
+                                } else {
+                                    options::PathTemplate::ASSET.into()
+                                };
+
+                            // SAFETY: see `self_ptr` note above — `transpiler_for_target` needs
+                            // `&mut self` only to pick between two stored `*mut Transpiler`s; it
+                            // never touches `graph.input_files`.
+                            let asset_naming = unsafe {
+                                &(*self_ptr)
+                                    .transpiler_for_target(target)
+                                    .options
+                                    .asset_naming
+                            };
+                            if !asset_naming.is_empty() {
+                                template.data.clone_from(asset_naming);
+                            }
+                            template
                         };
-                        if !asset_naming.is_empty() {
-                            template.data.clone_from(asset_naming);
-                        }
 
                         let source = &mut sources[index];
 
@@ -4093,7 +4372,7 @@ pub mod bv2_impl {
                             // TODO: outbase
                             let pathname =
                                 Fs::PathName::init(bun_paths::resolve_path::relative_platform::<
-                                    bun_paths::resolve_path::platform::Loose,
+                                    bun_paths::resolve_path::platform::Auto,
                                     false,
                                 >(
                                     &self.transpiler.options.root_dir,
@@ -4114,10 +4393,7 @@ pub mod bv2_impl {
                             }
 
                             if template.needs(options::PlaceholderField::Target) {
-                                template.placeholder.target = <&'static str>::from(target)
-                                    .as_bytes()
-                                    .to_vec()
-                                    .into_boxed_slice();
+                                template.placeholder.target = target.naming_placeholder().into();
                             }
                             let mut v = Vec::new();
                             template
@@ -4126,10 +4402,10 @@ pub mod bv2_impl {
                                     !self.transpiler.options.compile_mode.is_executable(),
                                 )
                                 .expect("oom");
+                            // Like a chunk's `final_rel_path`: `/`-separated on every platform.
+                            bun_paths::resolve_path::platform_to_posix_in_place::<u8>(&mut v);
                             v.into_boxed_slice()
                         };
-
-                        let loader = loaders[index];
 
                         // Hand the existing `source.contents` buffer to the
                         // OutputFile — no copy: move the contents
@@ -4176,13 +4452,22 @@ pub mod bv2_impl {
             // `on_load` must land there — not on the JS plugin loop — or it will
             // mutate `graph` / allocate from `graph.heap` off-thread.
             match self.any_loop_mut() {
-                bun_event_loop::AnyEventLoop::Js { owner } => {
-                    owner.enqueue_task_concurrent(
-                        bun_event_loop::ConcurrentTask::ConcurrentTask::from_callback(
-                            std::ptr::from_mut(load),
-                            on_load_from_js_loop_raw,
-                        ),
+                bun_event_loop::AnyEventLoop::Js { .. } => {
+                    let ct = bun_event_loop::ConcurrentTask::ConcurrentTask::from_callback(
+                        std::ptr::from_mut(load),
+                        on_load_from_js_loop_raw,
                     );
+                    let poster = self
+                        .js_poster
+                        .as_ref()
+                        .expect("JS-owned bundle has a poster");
+                    if let bun_event_loop::Posted::Refused(ct) = poster.post(ct) {
+                        // Owning JS VM torn down mid-bundle: the hop never runs.
+                        // SAFETY: refused ⇒ we own the task.
+                        unsafe {
+                            bun_event_loop::ConcurrentTask::ConcurrentTask::release_refused(ct)
+                        };
+                    }
                 }
                 bun_event_loop::AnyEventLoop::Mini(mini) => {
                     // SAFETY: `load` is a valid &mut for the duration of the enqueue;
@@ -4201,13 +4486,22 @@ pub mod bv2_impl {
         pub fn on_resolve_async(&mut self, resolve: &mut jsc_api::JSBundler::Resolve) {
             // See `on_load_async` — must dispatch on the bundler's own loop.
             match self.any_loop_mut() {
-                bun_event_loop::AnyEventLoop::Js { owner } => {
-                    owner.enqueue_task_concurrent(
-                        bun_event_loop::ConcurrentTask::ConcurrentTask::from_callback(
-                            std::ptr::from_mut(resolve),
-                            on_resolve_from_js_loop_raw,
-                        ),
+                bun_event_loop::AnyEventLoop::Js { .. } => {
+                    let ct = bun_event_loop::ConcurrentTask::ConcurrentTask::from_callback(
+                        std::ptr::from_mut(resolve),
+                        on_resolve_from_js_loop_raw,
                     );
+                    let poster = self
+                        .js_poster
+                        .as_ref()
+                        .expect("JS-owned bundle has a poster");
+                    if let bun_event_loop::Posted::Refused(ct) = poster.post(ct) {
+                        // Owning JS VM torn down mid-bundle: the hop never runs.
+                        // SAFETY: refused ⇒ we own the task.
+                        unsafe {
+                            bun_event_loop::ConcurrentTask::ConcurrentTask::release_refused(ct)
+                        };
+                    }
                 }
                 bun_event_loop::AnyEventLoop::Mini(mini) => {
                     // SAFETY: `resolve` is a valid &mut for the duration of the enqueue;
@@ -4252,6 +4546,13 @@ pub mod bv2_impl {
 
     impl<'a> BundleV2<'a> {
         pub(crate) fn on_load(load: &mut jsc_api::JSBundler::Load, this: &mut BundleV2) {
+            if load.deferred_in.take() == Some(this.graph.defer_epoch) {
+                // Answered while `.defer()`red and before that batch was drained (cancelled, or a plugin
+                // that did not wait): its unit is still parked in `deferred_pending`; move it back so this
+                // answer accounts for it like any other.
+                this.graph.deferred_pending -= 1;
+                this.graph.pending_items += 1;
+            }
             // `Load` is arena-allocated (no Drop); free its owned heap fields on every exit path.
             struct LoadDeinitGuard(*mut jsc_api::JSBundler::Load);
             impl Drop for LoadDeinitGuard {
@@ -4345,8 +4646,6 @@ pub mod bv2_impl {
                         this.free_list.push(code.source_code);
                         std::borrow::Cow::Borrowed(source_code)
                     };
-                    this.graph.input_files.items_flags_mut()[load.source_index.get() as usize]
-                        .insert(crate::Graph::InputFileFlags::IS_PLUGIN_FILE);
                     let parse_task = load.parse_task_mut();
                     parse_task.loader = Some(code.loader);
                     parse_task.contents_or_fd = parse_task::ContentsOrFd::Contents(source_code);
@@ -4383,7 +4682,6 @@ pub mod bv2_impl {
                                     fd,
                                     &load.path,
                                     bun_wyhash::hash(load.path.as_ref()) as u32,
-                                    bun_watcher::Loader(code.loader as u8),
                                     bun_sys::Fd::INVALID,
                                     None,
                                 ),
@@ -4448,6 +4746,29 @@ pub mod bv2_impl {
     }
 
     impl<'a> BundleV2<'a> {
+        /// Re-run the idempotent barrel seeding pass after a plugin `onResolve` result patches a record that the importer's parse-completion pass saw unresolved and skipped (#40606).
+        fn schedule_barrel_imports_after_plugin_resolve(
+            &mut self,
+            importer_source_index: IndexInt,
+        ) {
+            if !self.is_barrel_optimization_enabled() {
+                return;
+            }
+            let idx = importer_source_index as usize;
+            if idx >= self.graph.ast.len() {
+                return;
+            }
+            let ast_target = self.graph.ast.items_target()[idx];
+            let scheduled = barrel_imports::schedule_barrel_deferred_imports(
+                self,
+                importer_source_index,
+                ast_target,
+            )
+            .expect("oom");
+            // Barrel-scheduled parse tasks bypass the scan counter; account for them as `on_parse_task_complete` does.
+            self.graph.pending_items += u32::try_from(scheduled).expect("int cast");
+        }
+
         pub(crate) fn on_resolve(resolve: &mut jsc_api::JSBundler::Resolve, this: &mut BundleV2) {
             // RAII guard captures `this`
             // as a raw pointer so it does not hold a unique borrow across the body.
@@ -4494,9 +4815,12 @@ pub mod bv2_impl {
                                 return;
                             };
                             let mut resolved = resolved;
-                            let Ok(source_index) =
-                                this.enqueue_entry_item(&mut resolved, true, target)
-                            else {
+                            let Ok(source_index) = this.enqueue_entry_item(
+                                &mut resolved,
+                                true,
+                                target,
+                                resolve.import_record.loader,
+                            ) else {
                                 return;
                             };
 
@@ -4513,6 +4837,9 @@ pub mod bv2_impl {
                         this.run_resolver(
                             &resolve.import_record,
                             resolve.import_record.original_target,
+                        );
+                        this.schedule_barrel_imports_after_plugin_resolve(
+                            resolve.import_record.importer_source_index,
                         );
                         return;
                     }
@@ -4615,9 +4942,14 @@ pub mod bv2_impl {
                             unsafe { *value_ptr = source_index.get() };
                             out_source_index = Some(source_index);
                             let _ = this.graph.ast.append(JSAst::empty_in(this.graph.heap)); // OOM/capacity: fire-and-forget
-                            let loader = path
-                                .loader(&this.transpiler.options.loaders)
-                                .unwrap_or(Loader::File);
+                            // A file that a plugin resolved the record to instead keeps its own loader.
+                            let loader = this.requested_file_loader(
+                                &path,
+                                resolve
+                                    .import_record
+                                    .loader
+                                    .filter(|_| path.text == &*resolve.import_record.specifier),
+                            );
 
                             this.graph
                                 .input_files
@@ -4637,17 +4969,7 @@ pub mod bv2_impl {
                             let task_val = ParseTask {
                                 // SAFETY: `from_mut(this)` is the live bundle (write provenance);
                                 // outlives the task.
-                                ctx: Some(
-                                    unsafe {
-                                        bun_ptr::ParentRef::from_raw_mut(
-                                            std::ptr::from_mut::<BundleV2>(this)
-                                                .cast::<BundleV2<'static>>(),
-                                        )
-                                    }
-                                    .shared(),
-                                ),
-                                // SAFETY: `this` is the live bundle (write provenance).
-                                completion_ctx: Some(unsafe {
+                                ctx: Some(unsafe {
                                     bun_ptr::ParentRef::from_raw_mut(
                                         std::ptr::from_mut::<BundleV2>(this)
                                             .cast::<BundleV2<'static>>(),
@@ -4668,8 +4990,9 @@ pub mod bv2_impl {
                                 source_index: bun_ast::Index::init(source_index.get()),
                                 module_type: options::ModuleType::Unknown,
                                 loader: Some(loader),
-                                tree_shaking: this.linker.options.tree_shaking,
                                 known_target: resolve.import_record.original_target,
+                                is_entry_point: resolve.import_record.kind
+                                    == ImportKind::EntryPointBuild,
                                 ..Default::default()
                             };
                             // Arena-owned.
@@ -4703,6 +5026,20 @@ pub mod bv2_impl {
                             drop(result.path);
                         }
                     } else {
+                        if resolve.import_record.kind == ImportKind::EntryPointBuild {
+                            let log = this.log_for_resolution_failures(
+                                &resolve.import_record.source_file,
+                                resolve.import_record.original_target.bake_graph(),
+                            );
+                            log.add_error_fmt(
+                                None,
+                                bun_ast::Loc::EMPTY,
+                                format_args!(
+                                    "The entry point {} cannot be marked as external",
+                                    bun_core::fmt::quote(&resolve.import_record.specifier),
+                                ),
+                            );
+                        }
                         drop(result.namespace);
                         drop(result.path);
                     }
@@ -4742,6 +5079,9 @@ pub mod bv2_impl {
                                     .as_mut_slice()
                                     [resolve.import_record.import_record_index as usize];
                                 import_record.source_index = source_index;
+                                this.schedule_barrel_imports_after_plugin_resolve(
+                                    resolve.import_record.importer_source_index,
+                                );
                             }
                         }
                     }
@@ -4897,6 +5237,7 @@ pub mod bv2_impl {
             if self.transpiler.log().errors > 0 {
                 return Err(crate::Error::BuildFailed);
             }
+            self.fail_if_no_entry_points()?;
 
             self.scan_for_secondary_paths();
 
@@ -5363,7 +5704,7 @@ pub mod bv2_impl {
 
             // First is a chunk to contain all JavaScript modules.
             chunks.push(Chunk {
-                entry_point: chunk::EntryPoint::new(0, 0, true, false),
+                entry_point: chunk::EntryPoint::entry_point(0, 0),
                 content: chunk::Content::Javascript(chunk::JavaScriptChunk {
                     files_in_chunk_order: js_reachable_files
                         .iter()
@@ -5382,11 +5723,9 @@ pub mod bv2_impl {
                 let order = crate::linker_context::find_imported_files_in_css_order::find_imported_files_in_css_order(&mut self.linker, self.graph.heap, &[*entry_point]);
                 let order_len = order.len() as usize;
                 chunks.push(Chunk {
-                    entry_point: chunk::EntryPoint::new(
+                    entry_point: chunk::EntryPoint::non_entry_point(
                         entry_point.get(),
                         entry_point.get(),
-                        false,
-                        false,
                     ),
                     content: chunk::Content::Css(chunk::CssChunk {
                         imports_in_chunk_in_order: order,
@@ -5403,11 +5742,9 @@ pub mod bv2_impl {
             // Then all HTML files
             for source_index in html_files.keys() {
                 chunks.push(Chunk {
-                    entry_point: chunk::EntryPoint::new(
+                    entry_point: chunk::EntryPoint::non_entry_point(
                         source_index.get(),
                         source_index.get(),
-                        false,
-                        true,
                     ),
                     content: chunk::Content::Html,
                     output_source_map: SourceMap::SourceMapPieces::init(),
@@ -5488,6 +5825,7 @@ pub mod bv2_impl {
                             import_record_index,
                             range: import_record.range,
                             original_target,
+                            loader: None,
                         },
                     );
 
@@ -5499,10 +5837,12 @@ pub mod bv2_impl {
             false
         }
 
+        /// `loader`: see `requested_file_loader`.
         pub(crate) fn enqueue_entry_point_on_resolve_plugin_if_needed(
             &mut self,
             entry_point: &[u8],
             target: options::Target,
+            loader: Option<Loader>,
         ) -> bool {
             if let Some(plugins) = self.plugins_ref() {
                 let mut temp_path = Fs::Path::init(entry_point);
@@ -5531,6 +5871,7 @@ pub mod bv2_impl {
                             import_record_index: 0,
                             range: bun_ast::Range::NONE,
                             original_target: target,
+                            loader,
                         },
                     );
 
@@ -5720,6 +6061,7 @@ pub mod bv2_impl {
                 source: &result.source,
                 loader: result.loader,
                 target,
+                only_records: None,
             });
 
             if let Some(err) = resolve_result.last_error {
@@ -5778,6 +6120,8 @@ pub mod bv2_impl {
         pub(crate) source: &'a bun_ast::Source,
         pub(crate) loader: Loader,
         pub(crate) target: options::Target,
+        /// See `only_selected_record`.
+        pub(crate) only_records: Option<&'a [u32]>,
     }
 
     pub(crate) struct ResolveImportRecordResult {
@@ -5785,9 +6129,17 @@ pub mod bv2_impl {
         pub(crate) last_error: Option<Error>,
     }
 
+    /// `only_records`: barrel un-deferral passes the ascending indices of the records
+    /// it just un-deferred. A missing `source_index` does not mean a record is still
+    /// unresolved (external, failed, or waiting for an onResolve plugin).
+    #[inline]
+    fn only_selected_record(only_records: Option<&[u32]>, record_index: usize) -> bool {
+        only_records.is_none_or(|only| only.binary_search(&(record_index as u32)).is_ok())
+    }
+
     impl<'a> BundleV2<'a> {
-        /// Resolve all unresolved import records for a module. Skips records that
-        /// are already resolved (valid source_index), unused, or internal.
+        /// Resolve all unresolved import records for a module, or only `ctx.only_records`.
+        /// Skips records that are already resolved (valid source_index), unused, or internal.
         /// Returns a resolve queue of new modules to schedule, plus any fatal error.
         /// Used by both initial parse resolution and barrel un-deferral.
         pub(crate) fn resolve_import_records(
@@ -5797,6 +6149,8 @@ pub mod bv2_impl {
             let source = ctx.source;
             let loader = ctx.loader;
             let source_dir = source.path.source_dir();
+            let only_records = ctx.only_records;
+            debug_assert!(only_records.is_none_or(<[u32]>::is_sorted));
             let mut estimated_resolve_queue_count: usize = 0;
             for import_record in ctx.import_records.iter_mut() {
                 if import_record
@@ -5829,12 +6183,19 @@ pub mod bv2_impl {
                     || import_record.source_index.is_valid()))
                     as usize;
             }
+            if let Some(only) = only_records {
+                estimated_resolve_queue_count = estimated_resolve_queue_count.min(only.len());
+            }
             let mut resolve_queue = ResolveQueue::default();
             resolve_queue.reserve(estimated_resolve_queue_count);
 
             let mut last_error: Option<Error> = None;
 
             'outer: for (i, import_record) in ctx.import_records.iter_mut().enumerate() {
+                if !only_selected_record(only_records, i) {
+                    continue;
+                }
+
                 // Preserve original import specifier before resolution modifies path
                 if import_record.original_path.is_empty() {
                     import_record.original_path = import_record.path.text;
@@ -6061,15 +6422,8 @@ pub mod bv2_impl {
                         resolve_task.known_target = target;
                         // Use transpiler JSX options, applying force_node_env like the disk path does
                         resolve_task.jsx = transpiler.options.jsx.clone();
-                        resolve_task.jsx.development = match transpiler.options.force_node_env {
-                            options::ForceNodeEnv::Development => true,
-                            options::ForceNodeEnv::Production => false,
-                            options::ForceNodeEnv::Unspecified => {
-                                transpiler.options.jsx.development
-                            }
-                        };
+                        resolve_task.jsx.development = transpiler.options.forced_jsx_development();
                         resolve_task.loader = Some(import_record_loader);
-                        resolve_task.tree_shaking = transpiler.options.tree_shaking;
                         resolve_task.side_effects = bun_ast::SideEffects::HasSideEffects;
                         *resolve_entry.value_ptr = resolve_task;
                         continue;
@@ -6434,14 +6788,9 @@ pub mod bv2_impl {
                 };
 
                 resolve_task.jsx = resolve_result.jsx.clone();
-                resolve_task.jsx.development = match transpiler.options.force_node_env {
-                    options::ForceNodeEnv::Development => true,
-                    options::ForceNodeEnv::Production => false,
-                    options::ForceNodeEnv::Unspecified => transpiler.options.jsx.development,
-                };
+                resolve_task.jsx.development = transpiler.options.forced_jsx_development();
 
                 resolve_task.loader = Some(import_record_loader);
-                resolve_task.tree_shaking = transpiler.options.tree_shaking;
                 *resolve_entry.value_ptr = resolve_task;
                 if let Some(secondary) = &resolve_result.path_pair.secondary {
                     if !secondary.is_disabled
@@ -6537,8 +6886,7 @@ pub mod bv2_impl {
                     new_input_file.loader = loader;
                     let new_source_index: u32 = new_input_file.source.index.0;
                     new_task.source_index = bun_ast::Index(new_source_index);
-                    new_task.ctx = self_ptr.map(|p| p.shared());
-                    new_task.completion_ctx = self_ptr;
+                    new_task.ctx = self_ptr;
                     // SAFETY: value_ptr points into PathToSourceIndexMap storage; no
                     // intervening insert into that map has occurred since get_or_put.
                     unsafe {
@@ -6610,9 +6958,9 @@ pub mod bv2_impl {
         pub(crate) loader: Loader,
         pub(crate) target: options::Target,
         pub(crate) redirect_import_record_index: u32,
-        /// When true, always save source indices regardless of dev_server/loader.
-        /// Used for barrel un-deferral where records must always be connected.
-        pub(crate) force_save: bool,
+        /// See `only_selected_record`. `Some` also saves the source indices regardless
+        /// of dev_server/loader: the barrel BFS follows them.
+        pub(crate) only_records: Option<&'a [u32]>,
     }
 
     impl Default for PatchImportRecordsCtx<'_> {
@@ -6623,7 +6971,7 @@ pub mod bv2_impl {
                 loader: Loader::File,
                 target: Target::Browser,
                 redirect_import_record_index: u32::MAX,
-                force_save: false,
+                only_records: None,
             }
         }
     }
@@ -6641,7 +6989,8 @@ pub mod bv2_impl {
             // across the `&mut self.graph.build_graphs[...]` borrow
             // below, so address the disjoint `self.graph.*` fields directly instead.
             let input_file_loaders = self.graph.input_files.items_loader();
-            let save_import_record_source_index = ctx.force_save
+            debug_assert!(ctx.only_records.is_none_or(<[u32]>::is_sorted));
+            let save_import_record_source_index = ctx.only_records.is_some()
                 || self.dev_server.is_none()
                 || ctx.loader == Loader::Html
                 || ctx.loader.is_css();
@@ -6668,6 +7017,9 @@ pub mod bv2_impl {
             // so borrowck sees it as disjoint from `self.graph.input_files` above.
             let path_to_source_index_map = &mut self.graph.build_graphs[ctx.target];
             for (i, record) in import_records.as_mut_slice().iter_mut().enumerate() {
+                if !only_selected_record(ctx.only_records, i) {
+                    continue;
+                }
                 if let Some(source_index) = path_to_source_index_map.get_path(&record.path) {
                     if save_import_record_source_index
                         || input_file_loaders[source_index as usize].is_css()
@@ -6755,7 +7107,7 @@ pub mod bv2_impl {
                     // We replace this runtime API call's ref later via .link on the Symbol.
                     b"__jsonParse",
                 )?
-                .unwrap(),
+                .ok_or(Error::ParserError)?,
             );
 
             let fake_input_file = crate::Graph::InputFile {
@@ -6782,14 +7134,13 @@ pub mod bv2_impl {
     }
 
     impl<'a> BundleV2<'a> {
-        pub fn on_notify_defer(&mut self) {
-            self.thread_lock.assert_locked();
-            self.graph.deferred_pending += 1;
-            self.decrement_scan_counter();
-        }
-
-        pub fn on_notify_defer_mini(_: &mut jsc_api::JSBundler::Load, this: &mut BundleV2) {
-            this.on_notify_defer();
+        /// A load handed to the plugins called `.defer()`: its scan-counter unit is parked in
+        /// `deferred_pending` until the deferred batch runs or its answer arrives. Bundle thread.
+        pub fn on_notify_defer(load: &mut jsc_api::JSBundler::Load, this: &mut BundleV2) {
+            this.thread_lock.assert_locked();
+            load.deferred_in = Some(this.graph.defer_epoch);
+            this.graph.deferred_pending += 1;
+            this.decrement_scan_counter();
         }
 
         pub(crate) fn on_parse_task_complete(
@@ -6801,11 +7152,7 @@ pub mod bv2_impl {
             // across the `this.*` method calls below (each takes
             // `&mut BundleV2`), so re-borrow `this.graph` at each use site instead.
             if parse_result.external.function.is_some() {
-                let source = match &parse_result.value {
-                    parse_task::ResultValue::Empty { source_index } => source_index.get(),
-                    parse_task::ResultValue::Err(data) => data.source_index.get(),
-                    parse_task::ResultValue::Success(val) => val.source.index.0,
-                };
+                let source = parse_result.value.source_index();
                 let loader: Loader = this.graph.input_files.items_loader()[source as usize];
                 // `InputFile.arena` column dropped in the Rust port;
                 // stash the finalizer regardless so plugin-owned bytes are freed.
@@ -6813,8 +7160,6 @@ pub mod bv2_impl {
                 this.finalizers
                     .push(core::mem::take(&mut parse_result.external));
             }
-
-            // defer bun.default_allocator.destroy(parse_result) — caller owns Box and drops at end
 
             let mut diff: i32 = -1;
             // The pending-items adjustment is
@@ -6835,31 +7180,31 @@ pub mod bv2_impl {
             // To minimize contention, watchers are appended on the bundle thread.
             if this.bun_watcher.is_some() {
                 if parse_result.watcher_data.fd != bun_sys::Fd::INVALID {
-                    let source_index = match &parse_result.value {
-                        parse_task::ResultValue::Empty { source_index } => source_index.get(),
-                        parse_task::ResultValue::Err(data) => data.source_index.get(),
-                        parse_task::ResultValue::Success(val) => val.source.index.0,
-                    };
-                    // borrowck — read source path/loader before
+                    let source_index = parse_result.value.source_index();
+                    // borrowck — read the source path before
                     // `should_add_watcher(&self)` so the column borrow is released.
                     let source_path = this.graph.input_files.items_source()[source_index as usize]
                         .path
                         .text;
-                    let loader = this.graph.input_files.items_loader()[source_index as usize];
                     if this.should_add_watcher(source_path) {
-                        // const generic `CLONE_FILE_PATH = isWindows`
-                        // matches `cfg!(windows)` at compile time.
-                        let _ = this
-                            .bun_watcher_mut()
-                            .unwrap()
-                            .add_file::<{ cfg!(windows) }>(
-                                parse_result.watcher_data.fd,
+                        let fd = parse_result.watcher_data.fd;
+                        let dir_fd = parse_result.watcher_data.dir_fd;
+                        let hash = bun_wyhash::hash(source_path) as u32;
+                        let bun_watcher = this.bun_watcher_mut().unwrap();
+                        // The watcher keeps the path past this bundle; borrow it
+                        // only when it is interned for the process lifetime
+                        // (`dupe_alloc` leaves other paths in the bundle arena).
+                        let _ = if Fs::as_interned_path(source_path).is_some() {
+                            bun_watcher.add_file::<{ cfg!(windows) }>(
+                                fd,
                                 source_path,
-                                bun_wyhash::hash(source_path) as u32,
-                                bun_watcher::Loader(loader as u8),
-                                parse_result.watcher_data.dir_fd,
+                                hash,
+                                dir_fd,
                                 None,
-                            );
+                            )
+                        } else {
+                            bun_watcher.add_file::<true>(fd, source_path, hash, dir_fd, None)
+                        };
                     }
                 }
             }
@@ -6939,6 +7284,13 @@ pub mod bv2_impl {
                         .items_content_hash_for_additional_file_mut()[result_source_index] =
                         result.content_hash_for_additional_file;
                     if !result.unique_key_for_additional_file.is_empty()
+                        && result.loader == Loader::Text
+                    {
+                        // `process_resolve_queue` only counts `should_copy_for_bundling()`
+                        // loaders, and a zero count skips `process_files_to_copy`.
+                        this.graph.estimated_file_loader_count += 1;
+                    }
+                    if !result.unique_key_for_additional_file.is_empty()
                         && result.loader.should_copy_for_bundling()
                     {
                         if let Some(dev) = this.dev_server {
@@ -6990,7 +7342,7 @@ pub mod bv2_impl {
                             loader: result.loader,
                             target: result.ast.target,
                             redirect_import_record_index: result.ast.redirect_import_record_index,
-                            force_save: false,
+                            only_records: None,
                         },
                     );
 
@@ -7190,7 +7542,6 @@ pub mod bv2_impl {
                         } else {
                             let step_name = match err.step {
                                 crate::parse_task::Step::Pending => "pending",
-                                crate::parse_task::Step::ReadFile => "read_file",
                                 crate::parse_task::Step::Parse => "parse",
                                 crate::parse_task::Step::Resolve => "resolve",
                             };
@@ -7237,7 +7588,6 @@ pub mod bv2_impl {
         }
     }
 
-    pub use crate::AdditionalFile;
     pub use bun_core::cheap_prefix_normalizer;
 
     #[derive(Clone, Copy, Default)]
@@ -7297,6 +7647,11 @@ pub mod bv2_impl {
         Javascript {
             source_index: IndexInt,
             result: bun_js_printer::PrintResult,
+            /// The imports/exports the printer emitted for this part range.
+            /// Only present when `LinkerOptions::generates_module_info()`;
+            /// `post_process_js_chunk` appends these to the chunk's
+            /// `ModuleInfo` in output order.
+            module_info: Option<Box<crate::analyze_transpiled_module::ModuleInfo>>,
         },
         Css {
             result: crate::Result<Box<[u8]>>,
@@ -7356,48 +7711,6 @@ pub mod bv2_impl {
         }
     }
 
-    impl Clone for CompileResult {
-        fn clone(&self) -> Self {
-            match self {
-                CompileResult::Javascript {
-                    source_index,
-                    result,
-                } => CompileResult::Javascript {
-                    source_index: *source_index,
-                    result: match result {
-                        bun_js_printer::PrintResult::Result(r) => {
-                            bun_js_printer::PrintResult::Result(
-                                bun_js_printer::PrintResultSuccess {
-                                    code: r.code.clone(),
-                                    source_map: r.source_map.clone(),
-                                },
-                            )
-                        }
-                        bun_js_printer::PrintResult::Err(e) => bun_js_printer::PrintResult::Err(*e),
-                    },
-                },
-                CompileResult::Css {
-                    result,
-                    source_index,
-                    source_map,
-                } => CompileResult::Css {
-                    result: result.clone(),
-                    source_index: *source_index,
-                    source_map: source_map.clone(),
-                },
-                CompileResult::Html {
-                    source_index,
-                    code,
-                    script_injection_offset,
-                } => CompileResult::Html {
-                    source_index: *source_index,
-                    code: code.clone(),
-                    script_injection_offset: *script_injection_offset,
-                },
-            }
-        }
-    }
-
     impl Default for CompileResult {
         fn default() -> Self {
             CompileResult::Javascript {
@@ -7406,6 +7719,7 @@ pub mod bv2_impl {
                     code: Box::new([]),
                     source_map: None,
                 }),
+                module_info: None,
             }
         }
     }
@@ -7656,7 +7970,6 @@ pub mod bv2_impl {
     pub use crate::BundleThread::{BuildResult, BundleV2Result, CompletionStruct, singleton};
 
     // re-exports
-    pub use crate::IndexStringMap::IndexStringMap;
     pub use bun_ast::Loc;
 
     // C++ binding for lazy metafile getter (defined in BundlerMetafile.cpp)

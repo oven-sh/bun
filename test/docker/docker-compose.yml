@@ -135,6 +135,23 @@ services:
       start_period: 60s
       start_interval: 1s
 
+  mariadb_plain:
+    build:
+      context: .
+      dockerfile: Dockerfile.mariadb-plain
+    image: bun-mariadb-plain:local
+    ports:
+      - target: 3306
+        published: 0
+        protocol: tcp
+    healthcheck:
+      test: ["CMD", "mariadb", "-h", "127.0.0.1", "-uroot", "-e", "SELECT 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+      start_interval: 1s
+
   # Redis/Valkey Services
   redis_plain:
     image: redis:7-alpine

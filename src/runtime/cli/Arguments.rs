@@ -74,21 +74,6 @@ macro_rules! maybe_debug_params {
     };
 }
 
-// `bun_crash_handler::VERBOSE_ERROR_TRACE` gates extra crash diagnostics.
-// Expose the flag in crash-trace builds (debug/test/asan).
-const VERBOSE_ERROR_TRACE_PARAMS: &[ParamType] = &[parse_param!(
-    "--verbose-error-trace             Dump error return traces"
-)];
-macro_rules! maybe_verbose_error_trace {
-    () => {
-        if bun_core::env::SHOW_CRASH_TRACE {
-            VERBOSE_ERROR_TRACE_PARAMS
-        } else {
-            &[] as &[ParamType]
-        }
-    };
-}
-
 const BASE_PARAMS_: &[ParamType] = concat_params!(
     maybe_debug_params!(),
     &[
@@ -104,7 +89,6 @@ const BASE_PARAMS_: &[ParamType] = concat_params!(
         ),
         parse_param!("-h, --help                        Display this menu and exit"),
     ],
-    maybe_verbose_error_trace!(),
     &[parse_param!("<POS>...")],
 );
 
@@ -162,6 +146,9 @@ const RUNTIME_PARAMS_: &[ParamType] = &[
         "--watch                           Automatically restart the process on file change"
     ),
     parse_param!(
+        "--watch-kill-signal <STR>         Signal whose handlers run when --watch restarts the process (default: \"SIGTERM\")"
+    ),
+    parse_param!(
         "--hot                             Enable auto reload in the Bun runtime, test runner, or bundler"
     ),
     parse_param!(
@@ -199,7 +186,7 @@ const RUNTIME_PARAMS_: &[ParamType] = &[
         "--cpu-prof-interval <STR>         Specify the sampling interval in microseconds for CPU profiling (default: 1000)"
     ),
     parse_param!(
-        "--heap-prof                       Generate V8 heap snapshot on exit (.heapsnapshot)"
+        "--heap-prof                       Write a heap profile to disk on exit (.heapprofile)"
     ),
     parse_param!("--heap-prof-name <STR>            Specify the name of the heap profile file"),
     parse_param!(
@@ -207,6 +194,9 @@ const RUNTIME_PARAMS_: &[ParamType] = &[
     ),
     parse_param!(
         "--heap-prof-md                    Generate markdown heap profile on exit (for CLI analysis)"
+    ),
+    parse_param!(
+        "--heap-prof-interval <STR>        Specify the average sampling interval in bytes for heap profiling (default: 524288)"
     ),
     parse_param!(
         "--if-present                      Exit without an error if the entrypoint does not exist"
@@ -287,7 +277,10 @@ const RUNTIME_PARAMS_: &[ParamType] = &[
     parse_param!("--redis-preconnect                Preconnect to $REDIS_URL at startup"),
     parse_param!("--sql-preconnect                  Preconnect to PostgreSQL at startup"),
     parse_param!(
-        "--no-addons                       Throw an error if process.dlopen is called, and disable export condition \"node-addons\""
+        "--no-addons                       Throw an error if process.dlopen or bun:ffi cc() is called, and disable export condition \"node-addons\""
+    ),
+    parse_param!(
+        "--no-ffi-cc                       Throw an error if bun:ffi cc() is called (disables the C compiler)"
     ),
     parse_param!(
         "--unhandled-rejections <STR>      One of \"strict\", \"throw\", \"warn\", \"none\", or \"warn-with-error-code\""
@@ -438,6 +431,9 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
         ),
         parse_param!("--bytecode                       Use a bytecode cache"),
         parse_param!(
+            "--bytecode-depth <NUMBER>        How many levels of nested functions to compile to bytecode ahead of time. Defaults to all"
+        ),
+        parse_param!(
             "--watch                          Automatically restart the process on file change"
         ),
         parse_param!(
@@ -471,13 +467,19 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
         ),
         parse_param!("--splitting                      Enable code splitting"),
         parse_param!(
+            "--no-split-require               With --splitting and --target bun: keep a require()'d ESM file in the calling chunk instead of emitting a chunk loaded at the call"
+        ),
+        parse_param!(
+            "--min-chunk-size <INT>           With --splitting, also fold side-effect-free chunks smaller than this many source bytes into a chunk more entry points load"
+        ),
+        parse_param!(
             "--public-path <STR>              A prefix to be appended to any import paths in bundled code"
         ),
         parse_param!(
             "-e, --external <STR>...          Exclude module from transpilation (can use * wildcards). ex: -e react"
         ),
         parse_param!(
-            "--allow-unresolved <STR>...      Allow unresolved dynamic import()/require() specifiers matching these glob patterns. Use '<empty>' for opaque specifiers. Default is '*' (allow all)."
+            "--allow-unresolved <STR>...      Allow unresolved dynamic import()/require() specifiers matching these glob patterns. Use '\\<empty\\>' for opaque specifiers. Default is '*' (allow all)."
         ),
         parse_param!(
             "--reject-unresolved              Fail the build on any dynamic import()/require() specifier that cannot be resolved at build time."
@@ -560,7 +562,7 @@ pub(crate) const TEST_ONLY_PARAMS: &[ParamType] = &[
     ),
     parse_param!("-u, --update-snapshots           Update snapshot files"),
     parse_param!(
-        "--rerun-each <NUMBER>            Re-run each test file <NUMBER> times, helps catch certain bugs"
+        "--rerun-each <NUMBER>            Re-run each test file \\<NUMBER\\> times, helps catch certain bugs"
     ),
     parse_param!(
         "--retry <NUMBER>                 Default retry count for all tests, overridden by per-test { retry: N }"
@@ -583,7 +585,7 @@ pub(crate) const TEST_ONLY_PARAMS: &[ParamType] = &[
         "--coverage-dir <STR>             Directory for coverage files. Defaults to 'coverage'."
     ),
     parse_param!(
-        "--bail <NUMBER>?                 Exit the test suite after <NUMBER> failures. If you do not specify a number, it defaults to 1."
+        "--bail <NUMBER>?                 Exit the test suite after \\<NUMBER\\> failures. If you do not specify a number, it defaults to 1."
     ),
     parse_param!(
         "-t, --test-name-pattern/--grep <STR>    Run only tests with a name that matches the given regex."
@@ -719,6 +721,26 @@ pub(crate) static Bun__Node__ProcessTraceDeprecation: core::sync::atomic::Atomic
 pub(crate) static Bun__Node__ProcessPendingDeprecation: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 
+/// Node parity: `--cpu-prof-name` supports a `${pid}` placeholder.
+fn replace_pid_placeholder(name: &[u8]) -> Box<[u8]> {
+    if !bun_core::strings::contains(name, b"${pid}") {
+        return name.into();
+    }
+    let pid = std::process::id().to_string();
+    let mut out = Vec::with_capacity(name.len() + pid.len());
+    let mut i = 0;
+    while i < name.len() {
+        if name[i..].starts_with(b"${pid}") {
+            out.extend_from_slice(pid.as_bytes());
+            i += 6;
+        } else {
+            out.push(name[i]);
+            i += 1;
+        }
+    }
+    out.into_boxed_slice()
+}
+
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub(crate) enum BunCAStore {
@@ -737,7 +759,12 @@ pub(crate) static Bun__Node__UseSystemCA: core::sync::atomic::AtomicBool =
 // their private helpers moved to `bun_bunfig::arguments` so `bun_install` can
 // call them without a tier-6 dependency. Re-export here so existing
 // `crate::cli::arguments::load_config*` callers are unaffected.
-pub use bun_bunfig::arguments::{load_config, load_config_path, load_config_with_cmd_args};
+pub use bun_bunfig::arguments::{load_config_path, load_config_with_cmd_args};
+
+/// node aliases `-pe` to `--print --eval` as a whole token (node_options.cc):
+/// it can't be a short in either runtime, being ambiguous with `-p` carrying
+/// the attached value `e`. Bun's `-p` takes the code, so `-pe X` is `-p X`.
+pub const NODE_SHORT_ALIASES: &[(&[u8], &[u8])] = &[(b"-pe", b"-p")];
 
 /// Parse `argv` into `api::TransformOptions` for the given subcommand.
 ///
@@ -756,6 +783,11 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
                 CommandTag::RunCommand => 2,
                 CommandTag::AutoCommand | CommandTag::RunAsNodeCommand => 1,
                 _ => 0,
+            },
+            // Only the paths standing in for `node` get node's aliases.
+            short_aliases: match cmd {
+                CommandTag::AutoCommand | CommandTag::RunAsNodeCommand => NODE_SHORT_ALIASES,
+                _ => &[],
             },
         },
     ) {
@@ -783,20 +815,22 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         }
     }
 
-    // See `maybe_verbose_error_trace!` above.
-    if bun_core::env::SHOW_CRASH_TRACE && args.flag(b"--verbose-error-trace") {
-        bun_crash_handler::VERBOSE_ERROR_TRACE.store(true, core::sync::atomic::Ordering::Relaxed);
-    }
-
     // ── --cwd ────────────────────────────────────────────────────────────────
     // `api::TransformOptions.absolute_working_dir` is `Option<Box<[u8]>>`,
     // so we dupe into a plain `Box<[u8]>`.
     let cwd: Box<[u8]> = if let Some(cwd_arg) = args.option(b"--cwd") {
         let mut outbuf = PathBuffer::uninit();
-        let cwd_len = bun_sys::getcwd(&mut *outbuf)?;
-        let out = resolve_path::join_abs::<platform::Loose>(&outbuf[..cwd_len], cwd_arg);
-        // `chdir` wants a NUL-terminated path; `join_abs` returns a borrowed
-        // slice into a threadlocal buffer, so dupe-Z once and reuse for both
+        // An absolute --cwd needs no base; a relative one still requires a
+        // live cwd (an exe-dir base would silently chdir somewhere else).
+        let base: &[u8] = if bun_paths::is_absolute(cwd_arg) {
+            b"/"
+        } else {
+            bun_core::getcwd(&mut outbuf)?.as_bytes()
+        };
+        let mut spill = Vec::new();
+        let out =
+            resolve_path::join_abs_string_spill::<platform::Loose>(base, &mut spill, &[cwd_arg]);
+        // `chdir` wants a NUL-terminated path, so dupe-Z once and reuse for both
         // the `chdir` arg and the stored `absolute_working_dir`.
         let out_z = bun_core::ZBox::from_bytes(out);
         if let bun_sys::Result::Err(err) = bun_sys::chdir(&out_z) {
@@ -807,11 +841,26 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             );
             Global::exit(1);
         }
-        Box::<[u8]>::from(out_z.as_bytes())
-    } else {
+        // Store the post-chdir physical path (mirrors process.chdir) so
+        // process.cwd(), path.resolve, and the resolver agree on one form.
+        let mut phys = PathBuffer::uninit();
+        match bun_core::getcwd(&mut phys) {
+            Ok(p) => Box::<[u8]>::from(p.as_bytes()),
+            Err(_) => Box::<[u8]>::from(out_z.as_bytes()),
+        }
+    } else if matches!(
+        cmd,
+        CommandTag::AutoCommand | CommandTag::RunCommand | CommandTag::RunAsNodeCommand
+    ) {
+        // A deleted cwd must not abort the runtime (Node boots and lets
+        // `process.cwd()` throw later); fall back to the executable's dir.
         let mut temp = PathBuffer::uninit();
-        let len = bun_sys::getcwd(&mut *temp)?;
-        Box::<[u8]>::from(&temp[..len])
+        Box::<[u8]>::from(bun_core::getcwd_or_exe_dir(&mut temp).as_bytes())
+    } else {
+        // Everything else (install/test/build/...) must not silently act on
+        // whatever project happens to live above the executable.
+        let mut temp = PathBuffer::uninit();
+        Box::<[u8]>::from(bun_core::getcwd(&mut temp)?.as_bytes())
     };
 
     // Not gated on .BunxCommand: bunx skips Arguments.parse entirely
@@ -906,17 +955,14 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         });
     }
 
-    opts.tsconfig_override = if let Some(ts) = args.option(b"--tsconfig-override") {
-        Some(
-            resolve_path::join_abs_string::<platform::Auto>(
-                ctx.args.absolute_working_dir.as_deref().unwrap(),
-                &[ts],
-            )
-            .into(),
-        )
-    } else {
-        None
-    };
+    opts.tsconfig_override = args.option(b"--tsconfig-override").map(|ts| {
+        let mut spill = Vec::new();
+        Box::from(resolve_path::join_abs_string_spill::<platform::Auto>(
+            ctx.args.absolute_working_dir.as_deref().unwrap(),
+            &mut spill,
+            &[ts],
+        ))
+    });
 
     opts.main_fields = slice_to_owned(args.options(b"--main-fields"));
     // we never actually supported inject.
@@ -1009,6 +1055,27 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             }
         }
 
+        if let Some(kill_signal) = args.option(b"--watch-kill-signal") {
+            // Node reads --watch-kill-signal only in watch mode; elsewhere it is
+            // accepted and ignored. Matching is case-insensitive (node uppercases).
+            if ctx.debug.hot_reload == HotReload::Watch {
+                let upper = kill_signal.to_ascii_uppercase();
+                match bun_core::SignalCode::from_name(&upper)
+                    .filter(|s| s.platform_number().is_some())
+                {
+                    Some(sig) => ctx.debug.watch_kill_signal = sig,
+                    None => {
+                        Output::print_errorln(format_args!(
+                            "TypeError [ERR_UNKNOWN_SIGNAL]: Unknown signal: {}",
+                            bstr::BStr::new(kill_signal)
+                        ));
+                        Output::flush();
+                        Global::exit(1);
+                    }
+                }
+            }
+        }
+
         if let Some(origin) = args.option(b"--origin") {
             opts.origin = Some(origin.into());
         }
@@ -1022,9 +1089,13 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         }
 
         if args.flag(b"--no-addons") {
-            // used for disabling process.dlopen and
+            // used for disabling process.dlopen and bun:ffi cc(), and
             // for disabling export condition "node-addons"
             opts.allow_addons = Some(false);
+        }
+
+        if args.flag(b"--no-ffi-cc") {
+            opts.allow_ffi_cc = Some(false);
         }
 
         if let Some(unhandled_rejections) = args.option(b"--unhandled-rejections") {
@@ -1236,7 +1307,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         if cpu_prof_flag || cpu_prof_md_flag {
             ctx.runtime_options.cpu_prof.enabled = true;
             if let Some(name) = args.option(b"--cpu-prof-name") {
-                ctx.runtime_options.cpu_prof.name = name.into();
+                ctx.runtime_options.cpu_prof.name = replace_pid_placeholder(name);
             }
             if let Some(dir) = args.option(b"--cpu-prof-dir") {
                 ctx.runtime_options.cpu_prof.dir = dir.into();
@@ -1250,21 +1321,32 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
                     strings::parse_int::<u32>(interval_str, 10).unwrap_or(1000);
             }
         } else {
-            // Warn if --cpu-prof-name or --cpu-prof-dir is used without a profiler flag
+            // Node parity: profiler-scoped options without a profiler flag are a
+            // usage error printed as "<argv0>: <flag> must be used with --cpu-prof"
+            // and exit code 9. The default interval value is a noop, like node.
+            let mut bad_flags: [Option<&str>; 3] = [None, None, None];
             if args.option(b"--cpu-prof-name").is_some() {
-                bun_core::warn!(
-                    "--cpu-prof-name requires --cpu-prof or --cpu-prof-md to be enabled"
-                );
+                bad_flags[0] = Some("--cpu-prof-name");
             }
             if args.option(b"--cpu-prof-dir").is_some() {
-                bun_core::warn!(
-                    "--cpu-prof-dir requires --cpu-prof or --cpu-prof-md to be enabled"
-                );
+                bad_flags[1] = Some("--cpu-prof-dir");
             }
-            if args.option(b"--cpu-prof-interval").is_some() {
-                bun_core::warn!(
-                    "--cpu-prof-interval requires --cpu-prof or --cpu-prof-md to be enabled",
-                );
+            if let Some(interval_str) = args.option(b"--cpu-prof-interval") {
+                if strings::parse_int::<u32>(interval_str, 10).unwrap_or(0) != 1000 {
+                    bad_flags[2] = Some("--cpu-prof-interval");
+                }
+            }
+            if bad_flags.iter().any(Option::is_some) {
+                let argv0 = bun_core::argv().get(0).unwrap_or(bun_core::zstr!("bun"));
+                for flag in bad_flags.into_iter().flatten() {
+                    bun_core::pretty_errorln!(
+                        "{}: {} must be used with --cpu-prof",
+                        BStr::new(argv0.as_bytes()),
+                        flag
+                    );
+                }
+                Output::flush();
+                Global::exit(9);
             }
         }
 
@@ -1285,6 +1367,8 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
                 ctx.runtime_options.heap_prof.dir = dir.into();
             }
         } else if heap_prof_v8 || heap_prof_md {
+            // --heap-prof-interval is accepted for node CLI parity but unused:
+            // JSC has no allocation-site sampler to configure.
             ctx.runtime_options.heap_prof.enabled = true;
             ctx.runtime_options.heap_prof.text_format = heap_prof_md;
             if let Some(name) = args.option(b"--heap-prof-name") {
@@ -1294,16 +1378,32 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
                 ctx.runtime_options.heap_prof.dir = dir.into();
             }
         } else {
-            // Warn if --heap-prof-name or --heap-prof-dir is used without --heap-prof or --heap-prof-md
+            // Node parity: heap-profiler-scoped options without a profiler flag
+            // exit 9, like the --cpu-prof block above. The default interval
+            // value (512 KiB) is a noop, like node.
+            let mut bad_flags: [Option<&str>; 3] = [None, None, None];
             if args.option(b"--heap-prof-name").is_some() {
-                bun_core::warn!(
-                    "--heap-prof-name requires --heap-prof or --heap-prof-md to be enabled",
-                );
+                bad_flags[0] = Some("--heap-prof-name");
             }
             if args.option(b"--heap-prof-dir").is_some() {
-                bun_core::warn!(
-                    "--heap-prof-dir requires --heap-prof or --heap-prof-md to be enabled",
-                );
+                bad_flags[1] = Some("--heap-prof-dir");
+            }
+            if let Some(interval_str) = args.option(b"--heap-prof-interval") {
+                if strings::parse_int::<u32>(interval_str, 10).unwrap_or(0) != 512 * 1024 {
+                    bad_flags[2] = Some("--heap-prof-interval");
+                }
+            }
+            if bad_flags.iter().any(Option::is_some) {
+                let argv0 = bun_core::argv().get(0).unwrap_or(bun_core::zstr!("bun"));
+                for flag in bad_flags.into_iter().flatten() {
+                    bun_core::pretty_errorln!(
+                        "{}: {} must be used with --heap-prof",
+                        BStr::new(argv0.as_bytes()),
+                        flag
+                    );
+                }
+                Output::flush();
+                Global::exit(9);
             }
         }
 
@@ -1325,7 +1425,9 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         if args.flag(b"--trace-deprecation") {
             Bun__Node__ProcessTraceDeprecation.store(true, core::sync::atomic::Ordering::Relaxed);
         }
-        if args.flag(b"--pending-deprecation") {
+        if args.flag(b"--pending-deprecation")
+            || env_var::NODE_PENDING_DEPRECATION.get() == Some(b"1" as &[u8])
+        {
             Bun__Node__ProcessPendingDeprecation.store(true, core::sync::atomic::Ordering::Relaxed);
         }
         if let Some(path) = args.option(b"--redirect-warnings") {
@@ -1465,13 +1567,6 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
                         Global::exit(1);
                     }
                 };
-            }
-        }
-
-        if let Some(define) = &opts.define {
-            if !define.keys.is_empty() {
-                bun_jsc::runtime_transpiler_cache::IS_DISABLED
-                    .store(true, std::sync::atomic::Ordering::Relaxed);
             }
         }
     }
@@ -1677,7 +1772,8 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
 
     if let Some(reporter) = args.option(b"--reporter") {
         if reporter == b"junit" {
-            if ctx.test_options.reporter_outfile.is_none() {
+            // A `--parallel` worker only collects for the coordinator's file.
+            if ctx.test_options.reporter_outfile.is_none() && !args.flag(b"--test-worker") {
                 Output::err_generic(
                     "--reporter=junit requires --reporter-outfile [file] to specify where to save the XML report",
                     (),
@@ -1773,7 +1869,7 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
     if let Some(name_pattern) = args.option(b"--test-name-pattern") {
         ctx.test_options.test_filter_pattern = Some(name_pattern.into());
         let regex = match RegularExpression::init(
-            bun_core::String::from_bytes(name_pattern),
+            &bun_core::String::from_bytes(name_pattern),
             RegexFlags::None,
         ) {
             Ok(r) => r,
@@ -1931,6 +2027,18 @@ fn parse_build_command_options(
 ) {
     ctx.bundler_options.transform_only = args.flag(b"--no-bundle");
     ctx.bundler_options.bytecode = args.flag(b"--bytecode");
+    if let Some(depth) = args.option(b"--bytecode-depth") {
+        ctx.bundler_options.bytecode_depth = match strings::parse_int::<u32>(depth, 10) {
+            Ok(v) => v,
+            Err(_) => {
+                Output::err_generic(
+                    "Invalid value for --bytecode-depth: \"{}\". Must be a non-negative integer\n",
+                    format_args!("{}", BStr::new(depth)),
+                );
+                Global::exit(1);
+            }
+        };
+    }
 
     let production = args.flag(b"--production");
 
@@ -2433,6 +2541,27 @@ fn parse_build_command_options(
 
     if args.flag(b"--splitting") {
         ctx.bundler_options.code_splitting = true;
+    }
+    if args.flag(b"--no-split-require") {
+        ctx.bundler_options.split_require = false;
+    }
+
+    if let Some(size_str) = args.option(b"--min-chunk-size") {
+        let min_chunk_size = match strings::parse_int::<u64>(size_str, 10) {
+            Ok(v) => v,
+            Err(_) => {
+                Output::err_generic(
+                    "Invalid value for --min-chunk-size: \"{}\". Must be a non-negative integer\n",
+                    format_args!("{}", BStr::new(size_str)),
+                );
+                Global::exit(1);
+            }
+        };
+        if min_chunk_size > 0 && !ctx.bundler_options.code_splitting {
+            Output::err_generic("--min-chunk-size requires --splitting", ());
+            Global::crash();
+        }
+        ctx.bundler_options.min_chunk_size = min_chunk_size;
     }
 
     for (flag, slot) in [

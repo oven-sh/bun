@@ -3,69 +3,9 @@
 test/cli/install/bun-security-scanner-matrix-with-node-modules.test.ts
 test/cli/install/bun-security-scanner-matrix-without-node-modules.test.ts
 
-test/js/node/test/parallel/test-worker-abort-on-uncaught-exception.js
-test/js/node/test/parallel/test-worker-arraybuffer-zerofill.js
-test/js/node/test/parallel/test-worker-cjs-workerdata.js
-test/js/node/test/parallel/test-worker-cleanexit-with-js.js
-test/js/node/test/parallel/test-worker-cleanexit-with-moduleload.js
-test/js/node/test/parallel/test-worker-console-listeners.js
-test/js/node/test/parallel/test-worker-dns-terminate-during-query.js
-test/js/node/test/parallel/test-worker-environmentdata.js
-test/js/node/test/parallel/test-worker-esm-exit.js
-test/js/node/test/parallel/test-worker-esm-missing-main.js
-test/js/node/test/parallel/test-worker-esmodule.js
-test/js/node/test/parallel/test-worker-event.js
-test/js/node/test/parallel/test-worker-exit-event-error.js
-test/js/node/test/parallel/test-worker-exit-from-uncaught-exception.js
-test/js/node/test/parallel/test-worker-exit-heapsnapshot.js
-test/js/node/test/parallel/test-worker-fs-stat-watcher.js
-test/js/node/test/parallel/test-worker-heap-snapshot.js
-test/js/node/test/parallel/test-worker-http2-generic-streams-terminate.js
-test/js/node/test/parallel/test-worker-invalid-workerdata.js
-test/js/node/test/parallel/test-worker-load-file-with-extension-other-than-js.js
-test/js/node/test/parallel/test-worker-memory.js
-test/js/node/test/parallel/test-worker-message-channel-sharedarraybuffer.js
-test/js/node/test/parallel/test-worker-message-event.js
-test/js/node/test/parallel/test-worker-message-port-constructor.js
-test/js/node/test/parallel/test-worker-message-port-infinite-message-loop.js
-test/js/node/test/parallel/test-worker-message-port-receive-message.js
-test/js/node/test/parallel/test-worker-message-port-terminate-transfer-list.js
-test/js/node/test/parallel/test-worker-message-port-transfer-duplicate.js
-test/js/node/test/parallel/test-worker-message-port-transfer-terminate.js
-test/js/node/test/parallel/test-worker-message-port-wasm-module.js
-test/js/node/test/parallel/test-worker-message-port-wasm-threads.js
-test/js/node/test/parallel/test-worker-mjs-workerdata.js
-test/js/node/test/parallel/test-worker-nested-on-process-exit.js
-test/js/node/test/parallel/test-worker-nested-uncaught.js
-test/js/node/test/parallel/test-worker-no-sab.js
-test/js/node/test/parallel/test-worker-non-fatal-uncaught-exception.js
-test/js/node/test/parallel/test-worker-on-process-exit.js
-test/js/node/test/parallel/test-worker-onmessage-not-a-function.js
-test/js/node/test/parallel/test-worker-onmessage.js
-test/js/node/test/parallel/test-worker-parent-port-ref.js
-test/js/node/test/parallel/test-worker-process-argv.js
-test/js/node/test/parallel/test-worker-ref-onexit.js
-test/js/node/test/parallel/test-worker-ref.js
-test/js/node/test/parallel/test-worker-relative-path-double-dot.js
-test/js/node/test/parallel/test-worker-relative-path.js
-test/js/node/test/parallel/test-worker-safe-getters.js
-test/js/node/test/parallel/test-worker-sharedarraybuffer-from-worker-thread.js
-test/js/node/test/parallel/test-worker-terminate-http2-respond-with-file.js
-test/js/node/test/parallel/test-worker-terminate-nested.js
-test/js/node/test/parallel/test-worker-terminate-null-handler.js
-test/js/node/test/parallel/test-worker-terminate-timers.js
-test/js/node/test/parallel/test-worker-type-check.js
-test/js/node/test/parallel/test-worker-uncaught-exception-async.js
-test/js/node/test/parallel/test-worker-unref-from-message-during-exit.js
-test/js/node/test/parallel/test-worker-workerdata-sharedarraybuffer.js
-test/js/node/test/parallel/test-worker.js
-test/js/node/test/parallel/test-worker.mjs
-test/js/node/worker_threads/worker_destruction.test.ts
 # Two tests hit their 5s timeout under BUN_DESTRUCT_VM_ON_EXIT; passes without
 # LSAN and no sanitizer report, just slow VM teardown.
 test/js/node/watch/fs.watch.test.ts
-test/js/web/broadcastchannel/broadcast-channel.test.ts
-test/js/web/broadcastchannel/broadcast-channel-worker-gc.test.ts
 
 
 # error exit root cause unclear
@@ -154,7 +94,6 @@ test/cli/test/bun-test.test.ts
 test/cli/install/bun-install-security-provider.test.ts
 test/js/node/test/parallel/test-tls-fast-writing.js
 test/js/bun/sqlite/sqlite.test.js
-test/js/workerd/html-rewriter.test.js
 test/regression/issue/12250.test.ts
 test/js/bun/test/parallel/test-http-10177-response.write-with-non-ascii-latin1-should-not-cause-duplicated-character-or-segfault.ts
 test/cli/install/minimum-release-age.test.ts
@@ -170,18 +109,12 @@ test/bake/dev/stress.test.ts
 test/bake/dev/vfile.test.ts
 test/js/bun/http/serve.test.ts
 test/js/bun/resolve/import-meta.test.js
-test/js/node/worker_threads/worker_threads.test.ts
 test/js/third_party/body-parser/express-bun-build-compile.test.ts
 
 
 # ASSERTION FAILED: m_normalWorld->hasOneRef()
-test/js/node/test/parallel/test-unhandled-exception-with-worker-inuse.js
 test/js/node/test/parallel/test-process-beforeexit-throw-exit.js
-test/js/node/test/parallel/test-async-hooks-worker-asyncfn-terminate-1.js
 test/js/node/test/parallel/test-crypto-prime.js
-test/js/node/test/parallel/test-async-hooks-worker-asyncfn-terminate-4.js
-test/js/node/test/parallel/test-async-hooks-worker-asyncfn-terminate-2.js
-test/js/node/test/parallel/test-async-hooks-worker-asyncfn-terminate-3.js
 test/js/third_party/@fastify/websocket/fastity-test-websocket.test.js
 test/js/third_party/esbuild/esbuild-child_process.test.ts
 test/js/third_party/pino/pino.test.js
@@ -189,8 +122,6 @@ test/js/third_party/socket.io/socket.io-close.test.ts
 test/js/web/websocket/websocket-permessage-deflate-edge-cases.test.ts
 test/js/web/websocket/websocket-permessage-deflate-simple.test.ts
 test/js/web/websocket/websocket-upgrade.test.ts
-test/js/web/workers/message-channel.test.ts
-test/js/web/workers/worker_blob.test.ts
 test/regression/issue/012040.test.ts
 test/js/web/websocket/websocket-blob.test.ts
 test/regression/issue/14338.test.ts
@@ -223,6 +154,7 @@ test/js/node/test/parallel/test-http-server-keepalive-req-gc.js
 # Timeouts
 test/js/node/test/parallel/test-cluster-primary-kill.js
 test/cli/test/parallel.test.ts
+test/cli/test/parallel-startup-failure.test.ts
 
 # bun.assert(!this.hasPendingActivity() or jsc.VirtualMachine.get().isShuttingDown());
 # @call(bun.callmod_inline, Subprocess.finalize, .{thisValue});
@@ -393,7 +325,6 @@ test/js/bun/util/reportError.test.ts
 test/js/node/fs/abort-signal-leak-read-write-file.test.ts
 test/js/node/process/process.test.js
 test/js/web/websocket/websocket.test.js
-test/js/web/workers/worker.test.ts
 test/regression/issue/11664.test.ts
 
 # ASSERTION FAILED: m_cellState == CellState::DefinitelyWhite
@@ -433,7 +364,6 @@ test/bake/dev/server-sourcemap.test.ts
 # Watcher Thread
 test/bake/dev-and-prod.test.ts
 test/bake/dev/bundle.test.ts
-test/bake/dev/css.test.ts
 test/bake/dev/esm.test.ts
 test/bake/dev/hot.test.ts
 test/bake/dev/react-spa.test.ts
@@ -466,7 +396,3 @@ test/bundler/native-plugin.test.ts
 
 # Slow
 test/js/bun/typescript/type-export.test.ts
-
-# Worker termination exception in PropertyCallback
-test/js/node/test/parallel/test-worker-message-port-transfer-terminate.js
-test/js/node/worker_threads/worker-transfer-terminate-stress.test.ts

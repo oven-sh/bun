@@ -57,7 +57,6 @@ impl Async {
             bun_core::heap::alloc(crate::shell::dispatch_tasks::ShellAsyncTask {
                 interp: interp.as_ctx_ptr(),
                 node: id,
-                concurrent_task: Default::default(),
             });
         id
     }
@@ -150,33 +149,25 @@ impl Async {
     /// Bounce `run_from_main_thread` through the event loop so the async body runs on subsequent ticks while the
     /// parent proceeds.
     fn enqueue_self(interp: &Interpreter, this: NodeId) {
-        use bun_event_loop::{ConcurrentTask::AutoDeinit, EventLoopTaskPtr};
         let me = interp.as_async_mut(this);
         let task = me.task;
         debug_assert!(!task.is_null());
         match me.event_loop {
-            EventLoopHandle::Js { .. } => {
-                // SAFETY: `task` is the live heap payload allocated in `init`
-                // and freed only in `actually_deinit`. The embedded
-                // `ConcurrentTask` is reused for each bounce and is never
-                // in-flight twice: every enqueue is dispatched (dequeued)
-                // before the state machine can enqueue again.
-                unsafe {
-                    let ct = (*task).concurrent_task.from(task, AutoDeinit::ManualDeinit);
-                    me.event_loop.enqueue_task_concurrent(EventLoopTaskPtr {
-                        js: std::ptr::from_mut(ct),
-                    });
-                }
+            // Next loop iteration, after I/O has had a turn. `task` is the live
+            // heap payload allocated in `init` and freed only in `actually_deinit`.
+            EventLoopHandle::Js { owner } => {
+                owner.enqueue_task_after_yield(bun_jsc::Task::init(task))
             }
-            EventLoopHandle::Mini(_) => {
+            EventLoopHandle::Mini(mut mini) => {
                 // The payload embeds only the JS-arm `ConcurrentTask`, so the
                 // mini arm heap-allocates an auto-deinit wrapper per bounce.
                 let any = bun_jsc::AnyTaskWithExtraContext::AnyTaskWithExtraContext::from_callback_auto_deinit(
                     task,
                     run_from_main_thread_mini,
                 );
-                me.event_loop
-                    .enqueue_task_concurrent(EventLoopTaskPtr { mini: any });
+                // SAFETY: the shell's own mini loop, on its thread.
+                unsafe { mini.get_mut() }
+                    .enqueue_task_concurrent(core::ptr::NonNull::new(any).expect("heap task"));
             }
         }
     }
@@ -193,7 +184,6 @@ impl Async {
             drop(unsafe { bun_core::heap::take(me.task) });
             me.task = core::ptr::null_mut();
         }
-        me.base.end_scope();
     }
 
     pub(crate) fn run_from_main_thread(interp: &Interpreter, this: NodeId) {
@@ -212,6 +202,12 @@ enum NextAction {
 // enqueued pointer back to `ShellAsyncTask`; both sides MUST agree.
 impl bun_event_loop::Taskable for crate::shell::dispatch_tasks::ShellAsyncTask {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellAsync;
+    /// The `Async` node's bounce box, freed only at the end of a chain that
+    /// will not continue: free it here.
+    unsafe fn release_unrun(this: *mut Self) {
+        // SAFETY: fn contract — the box `Async::init` made; nothing else frees an unrun one.
+        drop(unsafe { bun_core::heap::take(this) });
+    }
 }
 
 /// Mini-loop trampoline.

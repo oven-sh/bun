@@ -294,6 +294,11 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
     it("correctly receives the this value from JS", async () => {
       await checkSameOutput("call_function_with_weird_this_values");
     });
+
+    it("receives globalThis as this when called bare through a closure", async () => {
+      const output = await checkSameOutput("call_function_bare_through_closure");
+      expect(output).toContain("bare call returned globalThis: true");
+    });
   });
 
   describe("error handling", () => {
@@ -345,6 +350,12 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
     });
   });
 
+  describe("ReturnValue", () => {
+    it("keeps the returned value alive when the scope it was created in closes", async () => {
+      await checkSameOutput("test_v8_return_value_from_inner_scope");
+    });
+  });
+
   describe("MaybeLocal", () => {
     it("correctly handles ToLocal and ToLocalChecked operations", async () => {
       await checkSameOutput("test_v8_maybe_local");
@@ -378,6 +389,36 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
   describe("PrototypeTemplate / Template::Set / SetNativeDataProperty", () => {
     it("prototype methods and native accessors are reachable on instances", async () => {
       await checkSameOutput("test_v8_prototype_template");
+    });
+
+    it("native accessor callbacks see the object as their holder on property access", async () => {
+      const output = await checkSameOutput("native_accessor_holder_on_property_access");
+      expect(output).toBe(["getter holder is the object: true", "setter holder is the object: true"].join("\n"));
+    });
+
+    // Only Bun exposes a native data property's getter and setter as callable functions, so this
+    // cannot be compared against Node: the receiver has to be converted the way a sloppy-mode
+    // function would, in particular a bare call through a closure must not hand the accessor the
+    // scope object JSC leaves in the this slot.
+    it("native accessor callbacks get a sloppy-mode holder when called as functions", async () => {
+      const expected = [
+        "bare getter(): globalThis",
+        "getter.call(undefined): globalThis",
+        "getter.call(null): globalThis",
+        "getter.call(5): a Number object",
+        "getter.call(obj): the object",
+        "bare setter(): globalThis",
+        "setter.call(undefined): globalThis",
+        "setter.call(null): globalThis",
+        "setter.call(5): a Number object",
+        "setter.call(obj): the object",
+      ].join("\n");
+      for (const buildMode of [BuildMode.release, BuildMode.debug]) {
+        const output = await runOn(Runtime.bun, buildMode, "native_accessor_holder_for_weird_receivers");
+        expect(output.replaceAll(/^\[\w+\].+$/gm, "").trim(), `addon built in ${BuildMode[buildMode]} mode`).toBe(
+          expected,
+        );
+      }
     });
   });
 
@@ -423,6 +464,15 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
   describe("CpuProfiler", () => {
     it("Start/Stop returns a profile with a root node", async () => {
       await checkSameOutput("test_v8_cpu_profiler");
+    });
+    it("accepts overlapping sessions and returns a profile for each", async () => {
+      // Regression test for dd-trace's profiler, which calls Start() for the
+      // next cycle before Stop() of the current one (see @datadog/pprof).
+      await checkSameOutput("test_v8_cpu_profiler_overlapping_sessions");
+    });
+    it("StartProfiling/StopProfiling key sessions by title and GetTitle returns it", async () => {
+      // google's pprof addon uses the title-keyed overloads (#19678).
+      await checkSameOutput("test_v8_cpu_profiler_title_api");
     });
   });
 

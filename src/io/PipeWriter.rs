@@ -77,7 +77,7 @@ pub trait PosixPipeWriter {
                 self.try_write_with_write_fn(buf, sys::write)
             }
             FileType::Pipe => self.try_write_with_write_fn(buf, write_to_blocking_pipe),
-            FileType::Socket => self.try_write_with_write_fn(buf, sys::send_non_block),
+            FileType::Socket => self.try_write_with_write_fn(buf, write_to_socket),
         }
     }
 
@@ -167,6 +167,7 @@ pub trait PosixPipeWriter {
                 self.on_write(amt, WriteStatus::Drained);
             }
             WriteResult::Err(err) => {
+                // Like `.drained`, this may free the writer; `self` is dead after it.
                 self.on_error(err);
             }
             WriteResult::Done(amt) => {
@@ -175,11 +176,11 @@ pub trait PosixPipeWriter {
         }
     }
 
-    /// Re-derives the slice from `self.get_buffer()` each iteration.
-    /// `try_write` only needs `&self`, so the shared borrow of the buffer
-    /// coexists with it, and the `&mut self` for `on_error` is taken after
-    /// the temporary slice borrow has ended — no raw-pointer escape needed.
-    fn drain_buffered_data(&mut self, max_write_size: usize, received_hup: bool) -> WriteResult {
+    /// Only writes; the caller dispatches the callbacks (`&self` enforces it,
+    /// and parents rely on no `on_write` arriving after `on_error`). An error
+    /// is always `Err`: `try_write` reports a short write as `Pending`, never
+    /// as `Wrote`, so an error here means nothing was written this round.
+    fn drain_buffered_data(&self, max_write_size: usize, received_hup: bool) -> WriteResult {
         let _ = received_hup; // autofix
 
         let buf_len = self.get_buffer().len();
@@ -193,12 +194,7 @@ pub trait PosixPipeWriter {
 
         while drained < limit {
             let force_sync = self.get_force_sync();
-            // `try_write` takes `&self`; re-fetching the buffer here keeps the
-            // shared borrow scoped to this statement so the `&mut self` for
-            // `on_error` below is unencumbered. `try_write` does not mutate
-            // `self`, so `get_buffer()` is stable across iterations.
-            let attempt = self.try_write(force_sync, &self.get_buffer()[drained..limit]);
-            match attempt {
+            match self.try_write(force_sync, &self.get_buffer()[drained..limit]) {
                 WriteResult::Pending(pending) => {
                     drained += pending;
                     return WriteResult::Pending(drained);
@@ -207,12 +203,7 @@ pub trait PosixPipeWriter {
                     drained += amt;
                 }
                 WriteResult::Err(err) => {
-                    if drained > 0 {
-                        self.on_error(err);
-                        return WriteResult::Wrote(drained);
-                    } else {
-                        return WriteResult::Err(err);
-                    }
+                    return WriteResult::Err(err);
                 }
                 WriteResult::Done(amt) => {
                     drained += amt;
@@ -239,6 +230,15 @@ fn write_to_blocking_pipe(fd: Fd, buf: &[u8]) -> sys::Result<usize> {
         bun_core::Pollable::Ready | bun_core::Pollable::Hup => sys::write(fd, buf),
         bun_core::Pollable::NotReady => sys::Result::Err(sys::Error::retry()),
     }
+}
+
+/// `send(2)` stands in for `write(2)` on the socketpair behind a child's stdio,
+/// only to pass `MSG_NOSIGNAL`. The error names `write`, as Node does.
+fn write_to_socket(fd: Fd, buf: &[u8]) -> sys::Result<usize> {
+    sys::send_non_block(fd, buf).map_err(|err| sys::Error {
+        syscall: sys::Tag::write,
+        ..err
+    })
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -438,7 +438,9 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
         let loop_ = self.parent_event_loop().loop_();
         match poll.register_with_fd(loop_, FilePollKind::Writable, poll.fd()) {
             sys::Result::Err(err) => {
-                self.parent_on_error(err);
+                // Same report as a failed write (the streaming writer does the
+                // same): parents expect every error to be followed by `on_close`.
+                self._on_error(err);
             }
             sys::Result::Ok(()) => {}
         }
@@ -578,7 +580,6 @@ pub trait PosixStreamingWriterParent {
     /// # Safety
     /// `this` must point to a live `Self`.
     unsafe fn on_error(this: *mut Self, err: sys::Error);
-    const HAS_ON_READY: bool;
     /// # Safety
     /// `this` must point to a live `Self`.
     unsafe fn on_ready(_this: *mut Self) {}
@@ -1094,7 +1095,7 @@ impl<Parent: PosixStreamingWriterParent> Drop for PosixStreamingWriter<Parent> {
 ///   fn start_with_current_pipe(&mut self) -> sys::Result<()>,
 ///   fn on_close_source(&mut self),
 #[cfg(windows)]
-pub trait BaseWindowsPipeWriter {
+pub trait BaseWindowsPipeWriter: Sized {
     type Parent: WindowsWriterParent;
 
     fn source(&self) -> &Option<Source>;
@@ -1106,6 +1107,26 @@ pub trait BaseWindowsPipeWriter {
     fn owns_fd(&self) -> bool;
     fn start_with_current_pipe(&mut self) -> sys::Result<()>;
     fn on_close_source(&mut self);
+    fn closed_without_reporting(&self) -> bool;
+    fn set_closed_without_reporting(&mut self, v: bool);
+
+    /// `uv::open_handles` closes this writer's stream through here at teardown.
+    unsafe fn stop_for_vm_teardown(this: *mut c_void) {
+        // SAFETY: recorded via `Source::set_owner` by this live writer; cleared
+        // when the writer closes (source taken → uv_close → off the list).
+        unsafe { (*this.cast::<Self>()).close() };
+    }
+
+    /// Close the source without invoking `Parent::on_close` — for `Drop`, where
+    /// the parent is mid-teardown. Error paths use `close()` so the parent
+    /// still observes `on_close`.
+    fn close_without_reporting(&mut self) {
+        if self.source().is_some() {
+            self.set_closed_without_reporting(true);
+            // Last: `close()` may drop the parent's final ref and free `self`.
+            self.close();
+        }
+    }
 
     fn get_fd(&self) -> Fd {
         let Some(pipe) = self.source() else {
@@ -1173,11 +1194,12 @@ pub trait BaseWindowsPipeWriter {
             }
             Source::Tty(tty) => {
                 let p = tty.as_ptr();
-                // SAFETY: tty is heap-allocated (via open_tty heap::alloc) or the
+                // SAFETY: tty is heap-allocated (via open_tty) or the
                 // process-static stdin tty; freed in on_tty_close (gated on is_stdin_tty).
-                unsafe { (*p).data = p.cast::<c_void>() };
-                // SAFETY: tty is a live uv handle; libuv calls on_tty_close after close completes.
-                unsafe { (*p).close(on_tty_close) };
+                unsafe { (*p).uv.data = p.cast::<c_void>() };
+                // SAFETY: tty is a live uv handle; `Tty::close` keeps
+                // whole-struct provenance so on_tty_close may reclaim the Box.
+                unsafe { crate::source::Tty::close(p, on_tty_close) };
             }
         }
         *self.source_mut() = None;
@@ -1199,13 +1221,17 @@ pub trait BaseWindowsPipeWriter {
         }
     }
 
+    /// Also the single point where this writer records itself as the owner a
+    /// VM teardown stops its pipe/tty through: every way a source is installed
+    /// (`start`, `start_with_pipe`, `set_pipe`, `start_sync`, `start_with_file`)
+    /// funnels through here.
     fn set_parent(&mut self, parent: *mut Self::Parent) {
         self.set_parent_ptr(parent);
         if !self.is_done() {
             // raw self-ptr first to dodge the immutable-then-mutable conflict
             let self_ptr = core::ptr::from_mut(self).cast::<c_void>();
-            if let Some(pipe) = self.source_mut().as_mut() {
-                pipe.set_data(self_ptr);
+            if let Some(source) = self.source_mut().as_mut() {
+                source.set_owner(self_ptr, Self::stop_for_vm_teardown);
             }
         }
     }
@@ -1305,11 +1331,12 @@ extern "C" fn on_pipe_close(handle: *mut uv::Pipe) {
 #[cfg(windows)]
 extern "C" fn on_tty_close(handle: *mut uv::uv_tty_t) {
     // `close()` set `handle.data = handle` and then called `uv_close(handle)`;
-    // libuv passes the same pointer back, so `handle` *is* the tty ptr.
-    // The stdin tty (fd 0) lives in static storage; never free it.
-    if !crate::source::stdin_tty::is_stdin_tty(handle) {
-        // SAFETY: non-stdin tty is heap-allocated (open_tty heap::alloc).
-        drop(unsafe { bun_core::heap::take(handle) });
+    // libuv passes the same pointer back; `Tty::from_uv` recovers the owning
+    // `Tty`. The stdin tty (fd 0) lives in static storage; never free it.
+    let tty = crate::source::Tty::from_uv(handle);
+    if !crate::source::stdin_tty::is_stdin_tty(tty) {
+        // SAFETY: non-stdin tty is heap-allocated (open_tty).
+        drop(unsafe { bun_core::heap::take(tty) });
     }
 }
 
@@ -1368,6 +1395,8 @@ pub struct WindowsBufferedWriter<Parent: WindowsBufferedWriterParent> {
     pub owns_fd: bool,
     pub(crate) parent: *mut Parent,
     pub(crate) is_done: bool,
+    /// Set by `Drop`: the parent is going away, close without `on_close`.
+    pub(crate) closed_without_reporting: bool,
     // we use only one write_req, any queued data in outgoing will be flushed after this ends
     pub(crate) write_req: uv::uv_write_t,
     pub(crate) write_buffer: uv::uv_buf_t,
@@ -1382,6 +1411,7 @@ impl<Parent: WindowsBufferedWriterParent> Default for WindowsBufferedWriter<Pare
             owns_fd: true,
             parent: core::ptr::null_mut(),
             is_done: false,
+            closed_without_reporting: false,
             write_req: bun_core::ffi::zeroed(),
             write_buffer: uv::uv_buf_t::init(b""),
             pending_payload_size: 0,
@@ -1416,10 +1446,19 @@ impl<Parent: WindowsBufferedWriterParent> BaseWindowsPipeWriter for WindowsBuffe
     }
 
     fn on_close_source(&mut self) {
+        if self.closed_without_reporting {
+            return;
+        }
         if Parent::HAS_ON_CLOSE {
             // SAFETY: parent is BACKREF set via set_parent; valid while writer alive.
             unsafe { Parent::on_close(self.parent) };
         }
+    }
+    fn closed_without_reporting(&self) -> bool {
+        self.closed_without_reporting
+    }
+    fn set_closed_without_reporting(&mut self, v: bool) {
+        self.closed_without_reporting = v;
     }
 
     fn start_with_current_pipe(&mut self) -> sys::Result<()> {
@@ -1946,11 +1985,16 @@ impl<Parent: WindowsStreamingWriterParent> BaseWindowsPipeWriter
     fn on_close_source(&mut self) {
         self.source = None;
         if self.closed_without_reporting {
-            self.closed_without_reporting = false;
             return;
         }
         // SAFETY: parent is BACKREF set via set_parent; valid while writer alive.
         unsafe { Parent::on_close(self.parent) };
+    }
+    fn closed_without_reporting(&self) -> bool {
+        self.closed_without_reporting
+    }
+    fn set_closed_without_reporting(&mut self, v: bool) {
+        self.closed_without_reporting = v;
     }
 
     fn start_with_current_pipe(&mut self) -> sys::Result<()> {
@@ -2323,17 +2367,6 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
         Self::r(this).last_write_result = WriteResult::Pending(0);
     }
 
-    /// Close the source without invoking `Parent::on_close`. Only `Drop` uses
-    /// this (the parent is mid-teardown there). Error paths must use `close()`
-    /// instead so the parent still observes `on_close`.
-    fn close_without_reporting(&mut self) {
-        if self.get_fd() != Fd::INVALID {
-            debug_assert!(!self.closed_without_reporting);
-            self.closed_without_reporting = true;
-            self.close();
-        }
-    }
-
     fn write_internal_u8(&mut self, buffer: &[u8], kind: WriteKind) -> WriteResult {
         if self.is_done {
             return WriteResult::Done(0);
@@ -2487,6 +2520,16 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
 }
 
 #[cfg(windows)]
+impl<Parent: WindowsBufferedWriterParent> Drop for WindowsBufferedWriter<Parent> {
+    fn drop(&mut self) {
+        // A parent dropping an open writer (e.g. `end()` deferred the close for a
+        // pending write): hand the handle to libuv like any close, minus the
+        // report to the parent that is going away.
+        self.close_without_reporting();
+    }
+}
+
+#[cfg(windows)]
 impl<Parent: WindowsStreamingWriterParent> Drop for WindowsStreamingWriter<Parent> {
     fn drop(&mut self) {
         // Close the pipe first to cancel any in-flight writes before
@@ -2582,7 +2625,6 @@ macro_rules! impl_streaming_writer_parent {
         #[cfg(unix)]
         impl $($gen)* $crate::pipe_writer::PosixStreamingWriterParent for $Ty {
             const POLL_OWNER_TAG: $crate::PollTag = $poll_tag;
-            const HAS_ON_READY: bool = true;
             #[inline]
             unsafe fn on_write(this: *mut Self, amount: usize, status: $crate::WriteStatus) {
                 // SAFETY: `this` is the BACKREF set via `set_parent`; the

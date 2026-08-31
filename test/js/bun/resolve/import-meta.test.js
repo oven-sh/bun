@@ -1,7 +1,7 @@
 import { spawnSync } from "bun";
 import { isModuleResolveFilenameSlowPathEnabled } from "bun:internal-for-testing";
 import { expect, it, mock } from "bun:test";
-import { bunEnv, bunExe, ospath } from "harness";
+import { bunEnv, bunExe, ospath, tempDir } from "harness";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import Module from "node:module";
 import { tmpdir } from "node:os";
@@ -28,6 +28,57 @@ it("import.meta.main", () => {
     stderr: "inherit",
     stdout: "inherit",
     stdin: null,
+  });
+  expect(exitCode).toBe(0);
+});
+
+it("import.meta.main follows a Bun.main override but not an own path property, is readable from a vm context, and is false in workers", async () => {
+  using dir = tempDir("import-meta-main", {
+    "entry.mjs": `
+      import { runInNewContext } from "node:vm";
+      import { Worker, isMainThread, parentPort } from "node:worker_threads";
+      if (isMainThread) {
+        const worker = new Worker(new URL(import.meta.url));
+        const fromWorker = new Promise((resolve, reject) => {
+          worker.once("message", resolve);
+          worker.once("error", reject);
+        });
+        const other = await import("./other.mjs");
+        const entryPath = import.meta.path;
+        const before = [import.meta.main, other.main()];
+        const vmContext = [import.meta, other.meta].map(meta => runInNewContext("meta.main", { meta }));
+        Bun.main = other.path;
+        const after = [import.meta.main, other.main()];
+        // main is computed from the module's own path, so swapping the visible path properties changes nothing.
+        Object.defineProperty(import.meta, "path", { value: other.path });
+        Object.defineProperty(other.meta, "path", { value: entryPath });
+        const ownPath = [import.meta.main, other.main()];
+        console.log(JSON.stringify({ before, vmContext, after, ownPath, worker: await fromWorker }));
+        await worker.terminate();
+      } else {
+        parentPort.postMessage(import.meta.main);
+      }
+    `,
+    "other.mjs": `
+      export const meta = import.meta;
+      export const path = import.meta.path;
+      export const main = () => import.meta.main;
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "entry.mjs"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(JSON.parse(stdout)).toEqual({
+    before: [true, false],
+    vmContext: [true, false],
+    after: [false, true],
+    ownPath: [false, true],
+    worker: false,
   });
   expect(exitCode).toBe(0);
 });
@@ -73,7 +124,7 @@ it("Module.createRequire does not use file url as the referrer (err message chec
     expect(e.name).not.toBe("UnreachableError");
     expect(e.message).not.toInclude("file:///");
     expect(e.message).toInclude(`'whaaat'`);
-    expect(e.message).toInclude(`'` + import.meta.path + `'`);
+    expect(e.message).toInclude(import.meta.path);
   }
 });
 

@@ -14,8 +14,6 @@ pub enum Error {
     SystemFdQuotaExceeded,
     #[error("SystemResources")]
     SystemResources,
-    #[error("DeviceBusy")]
-    DeviceBusy,
     #[error("TarballHTTP400")]
     TarballHTTP400,
     #[error("TarballHTTP401")]
@@ -156,8 +154,6 @@ pub enum Error {
     DebugTextLockfileRoundTrip,
     #[error("NoPackage")]
     NoPackage,
-    #[error("BrokenPipe")]
-    BrokenPipe,
     #[error("WriteFailed")]
     WriteFailed,
     #[error("InvalidCharacter")]
@@ -180,8 +176,6 @@ pub enum Error {
     MissingPackageName,
     #[error("GlobError")]
     GlobError,
-    #[error("Invalid")]
-    Invalid,
     #[error("Lockfile validation failed: list is impossibly long")]
     LockfileValidationFailedListIsImpossiblyLong,
     #[error("Lockfile validation failed: alignment mismatch")]
@@ -198,18 +192,8 @@ pub enum Error {
     LockfileValidationFailedInvalidBinTag,
     #[error("Lockfile validation failed: invalid package scripts")]
     LockfileValidationFailedInvalidPackageScripts,
-    #[error("NPMLockfileVersionMismatch")]
-    NPMLockfileVersionMismatch,
     #[error("InvalidNPMLockfile")]
     InvalidNPMLockfile,
-    #[error("PathTooLong")]
-    PathTooLong,
-    #[error("LockfileWorkspaceMissingResolved")]
-    LockfileWorkspaceMissingResolved,
-    #[error("NotAllPackagesGotResolved")]
-    NotAllPackagesGotResolved,
-    #[error("DependencyLoop")]
-    DependencyLoop,
     #[error("NotSupported")]
     NotSupported,
     #[error("Unexpected")]
@@ -264,7 +248,6 @@ impl Error {
             Self::SymLinkLoop => "SymLinkLoop",
             Self::SystemFdQuotaExceeded => "SystemFdQuotaExceeded",
             Self::SystemResources => "SystemResources",
-            Self::DeviceBusy => "DeviceBusy",
             Self::TarballHTTP400 => "TarballHTTP400",
             Self::TarballHTTP401 => "TarballHTTP401",
             Self::TarballHTTP402 => "TarballHTTP402",
@@ -339,7 +322,6 @@ impl Error {
             Self::RepositoryNotFound => "RepositoryNotFound",
             Self::DebugTextLockfileRoundTrip => "DebugTextLockfileRoundTrip",
             Self::NoPackage => "NoPackage",
-            Self::BrokenPipe => "BrokenPipe",
             Self::WriteFailed => "WriteFailed",
             Self::InvalidCharacter => "InvalidCharacter",
             Self::InvalidLockfile => "InvalidLockfile",
@@ -353,7 +335,6 @@ impl Error {
             Self::LockfileIsMissingResolutionData => "Lockfile is missing resolution data",
             Self::MissingPackageName => "MissingPackageName",
             Self::GlobError => "GlobError",
-            Self::Invalid => "Invalid",
             Self::LockfileValidationFailedListIsImpossiblyLong => {
                 "Lockfile validation failed: list is impossibly long"
             }
@@ -378,12 +359,7 @@ impl Error {
             Self::LockfileValidationFailedInvalidPackageScripts => {
                 "Lockfile validation failed: invalid package scripts"
             }
-            Self::NPMLockfileVersionMismatch => "NPMLockfileVersionMismatch",
             Self::InvalidNPMLockfile => "InvalidNPMLockfile",
-            Self::PathTooLong => "PathTooLong",
-            Self::LockfileWorkspaceMissingResolved => "LockfileWorkspaceMissingResolved",
-            Self::NotAllPackagesGotResolved => "NotAllPackagesGotResolved",
-            Self::DependencyLoop => "DependencyLoop",
             Self::NotSupported => "NotSupported",
             Self::Unexpected => "Unexpected",
             Self::NotSameFileSystem => "NotSameFileSystem",
@@ -443,7 +419,6 @@ impl From<crate::lockfile_real::tree::SubtreeError> for Error {
         use crate::lockfile_real::tree::SubtreeError as E;
         match e {
             E::OutOfMemory => Self::Alloc(bun_alloc::AllocError),
-            E::DependencyLoop => Self::DependencyLoop,
         }
     }
 }
@@ -464,7 +439,6 @@ impl From<crate::pnpm::MigratePnpmLockfileError> for Error {
         use crate::pnpm::MigratePnpmLockfileError as E;
         match e {
             E::OutOfMemory => Self::Alloc(bun_alloc::AllocError),
-            E::DependencyLoop => Self::DependencyLoop,
             _ => Self::InvalidLockfile,
         }
     }

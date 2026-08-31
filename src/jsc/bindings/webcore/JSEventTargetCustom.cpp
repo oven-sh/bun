@@ -31,7 +31,7 @@
 #include "EventTargetInterfaces.h"
 #include "JSDOMWrapperCache.h"
 #include "JSEventListener.h"
-#include "BunWorkerGlobalScope.h"
+#include "GlobalEventScope.h"
 
 #if ENABLE(OFFSCREEN_CANVAS)
 #include "OffscreenCanvas.h"

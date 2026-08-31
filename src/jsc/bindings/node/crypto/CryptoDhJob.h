@@ -41,9 +41,7 @@ public:
 };
 
 struct DhJob {
-    static DhJob* create(JSC::JSGlobalObject*, DhJobCtx&&, JSC::JSValue callback);
     static void createAndSchedule(JSC::JSGlobalObject*, DhJobCtx&&, JSC::JSValue callback);
-    void schedule();
 };
 
 } // namespace Bun

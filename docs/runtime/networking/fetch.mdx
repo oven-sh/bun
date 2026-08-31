@@ -5,7 +5,7 @@ description: Send HTTP requests with Bun's fetch API
 
 Bun implements the WHATWG `fetch` standard, with some extensions to meet the needs of server-side JavaScript.
 
-Bun also implements `node:http`, but `fetch` is generally recommended instead.
+Bun also implements `node:http`, but we generally recommend `fetch` instead.
 
 ## Sending an HTTP request
 
@@ -73,7 +73,7 @@ const response = await fetch("http://example.com", {
 });
 ```
 
-The `headers` are sent directly to the proxy in `CONNECT` requests (for HTTPS targets) or in the proxy request (for HTTP targets). If you provide a `Proxy-Authorization` header, it overrides any credentials in the proxy URL.
+Bun sends the `headers` directly to the proxy in `CONNECT` requests (for HTTPS targets) or in the proxy request (for HTTP targets). If you provide a `Proxy-Authorization` header, it overrides any credentials in the proxy URL.
 
 ### Custom headers
 
@@ -154,15 +154,15 @@ const response = await fetch("http://example.com", {
 
 When using streams with HTTP(S):
 
-- The data is streamed directly to the network without buffering the entire body in memory
-- If the connection is lost, the stream is canceled
-- The `Content-Length` header is not automatically set unless the stream has a known size
+- Bun streams the data directly to the network without buffering the entire body in memory
+- If the connection is lost, Bun cancels the stream
+- Bun sets the `Content-Length` header automatically only when the stream has a known size
 
 When using streams with S3:
 
 - For PUT/POST requests, Bun automatically uses multipart upload
-- The stream is consumed in chunks and uploaded in parallel
-- Progress can be monitored through the S3 options
+- Bun consumes the stream in chunks and uploads the chunks in parallel
+- You can monitor progress through the S3 options
 
 ### Fetching a URL with a timeout
 
@@ -300,7 +300,7 @@ const response = await fetch("file:///path/to/file.txt");
 const text = await response.text();
 ```
 
-On Windows, paths are automatically normalized:
+On Windows, Bun normalizes paths automatically:
 
 ```ts
 // Both work on Windows
@@ -435,7 +435,7 @@ By default, Bun limits the number of simultaneous `fetch` requests to 256, for t
 - It improves overall system stability. Operating systems have an upper limit on the number of simultaneous open TCP sockets, usually in the low thousands. Nearing this limit causes your entire computer to behave strangely. Applications hang and crash.
 - It encourages HTTP Keep-Alive connection reuse. For short-lived HTTP requests, the slowest step is often the initial connection setup. Reusing connections can save a lot of time.
 
-When the limit is exceeded, requests are queued and sent as soon as the next request ends.
+When the limit is exceeded, Bun queues requests and sends them as soon as the next request ends.
 
 To raise the limit, set the `BUN_CONFIG_MAX_HTTP_REQUESTS` environment variable:
 
@@ -466,13 +466,13 @@ await write("output.txt", response);
 
 ### Implementation details
 
-- Connection pooling is enabled by default but can be disabled per-request with `keepalive: false` or the `"Connection: close"` header.
-- Large file uploads are optimized using the operating system's `sendfile` syscall under specific conditions:
+- Connection pooling is enabled by default. You can disable it per-request with `keepalive: false` or the `"Connection: close"` header.
+- Bun optimizes large file uploads using the operating system's `sendfile` syscall under specific conditions:
   - The file must be larger than 32KB
-  - The request must not be using a proxy
+  - The request must not be using a proxy or the `compress` option
   - On macOS, only regular files (not pipes, sockets, or devices) can use `sendfile`
   - When these conditions aren't met, or when using S3/streaming uploads, Bun falls back to reading the file into memory
-  - This optimization is particularly effective for HTTP (not HTTPS) requests where the file can be sent directly from the kernel to the network stack
+  - Bun only uses this optimization for HTTP (not HTTPS) requests, where the file can be sent directly from the kernel to the network stack; Bun does not use it on Windows
 - S3 operations automatically handle signing requests and merging authentication headers
 
 Many of these features are Bun-specific extensions to the standard fetch API.

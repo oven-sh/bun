@@ -853,7 +853,7 @@ describe("registry credentials from $VAR env references", () => {
 
   // The registry answers 401, so the install itself always fails. Assert the
   // returned exit code last, after the Authorization assertions.
-  async function install(dir: string, extraEnv: Record<string, string>, cliArgs: string[] = []): Promise<number> {
+  async function install(dir: string, extraEnv: Record<string, string>, cliArgs: string[] = []) {
     const testEnv: Record<string, string | undefined> = {
       ...env,
       // An ambient proxy would intercept the requests to the local registry.
@@ -871,16 +871,18 @@ describe("registry credentials from $VAR env references", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    return exitCode;
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stderr, exitCode };
   }
 
-  test.concurrent("an unset $VAR token sends no Authorization header", async () => {
+  test.concurrent("an unset $VAR token sends no Authorization header and warns", async () => {
     const auths: (string | null)[] = [];
     await using server = authLoggingRegistry(auths);
     using dir = tempDir("bunfig-unset-token", scopeFiles(server.port!, `token = "$UNSET_TOKEN_41044"`, false));
-    const exitCode = await install(String(dir), {});
+    const { stderr, exitCode } = await install(String(dir), {});
     expect(auths).toEqual([null]);
+    expect(stderr).toContain("$UNSET_TOKEN_41044");
+    expect(stderr).toContain("is not set");
     expect(exitCode).not.toBe(0);
   });
 
@@ -888,7 +890,7 @@ describe("registry credentials from $VAR env references", () => {
     const auths: (string | null)[] = [];
     await using server = authLoggingRegistry(auths);
     using dir = tempDir("bunfig-unset-token-npmrc", scopeFiles(server.port!, `token = "$UNSET_TOKEN_41044"`, true));
-    const exitCode = await install(String(dir), {});
+    const { exitCode } = await install(String(dir), {});
     expect(auths).toEqual(["Bearer npmrc-token"]);
     expect(exitCode).not.toBe(0);
   });
@@ -897,7 +899,7 @@ describe("registry credentials from $VAR env references", () => {
     const auths: (string | null)[] = [];
     await using server = authLoggingRegistry(auths);
     using dir = tempDir("bunfig-set-token-npmrc", scopeFiles(server.port!, `token = "$UNSET_TOKEN_41044"`, true));
-    const exitCode = await install(String(dir), { UNSET_TOKEN_41044: "bunfig-token" });
+    const { exitCode } = await install(String(dir), { UNSET_TOKEN_41044: "bunfig-token" });
     expect(auths).toEqual(["Bearer bunfig-token"]);
     expect(exitCode).not.toBe(0);
   });
@@ -911,7 +913,7 @@ describe("registry credentials from $VAR env references", () => {
       "bunfig-half-pair-npmrc",
       scopeFiles(server.port!, `username = "$UNSET_TOKEN_41044", password = "literalpass"`, true),
     );
-    const exitCode = await install(String(dir), {});
+    const { exitCode } = await install(String(dir), {});
     expect(auths).toEqual(["Bearer npmrc-token"]);
     expect(exitCode).not.toBe(0);
   });
@@ -963,7 +965,7 @@ describe("registry credentials from $VAR env references", () => {
         `//127.0.0.1:${server.port}/:username=alice\n` +
         `//127.0.0.1:${server.port}/:_password=${btoa("$uperSecret")}\n`,
     });
-    const exitCode = await install(String(dir), {});
+    const { exitCode } = await install(String(dir), {});
     expect(auths).toEqual([`Basic ${btoa("alice:$uperSecret")}`]);
     expect(exitCode).not.toBe(0);
   });
@@ -976,7 +978,7 @@ describe("registry credentials from $VAR env references", () => {
       "bunfig-unset-token-own-pair",
       scopeFiles(server.port!, `token = "$UNSET_TOKEN_41044", username = "alice", password = "s3cret"`, false),
     );
-    const exitCode = await install(String(dir), {});
+    const { exitCode } = await install(String(dir), {});
     expect(auths).toEqual([`Basic ${btoa("alice:s3cret")}`]);
     expect(exitCode).not.toBe(0);
   });
@@ -991,7 +993,7 @@ describe("registry credentials from $VAR env references", () => {
       ".npmrc":
         `//127.0.0.1:${server.port}/:username=bob\n` + `//127.0.0.1:${server.port}/:_password=${btoa("s3cret")}\n`,
     });
-    const exitCode = await install(String(dir), {});
+    const { exitCode } = await install(String(dir), {});
     expect(auths).toEqual([`Basic ${btoa("bob:s3cret")}`]);
     expect(exitCode).not.toBe(0);
   });
@@ -1003,7 +1005,7 @@ describe("registry credentials from $VAR env references", () => {
       "bunfig-pair-npmrc",
       scopeFiles(server.port!, `username = "$USER_41044", password = "$PASS_41044"`, true),
     );
-    const exitCode = await install(String(dir), { USER_41044: "alice", PASS_41044: "s3cret" });
+    const { exitCode } = await install(String(dir), { USER_41044: "alice", PASS_41044: "s3cret" });
     expect(auths).toEqual([`Basic ${btoa("alice:s3cret")}`]);
     expect(exitCode).not.toBe(0);
   });
@@ -1012,7 +1014,7 @@ describe("registry credentials from $VAR env references", () => {
     const auths: (string | null)[] = [];
     await using server = authLoggingRegistry(auths);
     using dir = tempDir("bunfig-env-registry-unset", defaultRegistryFiles(server.port!, `token = "realtoken"`));
-    const exitCode = await install(String(dir), {
+    const { exitCode } = await install(String(dir), {
       BUN_CONFIG_REGISTRY: `http://:$UNSET_TOKEN_41044@127.0.0.1:${server.port}/`,
     });
     expect(auths).toEqual(["Bearer realtoken"]);
@@ -1023,7 +1025,7 @@ describe("registry credentials from $VAR env references", () => {
     const auths: (string | null)[] = [];
     await using server = authLoggingRegistry(auths);
     using dir = tempDir("bunfig-cli-registry-unset", defaultRegistryFiles(server.port!, `token = "realtoken"`));
-    const exitCode = await install(String(dir), {}, [
+    const { exitCode } = await install(String(dir), {}, [
       `--registry=http://:$UNSET_TOKEN_41044@127.0.0.1:${server.port}/`,
     ]);
     expect(auths).toEqual(["Bearer realtoken"]);
@@ -1037,7 +1039,7 @@ describe("registry credentials from $VAR env references", () => {
     const auths: (string | null)[] = [];
     await using server = authLoggingRegistry(auths);
     using dir = tempDir("bunfig-env-registry-dollar", defaultRegistryFiles(server.port!, `token = "$TOK_41044"`));
-    const exitCode = await install(String(dir), {
+    const { exitCode } = await install(String(dir), {
       TOK_41044: "$ecret123",
       BUN_CONFIG_REGISTRY: `http://127.0.0.1:${server.port}/`,
     });
@@ -1052,7 +1054,7 @@ describe("registry credentials from $VAR env references", () => {
       "bunfig-env-registry-basic",
       defaultRegistryFiles(server.port!, `username = "$USER_41044", password = "$PASS_41044"`),
     );
-    const exitCode = await install(String(dir), {
+    const { exitCode } = await install(String(dir), {
       USER_41044: "alice",
       PASS_41044: "s3cret",
       BUN_CONFIG_REGISTRY: `http://127.0.0.1:${server.port}/`,
@@ -1068,7 +1070,7 @@ describe("registry credentials from $VAR env references", () => {
       "bunfig-env-registry-url-auth",
       defaultRegistryFiles(server.port!, `username = "alice", password = "s3cret"`),
     );
-    const exitCode = await install(String(dir), {
+    const { exitCode } = await install(String(dir), {
       BUN_CONFIG_REGISTRY: `http://127.0.0.1:${server.port}/:_auth=${btoa("urluser:urlpass")}`,
     });
     expect(auths).toEqual([`Basic ${btoa("urluser:urlpass")}`]);

@@ -181,12 +181,26 @@ pub mod api {
         }
 
         /// Resolves `$VAR` credential references in place; a reference to an
-        /// unset variable becomes no credential. Called only at entry points
-        /// that document `$VAR` support; .npmrc values stay literal.
+        /// unset variable warns and becomes no credential. Called only at entry
+        /// points that document `$VAR` support; .npmrc values stay literal.
         pub fn resolve_credential_refs(&mut self, env: &bun_dotenv::Loader) {
-            for field in [&mut self.token, &mut self.username, &mut self.password] {
+            for (name, field) in [
+                ("token", &mut self.token),
+                ("username", &mut self.username),
+                ("password", &mut self.password),
+            ] {
                 if field.len() >= 2 && field[0] == b'$' {
-                    *field = env.get(field).map_or_else(Box::default, Box::from);
+                    match env.get(field) {
+                        Some(value) => *field = Box::from(value),
+                        None => {
+                            bun_core::warn!(
+                                "registry {} references <b>${}<r>, but that environment variable is not set; treating it as no credential",
+                                name,
+                                bstr::BStr::new(&field[1..]),
+                            );
+                            *field = Box::default();
+                        }
+                    }
                 }
             }
         }

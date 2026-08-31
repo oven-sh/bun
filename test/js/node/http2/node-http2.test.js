@@ -14,7 +14,7 @@ import tls from "node:tls";
 import { Duplex, duplexPair } from "stream";
 import http2utils from "./helpers";
 import { nodeEchoServer, TLS_CERT, TLS_OPTIONS } from "./http2-helpers";
-const { describe, expect, it, beforeAll, afterAll, createCallCheckCtx } = createTest(import.meta.path);
+const { describe, expect, it, beforeAll, afterAll, beforeEach, createCallCheckCtx } = createTest(import.meta.path);
 // bun-debug ships with ASAN but isn't named bun-asan, so isASAN is false
 // there; the 10k-request maxSessionMemory stress test takes ~105s under
 // debug+ASAN vs ~2s release, so scale for either.
@@ -41,12 +41,31 @@ function paddingStrategyName(paddingStrategy) {
   }
 }
 
+const PADDING_STRATEGIES = [
+  http2.constants.PADDING_STRATEGY_NONE,
+  http2.constants.PADDING_STRATEGY_MAX,
+  http2.constants.PADDING_STRATEGY_ALIGNED,
+];
+
+// One echo server per padding strategy, shared by the node and the bun "Client Basics" groups
+// below (the server is stateless and does not depend on nodeExecutable). They start here, in the
+// file-level beforeAll, and not in a beforeAll of each group: the runner completes a describe that
+// has beforeAll/afterAll hooks before it starts the next one, which made the six groups run one
+// after another. Without hooks of their own, their tests form one concurrent run.
+const echoServers = new Map();
+beforeAll(async () => {
+  await Promise.all(
+    PADDING_STRATEGIES.map(async paddingStrategy => {
+      echoServers.set(paddingStrategy, await nodeEchoServer(paddingStrategy));
+    }),
+  );
+});
+afterAll(() => {
+  for (const server of echoServers.values()) server.subprocess.kill(9);
+});
+
 for (const nodeExecutable of [nodeExe(), bunExe()]) {
-  for (const paddingStrategy of [
-    http2.constants.PADDING_STRATEGY_NONE,
-    http2.constants.PADDING_STRATEGY_MAX,
-    http2.constants.PADDING_STRATEGY_ALIGNED,
-  ]) {
+  for (const paddingStrategy of PADDING_STRATEGIES) {
     describe.concurrent(`${path.basename(nodeExecutable)} ${paddingStrategyName(paddingStrategy)}`, () => {
       async function nodeDynamicServer(test_name, code) {
         if (!nodeExecutable) throw new Error("node executable not found");
@@ -170,16 +189,11 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
       }
 
       describe("Client Basics", () => {
-        // The echo server is stateless; share one instance across all tests in
-        // this describe block instead of spawning a fresh subprocess per test.
-        let sharedEchoServer;
+        // The shared echo server is started by the file-level beforeAll above. Its URL is read
+        // here, per test, because a beforeAll in this group would serialize the groups again.
         let HTTPS_SERVER;
-        beforeAll(async () => {
-          sharedEchoServer = await nodeEchoServer(paddingStrategy);
-          HTTPS_SERVER = sharedEchoServer.url;
-        });
-        afterAll(() => {
-          sharedEchoServer?.subprocess?.kill?.(9);
+        beforeEach(() => {
+          HTTPS_SERVER = echoServers.get(paddingStrategy).url;
         });
 
         // we dont support server yet but we support client
@@ -188,8 +202,7 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
             ":path": "/get",
             "test-header": "test-value",
           });
-          let parsed;
-          expect(() => (parsed = JSON.parse(result.data))).not.toThrow();
+          const parsed = JSON.parse(result.data);
           expect(parsed.url).toBe(`${HTTPS_SERVER}/get`);
           expect(parsed.headers["test-header"]).toBe("test-value");
         });
@@ -201,8 +214,7 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
             { ":path": "/post", "test-header": "test-value", ":method": "POST" },
             payload,
           );
-          let parsed;
-          expect(() => (parsed = JSON.parse(result.data))).not.toThrow();
+          const parsed = JSON.parse(result.data);
           expect(parsed.url).toBe(`${HTTPS_SERVER}/post`);
           expect(parsed.headers["test-header"]).toBe("test-value");
           expect(parsed.json).toEqual({ "hello": "bun" });
@@ -229,8 +241,7 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
           });
           req.end(payload);
           const result = await promise;
-          let parsed;
-          expect(() => (parsed = JSON.parse(result.data))).not.toThrow();
+          const parsed = JSON.parse(result.data);
           expect(parsed.url).toBe(`${HTTPS_SERVER}/post`);
           expect(parsed.headers["test-header"]).toBe("test-value");
           expect(parsed.json).toEqual({ "hello": "bun" });
@@ -244,12 +255,7 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
             { headers: { ":path": "/get" } },
             { headers: { ":path": "/get" } },
           ]);
-          expect(results.length).toBe(5);
-          for (let i = 0; i < results.length; i++) {
-            let parsed;
-            expect(() => (parsed = JSON.parse(results[i].data))).not.toThrow();
-            expect(parsed.url).toBe(`${HTTPS_SERVER}/get`);
-          }
+          expect(results.map(result => JSON.parse(result.data).url)).toEqual(Array(5).fill(`${HTTPS_SERVER}/get`));
         });
         it("http2 should receive remoteSettings when receiving default settings frame", async () => {
           const { promise, resolve, reject } = Promise.withResolvers();
@@ -284,13 +290,10 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
             { headers: { ":path": "/post", ":method": "POST" }, payload: JSON.stringify({ "request": 4 }) },
             { headers: { ":path": "/post", ":method": "POST" }, payload: JSON.stringify({ "request": 5 }) },
           ]);
-          expect(results.length).toBe(5);
-          for (let i = 0; i < results.length; i++) {
-            let parsed;
-            expect(() => (parsed = JSON.parse(results[i].data))).not.toThrow();
-            expect(parsed.url).toBe(`${HTTPS_SERVER}/post`);
-            expect([1, 2, 3, 4, 5]).toContain(parsed.json?.request);
-          }
+          const parsed = results.map(result => JSON.parse(result.data));
+          expect(parsed.map(p => p.url)).toEqual(Array(5).fill(`${HTTPS_SERVER}/post`));
+          // Every request is answered exactly once; the responses may complete in any order.
+          expect(parsed.map(p => p.json.request).sort()).toEqual([1, 2, 3, 4, 5]);
         });
         it("constants", () => {
           expect(http2.constants).toEqual({
@@ -686,9 +689,7 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
             )
             .on("error", reject);
           const result = await promise;
-          let parsed;
-          expect(() => (parsed = JSON.parse(result.data))).not.toThrow();
-          expect(parsed.url).toBe(`${HTTPS_SERVER}/get`);
+          expect(JSON.parse(result.data).url).toBe(`${HTTPS_SERVER}/get`);
           socket.destroy();
         });
         it("close callback", async () => {
@@ -1066,8 +1067,7 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
           });
           req.end("hello");
           const response = await promise;
-          let parsed;
-          expect(() => (parsed = JSON.parse(response.data))).not.toThrow();
+          const parsed = JSON.parse(response.data);
           expect(parsed.headers[":method"]).toEqual(headers[":method"]);
           expect(parsed.headers[":path"]).toEqual(headers[":path"]);
           expect(parsed.headers["x-wait-trailer"]).toEqual(headers["x-wait-trailer"]);
@@ -1094,12 +1094,16 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
                 HTTP2_SERVER_INFO: JSON.stringify(server),
                 HTTP2_SERVER_TLS: JSON.stringify(TLS_OPTIONS),
               },
-              stderr: "inherit",
+              stderr: "pipe",
               stdin: "inherit",
-              stdout: "inherit",
+              stdout: "pipe",
             });
-            const exitCode = await proc.exited;
-            expect(exitCode || 0).toBe(0);
+            const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+            // The script logs a wrong echo response or a failed write to stdout and carries on, so
+            // such a run still exited 0. On success its only output is the RSS delta, on stderr.
+            expect(stdout).toBe("");
+            expect(stderr).toMatch(/^Memory delta -?\d+ MB\n$/);
+            expect(exitCode).toBe(0);
           },
           100000,
         );
@@ -2853,10 +2857,7 @@ it("http2 client.request() rejects header names longer than 4096 bytes with a ca
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stderr).toBe("");
-  expect(stdout).toContain("CODE:ERR_INVALID_HTTP_TOKEN");
-  expect(stdout).toContain("NAME:TypeError");
-  expect(stdout).not.toContain("NO_ERROR");
-  expect(stdout).toContain("STATUS:200");
+  expect(stdout).toBe("CODE:ERR_INVALID_HTTP_TOKEN\nNAME:TypeError\nSTATUS:200\n");
   expect(exitCode).toBe(0);
 });
 
@@ -3433,8 +3434,8 @@ it("http2 client survives session teardown from a socket write while flushing qu
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stdout).toContain("DATA_QUEUED");
-  expect(stdout).toContain("TEARDOWN_DURING_FLUSH_OK");
+  expect(stderr).toBe("");
+  expect(stdout).toBe("DATA_QUEUED\nTEARDOWN_DURING_FLUSH_OK\n");
   expect(exitCode).toBe(0);
 });
 
@@ -3517,7 +3518,8 @@ it("http2 client keeps parsing a socket chunk whose ArrayBuffer is transferred b
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stdout).toContain('PINGS:["4141414141414141","4242424242424242"]');
+  expect(stderr).toBe("");
+  expect(stdout).toBe('PINGS:["4141414141414141","4242424242424242"]\n');
   expect(exitCode).toBe(0);
 });
 

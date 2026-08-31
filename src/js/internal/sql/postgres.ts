@@ -800,7 +800,10 @@ class ListenConnection {
           for (const entry of this.#channels.values()) entry.ready = null;
           this.#scheduleSweep();
         }
-        this.#fireLifecycleCallback(adapter.connectionInfo.onclose, wrapPostgresError(err ?? adapter.connectionClosedError()));
+        this.#fireLifecycleCallback(
+          adapter.connectionInfo.onclose,
+          wrapPostgresError(err ?? adapter.connectionClosedError()),
+        );
       },
     ).then(handle => {
       if (handle === null || live !== null) return;

@@ -727,7 +727,6 @@ describe("onconnect/onclose", () => {
       console.warn = originalWarn;
     }
   });
-
 });
 
 describe("close()", () => {

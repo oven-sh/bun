@@ -145,6 +145,10 @@ namespace Bun {
 
 // One JSString per entry above, created on first use; see Bun::commonStrings(vm) in BunClientData.h.
 struct CommonStrings {
+    // Only the instance in JSVMClientData is rooted: a copy would hand out unrooted cells.
+    WTF_MAKE_NONCOPYABLE(CommonStrings);
+    WTF_MAKE_NONMOVABLE(CommonStrings);
+
     // clang-format off
     enum class Index : uint8_t {
         BUN_COMMON_STRINGS_EACH_NAME(BUN_COMMON_STRINGS_INDEX_ENTRY)

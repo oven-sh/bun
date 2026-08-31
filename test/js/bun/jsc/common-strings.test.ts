@@ -87,6 +87,10 @@ const script = /* js */ `
   const worker = new Worker(URL.createObjectURL(new Blob([
     "const values = []; for (let i = 0; i < 4; i++) { values.push(new TextEncoder().encoding, Response.error().type); Bun.gc(true); } postMessage(values);",
   ], { type: "application/javascript" })));
+  worker.onerror = e => {
+    console.error("worker error", e.message ?? e);
+    process.exit(1);
+  };
   worker.onmessage = e => {
     const ok = e.data.every((v, i) => v === (i % 2 === 0 ? "utf-8" : "error"));
     if (!ok) {

@@ -15,7 +15,8 @@ import {
 
 // Every test forks cluster workers, and a debug build spends about a second per process evaluating
 // node:cluster, node:net and node:tls. The tests run concurrently, so under `bun bd test` each one
-// also shares the CPU with the others in flight. CI passes its own --timeout and is left alone.
+// also shares the CPU with the others in flight and the 5s default is not enough. The release and
+// ASAN binaries CI runs are not debug builds, so the --timeout the runner passes still applies there.
 if (isDebug) setDefaultTimeout(60_000);
 
 // On Windows a busy machine can make the primary drop a worker's ack for a handed-off connection (#37815),

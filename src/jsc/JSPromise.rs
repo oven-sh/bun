@@ -271,8 +271,7 @@ impl JSPromise {
         JSC__JSPromise__setHandled(self)
     }
 
-    /// Spec `PromiseResolve(%Promise%, value)`: the promise `await value` waits on, with the
-    /// value's own `then()` called for a subclass or a thenable. `None`: not a thenable.
+    /// Spec `PromiseResolve(%Promise%, value)`, what `await value` waits on. `None`: not a thenable.
     pub fn awaitable(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<&mut JSPromise>> {
         let promise = crate::cpp::JSC__JSPromise__awaitable(global, value)?;
         Ok((!promise.is_null()).then(|| JSPromise::opaque_mut(promise)))

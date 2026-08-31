@@ -916,6 +916,19 @@ describe("registry credentials from $VAR env references", () => {
     expect(exitCode).not.toBe(0);
   });
 
+  // An unresolvable token must not shadow the scope's own username/password pair.
+  test.concurrent("an unset $VAR token next to a resolved username/password pair sends Basic auth", async () => {
+    const auths: (string | null)[] = [];
+    await using server = authLoggingRegistry(auths);
+    using dir = tempDir(
+      "bunfig-unset-token-own-pair",
+      scopeFiles(server.port!, `token = "$UNSET_TOKEN_41044", username = "alice", password = "s3cret"`, false),
+    );
+    const exitCode = await install(String(dir), {});
+    expect(auths).toEqual([`Basic ${btoa("alice:s3cret")}`]);
+    expect(exitCode).not.toBe(0);
+  });
+
   // The stale "$UNSET" token must not block from_api's username/password
   // branch once .npmrc supplies the pair.
   test.concurrent("an unset $VAR token falls back to a .npmrc username/_password pair", async () => {

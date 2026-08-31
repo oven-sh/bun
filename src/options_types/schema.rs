@@ -182,15 +182,6 @@ pub mod api {
                     && !env.get_auto(&self.password).is_empty())
         }
 
-        /// Clears credential fields whose `$VAR` reference resolves to nothing,
-        /// so a stale literal cannot shadow another credential source.
-        pub fn clear_unresolved_credentials(&mut self, env: &bun_dotenv::Loader) {
-            for field in [&mut self.token, &mut self.username, &mut self.password] {
-                if !field.is_empty() && env.get_auto(field).is_empty() {
-                    *field = Box::default();
-                }
-            }
-        }
     }
 
     /// Per-scope npm registry overrides, keyed by scope name.

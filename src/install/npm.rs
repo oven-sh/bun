@@ -371,9 +371,11 @@ pub mod registry {
             // username:password.
             let mut output_buf_owned: Box<[u8]> = Box::default();
 
-            if registry.token.is_empty() {
+            // Gate on resolved values: an unresolvable `$VAR` reference must
+            // not shadow the username/password pair or the URL's credentials.
+            if env.get_auto(&registry.token).is_empty() {
                 'outer: {
-                    if registry.password.is_empty() {
+                    if env.get_auto(&registry.password).is_empty() {
                         let mut pathname: &[u8] = url.pathname;
                         let mut needs_to_check_slash = true;
                         while let Some(colon) = strings::last_index_of_char(pathname, b':') {

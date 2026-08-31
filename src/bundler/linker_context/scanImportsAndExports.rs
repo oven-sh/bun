@@ -388,6 +388,8 @@ pub(crate) fn scan_imports_and_exports(
         {
             this.cycle_detector.clear();
             let _trace = perf::trace("Bundler.MatchImportsWithExports");
+            let mut member_resolutions =
+                crate::linker_context_mod::ImportMemberResolutions::default();
             for source_index_ in &reachable {
                 let source_index = source_index_.get() as usize;
 
@@ -405,6 +407,7 @@ pub(crate) fn scan_imports_and_exports(
                         unsafe { core::ptr::addr_of!((*named_imports)[source_index]) },
                         &mut col!(imports_to_bind_list)[source_index],
                         source_index_.get(),
+                        &mut member_resolutions,
                     );
 
                     if this.log().errors > 0 {

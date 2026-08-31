@@ -87,12 +87,6 @@ pub struct LinkerContext<'a> {
     /// [`Self::load`]. Read-only — never `assume_mut`.
     pub(crate) resolver: Option<bun_ptr::ParentRef<Resolver<'a>>>,
     pub(crate) cycle_detector: Vec<ImportTracker>,
-    /// `bind_import_property_accesses`: export `name` of file `source` resolved
-    /// once (the walk does not depend on the importing file).
-    pub(crate) import_member_resolutions: bun_collections::HashMap<
-        (crate::IndexInt, bun_ast::StoreStr),
-        Option<ImportMemberResolution>,
-    >,
 
     /// We may need to refer to the "__esm" and/or "__commonJS" runtime symbols
     pub(crate) cjs_runtime_ref: Ref,
@@ -152,7 +146,6 @@ impl<'a> Default for LinkerContext<'a> {
             log: core::ptr::null_mut(),
             resolver: None,
             cycle_detector: Vec::new(),
-            import_member_resolutions: Default::default(),
             cjs_runtime_ref: Ref::NONE,
             esm_runtime_ref: Ref::NONE,
             unbound_module_ref: Ref::NONE,
@@ -1613,13 +1606,16 @@ impl SourceMapData {
 }
 
 /// Where export `name` of some file finally resolves to, plus the re-export
-/// statements walked to get there (see `LinkerContext::import_member_resolutions`).
-#[derive(Clone)]
+/// statements walked to get there. Memoized per `(file, name)` for the
+/// duration of step 4 (`ImportMemberResolutions`) since the walk does not
+/// depend on the importing file.
 pub(crate) struct ImportMemberResolution {
     source_index: u32,
     r#ref: Ref,
-    re_exports: std::rc::Rc<[Dependency]>,
+    re_exports: Vec<Dependency>,
 }
+pub(crate) type ImportMemberResolutions =
+    bun_collections::HashMap<(crate::IndexInt, bun_ast::StoreStr), Option<ImportMemberResolution>>;
 
 // Clone: bitwise OK — `alias` borrows from the AST arena (non-owning); all
 // other fields are POD.
@@ -3994,6 +3990,7 @@ impl<'a> LinkerContext<'a> {
         named_imports_ptr: *const crate::bundled_ast::NamedImports,
         imports_to_bind: &mut crate::RefImportData,
         source_index: crate::IndexInt,
+        member_resolutions: &mut ImportMemberResolutions,
     ) {
         // Note: `ArrayHashMap` has no in-place key sort and `NamedImport` is
         // non-Clone (owns a `Vec`), so we sort an index vector over the live
@@ -4119,7 +4116,7 @@ impl<'a> LinkerContext<'a> {
             }
         }
 
-        self.bind_import_property_accesses(source_index, imports_to_bind);
+        self.bind_import_property_accesses(source_index, imports_to_bind, member_resolutions);
     }
 
     /// `import X from './a'; X.foo` where `X` resolved to the namespace of an
@@ -4134,6 +4131,7 @@ impl<'a> LinkerContext<'a> {
         &mut self,
         source_index: crate::IndexInt,
         imports_to_bind: &mut crate::RefImportData,
+        member_resolutions: &mut ImportMemberResolutions,
     ) {
         if self.options.output_format == Format::InternalBakeDev {
             return;
@@ -4175,36 +4173,30 @@ impl<'a> LinkerContext<'a> {
             }
 
             for &(base, target_source, name, count) in &accesses {
-                let resolved = match self.import_member_resolutions.get(&(target_source, name)) {
-                    Some(resolved) => resolved.clone(),
-                    None => {
-                        self.cycle_detector.clear();
-                        let mut re_exports: bun_alloc::AstVec<Dependency> =
-                            bun_alloc::AstAlloc::vec();
-                        let result = self.match_import_with_export_inner(
-                            ImportTracker {
-                                source_index: crate::Index::init(target_source),
-                                ..Default::default()
-                            },
-                            Some((target_source, name)),
-                            &mut re_exports,
-                        );
-                        let resolved = match result.kind {
-                            MatchImportKind::Normal | MatchImportKind::NormalAndNamespace => {
-                                Some(ImportMemberResolution {
-                                    source_index: result.source_index,
-                                    r#ref: result.r#ref,
-                                    re_exports: std::rc::Rc::from(re_exports.as_slice()),
-                                })
-                            }
-                            _ => None,
-                        };
-                        self.import_member_resolutions
-                            .insert((target_source, name), resolved.clone());
-                        resolved
-                    }
-                };
-                let Some(resolved) = resolved else {
+                if !member_resolutions.contains_key(&(target_source, name)) {
+                    self.cycle_detector.clear();
+                    let mut re_exports: bun_alloc::AstVec<Dependency> = bun_alloc::AstAlloc::vec();
+                    let result = self.match_import_with_export_inner(
+                        ImportTracker {
+                            source_index: crate::Index::init(target_source),
+                            ..Default::default()
+                        },
+                        Some((target_source, name)),
+                        &mut re_exports,
+                    );
+                    let resolved = match result.kind {
+                        MatchImportKind::Normal | MatchImportKind::NormalAndNamespace => {
+                            Some(ImportMemberResolution {
+                                source_index: result.source_index,
+                                r#ref: result.r#ref,
+                                re_exports: re_exports.to_vec(),
+                            })
+                        }
+                        _ => None,
+                    };
+                    member_resolutions.insert((target_source, name), resolved);
+                }
+                let Some(resolved) = member_resolutions.get(&(target_source, name)).unwrap() else {
                     continue;
                 };
 

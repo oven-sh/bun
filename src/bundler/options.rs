@@ -1324,7 +1324,7 @@ pub struct BundleOptions<'a> {
     pub ignore_dce_annotations: bool,
     pub emit_dce_annotations: bool,
     /// Namespace objects (`import *`, `export * as`) get a setter per export so
-    /// assigning to them replaces the binding instead of throwing. Deprecated;
+    /// assigning to them is silently accepted instead of throwing. Deprecated;
     /// off makes them getter-only like real module namespace objects.
     pub deprecated_namespace_object_setters: bool,
     pub bytecode: bool,

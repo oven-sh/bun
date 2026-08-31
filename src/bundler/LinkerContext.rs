@@ -3480,13 +3480,15 @@ impl<'a> LinkerContext<'a> {
                     .slice(),
             )
         {
-            let default_alias_of = if matching_export.data.source_index.get() == other_id {
-                self.graph.ast.items_named_exports()[other_id as usize]
-                    .get(named_import.alias.unwrap().slice())
-                    .map_or(Ref::NONE, |export| export.alias_of_import)
-            } else {
-                Ref::NONE
-            };
+            let alias = named_import.alias.unwrap().slice();
+            let default_alias_of =
+                if alias == b"default" && matching_export.data.source_index.get() == other_id {
+                    self.graph.ast.items_named_exports()[other_id as usize]
+                        .get(alias)
+                        .map_or(Ref::NONE, |export| export.alias_of_import)
+                } else {
+                    Ref::NONE
+                };
             // Check to see if this is a re-export of another import
             return ImportTrackerIterator {
                 value: ImportTracker {
@@ -3576,7 +3578,7 @@ impl<'a> LinkerContext<'a> {
         // keep that answer if it ends at a module namespace (whose identity is
         // fixed, so the default's snapshot of it is the live value). Otherwise
         // restore the binding to the `default` variable itself.
-        let mut default_alias_checkpoint: Option<(MatchImport, usize)> = None;
+        let mut default_alias_checkpoint: Option<(MatchImport, usize, usize)> = None;
 
         'loop_: loop {
             // Make sure we avoid infinite loops trying to resolve cycles:
@@ -3875,7 +3877,8 @@ impl<'a> LinkerContext<'a> {
 
                     if default_alias_of.is_valid() {
                         if default_alias_checkpoint.is_none() {
-                            default_alias_checkpoint = Some((result.clone(), re_exports.len()));
+                            default_alias_checkpoint =
+                                Some((result.clone(), re_exports.len(), ambiguous_results.len()));
                         }
                         tracker = ImportTracker {
                             source_index: next_tracker.source_index,
@@ -3894,13 +3897,13 @@ impl<'a> LinkerContext<'a> {
         // loop is done. All remaining exit paths are below this point.
         self.cycle_detector.truncate(cycle_detector_top);
 
-        if let Some((default_result, re_exports_len)) = default_alias_checkpoint
+        if let Some((default_result, re_exports_len, ambiguous_len)) = default_alias_checkpoint
             && !(result.kind == MatchImportKind::Normal
                 && self.is_esm_namespace_ref(result.source_index, result.r#ref))
         {
             result = default_result;
             re_exports.truncate(re_exports_len);
-            ambiguous_results.clear();
+            ambiguous_results.truncate(ambiguous_len);
         }
 
         // If there is a potential ambiguity, all results must be the same
@@ -3931,8 +3934,6 @@ impl<'a> LinkerContext<'a> {
         result
     }
 
-    /// Resolves every named import in one file to its matching export,
-    /// recording the bindings in `imports_to_bind`.
     /// Is `ref_` the `exports` object of ES module `source_index` (i.e. an
     /// import that resolved here is that module's namespace)?
     fn is_esm_namespace_ref(&self, source_index: crate::IndexInt, ref_: Ref) -> bool {
@@ -3946,6 +3947,8 @@ impl<'a> LinkerContext<'a> {
             && self.graph.meta.items_flags()[id].wrap != WrapKind::Cjs
     }
 
+    /// Resolves every named import in one file to its matching export,
+    /// recording the bindings in `imports_to_bind`.
     pub(crate) fn match_imports_with_exports_for_file(
         &mut self,
         named_imports_ptr: *const crate::bundled_ast::NamedImports,

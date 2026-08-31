@@ -260,13 +260,11 @@ impl LinkerContext<'_> {
                     .zip(part.symbol_uses.values())
                 {
                     // SAFETY: stable column pointer; row `id` is ours.
-                    if our_imports_to_bind.contains(r)
-                        || !unsafe { (*named_imports).get(r) }
-                            .is_some_and(|ni| ni.is_namespace_member)
+                    if unsafe { (*named_imports).get(r) }.is_some_and(|ni| ni.is_namespace_member)
+                        && !our_imports_to_bind.contains(r)
                     {
-                        continue;
+                        unbound_member_uses.push((*r, use_.count_estimate));
                     }
-                    unbound_member_uses.push((*r, use_.count_estimate));
                 }
                 for (member, count) in unbound_member_uses.drain(..) {
                     // Provably `undefined`; printed as such.

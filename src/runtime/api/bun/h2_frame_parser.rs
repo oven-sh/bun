@@ -26,7 +26,8 @@ use bun_jsc::array_buffer::BinaryType;
 use bun_jsc::bun_string_jsc;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
-    CallFrame, GlobalRef, JSGlobalObject, JSValue, JsCell, JsClass, JsRef, JsResult, StrongOptional,
+    CallFrame, GlobalRef, JSGlobalObject, JSValue, JsCell, JsClass, JsRef, JsResult, Strong,
+    StrongOptional,
 };
 use bun_ptr::RefPtr;
 
@@ -899,11 +900,33 @@ struct SendDataOptions {
     defer_write_callback: bool,
 }
 
-struct DispatchGuard<'a>(&'a Cell<u32>);
+struct DepthGuard<'a>(&'a Cell<u32>);
 
-impl Drop for DispatchGuard<'_> {
+impl<'a> DepthGuard<'a> {
+    fn enter(depth: &'a Cell<u32>) -> Self {
+        depth.set(depth.get() + 1);
+        DepthGuard(depth)
+    }
+}
+
+impl Drop for DepthGuard<'_> {
     fn drop(&mut self) {
         self.0.set(self.0.get() - 1);
+    }
+}
+
+struct FlagGuard<'a>(&'a Cell<bool>);
+
+impl<'a> FlagGuard<'a> {
+    fn set(flag: &'a Cell<bool>) -> Self {
+        flag.set(true);
+        FlagGuard(flag)
+    }
+}
+
+impl Drop for FlagGuard<'_> {
+    fn drop(&mut self) {
+        self.0.set(false);
     }
 }
 
@@ -982,12 +1005,52 @@ impl Drop for Keepalive<'_> {
     }
 }
 
+/// Work an inbound frame produced while `engine.receive()` was on the stack, delivered by
+/// `rewrite_read` after `receive()` returns so that the JS it runs (and the microtask checkpoint
+/// after each callback) never executes under the engine borrow. See `H2FrameParser::defer`.
+enum Deferred {
+    /// `handlers.<event>(ctx, args...)`.
+    Event {
+        event: JSH2FrameParser::Gc,
+        args: [DeferredArg; 3],
+        argc: u8,
+    },
+    /// A write's completion callback: `callback()`.
+    WriteCallback(Strong),
+    /// `Sink::on_stream_end` / `Sink::on_stream_reset`, whole: their legacy-state updates are
+    /// visible to JS (a stream half-closed by the peer answers `end()` by closing), so they must not
+    /// run ahead of the callbacks queued before them either.
+    StreamEnd {
+        stream_id: u32,
+        state: u8,
+    },
+    StreamReset {
+        stream_id: u32,
+        code: u32,
+    },
+}
+
+/// A queued callback argument. Heap cells are rooted for the wait; a stream's JS context is looked
+/// up at delivery, as the inline dispatch would.
+enum DeferredArg {
+    Immediate(JSValue),
+    Cell(Strong),
+    StreamCtx(u32),
+}
+
+/// A first argument for `dispatch_event`: a value, or the stream whose JS context to pass.
+#[derive(Clone, Copy)]
+enum Target {
+    Value(JSValue),
+    Stream(u32),
+}
+
 /// A `&mut Stream` that only exists inside an armed dispatch scope (`enter_stream_dispatch`):
 /// while it is live, rewrite_read defers stream frees, so user JS that re-enters `read()`
 /// (option getters, header-value `toString`) cannot free the stream out from under the borrow.
 struct GuardedStream<'a> {
     stream: &'a mut Stream,
-    _dispatch: DispatchGuard<'a>,
+    _dispatch: DepthGuard<'a>,
 }
 
 impl core::ops::Deref for GuardedStream<'_> {
@@ -1144,6 +1207,15 @@ pub struct H2FrameParser {
     /// Unconsumed inbound tail (the engine holds no reassembly buffer — design B): bytes after the
     /// last complete frame are kept here and prepended to the next read().
     rewrite_tail: JsCell<Vec<u8>>,
+    /// Read cursor into `rewrite_tail` while a batch has it parked (0 otherwise).
+    rewrite_tail_pos: Cell<usize>,
+    /// `engine.receive()` is on the stack: JS event callbacks are queued in `deferred` and delivered
+    /// once it returns (see `rewrite_read`).
+    receiving: Cell<bool>,
+    deferred: JsCell<std::collections::VecDeque<Deferred>>,
+    /// `rewrite_read` batches on the stack; per-batch work (window replenishment) waits for the
+    /// outermost one to finish.
+    batch_depth: Cell<u32>,
     /// Promised stream id whose PUSH_PROMISE header block is being delivered by the engine (its
     /// on_headers_complete dispatches onStreamPush instead of onStreamHeaders).
     rewrite_pending_push: Cell<u32>,
@@ -2345,9 +2417,8 @@ impl H2FrameParser {
     /// Armed across every JS dispatch wrapper AND every section that holds a `&mut Stream`
     /// while user JS can run (property getters, iteration, string coercion), so
     /// rewrite_read's deferred stream free (pending_engine_stream_closes) only runs at depth 0.
-    fn enter_dispatch(&self) -> DispatchGuard<'_> {
-        self.dispatch_depth.set(self.dispatch_depth.get() + 1);
-        DispatchGuard(&self.dispatch_depth)
+    fn enter_dispatch(&self) -> DepthGuard<'_> {
+        DepthGuard::enter(&self.dispatch_depth)
     }
 
     /// Reborrows a host fn's `*mut Stream` with the dispatch guard armed for the borrow's whole
@@ -2364,21 +2435,134 @@ impl H2FrameParser {
         }
     }
 
-    pub(crate) fn dispatch(&self, event: JSH2FrameParser::Gc, value: JSValue) {
-        value.ensure_still_alive();
+    /// `handlers.<event>(ctx, args...)` now. Every event dispatch ends here or in `defer`.
+    fn deliver(&self, event: JSH2FrameParser::Gc, args: &[JSValue]) {
         let Some(this_value) = self.strong_this.get().try_get() else {
             return;
         };
         let Some(ctx_value) = JSH2FrameParser::Gc::context.get(this_value) else {
             return;
         };
+        let mut argv = [
+            ctx_value,
+            JSValue::UNDEFINED,
+            JSValue::UNDEFINED,
+            JSValue::UNDEFINED,
+        ];
+        argv[1..1 + args.len()].copy_from_slice(args);
         let _dispatch = self.enter_dispatch();
         let _ = self.handlers.get().call_event_handler(
             event,
             this_value,
             ctx_value,
-            &[ctx_value, value],
+            &argv[..1 + args.len()],
         );
+    }
+
+    /// While `engine.receive()` is on the stack an event is queued instead of delivered: its
+    /// callback (and the microtask checkpoint `run_callback` performs after it) must not run under
+    /// the engine borrow, or a continuation that spins the event loop there reads this socket into
+    /// a parser that can only park the bytes. `Sink::should_stop` makes the engine return after the
+    /// current frame; `rewrite_read` delivers the queue and resumes it.
+    fn defer(&self, entry: Deferred) {
+        debug_assert!(self.receiving.get());
+        self.deferred.with_mut(|q| q.push_back(entry));
+    }
+
+    /// Every event dispatch: delivered now, or queued while `receive()` is on the stack.
+    fn dispatch_event(&self, event: JSH2FrameParser::Gc, target: Target, extra: &[JSValue]) {
+        for value in extra {
+            value.ensure_still_alive();
+        }
+        if let Target::Value(value) = target {
+            value.ensure_still_alive();
+        }
+        if self.receiving.get() {
+            // An empty value failed to materialize; drop the event here, as `should_skip_dispatch`
+            // would on delivery (a `Strong` cannot hold it).
+            if extra.iter().any(|v| v.is_empty())
+                || matches!(target, Target::Value(v) if v.is_empty())
+            {
+                return;
+            }
+            let global = self.global();
+            let root = |value: JSValue| {
+                if value.is_cell() {
+                    DeferredArg::Cell(Strong::create(value, &global))
+                } else {
+                    DeferredArg::Immediate(value)
+                }
+            };
+            let mut args = [const { DeferredArg::Immediate(JSValue::UNDEFINED) }; 3];
+            args[0] = match target {
+                Target::Value(value) => root(value),
+                Target::Stream(stream_id) => DeferredArg::StreamCtx(stream_id),
+            };
+            for (slot, value) in args[1..].iter_mut().zip(extra) {
+                *slot = root(*value);
+            }
+            return self.defer(Deferred::Event {
+                event,
+                args,
+                argc: 1 + extra.len() as u8,
+            });
+        }
+        let first = match target {
+            Target::Value(value) => value,
+            Target::Stream(stream_id) => self.rewrite_stream_ctx(stream_id),
+        };
+        let mut args = [first, JSValue::UNDEFINED, JSValue::UNDEFINED];
+        args[1..1 + extra.len()].copy_from_slice(extra);
+        self.deliver(event, &args[..1 + extra.len()]);
+    }
+
+    /// Deliver everything queued by the `receive()` that just returned, in order. A callback can
+    /// re-enter `rewrite_read` (a nested event loop reading this socket, a JS transport pushing
+    /// bytes back); that call drains this same queue, so entries are popped before they run.
+    fn run_deferred(&self) {
+        loop {
+            let Some(entry) = self.deferred.with_mut(|q| q.pop_front()) else {
+                return;
+            };
+            match entry {
+                Deferred::Event { event, args, argc } => {
+                    let mut values = [JSValue::UNDEFINED; 3];
+                    for (value, arg) in values.iter_mut().zip(&args[..argc as usize]) {
+                        *value = match arg {
+                            DeferredArg::Immediate(v) => *v,
+                            DeferredArg::Cell(strong) => strong.get(),
+                            DeferredArg::StreamCtx(id) => self.rewrite_stream_ctx(*id),
+                        };
+                    }
+                    self.deliver(event, &values[..argc as usize]);
+                }
+                Deferred::WriteCallback(callback) => {
+                    let _dispatch = self.enter_dispatch();
+                    let _ = self.handlers.get().call_write_callback(callback.get(), &[]);
+                }
+                Deferred::StreamEnd { stream_id, state } => self.stream_end_now(stream_id, state),
+                Deferred::StreamReset { stream_id, code } => self.stream_reset_now(stream_id, code),
+            }
+        }
+    }
+
+    /// The legacy slot and JS context root of a stream the engine reported fully closed.
+    fn release_stream(&self, stream_id: u32) {
+        if let Some(stream) = self.streams.get().get(&stream_id).copied() {
+            // SAFETY: stream is *mut Stream from self.streams; valid while the map entry exists
+            unsafe { (*stream).free_resources::<false>(self) };
+        }
+        self.sctx.with_mut(|m| {
+            m.remove(&stream_id);
+        });
+    }
+
+    pub(crate) fn dispatch(&self, event: JSH2FrameParser::Gc, value: JSValue) {
+        self.dispatch_event(event, Target::Value(value), &[]);
+    }
+
+    fn dispatch_stream_event(&self, event: JSH2FrameParser::Gc, stream_id: u32, extra: &[JSValue]) {
+        self.dispatch_event(event, Target::Stream(stream_id), extra);
     }
 
     pub(crate) fn call(&self, event: JSH2FrameParser::Gc, value: JSValue) -> JSValue {
@@ -2396,6 +2580,15 @@ impl H2FrameParser {
     }
 
     pub(crate) fn dispatch_write_callback(&self, callback: JSValue) {
+        if self.receiving.get() {
+            if callback.is_empty_or_undefined_or_null() {
+                return;
+            }
+            return self.defer(Deferred::WriteCallback(Strong::create(
+                callback,
+                &self.global(),
+            )));
+        }
         let _dispatch = self.enter_dispatch();
         let _ = self.handlers.get().call_write_callback(callback, &[]);
     }
@@ -2406,21 +2599,7 @@ impl H2FrameParser {
         value: JSValue,
         extra: JSValue,
     ) {
-        let Some(this_value) = self.strong_this.get().try_get() else {
-            return;
-        };
-        let Some(ctx_value) = JSH2FrameParser::Gc::context.get(this_value) else {
-            return;
-        };
-        value.ensure_still_alive();
-        extra.ensure_still_alive();
-        let _dispatch = self.enter_dispatch();
-        let _ = self.handlers.get().call_event_handler(
-            event,
-            this_value,
-            ctx_value,
-            &[ctx_value, value, extra],
-        );
+        self.dispatch_event(event, Target::Value(value), &[extra]);
     }
 
     pub(crate) fn dispatch_with_2_extra(
@@ -2430,22 +2609,7 @@ impl H2FrameParser {
         extra: JSValue,
         extra2: JSValue,
     ) {
-        let Some(this_value) = self.strong_this.get().try_get() else {
-            return;
-        };
-        let Some(ctx_value) = JSH2FrameParser::Gc::context.get(this_value) else {
-            return;
-        };
-        value.ensure_still_alive();
-        extra.ensure_still_alive();
-        extra2.ensure_still_alive();
-        let _dispatch = self.enter_dispatch();
-        let _ = self.handlers.get().call_event_handler(
-            event,
-            this_value,
-            ctx_value,
-            &[ctx_value, value, extra, extra2],
-        );
+        self.dispatch_event(event, Target::Value(value), &[extra, extra2]);
     }
 
     /// A header block the HPACK encoder cannot emit fails the whole session in nghttp2, so node
@@ -3518,12 +3682,12 @@ impl H2FrameParser {
     /// Feed inbound bytes through the rewrite engine, buffering the unconsumed tail (design B).
     fn rewrite_read(&self, bytes: &[u8]) {
         bun_output::scoped_log!(H2FrameParser, "rewriteRead {}", bytes.len());
-        // Re-entrancy guard: receive() dispatches into JS between frames, and user code can feed
-        // bytes back into the same parser from inside such a dispatch (e.g. a custom Duplex whose
-        // write path synchronously pushes back into the socket). The engine cell stays mutably
-        // borrowed across the outer receive(), so queue the bytes for the outer call to drain
-        // rather than panicking on a second borrow.
-        if self.engine.try_borrow_mut().is_err() {
+        // Re-entrancy: bytes fed back in while receive() is on the stack (a JS transport whose
+        // write path synchronously pushes into the socket) are parked; the batch picks them up once
+        // the current frame is parsed. Any other read — including one made from inside a frame
+        // callback, or from an event loop nested in it — finds the engine free and is parsed now,
+        // continuing from whatever an outer batch has parked so wire order is kept.
+        if self.receiving.get() || self.engine.try_borrow_mut().is_err() {
             self.rewrite_tail.with_mut(|t| t.extend_from_slice(bytes));
             return;
         }
@@ -3599,68 +3763,93 @@ impl H2FrameParser {
                 });
             }
         }
-        if self.rewrite_tail.get().is_empty() {
+        // Input for this batch. `rewrite_tail[rewrite_tail_pos..]` holds, in wire order, whatever is
+        // not parsed yet: an incomplete frame left by the last read, or the remainder an outer
+        // rewrite_read parked before delivering callbacks (see below). It is taken out while the
+        // engine runs on it, so a JS transport pushing bytes back re-entrantly appends to an
+        // empty tail instead of reallocating the slice being parsed. With nothing parked the read
+        // is parsed in place and only copied if a frame yields with bytes left behind it.
+        let mut owned: Vec<u8> = self.rewrite_tail.with_mut(std::mem::take);
+        let mut pos = self.rewrite_tail_pos.replace(0).min(owned.len());
+        let mut direct = owned.is_empty();
+        if direct {
+            pos = 0;
+        } else {
+            owned.extend_from_slice(bytes);
+        }
+        let batch = DepthGuard::enter(&self.batch_depth);
+        loop {
             let feed = {
+                let input: &[u8] = if direct { &bytes[pos..] } else { &owned[pos..] };
+                // Nothing the engine calls may reach a microtask checkpoint while it is borrowed:
+                // event callbacks are queued (`defer`), and this keeps any other JS it enters (a JS
+                // transport's onWrite) from being the outermost scope.
+                let vm = self.global_this.bun_vm();
+                let _no_checkpoint = vm.enter_event_loop_scope_without_checkpoint();
+                let _receiving = FlagGuard::set(&self.receiving);
                 let mut guard = self.engine.borrow_mut();
-                guard.as_mut().unwrap().receive(self, bytes)
+                guard.as_mut().unwrap().receive(self, input)
             };
+            pos += feed.consumed;
+            // Bytes a JS transport pushed back while the engine ran follow the current input.
+            let pushed_more = !self.rewrite_tail.get().is_empty();
+            if pushed_more {
+                let pushed = self.rewrite_tail.with_mut(std::mem::take);
+                self.rewrite_tail_pos.set(0);
+                if direct {
+                    owned.extend_from_slice(&bytes[pos..]);
+                    direct = false;
+                    pos = 0;
+                }
+                owned.extend_from_slice(&pushed);
+            }
             if feed.fatal {
                 // GOAWAY is on the wire and on_error tore the session down; feeding the
                 // remainder would only re-parse frames for a dead connection.
-                self.rewrite_tail.with_mut(|t| t.clear());
-                let _ = self.flush();
-                return;
+                self.run_deferred();
+                break;
             }
-            let consumed = feed.consumed;
-            if consumed < bytes.len() {
-                self.rewrite_tail.with_mut(|t| {
-                    // A reentrant read() during dispatch may have queued bytes already; this
-                    // batch's unconsumed remainder precedes them on the wire.
-                    let _ = t.splice(0..0, bytes[consumed..].iter().copied());
-                });
+            if !feed.yielded && pushed_more {
+                // Nothing to deliver, but the pushed-back bytes may complete a frame. (Cannot
+                // spin: a pass that parses nothing writes at most WINDOW_UPDATEs, once.)
+                continue;
             }
-        } else {
-            let mut combined = self.rewrite_tail.with_mut(std::mem::take);
-            combined.extend_from_slice(bytes);
-            let feed = {
-                let mut guard = self.engine.borrow_mut();
-                guard.as_mut().unwrap().receive(self, &combined)
-            };
-            if feed.fatal {
-                self.rewrite_tail.with_mut(|t| t.clear());
-                let _ = self.flush();
-                return;
-            }
-            let consumed = feed.consumed;
-            self.rewrite_tail.with_mut(|t| {
-                if consumed < combined.len() {
-                    let _ = t.splice(0..0, combined[consumed..].iter().copied());
+            if !feed.yielded || self.left_exception.get() {
+                // The engine took every complete frame (or stopped on a pending exception): keep
+                // the rest for the next read.
+                if direct {
+                    owned.clear();
+                    owned.extend_from_slice(&bytes[pos..]);
+                } else {
+                    owned.drain(..pos);
                 }
-            });
-        }
-        // Drain bytes queued by reentrant reads during the dispatches above. Stop when the engine
-        // makes no progress (an incomplete frame waiting for more input stays in the tail).
-        loop {
-            if self.rewrite_tail.get().is_empty() {
+                if !owned.is_empty() {
+                    self.rewrite_tail.set(owned);
+                }
+                self.run_deferred();
                 break;
             }
-            let pending = self.rewrite_tail.with_mut(std::mem::take);
-            let feed = {
-                let mut guard = self.engine.borrow_mut();
-                guard.as_mut().unwrap().receive(self, &pending)
-            };
-            if feed.fatal {
-                self.rewrite_tail.with_mut(|t| t.clear());
-                let _ = self.flush();
-                return;
+            // The frame just parsed queued callbacks. Park the remainder before running them: a
+            // callback that spins the event loop (bun:test's expect().resolves after an `await`, a
+            // require() of a module with TLA) reads this socket again, and that nested rewrite_read
+            // continues from the parked position, in wire order, instead of waiting for this frame
+            // to return.
+            if direct {
+                owned.extend_from_slice(&bytes[pos..]);
+                direct = false;
+                pos = 0;
             }
-            let consumed = feed.consumed;
-            self.rewrite_tail
-                .with_mut(|t| drop(t.splice(0..0, pending[consumed..].iter().copied())));
-            if consumed == 0 {
-                break;
-            }
+            self.rewrite_tail.set(owned);
+            self.rewrite_tail_pos.set(pos);
+            self.run_deferred();
+            // Resume from wherever the parked input now stands (a nested read may have consumed
+            // it, or added to it). Even when nothing is left the engine is entered once more: the
+            // batch only finishes, and windows are only replenished, on a receive() that was not
+            // asked to yield.
+            owned = self.rewrite_tail.with_mut(std::mem::take);
+            pos = self.rewrite_tail_pos.replace(0).min(owned.len());
         }
+        drop(batch);
         // Uncork: flush the engine's queued control/response frames to the socket.
         let _ = self.flush();
     }
@@ -3668,12 +3857,13 @@ impl H2FrameParser {
 
 /// The from-scratch engine calls back into H2FrameParser (the embedder) through this.
 impl crate::api::h2::connection::Sink for H2FrameParser {
-    /// A frame callback left an exception pending (a value it could not build): no later frame
-    /// in this batch is dispatched over it; `read()` throws it and `on_native_read` returns it to
-    /// the socket dispatch. (A termination between frames is what `run_callback`'s gate covers.)
+    /// Return before the next frame when the current one queued callbacks (`defer`), so they run
+    /// outside the engine borrow, or when a callback left an exception pending (a value it could not
+    /// build): then no later frame in this batch is dispatched over it and `read()` /
+    /// `on_native_read` return it to their caller.
     #[inline]
     fn should_stop(&self) -> bool {
-        self.left_exception.get()
+        self.left_exception.get() || !self.deferred.get().is_empty()
     }
 
     fn on_frame_counters(&self, received: u64, sent: u64) {
@@ -4035,26 +4225,54 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
                 JSValue::js_number(flags as f64),
             );
         } else {
-            let stream_ctx = self.rewrite_stream_ctx(stream_id);
-            self.dispatch_with_2_extra(
+            self.dispatch_stream_event(
                 JSH2FrameParser::Gc::onStreamHeaders,
-                stream_ctx,
-                tuple,
-                JSValue::js_number(flags as f64),
+                stream_id,
+                &[tuple, JSValue::js_number(flags as f64)],
             );
         }
     }
 
     fn on_data(&self, stream_id: u32, data: &[u8]) {
         let g = self.global();
-        let stream_ctx = self.rewrite_stream_ctx(stream_id);
         let Some(chunk) = self.or_stop(self.handlers.get().binary_type.to_js(data, &g)) else {
             return;
         };
-        self.dispatch_with_extra(JSH2FrameParser::Gc::onStreamData, stream_ctx, chunk);
+        self.dispatch_stream_event(JSH2FrameParser::Gc::onStreamData, stream_id, &[chunk]);
     }
 
     fn on_stream_end(&self, stream_id: u32, state: u8) {
+        if self.receiving.get() {
+            return self.defer(Deferred::StreamEnd { stream_id, state });
+        }
+        self.stream_end_now(stream_id, state);
+    }
+
+    fn on_stream_rejected(&self, stream_id: u32) {
+        // maxSessionRejectedStreams: counts only locally-initiated rejections (oversized or
+        // malformed header blocks) - peer-sent RST_STREAM frames must not consume the budget.
+        self.rejected_streams.set(self.rejected_streams.get() + 1);
+        if self.max_rejected_streams.get() <= self.rejected_streams.get() {
+            self.send_go_away(
+                stream_id,
+                ErrorCode::ENHANCE_YOUR_CALM,
+                b"ENHANCE_YOUR_CALM",
+                self.last_stream_id.get(),
+                true,
+            );
+        }
+    }
+
+    fn on_stream_reset(&self, stream_id: u32, code: u32) {
+        if self.receiving.get() {
+            return self.defer(Deferred::StreamReset { stream_id, code });
+        }
+        self.stream_reset_now(stream_id, code);
+    }
+}
+
+impl H2FrameParser {
+    fn stream_end_now(&self, stream_id: u32, state: u8) {
         // The engine only sees the inbound half while outbound flows through the legacy path, so it
         // can't know the local side already sent END_STREAM. Combine with the legacy stream's local
         // state: remote-closed (6) on a stream whose local half is closed (5/7) is fully CLOSED (7),
@@ -4081,45 +4299,21 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
                 };
             }
         }
-        let stream_ctx = self.rewrite_stream_ctx(stream_id);
-        self.dispatch_with_extra(
+        self.dispatch_stream_event(
             JSH2FrameParser::Gc::onStreamEnd,
-            stream_ctx,
-            JSValue::js_number(effective as f64),
+            stream_id,
+            &[JSValue::js_number(effective as f64)],
         );
         if effective == 7 {
             // Fully closed. In the sync-response flow the JS handler already half-closed the
             // local side during the HEADERS dispatch, so the legacy send-close branch saw
             // OPEN and skipped its teardown — free the legacy context here or it (its Strong
             // JS stream root, and the engine's map entry) leaks per request.
-            if let Some(stream) = self.streams.get().get(&stream_id).copied() {
-                // SAFETY: stream is *mut Stream from self.streams; valid while the map entry exists
-                unsafe { (*stream).free_resources::<false>(self) };
-            }
-            // Release the per-stream JS context root so it can be collected (also done by
-            // free_resources, but a stream may have no legacy entry).
-            self.sctx.with_mut(|m| {
-                m.remove(&stream_id);
-            });
+            self.release_stream(stream_id);
         }
     }
 
-    fn on_stream_rejected(&self, stream_id: u32) {
-        // maxSessionRejectedStreams: counts only locally-initiated rejections (oversized or
-        // malformed header blocks) - peer-sent RST_STREAM frames must not consume the budget.
-        self.rejected_streams.set(self.rejected_streams.get() + 1);
-        if self.max_rejected_streams.get() <= self.rejected_streams.get() {
-            self.send_go_away(
-                stream_id,
-                ErrorCode::ENHANCE_YOUR_CALM,
-                b"ENHANCE_YOUR_CALM",
-                self.last_stream_id.get(),
-                true,
-            );
-        }
-    }
-
-    fn on_stream_reset(&self, stream_id: u32, code: u32) {
+    fn stream_reset_now(&self, stream_id: u32, code: u32) {
         // A mid-block rejection (e.g. max_header_list_size) leaves partially-accumulated header
         // arrays behind; drop them so they can't leak into the next stream's dispatch. The same
         // applies to the pending PUSH_PROMISE marker - a rejected push block must not make the
@@ -4140,32 +4334,24 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
                 (*stream).rst_code = code;
             }
         }
-        let stream_ctx = self.rewrite_stream_ctx(stream_id);
         if code == crate::api::h2::wire::ErrorCode::Cancel.as_u32() {
             // A peer CANCEL is an abort, not an error (node emits 'aborted' and closes with
             // rstCode 8 without an 'error' event).
-            self.dispatch_with_2_extra(
+            self.dispatch_stream_event(
                 JSH2FrameParser::Gc::onAborted,
-                stream_ctx,
-                JSValue::UNDEFINED,
-                JSValue::js_number(old_state as f64),
+                stream_id,
+                &[JSValue::UNDEFINED, JSValue::js_number(old_state as f64)],
             );
         } else {
-            self.dispatch_with_extra(
+            self.dispatch_stream_event(
                 JSH2FrameParser::Gc::onStreamError,
-                stream_ctx,
-                JSValue::js_number(code as f64),
+                stream_id,
+                &[JSValue::js_number(code as f64)],
             );
         }
         // The reset closes the stream; free the legacy slot (queueing the engine eviction)
         // and release its JS context root, mirroring the on_stream_end full-close path.
-        if let Some(stream) = self.streams.get().get(&stream_id).copied() {
-            // SAFETY: stream is *mut Stream from self.streams; valid while the map entry exists
-            unsafe { (*stream).free_resources::<false>(self) };
-        }
-        self.sctx.with_mut(|m| {
-            m.remove(&stream_id);
-        });
+        self.release_stream(stream_id);
     }
 }
 
@@ -5534,13 +5720,14 @@ impl H2FrameParser {
         // SAFETY: stream is a *mut Stream from self.streams (heap::alloc); valid while the map entry exists
         unsafe { (*stream).reading_paused = !reading };
         if reading {
-            // Resumed: send the deferred WINDOW_UPDATE now. try_borrow: a resume issued from
-            // inside a dispatch (the engine borrow is held by rewrite_read) is covered by the
-            // batch-end replenish instead.
-            if let Ok(mut guard) = this.engine.try_borrow_mut() {
-                if let Some(engine) = guard.as_mut() {
-                    engine.replenish_stream(this, stream_id);
-                }
+            // Resumed: send the deferred WINDOW_UPDATE now. A resume issued from inside an inbound
+            // batch (a frame callback) is covered by the batch-end replenish instead: replenishing
+            // per frame would hide a peer overrunning the window within one burst.
+            if this.batch_depth.get() == 0
+                && let Ok(mut guard) = this.engine.try_borrow_mut()
+                && let Some(engine) = guard.as_mut()
+            {
+                engine.replenish_stream(this, stream_id);
             }
             let _ = this.flush();
         }
@@ -7587,6 +7774,10 @@ impl H2FrameParser {
             padding_strategy: Cell::new(PaddingStrategy::None),
             engine: core::cell::RefCell::new(None),
             rewrite_tail: JsCell::new(Vec::new()),
+            rewrite_tail_pos: Cell::new(0),
+            receiving: Cell::new(false),
+            deferred: JsCell::new(std::collections::VecDeque::new()),
+            batch_depth: Cell::new(0),
             rewrite_pending_push: Cell::new(0),
             sctx: JsCell::new(BunHashMap::default()),
             hdr_block: JsCell::new(Vec::new()),

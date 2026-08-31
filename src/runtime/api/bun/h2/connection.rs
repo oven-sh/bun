@@ -144,6 +144,10 @@ enum BlockDisposition {
 pub struct Feed {
     pub consumed: usize,
     pub fatal: bool,
+    /// Stopped between frames because `Sink::should_stop()` asked to: `bytes[consumed..]` was not
+    /// looked at and the batch is not finished (no windows were replenished). The embedder feeds
+    /// the remainder again once it can take callbacks, or an empty slice to finish the batch.
+    pub yielded: bool,
 }
 
 /// nghttp2's NGHTTP2_DEFAULT_MAX_OBQ_FLOOD_ITEM: outbound PING/SETTINGS ACKs that may pile up
@@ -168,8 +172,9 @@ pub trait Sink {
     /// After a WINDOW_UPDATE has been applied (for resuming sends).
     fn on_window_update(&self, stream_id: u32, increment: u32);
 
-    /// The embedder cannot take further callbacks in this batch (its VM has an exception pending
-    /// from an earlier one): stop before the next frame; the unconsumed bytes stay queued.
+    /// The embedder wants control back before the next frame: it has callbacks from the previous
+    /// frame to deliver outside the engine borrow, or its VM has an exception pending. `receive`
+    /// returns with `yielded` set; the unconsumed bytes stay with the embedder.
     fn should_stop(&self) -> bool {
         false
     }
@@ -444,6 +449,7 @@ impl Connection {
             return Feed {
                 consumed: bytes.len(),
                 fatal: true,
+                yielded: false,
             };
         }
 
@@ -465,6 +471,7 @@ impl Connection {
                 return Feed {
                     consumed: avail,
                     fatal: true,
+                    yielded: false,
                 };
             }
             self.preface_received += avail;
@@ -473,6 +480,7 @@ impl Connection {
                 return Feed {
                     consumed: offset,
                     fatal: false,
+                    yielded: false,
                 };
             }
         }
@@ -490,17 +498,35 @@ impl Connection {
                 self.finish_streamed_data(sink, &inflight);
             } else {
                 self.data_in_flight = Some(inflight);
+                if sink.should_stop() {
+                    return Feed {
+                        consumed: offset,
+                        fatal: false,
+                        yielded: true,
+                    };
+                }
                 self.replenish_windows(sink);
                 return Feed {
                     consumed: offset,
                     fatal: false,
+                    yielded: false,
                 };
             }
         }
 
         loop {
+            // Checked before looking at the input so a stop requested by the last frame's
+            // callbacks is honoured even when nothing follows it: the windows are replenished only
+            // once the embedder has delivered those callbacks and finishes the batch.
+            if sink.should_stop() {
+                return Feed {
+                    consumed: offset,
+                    fatal: false,
+                    yielded: true,
+                };
+            }
             let remaining = &bytes[offset..];
-            if remaining.len() < wire::FRAME_HEADER_SIZE || sink.should_stop() {
+            if remaining.len() < wire::FRAME_HEADER_SIZE {
                 break;
             }
             let hdr = FrameHeader::parse(remaining);
@@ -516,6 +542,7 @@ impl Connection {
                 return Feed {
                     consumed: offset,
                     fatal: true,
+                    yielded: false,
                 };
             }
             let total = wire::FRAME_HEADER_SIZE + hdr.length as usize;
@@ -536,6 +563,7 @@ impl Connection {
                                 return Feed {
                                     consumed: offset,
                                     fatal: true,
+                                    yielded: false,
                                 };
                             }
                             StreamedDataStart::Consumed(n) => {
@@ -551,9 +579,17 @@ impl Connection {
                 return Feed {
                     consumed: offset + total,
                     fatal: true,
+                    yielded: false,
                 };
             }
             offset += total;
+        }
+        if sink.should_stop() {
+            return Feed {
+                consumed: offset,
+                fatal: false,
+                yielded: true,
+            };
         }
         // Re-open consumed receive windows once per batch (RFC 9113 §6.9; mirrors how the
         // application-consumption-driven update works in node) — doing it per frame would both spam
@@ -562,6 +598,7 @@ impl Connection {
         Feed {
             consumed: offset,
             fatal: false,
+            yielded: false,
         }
     }
 

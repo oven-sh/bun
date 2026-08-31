@@ -20,7 +20,6 @@
 
 #include "config.h"
 #include "EventNames.h"
-#include "ZigGlobalObject.h"
 #include "JavaScriptCore/JSGlobalObject.h"
 #include "JavaScriptCore/JSStringInlines.h"
 #include "wtf/Assertions.h"
@@ -44,7 +43,6 @@ const EventNames& eventNames()
     return *eventNames_;
 }
 
-// Must be kept in sync with `EventType` in src/runtime/node/node_fs_watcher.rs
 enum class DOMEventName : uint8_t {
     rename = 0,
     change = 1,
@@ -54,24 +52,26 @@ enum class DOMEventName : uint8_t {
 
 };
 
-extern "C" JSC::EncodedJSValue Bun__domEventNameToJS(JSC::JSGlobalObject* lexicalGlobalObject, DOMEventName name)
+extern "C" JSC::EncodedJSValue Bun__domEventNameToJS(JSC::JSGlobalObject* globalObject, DOMEventName name)
 {
-    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
-    auto& commonStrings = globalObject->commonStrings();
-    switch (name) {
-    case DOMEventName::rename:
-        return JSValue::encode(commonStrings.eventRenameString(globalObject));
-    case DOMEventName::change:
-        return JSValue::encode(commonStrings.eventChangeString(globalObject));
-    case DOMEventName::error:
-        return JSValue::encode(commonStrings.fetchErrorString(globalObject));
-    case DOMEventName::abort:
-        return JSValue::encode(commonStrings.eventAbortString(globalObject));
-    case DOMEventName::close:
-        return JSValue::encode(commonStrings.eventCloseString(globalObject));
-    default:
-        RELEASE_ASSERT_NOT_REACHED();
-    }
+    const auto& eventName = [&]() -> const AtomString& {
+        switch (name) {
+        case DOMEventName::rename:
+            return eventNames().renameEvent;
+        case DOMEventName::change:
+            return eventNames().changeEvent;
+        case DOMEventName::error:
+            return eventNames().errorEvent;
+        case DOMEventName::abort:
+            return eventNames().abortEvent;
+        case DOMEventName::close:
+            return eventNames().closeEvent;
+        default:
+            RELEASE_ASSERT_NOT_REACHED();
+        }
+    }();
+
+    return JSValue::encode(JSC::jsString(globalObject->vm(), eventName));
 }
 
 }

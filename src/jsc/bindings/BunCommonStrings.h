@@ -65,10 +65,6 @@
     macro(binaryTypeNodeBuffer, "nodebuffer") \
     macro(binaryTypeUint8Array, "uint8array") \
     macro(buffer, "buffer") \
-    macro(eventAbort, "abort") \
-    macro(eventChange, "change") \
-    macro(eventClose, "close") \
-    macro(eventRename, "rename") \
     macro(fetchCors, "cors") \
     macro(fetchError, "error") \
     macro(fetchFollow, "follow") \

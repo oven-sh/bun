@@ -396,7 +396,7 @@ describe("onTestFailed", () => {
   test.concurrent("runs for failure modes decided at sequence completion", async () => {
     using dir = tempDir("vitest-compat-failhook-deferred", {
       "deferred.test.ts": `
-        import { test, onTestFailed, expect } from "vitest";
+        import { test, onTestFailed, onTestFinished, expect } from "vitest";
         test("assertion count mismatch", () => {
           onTestFailed(() => console.log("FAILED_HOOK_ASSERTIONS"));
           expect.assertions(2);
@@ -452,7 +452,8 @@ describe("onTestFailed", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toContain("Cannot call onTestFailed() outside of a test");
-    expect(stdout).not.toContain("never runs");
+    // The file fails at load, so no test registers or passes.
+    expect(stderr).not.toContain("(pass)");
     expect(exitCode).toBe(1);
   });
 });

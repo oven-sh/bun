@@ -15,92 +15,29 @@ use crate::{Chunk, LinkerContext, StableRef, WrapKind};
 
 /// TODO: investigate if we need to parallelize this function
 /// esbuild does parallelize it.
-// CONCURRENCY: called from `LinkerContext::generate_js_renamer` (`each_ptr`
-// callback) — runs on worker threads, one task per chunk. Writes go to
-// `chunk.renamer` (per-chunk disjoint) plus per-`source_index` rows of
-// `graph.ast.{module_scope, parts}` via the `NumberRenamer` path (declared-
-// symbol scope assignment). `files_in_order` is the chunk's own file list;
-// without code-splitting, files are partitioned across chunks so per-row
-// writes are disjoint. With code-splitting a `source_index` may appear in
-// multiple chunks; the writes are
-// idempotent (`declared_symbols` flag set, scope-member sort) so the race is
-// benign but is still a Stacked Borrows hazard. Mitigation: never
-// materialize `&mut LinkerContext` (would assert whole-context exclusivity
-// across N tasks); take `*mut LinkerContext` raw, deref to `&LinkerContext`
-// for reads, and access SoA columns via `split_raw()` root-provenance
-// pointers so per-row `&mut T` derefs do not invalidate sibling tasks'
-// pointers under SB.
-//
-/// # Safety
-/// `c` must point to a live `LinkerContext` for the duration of the call;
-/// caller (the `each_ptr` dispatch) guarantees the link step outlives all
-/// renamer tasks.
-pub(crate) unsafe fn rename_symbols_in_chunk(
-    c: *mut LinkerContext,
-    chunk: &mut Chunk,
+/// Runs on a pool thread, one task per chunk (`generate_js_renamer`): reads
+/// the linker graph and builds the chunk's renamer.
+pub(crate) fn rename_symbols_in_chunk(
+    c: &LinkerContext<'_>,
+    chunk: &Chunk,
     files_in_order: &[u32],
 ) -> Result<ChunkRenamer, crate::Error> {
     let _trace = bun_core::perf::trace("Bundler.renameSymbolsInChunk");
 
-    // Derive the `symbols` pointer from the raw `*mut LinkerContext` *before*
-    // shadowing `c` with a shared ref, so it carries the caller's mutable
-    // provenance (needed by `slice_mut()` inside `make_symbols_view`). Under
-    // SB a `&raw const` through `&LinkerContext` would be SharedRO and the
-    // later `*mut` cast would launder it.
-    // SAFETY: `c` is live for the call (fn safety doc).
-    let symbols: *mut symbol::Map = unsafe { &raw mut (*c).graph.symbols };
+    let symbols: &symbol::Map = &c.graph.symbols;
+    let ast = c.graph.ast.slice();
+    let all_module_scopes = ast.items_module_scope();
+    let all_flags: &[js_meta::Flags] = c.graph.meta.items_flags();
+    let all_parts = ast.items_parts();
+    let all_wrapper_refs = ast.items_wrapper_ref();
+    let all_import_records = ast.items_import_records();
+    let ast_flags_col = ast.items_flags();
+    let char_freq_col = ast.items_char_freq();
+    let exports_ref_col = ast.items_exports_ref();
+    let module_ref_col = ast.items_module_ref();
+    let nested_slot_counts_col = ast.items_nested_scope_slot_counts();
 
-    // Shared-ref view for all read-only access (`c.options`,
-    // `c.graph.stable_source_indices`, `c.graph.{ast,meta}.split_raw()`).
-    // Multiple worker threads may hold `&LinkerContext` simultaneously; the
-    // SoA buffers live behind raw pointers inside `MultiArrayList`, so this
-    // borrow does not assert immutability over the heap cells written below.
-    // SAFETY: see fn safety doc — `c` is live for the call.
-    let c: &LinkerContext<'_> = unsafe { &*c };
-
-    // ── raw SoA column pointers (root provenance) ────────────────────────
-    // `split_raw()` derives `*mut [T]` directly from the buffer base with no
-    // `&mut` intermediate, so per-column derefs here do not pop sibling
-    // tasks' borrow tags under Stacked Borrows. Read-only columns are
-    // deref'd to `&[T]`; the two written columns (`module_scope`, `parts`)
-    // are deref'd to `&mut [T]` — see CONCURRENCY note re: code-splitting
-    // overlap.
-    let ast = c.graph.ast.split_raw();
-    let meta = c.graph.meta.split_raw();
-
-    // SAFETY: `split_raw()` columns are valid for `ast.len()` / `meta.len()`
-    // elements; the lists do not reallocate during this function. Read-only
-    // columns are deref'd to `&[T]`; the two written columns
-    // (`module_scope`, `parts`) are deref'd to `&mut [T]` — see CONCURRENCY
-    // note above re: code-splitting overlap. All eleven derefs share the same
-    // invariant, so they are grouped under one `unsafe` block.
-    let (
-        all_module_scopes,
-        all_flags,
-        all_parts,
-        all_wrapper_refs,
-        all_import_records,
-        ast_flags_col,
-        char_freq_col,
-        exports_ref_col,
-        module_ref_col,
-        nested_slot_counts_col,
-        cjs_export_copies_col,
-    ): (_, &[js_meta::Flags], _, _, _, _, _, _, _, _, _) = unsafe {
-        (
-            &mut *ast.module_scope,
-            &*meta.flags,
-            &mut *ast.parts,
-            &*ast.wrapper_ref,
-            &*ast.import_records,
-            &*ast.flags,
-            &*ast.char_freq,
-            &*ast.exports_ref,
-            &*ast.module_ref,
-            &*ast.nested_scope_slot_counts,
-            &*meta.cjs_export_copies,
-        )
-    };
+    let cjs_export_copies_col = c.graph.meta.items_cjs_export_copies();
 
     // An entry point chunk ends with `generate_entry_point_tail_js`, which
     // declares a copy binding (`var export_foo = import_cjs.foo`) for each
@@ -116,27 +53,19 @@ pub(crate) unsafe fn rename_symbols_in_chunk(
         &[]
     };
 
-    // `symbol::Map` is not `Clone`/`Copy`. Build a non-owning shallow view via
-    // `from_bump_slice` so the renamer's `Map` does not free graph storage on
-    // drop.
-    // SAFETY: `c.graph.symbols` outlives the returned `ChunkRenamer` (both are
-    // owned by the link step). No growth is performed on the view. Raw `*mut`
-    // (not `&mut`) so concurrent renamer tasks do not assert exclusive access
-    // over the shared `symbol::Map` — `compute_reserved_names_for_scope` and
-    // the renamer constructors only read it. (`symbols` itself is derived
-    // above from the raw `*mut LinkerContext` to keep mutable provenance.)
-    let make_symbols_view = |symbols: *mut symbol::Map| -> symbol::Map {
-        // SAFETY: `symbols` is the live `c.graph.symbols`; we read its inner
-        // slice header to build a non-owning shallow `Vec` view.
-        let inner = unsafe { (*symbols).symbols_for_source.slice_mut() };
+    // `symbol::Map` is not `Clone`/`Copy`. Build a non-owning shallow view so
+    // the renamer's `Map` does not free graph storage on drop.
+    let make_symbols_view = |symbols: &symbol::Map| -> symbol::Map {
         symbol::Map {
             // SAFETY: `inner` aliases the live `c.graph.symbols` storage,
             // which outlives the returned `ChunkRenamer`; the renamer only
-            // reads through this view and never grows or drops it (see the
-            // closure-level note above), upholding the "no drop, no grow"
+            // reads through this view and never grows or drops it (it holds
+            // it in `ManuallyDrop`), upholding the "no drop, no grow"
             // contract of `from_borrowed_slice_dangerous`.
             symbols_for_source: core::mem::ManuallyDrop::into_inner(unsafe {
-                <Vec<_> as bun_collections::VecExt<_>>::from_borrowed_slice_dangerous(inner)
+                <Vec<_> as bun_collections::VecExt<_>>::from_borrowed_slice_dangerous(
+                    symbols.symbols_for_source.slice(),
+                )
             }),
         }
     };
@@ -145,8 +74,7 @@ pub(crate) unsafe fn rename_symbols_in_chunk(
     for &source_index in files_in_order {
         renamer::compute_reserved_names_for_scope(
             &all_module_scopes[source_index as usize],
-            // SAFETY: `symbols` points to the live `c.graph.symbols`; read-only here.
-            unsafe { &*symbols },
+            symbols,
             &mut reserved_names,
         );
     }
@@ -302,14 +230,14 @@ pub(crate) unsafe fn rename_symbols_in_chunk(
     // (`assign_cross_chunk_names`); everything else is numbered around them.
     if let Content::Javascript(js) = &chunk.content {
         for &ref_ in js.exports_to_other_chunks.keys() {
-            if let Some(name) = c.cross_chunk_names.get(&ref_) {
+            if let Some(name) = c.cross_chunk_names.get(&ref_).map(|n| n.slice()) {
                 r.pin_top_level_symbol(ref_, name);
             }
         }
     }
     for stable_ref in &sorted_imports_from_other_chunks {
         let ref_ = { stable_ref.r#ref };
-        if let Some(name) = c.cross_chunk_names.get(&ref_) {
+        if let Some(name) = c.cross_chunk_names.get(&ref_).map(|n| n.slice()) {
             r.pin_top_level_symbol(ref_, name);
         }
     }
@@ -322,8 +250,7 @@ pub(crate) unsafe fn rename_symbols_in_chunk(
 
     for &source_index in files_in_order {
         let wrap = all_flags[source_index as usize].wrap;
-        // Need `&mut [Part]` for `add_top_level_declared_symbols`.
-        let parts: &mut [Part] = all_parts[source_index as usize].as_mut_slice();
+        let parts: &[Part] = all_parts[source_index as usize].as_slice();
 
         match wrap {
             // Modules wrapped in a CommonJS closure look like this:
@@ -433,12 +360,12 @@ pub(crate) unsafe fn rename_symbols_in_chunk(
         }
 
         let parts_live = &c.graph.parts_live[source_index as usize];
-        for (part_index, part) in parts.iter_mut().enumerate() {
+        for (part_index, part) in parts.iter().enumerate() {
             if !parts_live.is_set(part_index) {
                 continue;
             }
 
-            r.add_top_level_declared_symbols(&mut part.declared_symbols);
+            r.add_top_level_declared_symbols(&part.declared_symbols);
             // `Part.scopes: StoreSlice<*mut Scope>` — safe `Deref` to `&[*mut Scope]`.
             for scope in part.scopes.iter() {
                 let root: *mut renamer::NumberScope = core::ptr::addr_of_mut!(r.root);

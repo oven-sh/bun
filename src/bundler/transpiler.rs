@@ -303,34 +303,15 @@ impl<'a> Transpiler<'a> {
     /// callers. **Self-referential pointers are NOT yet wired** (the value may
     /// still be moved into its final slot); call [`Self::wire_after_move`]
     /// once the `Transpiler` is at its final address.
-    ///
-    /// # Safety
-    /// `from` must outlive the returned `Transpiler<'a>`. The few
-    /// lifetime-carrying borrows in `BundleOptions<'_>` / `Resolver<'_>`
-    /// (`framework`, `optimize_imports`, `standalone_module_graph`,
-    /// `env_loader`) are widened from `from`'s lifetime to `'a` via a
-    /// layout-preserving transmute — sound because those reference
-    /// process-lifetime data in every caller, but unprovable to borrowck.
-    pub(crate) unsafe fn for_worker(
-        from: &Transpiler<'_>,
+    pub(crate) fn for_worker(
+        from: &Transpiler<'a>,
         arena: &'a Arena,
         log: *mut bun_ast::Log,
     ) -> Transpiler<'a> {
-        // Deep-clone the heavy nested fields at `from`'s lifetime, then
-        // lifetime-widen to `'a`. Layout is identical (only the lifetime
-        // parameter differs), so `transmute` is a no-op reinterpretation.
-        // SAFETY: see fn doc.
-        let options: options::BundleOptions<'a> = unsafe {
-            core::mem::transmute::<options::BundleOptions<'_>, options::BundleOptions<'a>>(
-                from.options.for_worker(),
-            )
-        };
+        let options: options::BundleOptions<'a> = from.options.for_worker();
         let resolver_opts = resolver_bundle_options_subset(&options);
         let log_nn = core::ptr::NonNull::new(log).expect("Transpiler::for_worker: log is non-null");
-        // SAFETY: see fn doc — `Resolver::for_worker` widens
-        // `standalone_module_graph` / `env_loader` lifetimes.
-        let resolver: Resolver<'a> =
-            unsafe { Resolver::for_worker(&from.resolver, log_nn, resolver_opts) };
+        let resolver: Resolver<'a> = Resolver::for_worker(&from.resolver, log_nn, resolver_opts);
 
         Transpiler {
             options,
@@ -1686,10 +1667,7 @@ impl<'a> Transpiler<'a> {
                     let define_ptr: *const js_ast::defines::Define =
                         &raw const *self.options.define;
                     define = &*define_ptr;
-                    opts.macro_context = self
-                        .macro_context
-                        .as_mut()
-                        .map(|m| &mut *core::ptr::from_mut(m));
+                    opts.macro_context = self.macro_context.as_ref().map(|m| m.handle());
                 }
 
                 // spec calls `transpiler.resolver.caches.js.parse`.

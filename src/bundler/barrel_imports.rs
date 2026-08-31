@@ -191,18 +191,22 @@ fn apply_barrel_optimization_impl(
     // doesn't conflict with later `&mut this.requested_exports`.
     let dev_handle = this.dev_server_handle().copied();
     if let Some(dev) = dev_handle {
-        // SAFETY: barrel_needed_exports is owned by DevServer; bundler runs on the bundle
-        // thread which holds the DevServer lock during this callback.
-        let needed = unsafe { &*dev.barrel_needed_exports() };
-        if let Some(persisted) = needed.get(result.source.path.text) {
-            for alias in persisted.keys() {
-                if let Some(resolution) =
-                    resolve_barrel_export(alias, &ast.named_exports, &ast.named_imports)
-                {
-                    needed_records.put(resolution.import_record_index, ())?;
+        let mut put = Ok(());
+        dev.with_barrel_needed_exports(&mut |needed| {
+            if let Some(persisted) = needed.get(result.source.path.text) {
+                for alias in persisted.keys() {
+                    if let Some(resolution) =
+                        resolve_barrel_export(alias, &ast.named_exports, &ast.named_imports)
+                    {
+                        if let Err(e) = needed_records.put(resolution.import_record_index, ()) {
+                            put = Err(e);
+                            return;
+                        }
+                    }
                 }
             }
-        }
+        });
+        put?;
     }
 
     // When HMR is active, ConvertESMExportsForHmr deduplicates import records
@@ -354,7 +358,7 @@ fn resolve_barrel_records(this: &mut BundleV2, barrel_idx: u32, un_deferred: &[u
 
     this.graph.input_files.items_source_mut()[idx] = source;
 
-    let scheduled = this.process_resolve_queue(&resolve_result.resolve_queue, target, barrel_idx);
+    let scheduled = this.process_resolve_queue(resolve_result.resolve_queue, target, barrel_idx);
 
     this.patch_import_record_source_indices(
         &mut barrel_ir,
@@ -504,7 +508,6 @@ pub(crate) fn schedule_barrel_deferred_imports(
         if ni.alias_is_star {
             *value = RequestedExports::All;
         } else if let Some(alias_ptr) = ni.alias {
-            // SAFETY: arena-backed `*const [u8]` valid for the AST lifetime.
             let alias: &[u8] = alias_ptr.slice();
             match value {
                 RequestedExports::All => {}

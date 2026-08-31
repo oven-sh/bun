@@ -1324,13 +1324,10 @@ impl<'a> HotReloaderCtx for bun_bundler::BundleV2<'a> {
     }
 
     fn bun_watcher_mut(&mut self) -> &mut Watcher {
-        let handle = self
-            .bun_watcher
-            .expect("bun_watcher_mut on un-enabled BundleV2 reloader");
-        // SAFETY: `Box<Watcher>` leaked via `into_raw` in `install_bun_watcher`;
-        // live for the process (BundleV2 is leaked under --watch — see
-        // `generate_from_cli`).
-        unsafe { &mut *handle.as_ptr() }
+        self.bun_watcher
+            .as_deref_mut()
+            .and_then(bun_bundler::bundle_v2::BundleWatcher::as_watcher_mut)
+            .expect("bun_watcher_mut on un-enabled BundleV2 reloader")
     }
 
     fn reload(&mut self, _task: &mut dyn HotReloadTaskView) {
@@ -1365,14 +1362,17 @@ impl<'a> HotReloaderCtx for bun_bundler::BundleV2<'a> {
         watcher: Box<Watcher>,
         _reload_immediately: bool,
     ) -> *mut Watcher {
-        // `watcher_nn` is a fresh non-null heap allocation; live for the
-        // process (BundleV2 is leaked under --watch — see `generate_from_cli`).
-        let watcher_nn = bun_core::heap::into_raw_nn(watcher);
-        let watcher_ptr: *mut Watcher = watcher_nn.as_ptr();
-        self.bun_watcher = Some(watcher_nn);
-        // SAFETY: `watcher_ptr` was just installed; live for the process.
-        self.transpiler_mut().resolver.watcher =
-            Some(unsafe { (*watcher_ptr).get_resolve_watcher() });
+        // Owned by the bundle, which `bun build --watch` leaks for the process;
+        // everything below is derived from its final home.
+        self.bun_watcher = Some(watcher);
+        let watcher: &mut Watcher = self
+            .bun_watcher
+            .as_deref_mut()
+            .and_then(bun_bundler::bundle_v2::BundleWatcher::as_watcher_mut)
+            .expect("just installed");
+        let resolve_watcher = watcher.get_resolve_watcher();
+        let watcher_ptr: *mut Watcher = watcher;
+        self.transpiler_mut().resolver.watcher = Some(resolve_watcher);
         watcher_ptr
     }
 
@@ -1389,15 +1389,15 @@ impl<'a> HotReloaderCtx for bun_bundler::BundleV2<'a> {
 type BundlerWatcher =
     NewHotReloader<bun_bundler::BundleV2<'static>, bun_event_loop::AnyEventLoop, true>;
 
-/// CYCLEBREAK extern hook: called from `BundleV2::init` (T5) when
-/// `cli_watch_flag` is set. Defined here (not in
-/// `bun_bundler`) because the bundler crate can't name `NewHotReloader`.
+/// Extern hook for `BundleV2::generate_from_cli_watching` (`bun build
+/// --watch`); defined here because the bundler crate can't name
+/// `NewHotReloader`. `bv2` is the bundle it leaked for the process; the
+/// reloader keeps the pointer.
 #[unsafe(no_mangle)]
 fn __bun_jsc_enable_hot_module_reloading_for_bundler(
     bv2: core::ptr::NonNull<bun_bundler::BundleV2<'static>>,
 ) {
-    // SAFETY: `bv2` is the `&mut *Box<BundleV2<'static>>` formed in
-    // `BundleV2::init`; the lifetime is `'static` for the only caller (build
-    // command leaks the CLI arena), and the box is leaked under --watch.
+    // SAFETY: the declaration's contract (`bun_bundler::bundle_v2::dispatch`):
+    // `bv2` is a leaked, process-lifetime bundle.
     unsafe { BundlerWatcher::enable_hot_module_reloading(bv2.as_ptr(), None) };
 }

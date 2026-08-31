@@ -1004,23 +1004,14 @@ pub mod directory_watch_store {
 
 bun_bundler::link_impl_DevServerHandle! {
     Bake for DevServerCell => |this| {
-        barrel_needed_exports() => (*this).with_mut(|dev| &raw mut dev.barrel_needed_exports),
-        log_for_resolution_failures(abs_path, graph) => (*this).with_mut(|dev| {
+        with_barrel_needed_exports(f) => (*this).with_mut(|dev| f(&mut dev.barrel_needed_exports)),
+        add_resolution_failures(abs_path, graph, log) => (*this).with_mut(|dev| {
             match dev.get_log_for_resolution_failures(abs_path, graph) {
-                Ok(log) => std::ptr::from_mut(log),
+                Ok(dest) => log.append_to_with_recycled(dest, true),
                 Err(_) => bun_alloc::out_of_memory(),
             }
         }),
-        finalize_bundle(bv2, result) => {
-            // `bv2` borrows the three `Transpiler`s owned by `DevServer`; the
-            // `'static` is a stand-in for the DevServer-self lifetime — see
-            // the comment on `CurrentBundle.bv2`.
-            let (bv2, result) = (&mut *bv2.cast(), &mut *result);
-            super::dev_server_body::finalize_bundle(&*this, bv2, result)
-                .map_err(|e| bun_bundler::Error::from(crate::Error::from(e)))
-        },
         handle_parse_task_failure(err, graph, abs_path, log, bv2) => {
-            let (log, bv2) = (&*log, &mut *bv2);
             (*this)
                 .with_mut(|dev| {
                     dev.handle_parse_task_failure(&err.into(), graph, abs_path, log, bv2)
@@ -1028,10 +1019,7 @@ bun_bundler::link_impl_DevServerHandle! {
                 .map_err(Into::into)
         },
         put_or_overwrite_asset(path, contents, content_hash) => {
-            // `path` was erased from `&bun_resolver::fs::Path<'_>` at the
-            // `DevServerHandle::put_or_overwrite_asset_erased` call site. Re-wrap
-            // bytes as an owned blob (ownership is transferred).
-            let path = &*path.cast::<bun_resolver::fs::Path<'_>>();
+            // Re-wrap bytes as an owned blob (ownership is transferred).
             let blob = crate::webcore::blob::Any::from_owned_slice(contents.to_vec());
             (*this)
                 .with_mut(|dev| dev.put_or_overwrite_asset(path, blob, content_hash))
@@ -1058,12 +1046,6 @@ bun_bundler::link_impl_DevServerHandle! {
             })
         },
         asset_hash(abs_path) => (*this).get().assets.get_hash(abs_path),
-        current_bundle_start_data() => (*this).with_mut(|dev| {
-            dev.current_bundle
-                .as_mut()
-                .map(|c| (&raw mut c.start_data).cast::<()>())
-                .unwrap_or(core::ptr::null_mut())
-        }),
         register_barrel_with_deferrals(path) => {
             (*this).with_mut(|dev| {
                 let _ = dev
@@ -1080,6 +1062,15 @@ bun_bundler::link_impl_DevServerHandle! {
             };
             let _ = gop.value_ptr.get_or_put(alias);
         }),
+        drain_bundle_inbox() => super::dev_server_body::drain_bundle_inbox(&*this),
+        watcher_add_file(fd, file_path, hash, dir_fd, clone_file_path) => (*this).with_mut(|dev| {
+            let watcher = dev.watcher();
+            if clone_file_path {
+                watcher.add_file::<true>(fd, file_path, hash, dir_fd, None)
+            } else {
+                watcher.add_file::<false>(fd, file_path, hash, dir_fd, None)
+            }
+        }),
     }
 }
 
@@ -1093,7 +1084,7 @@ impl DevServer {
     pub(crate) fn bundler_handle(&self) -> bun_bundler::dispatch::DevServerHandle {
         // Held by `CurrentBundle.bv2`, which this dev server (the cell's
         // contents) owns and drops first.
-        bun_bundler::dispatch::DevServerHandle::from_owner(self.this.expect("set by init()"))
+        bun_bundler::dispatch::DevServerHandle::from_backref(self.this.expect("set by init()"))
     }
 }
 

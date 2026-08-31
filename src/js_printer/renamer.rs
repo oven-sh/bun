@@ -123,7 +123,6 @@ impl<'a> NoOpRenamer<'a> {
         let resolved = self.symbols.follow(ref_);
 
         if let Some(symbol) = self.symbols.get_const(resolved) {
-            // SAFETY: `original_name` is an AST-arena slice that outlives the renamer.
             symbol.original_name.slice()
         } else {
             Output::panic(format_args!(
@@ -134,7 +133,7 @@ impl<'a> NoOpRenamer<'a> {
         }
     }
 
-    pub(crate) fn to_renamer(&mut self) -> Renamer<'_, 'a> {
+    pub(crate) fn to_renamer(&self) -> Renamer<'_, 'a> {
         Renamer::NoOpRenamer(self)
     }
 }
@@ -143,10 +142,11 @@ impl<'a> NoOpRenamer<'a> {
 // `'src` is `NoOpRenamer`'s borrow of the `Source`. Erasing both with a
 // single lifetime via `&'a mut NoOpRenamer<'a>` would make
 // `'a` invariant and lock the source borrow to the renamer borrow.
+#[derive(Clone, Copy)]
 pub enum Renamer<'r, 'src> {
-    NumberRenamer(&'r mut NumberRenamer),
-    NoOpRenamer(&'r mut NoOpRenamer<'src>),
-    MinifyRenamer(&'r mut MinifyRenamer),
+    NumberRenamer(&'r NumberRenamer),
+    NoOpRenamer(&'r NoOpRenamer<'src>),
+    MinifyRenamer(&'r MinifyRenamer),
 }
 
 impl<'r, 'src> Renamer<'r, 'src> {
@@ -158,8 +158,8 @@ impl<'r, 'src> Renamer<'r, 'src> {
         }
     }
 
-    pub fn name_for_symbol(&mut self, ref_: Ref) -> &[u8] {
-        match self {
+    pub fn name_for_symbol(&self, ref_: Ref) -> &'r [u8] {
+        match *self {
             Renamer::NumberRenamer(r) => r.name_for_symbol(ref_),
             Renamer::NoOpRenamer(r) => r.name_for_symbol(ref_),
             Renamer::MinifyRenamer(r) => r.name_for_symbol(ref_),
@@ -215,10 +215,7 @@ impl InlineString {
         this
     }
 
-    // do not make this *const or you will run into memory bugs.
-    // we cannot let the compiler decide to copy this struct because
-    // that would cause this to become a pointer to stack memory.
-    fn slice(&mut self) -> &[u8] {
+    fn slice(&self) -> &[u8] {
         &self.bytes[0..self.len as usize]
     }
 }
@@ -240,10 +237,7 @@ impl TinyString {
         }
     }
 
-    // do not make this *const or you will run into memory bugs.
-    // we cannot let the compiler decide to copy this struct because
-    // that would cause this to become a pointer to stack memory.
-    fn slice(&mut self) -> &[u8] {
+    fn slice(&self) -> &[u8] {
         match self {
             TinyString::InlineString(s) => s.slice(),
             // `StoreStr::slice` centralises the arena-backed deref; the payload
@@ -306,13 +300,12 @@ impl MinifyRenamer {
         }))
     }
 
-    pub fn name_for_symbol(&mut self, ref_: Ref) -> &[u8] {
+    pub fn name_for_symbol(&self, ref_: Ref) -> &[u8] {
         let ref_ = self.symbols.follow(ref_);
         let symbol: &Symbol = self.symbols.get_const(ref_).unwrap();
 
         let ns = symbol.slot_namespace();
         if ns == SlotNamespace::MustNotBeRenamed {
-            // SAFETY: `original_name` is an AST-arena slice that outlives the renamer.
             return symbol.original_name.slice();
         }
 
@@ -322,7 +315,6 @@ impl MinifyRenamer {
             .or_else(|| self.top_level_symbol_to_slot.get(&ref_).copied())
         {
             Some(i) => i,
-            // SAFETY: as above.
             None => return symbol.original_name.slice(),
         };
 
@@ -603,7 +595,6 @@ impl NumberRenamer {
             return;
         }
 
-        // SAFETY: `original_name` is an AST-arena slice that outlives the renamer.
         let original_name: &[u8] = symbol.original_name.slice();
         let name: NameStr = match scope.find_unused_name(&self.arena, original_name) {
             UnusedName::Renamed(name) => name,
@@ -793,7 +784,7 @@ impl NumberRenamer {
 
     pub fn add_top_level_declared_symbols(
         &mut self,
-        declared_symbols: &mut js_ast::DeclaredSymbolList,
+        declared_symbols: &js_ast::DeclaredSymbolList,
     ) {
         js_ast::DeclaredSymbol::for_each_top_level_symbol(declared_symbols, self, |r, ref_| {
             r.add_top_level_symbol(ref_)
@@ -822,7 +813,6 @@ impl NumberRenamer {
             }
         }
 
-        // SAFETY: `original_name` is an AST-arena slice that outlives the renamer.
         self.symbols.symbols_for_source[source_index as usize][inner_index as usize]
             .original_name
             .slice()
@@ -1201,7 +1191,6 @@ pub fn compute_reserved_names_for_scope(
     for member in scope.members.values() {
         let symbol: &Symbol = symbols.get_const(member.ref_).unwrap();
         if symbol.kind == symbol::Kind::Unbound || symbol.must_not_be_renamed() {
-            // SAFETY: `original_name` is an AST-arena slice.
             names
                 .put(symbol.original_name.slice(), 1)
                 .expect("unreachable");
@@ -1211,7 +1200,6 @@ pub fn compute_reserved_names_for_scope(
     for ref_ in scope.generated.slice() {
         let symbol: &Symbol = symbols.get_const(*ref_).unwrap();
         if symbol.kind == symbol::Kind::Unbound || symbol.must_not_be_renamed() {
-            // SAFETY: `original_name` is an AST-arena slice.
             names
                 .put(symbol.original_name.slice(), 1)
                 .expect("unreachable");

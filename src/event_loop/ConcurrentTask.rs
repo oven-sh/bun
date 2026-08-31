@@ -164,6 +164,31 @@ pub trait Taskable {
     unsafe fn release_unrun(this: *mut Self);
 }
 
+/// Implements [`Taskable`] for a type queued by `&mut` (its owner keeps it
+/// alive until the dispatcher has run or released it): `$release` receives
+/// `&mut Self` when the task is released unrun.
+///
+/// ```ignore
+/// bun_event_loop::taskable_by_ref!(['a] Load<'a>, BundleV2PluginLoad, |this| this.answer_cancelled());
+/// ```
+#[macro_export]
+macro_rules! taskable_by_ref {
+    ($(#[$meta:meta])* [$($gen:tt)*] $ty:ty, $tag:ident, |$this:ident| $release:expr) => {
+        impl<$($gen)*> $crate::Taskable for $ty {
+            const TAG: $crate::TaskTag = $crate::task_tag::$tag;
+            $(#[$meta])*
+            unsafe fn release_unrun(this: *mut Self) {
+                // SAFETY: queued under `TAG` as a live `&mut Self` (macro contract).
+                let $this: &mut Self = unsafe { &mut *this };
+                $release
+            }
+        }
+    };
+    ($(#[$meta:meta])* $ty:ty, $tag:ident, |$this:ident| $release:expr) => {
+        $crate::taskable_by_ref!($(#[$meta])* [] $ty, $tag, |$this| $release);
+    };
+}
+
 impl TaskTag {
     /// The tag's identifier, for diagnostics.
     pub fn name(self) -> &'static str {

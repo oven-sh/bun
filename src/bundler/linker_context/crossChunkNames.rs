@@ -63,10 +63,10 @@ fn reserved_names(
     Ok(reserved)
 }
 
-fn intern(c: &LinkerContext, name: &[u8]) -> &'static [u8] {
-    // SAFETY: the linker arena outlives every chunk, renamer and clause item
-    // that holds one of these names (all dropped with the link pass).
-    unsafe { bun_ptr::detach_lifetime_ref::<[u8]>(c.arena().alloc_slice_copy(name)) }
+/// The linker arena outlives every chunk, renamer and clause item that holds
+/// one of these names (all dropped with the link pass).
+fn intern(c: &LinkerContext, name: &[u8]) -> bun_ast::StoreStr {
+    bun_ast::StoreStr::new(c.arena().alloc_slice_copy(name))
 }
 
 /// Without `--minify-identifiers`: each binding keeps its own name, numbered
@@ -217,11 +217,14 @@ pub(crate) fn assign_minified(
             continue;
         };
         for &ref_ in js.exports_to_other_chunks.keys() {
-            r.pin(ref_, *c.cross_chunk_names.get(&ref_).unwrap())?;
+            r.pin(ref_, c.cross_chunk_names.get(&ref_).unwrap().slice())?;
         }
         for items in js.imports_from_other_chunks.values() {
             for item in items.iter() {
-                r.pin(item.r#ref, *c.cross_chunk_names.get(&item.r#ref).unwrap())?;
+                r.pin(
+                    item.r#ref,
+                    c.cross_chunk_names.get(&item.r#ref).unwrap().slice(),
+                )?;
             }
         }
     }
@@ -248,8 +251,7 @@ pub(crate) fn apply_to_clauses(c: &LinkerContext, chunks: &mut [Chunk]) {
                 _ => continue,
             };
             for item in items {
-                item.alias =
-                    bun_ast::StoreStr::new(*c.cross_chunk_names.get(&item.name.ref_).unwrap());
+                item.alias = *c.cross_chunk_names.get(&item.name.ref_).unwrap();
             }
         }
     }

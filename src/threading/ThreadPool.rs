@@ -411,7 +411,7 @@ pub struct Batch {
 impl Batch {
     pub fn pop(&mut self) -> Option<NonNull<Task>> {
         // SAFETY: `len` is only read here for the fast-path zero check.
-        let len = unsafe { (*(&raw const self.len).cast::<AtomicUsize>()).load(Ordering::Relaxed) };
+        let len = unsafe { AtomicUsize::from_ptr(&raw mut self.len) }.load(Ordering::Relaxed);
         if len == 0 {
             return None;
         }
@@ -489,6 +489,18 @@ where
     }
 }
 
+struct ByMut<F>(F);
+impl<Ctx, V, F> EachCall<Ctx, V> for ByMut<F>
+where
+    F: Fn(&Ctx, &mut V, usize) + core::marker::Sync,
+{
+    #[inline]
+    unsafe fn call(&self, ctx: &Ctx, value: *mut V, i: usize) {
+        // SAFETY: caller guarantees `value` is a live `V` handed to this task alone.
+        (self.0)(ctx, unsafe { &mut *value }, i);
+    }
+}
+
 struct ByPtr<F>(F);
 impl<Ctx, V, F> EachCall<Ctx, V> for ByPtr<F>
 where
@@ -532,11 +544,21 @@ impl ThreadPool {
         self.each_impl(ctx, ByPtr(run_fn), values);
     }
 
+    /// Like `each`, but each task gets `&mut` to its own element.
+    pub fn each_mut<Ctx, V, F>(&self, ctx: Ctx, run_fn: F, values: &mut [V])
+    where
+        F: Fn(&Ctx, &mut V, usize) + core::marker::Sync,
+        Ctx: core::marker::Sync,
+        V: core::marker::Send,
+    {
+        self.each_impl(ctx, ByMut(run_fn), values);
+    }
+
     fn each_impl<Ctx, V, F>(&self, ctx: Ctx, run_fn: F, values: &mut [V])
     where
         F: EachCall<Ctx, V>,
         Ctx: core::marker::Sync,
-        V: core::marker::Sync + core::marker::Send,
+        V: core::marker::Send,
     {
         if values.is_empty() {
             return;
@@ -1128,10 +1150,36 @@ fn now_ns() -> u64 {
     }
 }
 
+/// A pool thread, as seen from any thread: its idle queue takes work to run
+/// there. A [`BackRef`](bun_ptr::BackRef) — the `Thread` lives until its pool
+/// is shut down and joined, which the holder must not outlast.
+#[derive(Clone, Copy)]
+pub struct ThreadRef(bun_ptr::BackRef<Thread>);
+
+// SAFETY: the only operation is `push_idle_owned`, an MPSC push onto the
+// thread's lock-free idle queue, callable from any thread.
+unsafe impl core::marker::Send for ThreadRef {}
+// SAFETY: as above.
+unsafe impl core::marker::Sync for ThreadRef {}
+
+impl ThreadRef {
+    /// See [`Thread::push_idle_owned`].
+    #[inline]
+    pub fn push_idle_owned<T: crate::work_pool::OwnedTask>(self, task: Box<T>) {
+        self.0.push_idle_owned(task)
+    }
+}
+
 impl Thread {
     #[inline]
     pub fn current() -> *mut Thread {
         CURRENT.with(|c| c.get())
+    }
+
+    /// The pool thread this is called on, if any.
+    #[inline]
+    pub fn current_ref() -> Option<ThreadRef> {
+        NonNull::new(Self::current()).map(|p| ThreadRef(bun_ptr::BackRef::from(p)))
     }
 
     pub fn push_idle_task(&self, task: *mut Task) {
@@ -1141,6 +1189,18 @@ impl Thread {
             tail: node_ptr,
         };
         self.idle_queue.push(&list);
+    }
+
+    /// Queue a heap-allocated task to run on this thread when it next drains
+    /// its idle queue; the thread owns the `Box` until
+    /// [`OwnedTask::run`](crate::work_pool::OwnedTask::run) receives it back.
+    /// Callable from any thread.
+    pub fn push_idle_owned<T: crate::work_pool::OwnedTask>(&self, mut task: Box<T>) {
+        task.task_mut().callback = T::__callback;
+        let raw = Box::into_raw(task);
+        // SAFETY: `raw` is the live allocation just leaked; `field_of` projects
+        // to its embedded `Task`, which this thread hands to `T::__callback` once.
+        self.push_idle_task(unsafe { <T as bun_core::IntrusiveField<Task>>::field_of(raw) });
     }
 
     /// Thread entry point which runs a worker for the ThreadPool

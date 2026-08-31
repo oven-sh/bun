@@ -537,16 +537,18 @@ fn build_with_vm(
     // `bake_types::Framework` view.
     let bundler_framework = framework.as_bundler_view();
 
+    // The bundle's heap; declared here so it outlives `bundled_outputs_list`.
+    let heap = bun_bundler::bundle_v2::BundleHeap::new();
     let bundled_outputs_list: Vec<OutputFile> = {
-        // The three boxed transpilers outlive the bundle call; `BundleV2`
-        // holds them as non-exclusive back-references.
-        let client_ptr = NonNull::from(&mut *client_transpiler);
-        let ssr_ptr = ssr_transpiler.as_deref_mut().map(NonNull::from);
-
-        // Construct the `AnyEventLoop` enum
-        // value (NOT a pointer-cast: the bundler matches on its discriminant).
-        // Lives in this block's stack frame, outliving the bundle call.
-        let mut any_loop = bun_event_loop::AnyEventLoop::js(vm.event_loop().cast());
+        let mut config = bun_bundler::bundle_v2::BundleConfig::new(
+            bun_event_loop::AnyEventLoop::js(vm.event_loop().cast()),
+        );
+        config.bake = Some(bun_bundler::bundle_v2::BakeOptions {
+            framework: bundler_framework,
+            client_transpiler: bun_ptr::LentMut::new(&mut *client_transpiler),
+            ssr_transpiler: ssr_transpiler.as_deref_mut().map(bun_ptr::LentMut::new),
+        });
+        config.plugins = options.bundler_options.plugin.map(bun_ptr::BackRef::from);
 
         // Propagate via `?`. Do NOT
         // catch-and-exit here: the bake path expects this call to succeed for
@@ -554,15 +556,9 @@ fn build_with_vm(
         // (in the bundler), not a user-facing diagnostic to swallow.
         BundleV2::generate_from_bake_production_cli(
             &entry_points,
-            bun_ptr::ParentRef::from_ref_mut(&mut *server_transpiler),
-            bun_bundler::bundle_v2::BakeOptions {
-                framework: bundler_framework,
-                client_transpiler: client_ptr,
-                ssr_transpiler: ssr_ptr,
-                plugins: options.bundler_options.plugin,
-            },
-            &options.arena,
-            Some(NonNull::from(&mut any_loop)),
+            &mut server_transpiler,
+            config,
+            &heap,
         )?
     };
     if bundled_outputs_list.is_empty() {

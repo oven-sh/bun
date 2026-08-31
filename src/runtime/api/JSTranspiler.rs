@@ -1677,7 +1677,7 @@ impl JSTranspiler {
             let mc = JSAst::Macro::MacroContext::init(transpiler);
             transpiler.macro_context = Some(mc);
         }
-        opts.macro_context = transpiler.macro_context.as_mut();
+        opts.macro_context = transpiler.macro_context.as_ref().map(|m| m.handle());
 
         // `options.define` is `Box<Define>` owned by the long-lived `Transpiler`;
         // the parser borrows it for the arena lifetime.

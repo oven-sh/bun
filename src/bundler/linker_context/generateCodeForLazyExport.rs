@@ -20,6 +20,7 @@ type SymbolList<'a> = bun_ast::symbol::List<'a>;
 
 pub(crate) fn generate_code_for_lazy_export(
     this: &mut LinkerContext,
+    pg: &crate::Graph::Graph<'_>,
     source_index: IndexInt,
 ) -> Result<(), AllocError> {
     let mut exports_kind = this.graph.ast.items_exports_kind()[source_index as usize];
@@ -37,9 +38,7 @@ pub(crate) fn generate_code_for_lazy_export(
     // Take `parts` as a raw pointer *before* the
     // long-lived immutable `items_css()` borrow below; re-borrowed again later as needed.
     let parts: *mut [Part] = this.graph.ast.items_parts_mut()[source_index as usize].as_mut_slice();
-    // SAFETY: parse_graph backref; raw deref because `all_sources` is held
-    // across `&mut *this.log` below (split borrow).
-    let all_sources = unsafe { &(*this.parse_graph).input_files }.items_source();
+    let all_sources = pg.input_files.items_source();
     let all_css_asts: &[crate::bundled_ast::CssCol] = this.graph.ast.items_css();
     let maybe_css_ast: Option<&BundlerStyleSheet> = all_css_asts[source_index as usize].as_deref();
 
@@ -294,10 +293,10 @@ pub(crate) fn generate_code_for_lazy_export(
             // The Visitor is constructed inside the loop with a fresh `parts`
             // borrow each time (reshaped for borrowck).
             let all_symbols = this.graph.ast.items_symbols();
-            // SAFETY: `LinkerContext::arena()` returns a stable `&Arena` valid for the
-            // link pass; detach via raw-pointer round-trip so it doesn't hold a `&self`
-            // borrow across the `this.log` reborrow inside the Visitor below.
-            let arena: &Arena = unsafe { bun_ptr::detach_lifetime_ref::<Arena>(this.arena()) };
+            let arena: &Arena = pg.heap;
+            // The visitor holds graph columns and a log at once; its
+            // diagnostics are moved into `this.log` after the loop.
+            let mut visitor_log = Log::init();
 
             for entry in values {
                 let ref_ = entry.ref_;
@@ -320,8 +319,7 @@ pub(crate) fn generate_code_for_lazy_export(
                     all_import_records,
                     all_css_asts,
                     loc: stmt.loc,
-                    // Split-borrow — see `LinkerContext::log_disjoint`.
-                    log: this.log_disjoint(),
+                    log: &mut visitor_log,
                     all_sources,
                     arena,
                     all_symbols,
@@ -356,6 +354,7 @@ pub(crate) fn generate_code_for_lazy_export(
                 let key: &[u8] = symbols[ref_.inner_index() as usize].original_name.slice();
                 exports.put(arena, key, value)?;
             }
+            visitor_log.append_to_with_recycled(&mut this.log, true);
 
             if let StmtData::SLazyExport(mut slot) = part.stmts[0].data {
                 // `StoreRef<ExprData>` is a Copy `NonNull` — write through the pointer.
@@ -482,8 +481,7 @@ pub(crate) fn generate_code_for_lazy_export(
                 write!(
                     &mut name_buf,
                     "{}_default",
-                    this.parse_graph().input_files.items_source()[source_index as usize]
-                        .fmt_identifier()
+                    pg.input_files.items_source()[source_index as usize].fmt_identifier()
                 )
                 .expect("write to Vec<u8> cannot fail");
                 // SAFETY: `LinkerContext::arena()` returns a stable `&Arena` valid for the

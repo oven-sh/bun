@@ -862,6 +862,25 @@ describe("Bun.build", () => {
     expect(x.logs[0].message).toContain("Maximum call stack size exceeded while generating code for this file");
   });
 
+  test.concurrent("linker diagnostics keep their position and line text", async () => {
+    using dir = tempDir("build-api-linker-diagnostic", {
+      "a.js": `import { missing } from "./b.js";\nconsole.log(missing);\n`,
+      "b.js": `export const present = 1;\n`,
+    });
+    const x = await Bun.build({
+      entrypoints: [join(String(dir), "a.js")],
+      throw: false,
+    });
+    expect(x.success).toBe(false);
+    expect(x.logs).toHaveLength(1);
+    expect(x.logs[0].message).toMatch(/^No matching export in ".*b\.js" for import "missing"$/);
+    expect(x.logs[0].position).toMatchObject({
+      line: 1,
+      column: 10,
+      lineText: `import { missing } from "./b.js";`,
+    });
+  });
+
   test.concurrent("warnings do not fail a build", async () => {
     const x = await Bun.build({
       entrypoints: [join(import.meta.dir, "./fixtures/jsx-warning/index.jsx")],

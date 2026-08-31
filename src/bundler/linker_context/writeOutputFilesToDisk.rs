@@ -9,6 +9,7 @@ use bun_core::{String as BunString, strings};
 use bun_paths::{self as paths, PathBuffer};
 use bun_wyhash::hash;
 
+use crate::Graph::Graph;
 use crate::LinkerContext;
 use crate::chunk::{Content, Flags as ChunkFlags, ReferencePathStyle, SourceMapShiftTracking};
 use crate::linker_context::output_file_list_builder::OutputFileList;
@@ -18,7 +19,7 @@ use crate::output_file::{
     BakeExtra, Index as OutputFileIndex, IndexOptional, Options as OutputFileInit,
     OptionsData as OutputFileData, SavedFile, Value as OutputFileValue,
 };
-use crate::{BundleV2, Chunk, cheap_prefix_normalizer};
+use crate::{Chunk, cheap_prefix_normalizer};
 
 use bun_sys::{
     FdDirExt, PathOrFileDescriptor, WriteFileArgs, WriteFileData, WriteFileEncoding,
@@ -28,8 +29,9 @@ use bun_sys::{
 /// Bytecode output file extension (also defined in `generateChunksInParallel.rs`).
 const BYTECODE_EXTENSION: &str = ".jsc";
 
-pub(crate) fn write_output_files_to_disk(
-    c: &mut LinkerContext,
+pub(crate) fn write_output_files_to_disk<'a>(
+    c: &mut LinkerContext<'a>,
+    pg: &mut Graph<'a>,
     root_path: &[u8],
     chunks: &mut [Chunk],
     output_files: &mut OutputFileList,
@@ -42,7 +44,7 @@ pub(crate) fn write_output_files_to_disk(
         Ok(dir) => dir,
         Err(e) => {
             if bun_errno::SystemErrno::from(e.clone()) == bun_errno::SystemErrno::ENOTDIR {
-                c.log_mut()
+                c.log
                     .add_error_fmt(
                         None,
                         Loc::EMPTY,
@@ -53,7 +55,7 @@ pub(crate) fn write_output_files_to_disk(
                         ),
                     );
             } else {
-                c.log_mut().add_error_fmt(
+                c.log.add_error_fmt(
                     None,
                     Loc::EMPTY,
                     format_args!(
@@ -75,9 +77,6 @@ pub(crate) fn write_output_files_to_disk(
     let mut _max_heap_allocator_inline_source_map = MaxHeapAllocator::init();
 
     let mut pathbuf = PathBuffer::uninit();
-    // SAFETY: c points to LinkerContext which is the `linker` field of BundleV2.
-    let bv2: &mut BundleV2 =
-        unsafe { &mut *LinkerContext::bundle_v2_ptr(std::ptr::from_mut::<LinkerContext>(c)) };
 
     // `code()`/`code_standalone()` take both `chunk` (an element of `chunks`)
     // and `chunks` as
@@ -105,7 +104,7 @@ pub(crate) fn write_output_files_to_disk(
                 );
                 if !rel_parent.is_empty() {
                     if let Err(e) = root_dir.make_path(rel_parent) {
-                        c.log_mut().add_error_fmt(
+                        c.log.add_error_fmt(
                             None,
                             Loc::EMPTY,
                             format_args!(
@@ -124,7 +123,7 @@ pub(crate) fn write_output_files_to_disk(
                     paths::resolve_path::z(&source_map_final_rel_path, &mut pathbuf),
                     &output_source_map,
                 ) {
-                    c.log_mut().add_sys_error(
+                    c.log.add_sys_error(
                         &e,
                         format_args!(
                             "writing sourcemap for chunk {}",
@@ -135,8 +134,7 @@ pub(crate) fn write_output_files_to_disk(
                 }
 
                 let input_path: &[u8] = if chunk.entry_point.is_entry_point() {
-                    c.parse_graph().input_files.items_source()
-                        [chunk.entry_point.source_index() as usize]
+                    pg.input_files.items_source()[chunk.entry_point.source_index() as usize]
                         .path
                         .text
                 } else {
@@ -205,7 +203,7 @@ pub(crate) fn write_output_files_to_disk(
             paths::resolve_path::dirname::<paths::platform::Posix>(&chunk.final_rel_path);
         if !rel_parent.is_empty() {
             if let Err(e) = root_dir.make_path(rel_parent) {
-                c.log_mut().add_error_fmt(
+                c.log.add_error_fmt(
                     None,
                     Loc::EMPTY,
                     format_args!(
@@ -219,16 +217,16 @@ pub(crate) fn write_output_files_to_disk(
             }
         }
         let mut display_size: usize = 0;
-        let resolver_opts = &c.resolver().opts;
         let public_path: &[u8] = if chunk
             .flags
             .contains(ChunkFlags::IS_BROWSER_CHUNK_FROM_SERVER_BUILD)
         {
-            &bv2.transpiler_for_target(options::Target::Browser)
-                .options
-                .public_path
+            c.options
+                .browser_public_path
+                .as_deref()
+                .unwrap_or(&c.options.public_path)
         } else {
-            &resolver_opts.public_path
+            &c.options.public_path
         };
 
         // Take `intermediate_output` by value so its `&mut self` is
@@ -236,7 +234,7 @@ pub(crate) fn write_output_files_to_disk(
         let mut intermediate_output =
             core::mem::take(&mut chunks[chunk_index_in_chunks_list].intermediate_output);
         let chunk: &Chunk = &chunks[chunk_index_in_chunks_list];
-        let parse_graph = c.parse_graph();
+        let parse_graph = &*pg;
 
         let mut code_result = if let Some(scc) = standalone_chunk_contents {
             match intermediate_output.code_standalone(
@@ -265,7 +263,7 @@ pub(crate) fn write_output_files_to_disk(
                 chunk,
                 chunks,
                 Some(&mut display_size),
-                ReferencePathStyle::for_chunk(chunk, resolver_opts.compile),
+                ReferencePathStyle::for_chunk(chunk, c.options.compile),
                 SourceMapShiftTracking::for_source_map(
                     chunk.content.sourcemap(c.options.source_maps),
                 ),
@@ -329,7 +327,7 @@ pub(crate) fn write_output_files_to_disk(
                     &output_source_map,
                 ) {
                     Err(e) => {
-                        c.log_mut().add_sys_error(
+                        c.log.add_sys_error(
                             &e,
                             format_args!(
                                 "writing sourcemap for chunk {}",
@@ -441,7 +439,7 @@ pub(crate) fn write_output_files_to_disk(
                         ) {
                             Ok(_) => {}
                             Err(e) => {
-                                c.log_mut().add_error_fmt(
+                                c.log.add_error_fmt(
                                     None,
                                     Loc::EMPTY,
                                     format_args!(
@@ -511,7 +509,7 @@ pub(crate) fn write_output_files_to_disk(
             },
         ) {
             Err(e) => {
-                c.log_mut().add_sys_error(
+                c.log.add_sys_error(
                     &e,
                     format_args!("writing chunk {}", quote(&chunk.final_rel_path)),
                 );
@@ -570,7 +568,11 @@ pub(crate) fn write_output_files_to_disk(
             entry_point_index: if output_kind == options::OutputKind::EntryPoint {
                 // Server-components builds insert 2 extra synthetic sources
                 // before user entry points, so the source-index offset is 3.
-                let offset: u32 = if c.framework.is_some_and(|fw| fw.server_components.is_some()) {
+                let offset: u32 = if c
+                    .framework
+                    .as_ref()
+                    .is_some_and(|fw| fw.server_components.is_some())
+                {
                     3
                 } else {
                     1
@@ -618,9 +620,7 @@ pub(crate) fn write_output_files_to_disk(
         let additional_len = output_files.output_files.len() - additional_start;
         output_files.total_insertions += u32::try_from(additional_len).expect("int cast");
         let additional_output_files = &mut output_files.output_files[additional_start..];
-        // SAFETY: parse_graph backref; raw deref because `parse_graph` is held
-        // across `c.log_mut()` below (split borrow).
-        let parse_graph = unsafe { &mut *c.parse_graph };
+        let parse_graph = &mut *pg;
         debug_assert_eq!(
             parse_graph.additional_output_files.len(),
             additional_output_files.len()
@@ -641,7 +641,7 @@ pub(crate) fn write_output_files_to_disk(
             let rel_parent = paths::resolve_path::dirname::<paths::platform::Auto>(&src.dest_path);
             if !rel_parent.is_empty() {
                 if let Err(e) = root_dir.make_path(rel_parent) {
-                    c.log_mut().add_error_fmt(
+                    c.log.add_error_fmt(
                         None,
                         Loc::EMPTY,
                         format_args!(
@@ -661,7 +661,7 @@ pub(crate) fn write_output_files_to_disk(
                 &bytes,
             ) {
                 Err(e) => {
-                    c.log_mut().add_sys_error(
+                    c.log.add_sys_error(
                         &e,
                         format_args!("writing file {}", quote(src.src_path.text)),
                     );

@@ -1326,8 +1326,7 @@ exports[`esbuild-bundler css/CSSAtImportConditionsAtLayerBundleAlternatingLayerI
 `;
 
 exports[`esbuild-bundler css/CSSAtImportConditionsAtLayerBundleAlternatingLayerInFile: case3.css 1`] = `
-"@layer first;
-@layer last;
+"@layer first, last;
 
 /* a.css */
 @layer first {
@@ -1371,8 +1370,7 @@ exports[`esbuild-bundler css/CSSAtImportConditionsAtLayerBundleAlternatingLayerI
 `;
 
 exports[`esbuild-bundler css/CSSAtImportConditionsAtLayerBundleAlternatingLayerInFile: case5.css 1`] = `
-"@layer first;
-@layer last;
+"@layer first, last;
 
 /* a.css */
 @layer first {

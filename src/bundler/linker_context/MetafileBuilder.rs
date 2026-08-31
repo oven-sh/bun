@@ -44,6 +44,7 @@ use bun_ast::ExportsKind;
 use bun_ast::ImportKind;
 use bun_ast::ImportRecordFlags;
 
+use crate::Graph::Graph;
 use crate::chunk::{Content as ChunkContent, ReferencePathStyle, SourceMapShiftTracking};
 use crate::options::Loader;
 use crate::{Chunk, Index, LinkerContext};
@@ -58,13 +59,13 @@ fn fmt_size(bytes: u64) -> bfmt::SizeFormatter {
 /// The result is stored in chunk.metafile_chunk_json and assembled later.
 pub(crate) fn generate_chunk_json(
     c: &LinkerContext,
+    parse_graph: &Graph<'_>,
     chunk: &Chunk,
     chunks: &[Chunk],
 ) -> crate::Result<Box<[u8]>> {
     let mut json: Vec<u8> = Vec::new();
     // errdefer json.deinit() — handled by Drop on early return
 
-    let parse_graph = c.parse_graph();
     let sources = parse_graph.input_files.items_source();
 
     // Start chunk entry: "path/to/output.js": {
@@ -203,7 +204,11 @@ pub(crate) fn generate_chunk_json(
 /// Called after all chunks have been generated in parallel.
 /// Chunk references (unique_keys) are resolved to their final output paths.
 /// The caller is responsible for freeing the returned slice.
-pub(crate) fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> crate::Result<Box<[u8]>> {
+pub(crate) fn generate(
+    c: &mut LinkerContext,
+    parse_graph: &Graph<'_>,
+    chunks: &mut [Chunk],
+) -> crate::Result<Box<[u8]>> {
     // Use StringJoiner so we can use breakOutputIntoPieces to resolve chunk references
     let mut j = StringJoiner::default();
     // errdefer j.deinit() — handled by Drop
@@ -212,7 +217,6 @@ pub(crate) fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> crate::Re
 
     // Collect all input files that are reachable
     let mut first_input = true;
-    let parse_graph = c.parse_graph();
     let sources = parse_graph.input_files.items_source();
     let loaders = parse_graph.input_files.items_loader();
     let import_records_list = parse_graph.ast.items_import_records();
@@ -438,8 +442,9 @@ pub(crate) fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> crate::Re
     // which outlive `intermediate` — it is consumed by `code()` below while `chunks`
     // and `c` are still alive.
     let mut j = unsafe { j.detach_lifetime() };
+    let _ = alloc;
     let mut intermediate = c.break_output_into_pieces(
-        alloc,
+        parse_graph,
         &mut j,
         u32::try_from(chunks.len()).expect("int cast"),
     )?;

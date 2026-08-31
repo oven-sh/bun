@@ -314,8 +314,10 @@ impl Framework {
         out.configure_defines()?;
         out.options.jsx.development = mode == Mode::Development;
 
+        let define = std::sync::Arc::get_mut(&mut out.options.define)
+            .expect("not shared before a bundle starts");
         bake_body::add_import_meta_defines(
-            &mut out.options.define,
+            define,
             mode,
             match renderer {
                 Graph::Client => Side::Client,
@@ -337,7 +339,7 @@ impl Framework {
             {
                 let parsed =
                     bun_bundler::defines::DefineData::parse(k, v, false, false, log, arena)?;
-                out.options.define.insert(k, parsed)?;
+                define.insert(k, parsed)?;
             }
 
             for drop_item in bundler_options.drop.keys() {
@@ -345,7 +347,7 @@ impl Framework {
                     let parsed = bun_bundler::defines::DefineData::parse(
                         drop_item, b"", true, true, log, arena,
                     )?;
-                    out.options.define.insert(drop_item, parsed)?;
+                    define.insert(drop_item, parsed)?;
                 }
             }
         }

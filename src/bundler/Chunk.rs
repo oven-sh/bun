@@ -1,5 +1,4 @@
 use crate::mal_prelude::*;
-use core::cell::UnsafeCell;
 use core::fmt;
 use std::io::Write as _;
 
@@ -25,8 +24,7 @@ use crate::Graph::Graph;
 use crate::html_import_manifest as HTMLImportManifest;
 use crate::options::{self, Loader};
 use crate::{
-    AdditionalFile, CompileResult, LinkerContext, LinkerGraph, PartRange, PathTemplate,
-    cheap_prefix_normalizer,
+    AdditionalFile, CompileResult, LinkerGraph, PartRange, PathTemplate, cheap_prefix_normalizer,
 };
 
 use crate::IndexInt;
@@ -81,7 +79,7 @@ pub struct Chunk {
     // `ChunkRenamer` is the owning equivalent (see `crate::bun_renamer`).
     pub(crate) renamer: bun_renamer::ChunkRenamer,
 
-    pub compile_results_for_chunk: CompileResultSlots,
+    pub compile_results_for_chunk: Box<[CompileResult]>,
 
     /// Pre-built JSON fragment for this chunk's metafile output entry.
     /// Generated during parallel chunk generation, joined at the end.
@@ -110,90 +108,14 @@ impl Default for Content {
 
 // SAFETY: `Chunk` is processed across the bundler thread pool (see
 // `computeCrossChunkDependencies`, `generateChunksInParallel`). Raw-pointer
-// fields (`Layers::Borrowed`, `ChunkRenamer` arena)
-// point into bundler-arena storage that outlives the
-// pool join and is only mutated by the owning task; this mirrors
-// `InputFile`'s blanket impls (bundle_v2.rs).
-//
-// CONCURRENCY: during the `generate_compile_result_for_*_chunk` fan-out, many
-// `PendingPartRange` tasks share ONE `*mut Chunk` and each writes a disjoint
-// `compile_results_for_chunk[i]`. That field is therefore [`CompileResultSlots`]
-// (UnsafeCell-per-slot) so the per-task write is routed through interior
-// mutability and never requires an aliased `&mut Chunk` /
-// `&mut [CompileResult]` — see [`Chunk::write_compile_result_slot`].
-// `files_with_parts_in_chunk` values are bumped via atomic RMW;
-// the renamer is fully populated before fan-out and treated as
-// read-only by the printer.
-// Caveat: `Renamer<'r>` still borrows `&'r mut {Number,Minify}Renamer`,
-// so the per-chunk renamer is reborrowed mutably from each part-range task;
-// the printer never writes through it, but the borrow should become `&'r`.
+// fields (`Layers::Borrowed`, `ChunkRenamer` arena) point into bundler-arena
+// storage that outlives the pool join and is only mutated by the task that
+// is handed the chunk `&mut`.
 unsafe impl Send for Chunk {}
-// SAFETY: shared `&Chunk` access during the worker fan-out touches only
-// `compile_results_for_chunk` (UnsafeCell-per-slot, disjoint indices) and
-// `files_with_parts_in_chunk` atomic counters; the remaining fields are
-// frozen before fan-out and read single-threaded after the pool join —
-// **except** `renamer`, which the per-part-range printer reborrows `&mut`
-// from each worker (read-only in practice). See the renamer caveat above:
-// once `Renamer<'r>` borrows `&'r` instead of `&'r mut`, this caveat (and
-// the matching split-borrow in `generate_compile_result_for_js_chunk`) goes
-// away. Pre-existing; this impl mirrors `unsafe impl Send for Chunk` and
-// the single-pointer fan-out the workers use.
+// SAFETY: shared `&Chunk` access during the compile fan-out only reads, plus
+// the `files_with_parts_in_chunk` atomic counters; everything else is written
+// single-threaded (or through a per-task `&mut Chunk`) around the pool joins.
 unsafe impl Sync for Chunk {}
-
-/// Disjoint-slot output buffer for [`Chunk::compile_results_for_chunk`].
-///
-/// Allocated single-threaded in `generate_chunks_in_parallel` *before* the
-/// `generate_compile_result_for_*_chunk` fan-out, written concurrently by
-/// worker threads at **disjoint** indices (one slot per `PendingPartRange.i`),
-/// then read single-threaded after the batch's `group.wait()`. Wrapping each
-/// slot in `UnsafeCell` makes the per-task write sound through a shared view —
-/// worker callbacks never need to materialize an aliased `&mut Chunk` or
-/// `&mut [CompileResult]` to publish their result.
-#[derive(Default)]
-#[repr(transparent)]
-pub struct CompileResultSlots(Box<[UnsafeCell<CompileResult>]>);
-
-// SAFETY: writes target disjoint slots (unique `i` per task); reads happen
-// only after the pool join (happens-before via the batch's `group.wait()`).
-// `CompileResult` itself is `Send`.
-unsafe impl Sync for CompileResultSlots {}
-
-impl CompileResultSlots {
-    pub(crate) fn new(len: usize) -> Self {
-        let mut v = Vec::with_capacity(len);
-        v.resize_with(len, || UnsafeCell::new(CompileResult::default()));
-        Self(v.into_boxed_slice())
-    }
-
-    #[inline]
-    pub fn len(&self) -> usize {
-        self.0.len()
-    }
-
-    /// Post-join read view. Single-threaded callers only (after the batch's `group.wait()`).
-    #[inline]
-    pub fn iter(&self) -> impl ExactSizeIterator<Item = &CompileResult> + '_ {
-        // SAFETY: reads happen only after the pool join; no concurrent writer.
-        self.0.iter().map(|c| unsafe { &*c.get() })
-    }
-
-    /// Post-join exclusive access to one slot (e.g. to transfer ownership of
-    /// the result out of the chunk). `&mut self` proves no concurrent writer,
-    /// so `UnsafeCell::get_mut` needs no unsafe here.
-    #[inline]
-    pub fn get_mut(&mut self, i: usize) -> &mut CompileResult {
-        self.0[i].get_mut()
-    }
-}
-
-impl core::ops::Index<usize> for CompileResultSlots {
-    type Output = CompileResult;
-    #[inline]
-    fn index(&self, i: usize) -> &CompileResult {
-        // SAFETY: reads happen only after the pool join; no concurrent writer.
-        unsafe { &*self.0[i].get() }
-    }
-}
 
 impl Default for Chunk {
     fn default() -> Self {
@@ -210,7 +132,7 @@ impl Default for Chunk {
             intermediate_output: IntermediateOutput::default(),
             isolated_hash: u64::MAX,
             renamer: bun_renamer::ChunkRenamer::default(),
-            compile_results_for_chunk: CompileResultSlots::default(),
+            compile_results_for_chunk: Box::default(),
             metafile_chunk_json: Box::default(),
             flags: Flags::default(),
         }
@@ -218,55 +140,6 @@ impl Default for Chunk {
 }
 
 impl Chunk {
-    /// Write `result` into `compile_results_for_chunk[i]` through a raw
-    /// `*mut Chunk`, for the `generate_compile_result_for_*_chunk` worker
-    /// callbacks.
-    ///
-    /// Many `PendingPartRange` tasks share one `*mut Chunk` and each writes a
-    /// unique `i`. The write is routed entirely through raw-pointer field
-    /// projection (`addr_of_mut!`) and `UnsafeCell::get`, so no `&Chunk`,
-    /// `&mut Chunk`, or `&mut [CompileResult]` is ever materialized — only a
-    /// raw `*mut CompileResult` to this task's slot. That keeps the write
-    /// sound under Stacked Borrows even while peer tasks hold their own raw
-    /// views into the same `Chunk`.
-    ///
-    /// # Safety
-    /// - `chunk` must point to a live `Chunk` whose `compile_results_for_chunk`
-    ///   was sized by `generate_chunks_in_parallel` (so `i` is in-bounds).
-    /// - No two concurrent callers may pass the same `i` for the same `chunk`.
-    /// - No reader may observe slot `i` until after the worker-pool join.
-    #[inline]
-    pub(crate) unsafe fn write_compile_result_slot(
-        chunk: *mut Chunk,
-        i: usize,
-        result: CompileResult,
-    ) {
-        // SAFETY: per fn contract — `chunk` is live, `i` in-bounds, slot
-        // exclusively owned by this caller.
-        unsafe {
-            // Project to the slots field with no intermediate `&`/`&mut Chunk`.
-            let slots: *mut CompileResultSlots =
-                core::ptr::addr_of_mut!((*chunk).compile_results_for_chunk);
-            // `CompileResultSlots` is `repr(transparent)` over
-            // `Box<[UnsafeCell<CompileResult>]>`; reading the boxed-slice fat
-            // pointer in place (no move/drop) yields `*mut [UnsafeCell<_>]`
-            // without forming `&Box`. `Box<T>` is documented to have the same
-            // layout/ABI as `*mut T` (and `NonNull<T>`).
-            let cells: *mut [UnsafeCell<CompileResult>] =
-                core::ptr::read(slots.cast::<*mut [UnsafeCell<CompileResult>]>());
-            debug_assert!(
-                i < cells.len(),
-                "compile_results_for_chunk slot out of bounds"
-            );
-            let cell: *mut UnsafeCell<CompileResult> =
-                cells.cast::<UnsafeCell<CompileResult>>().add(i);
-            // `UnsafeCell` is `repr(transparent)` — `*mut UnsafeCell<T>` and
-            // `*mut T` address the same byte. Drop the previous (default)
-            // value in place and store the result.
-            *cell.cast::<CompileResult>() = result;
-        }
-    }
-
     #[inline]
     pub(crate) fn is_entry_point(&self) -> bool {
         self.entry_point.is_entry_point()
@@ -1354,24 +1227,12 @@ impl Drop for CssChunk {
 }
 
 pub struct CssImportOrder {
-    pub(crate) conditions: Vec<bun_css::ImportConditions>,
+    /// A view of a slab in the bundle arena; several entries may view one
+    /// slab (`findImportedFilesInCSSOrder`), each with its own length.
+    pub(crate) conditions: bun_ast::StoreSlice<bun_css::ImportConditions>,
     pub(crate) condition_import_records: Vec<ImportRecord>,
 
     pub(crate) kind: CssImportOrderKind,
-}
-
-impl Drop for CssImportOrder {
-    fn drop(&mut self) {
-        // `conditions`: bitwise-shared across multiple order entries by
-        // `findImportedFilesInCSSOrder` (`bitwise_copy(wrapping_conditions)`);
-        // freeing here would double-free. The slab is allocated from the
-        // `LinkerGraph` arena and is bulk-freed with it.
-        let _ = core::mem::ManuallyDrop::new(core::mem::take(&mut self.conditions));
-        // `condition_import_records`: every populated value is uniquely owned
-        // (moved `all_import_records`) or an empty-Vec bitwise copy (cap == 0,
-        // drop is a no-op). Normal drop frees the owned buffers; no
-        // double-free path exists.
-    }
 }
 
 #[derive(strum::IntoStaticStr)]
@@ -1408,18 +1269,11 @@ impl Layers {
         }
     }
 
-    /// Cow::Borrowed constructor.
-    ///
-    /// Takes `NonNull` (not `&Vec`) because the sole caller in
-    /// `findImportedFilesInCSSOrder.rs` type-puns the lifetime-erased shadow
-    /// `crate::bun_css::LayerName` to the real `::bun_css::LayerName` via a
-    /// raw-pointer cast — that nominal-type erasure cannot go through `&`.
-    /// The pointee is arena-owned storage that outlives the chunk pipeline
-    /// (see the lifetime note on `Chunk`); `BackRef` encapsulates that
-    /// invariant so `inner()`/`to_owned()` deref sites are safe.
+    /// Cow::Borrowed constructor. The pointee is a parsed stylesheet's
+    /// `layer_names`, arena-owned storage that outlives the chunk pipeline.
     #[inline]
-    pub(crate) fn borrow(p: core::ptr::NonNull<Vec<bun_css::LayerName>>) -> Self {
-        Layers::Borrowed(bun_ptr::BackRef::from(p))
+    pub(crate) fn borrow(p: &Vec<bun_css::LayerName>) -> Self {
+        Layers::Borrowed(bun_ptr::BackRef::new(p))
     }
 
     /// Drop owned (arena-backed, so no-op) and
@@ -1480,21 +1334,16 @@ impl CssImportOrder {
     #[allow(dead_code)]
     pub(crate) fn fmt<'a, 'ctx>(
         &'a self,
-        ctx: &'a LinkerContext<'ctx>,
+        pg: &'a crate::Graph::Graph<'ctx>,
     ) -> CssImportOrderDebug<'a, 'ctx> {
-        CssImportOrderDebug { inner: self, ctx }
+        CssImportOrderDebug { inner: self, pg }
     }
 }
 
 #[allow(dead_code)]
 pub(crate) struct CssImportOrderDebug<'a, 'ctx> {
     inner: &'a CssImportOrder,
-    // Note: split lifetimes — `LinkerContext<'ctx>` is invariant over `'ctx`,
-    // so coupling the borrow lifetime to the struct param (`&'a LinkerContext<'a>`)
-    // forces every caller's `&CssImportOrder` and `&LinkerContext` to share one
-    // region. The Display impl only reads `ctx.parse_graph` (a raw `*mut Graph`),
-    // so the inner `'ctx` need not relate to `'a`.
-    ctx: &'a LinkerContext<'ctx>,
+    pg: &'a crate::Graph::Graph<'ctx>,
 }
 
 impl<'a, 'ctx> fmt::Display for CssImportOrderDebug<'a, 'ctx> {
@@ -1517,10 +1366,7 @@ impl<'a, 'ctx> fmt::Display for CssImportOrderDebug<'a, 'ctx> {
                 write!(writer, "\"{}\"", bstr::BStr::new(&path.pretty))?;
             }
             CssImportOrderKind::SourceIndex(source_index) => {
-                // SAFETY: `parse_graph` is a backref into `BundleV2.graph`, valid
-                // for the lifetime of the link step that owns this LinkerContext.
-                let source =
-                    &self.ctx.parse_graph().input_files.items_source()[source_index.get() as usize];
+                let source = &self.pg.input_files.items_source()[source_index.get() as usize];
                 write!(
                     writer,
                     "{} ({})",
@@ -1662,7 +1508,7 @@ pub mod bun_renamer {
     }
 
     impl ChunkRenamer {
-        pub(crate) fn as_renamer(&mut self) -> bun_js_printer::renamer::Renamer<'_, '_> {
+        pub(crate) fn as_renamer(&self) -> bun_js_printer::renamer::Renamer<'_, '_> {
             match self {
                 ChunkRenamer::None => unreachable!("ChunkRenamer not initialized"),
                 ChunkRenamer::Number(r) => bun_js_printer::renamer::Renamer::NumberRenamer(r),

@@ -23,10 +23,11 @@ use super::convert_stmts_for_chunk_for_dev_server::convert_stmts_for_chunk_for_d
 
 #[allow(clippy::too_many_arguments)]
 pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
-    c: &mut LinkerContext,
+    c: &LinkerContext,
+    pg: &crate::Graph::Graph<'_>,
     writer: &mut js_printer::BufferWriter,
     r: renamer::Renamer<'r, 'src>,
-    chunk: &mut Chunk,
+    chunk: &Chunk,
     part_range: PartRange,
     to_common_js_ref: Ref,
     to_esm_ref: Ref,
@@ -38,18 +39,8 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
 ) -> js_printer::PrintResult {
     let source_index = part_range.source_index.get() as usize;
 
-    // Grab raw pointers to the SoA columns up front so
-    // subsequent `&mut c` borrows (convert_stmts_for_chunk, print_code_for_file_in_chunk_js)
-    // don't conflict.
-    // SAFETY: the underlying MultiArrayList storage is not resized for the duration of this
-    // function (linking has already sized everything).
-    let parts: *mut [Part] = {
-        let list = &mut c.graph.ast.items_parts_mut()[source_index];
-        core::ptr::addr_of_mut!(
-            list.as_mut_slice()
-                [part_range.part_index_begin as usize..part_range.part_index_end as usize]
-        )
-    };
+    let parts: &[Part] = &c.graph.ast.items_parts()[source_index].as_slice()
+        [part_range.part_index_begin as usize..part_range.part_index_end as usize];
     let flags: crate::js_meta::Flags = c.graph.meta.items_flags()[source_index];
     let wrapper_part_index = if flags.wrap != WrapKind::None {
         c.graph.meta.items_wrapper_part_index()[source_index]
@@ -78,12 +69,11 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
 
             let hmr_api_ref = ast.wrapper_ref;
 
-            // SAFETY: see `parts` raw-pointer note above.
-            for part in unsafe { (*parts).iter() } {
+            for part in parts.iter() {
                 let part_stmts: &[Stmt] = part.stmts.slice();
-                if let Err(err) =
-                    convert_stmts_for_chunk_for_dev_server(c, stmts, part_stmts, arena, &mut ast)
-                {
+                if let Err(err) = convert_stmts_for_chunk_for_dev_server(
+                    c, pg, stmts, part_stmts, arena, &mut ast,
+                ) {
                     return PrintResult::Err(err.into());
                 }
             }
@@ -101,7 +91,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                 .extend_from_slice(stmts.inside_wrapper_suffix.as_slice());
 
             // Capture pointer/len now, re-slice after pushes (borrowck).
-            // SAFETY: `inner` aliases the first `main_stmts_len` elements of `all_stmts`;
+            // `inner` aliases the first `main_stmts_len` elements of `all_stmts`;
             // subsequent pushes only append past this range and capacity was reserved above
             // so no reallocation occurs.
             let inner = bun_ast::StoreSlice::new_mut(
@@ -180,10 +170,10 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
 
             // TODO: there is a weird edge case where the pretty path is not computed
             // it does not reproduce when debugging.
-            let source_ref = c.get_source(source_index as u32);
-            // `bun_ast::Source` is not `Clone`
-            // (its `Cow` fields would deep-copy `Owned` data); instead, build a
-            // borrowed-field shadow only when the path needs fixing.
+            let source_ref = LinkerContext::get_source(pg, source_index as u32);
+            // `bun_ast::Source` is not `Clone` (its `Cow` fields would
+            // deep-copy `Owned` data); build a borrowed-field shadow only when
+            // the path needs fixing.
             let source_storage: bun_ast::Source;
             let source: &bun_ast::Source = if core::ptr::eq(
                 source_ref.path.text.as_ptr(),
@@ -196,19 +186,16 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                     top_level_dir,
                     arena,
                 ));
+                // The graph's sources outlive the print; `StoreStr` spells that.
                 source_storage = bun_ast::Source {
                     path: new_path,
-                    // SAFETY: `source_ref` is `&'static Source`, so re-borrowing its
-                    // `Cow` payloads as `&'static [u8]` is sound regardless of arm.
-                    contents: std::borrow::Cow::Borrowed(unsafe {
-                        &*std::ptr::from_ref::<[u8]>(source_ref.contents.as_ref())
-                    }),
+                    contents: std::borrow::Cow::Borrowed(
+                        bun_ast::StoreStr::new(source_ref.contents.as_ref()).slice(),
+                    ),
                     contents_is_recycled: source_ref.contents_is_recycled,
-                    // SAFETY: `source_ref` is `&'static Source`, so re-borrowing its
-                    // `Cow` payload as `&'static [u8]` is sound regardless of arm.
-                    identifier_name: std::borrow::Cow::Borrowed(unsafe {
-                        &*std::ptr::from_ref::<[u8]>(source_ref.identifier_name.as_ref())
-                    }),
+                    identifier_name: std::borrow::Cow::Borrowed(
+                        bun_ast::StoreStr::new(source_ref.identifier_name.as_ref()).slice(),
+                    ),
                     index: source_ref.index,
                 };
                 &source_storage
@@ -217,6 +204,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
             };
 
             return c.print_code_for_file_in_chunk_js(
+                pg,
                 r,
                 arena,
                 writer,
@@ -274,20 +262,14 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
             .expect("unreachable");
     }
 
-    // `convert_stmts_for_chunk` takes `&mut c` inside the loop body, so capture
-    // the per-file bitset as a BackRef once. The `parts_live` Vec doesn't
-    // reallocate after `tree_shaking_and_code_splitting` initializes it.
-    let parts_live: bun_ptr::BackRef<bun_collections::AutoBitSet> =
-        bun_ptr::BackRef::new(&c.graph.parts_live[source_index]);
+    let parts_live: &bun_collections::AutoBitSet = &c.graph.parts_live[source_index];
 
     // TODO: handle directive
     if namespace_export_part_index >= part_range.part_index_begin
         && namespace_export_part_index < part_range.part_index_end
         && parts_live.is_set(namespace_export_part_index as usize)
     {
-        // SAFETY: see `parts` raw-pointer note above; index bounded by the range check just above.
-        let ns_part_stmts: &[Stmt] =
-            unsafe { (*parts)[namespace_export_part_index as usize].stmts }.slice();
+        let ns_part_stmts: &[Stmt] = parts[namespace_export_part_index as usize].stmts.slice();
         if let Err(err) = convert_stmts_for_chunk(
             c,
             source_index as u32,
@@ -323,16 +305,12 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
     }
 
     // Add all other parts in this chunk
-    // SAFETY: see `parts` raw-pointer note above.
-    let parts_len = unsafe { (&*parts).len() };
-    for index_ in 0..parts_len {
+    for (index_, part) in parts.iter().enumerate() {
         let index = part_range.part_index_begin + (index_ as u32);
         if !parts_live.is_set(index as usize) {
             // Skip the part if it's not in this chunk
             continue;
         }
-        // SAFETY: index in bounds.
-        let part: &Part = unsafe { &(*parts)[index_] };
 
         if index == namespace_export_part_index {
             // Skip the namespace export part because we already handled it above
@@ -919,11 +897,9 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
         });
     }
 
-    // `get_source` returns `&'static Source` (parse_graph SoA is append-only and
-    // outlives the link step), so it does not borrow `c` — no split-borrow needed
-    // across the `&mut self` call below.
-    let source: &bun_ast::Source = c.get_source(source_index as u32);
+    let source: &bun_ast::Source = LinkerContext::get_source(pg, source_index as u32);
     c.print_code_for_file_in_chunk_js(
+        pg,
         r,
         arena,
         writer,

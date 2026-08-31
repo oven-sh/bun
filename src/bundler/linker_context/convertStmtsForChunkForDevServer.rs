@@ -43,7 +43,8 @@ use crate::linker_context_mod::{LinkerContext, StmtList, StmtListWhich};
 ///     }, false ],
 ///        ----- "is the module async?"
 pub(crate) fn convert_stmts_for_chunk_for_dev_server<'bump>(
-    c: &mut LinkerContext,
+    c: &LinkerContext,
+    pg: &crate::Graph::Graph<'_>,
     stmts: &mut StmtList,
     part_stmts: &[bun_ast::Stmt],
     bump: &'bump Bump,
@@ -54,7 +55,8 @@ pub(crate) fn convert_stmts_for_chunk_for_dev_server<'bump>(
     let mut esm_decls: bun_alloc::ArenaVec<'bump, ArrayBinding> = bun_alloc::ArenaVec::new_in(bump);
     let mut esm_callbacks: Vec<Expr> = Vec::new();
 
-    let input_files = &c.parse_graph().input_files;
+    let _ = c;
+    let input_files = &pg.input_files;
     let loaders = input_files.items_loader();
     let sources = input_files.items_source();
     for record in ast.import_records.as_mut_slice() {
@@ -86,7 +88,6 @@ pub(crate) fn convert_stmts_for_chunk_for_dev_server<'bump>(
                     // Barrel optimization: this import was deferred (unused submodule).
                     // Don't add to dep array, but declare the namespace ref as an
                     // empty object so body code referencing it doesn't throw.
-                    // SAFETY: `st.items` is an arena-owned fat ptr; len is always sound to read.
                     let items_len = st.items.len();
                     if !st.star_name_loc.is_empty() || items_len > 0 || st.default_name.is_some() {
                         stmts

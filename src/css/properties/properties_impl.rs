@@ -121,3 +121,17 @@ pub(super) mod property_mixin {
         )
     }
 }
+
+impl PropertyIdTag {
+    /// The tag with discriminant `repr`, if there is one.
+    #[inline]
+    pub fn from_repr(repr: u16) -> Option<PropertyIdTag> {
+        if repr <= PropertyIdTag::Custom as u16 {
+            // SAFETY: `PropertyIdTag` is `repr(u16)` with default (contiguous,
+            // zero-based) discriminants and `Custom` is its last variant.
+            Some(unsafe { core::mem::transmute::<u16, PropertyIdTag>(repr) })
+        } else {
+            None
+        }
+    }
+}

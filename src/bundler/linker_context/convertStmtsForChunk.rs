@@ -45,11 +45,11 @@ use crate::options::Format;
 /// namespace object (foo) because we cannot know what they are going to
 /// attempt to access statically
 pub(crate) fn convert_stmts_for_chunk(
-    c: &mut LinkerContext<'_>,
+    c: &LinkerContext<'_>,
     source_index: u32,
     stmts: &mut StmtList,
     part_stmts: &[bun_ast::Stmt],
-    chunk: &mut Chunk,
+    chunk: &Chunk,
     bump: &Bump,
     wrap: WrapKind,
     ast: &JSAst<'_>,
@@ -551,22 +551,8 @@ pub(crate) fn convert_stmts_for_chunk(
                                     }
 
                                     _ => unreachable!(
-                                        "Unexpected type in source file {}",
-                                        bstr::BStr::new(
-                                            &c.parse_graph()
-                                                .input_files
-                                                .get(
-                                                    c.graph
-                                                        .files
-                                                        .get(source_index as usize)
-                                                        .input_file
-                                                        .get()
-                                                        as usize
-                                                )
-                                                .source
-                                                .path
-                                                .text
-                                        ),
+                                        "Unexpected type in source file #{}",
+                                        source_index,
                                     ),
                                 }
                             }

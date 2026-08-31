@@ -565,16 +565,19 @@ impl BuildCommand {
                     this_transpiler.options.define.drop_debugger,
                     this_transpiler.options.dead_code_elimination
                         && this_transpiler.options.minify_syntax,
-                )?;
+                )?
+                .into();
             }
 
             crate::bake::bake_body::add_import_meta_defines(
-                &mut this_transpiler.options.define,
+                std::sync::Arc::get_mut(&mut this_transpiler.options.define)
+                    .expect("not shared before the bundle starts"),
                 crate::bake::Mode::Development,
                 crate::bake::Side::Server,
             )?;
             crate::bake::bake_body::add_import_meta_defines(
-                &mut ct.options.define,
+                std::sync::Arc::get_mut(&mut ct.options.define)
+                    .expect("not shared before the bundle starts"),
                 crate::bake::Mode::Development,
                 crate::bake::Side::Client,
             )?;
@@ -611,6 +614,8 @@ impl BuildCommand {
         let opt_transform_only = this_transpiler.options.transform_only;
         let env_ptr = this_transpiler.env;
 
+        // The bundle's heap; declared here so it outlives `output_files`.
+        let heap;
         let mut output_files: Vec<options::OutputFile> = 'brk: {
             if ctx.bundler_options.transform_only {
                 this_transpiler.options.import_path_format = options::ImportPathFormat::Relative;
@@ -653,21 +658,32 @@ impl BuildCommand {
                 // resolver subset; bundler-side `entry_naming` is sufficient.
             }
 
-            // Stack-owned Mini event loop so its tasks/concurrent_tasks queues
-            // drop at scope exit; the arena bulk-free skips Drop. Outlives the
-            // BACKREF passed to `generate_from_cli`.
-            let mut event_loop = bun_event_loop::AnyEventLoop::init();
-
-            let build_result = match BundleV2::generate_from_cli(
-                bun_ptr::ParentRef::from_ref_mut(this_transpiler),
-                arena,
-                Some(core::ptr::NonNull::from(&mut event_loop)),
-                ctx.debug.hot_reload == HotReload::Watch,
-                &mut reachable_file_count,
-                &mut minify_duration,
-                &mut input_code_length,
-                fetcher,
-            ) {
+            let _ = arena;
+            let build_result = if ctx.debug.hot_reload == HotReload::Watch {
+                // The watcher thread refers to the bundle (and its heap) until
+                // it `execve()`s the process on the next change.
+                BundleV2::generate_from_cli_watching(
+                    this_transpiler,
+                    Box::leak(Box::new(bun_bundler::bundle_v2::BundleHeap::new())),
+                    bun_event_loop::AnyEventLoop::init(),
+                    &mut reachable_file_count,
+                    &mut minify_duration,
+                    &mut input_code_length,
+                    fetcher,
+                )
+            } else {
+                heap = bun_bundler::bundle_v2::BundleHeap::new();
+                BundleV2::generate_from_cli(
+                    this_transpiler,
+                    &heap,
+                    bun_event_loop::AnyEventLoop::init(),
+                    &mut reachable_file_count,
+                    &mut minify_duration,
+                    &mut input_code_length,
+                    fetcher,
+                )
+            };
+            let build_result = match build_result {
                 Ok(r) => r,
                 Err(err) => {
                     if !log_ref.msgs.is_empty() {

@@ -1,14 +1,14 @@
 use crate::BundledAst as JSAst;
-use bun_alloc::Arena as ThreadLocalArena;
 use bun_alloc::{AstAlloc, AstVec};
 use bun_ast::server_component_boundary;
 use bun_collections::MultiArrayList;
 use enum_map::EnumMap;
 
+use crate::AdditionalFile;
 use crate::IndexStringMap::IndexStringMap;
 use crate::PathToSourceIndexMap::PathToSourceIndexMap;
 use crate::options;
-use crate::{AdditionalFile, BundleV2, ThreadPool};
+use crate::thread_pool::BundleHeap;
 
 use bun_ast::Index;
 
@@ -16,13 +16,7 @@ use bun_ast::Index;
 pub(crate) use crate::IndexInt;
 
 pub struct Graph<'a> {
-    // `BundleV2::init` allocates this from the `self.heap` arena and
-    // `BundleV2::deinit` calls `pool.deinit()`, so this is arena-owned but self-referential
-    // (sibling field). `BackRef` (not raw `NonNull`) so the read accessor `pool()` is
-    // safe — the BACKREF invariant (pointee outlives holder) holds for the entire
-    // bundle pass.
-    pub pool: bun_ptr::BackRef<ThreadPool, bun_ptr::Mut>,
-    pub(crate) heap: &'a ThreadLocalArena,
+    pub(crate) heap: &'a BundleHeap,
 
     /// Mapping user-specified entry points to their Source Index
     pub entry_points: Vec<Index>,
@@ -154,11 +148,8 @@ bitflags::bitflags! {
 }
 
 impl<'a> Graph<'a> {
-    pub(crate) fn new(heap: &'a ThreadLocalArena) -> Self {
+    pub(crate) fn new(heap: &'a BundleHeap) -> Self {
         Self {
-            // Self-referential arena pointer; real value wired in
-            // `BundleV2::init` before any use.
-            pool: bun_ptr::BackRef::dangling(),
             heap,
             entry_points: Vec::new(),
             entry_point_original_names: IndexStringMap::default(),
@@ -182,63 +173,12 @@ impl<'a> Graph<'a> {
 }
 
 impl<'a> Graph<'a> {
-    /// Shared borrow of the bundler `ThreadPool`.
-    ///
-    /// `pool` is arena-allocated in `BundleV2::init` and
-    /// torn down in `BundleV2::deinit`. It is non-null
-    /// and valid for the entire bundle pass; see LIFETIMES.tsv row 170
-    /// (BACKREF). All `ThreadPool` driver methods (`schedule`, `start`,
-    /// `worker_pool`, `schedule_inside_thread_pool`) take `&self`, so callers
-    /// can use this in place of the prior open-coded
-    /// `unsafe { self.pool.as_ref() }` / `as_mut()`.
-    #[inline]
-    pub(crate) fn pool(&self) -> &ThreadPool {
-        // BackRef invariant: `pool` is set in `BundleV2::init` to an
-        // arena-owned `ThreadPool` and remains valid until `BundleV2::deinit`;
-        // no `&mut ThreadPool` is live across any `pool()` borrow (the only
-        // `&mut` site is `deinit`, called after all schedule/worker activity
-        // has drained).
-        self.pool.get()
-    }
-
-    /// Exclusive borrow of the bundler `ThreadPool`. Only needed for
-    /// `ThreadPool::deinit` during teardown; prefer [`Self::pool`] for
-    /// scheduling.
-    #[inline]
-    pub(crate) fn pool_mut(&mut self) -> &mut ThreadPool {
-        // SAFETY: see `pool()`. `&mut self` excludes other safe borrows of
-        // `Graph`, so no aliasing `&ThreadPool` is live.
-        unsafe { self.pool.get_mut() }
-    }
-
     #[inline]
     pub(crate) fn path_to_source_index_map(
         &mut self,
         target: options::Target,
     ) -> &mut PathToSourceIndexMap {
         &mut self.build_graphs[target]
-    }
-
-    /// Schedule a task to be run on the JS thread which resolves the promise of
-    /// each `.defer()` called in an onLoad plugin.
-    ///
-    /// Returns true if there were more tasks queued.
-    pub(crate) fn drain_deferred_tasks(&mut self, transpiler: &mut BundleV2) -> bool {
-        transpiler.thread_lock.assert_locked();
-
-        if self.deferred_pending > 0 {
-            // Their units are back in `pending_items` (a new epoch: those loads' own units are no longer
-            // parked), plus one for the hop itself: the pass is not done until it is back (see
-            // `DeferredBatchTask`).
-            self.pending_items += self.deferred_pending + 1;
-            self.deferred_pending = 0;
-            self.defer_epoch += 1;
-            transpiler.drain_defer_task.schedule();
-
-            return true;
-        }
-
-        false
     }
 }
 

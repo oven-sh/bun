@@ -2,15 +2,14 @@ use crate::mal_prelude::*;
 
 use bstr::BStr;
 
-use bun_ast::Log;
 use bun_ast::{ImportKind, ImportRecord, ImportRecordFlags};
 use bun_core::strings;
-use bun_threading::thread_pool::Task as ThreadPoolLibTask;
 use lol_html::HandlerResult;
 use lol_html::html_content::{ContentType, Element, EndTag};
 
+use crate::Graph::Graph;
 use crate::HTMLScanner::{HTMLProcessor, HTMLProcessorHandler};
-use crate::linker_context_mod::{GenerateChunkCtx, LinkerContext, debug};
+use crate::linker_context_mod::{LinkShared, LinkerContext, debug};
 use crate::options::Loader;
 use crate::{Chunk, CompileResult};
 
@@ -33,39 +32,14 @@ use crate::{Chunk, CompileResult};
 ///    a <link rel="modulepreload" href="..." crossorigin> tag that
 ///    points to the module or chunk's unique key so that we tell the
 ///    browser to preload the user's code.
-// CONCURRENCY: thread-pool callback — runs on worker threads, one task per
-// HTML `PendingPartRange` (exactly one per HTML chunk). Writes:
-// `chunk.compile_results_for_chunk[0]` (per-chunk disjoint). Reads
-// `c.parse_graph.input_files` / `c.graph` / `ctx.chunks` shared. Never forms
-// `&mut LinkerContext` — `c_ptr` stays raw; the HTML rewriter takes
-// `&LinkerContext`. See `generate_compile_result_for_js_chunk` for the
-// `PendingPartRange: Send` justification.
-//
-/// # Safety
-///
-/// `task` must be the intrusive `task` field of a live `PendingPartRange`
-/// scheduled by `generate_chunks_in_parallel`; see
-/// [`pending_part_range_prologue`](crate::linker_context_mod::pending_part_range_prologue)
-/// for the full contract. Matches the `Task::callback: unsafe fn(*mut Task)`
-/// contract.
-pub(crate) unsafe fn generate_compile_result_for_html_chunk(task: *mut ThreadPoolLibTask) {
-    // SAFETY: `task` is the intrusive `task` field of a `PendingPartRange`
-    // scheduled by `generate_chunks_in_parallel`; see the helper's contract.
-    let (part_range, _c_ptr, chunk_ptr, _worker) =
-        unsafe { crate::linker_context_mod::pending_part_range_prologue(task) };
-    let i = part_range.i as usize;
-    let ctx: &GenerateChunkCtx = part_range.ctx;
-
-    // `ctx.c` is a `ParentRef` and `ctx.chunk` / `ctx.chunks` are `BackRef`s;
-    // all yield safe shared borrows via `.get()`. `chunk` is this task's
-    // exclusively-owned HTML chunk for the duration of the compile step.
-    let c_ref: &LinkerContext = ctx.c.get();
-    let chunk_ref: &Chunk = ctx.chunk.get();
-    let chunks: &[Chunk] = ctx.chunks.get();
-    let result = generate_compile_result_for_html_chunk_impl(c_ref, chunk_ref, chunks);
-    // SAFETY: HTML chunks have exactly one part-range (i == 0); see
-    // `Chunk::write_compile_result_slot` for the disjoint-slot contract.
-    unsafe { Chunk::write_compile_result_slot(chunk_ptr, i, result) };
+/// Pool-thread body for the one HTML file of `chunk` (see `CompileJob::run`).
+/// Reads the linker and parse graphs and every chunk's `unique_key`.
+pub(crate) fn generate_compile_result_for_html_chunk(
+    ctx: &LinkShared<'_, '_>,
+    chunk: &Chunk,
+) -> CompileResult {
+    let _worker = ctx.worker();
+    generate_compile_result_for_html_chunk_impl(ctx.c, ctx.graph, chunk, ctx.chunks)
 }
 
 #[derive(Default)]
@@ -77,6 +51,7 @@ struct EndTagIndices {
 
 struct HTMLLoader<'a> {
     linker: &'a LinkerContext<'a>,
+    pg: &'a Graph<'a>,
     import_records: &'a [ImportRecord],
     current_import_record_index: u32,
     /// This task's HTML chunk, an element of `chunks`.
@@ -132,7 +107,7 @@ impl<'a> HTMLProcessorHandler for HTMLLoader<'a> {
             &self.import_records[self.current_import_record_index as usize];
         self.current_import_record_index += 1;
 
-        let parse_graph = self.linker.parse_graph();
+        let parse_graph = self.pg;
         let unique_key_for_additional_files: &[u8] = if import_record.source_index.is_valid() {
             &parse_graph
                 .input_files
@@ -351,11 +326,11 @@ impl<'a> HTMLLoader<'a> {
 
 fn generate_compile_result_for_html_chunk_impl<'a>(
     c: &'a LinkerContext<'a>,
+    pg: &'a Graph<'a>,
     chunk: &'a Chunk,
     chunks: &'a [Chunk],
 ) -> CompileResult {
-    let parse_graph = c.parse_graph();
-    let sources = parse_graph.input_files.items_source();
+    let sources = pg.input_files.items_source();
     let import_records = c.graph.ast.items_import_records();
     let source_index = chunk.entry_point.source_index();
 
@@ -365,19 +340,14 @@ fn generate_compile_result_for_html_chunk_impl<'a>(
     // `CompileResult::Html`, so it lives as long as whoever holds the
     // `CompileResult` — no arena-lifetime distinction needed.
 
-    // `c.log` is now `*mut Log` (raw backref); copy directly. The HTMLLoader.log
-    // field is currently dead_code, so no write actually occurs through this
-    // pointer today.
-    let log: *mut Log = c.log;
-    let minify_whitespace = c.options.minify_whitespace;
     let compile_to_standalone_html = c.options.compile_mode.is_standalone_html();
     let has_dev_server = c.dev_server.is_some();
     let contents: &[u8] = &sources[source_index as usize].contents;
     let records = import_records[source_index as usize].as_slice();
 
-    let _ = (source_index, log, minify_whitespace);
     let mut html_loader = HTMLLoader {
         linker: c,
+        pg,
         import_records: records,
         current_import_record_index: 0,
         compile_to_standalone_html,

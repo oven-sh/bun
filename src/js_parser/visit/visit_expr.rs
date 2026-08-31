@@ -765,7 +765,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         let Ok(macro_result) = p
                             .options
                             .macro_context
-                            .as_deref_mut()
+                            .as_mut()
                             .expect("macro_context")
                             .call(
                                 record_path_text,
@@ -2181,7 +2181,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let macro_result = match p
                     .options
                     .macro_context
-                    .as_deref_mut()
+                    .as_mut()
                     .expect("macro_context")
                     .call(
                         record_path_text,

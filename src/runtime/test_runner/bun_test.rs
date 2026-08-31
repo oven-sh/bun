@@ -1176,8 +1176,7 @@ impl BunTest {
             }
         }
 
-        // A lazy `Promise` subclass (Bun.SQL's `Query`) or a plain thenable is awaited
-        // through its own `then()`; `JSValue::then` alone would never start its work.
+        // Await a lazy `Promise` subclass (Bun.SQL's `Query`) or a thenable through its own `then()`.
         let mut awaited: Option<&mut bun_jsc::JSPromise> = None;
         if !result.is_empty() {
             match bun_jsc::JSPromise::awaitable(global_this, result) {

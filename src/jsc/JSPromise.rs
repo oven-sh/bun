@@ -271,25 +271,13 @@ impl JSPromise {
         JSC__JSPromise__setHandled(self)
     }
 
-    /// Returns the promise whose settlement is `value`'s outcome, or `None` when `value`
-    /// is not a thenable. Use it on a value that user code returned and native code
-    /// wants to await: a test callback, a hook, a handler.
-    ///
-    /// A reaction attached to a promise's internal state (`JSValue::then`,
-    /// `wait_for_promise`) never calls the value's own `then()`. A `Promise` subclass
-    /// that starts its work inside an overridden `then()` (Bun.SQL's `Query`, `Bun.$`'s
-    /// `ShellPromise`) never settles that way, and a plain thenable has no internal
-    /// state at all. This is the coercion `await` applies (spec `PromiseResolve`): a
-    /// promise whose constructor is `Promise` is returned as is, and anything else is
-    /// adopted by a fresh native promise whose resolve steps read `then` once and call
-    /// it. The adopter is marked handled: the caller observes its outcome, and a `then`
-    /// getter that throws rejects it before the caller can attach a reaction.
-    ///
-    /// An object whose `then` is not callable is not a thenable, as in
-    /// `typeof value.then !== "function"` in Jest.
+    /// The promise `await value` would wait on, or `None` when `value` is not a thenable.
+    /// Spec `PromiseResolve`: a promise whose constructor is `Promise` is returned as is.
+    /// Anything else (a subclass with its own `then()`, a plain thenable) is adopted by a
+    /// fresh promise that calls `value.then()`. `JSValue::then` never does, so a lazy
+    /// subclass such as Bun.SQL's `Query` would never start. The adopter is marked handled.
     pub fn awaitable(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<&mut JSPromise>> {
         let promise = crate::cpp::JSC__JSPromise__awaitable(global, value)?;
-        // A non-null return is a GC-managed cell tied to `global`'s VM.
         Ok((!promise.is_null()).then(|| JSPromise::opaque_mut(promise)))
     }
 

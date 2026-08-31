@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { isPhaseGroupHeader, parseLog } from "../../scripts/ci-slowest-tests";
+import { isPhaseGroupHeader } from "../../scripts/ci-log-phase.mjs";
+import { parseLog } from "../../scripts/ci-slowest-tests";
 import { parseLog as parseDurations } from "../../scripts/update-test-durations.mjs";
 
 // Buildkite prefixes each line with an APC timestamp: ESC `_bk;t=<ms>` BEL.
@@ -144,9 +145,9 @@ describe("scripts/ci-slowest-tests.ts parseLog", () => {
 });
 
 describe("phase-header boundary", () => {
-  // The three log parsers share this allowlist; if runner.node.mjs grows a new
-  // phase between the serial tests and the next `[N/M]` header, add it here and
-  // to isPhaseGroupHeader.
+  // Both log parsers share this allowlist (scripts/ci-log-phase.mjs); if
+  // runner.node.mjs grows a new phase between the serial tests and the next
+  // `[N/M]` header, add it there and here.
   test.each([
     [true, `--- napi prebuild: 3 addon(s), 23.9s`],
     [true, `--- [52-257/829] 206 files in parallel (3\u00d7)`],

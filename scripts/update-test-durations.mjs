@@ -15,6 +15,7 @@ import { writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
+import { isPhaseGroupHeader } from "./ci-log-phase.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const outputPath = join(__dirname, "..", "test", "expected-durations.json");
@@ -103,18 +104,11 @@ export function parseLog(raw) {
       concurrent = isPath && !hdr[1];
       continue;
     }
-    // The runner's other startGroup phase headers (End, `Running N
-    // parallel-safe ...`, `napi prebuild: ...`, `[A-B/M] K files in
-    // parallel`) close the open span so the preceding serial test is not
-    // charged for the phase that follows. Limited to the titles
-    // runner.node.mjs actually emits; pipeTestStdout sanitises `--- ` in
-    // streamed test output, but a chunk boundary mid-token or one of the
-    // raw-write paths can still deliver `--- a/<file>` or `--- ps ---`.
-    if (
-      /^--- (?:\[\d+-\d+\/\d+\]|napi prebuild:|Running \d+ parallel-safe|End\b|Summary\b|Received \w+, exiting)/.test(
-        text,
-      )
-    ) {
+    // The runner's other phase headers (`[A-B/M] K files in parallel`,
+    // `napi prebuild: ...`, `Running N parallel-safe ...`, End) close the open
+    // span so the preceding serial test is not charged for the phase that
+    // follows. See scripts/ci-log-phase.mjs.
+    if (isPhaseGroupHeader(text)) {
       emit(ts);
       path = start = null;
       concurrent = false;

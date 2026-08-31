@@ -121,7 +121,7 @@ impl GarbageCollectionController {
         };
         let elapsed_ms = elapsed_ms.max(1) as u64;
         let busy = cpu_us.saturating_sub(self.idle_last_cpu_us.get()) * 100
-            > elapsed_ms * 1000 * IDLE_CPU_PERCENT;
+            >= elapsed_ms * 1000 * IDLE_CPU_PERCENT;
         self.idle_last_cpu_us.set(cpu_us);
         if busy {
             self.idle_quiet_ms.set(0);
@@ -133,6 +133,8 @@ impl GarbageCollectionController {
         let armed =
             released_at == u64::MAX || cpu_us.saturating_sub(released_at) >= REARM_AFTER_CPU_US;
         if quiet >= after && armed && !vm.is_inspector_enabled() {
+            // A fresh BUN_IDLE_RELEASE_SECONDS of quiet is needed before the next release, not just re-arming.
+            self.idle_quiet_ms.set(0);
             vm.jsc_vm().release_memory_for_idle();
             if let Some(graph) = vm.standalone_module_graph {
                 let _ = std::thread::Builder::new()

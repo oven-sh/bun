@@ -292,10 +292,10 @@ function getImageName(platform, options) {
     return `${name}-build-${getBuildNumber()}`;
   }
 
-  // Trial branch: run on the images this branch baked in build #108592 (bootstrap v42 with
+  // Trial branch: run on the images this branch baked in build #108641 (bootstrap v42 with
   // /opt/bun-toolchain) instead of the published v<N>, so follow-up commits need no rebake.
   if (hostOs === "linux") {
-    return `${name}-build-108592`;
+    return `${name}-build-108641`;
   }
 
   return `${name}-v${getBootstrapVersion(hostOs)}`;

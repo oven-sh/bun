@@ -757,6 +757,12 @@ impl Channel {
         let optmask: c_int =
             ARES_OPT_FLAGS | ARES_OPT_TIMEOUTMS | ARES_OPT_SOCK_STATE_CB | ARES_OPT_TRIES;
 
+        // SAFETY: idempotent Winsock init (uv_once); c-ares creates its sockets with
+        // ws2_32 directly and libuv otherwise initializes Winsock lazily.
+        #[cfg(windows)]
+        unsafe {
+            bun_libuv_sys::uv__winsock_ensure()
+        };
         // SAFETY: c-ares FFI; opts/channel are valid stack pointers.
         let rc = unsafe { ares_init_options(&raw mut channel, &raw mut opts, optmask) };
         if let Some(err) = Error::get(rc) {
@@ -1524,7 +1530,6 @@ unsafe extern "C" {
     ) -> c_int;
     pub fn ares_free_hostent(host: *mut struct_hostent);
     pub fn ares_free_data(dataptr: *mut c_void);
-    pub safe fn ares_strerror(code: c_int) -> *const u8;
 }
 
 #[repr(C)]

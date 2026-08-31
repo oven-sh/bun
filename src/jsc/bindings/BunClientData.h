@@ -3,6 +3,7 @@
 // A counted reference to a VM's handle (bun_jsc::VmHandle): what any thread other than the
 // VM's own uses to post work to it, keep its loop alive, or ask whether it may still run
 // script. retain / retainRef take a count, release gives one up; valid however long it is held.
+#include "BunLoopKind.h"
 struct BunVmHandleRef;
 extern "C" const BunVmHandleRef* Bun__VmHandle__retain(void* bunVM); // JS thread
 extern "C" const BunVmHandleRef* Bun__VmHandle__retainRef(const BunVmHandleRef*); // any thread
@@ -20,11 +21,13 @@ bool takeTerminationOutsideScript(JSC::VM&, JSC::TopExceptionScope&);
 extern "C" bool Bun__VM__takeTerminationOutsideScript(JSC::JSGlobalObject*);
 
 namespace WebCore {
+class WorkerMessagingProxy;
 class EventLoopTask;
 }
-// Post through a reference and give it up in one step (a reference taken only to outlive a lock).
-extern "C" void Bun__VmHandle__postAndRelease(const BunVmHandleRef*, WebCore::EventLoopTask*);
-extern "C" void Bun__VmHandle__refKeepAlive(const BunVmHandleRef*, int delta);
+// Post to the VM's `kind` loop through a reference and give it up in one step (a reference taken only
+// to outlive a lock).
+extern "C" void Bun__VmHandle__postAndRelease(const BunVmHandleRef*, WebCore::EventLoopTask*, BunLoopKind);
+extern "C" void Bun__VmHandle__refKeepAlive(const BunVmHandleRef*, BunLoopKind, int delta);
 // Node's can_call_into_js(): false once the VM's stop was requested (terminate()/exit/teardown). Any thread.
 extern "C" bool Bun__VmHandle__scriptAllowed(const BunVmHandleRef*);
 // The handle's state byte, so hot paths test it inline (BUN_VM_HANDLE_STATE_OPEN == bun_jsc::vm_handle::State::Open).
@@ -66,13 +69,74 @@ class DOMWrapperWorld;
 #include <wtf/WeakHashSet.h>
 #include "JSCTaskScheduler.h"
 #include "HTTPHeaderIdentifiers.h"
+#include "BunCommonStrings.h"
 #include "DOMURLBaseCache.h"
+#include <JavaScriptCore/HeapObserver.h>
 namespace Zig {
 class GlobalObject;
 }
 
 namespace Bun {
 class StrongRootBlock;
+
+// JSC measures the live size of the heap at the end of each collection, but only
+// publishes it per scope: an eden collection updates
+// Heap::sizeAfterLastEdenCollection() and a full collection updates
+// Heap::sizeAfterLastFullCollection(), so one of the two is always stale. The
+// combined counter (Heap::m_sizeAfterLastCollect) has no accessor. Attached to
+// the heap for the life of the VM, this copies the counter of whichever scope
+// just finished. Unlike Heap::size(), reading it does not walk the heap.
+class HeapSizeAfterLastCollection final : public JSC::HeapObserver {
+    WTF_MAKE_NONCOPYABLE(HeapSizeAfterLastCollection);
+
+public:
+    explicit HeapSizeAfterLastCollection(JSC::Heap& heap)
+        : m_heap(heap)
+    {
+        m_heap.addObserver(this);
+    }
+
+    ~HeapSizeAfterLastCollection() final
+    {
+        m_heap.removeObserver(this);
+    }
+
+    // 0 until the first collection of this heap finishes.
+    size_t get() const { return m_sizeAfterLastCollection; }
+
+private:
+    void willGarbageCollect() final {}
+
+    // Heap::didFinishCollection() notifies observers after updateAllocationLimits()
+    // stored this collection's size, in the end phase of the collection, while
+    // the mutator is stopped. The mutator reads m_sizeAfterLastCollection once
+    // it resumes, the same way it reads JSC's own counters.
+    void didGarbageCollect(JSC::CollectionScope scope) final
+    {
+        m_sizeAfterLastCollection = scope == JSC::CollectionScope::Full
+            ? m_heap.sizeAfterLastFullCollection()
+            : m_heap.sizeAfterLastEdenCollection();
+    }
+
+    JSC::Heap& m_heap;
+    size_t m_sizeAfterLastCollection { 0 };
+};
+}
+
+namespace JSC {
+struct HashTableValue;
+class DecoderStringTable;
+}
+
+namespace Bun {
+// Out-of-line `JSC::Structure::create` / `JSC::reifyStaticProperties` for the
+// once-per-class setup paths, so each wrapper class doesn't inline them.
+JSC::Structure* createClassStructure(JSC::VM&, JSC::JSGlobalObject*, JSC::JSValue prototype, JSC::TypeInfo, const JSC::ClassInfo*, JSC::IndexingType = JSC::NonArray, unsigned inlineCapacity = 0);
+void reifyStaticPropertyTable(JSC::VM&, const JSC::ClassInfo*, std::span<const JSC::HashTableValue>, JSC::JSObject&);
+// `JSC::allocateCell` for a fieldless `JSNonFinalObject` subclass living in `vm.plainObjectSpace()` (prototype objects).
+void* allocatePlainObjectCell(JSC::VM&, size_t);
+// `JSC_TO_STRING_TAG_WITHOUT_TRANSITION()`, out of line.
+void putToStringTagWithoutTransition(JSC::VM&, JSC::JSObject*, const JSC::ClassInfo*);
 }
 
 namespace WebCore {
@@ -147,7 +211,8 @@ public:
 
     virtual ~JSVMClientData();
 
-    static void create(JSC::VM*, void* bunVM, bool isWorkerVM);
+    // `worker` is the WorkerMessagingProxy this VM is being created for, or null on the main thread.
+    static void create(JSC::VM*, void* bunVM, WorkerMessagingProxy* worker);
 
     JSHeapData& heapData() { return *m_heapData; }
     BunBuiltinNames& builtinNames() { return m_builtinNames; }
@@ -171,7 +236,13 @@ public:
     // so there is no startup cost worth deferring.
     WebCore::HTTPHeaderIdentifiers& httpHeaderIdentifiers() { return m_httpHeaderIdentifiers; }
 
+    // Public so Bun::commonStrings(vm) below is a static_cast and a member load.
+    Bun::CommonStrings commonStrings;
+
     WebCore::DOMURLBaseCache& urlBaseCache() { return m_urlBaseCache; }
+
+    // Live size of the heap as measured by the most recent collection, eden or full.
+    size_t heapSizeAfterLastCollection() const { return m_heapSizeAfterLastCollection.get(); }
 
     void* bunVM;
     // Opaque box of the Rust VmHandle for this VM: what any *other* thread uses
@@ -185,6 +256,11 @@ public:
     // this thread and JSC forbids execution. Either way no script may be entered on this VM.
     ALWAYS_INLINE bool isStoppingOrStopped(const JSC::VM& vm) const { return !scriptAllowed() || vm.executionForbidden(); }
     Bun::JSCTaskScheduler deferredWorkTimer;
+
+    // One slot per string of the executable's module-info string table,
+    // filled on first use so each name is atomized once however many chunks
+    // import or export it (BunAnalyzeTranspiledModule.cpp).
+    Vector<JSC::Identifier> sharedModuleInfoIdentifiers;
 
     // Linked list of StrongRootBlock cells backing bun_jsc::Strong handles
     // (see StrongRootBlock.h). Raw pointers into the GC heap: they are rooted
@@ -206,8 +282,12 @@ public:
     // after every swap.
     WTF::UncheckedKeyHashMap<WTF::String, RefPtr<JSC::SourceProvider>> isolationSourceProviderCache;
 
+    JSC::DecoderStringTable* decoderStringTable() final { return m_decoderStringTable.get(); }
+    void setDecoderStringTable(std::span<const uint8_t>);
+
 private:
     bool isWebCoreJSClientData() const final { return true; }
+    std::unique_ptr<JSC::DecoderStringTable> m_decoderStringTable;
 
     // Frees a per-VM `JSHeapData` but leaves the process-wide `useGlobalGC`
     // singleton alone (it is shared by every VM). On the default `!useGlobalGC`
@@ -239,12 +319,17 @@ private:
 
     WebCore::DOMURLBaseCache m_urlBaseCache;
 
+    Bun::HeapSizeAfterLastCollection m_heapSizeAfterLastCollection;
+
     SentinelLinkedList<JSVMClientDataClient, BasicRawSentinelNode<JSVMClientDataClient>> m_clients;
     bool m_isWorkerVM { false };
+    bool m_isNodeWorkerVM { false };
 
 public:
     // upstream's `&vm != commonVMOrNull()`
     bool isWorkerVM() const { return m_isWorkerVM; }
+    // Created by node:worker_threads' Worker (WorkerOptions::Kind::Node), as opposed to the Web Worker constructor.
+    bool isNodeWorkerVM() const { return m_isNodeWorkerVM; }
     // VM thread. Unlinking is the client's own (`remove()` in its destructor).
     void addClient(JSVMClientDataClient& client) { m_clients.append(&client); }
 };
@@ -257,48 +342,53 @@ SPECIALIZE_TYPE_TRAITS_END()
 
 namespace WebCore {
 
-template<typename T, UseCustomHeapCellType useCustomHeapCellType, typename GetClient, typename SetClient, typename GetServer, typename SetServer>
-ALWAYS_INLINE JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM& vm, GetClient getClient, SetClient setClient, GetServer getServer, SetServer setServer, JSC::HeapCellType& (*getCustomHeapCellType)(JSHeapData&) = nullptr)
-{
-    auto& clientData = *downcast<JSVMClientData>(vm.clientData);
-    auto& clientSubspaces = clientData.clientSubspaces();
-    if (auto* clientSpace = getClient(clientSubspaces))
-        return clientSpace;
+// Byte offsets of a wrapper class's client- and server-subspace slots
+// (owned-pointer members of the two subspace tables). See BUN_SUBSPACE_SLOTS.
+struct SubspaceSlots {
+    size_t clientOffset;
+    size_t serverOffset;
+};
 
-    auto& heapData = clientData.heapData();
-    Locker locker { heapData.lock() };
-
-    auto& subspaces = heapData.subspaces();
-    JSC::IsoSubspace* space = getServer(subspaces);
-    if (!space) {
-        JSC::Heap& heap = vm.heap;
-        std::unique_ptr<JSC::IsoSubspace> uniqueSubspace;
-        static_assert(useCustomHeapCellType == UseCustomHeapCellType::Yes || std::is_base_of_v<JSC::JSDestructibleObject, T> || T::needsDestruction == JSC::DoesNotNeedDestruction);
-        if constexpr (useCustomHeapCellType == UseCustomHeapCellType::Yes)
-            uniqueSubspace = makeUnique<JSC::IsoSubspace> ISO_SUBSPACE_INIT(heap, getCustomHeapCellType(heapData), T);
-        else {
-            if constexpr (std::is_base_of_v<JSC::JSDestructibleObject, T>)
-                uniqueSubspace = makeUnique<JSC::IsoSubspace> ISO_SUBSPACE_INIT(heap, heap.destructibleObjectHeapCellType, T);
-            else
-                uniqueSubspace = makeUnique<JSC::IsoSubspace> ISO_SUBSPACE_INIT(heap, heap.cellHeapCellType, T);
-        }
-        space = uniqueSubspace.get();
-        setServer(subspaces, WTF::move(uniqueSubspace));
-
-        IGNORE_WARNINGS_BEGIN("unreachable-code")
-        IGNORE_WARNINGS_BEGIN("tautological-compare")
-        void (*myVisitOutputConstraint)(JSC::JSCell*, JSC::SlotVisitor&) = T::visitOutputConstraints;
-        void (*jsCellVisitOutputConstraint)(JSC::JSCell*, JSC::SlotVisitor&) = JSC::JSCell::visitOutputConstraints;
-        if (myVisitOutputConstraint != jsCellVisitOutputConstraint)
-            heapData.outputConstraintSpaces().append(space);
-        IGNORE_WARNINGS_END
-        IGNORE_WARNINGS_END
+#define BUN_SUBSPACE_SLOTS(clientMember, serverMember)                           \
+    ::WebCore::SubspaceSlots                                                     \
+    {                                                                            \
+        OBJECT_OFFSETOF(::WebCore::ExtendedDOMClientIsoSubspaces, clientMember), \
+            OBJECT_OFFSETOF(::WebCore::ExtendedDOMIsoSubspaces, serverMember)    \
     }
 
-    auto uniqueClientSubspace = makeUnique<JSC::GCClient::IsoSubspace>(*space);
-    auto* clientSpace = uniqueClientSubspace.get();
-    setClient(clientSubspaces, WTF::move(uniqueClientSubspace));
-    return clientSpace;
+// The type-independent part of `subspaceForImpl` (creating the server and
+// client subspaces on first use), compiled once instead of per wrapper class.
+// Everything that depends on `T` is a small per-`T` constant table.
+struct SubspaceForInit {
+    unsigned cellSize;
+    uint8_t numberOfLowerTierPreciseCells;
+    enum class CellType : uint8_t { Cell,
+        Destructible,
+        Custom } cellType;
+    bool hasOutputConstraints;
+};
+
+JSC::GCClient::IsoSubspace* subspaceForImplSlow(JSC::VM&, const SubspaceForInit&, SubspaceSlots, JSC::HeapCellType& (*getCustomHeapCellType)(JSHeapData&));
+
+template<typename T, UseCustomHeapCellType useCustomHeapCellType>
+inline constexpr SubspaceForInit subspaceForInit {
+    sizeof(T),
+    T::numberOfLowerTierPreciseCells,
+    useCustomHeapCellType == UseCustomHeapCellType::Yes   ? SubspaceForInit::CellType::Custom
+        : std::is_base_of_v<JSC::JSDestructibleObject, T> ? SubspaceForInit::CellType::Destructible
+                                                          : SubspaceForInit::CellType::Cell,
+    static_cast<void (*)(JSC::JSCell*, JSC::SlotVisitor&)>(T::visitOutputConstraints) != static_cast<void (*)(JSC::JSCell*, JSC::SlotVisitor&)>(JSC::JSCell::visitOutputConstraints),
+};
+
+template<typename T, UseCustomHeapCellType useCustomHeapCellType>
+ALWAYS_INLINE JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM& vm, SubspaceSlots slots, JSC::HeapCellType& (*getCustomHeapCellType)(JSHeapData&) = nullptr)
+{
+    static_assert(useCustomHeapCellType == UseCustomHeapCellType::Yes || std::is_base_of_v<JSC::JSDestructibleObject, T> || T::needsDestruction == JSC::DoesNotNeedDestruction);
+    auto& clientData = *downcast<JSVMClientData>(vm.clientData);
+    auto* clientSpace = *reinterpret_cast<JSC::GCClient::IsoSubspace**>(reinterpret_cast<uint8_t*>(&clientData.clientSubspaces()) + slots.clientOffset);
+    if (clientSpace)
+        return clientSpace;
+    return subspaceForImplSlow(vm, subspaceForInit<T, useCustomHeapCellType>, slots, getCustomHeapCellType);
 }
 
 static JSVMClientData* clientData(JSC::VM& vm)
@@ -312,6 +402,15 @@ static inline BunBuiltinNames& builtinNames(JSC::VM& vm)
 }
 
 } // namespace WebCore
+
+namespace Bun {
+
+ALWAYS_INLINE CommonStrings& commonStrings(JSC::VM& vm)
+{
+    return static_cast<WebCore::JSVMClientData*>(vm.clientData)->commonStrings;
+}
+
+} // namespace Bun
 
 inline void* bunVM(JSC::VM& vm)
 {

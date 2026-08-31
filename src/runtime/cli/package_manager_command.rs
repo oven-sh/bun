@@ -636,7 +636,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                 let root_deps = slice.items_dependencies()[0];
 
                 Output::println(format_args!(
-                    "{} node_modules ({})",
+                    "{} node_modules ({} installed)",
                     bstr::BStr::new(path),
                     lockfile.buffers.hoisted_dependencies.len(),
                 ));
@@ -650,11 +650,9 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                     dependencies,
                     buf: string_bytes,
                 };
-                // `sort_unstable_by` is pdqsort; names are
-                // unique so stability is irrelevant.
-                index_sort::sort_indices_unstable(&mut sorted_dependencies, &mut |a, b| {
-                    by_name.cmp(a, b)
-                });
+                // The root lists a workspace it also declares once per declaration.
+                index_sort::sort_indices(&mut sorted_dependencies, &mut |a, b| by_name.cmp(a, b));
+                sorted_dependencies.dedup_by(|a, b| by_name.cmp(*a, *b) == Ordering::Equal);
 
                 if trusted_only {
                     sorted_dependencies.retain(|&dep_id| {

@@ -180,10 +180,6 @@ impl ReadableStream {
         Ok(Some((out_stream1, out_stream2)))
     }
 
-    pub fn to_js(&self) -> JSValue {
-        self.value
-    }
-
     /// Re-read this stream's tag (its native source may have changed hands). Pure, like `from_js_direct`.
     pub fn reload_tag(&mut self) {
         *self = ReadableStream::from_js_direct(self.value).unwrap_or(ReadableStream {
@@ -204,7 +200,7 @@ impl ReadableStream {
                 // SAFETY: ptr came from ReadableStreamTag__tagged; valid while stream alive.
                 let blobby = unsafe { &mut *blobby };
                 if let Some(blob) = blobby.to_any_blob(global_this) {
-                    self.done(global_this);
+                    self.done();
                     return Some(blob);
                 }
             }
@@ -216,7 +212,7 @@ impl ReadableStream {
                     let blob = Blob::init_with_store(store.clone(), global_this);
                     // it should be lazy, file shouldn't have opened yet.
                     debug_assert!(!blobby.started.get());
-                    self.done(global_this);
+                    self.done();
                     return Some(webcore::blob::Any::Blob(blob));
                 }
             }
@@ -226,7 +222,7 @@ impl ReadableStream {
                 // If we've received the complete body by the time this function is called
                 // we can avoid streaming it and convert it to a Blob
                 if let Some(blob) = bytes.to_any_blob() {
-                    self.done(global_this);
+                    self.done();
                     return Some(blob);
                 }
                 return None;
@@ -237,7 +233,7 @@ impl ReadableStream {
         None
     }
 
-    pub fn done(&self, global_this: &JSGlobalObject) {
+    pub fn done(&self) {
         // done is called when we are done consuming the stream
         // cancel actually mark the stream source as done
         // this will resolve any pending promises to done: true
@@ -250,14 +246,13 @@ impl ReadableStream {
             Source::Bytes(source) => unsafe { (*NewSource::from_context_ptr(source)).cancel() },
             _ => {}
         }
-        self.detach_if_possible(global_this);
     }
 
     /// Cancel the stream (an `AbortError` reason) and mark its native source done. The source's own
-    /// cancel failure is the cancel promise's (handled) rejection; `Err` is a termination met in there.
+    /// cancel failure is the cancel promise's (handled) rejection; `Err` is anything thrown synchronously.
     pub fn cancel(&self, global_this: &JSGlobalObject) -> JsResult<()> {
         let result = bun_jsc::cpp::ReadableStream__cancel(self.value, global_this);
-        self.done(global_this);
+        self.done();
         result
     }
 
@@ -272,7 +267,7 @@ impl ReadableStream {
     ) -> JsResult<()> {
         let result =
             bun_jsc::cpp::ReadableStream__cancelWithReason(self.value, global_this, reason);
-        self.done(global_this);
+        self.done();
         result
     }
 
@@ -284,7 +279,7 @@ impl ReadableStream {
     /// Like [`Self::cancel`] but pending reads reject with `reason` instead of resolving `{done: true}`.
     pub(crate) fn error(&self, global_this: &JSGlobalObject, reason: JSValue) -> JsResult<()> {
         let result = bun_jsc::cpp::ReadableStream__error(self.value, global_this, reason);
-        self.done(global_this);
+        self.done();
         result
     }
 
@@ -390,11 +385,6 @@ impl ReadableStream {
 
         NativeWireResult::NotNative
     }
-
-    /// Decrement Source ref count and detach the underlying stream if ref count is zero
-    /// be careful, this can invalidate the stream do not call this multiple times
-    /// this is meant to be called only once when we are done consuming the stream or from the ReadableStream.Strong.deinit
-    pub fn detach_if_possible(&self, _global: &JSGlobalObject) {}
 
     pub fn is_disturbed(&self, global_object: &JSGlobalObject) -> bool {
         is_disturbed_value(self.value, global_object)
@@ -502,7 +492,6 @@ impl ReadableStream {
         recommended_chunk_size: webcore::blob::SizeType,
     ) -> JsResult<JSValue> {
         let blob = Blob::init(bytes.into(), global_this);
-        // defer blob.deinit() → handled by Drop
         Self::from_blob_copy_ref(global_this, &blob, recommended_chunk_size)
     }
 
@@ -693,9 +682,6 @@ pub enum Source {
     /// but with a FileLoader
     /// we can skip the FileLoader and just use the underlying File
     File(*mut FileReader),
-    /// This is a direct readable stream
-    /// That means we can turn it into whatever we want
-    Direct,
     Bytes(*mut ByteStream),
 }
 
@@ -785,6 +771,10 @@ pub trait SourceContext: Sized {
         false
     }
 
+    /// The JS wrapper was collected while native refs remain. Runs inside a GC
+    /// sweep: no JS. `ByteStream` tells a parked producer nobody can read it now.
+    fn wrapper_finalized(&mut self) {}
+
     /// `setRefUnrefFn` — default no-op.
     fn set_ref_unref(&mut self, _enable: bool) {}
 
@@ -855,6 +845,10 @@ pub struct NewSource<C: SourceContext> {
     /// `Finalized` so [`Self::on_js_close`] reads `None` instead of a
     /// dead-but-unswept cell.
     pub this_jsvalue: jsc::JsRef,
+    /// The producer holding a native ref has parked ([`Self::unroot_wrapper`]):
+    /// its ref keeps this allocation, not the wrapper, so an unread stream can
+    /// be collected. Cleared by [`Self::root_wrapper`].
+    pub wrapper_unrooted: Cell<bool>,
     /// R-2: written by context methods (`ByteStream::to_any_blob`,
     /// `ByteBlobLoader::to_any_blob`) through their parent accessor, so
     /// interior-mutable.
@@ -873,6 +867,7 @@ impl<C: SourceContext + Default> Default for NewSource<C> {
             producer: Cell::new(streams::SourceHandle::None),
             global_this: None,
             this_jsvalue: jsc::JsRef::empty(),
+            wrapper_unrooted: Cell::new(false),
             is_closed: Cell::new(false),
         }
     }
@@ -1144,9 +1139,53 @@ impl<C: SourceContext> NewSource<C> {
         // `waiting_for_on_reader_done` I/O ref). Root the wrapper so
         // `on_js_close`, reached from `on_reader_done` off the event loop with
         // no JS frame on the stack, never reads a dead-but-unswept cell.
-        if let Some(global) = self.global_this.as_deref() {
-            if self.this_jsvalue.is_not_empty() {
-                self.this_jsvalue.upgrade(global);
+        if !self.wrapper_unrooted.get() {
+            // SAFETY: `self` is live for the call.
+            unsafe { Self::upgrade_wrapper(self) };
+        }
+    }
+
+    /// # Safety
+    /// `this` points at a live `NewSource<C>`.
+    unsafe fn upgrade_wrapper(this: *mut Self) {
+        // SAFETY: fn contract; field places only, see `unroot_wrapper`.
+        unsafe {
+            if let Some(global) = (*this).global_this.as_deref() {
+                if (*this).this_jsvalue.is_not_empty() {
+                    (*this).this_jsvalue.upgrade(global);
+                }
+            }
+        }
+    }
+
+    /// The producer keeps its native ref but stops rooting the wrapper: nothing
+    /// is reading, so the stream should be collectable. [`SourceContext::wrapper_finalized`]
+    /// tells the producer if that happens.
+    ///
+    /// Takes a raw pointer: the producer reaches this while it holds a `&C` into
+    /// `this` (the chunk it is delivering to), so only the fields written here
+    /// are touched, never a `&mut Self` that would cover the context too.
+    ///
+    /// # Safety
+    /// `this` points at a live `NewSource<C>`.
+    pub unsafe fn unroot_wrapper(this: *mut Self) {
+        // SAFETY: fn contract.
+        unsafe {
+            (*this).wrapper_unrooted.set(true);
+            (*this).this_jsvalue.downgrade();
+        }
+    }
+
+    /// Undo [`Self::unroot_wrapper`]: a consumer is reading again.
+    ///
+    /// # Safety
+    /// As [`Self::unroot_wrapper`].
+    pub unsafe fn root_wrapper(this: *mut Self) {
+        // SAFETY: fn contract.
+        unsafe {
+            (*this).wrapper_unrooted.set(false);
+            if (*this).ref_count > 1 {
+                Self::upgrade_wrapper(this);
             }
         }
     }
@@ -1444,6 +1483,13 @@ impl<C: SourceContext> NewSource<C> {
         let this = Box::into_raw(self);
         // SAFETY: `this` is live — just unwrapped from `Box`.
         unsafe { (*this).this_jsvalue.finalize() };
+        // SAFETY: `this` is live; the JS-wrapper +1 (released last) keeps ref_count > 0
+        // across whatever ref the producer drops in response.
+        unsafe {
+            if (*this).ref_count > 1 {
+                (*this).context.wrapper_finalized();
+            }
+        }
         // SAFETY: `this` is live; the JS-wrapper ref below still pins the count.
         if unsafe { (*this).context.finalize_detach() } {
             // SAFETY: `this` is live; the JS-wrapper +1 (released below) keeps ref_count > 0.

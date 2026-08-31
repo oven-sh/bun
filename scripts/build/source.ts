@@ -1675,7 +1675,7 @@ function emitDirect(
     const path = typeof s === "string" ? s : s.path;
     const extra = typeof s === "string" ? [] : s.cflags;
     const abs = resolve(srcDir, path);
-    // .asm → nasm() (NASM syntax, Windows-x64). .c/.S → cc() (clang's
+    // .asm → nasm() (NASM syntax, x64). .c/.S → cc() (clang's
     // integrated assembler handles .S), prepending `-x c++` when lang:"cxx"
     // forces a C source through the C++ frontend (mimalloc). Everything
     // else (.cc/.cpp/.cxx) → cxx().

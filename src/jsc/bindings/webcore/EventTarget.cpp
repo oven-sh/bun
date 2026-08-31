@@ -39,16 +39,8 @@
 #include "DOMWrapperWorld.h"
 #include "EventNames.h"
 #include "EventTargetConcrete.h"
-// #include "HTMLBodyElement.h"
-// #include "HTMLHtmlElement.h"
-// #include "InspectorInstrumentation.h"
 #include "JSErrorHandler.h"
 #include "JSEventListener.h"
-// #include "Logging.h"
-// #include "Quirks.h"
-// #include "ScriptController.h"
-// #include "ScriptDisallowedScope.h"
-// #include "Settings.h"
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/MainThread.h>
 #include <wtf/NeverDestroyed.h>
@@ -262,9 +254,6 @@ void EventTarget::innerInvokeEventListeners(Event& event, EventListenerVector li
     ASSERT(scriptExecutionContext());
 
     auto& context = *scriptExecutionContext();
-    // bool contextIsDocument = is<Document>(context);
-    // if (contextIsDocument)
-    //     InspectorInstrumentation::willDispatchEvent(downcast<Document>(context), event);
 
     for (auto& registeredListener : listeners) {
         if (registeredListener->wasRemoved()) [[unlikely]]

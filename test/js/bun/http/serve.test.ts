@@ -622,12 +622,17 @@ it.each([
 
 describe("streaming", () => {
   describe("error handler", () => {
-    it("throw on pull renders headers, does not call error handler", async () => {
+    // The body source fails before any byte is written. The Response's status
+    // and headers are already committed to uWS, so error() cannot replace them
+    // and is not called; the connection is closed without a complete response
+    // so the client cannot mistake the failed body for an empty one.
+    it("throw on pull closes the connection, does not call error handler", async () => {
+      let outcome: string | undefined;
       const onMessage = mock(async url => {
-        const response = await fetch(url);
-        expect(response.status).toBe(402);
-        expect(response.headers.get("X-Hey")).toBe("123");
-        expect(response.text()).resolves.toBe("");
+        outcome = await fetch(url).then(
+          response => `resolved ${response.status}`,
+          (err: any) => `rejected ${err.code}`,
+        );
         subprocess.kill();
       });
 
@@ -642,17 +647,23 @@ describe("streaming", () => {
 
       let [exitCode, stderr] = await Promise.all([subprocess.exited, subprocess.stderr.text()]);
       expect(exitCode).toBeInteger();
+      expect(outcome).toBe("rejected ECONNRESET");
       expect(stderr).toContain("error: Oops");
+      expect(stderr).not.toContain("error handler called");
       expect(onMessage).toHaveBeenCalled();
     });
 
-    it("throw on pull after writing should not call the error handler", async () => {
+    // pull() queues two chunks, requests close, then throws: per the streams
+    // spec the error wins and the queued chunks are discarded, so this is the
+    // same "failed before any byte" case as above.
+    it("throw on pull after writing closes the connection, does not call the error handler", async () => {
+      let outcome: string | undefined;
       const onMessage = mock(async href => {
         const url = new URL("write", href);
-        const response = await fetch(url);
-        expect(response.status).toBe(402);
-        expect(response.headers.get("X-Hey")).toBe("123");
-        expect(response.text()).resolves.toBe("");
+        outcome = await fetch(url).then(
+          response => `resolved ${response.status}`,
+          (err: any) => `rejected ${err.code}`,
+        );
         subprocess.kill();
       });
 
@@ -667,7 +678,9 @@ describe("streaming", () => {
 
       let [exitCode, stderr] = await Promise.all([subprocess.exited, subprocess.stderr.text()]);
       expect(exitCode).toBeInteger();
+      expect(outcome).toBe("rejected ECONNRESET");
       expect(stderr).toContain("error: Oops");
+      expect(stderr).not.toContain("error handler called");
       expect(onMessage).toHaveBeenCalled();
     });
 
@@ -2098,6 +2111,85 @@ it.concurrent("dev error page embeds the thrown error, its stack, and build/reso
 
   expect(stderr).toContain("boom <b>&</b>");
   expect(exitCode).toBe(0);
+});
+
+it.concurrent("dev error page ships a bun-error bundle that evaluates and registers the renderer", async () => {
+  using dir = tempDir("serve-dev-error-page-bundle", {
+    "server.ts": `
+      const server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        development: true,
+        fetch() {
+          throw new Error("bundle-test boom");
+        },
+      });
+      const html = await (await fetch(server.url)).text();
+      // dev-error-page.html inlines one module script: two lines that move the JSON payload out of the
+      // document, then the packages/bun-error bundle, then the call into the function the bundle registers.
+      const lines = /<script type="module">([^]*?)<\\/script>/.exec(html)[1].trim().split("\\n");
+      await Bun.write("bun-error-bundle.mjs", lines.slice(2, -1).join("\\n"));
+      console.log(JSON.stringify({ setup: lines.slice(0, 2).map(line => line.trim()), call: lines.at(-1).trim() }));
+      server.stop(true);
+      // The thrown error was reported through the unhandled-rejection path, which sets the exit code.
+      process.exit(0);
+    `,
+    "renderer-check.ts": `
+      import { dismissError, renderFallbackError } from "./bun-error-bundle.mjs";
+      const registered = globalThis[Symbol.for("Bun__renderFallbackError")];
+      console.log(JSON.stringify({
+        registered: typeof registered,
+        registeredIsTheExport: registered === renderFallbackError,
+        // Nothing is rendered, so dismissing must be a no-op; there is no document to touch here.
+        dismissWithoutOverlay: dismissError() === undefined,
+        document: typeof document,
+      }));
+    `,
+  });
+
+  await using server = Bun.spawn({
+    cmd: [bunExe(), "server.ts"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [serverStdout, serverStderr, serverExitCode] = await Promise.all([
+    server.stdout.text(),
+    server.stderr.text(),
+    server.exited,
+  ]);
+  expect(JSON.parse(serverStdout.trim().split("\n").at(-1)!)).toEqual({
+    setup: [
+      'globalThis.__BUN_DATA__ = JSON.parse(document.getElementById("__bunfallback").textContent);',
+      'document.getElementById("__bunfallback").remove();',
+    ],
+    call: 'globalThis[Symbol.for("Bun__renderFallbackError")](globalThis.__BUN_DATA__);',
+  });
+  expect(serverStderr).toContain("bundle-test boom");
+  expect(serverExitCode).toBe(0);
+
+  // The bundle must evaluate outside a browser too: its only top-level side effect is registering the renderer.
+  await using check = Bun.spawn({
+    cmd: [bunExe(), "renderer-check.ts"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [checkStdout, checkStderr, checkExitCode] = await Promise.all([
+    check.stdout.text(),
+    check.stderr.text(),
+    check.exited,
+  ]);
+  expect(checkStderr).toBe("");
+  expect(JSON.parse(checkStdout.trim())).toEqual({
+    registered: "function",
+    registeredIsTheExport: true,
+    dismissWithoutOverlay: true,
+    document: "undefined",
+  });
+  expect(checkExitCode).toBe(0);
 });
 
 it("should support multiple Set-Cookie headers", async () => {

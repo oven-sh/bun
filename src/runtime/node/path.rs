@@ -1,49 +1,30 @@
 use crate::jsc::rare_data::PathBuf as RarePathBuf;
 use crate::jsc::{
-    JSGlobalObject, JSValue, JsResult, SysErrorJsc as _, bun_string_jsc as BunString,
+    JSGlobalObject, JSStringView, JSValue, JsResult, StringJsc as _, SysErrorJsc as _,
+    bun_string_jsc,
 };
 use crate::node::validators::{validate_object, validate_string};
 use bun_collections::smallvec::SmallVec;
-use bun_core::{ZigString, ZigStringSlice, strings};
+use bun_core::{Utf8Bytes, strings};
 use bun_paths::{self, MAX_PATH_BYTES, Platform};
 use bun_sys;
 
 /// Create a JS string from a `[T]` slice (T = u8 | u16).
 ///
-/// In practice every JS entry point converts to UTF-8 first (via
-/// `ZigString.toSlice`) and instantiates with
-/// `T = u8`, so the `u16` arm is never reached at runtime — but it must still
+/// In practice every JS entry point converts to a UTF-8 slice first and
+/// instantiates with `T = u8`, so the `u16` arm is never reached at runtime — but it must still
 /// type-check. Dispatch on `T::IS_U16` and route the cold u16 arm through
 /// a UTF-16 `BunString` clone + `to_js` so the generic body unifies.
 #[inline]
 fn create_js_string_t<T: PathCharCwd>(global: &JSGlobalObject, s: &[T]) -> JsResult<JSValue> {
-    use crate::jsc::{StringJsc as _, bun_string_jsc};
     if T::IS_U16 {
         // T == u16 when IS_U16; bytemuck statically checks the layout.
         let s16: &[u16] = bytemuck::cast_slice::<T, u16>(s);
-        let bs = bun_core::String::clone_utf16(s16);
-        let r = bs.to_js(global);
-        bs.deref();
-        r
+        bun_core::String::clone_utf16(s16).into_js(global)
     } else {
         // T == u8 when !IS_U16; bytemuck statically checks the layout.
         let s8: &[u8] = bytemuck::cast_slice::<T, u8>(s);
         bun_string_jsc::create_utf8_for_js(global, s8)
-    }
-}
-
-// ── Local extension shims for upstream types missing methods (cannot edit upstream crates).
-
-/// `ZigString.trunc(n)` — clamp `len` to `n`.
-trait ZigStringTruncExt {
-    fn trunc(&self, len: usize) -> ZigString;
-}
-impl ZigStringTruncExt for ZigString {
-    #[inline]
-    fn trunc(&self, len: usize) -> ZigString {
-        let mut out = *self;
-        out.len = out.len.min(len);
-        out
     }
 }
 
@@ -586,25 +567,26 @@ pub(crate) fn basename(
     };
     validate_string(global_object, path_ptr, format_args!("path"))?;
 
-    let path_zstr = path_ptr.get_zig_string(global_object)?;
-    if path_zstr.len == 0 {
+    let path_str = path_ptr.to_js_string_view(global_object)?;
+    if path_str.is_empty() {
         return Ok(path_ptr);
     }
 
-    let path_zslice = path_zstr.to_slice();
+    let path_slice = path_str.to_utf8();
 
-    let mut suffix_zslice: Option<bun_core::ZigStringSlice> = None;
-    if let Some(_suffix_ptr) = suffix_ptr {
-        let suffix_zstr = _suffix_ptr.get_zig_string(global_object)?;
-        if suffix_zstr.len > 0 && suffix_zstr.len <= path_zstr.len {
-            suffix_zslice = Some(suffix_zstr.to_slice());
-        }
-    }
+    let suffix_str = match suffix_ptr {
+        Some(suffix_ptr) => Some(suffix_ptr.to_js_string_view(global_object)?),
+        None => None,
+    };
+    let suffix_slice = suffix_str
+        .as_ref()
+        .filter(|s| !s.is_empty() && s.length() <= path_str.length())
+        .map(|s| s.to_utf8());
     basename_js_t::<u8>(
         global_object,
         is_windows,
-        path_zslice.slice(),
-        suffix_zslice.as_ref().map(|s| s.slice()),
+        path_slice.slice(),
+        suffix_slice.as_ref().map(|s| s.slice()),
     )
 }
 
@@ -801,13 +783,13 @@ fn dirname(
     };
     validate_string(global_object, path_ptr, format_args!("path"))?;
 
-    let path_zstr = path_ptr.get_zig_string(global_object)?;
-    if path_zstr.len == 0 {
-        return BunString::create_utf8_for_js(global_object, CHAR_STR_DOT);
+    let path_str = path_ptr.to_js_string_view(global_object)?;
+    if path_str.is_empty() {
+        return bun_core::String::static_(CHAR_STR_DOT).to_js(global_object);
     }
 
-    let path_zslice = path_zstr.to_slice();
-    dirname_js_t::<u8>(global_object, is_windows, path_zslice.slice())
+    let path_slice = path_str.to_utf8();
+    dirname_js_t::<u8>(global_object, is_windows, path_slice.slice())
 }
 
 /// Based on Node v21.6.1 path.posix.extname:
@@ -1044,13 +1026,13 @@ fn extname(
     };
     validate_string(global_object, path_ptr, format_args!("path"))?;
 
-    let path_zstr = path_ptr.get_zig_string(global_object)?;
-    if path_zstr.len == 0 {
+    let path_str = path_ptr.to_js_string_view(global_object)?;
+    if path_str.is_empty() {
         return Ok(path_ptr);
     }
 
-    let path_zslice = path_zstr.to_slice();
-    extname_js_t::<u8>(global_object, is_windows, path_zslice.slice())
+    let path_slice = path_str.to_utf8();
+    extname_js_t::<u8>(global_object, is_windows, path_slice.slice())
 }
 
 /// Based on Node v21.6.1 private helper _format:
@@ -1217,7 +1199,7 @@ fn format(global_object: &JSGlobalObject, is_windows: bool, args: &[JSValue]) ->
 
     let mut root: &[u8] = b"";
     let root_slice = if let Some(js_value) = path_object_ptr.get_truthy(global_object, "root")? {
-        Some(js_value.to_slice(global_object)?)
+        Some(js_value.to_utf8(global_object)?)
     } else {
         None
     };
@@ -1227,7 +1209,7 @@ fn format(global_object: &JSGlobalObject, is_windows: bool, args: &[JSValue]) ->
 
     let mut dir: &[u8] = b"";
     let dir_slice = if let Some(js_value) = path_object_ptr.get_truthy(global_object, "dir")? {
-        Some(js_value.to_slice(global_object)?)
+        Some(js_value.to_utf8(global_object)?)
     } else {
         None
     };
@@ -1237,7 +1219,7 @@ fn format(global_object: &JSGlobalObject, is_windows: bool, args: &[JSValue]) ->
 
     let mut base: &[u8] = b"";
     let base_slice = if let Some(js_value) = path_object_ptr.get_truthy(global_object, "base")? {
-        Some(js_value.to_slice(global_object)?)
+        Some(js_value.to_utf8(global_object)?)
     } else {
         None
     };
@@ -1247,7 +1229,7 @@ fn format(global_object: &JSGlobalObject, is_windows: bool, args: &[JSValue]) ->
 
     let mut _name: &[u8] = b"";
     let _name_slice = if let Some(js_value) = path_object_ptr.get_truthy(global_object, "name")? {
-        Some(js_value.to_slice(global_object)?)
+        Some(js_value.to_utf8(global_object)?)
     } else {
         None
     };
@@ -1257,7 +1239,7 @@ fn format(global_object: &JSGlobalObject, is_windows: bool, args: &[JSValue]) ->
 
     let mut ext: &[u8] = b"";
     let ext_slice = if let Some(js_value) = path_object_ptr.get_truthy(global_object, "ext")? {
-        Some(js_value.to_slice(global_object)?)
+        Some(js_value.to_utf8(global_object)?)
     } else {
         None
     };
@@ -1280,20 +1262,20 @@ fn format(global_object: &JSGlobalObject, is_windows: bool, args: &[JSValue]) ->
     )
 }
 
-fn is_absolute_posix_zig_string(path_zstr: &ZigString) -> bool {
-    let path_zstr_trunc = path_zstr.trunc(1);
-    if path_zstr_trunc.len > 0 && path_zstr_trunc.is_16bit() {
-        is_absolute_posix_t::<u16>(path_zstr_trunc.utf16_slice_aligned())
+fn is_absolute_posix_string(path: &bun_core::String) -> bool {
+    let path_trunc = path.trunc(1);
+    if path_trunc.is_utf16() {
+        is_absolute_posix_t::<u16>(path_trunc.utf16())
     } else {
-        is_absolute_posix_t::<u8>(path_zstr_trunc.slice())
+        is_absolute_posix_t::<u8>(path_trunc.latin1())
     }
 }
 
-fn is_absolute_windows_zig_string(path_zstr: &ZigString) -> bool {
-    if path_zstr.len > 0 && path_zstr.is_16bit() {
-        is_absolute_windows_t::<u16>(path_zstr.utf16_slice_aligned())
+fn is_absolute_windows_string(path: &bun_core::String) -> bool {
+    if path.is_utf16() {
+        is_absolute_windows_t::<u16>(path.utf16())
     } else {
-        is_absolute_windows_t::<u8>(path_zstr.slice())
+        is_absolute_windows_t::<u8>(path.latin1())
     }
 }
 
@@ -1310,14 +1292,14 @@ fn is_absolute(
     };
     validate_string(global_object, path_ptr, format_args!("path"))?;
 
-    let path_zstr = path_ptr.get_zig_string(global_object)?;
-    if path_zstr.len == 0 {
+    let path_str = path_ptr.to_js_string_view(global_object)?;
+    if path_str.is_empty() {
         return Ok(JSValue::FALSE);
     }
     if is_windows {
-        return Ok(JSValue::from(is_absolute_windows_zig_string(&path_zstr)));
+        return Ok(JSValue::from(is_absolute_windows_string(&path_str)));
     }
-    Ok(JSValue::from(is_absolute_posix_zig_string(&path_zstr)))
+    Ok(JSValue::from(is_absolute_posix_string(&path_str)))
 }
 
 /// Based on Node v21.6.1 path.posix.join:
@@ -1368,33 +1350,23 @@ fn join_posix_t<'a, T: PathCharCwd>(
 }
 
 /// # Safety
-/// `lhs` and `result` must be valid, aligned `BunString*` pointers and
 /// `rhs_ptr[..rhs_len]` must be a valid readable slice. Called only from C++.
 #[unsafe(no_mangle)]
 unsafe extern "C" fn Bun__Node__Path_joinWTF(
-    lhs: *mut bun_core::String,
+    lhs: &bun_core::String,
     rhs_ptr: *const u8,
     rhs_len: usize,
-    result: *mut bun_core::String,
-) {
-    // SAFETY: caller passes valid pointers from C++.
+) -> bun_core::String {
+    // SAFETY: caller passes a valid slice from C++.
     let rhs = unsafe { bun_core::ffi::slice(rhs_ptr, rhs_len) };
     let mut buf = [0u8; path_size::<u8>()];
     let mut buf2 = [0u8; path_size::<u8>()];
-    // SAFETY: lhs is a valid BunString pointer.
-    let slice = unsafe { &*lhs }.to_utf8();
+    let lhs = lhs.to_utf8();
     #[cfg(windows)]
-    {
-        let win = join_windows_t::<u8>(&[slice.slice(), rhs], &mut buf, &mut buf2);
-        // SAFETY: result is a valid out-pointer.
-        unsafe { *result = bun_core::String::clone_utf8(win) };
-    }
+    let joined = join_windows_t::<u8>(&[lhs.slice(), rhs], &mut buf, &mut buf2);
     #[cfg(not(windows))]
-    {
-        let posix = join_posix_t::<u8>(&[slice.slice(), rhs], &mut buf, &mut buf2);
-        // SAFETY: result is a valid out-pointer.
-        unsafe { *result = bun_core::String::clone_utf8(posix) };
-    }
+    let joined = join_posix_t::<u8>(&[lhs.slice(), rhs], &mut buf, &mut buf2);
+    bun_core::String::clone_utf8(joined)
 }
 
 /// Based on Node v21.6.1 path.win32.join:
@@ -1552,14 +1524,12 @@ pub(crate) fn join(
 ) -> JsResult<JSValue> {
     let args_len = args.len();
     if args_len == 0 {
-        return BunString::create_utf8_for_js(global_object, CHAR_STR_DOT);
+        return bun_core::String::static_(CHAR_STR_DOT).to_js(global_object);
     }
 
-    // The `ZigStringSlice` RAII guards live inline in `owned` so every
-    // per-arg `toSlice()` is released at scope exit.
-    // ASCII-only inputs (the common case) borrow the WTF backing without
+    // ASCII-only inputs (the common case) borrow the JSString backing without
     // allocating; only non-ASCII triggers a transcode allocation.
-    let mut owned: SmallVec<[ZigStringSlice; 8]> = SmallVec::with_capacity(args_len);
+    let mut views: SmallVec<[JSStringView<'_>; 8]> = SmallVec::with_capacity(args_len);
 
     for (i, &path_ptr) in args.iter().enumerate() {
         // Inline the `is_string` fast path; only build `format_args!("paths[{i}]")`
@@ -1573,17 +1543,14 @@ pub(crate) fn join(
             }
             return Err(not_a_string(global_object, path_ptr, i));
         }
-        let path_zstr = path_ptr.get_zig_string(global_object)?;
-        if path_zstr.len == 0 {
+        let path_str = path_ptr.to_js_string_view(global_object)?;
+        if path_str.is_empty() {
             continue;
         }
-        owned.push(path_zstr.to_slice());
+        views.push(path_str);
     }
-    // Derive the `&[u8]` views in a second pass once `owned` is fully built —
-    // borrowck then sees `paths` as a plain reborrow of `owned` with no
-    // intervening mutation, so no raw-pointer detach is needed. Empty entries
-    // are skipped both here and inside `join_*_t`.
-    let paths: SmallVec<[&[u8]; 8]> = owned.iter().map(ZigStringSlice::slice).collect();
+    let owned: SmallVec<[Utf8Bytes<'_>; 8]> = views.iter().map(JSStringView::to_utf8).collect();
+    let paths: SmallVec<[&[u8]; 8]> = owned.iter().map(Utf8Bytes::slice).collect();
     let pool = &mut global_object.bun_vm().as_mut().rare_data().path_buf;
     join_js_t::<u8>(global_object, pool, is_windows, &paths)
 }
@@ -2011,15 +1978,14 @@ fn normalize(
         JSValue::UNDEFINED
     };
     validate_string(global_object, path_ptr, format_args!("path"))?;
-    let path_zstr = path_ptr.get_zig_string(global_object)?;
-    let len = path_zstr.len;
-    if len == 0 {
-        return BunString::create_utf8_for_js(global_object, CHAR_STR_DOT);
+    let path_str = path_ptr.to_js_string_view(global_object)?;
+    if path_str.is_empty() {
+        return bun_core::String::static_(CHAR_STR_DOT).to_js(global_object);
     }
 
-    let path_zslice = path_zstr.to_slice();
+    let path_slice = path_str.to_utf8();
     let pool = &mut global_object.bun_vm().as_mut().rare_data().path_buf;
-    normalize_js_t::<u8>(global_object, pool, is_windows, path_zslice.slice())
+    normalize_js_t::<u8>(global_object, pool, is_windows, path_slice.slice())
 }
 
 // Based on Node v21.6.1 path.posix.parse
@@ -2381,13 +2347,13 @@ pub(crate) fn parse(
     };
     crate::node::validators_impl::validate_string(global_object, path_ptr, format_args!("path"))?;
 
-    let path_zstr = path_ptr.get_zig_string(global_object)?;
-    if path_zstr.len == 0 {
+    let path_str = path_ptr.to_js_string_view(global_object)?;
+    if path_str.is_empty() {
         return PathParsed::<u8>::default().to_js_object(global_object);
     }
 
-    let path_zslice = path_zstr.to_slice();
-    parse_js_t::<u8>(global_object, is_windows, path_zslice.slice())
+    let path_slice = path_str.to_utf8();
+    parse_js_t::<u8>(global_object, is_windows, path_slice.slice())
 }
 
 /// Based on Node v21.6.1 path.posix.relative:
@@ -2798,21 +2764,21 @@ fn relative(
     };
     crate::node::validators_impl::validate_string(global_object, to_ptr, format_args!("to"))?;
 
-    let from_zig_str = from_ptr.get_zig_string(global_object)?;
-    let to_zig_str = to_ptr.get_zig_string(global_object)?;
-    if (from_zig_str.len + to_zig_str.len) == 0 {
+    let from_str = from_ptr.to_js_string_view(global_object)?;
+    let to_str = to_ptr.to_js_string_view(global_object)?;
+    if from_str.is_empty() && to_str.is_empty() {
         return Ok(from_ptr);
     }
 
-    let from_zig_slice = from_zig_str.to_slice();
-    let to_zig_slice = to_zig_str.to_slice();
+    let from_slice = from_str.to_utf8();
+    let to_slice_ = to_str.to_utf8();
     let pool = &mut global_object.bun_vm().as_mut().rare_data().path_buf;
     relative_js_t::<u8>(
         global_object,
         pool,
         is_windows,
-        from_zig_slice.slice(),
-        to_zig_slice.slice(),
+        from_slice.slice(),
+        to_slice_.slice(),
     )
 }
 
@@ -3412,12 +3378,11 @@ fn resolve(
     // Lazily-allocated RareData buffer replaces the old stack_fallback_size_large
     // on the stack; `PathScratch` spills to the heap for very long paths.
 
-    // Borrow each argument's WTF backing as a `ZigStringSlice` (no per-arg
-    // `to_owned_slice()` heap copy — ASCII inputs borrow in place, only
-    // non-ASCII transcodes). Inline-8 keeps the typical call alloc-free.
-    // Walk back-to-front to early-out on the first absolute
+    // Borrow each argument's JSString backing as `Utf8Bytes` (ASCII inputs
+    // borrow in place, only non-ASCII transcodes). Inline-8 keeps the typical
+    // call alloc-free. Walk back-to-front to early-out on the first absolute
     // POSIX path; reverse the borrowed views before handing to `resolve_*_t`.
-    let mut owned: SmallVec<[ZigStringSlice; 8]> = SmallVec::new();
+    let mut views: SmallVec<[JSStringView<'_>; 8]> = SmallVec::new();
     let mut resolved_root = false;
 
     let mut i = args_len;
@@ -3430,26 +3395,19 @@ fn resolve(
 
         let path = args[i as usize];
         validate_string(global_object, path, format_args!("paths[{}]", i))?;
-        let path_zstr = path.get_zig_string(global_object)?;
-
-        if path_zstr.len == 0 {
+        let path_str = path.to_js_string_view(global_object)?;
+        if path_str.is_empty() {
             continue;
         }
 
-        owned.push(path_zstr.to_slice());
-
-        if !is_windows {
-            // `'/'` is ASCII, so byte-level check on the UTF-8 view matches `charAt(0)`.
-            if owned.last().unwrap().slice().first() == Some(&CHAR_FORWARD_SLASH) {
-                resolved_root = true;
-            }
+        if !is_windows && path_str.char_at(0) == u16::from(CHAR_FORWARD_SLASH) {
+            resolved_root = true;
         }
+        views.push(path_str);
     }
 
-    let mut paths: SmallVec<[&[u8]; 8]> = SmallVec::with_capacity(owned.len());
-    for s in owned.iter().rev() {
-        paths.push(s.slice());
-    }
+    let owned: SmallVec<[Utf8Bytes<'_>; 8]> = views.iter().map(JSStringView::to_utf8).collect();
+    let paths: SmallVec<[&[u8]; 8]> = owned.iter().rev().map(Utf8Bytes::slice).collect();
 
     #[cfg(unix)]
     {
@@ -3457,7 +3415,10 @@ fn resolve(
             // Micro-optimization #1: avoid creating a new string when passing no arguments or only empty strings.
             // Micro-optimization #2: path.resolve(".") and path.resolve("./") === process.cwd()
             if paths.is_empty() || (paths.len() == 1 && (paths[0] == b"." || paths[0] == b"./")) {
-                return Ok(Process__getCachedCwd(global_object));
+                // Throws when `getcwd` fails (for example, a deleted cwd).
+                return crate::jsc::call_zero_is_throw(global_object, || {
+                    Process__getCachedCwd(global_object)
+                });
             }
         }
     }
@@ -3587,15 +3548,14 @@ fn to_namespaced_path(
     if !is_windows || !path_ptr.is_string() {
         return Ok(path_ptr);
     }
-    let path_zstr = path_ptr.get_zig_string(global_object)?;
-    let len = path_zstr.len;
-    if len == 0 {
+    let path_str = path_ptr.to_js_string_view(global_object)?;
+    if path_str.is_empty() {
         return Ok(path_ptr);
     }
 
-    let path_zslice = path_zstr.to_slice();
+    let path_slice = path_str.to_utf8();
     let pool = &mut global_object.bun_vm().as_mut().rare_data().path_buf;
-    to_namespaced_path_js_t::<u8>(global_object, pool, is_windows, path_zslice.slice())
+    to_namespaced_path_js_t::<u8>(global_object, pool, is_windows, path_slice.slice())
 }
 
 // Emit the SYSV-ABI thunks locally.

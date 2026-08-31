@@ -21,8 +21,8 @@ use crate::renamer;
 use crate::{
     ARGUMENTS_STR as arguments_str, DeferredArrowArgErrors, DeferredErrors,
     DeferredImportNamespace, EXPORTS_STRING_NAME as exports_string_name, ExprBindingTuple,
-    FindLabelSymbolResult, FnOnlyDataVisit, FnOrArrowDataParse, FnOrArrowDataVisit, FunctionKind,
-    IdentifierOpts, ImportItemForNamespaceMap, InvalidLoc, JSXImport, JSXTransformType, Jest,
+    FindLabelSymbolResult, FnOnlyDataVisit, FnOrArrowDataParse, FnOrArrowDataVisit, IdentifierOpts,
+    ImportItemForNamespaceMap, InvalidLoc, JSXImport, JSXTransformType, Jest,
     LOC_MODULE_SCOPE as loc_module_scope, LocList, MacroState, ParseStatementOptions, ParsedPath,
     PrependTempRefsOpts, ReactRefresh, Ref, RefMap, RefRefMap, RuntimeImports, ScopeOrder,
     ScopeOrderList, StrictModeFeature, StringBoolMap, Substitution, TempRef, ThenCatchChain,
@@ -118,6 +118,13 @@ impl<'a> ImportRecordList<'a> {
             Self::Borrowed(v) => v.len(),
         }
     }
+    #[inline]
+    fn truncate(&mut self, len: usize) {
+        match self {
+            Self::Owned(v) => v.truncate(len),
+            Self::Borrowed(v) => v.truncate(len),
+        }
+    }
 
     /// Transfer the
     /// backing storage into a `Vec<ImportRecord>` and leave `self` empty
@@ -155,6 +162,34 @@ impl<'a> core::ops::DerefMut for NamedImportsType<'a> {
             Self::Borrowed(v) => *v,
         }
     }
+}
+
+/// See [`P::parser_snapshot`].
+pub(crate) struct ParserSnapshot<'a> {
+    lexer: js_lexer::LexerSnapshot<'a>,
+    comments_to_preserve_before: Vec<js_ast::G::Comment>,
+    log_msgs_len: usize,
+    log_errors: u32,
+    log_warnings: u32,
+    allow_in: bool,
+    allow_private_identifiers: bool,
+    has_classic_runtime_warned: bool,
+    has_non_local_export_declare_inside_namespace: bool,
+    should_fold_typescript_constant_expressions: bool,
+    fn_or_arrow_data_parse: FnOrArrowDataParse,
+    latest_arrow_arg_loc: bun_ast::Loc,
+    forbid_suffix_after_as_loc: bun_ast::Loc,
+    after_arrow_body_loc: bun_ast::Loc,
+    esm_import_keyword: bun_ast::Range,
+    esm_export_keyword: bun_ast::Range,
+    enclosing_class_keyword: bun_ast::Range,
+    current_scope: js_ast::StoreRef<Scope>,
+    current_scope_children_len: usize,
+    scopes_in_order_len: usize,
+    scopes_in_order_for_enum_len: usize,
+    symbols_len: usize,
+    allocated_names_len: usize,
+    import_records_len: usize,
 }
 
 pub(crate) type NeedsJSXType = bool;
@@ -222,7 +257,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) top_level_await_keyword: bun_ast::Range,
     pub(crate) fn_or_arrow_data_parse: FnOrArrowDataParse,
     pub(crate) fn_or_arrow_data_visit: FnOrArrowDataVisit,
-    pub(crate) fn_only_data_visit: FnOnlyDataVisit<'a>,
+    pub(crate) fn_only_data_visit: FnOnlyDataVisit,
     pub(crate) allocated_names: List<'a, &'a [u8]>,
     // allocated_names: ListManaged(string) = ListManaged(string).init(bun.default_allocator),
     // allocated_names_pool: ?*AllocatedNamesPool.Node = null,
@@ -308,6 +343,16 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// (found by fuzzing). Kept sorted for binary search; stays empty (no allocation)
     /// until a constraint attempt actually backtracks, which is rare in real code.
     pub(crate) ts_infer_constraint_backtracks: Vec<u32>,
+
+    /// Outcomes of `is_type_script_arrow_return_type_after_question_and_before_colon`,
+    /// keyed by the byte offset of the `:` shifted left by one, with the low bit set
+    /// when the attempt parsed an arrow function. The outcome depends only on the
+    /// source from that offset on, so the real parse that follows a discarded
+    /// attempt can reuse it. Without this memo every nested
+    /// `a ? (b) : c => <body> : e` inside the body is parsed once by the attempt and
+    /// once for real, which is exponential in the nesting depth. Kept sorted for
+    /// binary search.
+    pub(crate) ts_conditional_arrow_attempts: Vec<u32>,
 
     /// When this flag is enabled, we attempt to fold all expressions that
     /// TypeScript would consider to be "constant expressions". This flag is
@@ -1356,7 +1401,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     /// Bump-allocate a binding payload and wrap it in `Binding`.
     ///
-    /// If a caller needs to wrap an already-stored payload, call `Binding::init` directly.
+    /// If a caller needs to wrap an already-stored payload, construct
+    /// `Binding { loc, data }` directly.
     #[inline]
     pub(crate) fn b<T>(&mut self, t: T, loc: bun_ast::Loc) -> Binding
     where
@@ -1460,6 +1506,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // tracked separately in a parser-only data structure.
         if TYPESCRIPT {
             self.ts_use_counts[ref_.inner_index() as usize] += 1;
+        }
+    }
+
+    /// Marks the root of the link chain, the symbol `symbol::Map::follow`
+    /// returns. A block `var n` hoisted onto a parameter `n` is a linked ref
+    /// of the same variable.
+    pub(crate) fn record_assignment(&mut self, ref_: Ref) {
+        let mut ref_ = ref_;
+        loop {
+            let symbol = &mut self.symbols[ref_.inner_index() as usize];
+            if !symbol.has_link() {
+                symbol.set_has_been_assigned_to(true);
+                return;
+            }
+            ref_ = symbol.link.get();
         }
     }
 
@@ -2656,23 +2717,33 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if let Some(factory) = self.lexer.jsx_pragma.jsx() {
             // `Span.text` is a `StoreStr` into lexer-owned source; valid for 'a.
             let text = factory.text.slice();
-            self.options.jsx.factory =
-                options::JSX::Pragma::member_list_to_components_if_different(
-                    core::mem::take(&mut self.options.jsx.factory),
-                    text,
-                )
-                .expect("unreachable");
+            match options::JSX::Pragma::member_list_to_components_if_different(
+                &self.options.jsx.factory,
+                text,
+            ) {
+                Some(members) => self.options.jsx.factory = members,
+                None => self.log().add_range_warning_fmt(
+                    Some(self.source),
+                    factory.range,
+                    format_args!("Invalid JSX factory: \"{}\"", bstr::BStr::new(text)),
+                ),
+            }
         }
 
         if let Some(fragment) = self.lexer.jsx_pragma.jsx_frag() {
             // SAFETY: Span.text is `ArenaStr` valid for 'a.
             let text = fragment.text.slice();
-            self.options.jsx.fragment =
-                options::JSX::Pragma::member_list_to_components_if_different(
-                    core::mem::take(&mut self.options.jsx.fragment),
-                    text,
-                )
-                .expect("unreachable");
+            match options::JSX::Pragma::member_list_to_components_if_different(
+                &self.options.jsx.fragment,
+                text,
+            ) {
+                Some(members) => self.options.jsx.fragment = members,
+                None => self.log().add_range_warning_fmt(
+                    Some(self.source),
+                    fragment.range,
+                    format_args!("Invalid JSX fragment: \"{}\"", bstr::BStr::new(text)),
+                ),
+            }
         }
 
         if let Some(import_source) = self.lexer.jsx_pragma.jsx_import_source() {
@@ -4210,11 +4281,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         r: bun_ast::Range,
         detail: &[u8],
     ) -> Result<(), crate::Error> {
-        let can_be_transformed = feature == StrictModeFeature::ForInVarInit;
         let text: &'a [u8] = match feature {
-            StrictModeFeature::WithStatement => b"With statements",
-            StrictModeFeature::DeleteBareName => b"\"delete\" of a bare identifier",
-            StrictModeFeature::ForInVarInit => b"Variable initializers within for-in loops",
             StrictModeFeature::EvalOrArguments => bun_alloc::arena_format!(
                 in self.arena,
                 "Declarations with the name \"{}\"",
@@ -4229,9 +4296,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             )
             .into_bump_str()
             .as_bytes(),
-            StrictModeFeature::LegacyOctalLiteral => b"Legacy octal literals",
-            StrictModeFeature::LegacyOctalEscape => b"Legacy octal escape sequences",
-            StrictModeFeature::IfElseFunctionStmt => b"Function declarations inside if statements",
         };
 
         let scope = self.current_scope();
@@ -4272,7 +4336,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 notes,
                 format_args!("{} cannot be used in strict mode", bstr::BStr::new(text)),
             );
-        } else if !can_be_transformed && self.is_strict_mode_output_format() {
+        } else if self.is_strict_mode_output_format() {
             self.log().add_range_error_fmt(
                 Some(self.source),
                 r,
@@ -4519,7 +4583,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(ref_)
     }
 
-    pub(crate) fn validate_function_name(&mut self, func: &G::Fn, kind: FunctionKind) {
+    pub(crate) fn validate_function_name(&mut self, func: &G::Fn) {
         if let Some(name) = &func.name {
             // SAFETY: Symbol.original_name is an arena/source-contents slice valid for 'a.
             let original_name: &[u8] = self.symbols[name.ref_.inner_index() as usize]
@@ -4532,9 +4596,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     js_lexer::range_of_identifier(self.source, name.loc),
                     b"An async function cannot be named \"await\"",
                 );
-            } else if kind == FunctionKind::Expr
-                && func.flags.contains(Flags::Function::IsGenerator)
-                && original_name == b"yield"
+            } else if func.flags.contains(Flags::Function::IsGenerator) && original_name == b"yield"
             {
                 self.log().add_range_error(
                     Some(self.source),
@@ -5136,27 +5198,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     pub(crate) fn value_for_this(&mut self, loc: bun_ast::Loc) -> Option<Expr> {
-        // Substitute "this" if we're inside a static class property initializer
-        if self
-            .fn_only_data_visit
-            .should_replace_this_with_class_name_ref
-        {
-            // class_name_ref is `Option<&'a Cell<Ref>>` (arena slot owned by the enclosing
-            // `visit_class` frame); copy the Ref out so the field borrow is released before
-            // record_usage/new_expr.
-            if let Some(r) = self.fn_only_data_visit.class_name_ref.map(|c| c.get()) {
-                self.record_usage(r);
-                return Some(self.new_expr(
-                    E::Identifier {
-                        ref_: r,
-                        ..Default::default()
-                    },
-                    loc,
-                ));
-            }
-        }
-
-        // oroigianlly was !=- modepassthrough
         if !self.fn_only_data_visit.is_this_nested {
             // In the REPL, top-level `this` must evaluate to the global object
             // (matching Node's `> this` and `deno repl > this`). The REPL wraps
@@ -5307,14 +5348,29 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 continue;
             }
 
-            // ToPropertyKey on a computed key can run user code unless it's a primitive literal.
-            if property.flags.contains(Flags::Property::IsComputed)
-                && !property
-                    .key
-                    .map(|key| key.unwrap_inlined().is_primitive_literal())
-                    .unwrap_or(false)
-            {
-                return false;
+            // ToPropertyKey on a computed key can run user code (a custom
+            // "toString"), so a non-primitive literal key keeps the class.
+            // A side-effect-free reference (`[TypeId]`, `[Ns.TypeId]`) is
+            // accepted anyway: such keys are almost always string or symbol
+            // constants, and rejecting them blocks tree-shaking of entire
+            // libraries that brand classes with type-id fields (#40114).
+            if property.flags.contains(Flags::Property::IsComputed) {
+                let Some(key) = property.key else {
+                    return false;
+                };
+                let key = key.unwrap_inlined();
+                let is_reference = matches!(
+                    key.data,
+                    js_ast::ExprData::EIdentifier(_)
+                        | js_ast::ExprData::EImportIdentifier(_)
+                        | js_ast::ExprData::ECommonjsExportIdentifier(_)
+                        | js_ast::ExprData::EDot(_)
+                );
+                if !key.is_primitive_literal()
+                    && !(is_reference && self.expr_can_be_removed_if_unused_without_dce_check(&key))
+                {
+                    return false;
+                }
             }
 
             // Non-static values/initializers only run on construction or access, never for an unused class.
@@ -6318,14 +6374,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 }
 
-// `bun_paths::fs::Path` lacks a package-name method
-// (it lives on the resolver `Path`, which `bun_js_parser` cannot depend on), so
-// the slice logic is inlined here. Mirrors `src/resolver/fs.rs::Path::packageName`.
+/// The unscoped npm package of a specifier (`react/x`) or path (`node_modules<sep>react<sep>x.js`).
 fn path_package_name<'a>(path: &fs::Path<'a>) -> Option<&'a [u8]> {
-    let mut name_to_use = path.pretty;
-    if let Some(node_modules) = strings::last_index_of(path.text, bun_paths::NODE_MODULES_NEEDLE) {
-        name_to_use = &path.text[node_modules + bun_paths::NODE_MODULES_NEEDLE.len()..];
-    }
+    let (name_to_use, separators): (&[u8], &[u8]) =
+        match strings::last_index_of(path.text, bun_paths::NODE_MODULES_NEEDLE) {
+            Some(node_modules) => (
+                &path.text[node_modules + bun_paths::NODE_MODULES_NEEDLE.len()..],
+                if cfg!(windows) { b"/\\" } else { b"/" },
+            ),
+            None => (path.pretty, b"/"),
+        };
 
     let pkgname = {
         let str = name_to_use;
@@ -6334,17 +6392,15 @@ fn path_package_name<'a>(path: &fs::Path<'a>) -> Option<&'a [u8]> {
                 break 'brk str;
             }
             if str[0] == b'@' {
-                if let Some(first_slash) = strings::index_of_char(&str[1..], b'/') {
-                    let first_slash = first_slash as usize;
+                if let Some(first_slash) = strings::index_of_any(&str[1..], separators) {
                     let remainder = &str[1 + first_slash + 1..];
-                    if let Some(last_slash) = strings::index_of_char(remainder, b'/') {
-                        let last_slash = last_slash as usize;
+                    if let Some(last_slash) = strings::index_of_any(remainder, separators) {
                         break 'brk &str[0..first_slash + 1 + last_slash + 1];
                     }
                 }
             }
-            if let Some(first_slash) = strings::index_of_char(str, b'/') {
-                break 'brk &str[0..first_slash as usize];
+            if let Some(first_slash) = strings::index_of_any(str, separators) {
+                break 'brk &str[0..first_slash];
             }
             str
         }
@@ -7315,6 +7371,106 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
+    /// Everything the parse pass mutates, so that a speculative parse of an
+    /// expression can be undone with [`Self::restore_parser_snapshot`]. The
+    /// lexer-only backtracking in `parse_skip_typescript.rs` only covers
+    /// types: an expression also declares symbols, pushes scopes, records
+    /// dynamic imports and logs through `P::log()`, which ignores
+    /// `lexer.is_log_disabled`. Lists are captured as lengths and truncated
+    /// on restore; the attempt's arena allocations just become unreachable.
+    /// The legal comments waiting for the next statement are moved out
+    /// instead: a block body or `import()` drains them, so a length cannot
+    /// restore them.
+    pub(crate) fn parser_snapshot(&mut self) -> ParserSnapshot<'a> {
+        let comments_to_preserve_before =
+            core::mem::take(&mut self.lexer.comments_to_preserve_before);
+        let log = self.log();
+        ParserSnapshot {
+            lexer: self.lexer.snapshot(),
+            comments_to_preserve_before,
+            log_msgs_len: log.msgs.len(),
+            log_errors: log.errors,
+            log_warnings: log.warnings,
+            allow_in: self.allow_in,
+            allow_private_identifiers: self.allow_private_identifiers,
+            has_classic_runtime_warned: self.has_classic_runtime_warned,
+            has_non_local_export_declare_inside_namespace: self
+                .has_non_local_export_declare_inside_namespace,
+            should_fold_typescript_constant_expressions: self
+                .should_fold_typescript_constant_expressions,
+            fn_or_arrow_data_parse: self.fn_or_arrow_data_parse.clone(),
+            latest_arrow_arg_loc: self.latest_arrow_arg_loc,
+            forbid_suffix_after_as_loc: self.forbid_suffix_after_as_loc,
+            after_arrow_body_loc: self.after_arrow_body_loc,
+            esm_import_keyword: self.esm_import_keyword,
+            esm_export_keyword: self.esm_export_keyword,
+            enclosing_class_keyword: self.enclosing_class_keyword,
+            current_scope: self.current_scope,
+            current_scope_children_len: self.current_scope.children.len(),
+            scopes_in_order_len: self.scopes_in_order.len(),
+            scopes_in_order_for_enum_len: self.scopes_in_order_for_enum.len(),
+            symbols_len: self.symbols.len(),
+            allocated_names_len: self.allocated_names.len(),
+            import_records_len: self.import_records.len(),
+        }
+    }
+
+    /// Undo every parse-pass mutation made since [`Self::parser_snapshot`].
+    pub(crate) fn restore_parser_snapshot(&mut self, snapshot: ParserSnapshot<'a>) {
+        self.lexer.restore(&snapshot.lexer);
+        self.lexer.comments_to_preserve_before = snapshot.comments_to_preserve_before;
+
+        let log = self.log();
+        log.msgs.truncate(snapshot.log_msgs_len);
+        log.errors = snapshot.log_errors;
+        log.warnings = snapshot.log_warnings;
+
+        self.allow_in = snapshot.allow_in;
+        self.allow_private_identifiers = snapshot.allow_private_identifiers;
+        self.has_classic_runtime_warned = snapshot.has_classic_runtime_warned;
+        self.has_non_local_export_declare_inside_namespace =
+            snapshot.has_non_local_export_declare_inside_namespace;
+        self.should_fold_typescript_constant_expressions =
+            snapshot.should_fold_typescript_constant_expressions;
+        self.fn_or_arrow_data_parse = snapshot.fn_or_arrow_data_parse;
+        self.latest_arrow_arg_loc = snapshot.latest_arrow_arg_loc;
+        self.forbid_suffix_after_as_loc = snapshot.forbid_suffix_after_as_loc;
+        self.after_arrow_body_loc = snapshot.after_arrow_body_loc;
+        self.esm_import_keyword = snapshot.esm_import_keyword;
+        self.esm_export_keyword = snapshot.esm_export_keyword;
+        self.enclosing_class_keyword = snapshot.enclosing_class_keyword;
+
+        // Every scope pushed since is a descendant of the then-current scope, appended
+        // to its `children` (also by `pop_and_flatten_scope`) and to `scopes_in_order`.
+        let mut scope = snapshot.current_scope;
+        scope.children.truncate(snapshot.current_scope_children_len);
+        self.current_scope = scope;
+        self.scopes_in_order.truncate(snapshot.scopes_in_order_len);
+        while self.scopes_in_order_for_enum.len() > snapshot.scopes_in_order_for_enum_len {
+            self.scopes_in_order_for_enum.pop();
+        }
+
+        // Enum and namespace symbols also key `ref_to_ts_namespace_member`; a symbol
+        // that later reuses the index must not inherit their namespace data.
+        if self.symbols.len() > snapshot.symbols_len {
+            self.symbols.truncate(snapshot.symbols_len);
+            if TYPESCRIPT {
+                self.ts_use_counts.truncate(snapshot.symbols_len);
+            }
+            let stale: Vec<Ref> = self
+                .ref_to_ts_namespace_member
+                .keys()
+                .filter(|ref_| ref_.inner_index() as usize >= snapshot.symbols_len)
+                .copied()
+                .collect();
+            for ref_ in stale {
+                self.ref_to_ts_namespace_member.remove(&ref_);
+            }
+        }
+        self.allocated_names.truncate(snapshot.allocated_names_len);
+        self.import_records.truncate(snapshot.import_records_len);
+    }
+
     /// When not transpiling we dont use the renamer, so our solution is to generate really
     /// hard to collide with variables, instead of actually making things collision free
     pub(crate) fn generate_temp_ref(&mut self, default_name: Option<&'a [u8]>) -> Ref {
@@ -8032,6 +8188,32 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
+        // A direct eval at module scope can assign every top-level variable and
+        // reach every top-level name. Nested scopes are pinned in `pop_scope`;
+        // the module scope never pops. When the bundler wraps this file in a
+        // CommonJS closure those names stay private to it, so pin them too. A
+        // flat ESM file's top-level names share the chunk's scope with other
+        // files', so they stay renameable (as in esbuild) and eval may not see
+        // them. Import bindings are left out: the linker merges them into the
+        // exporting file's symbol, which would pin that name in every chunk
+        // that references it.
+        if self.module_scope().contains_direct_eval {
+            let pin = bundling && exports_kind == js_ast::ExportsKind::Cjs;
+            let module_scope = self.module_scope_ref();
+            for member in module_scope.members.values() {
+                let kind = self.symbols[member.ref_.inner_index() as usize].kind;
+                if kind == js_ast::symbol::Kind::Import {
+                    continue;
+                }
+                if kind != js_ast::symbol::Kind::Unbound {
+                    self.record_assignment(member.ref_);
+                }
+                if pin {
+                    self.symbols[member.ref_.inner_index() as usize].set_must_not_be_renamed(true);
+                }
+            }
+        }
+
         if wrap_mode == WrapMode::BunCommonjs && !self.options.features.remove_cjs_module_wrapper {
             // This transforms the user's code into.
             //
@@ -8620,6 +8802,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             stack_check: bun_core::StackCheck::init(),
             reported_stack_overflow: core::cell::Cell::new(false),
             ts_infer_constraint_backtracks: Vec::new(),
+            ts_conditional_arrow_attempts: Vec::new(),
             arena,
             then_catch_chain: ThenCatchChain {
                 next_target: null_expr_data(),

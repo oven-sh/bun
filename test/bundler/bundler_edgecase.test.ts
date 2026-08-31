@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isBroken, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { decodeSourceMappingsLine, itBundled } from "./expectBundled";
@@ -1519,7 +1519,6 @@ describe("bundler", () => {
     },
     target: "bun",
     run: true,
-    todo: isBroken && isWindows,
     timeoutScale: 5,
   });
   itBundled("edgecase/PackageExternalDoNotBundleNodeModules", {
@@ -2653,6 +2652,58 @@ describe("bundler", () => {
     target: "bun",
     run: { stdout: '[true,true,null,"{\\"__proto__\\":{\\"x\\":1},\\"a\\":2}"]' },
   });
+  // The macro module is transpiled by the macro VM, not by the bundler. That
+  // VM has to be created from the build's transform options, or the macro
+  // module does not see `--define` and `--loader`. The `Bun.build()` variant
+  // lives in transpiler/macro-test.test.ts: the macro VM of a worker thread
+  // outlives the build that created it, so that test needs its own process.
+  itBundled("edgecase/MacroSeesBuildDefinesAndLoaders", {
+    files: {
+      "/entry.ts": /* js */ `
+        import { mode, banner } from "./macro.ts" with { type: "macro" };
+        console.log(mode(), banner());
+      `,
+      "/macro.ts": /* js */ `
+        import banner_ from "./banner.dat";
+        export function mode() {
+          return process.env.MODE ?? "none";
+        }
+        export function banner() {
+          return banner_;
+        }
+      `,
+      "/banner.dat": "hello from a text loader",
+    },
+    backend: "cli",
+    define: { "process.env.MODE": '"prod"' },
+    loader: { ".dat": "text" },
+    target: "bun",
+    run: { stdout: "prod hello from a text loader" },
+  });
+  // `--external` and `--packages=external` describe the output bundle, not the
+  // macro VM. A package the macro module imports has to resolve at build time.
+  itBundled("edgecase/MacroImportsPackageMarkedExternal", {
+    files: {
+      "/entry.ts": /* js */ `
+        import { fooAtBuildTime } from "./macro.ts" with { type: "macro" };
+        import foo from "foo";
+        console.log(fooAtBuildTime(), foo);
+      `,
+      "/macro.ts": /* js */ `
+        import foo from "foo";
+        export function fooAtBuildTime() {
+          return foo;
+        }
+      `,
+      "/node_modules/foo/package.json": `{ "name": "foo", "version": "1.0.0", "main": "index.js" }`,
+      "/node_modules/foo/index.js": `module.exports = "foo-value";`,
+    },
+    backend: "cli",
+    external: ["foo"],
+    packages: "external",
+    target: "bun",
+    run: { stdout: "foo-value foo-value" },
+  });
   itBundled("edgecase/NodeBuiltinWithoutPrefix", {
     files: {
       "/entry.ts": `
@@ -2765,6 +2816,8 @@ describe("bundler", () => {
       ...deepChainFiles,
     },
     backend: "cli",
+    // (local runs: writing 7000 fixture files is slow on Windows; the build itself is well under a second)
+    timeoutScale: 6,
     run: { stdout: String(deepChainDepth) },
   });
   // Top-level await in the entry makes `validate_tla` / `propagate_async` walk
@@ -2778,6 +2831,7 @@ describe("bundler", () => {
       ...deepChainFiles,
     },
     backend: "cli",
+    timeoutScale: 6,
     onAfterBundle(api) {
       const out = api.readFile("out.js");
       expect(out).toContain(`init_m${deepChainDepth - 2}`);
@@ -3169,6 +3223,59 @@ describe("bundler", () => {
       api.expectFile("/out.js").not.toContain("Cannot require module");
     },
     run: { stdout: "try:false" },
+  });
+  // A sloppy-mode file may declare `arguments`/`eval`. ESM output is always
+  // strict, so bundling such a file to ESM is an error in the file, while the
+  // non-strict output formats keep the declaration as written.
+  itBundled("edgecase/SloppyArgumentsDeclarationESMOutputIsAnError", {
+    files: {
+      "/entry.js": /* js */ `
+        var arguments = 1;
+        console.log(arguments);
+      `,
+    },
+    format: "esm",
+    bundleErrors: {
+      "/entry.js": [
+        'Declarations with the name "arguments" cannot be used with the ESM output format due to strict mode',
+      ],
+    },
+  });
+  itBundled("edgecase/SloppyEvalFunctionDeclarationESMOutputIsAnError", {
+    files: {
+      "/entry.js": /* js */ `
+        function eval() {}
+        console.log(typeof eval);
+      `,
+    },
+    format: "esm",
+    bundleErrors: {
+      "/entry.js": ['Declarations with the name "eval" cannot be used with the ESM output format due to strict mode'],
+    },
+  });
+  itBundled("edgecase/SloppyArgumentsDeclarationCJSOutput", {
+    files: {
+      "/entry.js": /* js */ `
+        var arguments = 1;
+        console.log(arguments);
+      `,
+    },
+    format: "cjs",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("var arguments = 1;");
+    },
+  });
+  itBundled("edgecase/SloppyArgumentsDeclarationIIFEOutput", {
+    files: {
+      "/entry.js": /* js */ `
+        var arguments = 1;
+        console.log(arguments);
+      `,
+    },
+    format: "iife",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("var arguments = 1;");
+    },
   });
 });
 

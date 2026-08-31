@@ -591,6 +591,8 @@ const enum PooledConnectionFlags {
   reserved = 1 << 1,
   /// preReserved is used to indicate that the connection will be reserved in the future when queryCount drops to 0
   preReserved = 1 << 2,
+  /// onConnectFired is used to indicate that handleConnected ran for this slot, so the user's onconnect callback already fired (with null or an error)
+  onConnectFired = 1 << 3,
 }
 export type { PooledConnectionState };
 
@@ -657,6 +659,7 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
     if (err) {
       err = this.wrapError(err);
     }
+    this.flags |= PooledConnectionFlags.onConnectFired;
     const connectionInfo = this.connectionInfo;
     try {
       // user code; a throw must not abort the pool bookkeeping below
@@ -759,9 +762,11 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
 
   #finishClose(err: any) {
     const connectionInfo = this.connectionInfo;
+    const poolClosedSlotBeforeOnconnect =
+      this.onFinish !== null && !(this.flags & PooledConnectionFlags.onConnectFired);
     try {
       // user code; a throw must not abort the pool bookkeeping below
-      if (connectionInfo?.onclose) {
+      if (!poolClosedSlotBeforeOnconnect && connectionInfo?.onclose) {
         AsyncContextFrame.run(this.adapter.callbackAsyncContext, connectionInfo.onclose, connectionInfo, err);
       }
     } finally {
@@ -772,7 +777,6 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
       this.adapter.readyConnections.delete(this);
       const queries = new Set(this.queries);
       this.queries?.clear?.();
-      this.queryCount = 0;
       this.flags &= ~PooledConnectionFlags.reserved;
 
       // notify all queries that the connection is closed
@@ -801,10 +805,11 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
     if (this.adapter.closed) {
       return;
     }
-    // reset error and state
+    // reset error and state; the new cycle has not fired onconnect yet
     this.storedError = null;
     this.connectStartedAt = 0;
     this.state = PooledConnectionState.pending;
+    this.flags &= ~PooledConnectionFlags.onConnectFired;
     // retry connection
     this.#beginConnecting();
   }
@@ -1005,12 +1010,42 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
       return false;
     }
     this.reservedQueue.splice(index, 1);
+    this.#dropExcessPreReservations();
     // the cancelled reservation may have been the last pending work; a
     // graceful close() is waiting on this callback
     if (this.onAllQueriesFinished && !this.hasPendingQueries()) {
       this.onAllQueriesFinished();
     }
     return true;
+  }
+
+  /// preReserved marks are not tied to a specific reservation. When a
+  /// reservation leaves reservedQueue without taking a marked connection
+  /// (cancelled, or an unmarked connection went idle first), the mark would
+  /// keep queries off that connection until it happens to go idle, which is
+  /// the only point where release() clears it. Keep at most one mark per
+  /// reservation still queued.
+  #dropExcessPreReservations() {
+    const preReserved: PooledConnection[] = [];
+    const pollSize = this.connections.length;
+    for (let i = 0; i < pollSize; i++) {
+      const connection = this.connections[i];
+      // unassigned holes while the pool is starting, null once it is closed
+      if (connection && connection.flags & PooledConnectionFlags.preReserved) {
+        preReserved.push(connection);
+      }
+    }
+    const excess = preReserved.length - this.reservedQueue.length;
+    if (excess <= 0) {
+      return;
+    }
+    // the connections closest to idle serve the remaining reservations
+    // soonest, so give up the busiest marks first
+    preReserved.sort((a, b) => b.queryCount - a.queryCount);
+    for (let i = 0; i < excess; i++) {
+      preReserved[i].flags &= ~PooledConnectionFlags.preReserved;
+    }
+    this.flushConcurrentQueries();
   }
 
   getConnectionForQuery(pooledConnection: PooledConnection) {
@@ -1150,6 +1185,8 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
         this.readyConnections.delete(connection);
         // we have a connection waiting for a reserved connection lets prioritize it
         pendingReserved(connection.storedError, connection);
+        // the reservation may have been draining a different connection
+        this.#dropExcessPreReservations();
         return;
       }
     }
@@ -1405,8 +1442,8 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
         if (connection.flags & PooledConnectionFlags.preReserved || connection.flags & PooledConnectionFlags.reserved)
           continue;
         const queryCount = connection.queryCount;
-        if (queryCount > 0) {
-          if (queryCount < leastQueries) {
+        if (queryCount !== 0) {
+          if (queryCount > 0 && queryCount < leastQueries) {
             leastQueries = queryCount;
             connectionWithLeastQueries = connection;
           }
@@ -2207,7 +2244,4 @@ export default {
   BasePooledConnection,
   BaseSQLAdapter,
   createPooledConnectionHandle,
-  // @ts-expect-error we're exporting a const enum which works in our builtins
-  // generator but not in typescript officially
-  SSLMode,
 };

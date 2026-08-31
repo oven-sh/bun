@@ -22,7 +22,9 @@
 
 #include "root.h"
 
+#include <JavaScriptCore/InternalFunction.h>
 #include <JavaScriptCore/JSGlobalObject.h>
+#include <JavaScriptCore/ThrowScope.h>
 #include <wtf/NeverDestroyed.h>
 
 #include "BufferEncodingType.h"
@@ -32,12 +34,17 @@ extern "C" JSC::EncodedJSValue JSBuffer__bufferFromLength(JSC::JSGlobalObject* l
 extern "C" JSC::EncodedJSValue JSBuffer__bufferFromPointerAndLengthAndDeinit(JSC::JSGlobalObject* lexicalGlobalObject, char* ptr, size_t length, void* ctx, JSTypedArrayBytesDeallocator bytesDeallocator);
 extern "C" JSC::EncodedJSValue Bun__encoding__toString(const uint8_t* input, size_t len, JSC::JSGlobalObject* globalObject, Encoding encoding);
 extern "C" JSC::EncodedJSValue Bun__encoding__toStringUTF8(const uint8_t* input, size_t len, JSC::JSGlobalObject* globalObject);
-extern "C" bool Bun__Buffer_fill(ZigString*, void*, size_t, WebCore::BufferEncodingType);
+extern "C" bool Bun__Buffer_fill(EncodedSlice*, void*, size_t, WebCore::BufferEncodingType);
 extern "C" bool JSBuffer__isBuffer(JSC::JSGlobalObject*, JSC::EncodedJSValue);
 
 namespace Bun {
 
 std::optional<size_t> byteLength(JSC::JSString* str, JSC::JSGlobalObject* lexicalGlobalObject, WebCore::BufferEncodingType encoding);
+
+// ArrayBuffer::createFromBytes RELEASE_ASSERTs above MAX_ARRAY_BUFFER_SIZE. Above
+// it, this releases the adopted bytes through the deallocator, throws the
+// RangeError `new ArrayBuffer(length)` would throw, and returns true.
+bool rejectBytesNoCopyAboveArrayBufferLimit(JSC::JSGlobalObject*, JSC::ThrowScope&, const void* bytes, size_t length, JSTypedArrayBytesDeallocator, void* deallocatorContext);
 
 namespace Buffer {
 
@@ -58,6 +65,30 @@ JSC::JSUint8Array* createBuffer(JSC::JSGlobalObject* lexicalGlobalObject, const 
 JSC::JSUint8Array* createBuffer(JSC::JSGlobalObject* lexicalGlobalObject, const std::span<const uint8_t> data);
 JSC::JSUint8Array* createBuffer(JSC::JSGlobalObject* lexicalGlobalObject, Ref<JSC::ArrayBuffer>&& backingStore);
 JSC::JSUint8Array* createEmptyBuffer(JSC::JSGlobalObject* lexicalGlobalObject);
+
+class JSBufferConstructor final : public JSC::InternalFunction {
+public:
+    using Base = JSC::InternalFunction;
+    static constexpr unsigned StructureFlags = Base::StructureFlags | JSC::HasStaticPropertyTable;
+
+    ~JSBufferConstructor() = default;
+
+    static void destroy(JSC::JSCell* cell)
+    {
+        static_cast<JSBufferConstructor*>(cell)->JSBufferConstructor::~JSBufferConstructor();
+    }
+
+    static JSC::Structure* createStructure(JSC::VM&, JSC::JSGlobalObject*);
+
+    DECLARE_INFO;
+
+    static JSBufferConstructor* create(JSC::VM&, JSC::JSGlobalObject*, JSC::Structure*, JSC::JSObject* prototype);
+
+private:
+    JSBufferConstructor(JSC::VM&, JSC::Structure*);
+
+    void finishCreation(JSC::VM&, JSC::JSGlobalObject*, JSC::JSObject* prototype);
+};
 
 JSC_DECLARE_HOST_FUNCTION(constructSlowBuffer);
 JSC::JSObject* createBufferPrototype(JSC::VM&, JSC::JSGlobalObject*);

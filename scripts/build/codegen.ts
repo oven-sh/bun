@@ -308,6 +308,7 @@ export function emitCodegen(n: Ninja, cfg: Config, sources: Sources): CodegenOut
   emitBindgen(ctx);
   emitJsSink(ctx);
   emitObjectLuts(ctx);
+  emitCompressedEmbeds(ctx);
 
   n.phony("codegen", o.all);
   n.blank();
@@ -417,6 +418,50 @@ function emitBunError({ n, cfg, sources, o, dirStamp }: Ctx): void {
 
   o.all.push(...outputs);
   o.rustInputs.push(...outputs);
+}
+
+/**
+ * zstd-compressed twins of assets that Bun never executes or parses itself —
+ * the shell completion scripts and the JS/CSS bundles that are only ever
+ * shipped to a browser (dev-server client runtime, error overlay, error page).
+ * Release builds embed these via `bun_zstd::embed_compressed!` and inflate on
+ * first use instead of carrying the plain text in `.rodata`. Anything that runs
+ * inside Bun (builtin modules, bake.server.js, FFI headers, …) stays as-is.
+ * Output: `<codegenDir>/compressed/<name>.zst`.
+ */
+function emitCompressedEmbeds({ n, cfg, o, dirStamp }: Ctx): void {
+  const script = resolve(cfg.cwd, "src", "codegen", "compress-embed.ts");
+  const assets: { input: string; name: string }[] = [
+    // Repo files, named by repo-relative path.
+    ...[
+      "completions/bun.bash",
+      "completions/bun.zsh",
+      "completions/bun.fish",
+      "src/runtime/bake/bun-framework-react/client.tsx",
+    ].map(rel => ({ input: resolve(cfg.cwd, rel), name: rel })),
+    // Codegen outputs (browser bundles), named `codegen/<path in codegenDir>`.
+    ...[
+      "bake.client.js",
+      "bake.error.js",
+      "bun-error/index.js",
+      "bun-error/bun-error.css",
+      "node-fallbacks/react-refresh.js",
+    ].map(rel => ({ input: resolve(cfg.codegenDir, rel), name: `codegen/${rel}` })),
+  ];
+  for (const { input, name } of assets) {
+    const out = resolve(cfg.codegenDir, "compressed", `${name}.zst`);
+    n.build({
+      outputs: [out],
+      rule: "codegen",
+      inputs: [script, input],
+      orderOnlyInputs: [dirStamp],
+      vars: { cwd: cfg.cwd, desc: `compressed/${name}.zst`, args: shJoin(cfg, ["run", script, input, out]) },
+    });
+    o.all.push(out);
+    // Debug reads the originals at runtime; only release embeds these.
+    if (cfg.debug) o.rustOrderOnly.push(out);
+    else o.rustInputs.push(out);
+  }
 }
 
 function emitRuntimeJs({ n, cfg, o, dirStamp }: Ctx): void {
@@ -617,13 +662,17 @@ function emitHostExports({ n, cfg, sources, o, dirStamp }: Ctx): void {
   const script = resolve(cfg.cwd, "src", "codegen", "generate-host-exports.ts");
   const output = resolve(cfg.codegenDir, "generated_host_exports.rs");
 
-  // Inputs: every .rs under src/runtime + src/jsc (the scrape scope). The
+  // Inputs: every .rs under src/runtime + src/jsc + src/http_jsc (the scrape scope). The
   // `sources.rust` glob already covers these plus Cargo manifests; filter to
-  // the two crates so unrelated edits (e.g. src/bundler) don't re-run the
+  // those crates so unrelated edits (e.g. src/bundler) don't re-run the
   // scrape. restat=1 + writeIfNotChanged means a no-marker-change edit
   // produces identical output and the cargo step is pruned.
   const slashed = (p: string) => p.replace(/\\/g, "/");
-  const scrapeDirs = [slashed(`${cfg.cwd}/src/runtime/`), slashed(`${cfg.cwd}/src/jsc/`)];
+  const scrapeDirs = [
+    slashed(`${cfg.cwd}/src/runtime/`),
+    slashed(`${cfg.cwd}/src/jsc/`),
+    slashed(`${cfg.cwd}/src/http_jsc/`),
+  ];
   const rsInputs = sources.rust.filter(p => {
     const q = slashed(p);
     return q.endsWith(".rs") && scrapeDirs.some(d => q.includes(d)) && !q.endsWith("generated_host_exports.rs");
@@ -720,6 +769,7 @@ function emitJsModules({ n, cfg, sources, o, dirStamp }: Ctx): void {
     resolve(cfg.codegenDir, "InternalModuleRegistry+numberOfModules.h"),
     resolve(cfg.codegenDir, "NativeModuleImpl.h"),
     resolve(cfg.codegenDir, "SyntheticModuleType.h"),
+    resolve(cfg.codegenDir, "BuiltinModuleKeys.h"),
     resolve(cfg.codegenDir, "GeneratedJS2Native.h"),
     // Rust sibling: include!()'d by src/runtime/generated_js2native.rs. Must be
     // a declared output so the cargo edge re-invokes when bundle-modules.ts /
@@ -729,6 +779,8 @@ function emitJsModules({ n, cfg, sources, o, dirStamp }: Ctx): void {
     // `resolved_source_tag` module in src/jsc/lib.rs. Declared for the same
     // reason as generated_js2native.rs.
     resolve(cfg.codegenDir, "generated_resolved_source_tag.rs"),
+    // Canonical builtin key -> BuiltinModuleKeys.h index: include!()'d by `builtin_module_key_index` in src/jsc/lib.rs.
+    resolve(cfg.codegenDir, "generated_builtin_module_key_index.rs"),
     o.internalModulesAsm,
     o.internalModulesBin,
   ];

@@ -106,12 +106,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             *e = exp;
             return;
         }
-
-        //                 // Capture "this" inside arrow functions that will be lowered into normal
-        // // function expressions for older language environments
-        // if p.fnOrArrowDataVisit.isArrow && p.options.unsupportedJSFeatures.Has(compat.Arrow) && p.fnOnlyDataVisit.isThisNested {
-        //     return js_ast.Expr{Loc: expr.Loc, Data: &js_ast.EIdentifier{Ref: p.captureThis()}}, exprOut{}
-        // }
     }
 
     fn e_spread(p: &mut Self, e: &mut Expr, _: ExprIn) {
@@ -252,7 +246,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.commonjs_module_exports_assigned_deoptimized = true;
             }
 
-            p.symbols[result.r#ref.inner_index() as usize].set_has_been_assigned_to(true);
+            p.record_assignment(result.r#ref);
         }
 
         let mut original_name: Option<&[u8]> = None;
@@ -2429,14 +2423,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             ..Default::default()
         };
 
-        // Mark if we're inside an async arrow function. This value should be true
-        // even if we're inside multiple arrow functions and the closest inclosing
-        // arrow function isn't async, as long as at least one enclosing arrow
-        // function within the current enclosing function is async.
-        let old_inside_async_arrow_fn = p.fn_only_data_visit.is_inside_async_arrow_fn;
-        p.fn_only_data_visit.is_inside_async_arrow_fn =
-            e_.is_async || p.fn_only_data_visit.is_inside_async_arrow_fn;
-
         p.push_scope_for_visit_pass(js_ast::scope::Kind::FunctionArgs, expr.loc)
             .expect("unreachable");
         let dupe: &'a mut [Stmt] = p.arena.alloc_slice_copy(e_.body.stmts.slice());
@@ -2502,7 +2488,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.pop_scope();
         p.pop_scope();
 
-        p.fn_only_data_visit.is_inside_async_arrow_fn = old_inside_async_arrow_fn;
         p.fn_or_arrow_data_visit = old_fn_or_arrow_data;
 
         // Restore before any further `p.*` call so the stack-local pointer

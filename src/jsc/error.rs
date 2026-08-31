@@ -20,6 +20,8 @@ pub enum Error {
     MissingData,
     #[error("InvalidHash")]
     InvalidHash,
+    #[error("NotARegularFile")]
+    NotARegularFile,
     #[error("CacheDisabled")]
     CacheDisabled,
     #[error("InvalidInputHash")]
@@ -48,8 +50,6 @@ pub enum Error {
     ThreadSpawnFailed,
     #[error("MissingDebugInfo")]
     MissingDebugInfo,
-    #[error("InvalidDebugInfo")]
-    InvalidDebugInfo,
     #[error("EndOfFile")]
     EndOfFile,
     #[error("FailedToOpenSocket")]
@@ -100,6 +100,7 @@ impl Error {
             Self::WriteFailed => "WriteFailed",
             Self::MissingData => "MissingData",
             Self::InvalidHash => "InvalidHash",
+            Self::NotARegularFile => "NotARegularFile",
             Self::CacheDisabled => "CacheDisabled",
             Self::InvalidInputHash => "InvalidInputHash",
             Self::MismatchedFeatureHash => "MismatchedFeatureHash",
@@ -114,7 +115,6 @@ impl Error {
             Self::JSErrorObject => "JSErrorObject",
             Self::ThreadSpawnFailed => "ThreadSpawnFailed",
             Self::MissingDebugInfo => "MissingDebugInfo",
-            Self::InvalidDebugInfo => "InvalidDebugInfo",
             Self::EndOfFile => "EndOfFile",
             Self::FailedToOpenSocket => "FailedToOpenSocket",
             Self::Sys(e) => <&'static str>::from(e),

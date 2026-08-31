@@ -18,11 +18,12 @@ import { join } from "node:path";
 const cargo = which("cargo");
 const repoRoot = join(import.meta.dir, "..", "..");
 // Cargo parses the whole workspace manifest (including path deps) before
-// applying -p, so it needs vendor/lolhtml on disk even for a zero-dep crate.
+// applying -p, so it needs the vendored path deps on disk even for a zero-dep crate.
 // Test-only CI lanes run a prebuilt binary and never fetch it; skip there.
 // Same prerequisite check as linear-fifo.test.ts / scripts/rust-miri.ts.
 const workspaceResolvable =
   existsSync(join(repoRoot, "vendor", "lolhtml", "Cargo.toml")) &&
+  existsSync(join(repoRoot, "vendor", "rust-argon2", "Cargo.toml")) &&
   existsSync(join(repoRoot, "build", "debug", "codegen", "build_options.rs"));
 
 test.skipIf(isWindows || !cargo || !workspaceResolvable)(

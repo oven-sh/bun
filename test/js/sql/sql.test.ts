@@ -865,6 +865,19 @@ if (isDockerEnabled()) {
       expect(error.code).toBe(`ERR_POSTGRES_LIFETIME_TIMEOUT`);
     });
 
+    // https://github.com/oven-sh/bun/issues/39940
+    // close() used to fire onclose once per pool slot, even for slots whose
+    // handshake never completed, so onconnect/onclose pairing drifted.
+    test("close() fires onclose only for connections that fired onconnect", async () => {
+      const onconnect = mock();
+      const onclose = mock();
+      const sql = postgres({ ...options, max: 10, onconnect, onclose });
+      await sql`select 1`;
+      await sql.close();
+      expect(onconnect).toHaveBeenCalled();
+      expect(onclose).toHaveBeenCalledTimes(onconnect.mock.calls.length);
+    });
+
     // Last one wins.
     test("Handles duplicate string column names", async () => {
       const result = await sql`select 1 as x, 2 as x, 3 as x`;

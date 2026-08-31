@@ -10,7 +10,7 @@
 // scenario prints one JSON value; `outcome()` turns a promise into
 // { resolved } or { rejected: message }.
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 
 const fixture = join(import.meta.dir, "fake-chrome-fixture.ts");
@@ -157,6 +157,58 @@ test.concurrent("the browser exiting rejects what it owed, and the next WebView 
     second.close();
   `);
   expect(result).toEqual({ death: transportLost, second: "alive again" });
+});
+
+// `bun test --isolate` replaces the global object between files. The transport
+// is bound to the global that spawned the browser, so it has to go with that
+// file: its open views are closed, their pending promises rejected, and the
+// next file spawns a browser of its own. The fake outlives its pipes by 20 s
+// like a real browser shutting down, so the next file cannot depend on the
+// old process having gone away by itself.
+test.concurrent("bun test --isolate retires the transport with the file that spawned it", async () => {
+  const file = /* js */ `
+    import { test } from "bun:test";
+    const backend = {
+      type: "chrome",
+      url: false,
+      path: ${JSON.stringify(bunExe())},
+      argv: [${JSON.stringify(fixture)}, "--exit-delay=20000"],
+      stderr: "inherit",
+    };
+    test("leaves a view open with a command in flight", async () => {
+      const view = new Bun.WebView({ backend, width: 100, height: 100 });
+      await view.navigate("http://fake/" + import.meta.file);
+      console.log(JSON.stringify({ file: import.meta.file, url: view.url }));
+      view.evaluate("__fake_no_reply()").catch(e => {
+        console.log(JSON.stringify({ file: import.meta.file, rejected: e.message, isError: e instanceof Error }));
+      });
+    });
+  `;
+  using dir = tempDir("webview-isolate", { "a.test.ts": file, "b.test.ts": file });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--isolate", "a.test.ts", "b.test.ts"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // The first stdout line is the `bun test` banner.
+  const lines = stdout
+    .split("\n")
+    .filter(line => line.startsWith("{"))
+    .map(line => JSON.parse(line));
+  // The first file's evaluate is rejected when its global retires; the second
+  // file's is still in flight when the run ends. Discovery order decides
+  // which file is which.
+  const [first, second] = lines[0]?.file === "b.test.ts" ? ["b.test.ts", "a.test.ts"] : ["a.test.ts", "b.test.ts"];
+  expect(lines).toEqual([
+    { file: first, url: "http://fake/" + first },
+    { file: first, rejected: "WebView closed: its test file finished", isError: true },
+    { file: second, url: "http://fake/" + second },
+  ]);
+  expect(stderr).toContain(" 2 pass");
+  expect(exitCode).toBe(0);
 });
 
 // On POSIX fd 3 and fd 4 are one socket, so losing a single direction is not

@@ -13,25 +13,12 @@ pub const MAX_WBITS: c_int = 15;
 unsafe extern "C" {
     pub safe fn zlibVersion() -> *const c_char;
 
-    pub fn compress(
-        dest: *mut Bytef,
-        dest_len: *mut uLongf,
-        source: *const Bytef,
-        source_len: uLong,
-    ) -> c_int;
     pub fn compress2(
         dest: *mut Bytef,
         dest_len: *mut uLongf,
         source: *const Bytef,
         source_len: uLong,
         level: c_int,
-    ) -> c_int;
-    pub safe fn compressBound(source_len: uLong) -> uLong;
-    pub fn uncompress(
-        dest: *mut Bytef,
-        dest_len: *mut uLongf,
-        source: *const Bytef,
-        source_len: uLong,
     ) -> c_int;
 }
 
@@ -40,8 +27,7 @@ pub use bun_zlib_sys::shared::{Bytef, uInt, uLong, uLongf};
 // typedef voidpf (*alloc_func) OF((voidpf opaque, uInt items, uInt size));
 // typedef void   (*free_func)  OF((voidpf opaque, voidpf address));
 
-pub use crate::internal::z_stream;
-pub use crate::internal::z_streamp;
+pub use bun_zlib_sys::shared::{z_stream, z_streamp};
 
 // typedef struct z_stream_s {
 //     z_const Bytef *next_in;  /* next input byte */
@@ -65,10 +51,9 @@ pub use crate::internal::z_streamp;
 //     uLong   reserved;   /* reserved for future use */
 // } z_stream;
 
-pub use crate::internal::FlushValue;
-pub use crate::internal::ReturnCode;
+pub use bun_zlib_sys::shared::{FlushValue, ReturnCode};
 
-use crate::internal::{DataType, zStream_struct};
+use bun_zlib_sys::shared::{DataType, zStream_struct};
 
 // ZEXTERN int ZEXPORT inflateInit OF((z_streamp strm));
 
@@ -385,7 +370,6 @@ impl<'a> ZlibReaderArrayList<'a> {
             Ok(())
         })();
 
-        // defer epilogue (runs unconditionally):
         let total_out = self.zlib.total_out as usize;
         if self.list_ptr.len() > total_out {
             self.list_ptr.truncate(total_out);
@@ -1183,16 +1167,4 @@ fn step(
     unsafe { bun_core::vec::commit_spare(out, produced) };
     let consumed = in_len - strm.avail_in as usize;
     (consumed, rc)
-}
-
-// Re-export from bun_zlib_sys, platform-selected.
-mod internal {
-    #[cfg(not(windows))]
-    pub(super) use bun_zlib_sys::posix::{DataType, zStream_struct};
-    #[cfg(not(windows))]
-    pub use bun_zlib_sys::posix::{FlushValue, ReturnCode, z_stream, z_streamp};
-    #[cfg(windows)]
-    pub(super) use bun_zlib_sys::win32::{DataType, zStream_struct};
-    #[cfg(windows)]
-    pub use bun_zlib_sys::win32::{FlushValue, ReturnCode, z_stream, z_streamp};
 }

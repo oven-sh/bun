@@ -121,10 +121,6 @@ impl BlockList {
             / (self.ref_count.get().max(1) as usize)
     }
 
-    pub fn finalize(self: Box<Self>) {
-        bun_ptr::finalize_js_box_noop(self);
-    }
-
     // NOTE: no `#[bun_jsc::host_fn]` — receiver-less assoc fns aren't supported
     // by the Free-kind shim (it emits a bare `fn_name(...)` call). The
     // `.classes.ts` codegen owns the static-method link name and calls
@@ -142,7 +138,7 @@ impl BlockList {
     ) -> JsResult<JSValue> {
         let [address_js, mut family_js] = frame.arguments_as_array::<2>();
         if family_js.is_undefined() {
-            family_js = BunString::static_str("ipv4").to_js(global)?;
+            family_js = global.common_strings().ipv4_lower();
         }
         let address = if let Some(sa) = address_js.as_class_ref::<SocketAddress>() {
             sa._addr
@@ -169,7 +165,7 @@ impl BlockList {
     ) -> JsResult<JSValue> {
         let [start_js, end_js, mut family_js] = frame.arguments_as_array::<3>();
         if family_js.is_undefined() {
-            family_js = BunString::static_str("ipv4").to_js(global)?;
+            family_js = global.common_strings().ipv4_lower();
         }
         let start = if let Some(sa) = start_js.as_class_ref::<SocketAddress>() {
             sa._addr
@@ -212,7 +208,7 @@ impl BlockList {
     ) -> JsResult<JSValue> {
         let [network_js, prefix_js, mut family_js] = frame.arguments_as_array::<3>();
         if family_js.is_undefined() {
-            family_js = BunString::static_str("ipv4").to_js(global)?;
+            family_js = global.common_strings().ipv4_lower();
         }
         let network = if let Some(sa) = network_js.as_class_ref::<SocketAddress>() {
             sa._addr
@@ -260,7 +256,7 @@ impl BlockList {
     ) -> JsResult<JSValue> {
         let [address_js, mut family_js] = frame.arguments_as_array::<2>();
         if family_js.is_undefined() {
-            family_js = BunString::static_str("ipv4").to_js(global)?;
+            family_js = global.common_strings().ipv4_lower();
         }
         let address_val;
         let address: &sockaddr = if let Some(sa) = address_js.as_class_ref::<SocketAddress>() {
@@ -374,7 +370,7 @@ impl BlockList {
         let array = JSValue::create_empty_array(global, rules.len())?;
 
         for (i, rule) in rules.iter().enumerate() {
-            let mut s = match rule {
+            let s = match rule {
                 Rule::Addr(a) => {
                     let mut buf = [0u8; inet::INET6_ADDRSTRLEN as usize];
                     BunString::create_format(format_args!(
@@ -403,7 +399,7 @@ impl BlockList {
                     ))
                 }
             };
-            array.put_index(global, i as u32, s.transfer_to_js(global)?)?;
+            array.put_index(global, i as u32, s.into_js(global)?)?;
         }
         Ok(array)
     }
@@ -435,11 +431,12 @@ impl BlockList {
     // signature is fixed by `generate-classes.ts`, so the deref is documented with
     // the SAFETY comment below.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
+    /// `Ok(None)`: the bytes are not a valid record (the deserializer reports its usual error).
     pub(crate) fn on_structured_clone_deserialize(
         global: &JSGlobalObject,
         ptr: *mut *mut u8,
         end: *const u8,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<Option<JSValue>> {
         // SAFETY: `*ptr` and `end` bound a contiguous byte buffer owned by the
         // caller (C++ SerializedScriptValue); `end >= *ptr`. `ptr` itself is a
         // non-null out-param the caller expects us to advance.
@@ -451,13 +448,8 @@ impl BlockList {
         let mut r =
             bun_io::FixedBufferStream::new(unsafe { bun_core::ffi::slice(start, total_length) });
 
-        let nonce = match r.read_int_le::<u64>() {
-            Ok(n) => n,
-            Err(_) => {
-                return Err(global.throw(format_args!(
-                    "BlockList.onStructuredCloneDeserialize failed"
-                )));
-            }
+        let Ok(nonce) = r.read_int_le::<u64>() else {
+            return Ok(None);
         };
 
         // Advance the caller's cursor by the number of bytes consumed
@@ -473,9 +465,7 @@ impl BlockList {
         let this: *mut Self = {
             let refs = SERIALIZED_REFS.lock();
             let Some(addr) = refs.iter().find_map(|&(n, a)| (n == nonce).then_some(a)) else {
-                return Err(global.throw(format_args!(
-                    "BlockList.onStructuredCloneDeserialize failed"
-                )));
+                return Ok(None);
             };
             let this = addr as *mut Self;
             // SAFETY: the entry was pushed by `on_structured_clone_serialize`
@@ -489,7 +479,7 @@ impl BlockList {
         // SAFETY: ownership of the ref taken above transfers to the C++ wrapper
         // (released via `finalize` → `deref`). `to_js_ptr` is the
         // `#[bun_jsc::JsClass]`-generated `${T}__create` shim.
-        Ok(unsafe { Self::to_js_ptr(this, global) })
+        Ok(Some(unsafe { Self::to_js_ptr(this, global) }))
     }
 }
 

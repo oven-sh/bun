@@ -10,8 +10,10 @@
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/JSFunction.h>
 #include "JSFetchHeaders.h"
+#include "HTTPLatin1String.h"
 #include <bun-uws/src/App.h>
 #include <bun-uws/src/Http3Response.h>
+#include <bun-uws/src/Http2Context.h>
 #include "ZigGeneratedClasses.h"
 #include "ScriptExecutionContext.h"
 #include "AsyncContextFrame.h"
@@ -225,27 +227,12 @@ extern "C" EncodedJSValue Bun__NodeHTTP__buildRawHeadersArray(JSC::JSGlobalObjec
                 array->initializeIndex(initializationScope, i, JSValue::decode(argValues[i]));
             }
         } else {
-            RETURN_IF_EXCEPTION(scope, {});
             array = constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), arrayValues);
             RETURN_IF_EXCEPTION(scope, {});
         }
     }
 
     RELEASE_AND_RETURN(scope, JSValue::encode(array));
-}
-
-// Scope-free VM::exception() read. A callee's ThrowScope destructor
-// simulates a throw so its caller must check; when the caller is Rust
-// (writeHeadAndEnd's write-head phase) there is no ThrowScope to do it, so
-// this acknowledges the check without declaring a scope (declaring one
-// would trip the verifier before the read). The actual success/failure
-// travels through NodeHTTPServer__writeHead's return value.
-extern "C" void Bun__NodeHTTP__acknowledgeThrowScope(JSC::JSGlobalObject* globalObject)
-{
-    // The same sanctioned read RETURN_IF_EXCEPTION performs; it observes
-    // (and under exception-scope verification, acknowledges) any pending
-    // exception without constructing a verifying scope.
-    (void)globalObject->vm().hasExceptionsAfterHandlingTraps();
 }
 
 // Defined in Rust (NodeHTTPResponse.rs): moves the captured raw header bytes
@@ -322,7 +309,6 @@ static EncodedJSValue NodeHTTPServer__onRequest(
     // capacity keeps the capture heap-allocation-free for the common case.
     WTF::Vector<uint8_t, 1024> flatHeaders;
     assignHeadersFromUWebSocketsForCall(request, methodString, args, flatHeaders, globalObject, vm);
-    RETURN_IF_EXCEPTION(scope, {});
 
     bool hasBody = false;
     WebCore::JSNodeHTTPResponse* nodeHTTPResponseObject = uncheckedDowncast<WebCore::JSNodeHTTPResponse>(JSValue::decode(NodeHTTPResponse__createForJS(any_server, globalObject, &hasBody, request, isSSL, response, upgrade_ctx, nodeHttpResponsePtr)));
@@ -387,30 +373,10 @@ static EncodedJSValue NodeHTTPServer__onRequest(
 template<bool isSSL>
 static void writeResponseHeader(uWS::HttpResponse<isSSL>* res, const WTF::StringView& name, const WTF::StringView& value)
 {
-    WTF::CString nameStr;
-    WTF::CString valueStr;
-
-    std::string_view nameView;
-    std::string_view valueView;
-
-    if (name.is8Bit()) {
-        const auto nameSpan = name.span8();
-        ASSERT(name.containsOnlyASCII());
-        nameView = std::string_view(reinterpret_cast<const char*>(nameSpan.data()), nameSpan.size());
-    } else {
-        nameStr = name.utf8();
-        nameView = std::string_view(nameStr.data(), nameStr.length());
-    }
-
-    if (value.is8Bit()) {
-        const auto valueSpan = value.span8();
-        valueView = std::string_view(reinterpret_cast<const char*>(valueSpan.data()), valueSpan.size());
-    } else {
-        valueStr = value.utf8();
-        valueView = std::string_view(valueStr.data(), valueStr.length());
-    }
-
-    res->writeHeader(nameView, valueView);
+    ASSERT(name.containsOnlyASCII());
+    HTTPLatin1String nameBytes(name);
+    HTTPLatin1String valueBytes(value);
+    res->writeHeader(nameBytes.view(), valueBytes.view());
 }
 
 // Connection is `1#connection-option` (RFC 9112 §9.3): look for the "close"
@@ -436,14 +402,8 @@ static void writeFetchHeadersToUWSResponse(WebCore::FetchHeaders& headers, uWS::
     auto& internalHeaders = headers.internalHeaders();
 
     for (auto& value : internalHeaders.getSetCookieHeaders()) {
-
-        if (value.is8Bit()) {
-            const auto valueSpan = value.span8();
-            res->writeHeader(std::string_view("set-cookie", 10), std::string_view(reinterpret_cast<const char*>(valueSpan.data()), valueSpan.size()));
-        } else {
-            WTF::CString valueStr = value.utf8();
-            res->writeHeader(std::string_view("set-cookie", 10), std::string_view(valueStr.data(), valueStr.length()));
-        }
+        HTTPLatin1String valueBytes(value);
+        res->writeHeader(std::string_view("set-cookie", 10), valueBytes.view());
     }
 
     auto* data = res->getHttpResponseData();
@@ -584,12 +544,8 @@ static void writeAutoHeaders(uWS::HttpResponse<isSSL>* response, uint32_t autoHe
     }
 }
 
-// Returns false when a JS exception is pending (header conversion or
-// validation threw). The exception check happens here, inside the owning
-// ThrowScope; callers on the Rust side branch on the return value instead
-// of probing VM exception state through another scope.
 template<bool isSSL>
-static bool NodeHTTPServer__writeHead(
+static void NodeHTTPServer__writeHead(
     JSC::JSGlobalObject* globalObject,
     const char* statusMessage,
     size_t statusMessageLength,
@@ -623,9 +579,9 @@ static bool NodeHTTPServer__writeHead(
     if (headersObject) {
         if (auto* fetchHeaders = dynamicDowncast<WebCore::JSFetchHeaders>(headersObject)) {
             writeFetchHeadersToUWSResponse<isSSL>(fetchHeaders->wrapped(), response);
-            RETURN_IF_EXCEPTION(scope, false);
+            RETURN_IF_EXCEPTION(scope, void());
             if (autoHeaderBits) writeAutoHeaders<isSSL>(response, autoHeaderBits, keepAliveTimeoutSecs);
-            return true;
+            return;
         }
 
         // A flat [name, value, name, value, ...] array. Used by node:http's
@@ -637,14 +593,14 @@ static bool NodeHTTPServer__writeHead(
             unsigned length = pairsArray->length();
             for (unsigned i = 0; i + 1 < length; i += 2) {
                 JSValue nameValue = pairsArray->getIndex(globalObject, i);
-                RETURN_IF_EXCEPTION(scope, false);
+                RETURN_IF_EXCEPTION(scope, void());
                 JSValue headerValue = pairsArray->getIndex(globalObject, i + 1);
-                RETURN_IF_EXCEPTION(scope, false);
+                RETURN_IF_EXCEPTION(scope, void());
 
                 String name = nameValue.toWTFString(globalObject);
-                RETURN_IF_EXCEPTION(scope, false);
+                RETURN_IF_EXCEPTION(scope, void());
                 String value = headerValue.toWTFString(globalObject);
-                RETURN_IF_EXCEPTION(scope, false);
+                RETURN_IF_EXCEPTION(scope, void());
 
                 // node:http marks framing decisions with a NUL-named sentinel
                 // pair instead of a real header: value "1" = close-delimited
@@ -675,14 +631,14 @@ static bool NodeHTTPServer__writeHead(
 
                 writeResponseHeader<isSSL>(response, name, value);
             }
-            RETURN_IF_EXCEPTION(scope, false);
+            RETURN_IF_EXCEPTION(scope, void());
             if (autoHeaderBits) writeAutoHeaders<isSSL>(response, autoHeaderBits, keepAliveTimeoutSecs);
-            return true;
+            return;
         }
 
         if (headersObject->hasNonReifiedStaticProperties()) [[unlikely]] {
             headersObject->reifyAllStaticProperties(globalObject);
-            RETURN_IF_EXCEPTION(scope, false);
+            RETURN_IF_EXCEPTION(scope, void());
         }
 
         auto* structure = headersObject->structure();
@@ -706,31 +662,29 @@ static bool NodeHTTPServer__writeHead(
         } else {
             PropertyNameArrayBuilder propertyNames(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
             headersObject->getOwnPropertyNames(headersObject, globalObject, propertyNames, DontEnumPropertiesMode::Exclude);
-            RETURN_IF_EXCEPTION(scope, false);
+            RETURN_IF_EXCEPTION(scope, void());
 
             for (unsigned i = 0; i < propertyNames.size(); ++i) {
                 JSValue headerValue = headersObject->getIfPropertyExists(globalObject, propertyNames[i]);
-                RETURN_IF_EXCEPTION(scope, false);
+                RETURN_IF_EXCEPTION(scope, void());
                 if (!headerValue.isString()) {
                     continue;
                 }
 
                 String key = propertyNames[i].string();
                 String value = headerValue.toWTFString(globalObject);
-                RETURN_IF_EXCEPTION(scope, false);
+                RETURN_IF_EXCEPTION(scope, void());
 
                 writeResponseHeader<isSSL>(response, key, value);
             }
         }
     }
 
-    RETURN_IF_EXCEPTION(scope, false);
+    RETURN_IF_EXCEPTION(scope, void());
     if (autoHeaderBits) writeAutoHeaders<isSSL>(response, autoHeaderBits, keepAliveTimeoutSecs);
-
-    return true;
 }
 
-extern "C" bool NodeHTTPServer__writeHead_http(
+extern "C" void NodeHTTPServer__writeHead_http(
     JSC::JSGlobalObject* globalObject,
     const char* statusMessage,
     size_t statusMessageLength,
@@ -739,10 +693,10 @@ extern "C" bool NodeHTTPServer__writeHead_http(
     uint32_t keepAliveTimeoutSecs,
     uWS::HttpResponse<false>* response)
 {
-    return NodeHTTPServer__writeHead<false>(globalObject, statusMessage, statusMessageLength, headersObjectValue, autoHeaderBits, keepAliveTimeoutSecs, response);
+    NodeHTTPServer__writeHead<false>(globalObject, statusMessage, statusMessageLength, headersObjectValue, autoHeaderBits, keepAliveTimeoutSecs, response);
 }
 
-extern "C" bool NodeHTTPServer__writeHead_https(
+extern "C" void NodeHTTPServer__writeHead_https(
     JSC::JSGlobalObject* globalObject,
     const char* statusMessage,
     size_t statusMessageLength,
@@ -751,7 +705,7 @@ extern "C" bool NodeHTTPServer__writeHead_https(
     uint32_t keepAliveTimeoutSecs,
     uWS::HttpResponse<true>* response)
 {
-    return NodeHTTPServer__writeHead<true>(globalObject, statusMessage, statusMessageLength, headersObjectValue, autoHeaderBits, keepAliveTimeoutSecs, response);
+    NodeHTTPServer__writeHead<true>(globalObject, statusMessage, statusMessageLength, headersObjectValue, autoHeaderBits, keepAliveTimeoutSecs, response);
 }
 
 extern "C" EncodedJSValue NodeHTTPServer__onRequest_http(
@@ -878,53 +832,38 @@ JSValue createNodeHTTPInternalBinding(Zig::GlobalObject* globalObject)
     return obj;
 }
 
-static void writeFetchHeadersToH3Response(WebCore::FetchHeaders& headers, uWS::Http3Response* res)
+/* Http2Response and Http3Response share this surface: headers are buffered
+ * as a list and framed by the transport, so there is no Transfer-Encoding. */
+template<typename Response, typename ResponseData>
+static void writeFetchHeadersToStreamResponse(WebCore::FetchHeaders& headers, Response* res)
 {
     auto& internalHeaders = headers.internalHeaders();
     auto* data = res->getHttpResponseData();
 
     auto writeOne = [&](const WTF::StringView& name, const WTF::StringView& value) {
-        WTF::CString nameStr, valueStr;
-        std::string_view nameView, valueView;
-        if (name.is8Bit()) {
-            const auto s = name.span8();
-            nameView = std::string_view(reinterpret_cast<const char*>(s.data()), s.size());
-        } else {
-            nameStr = name.utf8();
-            nameView = std::string_view(nameStr.data(), nameStr.length());
-        }
-        if (value.is8Bit()) {
-            const auto s = value.span8();
-            valueView = std::string_view(reinterpret_cast<const char*>(s.data()), s.size());
-        } else {
-            valueStr = value.utf8();
-            valueView = std::string_view(valueStr.data(), valueStr.length());
-        }
-        res->writeHeader(nameView, valueView);
+        ASSERT(name.containsOnlyASCII());
+        HTTPLatin1String nameBytes(name);
+        HTTPLatin1String valueBytes(value);
+        res->writeHeader(nameBytes.view(), valueBytes.view());
     };
 
     for (auto& value : internalHeaders.getSetCookieHeaders()) {
-        if (value.is8Bit()) {
-            const auto s = value.span8();
-            res->writeHeader(std::string_view("set-cookie", 10), std::string_view(reinterpret_cast<const char*>(s.data()), s.size()));
-        } else {
-            WTF::CString v = value.utf8();
-            res->writeHeader(std::string_view("set-cookie", 10), std::string_view(v.data(), v.length()));
-        }
+        HTTPLatin1String valueBytes(value);
+        res->writeHeader(std::string_view("set-cookie", 10), valueBytes.view());
     }
 
     for (const auto& header : internalHeaders.commonHeaders()) {
         if (header.key == WebCore::HTTPHeaderName::ContentLength) {
-            if (!(data->state & uWS::Http3ResponseData::HTTP_WROTE_CONTENT_LENGTH_HEADER)) {
-                data->state |= uWS::Http3ResponseData::HTTP_WROTE_CONTENT_LENGTH_HEADER;
+            if (!(data->state & ResponseData::HTTP_WROTE_CONTENT_LENGTH_HEADER)) {
+                data->state |= ResponseData::HTTP_WROTE_CONTENT_LENGTH_HEADER;
                 res->writeMark();
             }
         }
         if (header.key == WebCore::HTTPHeaderName::Date) {
-            data->state |= uWS::Http3ResponseData::HTTP_WROTE_DATE_HEADER;
+            data->state |= ResponseData::HTTP_WROTE_DATE_HEADER;
         }
-        // HTTP/3 has no Transfer-Encoding; if a user header reaches here it
-        // was already stripped by doWriteHeaders().
+        // No Transfer-Encoding on these transports; if a user header reaches
+        // here it was already stripped by doWriteHeaders().
         writeOne(WebCore::httpHeaderNameString(header.key), header.value);
     }
 
@@ -942,8 +881,11 @@ extern "C" void WebCore__FetchHeaders__toUWSResponse(WebCore::FetchHeaders* arg0
     case UWSResponseKind::SSL:
         writeFetchHeadersToUWSResponse<true>(*arg0, reinterpret_cast<uWS::HttpResponse<true>*>(arg2));
         break;
+    case UWSResponseKind::H2:
+        writeFetchHeadersToStreamResponse<uWS::Http2Response, uWS::Http2ResponseData>(*arg0, reinterpret_cast<uWS::Http2Response*>(arg2));
+        break;
     case UWSResponseKind::H3:
-        writeFetchHeadersToH3Response(*arg0, reinterpret_cast<uWS::Http3Response*>(arg2));
+        writeFetchHeadersToStreamResponse<uWS::Http3Response, uWS::Http3ResponseData>(*arg0, reinterpret_cast<uWS::Http3Response*>(arg2));
         break;
     }
 }

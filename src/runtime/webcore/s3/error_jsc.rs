@@ -123,16 +123,6 @@ struct JSS3Error {
     path: BunString,
 }
 
-impl Default for JSS3Error {
-    fn default() -> Self {
-        Self {
-            code: BunString::empty(),
-            message: BunString::empty(),
-            path: BunString::empty(),
-        }
-    }
-}
-
 impl JSS3Error {
     fn init(code: &[u8], message: &[u8], path: Option<&[u8]>) -> Self {
         Self {
@@ -140,18 +130,14 @@ impl JSS3Error {
             code: BunString::create_atom_if_possible(code),
             message: BunString::create_atom_if_possible(message),
             path: if let Some(p) = path {
-                BunString::init(p)
+                BunString::from_bytes(p)
             } else {
-                BunString::empty()
+                BunString::EMPTY
             },
         }
     }
 
-    // The three `bun_core::String` fields deref themselves via `Drop`, so no
-    // explicit `Drop` impl is needed here.
-
     fn to_error_instance(self, global: &JSGlobalObject) -> JSValue {
-        // `defer this.deinit()` → `self` is consumed and dropped at scope exit.
         S3Error__toErrorInstance(&self, global)
     }
 }

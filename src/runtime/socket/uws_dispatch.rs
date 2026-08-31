@@ -196,8 +196,6 @@ unsafe extern "C" fn us_dispatch_ssl_raw_tap(
     let tls: bun_ptr::ThisPtr<TLSSocket> =
         s_ref.ext::<Option<bun_ptr::ThisPtr<TLSSocket>>>().unwrap();
     if let Some(raw) = tls.twin.get().as_ref() {
-        // `twin` is `IntrusiveRc<Self>` (intrusive ref-counted heap pointer);
-        // grab the raw `*mut` without consuming the ref so the +1 stays put.
         let raw: *mut TLSSocket = raw.as_ptr();
         // A negative length from the C side means there is nothing to deliver;
         // never panic across the `extern "C"` boundary.

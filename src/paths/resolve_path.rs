@@ -13,10 +13,14 @@ use bun_core::{ZStr, strings};
 // SAFETY invariant: each buffer has at most one live mutable borrow per thread;
 // callers must not re-enter the accessor while a previous borrow is alive.
 thread_local! {
-    static PARSER_JOIN_INPUT_BUFFER: UnsafeCell<[u8; 4096]> = const { UnsafeCell::new([0u8; 4096]) };
+    static PARSER_JOIN_INPUT_BUFFER: UnsafeCell<[u8; PARSER_JOIN_INPUT_BUFFER_LEN]> =
+        const { UnsafeCell::new([0u8; PARSER_JOIN_INPUT_BUFFER_LEN]) };
     static PARSER_BUFFER: UnsafeCell<[u8; PARSER_BUFFER_LEN]> =
         const { UnsafeCell::new([0u8; PARSER_BUFFER_LEN]) };
 }
+
+/// Output capacity of [`join_abs_string`] / [`join_abs_string_z`].
+const PARSER_JOIN_INPUT_BUFFER_LEN: usize = 4096;
 
 /// Output capacity of [`normalize_string`].
 const PARSER_BUFFER_LEN: usize = 1024;
@@ -1380,6 +1384,24 @@ pub fn join_abs_string<'a, P: PlatformT>(cwd: &'a [u8], parts: &[&[u8]]) -> &'a 
     PARSER_JOIN_INPUT_BUFFER.with(|b| join_abs_string_buf::<P>(cwd, tl_buf_mut(b), parts))
 }
 
+/// [`join_abs_string`] (thread-local buffer) when the result fits, otherwise
+/// into `spill` (grown as needed). `spill` is untouched in the common case.
+pub fn join_abs_string_spill<'a, P: PlatformT>(
+    cwd: &'a [u8],
+    spill: &'a mut Vec<u8>,
+    parts: &[&[u8]],
+) -> &'a [u8] {
+    debug_assert!(!matches!(P::P, Platform::Nt));
+    let needed = join_abs_needed(cwd.len(), parts);
+    if needed <= PARSER_JOIN_INPUT_BUFFER_LEN {
+        return join_abs_string::<P>(cwd, parts);
+    }
+    if spill.len() < needed {
+        spill.resize(needed, 0);
+    }
+    join_abs_string_buf::<P>(cwd, &mut spill[..], parts)
+}
+
 /// Convert parts of potentially invalid file paths into a single valid filpeath
 /// without querying the filesystem
 /// This is the equivalent of path.resolve
@@ -1604,6 +1626,14 @@ fn join_string_buf_t<'a, T: PathChar, P: PlatformT>(buf: &'a mut [T], parts: &[&
     normalize_string_node_t::<T, P>(joined, buf)
 }
 
+/// Buffer length that holds `_join_abs_string_buf`'s concatenation of `cwd` and
+/// `parts` (one separator each, plus the one a bare Windows root gains) as well
+/// as its normalized output.
+#[inline]
+fn join_abs_needed(cwd_len: usize, parts: &[&[u8]]) -> usize {
+    parts.iter().map(|p| p.len() + 1).sum::<usize>() + cwd_len + 2
+}
+
 /// Scratch buffer for `_join_abs_string_buf`'s unnormalized concatenation.
 /// Draws from the
 /// thread-local `path_buffer_pool` for the common case and only heap-allocates
@@ -1617,10 +1647,7 @@ enum JoinScratch {
 impl JoinScratch {
     #[inline]
     fn init(base: usize, parts: &[&[u8]]) -> Self {
-        let mut total = base + 2;
-        for p in parts {
-            total += p.len() + 1;
-        }
+        let total = join_abs_needed(base, parts);
         if total <= MAX_PATH_BYTES {
             JoinScratch::Pooled(crate::path_buffer_pool::get())
         } else {
@@ -1658,10 +1685,7 @@ pub fn join_abs_string_buf_checked<'a, P: PlatformT>(
     debug_assert!(!matches!(P::P, Platform::Nt));
     // Fast path: size check only — don't allocate a JoinScratch here since the
     // inner join_abs_string_buf already has its own (avoids doubling stack usage).
-    let mut total: usize = cwd.len() + 2;
-    for p in parts {
-        total += p.len() + 1;
-    }
+    let total = join_abs_needed(cwd.len(), parts);
     if total < buf.len() {
         return Some(join_abs_string_buf::<P>(cwd, buf, parts));
     }
@@ -1908,11 +1932,6 @@ fn join_abs_string_buf_windows<'a, const IS_SENTINEL: bool>(
         temp_buf[out..out + part_without_vol.len()].copy_from_slice(part_without_vol);
         out += part_without_vol.len();
     }
-
-    // if (out > 0 and temp_buf[out - 1] != '\\') {
-    //     temp_buf[out] = '\\';
-    //     out += 1;
-    // }
 
     let result = normalize_string_buf::<false, platform::Windows, true>(&temp_buf[0..out], buf);
     let result_len = result.len();
@@ -2553,6 +2572,61 @@ mod tests {
             normalize_string_spill::<true, platform::Loose>(&mut spill, &long),
             &long[..]
         );
+    }
+
+    #[test]
+    fn join_abs_string_spill_leaves_spill_untouched_when_the_result_fits() {
+        let mut spill = Vec::new();
+        let out = join_abs_string_spill::<platform::Posix>(b"/work", &mut spill, &[b"a/../b.json"]);
+        assert_eq!(out, b"/work/b.json");
+        assert!(spill.is_empty());
+    }
+
+    #[test]
+    fn join_abs_string_spill_spills_a_part_longer_than_the_thread_local_buffer() {
+        let name = vec![b'a'; PARSER_JOIN_INPUT_BUFFER_LEN + 1];
+        let mut expected = b"/work/".to_vec();
+        expected.extend_from_slice(&name);
+
+        let mut spill = Vec::new();
+        let out = join_abs_string_spill::<platform::Posix>(b"/work", &mut spill, &[&name]);
+        assert_eq!(out, &expected[..]);
+        assert!(!spill.is_empty());
+    }
+
+    #[test]
+    fn join_abs_string_spill_spills_an_absolute_part_and_a_long_cwd_alike() {
+        let mut abs = b"/".to_vec();
+        abs.resize(PARSER_JOIN_INPUT_BUFFER_LEN * 2, b'a');
+        let mut spill = Vec::new();
+        assert_eq!(
+            join_abs_string_spill::<platform::Posix>(b"/", &mut spill, &[&abs]),
+            &abs[..]
+        );
+
+        let mut cwd = b"/".to_vec();
+        cwd.resize(PARSER_JOIN_INPUT_BUFFER_LEN, b'c');
+        let mut expected = cwd.clone();
+        expected.extend_from_slice(b"/x");
+        let mut spill = Vec::new();
+        assert_eq!(
+            join_abs_string_spill::<platform::Posix>(&cwd, &mut spill, &[b"./x"]),
+            &expected[..]
+        );
+    }
+
+    #[test]
+    fn join_abs_string_spill_normalizes_a_long_part_that_collapses() {
+        // `sub/../` repeated past the buffer size resolves back to the cwd.
+        let mut part = Vec::new();
+        while part.len() <= PARSER_JOIN_INPUT_BUFFER_LEN {
+            part.extend_from_slice(b"sub/../");
+        }
+        part.extend_from_slice(b"sub");
+
+        let mut spill = Vec::new();
+        let out = join_abs_string_spill::<platform::Posix>(b"/work", &mut spill, &[&part]);
+        assert_eq!(out, b"/work/sub");
     }
 
     #[test]

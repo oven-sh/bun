@@ -471,10 +471,9 @@ describe("HTMLRewriter", () => {
     });
 
     // `rsisAbrupt` calls `controller.close(error)` synchronously before
-    // rejecting the pump promise, and the generated `__close` drops its error
-    // argument. The pipe must defer its terminal step to the reject reaction
-    // so the real error reaches the output body instead of resolving with
-    // truncated HTML.
+    // rejecting the pump promise. The pipe must defer its terminal step to the
+    // reject reaction so the real error reaches the output body instead of
+    // resolving with truncated HTML.
     it.each(["default", "pull"])(
       "a JS ReadableStream (%s) input that errors mid-stream rejects the body",
       async kind => {
@@ -500,6 +499,58 @@ describe("HTMLRewriter", () => {
         await expect(res.text()).rejects.toThrow("upstream boom");
       },
     );
+
+    // The input is already errored when transform() runs: the pump's first
+    // read throws, so `controller.close(error)` and the pump rejection both
+    // happen inside transform(), before any reject reaction is attached. The
+    // close must carry the error to the pipe, or the body resolves to "".
+    // `error()` with no reason errors the stream with `undefined`; that must
+    // not read as a clean close either.
+    it.each([
+      ["an Error", new Error("upstream boom")],
+      ["undefined", undefined],
+    ])("a JS ReadableStream input that is already errored (%s) rejects the body", async (_, reason) => {
+      const encoder = new TextEncoder();
+      const stream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(encoder.encode("<p>partial"));
+          controller.error(reason);
+        },
+      });
+      const res = new HTMLRewriter().on("p", { element() {} }).transform(new Response(stream));
+      const settled = await res.text().then(
+        text => ({ resolved: text }),
+        err => ({ rejected: err }),
+      );
+      expect(settled).toEqual({ rejected: reason });
+    });
+
+    // A `type: 'direct'` pull() ends the input through the sink controller's
+    // own `close(error?)`. The argument is optional: a falsy one is the same
+    // clean close as `close()` and the body resolves with the rewritten HTML.
+    // Only a truthy error fails the rewrite.
+    it.each([
+      ["close()", c => c.close(), { resolved: "<p>hello</p>" }],
+      ["close(undefined)", c => c.close(undefined), { resolved: "<p>hello</p>" }],
+      ["close(null)", c => c.close(null), { resolved: "<p>hello</p>" }],
+      ["close(false)", c => c.close(false), { resolved: "<p>hello</p>" }],
+      ['close("")', c => c.close(""), { resolved: "<p>hello</p>" }],
+      ["close(error)", c => c.close(new Error("source boom")), { rejected: "source boom" }],
+    ])("a direct ReadableStream input whose pull() ends with %s", async (_, close, expected) => {
+      const stream = new ReadableStream({
+        type: "direct",
+        pull(controller) {
+          controller.write("<p>hello</p>");
+          close(controller);
+        },
+      });
+      const res = new HTMLRewriter().on("p", { element() {} }).transform(new Response(stream));
+      const settled = await res.text().then(
+        text => ({ resolved: text }),
+        err => ({ rejected: err instanceof Error ? err.message : err }),
+      );
+      expect(settled).toEqual(expected);
+    });
 
     // A `type: 'direct'` source whose `pull()` throws synchronously leaves the
     // JS controller's `m_sinkPtr` set after `readDirectStream` returns with an
@@ -3100,5 +3151,59 @@ describe("GC pressure mid-rewrite", () => {
       exact: true,
     });
     expect(exitCode).toBe(0);
+  });
+
+  // The transform's input is a fetch() body wired straight into the pipe. Once the caller
+  // keeps only the promise for the output, the pipe is reachable from nothing in JS; what
+  // keeps it alive is the input stream's source, which the fetch holds while it delivers.
+  // The body arrives across many turns, with collections in between: every chunk must
+  // still reach the handlers.
+  it("a transform over a fetch body survives GC once only its output promise is held", async () => {
+    const fixture = /* js */ `
+      const CHUNKS = 20;
+      let release;
+      const gate = new Promise(resolve => (release = resolve));
+      const server = Bun.serve({
+        port: 0,
+        fetch: () =>
+          new Response(
+            new ReadableStream({
+              async start(controller) {
+                controller.enqueue("<html><body>");
+                await gate;
+                for (let i = 0; i < CHUNKS; i++) {
+                  controller.enqueue("<p>" + Buffer.alloc(1000, "x").toString() + "</p>");
+                  await Bun.sleep(1);
+                }
+                controller.close();
+              },
+            }),
+            { headers: { "content-type": "text/html" } },
+          ),
+      });
+      async function start() {
+        const res = await fetch(server.url);
+        return new HTMLRewriter().on("p", { element(el) { el.setAttribute("seen", ""); } }).transform(res).text();
+      }
+      const text = start();
+      for (let i = 0; i < 5; i++) { Bun.gc(true); await Bun.sleep(1); }
+      release();
+      for (let i = 0; i < 30; i++) { Bun.gc(true); await Bun.sleep(2); }
+      const html = await text;
+      console.log(JSON.stringify({ seen: html.split('<p seen="">').length - 1, ended: html.endsWith("</p>") }));
+      server.stop(true);
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({ seen: 20, ended: true }),
+      stderr: "",
+      exitCode: 0,
+    });
   });
 });

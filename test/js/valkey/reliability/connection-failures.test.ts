@@ -1,7 +1,9 @@
 import { RedisClient } from "bun";
+import { estimateShallowMemoryUsageOf } from "bun:jsc";
 import { describe, expect, mock, test } from "bun:test";
 import { once } from "events";
-import { bunEnv, bunExe, isWindows, tempDir, tls as tlsCert } from "harness";
+import { existsSync, readFileSync, writeFileSync } from "fs";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows, nodeExe, tempDir, tls as tlsCert } from "harness";
 import net from "net";
 import path from "path";
 import tls from "tls";
@@ -341,50 +343,52 @@ describe.skipIf(!isEnabled)("Valkey: Connection Failures", () => {
   });
 });
 
-describe("Valkey: Auto-Reconnect In-Flight Commands", () => {
-  function readCommands(state: { buffer: Buffer }): string[][] {
-    const commands: string[][] = [];
-    while (true) {
-      const text = state.buffer.toString("latin1");
-      if (text[0] !== "*") break;
-      const headerEnd = text.indexOf("\r\n");
-      if (headerEnd === -1) break;
-      const argCount = parseInt(text.slice(1, headerEnd), 10);
-      if (!Number.isInteger(argCount) || argCount < 0) break;
-      let pos = headerEnd + 2;
-      const args: string[] = [];
-      let complete = true;
-      for (let i = 0; i < argCount; i++) {
-        if (text[pos] !== "$") {
-          complete = false;
-          break;
-        }
-        const lenEnd = text.indexOf("\r\n", pos);
-        if (lenEnd === -1) {
-          complete = false;
-          break;
-        }
-        const len = parseInt(text.slice(pos + 1, lenEnd), 10);
-        if (!Number.isInteger(len) || len < 0) {
-          complete = false;
-          break;
-        }
-        const dataStart = lenEnd + 2;
-        const dataEnd = dataStart + len;
-        if (text.length < dataEnd + 2) {
-          complete = false;
-          break;
-        }
-        args.push(text.slice(dataStart, dataEnd));
-        pos = dataEnd + 2;
+// Takes the complete RESP commands off the front of `state.buffer` and leaves
+// any partial command in it for the next chunk.
+function readCommands(state: { buffer: Buffer }): string[][] {
+  const commands: string[][] = [];
+  while (true) {
+    const text = state.buffer.toString("latin1");
+    if (text[0] !== "*") break;
+    const headerEnd = text.indexOf("\r\n");
+    if (headerEnd === -1) break;
+    const argCount = parseInt(text.slice(1, headerEnd), 10);
+    if (!Number.isInteger(argCount) || argCount < 0) break;
+    let pos = headerEnd + 2;
+    const args: string[] = [];
+    let complete = true;
+    for (let i = 0; i < argCount; i++) {
+      if (text[pos] !== "$") {
+        complete = false;
+        break;
       }
-      if (!complete) break;
-      commands.push(args);
-      state.buffer = state.buffer.subarray(pos);
+      const lenEnd = text.indexOf("\r\n", pos);
+      if (lenEnd === -1) {
+        complete = false;
+        break;
+      }
+      const len = parseInt(text.slice(pos + 1, lenEnd), 10);
+      if (!Number.isInteger(len) || len < 0) {
+        complete = false;
+        break;
+      }
+      const dataStart = lenEnd + 2;
+      const dataEnd = dataStart + len;
+      if (text.length < dataEnd + 2) {
+        complete = false;
+        break;
+      }
+      args.push(text.slice(dataStart, dataEnd));
+      pos = dataEnd + 2;
     }
-    return commands;
+    if (!complete) break;
+    commands.push(args);
+    state.buffer = state.buffer.subarray(pos);
   }
+  return commands;
+}
 
+describe("Valkey: Auto-Reconnect In-Flight Commands", () => {
   test("rejects commands that were in flight when the connection dropped instead of pairing them with replies from the next connection", async () => {
     const sockets: net.Socket[] = [];
     let connections = 0;
@@ -497,6 +501,62 @@ describe("Valkey: Recovering After fail()", () => {
   // it closes, which events.once() would turn into a rejection.
   function closedOnServer(socket: net.Socket): Promise<void> {
     return socket.destroyed ? Promise.resolve() : new Promise(resolve => socket.once("close", () => resolve()));
+  }
+
+  // How the peer's socket ended: "end" for a FIN, the error code for an RST.
+  function endOrError(socket: net.Socket): Promise<string> {
+    return new Promise(resolve => {
+      socket.once("end", () => resolve("end"));
+      socket.once("error", (err: NodeJS.ErrnoException) => resolve(err.code ?? err.message));
+    });
+  }
+
+  const STUCK_VALUE_BYTES = 256 * 1024;
+  // One of writeUntilStuck's SETs as the client frames it: header, value, CRLF.
+  const STUCK_COMMAND_BYTES =
+    `*3\r\n$3\r\nSET\r\n$3\r\nkey\r\n$${STUCK_VALUE_BYTES}\r\n`.length + STUCK_VALUE_BYTES + 2;
+
+  // Writes SETs of STUCK_VALUE_BYTES until two flushes in a row hand nothing to
+  // the socket, i.e. the peer has stopped reading and the socket holds
+  // undelivered bytes.
+  async function writeUntilStuck(client: RedisClient): Promise<Promise<string>[]> {
+    const value = Buffer.alloc(STUCK_VALUE_BYTES, "x").toString();
+    const pending: Promise<string>[] = [];
+    let stuckFlushes = 0;
+    while (stuckFlushes < 2 && pending.length < 256) {
+      const before = client.bufferedAmount;
+      pending.push(
+        client.set("key", value).then(
+          () => "resolved",
+          err => err.code,
+        ),
+      );
+      await new Promise(resolve => setImmediate(resolve));
+      const added = client.bufferedAmount - before;
+      stuckFlushes = added >= value.length ? stuckFlushes + 1 : 0;
+    }
+    expect(stuckFlushes).toBe(2);
+    return pending;
+  }
+
+  // RESP3 push frames as the server writes them for SUBSCRIBE and for messages.
+  const push = (...items: (string | number)[]) =>
+    `>${items.length}\r\n` +
+    items
+      .map(item => (typeof item === "number" ? `:${item}\r\n` : `$${Buffer.byteLength(item)}\r\n${item}\r\n`))
+      .join("");
+
+  // A process that a client keeps alive never exits on its own; report that
+  // as the exit code instead of waiting for the test to time out. The payload
+  // runs in well under a second on a debug build; the exit itself is what an
+  // ASAN build makes slow.
+  async function exitOutcome(proc: Bun.Subprocess<"ignore", "pipe", "pipe">) {
+    const output = Promise.all([proc.stdout.text(), proc.stderr.text()]);
+    const budget = isASAN || isDebug ? 15_000 : 3_000;
+    const exitCode = await Promise.race([proc.exited, delay(budget).then(() => "still running" as const)]);
+    if (exitCode === "still running") proc.kill();
+    const [stdout, stderr] = await output;
+    return { stdout, stderr, exitCode };
   }
 
   // Calls connect() from the first onclose and reports how that attempt ended.
@@ -725,20 +785,7 @@ describe("Valkey: Recovering After fail()", () => {
     try {
       client.onclose = () => closed.resolve();
       await client.connect();
-      const value = Buffer.alloc(256 * 1024, "x").toString();
-      const pending: Promise<unknown>[] = [];
-      // Each SET is flushed as soon as it is queued; once two flushes in a row
-      // hand nothing at all to the socket, the kernel buffers on both ends are
-      // full and the socket is stuck behind its undelivered ciphertext.
-      let stuckFlushes = 0;
-      while (stuckFlushes < 2 && pending.length < 256) {
-        const before = client.bufferedAmount;
-        pending.push(client.set("key", value).catch(() => {}));
-        await new Promise(resolve => setImmediate(resolve));
-        const added = client.bufferedAmount - before;
-        stuckFlushes = added >= value.length ? stuckFlushes + 1 : 0;
-      }
-      expect(stuckFlushes).toBe(2);
+      const pending = await writeUntilStuck(client);
       const lastSet = client.set("key", "last");
       fake.sockets[0].write("\x01\r\n");
       await expect(lastSet).rejects.toMatchObject({ code: "ERR_REDIS_INVALID_RESPONSE_TYPE" });
@@ -893,9 +940,48 @@ describe("Valkey: Recovering After fail()", () => {
       await expect(client.ping()).rejects.toMatchObject({ code: "ERR_REDIS_INVALID_RESPONSE_TYPE" });
       expect(client.connected).toBe(false);
       duplicate = await client.duplicate();
-      // A duplicate copies the original's manual-close state; a failure is not
-      // one, so the drop of connection 2 goes through the retry policy: no
-      // onclose, a second onconnect, and the queued PING answered by connection 3.
+      // A duplicate carries no close history from its source, so the drop of
+      // connection 2 goes through the retry policy: no onclose, a second
+      // onconnect, and the next PING answered by connection 3.
+      const reconnected = Promise.withResolvers<void>();
+      let connects = 0;
+      duplicate.onconnect = () => {
+        if (++connects === 2) reconnected.resolve();
+      };
+      duplicate.onclose = err => reconnected.reject(err);
+      expect(await duplicate.ping()).toBe("PONG");
+      await reconnected.promise;
+      expect(await duplicate.ping()).toBe("PONG");
+      expect(fake.connections).toBe(3);
+    } finally {
+      duplicate?.close();
+      client.close();
+      fake.server.close();
+    }
+  });
+
+  test("a duplicate of a closed client auto-reconnects", async () => {
+    // Connection 2 (the duplicate's first) is dropped by the server right
+    // after it answers PING.
+    const fake = helloServer({
+      PING: (connection, socket) => {
+        if (connection === 2) {
+          socket.end("+PONG\r\n");
+          return null;
+        }
+        return "+PONG\r\n";
+      },
+    });
+    const port = await fake.listen();
+    const client = new RedisClient(`redis://127.0.0.1:${port}`, { autoReconnect: true });
+    let duplicate: RedisClient | undefined;
+    try {
+      await client.connect();
+      client.close();
+      duplicate = await client.duplicate();
+      // The duplicate has no close history of its own, so the drop of
+      // connection 2 goes through the retry policy: no onclose, a second
+      // onconnect, and the next PING answered by connection 3.
       const reconnected = Promise.withResolvers<void>();
       let connects = 0;
       duplicate.onconnect = () => {
@@ -914,10 +1000,6 @@ describe("Valkey: Recovering After fail()", () => {
   });
 
   test("a message listener that closes and reconnects is not fed the pushes buffered behind its message", async () => {
-    // RESP3 push frames as the server writes them for SUBSCRIBE and for messages.
-    const push = (...items: (string | number)[]) =>
-      `>${items.length}\r\n` +
-      items.map(item => (typeof item === "number" ? `:${item}\r\n` : `$${item.length}\r\n${item}\r\n`)).join("");
     const fake = helloServer();
     const port = await fake.listen();
     const client = new RedisClient(`redis://127.0.0.1:${port}`);
@@ -1321,6 +1403,897 @@ describe("Valkey: Recovering After fail()", () => {
       });
     } finally {
       fake.server.close();
+    }
+  });
+
+  // Polls `condition` until it holds or `timeoutMs` passes; reports whether it held.
+  async function until(condition: () => boolean, timeoutMs: number): Promise<boolean> {
+    const deadline = Date.now() + timeoutMs;
+    while (!condition() && Date.now() < deadline) await Bun.sleep(1);
+    return condition();
+  }
+
+  // Answers HELLO on connection 1 and drops it on PING, so the client is left
+  // between retries with the reconnect timer armed and no socket. Later
+  // connections hold their HELLO reply until `release` is called for them.
+  function droppingServer() {
+    const held = new Map<number, net.Socket>();
+    const fake = helloServer({
+      PING: (connection, socket) => {
+        if (connection !== 1) return "+PONG\r\n";
+        socket.end();
+        return null;
+      },
+      HELLO: (connection, socket) => {
+        if (connection === 1) return "+OK\r\n";
+        held.set(connection, socket);
+        return null;
+      },
+    });
+    return {
+      ...fake,
+      get connections() {
+        return fake.connections;
+      },
+      release: (connection: number) => held.get(connection)!.write("+OK\r\n"),
+    };
+  }
+
+  // Connects `client`, has the server drop the connection, and returns once the
+  // client has scheduled its first retry (50ms out).
+  async function dropAndAwaitRetryDelay(client: RedisClient) {
+    await client.connect();
+    const ping = await client.ping().then(
+      () => "answered",
+      (err: Error & { code: string }) => err.code,
+    );
+    expect(ping).toBe("ERR_REDIS_CONNECTION_CLOSED");
+    expect(client.connected).toBe(false);
+  }
+
+  test("close() during the retry delay cancels the retry and fires onclose once", async () => {
+    const fake = droppingServer();
+    const port = await fake.listen();
+    const client = new RedisClient(`redis://127.0.0.1:${port}`);
+    const closes: string[] = [];
+    client.onclose = err => closes.push(`${err.code}: ${err.message}`);
+    try {
+      await dropAndAwaitRetryDelay(client);
+      // Queued for the retry; only close() is left to settle it.
+      const queued = client.get("k").then(
+        () => "answered",
+        (err: Error & { code: string }) => err.code,
+      );
+      client.close();
+      expect({ queued: await queued, closes }).toEqual({
+        queued: "ERR_REDIS_CONNECTION_CLOSED",
+        closes: ["ERR_REDIS_CONNECTION_CLOSED: Connection closed"],
+      });
+      // The retry was due 50ms after the drop; a second connection within a
+      // few multiples of that would be the cancelled timer dialling anyway.
+      await until(() => fake.connections >= 2, 300);
+      expect({ connections: fake.connections, closes: closes.length, connected: client.connected }).toEqual({
+        connections: 1,
+        closes: 1,
+        connected: false,
+      });
+    } finally {
+      client.close();
+      for (const socket of fake.sockets) socket.destroy();
+      await fake.close();
+    }
+  });
+
+  test("close() after the retries are exhausted does not report a second close", async () => {
+    const fake = helloServer();
+    const port = await fake.listen();
+    await fake.close();
+    const client = new RedisClient(`redis://127.0.0.1:${port}`, { maxRetries: 1 });
+    let closes = 0;
+    client.onclose = () => closes++;
+    try {
+      await expect(client.connect()).rejects.toMatchObject({ code: "ERR_REDIS_CONNECTION_CLOSED" });
+      expect(closes).toBe(1);
+      client.close();
+      await until(() => closes >= 2, 100);
+      expect(closes).toBe(1);
+    } finally {
+      client.close();
+    }
+  });
+
+  test("the process exits once close() cancels a pending retry", async () => {
+    const fake = droppingServer();
+    const port = await fake.listen();
+    try {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+          const client = new Bun.RedisClient("redis://127.0.0.1:${port}");
+          let connects = 0;
+          client.onconnect = () => console.log("onconnect", ++connects);
+          client.onclose = err => console.log("onclose", err.code);
+          await client.connect();
+          await client.ping().catch(err => console.log("ping rejected", err.code));
+          while (client.connected) await Bun.sleep(1);
+          client.close();
+          console.log("closed");
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: [
+          "onconnect 1",
+          "ping rejected ERR_REDIS_CONNECTION_CLOSED",
+          "onclose ERR_REDIS_CONNECTION_CLOSED",
+          "closed",
+          "",
+        ].join("\n"),
+        stderr: "",
+        exitCode: 0,
+      });
+      expect(fake.connections).toBe(1);
+    } finally {
+      await fake.close();
+    }
+  });
+
+  test("connect() during the retry delay dials once and the retry timer does not dial on top of it", async () => {
+    const fake = droppingServer();
+    const port = await fake.listen();
+    const client = new RedisClient(`redis://127.0.0.1:${port}`);
+    let closes = 0;
+    client.onclose = () => closes++;
+    try {
+      await dropAndAwaitRetryDelay(client);
+      const reconnected = client.connect().then(
+        () => "connected",
+        (err: Error & { code: string }) => err.code,
+      );
+      expect(await until(() => fake.connections === 2, 1000)).toBe(true);
+      // Connection 2 holds its HELLO reply past the 50ms the retry was due
+      // in; a third connection would be that retry dialling on top of it.
+      await until(() => fake.connections >= 3, 300);
+      expect(fake.connections).toBe(2);
+      fake.release(2);
+      expect({ reconnected: await reconnected, connected: client.connected, closes }).toEqual({
+        reconnected: "connected",
+        connected: true,
+        closes: 0,
+      });
+      expect(await client.ping()).toBe("PONG");
+    } finally {
+      client.close();
+      for (const socket of fake.sockets) socket.destroy();
+      await fake.close();
+    }
+  });
+
+  test("connect() during the retry delay starts the retry budget over", async () => {
+    // Connection 1 is dropped on PING; every later connection is dropped as
+    // soon as it sends HELLO, so each dial ends in another retry.
+    const fake = helloServer({
+      PING: (_connection, socket) => {
+        socket.end();
+        return null;
+      },
+      HELLO: (connection, socket) => {
+        if (connection === 1) return "+OK\r\n";
+        socket.destroy();
+        return null;
+      },
+    });
+    const port = await fake.listen();
+    const client = new RedisClient(`redis://127.0.0.1:${port}`, { maxRetries: 2 });
+    let closes = 0;
+    client.onclose = () => closes++;
+    try {
+      // Attempt 1 of 2 is pending here. Waiting for it would leave one more
+      // attempt; connect() dials now instead and counts from zero again, so
+      // three more connections are dropped before the client gives up.
+      await dropAndAwaitRetryDelay(client);
+      const outcome = await client.connect().then(
+        () => "connected",
+        (err: Error & { code: string }) => err.code,
+      );
+      expect({ outcome, connections: fake.connections, closes, connected: client.connected }).toEqual({
+        outcome: "ERR_REDIS_CONNECTION_CLOSED",
+        connections: 4,
+        closes: 1,
+        connected: false,
+      });
+    } finally {
+      client.close();
+      for (const socket of fake.sockets) socket.destroy();
+      await fake.close();
+    }
+  });
+
+  test("close() during a reconnect attempt reports the close exactly once", async () => {
+    const fake = droppingServer();
+    const port = await fake.listen();
+    const client = new RedisClient(`redis://127.0.0.1:${port}`);
+    let closes = 0;
+    client.onclose = () => closes++;
+    try {
+      await dropAndAwaitRetryDelay(client);
+      // The explicit dial is left connecting on a held HELLO reply.
+      const reconnected = client.connect().then(
+        () => "connected",
+        (err: Error & { code: string }) => err.code,
+      );
+      expect(await until(() => fake.connections === 2, 1000)).toBe(true);
+      client.close();
+      expect(await reconnected).toBe("ERR_REDIS_CONNECTION_CLOSED");
+      await until(() => closes >= 2, 300);
+      expect({ closes, connections: fake.connections, connected: client.connected }).toEqual({
+        closes: 1,
+        connections: 2,
+        connected: false,
+      });
+    } finally {
+      client.close();
+      for (const socket of fake.sockets) socket.destroy();
+      await fake.close();
+    }
+  });
+
+  test.skipIf(isWindows)(
+    "the connect timer of an attempt ended by close() does not fire into the next attempt",
+    async () => {
+      using dir = tempDir("valkey-unix", {});
+      const socketPath = path.join(String(dir), "r.sock");
+      // Holds every HELLO reply, so the first dial stays connecting until close().
+      const first = helloServer({ HELLO: () => null });
+      const second = helloServer();
+      await first.listenUnix(socketPath);
+      const connectionTimeout = 1000;
+      const client = new RedisClient(`redis+unix://${socketPath}`, { connectionTimeout });
+      let closes = 0;
+      client.onclose = () => closes++;
+      // Settled by the connect() made from the socket callback below.
+      const fromCallback = Promise.withResolvers<{
+        outcome: Promise<string>;
+        ping: Promise<string>;
+        beforeStaleDeadline: boolean;
+      }>();
+      // A dial made from a socket callback runs before the timers of that
+      // loop iteration are checked, and blocking there makes them due.
+      using control = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        socket: {
+          data(_socket, chunk) {
+            const staleDeadline = Number(chunk.toString());
+            fromCallback.resolve({
+              beforeStaleDeadline: performance.now() < staleDeadline,
+              outcome: client.connect().then(
+                () => "connected",
+                (err: Error & { code: string }) => `rejected: ${err.code}`,
+              ),
+              ping: client.ping().then(
+                () => "PONG",
+                (err: Error) => `rejected: ${err.message}`,
+              ),
+            });
+            Bun.sleepSync(Math.max(0, staleDeadline + 100 - performance.now()));
+          },
+          open() {},
+          close() {},
+          error() {},
+        },
+      });
+      const sender = await Bun.connect({
+        hostname: "127.0.0.1",
+        port: control.port,
+        socket: { data() {}, open() {}, close() {}, error() {} },
+      });
+      try {
+        // connect() arms the connect timer before it returns, so the real
+        // deadline is at or shortly after the one computed from here: a dial
+        // before this one is before the real one too, and the callback sleeps
+        // 100ms past it to be past the real one as well.
+        const armedAt = performance.now();
+        const attempt = client.connect().then(
+          () => "connected",
+          (err: Error & { code: string }) => `rejected: ${err.code}`,
+        );
+        const staleDeadline = armedAt + connectionTimeout;
+        expect(await until(() => first.connections === 1, 1000)).toBe(true);
+        client.close();
+        expect({ attempt: await attempt, closes }).toEqual({
+          attempt: "rejected: ERR_REDIS_CONNECTION_CLOSED",
+          closes: 1,
+        });
+        // With the path gone the next dial fails outright, so it arms no
+        // connect timer of its own; the hold it leaves is settled from the
+        // event loop, after the timers of the iteration are checked. Blocking
+        // in the callback past the stale deadline makes that timer due first.
+        await first.close();
+        sender.write(String(staleDeadline));
+        const { outcome, ping, beforeStaleDeadline } = await fromCallback.promise;
+        // Had the timer been left armed, it was still pending when the
+        // callback dialled; otherwise the test proved nothing.
+        expect(beforeStaleDeadline).toBe(true);
+        // The hold's close schedules a retry, which is what connects.
+        await second.listenUnix(socketPath);
+        expect(await until(() => second.connections >= 1, 3000)).toBe(true);
+        expect({ outcome: await outcome, ping: await ping, closes }).toEqual({
+          outcome: "connected",
+          ping: "PONG",
+          closes: 1,
+        });
+      } finally {
+        client.close();
+        sender.end();
+        for (const socket of first.sockets) socket.destroy();
+        await first.close();
+        await second.close();
+      }
+    },
+  );
+
+  test("subscribe() on a failed client rejects and registers no handler", async () => {
+    const fake = helloServer();
+    const port = await fake.listen();
+    const client = new RedisClient(`redis://127.0.0.1:${port}`, {
+      connectionTimeout: 0,
+      idleTimeout: 50,
+      autoReconnect: false,
+    });
+    try {
+      const closed = Promise.withResolvers<Error>();
+      client.onclose = err => closed.resolve(err);
+      await client.connect();
+      await closed.promise;
+      const delivered: string[] = [];
+      const firstDelivered = Promise.withResolvers<void>();
+      const listener = (message: string) => {
+        delivered.push(message);
+        firstDelivered.resolve();
+      };
+      await expect(client.subscribe("ch", listener)).rejects.toMatchObject({
+        code: "ERR_REDIS_CONNECTION_CLOSED",
+        message: "Connection has failed",
+      });
+      // The rejected subscribe left the client out of subscriber mode.
+      expect(() => client.unsubscribe("ch")).toThrow("can only be called while in subscriber mode");
+
+      // A subscribe on the next connection is the only registration: the
+      // message arrives once, not once per attempt.
+      client.onclose = () => {};
+      await client.connect();
+      const connection2 = fake.sockets[1];
+      connection2.on("data", chunk => {
+        if (chunk.toString("latin1").includes("SUBSCRIBE")) {
+          connection2.write(push("subscribe", "ch", 1) + push("message", "ch", "m0"));
+        }
+      });
+      await client.subscribe("ch", listener);
+      await firstDelivered.promise;
+      // PONG comes back after anything else the stub wrote, so a second
+      // delivery of m0 would be in `delivered` by now.
+      await client.ping();
+      expect({ delivered, connections: fake.connections }).toEqual({ delivered: ["m0"], connections: 2 });
+    } finally {
+      client.close();
+      fake.server.close();
+    }
+  });
+
+  test("subscribe() on a fresh client with the offline queue off dials, rejects and registers no handler", async () => {
+    const fake = helloServer();
+    const port = await fake.listen();
+    const client = new RedisClient(`redis://127.0.0.1:${port}`, { enableOfflineQueue: false });
+    try {
+      const connected = Promise.withResolvers<void>();
+      client.onconnect = () => connected.resolve();
+      const delivered: string[] = [];
+      const firstDelivered = Promise.withResolvers<void>();
+      const listener = (message: string) => {
+        delivered.push(message);
+        firstDelivered.resolve();
+      };
+      // The rejection is the one get() gets on this client: the dial has been
+      // started, and the SUBSCRIBE cannot wait for it.
+      await expect(client.subscribe("ch", listener)).rejects.toMatchObject({
+        code: "ERR_REDIS_CONNECTION_CLOSED",
+        message: "Connection is closed and offline queue is disabled",
+      });
+      expect(() => client.unsubscribe("ch")).toThrow("can only be called while in subscriber mode");
+
+      // That dial completes on its own.
+      await connected.promise;
+      const connection = fake.sockets[0];
+      connection.on("data", chunk => {
+        if (chunk.toString("latin1").includes("SUBSCRIBE")) {
+          connection.write(push("subscribe", "ch", 1) + push("message", "ch", "m0"));
+        }
+      });
+      await client.subscribe("ch", listener);
+      await firstDelivered.promise;
+      await client.ping();
+      expect({ delivered, connections: fake.connections }).toEqual({ delivered: ["m0"], connections: 1 });
+    } finally {
+      client.close();
+      fake.server.close();
+    }
+  });
+
+  test("subscribe() with a channel of the wrong type throws before the fresh client dials", async () => {
+    const fake = helloServer();
+    const port = await fake.listen();
+    const client = new RedisClient(`redis://127.0.0.1:${port}`);
+    const probe = new RedisClient(`redis://127.0.0.1:${port}`);
+    try {
+      expect(() => client.subscribe(123 as never, () => {})).toThrow(
+        "Expected channel to be a string or array for 'subscribe'.",
+      );
+      // A dial made by the call above is ahead of the probe's in the stub's
+      // accept queue, so it has been counted by the time the probe is answered.
+      await probe.connect();
+      expect(fake.connections).toBe(1);
+    } finally {
+      client.close();
+      probe.close();
+      fake.server.close();
+    }
+  });
+
+  test("the process exits after subscribe() is rejected by a failed client", async () => {
+    const fake = helloServer();
+    const port = await fake.listen();
+    try {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+          const client = new Bun.RedisClient("redis://127.0.0.1:${port}", { connectionTimeout: 0, idleTimeout: 50, autoReconnect: false });
+          const closed = Promise.withResolvers();
+          client.onclose = err => closed.resolve(err);
+          await client.connect();
+          await closed.promise;
+          console.log("onclose");
+          await client.subscribe("ch", () => {}).catch(err => console.log("subscribe rejected", err.code));
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      expect(await exitOutcome(proc)).toEqual({
+        stdout: "onclose\nsubscribe rejected ERR_REDIS_CONNECTION_CLOSED\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    } finally {
+      fake.server.close();
+    }
+  });
+
+  // subscribe() before connect() with the default offline queue stores the
+  // listener and queues the SUBSCRIBE; when the dial then fails for good the
+  // queued SUBSCRIBE is rejected but the listener stays, so the process is
+  // held alive. #33290 registers the listener on the server's subscribe
+  // confirmation instead, which closes this route; a -ERR reply to SUBSCRIBE
+  // (an ACL NOPERM, say) leaves the same orphan and is closed the same way.
+  test.todo("the process exits after a queued subscribe() is rejected by a dial that fails for good", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const client = new Bun.RedisClient("redis://127.0.0.1:1", { maxRetries: 0, autoReconnect: false });
+        await client.subscribe("ch", () => {}).catch(err => console.log("subscribe rejected", err.code));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(await exitOutcome(proc)).toEqual({
+      stdout: "subscribe rejected ERR_REDIS_CONNECTION_CLOSED\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // A TLS stub run under Node in its own process, so it can read while this
+  // loop is blocked, and so that what it reports about the peer's close does
+  // not come from the socket code under test. It pauses connection 1 after
+  // HELLO, resumes when the resume file appears, and writes the drained file
+  // once its byte count has reached the number written into the resume file
+  // (minus what one spilled batch can hold) and stopped growing. When the
+  // peer ends the connection it probes the socket with one write: after a
+  // FIN the kernel takes the byte, after an RST it refuses it. Told the peer
+  // already closed, it also probes once it has drained without an end.
+  const TLS_STUB = /* js */ `
+    const tls = require("tls");
+    const { existsSync, readFileSync, writeFileSync } = require("fs");
+    const [resumeFile, drainedFile] = process.argv.slice(2);
+    let connections = 0;
+    const server = tls.createServer(
+      { key: readFileSync("key.pem"), cert: readFileSync("cert.pem"), allowHalfOpen: true },
+      socket => {
+        const connection = ++connections;
+        const seen = [];
+        let reported = false;
+        function report(probe) {
+          if (reported) return;
+          reported = true;
+          console.log("saw", seen.join(", "), "|", probe, "|", socket.bytesRead);
+        }
+        socket.on("data", chunk => {
+          const text = chunk.toString("latin1");
+          if (text.includes("HELLO")) {
+            socket.write("+OK\\r\\n");
+            if (connection === 1) {
+              socket.pause();
+              const poll = setInterval(() => {
+                if (!existsSync(resumeFile)) return;
+                clearInterval(poll);
+                socket.resume();
+                const [handed, peerClosed] = readFileSync(resumeFile, "utf8").split(" ").map(Number);
+                const expected = handed - ${STUCK_VALUE_BYTES};
+                let last = -1;
+                const settle = setInterval(() => {
+                  const now = socket.bytesRead;
+                  if (now >= expected && now === last) {
+                    clearInterval(settle);
+                    writeFileSync(drainedFile, String(now));
+                    // The peer closed before we read again and no end came
+                    // with the data: a reset the kernel discarded (its window
+                    // was shut) leaves no trace, so probe, and if the kernel
+                    // takes the byte wait for the reply it draws.
+                    if (peerClosed && !seen.includes("end")) probeWrite(true);
+                  }
+                  last = now;
+                }, 100);
+              }, 10);
+            }
+          }
+          if (text.includes("PING")) socket.write("+PONG\\r\\n");
+        });
+        if (connection !== 1) return;
+        socket.on("error", err => {
+          seen.push("error " + err.code);
+          report("errored");
+        });
+        socket.on("close", () => report("closed"));
+        socket.on("end", () => {
+          seen.push("end");
+          probeWrite(false);
+        });
+        function probeWrite(waitForReply) {
+          socket.write("x", err => {
+            if (err) report("write " + err.code);
+            else if (!waitForReply) report("write ok");
+          });
+        }
+      },
+    );
+    server.listen(0, "127.0.0.1", () => console.log("port", server.address().port));
+  `;
+
+  async function spawnTlsStub() {
+    const dir = tempDir("valkey-tls-stub", { "key.pem": tlsCert.key, "cert.pem": tlsCert.cert, "stub.js": TLS_STUB });
+    const resumeFile = path.join(String(dir), "resume");
+    const drainedFile = path.join(String(dir), "drained");
+    const proc = Bun.spawn({
+      cmd: [nodeExe()!, "stub.js", resumeFile, drainedFile],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    let output = "";
+    const gotPort = Promise.withResolvers<number>();
+    const gotResult = Promise.withResolvers<{ seen: string; probe: string; bytesRead: number }>();
+    (async () => {
+      for await (const chunk of proc.stdout) {
+        output += Buffer.from(chunk).toString();
+        const port = /^port (\d+)$/m.exec(output);
+        if (port) gotPort.resolve(Number(port[1]));
+        const result = /^saw (.*) \| (.*) \| (\d+)$/m.exec(output);
+        if (result) gotResult.resolve({ seen: result[1], probe: result[2], bytesRead: Number(result[3]) });
+      }
+      // Neither line is coming any more: fail a waiter now rather than at the test timeout.
+      const gone = new Error(`tls stub exited with ${await proc.exited}, output: ${JSON.stringify(output)}`);
+      gotPort.reject(gone);
+      gotResult.reject(gone);
+    })();
+    // The dispose below also ends the stub when the test failed before it
+    // awaited the result, and that rejection must not count as unhandled.
+    gotResult.promise.catch(() => {});
+    const stop = async () => {
+      proc.kill();
+      await proc.exited;
+      dir[Symbol.dispose]();
+    };
+    let port: number;
+    try {
+      port = await gotPort.promise;
+    } catch (err) {
+      await stop();
+      throw err;
+    }
+    return {
+      port,
+      result: gotResult.promise,
+      // Lets connection 1 read again; blocks until the stub has read `handed`
+      // bytes, less one spilled batch, and its count has stopped growing.
+      resumeAndDrain(handed: number, peerClosed: boolean): number {
+        writeFileSync(resumeFile, `${handed} ${peerClosed ? 1 : 0}`);
+        const deadline = Date.now() + 10_000;
+        while (!existsSync(drainedFile)) {
+          if (Date.now() > deadline) throw new Error("stub never drained");
+          Bun.sleepSync(10);
+        }
+        return Number(readFileSync(drainedFile, "utf8"));
+      },
+      [Symbol.asyncDispose]: stop,
+    };
+  }
+
+  test("close() over redis:// while the peer has stopped reading closes the socket at once", async () => {
+    // Same stuck flush as the fail() test above, ended by close() instead of
+    // a protocol error. Plain TCP never defers a close, so this pins that the
+    // close stays graceful: the queued bytes drain and the peer sees a FIN,
+    // not an RST.
+    const fake = helloServer({
+      HELLO: (connection, socket) => {
+        if (connection === 1) socket.pause();
+        return "+OK\r\n";
+      },
+      PING: () => "+PONG\r\n",
+    });
+    const port = await fake.listen();
+    const client = new RedisClient(`redis://127.0.0.1:${port}`, { autoReconnect: false });
+    try {
+      let closes = 0;
+      client.onclose = () => closes++;
+      await client.connect();
+      const pending = await writeUntilStuck(client);
+      client.close();
+      expect({ connected: client.connected, closes }).toEqual({ connected: false, closes: 1 });
+      expect(new Set(await Promise.all(pending))).toEqual(new Set(["ERR_REDIS_CONNECTION_CLOSED"]));
+      const stuck = fake.sockets[0];
+      const ending = endOrError(stuck);
+      stuck.resume();
+      expect(await ending).toBe("end");
+      await client.connect();
+      expect(await client.ping()).toBe("PONG");
+      expect(fake.connections).toBe(2);
+    } finally {
+      client.close();
+      fake.sockets[0]?.destroy();
+      fake.server.close();
+    }
+  });
+
+  test.skipIf(!nodeExe())(
+    "close() over rediss:// while the peer has stopped reading closes the socket at once",
+    async () => {
+      // The fast shutdown close() asks for is deferred behind the undelivered
+      // ciphertext, and a peer that never reads would leave it there; close()
+      // finishes it with a reset. The stub, once it reads again, must find the
+      // connection reset.
+      await using stub = await spawnTlsStub();
+      const client = new RedisClient(`rediss://127.0.0.1:${stub.port}`, {
+        autoReconnect: false,
+        tls: { ca: tlsCert.cert },
+      });
+      try {
+        let closes = 0;
+        client.onclose = () => closes++;
+        await client.connect();
+        const pending = await writeUntilStuck(client);
+        client.close();
+        expect({ connected: client.connected, closes }).toEqual({ connected: false, closes: 1 });
+        expect(new Set(await Promise.all(pending))).toEqual(new Set(["ERR_REDIS_CONNECTION_CLOSED"]));
+        stub.resumeAndDrain(0, true);
+        const { seen, probe } = await stub.result;
+        // No close_notify got out past the full kernel buffer, and the reset
+        // reaches the stub as a read error or refuses its write.
+        expect(seen).not.toContain("end");
+        expect(`${seen} ${probe}`).toMatch(/E(PIPE|CONNRESET)/);
+        await client.connect();
+        expect(await client.ping()).toBe("PONG");
+      } finally {
+        client.close();
+      }
+    },
+  );
+
+  test.skipIf(!nodeExe())("close() over rediss:// after the peer drained the backlog still ends in a FIN", async () => {
+    // The socket holds spilled ciphertext from a stall the peer has since
+    // recovered from, but this loop has not turned since, so nothing has
+    // flushed it yet. The fast shutdown drains it and is not deferred; the
+    // peer must see the rest of the data and a clean end, and its write
+    // probe must be taken, not refused by a reset.
+    await using stub = await spawnTlsStub();
+    const client = new RedisClient(`rediss://127.0.0.1:${stub.port}`, {
+      autoReconnect: false,
+      tls: { ca: tlsCert.cert },
+    });
+    try {
+      let closes = 0;
+      client.onclose = () => closes++;
+      await client.connect();
+      const pending = await writeUntilStuck(client);
+      // Bytes handed to the socket so far: everything written less what the
+      // client still holds as plaintext.
+      const handed = pending.length * STUCK_COMMAND_BYTES - client.bufferedAmount;
+      const drained = stub.resumeAndDrain(handed, false);
+      client.close();
+      expect({ connected: client.connected, closes }).toEqual({ connected: false, closes: 1 });
+      expect(new Set(await Promise.all(pending))).toEqual(new Set(["ERR_REDIS_CONNECTION_CLOSED"]));
+      const { seen, probe, bytesRead } = await stub.result;
+      expect({ seen, probe }).toEqual({ seen: "end", probe: "write ok" });
+      // The spilled ciphertext reached the peer before the FIN.
+      expect(bytesRead).toBeGreaterThan(drained);
+    } finally {
+      client.close();
+    }
+  });
+});
+
+describe("Valkey: Offline Queue", () => {
+  // Answers each complete command in the order it arrives: HELLO with `+OK`
+  // and everything else with `+PONG`. With `answer: false` nothing is ever
+  // answered, so the connection never becomes ready and everything the client
+  // sends stays in its offline queue.
+  function stubServer({ answer = true } = {}) {
+    const sockets: net.Socket[] = [];
+    const server = net.createServer(socket => {
+      sockets.push(socket);
+      const state = { buffer: Buffer.alloc(0) };
+      socket.on("data", chunk => {
+        if (!answer) return;
+        state.buffer = Buffer.concat([state.buffer, chunk]);
+        const replies = readCommands(state).map(args =>
+          (args[0] ?? "").toUpperCase() === "HELLO" ? "+OK\r\n" : "+PONG\r\n",
+        );
+        if (replies.length > 0) socket.write(replies.join(""));
+      });
+      socket.on("error", () => {});
+    });
+    return {
+      server,
+      listen: async () => {
+        server.listen(0, "127.0.0.1");
+        await once(server, "listening");
+        return (server.address() as net.AddressInfo).port;
+      },
+      close: () => {
+        for (const socket of sockets) socket.destroy();
+        return new Promise(resolve => server.close(resolve));
+      },
+    };
+  }
+
+  test("estimated memory counts every queued command after the queue was drained and refilled", async () => {
+    const stub = stubServer();
+    const port = await stub.listen();
+    const client = new RedisClient(`redis://127.0.0.1:${port}`, { autoReconnect: false });
+    try {
+      await client.connect();
+      // Six commands go through the queue and are answered. The queue is empty
+      // again, but its read position has moved to slot 6 of the 8 it grew to,
+      // so the next five commands wrap around to the start of its storage.
+      await Promise.all(Array.from({ length: 6 }, () => client.ping()));
+      const idleCost = estimateShallowMemoryUsageOf(client);
+
+      // Five more commands are queued in one turn, before the pipeline
+      // flushes them. Their serialized bytes must all show up in the estimate.
+      const key = Buffer.alloc(1000, "k").toString();
+      const pending = Promise.all(Array.from({ length: 5 }, () => client.get(key)));
+      const queuedCost = estimateShallowMemoryUsageOf(client);
+
+      expect(await pending).toEqual(Array(5).fill("PONG"));
+      expect(queuedCost - idleCost).toBeGreaterThanOrEqual(5 * key.length);
+    } finally {
+      client.close();
+      await stub.close();
+    }
+  });
+
+  test("commands queued after the queue wrapped reach the server in one write", async () => {
+    // The client runs in a child process with nothing else live and queues
+    // the GETs from a setImmediate callback, so the flush runs at the end of
+    // that tick and the loop then parks. A client that only flushes the part
+    // of the queue before the wrap point writes two GETs there and the other
+    // three on a later, unrelated wake. The stub records how many GETs the
+    // first read carrying a GET held, and holds the GET replies until it has
+    // all five so no reply can wake the child in between. It then answers all
+    // five, so the child exits and the count is asserted however the GETs
+    // arrived.
+    let getsSeen = 0;
+    let getsInFirstRead = 0;
+    const server = Bun.listen<{ buffer: Buffer }>({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        open(socket) {
+          socket.data = { buffer: Buffer.alloc(0) };
+        },
+        error() {},
+        close() {},
+        data(socket, chunk) {
+          const state = socket.data;
+          state.buffer = Buffer.concat([state.buffer, chunk]);
+          let replies = "";
+          let gets = 0;
+          for (const args of readCommands(state)) {
+            const name = (args[0] ?? "").toUpperCase();
+            if (name === "GET") {
+              gets += 1;
+            } else {
+              replies += name === "HELLO" ? "+OK\r\n" : "+PONG\r\n";
+            }
+          }
+          if (replies) socket.write(replies);
+          if (gets > 0 && getsSeen === 0) getsInFirstRead = gets;
+          const getsSeenBefore = getsSeen;
+          getsSeen += gets;
+          if (getsSeenBefore < 5 && getsSeen >= 5) socket.write("$1\r\nv\r\n".repeat(getsSeen));
+        },
+      },
+    });
+    try {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+          const client = new Bun.RedisClient("redis://127.0.0.1:${server.port}", { autoReconnect: false });
+          await client.connect();
+          await Promise.all(Array.from({ length: 6 }, () => client.ping()));
+          await new Promise(resolve => setImmediate(resolve));
+          const values = await Promise.all(Array.from({ length: 5 }, () => client.get("k")));
+          console.log(values.length, "replies");
+          client.close();
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ getsInFirstRead, stdout, stderr, exitCode }).toEqual({
+        getsInFirstRead: 5,
+        stdout: "5 replies\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  test("close() rejects every command queued while the connection never became ready", async () => {
+    const stub = stubServer({ answer: false });
+    const port = await stub.listen();
+    const client = new RedisClient(`redis://127.0.0.1:${port}`, { autoReconnect: false });
+    try {
+      const outcomes = Array.from({ length: 40 }, (_, i) =>
+        client.get(`key-${i}`).then(
+          () => "fulfilled",
+          (err: Error & { code?: string }) => err.code,
+        ),
+      );
+      client.close();
+      expect(await Promise.all(outcomes)).toEqual(Array(40).fill("ERR_REDIS_CONNECTION_CLOSED"));
+    } finally {
+      client.close();
+      await stub.close();
     }
   });
 });

@@ -7,8 +7,8 @@ mode: center
 [Vercel](https://vercel.com/) is a cloud platform for building, deploying, and scaling apps. Vercel Functions can run on the Bun runtime, either behind a framework that Vercel supports or as a [`Bun.serve()`](/runtime/http/server) server.
 
 <Warning>
-  The Bun runtime on Vercel is in Beta. Automatic source maps, bytecode caching, and request metrics for `node:http` and
-  `node:https` are not supported yet (request metrics for `fetch` are). See [feature
+  Automatic source maps, bytecode caching, and request metrics for `node:http` and `node:https` are not supported on the
+  Bun runtime (request metrics for `fetch` are). See [feature
   support](https://vercel.com/docs/functions/runtimes/bun#feature-support) in the Vercel documentation.
 </Warning>
 
@@ -20,11 +20,11 @@ mode: center
 
     	```json vercel.json icon="file-json"
     	{
-    		"bunVersion": "1.x" // [!code ++]
+    		"bunVersion": "1.4.x" // [!code ++]
     	}
     	```
 
-    	The value must be `"1.x"`; Vercel manages the minor and patch versions.
+    	Vercel manages the patch version.
 
     	For best results, match your local Bun version with the version Vercel uses.
     </Step>
@@ -130,7 +130,7 @@ mode: center
     	console.log("runtime", process.versions.bun);
     	```
     	```txt
-    	runtime 1.3.14
+    	runtime 1.4.0
     	```
 
     	[See the Vercel Bun Runtime documentation for feature support →](https://vercel.com/docs/functions/runtimes/bun#feature-support)

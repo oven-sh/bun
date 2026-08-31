@@ -3,7 +3,7 @@
  *
  * This is where all the phases come together:
  *   - emit codegen → generated .cpp/.h/.rs
- *   - emit cargo build → libbun_rust.a
+ *   - emit cargo build → libbun_runtime.a
  *   - resolve all deps → lib paths + include dirs
  *   - build PCH from root-pch.h (implicit deps: WebKit libs + all codegen)
  *   - compile all C/C++ with the PCH
@@ -15,10 +15,10 @@
  * `cfg.mode` controls what we actually produce:
  *   - "full": everything (default, local dev)
  *   - "cpp-only": compile to libbun.a, skip rust/link (CI upstream)
- *   - "rust-only": codegen + cargo → libbun_rust.a (CI upstream)
+ *   - "rust-only": codegen + cargo → libbun_runtime.a (CI upstream)
  *   - "link-only": link pre-built artifacts (CI downstream)
  *   - "rust-and-link": cargo + link; downloads cpp-only's archive (CI)
- *   - "archive-link": full build on one agent, linked from the cpp-only-style archive; uploads it + libbun_rust.a (CI)
+ *   - "archive-link": full build on one agent, linked from the cpp-only-style archive; uploads it + libbun_runtime.a (CI)
  *
  * The split modes are for CI where C++ and Rust build in parallel on
  * separate machines. rust-and-link folds the rust + link steps onto one
@@ -35,11 +35,12 @@ import { bunExeName, shouldStrip, type Config } from "./config.ts";
 import { generateDepVersionsHeader } from "./depVersionsHeader.ts";
 import { allDeps } from "./deps/index.ts";
 import { lolhtml } from "./deps/lolhtml.ts";
+import { rustArgon2 } from "./deps/rust-argon2.ts";
 import { assert } from "./error.ts";
-import { bunIncludes, computeFlags, extraFlagsFor, linkDepends } from "./flags.ts";
+import { bunIncludes, computeFlags, extraFlagsFor, linkDepends, linkerMapOutputs } from "./flags.ts";
 import { writeIfChanged } from "./fs.ts";
 import type { BuildNode, Ninja } from "./ninja.ts";
-import { emitRust, linkerMapPath, rustLibPath, rustLtoLinkInputs } from "./rust.ts";
+import { emitRust, rustLibPath } from "./rust.ts";
 import { quote, slash } from "./shell.ts";
 import { emitShims, machoPostlinkCommand, machoPostlinkImplicitInputs } from "./shims.ts";
 import { computeDepLibs, resolveDep, type ResolvedDep } from "./source.ts";
@@ -94,8 +95,11 @@ function systemLibs(cfg: Config): string[] {
   if (cfg.freebsd) {
     // pthread/m: explicit on FreeBSD (not folded into libc).
     // execinfo: backtrace() — separate library on FreeBSD.
-    // kvm/procstat/elf/util: process introspection for node:os and crash handler.
-    libs.push("-lc", "-lpthread", "-lm", "-lexecinfo", "-lkvm", "-lprocstat", "-lelf", "-lutil");
+    // kvm/procstat/elf: process introspection for node:os and crash handler.
+    // libutil (openpty) is linked statically: its soname bumped .so.9 → .so.10
+    // between 14.x and 15.0, so a dynamic NEEDED entry from the 14.3 sysroot
+    // fails to load on 15.x (#40530). Every other lib here kept its soname.
+    libs.push("-lc", "-lpthread", "-lm", "-lexecinfo", "-lkvm", "-lprocstat", "-lelf", "-l:libutil.a");
   }
 
   if (cfg.windows) {
@@ -201,11 +205,14 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     const lolhtmlDep = resolveDep(n, cfg, lolhtml, depsByName);
     assert(lolhtmlDep !== null, "lolhtml resolveDep returned null — should never be skipped");
     depsByName.set(lolhtml.name, lolhtmlDep);
+    const rustArgon2Dep = resolveDep(n, cfg, rustArgon2, depsByName);
+    assert(rustArgon2Dep !== null, "rust-argon2 resolveDep returned null — should never be skipped");
+    depsByName.set(rustArgon2.name, rustArgon2Dep);
     rustObjects = emitRust(n, cfg, {
       codegenInputs: codegen.rustInputs,
       codegenOrderOnly: codegen.rustOrderOnly,
       rustSources: sources.rust,
-      vendorStamps: lolhtmlDep.outputs,
+      vendorStamps: [...lolhtmlDep.outputs, ...rustArgon2Dep.outputs],
     });
   }
 
@@ -227,6 +234,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   const depLibs: string[] = [];
   const depObjects: string[] = [];
   const depIncludes: string[] = [];
+  const depDefines: string[] = [];
   // Outputs of deps that provide headers — used as implicit inputs on PCH/cc/
   // no-PCH cxx so a dep rebuild invalidates compiles that #include its headers
   // (the .a is the signal — see comment at the PCH step). Deps with no provided
@@ -243,6 +251,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     depObjects.push(...d.objects);
     depChecks.push(...d.checks);
     depIncludes.push(...d.includes);
+    depDefines.push(...d.defines);
     // d.outputs is the "headers are ready" signal: for nested-cmake/
     // prebuilt that's the .a/stamp (headers are undeclared side-effects),
     // for direct deps it's the generated-header set + source stamp.
@@ -257,11 +266,11 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
 
   const flags = computeFlags(cfg);
 
-  // Full include set: bun's own + all dep includes + buildDir (for the
-  // generated versions header).
+  // Full include / define set: bun's own + what deps provide + buildDir (for
+  // the generated versions header).
   const allIncludes = [...bunIncludes(cfg), cfg.buildDir, ...depIncludes];
   const includeFlags = allIncludes.map(inc => `-I${inc}`);
-  const defineFlags = flags.defines.map(d => `-D${d}`);
+  const defineFlags = [...flags.defines, ...depDefines].map(d => `-D${d}`);
 
   // Final flag arrays for compile.
   const cxxFlagsFull = [...flags.cxxflags, ...includeFlags, ...defineFlags];
@@ -439,7 +448,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
 
   // ─── Step 6: cpp-only / archive-link → archive (cpp-only returns here) ───
   // CI's build-cpp step: archive all .o into libbun.a, stop. The sibling
-  // build-rust step produces libbun_rust.a independently; build-bun
+  // build-rust step produces libbun_runtime.a independently; build-bun
   // downloads both artifacts and links them. Archive name uses the exe
   // name (not just "libbun") so asan/debug variants are distinguishable.
   const archived = cfg.mode === "cpp-only" || cfg.mode === "archive-link";
@@ -495,22 +504,15 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // is needed; if a member ever isn't, `rustLinkFlags()` in rust.ts is the
   // wrapping helper.
   const shims = emitShims(n, cfg);
-  // rustLtoLinkInputs(): on ELF cross-language LTO targets the Rust bitcode
-  // is rewritten with a regular-LTO summary first (identity elsewhere).
-  const linkObjects = [
-    ...(archive !== undefined ? [archive] : allObjects),
-    ...rustLtoLinkInputs(n, cfg, rustObjects),
-    ...windowsRes,
-  ];
+  const linkObjects = [...(archive !== undefined ? [archive] : allObjects), ...rustObjects, ...windowsRes];
   const ldflags = [...flags.ldflags, ...systemLibs(cfg), ...shims.ldflags];
   const exe = link(n, cfg, exeName, linkObjects, {
     libs: depLibs,
     flags: ldflags,
     implicitInputs: [...linkImplicitInputs(cfg), ...shims.implicitInputs, ...depChecks],
-    // Declare the `-Wl,-Map=` side-product so `perf` symbolication picks it
-    // up. Linux release only — the map flag itself is gated identically in
-    // flags.ts.
-    linkerMapOutput: cfg.linux && cfg.release && !cfg.asan && !cfg.valgrind ? linkerMapPath(cfg) : undefined,
+    // Declare the maps the release link writes as side-products (`perf`
+    // symbolication on linux; the order file tracer's symbol table on windows).
+    linkerMapOutputs: linkerMapOutputs(cfg),
   });
 
   // ─── Step 7: post-link (strip, dsymutil, smoke test) ───
@@ -554,13 +556,13 @@ function emitBkUpload(n: Ninja, cfg: Config, stamp: string, files: string[], { g
 
 /**
  * rust-only mode: emit just the cargo build graph. CI's build-rust step
- * uses this to compile libbun_rust.a in parallel with build-cpp; target
+ * uses this to compile libbun_runtime.a in parallel with build-cpp; target
  * set via --os/--arch overrides (cargo `--target <triple>`).
  *
  * Needs:
  *   - lolhtml FETCHED (path dep of `bun_runtime`/`bun_bundler`) — not built separately
  *   - codegen (Rust `include!`s/`include_bytes!`s the same generated set)
- *   - cargo build → libbun_rust.a
+ *   - cargo build → libbun_runtime.a
  *
  * Does NOT need: any C dep built, any cxx, PCH, link. ninja only pulls
  * what's depended on — lolhtml's configure/build rules are emitted but
@@ -568,14 +570,15 @@ function emitBkUpload(n: Ninja, cfg: Config, stamp: string, files: string[], { g
  */
 function emitRustOnly(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   n.comment("════════════════════════════════════════════════════════════════");
-  n.comment(`  Building libbun_rust.a (rust-only, target: ${cfg.os}-${cfg.arch})`);
+  n.comment(`  Building libbun_runtime.a (rust-only, target: ${cfg.os}-${cfg.arch})`);
   n.comment("════════════════════════════════════════════════════════════════");
   n.blank();
 
-  // Only dep: lolhtml, fetched as a cargo path dependency. resolveDep
-  // emits its fetch; emitRust depends on the fetch stamp via vendorStamps.
+  // Only deps: the cargo path dependencies; emitRust waits on their fetch stamps.
   const lolhtmlDep = resolveDep(n, cfg, lolhtml, new Map());
   assert(lolhtmlDep !== null, "lolhtml resolveDep returned null — should never be skipped");
+  const rustArgon2Dep = resolveDep(n, cfg, rustArgon2, new Map());
+  assert(rustArgon2Dep !== null, "rust-argon2 resolveDep returned null — should never be skipped");
 
   // Codegen: emitted fully, but only the embed-input subset is pulled.
   // The cpp-related outputs (cppSources, bindgenV2Cpp) have no consumer
@@ -586,13 +589,13 @@ function emitRustOnly(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     codegenInputs: codegen.rustInputs,
     codegenOrderOnly: codegen.rustOrderOnly,
     rustSources: sources.rust,
-    vendorStamps: lolhtmlDep.outputs,
+    vendorStamps: [...lolhtmlDep.outputs, ...rustArgon2Dep.outputs],
   });
 
   n.phony("bun", rustObjects);
   n.default(["bun"]);
 
-  return { deps: [lolhtmlDep], codegen, rustObjects, objects: [] };
+  return { deps: [lolhtmlDep, rustArgon2Dep], codegen, rustObjects, objects: [] };
 }
 
 /**
@@ -603,7 +606,7 @@ function emitRustOnly(n: Ninja, cfg: Config, sources: Sources): BunOutput {
  *
  * Expected artifacts (same paths cpp-only/rust-only produced):
  *   - libbun-profile.a            — from cpp-only's ar()
- *   - libbun_rust.a / bun_rust.lib — from rust-only's cargo (rustLibPath)
+ *   - libbun_runtime.a / bun_runtime.lib — from rust-only's cargo (rustLibPath)
  *   - deps/<name>/lib<name>.a     — from cpp-only's dep builds
  *   - cache/webkit-<hash>/lib/... — WebKit prebuilt (same cache path)
  */
@@ -628,12 +631,10 @@ function emitLinkOnly(n: Ninja, cfg: Config): BunOutput {
   // prefix/suffix, e.g. libbun-profile.a).
   const archive = resolve(cfg.buildDir, `${cfg.libPrefix}${exeName}${cfg.libSuffix}`);
 
-  // libbun_rust.a from rust-only: same path emitRust writes to. Shared
+  // libbun_runtime.a from rust-only: same path emitRust writes to. Shared
   // helper so both sides of the CI split agree (cargo's
-  // `<target-dir>/<triple>/<profile>/` layout). rustLtoLinkInputs(): on ELF
-  // cross-language LTO targets the downloaded archive's bitcode is rewritten
-  // with a regular-LTO summary on this (link) agent before the link.
-  const rustObjects = rustLtoLinkInputs(n, cfg, [rustLibPath(cfg)]);
+  // `<target-dir>/<triple>/<profile>/` layout).
+  const rustObjects = [rustLibPath(cfg)];
 
   // Only need ldflags + stripflags (no cflags/cxxflags — no compile).
   const flags = computeFlags(cfg);
@@ -653,7 +654,7 @@ function emitLinkOnly(n: Ninja, cfg: Config): BunOutput {
     libs: depLibs,
     flags: ldflags,
     implicitInputs: [...linkImplicitInputs(cfg), ...shims.implicitInputs],
-    linkerMapOutput: cfg.linux && cfg.release && !cfg.asan && !cfg.valgrind ? linkerMapPath(cfg) : undefined,
+    linkerMapOutputs: linkerMapOutputs(cfg),
   });
 
   // Strip + smoke test — same as full mode.
@@ -672,7 +673,7 @@ function emitLinkOnly(n: Ninja, cfg: Config): BunOutput {
 /**
  * rust-and-link mode: cargo build + link on one CI agent. The cpp archive
  * and dep libs are downloaded from the sibling build-cpp step (ci.ts polls
- * for its outcome and downloads before ninja runs); libbun_rust.a is built
+ * for its outcome and downloads before ninja runs); libbun_runtime.a is built
  * locally. Graph = emitRustOnly's cargo edge + emitLinkOnly's link edge.
  *
  * Expected downloaded artifacts (same paths cpp-only produced):
@@ -689,11 +690,13 @@ function emitRustAndLink(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   n.blank();
 
   // ─── Rust (built here) ───
-  // lolhtml fetch + codegen + cargo — same as emitRustOnly. The cargo edge
+  // Path-dep fetch + codegen + cargo — same as emitRustOnly. The cargo edge
   // runs while build-cpp is still compiling on its own agent; by the time
   // ninja reaches the link edge, ci.ts has already downloaded the archive.
   const lolhtmlDep = resolveDep(n, cfg, lolhtml, new Map());
   assert(lolhtmlDep !== null, "lolhtml resolveDep returned null — should never be skipped");
+  const rustArgon2Dep = resolveDep(n, cfg, rustArgon2, new Map());
+  assert(rustArgon2Dep !== null, "rust-argon2 resolveDep returned null — should never be skipped");
 
   const codegen = emitCodegen(n, cfg, sources);
 
@@ -701,7 +704,7 @@ function emitRustAndLink(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     codegenInputs: codegen.rustInputs,
     codegenOrderOnly: codegen.rustOrderOnly,
     rustSources: sources.rust,
-    vendorStamps: lolhtmlDep.outputs,
+    vendorStamps: [...lolhtmlDep.outputs, ...rustArgon2Dep.outputs],
   });
 
   // ─── C++ archive + dep libs (downloaded, not built) ───
@@ -722,13 +725,13 @@ function emitRustAndLink(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   const windowsRes = cfg.windows ? [emitWindowsResources(n, cfg)] : [];
 
   const shims = emitShims(n, cfg);
-  const linkObjects = [archive, ...rustLtoLinkInputs(n, cfg, rustObjects), ...windowsRes];
+  const linkObjects = [archive, ...rustObjects, ...windowsRes];
   const ldflags = [...flags.ldflags, ...systemLibs(cfg), ...shims.ldflags];
   const exe = link(n, cfg, exeName, linkObjects, {
     libs: depLibs,
     flags: ldflags,
     implicitInputs: [...linkImplicitInputs(cfg), ...shims.implicitInputs],
-    linkerMapOutput: cfg.linux && cfg.release && !cfg.asan && !cfg.valgrind ? linkerMapPath(cfg) : undefined,
+    linkerMapOutputs: linkerMapOutputs(cfg),
   });
 
   const { strippedExe, dsym } = emitPostLink(n, cfg, exe, exeName, flags.stripflags);
@@ -737,7 +740,7 @@ function emitRustAndLink(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     exe,
     strippedExe,
     dsym,
-    deps: [lolhtmlDep],
+    deps: [lolhtmlDep, rustArgon2Dep],
     codegen,
     rustObjects,
     objects: [],
@@ -1153,7 +1156,7 @@ export function validateBunConfig(cfg: Config): void {
         cfg.rustLld !== undefined && (cfg.ld === cfg.rustLld || dirname(cfg.ld) === dirname(cfg.rustLld)),
         `Cross-language LTO is on and rustc's LLVM (${cfg.rustLlvmVersion}) is newer than clang's ` +
           `(${cfg.clangVersion}), but rustc's bundled lld wasn't found — the link would fail with ` +
-          `"Invalid record" reading libbun_rust.a's bitcode. Install the pinned toolchain on this ` +
+          `"Invalid record" reading libbun_runtime.a's bitcode. Install the pinned toolchain on this ` +
           `host (\`rustup toolchain install ${cfg.rustToolchain}\`), upgrade clang/lld to LLVM ` +
           `${rustMajor}+, or disable LTO with \`--lto=off\`.`,
       );

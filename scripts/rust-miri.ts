@@ -51,6 +51,7 @@ const MIRI_CRATES = [
   "bun_resolve_builtins",
   "bun_shell_parser",
   "bun_threading",
+  "bun_url",
   "bun_wyhash",
 ];
 
@@ -59,14 +60,19 @@ function run(cmd: string, args: string[], opts: Parameters<typeof spawnSync>[2] 
 }
 
 // `bun_core/build.rs` needs `build_options.rs`; cargo can't resolve the
-// workspace until `vendor/lolhtml/` (a path dep) exists. Both come from the
-// configure step, which is a no-op when already done.
+// workspace until the vendored path deps (`vendor/lolhtml/`,
+// `vendor/rust-argon2/`) exist. All come from the configure step, which is a
+// no-op when already done.
 const buildOptionsRs = resolve(repo, "build/debug/codegen/build_options.rs");
 const lolhtmlCargo = resolve(repo, "vendor/lolhtml/Cargo.toml");
-if (!existsSync(buildOptionsRs) || !existsSync(lolhtmlCargo)) {
+const argon2Cargo = resolve(repo, "vendor/rust-argon2/Cargo.toml");
+if (!existsSync(buildOptionsRs) || !existsSync(lolhtmlCargo) || !existsSync(argon2Cargo)) {
   console.log("\x1b[36m[setup]\x1b[0m bun run build --configure-only");
   if (run("bun", ["run", "build", "--configure-only"]).status !== 0) process.exit(1);
-  if (!existsSync(lolhtmlCargo) && run("ninja", ["-C", "build/debug", "clone-lolhtml"]).status !== 0) {
+  if (
+    (!existsSync(lolhtmlCargo) || !existsSync(argon2Cargo)) &&
+    run("ninja", ["-C", "build/debug", "clone-lolhtml", "clone-rust-argon2"]).status !== 0
+  ) {
     process.exit(1);
   }
   // Re-check: configure can succeed without producing these (e.g. partial
@@ -75,6 +81,7 @@ if (!existsSync(buildOptionsRs) || !existsSync(lolhtmlCargo)) {
   for (const [path, hint] of [
     [buildOptionsRs, "bun run build --configure-only"],
     [lolhtmlCargo, "ninja -C build/debug clone-lolhtml"],
+    [argon2Cargo, "ninja -C build/debug clone-rust-argon2"],
   ] as const) {
     if (!existsSync(path)) {
       console.error(`\x1b[31m[error]\x1b[0m ${path} still missing after setup — try: ${hint}`);

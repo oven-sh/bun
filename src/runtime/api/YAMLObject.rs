@@ -4,7 +4,7 @@ use core::ffi::c_void;
 use bun_ast::{Expr, expr::Data as ExprData};
 use bun_collections::{HashMap, StringHashMap};
 use bun_core::StackCheck;
-use bun_core::{OwnedString, String as BunString};
+use bun_core::String as BunString;
 use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSPropertyIterator, JSPropertyIteratorOptions, JSValue,
     JsError, JsResult, MarkedArgumentBuffer, wtf,
@@ -65,8 +65,7 @@ struct Stringifier {
 enum Space {
     Minified,
     Number(u32),
-    /// +1 WTF ref owned for the lifetime of the `Stringifier`.
-    Str(OwnedString),
+    Str(bun_core::String),
 }
 
 impl Space {
@@ -84,7 +83,7 @@ impl Space {
         }
 
         if space.is_string() {
-            let str = OwnedString::new(space.to_bun_string(global)?);
+            let str = space.to_bun_string(global)?;
             if str.length() == 0 {
                 return Ok(Space::Minified);
             }
@@ -115,7 +114,7 @@ impl Default for AnchorAlias {
 }
 
 impl AnchorAlias {
-    fn init(origin: ValueOrigin) -> AnchorAlias {
+    fn init(origin: ValueOrigin<'_>) -> AnchorAlias {
         AnchorAlias {
             anchored: false,
             used: false,
@@ -123,7 +122,7 @@ impl AnchorAlias {
                 ValueOrigin::Root => AnchorAliasName::Root,
                 ValueOrigin::ArrayItem => AnchorAliasName::ArrayItem(0),
                 ValueOrigin::PropValue(prop_name) => AnchorAliasName::PropValue {
-                    prop_name,
+                    prop_name: (*prop_name).clone(),
                     counter: 0,
                 },
             },
@@ -143,10 +142,10 @@ pub(crate) enum AnchorAliasName {
 }
 
 #[derive(Clone, Copy)]
-pub(crate) enum ValueOrigin {
+pub(crate) enum ValueOrigin<'a> {
     Root,
     ArrayItem,
-    PropValue(BunString),
+    PropValue(&'a BunString),
 }
 
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug)]
@@ -202,14 +201,11 @@ impl Stringifier {
         })
     }
 
-    // deinit: all fields have Drop (`space: Space::Str` holds an
-    // `OwnedString`); no explicit impl needed.
-
     fn find_anchors_and_aliases(
         &mut self,
         global: &JSGlobalObject,
         value: JSValue,
-        origin: ValueOrigin,
+        origin: ValueOrigin<'_>,
     ) -> Result<(), StringifyError> {
         if !self.stack_check.is_safe_to_recurse() {
             return Err(StringifyError::StackOverflow);
@@ -296,7 +292,7 @@ impl Stringifier {
         }
 
         // const generics: <SKIP_EMPTY_NAME, INCLUDE_VALUE>
-        let mut iter = JSPropertyIterator::init(
+        let iter = JSPropertyIterator::init(
             global,
             unwrapped.to_object(global)?,
             JSPropertyIteratorOptions {
@@ -306,22 +302,30 @@ impl Stringifier {
             },
         )?;
 
-        while let Some(prop_name) = iter.next()? {
-            if iter.value.is_undefined() || iter.value.is_symbol() || iter.value.is_function() {
+        while let Some((prop_name, value)) = iter.next()? {
+            if value.is_undefined() || value.is_symbol() || value.is_function() {
                 continue;
             }
-            self.find_anchors_and_aliases(global, iter.value, ValueOrigin::PropValue(prop_name))?;
+            self.find_anchors_and_aliases(global, value, ValueOrigin::PropValue(&prop_name))?;
         }
 
         Ok(())
     }
 
     fn stringify(&mut self, global: &JSGlobalObject, value: JSValue) -> Result<(), StringifyError> {
+        let unwrapped = value.unwrap_boxed_primitive(global)?;
+        self.stringify_unwrapped(global, unwrapped)
+    }
+
+    /// `unwrapped` has been through `unwrap_boxed_primitive`.
+    fn stringify_unwrapped(
+        &mut self,
+        global: &JSGlobalObject,
+        unwrapped: JSValue,
+    ) -> Result<(), StringifyError> {
         if !self.stack_check.is_safe_to_recurse() {
             return Err(StringifyError::StackOverflow);
         }
-
-        let unwrapped = value.unwrap_boxed_primitive(global)?;
 
         if unwrapped.is_null() {
             self.builder.append_latin1(b"null");
@@ -369,7 +373,7 @@ impl Stringifier {
         }
 
         if unwrapped.is_string() {
-            let value_str = OwnedString::new(unwrapped.to_bun_string(global)?);
+            let value_str = unwrapped.to_bun_string(global)?;
             self.append_string(&value_str);
             return Ok(());
         }
@@ -405,7 +409,7 @@ impl Stringifier {
                         self.builder.append_latin1(b"value");
                         self.builder.append_usize(*counter);
                     } else {
-                        self.builder.append_string(*prop_name);
+                        self.builder.append_string(prop_name);
                         if *counter != 0 {
                             self.builder.append_usize(*counter);
                         }
@@ -485,7 +489,7 @@ impl Stringifier {
         }
 
         // const generics: <SKIP_EMPTY_NAME, INCLUDE_VALUE>
-        let mut iter = JSPropertyIterator::init(
+        let iter = JSPropertyIterator::init(
             global,
             unwrapped.to_object(global)?,
             JSPropertyIteratorOptions {
@@ -504,11 +508,8 @@ impl Stringifier {
             Space::Minified => {
                 self.builder.append_lchar(b'{');
                 let mut first = true;
-                while let Some(prop_name) = iter.next()? {
-                    if iter.value.is_undefined()
-                        || iter.value.is_symbol()
-                        || iter.value.is_function()
-                    {
+                while let Some((prop_name, value)) = iter.next()? {
+                    if value.is_undefined() || value.is_symbol() || value.is_function() {
                         continue;
                     }
 
@@ -520,7 +521,7 @@ impl Stringifier {
                     self.append_string(&prop_name);
                     self.builder.append_latin1(b": ");
 
-                    self.stringify(global, iter.value)?;
+                    self.stringify(global, value)?;
                 }
                 self.builder.append_lchar(b'}');
             }
@@ -528,11 +529,8 @@ impl Stringifier {
                 self.builder.ensure_unused_capacity(iter.len * b": ".len());
 
                 let mut first = true;
-                while let Some(prop_name) = iter.next()? {
-                    if iter.value.is_undefined()
-                        || iter.value.is_symbol()
-                        || iter.value.is_function()
-                    {
+                while let Some((prop_name, value)) = iter.next()? {
+                    if value.is_undefined() || value.is_symbol() || value.is_function() {
                         continue;
                     }
 
@@ -546,11 +544,12 @@ impl Stringifier {
 
                     self.indent += 1;
 
-                    if prop_value_needs_newline(iter.value) {
+                    let prop_value = value.unwrap_boxed_primitive(global)?;
+                    if prop_value_needs_newline(prop_value) {
                         self.newline();
                     }
 
-                    self.stringify(global, iter.value)?;
+                    self.stringify_unwrapped(global, prop_value)?;
                     self.indent -= 1;
                 }
                 if first {
@@ -579,16 +578,12 @@ impl Stringifier {
             Space::Str(space_str) => {
                 self.builder.append_lchar(b'\n');
 
-                let clamped: BunString = if space_str.length() > 10 {
-                    space_str.substring_with_len(0, 10)
-                } else {
-                    **space_str
-                };
+                let clamped = space_str.trunc(10);
 
                 self.builder
                     .ensure_unused_capacity(indent_count * clamped.length());
                 for _ in 0..indent_count {
-                    self.builder.append_string(clamped);
+                    self.builder.append_string(&clamped);
                 }
             }
         }
@@ -659,11 +654,11 @@ impl Stringifier {
             self.append_double_quoted_string(str);
             return;
         }
-        self.builder.append_string(*str);
+        self.builder.append_string(str);
     }
 }
 
-/// Does this object property value need a newline? True for arrays and objects.
+/// Does this (unwrapped) object property value need a newline? True for arrays and objects.
 fn prop_value_needs_newline(value: JSValue) -> bool {
     !value.is_number() && !value.is_boolean() && !value.is_null() && !value.is_string()
 }
@@ -773,7 +768,7 @@ fn string_needs_quotes(str: &BunString) -> bool {
     ];
 
     for keyword in KEYWORDS {
-        if str.eql_comptime(keyword) {
+        if str.eq_ascii(keyword) {
             return true;
         }
     }
@@ -1106,11 +1101,10 @@ impl From<bun_ast::ToJSError> for ToJsError {
         match e {
             Up::OutOfMemory => ToJsError::OutOfMemory,
             Up::JSError => ToJsError::JsError,
-            // `value_string_to_js` never yields the macro/identifier variants
-            // (those come from the full `data_to_js` walker); map defensively.
-            Up::CannotConvertArgumentTypeToJS
-            | Up::CannotConvertIdentifierToJS
-            | Up::MacroError => ToJsError::JsError,
+            // `value_string_to_js` never yields these; map defensively.
+            Up::CannotConvertArgumentTypeToJS | Up::CannotConvertIdentifierToJS => {
+                ToJsError::JsError
+            }
         }
     }
 }
@@ -1193,7 +1187,7 @@ impl<'a> ParserCtx<'a> {
                     let key = self.to_js(args, key_expr)?;
                     let value = self.to_js(args, value_expr)?;
 
-                    let key_str = OwnedString::new(key.to_bun_string(self.global)?);
+                    let key_str = key.to_bun_string(self.global)?;
                     obj.put_may_be_index(self.global, &key_str, value)?;
                 }
 

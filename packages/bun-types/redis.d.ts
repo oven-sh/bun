@@ -110,6 +110,19 @@ declare module "bun" {
      * @param command The command to send
      * @param args The arguments to the command
      * @returns A promise that resolves with the command result
+     *
+     * The reply is converted as follows. See the type conversion section in
+     * docs/runtime/redis.mdx.
+     * - A simple, bulk or verbatim string becomes a string. Methods that return a Buffer, such as getBuffer, keep the bytes.
+     * - An integer becomes a number.
+     * - A double becomes a number.
+     * - A big number becomes a bigint. When its payload is not an integer literal it becomes a string.
+     * - A boolean becomes a boolean.
+     * - A null, a null bulk string and a null array become null.
+     * - An array becomes an array.
+     * - A set becomes an array.
+     * - A map becomes a plain object with a null prototype.
+     * - An error reply (`-` or `!`) rejects the promise with code ERR_REDIS_SERVER_ERROR.
      */
     send(command: string, args: string[]): Promise<any>;
 
@@ -3536,6 +3549,8 @@ declare module "bun" {
      * await redis.eval("return ARGV[1]", 0, "hello"); // "hello"
      * await redis.eval("return redis.call('GET', KEYS[1])", 1, "mykey");
      * ```
+     *
+     * The reply is converted the same way as for `send`.
      */
     eval(script: string, numkeys: number, ...keysAndArgs: (string | number)[]): Promise<any>;
 
@@ -3551,6 +3566,8 @@ declare module "bun" {
      * const sha = await redis.script("LOAD", "return ARGV[1]");
      * await redis.evalsha(sha, 0, "hello"); // "hello"
      * ```
+     *
+     * The reply is converted the same way as for `send`.
      */
     evalsha(sha1: string, numkeys: number, ...keysAndArgs: (string | number)[]): Promise<any>;
 
@@ -3574,6 +3591,8 @@ declare module "bun" {
      * @param numkeys The number of keys
      * @param keysAndArgs The keys followed by additional arguments
      * @returns Promise that resolves with the function's return value
+     *
+     * The reply is converted the same way as for `send`.
      */
     fcall(name: string, numkeys: number, ...keysAndArgs: (string | number)[]): Promise<any>;
 

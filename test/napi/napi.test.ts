@@ -140,23 +140,30 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
               stderr: "inherit",
             });
             expect(build.success).toBeTrue();
-            await using tmpdir = tempDir("should-be-empty-except", {});
-            const result = spawnSync({
-              cmd: [exe, "self"],
-              env: { ...bunEnv, BUN_TMPDIR: tmpdir },
-              stdin: "inherit",
-              stderr: "inherit",
-              stdout: "pipe",
-            });
+            // Since #29587 each extracted `.node` persists at a content-hashed
+            // path shared across runs (pre-#29587 it was unlinked per load,
+            // see #19550), so a second run must not extract new copies.
+            await using tmpdir = tempDir("napi-compile-extract-" + format, {});
+            const runEnv = { ...bunEnv, BUN_TMPDIR: String(tmpdir), TMPDIR: String(tmpdir) };
+            const runSelf = () =>
+              spawnSync({
+                cmd: [exe, "self"],
+                env: runEnv,
+                stdin: "inherit",
+                stderr: "inherit",
+                stdout: "pipe",
+              });
+            const result = runSelf();
             const stdout = result.stdout.toString().trim();
             expect(stdout).toBe("hello world!");
             expect(result.success).toBeTrue();
-            if (process.platform !== "win32") {
-              expect(readdirSync(tmpdir), "bun should clean up .node files").toBeEmpty();
-            } else {
-              // On Windows, we have to mark it for deletion on reboot.
-              // Not clear how to test for that.
-            }
+            const extractedCount = () => readdirSync(String(tmpdir)).filter(f => f.endsWith(".node")).length;
+            const count = extractedCount();
+            expect(count).toBeGreaterThan(0);
+            const again = runSelf();
+            expect(again.stdout.toString().trim()).toBe("hello world!");
+            expect(again.success).toBeTrue();
+            expect(extractedCount()).toBe(count);
           },
           // CI runs tests under bun-profile (~700 MB on linux with ThinLTO
           // DWARF); --compile copies+reads+rewrites the whole thing to /tmp,
@@ -336,6 +343,24 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       // This tests the fix for napi_reference_unref underflow protection
       await checkSameOutput("test_ref_unref_underflow", []);
     });
+    it("napi_create_reference accepts primitives when the module declares NAPI_VERSION >= 10", async () => {
+      // Node.js keys the primitive-reference gate on the module's declared
+      // Node-API version: >= 10 may reference any napi_valuetype, < 10 only
+      // object/function/symbol. A value that cannot be held weakly is released
+      // once the count reaches zero (heldAtZero=0) and a later ref stays at 0;
+      // weakly held values survive (the test still holds them) and ref again to
+      // 1. checkSameOutput asserts parity with Node for both addon builds.
+      const result = await checkSameOutput("test_create_reference_primitive_by_version", []);
+      const notWeakable = ["undefined", "null", "boolean", "number", "string", "bigint"];
+      const weakable = ["symbol", "registered symbol", "object", "function"];
+      // napi_ok = 0, napi_invalid_arg = 1
+      expect(result.split(/\r?\n/)).toEqual([
+        ...notWeakable.map(name => `declared=10 header=10 ${name}: status=0 roundTrip=1 heldAtZero=0 reref=0`),
+        ...weakable.map(name => `declared=10 header=10 ${name}: status=0 roundTrip=1 heldAtZero=1 reref=1`),
+        ...notWeakable.map(name => `declared=8 header=8 ${name}: status=1`),
+        ...weakable.map(name => `declared=8 header=8 ${name}: status=0 roundTrip=1 heldAtZero=1 reref=1`),
+      ]);
+    });
   });
 
   describe("napi_get_version / node_api_create_external_string_*", () => {
@@ -404,6 +429,60 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       expect(result).toContain("status=10");
       expect(result).toContain("PASS: caller retains ownership on failure with pending exception");
       expect(result).not.toContain("FAIL");
+    });
+  });
+
+  // The finalizer of an external buffer belongs to the env that created it, and that env's
+  // teardown frees the bytes, so the bytes must not be transferred to another thread.
+  describe("external buffers are untransferable", () => {
+    it("every transfer entry point throws DataCloneError and leaves the buffer intact", async () => {
+      const result = await checkSameOutput("test_external_buffer_untransferable", []);
+      const expected = (kind: string) =>
+        [
+          `${kind}: isMarkedAsUntransferable(created)=${kind === "arraybuffer"} isMarkedAsUntransferable(arrayBuffer)=true ownKeys=0`,
+          `${kind}: structuredClone: DataCloneError code=25`,
+          `${kind}: MessagePort.postMessage: DataCloneError code=25`,
+          `${kind}: new Worker transferList: DataCloneError code=25`,
+          `${kind}: structuredClone after a plain ArrayBuffer: DataCloneError code=25`,
+          `${kind}: byteLength=8 plain.byteLength=2`,
+          `${kind}: copy=[1,2,3,4,5,6,7,8] byteLength=8`,
+        ].join("\n");
+      const expectedEmpty = (kind: string) =>
+        [
+          `empty ${kind}: isMarkedAsUntransferable(arrayBuffer)=true`,
+          `empty ${kind}: structuredClone: DataCloneError code=25`,
+        ].join("\n");
+      expect(result).toBe(
+        [
+          expected("arraybuffer"),
+          expected("buffer"),
+          expectedEmpty("arraybuffer"),
+          expectedEmpty("buffer"),
+          'stats: {"finalized":0,"finalizedOffThread":0}',
+        ].join("\n"),
+      );
+    });
+
+    it("a worker's buffers reach the parent as copies and are finalized by the worker's env teardown", async () => {
+      const result = await checkSameOutput("test_external_buffer_worker_exit", []);
+      const message = JSON.stringify({
+        transfers: {
+          arraybuffer: "DataCloneError code=25",
+          arraybufferByteLength: 4,
+          buffer: "DataCloneError code=25",
+          bufferByteLength: 4,
+        },
+        copies: { arraybuffer: [1, 2, 3, 4], buffer: [1, 2, 3, 4] },
+        stats: { finalized: 0, finalizedOffThread: 0 },
+      });
+      expect(result).toBe(
+        [
+          "worker exited with 0",
+          `messages: [${message}]`,
+          'stats after exit: {"finalized":2,"finalizedOffThread":0}',
+          "resolved to undefined",
+        ].join("\n"),
+      );
     });
   });
 
@@ -651,6 +730,60 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       const result = await checkSameOutput("test_threadsafe_function_call_js_throws", []);
       expect(result).toContain("uncaughtException 3 call_js error 3");
       expect(result).toContain("done 3");
+    });
+
+    // Items still queued when the function stops being dispatched. Node's
+    // process.exit() leaves them alone; an addon's call_js is usually written
+    // for a live env and aborts when handed a null one at exit (the finalizer
+    // is not printed: bun runs it at exit, node does not).
+    it("drops the queued items at process.exit()", async () => {
+      const result = await checkSameOutput("test_threadsafe_function_queued_items_at_process_exit", []);
+      expect(result).toBe("exiting with 3 items queued");
+    });
+
+    it("does not re-enter call_js when its callback calls process.exit()", async () => {
+      const result = await checkSameOutput("test_threadsafe_function_process_exit_inside_callback", []);
+      expect(result).toBe("call_js: item 1, env live, js_callback set");
+    });
+
+    // A worker's env really goes away while the addon's threads live on, so
+    // each item goes back to call_js the normal way, with the live env (calling
+    // into JS is refused: napi_cannot_run_js, 23, as this addon is built with
+    // NAPI_EXPERIMENTAL), and then the finalizer runs. Node does the same when
+    // its env cleanup turns the loop a last time.
+    it.each([
+      ["exit", 0],
+      ["terminate", 1],
+    ])("delivers the queued items with the live env when the creating worker is gone (%s)", async (how, code) => {
+      const result = await checkSameOutput(`test_threadsafe_function_queued_items_at_worker_${how}`, []);
+      // printf ends its lines with \r\n on Windows.
+      expect(result.replaceAll("\r\n", "\n")).toBe(
+        [
+          ...[1, 2, 3].flatMap(item => [
+            `call_js: item ${item}, env live, js_callback set`,
+            `call_js: item ${item}, call_function 23`,
+          ]),
+          "finalize: env live",
+          `worker exited with ${code}`,
+          "resolved to undefined",
+        ].join("\n"),
+      );
+    });
+
+    // After napi_tsfn_abort nothing queued runs any more: each item goes back
+    // to call_js with a null env and js_callback (the documented "free this"
+    // signal), then the function finalizes.
+    it("hands the queued items back with a null env after abort instead of running them", async () => {
+      const result = await checkSameOutput("test_threadsafe_function_abort_hands_queued_items_back", []);
+      expect(result.replaceAll("\r\n", "\n")).toBe(
+        [
+          "abort: 0",
+          ...[1, 2, 3].map(item => `call_js: item ${item}, env null, js_callback null`),
+          "finalize: env live",
+          "finalized: true",
+          "resolved to undefined",
+        ].join("\n"),
+      );
     });
 
     // An addon's own threads outlive the worker that created the threadsafe
@@ -1133,6 +1266,13 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     });
   });
 
+  describe("napi_get_cb_info this_arg", () => {
+    it("is globalThis for a bare call resolved through a closure scope", async () => {
+      const output = await checkSameOutput("test_this_value_of_bare_call_through_closure", []);
+      expect(output).toContain("bare call through closure returned globalThis: true");
+    });
+  });
+
   describe("bigint conversion to int64/uint64", () => {
     it("works", async () => {
       const tests = [-1n, 0n, 1n];
@@ -1589,6 +1729,90 @@ describe.skipIf(!canBuildNodeAddons())("cleanup hooks", () => {
     it("executes in reverse insertion order like Node.js", async () => {
       // Test that cleanup hooks execute in reverse insertion order (LIFO)
       await checkSameOutput("test_cleanup_hook_order", []);
+    });
+  });
+
+  // Node frees the main thread's environment, which is what runs an addon's
+  // cleanup hooks and the finalizers of everything it still has alive, only
+  // after the event loop runs dry. process.exit() and a fatal error call exit()
+  // instead, so an addon's teardown code never runs on those paths (Node
+  // v26.3.0). Bun used to run it on every exit, calling into addons where Node
+  // does not. Under BUN_DESTRUCT_VM_ON_EXIT (the sanitizer lanes set it for
+  // every child) the main thread's VM is destroyed like a worker's, and the envs
+  // are still torn down first, so these children opt out of it and of the leak
+  // check that goes with it.
+  describe.concurrent("env teardown on the main thread", () => {
+    const noDestruct = {
+      BUN_DESTRUCT_VM_ON_EXIT: "0",
+      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
+    };
+    const hooksAddon = join(__dirname, "napi-app/build/Debug/test_cleanup_hook_order.node");
+    const wrapsAddon = join(__dirname, "napi-app/build/Debug/test_wrap_cleanup_order.node");
+    // test() prints these two lines when called; each hook prints a line when it
+    // runs. createParentAndChildren() prints "finalize order: ..." from the
+    // parent's napi_wrap finalizer.
+    const setupLines = ["Added hooks in order: 1, 2, 3", "They should execute in reverse order: 3, 2, 1"];
+    const teardownLines = [
+      ...setupLines,
+      "hook3 executed at position 0",
+      "hook2 executed at position 1",
+      "hook1 executed at position 2",
+      "finalize order: 1 0",
+    ];
+    const setup = `
+      const hooks = require(${JSON.stringify(hooksAddon)});
+      const wraps = require(${JSON.stringify(wrapsAddon)});
+      hooks.test();
+      globalThis.keep = wraps.createParentAndChildren(1);
+    `;
+
+    // Returns stdout as a sorted list of lines. The addons print with printf(),
+    // which on Windows ends lines with \r\n and buffers each addon's output in
+    // its own CRT until exit, so only the set of lines is stable there.
+    async function run(code: string, env: Record<string, string>) {
+      await using proc = spawn({
+        cmd: [bunExe(), "-e", code],
+        env: { ...bunEnv, ...env },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { lines: stdout.split(/\r?\n/).filter(Boolean).sort(), stderr, exitCode };
+    }
+
+    it("process.exit() skips it, like Node", async () => {
+      await checkSameOutput("test_env_teardown_skipped_by_process_exit", [], noDestruct);
+    });
+
+    it("an uncaught exception while the entry point runs skips it", async () => {
+      const { lines, stderr, exitCode } = await run(`${setup}; throw new Error("fatal");`, noDestruct);
+      expect(stderr).toContain("fatal");
+      expect(lines).toEqual(setupLines.toSorted());
+      expect(exitCode).toBe(1);
+    });
+
+    it("an uncaught exception from the event loop skips it", async () => {
+      const { lines, stderr, exitCode } = await run(
+        `${setup}; setTimeout(() => { throw new Error("fatal"); }, 1);`,
+        noDestruct,
+      );
+      expect(stderr).toContain("fatal");
+      expect(lines).toEqual(setupLines.toSorted());
+      expect(exitCode).toBe(1);
+    });
+
+    it("an event loop that runs dry tears it down", async () => {
+      const { lines, stderr, exitCode } = await run(setup, noDestruct);
+      expect(stderr).toBe("");
+      expect(lines).toEqual(teardownLines.toSorted());
+      expect(exitCode).toBe(0);
+    });
+
+    it("process.exit() still tears it down when the VM is destroyed on exit", async () => {
+      const { lines, stderr, exitCode } = await run(`${setup}; process.exit(0);`, { BUN_DESTRUCT_VM_ON_EXIT: "1" });
+      expect(stderr).toBe("");
+      expect(lines).toEqual(teardownLines.toSorted());
+      expect(exitCode).toBe(0);
     });
   });
 

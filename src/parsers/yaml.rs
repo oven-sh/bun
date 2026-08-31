@@ -382,9 +382,7 @@ pub trait Encoding: Copy + 'static {
     /// Zero unit (used as EOF sentinel).
     const NUL: Self::Unit;
 
-    /// Construct a Unit from one byte of UTF-8 source text. Callers pass
-    /// ASCII and the bytes of encoded code points alike, which is only
-    /// an identity while `Unit == u8`.
+    /// Widen one byte of UTF-8 source text to a Unit.
     fn ch(c: u8) -> Self::Unit;
 
     /// Widen a unit to u32 for switching.
@@ -392,18 +390,13 @@ pub trait Encoding: Copy + 'static {
         u.into()
     }
 
-    /// A UTF-8 byte-string literal in the target encoding, widened per unit
-    /// into an inline `EncLit` buffer (see `EncLit` doc for the
-    /// const-generics rationale). Per-unit widening is only correct while
-    /// `Unit == u8`.
+    /// A UTF-8 byte-string literal, widened per unit into an inline `EncLit`.
     fn literal(s: &'static [u8]) -> EncLit<Self::Unit>;
 
     /// Number of leading units to skip if `input` starts with [3] c-byte-order-mark.
     fn bom_len(input: &[Self::Unit]) -> usize;
 
-    /// Reinterpret a `&[Unit]` slice as `&[u8]`, for `StringHashMap` keying
-    /// (`anchors` / `tag_handles`) and for the `&[u8]` consumers of scalar
-    /// text. Identity for `Utf8`.
+    /// Reinterpret `&[Unit]` as `&[u8]`; identity for `Utf8`.
     fn key_bytes(s: &[Self::Unit]) -> &[u8];
 }
 
@@ -1357,17 +1350,13 @@ fn is_core_schema_number<Enc: Encoding>(s: &[Enc::Unit], first_char: FirstChar) 
     i == len
 }
 
-/// Port of `bun.jsc.wtf.parseDouble(slice)` over an encoding-generic slice.
-/// `bun_core::wtf::parse_double` takes `&[u8]`, so the slice is narrowed via
-/// `Enc::key_bytes` (identity for `Utf8`).
+/// `bun_core::wtf::parse_double` over an encoding-generic slice.
 fn parse_double_generic<Enc: Encoding>(s: &[Enc::Unit]) -> Result<f64, ()> {
     bun_core::wtf::parse_double(Enc::key_bytes(s)).map_err(|_| ())
 }
 
-/// Parses a `u64` from an encoding-generic slice with radix
-/// auto-detection: `0x`/`0X` (hex), `0o`/`0O` (oct), `0b`/`0B`
-/// (bin), else decimal; `_` is a digit separator. The slice is narrowed via
-/// `Enc::key_bytes`.
+/// Parses a `u64` with radix auto-detection (`0x`, `0o`, `0b`, else decimal);
+/// `_` is a digit separator.
 fn parse_unsigned_radix0<Enc: Encoding>(s: &[Enc::Unit]) -> Result<u64, ()> {
     bun_core::fmt::parse_unsigned::<u64>(Enc::key_bytes(s), 0).map_err(|_| ())
 }

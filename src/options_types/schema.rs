@@ -174,15 +174,22 @@ pub mod api {
             registry
         }
 
-        pub fn has_credentials(&self) -> bool {
-            !self.token.is_empty() || !self.username.is_empty() || !self.password.is_empty()
-        }
-
-        /// `has_credentials` with `$VAR` resolved; counts only a token or a username+password pair.
+        /// True after `$VAR` resolution for a credential that can produce an
+        /// Authorization header: a token, or a username+password pair.
         pub fn has_resolved_credentials(&self, env: &bun_dotenv::Loader) -> bool {
             !env.get_auto(&self.token).is_empty()
                 || (!env.get_auto(&self.username).is_empty()
                     && !env.get_auto(&self.password).is_empty())
+        }
+
+        /// Clears credential fields whose `$VAR` reference resolves to nothing,
+        /// so a stale literal cannot shadow another credential source.
+        pub fn clear_unresolved_credentials(&mut self, env: &bun_dotenv::Loader) {
+            for field in [&mut self.token, &mut self.username, &mut self.password] {
+                if !field.is_empty() && env.get_auto(field).is_empty() {
+                    *field = Box::default();
+                }
+            }
         }
     }
 

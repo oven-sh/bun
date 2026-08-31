@@ -1300,6 +1300,7 @@ mod draft {
         }
         if let Some(registry) = install.default_registry.as_mut() {
             if !registry.has_resolved_credentials(env) {
+                registry.clear_unresolved_credentials(env);
                 for item in auth {
                     let matched = item.matches(if registry.url.is_empty() {
                         bun_install_types::NodeLinker::npm::Registry::DEFAULT_URL.as_bytes()
@@ -1317,6 +1318,7 @@ mod draft {
                 if registry.has_resolved_credentials(env) {
                     continue;
                 }
+                registry.clear_unresolved_credentials(env);
                 for item in auth {
                     let matched = item.matches(&registry.url);
                     if matched {

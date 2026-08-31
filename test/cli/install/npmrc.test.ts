@@ -916,6 +916,22 @@ describe("registry credentials from $VAR env references", () => {
     expect(exitCode).not.toBe(0);
   });
 
+  // The stale "$UNSET" token must not block from_api's username/password
+  // branch once .npmrc supplies the pair.
+  test.concurrent("an unset $VAR token falls back to a .npmrc username/_password pair", async () => {
+    const auths: (string | null)[] = [];
+    await using server = authLoggingRegistry(auths);
+    using dir = tempDir("bunfig-unset-token-npmrc-pair", {
+      ...scopeFiles(server.port!, `token = "$UNSET_TOKEN_41044"`, false),
+      ".npmrc":
+        `//127.0.0.1:${server.port}/:username=bob\n` +
+        `//127.0.0.1:${server.port}/:_password=${btoa("s3cret")}\n`,
+    });
+    const exitCode = await install(String(dir), {});
+    expect(auths).toEqual([`Basic ${btoa("bob:s3cret")}`]);
+    expect(exitCode).not.toBe(0);
+  });
+
   test.concurrent("a resolved $VAR username and password pair wins over the .npmrc credential", async () => {
     const auths: (string | null)[] = [];
     await using server = authLoggingRegistry(auths);

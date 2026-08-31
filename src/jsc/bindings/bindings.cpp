@@ -4165,31 +4165,27 @@ void JSC__JSValue__putNonEnumerable(JSC::EncodedJSValue JSValue0, JSC::JSGlobalO
     object->putDirect(arg1->vm(), Zig::toIdentifier(*arg2, arg1), JSC::JSValue::decode(JSValue3), JSC::PropertyAttribute::DontEnum | 0);
 }
 
-// Encoding-aware variant of JSC__JSValue__getIfPropertyExistsImpl: the key's
-// EncodedSlice bits decide Latin-1 vs UTF-8 vs UTF-16, and integer-index
-// names ("0") are safe. Returns deleted if the property does not exist.
-extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue JSC__JSValue__getIfPropertyExistsEncoded(JSC::EncodedJSValue target, JSC::JSGlobalObject* globalObject, const EncodedSlice* key)
+// Encoding-aware own-property read: the key's EncodedSlice bits decide
+// Latin-1 vs UTF-8 vs UTF-16, integer-index names ("0") are safe, and the
+// prototype chain is not consulted. Returns deleted if the own property
+// does not exist.
+extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue JSC__JSValue__getOwnEncoded(JSC::EncodedJSValue target, JSC::JSGlobalObject* globalObject, const EncodedSlice* key)
 {
     ASSERT_NO_PENDING_EXCEPTION(globalObject);
     JSValue value = JSC::JSValue::decode(target);
-    ASSERT_WITH_MESSAGE(!value.isEmpty(), "get() must not be called on empty value");
+    ASSERT_WITH_MESSAGE(!value.isEmpty(), "getOwn() must not be called on empty value");
 
     auto& vm = JSC::getVM(globalObject);
-    JSC::JSObject* object = value.getObject();
-    if (!object) [[unlikely]] {
-        return JSValue::encode(JSValue::decode(JSC::JSValue::ValueDeleted));
-    }
+    auto scope = DECLARE_THROW_SCOPE(vm);
 
     const auto identifier = Zig::toIdentifier(*key, globalObject);
     const auto property = JSC::PropertyName(identifier);
 
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    PropertySlot slot(object, PropertySlot::InternalMethodType::Get);
-    if (!object->getPropertySlot(globalObject, property, slot)) {
-        RETURN_IF_EXCEPTION(scope, {});
-        return JSValue::encode(JSValue::decode(JSC::JSValue::ValueDeleted));
-    }
+    PropertySlot slot(value, PropertySlot::InternalMethodType::GetOwnProperty);
+    bool hasSlot = value.getOwnPropertySlot(globalObject, property, slot);
     RETURN_IF_EXCEPTION(scope, {});
+    if (!hasSlot)
+        return JSValue::encode(JSValue::decode(JSC::JSValue::ValueDeleted));
 
     JSValue result = slot.getValue(globalObject, property);
     RETURN_IF_EXCEPTION(scope, {});

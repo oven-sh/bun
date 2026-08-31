@@ -206,6 +206,22 @@ describe("vi members", () => {
     }
   });
 
+  test("stubbing an inherited name restores by delete", () => {
+    const g = globalThis as Record<string, unknown>;
+    try {
+      vi.stubGlobal("hasOwnProperty", "stubbed");
+      expect(g.hasOwnProperty).toBe("stubbed");
+      vi.unstubAllGlobals();
+      // The name only existed on Object.prototype, so restore removes the
+      // own property instead of copying the inherited value onto globalThis.
+      expect(Object.getOwnPropertyDescriptor(globalThis, "hasOwnProperty")).toBeUndefined();
+      expect(typeof g.hasOwnProperty).toBe("function");
+    } finally {
+      vi.unstubAllGlobals();
+      delete g.hasOwnProperty;
+    }
+  });
+
   test("restore keeps a global that was already undefined", () => {
     const g = globalThis as Record<string, unknown>;
     try {

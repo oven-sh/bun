@@ -608,7 +608,7 @@ pub mod Jest {
 
         // Read the original before the borrow of the runner: the property
         // access can run user JS (a getter), which may re-enter these fns.
-        let mut original = target.get_encoded(global_object, &key_slice)?;
+        let mut original = target.get_own_encoded(global_object, &key_slice)?;
         if matches!(kind, StubKind::Env) {
             // Env values are strings, and the Windows env map reports a missing
             // name as `undefined`: treat `undefined` as absent so restore

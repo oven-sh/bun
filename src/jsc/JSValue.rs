@@ -1492,17 +1492,18 @@ impl JSValue {
             JSC__JSValue__putMayBeIndex(self, global, key, value)
         })
     }
-    /// [`Self::get`] with an explicit key encoding. The byte-slice [`Self::get`]
-    /// reads the key as Latin-1, so non-ASCII UTF-8 key bytes need this one.
-    /// Unlike [`Self::get`], a property that exists with the value `undefined`
-    /// returns `Some(undefined)`, not `None`.
-    pub fn get_encoded(
+    /// Own-property read with an explicit key encoding: the prototype chain
+    /// is not consulted, non-ASCII UTF-8 key bytes are read as UTF-8 (the
+    /// byte-slice [`Self::get`] reads Latin-1), and an own property that
+    /// exists with the value `undefined` returns `Some(undefined)`, not
+    /// `None`.
+    pub fn get_own_encoded(
         self,
         global: &JSGlobalObject,
         key: &bun_core::EncodedSlice,
     ) -> JsResult<Option<JSValue>> {
         // SAFETY: `key` is valid for the duration of the call.
-        let v = unsafe { crate::cpp::JSC__JSValue__getIfPropertyExistsEncoded(self, global, key) }?;
+        let v = unsafe { crate::cpp::JSC__JSValue__getOwnEncoded(self, global, key) }?;
         if v.0 == JSValue::PROPERTY_DOES_NOT_EXIST.0 {
             Ok(None)
         } else {

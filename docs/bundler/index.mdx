@@ -1365,17 +1365,34 @@ The bundler always loads `export *` re-exports (it never defers them) to avoid c
 
 Property reads on an import that turns out to be a module namespace are linked straight to the export they name, the same as a named import. This covers namespaces reached indirectly:
 
-```ts title="lib/index.ts" icon="/icons/typescript.svg"
+Each of these shapes of `lib.ts` qualifies:
+
+```ts icon="/icons/typescript.svg"
+// import { z } from "./lib";  z.object()
 import * as z from "./external";
-export { z }; // import { z } from "lib";  z.object()
-export default z; // import z from "lib";      z.object()
-export * as ns from "./external"; // import { ns } from "lib"; ns.object()
-export * as default from "."; // import lib from "lib";    lib.object()
+export { z };
 ```
 
-In each case `z.object()` compiles to a direct reference to `object`, the `exports` object for `./external` is not created unless something else uses the namespace as a value (`Object.keys(z)`, `{ ...z }`, passing `z` around), and the exports you don't touch are tree-shaken. One level is resolved (`ns.a.b` binds `a`). Calling a function this way passes `undefined` as `this`, as with `import * as ns; ns.fn()`.
+```ts icon="/icons/typescript.svg"
+// import z from "./lib";  z.object()
+import * as z from "./external";
+export default z;
+```
 
-Assignments (`z.x = 1`), optional chains, and computed keys are left as property accesses. `export default someImport` is followed only when it ends at a namespace; a default that snapshots a `let` export keeps snapshot semantics.
+```ts icon="/icons/typescript.svg"
+// import { ns } from "./lib";  ns.object()
+export * as ns from "./external";
+```
+
+```ts icon="/icons/typescript.svg"
+// import lib from "./lib";  lib.object()
+export function object() {}
+export * as default from "./lib";
+```
+
+In each case the member access compiles to a direct reference to `object`, the `exports` object for `./external` is not created unless something else uses the namespace as a value (`Object.keys(z)`, `{ ...z }`, passing `z` around), and the exports you don't touch are tree-shaken. One level is resolved (`ns.a.b` binds `a`). Calling a function this way passes `undefined` as `this`, as with `import * as ns; ns.fn()`.
+
+Assignments (`z.x = 1`), optional chains, and non-literal computed keys (`z[key]`) are left as property accesses; `z["object"]` is treated like `z.object`. `export default someImport` is followed only when it ends at a namespace; a default that snapshots a `let` export keeps snapshot semantics.
 
 ### deprecatedNamespaceObjectSetters
 

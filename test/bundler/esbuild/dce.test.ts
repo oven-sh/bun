@@ -1,5 +1,5 @@
 import { describe, expect } from "bun:test";
-import { dedent, itBundled } from "../expectBundled";
+import { BundlerTestInput, dedent, itBundled as itBundledBase } from "../expectBundled";
 
 // Tests ported from:
 // https://github.com/evanw/esbuild/blob/main/internal/bundler_tests/bundler_dce_test.go
@@ -8,7 +8,12 @@ import { dedent, itBundled } from "../expectBundled";
 
 // To understand what `dce: true` is doing, see ../expectBundled.md's "dce: true" section
 
-describe("bundler", () => {
+// Default to the CLI backend: itBundled registers API-backend cases with
+// it.serial (Bun.build needs process.chdir), so only CLI-backend cases overlap
+// under describe.concurrent.
+const itBundled = (id: string, opts: BundlerTestInput) => itBundledBase(id, { backend: "cli", ...opts });
+
+describe.concurrent("bundler", () => {
   itBundled("dce/PackageJsonSideEffectsFalseKeepNamedImportES6", {
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
@@ -1236,7 +1241,6 @@ describe("bundler", () => {
       },
       minifyWhitespace: minify,
       emitDCEAnnotations: emitDCEAnnotations,
-      backend: "cli",
       onAfterBundle(api) {
         const code = api.readFile("/out.js");
         expect(code).not.toContain("_yes"); // should not contain any *_yes variables
@@ -1300,6 +1304,10 @@ describe("bundler", () => {
     },
     target: "bun",
     dce: true,
+    // The harness passes jsx.runtime as --jsx-runtime, and any --jsx-* flag makes
+    // `bun build` use the production JSX runtime (Arguments.rs sets development: false).
+    // This fixture only ships jsx-dev-runtime, so build with the API.
+    backend: "api",
     run: {
       stdout: `["F",{"children":[null,{"children":["div",{}]}]}]`,
     },

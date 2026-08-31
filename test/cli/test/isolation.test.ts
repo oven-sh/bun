@@ -1,5 +1,5 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, normalizeBunSnapshot, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, normalizeBunSnapshot, tempDir, tls } from "harness";
 import fs from "node:fs";
 import net from "node:net";
 import { join } from "node:path";
@@ -39,10 +39,15 @@ const fixtures = {
   `,
 };
 
-async function runTests(dir: string, extraArgs: string[], files = ["./a-leaker.test.ts", "./b-observer.test.ts"]) {
+async function runTests(
+  dir: string,
+  extraArgs: string[],
+  files = ["./a-leaker.test.ts", "./b-observer.test.ts"],
+  env: Record<string, string | undefined> = bunEnv,
+) {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "test", ...extraArgs, ...files],
-    env: bunEnv,
+    env,
     cwd: dir,
     stderr: "pipe",
     stdout: "pipe",
@@ -104,6 +109,81 @@ describe.concurrent("bun test --isolate", () => {
     });
     const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(normalizeBunSnapshot(stderr, parallel)).toContain("2 pass");
+    expect(exitCode).toBe(0);
+  });
+
+  // TZ, NODE_TLS_REJECT_UNAUTHORIZED, BUN_CONFIG_VERBOSE_FETCH and the proxy
+  // keys have process.env setters with a native side effect outside the global
+  // (the WTF time zone override, per-VM caches, the env map the next
+  // process.env is seeded from). The next file reads the original values, so
+  // the side effects must be rolled back with the global.
+  test("with --isolate, a file's process.env writes with native side effects are undone before the next file", async () => {
+    const envFixtures = {
+      "a-env.test.ts": `
+        import { test, expect } from "bun:test";
+        process.env.TZ = "America/New_York";
+        process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
+        process.env.BUN_CONFIG_VERBOSE_FETCH = "curl";
+        process.env.HTTP_PROXY = "http://127.0.0.1:9/";
+        test("the writes apply to this file", () => {
+          expect(new Date(0).getTimezoneOffset()).toBe(300);
+          expect(process.env.HTTP_PROXY).toBe("http://127.0.0.1:9/");
+        });
+      `,
+      "b-env.test.ts": `
+        import { test, expect } from "bun:test";
+        const tls = ${JSON.stringify(tls)};
+        test("Date is back on the runner's TZ", () => {
+          expect(process.env.TZ).toBe("Etc/UTC");
+          expect(new Date(0).getTimezoneOffset()).toBe(0);
+        });
+        test("fetch() verifies certificates again", async () => {
+          expect(process.env.NODE_TLS_REJECT_UNAUTHORIZED).toBeUndefined();
+          using server = Bun.serve({ port: 0, tls, fetch: () => new Response("ok") });
+          // Self-signed and not in any CA store: only a lax fetch() can connect.
+          await expect(fetch(\`https://localhost:\${server.port}/\`, { keepalive: false })).rejects.toMatchObject({
+            code: "DEPTH_ZERO_SELF_SIGNED_CERT",
+          });
+        });
+        test("fetch() no longer goes through the previous file's proxy", async () => {
+          expect(process.env.HTTP_PROXY).toBeUndefined();
+          using server = Bun.serve({ port: 0, fetch: () => new Response("direct") });
+          expect(await fetch(\`http://127.0.0.1:\${server.port}/\`, { keepalive: false }).then(r => r.text())).toBe("direct");
+        });
+      `,
+    };
+    const files = ["./a-env.test.ts", "./b-env.test.ts"];
+    // The second file expects the proxy key to be unset, so the runner must
+    // start without one even on a machine that routes through a proxy.
+    const env = {
+      ...bunEnv,
+      HTTP_PROXY: undefined,
+      http_proxy: undefined,
+      HTTPS_PROXY: undefined,
+      https_proxy: undefined,
+      NO_PROXY: undefined,
+      no_proxy: undefined,
+    };
+
+    using isolated = tempDir("isolate-env", envFixtures);
+    const serial = await runTests(String(isolated), ["--isolate"], files, env);
+    expect(normalizeBunSnapshot(serial.stderr, isolated)).toContain("4 pass");
+    // Verbose fetch logging was left on by the first file: the second file's
+    // fetch() must not print its curl transcript.
+    expect(serial.stderr).not.toContain("curl --http1.1");
+    expect(serial.exitCode).toBe(0);
+
+    using parallel = tempDir("isolate-env-parallel", envFixtures);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--parallel=2", ...files],
+      env: { ...env, BUN_TEST_PARALLEL_SCALE_MS: "60000" },
+      cwd: String(parallel),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(normalizeBunSnapshot(stderr, parallel)).toContain("4 pass");
+    expect(stderr).not.toContain("curl --http1.1");
     expect(exitCode).toBe(0);
   });
 

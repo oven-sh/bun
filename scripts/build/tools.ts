@@ -414,8 +414,6 @@ export function resolveLlvmToolchain(
   | "ld64Lld"
   | "rustLld"
   | "rustLlvmVersion"
-  | "rustSysroot"
-  | "rustHostTriple"
   | "strip"
   | "llvmStrip"
   | "nm"
@@ -574,7 +572,7 @@ export function resolveLlvmToolchain(
 
   // rust-lld: optional alternative linker for cross-language LTO when
   // rustc's bundled LLVM is newer than clang's. See findRustLld().
-  const { rustLld, rustLlvmVersion, rustSysroot, rustHostTriple } = findRustLld(os);
+  const { rustLld, rustLlvmVersion } = findRustLld(os);
 
   // ccache: optional. If found, used as compiler launcher.
   const ccache = findTool({ names: ["ccache"], required: false })?.path;
@@ -601,8 +599,6 @@ export function resolveLlvmToolchain(
     ld64Lld,
     rustLld,
     rustLlvmVersion,
-    rustSysroot,
-    rustHostTriple,
     strip,
     llvmStrip,
     nm,
@@ -660,7 +656,7 @@ export interface CargoToolchain {
 export function findRustLld(os: OS): {
   rustLld: string | undefined;
   rustLlvmVersion: string | undefined;
-  /** `rustc --print sysroot` — needed for bundled `llvm-nm` even when rust-lld itself isn't used. */
+  /** `rustc --print sysroot`. */
   rustSysroot: string | undefined;
   /** `host:` line from `rustc -vV` — the rustlib subdirectory name. */
   rustHostTriple: string | undefined;
@@ -670,7 +666,7 @@ export function findRustLld(os: OS): {
   const cargoHome = process.env.CARGO_HOME ?? join(homedir(), ".cargo");
   const rustc =
     toolchainOverride.rust !== undefined
-      ? join(toolchainOverride.rust, "bin", "rustc")
+      ? join(toolchainOverride.rust, "bin", os === "windows" ? "rustc.exe" : "rustc")
       : findTool({ names: ["rustc"], paths: [join(cargoHome, "bin")], required: false })?.path;
   if (rustc === undefined) return none;
 
@@ -690,7 +686,7 @@ export function findRustLld(os: OS): {
   // whatever's there.
   const rustup = findTool({ names: ["rustup"], paths: [join(cargoHome, "bin")], required: false })?.path;
   const channel = readRustToolchainChannel();
-  if (rustup !== undefined && channel !== undefined && toolchainOverride.rust === undefined) {
+  if (rustup !== undefined && channel !== undefined) {
     const started = performance.now();
     spawnSync(
       rustup,
@@ -716,7 +712,7 @@ export function findRustLld(os: OS): {
   // ensured. Without it the proxy, running in the repo root, applies
   // rust-toolchain.toml in full: besides selecting the channel it installs
   // every entry of its `components` and `targets` lists that is missing
-  // (rustfmt, clippy, miri, llvm-tools and the std of 11 targets — ~2.4 GB),
+  // (rustfmt, clippy, miri and the std of 11 targets — ~2.4 GB),
   // with its output piped into nowhere here. The build itself installs what
   // it needs (rust-src above, the target's std in the rust_build_cross rule),
   // and the toml still applies to anyone running cargo directly. Generous
@@ -786,13 +782,9 @@ export function findCargo(hostOs: OS): CargoToolchain | undefined {
   const cargo =
     toolchainOverride.cargo ??
     (toolchainOverride.rust !== undefined
-      ? join(toolchainOverride.rust, "bin", "cargo")
+      ? join(toolchainOverride.rust, "bin", hostOs === "windows" ? "cargo.exe" : "cargo")
       : findTool({ names: ["cargo"], paths: [join(cargoHome, "bin")], required: false })?.path);
   if (cargo === undefined) return undefined;
-
-  // Suppress unused warning for hostOs — kept in signature for future
-  // host-specific path resolution (e.g. %PROGRAMFILES% probing on win32).
-  void hostOs;
 
   return { cargo, cargoHome, rustupHome };
 }

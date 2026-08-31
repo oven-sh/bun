@@ -647,6 +647,38 @@ describe("bunshell", () => {
       expect(results).toEqual([...Array(firstFailure).fill(ok), ...Array(results.length - firstFailure).fill(emfile)]);
       expect(exitCode).toBe(0);
     });
+
+    // Same sweep with a subshell at the head. A subshell runs a Script of its
+    // own, so if the pipeline started it before a later command's `dup`
+    // failed, tearing the pipeline down would leave that Script behind with
+    // the subshell's echo still writing into the pipe. The echo then reports
+    // to a freed node once the pipe is closed under it. No child may start
+    // until every child is set up.
+    test("reports EMFILE from the per-command env dup when the head is a subshell", async () => {
+      const script = /* ts */ `
+        import { $ } from "bun";
+        const results = [];
+        for (let n = 2; n <= 16; n++) {
+          const pipeline = ["(echo hi)", ...Array(n - 1).fill("cat")].join(" | ");
+          const r = await $\`\${{ raw: pipeline }}\`.nothrow().quiet();
+          results.push({ stdout: r.stdout.toString(), stderr: r.stderr.toString(), exitCode: r.exitCode });
+          // One event loop turn, so that a write a torn-down child left in
+          // flight completes (and reports) before the next pipeline runs.
+          await Bun.sleep(0);
+        }
+        console.log(JSON.stringify(results));
+      `;
+      await using proc = runWithFdLimit(32, script, { ...bunEnv, BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS: "1" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      const results = JSON.parse(stdout);
+      const ok = { stdout: "hi\n", stderr: "", exitCode: 0 };
+      const emfile = { stdout: "", stderr: "bun: Too many open files\n", exitCode: 1 };
+      const firstFailure = results.findIndex(r => r.exitCode !== 0);
+      expect(firstFailure).toBeGreaterThan(0);
+      expect(results).toEqual([...Array(firstFailure).fill(ok), ...Array(results.length - firstFailure).fill(emfile)]);
+      expect(exitCode).toBe(0);
+    });
   });
 
   describe("operators no spaces", async () => {
@@ -3215,6 +3247,61 @@ test("redirect target buffer stays attached while a builtin command is running",
   await running;
   expect(stringifyBuffer(buffer)).toEqual("pin.txt\n");
 });
+
+test.skipIf(isWindows)(
+  "output redirect buffer for an external command is detachable as soon as the command settles",
+  async () => {
+    // `> ${buf}` for an external command is pinned until the child's stdout
+    // reaches EOF. Here `sh` prints and exits at once while a background
+    // grandchild inherits the stdout pipe and holds it open until the gated
+    // fetch below is answered. The process exit and the stderr EOF are then
+    // processed long before the stdout EOF, so the stdout reader is the
+    // callback that settles the promise. The code after `await` must already
+    // see the buffer unpinned: a `transfer()` detaches it instead of copying.
+    const buffer = new Uint8Array(new ArrayBuffer(1 << 16));
+    const gate = Promise.withResolvers<void>();
+    const grandchildStarted = Promise.withResolvers<void>();
+    await using server = Bun.serve({
+      port: 0,
+      async fetch() {
+        grandchildStarted.resolve();
+        await gate.promise;
+        return new Response("ok");
+      },
+    });
+    const grandchildCode = `await fetch(${JSON.stringify(String(server.url))})`;
+    const promise = $`sh -c ${'"$0" -e "$1" 2>/dev/null & echo hi'} ${BUN} ${grandchildCode} > ${buffer}`
+      .env(bunEnv)
+      .nothrow();
+    const running = promise.then(o => o);
+    // By the time the request arrives, `sh` has exited and the grandchild is
+    // the only holder of the stdout pipe. If the command settles first, the
+    // grandchild never held it: fail with the shell's output instead of
+    // waiting on the gate until the test times out.
+    await Promise.race([
+      grandchildStarted.promise,
+      running.then(r => {
+        throw new Error(`command settled before the grandchild connected (exit ${r.exitCode}): ${r.stderr}`);
+      }),
+    ]);
+
+    // The grandchild still holds stdout, so the buffer is pinned: a detach
+    // attempt copies instead (or throws).
+    try {
+      buffer.buffer.transfer();
+    } catch {}
+    const detachedWhileOpen = buffer.buffer.detached;
+    gate.resolve();
+    expect(detachedWhileOpen).toBe(false);
+
+    const result = await running;
+    expect(stringifyBuffer(buffer)).toEqual("hi\n");
+
+    buffer.buffer.transfer();
+    expect(buffer.buffer.detached).toBe(true);
+    expect(result.exitCode).toBe(0);
+  },
+);
 
 test("stdin redirect from a Uint8Array sends the bytes captured when the command starts", async () => {
   // `< ${buf}` snapshots the buffer's contents when the command starts and

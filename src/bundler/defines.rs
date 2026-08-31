@@ -167,6 +167,7 @@ impl DefineExt for Define {
             identifiers: StringHashMap::default(),
             dots: StringHashMap::default(),
             drop_debugger,
+            user_hash: None,
         });
         define.dots.reserve(124);
 

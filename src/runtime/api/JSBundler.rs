@@ -1978,7 +1978,10 @@ impl BuildArtifact {
 
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_loader(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        BunString::static_(<&'static str>::from(this.loader)).to_js(global_this)
+        match this.loader {
+            bun_ast::Loader::Base64 => Ok(global_this.common_strings().base64()),
+            loader => BunString::static_(<&'static str>::from(loader)).to_js(global_this),
+        }
     }
 
     #[bun_jsc::host_fn(getter)]

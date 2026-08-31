@@ -442,7 +442,15 @@ function Component(t0) {
     return t1;
   let T0, t2;
   if ($[3] !== num) {
-    let arr = makeArray(num);
+    let t3;
+    bb1: {
+      if (num > 1) {
+        t3 = [];
+        break bb1;
+      }
+      t3 = makeArray(num);
+    }
+    let arr = t3;
     T0 = Lib.Stringify;
     t2 = arr.push(num);
     $[3] = num, $[4] = T0, $[5] = t2;

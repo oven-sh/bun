@@ -1132,10 +1132,10 @@ describe("bundler", () => {
   // names it `#t<n>` (or `#T<n>` for a JSX tag, which has to be capitalised to
   // read as a component) after its declaration id, and the printer drops the
   // `#`. Several passes promote: the early return value of a reactive scope,
-  // the result of an inlined IIFE, and every temporary read across scopes,
-  // all through `Environment::promote_temporary` (src/react_compiler/hir/
-  // environment.rs). The early return, the IIFE and the namespace-loaded tag
-  // below each take a different one of those paths.
+  // the result of an inlined IIFE with more than one return, and every
+  // temporary read across scopes, all through `Environment::promote_temporary`
+  // (src/react_compiler/hir/environment.rs). The early return, the IIFE and
+  // the namespace-loaded tag below each take a different one of those paths.
   itBundled("react-compiler/PromotedTemporariesAreNamedAfterTheirDeclaration", {
     files: {
       "/entry.jsx": /* jsx */ `
@@ -1148,7 +1148,12 @@ describe("bundler", () => {
             x.push(a);
             return x;
           }
-          const arr = (() => makeArray(num))();
+          const arr = (() => {
+            if (num > 1) {
+              return [];
+            }
+            return makeArray(num);
+          })();
           return <Lib.Stringify value={arr.push(num)} />;
         }
       `,
@@ -1166,17 +1171,20 @@ describe("bundler", () => {
       expect(out).toMatch(/\bt1 = __EARLY_RETURN_SENTINEL;\s*bb0: \{/);
       expect(out).toMatch(/\bt1 = x;\s*break bb0;/);
       expect(out).toMatch(/if \(t1 !== __EARLY_RETURN_SENTINEL\)\s*return t1;/);
-      // The IIFE is inlined and its result lands in the `arr` local.
-      expect(out).toContain("let arr = makeArray(num);");
-      expect(out).not.toContain("=> makeArray");
+      // The IIFE is inlined into a labeled block. Its two returns assign the
+      // promoted temporary that then feeds the `arr` local.
+      expect(out).not.toContain("=> {");
+      expect(out).toMatch(
+        /\blet t3;\s*bb1: \{\s*if \(num > 1\) \{\s*t3 = \[\];\s*break bb1;\s*\}\s*t3 = makeArray\(num\);\s*\}\s*let arr = t3;/,
+      );
       // The tag is loaded in one scope and used in another, so it is promoted
       // with the JSX tag spelling.
       expect(out).toMatch(/\blet T0, t2;/);
       expect(out).toContain("T0 = Lib.Stringify;");
       expect(out).toMatch(/\bjsx(?:DEV)?\(T0, \{/);
-      // Every promoted name is declared exactly once.
-      const declared = [...out.matchAll(/\blet ([tT]\d+(?:, [tT]\d+)*);/g)].flatMap(m => m[1].split(", "));
-      expect(declared.sort()).toEqual(["T0", "t1", "t2", "t3"]);
+      // Every promoted name that is read has a `let` (t0 is the parameter).
+      const declared = new Set([...out.matchAll(/\blet ([tT]\d+(?:, [tT]\d+)*);/g)].flatMap(m => m[1].split(", ")));
+      expect([...declared].sort()).toEqual(["T0", "t1", "t2", "t3"]);
       const used = new Set([...out.matchAll(/\b([tT]\d+)\b/g)].map(m => m[1]));
       expect([...used].sort()).toEqual(["T0", "t0", "t1", "t2", "t3"]);
     },

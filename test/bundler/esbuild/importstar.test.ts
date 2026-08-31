@@ -1,12 +1,17 @@
 import { describe } from "bun:test";
-import { itBundled } from "../expectBundled";
+import { BundlerTestInput, itBundled as itBundledBase } from "../expectBundled";
 
 // Tests ported from:
 // https://github.com/evanw/esbuild/blob/main/internal/bundler_tests/bundler_importstar_test.go
 
 // For debug, all files are written to $TEMP/bun-bundle-tests/importstar
 
-describe("bundler", () => {
+// Default to the CLI backend: itBundled registers API-backend cases with
+// it.serial (Bun.build needs process.chdir), so only CLI-backend cases overlap
+// under describe.concurrent.
+const itBundled = (id: string, opts: BundlerTestInput) => itBundledBase(id, { backend: "cli", ...opts });
+
+describe.concurrent("bundler", () => {
   itBundled("importstar/ImportStarUnused", {
     files: {
       "/entry.js": /* js */ `
@@ -46,6 +51,10 @@ describe("bundler", () => {
         console.log(ns.foo, ns.foo, foo)
       `,
       "/foo.js": `export const foo = 123`,
+    },
+    onAfterBundle(api) {
+      // ns.foo binds to foo directly, so no namespace object is created
+      api.expectFile("/out.js").not.toContain("__export");
     },
     run: {
       stdout: "123 123 234",
@@ -171,6 +180,9 @@ describe("bundler", () => {
       "/foo.js": `export const foo = 123`,
       "/bar.js": `export * from './foo'`,
     },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("__export");
+    },
     run: {
       stdout: "123 123 234",
     },
@@ -236,6 +248,13 @@ describe("bundler", () => {
         console.log(ns.foo, ns2.foo)
       `,
       "/foo.js": `export const foo = 123`,
+    },
+    onAfterBundle(api) {
+      // foo.js stays an ES module; require() of it goes through __toCommonJS
+      api.expectFile("/out.js").not.toContain("__commonJS");
+    },
+    run: {
+      stdout: "123 123",
     },
   });
   itBundled("importstar/ImportStarNoBundleUnused", {
@@ -325,7 +344,7 @@ describe("bundler", () => {
       "/entry.js": /* js */ `
         import * as ns from './foo'
         let foo = 234
-        console.log(JSON.stringify(ns), ns.foo, foo)
+        console.log(ns.foo, ns.foo, foo)
       `,
     },
     minifySyntax: true,
@@ -334,7 +353,7 @@ describe("bundler", () => {
       "/foo.js": `export const foo = 123`,
     },
     run: {
-      stdout: '{"foo":123} 123 234',
+      stdout: "123 123 234",
     },
   });
   itBundled("importstar/ImportStarExportStarOmitAmbiguous", {
@@ -559,6 +578,13 @@ describe("bundler", () => {
       `,
     },
     format: "iife",
+    onAfterBundle(api) {
+      // the self re-export resolves statically: no runtime re-export helper
+      api.expectFile("/out.js").not.toContain("__reExport");
+    },
+    run: {
+      stdout: "",
+    },
   });
   itBundled("importstar/ExportSelfIIFEWithName", {
     todo: true,
@@ -846,6 +872,16 @@ describe("bundler", () => {
       "/foo.js": `exports.foo = 123`,
     },
     format: "cjs",
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        const foo = require('./out.js')
+        console.log(JSON.stringify(foo));
+      `,
+    },
+    run: {
+      file: "/test.js",
+      stdout: '{"ns":{"default":{"foo":123},"foo":123}}',
+    },
   });
   itBundled("importstar/NamespaceImportMissingES6", {
     files: {

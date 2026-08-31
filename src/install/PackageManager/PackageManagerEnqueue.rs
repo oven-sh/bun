@@ -1301,12 +1301,15 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                     Some(resolved) => resolved,
                     None => {
                         // Waits on a `git log` task; `run_tasks` fills `git_commits` and re-enters here.
-                        let url = this.lockfile.str(&dep.repo);
-                        let committish = this.lockfile.str(&dep.committish);
-                        let commit_id = Task::Id::for_git_commit(url, committish);
+                        let commit_id = Task::Id::for_git_commit(
+                            this.lockfile.str(&dep.repo),
+                            this.lockfile.str(&dep.committish),
+                        );
                         match this.git_commits.get(&commit_id) {
                             Some(resolved) => resolved.clone(),
                             None => {
+                                let url = interned(this.lockfile.str(&dep.repo));
+                                let committish = interned(this.lockfile.str(&dep.committish));
                                 let entry = this
                                     .task_queue
                                     .get_or_put_context(commit_id, ())
@@ -1328,8 +1331,6 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                     return Ok(());
                                 }
 
-                                let url = interned(url);
-                                let committish = interned(committish);
                                 let task = enqueue_git_commit(
                                     this, commit_id, clone_id, alias, url, committish,
                                 );

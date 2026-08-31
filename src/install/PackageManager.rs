@@ -1,5 +1,5 @@
-use core::ffi::c_void;
 use core::cell::OnceCell;
+use core::ffi::c_void;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::collections::VecDeque;
 use std::io::Write as _;

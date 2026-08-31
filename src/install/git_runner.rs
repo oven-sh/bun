@@ -422,8 +422,10 @@ impl GitSubprocess {
     }
 
     fn new_staging(&self) -> Result<Vec<u8>, Error> {
-        let staging =
-            CacheStaging::new(self.cache_dir, self.manager().cache_directory_path.as_bytes())?;
+        let staging = CacheStaging::new(
+            self.cache_dir,
+            self.manager().cache_directory_path.as_bytes(),
+        )?;
         let tmp_path = staging.tmp_path.clone();
         self.staging.set(Some(staging));
         Ok(tmp_path)

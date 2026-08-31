@@ -107,13 +107,8 @@ impl SSLContextCache {
                 // via compact_locked / Drop, both of which hold this mutex.
                 let entry = unsafe { &**entry };
                 if !entry.ctx.is_null() {
-                    let ctx = entry.ctx;
-                    // SAFETY: ctx non-null and tombstone write is serialized by this mutex;
-                    // the up_ref is the +1 `from_raw` takes.
-                    return unsafe {
-                        boringssl::SSL_CTX_up_ref(ctx);
-                        OwnedSslCtx::from_raw(ctx)
-                    };
+                    // Tombstone write is serialized by this mutex.
+                    return Some(boringssl::SSL_CTX::opaque_ref(entry.ctx).up_ref());
                 }
             }
         }
@@ -138,12 +133,7 @@ impl SSLContextCache {
             // SAFETY: existing map value is a live heap Entry (see above).
             let entry = unsafe { &mut **gop.value_ptr };
             if !entry.ctx.is_null() {
-                let existing = entry.ctx;
-                // SAFETY: existing non-null; the up_ref is the +1 `from_raw` takes.
-                return unsafe {
-                    boringssl::SSL_CTX_up_ref(existing);
-                    OwnedSslCtx::from_raw(existing)
-                };
+                return Some(boringssl::SSL_CTX::opaque_ref(entry.ctx).up_ref());
             }
             // Tombstone — adopt the rebuilt CTX into the existing slot.
             // SSL_CTX_set_ex_data only fails on OOM (Bun crashes anyway), but if

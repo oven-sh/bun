@@ -2038,13 +2038,7 @@ pub fn init(
         wr!(options, options);
         wr!(
             active_lifecycle_scripts,
-            crate::lifecycle_script_runner::List {
-                root: core::ptr::null_mut(),
-                // `lifecycle_script_runner::List`'s heap comparator never
-                // dereferences its context arg, so it is modeled as a ZST
-                // (`StartedAtCtx`) instead of threading a back-pointer.
-                context: crate::lifecycle_script_runner::StartedAtCtx,
-            }
+            crate::lifecycle_script_runner::List::default()
         );
         wr!(network_task_fifo, NetworkQueue::init());
         wr!(patch_task_fifo, PatchTaskFifo::init());
@@ -2502,10 +2496,7 @@ fn init_with_runtime_once(
         );
         wr!(
             active_lifecycle_scripts,
-            crate::lifecycle_script_runner::List {
-                root: core::ptr::null_mut(),
-                context: crate::lifecycle_script_runner::StartedAtCtx,
-            }
+            crate::lifecycle_script_runner::List::default()
         );
         wr!(network_task_fifo, NetworkQueue::init());
         wr!(log, std::ptr::from_mut(log));

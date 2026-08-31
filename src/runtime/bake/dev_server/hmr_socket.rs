@@ -127,20 +127,16 @@ impl HmrSocket {
                                         // Note (jsc/runtime crate cycle): `vm.timer` is `()` on the
                                         // low-tier `VirtualMachine`; the real `timer::All`
                                         // lives in `RuntimeState` (see jsc_hooks.rs).
-                                        let state = crate::jsc_hooks::runtime_state();
                                         let next = bun_core::Timespec::ms_from_now(
                                             bun_core::TimespecMockMode::ForceRealTime,
                                             1000,
                                         );
-                                        // SAFETY: `runtime_state()` is non-null after
-                                        // `bun_runtime::init()`; JS-thread only, sole
-                                        // `&mut` to `timer` in this scope.
-                                        unsafe {
-                                            (*state).timer.update(
-                                                &raw mut dev.memory_visualizer_timer,
-                                                &next,
-                                            );
-                                        }
+                                        crate::jsc_hooks::timer_all().update(
+                                            crate::timer::TimerRef::from_mut(dev, |d| {
+                                                &mut d.memory_visualizer_timer
+                                            }),
+                                            &next,
+                                        );
                                     }
                                 }
                                 _ => {}
@@ -310,14 +306,10 @@ impl HmrSocket {
                 if dev.emit_incremental_visualizer_events == 0
                     && dev.memory_visualizer_timer.state == EventLoopTimerState::ACTIVE
                 {
-                    // Note (jsc/runtime crate cycle): `vm.timer` is `()` on the low-tier
-                    // `VirtualMachine`; the real `timer::All` lives in `RuntimeState`.
-                    let state = crate::jsc_hooks::runtime_state();
-                    // SAFETY: `runtime_state()` is non-null after `bun_runtime::init()`;
-                    // JS-thread only, sole `&mut` to `timer` in this scope.
-                    unsafe {
-                        (*state).timer.remove(&raw mut dev.memory_visualizer_timer);
-                    }
+                    crate::jsc_hooks::timer_all()
+                        .remove(crate::timer::TimerRef::from_mut(dev, |d| {
+                            &mut d.memory_visualizer_timer
+                        }));
                 }
             }
         }

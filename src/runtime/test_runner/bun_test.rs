@@ -827,7 +827,7 @@ impl BunTest {
             bun_core::scoped_log!(bun_test_group, "-> setting timer to {:?}", min_timeout);
             if next != ElTimespec::EPOCH {
                 bun_core::scoped_log!(bun_test_group, "-> removing existing timer");
-                crate::jsc_hooks::timer_all_mut().remove(self.timer.as_ptr());
+                crate::jsc_hooks::timer_all().remove(self.timer_ref());
             }
             // `EventLoopTimer.next` uses the event-loop crate's local
             // `Timespec` (distinct from `bun_core::Timespec`); convert by field.
@@ -838,7 +838,7 @@ impl BunTest {
             self.timer.with_mut(|t| t.next = next);
             if next != ElTimespec::EPOCH {
                 bun_core::scoped_log!(bun_test_group, "-> inserting timer");
-                crate::jsc_hooks::timer_all_mut().insert(self.timer.as_ptr());
+                crate::jsc_hooks::timer_all().insert(self.timer_ref());
                 if debug::group::get_log_enabled() {
                     let duration = min_timeout.since_now_force_real_time();
                     bun_core::scoped_log!(bun_test_group, "-> timer duration: {}", duration);
@@ -848,9 +848,13 @@ impl BunTest {
         }
     }
 
+    fn timer_ref(&self) -> crate::timer::TimerRef {
+        crate::timer::TimerRef::new(self, |t| &t.timer)
+    }
+
     /// Unlink the file-level timeout timer if it is armed.
     pub(crate) fn remove_timer(&self) {
-        crate::jsc_hooks::timer_all_mut().remove(self.timer.as_ptr());
+        crate::jsc_hooks::timer_all().remove(self.timer_ref());
     }
 
     fn advance(&self, _global_this: &JSGlobalObject) -> JsResult<Advance> {

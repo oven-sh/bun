@@ -10,8 +10,8 @@ use bun_sql::postgres::postgres_types::AnyPostgresError;
 use bun_sql::shared::data::Data;
 use bun_sql::shared::sql_query_result_mode::SQLQueryResultMode as PostgresSQLQueryResultMode;
 
-pub(crate) use crate::shared::sql_data_cell::SQLDataCell;
 pub use crate::shared::sql_data_cell::{Array, Flags, Raw, Tag, TypedArray, Value};
+pub(crate) use crate::shared::sql_data_cell::{CellStorage, SQLDataCell};
 
 type Result<T, E = AnyPostgresError> = core::result::Result<T, E>;
 
@@ -43,31 +43,18 @@ fn parse_date_time_text(
     bun_string_jsc::parse_date(&str, global_object).map_err(crate::jsc::js_error_to_postgres)
 }
 
-fn parse_bytea(hex: &[u8]) -> Result<SQLDataCell> {
+fn parse_bytea(storage: &mut CellStorage, hex: &[u8]) -> Result<SQLDataCell> {
     let len = hex.len() / 2;
     let mut buf: Vec<u8> = Vec::new();
     buf.try_reserve_exact(len)
         .map_err(|_| AnyPostgresError::OutOfMemory)?;
-    // SAFETY: the decoder only writes into the spare bytes and returns how many it filled.
-    let written = unsafe {
-        bun_core::vec::fill_spare(&mut buf, 0, |spare| {
-            match bun_core::decode_hex_to_bytes(&mut spare[..len], hex) {
-                Ok(written) => (written, Ok(written)),
-                Err(_) => (0, Err(AnyPostgresError::InvalidByteSequence)),
-            }
-        })
-    }?;
-    // `SQLDataCell::deinit` frees this as a `Box<[u8]>` of exactly `written` bytes.
-    let ptr = bun_core::heap::into_raw(buf.into_boxed_slice()).cast::<u8>();
-
-    Ok(SQLDataCell {
-        tag: Tag::Bytea,
-        value: Value {
-            bytea: [ptr as usize, written],
-        },
-        free_value: 1,
-        ..Default::default()
-    })
+    buf.resize(len, 0);
+    let written = bun_core::decode_hex_to_bytes(&mut buf, hex)
+        .map_err(|_| AnyPostgresError::InvalidByteSequence)?;
+    buf.truncate(written);
+    Ok(SQLDataCell::bytea(
+        storage.hold_bytes(buf.into_boxed_slice()),
+    ))
 }
 
 fn unescape_postgres_string<'a>(input: &[u8], buffer: &'a mut [u8]) -> crate::Result<&'a mut [u8]> {
@@ -130,6 +117,7 @@ const MAX_ARRAY_NESTING_DEPTH: usize = 100;
 // PERF: `array_type` and `is_json_sub_array` are only used in value
 // position (branch selectors), never type position. Profile if it shows up on a hot path.
 fn parse_array(
+    storage: &mut CellStorage,
     bytes: &[u8],
     bigint: bool,
     array_type: types::Tag,
@@ -160,15 +148,7 @@ fn parse_array(
         });
     }
 
-    // errdefer { for cell in array { cell.deinit() }; array.deinit() }
-    // → scopeguard: SQLDataCell has FFI-side resources that Vec::drop won't release.
-    let array = scopeguard::guard(Vec::<SQLDataCell>::new(), |mut a| {
-        for cell in a.iter_mut() {
-            cell.deinit();
-        }
-        // Vec storage drops here
-    });
-    let mut array = array;
+    let mut array = Vec::<SQLDataCell>::new();
 
     let mut stack_buffer = [0u8; 16 * 1024];
 
@@ -193,6 +173,7 @@ fn parse_array(
         } else if ch == opening_brace {
             let mut sub_array_offset: usize = 0;
             let sub_array = parse_array(
+                storage,
                 slice,
                 bigint,
                 array_type,
@@ -228,7 +209,10 @@ fn parse_array(
                     let bytea_bytes = &slice[1..current_idx];
                     if bytea_bytes.starts_with(b"\\\\x") {
                         // its a bytea string lets parse it as a bytea
-                        array.push(parse_bytea(&bytea_bytes[3..][0..bytea_bytes.len() - 3])?);
+                        array.push(parse_bytea(
+                            storage,
+                            &bytea_bytes[3..][0..bytea_bytes.len() - 3],
+                        )?);
                         slice = try_slice(slice, current_idx + 1);
                         continue;
                     }
@@ -260,7 +244,7 @@ fn parse_array(
                     };
                     let unescaped = unescape_postgres_string(str_bytes, buffer)
                         .map_err(|_| AnyPostgresError::InvalidByteSequence)?;
-                    array.push(SQLDataCell::json(unescaped));
+                    array.push(SQLDataCell::json(storage, unescaped));
                     slice = try_slice(slice, current_idx + 1);
                     continue;
                 }
@@ -269,7 +253,7 @@ fn parse_array(
             let str_bytes = &slice[1..current_idx];
             if str_bytes.is_empty() {
                 // empty string
-                array.push(SQLDataCell::string(b""));
+                array.push(SQLDataCell::string(storage, b""));
                 slice = try_slice(slice, current_idx + 1);
                 continue;
             }
@@ -283,7 +267,7 @@ fn parse_array(
             };
             let string_bytes = unescape_postgres_string(str_bytes, buffer)
                 .map_err(|_| AnyPostgresError::InvalidByteSequence)?;
-            array.push(SQLDataCell::string(string_bytes));
+            array.push(SQLDataCell::string(storage, string_bytes));
 
             slice = try_slice(slice, current_idx + 1);
             continue;
@@ -356,9 +340,9 @@ fn parse_array(
                     } else {
                         // the only escape sequency possible here is \b
                         if element == b"\\b" {
-                            array.push(SQLDataCell::string(b"\x08"));
+                            array.push(SQLDataCell::string(storage, b"\x08"));
                         } else {
-                            array.push(SQLDataCell::string(element));
+                            array.push(SQLDataCell::string(storage, element));
                         }
                     }
                     slice = try_slice(slice, current_idx);
@@ -558,7 +542,7 @@ fn parse_array(
                                                 .ok_or(AnyPostgresError::UnsupportedArrayFormat)?,
                                         ));
                                     } else {
-                                        array.push(SQLDataCell::string(element));
+                                        array.push(SQLDataCell::string(storage, element));
                                     }
                                     slice = try_slice(slice, current_idx);
                                     continue;
@@ -585,6 +569,7 @@ fn parse_array(
                                 if slice[0] == b'[' {
                                     let mut sub_array_offset: usize = 0;
                                     let sub_array = parse_array(
+                                        storage,
                                         slice,
                                         bigint,
                                         array_type,
@@ -616,17 +601,11 @@ fn parse_array(
         return Err(AnyPostgresError::UnsupportedArrayFormat);
     }
 
-    // disarm errdefer
-    let mut array = core::mem::ManuallyDrop::new(scopeguard::ScopeGuard::into_inner(array));
-    let len = array.len() as u32;
-    let cap = array.capacity() as u32;
-    let ptr = array.as_mut_ptr();
     Ok(SQLDataCell {
         tag: Tag::Array,
         value: Value {
-            array: Array { ptr, len, cap },
+            array: storage.hold_array(array),
         },
-        free_value: 1,
         ..Default::default()
     })
 }
@@ -634,6 +613,7 @@ fn parse_array(
 // Helper: typed-array binary path shared by .int4_array / .float4_array.
 // Monomorphized over the element type.
 fn from_bytes_typed_array<Elem: bun_sql::postgres::types::tag::WireByteSwap>(
+    storage: &mut CellStorage,
     tag: types::Tag,
     bytes: &[u8],
 ) -> Result<SQLDataCell> {
@@ -702,13 +682,13 @@ fn from_bytes_typed_array<Elem: bun_sql::postgres::types::tag::WireByteSwap>(
     // — the `readonly` LLVM parameter attribute lets the optimizer elide
     // those writes, which in the release-asan build left the header `len`
     // un-byte-swapped (3 → 0x03000000) and produced a 192MB OOB memcpy in
-    // SQLClient.cpp. Parse into an owned buffer instead; freed via
-    // `free_value = 1` after C++ has copied it into the JS typed array.
+    // SQLClient.cpp. Parse into a buffer held by `storage` instead, which
+    // C++ copies into the JS typed array.
     let array_len = array_len as usize;
     let elem_size = size_of::<Elem>();
     let out_bytes = array_len * elem_size;
-    let (head_ptr, free_value) = if array_len == 0 {
-        (core::ptr::null_mut::<u8>(), 0u8)
+    let head_ptr = if array_len == 0 {
+        core::ptr::null_mut::<u8>()
     } else {
         let mut out: Box<[u8]> = vec![0u8; out_bytes].into_boxed_slice();
         for i in 0..array_len {
@@ -724,7 +704,7 @@ fn from_bytes_typed_array<Elem: bun_sql::postgres::types::tag::WireByteSwap>(
                 .wire_byte_swap();
             val.write_unaligned_ne_bytes(&mut out[i * elem_size..(i + 1) * elem_size]);
         }
-        (Box::into_raw(out).cast::<u8>(), 1u8)
+        storage.hold_bytes(out).as_ptr().cast_mut()
     };
 
     Ok(SQLDataCell {
@@ -738,12 +718,12 @@ fn from_bytes_typed_array<Elem: bun_sql::postgres::types::tag::WireByteSwap>(
                 type_: js_typed_array_type,
             },
         },
-        free_value,
         ..Default::default()
     })
 }
 
 fn from_bytes(
+    storage: &mut CellStorage,
     binary: bool,
     bigint: bool,
     oid: types::Tag,
@@ -755,16 +735,16 @@ fn from_bytes(
         // TODO: .int2_array, .float8_array
         T::int4_array => {
             if binary {
-                from_bytes_typed_array::<i32>(T::int4_array, bytes)
+                from_bytes_typed_array::<i32>(storage, T::int4_array, bytes)
             } else {
-                parse_array(bytes, bigint, T::int4_array, global_object, None, false, 0)
+                parse_array(storage, bytes, bigint, T::int4_array, global_object, None, false, 0)
             }
         }
         T::float4_array => {
             if binary {
-                from_bytes_typed_array::<f32>(T::float4_array, bytes)
+                from_bytes_typed_array::<f32>(storage, T::float4_array, bytes)
             } else {
-                parse_array(bytes, bigint, T::float4_array, global_object, None, false, 0)
+                parse_array(storage, bytes, bigint, T::float4_array, global_object, None, false, 0)
             }
         }
         T::int2 => {
@@ -802,7 +782,7 @@ fn from_bytes(
                     bun_core::fmt::parse_decimal::<i64>(bytes).unwrap_or(0),
                 ))
             } else {
-                Ok(SQLDataCell::string(bytes))
+                Ok(SQLDataCell::string(storage, bytes))
             }
         }
         T::float8 => {
@@ -831,13 +811,13 @@ fn from_bytes(
                 // if is binary format lets display as a string because JS cant handle it in a safe way
                 let result = parse_binary_numeric(bytes, &mut numeric_buffer)
                     .map_err(|_| AnyPostgresError::UnsupportedNumericFormat)?;
-                Ok(SQLDataCell::string(result.slice()))
+                Ok(SQLDataCell::string(storage, result.slice()))
             } else {
                 // nice text is actually what we want here
-                Ok(SQLDataCell::string(bytes))
+                Ok(SQLDataCell::string(storage, bytes))
             }
         }
-        T::jsonb | T::json => Ok(SQLDataCell::json(bytes)),
+        T::jsonb | T::json => Ok(SQLDataCell::json(storage, bytes)),
         T::bool => {
             if binary {
                 Ok(SQLDataCell::bool(!bytes.is_empty() && bytes[0] == 1))
@@ -886,7 +866,7 @@ fn from_bytes(
                     let mut buffer = [0u8; 32];
                     let len = Postgres__formatTime(microseconds, &mut buffer, 32);
 
-                    Ok(SQLDataCell::string(&buffer[0..len]))
+                    Ok(SQLDataCell::string(storage, &buffer[0..len]))
                 } else if tag == T::timetz && bytes.len() == 12 {
                     // PostgreSQL sends timetz as microseconds since midnight (8 bytes) + timezone offset in seconds (4 bytes)
                     let microseconds = i64::from_ne_bytes(bytes[0..8].try_into().expect("infallible: size matches")).swap_bytes();
@@ -896,26 +876,22 @@ fn from_bytes(
                     let mut buffer = [0u8; 48];
                     let len = Postgres__formatTimeTz(microseconds, tz_offset_seconds, &mut buffer, 48);
 
-                    Ok(SQLDataCell::string(&buffer[0..len]))
+                    Ok(SQLDataCell::string(storage, &buffer[0..len]))
                 } else {
                     Err(AnyPostgresError::InvalidBinaryData)
                 }
             } else {
                 // Text format - just return as string
-                Ok(SQLDataCell::string(bytes))
+                Ok(SQLDataCell::string(storage, bytes))
             }
         }
 
         T::bytea => {
             if binary {
-                Ok(SQLDataCell {
-                    tag: Tag::Bytea,
-                    value: Value { bytea: [bytes.as_ptr() as usize, bytes.len()] },
-                    ..Default::default()
-                })
+                Ok(SQLDataCell::bytea(bytes))
             } else {
                 if bytes.starts_with(b"\\x") {
-                    return parse_bytea(&bytes[2..]);
+                    return parse_bytea(storage, &bytes[2..]);
                 }
                 Err(AnyPostgresError::UnsupportedByteaFormat)
             }
@@ -967,8 +943,8 @@ fn from_bytes(
         | T::timetz_array
         | T::timestamp_array
         | T::timestamptz_array
-        | T::interval_array) => parse_array(bytes, bigint, tag, global_object, None, false, 0),
-        _ => Ok(SQLDataCell::string(bytes)),
+        | T::interval_array) => parse_array(storage, bytes, bigint, tag, global_object, None, false, 0),
+        _ => Ok(SQLDataCell::string(storage, bytes)),
     }
 }
 
@@ -1207,6 +1183,8 @@ pub(crate) fn parse_binary_float4(bytes: &[u8]) -> Result<f32, AnyPostgresError>
 
 pub(crate) struct Putter<'a> {
     pub list: &'a mut [SQLDataCell],
+    /// Owns what the cells in `list` point at; see [`CellStorage`].
+    pub storage: CellStorage,
     pub fields: &'a [protocol::FieldDescription],
     pub binary: bool,
     pub bigint: bool,
@@ -1277,6 +1255,7 @@ impl<'a> Putter<'a> {
             };
             *cell = if let Some(data) = optional_bytes {
                 from_bytes(
+                    &mut self.storage,
                     (field.binary || self.binary) && tag.is_binary_format_supported(),
                     self.bigint,
                     tag,

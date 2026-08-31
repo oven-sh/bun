@@ -1816,11 +1816,9 @@ fn get_valkey_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JSVa
         }
     };
 
-    let as_js = JSValkeyClient::ptr_to_js(valkey, global_this);
+    let as_js = JSValkeyClient::ptr_to_js(valkey.as_ptr(), global_this);
 
-    // SAFETY: `valkey` is a fresh heap allocation owned by the JS wrapper; we
-    // hold the only reference for field init below.
-    let valkey_ref = unsafe { &*valkey };
+    let valkey_ref: &JSValkeyClient = &valkey;
     valkey_ref.this_value.set(jsc::JsRef::init_weak(as_js));
     match SubscriptionCtx::init(valkey_ref) {
         Ok(ctx) => valkey_ref._subscription_ctx.set(ctx),

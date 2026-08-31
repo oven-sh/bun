@@ -1618,6 +1618,47 @@ describe("bundler", () => {
     },
     run: { stdout: "function object 1" },
   });
+  itBundled("importstar/MemberOfImportDelete", {
+    files: {
+      "/entry.js": /* js */ `
+        import { ns } from './lib'
+        try { delete ns.foo } catch {}
+        console.log(typeof ns.bar)
+      `,
+      "/lib.js": `export * as ns from './t'`,
+      "/t.js": `export const foo = 1; export const bar = 2`,
+    },
+    // must not print \`delete bar\` (a strict-mode SyntaxError)
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toMatch(/delete \w+\.foo/);
+    },
+    run: { stdout: "number" },
+  });
+  itBundled("importstar/ImportStarDeleteIsAnError", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as ns from './t'
+        delete ns.foo
+      `,
+      "/t.js": `export const foo = 1`,
+    },
+    bundleErrors: { "/entry.js": [`Cannot assign to import "foo"`] },
+  });
+  itBundled("importstar/MemberOfExportDefaultImportMissingReportedOnce", {
+    files: {
+      "/entry.js": /* js */ `
+        import a from './b'
+        import a2 from './b'
+        console.log(a.x, a2.x)
+      `,
+      "/b.js": /* js */ `
+        import Y from './c'
+        export default Y
+      `,
+      "/c.js": `export const x = 1`,
+    },
+    bundleErrors: { "/b.js": [`No matching export in "c.js" for import "default"`] },
+  });
   itBundled("importstar/MemberOfExportStarAs", {
     files: {
       "/entry.js": /* js */ `

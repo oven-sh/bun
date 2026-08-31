@@ -3617,6 +3617,12 @@ impl<'a> LinkerContext<'a> {
             let next_tracker = advanced.value;
             let status = advanced.status;
             let default_alias_of = advanced.default_alias_of;
+            // While speculatively following `export default X`, anything but a
+            // clean hop means the default keeps its own binding; bail before the
+            // branches below log or mutate anything (the checkpoint restores).
+            if default_alias_checkpoint.is_some() && status != ImportTrackerStatus::Found {
+                break 'loop_;
+            }
             // `advanced.import_data` borrows
             // `graph.meta[..].resolved_exports[..].potentially_ambiguous_export_star_refs`;
             // that storage is never reallocated while this loop runs (only

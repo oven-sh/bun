@@ -257,8 +257,7 @@ fn vm_get<'a>() -> &'a mut VirtualMachine {
 /// call-site symmetry but reads the thread-local directly:
 /// `VirtualMachine::as_mut()` ignores its receiver and re-reads the TLS slot,
 /// so routing through `global.bun_vm()` was pure overhead on the per-request
-/// path (`NodeHTTPResponse__createForJS` disasm showed the `bunVM` FFI result
-/// dropped on the floor).
+/// path (`NodeHTTPResponse::create`).
 #[inline(always)]
 fn bun_vm_mut(_global: &JSGlobalObject) -> &mut VirtualMachine {
     VirtualMachine::get_mut()

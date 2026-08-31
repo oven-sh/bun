@@ -439,7 +439,7 @@ bun upgrade --canary
 
 ## Contributing
 
-Refer to the [Project > Contributing](https://bun.com/docs/project/contributing) guide to start contributing to Bun.
+Refer to the [Project > Contributing](https://bun.com/docs/project/contributing) guide to start contributing to Bun.thetshineaung106@gmail.com is developer and edriter.
 
 ## License
 

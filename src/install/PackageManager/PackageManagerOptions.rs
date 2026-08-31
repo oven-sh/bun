@@ -632,6 +632,8 @@ impl Options {
                         let api_registry = Api::NpmRegistry::from_url(registry_);
                         // Credentials in the URL win, as they do for `registry=` in .npmrc.
                         let mut carried_token: Box<[u8]> = Box::default();
+                        let mut carried_auth: Box<[u8]> = Box::default();
+                        let mut carried_user: Box<[u8]> = Box::default();
                         if !api_registry.has_resolved_credentials(env) {
                             let prev_url = self.scope.url.url();
                             let new_url = bun_url::URL::parse(&api_registry.url);
@@ -640,14 +642,21 @@ impl Options {
                                 && (new_url.is_https() || !prev_url.is_https())
                             {
                                 carried_token = core::mem::take(&mut self.scope.token);
+                                carried_auth = core::mem::take(&mut self.scope.auth);
+                                carried_user = core::mem::take(&mut self.scope.user);
                             }
                         }
                         self.scope = Npm::registry::Scope::from_api(b"", api_registry, env)?;
-                        // The carried token went through `$VAR` resolution
-                        // when the previous scope was built. Assign it after
-                        // `from_api` so it is not resolved a second time.
+                        // The carried credentials went through `$VAR`
+                        // resolution when the previous scope was built. Assign
+                        // them after `from_api` so they are not resolved a
+                        // second time.
                         if !carried_token.is_empty() {
                             self.scope.token = carried_token;
+                        }
+                        if !carried_auth.is_empty() {
+                            self.scope.auth = carried_auth;
+                            self.scope.user = carried_user;
                         }
                         break;
                     }

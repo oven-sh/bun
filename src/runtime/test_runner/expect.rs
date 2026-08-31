@@ -507,7 +507,13 @@ impl Expect {
     ) -> JsResult<JSValue> {
         match flags.promise() {
             resolution @ (Promise::Resolves | Promise::Rejects) => {
-                if let Some(promise) = Self::thenable_to_wait_for(global_this, value)? {
+                // Jest calls a function receiver and waits on what it returns.
+                let received = if value.is_callable() {
+                    value.call(global_this, JSValue::UNDEFINED, &[])?
+                } else {
+                    value
+                };
+                if let Some(promise) = Self::thenable_to_wait_for(global_this, received)? {
                     let vm = global_this.vm();
 
                     // SAFETY: bun_vm() returns the live thread-local VirtualMachine.
@@ -528,7 +534,7 @@ impl Expect {
                                         global_this, custom_label, matcher_name, matcher_params, flags,
                                         "Expected promise that rejects",
                                         "Received promise that resolved: ",
-                                        value.to_fmt(&mut formatter),
+                                        new_value.to_fmt(&mut formatter),
                                     ));
                                 }
                                 return Err(JsError::Thrown);
@@ -544,7 +550,7 @@ impl Expect {
                                         global_this, custom_label, matcher_name, matcher_params, flags,
                                         "Expected promise that resolves",
                                         "Received promise that rejected: ",
-                                        value.to_fmt(&mut formatter),
+                                        new_value.to_fmt(&mut formatter),
                                     ));
                                 }
                                 return Err(JsError::Thrown);
@@ -561,7 +567,7 @@ impl Expect {
                         let mut formatter = ConsoleObject::Formatter::new(global_this).with_quote_strings(true);
                         return Err(Self::throw_promise_matcher_error(
                             global_this, custom_label, matcher_name, matcher_params, flags,
-                            "Expected promise",
+                            "Expected a promise or a function returning a promise",
                             "Received: ",
                             value.to_fmt(&mut formatter),
                         ));

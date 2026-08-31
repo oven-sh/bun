@@ -212,7 +212,6 @@ test/bundler/bundler_jsx.test.ts
 test/bundler/bundler_loader.test.ts
 test/bundler/bundler_minify.test.ts
 test/bundler/esbuild/dce.test.ts
-test/bundler/esbuild/default.test.ts
 test/bundler/esbuild/extra.test.ts
 test/bundler/esbuild/importstar.test.ts
 test/bundler/esbuild/loader.test.ts

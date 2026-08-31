@@ -5,12 +5,15 @@ use core::ffi::c_int;
 use core::mem::{align_of, size_of};
 use core::sync::atomic::{AtomicU32, Ordering};
 
-use bun_core::{ZStr, env_var, output as Output};
+use bun_core::{ZStr, output as Output};
 use bun_paths::MAX_PATH_BYTES;
 use bun_sys::{self, Fd};
 use bun_threading::Futex;
 
-use crate::watcher_impl::{MAX_COUNT as max_count, Op, WatchEvent, WatchItemIndex, Watcher};
+use crate::watcher_impl::{
+    MAX_COALESCE_ITERATIONS, MAX_COUNT as max_count, Op, WatchEvent, WatchItemIndex, Watcher,
+    coalesce_interval_ns, coalesce_timespec,
+};
 use bun_collections::index_sort;
 
 bun_core::declare_scope!(watcher, visible);
@@ -54,8 +57,8 @@ pub struct INotifyWatcher {
     read_ptr: Option<ReadPtr>,
 
     pub(crate) watch_count: AtomicU32,
-    /// nanoseconds
-    pub(crate) coalesce_interval: isize,
+    /// See [`coalesce_interval_ns`].
+    pub(crate) coalesce_interval: u64,
 }
 
 impl Default for INotifyWatcher {
@@ -67,7 +70,7 @@ impl Default for INotifyWatcher {
             eventlist_ptrs: [core::ptr::null(); max_count],
             read_ptr: None,
             watch_count: AtomicU32::new(0),
-            coalesce_interval: 100_000,
+            coalesce_interval: 0,
         }
     }
 }
@@ -197,10 +200,7 @@ impl INotifyWatcher {
         Ok(Self {
             fd,
             loaded: true,
-            coalesce_interval: env_var::BUN_INOTIFY_COALESCE_INTERVAL
-                .get()
-                .and_then(|v| isize::try_from(v).ok())
-                .unwrap_or(100_000),
+            coalesce_interval: coalesce_interval_ns(),
             ..Self::default()
         })
     }
@@ -246,19 +246,22 @@ impl INotifyWatcher {
                             return Ok(&[]);
                         }
 
-                        // IN_MODIFY is very noisy
-                        // we do a 0.1ms sleep to try to coalesce events better
-                        const DOUBLE_READ_THRESHOLD: usize = Event::LARGEST_SIZE * (max_count / 2);
-                        if read_len < DOUBLE_READ_THRESHOLD {
+                        // Drain until quiet; beyond `max_count` the parser sets `read_ptr` anyway.
+                        let timespec = coalesce_timespec(self.coalesce_interval);
+                        let mut iterations: u32 = 0;
+                        while read_len < size_of::<Event>() * max_count
+                            && iterations < MAX_COALESCE_ITERATIONS
+                        {
+                            let rest = &mut self.eventlist_bytes.0[read_len..];
+                            if rest.len() < Event::LARGEST_SIZE {
+                                break; // buffer nearly full
+                            }
+
                             let mut fds = [system::pollfd {
                                 fd: self.fd.native(),
                                 events: (libc::POLLIN | libc::POLLERR) as _,
                                 revents: 0,
                             }];
-                            let timespec = libc::timespec {
-                                tv_sec: 0,
-                                tv_nsec: self.coalesce_interval as _,
-                            };
                             // SAFETY: fds and timespec are valid stack locals; sigmask is null.
                             let poll_n = unsafe {
                                 system::ppoll(
@@ -268,37 +271,34 @@ impl INotifyWatcher {
                                     core::ptr::null(),
                                 )
                             };
-                            if poll_n > 0 {
-                                'inner: loop {
-                                    let rest = &mut self.eventlist_bytes.0[read_len..];
-                                    debug_assert!(!rest.is_empty());
-                                    // SAFETY: fd valid; rest is a valid mutable buffer.
-                                    let new_rc = unsafe {
-                                        system::read(
-                                            self.fd.native(),
-                                            rest.as_mut_ptr(),
-                                            rest.len(),
-                                        )
-                                    };
-                                    let e = get_errno(new_rc);
-                                    match e {
-                                        E::SUCCESS => {
-                                            read_len += usize::try_from(new_rc).expect("int cast");
-                                            break 'outer read_len;
-                                        }
-                                        E::EAGAIN | E::EINTR => {
-                                            continue 'inner;
-                                        }
-                                        _ => {
-                                            return Err(bun_sys::Error {
-                                                errno: e as u32 as _,
-                                                syscall: bun_sys::Tag::read,
-                                                ..Default::default()
-                                            });
-                                        }
+                            if poll_n <= 0 {
+                                break; // quiet
+                            }
+
+                            'inner: loop {
+                                // SAFETY: fd valid; rest is a valid mutable buffer.
+                                let new_rc = unsafe {
+                                    system::read(self.fd.native(), rest.as_mut_ptr(), rest.len())
+                                };
+                                let e = get_errno(new_rc);
+                                match e {
+                                    E::SUCCESS => {
+                                        read_len += usize::try_from(new_rc).expect("int cast");
+                                        break 'inner;
+                                    }
+                                    E::EAGAIN | E::EINTR => {
+                                        continue 'inner;
+                                    }
+                                    _ => {
+                                        return Err(bun_sys::Error {
+                                            errno: e as u32 as _,
+                                            syscall: bun_sys::Tag::read,
+                                            ..Default::default()
+                                        });
                                     }
                                 }
                             }
+                            iterations += 1;
                         }
 
                         break 'outer read_len;

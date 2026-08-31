@@ -523,6 +523,11 @@ where
     }
 
     pub(crate) fn append(&mut self, id: u32) {
+        // One save repeats its hash; duplicates would hit the mid-update `enqueue` below.
+        if self.hashes[..self.count as usize].contains(&id) {
+            return;
+        }
+
         if self.count == 8 {
             self.enqueue();
             self.count = 0;

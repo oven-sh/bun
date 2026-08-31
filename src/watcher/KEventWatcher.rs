@@ -1,12 +1,16 @@
 use bun_core::output as Output;
 use bun_sys::Fd;
 
-use crate::watcher_impl::{Op, WatchEvent, Watcher};
+use crate::watcher_impl::{
+    MAX_COALESCE_ITERATIONS, Op, WatchEvent, Watcher, coalesce_interval_ns, coalesce_timespec,
+};
 
 pub(crate) type Platform = KEventWatcher;
 
 pub struct KEventWatcher {
     pub(crate) fd: Fd,
+    /// See [`coalesce_interval_ns`].
+    pub(crate) coalesce_interval: u64,
 }
 
 const CHANGELIST_COUNT: usize = 128;
@@ -17,7 +21,10 @@ impl KEventWatcher {
         if fd.native() == 0 {
             return Err(crate::Error::KQueueError);
         }
-        Ok(Self { fd })
+        Ok(Self {
+            fd,
+            coalesce_interval: coalesce_interval_ns(),
+        })
     }
 
     pub(crate) fn stop(&mut self) {
@@ -58,13 +65,16 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
 
     let mut count = bun_sys::kevent(fd, &[], &mut changelist, None)?;
 
-    // Give the events more time to coalesce
-    if count < CHANGELIST_COUNT / 2 {
-        let ts = libc::timespec {
-            tv_sec: 0,
-            tv_nsec: 100_000,
-        }; // 0.0001 seconds
-        count += bun_sys::kevent(fd, &[], &mut changelist[count..], Some(&ts))?;
+    // Drain until quiet.
+    let ts = coalesce_timespec(this.platform.coalesce_interval);
+    let mut iterations: u32 = 0;
+    while count > 0 && count < CHANGELIST_COUNT && iterations < MAX_COALESCE_ITERATIONS {
+        // Don't let a failed drain poll discard the events already read.
+        match bun_sys::kevent(fd, &[], &mut changelist[count..], Some(&ts)) {
+            Ok(0) | Err(_) => break,
+            Ok(extra) => count += extra,
+        }
+        iterations += 1;
     }
 
     let changes = &changelist[..count];

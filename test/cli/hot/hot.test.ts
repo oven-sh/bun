@@ -1,7 +1,18 @@
 import { spawn } from "bun";
 import { beforeEach, expect, it } from "bun:test";
-import { copyFileSync, cpSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isDebug, isWindows, tmpdirSync, waitForFileToExist } from "harness";
+import {
+  closeSync,
+  copyFileSync,
+  cpSync,
+  openSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  unlinkSync,
+  writeFileSync,
+  writeSync,
+} from "fs";
+import { bunEnv, bunExe, isDebug, isIntelMacOS, isWindows, tmpdirSync, waitForFileToExist } from "harness";
 import { join } from "path";
 
 const timeout = isDebug ? Infinity : 10_000;
@@ -332,6 +343,100 @@ it(
   timeout,
 );
 
+// Intel macOS runners stretch `sleepSync(2)` past the 10 ms coalesce window,
+// splitting the burst; the bug (#13511) was reported on Linux and Windows.
+it.skipIf(isIntelMacOS)(
+  "coalesces a burst of writes into a single reload",
+  async () => {
+    // https://github.com/oven-sh/bun/issues/13511
+    //
+    // A fresh directory (not `cwd`, which holds the whole fixture set) so the
+    // directory watch only sees the file under test.
+    const dir = tmpdirSync();
+    const root = join(dir, "coalesce.js");
+    // `globalThis.count` survives a hot reload, so it counts evaluations.
+    // `console.write` so the line is written atomically (see hot-runner.js).
+    const body = `globalThis.count = (globalThis.count || 0) + 1;
+console.write("[eval] " + globalThis.count + "\\n");
+setInterval(() => {}, 1e6);
+`;
+    writeFileSync(root, body);
+
+    await using runner = spawn({
+      cmd: [bunExe(), "--hot", "run", root],
+      env: bunEnv,
+      cwd: dir,
+      stdout: "pipe",
+      stderr: "inherit",
+      stdin: "ignore",
+    });
+
+    const evals: number[] = [];
+    let buffered = "";
+    (async () => {
+      for await (const chunk of runner.stdout) {
+        buffered += new TextDecoder().decode(chunk);
+        let nl: number;
+        while ((nl = buffered.indexOf("\n")) !== -1) {
+          const line = buffered.slice(0, nl);
+          buffered = buffered.slice(nl + 1);
+          const m = line.match(/\[eval\] (\d+)/);
+          if (m) evals.push(Number(m[1]));
+        }
+      }
+    })().catch(() => {});
+
+    while (evals.length < 1) await Bun.sleep(1);
+
+    // An editor-save-shaped burst: each write emits an event on the file and
+    // directory watches, and the 2 ms gaps let the watcher thread observe
+    // them mid-burst while staying inside the 10 ms coalesce window.
+    //
+    // The gaps are measured: a loaded runner can stretch `sleepSync(2)` past
+    // the window, and writes that far apart are legitimately separate saves.
+    // A burst that was both stretched and split proves nothing either way, so
+    // it is retried; a split burst only counts against the watcher when its
+    // gaps stayed well inside the window.
+    const maxTightGapMs = 8;
+    let trial: { reloads: number; gapsMs: number[] } | undefined;
+    for (let attempt = 0; attempt < 8 && trial === undefined; attempt++) {
+      const evalsBefore = evals.length;
+      const gapsMs: number[] = [];
+      const fd = openSync(root, "a");
+      try {
+        let last = performance.now();
+        for (let i = 0; i < 10; i++) {
+          writeSync(fd, "\n");
+          Bun.sleepSync(2);
+          const now = performance.now();
+          gapsMs.push(now - last);
+          last = now;
+        }
+      } finally {
+        closeSync(fd);
+      }
+
+      while (evals.length === evalsBefore) await Bun.sleep(1);
+      // Give any extra reloads time to surface (same settle as the "random
+      // file" test below).
+      await Bun.sleep(200);
+
+      const reloads = evals.length - evalsBefore;
+      if (reloads === 1 || Math.max(...gapsMs) <= maxTightGapMs) {
+        trial = { reloads, gapsMs };
+      }
+    }
+
+    runner.kill();
+
+    // One reload for the whole burst. `gapsMs` is carried along so a failure
+    // shows how tight the burst actually was.
+    expect(trial).toBeDefined();
+    expect(trial).toEqual({ ...trial!, reloads: 1 });
+  },
+  timeout,
+);
+
 it(
   "should not hot reload when a random file is written",
   async () => {
@@ -600,7 +705,10 @@ ${Buffer.alloc(counter * 2, " ").toString()}throw new Error('${counter}');`,
     writeFull(0);
     await using runner = spawn({
       cmd: [bunExe(), "--smol", "--hot", "run", hotRunnerRoot],
-      env: bunEnv,
+      // The race under test needs the self-write's event dispatched before
+      // the rejection is reported; the default 10 ms coalesce window would
+      // close it.
+      env: { ...bunEnv, BUN_INOTIFY_COALESCE_INTERVAL: "0" },
       cwd,
       stdout: "ignore",
       stderr: "pipe",

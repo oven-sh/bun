@@ -130,6 +130,10 @@ bun build <entry points>
   Re-emit Dead Code Elimination annotations. Disabled when <code>--minify-whitespace</code> is used
 </ParamField>
 
+<ParamField path="--no-deprecated-namespace-object-setters" type="boolean">
+  Emit getter-only module namespace objects (assigning to a property throws, like a real namespace). This becomes the default in a future release
+</ParamField>
+
 <ParamField path="--minify" type="boolean">
   Enable all minification options
 </ParamField>

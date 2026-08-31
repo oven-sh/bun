@@ -423,7 +423,10 @@ impl Tag {
 
     #[inline]
     pub(crate) const fn can_have_circular_references(self) -> bool {
-        matches!(self, Tag::Array | Tag::Object | Tag::Map | Tag::Set)
+        matches!(
+            self,
+            Tag::Array | Tag::Object | Tag::Map | Tag::Set | Tag::JSX | Tag::Event
+        )
     }
 }
 
@@ -1853,6 +1856,7 @@ impl<'a> Formatter<'a> {
                     {
                         evt @ (EventType::MessageEvent | EventType::ErrorEvent) => evt,
                         _ => {
+                            let _ = self.map.remove(&value);
                             return self.print_as::<W, { Tag::Object }, ENABLE_ANSI_COLORS>(
                                 writer.ctx, value, JSType::Event,
                             );

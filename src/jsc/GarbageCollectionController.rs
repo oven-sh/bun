@@ -1,4 +1,4 @@
-//! Idle GC timer: JSC's own `GCActivityCallback` (via `WTFTimer`) paces eden/full against allocation rate; this only adds a 1 s / 30 s idle `collect_async()` so a process that stops allocating still releases memory. Knobs: `BUN_GC_TIMER_INTERVAL` (ms), `BUN_GC_TIMER_DISABLE`. One per JS thread, not thread-safe.
+//! Idle GC timer: JSC's own `GCActivityCallback` (via `WTFTimer`) paces eden/full against allocation rate; this only adds a 1 s / 30 s idle `collect_async()` so a process that stops allocating still releases memory, and — once per idle period, after `BUN_IDLE_RELEASE_SECONDS` (default 30, 0 = off) of the process using under 2% CPU — drops JIT code and pages out a standalone executable's embedded module graph (main thread only). Knobs: `BUN_GC_TIMER_INTERVAL` (ms), `BUN_GC_TIMER_DISABLE`. One per JS thread, not thread-safe.
 
 use core::cell::Cell;
 use core::ffi::c_int;
@@ -20,6 +20,12 @@ pub struct GarbageCollectionController {
     pub(crate) gc_timer_interval: Cell<i32>,
     pub(crate) gc_repeating_timer_fast: Cell<bool>,
     pub(crate) disabled: Cell<bool>,
+    /// Idle release: process CPU time (µs) at the last fire, how long the process has stayed under the idle CPU
+    /// threshold, CPU time at the last release (`u64::MAX` = armed), and the configured delay (0 = off).
+    idle_last_cpu_us: Cell<u64>,
+    idle_quiet_ms: Cell<u32>,
+    idle_released_at_cpu_us: Cell<u64>,
+    idle_release_after_ms: Cell<u32>,
 }
 
 bun_event_loop::impl_timer_owner!(
@@ -36,6 +42,10 @@ impl Default for GarbageCollectionController {
             gc_timer_interval: Cell::new(0),
             gc_repeating_timer_fast: Cell::new(true),
             disabled: Cell::new(false),
+            idle_last_cpu_us: Cell::new(0),
+            idle_quiet_ms: Cell::new(0),
+            idle_released_at_cpu_us: Cell::new(u64::MAX),
+            idle_release_after_ms: Cell::new(0),
         }
     }
 }
@@ -86,6 +96,53 @@ impl GarbageCollectionController {
 
         self.disabled
             .set(env_var::BUN_GC_TIMER_DISABLE::get().unwrap_or(false));
+
+        if vm.is_main_thread() {
+            self.idle_release_after_ms.set(
+                (env_var::BUN_IDLE_RELEASE_SECONDS::get()
+                    .unwrap_or(30)
+                    .min(3600)
+                    * 1000) as u32,
+            );
+        }
+    }
+
+    /// Called on every repeating-timer fire with the interval that just elapsed. "Idle" is judged by process CPU
+    /// time rather than by whether any JS ran: an interactive app sitting at a prompt still fires the odd timer.
+    fn note_tick_for_idle_release(&self, vm: &VirtualMachine, elapsed_ms: i32) {
+        const IDLE_CPU_PERCENT: u64 = 2;
+        const REARM_AFTER_CPU_US: u64 = 250_000;
+        let after = self.idle_release_after_ms.get();
+        if after == 0 {
+            return;
+        }
+        let Some(cpu_us) = process_cpu_time_us() else {
+            return;
+        };
+        let elapsed_ms = elapsed_ms.max(1) as u64;
+        let busy = cpu_us.saturating_sub(self.idle_last_cpu_us.get()) * 100
+            > elapsed_ms * 1000 * IDLE_CPU_PERCENT;
+        self.idle_last_cpu_us.set(cpu_us);
+        if busy {
+            self.idle_quiet_ms.set(0);
+            return;
+        }
+        let quiet = self.idle_quiet_ms.get().saturating_add(elapsed_ms as u32);
+        self.idle_quiet_ms.set(quiet);
+        let released_at = self.idle_released_at_cpu_us.get();
+        let armed =
+            released_at == u64::MAX || cpu_us.saturating_sub(released_at) >= REARM_AFTER_CPU_US;
+        if quiet >= after && armed && !vm.is_inspector_enabled() {
+            vm.jsc_vm().release_memory_for_idle();
+            if let Some(graph) = vm.standalone_module_graph {
+                let _ = std::thread::Builder::new()
+                    .name("idle page-out".into())
+                    .spawn(move || graph.page_out());
+            }
+            // Read again so the release's own work does not count towards re-arming.
+            self.idle_released_at_cpu_us
+                .set(process_cpu_time_us().unwrap_or(cpu_us));
+        }
     }
 
     /// Idempotent. Must run before JSC teardown: `~RunLoop::Timer` frees the
@@ -143,6 +200,8 @@ impl GarbageCollectionController {
         if this.disabled.get() {
             return;
         }
+        // SAFETY: per fn contract.
+        this.note_tick_for_idle_release(unsafe { &*vm }, this.repeat_interval());
         let prev_heap_size = this.gc_last_heap_size.get();
         this.perform_gc();
         if prev_heap_size == this.gc_last_heap_size.get() {
@@ -169,6 +228,26 @@ impl GarbageCollectionController {
                 .cast_mut(),
             interval,
         );
+    }
+}
+
+/// User + system CPU time of the whole process (all threads), in microseconds.
+fn process_cpu_time_us() -> Option<u64> {
+    #[cfg(unix)]
+    {
+        let mut ru = core::mem::MaybeUninit::<libc::rusage>::zeroed();
+        // SAFETY: getrusage writes a complete rusage into `ru`.
+        if unsafe { libc::getrusage(libc::RUSAGE_SELF, ru.as_mut_ptr()) } != 0 {
+            return None;
+        }
+        // SAFETY: initialised by the successful call above.
+        let ru = unsafe { ru.assume_init() };
+        let us = |t: libc::timeval| t.tv_sec as u64 * 1_000_000 + t.tv_usec as u64;
+        Some(us(ru.ru_utime) + us(ru.ru_stime))
+    }
+    #[cfg(not(unix))]
+    {
+        None
     }
 }
 

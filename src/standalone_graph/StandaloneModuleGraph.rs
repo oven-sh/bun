@@ -359,6 +359,20 @@ impl bun_resolver::StandaloneModuleGraph for StandaloneModuleGraph {
             .sum();
         modules + builtins + self.bytecode_string_table.len()
     }
+    fn page_out(&self) {
+        #[cfg(target_os = "linux")]
+        {
+            let bytes = self.bytes;
+            let page = bun_alloc::page_size();
+            let lo = (bytes.cast::<u8>() as usize + page - 1) & !(page - 1);
+            let hi = (bytes.cast::<u8>() as usize + bytes.len()) & !(page - 1);
+            if hi > lo {
+                // SAFETY: `[lo, hi)` is inside the mapped executable image; MADV_PAGEOUT only drops clean pages,
+                // which the kernel refills from the file on the next access.
+                unsafe { libc::madvise(lo as *mut core::ffi::c_void, hi - lo, libc::MADV_PAGEOUT) };
+            }
+        }
+    }
 }
 
 #[repr(C)]

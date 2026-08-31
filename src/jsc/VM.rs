@@ -26,6 +26,7 @@ unsafe extern "C" {
     safe fn JSC__VM__releaseAPILock(vm: &VM);
     safe fn JSC__VM__reportExtraMemory(vm: &VM, size: usize);
     safe fn JSC__VM__shrinkFootprint(vm: &VM);
+    safe fn JSC__VM__releaseMemoryForIdle(vm: &VM);
     safe fn JSC__VM__runGC(vm: &VM, sync: bool) -> usize;
     safe fn JSC__VM__heapSize(vm: &VM) -> usize;
     safe fn JSC__VM__collectAsync(vm: &VM);
@@ -84,6 +85,11 @@ impl VM {
 
     pub fn shrink_footprint(&self) {
         JSC__VM__shrinkFootprint(self)
+    }
+
+    /// Drop JIT code + CodeBlocks and start a concurrent full GC. For a process that has gone idle.
+    pub fn release_memory_for_idle(&self) {
+        JSC__VM__releaseMemoryForIdle(self)
     }
 
     pub fn run_gc(&self, sync: bool) -> usize {

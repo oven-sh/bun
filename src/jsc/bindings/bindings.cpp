@@ -5003,7 +5003,15 @@ bool JSC__JSValue__isTerminationException(JSC::EncodedJSValue JSValue0)
 void JSC__VM__shrinkFootprint(JSC::VM* arg0)
 {
     arg0->shrinkFootprintWhenIdle();
-};
+}
+
+void JSC__VM__releaseMemoryForIdle(JSC::VM* vm)
+{
+    JSC::JSLockHolder lock(*vm);
+    JSC::sanitizeStackForVM(*vm);
+    vm->deleteAllCode(JSC::DeleteAllCodeIfNotCollecting);
+    vm->heap.collectAsync(JSC::CollectionScope::Full);
+}
 
 void JSC__VM__holdAPILock(JSC::VM* arg0, void* ctx, void (*callback)(void* arg0))
 {

@@ -1238,6 +1238,9 @@ impl<'a> Parser<'a> {
                 aliases: Vec<bun_ast::StoreStr>,
             }
             let mut by_record: bun_collections::ArrayHashMap<u32, PerRecord> = Default::default();
+            // A namespace ref is listed once per registration and once per
+            // destructure of it; its alias map only needs one walk.
+            let mut seen_namespace: bun_collections::HashMap<bun_ast::Ref, ()> = Default::default();
             let arena = p.arena;
             for i in 0..p.imports_to_convert_from_dynamic_import.len() {
                 let (ns_ref, import_record_id, scope) = {
@@ -1265,14 +1268,14 @@ impl<'a> Parser<'a> {
                 }
                 let rec = entry.value_ptr;
                 rec.escaped |= escaped;
-                if rec.escaped {
+                if rec.escaped || seen_namespace.insert(ns_ref, ()).is_some() {
                     continue;
                 }
                 let Some(map) = p.import_items_for_namespace.get(&ns_ref) else {
                     continue;
                 };
-                for key in map.keys().iter() {
-                    let local = map.get(key).unwrap().ref_;
+                for (key, loc_ref) in map.keys().iter().zip(map.values().iter()) {
+                    let local = loc_ref.ref_;
                     // A destructured local that is never read does not keep
                     // its export alive — unless it was merged with another
                     // declaration or a direct `eval` can read it by name.

@@ -5803,7 +5803,12 @@ class ClientHttp2Session extends Http2Session {
       }
       cancelPendingPings(this.#pingCallbacks);
       this.#pingCallbacks = null;
-      if (typeof error === "number") {
+      if (error === undefined) {
+        // node's signature is destroy(error = NGHTTP2_NO_ERROR, code): the defaulted error is a
+        // number and replaces code, so destroy(undefined, code) is destroy(). An explicit code only
+        // reaches the wire next to an Error (or null).
+        code = undefined;
+      } else if (typeof error === "number") {
         code = error;
         error = code !== constants.NGHTTP2_NO_ERROR ? $ERR_HTTP2_SESSION_ERROR(code) : undefined;
       }

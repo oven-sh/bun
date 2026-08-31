@@ -3347,10 +3347,10 @@ impl<'a> LinkerContext<'a> {
 
     /// Follows one step of an import chain: resolves what `tracker`'s import
     /// points to in the target file and reports the match status.
-    /// `namespace_source`: when the import is a generated `X.alias` member
-    /// (`NamedImport::is_namespace_member`) and `X` resolved to the namespace
-    /// of that file, look `alias` up there instead of following the import
-    /// record.
+    /// `namespace_source`: the import is one `bind_import_property_accesses`
+    /// synthesized for `X.alias`, whose `NamedImport` carries `X`'s import
+    /// record; `X` already resolved to the namespace of this file, so look
+    /// `alias` up there instead of following the record.
     pub(crate) fn advance_import_tracker(
         &mut self,
         tracker: &ImportTracker,
@@ -3484,15 +3484,13 @@ impl<'a> LinkerContext<'a> {
                     .slice(),
             )
         {
-            let alias = named_import.alias.unwrap().slice();
-            let default_alias_of =
-                if alias == b"default" && matching_export.data.source_index.get() == other_id {
-                    self.graph.ast.items_named_exports()[other_id as usize]
-                        .get(alias)
-                        .map_or(Ref::NONE, |export| export.alias_of_import)
-                } else {
-                    Ref::NONE
-                };
+            let default_alias_of = if named_import.alias.unwrap().slice() == b"default"
+                && matching_export.data.source_index.get() == other_id
+            {
+                self.graph.ast.items_export_default_alias_of_import()[other_id as usize]
+            } else {
+                Ref::NONE
+            };
             // Check to see if this is a re-export of another import
             return ImportTrackerIterator {
                 value: ImportTracker {
@@ -4007,48 +4005,12 @@ impl<'a> LinkerContext<'a> {
             );
 
             match result.kind {
-                MatchImportKind::Normal => {
-                    imports_to_bind
-                        .put(
-                            import_ref,
-                            crate::ImportData {
-                                re_exports,
-                                data: ImportTracker {
-                                    source_index: crate::Index::init(result.source_index),
-                                    import_ref: result.r#ref,
-                                    ..Default::default()
-                                },
-                            },
-                        )
-                        .expect("unreachable");
+                MatchImportKind::Normal | MatchImportKind::NormalAndNamespace => {
+                    self.bind_matched_import(imports_to_bind, import_ref, &result, re_exports);
                 }
                 MatchImportKind::Namespace => {
                     // SAFETY: the mutated symbol slot is disjoint from `named_import`
                     // (graph.ast SoA) and `result` (stack local).
-                    unsafe { self.graph.symbol_mut(import_ref) }.namespace_alias =
-                        Some(bun_alloc::ast_box(G::NamespaceAlias {
-                            namespace_ref: result.namespace_ref,
-                            alias: result.alias,
-                            ..Default::default()
-                        }));
-                }
-                MatchImportKind::NormalAndNamespace => {
-                    imports_to_bind
-                        .put(
-                            import_ref,
-                            crate::ImportData {
-                                re_exports,
-                                data: ImportTracker {
-                                    source_index: crate::Index::init(result.source_index),
-                                    import_ref: result.r#ref,
-                                    ..Default::default()
-                                },
-                            },
-                        )
-                        .expect("unreachable");
-
-                    // SAFETY: one-shot field store after `imports_to_bind.put` (disjoint
-                    // map) has fully returned; no other live borrow aliases this symbol slot.
                     unsafe { self.graph.symbol_mut(import_ref) }.namespace_alias =
                         Some(bun_alloc::ast_box(G::NamespaceAlias {
                             namespace_ref: result.namespace_ref,
@@ -4139,6 +4101,7 @@ impl<'a> LinkerContext<'a> {
             return;
         }
         let id = source_index as usize;
+        let mut seen: bun_collections::HashMap<(Ref, &[u8]), ()> = Default::default();
         let mut accesses: Vec<(Ref, bun_ast::StoreStr)> = Vec::new();
         for part in self.graph.ast.items_parts()[id].as_slice() {
             let Some(uses) = part.import_symbol_property_uses.as_ref() else {
@@ -4153,6 +4116,17 @@ impl<'a> LinkerContext<'a> {
                     continue;
                 }
                 for name in properties.keys() {
+                    if seen.insert((*base, &**name), ()).is_some() {
+                        continue;
+                    }
+                    // Not a static export of the target (missing, ambiguous, or
+                    // only reachable through `export *` from CommonJS): keep the
+                    // property access.
+                    if !self.graph.meta.items_resolved_exports()[target.source_index.get() as usize]
+                        .contains(name)
+                    {
+                        continue;
+                    }
                     let name: &[u8] = self.graph.arena().alloc_slice_copy(name);
                     accesses.push((*base, bun_ast::StoreStr::new(name)));
                 }
@@ -4160,24 +4134,10 @@ impl<'a> LinkerContext<'a> {
         }
 
         for (base, name) in accesses {
-            if let Some(bound) = self.graph.import_member_bindings.get(&base)
-                && bound.contains_key(name.slice())
-            {
-                continue;
-            }
             let import_data = imports_to_bind.get(&base).unwrap();
             let target_source = import_data.data.source_index.get();
-            let mut re_exports: bun_alloc::AstVec<Dependency> = bun_alloc::AstAlloc::vec();
-            re_exports.extend_from_slice(import_data.re_exports.slice());
-
-            // Not a static export of the target (missing, ambiguous, or only
-            // reachable through `export *` from CommonJS): keep the property access.
-            if !self.graph.meta.items_resolved_exports()[target_source as usize]
-                .contains(name.slice())
-            {
-                continue;
-            }
-
+            let mut re_exports =
+                bun_alloc::AstAlloc::vec_from_slice(import_data.re_exports.slice());
             let (import_record_index, alias_loc) = {
                 let base_import = self.graph.ast.items_named_imports()[id].get(&base).unwrap();
                 (base_import.import_record_index, base_import.alias_loc)
@@ -4212,32 +4172,8 @@ impl<'a> LinkerContext<'a> {
                 Some(target_source),
                 &mut re_exports,
             );
-            match result.kind {
-                MatchImportKind::Normal | MatchImportKind::NormalAndNamespace => {
-                    imports_to_bind
-                        .put(
-                            r#ref,
-                            crate::ImportData {
-                                re_exports,
-                                data: ImportTracker {
-                                    source_index: crate::Index::init(result.source_index),
-                                    import_ref: result.r#ref,
-                                    ..Default::default()
-                                },
-                            },
-                        )
-                        .expect("OOM");
-                    if result.kind == MatchImportKind::NormalAndNamespace {
-                        // SAFETY: freshly generated symbol; no other borrow of its slot is live.
-                        unsafe { self.graph.symbol_mut(r#ref) }.namespace_alias =
-                            Some(bun_alloc::ast_box(G::NamespaceAlias {
-                                namespace_ref: result.namespace_ref,
-                                alias: result.alias,
-                                ..Default::default()
-                            }));
-                    }
-                }
-                _ => continue,
+            if !self.bind_matched_import(imports_to_bind, r#ref, &result, re_exports) {
+                continue;
             }
             self.graph
                 .import_member_bindings
@@ -4247,6 +4183,47 @@ impl<'a> LinkerContext<'a> {
                 .put(name.slice(), r#ref)
                 .expect("OOM");
         }
+    }
+
+    /// Records a `Normal`/`NormalAndNamespace` match for `import_ref`; returns
+    /// false for every other kind.
+    fn bind_matched_import(
+        &mut self,
+        imports_to_bind: &mut crate::RefImportData,
+        import_ref: Ref,
+        result: &MatchImport,
+        re_exports: bun_alloc::AstVec<Dependency>,
+    ) -> bool {
+        if !matches!(
+            result.kind,
+            MatchImportKind::Normal | MatchImportKind::NormalAndNamespace
+        ) {
+            return false;
+        }
+        imports_to_bind
+            .put(
+                import_ref,
+                crate::ImportData {
+                    re_exports,
+                    data: ImportTracker {
+                        source_index: crate::Index::init(result.source_index),
+                        import_ref: result.r#ref,
+                        ..Default::default()
+                    },
+                },
+            )
+            .expect("unreachable");
+        if result.kind == MatchImportKind::NormalAndNamespace {
+            // SAFETY: one-shot field store after `imports_to_bind.put` (disjoint
+            // map) has fully returned; no other live borrow aliases this symbol slot.
+            unsafe { self.graph.symbol_mut(import_ref) }.namespace_alias =
+                Some(bun_alloc::ast_box(G::NamespaceAlias {
+                    namespace_ref: result.namespace_ref,
+                    alias: result.alias,
+                    ..Default::default()
+                }));
+        }
+        true
     }
 
     /// Thin inherent-method shim so callers can write

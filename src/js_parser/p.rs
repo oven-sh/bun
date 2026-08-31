@@ -448,6 +448,8 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) enclosing_class_keyword: bun_ast::Range,
     pub(crate) import_items_for_namespace: HashMap<Ref, ImportItemForNamespaceMap>,
     pub(crate) is_import_item: RefMap,
+    /// See `Ast::export_default_alias_of_import`.
+    pub(crate) export_default_alias_of_import: Ref,
     pub(crate) named_imports: NamedImportsType<'a>,
     pub(crate) named_exports: bun_ast::ast_result::NamedExports,
 
@@ -1473,7 +1475,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 js_ast::NamedExport {
                     alias_loc: loc,
                     ref_: r#ref,
-                    alias_of_import: Ref::NONE,
                 },
             )?;
         }
@@ -8569,6 +8570,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             has_import_meta: self.has_import_meta,
 
             hashbang: hashbang.into(),
+            export_default_alias_of_import: self.export_default_alias_of_import,
             // TODO: cross-module constant inlining
             // const_values: self.const_values,
             ts_enums,
@@ -8931,6 +8933,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             enclosing_class_keyword: bun_ast::Range::NONE,
             import_items_for_namespace: Default::default(),
             is_import_item: Default::default(),
+            export_default_alias_of_import: Ref::NONE,
             scope_order_to_visit: &[],
             module_scope_directive_loc: bun_ast::Loc::default(),
             is_control_flow_dead: false,

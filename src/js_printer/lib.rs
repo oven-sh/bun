@@ -3714,14 +3714,17 @@ pub(crate) mod __gated_printer {
                                     self.print_inlined_enum(value, str.slice8(), level);
                                     return;
                                 }
-                                if e.is_import_property_use
-                                    && let Some(binding) =
-                                        self.import_member_binding(e.target, str.slice8())
-                                {
-                                    self.print_expr(binding, level, flags);
-                                    return;
-                                }
                             }
+                        }
+                        if e.is_import_property_use
+                            && let Some(str) = e.index.unwrap_inlined().data.as_e_string()
+                            && let str = str.flattened(self.bump)
+                            && str.is_utf8()
+                            && let Some(binding) =
+                                self.import_member_binding(e.target, str.slice8())
+                        {
+                            self.print_expr(binding, level, flags);
+                            return;
                         }
                     } else {
                         if flags.contains(ExprFlag::HasNonOptionalChainParent) {

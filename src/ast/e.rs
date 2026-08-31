@@ -317,7 +317,7 @@ pub struct Dot {
     /// `target` is an `EImportIdentifier` and this read was counted in
     /// `Part::import_symbol_property_uses` instead of as a use of the import,
     /// so the linker may bind it straight to the export it names
-    /// (`LinkerGraph::import_member_binding`).
+    /// (`LinkerGraph::import_member_bindings`).
     pub is_import_property_use: bool,
 }
 impl Default for Dot {

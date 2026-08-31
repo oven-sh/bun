@@ -728,11 +728,8 @@ impl<'a> ImportScanner<'a> {
                     // This is defer'd so that we still record export default for identifiers
                     if let Some(ref_) = deferred_default_name.ref_.to_nullable() {
                         let _ = p.record_export(deferred_default_name.loc, b"default", ref_);
-                        if alias_of_import.is_valid()
-                            && let Some(export) = p.named_exports.get_ptr_mut(b"default")
-                            && export.ref_ == ref_
-                        {
-                            export.alias_of_import = alias_of_import;
+                        if alias_of_import.is_valid() {
+                            p.export_default_alias_of_import = alias_of_import;
                         }
                     }
                 }

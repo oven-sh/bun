@@ -558,8 +558,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         });
                     }
                 }
-                // EImportIdentifier: see `record_import_property_use` (the callers
-                // need to mark the E::Dot/E::Index node, so it is done there).
                 // EDot and EIndex are handled with structurally identical arms.
                 js_ast::ExprData::EDot(data) => {
                     if matches!(p.ts_namespace.expr, js_ast::ExprData::EDot(ns_data) if data.as_ptr() == ns_data.as_ptr())

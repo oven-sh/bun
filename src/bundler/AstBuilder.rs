@@ -554,6 +554,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
             top_level_await_keyword: Range::NONE,
             nested_scope_slot_counts: Default::default(),
             hashbang: b"".into(),
+            export_default_alias_of_import: Ref::NONE,
             css: None,
             url_for_css: b"",
             require_ref: Ref::NONE,
@@ -585,7 +586,6 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
                 NamedExport {
                     alias_loc: Loc::EMPTY,
                     ref_,
-                    alias_of_import: Ref::NONE,
                 },
             )?;
         }

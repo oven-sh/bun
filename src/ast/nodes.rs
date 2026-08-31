@@ -1182,10 +1182,6 @@ pub struct NamedImport {
 pub struct NamedExport {
     pub ref_: Ref,
     pub alias_loc: crate::Loc,
-    /// `export default X` where `X` is an import binding. When `X` resolves to
-    /// a module namespace the linker binds importers of `default` through `X`
-    /// (a namespace never changes identity, so the snapshot is the live value).
-    pub alias_of_import: Ref,
 }
 
 #[repr(u8)]

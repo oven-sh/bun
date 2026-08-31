@@ -479,15 +479,17 @@ impl Expect {
             if promise.status() != js_promise::Status::Pending {
                 return Ok(Some(promise));
             }
-        } else {
-            let then = if value.is_object() { value.get(global_this, "then")? } else { None };
-            if !then.is_some_and(JSValue::is_callable) {
-                return Ok(None);
-            }
+        } else if !value.is_object() {
+            return Ok(None);
         }
         let adopter = js_promise::JSPromise::create(global_this);
         adopter.set_handled();
         adopter.resolve(global_this, value)?;
+        // A thenable's `then()` runs in a queued job, so the adopter is still pending here. An
+        // object without a callable `then` fulfilled it at once and is not a promise.
+        if adopter.status() == js_promise::Status::Fulfilled {
+            return Ok(None);
+        }
         Ok(Some(AnyPromise::Normal(core::ptr::from_mut(adopter))))
     }
 

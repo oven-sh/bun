@@ -613,8 +613,7 @@ describe.skipIf(!isDockerEnabled())("WebSocket through Squid proxy (Docker)", ()
 
   beforeAll(async () => {
     console.log("Starting squid proxy container...");
-    squidInfo = await dockerCompose.ensure("squid");
-    console.log(`Squid proxy ready at: ${squidInfo.host}:${squidInfo.ports[3128]}`);
+    squidInfo = await dockerCompose.awaitService("squid");
   }, 240_000);
 
   afterAll(async () => {

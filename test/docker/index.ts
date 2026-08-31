@@ -548,6 +548,31 @@ export async function ensure(service: ServiceName): Promise<ServiceInfo> {
   return getHelper().ensure(service);
 }
 
+/**
+ * `ensure()` for a test file that is blocked until the service is up. Prints
+ *
+ *     Container ready via docker-compose: <service> at <host>:<ports> (waited <ms>ms)
+ *
+ * which scripts/ci-slowest-tests.ts and scripts/update-test-durations.mjs key
+ * on: `waited` is how long this call blocked, and they take it off the file's
+ * measured duration, since the first file on a shard to touch a cold service
+ * otherwise shows up as a 15-40 s test. Pass `pending` when ensure() was kicked
+ * off earlier (describeWithContainer) so only the time actually blocked here is
+ * reported. Only a test process may print this line: the coordinator's output
+ * lands in whichever file's log section happens to be streaming.
+ */
+export async function awaitService(
+  service: ServiceName,
+  pending: Promise<ServiceInfo> = ensure(service),
+): Promise<ServiceInfo> {
+  const start = performance.now();
+  const info = await pending;
+  const waited = Math.round(performance.now() - start);
+  const ports = Object.values(info.ports).join(",");
+  console.log(`Container ready via docker-compose: ${service} at ${info.host}:${ports} (waited ${waited}ms)`);
+  return info;
+}
+
 export async function port(service: ServiceName, targetPort: number): Promise<number> {
   return getHelper().port(service, targetPort);
 }

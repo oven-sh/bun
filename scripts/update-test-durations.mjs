@@ -20,6 +20,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const outputPath = join(__dirname, "..", "test", "expected-durations.json");
 
 const { values: opts } = parseArgs({
+  strict: false,
   options: {
     builds: { type: "string", default: "5" },
     org: { type: "string", default: "bun" },
@@ -28,10 +29,6 @@ const { values: opts } = parseArgs({
 });
 
 const token = process.env.BUILDKITE_API_TOKEN || process.env.BUILDKITE_TOKEN;
-if (!token) {
-  console.error("BUILDKITE_API_TOKEN is required");
-  process.exit(1);
-}
 
 // default + asan are both linux-x64-debian-13 (lowest-variance runner pool);
 // windows and musl get their own columns because process-spawn cost and
@@ -60,36 +57,63 @@ const api = async path => {
   }
 };
 
+// awaitService (test/docker/index.ts; describeWithContainer goes through it)
+// prints this from the test process with how long it sat blocked waiting for
+// docker-compose to bring the service up. That wait is inside the file's
+// measured time but is a cost of the shard, not the file (whichever file first
+// touches a cold service pays it, and the packing this table drives decides
+// which file that is), so it comes off the file's cost instead of being
+// committed as a 15-40 s test. The reported number is the only usable signal: a
+// file with several container describes runs real tests between its lines, so
+// the line's timestamp says nothing about the wait.
+const containerWaitLine = /Container ready via docker-compose: .*\(waited (\d+)ms\)/;
+// In the parallel bucket, `bun test --parallel` flushes each file's output as a
+// block introduced by `<path>:`; that is what attributes a wait printed there.
+const bucketOutputHeader = /^(\S+\.(?:[cm]?[jt]sx?)):$/;
+
 // Per-file cost is the gap between the APC timestamps Buildkite injects into
-// consecutive `[N/M] <path>` headers (ESC `_bk;t=<ms>` BEL). Serial tests
-// prefix the header with `--- `; the parallel-safe phase (runner.node.mjs)
-// prints the bare form. For that concurrent phase the gap is an inter-dispatch
-// delta, not wall clock; we clamp it so the last-dispatched file on each shard
-// does not absorb the N-wide tail drain or a sibling's 5-15 s retry backoff.
-function parseLog(raw) {
+// consecutive `[N/M] <path>` headers (ESC `_bk;t=<ms>` BEL), or for the
+// parallel bucket the per-file figure on its summary line, minus the container
+// wait above. Serial tests prefix the header with `--- `; the parallel-safe
+// phase (runner.node.mjs) prints the bare form. For that concurrent phase the
+// gap is an inter-dispatch delta, not wall clock; we clamp it so the
+// last-dispatched file on each shard does not absorb the N-wide tail drain or
+// a sibling's 5-15 s retry backoff.
+export function parseLog(raw) {
   const out = [];
   const lines = raw.replace(/\x1b\[[0-9;]*m/g, "").split(/\r?\n/);
   let path = null;
   let start = null;
+  let containerMs = 0;
   let concurrent = false;
+  let lastTs = null;
+  let inBucket = false;
+  let bucketFile = null;
+  const bucketWaits = new Map();
   const emit = ts => {
     if (path === null || start === null || ts === null) return;
-    out.push([path, concurrent ? Math.min(ts - start, 500) : ts - start]);
+    const own = Math.max(0, ts - start - containerMs);
+    out.push([path, concurrent ? Math.min(own, 500) : own]);
   };
   for (let line of lines) {
     if (line.endsWith("\r")) line = line.slice(0, -1);
     const m = /^\x1b_bk;t=(\d+)\x07(.*)$/.exec(line);
-    const ts = m ? Number(m[1]) : null;
+    const ts = m ? (lastTs = Number(m[1])) : null;
     const text = m ? m[2] : line;
     const hdr = /^(--- )?\[\d+\/\d+\] (.+)$/.exec(text);
     if (hdr) {
       emit(ts);
+      containerMs = 0;
+      inBucket = false;
+      bucketFile = null;
       // Retry/error headers (`... - code 1`, `... [attempt #2]`) are not file
       // paths; treat them as a delimiter so the preceding span closes cleanly.
       const title = hdr[2].trim();
       const timed = /^(.+\.(?:[cm]?[jt]sx?|json)) \((\d+(?:\.\d+)?)s\)$/.exec(title);
       if (timed) {
-        out.push([timed[1], Math.round(parseFloat(timed[2]) * 1000)]);
+        const waited = bucketWaits.get(timed[1]) ?? 0;
+        bucketWaits.delete(timed[1]);
+        out.push([timed[1], Math.max(0, Math.round(parseFloat(timed[2]) * 1000) - waited)]);
         path = start = null;
         concurrent = false;
         continue;
@@ -100,12 +124,41 @@ function parseLog(raw) {
       concurrent = isPath && !hdr[1];
       continue;
     }
-    if (/^--- (?:End\b|Running \d+ parallel-safe)/.test(text)) {
+    // The runner's other startGroup phase headers (End, `Running N
+    // parallel-safe ...`, `napi prebuild: ...`, `[A-B/M] K files in
+    // parallel`) close the open span so the preceding serial test is not
+    // charged for the phase that follows. Limited to the titles
+    // runner.node.mjs actually emits; pipeTestStdout sanitises `--- ` in
+    // streamed test output, but a chunk boundary mid-token or one of the
+    // raw-write paths can still deliver `--- a/<file>` or `--- ps ---`.
+    if (
+      /^--- (?:\[\d+-\d+\/\d+\]|napi prebuild:|Running \d+ parallel-safe|End\b|Summary\b|Received \w+, exiting)/.test(
+        text,
+      )
+    ) {
       emit(ts);
       path = start = null;
+      containerMs = 0;
       concurrent = false;
+      // `[N/M]` headers were handled above, so `--- [` here is the bucket's
+      // `[A-B/M] K files in parallel`.
+      inBucket = text.startsWith("--- [");
+      bucketFile = null;
+      continue;
     }
+    if (inBucket) {
+      const block = bucketOutputHeader.exec(text);
+      if (block) {
+        bucketFile = block[1].replaceAll("\\", "/");
+        continue;
+      }
+    }
+    const wait = containerWaitLine.exec(text);
+    if (!wait) continue;
+    if (path !== null) containerMs += Number(wait[1]);
+    else if (bucketFile !== null) bucketWaits.set(bucketFile, (bucketWaits.get(bucketFile) ?? 0) + Number(wait[1]));
   }
+  emit(lastTs);
   return out;
 }
 
@@ -169,50 +222,57 @@ async function collect(build, stepKey, into) {
   await Promise.all(Array.from({ length: 4 }, worker));
 }
 
-const want = Math.max(1, parseInt(opts.builds, 10) || 5);
-console.error(`looking for ${want} recent builds with complete ${Object.values(lanes).join(" + ")} lanes`);
-const builds = await findSourceBuilds(want);
-if (builds.length === 0) {
-  console.error("no suitable builds found");
-  process.exit(1);
-}
-console.error(`using builds: ${builds.join(", ")}`);
-
-// lane -> path -> [ms, ...]
-const samples = Object.fromEntries(Object.keys(lanes).map(lane => [lane, {}]));
-for (const b of builds) {
-  for (const [lane, step] of Object.entries(lanes)) {
-    console.error(`  build ${b} ${lane}`);
-    await collect(b, step, samples[lane]);
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  if (!token) {
+    console.error("BUILDKITE_API_TOKEN is required");
+    process.exit(1);
   }
-}
 
-const paths = new Set(Object.values(samples).flatMap(s => Object.keys(s)));
-// Guard the implicit contract with utils.mjs startGroup(): if the group-header
-// format ever changes, parseLog() quietly returns nothing. Fail loudly rather
-// than committing an empty table that would collapse every shard onto shard 0.
-if (paths.size < 1000) {
-  console.error(
-    `only parsed ${paths.size} test paths; expected >1000. ` +
-      `This usually means the '--- [N/M] <path>' log header format changed.`,
-  );
-  process.exit(1);
-}
-const out = {
-  // Consumers should tolerate missing paths (new tests) and missing lanes.
-  _meta: {
-    generated_at: new Date().toISOString(),
-    source_builds: builds,
-    lanes,
-  },
-};
-for (const p of [...paths].sort()) {
-  const entry = {};
-  for (const lane of Object.keys(lanes)) {
-    if (samples[lane][p]?.length) entry[lane] = median(samples[lane][p]);
+  const want = Math.max(1, parseInt(opts.builds, 10) || 5);
+  console.error(`looking for ${want} recent builds with complete ${Object.values(lanes).join(" + ")} lanes`);
+  const builds = await findSourceBuilds(want);
+  if (builds.length === 0) {
+    console.error("no suitable builds found");
+    process.exit(1);
   }
-  out[p] = entry;
-}
+  console.error(`using builds: ${builds.join(", ")}`);
 
-writeFileSync(outputPath, JSON.stringify(out, null, 2) + "\n");
-console.error(`wrote ${paths.size} entries to ${outputPath}`);
+  // lane -> path -> [ms, ...]
+  const samples = Object.fromEntries(Object.keys(lanes).map(lane => [lane, {}]));
+  for (const b of builds) {
+    for (const [lane, step] of Object.entries(lanes)) {
+      console.error(`  build ${b} ${lane}`);
+      await collect(b, step, samples[lane]);
+    }
+  }
+
+  const paths = new Set(Object.values(samples).flatMap(s => Object.keys(s)));
+  // Guard the implicit contract with utils.mjs startGroup(): if the group-header
+  // format ever changes, parseLog() quietly returns nothing. Fail loudly rather
+  // than committing an empty table that would collapse every shard onto shard 0.
+  if (paths.size < 1000) {
+    console.error(
+      `only parsed ${paths.size} test paths; expected >1000. ` +
+        `This usually means the '--- [N/M] <path>' log header format changed.`,
+    );
+    process.exit(1);
+  }
+  const out = {
+    // Consumers should tolerate missing paths (new tests) and missing lanes.
+    _meta: {
+      generated_at: new Date().toISOString(),
+      source_builds: builds,
+      lanes,
+    },
+  };
+  for (const p of [...paths].sort()) {
+    const entry = {};
+    for (const lane of Object.keys(lanes)) {
+      if (samples[lane][p]?.length) entry[lane] = median(samples[lane][p]);
+    }
+    out[p] = entry;
+  }
+
+  writeFileSync(outputPath, JSON.stringify(out, null, 2) + "\n");
+  console.error(`wrote ${paths.size} entries to ${outputPath}`);
+}

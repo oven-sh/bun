@@ -1271,16 +1271,18 @@ export async function describeWithContainer(
     // up() de-duplicates in-flight calls per service, so two describes for
     // the same service share one `compose up`. beforeAll just awaits the
     // result so test failures still surface there.
-    const startPromise = import("./docker/index.ts").then(h => h.ensure(actualService as any));
+    const docker = import("./docker/index.ts");
+    const startPromise = docker.then(h => h.ensure(actualService as any));
     // Surface any rejection through `ready`; without a handler the runner
     // would see an unhandled rejection before beforeAll re-throws it.
     startPromise.catch(readyRejecter!);
 
     beforeAll(async () => {
-      const info = await startPromise;
+      // Reports the time this hook blocked, not the time since the kick-off
+      // above: an earlier describe's tests may have run in between.
+      const info = await (await docker).awaitService(actualService as any, startPromise);
       _host = info.host;
       _port = info.ports[servicePort];
-      console.log(`Container ready via docker-compose: ${image} at ${_host}:${_port}`);
       readyResolver!();
       // Cold container start is bounded by `compose up --wait-timeout 180` plus
       // a `compose build` step; the default 5s hook timeout fires first and the

@@ -279,10 +279,14 @@ impl ShellSubprocess {
     /// Windows: `PipeReader`'s drop asserts the libuv source is closed, and
     /// whether the source is uv-initialized depends on how far
     /// startWithCurrentPipe got, so the caller leaks the Subprocess instead
-    /// (pre-existing behavior); only the Ctrl+C accounting is released.
+    /// (pre-existing behavior); the Ctrl+C accounting is released and the
+    /// exit handler cleared without closing the poller.
     fn abort_after_failed_start(&self) {
         #[cfg(windows)]
-        self.ctrl_c_child.set(None);
+        {
+            self.ctrl_c_child.set(None);
+            self.process.process_mut().set_exit_handler_default();
+        }
         #[cfg(not(windows))]
         {
             for r in [&self.stdout, &self.stderr] {
@@ -543,8 +547,9 @@ impl ShellSubprocess {
 
         let stdin = match Writable::init(stdio0, event_loop, subprocess, spawn_stdin) {
             Ok(w) => w,
-            Err(WritableInitError::UnexpectedCreatingStdin) => {
-                panic!("unexpected error while creating stdin");
+            Err(WritableInitError::UnexpectedCreatingStdin(err)) => {
+                let _ = subprocess.try_kill(SignalCode::SIGTERM as i32);
+                return Err(ShellErr::new_sys(&err));
             }
         };
         subprocess.stdin.set(stdin);
@@ -689,7 +694,7 @@ impl ShellSubprocess {
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
 pub enum WritableInitError {
     #[error("UnexpectedCreatingStdin")]
-    UnexpectedCreatingStdin,
+    UnexpectedCreatingStdin(bun_sys::Error),
 }
 
 pub enum Writable {
@@ -731,10 +736,10 @@ impl Writable {
                         // Ownership of the `Box<uv::Pipe>` transfers into the
                         // FileSink's writer.
                         let pipe = FileSink::create_with_pipe(event_loop, buf);
-                        if let bun_sys::Result::Err(_err) =
+                        if let bun_sys::Result::Err(err) =
                             pipe.writer.with_mut(|w| w.start_with_current_pipe())
                         {
-                            return Err(WritableInitError::UnexpectedCreatingStdin);
+                            return Err(WritableInitError::UnexpectedCreatingStdin(err));
                         }
 
                         // TODO: uncoment this when is ready, commented because was not compiling
@@ -1670,12 +1675,11 @@ impl PipeReader {
         );
         let _guard = RefPtr::from_this(this);
         this.state.with_mut(|state| {
-            if let PipeReaderState::Done(buf) =
-                core::mem::replace(state, PipeReaderState::Err(None))
-            {
-                drop(buf);
+            match core::mem::replace(state, PipeReaderState::Err(None)) {
+                // Keep the first recorded error, as `take_captured_error` does.
+                old @ PipeReaderState::Err(Some(_)) => *state = old,
+                _ => *state = PipeReaderState::Err(Some(Box::new(err.to_system_error()))),
             }
-            *state = PipeReaderState::Err(Some(Box::new(err.to_system_error())));
         });
         if !this.is_done() {
             return;

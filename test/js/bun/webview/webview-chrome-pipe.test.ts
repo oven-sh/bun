@@ -159,6 +159,88 @@ test.concurrent("the browser exiting rejects what it owed, and the next WebView 
   expect(result).toEqual({ death: transportLost, second: "alive again" });
 });
 
+// close() is a user-initiated teardown, so the rejection of an in-flight
+// operation must not surface as an unhandled rejection. The constructor's
+// `url:` navigation is the worst case: its promise is internal, so nothing in
+// user code could ever catch it (#40991).
+test.concurrent("close() during the constructor url navigation raises no unhandled rejection", async () => {
+  const result = await runScenario(`
+    const unhandled = [];
+    process.on("unhandledRejection", e => unhandled.push(e.message));
+    const view = new Bun.WebView({ backend, width: 100, height: 100, url: "http://fake/initial" });
+    view.close();
+    await Bun.sleep(50);
+    print(unhandled);
+  `);
+  expect(result).toEqual([]);
+});
+
+test.concurrent("close() rejects a held navigate() catchably and a floating one quietly", async () => {
+  const result = await runScenario(`
+    const unhandled = [];
+    process.on("unhandledRejection", e => unhandled.push(e.message));
+    const first = newView();
+    const held = first.navigate("http://fake/held");
+    first.close();
+    const heldOutcome = await outcome(held);
+    const second = newView();
+    second.navigate("http://fake/floating");
+    second.close();
+    await Bun.sleep(50);
+    print({ heldOutcome, unhandled });
+  `);
+  expect(result).toEqual({ heldOutcome: { rejected: "WebView closed" }, unhandled: [] });
+});
+
+// The browser dying (instead of close()) rejects the same internal
+// constructor-url promise; that must be quiet too. --no-title-reply keeps the
+// Navigate slot pending past onNavigated, like a real browser whose title
+// fetch has not come back yet.
+test.concurrent("a browser death during the constructor url navigation raises no unhandled rejection", async () => {
+  const result = await runScenario(`
+    const unhandled = [];
+    process.on("unhandledRejection", e => unhandled.push(e.message));
+    const view = new Bun.WebView({
+      backend: { ...backend, argv: [...backend.argv, "--no-title-reply"] },
+      width: 100,
+      height: 100,
+      url: "http://fake/initial",
+    });
+    await new Promise(resolve => { view.onNavigated = resolve; });
+    const death = await outcome(view.evaluate("__fake_exit(3)"));
+    await Bun.sleep(50);
+    print({ death, unhandled });
+  `);
+  expect(result).toEqual({ death: transportLost, unhandled: [] });
+});
+
+// A genuine navigation failure (Chrome answers Page.navigate with errorText)
+// stays observable: a held navigate() rejects with that text, and the
+// constructor url, whose promise is internal and marked handled, reports
+// through onNavigationFailed like the WebKit backend does.
+test.concurrent("a navigation that Chrome fails with errorText rejects and fires onNavigationFailed", async () => {
+  const result = await runScenario(`
+    const unhandled = [];
+    process.on("unhandledRejection", e => unhandled.push(e.message));
+    const errBackend = { ...backend, argv: [...backend.argv, "--navigate-error=net::ERR_NAME_NOT_RESOLVED"] };
+    const view = new Bun.WebView({ backend: errBackend, width: 100, height: 100 });
+    const held = await outcome(view.navigate("http://fake/held"));
+    view.close();
+    const ctor = new Bun.WebView({ backend: errBackend, width: 100, height: 100, url: "http://fake/ctor" });
+    const failed = await new Promise(resolve => { ctor.onNavigationFailed = resolve; });
+    const loadingAfterFail = ctor.loading;
+    ctor.close();
+    await Bun.sleep(50);
+    print({ held, failedMessage: failed.message, loadingAfterFail, unhandled });
+  `);
+  expect(result).toEqual({
+    held: { rejected: "net::ERR_NAME_NOT_RESOLVED" },
+    failedMessage: "net::ERR_NAME_NOT_RESOLVED",
+    loadingAfterFail: false,
+    unhandled: [],
+  });
+});
+
 // `bun test --isolate` replaces the global object between files. The transport
 // is bound to the global that spawned the browser, so it has to go with that
 // file: its open views are closed, their pending promises rejected, and the

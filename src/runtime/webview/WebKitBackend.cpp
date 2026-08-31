@@ -655,16 +655,25 @@ JSPromise* reload(JSGlobalObject* g, JSWebView* view)
     return sendOp(g, view, view->m_pendingMisc, Op::Reload, nullptr, 0);
 }
 
+// close() variant of the slot teardown, mirror of ChromeBackend's
+// rejectViewSlotsAsHandled: the user asked for the teardown, so a pending
+// op's rejection must not surface as an unhandled rejection. A held promise
+// (an unawaited navigate()) still rejects catchably.
+static void rejectViewSlotsAsHandled(JSGlobalObject* g, JSWebView* view, JSValue err)
+{
+    view->m_loading = false;
+    rejectSlotAsHandled(g, view, view->m_pendingNavigate, err);
+    rejectSlotAsHandled(g, view, view->m_pendingEval, err);
+    rejectSlotAsHandled(g, view, view->m_pendingScreenshot, err);
+    rejectSlotAsHandled(g, view, view->m_pendingMisc, err);
+}
+
 void close(JSWebView* view)
 {
     auto& c = client();
     if (c.global) {
         auto* g = c.global;
-        JSValue err = createError(g, "WebView closed"_s);
-        settleSlot(g, view, view->m_pendingNavigate, false, err);
-        settleSlot(g, view, view->m_pendingEval, false, err);
-        settleSlot(g, view, view->m_pendingScreenshot, false, err);
-        settleSlot(g, view, view->m_pendingMisc, false, err);
+        rejectViewSlotsAsHandled(g, view, createError(g, "WebView closed"_s));
     }
     c.writeFrame(Op::Close, view->m_viewId, nullptr, 0);
     c.viewsById.erase(view->m_viewId);

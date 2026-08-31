@@ -9677,6 +9677,11 @@ declare module "bun" {
     /**
      * Close the view and release its WebContent process. After close,
      * all methods throw. Idempotent.
+     *
+     * Pending operations reject with `Error("WebView closed")`. The
+     * rejections are marked as handled: a promise you hold still rejects
+     * catchably, but a pending operation nothing holds never triggers
+     * `unhandledRejection`.
      */
     close(): void;
 

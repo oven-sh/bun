@@ -20,6 +20,15 @@ const screenshotBase64 = screenshot.toString("base64");
 // a real browser takes a moment to shut down after the pipe closes. Default 0.
 const exitDelay = Number(process.argv.find(a => a.startsWith("--exit-delay="))?.slice("--exit-delay=".length) ?? 0);
 
+// `--no-title-reply`: never answer the document.title fetch that follows
+// Page.loadEventFired, so the runtime's Navigate slot stays pending forever.
+const noTitleReply = process.argv.includes("--no-title-reply");
+
+// `--navigate-error=<errorText>`: Page.navigate answers with errorText, the
+// way real Chrome reports e.g. net::ERR_NAME_NOT_RESOLVED, instead of
+// navigating.
+const navigateError = process.argv.find(a => a.startsWith("--navigate-error="))?.slice("--navigate-error=".length);
+
 const NO_REPLY = Symbol("no reply");
 let commandsClosed = false;
 Object.assign(globalThis, {
@@ -64,6 +73,7 @@ async function handle(command: { id: number; method: string; params?: any; sessi
     case "Target.attachToTarget":
       return reply({ sessionId: "S" + params.targetId.slice(1) });
     case "Page.navigate": {
+      if (navigateError) return reply({ frameId: "F", errorText: navigateError });
       const loaderId = "L" + ++loads;
       reply({ frameId: "F", loaderId });
       event("Page.frameNavigated", { frame: { id: "F", loaderId, url: params.url, mimeType: "text/html" } });
@@ -73,7 +83,10 @@ async function handle(command: { id: number; method: string; params?: any; sessi
     case "Page.captureScreenshot":
       return reply({ data: screenshotBase64 });
     case "Runtime.evaluate": {
-      if (params.expression === "document.title") return reply({ result: { type: "string", value: "fake chrome" } });
+      if (params.expression === "document.title") {
+        if (noTitleReply) return;
+        return reply({ result: { type: "string", value: "fake chrome" } });
+      }
       let value: unknown;
       try {
         value = await (0, eval)(params.expression);

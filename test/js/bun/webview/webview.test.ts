@@ -963,6 +963,37 @@ it("close() rejects pending promises", async () => {
   await expect(p).rejects.toThrow(/closed/i);
 });
 
+it("close() with in-flight work raises no unhandled rejection", async () => {
+  // Subprocess-isolated: `bun test` fails the running test on any unhandled
+  // rejection instead of consulting process listeners, so the collector has
+  // to live in a plain `bun -e` process. Two quiet cases (#40991): a
+  // floating evaluate() nothing holds, and the constructor url navigation,
+  // whose promise is internal and unreachable from user code.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const unhandled = [];
+        process.on("unhandledRejection", e => unhandled.push(e.message));
+        const view = new Bun.WebView({ width: 200, height: 200 });
+        await view.navigate("data:text/html," + encodeURIComponent("<body>hi</body>"));
+        view.evaluate("1 + 1"); // floating, still in flight at close()
+        view.close();
+        const ctor = new Bun.WebView({ width: 200, height: 200, url: "data:text/html,bye" });
+        ctor.close();
+        await Bun.sleep(100);
+        console.log(JSON.stringify(unhandled));
+      `,
+    ],
+    env: bunEnv,
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(JSON.parse(stdout)).toEqual([]);
+  expect(exitCode).toBe(0);
+});
+
 it("WebView.closeAll() kills the host subprocess and pending promises reject", async () => {
   // Subprocess-isolated — closeAll() SIGKILLs the one shared WKWebView host,
   // which would break subsequent tests. ensureSpawned respawns on the next

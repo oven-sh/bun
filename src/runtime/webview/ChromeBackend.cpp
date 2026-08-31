@@ -666,6 +666,19 @@ static void rejectViewSlots(JSGlobalObject* g, JSWebView* view, JSValue err)
     settleSlot(g, view, view->m_pendingCdp, false, err);
 }
 
+// close() variant: the user asked for the teardown, so a pending op's
+// rejection must not surface as an unhandled rejection. A held promise
+// (an unawaited navigate()) still rejects catchably.
+static void rejectViewSlotsAsHandled(JSGlobalObject* g, JSWebView* view, JSValue err)
+{
+    view->m_loading = false;
+    rejectSlotAsHandled(g, view, view->m_pendingNavigate, err);
+    rejectSlotAsHandled(g, view, view->m_pendingEval, err);
+    rejectSlotAsHandled(g, view, view->m_pendingScreenshot, err);
+    rejectSlotAsHandled(g, view, view->m_pendingMisc, err);
+    rejectSlotAsHandled(g, view, view->m_pendingCdp, err);
+}
+
 // Build an Error from CDP exceptionDetails. exception.description is V8's
 // Error.prototype.stack formatter:
 //   "Error: msg\n    at functionName (url:line:col)\n    at ..."
@@ -812,8 +825,18 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         // sessionId — actually the event handler uses m_sessions, not
         // m_pending, so we just drop here.
         auto err = jsonString(jsonField(result, { "errorText", 9 }));
-        if (!err.empty())
-            settle(g, view, entry.slot, false, createError(g, WTF::String::fromUTF8(err)));
+        if (!err.empty()) {
+            view->m_loading = false;
+            JSValue errValue = createError(g, WTF::String::fromUTF8(err));
+            // Same failure signal WebKit sends via NavFailEvent. The
+            // constructor-url navigation promise is marked handled, so
+            // without this callback a bad `url:` would fail silently.
+            if (JSObject* cb = view->m_onNavigationFailed.get()) {
+                Bun__EventLoop__runCallback2(g, JSValue::encode(cb), JSValue::encode(jsUndefined()),
+                    JSValue::encode(errValue), JSValue::encode(jsUndefined()));
+            }
+            settle(g, view, entry.slot, false, errValue);
+        }
         // Else: don't settle — Page.loadEventFired does.
         return;
     }
@@ -1725,7 +1748,7 @@ JSPromise* reload(JSGlobalObject* g, JSWebView* view)
 void close(JSWebView* view)
 {
     auto& t = transport();
-    if (auto* g = t.m_global) rejectViewSlots(g, view, createError(g, "WebView closed"_s));
+    if (auto* g = t.m_global) rejectViewSlotsAsHandled(g, view, createError(g, "WebView closed"_s));
     // Prune m_pending entries for this view — the attach chain
     // (TargetCreateTarget → TargetAttachToTarget → PageEnable →
     // PageNavigate) holds Weak<view> per step and each step chains to the

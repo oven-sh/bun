@@ -68,7 +68,7 @@
           {
             "group": "Core Runtime",
             "icon": "cog",
-            "pages": ["/runtime/index", "/runtime/watch-mode", "/runtime/debugger", "/runtime/repl", "/runtime/bunfig"]
+            "pages": ["/runtime", "/runtime/watch-mode", "/runtime/debugger", "/runtime/repl", "/runtime/bunfig"]
           },
           {
             "group": "File & Module System",
@@ -236,7 +236,7 @@
           {
             "group": "Core",
             "icon": "package",
-            "pages": ["/bundler/index"]
+            "pages": ["/bundler"]
           },
           {
             "group": "Development Server",
@@ -277,7 +277,7 @@
           {
             "group": "Getting Started",
             "icon": "circle-play",
-            "pages": ["/test/index", "/test/writing-tests", "/test/configuration"]
+            "pages": ["/test", "/test/writing-tests", "/test/configuration"]
           },
           {
             "group": "Test Execution",
@@ -309,7 +309,7 @@
           {
             "group": "Overview",
             "icon": "globe",
-            "pages": ["/guides/index"]
+            "pages": ["/guides"]
           },
           {
             "group": "Deployment",
@@ -636,6 +636,16 @@
       }
     ]
   },
+  "redirects": [
+    { "source": "/runtime/index", "destination": "/runtime" },
+    { "source": "/runtime/index.md", "destination": "/runtime.md" },
+    { "source": "/bundler/index", "destination": "/bundler" },
+    { "source": "/bundler/index.md", "destination": "/bundler.md" },
+    { "source": "/test/index", "destination": "/test" },
+    { "source": "/test/index.md", "destination": "/test.md" },
+    { "source": "/guides/index", "destination": "/guides" },
+    { "source": "/guides/index.md", "destination": "/guides.md" }
+  ],
   "footer": {
     "socials": {
       "x": "https://x.com/bunjavascript",

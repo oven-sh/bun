@@ -1,6 +1,16 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync } from "fs";
-import { bunEnv, bunExe, compileFixture, isDebug, isGlibcVersionAtLeast, isWindows, tempDir } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  compileFixture,
+  isDebug,
+  isGlibcVersionAtLeast,
+  isMacOS,
+  isMusl,
+  isWindows,
+  tempDir,
+} from "harness";
 import { platform } from "os";
 
 import {
@@ -889,6 +899,66 @@ describe("CFunction", () => {
 
   it("reports a missing ptr the same way linkSymbols() does", () => {
     expect(() => new CFunction({ returns: "int32_t", args: [] })).toThrow(/CFunction.*ptr.*(linkSymbols|CFunction)/);
+  });
+});
+
+describe("symbol names that are array indexes", () => {
+  // A `ptr` field skips the dlsym lookup, so any loadable library works for dlopen.
+  const systemLib = isWindows
+    ? "kernel32.dll"
+    : isMacOS
+      ? "libSystem.B.dylib"
+      : isMusl
+        ? process.arch === "arm64"
+          ? "libc.musl-aarch64.so.1"
+          : "libc.musl-x86_64.so.1"
+        : "libc.so.6";
+
+  // Subprocess: a debug build of the unfixed code aborts on a JSC assertion.
+  it.concurrent.each([
+    ["linkSymbols", "linkSymbols(map)"],
+    ["dlopen", `dlopen(${JSON.stringify(systemLib)}, map)`],
+  ])("%s stores them as indexed properties", async (_, open) => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `import { dlopen, linkSymbols, JSCallback } from "bun:ffi";
+        const cb = new JSCallback(() => 42, { returns: "int32_t", args: [] });
+        const fn = { ptr: cb.ptr, returns: "int32_t", args: [] };
+        // 4294967295 is 2^32 - 1, the first integer that is not an array index.
+        const map = { "0": fn, named: fn, "2023": fn, "4294967295": fn };
+        const lib = ${open};
+        const { symbols } = lib;
+        console.log(
+          JSON.stringify({
+            keys: Object.keys(symbols),
+            types: [typeof symbols[0], typeof symbols["0"], typeof symbols[2023], typeof symbols[4294967295]],
+            has: [0 in symbols, "0" in symbols, 2023 in symbols, Object.hasOwn(symbols, "0")],
+            sameFunction: symbols[0] === symbols["0"],
+            results: [symbols[0](), symbols[2023](), symbols.named(), symbols[4294967295]()],
+          }),
+        );
+        lib.close();
+        cb.close();`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ result: JSON.parse(stdout.trim() || "null"), stderr, exitCode }).toEqual({
+      result: {
+        // Index keys come first, in ascending order. The rest keep insertion order.
+        keys: ["0", "2023", "named", "4294967295"],
+        types: ["function", "function", "function", "function"],
+        has: [true, true, true, true],
+        sameFunction: true,
+        results: [42, 42, 42, 42],
+      },
+      stderr: "",
+      exitCode: 0,
+    });
   });
 });
 

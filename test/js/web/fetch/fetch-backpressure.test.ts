@@ -20,6 +20,10 @@ const COUNT = 256; // 16 MiB
 const TOTAL = CHUNK * COUNT;
 const PAYLOAD = Buffer.alloc(CHUNK, 65);
 
+// What the client takes off the socket before it pauses it: `BODY_HIGH_WATER_MARK` in
+// src/http/Signals.rs. Past this mark, only the kernel's buffers take bytes.
+const HIGH_WATER_MARK = 256 * 1024;
+
 function md5(data: Uint8Array | string): string {
   return Bun.CryptoHasher.hash("md5", data, "hex");
 }
@@ -54,8 +58,9 @@ type Server = AsyncDisposable & {
   // What `sent()` reaches once a whole body is out.
   wire: number;
   // Resolves with `sent()` once the body has stopped moving: the socket stopped taking writes past
-  // its first packets (or the whole body is out), and `sent()` then held still for three samples
-  // 10 ms apart. No event reports "nothing more is coming", so the second half has to sample.
+  // the client's high-water mark (or the whole body is out), and `sent()` then held still for
+  // three samples 10 ms apart. No event reports "nothing more is coming", so the second half has
+  // to sample.
   settled: () => Promise<number>;
   // `sent()` reached `n`.
   wrote: (n: number) => Promise<void>;
@@ -76,10 +81,13 @@ function progress(wire: number) {
       for (let i = waiters.length; i--; ) if (sent >= waiters[i][0]) waiters.splice(i, 1)[0][1]();
       if (sent >= wire) finished.resolve();
     },
-    // A write that did not go through once the socket has taken more than 8 chunks: the kernel is
-    // full, not merely slow to take the first packets.
+    // A write that did not go through once the socket has taken more than the client holds before
+    // it pauses. Past that mark only the kernel takes bytes, and `sent()` holding still means it is
+    // full. The mark has to be this low: Windows loopback buffers can stay at about 256 KiB while
+    // the peer is paused, so with chunked framing the socket takes a few bytes short of 8 chunks,
+    // and a mark of 8 chunks was never reached.
     block() {
-      if (sent > 8 * CHUNK) blocked.resolve();
+      if (sent > HIGH_WATER_MARK) blocked.resolve();
     },
     close: () => closed.resolve(),
     api: {
@@ -600,7 +608,7 @@ describe.concurrent("fetch() receive backpressure — streaming consumer shapes"
         while (sent < declared) {
           const n = s.write(PAYLOAD);
           sent += Math.max(n, 0);
-          if (n < PAYLOAD.length) return void (sent > 4 * CHUNK && blocked.resolve(s));
+          if (n < PAYLOAD.length) return void (sent > HIGH_WATER_MARK && blocked.resolve(s));
         }
       };
       using listener = Bun.listen({

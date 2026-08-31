@@ -378,10 +378,8 @@ pub struct TestIsolationState {
     /// The proxy env keys as the env map held them at startup, restored after
     /// every file. See [`crate::rare_data::ProxyEnvSnapshot`].
     pub proxy_env: Option<crate::rare_data::ProxyEnvSnapshot>,
-    /// The synthetic allocation limit at startup (the default, or
-    /// `BUN_FEATURE_FLAG_SYNTHETIC_MEMORY_LIMIT`). The limit is process-wide
-    /// and `setSyntheticAllocationLimitForTesting` lowers it, so it is put back
-    /// after every file.
+    /// The synthetic allocation limit at startup, restored after every file.
+    /// `setSyntheticAllocationLimitForTesting` lowers it process-wide.
     pub synthetic_allocation_limit: Option<usize>,
 }
 
@@ -5240,11 +5238,8 @@ impl VirtualMachine {
         self.undo_synthetic_allocation_limit();
     }
 
-    /// `setSyntheticAllocationLimitForTesting` (bun:internal-for-testing)
-    /// lowers the process-wide string/allocation limit. A file that does not
-    /// raise it again (or dies before its restore runs) would otherwise fail
-    /// every later file in this process with ERR_STRING_TOO_LONG. Put the
-    /// startup value back.
+    /// `setSyntheticAllocationLimitForTesting` lowers a process-wide limit.
+    /// Put the startup value back so a file's limit stays with that file.
     fn undo_synthetic_allocation_limit(&mut self) {
         if let Some(limit) = self.test_isolation_state.synthetic_allocation_limit {
             SYNTHETIC_ALLOCATION_LIMIT.store(limit, core::sync::atomic::Ordering::Relaxed);

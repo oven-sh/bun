@@ -44,6 +44,12 @@ pub struct ExternalSlice<T> {
     _marker: PhantomData<T>,
 }
 
+// SAFETY: two `u32`s and a zero-sized marker; `repr(C)`, no padding, and
+// every bit pattern is a valid (if out-of-range) index pair.
+unsafe impl<T: 'static> bytemuck::Zeroable for ExternalSlice<T> {}
+// SAFETY: as above.
+unsafe impl<T: 'static> bytemuck::Pod for ExternalSlice<T> {}
+
 // Manual impls: the `(off, len)` pair is unconditionally
 // copyable/comparable regardless of `Type`. `#[derive]` would add spurious
 // `T: Copy/Clone/Default/PartialEq` bounds via `PhantomData<T>`, breaking
@@ -148,7 +154,7 @@ impl<T> ExternalSlice<T> {
 }
 
 #[repr(C)]
-#[derive(Copy, Clone, Default, Debug)]
+#[derive(Copy, Clone, Default, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct ExternalStringMap {
     pub name: ExternalStringList,
     pub value: ExternalStringList,
@@ -473,7 +479,7 @@ impl DependencyVersion {
     // Every payload is POD/arena-backed (`SemverString` handles, `Repository`,
     // `ManuallyDrop<NpmInfo>` over an arena-owned linked list), so reading the
     // "wrong" variant is not UB — it yields garbage. `_mut` variants let the
-    // handful of mutate-in-place call sites (`runTasks.rs` package-name
+    // handful of mutate-in-place call sites (`run_tasks.rs` package-name
     // back-patching, `Package.rs` workspace resolution) write through the
     // active arm without an `unsafe` block apiece.
     bun_core::extern_union_accessors! {
@@ -790,7 +796,7 @@ macro_rules! negatable_names {
 
 /// https://nodejs.org/api/os.html#osplatform
 #[repr(transparent)]
-#[derive(Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, PartialEq, Eq, Default, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct OperatingSystem(pub u16);
 
 impl OperatingSystem {
@@ -859,7 +865,7 @@ negatable_names! { OperatingSystem: u16, OPERATING_SYSTEM_NAMES => [
 // ──────────────────────────────────────────────────────────────────────────
 
 #[repr(transparent)]
-#[derive(Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, PartialEq, Eq, Default, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct Libc(pub u8);
 
 impl Libc {
@@ -886,7 +892,7 @@ negatable_names! { Libc: u8, LIBC_NAMES => [ b"musl" => MUSL, b"glibc" => GLIBC 
 /// https://docs.npmjs.com/cli/v8/configuring-npm/package-json#cpu
 /// https://nodejs.org/api/os.html#osarch
 #[repr(transparent)]
-#[derive(Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, PartialEq, Eq, Default, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct Architecture(pub u16);
 
 impl Architecture {
@@ -959,7 +965,7 @@ negatable_names! { Architecture: u16, ARCHITECTURE_NAMES => [
 // name a real type instead of an opaque blob.
 
 #[repr(C)]
-#[derive(Copy, Default)]
+#[derive(Copy, Default, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct Repository {
     pub owner: SemverString,
     pub repo: SemverString,
@@ -1044,6 +1050,20 @@ pub struct VersionedURLType<SemverInt: bun_semver::version::VersionInt> {
     pub version: bun_semver::VersionType<SemverInt>,
 }
 
+// SAFETY: `repr(C)`; `url` is 8 bytes (align 1) followed directly by the
+// 8-aligned `VersionType`, so there is no padding, and both fields are `Pod`.
+unsafe impl<I: bun_semver::version::VersionInt> bytemuck::Zeroable for VersionedURLType<I> {}
+// SAFETY: as above.
+unsafe impl<I: bun_semver::version::VersionInt> bytemuck::Pod for VersionedURLType<I> {}
+const _: () = assert!(
+    core::mem::size_of::<VersionedURLType<u64>>()
+        == 8 + core::mem::size_of::<bun_semver::VersionType<u64>>()
+);
+const _: () = assert!(
+    core::mem::size_of::<VersionedURLType<u32>>()
+        == 8 + core::mem::size_of::<bun_semver::VersionType<u32>>()
+);
+
 // Manual `Copy`/`Clone` so the inherent buffer-relative `clone(&self, buf,
 // builder)` below does not collide with a derived `clone(&self)` at
 // method-resolution time, and to avoid the spurious `SemverInt: Copy` bound
@@ -1119,31 +1139,114 @@ pub enum ResolutionTag {
     SingleFileModule = 100,
 }
 
-/// Every
-/// payload is `()`, a `Semver.String` handle, a [`Repository`], or a
-/// [`VersionedURLType`] — all lower-tier `bun_semver` data, so the real union
-/// lives here (not an opaque `[u64; N]`). `bun_install::resolution` re-exports
-/// this and wraps it with constructors/formatters.
+/// The resolution payload: `()`, a `Semver.String` handle, a [`Repository`],
+/// or a [`VersionedURLType`], overlaid on zeroed storage the size of the
+/// largest. Which view is live is the enclosing resolution's tag; every view
+/// is plain data, so reading the wrong one is garbage, not UB.
+/// `bun_install::resolution` re-exports this and wraps it with
+/// constructors/formatters.
 #[repr(C)]
-#[derive(Clone, Copy)]
-pub union ResolutionValue<I: VersionInt> {
-    pub uninitialized: (),
-    pub root: (),
-    pub npm: VersionedURLType<I>,
-    pub folder: SemverString,
-    pub local_tarball: SemverString,
-    pub github: Repository,
-    pub git: Repository,
-    pub symlink: SemverString,
-    pub workspace: SemverString,
-    pub remote_tarball: SemverString,
-    pub single_file_module: SemverString,
+pub struct ResolutionValue<I: VersionInt> {
+    words: I::ResolutionStorage,
 }
+
+impl<I: VersionInt> Clone for ResolutionValue<I> {
+    #[inline]
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+impl<I: VersionInt> Copy for ResolutionValue<I> {}
+
+// SAFETY: a single `repr(C)` field that is itself `Pod`.
+unsafe impl<I: VersionInt> bytemuck::Zeroable for ResolutionValue<I> {}
+// SAFETY: as above.
+unsafe impl<I: VersionInt> bytemuck::Pod for ResolutionValue<I> {}
 
 impl<I: VersionInt> Default for ResolutionValue<I> {
     #[inline]
     fn default() -> Self {
-        ResolutionValue { uninitialized: () }
+        Self::ZEROED
+    }
+}
+
+const _: () = assert!(core::mem::size_of::<ResolutionValue<u64>>() == 64);
+const _: () = assert!(core::mem::size_of::<ResolutionValue<u32>>() == 56);
+const _: () = assert!(core::mem::size_of::<VersionedURLType<u64>>() == 64);
+const _: () = assert!(core::mem::size_of::<VersionedURLType<u32>>() == 56);
+const _: () = assert!(core::mem::size_of::<Repository>() <= 56);
+
+impl<I: VersionInt> ResolutionValue<I> {
+    pub const ZEROED: Self = Self {
+        words: I::RESOLUTION_STORAGE_ZERO,
+    };
+
+    #[inline]
+    fn view<T: bytemuck::Pod>(&self) -> &T {
+        bytemuck::from_bytes(&bytemuck::bytes_of(&self.words)[..core::mem::size_of::<T>()])
+    }
+    #[inline]
+    fn view_mut<T: bytemuck::Pod>(&mut self) -> &mut T {
+        bytemuck::from_bytes_mut(
+            &mut bytemuck::bytes_of_mut(&mut self.words)[..core::mem::size_of::<T>()],
+        )
+    }
+    /// Zeroed storage holding `value` (so the bytes past it are deterministic).
+    #[inline]
+    fn holding<T: bytemuck::NoUninit>(value: &T) -> Self {
+        let mut this = Self::ZEROED;
+        let bytes = bytemuck::bytes_of(value);
+        bytemuck::bytes_of_mut(&mut this.words)[..bytes.len()].copy_from_slice(bytes);
+        this
+    }
+
+    #[inline]
+    pub fn uninitialized() -> Self {
+        Self::ZEROED
+    }
+    #[inline]
+    pub fn root() -> Self {
+        Self::ZEROED
+    }
+    #[inline]
+    pub fn from_npm(v: &VersionedURLType<I>) -> Self {
+        Self::holding(v)
+    }
+    #[inline]
+    pub fn from_repository(v: &Repository) -> Self {
+        Self::holding(v)
+    }
+    #[inline]
+    pub fn from_string(v: SemverString) -> Self {
+        Self::holding(&v)
+    }
+
+    #[inline]
+    pub fn npm(&self) -> &VersionedURLType<I> {
+        self.view()
+    }
+    #[inline]
+    pub fn npm_mut(&mut self) -> &mut VersionedURLType<I> {
+        self.view_mut()
+    }
+    /// The `git` / `github` view.
+    #[inline]
+    pub fn repository(&self) -> &Repository {
+        self.view()
+    }
+    #[inline]
+    pub fn repository_mut(&mut self) -> &mut Repository {
+        self.view_mut()
+    }
+    /// The `folder` / `local_tarball` / `symlink` / `workspace` /
+    /// `remote_tarball` / `single_file_module` view.
+    #[inline]
+    pub fn string(&self) -> &SemverString {
+        self.view()
+    }
+    #[inline]
+    pub fn string_mut(&mut self) -> &mut SemverString {
+        self.view_mut()
     }
 }
 
@@ -1163,7 +1266,7 @@ impl Default for Resolution {
         Self {
             tag: ResolutionTag::Uninitialized,
             _padding: [0; 7],
-            value: ResolutionValue { uninitialized: () },
+            value: ResolutionValue::ZEROED,
         }
     }
 }
@@ -1281,39 +1384,63 @@ pub struct TaskCallbackContext {
 /// loop when a network task completes. The resolver only stores and forwards
 /// it; the fields are `Option` so `Default` is all-None.
 ///
-/// `handler`'s second parameter (`*PackageManager`) is erased to
-/// `*mut c_void` because that concrete type lives in `bun_install` (a higher
-/// tier); `bun_install::PackageManager::wake` casts at the call site.
+/// `handler`'s second parameter (historically `*PackageManager`) is an
+/// opaque `*mut c_void`; `bun_install` passes null and the runtime's handler
+/// ignores it.
 /// `on_dependency_error`'s `Dependency` parameter is *not* erased — the type
 /// lives in this crate — so callers pass the borrow directly.
 // Clone: bitwise OK — `context` is a non-owning opaque backref the runtime
 // installed; the handler fn-ptrs are POD.
 #[derive(Default, Copy, Clone)]
 pub struct WakeHandler {
-    pub context: Option<NonNull<c_void>>,
-    pub handler: Option<fn(*mut c_void, *mut c_void)>,
-    pub on_dependency_error:
-        Option<unsafe fn(*mut c_void, &Dependency, DependencyID, &'static str)>,
+    context: Option<NonNull<c_void>>,
+    handler: Option<fn(*mut c_void, *mut c_void)>,
+    on_dependency_error: Option<fn(*mut c_void, &Dependency, DependencyID, &'static str)>,
 }
 
+// SAFETY: `context` is an opaque token that only `handler` /
+// `on_dependency_error` interpret, and `new`'s contract makes those callable
+// with it from any thread.
+unsafe impl Send for WakeHandler {}
+// SAFETY: as above; the struct is read-only once installed.
+unsafe impl Sync for WakeHandler {}
+
 impl WakeHandler {
-    #[inline]
-    pub fn get_handler(&self) -> fn(*mut c_void, *mut c_void) {
-        // `handler` is Some whenever `context` is Some: the sole installer
-        // (runtime::jsc_hooks) sets `context`, `handler`, and
-        // `on_dependency_error` together in one struct literal, and callers
-        // gate on `context.is_some()` before invoking — so this unwrap cannot
-        // fire.
-        self.handler.unwrap()
+    /// # Safety
+    /// `handler(context, _)` may be called from any thread (install workers,
+    /// the HTTP thread) and `on_dependency_error(context, ..)` from the thread
+    /// that drives the package manager, for as long as this handler is
+    /// installed; `context` must stay valid for both.
+    pub const unsafe fn new(
+        context: NonNull<c_void>,
+        handler: fn(*mut c_void, *mut c_void),
+        on_dependency_error: fn(*mut c_void, &Dependency, DependencyID, &'static str),
+    ) -> Self {
+        Self {
+            context: Some(context),
+            handler: Some(handler),
+            on_dependency_error: Some(on_dependency_error),
+        }
     }
 
+    /// Nudge the runtime that installed this handler (no-op when none did).
+    /// `manager` is the erased `*mut PackageManager` the handler signature
+    /// carries; the runtime handler ignores it.
     #[inline]
-    pub fn get_on_dependency_error(
-        &self,
-    ) -> unsafe fn(*mut c_void, &Dependency, DependencyID, &'static str) {
-        // Same invariant as `get_handler`: set together with `context` by the
-        // sole installer; callers gate on `context.is_some()`.
-        self.on_dependency_error.unwrap()
+    pub fn wake(&self, manager: *mut c_void) {
+        // `handler` is Some whenever `context` is Some: the sole installer
+        // (runtime::jsc_hooks) sets all three fields together.
+        if let (Some(ctx), Some(handler)) = (self.context, self.handler) {
+            handler(ctx.as_ptr(), manager);
+        }
+    }
+
+    /// Report a root dependency that failed to resolve to the runtime, if any.
+    #[inline]
+    pub fn dependency_error(&self, dep: &Dependency, id: DependencyID, err: &'static str) {
+        if let (Some(ctx), Some(f)) = (self.context, self.on_dependency_error) {
+            f(ctx.as_ptr(), dep, id, err);
+        }
     }
 }
 
@@ -1438,7 +1565,7 @@ pub trait AutoInstaller {
     ) -> core::result::Result<DependencyID, bun_core::Error>;
 
     // ── Lockfile writes ───────────────────────────────────────────────────
-    /// Port of `lockfile.appendPackage(Package.fromPackageJSON(...))` —
+    /// `lockfile.append_package(Package::parse(<package.json>))` —
     /// collapsed because `Package` itself is install-internal. Returns the
     /// id assigned to the appended package.
     fn lockfile_append_from_package_json(
@@ -1464,7 +1591,6 @@ pub trait AutoInstaller {
         package_id: PackageID,
         resolution: &Resolution,
         ctx: TaskCallbackContext,
-        patch_name_and_version_hash: Option<u64>,
     ) -> core::result::Result<(), bun_core::Error>;
     fn resolve_from_disk_cache(
         &mut self,

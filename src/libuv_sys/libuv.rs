@@ -1172,6 +1172,15 @@ pub struct Pipe {
     pipe: pipe_u,
 }
 
+/// `uv_pipe`: a connected pipe pair `[read, write]` with the given
+/// `UV_NONBLOCK_PIPE`-style flags per end.
+pub fn pipe_pair(read_flags: c_int, write_flags: c_int) -> Result<[uv_file; 2], ReturnCode> {
+    let mut fds: [uv_file; 2] = [0; 2];
+    // SAFETY: `fds` is the 2-element out-array `uv_pipe` writes.
+    let rc = unsafe { uv_pipe(&mut fds, read_flags, write_flags) };
+    if rc.0 == 0 { Ok(fds) } else { Err(rc) }
+}
+
 impl Pipe {
     #[inline]
     pub fn ipc_remote_pid(&self) -> DWORD {

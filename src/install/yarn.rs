@@ -88,7 +88,7 @@ pub(crate) struct ParsedGitUrl<'a> {
     pub(crate) repo: Option<&'a [u8]>,
     // Optional owned "https://github.com/{path}" buffer so the borrow
     // case stays zero-copy. Callers must check `owned_url` first: when it is `Some`,
-    // it supersedes `url` (see `into_resolved`).
+    // it supersedes `url`.
     pub(crate) owned_url: Option<Vec<u8>>,
 }
 
@@ -566,8 +566,7 @@ fn process_deps(
             }
 
             if let Some(pkg_id) = found_package_id {
-                // SAFETY: `deps_buf` is uninitialized spare capacity; `ptr::write` skips Drop.
-                unsafe { core::ptr::write(deps_buf.as_mut_ptr().add(count), dep) };
+                deps_buf[count] = dep;
                 res_buf[count] = pkg_id;
                 count += 1;
             }
@@ -789,18 +788,17 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
         })?;
     }
 
-    // SAFETY: capacity reserved above to num_deps; we write past `len` through
-    // raw pointers into the reserved capacity and set `len` at the end.
-    let dependencies_base_ptr = this.buffers.dependencies.as_mut_ptr();
-    let resolutions_base_ptr = this.buffers.resolutions.as_mut_ptr();
-    let mut dependencies_buf: &mut [Dependency] = unsafe {
-        // SAFETY: capacity >= num_deps reserved above
-        bun_core::ffi::slice_mut(dependencies_base_ptr, num_deps as usize)
-    };
-    let mut resolutions_buf: &mut [PackageID] = unsafe {
-        // SAFETY: capacity >= num_deps reserved above
-        bun_core::ffi::slice_mut(resolutions_base_ptr, num_deps as usize)
-    };
+    // Fill `num_deps` slots of both buffers (held outside `this` while the
+    // string builder borrows it), then trim to what was actually written.
+    let deps_base = this.buffers.dependencies.len();
+    let mut all_dependencies = core::mem::take(&mut this.buffers.dependencies);
+    let mut all_resolutions = core::mem::take(&mut this.buffers.resolutions);
+    all_dependencies.resize(deps_base + num_deps as usize, Dependency::default());
+    all_resolutions.resize(deps_base + num_deps as usize, install::INVALID_PACKAGE_ID);
+    let mut dependencies_buf: &mut [Dependency] = &mut all_dependencies[deps_base..];
+    let mut resolutions_buf: &mut [PackageID] = &mut all_resolutions[deps_base..];
+    // Both cursors advance together; a slot's index is `num_deps - remaining`.
+    let slot_of = |remaining: usize| deps_base + num_deps as usize - remaining;
 
     let mut yarn_entry_to_package_id: Vec<PackageID> = vec![0; yarn_lock.entries.len()];
 
@@ -971,10 +969,9 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
 
         let name_hash = string_hash(name_to_use);
 
-        // reshaped for borrowck — compute the resolution before the
-        // `this.packages.append(...)` call so the per-field `sbuf!()` borrows of
-        // `this.buffers.string_bytes` don't overlap the two-phase reservation
-        // on `this.packages`.
+        // The resolution is computed before `this.packages.append(...)` so
+        // the `sbuf!()` borrows of `this.buffers.string_bytes` don't overlap
+        // the two-phase reservation on `this.packages`.
         let pkg_name = sbuf!().append_with_hash(name_to_use, name_hash)?;
         let resolution = 'blk: {
             if entry.workspace {
@@ -1150,28 +1147,20 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                 let dep_name_string = sbuf!().append_with_hash(&dep.name, name_hash)?;
                 let version_string = sbuf!().append(&dep.version)?;
 
-                // SAFETY: `dependencies_buf` is uninitialized spare capacity; `ptr::write` skips Drop.
-                unsafe {
-                    core::ptr::write(
-                        dependencies_buf
-                            .as_mut_ptr()
-                            .add(actual_root_dep_count as usize),
-                        Dependency {
-                            name: dep_name_string,
-                            name_hash,
-                            version: Dependency::parse(
-                                dep_name_string,
-                                Some(name_hash),
-                                version_string.slice(this.buffers.string_bytes.as_slice()),
-                                &version_string.sliced(this.buffers.string_bytes.as_slice()),
-                                Some(&mut *log),
-                                Some(&mut *manager),
-                            )
-                            .unwrap_or_default(),
-                            behavior: behavior_for(dep.dep_type, false),
-                        },
-                    );
-                }
+                dependencies_buf[actual_root_dep_count as usize] = Dependency {
+                    name: dep_name_string,
+                    name_hash,
+                    version: Dependency::parse(
+                        dep_name_string,
+                        Some(name_hash),
+                        version_string.slice(this.buffers.string_bytes.as_slice()),
+                        &version_string.sliced(this.buffers.string_bytes.as_slice()),
+                        Some(&mut *log),
+                        Some(&mut *manager),
+                    )
+                    .unwrap_or_default(),
+                    behavior: behavior_for(dep.dep_type, false),
+                };
 
                 resolutions_buf[actual_root_dep_count as usize] = yarn_entry_to_package_id[idx];
                 actual_root_dep_count += 1;
@@ -1193,12 +1182,9 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
             continue;
         }
 
-        let dependencies_start = dependencies_buf.as_mut_ptr();
-        let resolutions_start = resolutions_buf.as_mut_ptr();
+        let dependencies_start = slot_of(dependencies_buf.len());
+        let resolutions_start = slot_of(resolutions_buf.len());
 
-        // reshaped for borrowck — iterate by index and re-borrow
-        // `yarn_lock.entries[yarn_idx]` for each map so the shared borrow of
-        // `yarn_lock` passed into `process_deps` doesn't overlap an iterator.
         if let Some(deps) = yarn_lock.entries[yarn_idx].dependencies.as_ref() {
             let processed = process_deps(
                 deps,
@@ -1263,31 +1249,25 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
             resolutions_buf = &mut resolutions_buf[processed..];
         }
 
-        // dependencies_start/dependencies_buf.as_ptr() are within the same allocation
-        let deps_len = (dependencies_buf.as_mut_ptr() as usize) - (dependencies_start as usize);
-        let deps_off = (dependencies_start as usize) - (dependencies_base_ptr as usize);
+        let deps_len = slot_of(dependencies_buf.len()) - dependencies_start;
         this.packages.items_dependencies_mut()[package_id as usize] =
             lockfile::DependencySlice::new(
-                u32::try_from(deps_off / core::mem::size_of::<Dependency>()).expect("int cast"),
-                u32::try_from(deps_len / core::mem::size_of::<Dependency>()).expect("int cast"),
+                u32::try_from(dependencies_start).expect("int cast"),
+                u32::try_from(deps_len).expect("int cast"),
             );
-        let res_off = (resolutions_start as usize) - (resolutions_base_ptr as usize);
-        let res_len = (resolutions_buf.as_mut_ptr() as usize) - (resolutions_start as usize);
+        let res_len = slot_of(resolutions_buf.len()) - resolutions_start;
         this.packages.items_resolutions_mut()[package_id as usize] =
             lockfile::DependencyIDSlice::new(
-                u32::try_from(res_off / core::mem::size_of::<PackageID>()).expect("int cast"),
-                u32::try_from(res_len / core::mem::size_of::<PackageID>()).expect("int cast"),
+                u32::try_from(resolutions_start).expect("int cast"),
+                u32::try_from(res_len).expect("int cast"),
             );
     }
 
-    let final_deps_len = ((dependencies_buf.as_mut_ptr() as usize)
-        - (dependencies_base_ptr as usize))
-        / core::mem::size_of::<Dependency>();
-    unsafe {
-        // SAFETY: all elements in 0..final_deps_len initialized above; capacity >= num_deps
-        this.buffers.dependencies.set_len(final_deps_len);
-        this.buffers.resolutions.set_len(final_deps_len);
-    }
+    let final_deps_len = slot_of(dependencies_buf.len());
+    all_dependencies.truncate(final_deps_len);
+    all_resolutions.truncate(final_deps_len);
+    this.buffers.dependencies = all_dependencies;
+    this.buffers.resolutions = all_resolutions;
 
     this.buffers.hoisted_dependencies.reserve(
         (this.buffers.dependencies.len() * 2)

@@ -160,7 +160,7 @@ pub mod external_string {
     use super::semver_string::{Formatter, String};
 
     #[repr(C)]
-    #[derive(Clone, Copy, Default)]
+    #[derive(Clone, Copy, Default, Debug, bytemuck::Pod, bytemuck::Zeroable)]
     pub struct ExternalString {
         pub value: String,
         pub hash: u64,
@@ -231,7 +231,7 @@ pub mod semver_string {
 
     /// String type that stores either an offset/length into an external buffer or a string inline directly
     #[repr(C)]
-    #[derive(Copy, Clone, PartialEq, Eq, Default)]
+    #[derive(Copy, Clone, PartialEq, Eq, Default, bytemuck::Pod, bytemuck::Zeroable)]
     pub struct String {
         /// This is three different types of string.
         /// 1. Empty string. If it's all zeroes, then it's an empty string.

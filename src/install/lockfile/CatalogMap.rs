@@ -418,9 +418,6 @@ impl CatalogMap {
             });
     }
 
-    // No explicit `deinit`: `Map` and `ArrayHashMap<String, Map>` are owned
-    // collections whose `Drop` recursively frees the nested maps.
-
     /// Accepts `lockfile.buffers.string_bytes` directly (rather than the whole
     /// `Lockfile`) so callers can split-borrow the lockfile alongside a live
     /// `StringBuilder`.

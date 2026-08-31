@@ -1,6 +1,6 @@
 use bun_core::{Global, Output};
 use bun_install::package_manager_real::{
-    CommandLineArguments, PackageManager, ROOT_PACKAGE_JSON_PATH, Subcommand, install_with_manager,
+    CommandLineArguments, PackageManager, Subcommand, install_with_manager, root_package_json_path,
 };
 
 use crate::Command;
@@ -40,8 +40,7 @@ impl DedupeCommand {
             Output::flush();
         }
 
-        // SAFETY: `ROOT_PACKAGE_JSON_PATH` is written exactly once inside `PackageManager::init` above; only read thereafter.
-        let root_package_json_path = unsafe { ROOT_PACKAGE_JSON_PATH.read() };
+        let root_package_json_path = root_package_json_path();
         if let Err(e) =
             install_with_manager(manager, &mut *ctx, root_package_json_path, &original_cwd)
         {

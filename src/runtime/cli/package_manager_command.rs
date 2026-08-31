@@ -6,7 +6,9 @@ use bun_core::fmt::PathSep;
 use bun_core::strings;
 use bun_core::{Global, Output, env_var, fmt as bun_fmt};
 use bun_install::dependency::Dependency;
-use bun_install::lockfile::{LoadResult, LoadStep, Lockfile, package::PackageColumns as _, tree};
+use bun_install::lockfile::{
+    DetachedLoadResult, LoadStatus, LoadStep, Lockfile, package::PackageColumns as _, tree,
+};
 use bun_install::npm as Npm;
 use bun_install::package_manager_real::{
     CommandLineArguments, Subcommand, fetch_cache_directory_path, get_cache_directory,
@@ -68,19 +70,22 @@ impl PackageManagerCommand {
     // Takes `LogLevel` instead of `&mut PackageManager` so callers
     // can keep `pm` mutably borrowed by `LoadResult` (which holds
     // `&mut Lockfile` into `pm.lockfile`) across this call.
-    pub(crate) fn handle_load_lockfile_errors(load_lockfile: &LoadResult<'_>, log_level: LogLevel) {
+    pub(crate) fn handle_load_lockfile_errors(
+        load_lockfile: &impl bun_install::lockfile::LoadedFrom,
+        log_level: LogLevel,
+    ) {
         Self::handle_load_lockfile_errors_for(load_lockfile, log_level, "");
     }
 
     pub(crate) fn handle_load_lockfile_errors_for(
-        load_lockfile: &LoadResult<'_>,
+        load_lockfile: &impl bun_install::lockfile::LoadedFrom,
         log_level: LogLevel,
         nothing_to: &str,
     ) {
         let not_silent = log_level != LogLevel::Silent;
 
-        match load_lockfile {
-            LoadResult::NotFound => {
+        match load_lockfile.status() {
+            LoadStatus::NotFound => {
                 if not_silent {
                     if nothing_to.is_empty() {
                         Output::err_generic("missing lockfile", ());
@@ -91,7 +96,7 @@ impl PackageManagerCommand {
                 }
                 Global::exit(1);
             }
-            LoadResult::Err(err) => {
+            LoadStatus::Err(err) => {
                 if not_silent && !migration::reported_unsupported_lockfile_version(err) {
                     Output::err_generic(
                         "failed to {s} lockfile: {s}",
@@ -100,7 +105,7 @@ impl PackageManagerCommand {
                 }
                 Global::exit(1);
             }
-            LoadResult::Ok(_) => {}
+            LoadStatus::Ok => {}
         }
     }
 
@@ -118,19 +123,9 @@ impl PackageManagerCommand {
         };
 
         let log_level = pm.options.log_level;
-        // Reshaped for borrowck — `pm.lockfile.load_from_bytes(pm, …)`
-        // is a self-referential split borrow. Derive both halves through `pm`
-        // (not the raw `pm_ptr`) so the outer borrow stays on the stack.
-        let pm_raw: *mut PackageManager = pm;
-        // SAFETY: `pm.lockfile` is `Box<Lockfile>` whose pointee lives in a
-        // separate heap allocation; `&mut Lockfile` and `&mut PackageManager`
-        // cannot alias. `load_from_bytes` reads `manager.options`/`manager.log`
-        // only and never re-projects `manager.lockfile`.
-        let load_lockfile = unsafe {
-            let lockfile: *mut Lockfile = &raw mut *(*pm_raw).lockfile;
-            let log: *mut bun_ast::Log = (*pm_raw).log;
-            (*lockfile).load_from_bytes(Some(&mut *pm_raw), bytes, &mut *log)
-        };
+        let load_lockfile = pm.with_lockfile_and_log(|lockfile, pm, log| {
+            lockfile.load_from_bytes(Some(pm), bytes, log).detach()
+        });
 
         Self::handle_load_lockfile_errors_for(&load_lockfile, log_level, "hash");
 
@@ -439,7 +434,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
 
                 let mut process_env = bun_dotenv::Loader::init();
                 process_env.load_process()?;
-                let cache_dir = fetch_cache_directory_path(&mut process_env, None);
+                let cache_dir = fetch_cache_directory_path(&process_env, None);
                 let mut rm_buf = PathBuffer::uninit();
                 let rm_dir = match Dir::cwd().make_open_path(&cache_dir.path, Default::default()) {
                     Ok(d) => d,
@@ -553,7 +548,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             UntrustedCommand::exec(&mut *ctx, pm, args)?;
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"trust") {
-            TrustCommand::exec(&mut *ctx, pm, args)?;
+            TrustCommand::exec(pm, args)?;
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"ls") {
             let log_level = pm.options.log_level;
@@ -607,7 +602,12 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                     // package nested under an untrusted parent must still be
                     // shown. Walk every node_modules folder and print a flat
                     // list instead of pruning the tree.
-                    print_trusted_dependencies_flat(&first_directory, &directories, lockfile);
+                    print_trusted_dependencies_flat(
+                        &first_directory,
+                        &directories,
+                        lockfile,
+                        &pm.options,
+                    );
                 } else {
                     print_node_modules_folder_structure(
                         &first_directory,
@@ -663,6 +663,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                         let alias = dependencies[dep_id as usize].name.slice(string_bytes);
                         let pkg_name = pkg_names[package_id as usize].slice(string_bytes);
                         lockfile.has_trusted_dependency(
+                            &pm.options,
                             alias,
                             pkg_name,
                             &resolutions[package_id as usize],
@@ -716,47 +717,15 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                 }
             }
             let log_level = pm.options.log_level;
-            // Reshaped for borrowck —
-            // `detect_and_load_other_lockfile(&pm.lockfile, .cwd(), pm, ctx.log)`
-            // is a self-referential split borrow. Derive both halves through
-            // `pm` (not the raw `pm_ptr`) so the outer borrow stays on the
-            // Stacked-Borrows stack.
-            let pm_raw: *mut PackageManager = pm;
-            // SAFETY: `pm.lockfile` is `Box<Lockfile>` whose pointee lives in a
-            // separate heap allocation; `&mut Lockfile` and `&mut PackageManager`
-            // cannot alias. `detect_and_load_other_lockfile` reads
-            // `manager.options`/`manager.log` only and never re-projects
-            // `manager.lockfile`.
-            let mut load_lockfile = unsafe {
-                let lockfile: *mut Lockfile = &raw mut *(*pm_raw).lockfile;
-                let log: *mut bun_ast::Log = (*pm_raw).log;
-                migration::detect_and_load_other_lockfile(
-                    &mut *lockfile,
-                    Fd::cwd(),
-                    &mut *pm_raw,
-                    &mut *log,
-                )
-            };
-            if matches!(load_lockfile, LoadResult::NotFound) {
+            let load_lockfile = pm.with_lockfile_and_log(|lockfile, pm, log| {
+                migration::detect_and_load_other_lockfile(lockfile, Fd::cwd(), pm, log).detach()
+            });
+            if matches!(load_lockfile, DetachedLoadResult::NotFound) {
                 bun_core::pretty_errorln!("<r><red>error<r>: could not find any other lockfile");
                 Global::exit(1);
             }
             Self::handle_load_lockfile_errors(&load_lockfile, log_level);
-            // Reshaped for borrowck — `save_to_disk` needs
-            // `&mut Lockfile` (self) and `&LoadResult` simultaneously, but
-            // `LoadResultOk.lockfile` already holds the only `&mut` into the
-            // boxed lockfile. Project that field to a raw pointer (no second
-            // Box-deref) so both arguments share one Stacked-Borrows lineage.
-            let lf: *mut Lockfile = &raw mut *load_lockfile.ok_mut().lockfile;
-            // SAFETY: `load_lockfile` is `Ok` (errors exited above). `lf` is a
-            // reborrow of `ok.lockfile`; `save_to_disk` reads `load_result` only
-            // for `save_format()` / `loaded_from_binary_lockfile()` (scalar
-            // `format`/`migrated` fields) and never dereferences `ok.lockfile`,
-            // so `&mut *lf` remains the sole live mutable view of the heap
-            // lockfile. `options` is read via `pm_raw` (disjoint allocation).
-            unsafe {
-                (*lf).save_to_disk(&load_lockfile, &(*pm_raw).options);
-            }
+            pm.lockfile.save_to_disk(&load_lockfile, &pm.options);
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"version") {
             let positionals: &[&[u8]] = pm.options.positionals;
@@ -981,6 +950,7 @@ fn print_trusted_dependencies_flat(
     first_directory: &NodeModulesFolder,
     directories: &[NodeModulesFolder],
     lockfile: &Lockfile,
+    options: &bun_install::package_manager_real::Options,
 ) {
     let mut cwd_buf = PathBuffer::uninit();
     let path = match bun_sys::getcwd(&mut cwd_buf[..]) {
@@ -1013,7 +983,12 @@ fn print_trusted_dependencies_flat(
         }
         let alias = dependencies[dep_id as usize].name.slice(string_bytes);
         let pkg_name = pkg_names[package_id as usize].slice(string_bytes);
-        if lockfile.has_trusted_dependency(alias, pkg_name, &resolutions[package_id as usize]) {
+        if lockfile.has_trusted_dependency(
+            options,
+            alias,
+            pkg_name,
+            &resolutions[package_id as usize],
+        ) {
             seen.set(package_id as usize);
             trusted.push(dep_id);
         }

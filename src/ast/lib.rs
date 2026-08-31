@@ -1575,6 +1575,19 @@ impl Log {
         }
     }
 
+    /// Move every message (and the counts and owned backing strings) into
+    /// `other`, leaving `self` empty.
+    pub fn transfer_to(&mut self, other: &mut Log) {
+        other.msgs.append(&mut self.msgs);
+        other.errors += self.errors;
+        other.warnings += self.warnings;
+        self.errors = 0;
+        self.warnings = 0;
+        other.owned_strings.append(&mut self.owned_strings);
+        // See `reset` — the scan cache goes with the messages.
+        self.line_column_tracker = None;
+    }
+
     pub fn append_to_with_recycled(&mut self, other: &mut Log, recycled: bool) {
         self.clone_to_with_recycled(other, recycled);
         self.msgs.clear();

@@ -289,7 +289,6 @@ const SIZE: usize = core::mem::size_of::<VersionExternal>()
     + core::mem::size_of::<String>();
 
 pub struct Context<'a> {
-    // allocator dropped (global mimalloc)
     pub(crate) log: &'a mut bun_ast::Log,
     pub(crate) buffer: &'a [u8],
     pub(crate) package_manager: Option<&'a mut PackageManager>,
@@ -299,7 +298,6 @@ pub(crate) fn to_dependency(this: External, ctx: &mut Context<'_>) -> Dependency
     let name = String {
         bytes: this[0..8].try_into().expect("infallible: size matches"),
     };
-    // SAFETY: same-size POD bitcast
     let name_hash: u64 =
         u64::from_ne_bytes(this[8..16].try_into().expect("infallible: size matches"));
     Dependency {
@@ -1076,6 +1074,28 @@ pub fn parse<'a, 'b>(
     )
 }
 
+/// [`parse`] for callers that hold only the npm-alias registry (e.g. a
+/// split-borrowed `PackageManager`).
+pub fn parse_with_alias_registry<'a>(
+    alias: String,
+    alias_hash: Option<PackageNameHash>,
+    dependency: &[u8],
+    sliced: &SlicedString,
+    log: Option<&'a mut bun_ast::Log>,
+    registry: Option<&mut dyn NpmAliasRegistry>,
+) -> Option<Version> {
+    let dep = strings::trim_left(dependency, b" \t\n\r");
+    parse_with_tag(
+        alias,
+        alias_hash,
+        dep,
+        Tag::infer(dep),
+        sliced,
+        log,
+        registry,
+    )
+}
+
 pub(crate) fn parse_with_optional_tag<'a, 'b>(
     alias: String,
     alias_hash: impl Into<Option<PackageNameHash>>,
@@ -1147,7 +1167,6 @@ pub(crate) fn parse_with_tag(
             let version = match Semver::query::parse(input, sliced.sub(input)) {
                 Ok(v) => v,
                 Err(_e) => {
-                    // error.OutOfMemory => bun.outOfMemory()
                     bun_core::out_of_memory();
                 }
             };

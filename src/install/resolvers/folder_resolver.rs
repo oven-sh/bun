@@ -2,7 +2,7 @@ use core::fmt;
 
 use bun_core::fmt::QuotedFormatter;
 use bun_core::{ZStr, strings};
-use bun_paths::{self, MAX_PATH_BYTES, PathBuffer, SEP, SEP_STR};
+use bun_paths::{self, PathBuffer, SEP, SEP_STR};
 use bun_resolver::fs::FileSystem;
 use bun_semver::{self as semver, String as SemverString};
 use bun_sys::{self, Fd, File, O};
@@ -28,54 +28,53 @@ pub enum FolderResolution {
 // The enum discriminant serves as the tag; expose an alias for it.
 
 pub(crate) struct PackageWorkspaceSearchPathFormatter<'a> {
-    pub manager: &'a PackageManager,
+    pub lockfile: &'a Lockfile,
     pub version: dependency::Version,
     pub quoted: bool,
 }
 
 impl<'a> fmt::Display for PackageWorkspaceSearchPathFormatter<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut joined = [0u8; MAX_PATH_BYTES + 2];
+        let mut joined = PathBuffer::uninit();
         // Caller constructs this formatter only when
         // `self.version.tag == .workspace`.
         let workspace = self.version.workspace();
         let str_to_use = self
-            .manager
             .lockfile
             .workspace_paths
             .get(&semver::string::Builder::string_hash(
-                self.manager.lockfile.str(workspace),
+                self.lockfile.str(workspace),
             ))
             .unwrap_or(workspace);
 
-        // SAFETY: joined[2..] is exactly MAX_PATH_BYTES bytes long.
-        let joined_path: &mut PathBuffer =
-            unsafe { &mut *joined.as_mut_ptr().add(2).cast::<PathBuffer>() };
-        let mut paths = normalize_package_json_path(
+        let paths = normalize_package_json_path(
             GlobalOrRelative::Relative(dependency::version::Tag::Workspace),
-            joined_path,
-            self.manager.lockfile.str(str_to_use),
+            &mut joined,
+            self.lockfile.str(str_to_use),
         );
 
-        if !strings::starts_with_char(paths.rel, b'.') && !strings::starts_with_char(paths.rel, SEP)
+        let mut prefixed = PathBuffer::uninit();
+        let rel: &[u8] = if !strings::starts_with_char(paths.rel, b'.')
+            && !strings::starts_with_char(paths.rel, SEP)
         {
-            joined[0] = b'.';
-            joined[1] = SEP;
-            // `paths.rel` points into `joined[2..]`; extend the view backward
-            // by the two bytes just written via safe slicing of `joined`.
-            let n = paths.rel.len() + 2;
-            paths.rel = &joined[..n];
-        }
+            let n = paths.rel.len();
+            prefixed[0] = b'.';
+            prefixed[1] = SEP;
+            prefixed[2..2 + n].copy_from_slice(paths.rel);
+            &prefixed[..2 + n]
+        } else {
+            paths.rel
+        };
 
         if self.quoted {
-            let quoted = QuotedFormatter { text: paths.rel };
+            let quoted = QuotedFormatter { text: rel };
             fmt::Display::fmt(&quoted, f)
         } else {
             // `fmt::Formatter` only accepts `&str`, so non-UTF-8 path bytes are emitted lossily
             // (U+FFFD) via `bstr::BStr`'s Display. Both current callers pass
             // `quoted = true`, so this branch is unreached today; if a future
             // caller needs byte-exact output it must use an `io::Write` sink.
-            write!(f, "{}", bstr::BStr::new(paths.rel))
+            write!(f, "{}", bstr::BStr::new(rel))
         }
     }
 }
@@ -268,52 +267,25 @@ fn read_package_json_from_disk<R: FolderResolverImpl>(
 
     let mut package: LockfilePackage = Default::default();
 
-    // Borrow splitting: `manager.lockfile`, `manager`, and `manager.log` are
-    // needed simultaneously; borrowck rejects the overlap on `&mut self`,
-    // so split via raw pointer once here. `lockfile` and `log` are disjoint
-    // fields of `PackageManager`, and `parse{,_with_json}` only reaches
-    // `manager` through the `pm` argument (no re-entrant access to
-    // `lockfile`/`log` via `pm`).
-    //
-    // `log_mut()` reads the BACKREF `self.log: *mut Log` and returns the
-    // disjoint CLI `Log` allocation (lifetime decoupled from `&self`); call it
-    // safely *before* establishing `manager_ptr` so `log` is derived from a
-    // separate allocation and is unaffected by the `&mut *manager_ptr`
-    // reborrows below.
-    let log: &mut bun_ast::Log = manager.log_mut();
-    let manager_ptr: *mut PackageManager = manager;
-
     if R::IS_WORKSPACE {
         let _tracer =
             bun_perf::trace(bun_perf::PerfEvent::FolderResolverReadPackageJSONFromDiskWorkspace);
 
-        // SAFETY: `manager_ptr` was just derived from the live `&mut PackageManager`
-        // argument; `log` points into a separate `Log` allocation (see the
-        // borrow-splitting comment above), so this `&mut` reborrow aliases no
-        // other live reference.
-        let json = unsafe { &mut *manager_ptr }
-            .workspace_package_json_cache
-            .get_with_path(log, abs.as_bytes(), Default::default())
-            .unwrap()?;
-        // `Expr` is `Copy`; take a raw pointer to `source` so the borrow on
-        // `workspace_package_json_cache` ends before `&mut *manager_ptr` is
-        // formed for `parse_with_json`.
-        let root: Expr = json.root;
-        let source: *const bun_ast::Source = &raw const json.source;
-
-        // SAFETY: see the borrow-splitting comment above.
-        unsafe {
-            let lockfile: *mut Lockfile = &raw mut *(*manager_ptr).lockfile;
-            package.parse_with_json::<R>(
-                &mut *lockfile,
-                &mut *manager_ptr,
+        let (source, root) = {
+            let PackageManager {
                 log,
-                &*source,
-                root,
-                resolver,
-                features,
-            )?;
-        }
+                workspace_package_json_cache,
+                ..
+            } = &mut *manager;
+            let json = workspace_package_json_cache
+                .get_with_path(log, abs.as_bytes(), Default::default())
+                .unwrap()?;
+            (json.source.clone(), json.root)
+        };
+
+        manager.with_lockfile_and_log(|lockfile, manager, log| {
+            package.parse_with_json::<R>(lockfile, manager, log, &source, root, resolver, features)
+        })?;
     } else {
         let _tracer =
             bun_perf::trace(bun_perf::PerfEvent::FolderResolverReadPackageJSONFromDiskFolder);
@@ -330,18 +302,9 @@ fn read_package_json_from_disk<R: FolderResolverImpl>(
             bun_ast::Source::init_path_string(abs.as_bytes(), body.list.as_slice())
         };
 
-        // SAFETY: see the borrow-splitting comment above.
-        unsafe {
-            let lockfile: *mut Lockfile = &raw mut *(*manager_ptr).lockfile;
-            package.parse::<R>(
-                &mut *lockfile,
-                &mut *manager_ptr,
-                log,
-                &source,
-                resolver,
-                features,
-            )?;
-        }
+        manager.with_lockfile_and_log(|lockfile, manager, log| {
+            package.parse::<R>(lockfile, manager, log, &source, resolver, features)
+        })?;
     }
 
     let has_scripts = package.scripts.has_any()
@@ -409,7 +372,6 @@ pub(crate) fn get_or_put(
         let abs_len = paths.abs.len();
         let rel_len = paths.rel.len();
         rel_buf[..rel_len].copy_from_slice(paths.rel);
-        // `paths` is dead past this point → `joined` is no longer borrowed.
         bun_paths::dangerously_convert_path_to_posix_in_place::<u8>(&mut joined[..abs_len]);
         bun_paths::dangerously_convert_path_to_posix_in_place::<u8>(&mut rel_buf[..rel_len]);
         (

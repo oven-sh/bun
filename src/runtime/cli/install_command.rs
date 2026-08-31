@@ -2,11 +2,11 @@ use crate::Error;
 use bun_bundler::bundle_v2::{DependenciesScanner, DependenciesScannerResult};
 use bun_core::{Global, Output};
 use bun_install::package_manager_real::{
-    CommandLineArguments, PackageManager, ROOT_PACKAGE_JSON_PATH, Subcommand, install_with_manager,
+    CommandLineArguments, PackageManager, Subcommand, install_with_manager, root_package_json_path,
     update_package_json_and_install_with_manager,
 };
 
-use crate::Cli;
+use crate::Command;
 use crate::build_command::BuildCommand;
 use crate::command::ContextData;
 
@@ -32,11 +32,10 @@ impl InstallCommand {
                 bun_install::Error::InstallFailed | bun_install::Error::InvalidPackageJSON
             )
         ) {
-            // SAFETY: `Cli::LOG_` is initialised once during single-threaded
-            // startup in `Cli::start()` before any command (including this
-            // one) is dispatched; no other `&mut` to it is live here.
-            let log = unsafe { (*Cli::LOG_.get()).assume_init_mut() };
-            let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+            // The command context's log (the package manager's, once it is up).
+            let _ = Command::get()
+                .log_ref()
+                .print(std::ptr::from_mut(Output::error_writer()));
             Global::exit(1);
         }
         Err(e)
@@ -182,9 +181,7 @@ fn install_with_cli(ctx: &mut ContextData, cli: CommandLineArguments) -> Result<
         Output::flush();
     }
 
-    // SAFETY: `ROOT_PACKAGE_JSON_PATH` is written exactly once inside
-    // `PackageManager::init` (above) on this thread; only read thereafter.
-    let root_package_json_path = unsafe { ROOT_PACKAGE_JSON_PATH.read() };
+    let root_package_json_path = root_package_json_path();
     install_with_manager(manager, &mut *ctx, root_package_json_path, &original_cwd)?;
 
     if manager.any_failed_to_install {

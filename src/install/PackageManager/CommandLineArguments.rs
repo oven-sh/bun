@@ -493,12 +493,10 @@ const PRUNE_HELP_PARAMS: &[ParamType] = &[
     clap::param!("-h, --help                             Print this help menu"),
 ];
 
-// NOTE: `string` (= `[]const u8`) fields here are slices into process argv (owned by `clap::Args`
-// which itself lives for the program duration). They are never freed. Mapped to `&'static [u8]`
-// per PORTING.md (no `deinit`, never `allocator.free`d). An explicit lifetime would only
-// become necessary if `clap::Args` ever becomes scoped.
+// The `&'static [u8]` fields are slices into process argv (owned by
+// `clap::Args`, which lives for the program duration).
 //
-// `Clone` is needed because `updatePackageJSONAndInstall`
+// `Clone` is needed because `update_package_json_and_install`
 // passes `cli` by value into `PackageManager.init` while retaining its own
 // copy.
 #[derive(Clone)]
@@ -769,7 +767,7 @@ impl CommandLineArguments {
         // use <bar> to emphasize 'bar'
 
         match subcommand {
-            // fall back to HelpCommand.printWithReason
+            // fall back to HelpCommand.print_with_reason
             Subcommand::Install => {
                 let intro_text = r"
 <b>Usage<r>: <b><green>bun install<r> <cyan>[flags]<r> <blue>\<name\><r><d>@\<version\><r>

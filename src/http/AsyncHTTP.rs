@@ -51,9 +51,111 @@ pub struct AsyncHTTP<'a> {
     pub elapsed: u64,
 
     pub(crate) signals: Signals,
+
+    /// Buffers `url` / `client.header_buf` / `client.http_proxy` may borrow
+    /// from when the request was built with [`OwnedRequest::new`].
+    /// Declared last so it is dropped after every field that points into it.
+    owned: OwnedRequestBuffers,
 }
 
 bun_threading::intrusive_work_task!(['a] AsyncHTTP<'a>, task);
+
+/// Backing storage for a request that owns the bytes its URL, header block
+/// and proxy URL are parsed from (see [`OwnedRequest::new`]).
+#[derive(Default)]
+pub struct OwnedRequestBuffers {
+    pub url: Box<[u8]>,
+    pub headers: Box<[u8]>,
+    pub proxy_url: Option<Box<[u8]>>,
+}
+
+/// A request that owns the bytes its URL, header block and proxy URL are
+/// parsed from. The [`AsyncHTTP`] inside borrows them, so it is only reachable
+/// through accessors whose borrows end with `&self`; it is scheduled with
+/// [`crate::schedule_owned_request`].
+pub struct OwnedRequest {
+    http: AsyncHTTP<'static>,
+}
+
+impl OwnedRequest {
+    /// [`AsyncHTTP::init`] over `buffers`. `if_modified_since` is a range of
+    /// `buffers.headers`.
+    pub fn new(
+        buffers: OwnedRequestBuffers,
+        method: Method,
+        headers: headers::EntryList,
+        static_headers_buf: Option<&'static [u8]>,
+        redirect_type: FetchRedirect,
+        mut options: Options<'static>,
+        if_modified_since: Option<core::ops::Range<usize>>,
+    ) -> OwnedRequest {
+        // SAFETY: the boxed bytes are moved into `http.owned` below and are
+        // neither replaced nor freed while `http` is alive (this type keeps it
+        // private, and every accessor rebinds borrows to `&self`); a
+        // `Box<[u8]>`'s heap bytes do not move when the box does.
+        let (url_buf, headers_buf, proxy_buf): (
+            &'static [u8],
+            &'static [u8],
+            Option<&'static [u8]>,
+        ) = unsafe {
+            (
+                bun_ptr::detach_lifetime(&buffers.url),
+                bun_ptr::detach_lifetime(&buffers.headers),
+                buffers
+                    .proxy_url
+                    .as_deref()
+                    .map(|p| bun_ptr::detach_lifetime(p)),
+            )
+        };
+        let url = URL::parse(url_buf);
+        if let Some(proxy) = proxy_buf {
+            options.http_proxy = Some(URL::parse(proxy));
+        }
+        let mut http = AsyncHTTP::init(
+            method,
+            url,
+            headers,
+            static_headers_buf.unwrap_or(headers_buf),
+            b"",
+            noop_callback(),
+            redirect_type,
+            options,
+        );
+        if let Some(range) = if_modified_since {
+            http.client.if_modified_since = &headers_buf[range];
+        }
+        http.owned = buffers;
+        OwnedRequest { http }
+    }
+
+    /// The URL bytes the request was built from.
+    #[inline]
+    pub fn url(&self) -> &[u8] {
+        &self.http.owned.url
+    }
+
+    /// Nanoseconds the request took (once it has finished).
+    #[inline]
+    pub fn elapsed(&self) -> u64 {
+        self.http.elapsed
+    }
+
+    #[inline]
+    pub fn client_flags_mut(&mut self) -> &mut crate::Flags {
+        &mut self.http.client.flags
+    }
+
+    #[inline]
+    pub fn set_verbose(&mut self, verbose: crate::HTTPVerboseLevel) {
+        self.http.client.verbose = verbose;
+    }
+
+    /// Point the result callback at `ctx` and add the request to `batch`.
+    pub(crate) fn schedule_with(&mut self, callback: HTTPClientResultCallback, batch: &mut Batch) {
+        self.http.result_callback = callback;
+        self.http.schedule(batch);
+    }
+}
 
 // SAFETY: `next` is the sole intrusive link for `UnboundedQueue(AsyncHTTP, .next)`.
 // Only implemented for the lifetime-erased form — the queue is heterogeneous
@@ -454,6 +556,7 @@ impl<'a> AsyncHTTP<'a> {
             async_http_id,
             elapsed: 0,
             signals,
+            owned: OwnedRequestBuffers::default(),
         };
         if let Some(val) = options.unix_socket_path {
             this.client.unix_socket_path = val;
@@ -597,7 +700,7 @@ fn send_sync_callback(
     // `read_item`.
     unsafe {
         result.body_into(&mut (*(*this).response_buffer).list);
-        (*this).write_item(result.detach_lifetime());
+        (*this).write_item(result.without_body());
     }
 }
 

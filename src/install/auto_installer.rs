@@ -21,12 +21,13 @@
 //! `value` union by plain assignment.
 
 use core::mem::{align_of, size_of};
+use core::ptr::NonNull;
 
 use bun_install_types::resolver_hooks as hooks;
 use bun_semver::{SlicedString, String as SemverString};
 
 use crate::dependency::{self, DependencyExt as _};
-use crate::lockfile::{self, Package};
+use crate::lockfile::Package;
 use crate::package_manager::package_manager_directories as directories;
 use crate::package_manager::package_manager_enqueue as enqueue;
 use crate::package_manager::package_manager_lifecycle as lifecycle;
@@ -197,17 +198,16 @@ impl hooks::AutoInstaller for PackageManager {
         // `PackageJsonView` interface so this impl does not need to name
         // `bun_resolver::PackageJSON` directly.
 
-        // Reshaped for borrowck — `string_builder!` borrows
-        // `self.lockfile` mutably while `dep.clone_in` needs `&mut self`.
-        // Use a raw pointer for the disjoint reborrow (same approach as
-        // `Package::from_package_json`).
-        let pm: *mut PackageManager = self;
-        // SAFETY: `pm` derives from `&mut self`; reborrows below are disjoint
-        // from `string_builder`'s borrow of `lockfile.{string_bytes,string_pool}`.
-        let lockfile: &mut lockfile::Lockfile = unsafe { &mut *(*pm).lockfile };
+        // `dep.clone_in` needs only the npm-alias registry alongside the
+        // string builder, so split the manager / lockfile by field.
+        let PackageManager {
+            lockfile,
+            known_npm_aliases,
+            ..
+        } = self;
+        let (mut string_builder, fields) = lockfile.string_builder_split();
 
         let mut package = Package::default();
-        let mut string_builder = crate::string_builder!(lockfile);
         let mut total_dependencies_count: u32 = 0;
 
         // --- Counting
@@ -223,8 +223,8 @@ impl hooks::AutoInstaller for PackageManager {
 
         string_builder.allocate()?;
 
-        let dependencies_list = &mut lockfile.buffers.dependencies;
-        let resolutions_list = &mut lockfile.buffers.resolutions;
+        let dependencies_list = fields.dependencies;
+        let resolutions_list = fields.resolutions;
         dependencies_list.reserve(total_dependencies_count as usize);
         resolutions_list.reserve(total_dependencies_count as usize);
 
@@ -248,10 +248,7 @@ impl hooks::AutoInstaller for PackageManager {
             if !dep.behavior.is_enabled(features) {
                 continue;
             }
-            // SAFETY: `pm` is the unique owner; `string_builder` borrows
-            // disjoint lockfile fields.
-            let pm_ref: &mut PackageManager = unsafe { &mut *pm };
-            match dep.clone_in(pm_ref, source_buf, &mut string_builder) {
+            match dep.clone_in(known_npm_aliases, source_buf, &mut string_builder) {
                 Ok(cloned) => dependencies[0] = cloned,
                 Err(e) => {
                     // `string_builder.clamp()` must run on the
@@ -292,7 +289,7 @@ impl hooks::AutoInstaller for PackageManager {
 
         string_builder.clamp();
 
-        let appended = lockfile.append_package(&package)?;
+        let appended = self.lockfile.append_package(&package)?;
         Ok(appended.meta.id)
     }
 
@@ -308,7 +305,7 @@ impl hooks::AutoInstaller for PackageManager {
     // ── PackageManager ops ────────────────────────────────────────────────
 
     fn set_on_wake(&mut self, handler: hooks::WakeHandler) {
-        self.on_wake = handler;
+        self.shared.set_on_wake(handler);
     }
 
     fn path_for_resolution<'b>(
@@ -317,19 +314,14 @@ impl hooks::AutoInstaller for PackageManager {
         resolution: &hooks::Resolution,
         buf: &'b mut [u8],
     ) -> Result<&'b [u8], bun_core::Error> {
-        // The resolver passes a `bun_paths::PathBuffer`-sized slice
-        // (`bufs!(path_in_global_disk_cache)`); reborrow it as the install
-        // signature's `&mut PathBuffer`.
-        debug_assert!(buf.len() >= bun_paths::MAX_PATH_BYTES);
-        // SAFETY: `PathBuffer` is `#[repr(transparent)]` over
-        // `[u8; MAX_PATH_BYTES]`; caller-provided slice is at least that long
-        // (asserted above).
-        let path_buf: &mut bun_paths::PathBuffer =
-            unsafe { &mut *buf.as_mut_ptr().cast::<bun_paths::PathBuffer>() };
+        // The resolver passes a `PathBuffer`-sized slice (`bufs!(path_in_global_disk_cache)`).
+        let path_buf =
+            bun_paths::PathBuffer::from_slice_mut(buf).expect("resolver passes a PathBuffer");
         let r = resolution_from_hooks(resolution);
-        let out = directories::path_for_resolution(self, package_id, &r, path_buf)
-            .map_err(bun_core::Error::from)?;
-        Ok(&*out)
+        let len = directories::path_for_resolution(self, package_id, &r, path_buf)
+            .map_err(bun_core::Error::from)?
+            .len();
+        Ok(&buf[..len])
     }
 
     fn get_preinstall_state(&self, package_id: PackageID) -> PreinstallState {
@@ -343,7 +335,6 @@ impl hooks::AutoInstaller for PackageManager {
         package_id: PackageID,
         resolution: &hooks::Resolution,
         ctx: hooks::TaskCallbackContext,
-        patch_name_and_version_hash: Option<u64>,
     ) -> Result<(), bun_core::Error> {
         let r = resolution_from_hooks(resolution);
         // Only the npm arm reaches this enqueue.
@@ -351,16 +342,20 @@ impl hooks::AutoInstaller for PackageManager {
         // the resolver (`resolution.tag == .npm`); the field-copy bridge
         // preserves the tag/union pairing.
         let npm = *r.npm();
-        let url = self.lockfile.str(&npm.url).to_vec();
+        debug_assert_eq!(
+            name,
+            self.lockfile
+                .str(&self.lockfile.packages.get(package_id as usize).name)
+        );
+        let name = self.lockfile.packages.get(package_id as usize).name;
         enqueue::enqueue_package_for_download(
             self,
             name,
             dependency_id,
             package_id,
             npm.version,
-            &url,
+            npm.url,
             crate::TaskCallbackContext::RootRequestId(ctx.root_request_id),
-            patch_name_and_version_hash,
         )
         .map_err(|e| crate::Error::from(e).into())
     }
@@ -434,62 +429,50 @@ impl hooks::AutoInstaller for PackageManager {
     }
 }
 
-// ─── Lazy factory (resolver → install link-time hook) ─────────────────────
+// ─── Lazy factory (registered with the resolver at startup) ────────────────
 //
 // `bun_resolver` cannot name `PackageManager` (it would create a dep cycle),
-// so it declares this `extern "Rust"` and we provide the body here. The
-// returned pointer is the process-static `PackageManager` singleton (`get()`),
-// upcast to the `dyn AutoInstaller` trait object the resolver stores.
-//
-// SAFETY (callee contract):
-//   • `log` is the resolver's `NonNull<bun_ast::Log>` (Transpiler-owned,
-//     process-lifetime; `init_with_runtime` stores it raw).
-//   • `install` is `BundleOptions.install` (`?*Api.BunInstall`). The pointee is
-//     the CLI-owned `Box<BunInstall>` (process-lifetime), read-only.
-//   • `env` is the resolver's unwrapped `env_loader` (Transpiler-owned,
-//     process-lifetime). `init_with_runtime` stores it as `NonNull<Loader>`.
-#[unsafe(no_mangle)]
-unsafe fn __bun_resolver_init_package_manager(
-    mut log: core::ptr::NonNull<bun_ast::Log>,
-    install: Option<core::ptr::NonNull<crate::bun_schema::api::BunInstall>>,
-    mut env: core::ptr::NonNull<bun_dotenv::Loader>,
-) -> core::result::Result<core::ptr::NonNull<dyn hooks::AutoInstaller>, bun_errno::SystemErrno> {
-    // ABI: the resolver-side `extern "Rust"` declaration names
-    // `bun_errno::SystemErrno` (both crates depend on bun_errno; carries the
-    // real errno name so resolve.test.ts sees `EACCES` not `Unexpected`). Keep
-    // both sides byte-identical or the `Result` layout diverges.
-    //
-    // Idempotent.
-    bun_http::http_thread::init(&Default::default());
+// so the runtime registers this with `bun_resolver::set_auto_installer_factory`.
+// `log` / `env` are the resolver's Transpiler-owned, process-lifetime log and
+// env loader; `install` is `BundleOptions.install`, read-only.
+pub fn init_for_resolver(
+    log: &mut bun_ast::Log,
+    bun_install: Option<&crate::bun_schema::api::BunInstall>,
+    env: &mut bun_dotenv::Loader,
+) -> core::result::Result<NonNull<dyn hooks::AutoInstaller>, bun_errno::SystemErrno> {
+    /// Address of the leaked runtime package manager (whoever dereferences it
+    /// upholds the manager's threading rules; see `Resolver::get_package_manager`).
+    struct Published(core::sync::atomic::AtomicPtr<PackageManager>);
+    static RUNTIME_MANAGER: std::sync::OnceLock<Result<Published, crate::Error>> =
+        std::sync::OnceLock::new();
 
-    // SAFETY: when `Some`, `install` points at a live `Api::BunInstall`
-    // (see `run_command::wire_transpiler_from_ctx`); read-only borrow.
-    let bun_install: Option<&crate::bun_schema::api::BunInstall> =
-        install.map(|p| unsafe { p.as_ref() });
-    // SAFETY: caller guarantees `log` / `env` point at process-lifetime
-    // Transpiler-owned storage with no aliasing `&mut` live across this call.
-    let (log_ref, env_ref): (&mut bun_ast::Log, &mut bun_dotenv::Loader) =
-        unsafe { (log.as_mut(), env.as_mut()) };
-
-    let pm: *mut PackageManager = crate::package_manager::init_with_runtime(
-        log_ref,
-        bun_install,
-        crate::package_manager::CommandLineArguments::default(),
-        env_ref,
-    )
-    .map_err(|e| match e {
-        crate::Error::Sys(errno) => errno,
-        crate::Error::Resolver(bun_resolver::Error::Sys(errno)) => errno,
-        other => {
-            log_ref.add_zig_error_with_note(
-                other.name(),
-                format_args!("while initializing the auto-install package manager"),
-            );
-            bun_errno::SystemErrno::EIO
+    let result = RUNTIME_MANAGER.get_or_init(|| {
+        bun_http::http_thread::init(&Default::default());
+        crate::package_manager::init_with_runtime(
+            log,
+            bun_install,
+            crate::package_manager::CommandLineArguments::default(),
+            env,
+        )
+        .map(|pm| Published(core::sync::atomic::AtomicPtr::new(core::ptr::from_mut(pm))))
+    });
+    match result {
+        Ok(Published(pm)) => {
+            let pm = NonNull::new(pm.load(core::sync::atomic::Ordering::Relaxed))
+                .expect("published manager is non-null");
+            let pm: NonNull<dyn hooks::AutoInstaller> = pm;
+            Ok(pm)
         }
-    })?;
-    // On success `init_with_runtime` returns the non-null `holder::RAW_PTR`
-    // singleton; upcast to the trait object the resolver stores.
-    Ok(core::ptr::NonNull::new(pm as *mut dyn hooks::AutoInstaller)
-        .expect("init_with_runtime returns the holder::RAW_PTR singleton"))
+        Err(err) => Err(match *err {
+            crate::Error::Sys(errno) => errno,
+            crate::Error::Resolver(bun_resolver::Error::Sys(errno)) => errno,
+            other => {
+                log.add_zig_error_with_note(
+                    other.name(),
+                    format_args!("while initializing the auto-install package manager"),
+                );
+                bun_errno::SystemErrno::EIO
+            }
+        }),
+    }
 }

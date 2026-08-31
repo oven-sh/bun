@@ -1,4 +1,3 @@
-use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
 
 use bun_alloc::Arena as Bump;
@@ -6,13 +5,13 @@ use bun_collections::{ArrayHashMap, ArrayIdentityContext, StringArrayHashMap};
 use bun_core::strings;
 use bun_core::{Global, Output, Progress};
 use bun_install::lockfile::{
-    LoadResult, Lockfile,
+    Lockfile,
     package::PackageColumns as _,
     package::scripts::{List as ScriptsList, PrintFormat, Scripts},
     tree,
 };
 use bun_install::package_manager_real::{
-    PackageJSONEditor, ProgressStrings, ROOT_PACKAGE_JSON_PATH, update_lockfile_if_needed,
+    PackageJSONEditor, ProgressStrings, root_package_json_path, update_lockfile_if_needed,
 };
 use bun_install::{
     self as install, DEFAULT_TRUSTED_DEPENDENCIES_LIST, DependencyID, LifecycleScriptSubprocess,
@@ -57,26 +56,19 @@ impl UntrustedCommand {
         Output::flush();
 
         // Reshaped for borrowck — `LoadResult` returned by
-        // `load_lockfile_from_cwd` mutably borrows `pm.lockfile`, so all
-        // subsequent `pm` access goes through `pm_raw`. Same singleton pattern
-        // as `package_manager_command.rs::print_hash`.
-        let pm_raw: *mut PackageManager = pm;
         let log_level = pm.options.log_level;
-        let load_lockfile = pm.load_lockfile_from_cwd::<true>();
+        let load_lockfile = pm.load_lockfile_from_cwd_detached::<true>();
         PackageManagerCommand::handle_load_lockfile_errors_for(&load_lockfile, log_level, "list");
-        // SAFETY: `pm_raw` derived from `pm` above; `update_lockfile_if_needed`
-        // reads `load_result.serializer_result` (no `ok.lockfile` deref) and
-        // writes through `manager.lockfile`, which is the same heap allocation
-        // `load_lockfile` borrows but is never dereferenced via `load_lockfile`
-        // here.
-        unsafe { update_lockfile_if_needed(&mut *pm_raw, &load_lockfile)? };
+        update_lockfile_if_needed(pm, &load_lockfile)?;
 
-        // SAFETY: `load_lockfile` is not used past this point; `pm_raw` is the
-        // only path to the singleton for the rest of this fn (same as the
-        // original `pm`).
-        let pm: &mut PackageManager = unsafe { &mut *pm_raw };
-        let log: &mut bun_ast::Log = pm.log_mut();
-        let lockfile: &Lockfile = &pm.lockfile;
+        let PackageManager {
+            lockfile,
+            log,
+            options,
+            ..
+        } = &mut *pm;
+        let lockfile: &Lockfile = lockfile;
+        let options: &bun_install::package_manager_real::Options = options;
 
         let packages = lockfile.packages.slice();
         let scripts: &[Scripts] = packages.items_scripts();
@@ -97,7 +89,7 @@ impl UntrustedCommand {
             let alias = dep.name.slice(buf);
             let pkg_name = packages.items_name()[package_id as usize].slice(buf);
             let resolution = &resolutions[package_id as usize];
-            if !lockfile.has_trusted_dependency(alias, pkg_name, resolution) {
+            if !lockfile.has_trusted_dependency(options, alias, pkg_name, resolution) {
                 untrusted_dep_ids.put(dep_id, ())?;
             }
         }
@@ -143,6 +135,7 @@ impl UntrustedCommand {
                 let _ = node_modules_path.append(alias);
 
                 let result = package_scripts.get_list(
+                    options,
                     log,
                     lockfile,
                     &mut node_modules_path,
@@ -238,11 +231,7 @@ impl TrustCommand {
         }
     }
 
-    pub(crate) fn exec(
-        ctx: Command::Context,
-        pm: &mut PackageManager,
-        args: &[&[u8]],
-    ) -> crate::Result<()> {
+    pub(crate) fn exec(pm: &mut PackageManager, args: &[&[u8]]) -> crate::Result<()> {
         bun_core::pretty_error!(
             "<r><b>bun pm trust <r><d>v{}<r>\n",
             Global::package_json_version_with_sha,
@@ -253,25 +242,10 @@ impl TrustCommand {
             Self::error_expected_args();
         }
 
-        // Reshaped for borrowck — see `UntrustedCommand::exec`.
-        // `load_lockfile` lives until `save_to_disk` near the end, so every
-        // `pm`/`pm.lockfile` access in between goes through `pm_raw`.
-        let pm_raw: *mut PackageManager = pm;
         let log_level = pm.options.log_level;
-        let load_lockfile = pm.load_lockfile_from_cwd::<true>();
+        let load_lockfile = pm.load_lockfile_from_cwd_detached::<true>();
         PackageManagerCommand::handle_load_lockfile_errors_for(&load_lockfile, log_level, "trust");
-        // `update_lockfile_if_needed` consumes `LoadResult` but we
-        // need it again for `save_to_disk`; inline the body (it only flips
-        // `meta.has_install_script` when `packages_need_update`).
-        if matches!(&load_lockfile, LoadResult::Ok(ok) if ok.serializer_result.packages_need_update)
-        {
-            // SAFETY: `pm_raw` derived from `pm` above; `load_lockfile` is not
-            // dereferenced concurrently. See `update_lockfile_if_needed`.
-            let mut slice = unsafe { (*pm_raw).lockfile.packages.slice() };
-            for meta in slice.items_meta_mut() {
-                meta.set_has_install_script(false);
-            }
-        }
+        update_lockfile_if_needed(pm, &load_lockfile)?;
 
         let mut packages_to_trust: Vec<&[u8]> = Vec::with_capacity(args[2..].len());
         for arg in &args[2..] {
@@ -286,10 +260,16 @@ impl TrustCommand {
             Self::error_expected_args();
         }
 
-        // SAFETY: `pm_raw` is the singleton; `pm.log` set at init, non-null.
-        let log: *mut bun_ast::Log = unsafe { (*pm_raw).log };
-        // SAFETY: `pm_raw` singleton; read-only `lockfile` borrow for the discovery phase.
-        let lockfile: &Lockfile = unsafe { &*(*pm_raw).lockfile };
+        // Discovery phase: the lockfile and options read-only, the log for
+        // `get_list` diagnostics.
+        let PackageManager {
+            lockfile,
+            log,
+            options,
+            ..
+        } = &mut *pm;
+        let lockfile: &Lockfile = lockfile;
+        let options: &bun_install::package_manager_real::Options = options;
 
         let buf = lockfile.buffers.string_bytes.as_slice();
         let packages = lockfile.packages.slice();
@@ -318,7 +298,7 @@ impl TrustCommand {
             let alias = dep.name.slice(buf);
             let pkg_name = packages.items_name()[package_id as usize].slice(buf);
             let resolution = &resolutions[package_id as usize];
-            if !lockfile.has_trusted_dependency(alias, pkg_name, resolution) {
+            if !lockfile.has_trusted_dependency(options, alias, pkg_name, resolution) {
                 untrusted_dep_ids.put(dep_id, ())?;
             }
         }
@@ -375,9 +355,9 @@ impl TrustCommand {
                 let folder_saved = node_modules_path.len();
                 let _ = node_modules_path.append(alias);
 
-                // SAFETY: `log` derived from `pm.log`; single-threaded CLI.
                 let result = package_scripts.get_list(
-                    unsafe { &mut *log },
+                    options,
+                    log,
                     lockfile,
                     &mut node_modules_path,
                     alias,
@@ -400,6 +380,7 @@ impl TrustCommand {
                         for package_name_from_cli in &packages_to_trust {
                             if strings::eql_long(package_name_from_cli, alias, true)
                                 && !lockfile.has_trusted_dependency(
+                                    options,
                                     alias,
                                     packages.items_name()[package_id as usize].slice(buf),
                                     resolution,
@@ -439,22 +420,15 @@ impl TrustCommand {
             Global::crash();
         }
 
-        let mut scripts_node: Progress::Node;
-        // SAFETY: `pm_raw` singleton; `progress` is owned inline.
-        let show_progress = unsafe { (*pm_raw).options.log_level.show_progress() };
+        let show_progress = pm.options.log_level.show_progress();
 
         if show_progress {
-            // SAFETY: see above; `progress.start()` returns `&mut root` which is
-            // immediately consumed by `Node::start` (returns an owned `Node`
-            // with raw backrefs into `pm.progress`).
-            unsafe {
-                (*pm_raw).progress.supports_ansi_escape_codes = Output::enable_ansi_colors_stderr();
-                scripts_node = (*pm_raw)
-                    .progress
-                    .start(b"", 0)
-                    .start(ProgressStrings::script(), scripts_count);
-                (*pm_raw).scripts_node = Some(NonNull::from(&mut scripts_node));
-            }
+            pm.progress.supports_ansi_escape_codes = Output::enable_ansi_colors_stderr();
+            let scripts_node = pm
+                .progress
+                .start(b"", 0)
+                .start(ProgressStrings::script(), scripts_count);
+            pm.scripts_node = Some(scripts_node);
         }
 
         // `scripts_at_depth.values()` is taken twice (run, then
@@ -467,14 +441,12 @@ impl TrustCommand {
                     continue;
                 }
 
-                // SAFETY: `pm_raw` singleton; `options` is CLI config set at init.
-                let max_concurrent = unsafe { (*pm_raw).options.max_concurrent_lifecycle_scripts };
+                let max_concurrent = pm.options.max_concurrent_lifecycle_scripts;
                 while LifecycleScriptSubprocess::alive_count().load(Ordering::Relaxed)
                     >= max_concurrent
                 {
-                    // SAFETY: `pm_raw` singleton; `options.log_level` is CLI config set at init.
-                    if unsafe { (*pm_raw).options.log_level.is_verbose() }
-                        && PackageManager::has_enough_time_passed_between_waiting_messages()
+                    if pm.options.log_level.is_verbose()
+                        && pm.has_enough_time_passed_between_waiting_messages()
                     {
                         bun_core::pretty_errorln!(
                             "<d>[PackageManager]<r> waiting for {} scripts\n",
@@ -482,106 +454,71 @@ impl TrustCommand {
                         );
                     }
 
-                    // SAFETY: `pm_raw` singleton.
-                    unsafe { (*pm_raw).sleep() };
+                    pm.sleep();
                 }
 
                 let output_in_foreground = false;
                 let optional = false;
-                // SAFETY: `pm_raw` singleton; `ctx` is the CLI `&mut ContextData`.
-                unsafe {
-                    (*pm_raw).spawn_package_lifecycle_scripts(
-                        &mut *ctx,
-                        info.scripts_list.clone(),
-                        optional,
-                        output_in_foreground,
-                        None,
-                    )?;
-                }
+                pm.spawn_package_lifecycle_scripts(
+                    info.scripts_list.clone(),
+                    optional,
+                    output_in_foreground,
+                    None,
+                )?;
 
-                // SAFETY: `pm_raw` singleton; `options.log_level` is CLI config set at init.
-                if unsafe { (*pm_raw).options.log_level.show_progress() } {
-                    // SAFETY: `scripts_node` initialized above when
-                    // `show_progress` was true at the same `log_level`.
-                    if let Some(sn) = unsafe { (*pm_raw).scripts_node } {
-                        // SAFETY: points at our stack-local `scripts_node`.
-                        unsafe { sn.as_ptr().as_mut().unwrap().activate() };
+                if pm.options.log_level.show_progress() {
+                    if let Some(sn) = pm.scripts_node.as_mut() {
+                        sn.activate();
                     }
-                    // SAFETY: `pm_raw` singleton; `progress` owned inline by `pm`.
-                    unsafe { (*pm_raw).progress.refresh() };
+                    pm.progress.refresh();
                 }
             }
 
-            // SAFETY: `pm_raw` singleton.
-            while unsafe {
-                (*pm_raw)
-                    .pending_lifecycle_script_tasks
-                    .load(Ordering::Relaxed)
-            } > 0
-            {
-                // SAFETY: `pm_raw` singleton; `sleep()` ticks the event loop on the CLI thread.
-                unsafe { (*pm_raw).sleep() };
+            while pm.pending_lifecycle_script_tasks.load(Ordering::Relaxed) > 0 {
+                pm.sleep();
             }
         }
 
         if show_progress {
-            // SAFETY: `pm_raw` singleton.
-            unsafe {
-                (*pm_raw).progress.root.end();
-                (*pm_raw).progress = Progress::Progress::default();
-                (*pm_raw).scripts_node = None;
-            }
+            pm.progress.root.end();
+            pm.progress = Progress::Progress::default();
+            pm.scripts_node = None;
         }
 
-        // SAFETY: `pm_raw` singleton; this scope takes over the descriptor
-        // (the original `pm.root_package_json_file` is replaced with INVALID so
-        // its eventual drop is a no-op).
-        let root_file = unsafe {
-            let fd = (*pm_raw).root_package_json_file.handle;
-            (*pm_raw).root_package_json_file.handle = bun_core::Fd::INVALID;
+        // This scope takes over the descriptor (the original
+        // `pm.root_package_json_file` is replaced with INVALID so its eventual
+        // drop is a no-op).
+        let root_file = {
+            let fd = pm.root_package_json_file.handle;
+            pm.root_package_json_file.handle = bun_core::Fd::INVALID;
             bun_sys::File::from_fd(fd)
         };
         let package_json_contents = root_file.read_to_end().map_err(crate::Error::from)?;
 
-        // SAFETY: `ROOT_PACKAGE_JSON_PATH` is set during `PackageManager::init`
-        // (single-threaded startup) and immutable thereafter.
         let package_json_source = bun_ast::Source::init_path_string(
-            unsafe { ROOT_PACKAGE_JSON_PATH.read() }.as_bytes(),
+            root_package_json_path().as_bytes(),
             package_json_contents.as_slice(),
         );
 
         let bump = Bump::new();
-        // SAFETY: `ctx.log` set by `Command::init`, non-null for the command.
-        // Layering: `parse_utf8` returns the T2
-        // `bun_ast::Expr`; `PackageJSONEditor` and
-        // `js_printer::print_json` consume the T4 `bun_ast::Expr`. Lift
-        // once via `From<T2> for T4` (same as `updatePackageJSONAndInstall` /
-        // `pack_command`).
-        let mut package_json: bun_ast::Expr = match bun_parsers::json::parse_utf8(
-            &package_json_source,
-            unsafe { ctx.log_mut() },
-            &bump,
-        ) {
-            Ok(v) => v,
-            Err(err) => {
-                let _ = ctx
-                    .log_ref()
-                    .print(std::ptr::from_mut(Output::error_writer()));
+        // `ctx.log` is the manager's log (`PackageManager::init`).
+        let mut package_json: bun_ast::Expr =
+            match bun_parsers::json::parse_utf8(&package_json_source, &mut pm.log, &bump) {
+                Ok(v) => v,
+                Err(err) => {
+                    let _ = pm.log.print(std::ptr::from_mut(Output::error_writer()));
 
-                Output::err_generic("failed to parse package.json: {s}", (err.name(),));
-                Global::crash();
-            }
-        };
+                    Output::err_generic("failed to parse package.json: {s}", (err.name(),));
+                    Global::crash();
+                }
+            };
 
         // now add the package names to lockfile.trustedDependencies and package.json `trustedDependencies`
         debug_assert!(!package_names_to_add.keys().is_empty());
 
         // could be null if these are the first packages to be trusted
-        // SAFETY: `pm_raw` singleton; mutates `lockfile.trusted_dependencies`.
-        unsafe {
-            if (*pm_raw).lockfile.trusted_dependencies.is_none() {
-                (*pm_raw).lockfile.trusted_dependencies = Some(Default::default());
-            }
+        if pm.lockfile.trusted_dependencies.is_none() {
+            pm.lockfile.trusted_dependencies = Some(Default::default());
         }
 
         let mut total_scripts_ran: usize = 0;
@@ -590,8 +527,7 @@ impl TrustCommand {
 
         Output::print(format_args!("\n"));
 
-        // SAFETY: `pm_raw` singleton; read-only borrow for printing.
-        let lockfile: &Lockfile = unsafe { &*(*pm_raw).lockfile };
+        let lockfile: &Lockfile = &pm.lockfile;
         let buf = lockfile.buffers.string_bytes.as_slice();
         for entry in scripts_at_depth.values().iter().rev() {
             for info in entry.iter() {
@@ -616,32 +552,13 @@ impl TrustCommand {
         )?;
 
         for name in package_names_to_add.keys() {
-            // SAFETY: `pm_raw` singleton; `trusted_dependencies` set Some above.
-            unsafe {
-                (*pm_raw)
-                    .lockfile
-                    .trusted_dependencies
-                    .as_mut()
-                    .unwrap()
-                    .put(
-                        bun_semver::string::Builder::string_hash(name)
-                            as install::TruncatedPackageNameHash,
-                        Box::<[u8]>::from(&**name),
-                    )?;
-            }
+            pm.lockfile.trusted_dependencies.as_mut().unwrap().put(
+                bun_semver::string::Builder::string_hash(name) as install::TruncatedPackageNameHash,
+                Box::<[u8]>::from(&**name),
+            )?;
         }
 
-        // Reshaped for borrowck — `save_to_disk` needs `&mut Lockfile`
-        // and `&LoadResult` simultaneously, but `LoadResultOk.lockfile` already
-        // holds the only `&mut`. Same projection pattern as `migrate` in
-        // `package_manager_command.rs`.
-        // SAFETY: `load_lockfile` is `Ok` (errors exited in
-        // `handle_load_lockfile_errors`). `save_to_disk` reads `load_result`
-        // only for `save_format()` (scalar `format`/`migrated` fields).
-        unsafe {
-            let lf: *mut Lockfile = &raw mut *(*pm_raw).lockfile;
-            (*lf).save_to_disk(&load_lockfile, &(*pm_raw).options);
-        }
+        pm.lockfile.save_to_disk(&load_lockfile, &pm.options);
 
         let mut buffer_writer = bun_js_printer::BufferWriter::init();
         buffer_writer.buffer.list.reserve(

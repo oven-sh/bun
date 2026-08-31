@@ -406,9 +406,10 @@ fn take_manifest_error(msgs: &mut Vec<bun_ast::Msg>, name: &[u8]) -> (Box<[u8]>,
     )
 }
 
-fn print_manifest_unavailable(manager: &PackageManager, items: &[ManifestUnavailable]) {
-    let log = manager.log_mut();
-    if manager.options.log_level == LogLevel::Silent {
+fn print_manifest_unavailable(manager: &mut PackageManager, items: &[ManifestUnavailable]) {
+    let silent = manager.options.log_level == LogLevel::Silent;
+    let log = &mut manager.log;
+    if silent {
         log.reset();
         return;
     }
@@ -626,12 +627,18 @@ pub fn plan_fixes(manager: &mut PackageManager, advisories: &[Advisory]) -> crat
         .set(Enable::MANIFEST_CACHE_CONTROL, false);
     let ids: Vec<PackageID> = instances.iter().map(|inst| inst.pkg_id).collect();
     populate_manifest_cache::populate_manifest_cache(manager, Packages::Exact(&ids))?;
-    let log_msgs = &mut manager.log_mut().msgs;
-
     let cache_ctx = manager.manifest_disk_cache_ctx();
-    let min_age = manager.options.minimum_release_age_ms;
-    let excludes = manager.options.minimum_release_age_excludes;
-    let buf = manager.lockfile.buffers.string_bytes.as_slice();
+    let PackageManager {
+        log,
+        options,
+        lockfile,
+        manifests,
+        ..
+    } = &mut *manager;
+    let log_msgs = &mut log.msgs;
+    let min_age = options.minimum_release_age_ms;
+    let excludes = options.minimum_release_age_excludes;
+    let buf = lockfile.buffers.string_bytes.as_slice();
 
     let mut fixes: Vec<PlannedFix> = Vec::new();
     let mut blocked: Vec<BlockedFix> = Vec::new();
@@ -643,8 +650,8 @@ pub fn plan_fixes(manager: &mut PackageManager, advisories: &[Advisory]) -> crat
 
     for inst in instances {
         let mut expired = false;
-        let scope = manager.options.scope_for_package_name(&inst.name);
-        let Some(manifest) = manager.manifests.by_name_allow_expired(
+        let scope = options.scope_for_package_name(&inst.name);
+        let Some(manifest) = manifests.by_name_allow_expired(
             cache_ctx,
             scope,
             &inst.name,

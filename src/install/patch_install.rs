@@ -3,6 +3,7 @@ use crate::lockfile::package::PackageColumns as _;
 use bstr::BStr;
 
 use bun_ast::{Loc, Log};
+use bun_core::StringOrTinyString;
 use bun_core::ZBox;
 use bun_core::{Global, Output};
 use bun_core::{ZStr, strings};
@@ -10,7 +11,6 @@ use bun_paths::{self as path, PathBuffer};
 use bun_resolver::fs::FileSystem;
 use bun_semver::String as SemverString;
 use bun_sys::{self as sys, Fd, FdExt};
-use bun_threading::IntrusiveWorkTask as _;
 use bun_threading::thread_pool::{Batch, Node as ThreadPoolNode, Task as ThreadPoolTask};
 
 use crate::package_install::PackageInstall;
@@ -33,14 +33,9 @@ type BuntagHashBuf = [u8; MAX_BUNTAG_HASH_BUF_LEN];
 // `Dir::borrow(&fd)` where a `&Dir` is needed.
 
 pub struct PatchTask {
-    /// BACKREF. Stored as `BackRef` because the task
-    /// is held via raw pointer through the intrusive thread-pool queue while
-    /// the manager is concurrently borrowed `&mut` on the main thread; a `&`
-    /// reference here would alias that exclusive borrow under Stacked Borrows.
-    /// Constructed via `BackRef::new_mut` so the underlying pointer carries
-    /// write provenance for `PackageManager::wake_raw(*mut Self)`, which
-    /// writes the event-loop wake flag.
-    pub(crate) manager: bun_ptr::BackRef<PackageManager, bun_ptr::Mut>,
+    /// Read-only on the worker (lockfile strings, `shared`); the manager is
+    /// leaked for the process and outlives every task.
+    pub(crate) manager: bun_ptr::BackRef<PackageManager>,
     /// Borrowed view of the manager's temp directory fd (see comment at top of file).
     pub(crate) tempdir: Fd,
     pub(crate) project_dir: &'static [u8],
@@ -50,16 +45,8 @@ pub struct PatchTask {
     pub(crate) next: bun_threading::Link<PatchTask>,
 }
 
-bun_threading::intrusive_work_task!(PatchTask, task);
-
-// SAFETY: `next` is the sole intrusive link for `UnboundedQueue(PatchTask, .next)`.
-unsafe impl bun_threading::Linked for PatchTask {
-    #[inline]
-    unsafe fn link(item: *mut Self) -> *const bun_threading::Link<Self> {
-        // SAFETY: `item` is valid and properly aligned per `UnboundedQueue` contract.
-        unsafe { core::ptr::addr_of!((*item).next) }
-    }
-}
+bun_threading::owned_task!(PatchTask, task);
+bun_threading::intrusive_linked!(PatchTask, next);
 
 #[derive(strum::IntoStaticStr)]
 pub enum Callback {
@@ -135,51 +122,27 @@ pub struct InstallContext {
 }
 
 impl PatchTask {
-    /// # Safety
-    /// Only invoked by `ThreadPool` via the `callback` fn-pointer registered in
-    /// `new_calc_patch_hash` / `new_apply_patch_hash`. `task` must be live and
-    /// point at the `task` field of a heap-allocated `PatchTask`, with the pool
-    /// granting exclusive access for the duration of the call.
-    pub(crate) unsafe fn run_from_thread_pool(task: *mut ThreadPoolTask) {
-        // SAFETY: thread-pool callback contract — `task` points to the `task`
-        // field of a live `PatchTask` (set at construction); the pool runs
-        // each task at most once with exclusive access for the call.
-        let patch_task = unsafe { &mut *PatchTask::from_task_ptr(task) };
-        patch_task.run_from_thread_pool_impl();
-    }
-
-    pub(crate) fn run_from_thread_pool_impl(&mut self) {
+    /// Thread-pool entry point: run, then hand the task back to the main thread.
+    fn run_owned(mut self: Box<Self>) {
         bun_output::scoped_log!(
             InstallPatch,
-            "runFromThreadPoolImpl {}",
+            "run_owned {}",
             <&'static str>::from(&self.callback)
         );
-        // There are no early returns in the body, so the ordering
-        // (body → push → wake) is inlined below.
         match &mut self.callback {
             Callback::CalcHash(_) => {
                 let result = self.calc_hash();
                 if let Callback::CalcHash(ch) = &mut self.callback {
                     ch.result = result;
                 }
-                // Reshaped for borrowck — `calc_hash` borrows `&mut self`, so we
-                // cannot hold a `&mut ch` across the call.
             }
             Callback::Apply(_) => {
                 bun_core::handle_oom(self.apply());
             }
         }
-        let mgr = self.manager.as_ptr();
-        // SAFETY: `self.manager` is a long-lived BACKREF;
-        // the worker thread only touches the lock-free `patch_task_queue` and the
-        // event-loop wake atomics, neither of which alias data the main thread
-        // holds an exclusive borrow on.
-        unsafe {
-            (*mgr)
-                .patch_task_queue
-                .push(core::ptr::NonNull::from(&mut *self));
-            PackageManager::wake_raw(mgr);
-        }
+        let shared = self.manager.get().shared;
+        shared.patch_task_queue.push(self);
+        shared.wake();
     }
 
     pub(crate) fn run_from_main_thread(
@@ -305,19 +268,13 @@ impl PatchTask {
                         BStr::new(pkg_name.slice(&manager.lockfile.buffers.string_bytes))
                     );
 
-                    // SAFETY: every `Resolution` `Value` payload is `Copy`
-                    // POD and the union is zero-initialized (see the union
-                    // accessors in resolution.rs), so reading `.npm.version`
-                    // yields initialized bytes even when the active variant
-                    // is not `npm` — possibly stale, never uninit. This arm
-                    // is reachable for non-npm resolutions too (git/github/
-                    // tarball; see the TODO below), which then read garbage
-                    // version bytes into the task id, not UB.
-                    let pkg_npm_version = unsafe {
-                        manager.lockfile.packages.items_resolution()[pkg_id as usize]
-                            .value
-                            .npm
-                            .version
+                    let pkg_npm_version = {
+                        let res = &manager.lockfile.packages.items_resolution()[pkg_id as usize];
+                        if res.tag == crate::resolution_real::Tag::Npm {
+                            res.npm().version
+                        } else {
+                            bun_semver::Version::default()
+                        }
                     };
                     let task_id =
                         TaskId::for_npm_package(manager.lockfile.str(&pkg_name), pkg_npm_version);
@@ -327,16 +284,18 @@ impl PatchTask {
                         .behavior
                         .is_required();
                     let pkg_again: Package = *manager.lockfile.packages.get(pkg_id as usize);
-                    let network_task: *mut crate::NetworkTask =
+                    let network_task: Box<crate::NetworkTask> =
                         match package_manager::generate_network_task_for_tarball(
                             manager,
                             // TODO: not just npm package
                             task_id,
-                            url,
+                            StringOrTinyString::init_append_if_needed(
+                                url,
+                                &mut crate::network_task::filename_store_appender(),
+                            )?,
                             is_required,
                             dep_id,
                             &pkg_again,
-                            Some(name_and_version_hash),
                             match pkg_resolution_tag {
                                 crate::resolution_real::Tag::Npm => {
                                     Authorization::AllowAuthorization
@@ -388,7 +347,6 @@ impl PatchTask {
         };
         let log = &mut patch.logger;
         bun_output::scoped_log!(InstallPatch, "apply patch task");
-        // bun.assert(this.callback == .apply) — enforced by the match above.
 
         let dir = self.project_dir;
         let patchfile_path = &patch.patchfilepath;
@@ -462,36 +420,32 @@ impl PatchTask {
 
         // 3. copy the unpatched files into temp dir
         let cache_dir_subpath_z: &ZStr = patch.cache_dir_subpath_without_patch_hash.as_zstr();
-        // Borrowck — `tempdir_name` borrows `tmpname_buf` mutably, but
-        // `PackageInstall` also wants `&mut tmpname_buf[..]` for
-        // `destination_dir_subpath_buf`. `PackageInstall` assumes
-        // `destination_dir_subpath` is a prefix slice *into*
-        // `destination_dir_subpath_buf` (see `verifyGitResolution` /
-        // `verifyPackageJSONNameAndVersion`), and that aliasing can't be
-        // expressed with `&ZStr` + `&mut [u8]`, so use a separate buffer but
-        // mirror the prefix bytes so the invariant holds for any future call
-        // that reaches those paths.
+        // `tempdir_name` borrows `tmpname_buf`, and `PackageInstall` wants its
+        // own `destination_dir_subpath_buf` whose first
+        // `destination_dir_subpath_len` bytes are the subpath, so copy the name
+        // into a separate buffer.
         let mut dest_subpath_buf = [0u8; 1024];
         dest_subpath_buf[..tempdir_name.len() + 1]
             .copy_from_slice(tempdir_name.as_bytes_with_nul());
-        // Not `self.manager()` — `&mut self.callback` is live.
-        // BACKREF — read-only lockfile access while the task runs off-thread.
-        let lockfile = &self.manager.get().lockfile;
+        let manager = self.manager.get();
+        let lockfile = &manager.lockfile;
         let mut pkg_install = PackageInstall {
             cache_dir: patch.cache_dir,
             cache_dir_subpath: cache_dir_subpath_z,
-            destination_dir_subpath: tempdir_name,
+            destination_dir_subpath_len: tempdir_name.len(),
             destination_dir_subpath_buf: &mut dest_subpath_buf[..],
             patch: None,
-            progress: None,
             package_name: pkg_name,
             package_version: &resolution_label,
             // dummy value
             node_modules: &dummy_node_modules,
-            lockfile,
         };
 
         match pkg_install.install(
+            crate::package_install::InstallEnv::Worker {
+                lockfile,
+                thread_pool: &manager.thread_pool,
+            },
             true,
             sys::Dir::borrow(&system_tmpdir),
             InstallMethod::Copyfile,
@@ -707,8 +661,8 @@ impl PatchTask {
         Some(u64::from_le_bytes(digest[0..8].try_into().unwrap()))
     }
 
-    pub(crate) fn schedule(&mut self, batch: &mut Batch) {
-        batch.push(Batch::from(&raw mut self.task));
+    pub(crate) fn schedule(self: Box<Self>, batch: &mut Batch) {
+        batch.push_owned(self);
     }
 
     pub(crate) fn new_calc_patch_hash(
@@ -736,11 +690,11 @@ impl PatchTask {
                 result: None,
                 logger: Log::init(),
             }),
-            manager: bun_ptr::BackRef::new_mut(manager),
+            manager: bun_ptr::BackRef::new(manager),
             project_dir: FileSystem::instance().top_level_dir(),
             task: ThreadPoolTask {
                 node: ThreadPoolNode::default(),
-                callback: Self::run_from_thread_pool,
+                callback: <Self as bun_threading::work_pool::OwnedTask>::__callback,
             },
             pre: false,
             next: bun_threading::Link::new(),
@@ -789,8 +743,6 @@ impl PatchTask {
         let patch_hash_idx = strings::index_of(cache_dir_subpath_bytes, b"_patch_hash=")
             .unwrap_or_else(|| panic!("This is a bug in Bun."));
 
-        // need to dupe this as it's calculated using
-        // `PackageManager.cached_package_folder_name_buf` which may be modified
         let cache_dir_subpath = ZBox::from_bytes(cache_dir_subpath_bytes);
         let cache_dir_subpath_without_patch_hash =
             ZBox::from_bytes(&cache_dir_subpath_bytes[..patch_hash_idx]);
@@ -811,11 +763,11 @@ impl PatchTask {
                 task_id: None,
                 install_context: None,
             }),
-            manager: bun_ptr::BackRef::new_mut(pkg_manager),
+            manager: bun_ptr::BackRef::new(pkg_manager),
             project_dir: FileSystem::instance().top_level_dir(),
             task: ThreadPoolTask {
                 node: ThreadPoolNode::default(),
-                callback: Self::run_from_thread_pool,
+                callback: <Self as bun_threading::work_pool::OwnedTask>::__callback,
             },
             pre: false,
             next: bun_threading::Link::new(),

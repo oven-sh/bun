@@ -35,14 +35,14 @@ pub struct ExtractTarball {
     pub(crate) dependency_id: DependencyID,
     pub(crate) skip_verify: bool, // = false
     pub(crate) in_trusted_dependencies: bool,
-    pub(crate) integrity: Integrity, // = Integrity::default()
+    pub(crate) integrity: Integrity,
     pub(crate) url: StringOrTinyString,
     /// The lockfile's bun-tag (`repository.resolved`) for a Github resolution,
     /// copied out because extract workers must not read lockfile buffers. When
     /// set it names the cache folder and `.bun-tag` (cache lookups are keyed by
     /// it); empty on a fresh resolve, which uses the archive's root dir name.
     pub(crate) github_resolved: StringOrTinyString,
-    /// BACKREF: PackageManager owns the task pool that owns this struct.
+    /// The manager outlives every task that carries this.
     pub(crate) package_manager: bun_ptr::BackRef<PackageManager>,
 }
 
@@ -171,8 +171,8 @@ struct TlBufs {
 }
 
 thread_local! {
-    // bun.ThreadlocalBuffers: lazily heap-allocate so only a Box pointer lives in TLS
-    // (keeps PT_TLS MemSiz small — see test/js/bun/binary/tls-segment-size).
+    // Heap-allocated so only a Box pointer lives in TLS (keeps PT_TLS MemSiz
+    // small — see test/js/bun/binary/tls-segment-size).
     static TL_BUFS: RefCell<Box<TlBufs>> = RefCell::new(Box::new(TlBufs {
         final_path_buf: PathBuffer::ZEROED,
         folder_name_buf: PathBuffer::ZEROED,
@@ -286,7 +286,6 @@ impl ExtractTarball {
             use bun_libarchive::Archiver;
             let mut zlib_pool = Npm::Registry::BodyPool::get();
             zlib_pool.reset();
-            // `defer Npm.Registry.BodyPool.release(zlib_pool)` → PoolGuard's Drop releases.
 
             let time_started_for_verbose_logs: u64 = if PackageManager::verbose_install() {
                 bun_core::Timespec::now_allow_mocked_time().ns()
@@ -786,7 +785,7 @@ impl ExtractTarball {
                     }
                 };
                 json_buf = buf;
-                // `defer json_file.close()` → close after resolving path.
+                // Closed after resolving its path.
                 json_path = match json_file.get_path(&mut bufs.json_path_buf) {
                     Ok(p) => p,
                     Err(err) => {
@@ -870,9 +869,6 @@ impl ExtractTarball {
 
             let ret_json_path = FileSystem::instance().dirname_store().append(json_path)?;
 
-            // Lands in `Task.data.*` (untagged `ManuallyDrop` union); freed by
-            // `Task::deinit_payload()` at the `runTasks.rs` re-pool site, which
-            // calls it before `preallocated_resolve_tasks.put()`.
             Ok(ExtractData {
                 url: url.into(),
                 resolved: resolved.into(),

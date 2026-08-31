@@ -44,7 +44,7 @@ pub fn assign_root_resolution(
 
 impl PackageManager {
     pub(crate) fn format_later_version_in_cache(
-        &mut self,
+        &self,
         package_name: &[u8],
         name_hash: PackageNameHash,
         resolution: &Resolution,
@@ -57,16 +57,7 @@ impl PackageManager {
                     return None;
                 }
 
-                // reshaped for borrowck —
-                // `this.manifests.byNameHash(this, …, .load_from_memory, …)`
-                // would require simultaneous `&mut self.manifests`
-                // (receiver) and `&mut self` (arg). The memory-only path touches
-                // nothing on `PackageManager` besides the map, so use the
-                // disjoint-borrow helper and read `self.options` / `self.lockfile`
-                // alongside the held `&mut self.manifests` field borrow.
-                let manifest = self
-                    .manifests
-                    .by_name_hash_in_memory(package_name, name_hash)?;
+                let manifest = self.manifests.in_memory(package_name, name_hash)?;
 
                 if let Some(latest_version) = manifest
                     .find_by_dist_tag_with_filter(
@@ -251,7 +242,6 @@ impl PackageManager {
     }
 
     pub(crate) fn assign_resolution(&mut self, dependency_id: DependencyID, package_id: PackageID) {
-        // reshaped for borrowck — capture lengths before mutable borrows.
         debug_assert!(
             (dependency_id as usize) < self.lockfile.buffers.resolutions.as_slice().len()
         );
@@ -274,7 +264,6 @@ impl PackageManager {
         dependency_id: DependencyID,
         package_id: PackageID,
     ) {
-        // reshaped for borrowck — capture lengths before mutable borrows.
         debug_assert!(
             (dependency_id as usize) < self.lockfile.buffers.resolutions.as_slice().len()
         );

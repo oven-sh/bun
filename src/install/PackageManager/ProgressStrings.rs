@@ -88,29 +88,11 @@ impl ProgressStrings {
 }
 
 impl PackageManager {
-    pub(crate) fn set_node_name<const IS_FIRST: bool>(
-        &mut self,
-        node: &mut ProgressNode,
-        name: &[u8],
-        emoji: &[u8],
-    ) {
-        // SAFETY: `node` is `self.downloads_node` / `self.scripts_node`, both of
-        // which point at storage owned by (or outliving) this `PackageManager`
-        // singleton; `progress_name_buf` is an inline field of that same
-        // singleton, so the buffer outlives every node that references it and
-        // erasing the slice lifetime to `'static` is sound.
-        unsafe {
-            let len = if Output::enable_ansi_colors_stderr() {
-                if IS_FIRST {
-                    self.progress_name_buf[..emoji.len()].copy_from_slice(emoji);
-                }
-                self.progress_name_buf[emoji.len()..][..name.len()].copy_from_slice(name);
-                emoji.len() + name.len()
-            } else {
-                self.progress_name_buf[..name.len()].copy_from_slice(name);
-                name.len()
-            };
-            node.name = bun_ptr::detach_lifetime(&self.progress_name_buf[..len]);
+    pub(crate) fn set_node_name(node: &mut ProgressNode, name: &[u8], emoji: &[u8]) {
+        if Output::enable_ansi_colors_stderr() {
+            node.set_name_parts(&[emoji, name]);
+        } else {
+            node.set_name_parts(&[name]);
         }
     }
 
@@ -122,21 +104,20 @@ impl PackageManager {
 
     pub(crate) fn start_progress_bar(&mut self) {
         self.progress.supports_ansi_escape_codes = Output::enable_ansi_colors_stderr();
-        // `Progress::start` returns `&mut Node` borrowing `self.progress`;
-        // decay to a raw ptr immediately so the exclusive borrow ends before we
-        // re-borrow `&mut self` for `set_node_name` / `progress.refresh()`.
-        let node: *mut ProgressNode = self.progress.start(ProgressStrings::download(), 0);
+        let root = self.progress.start(b"", 0);
+        let node = root.start(ProgressStrings::download(), 0);
         self.downloads_node = Some(node);
-        self.set_node_name::<true>(
-            self.downloads_node_mut(),
+        let total_tasks = self.total_tasks;
+        let extracted_count = self.extracted_count;
+        let pending = self.pending_task_count();
+        let dn = self.downloads_node_mut();
+        Self::set_node_name(
+            dn,
             ProgressStrings::DOWNLOAD_NO_EMOJI_.as_bytes(),
             ProgressStrings::DOWNLOAD_EMOJI.as_bytes(),
         );
-        // `downloads_node` was just stashed above; route through the accessor
-        // (single unsafe site) instead of re-dereffing the raw `node` here.
-        let dn = self.downloads_node_mut();
-        dn.set_estimated_total_items((self.total_tasks + self.extracted_count) as usize);
-        dn.set_completed_items((self.total_tasks - self.pending_task_count()) as usize);
+        dn.set_estimated_total_items((total_tasks + extracted_count) as usize);
+        dn.set_completed_items((total_tasks - pending) as usize);
         dn.activate();
         self.progress.refresh();
     }
@@ -145,8 +126,6 @@ impl PackageManager {
         if self.downloads_node.is_none() {
             return;
         }
-        // Route through the accessor (single unsafe site) instead of a raw
-        // `(*downloads_node)` deref here.
         let dn = self.downloads_node_mut();
         let total = dn.unprotected_estimated_total_items.load(Ordering::Relaxed);
         dn.set_estimated_total_items(total);

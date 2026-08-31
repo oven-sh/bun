@@ -16,11 +16,9 @@ use bun_sys as Syscall;
 use crate::bun_fs::FileSystem;
 
 use super::directories;
-use crate::lifecycle_script_runner::{
-    InstallCtx, LifecycleScriptSubprocess as RealLifecycleScriptSubprocess,
-};
+use crate::lifecycle_script_runner::LifecycleScriptSubprocess as RealLifecycleScriptSubprocess;
 use crate::lockfile_real::package::scripts::List as ScriptsList;
-use crate::package_manager_real::Command;
+use crate::package_manager_real::run_tasks;
 use crate::resolution_real::Tag as ResolutionTag;
 use bun_install::lockfile::{Lockfile, Package};
 use bun_install::{PackageID, PackageManager, PreinstallState, invalid_package_id};
@@ -31,17 +29,14 @@ impl PackageManager {
             return;
         }
 
-        let offset = self.preinstall_state.len();
         self.preinstall_state
             .reserve(count.saturating_sub(self.preinstall_state.len()));
-        // expandToCapacity + @memset(.., .unknown)
         self.preinstall_state
             .resize(self.preinstall_state.capacity(), PreinstallState::Unknown);
-        let _ = offset; // resize already fills [offset..] with Unknown
     }
 
     /// A separate `lockfile` parameter would only feed `lockfile.packages.len` into
-    /// `ensurePreinstallStateListCapacity`. Every caller passes
+    /// `ensure_preinstall_state_list_capacity`. Every caller passes
     /// `self.lockfile` (or an alias of it), which would alias `&mut self`;
     /// `self.lockfile` is read directly instead to keep
     /// borrowck happy.
@@ -114,18 +109,17 @@ impl PackageManager {
                     break 'brk Some(patched_dep.patchfile_hash().unwrap());
                 };
 
-                // SAFETY: each arm reads the union variant that matches the
-                // `pkg.resolution.tag` just dispatched on; `Resolution` is
-                // zero-initialised (`Value::zero()`) so even a stale tag yields
-                // POD bytes, never uninit.
+                let mut folder_path_buf = bun_paths::PathBuffer::uninit();
                 let folder_path: &ZStr = match pkg.resolution.tag {
                     ResolutionTag::Git => directories::cached_git_folder_name_print_auto(
                         self,
+                        &mut folder_path_buf,
                         pkg.resolution.git(),
                         patch_hash,
                     ),
                     ResolutionTag::Github => directories::cached_github_folder_name_print_auto(
                         self,
+                        &mut folder_path_buf,
                         pkg.resolution.github(),
                         patch_hash,
                     ),
@@ -135,6 +129,7 @@ impl PackageManager {
                             .slice(self.lockfile.buffers.string_bytes.as_slice());
                         directories::cached_npm_package_folder_name(
                             self,
+                            &mut folder_path_buf,
                             name,
                             pkg.resolution.npm().version,
                             patch_hash,
@@ -142,11 +137,13 @@ impl PackageManager {
                     }
                     ResolutionTag::LocalTarball => directories::cached_tarball_folder_name(
                         self,
+                        &mut folder_path_buf,
                         *pkg.resolution.local_tarball(),
                         patch_hash,
                     ),
                     ResolutionTag::RemoteTarball => directories::cached_tarball_folder_name(
                         self,
+                        &mut folder_path_buf,
                         *pkg.resolution.remote_tarball(),
                         patch_hash,
                     ),
@@ -209,33 +206,18 @@ impl PackageManager {
         self.pending_lifecycle_script_tasks.load(Ordering::Relaxed) == 0
     }
 
-    pub(crate) fn tick_lifecycle_scripts(&mut self) {
-        // reshaped for borrowck — `self.event_loop.tick_once(self)`
-        // would borrow `self` twice. Erase `self` to a raw context pointer
-        // first; `tick_once` only forwards it opaquely to task callbacks.
-        let ctx = std::ptr::from_mut::<PackageManager>(self).cast::<core::ffi::c_void>();
-        self.event_loop.tick_once(ctx);
+    /// Run event-loop callbacks once without blocking, then finish any
+    /// lifecycle scripts that completed.
+    pub(crate) fn tick_lifecycle_scripts<C: run_tasks::RunTasksCtx + ?Sized>(ctx: &mut C) {
+        // See `sleep_until`: a script reaped while spawning has no loop event.
+        Self::drain_lifecycle_scripts(ctx);
+        ctx.manager().event_loop.tick_once(core::ptr::null_mut());
+        Self::drain_lifecycle_scripts(ctx);
     }
 
     pub fn sleep(&mut self) {
         self.report_slow_lifecycle_scripts();
-        Output::flush();
-        // see `tick_lifecycle_scripts` — `is_done` callback reborrows
-        // `self` (the struct that owns `event_loop`), so use the raw-pointer
-        // `tick_raw` variant which only holds `&mut event_loop` between
-        // `is_done` calls.
-        let ctx = std::ptr::from_mut::<PackageManager>(self).cast::<core::ffi::c_void>();
-        let event_loop = core::ptr::addr_of_mut!(self.event_loop);
-        // SAFETY: `event_loop` is valid for the duration; `is_done` reborrows
-        // `*ctx` only while no `&mut event_loop` is live (per `tick_raw` contract).
-        unsafe {
-            bun_event_loop::AnyEventLoop::tick_raw(event_loop, ctx, |ctx| {
-                // SAFETY: `ctx` is the `*mut PackageManager` erased above; live
-                // for the duration of `sleep`.
-                let this = bun_ptr::callback_ctx::<PackageManager>(ctx);
-                this.has_no_more_pending_lifecycle_scripts()
-            });
-        }
+        PackageManager::sleep_until(self, |this| this.has_no_more_pending_lifecycle_scripts());
     }
 
     pub(crate) fn report_slow_lifecycle_scripts(&mut self) {
@@ -250,8 +232,7 @@ impl PackageManager {
             return;
         }
 
-        let longest_running = self.active_lifecycle_scripts.peek();
-        if longest_running.is_null() {
+        if self.active_lifecycle_scripts.is_empty() {
             return;
         }
         if self.cached_tick_for_slow_lifecycle_script_logging == self.event_loop.iteration_number()
@@ -259,12 +240,13 @@ impl PackageManager {
             return;
         }
         self.cached_tick_for_slow_lifecycle_script_logging = self.event_loop.iteration_number();
-        // SAFETY: `peek()` returned a non-null intrusive heap node owned by
-        // `active_lifecycle_scripts`; only read for its `started_at` /
-        // `package_name` fields below.
-        let longest_running = unsafe { &*longest_running };
+        let longest_running = &**self
+            .active_lifecycle_scripts
+            .iter()
+            .min_by_key(|script| script.started_at.get())
+            .expect("non-empty");
         let current_time = bun_core::Timespec::now_allow_mocked_time().ns();
-        let time_running = current_time.saturating_sub(longest_running.started_at);
+        let time_running = current_time.saturating_sub(longest_running.started_at.get());
         const NS_PER_S: u64 = 1_000_000_000;
         let interval: u64 = if log_level.is_verbose() {
             NS_PER_S * 5
@@ -301,12 +283,11 @@ impl PackageManager {
         );
 
         let buf = self.lockfile.buffers.string_bytes.as_slice();
-        // need to clone because this is a copy before Lockfile.cleanWithLogger
+        // need to clone because this is a copy before Lockfile::clean_with_logger
         let name = root_package.name.slice(buf);
 
         // `AutoAbsPath` is the SEP=auto alias.
         let mut top_level_dir = AutoAbsPath::init_top_level_dir();
-        // `defer top_level_dir.deinit()` — handled by Drop
 
         if root_package.scripts.has_any() {
             let add_node_gyp_rebuild_script = root_package.scripts.install.is_empty()
@@ -338,11 +319,10 @@ impl PackageManager {
     /// TODO: re-evaluate whether some variables still need to be atomic
     pub fn spawn_package_lifecycle_scripts(
         &mut self,
-        ctx: Command::Context<'_>,
         list: ScriptsList,
         optional: bool,
         foreground: bool,
-        install_ctx: Option<InstallCtx<'_>>,
+        entry_id: Option<crate::isolated_install::store::entry::Id>,
     ) -> Result<(), crate::Error> {
         let log_level = self.options.log_level;
         let mut any_scripts = false;
@@ -362,21 +342,16 @@ impl PackageManager {
         // `cwd` out so the PATH builder can borrow it independently.
         let cwd_owned: Vec<u8> = list.cwd.as_bytes().to_vec();
         let cwd: &[u8] = &cwd_owned;
-        let this_transpiler = self.configure_env_for_scripts(ctx, log_level)?;
-
-        let env_loader = this_transpiler.env_mut();
+        let env_loader = self.configure_env_for_scripts()?;
         let mut script_env = env_loader.map.clone_with_allocator()?;
-        // `defer script_env.map.deinit()` — handled by Drop
 
         // `script_env.put` below needs `&mut`; copy PATH out so the
         // shared borrow does not span it.
         let original_path: Vec<u8> = script_env.get(b"PATH").unwrap_or(b"").to_vec();
 
-        // `EnvPathOptions` is currently fieldless.
         let mut path = EnvPath::init_capacity(
             original_path.len() + 1 + b"node_modules/.bin".len() + cwd.len() + 1,
         )?;
-        // `defer PATH.deinit()` — handled by Drop
 
         let mut parent: Option<&[u8]> = Some(cwd);
 
@@ -423,14 +398,7 @@ impl PackageManager {
         };
 
         RealLifecycleScriptSubprocess::spawn_package_scripts(
-            self,
-            list,
-            envp,
-            shell_bin,
-            optional,
-            log_level,
-            foreground,
-            install_ctx,
+            self, list, envp, shell_bin, optional, log_level, foreground, entry_id,
         )?;
         Ok(())
     }

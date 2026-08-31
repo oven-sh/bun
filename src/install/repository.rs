@@ -136,7 +136,8 @@ impl SloppyGlobalGitConfig {
 // once `RepositoryExt` is in scope.
 pub use bun_install_types::resolver_hooks::Repository;
 
-/// The environment every `git` the install spawns runs with (see `GitEnv::get`).
+/// The environment every `git` the install spawns runs with
+/// (`PackageManager::git_env`, built once on the install thread).
 pub(crate) struct GitEnv {
     /// `KEY=VALUE\0` array for spawn.
     pub(crate) envp: bun_dotenv::NullDelimitedEnvMap,
@@ -144,23 +145,8 @@ pub(crate) struct GitEnv {
     pub(crate) git: Option<ZBox>,
 }
 
-// Written once from the install thread (the only one that spawns git), then read-only.
-static GIT_ENV: bun_core::RacyCell<Option<GitEnv>> = bun_core::RacyCell::new(None);
-
 impl GitEnv {
-    pub(crate) fn get(loader: &mut bun_dotenv::Loader) -> &'static GitEnv {
-        let slot = GIT_ENV.get();
-        // SAFETY: only the install thread reaches this. The slot is written
-        // once, before any reference into it exists, and never reassigned.
-        unsafe {
-            if (*slot).is_none() {
-                *slot = Some(Self::init(loader));
-            }
-            (*slot).as_ref().unwrap()
-        }
-    }
-
-    fn init(loader: &mut bun_dotenv::Loader) -> GitEnv {
+    pub(crate) fn new(loader: &bun_dotenv::Loader) -> GitEnv {
         // No prompts by default: the install's own output would hide them.
         let mut map = bun_core::handle_oom(loader.map.clone_with_allocator());
 

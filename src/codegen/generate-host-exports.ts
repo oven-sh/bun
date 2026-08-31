@@ -145,7 +145,7 @@ function ptrify(ty: string): { cTy: string; deref: (n: string) => string; extraL
     };
   }
   // `Option<&CStr>` — C passes a nullable `const char*`.
-  if (/^Option\s*<\s*&\s*(?:(?:core|std)::ffi::)?CStr\s*>$/.test(ty)) {
+  if (/^Option\s*<\s*&\s*(?:'\w+\s+)?(?:(?:::)?(?:core|std)::ffi::)?CStr\s*>$/.test(ty)) {
     return {
       cTy: `*const c_char`,
       deref: n =>

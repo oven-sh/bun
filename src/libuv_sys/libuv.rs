@@ -3141,16 +3141,27 @@ struct SocketPollBox<T> {
 pub struct SocketPoll<T: SocketPollHandler>(ptr::NonNull<SocketPollBox<T>>);
 
 impl<T: SocketPollHandler> SocketPoll<T> {
-    /// `uv_poll_init_socket`; `Err` gives `data` back.
-    pub fn init(loop_: *mut Loop, socket: uv_os_sock_t, data: T) -> Result<Self, (c_int, T)> {
+    /// `uv_poll_init_socket`; `Err` is its status (`data` is dropped, once
+    /// libuv is done with the handle if it had already linked it).
+    pub fn init(loop_: *mut Loop, socket: uv_os_sock_t, data: T) -> Result<Self, c_int> {
         let boxed = Box::new(SocketPollBox {
             handle: UnsafeCell::new(bun_core::ffi::zeroed()),
             data,
         });
+        let handle = boxed.handle.get();
         // SAFETY: `handle` is a zeroed `uv_poll_t` at a stable heap address.
-        let rc = unsafe { uv_poll_init_socket(loop_, boxed.handle.get(), socket) };
+        let rc = unsafe { uv_poll_init_socket(loop_, handle, socket) };
         if rc < 0 {
-            return Err((rc, boxed.data));
+            // win/poll.c links the handle into the loop (`uv__handle_init`,
+            // which sets `type`) before the `getsockopt` that can still fail;
+            // a linked handle must leave through `uv_close`.
+            // SAFETY: `handle` is the zeroed-or-initialised `uv_poll_t` above.
+            if unsafe { (*handle).type_ } == HandleType::Poll {
+                let raw = Box::into_raw(boxed);
+                // SAFETY: initialised, not started; `close_cb` frees `raw`.
+                unsafe { uv_close(raw.cast::<uv_handle_t>(), Some(Self::close_cb)) };
+            }
+            return Err(rc);
         }
         Ok(SocketPoll(ptr::NonNull::from(Box::leak(boxed))))
     }

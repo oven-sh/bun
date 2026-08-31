@@ -1472,7 +1472,8 @@ describe.concurrent("bundler", () => {
       "/b.js": `export class Base { x() { console.log(1); return this; } }`,
     },
     dce: true,
-    dceKeepMarkerCount: false,
+    // `class Keep` and `new Keep()`
+    dceKeepMarkerCount: 2,
     run: {
       stdout: "1\n2",
     },
@@ -1631,7 +1632,6 @@ describe.concurrent("bundler", () => {
       `,
     },
     dce: true,
-    dceKeepMarkerCount: false,
     run: {
       stdout: `{"0":"FOO","1":"BAR","FOO":0,"BAR":1}`,
     },
@@ -1811,7 +1811,8 @@ describe.concurrent("bundler", () => {
     },
     format: "esm",
     dce: true,
-    dceKeepMarkerCount: false,
+    // keep1 and keep2: the two declarations, the two string literals, and the two calls
+    dceKeepMarkerCount: 6,
     run: {
       stdout: '["keep1",{"default":"keep2"}]',
     },
@@ -2070,6 +2071,10 @@ describe.concurrent("bundler", () => {
     dce: true,
     minifySyntax: true,
     bundling: false,
+    onAfterBundle(api) {
+      // the unused imports could be types, so TS drops them despite the eval and keeps no bare import
+      api.expectFile("/out.js").toBe('eval("foo(a, b, c)");\n');
+    },
   });
   itBundled("dce/DCEClassStaticBlocks", {
     files: {
@@ -2126,6 +2131,18 @@ describe.concurrent("bundler", () => {
     },
     dce: true,
     entryPoints: ["/a.js", "/b.js", "/c.js"],
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        import a from './out/a.js'
+        import b from './out/b.js'
+        import * as c from './out/c.js'
+        console.log(JSON.stringify([a, b, c.foo]))
+      `,
+    },
+    run: {
+      file: "/test.js",
+      stdout: '[{"keep":123},{"keep":123},{"keep":123}]',
+    },
   });
   itBundled("dce/DCETemplateLiteral", {
     files: {
@@ -3042,6 +3059,23 @@ describe.concurrent("bundler", () => {
     },
     entryPoints: ["/enum-entry.ts", "/const-entry.js", "/nested-entry.ts"],
     dce: true,
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        const log = console.log
+        console.log = (...args) => log(args.map(x => JSON.stringify(x)).join(' '))
+        await import('./out/enum-entry.js')
+        await import('./out/const-entry.js')
+        await import('./out/nested-entry.js')
+      `,
+    },
+    run: {
+      file: "/test.js",
+      stdout: [
+        '[6,-6,-7,false,"number"] [9,-3,18,0.5,3,729] [true,false,true,false,false,true,false,true] [12,3,3] [2,7,5] [6,3,3]',
+        '[6,-6,-7,false,"number"] [9,-3,18,0.5,3,729] [true,false,true,false,false,true,false,true] [12,3,3] [2,7,5] [6,3,3]',
+        '{"should be 4":4,"should be 32":32}',
+      ].join("\n"),
+    },
   });
   itBundled("dce/MultipleDeclarationTreeShaking", {
     files: {
@@ -3264,6 +3298,40 @@ describe.concurrent("bundler", () => {
       `,
     },
     entryPoints: ["/entry.js", "/entry-outer.js"],
+    minifySyntax: true,
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        globalThis.args = {
+          tag: 'args',
+          [Symbol.iterator]() {
+            console.log('spread')
+            return {
+              next() {
+                return { done: true, value: undefined }
+              }
+            }
+          }
+        };
+        globalThis.check = (...values) => console.log(JSON.stringify(values));
+
+        await import('./out/entry.js');
+        console.log('---')
+        await import('./out/entry-outer.js');
+      `,
+    },
+    run: {
+      file: "/test.js",
+      // each spread iterates `args` exactly once, and only identity2 returns its argument
+      stdout: [
+        "spread",
+        "spread",
+        '[null,null,null,null,{"tag":"args"},null]',
+        "---",
+        "spread",
+        "spread",
+        '[null,null,null,null,{"tag":"args"},null]',
+      ].join("\n"),
+    },
   });
   // im confused what this is testing. cross platform slash? there is none?? not even in the go source
   itBundled("dce/PackageJsonSideEffectsFalseCrossPlatformSlash", {
@@ -3293,6 +3361,9 @@ describe.concurrent("bundler", () => {
         /* @__PURE__ */ noSideEffects();
       `,
     },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toBe("");
+    },
     run: {
       stdout: "",
     },
@@ -3302,6 +3373,9 @@ describe.concurrent("bundler", () => {
       "/entry.js": /* js */ `
         /* @__PURE__ */ new NoSideEffects();
       `,
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toBe("");
     },
     run: {
       stdout: "",

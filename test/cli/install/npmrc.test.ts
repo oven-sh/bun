@@ -995,4 +995,18 @@ describe("registry credentials from $VAR env references", () => {
     expect(auths).toEqual([`Basic ${btoa("alice:s3cret")}`]);
     expect(exitCode).not.toBe(0);
   });
+
+  test.concurrent("a credential in the BUN_CONFIG_REGISTRY URL wins over the bunfig credential", async () => {
+    const auths: (string | null)[] = [];
+    await using server = authLoggingRegistry(auths);
+    using dir = tempDir(
+      "bunfig-env-registry-url-auth",
+      defaultRegistryFiles(server.port!, `username = "alice", password = "s3cret"`),
+    );
+    const exitCode = await install(String(dir), {
+      BUN_CONFIG_REGISTRY: `http://127.0.0.1:${server.port}/:_auth=${btoa("urluser:urlpass")}`,
+    });
+    expect(auths).toEqual([`Basic ${btoa("urluser:urlpass")}`]);
+    expect(exitCode).not.toBe(0);
+  });
 });

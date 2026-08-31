@@ -1687,7 +1687,9 @@ describe("bundler", () => {
         "/lib.js": `export let x = 1`,
       },
       deprecatedNamespaceObjectSetters,
-      run: { stdout: deprecatedNamespaceObjectSetters ? "function function true false 1" : "function undefined true true 1" },
+      run: {
+        stdout: deprecatedNamespaceObjectSetters ? "function function true false 1" : "function undefined true true 1",
+      },
     });
   }
   itBundled("importstar/CjsEntryPointExportsSorted", {

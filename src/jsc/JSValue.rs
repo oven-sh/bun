@@ -1492,6 +1492,29 @@ impl JSValue {
             JSC__JSValue__putMayBeIndex(self, global, key, value)
         })
     }
+    /// [`Self::get`] with an explicit key encoding. The byte-slice [`Self::get`]
+    /// reads the key as Latin-1, so non-ASCII UTF-8 key bytes need this one.
+    pub fn get_encoded(
+        self,
+        global: &JSGlobalObject,
+        key: &bun_core::EncodedSlice,
+    ) -> JsResult<Option<JSValue>> {
+        // SAFETY: `key` is valid for the duration of the call.
+        let v = unsafe { crate::cpp::JSC__JSValue__getIfPropertyExistsEncoded(self, global, key) }?;
+        if v.0 == JSValue::PROPERTY_DOES_NOT_EXIST.0 || v.is_undefined() {
+            Ok(None)
+        } else {
+            Ok(Some(v))
+        }
+    }
+    /// [`Self::delete_property`] with an explicit key encoding.
+    pub fn delete_property_encoded(
+        self,
+        global: &JSGlobalObject,
+        key: &bun_core::EncodedSlice,
+    ) -> JsResult<bool> {
+        crate::call_check_slow(global, || JSC__JSValue__deleteProperty(self, global, key))
+    }
     /// Method-table put: runs custom `put` overrides (for example
     /// `process.env`'s setter). [`Self::put`] is a `putDirect` and bypasses
     /// them.

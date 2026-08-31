@@ -604,10 +604,11 @@ pub mod Jest {
         }
         let key_utf8 = key.to_utf8(global_object)?;
         let key_bytes = key_utf8.slice();
+        let key_slice = bun_core::EncodedSlice::from_bytes(key_bytes);
 
         // Read the original before the borrow of the runner: the property
         // access can run user JS (a getter), which may re-enter these fns.
-        let original = target.get(global_object, key_bytes)?;
+        let original = target.get_encoded(global_object, &key_slice)?;
         // Windows env names are ASCII-case-insensitive: PATH and Path are one
         // variable, so they must share one registry entry.
         let same_key = |k: &[u8]| -> bool {
@@ -627,8 +628,10 @@ pub mod Jest {
             }
         }
 
-        if value.is_undefined() {
-            target.delete_property(global_object, key_bytes)?;
+        if value.is_undefined() && matches!(kind, StubKind::Env) {
+            // vitest: stubEnv(name, undefined) removes the variable, while
+            // stubGlobal(name, undefined) defines the global as undefined.
+            target.delete_property_encoded(global_object, &key_slice)?;
         } else {
             // Method-table put: process.env has a custom `put` (value
             // coercion, Windows case handling) that a putDirect bypasses.
@@ -654,7 +657,10 @@ pub mod Jest {
                     target.put_generic(global_object, &*key, strong.get())?;
                 }
                 None => {
-                    target.delete_property(global_object, &*key)?;
+                    target.delete_property_encoded(
+                        global_object,
+                        &bun_core::EncodedSlice::from_bytes(&key),
+                    )?;
                 }
             }
         }

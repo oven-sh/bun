@@ -4165,6 +4165,26 @@ void JSC__JSValue__putNonEnumerable(JSC::EncodedJSValue JSValue0, JSC::JSGlobalO
     object->putDirect(arg1->vm(), Zig::toIdentifier(*arg2, arg1), JSC::JSValue::decode(JSValue3), JSC::PropertyAttribute::DontEnum | 0);
 }
 
+// Encoding-aware variant of JSC__JSValue__getIfPropertyExistsImpl: the key's
+// EncodedSlice bits decide Latin-1 vs UTF-8 vs UTF-16.
+extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue JSC__JSValue__getIfPropertyExistsEncoded(JSC::EncodedJSValue target, JSC::JSGlobalObject* globalObject, const EncodedSlice* key)
+{
+    ASSERT_NO_PENDING_EXCEPTION(globalObject);
+    JSValue value = JSC::JSValue::decode(target);
+    ASSERT_WITH_MESSAGE(!value.isEmpty(), "get() must not be called on empty value");
+
+    auto& vm = JSC::getVM(globalObject);
+    JSC::JSObject* object = value.getObject();
+    if (!object) [[unlikely]] {
+        return JSValue::encode(JSValue::decode(JSC::JSValue::ValueDeleted));
+    }
+
+    const auto identifier = Zig::toIdentifier(*key, globalObject);
+    const auto property = JSC::PropertyName(identifier);
+
+    return JSC::JSValue::encode(Bun::getIfPropertyExistsPrototypePollutionMitigationUnsafe(vm, globalObject, object, property));
+}
+
 // Generic (method-table) put: runs custom `put` overrides such as
 // JSEnvironmentVariableMap's, which JSC__JSValue__put (a putDirect) bypasses.
 extern "C" [[ZIG_EXPORT(check_slow)]] void JSC__JSValue__putGeneric(JSC::EncodedJSValue target, JSC::JSGlobalObject* globalObject, const EncodedSlice* key, JSC::EncodedJSValue value)

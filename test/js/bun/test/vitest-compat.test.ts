@@ -161,6 +161,53 @@ describe("vi members", () => {
     }
   });
 
+  test("vi.stubEnv('TZ', ...) fires the timezone side effect", () => {
+    process.env.TZ = "Etc/UTC";
+    try {
+      vi.stubEnv("TZ", "Etc/GMT-2");
+      expect(new Date(0).getTimezoneOffset()).toBe(-120);
+      vi.unstubAllEnvs();
+      expect(new Date(0).getTimezoneOffset()).toBe(0);
+    } finally {
+      vi.unstubAllEnvs();
+      process.env.TZ = "Etc/UTC";
+    }
+  });
+
+  test("vi.stubGlobal(name, undefined) defines undefined instead of deleting", () => {
+    const original = globalThis.structuredClone;
+    try {
+      vi.stubGlobal("structuredClone", undefined);
+      expect(globalThis.structuredClone).toBeUndefined();
+      expect("structuredClone" in globalThis).toBe(true);
+      vi.unstubAllGlobals();
+      expect(globalThis.structuredClone).toBe(original);
+    } finally {
+      vi.unstubAllGlobals();
+      globalThis.structuredClone = original;
+    }
+  });
+
+  test("non-ASCII names stub and restore correctly", () => {
+    const g = globalThis as Record<string, unknown>;
+    try {
+      vi.stubGlobal("π", 3.14);
+      expect(g["π"]).toBe(3.14);
+      vi.stubEnv("ÜBER_COMPAT", "ja");
+      expect(process.env["ÜBER_COMPAT"]).toBe("ja");
+
+      vi.unstubAllGlobals();
+      vi.unstubAllEnvs();
+      expect("π" in g).toBe(false);
+      expect(process.env["ÜBER_COMPAT"]).toBeUndefined();
+    } finally {
+      vi.unstubAllEnvs();
+      vi.unstubAllGlobals();
+      delete g["π"];
+      delete process.env["ÜBER_COMPAT"];
+    }
+  });
+
   test("stub calls chain like vitest's utils object", () => {
     try {
       expect(vi.stubEnv("VITEST_COMPAT_CHAIN", "1").stubGlobal("__vitest_compat_chain__", 2)).toBe(vi);

@@ -66,15 +66,14 @@ using namespace JSC;
 
 template<> JSString* convertEnumerationToJS(JSGlobalObject& lexicalGlobalObject, CryptoKey::Type enumerationValue)
 {
-    auto* globalObject = defaultGlobalObject(&lexicalGlobalObject);
-    auto& commonStrings = globalObject->commonStrings();
+    auto& commonStrings = WebCore::clientData(lexicalGlobalObject.vm())->commonStrings();
     switch (enumerationValue) {
     case CryptoKey::Type::Public:
-        return commonStrings.keyTypePublicString(globalObject);
+        return commonStrings.keyTypePublicString(&lexicalGlobalObject);
     case CryptoKey::Type::Private:
-        return commonStrings.keyTypePrivateString(globalObject);
+        return commonStrings.keyTypePrivateString(&lexicalGlobalObject);
     case CryptoKey::Type::Secret:
-        return commonStrings.keyTypeSecretString(globalObject);
+        return commonStrings.keyTypeSecretString(&lexicalGlobalObject);
     }
     ASSERT_NOT_REACHED();
     return jsEmptyString(lexicalGlobalObject.vm());

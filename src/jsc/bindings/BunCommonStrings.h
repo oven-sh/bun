@@ -148,6 +148,8 @@
 
 namespace Bun {
 
+// Per-VM cache of the strings above (one JSString each, created on first use).
+// Lives in JSVMClientData; every Zig::GlobalObject visits it.
 class CommonStrings {
 public:
     // clang-format off
@@ -162,7 +164,8 @@ public:
     BUN_COMMON_STRINGS_EACH_NAME(BUN_COMMON_STRINGS_ACCESSOR_DEFINITION_BUILTIN_NAME)
     BUN_COMMON_STRINGS_EACH_VM_PROPERTY_NAME(BUN_COMMON_STRINGS_ACCESSOR_DEFINITION_VM_PROPERTY_NAME)
     BUN_COMMON_STRINGS_EACH_NAME_NOT_BUILTIN_NAMES(BUN_COMMON_STRINGS_ACCESSOR_DEFINITION_NOT_BUILTIN_NAMES)
-    void initialize();
+
+    CommonStrings();
 
     template<typename Visitor>
     void visit(Visitor& visitor);

@@ -931,7 +931,7 @@ size_t JSCookie::estimatedSize(JSC::JSCell* cell, JSC::VM& vm)
 
 JSC::JSValue toJS(JSC::JSGlobalObject* globalObject, CookieSameSite sameSite)
 {
-    auto& commonStrings = defaultGlobalObject(globalObject)->commonStrings();
+    auto& commonStrings = WebCore::clientData(globalObject->vm())->commonStrings();
     switch (sameSite) {
     case CookieSameSite::Strict:
         return commonStrings.strictString(globalObject);

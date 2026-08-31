@@ -154,8 +154,7 @@ JSC::JSValue KeyObject::exportJwkAkpKey(JSC::JSGlobalObject* lexicalGlobalObject
 JSC::JSValue KeyObject::exportJwkEdKey(JSC::JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, CryptoKeyType exportType)
 {
     VM& vm = lexicalGlobalObject->vm();
-    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
-    auto& commonStrings = globalObject->commonStrings();
+    auto& commonStrings = WebCore::clientData(vm)->commonStrings();
 
     const auto& pkey = m_data->asymmetricKey;
 
@@ -217,8 +216,7 @@ JSC::JSValue KeyObject::exportJwkEdKey(JSC::JSGlobalObject* lexicalGlobalObject,
 JSC::JSValue KeyObject::exportJwkEcKey(JSC::JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, CryptoKeyType exportType)
 {
     VM& vm = lexicalGlobalObject->vm();
-    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
-    auto& commonStrings = globalObject->commonStrings();
+    auto& commonStrings = WebCore::clientData(vm)->commonStrings();
 
     const auto& pkey = m_data->asymmetricKey;
     ASSERT(pkey.id() == EVP_PKEY_EC);
@@ -295,8 +293,7 @@ JSC::JSValue KeyObject::exportJwkEcKey(JSC::JSGlobalObject* lexicalGlobalObject,
 JSC::JSValue KeyObject::exportJwkRsaKey(JSC::JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, CryptoKeyType exportType)
 {
     VM& vm = lexicalGlobalObject->vm();
-    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
-    auto& commonStrings = globalObject->commonStrings();
+    auto& commonStrings = WebCore::clientData(vm)->commonStrings();
 
     JSObject* jwk = JSC::constructEmptyObject(lexicalGlobalObject);
 
@@ -338,8 +335,7 @@ JSC::JSValue KeyObject::exportJwkSecretKey(JSC::JSGlobalObject* lexicalGlobalObj
 {
 
     VM& vm = lexicalGlobalObject->vm();
-    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
-    auto& commonStrings = globalObject->commonStrings();
+    auto& commonStrings = WebCore::clientData(vm)->commonStrings();
 
     JSObject* jwk = JSC::constructEmptyObject(lexicalGlobalObject);
 

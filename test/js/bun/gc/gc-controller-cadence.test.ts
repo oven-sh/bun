@@ -160,7 +160,7 @@ describe("idle release", () => {
   // `idle`: warm some functions, then do nothing but poll once a second (well under the idle CPU threshold) until the
   // CodeBlock count drops or `waitMs` passes. `busy`: same, while keeping a core ~75% busy.
   const script = (mode: "idle" | "busy", waitMs: number) => `
-    const { heapStats } = require("bun:jsc");
+    import { heapStats } from "bun:jsc";
     const fns = [];
     for (let i = 0; i < 200; i++) fns.push(new Function("a", "let s = 0; for (let j = 0; j < 100; j++) s += a * " + i + " + j; return s"));
     for (let r = 0; r < 30; r++) for (const f of fns) f(r);

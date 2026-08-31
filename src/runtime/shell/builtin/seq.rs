@@ -18,10 +18,8 @@ pub struct Seq {
     start: f32,
     end: f32,
     increment: f32,
-    /// Borrowed from argv (NUL-terminated arena strings) or `'static` literals;
-    /// argv outlives the builtin — `RawSlice` invariant.
-    separator: bun_ptr::RawSlice<u8>,
-    terminator: bun_ptr::RawSlice<u8>,
+    separator: Vec<u8>,
+    terminator: Vec<u8>,
 }
 
 impl Default for Seq {
@@ -31,8 +29,8 @@ impl Default for Seq {
             start: 1.0,
             end: 1.0,
             increment: 1.0,
-            separator: bun_ptr::RawSlice::new(b"\n"),
-            terminator: bun_ptr::RawSlice::EMPTY,
+            separator: b"\n".to_vec(),
+            terminator: Vec::new(),
         }
     }
 }
@@ -44,24 +42,23 @@ impl Seq {
             return Self::fail(interp, cmd, Kind::Seq.usage_string());
         }
 
+        let arg_at = |i: usize| -> Vec<u8> { Builtin::of(interp, cmd).arg_bytes(i).to_vec() };
         let mut idx = 0usize;
-        // Flag parsing — operates on raw argv pointers so we can stash
-        // borrowed slices into separator/terminator.
         while idx < argc {
-            let arg = Builtin::of(interp, cmd).arg_bytes(idx);
+            let arg = arg_at(idx);
 
             if arg == b"-s" || arg == b"--separator" {
                 idx += 1;
                 if idx >= argc {
                     return Self::fail(interp, cmd, b"seq: option requires an argument -- s\n");
                 }
-                let bytes = Builtin::of(interp, cmd).arg_bytes(idx);
-                Self::state_mut(interp, cmd).separator = bun_ptr::RawSlice::new(bytes);
+                let bytes = arg_at(idx);
+                Self::state_mut(interp, cmd).separator = bytes;
                 idx += 1;
                 continue;
             }
             if arg.starts_with(b"-s") && arg.len() > 2 {
-                Self::state_mut(interp, cmd).separator = bun_ptr::RawSlice::new(&arg[2..]);
+                Self::state_mut(interp, cmd).separator = arg[2..].to_vec();
                 idx += 1;
                 continue;
             }
@@ -70,13 +67,13 @@ impl Seq {
                 if idx >= argc {
                     return Self::fail(interp, cmd, b"seq: option requires an argument -- t\n");
                 }
-                let bytes = Builtin::of(interp, cmd).arg_bytes(idx);
-                Self::state_mut(interp, cmd).terminator = bun_ptr::RawSlice::new(bytes);
+                let bytes = arg_at(idx);
+                Self::state_mut(interp, cmd).terminator = bytes;
                 idx += 1;
                 continue;
             }
             if arg.starts_with(b"-t") && arg.len() > 2 {
-                Self::state_mut(interp, cmd).terminator = bun_ptr::RawSlice::new(&arg[2..]);
+                Self::state_mut(interp, cmd).terminator = arg[2..].to_vec();
                 idx += 1;
                 continue;
             }
@@ -90,8 +87,8 @@ impl Seq {
         // Positional args.
         macro_rules! parse_num {
             ($i:expr) => {{
-                let s = Builtin::of(interp, cmd).arg_bytes($i);
-                match parse_f32(s) {
+                let s = arg_at($i);
+                match parse_f32(&s) {
                     Some(n) if n.is_finite() => n,
                     _ => return Self::fail(interp, cmd, b"seq: invalid argument\n"),
                 }
@@ -104,7 +101,7 @@ impl Seq {
         let int1 = parse_num!(idx);
         idx += 1;
         {
-            let me = Self::state_mut(interp, cmd);
+            let mut me = Self::state_mut(interp, cmd);
             me.end = int1;
             if me.start > me.end {
                 me.increment = -1.0;
@@ -115,7 +112,8 @@ impl Seq {
             let int2 = parse_num!(idx);
             idx += 1;
             {
-                let me = Self::state_mut(interp, cmd);
+                let mut me = Self::state_mut(interp, cmd);
+                let me = &mut *me;
                 me.start = int1;
                 me.end = int2;
                 me.increment = if me.start < me.end {
@@ -129,19 +127,22 @@ impl Seq {
             if idx < argc {
                 let int3 = parse_num!(idx);
                 {
-                    let me = Self::state_mut(interp, cmd);
+                    let mut me = Self::state_mut(interp, cmd);
                     me.start = int1;
                     me.increment = int2;
                     me.end = int3;
                 }
-                let me = Self::state_mut(interp, cmd);
-                if me.increment == 0.0 {
+                let (start, end, increment) = {
+                    let me = Self::state_mut(interp, cmd);
+                    (me.start, me.end, me.increment)
+                };
+                if increment == 0.0 {
                     return Self::fail(interp, cmd, b"seq: zero increment\n");
                 }
-                if me.start > me.end && me.increment > 0.0 {
+                if start > end && increment > 0.0 {
                     return Self::fail(interp, cmd, b"seq: needs negative decrement\n");
                 }
-                if me.start < me.end && me.increment < 0.0 {
+                if start < end && increment < 0.0 {
                     return Self::fail(interp, cmd, b"seq: needs positive increment\n");
                 }
             }
@@ -160,8 +161,14 @@ impl Seq {
         // Render entirely into a local Vec, then either enqueue it or
         // write_no_io it; we buffer once for simplicity.
         let (start, end, incr, sep, term) = {
-            let me = Self::state_mut(interp, cmd);
-            (me.start, me.end, me.increment, me.separator, me.terminator)
+            let mut me = Self::state_mut(interp, cmd);
+            (
+                me.start,
+                me.end,
+                me.increment,
+                core::mem::take(&mut me.separator),
+                core::mem::take(&mut me.terminator),
+            )
         };
         let mut out = Vec::new();
         let mut current = start;
@@ -173,7 +180,7 @@ impl Seq {
             // Rust `{}` for f32 prints the shortest decimal that round-trips
             // (no exponent, no trailing ".0").
             let _ = write!(&mut out, "{}", current);
-            out.extend_from_slice(sep.slice());
+            out.extend_from_slice(&sep);
             let next = current + incr;
             if next == current {
                 // f32 rounding can make `current + incr` equal `current`
@@ -184,15 +191,13 @@ impl Seq {
             }
             current = next;
         }
-        out.extend_from_slice(term.slice());
+        out.extend_from_slice(&term);
 
         Self::state_mut(interp, cmd).state = State::Done;
         if needs_io {
             let safeguard = Builtin::of(interp, cmd).stdout.needs_io().unwrap();
             let child = ChildPtr::new(cmd, WriterTag::Builtin);
-            return Builtin::of_mut(interp, cmd)
-                .stdout
-                .enqueue(child, &out, safeguard);
+            return Builtin::write_out(interp, cmd, IoKind::Stdout, child, &out, safeguard);
         }
         let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &out);
         Builtin::done(interp, cmd, 0)
@@ -208,7 +213,8 @@ impl Seq {
             Self::state_mut(interp, cmd).state = State::Err;
             return Builtin::done(interp, cmd, 1);
         }
-        match Self::state_mut(interp, cmd).state {
+        let state = Self::state_mut(interp, cmd).state;
+        match state {
             State::Done => Builtin::done(interp, cmd, 0),
             State::Err => Builtin::done(interp, cmd, 1),
             State::Idle => {

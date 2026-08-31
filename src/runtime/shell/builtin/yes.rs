@@ -1,5 +1,5 @@
 use crate::shell::ExitCode;
-use crate::shell::builtin::{Builtin, BuiltinIO, BuiltinState, Impl, Kind};
+use crate::shell::builtin::{Builtin, BuiltinIO, BuiltinState, Impl, IoKind, Kind};
 use crate::shell::interpreter::{EventLoopHandle, Interpreter, NodeId, OutputNeedsIOSafeGuard};
 use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::states::cmd::Exec;
@@ -64,20 +64,21 @@ impl Yes {
         }
 
         let evtloop = Builtin::event_loop(interp, cmd);
-        let interp_ptr: *mut Interpreter = interp.as_ctx_ptr();
         {
-            let me = Self::state_mut(interp, cmd);
+            let mut me = Self::state_mut(interp, cmd);
             me.buffer = buf;
             me.buffer_used = filled;
             me.task = Some(YesTask {
-                interp: interp_ptr,
+                interp: bun_ptr::ParentRef::new(interp),
                 cmd,
                 evtloop,
                 concurrent_task: EventLoopTask::from_event_loop(evtloop),
             });
         }
 
-        if let Some(safeguard) = Builtin::of(interp, cmd).stdout.needs_io() {
+        let stdout_needs_io = Builtin::of(interp, cmd).stdout.needs_io();
+
+        if let Some(safeguard) = stdout_needs_io {
             Self::state_mut(interp, cmd).state = State::WaitingIo;
             return Self::enqueue_chunk(interp, cmd, safeguard);
         }
@@ -92,8 +93,9 @@ impl Yes {
         // are accessible simultaneously — the buffer is written zero-copy,
         // which matters for `yes` throughput.
         let err = {
-            let cmd_node = interp.as_cmd_mut(cmd);
-            let shell = cmd_node.base.shell;
+            let mut cmd_node = interp.as_cmd_mut(cmd);
+            let cmd_node = &mut *cmd_node;
+            let shell = cmd_node.base.shell.borrow();
             let Exec::Builtin(me) = &mut cmd_node.exec else {
                 unreachable!()
             };
@@ -101,8 +103,7 @@ impl Yes {
             let chunk = &yes.buffer[..yes.buffer_used];
             let mut err = None;
             for _ in 0..4 {
-                // SAFETY: `shell` is `cmd_node.base.shell`, live for the Cmd.
-                if let Err(e) = unsafe { stdout.write_no_io_to(shell, chunk) } {
+                if let Err(e) = stdout.write_no_io_to(&shell, chunk) {
                     err = Some(e);
                     break;
                 }
@@ -111,12 +112,9 @@ impl Yes {
         };
         if let Some(e) = err {
             let buf = Builtin::fmt_error_arena(
-                interp,
-                cmd,
                 Some(Kind::Yes),
                 format_args!("{}\n", bstr::BStr::new(e.name())),
-            )
-            .to_vec();
+            );
             return Self::write_failing_error(interp, cmd, &buf, 1);
         }
         // Bounce back via the event loop so we don't block the main thread.
@@ -139,10 +137,10 @@ impl Yes {
         safeguard: OutputNeedsIOSafeGuard,
     ) -> Yield {
         let child = ChildPtr::new(cmd, WriterTag::Builtin);
-        // `stdout` and `impl_` are disjoint fields of `Builtin` — split-borrow
-        // so the tiled buffer is enqueued zero-copy.
-        let (stdout, yes) = Self::split_stdout_state(Builtin::of_mut(interp, cmd));
-        stdout.enqueue(child, &yes.buffer[..yes.buffer_used], safeguard)
+        Builtin::write_out_with(interp, cmd, IoKind::Stdout, child, safeguard, |buf| {
+            let yes = Self::state_mut(interp, cmd);
+            buf.extend_from_slice(&yes.buffer[..yes.buffer_used]);
+        })
     }
 
     fn write_failing_error(
@@ -191,7 +189,7 @@ impl Yes {
 #[repr(C)]
 pub struct YesTask {
     /// Back-ref to the owning [`Interpreter`].
-    pub(crate) interp: *mut Interpreter,
+    pub(crate) interp: bun_ptr::ParentRef<Interpreter>,
     pub(crate) cmd: NodeId,
     pub(crate) evtloop: EventLoopHandle,
     pub(crate) concurrent_task: EventLoopTask,
@@ -240,8 +238,7 @@ impl YesTask {
     /// [`Yes::start`]. Reached only via the concurrent-task dispatch installed
     /// in [`enqueue`](Self::enqueue).
     pub(crate) fn run_from_main_thread(this: &Self) {
-        // SAFETY: `interp` was set in `Yes::start` and outlives the task.
-        let (interp, cmd) = unsafe { (&*this.interp, this.cmd) };
+        let (interp, cmd) = (&*this.interp, this.cmd);
         Yes::write_no_io_loop(interp, cmd).run(interp);
     }
 

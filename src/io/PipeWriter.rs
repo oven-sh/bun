@@ -2589,14 +2589,18 @@ pub type StreamingWriter<P> = WindowsStreamingWriter<P>;
 //                     parents that may drop their last ref mid-callback).
 //
 // Accessor args use closure-literal syntax (`|this| expr`) purely as a binder
-// for the macro — no actual closure is created. For `mut`/`shared`/`ptr`,
-// `expr` is pasted into an `unsafe` block with `this: *mut Self` in scope;
-// for `this`, `expr` is pasted as-is with `this: ThisPtr<Self>` in scope.
+// for the macro — no actual closure is created. For `mut`/`ptr`, `expr` is
+// pasted into an `unsafe` block with `this: *mut Self` in scope; for `this`,
+// `impl_streaming_writer_parent!` pastes `expr` as-is with `this: ThisPtr<Self>`
+// in scope. `impl_buffered_writer_parent!` binds `this: &Self` (pasted as-is)
+// for its read-only accessors under `shared`/`this`, and under `this` maps
+// the writer's `ref_`/`deref` hooks to the parent's intrusive refcount.
 
 /// Re-exports for `$crate::`-qualified use inside the macro bodies so callers
 /// need no extra `use` items.
 #[doc(hidden)]
 pub mod __parent_macro {
+    pub use ::bun_ptr::AnyRefCounted;
     pub use ::bun_ptr::ThisPtr;
     pub use ::bun_sys::Error as SysError;
     #[cfg(windows)]
@@ -2752,6 +2756,41 @@ macro_rules! impl_streaming_writer_parent {
 /// `WindowsBufferedWriterParent` for a parent type. See module comment above.
 #[macro_export]
 macro_rules! impl_buffered_writer_parent {
+    // Internal: dispatch a callback off the raw-ptr backref per `borrow` mode.
+    (@call mut    $p:expr; $m:ident($($a:tt)*)) => { (&mut *$p).$m($($a)*) };
+    (@call shared $p:expr; $m:ident($($a:tt)*)) => { (&*$p).$m($($a)*) };
+    (@call ptr    $p:expr; $m:ident($($a:tt)*)) => { <Self>::$m($p, $($a)*) };
+    (@call this   $p:expr; $m:ident($($a:tt)*)) => {
+        <Self>::$m($crate::pipe_writer::__parent_macro::ThisPtr::<Self>::new($p), $($a)*)
+    };
+
+    // Internal: evaluate an accessor body with `$id` bound per `borrow` mode.
+    // `shared`/`this` bind `&Self` (accessors only read), so accessor bodies
+    // are plain safe expressions; `mut`/`ptr` keep the raw `*mut Self`.
+    (@acc mut $id:ident = $p:ident; $e:expr) => {{
+        let $id = $p;
+        #[allow(unused_unsafe)]
+        unsafe { $e }
+    }};
+    (@acc ptr $id:ident = $p:ident; $e:expr) => {
+        $crate::impl_buffered_writer_parent!(@acc mut $id = $p; $e)
+    };
+    (@acc $borrow:tt $id:ident = $p:ident; $e:expr) => {{
+        // SAFETY: `$p` is the BACKREF set via `set_parent` — the live parent
+        // for the duration of this read-only accessor.
+        let $id: &Self = unsafe { &*$p };
+        $e
+    }};
+    // Internal: refcount hooks. `this` hands the body the raw root pointer
+    // (the body may free `*$p`); other modes bind as `@acc` does.
+    (@rc this $id:ident = $p:ident; $e:expr) => {{
+        let $id: *mut Self = $p;
+        $e
+    }};
+    (@rc $borrow:tt $id:ident = $p:ident; $e:expr) => {
+        $crate::impl_buffered_writer_parent!(@acc $borrow $id = $p; $e)
+    };
+
     (@emit
         [$($gen:tt)*] $Ty:ty;
         poll_tag   = $poll_tag:expr,
@@ -2771,31 +2810,30 @@ macro_rules! impl_buffered_writer_parent {
             #[inline]
             unsafe fn on_write(this: *mut Self, amount: usize, status: $crate::WriteStatus) {
                 // SAFETY: `this` is the BACKREF set via `set_parent`; the
-                // BufferedWriter never materializes `&mut Parent`. The handler
-                // is dispatched per the `borrow` mode (`mut`/`shared`/`ptr`/`this` —
-                // see the module comment).
-                unsafe { $crate::impl_streaming_writer_parent!(@call $borrow this; $on_write(amount, status)) };
+                // BufferedWriter never materializes `&mut Parent`, so this is
+                // the unique access path for the callback's duration.
+                unsafe { $crate::impl_buffered_writer_parent!(@call $borrow this; $on_write(amount, status)) };
             }
             #[inline]
             unsafe fn on_error(this: *mut Self, err: $crate::pipe_writer::__parent_macro::SysError) {
                 // SAFETY: see on_write.
-                unsafe { $crate::impl_streaming_writer_parent!(@call $borrow this; $on_error(&err)) };
+                unsafe { $crate::impl_buffered_writer_parent!(@call $borrow this; $on_error(&err)) };
             }
             const HAS_ON_CLOSE: bool = true;
             #[inline]
             unsafe fn on_close(this: *mut Self) {
                 // SAFETY: see on_write.
-                unsafe { $crate::impl_streaming_writer_parent!(@call $borrow this; $on_close()) };
+                unsafe { $crate::impl_buffered_writer_parent!(@call $borrow this; $on_close()) };
             }
             #[inline]
             unsafe fn get_buffer<'a>(this: *mut Self) -> &'a [u8] {
                 // SAFETY: see on_write. Shared-only borrow of the buffer storage.
-                $crate::impl_streaming_writer_parent!(@acc $borrow $gb_this = this; $gb)
+                $crate::impl_buffered_writer_parent!(@acc $borrow $gb_this = this; $gb)
             }
             #[inline]
             unsafe fn event_loop(this: *mut Self) -> $crate::EventLoopHandle {
                 // SAFETY: see on_write.
-                $crate::impl_streaming_writer_parent!(@acc $borrow $el_this = this; $el)
+                $crate::impl_buffered_writer_parent!(@acc $borrow $el_this = this; $el)
             }
         }
 
@@ -2804,17 +2842,17 @@ macro_rules! impl_buffered_writer_parent {
             #[inline]
             unsafe fn loop_(this: *mut Self) -> *mut $crate::pipe_writer::__parent_macro::UvLoop {
                 // SAFETY: BACKREF set via `set_parent`; shared-only read.
-                $crate::impl_streaming_writer_parent!(@acc $borrow $uv_this = this; $uv)
+                $crate::impl_buffered_writer_parent!(@acc $borrow $uv_this = this; $uv)
             }
             #[inline]
             unsafe fn ref_(this: *mut Self) {
                 // SAFETY: see loop_. Intrusive refcount bump.
-                $crate::impl_streaming_writer_parent!(@acc $borrow $ref_this = this; $ref_)
+                $crate::impl_buffered_writer_parent!(@rc $borrow $ref_this = this; $ref_)
             }
             #[inline]
             unsafe fn deref(this: *mut Self) {
                 // SAFETY: see loop_. May free `this`.
-                $crate::impl_streaming_writer_parent!(@acc $borrow $deref_this = this; $deref)
+                $crate::impl_buffered_writer_parent!(@rc $borrow $deref_this = this; $deref)
             }
         }
 
@@ -2823,25 +2861,60 @@ macro_rules! impl_buffered_writer_parent {
             #[inline]
             unsafe fn on_write(this: *mut Self, amount: usize, status: $crate::WriteStatus) {
                 // SAFETY: BACKREF set via `set_parent`; see borrow-mode note.
-                unsafe { $crate::impl_streaming_writer_parent!(@call $borrow this; $on_write(amount, status)) };
+                unsafe { $crate::impl_buffered_writer_parent!(@call $borrow this; $on_write(amount, status)) };
             }
             #[inline]
             unsafe fn on_error(this: *mut Self, err: $crate::pipe_writer::__parent_macro::SysError) {
                 // SAFETY: see on_write.
-                unsafe { $crate::impl_streaming_writer_parent!(@call $borrow this; $on_error(&err)) };
+                unsafe { $crate::impl_buffered_writer_parent!(@call $borrow this; $on_error(&err)) };
             }
             const HAS_ON_CLOSE: bool = true;
             #[inline]
             unsafe fn on_close(this: *mut Self) {
                 // SAFETY: see on_write.
-                unsafe { $crate::impl_streaming_writer_parent!(@call $borrow this; $on_close()) };
+                unsafe { $crate::impl_buffered_writer_parent!(@call $borrow this; $on_close()) };
             }
             #[inline]
             unsafe fn get_buffer<'a>(this: *mut Self) -> &'a [u8] {
                 // SAFETY: see on_write.
-                $crate::impl_streaming_writer_parent!(@acc $borrow $gb_this = this; $gb)
+                $crate::impl_buffered_writer_parent!(@acc $borrow $gb_this = this; $gb)
             }
             const HAS_ON_WRITABLE: bool = false;
+        }
+    };
+
+    // Public entry — `borrow = this`, intrusively refcounted parent: the
+    // writer's `ref_`/`deref` hooks are the parent's own refcount.
+    (
+        $Ty:ty;
+        poll_tag   = $poll_tag:expr,
+        borrow     = this,
+        on_write   = $on_write:ident,
+        on_error   = $on_error:ident,
+        on_close   = $on_close:ident,
+        get_buffer = |$gb_this:ident| $gb:expr,
+        event_loop = |$el_this:ident| $el:expr,
+        uv_loop    = |$uv_this:ident| $uv:expr,
+    ) => {
+        $crate::impl_buffered_writer_parent! {
+            @emit [] $Ty;
+            poll_tag   = $poll_tag,
+            borrow     = this,
+            on_write   = $on_write,
+            on_error   = $on_error,
+            on_close   = $on_close,
+            get_buffer = |$gb_this| $gb,
+            event_loop = |$el_this| $el,
+            uv_loop    = |$uv_this| $uv,
+            // SAFETY: `this_` is the live parent's root pointer.
+            ref_       = |this_| unsafe {
+                <$Ty as $crate::pipe_writer::__parent_macro::AnyRefCounted>::rc_ref(this_)
+            },
+            // SAFETY: releases the ref the writer took through `ref_` above;
+            // `this_` is the parent's root pointer.
+            deref      = |this_| unsafe {
+                <$Ty as $crate::pipe_writer::__parent_macro::AnyRefCounted>::rc_deref(this_)
+            },
         }
     };
 

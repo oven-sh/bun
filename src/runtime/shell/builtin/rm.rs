@@ -41,6 +41,7 @@ pub struct ExecState {
     pub(crate) error_signal: AtomicBool,
     pub(crate) output_done: AtomicUsize,
     pub(crate) output_count: AtomicUsize,
+    pub(crate) verbose_seq: u32,
     pub(crate) tasks_done: usize,
     pub(crate) started: bool,
 }
@@ -141,7 +142,8 @@ impl Rm {
                     }
 
                     let arg = Builtin::of(interp, cmd).arg_bytes(idx as usize).to_vec();
-                    match Self::parse_flag(&mut Self::state_mut(interp, cmd).opts, &arg) {
+                    let parsed = Self::parse_flag(&mut Self::state_mut(interp, cmd).opts, &arg);
+                    match parsed {
                         RmParseFlag::ContinueParsing => {
                             if let RmState::ParseOpts { idx: i, .. } =
                                 &mut Self::state_mut(interp, cmd).state
@@ -170,7 +172,7 @@ impl Rm {
 
                             // Check that none of the paths will delete the root.
                             {
-                                let cwd = Builtin::shell(interp, cmd).cwd().to_vec();
+                                let cwd = Builtin::shell(interp, cmd).borrow().cwd().to_vec();
                                 // Operands are unbounded user input, so neither
                                 // step may use the fixed-size thread-local
                                 // buffers behind `join` / `normalize_string`.
@@ -180,13 +182,13 @@ impl Rm {
                                 let mut normalize_buf = Vec::new();
 
                                 for i in args_start..argc {
-                                    let path = Builtin::of(interp, cmd).arg_bytes(i);
-                                    let resolved: &[u8] = if Platform::AUTO.is_absolute(path) {
-                                        path
+                                    let path = Builtin::of(interp, cmd).arg_bytes(i).to_vec();
+                                    let resolved: &[u8] = if Platform::AUTO.is_absolute(&path) {
+                                        &path
                                     } else {
                                         resolve_path::join_spill::<platform::Auto>(
                                             &mut join_spill,
-                                            &[&cwd, path],
+                                            &[&cwd, &path],
                                         )
                                     };
                                     if normalize_buf.len() <= resolved.len() {
@@ -205,37 +207,35 @@ impl Rm {
                                         // Copy resolved before
                                         // re-borrowing `interp` mutably.
                                         let resolved_owned = resolved.to_vec();
-                                        if let Some(safeguard) =
-                                            Builtin::of(interp, cmd).stderr.needs_io()
-                                        {
+                                        let stderr_needs_io =
+                                            Builtin::of(interp, cmd).stderr.needs_io();
+                                        if let Some(safeguard) = stderr_needs_io {
                                             Self::state_mut(interp, cmd).state =
                                                 RmState::ParseOpts {
                                                     idx,
                                                     wait_write_err: true,
                                                 };
                                             let child = ChildPtr::new(cmd, WriterTag::Builtin);
-                                            return Builtin::of_mut(interp, cmd)
-                                                .stderr
-                                                .enqueue_fmt(
-                                                    child,
-                                                    Some(Kind::Rm),
-                                                    format_args!(
-                                                        "\"{}\" may not be removed\n",
-                                                        bstr::BStr::new(&resolved_owned)
-                                                    ),
-                                                    safeguard,
-                                                );
+                                            return Builtin::write_out_fmt(
+                                                interp,
+                                                cmd,
+                                                IoKind::Stderr,
+                                                child,
+                                                Some(Kind::Rm),
+                                                format_args!(
+                                                    "\"{}\" may not be removed\n",
+                                                    bstr::BStr::new(&resolved_owned)
+                                                ),
+                                                safeguard,
+                                            );
                                         }
                                         let buf = Builtin::fmt_error_arena(
-                                            interp,
-                                            cmd,
                                             Some(Kind::Rm),
                                             format_args!(
                                                 "\"{}\" may not be removed\n",
                                                 bstr::BStr::new(&resolved_owned)
                                             ),
-                                        )
-                                        .to_vec();
+                                        );
                                         let _ =
                                             Builtin::write_no_io(interp, cmd, IoKind::Stderr, &buf);
                                         return Builtin::done(interp, cmd, 1);
@@ -251,6 +251,7 @@ impl Rm {
                                 error_signal: AtomicBool::new(false),
                                 output_done: AtomicUsize::new(0),
                                 output_count: AtomicUsize::new(0),
+                                verbose_seq: 0,
                                 tasks_done: 0,
                                 started: false,
                             });
@@ -265,13 +266,17 @@ impl Rm {
                             );
                         }
                         RmParseFlag::IllegalOptionWithFlag => {
-                            if let Some(safeguard) = Builtin::of(interp, cmd).stderr.needs_io() {
+                            let stderr_needs_io = Builtin::of(interp, cmd).stderr.needs_io();
+                            if let Some(safeguard) = stderr_needs_io {
                                 Self::state_mut(interp, cmd).state = RmState::ParseOpts {
                                     idx,
                                     wait_write_err: true,
                                 };
                                 let child = ChildPtr::new(cmd, WriterTag::Builtin);
-                                return Builtin::of_mut(interp, cmd).stderr.enqueue_fmt(
+                                return Builtin::write_out_fmt(
+                                    interp,
+                                    cmd,
+                                    IoKind::Stderr,
                                     child,
                                     Some(Kind::Rm),
                                     format_args!(
@@ -282,12 +287,9 @@ impl Rm {
                                 );
                             }
                             let buf = Builtin::fmt_error_arena(
-                                interp,
-                                cmd,
                                 Some(Kind::Rm),
                                 format_args!("illegal option -- {}\n", bstr::BStr::new(&arg[1..])),
-                            )
-                            .to_vec();
+                            );
                             let _ = Builtin::write_no_io(interp, cmd, IoKind::Stderr, &buf);
                             return Builtin::done(interp, cmd, 1);
                         }
@@ -300,29 +302,29 @@ impl Rm {
                     };
                     if !started {
                         let cwd = Builtin::cwd(interp, cmd);
-                        let evtloop = Builtin::event_loop(interp, cmd);
                         let opts = Self::state_mut(interp, cmd).opts;
-                        let interp_ptr: *mut Interpreter = interp.as_ctx_ptr();
                         let (args_start, argc) = {
-                            let me = Self::state_mut(interp, cmd);
+                            let mut me = Self::state_mut(interp, cmd);
                             let RmState::Exec(e) = &mut me.state else {
                                 unreachable!()
                             };
                             e.started = true;
                             (e.args_start, e.args_start + e.total_tasks)
                         };
-                        let (sig, out_count) = match &Self::state_mut(interp, cmd).state {
-                            RmState::Exec(e) => (
+                        let (sig, out_count) = {
+                            let me = Self::state_mut(interp, cmd);
+                            let RmState::Exec(e) = &me.state else {
+                                unreachable!()
+                            };
+                            (
                                 bun_ptr::BackRef::new(&e.error_signal),
                                 bun_ptr::BackRef::new(&e.output_count),
-                            ),
-                            _ => unreachable!(),
+                            )
                         };
                         for i in args_start..argc {
-                            let root = Builtin::of(interp, cmd).arg_bytes(i);
-                            let task = ShellRmTask::create(
-                                cmd, opts, root, cwd, sig, out_count, evtloop, interp_ptr,
-                            );
+                            let root = Builtin::of(interp, cmd).arg_bytes(i).to_vec();
+                            let task =
+                                ShellRmTask::create(cmd, opts, &root, cwd, sig, out_count, interp);
                             // SAFETY: freshly heap-allocated.
                             unsafe { ShellRmTask::schedule(task) };
                         }
@@ -336,15 +338,14 @@ impl Rm {
     }
 
     fn write_err_literal(interp: &Interpreter, cmd: NodeId, idx: u32, buf: &[u8]) -> Yield {
-        if let Some(safeguard) = Builtin::of(interp, cmd).stderr.needs_io() {
+        let stderr_needs_io = Builtin::of(interp, cmd).stderr.needs_io();
+        if let Some(safeguard) = stderr_needs_io {
             Self::state_mut(interp, cmd).state = RmState::ParseOpts {
                 idx,
                 wait_write_err: true,
             };
             let child = ChildPtr::new(cmd, WriterTag::Builtin);
-            return Builtin::of_mut(interp, cmd)
-                .stderr
-                .enqueue(child, buf, safeguard);
+            return Builtin::write_out(interp, cmd, IoKind::Stderr, child, buf, safeguard);
         }
         let _ = Builtin::write_no_io(interp, cmd, IoKind::Stderr, buf);
         Builtin::done(interp, cmd, 1)
@@ -397,7 +398,7 @@ impl Rm {
         // stashing the error on `exec` (formatting needs &mut interp).
         let errstr: Option<Vec<u8>> = task_err
             .as_ref()
-            .map(|e| Builtin::task_error_to_string(interp, cmd, Kind::Rm, e).to_vec());
+            .map(|e| Builtin::task_error_to_string(Kind::Rm, e));
         let (tasks_done, total) = {
             let RmState::Exec(exec) = &mut Self::state_mut(interp, cmd).state else {
                 panic!("Invalid state")
@@ -414,15 +415,18 @@ impl Rm {
         };
 
         if let Some(s) = errstr {
-            if let Some(safeguard) = Builtin::of(interp, cmd).stderr.needs_io() {
-                if let RmState::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
-                    exec.output_count.fetch_add(1, Ordering::SeqCst);
-                }
-                let child = ChildPtr::new(cmd, WriterTag::Builtin);
-                Builtin::of_mut(interp, cmd)
-                    .stderr
-                    .enqueue(child, &s, safeguard)
-                    .run(interp);
+            let stderr_needs_io = Builtin::of(interp, cmd).stderr.needs_io();
+            if let Some(safeguard) = stderr_needs_io {
+                let seq = match &mut Self::state_mut(interp, cmd).state {
+                    RmState::Exec(exec) => {
+                        exec.output_count.fetch_add(1, Ordering::SeqCst);
+                        exec.verbose_seq += 1;
+                        exec.verbose_seq
+                    }
+                    _ => 1,
+                };
+                let child = ChildPtr::builtin_task(cmd, seq);
+                Builtin::write_out(interp, cmd, IoKind::Stderr, child, &s, safeguard).run(interp);
                 return;
             }
             let _ = Builtin::write_no_io(interp, cmd, IoKind::Stderr, &s);
@@ -473,11 +477,20 @@ impl Rm {
             }
         });
 
-        if let Some(safeguard) = Builtin::of(interp, cmd).stdout.needs_io() {
-            let child = ChildPtr::new(cmd, WriterTag::Builtin);
-            return Builtin::of_mut(interp, cmd)
-                .stdout
-                .enqueue(child, &buf, safeguard);
+        let stdout_needs_io = Builtin::of(interp, cmd).stdout.needs_io();
+
+        if let Some(safeguard) = stdout_needs_io {
+            // One chunk per DirTask can be in flight; number them so each is
+            // called back (a failed writer calls equal children back once).
+            let seq = match &mut Self::state_mut(interp, cmd).state {
+                RmState::Exec(exec) => {
+                    exec.verbose_seq += 1;
+                    exec.verbose_seq
+                }
+                _ => 1,
+            };
+            let child = ChildPtr::builtin_task(cmd, seq);
+            return Builtin::write_out(interp, cmd, IoKind::Stdout, child, &buf, safeguard);
         }
         let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &buf);
         let done = match &mut Self::state_mut(interp, cmd).state {
@@ -555,11 +568,11 @@ impl Rm {
     }
 
     #[inline]
-    fn state_mut(interp: &Interpreter, cmd: NodeId) -> &mut Rm {
-        match &mut Builtin::of_mut(interp, cmd).impl_ {
+    fn state_mut(interp: &Interpreter, cmd: NodeId) -> bun_ptr::JsCellRefMut<'_, Rm> {
+        bun_ptr::JsCellRefMut::map(Builtin::of_mut(interp, cmd), |b| match &mut b.impl_ {
             crate::shell::builtin::Impl::Rm(r) => &mut **r,
             _ => unreachable!(),
-        }
+        })
     }
 }
 
@@ -668,9 +681,9 @@ impl ShellRmTask {
         cwd: bun_sys::Fd,
         error_signal: bun_ptr::BackRef<AtomicBool>,
         output_count: bun_ptr::BackRef<AtomicUsize>,
-        evtloop: EventLoopHandle,
-        interp: *mut Interpreter,
+        interp: &Interpreter,
     ) -> *mut ShellRmTask {
+        let evtloop = interp.event_loop;
         let join_style = JoinStyle::from_path(root_path);
         // Separate allocation — see the comment on `root_task`.
         let root_task = bun_core::heap::into_raw(Box::new(DirTask {
@@ -690,7 +703,7 @@ impl ShellRmTask {
                 callback: DirTask::work_pool_callback,
             },
         }));
-        let mut boxed = Box::new(ShellRmTask {
+        let boxed = Box::new(ShellRmTask {
             cmd,
             opts,
             cwd,
@@ -701,9 +714,8 @@ impl ShellRmTask {
             err: bun_threading::Guarded::new(None),
             join_style,
             event_loop: evtloop,
-            task: ShellTask::new(evtloop),
+            task: ShellTask::new(interp),
         });
-        boxed.task.interp = interp;
         let raw = bun_core::heap::into_raw(boxed);
         // SAFETY: both freshly leaked; exclusive.
         unsafe { (*root_task).task_manager = raw };
@@ -734,12 +746,12 @@ impl ShellRmTask {
     /// Recover `*ShellRmTask` from the intrusive `*WorkPoolTask` and run the
     /// root DirTask.
     unsafe fn work_pool_callback(task: *mut WorkPoolTask) {
-        // SAFETY: `task` is the first `#[repr(C)]` field of `ShellTask`, which
-        // is embedded in `ShellRmTask` at `TASK_OFFSET`. `this` is a live
-        // heap-allocated task; the worker thread has exclusive access to
+        // SAFETY: `task` is `self.task.task`, embedded in a live heap-allocated
+        // `ShellRmTask`; the worker thread has exclusive access to
         // `root_task` until it spawns subtasks.
         unsafe {
-            let this = <Self as crate::shell::interpreter::ShellTaskCtx>::from_work_task(task);
+            let this =
+                bun_ptr::container_of::<Self, _>(task, core::mem::offset_of!(Self, task.task));
             DirTask::run_from_thread_pool_impl((*this).root_task);
         }
     }
@@ -751,18 +763,29 @@ impl ShellRmTask {
     /// `this` is the live `heap::alloc`'d task; not touched again on this
     /// thread after return (unless a verbose pending-count keeps it alive).
     unsafe fn finish_concurrently(this: *mut ShellRmTask) {
-        // SAFETY: caller contract.
-        unsafe { ShellTask::on_finish::<ShellRmTask>(this) };
-    }
-
-    /// # Safety
-    /// `this` must be a live `heap::alloc`'d [`ShellRmTask`] posted via
-    /// [`finish_concurrently`]; main thread.
-    fn run_from_main_thread(this: *mut ShellRmTask, interp: &Interpreter) {
-        // SAFETY: caller contract.
+        use bun_event_loop::{ArmedLoopTask, ConcurrentTask::AutoDeinit, EventLoopTask};
+        use core::ptr::NonNull;
+        // SAFETY: caller contract. Raw place access only: queued verbose hops
+        // may read `*this` on the main thread concurrently, so no `Box`/`&mut`
+        // may cover it here; `poster` is moved out before the post, after
+        // which the main thread may free `*this`.
         unsafe {
-            let cmd = (*this).cmd;
-            Rm::on_shell_rm_task_done(interp, cmd, this);
+            let poster = (*this)
+                .task
+                .poster
+                .take()
+                .expect("shell task on the pool is armed");
+            let armed = match &mut (*this).task.concurrent_task {
+                EventLoopTask::Js(ct) => {
+                    ArmedLoopTask::Js(NonNull::from(ct.from(this, AutoDeinit::ManualDeinit)))
+                }
+                EventLoopTask::Mini(at) => ArmedLoopTask::Mini(
+                    NonNull::new(at.from(this, shell_rm_task_run_from_main_thread_mini))
+                        .expect("intrusive task"),
+                ),
+            };
+            poster.post(armed);
+            drop(poster);
         }
     }
 
@@ -1548,8 +1571,9 @@ impl DirTask {
         // SAFETY: caller contract — `interp` set at create.
         let (interp, cmd) = unsafe {
             let tm = (*this).task_manager;
-            (&*(*tm).task.interp, (*tm).cmd)
+            ((*tm).task.interp, (*tm).cmd)
         };
+        let interp = interp.get();
         Rm::write_verbose(interp, cmd, this).run(interp);
     }
 
@@ -1751,9 +1775,21 @@ impl bun_event_loop::Taskable for DirTask {
     }
 }
 
+/// Mini-loop trampoline for [`ShellRmTask::finish_concurrently`].
+fn shell_rm_task_run_from_main_thread_mini(this: *mut ShellRmTask, _: *mut ()) {
+    // SAFETY: `this` is the live heap task `finish_concurrently` posted; the
+    // mini loop fires it once on the main thread.
+    ShellTask::run_from_main_thread::<ShellRmTask>(unsafe { bun_core::heap::take(this) });
+}
+
 impl crate::shell::interpreter::ShellTaskCtx for ShellRmTask {
-    const TASK_OFFSET: usize = core::mem::offset_of!(Self, task);
-    fn run_from_thread_pool(_this: &mut Self) {
+    fn shell_task(&self) -> &ShellTask {
+        &self.task
+    }
+    fn shell_task_mut(&mut self) -> &mut ShellTask {
+        &mut self.task
+    }
+    fn run_from_thread_pool(&mut self) {
         // Not reached: `ShellRmTask::schedule` installs `work_pool_callback`
         // directly (the generic trampoline auto-posts back, which would race
         // the recursive DirTask tree's own `finish_concurrently`).
@@ -1762,8 +1798,10 @@ impl crate::shell::interpreter::ShellTaskCtx for ShellRmTask {
             "ShellRmTask scheduled via ShellTask::schedule; use ShellRmTask::schedule"
         );
     }
-    fn run_from_main_thread(this: *mut Self, interp: &Interpreter) {
-        // SAFETY: `ShellTask::run_from_main_thread` dispatch contract.
-        Self::run_from_main_thread(this, interp)
+    /// Released back to the raw pending-callback protocol
+    /// (`decr_pending_and_maybe_deinit` frees it).
+    fn run_from_main_thread(self: Box<Self>, interp: &Interpreter) {
+        let cmd = self.cmd;
+        Rm::on_shell_rm_task_done(interp, cmd, bun_core::heap::into_raw(self));
     }
 }

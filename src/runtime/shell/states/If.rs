@@ -1,10 +1,11 @@
 use crate::shell::ExitCode;
 use crate::shell::ast;
-use crate::shell::interpreter::{Interpreter, Node, NodeId, ShellExecEnv, log};
+use crate::shell::interpreter::{EnvRc, Interpreter, Node, NodeId, log};
 use crate::shell::io::IO;
 use crate::shell::states::base::Base;
 use crate::shell::states::stmt::Stmt;
 use crate::shell::yield_::Yield;
+use std::rc::Rc;
 
 pub struct If {
     pub(crate) base: Base,
@@ -23,27 +24,17 @@ pub enum IfState {
 pub struct Exec {
     pub(crate) state: ExecBranch,
     /// Back-reference to the current `SmolList<ast::Stmt, 1>` being walked.
-    /// Points into the AST arena, which the interpreter holds for its entire
-    /// lifetime — it outlives every state node.
+    /// Points into the AST arena, which is reset only after every state node
+    /// is freed.
     pub(crate) stmts: bun_ptr::BackRef<ast::SmolList<ast::Stmt, 1>>,
     pub(crate) stmt_idx: u32,
     pub(crate) last_exit_code: ExitCode,
 }
 
 impl Exec {
-    /// Borrow the current `SmolList<Stmt, 1>` being walked.
-    ///
-    /// `stmts` always points into the AST arena (`ShellArgs::__arena`), which
-    /// the interpreter holds for its entire lifetime — it outlives every state
-    /// node (BackRef invariant).
-    #[inline]
-    fn stmts(&self) -> &ast::SmolList<ast::Stmt, 1> {
-        self.stmts.get()
-    }
-
     #[inline]
     fn stmts_len(&self) -> u32 {
-        self.stmts().len() as u32
+        self.stmts.len() as u32
     }
 }
 
@@ -57,7 +48,7 @@ pub enum ExecBranch {
 impl If {
     pub(crate) fn init(
         interp: &Interpreter,
-        shell: *mut ShellExecEnv,
+        shell: EnvRc,
         node: &ast::If,
         parent: NodeId,
         io: IO,
@@ -80,7 +71,7 @@ impl If {
             // Read/mutate `state` via a short-lived borrow, decide an action,
             // then drop the borrow before calling back into `interp`.
             let action = {
-                let me = interp.as_if_mut(this);
+                let mut me = interp.as_if_mut(this);
                 // Copy the BackRef out so `n` borrows a local, leaving `me`
                 // free for the disjoint `&mut me.state` borrow below.
                 let node = me.node;
@@ -158,8 +149,8 @@ impl If {
                             let i = exec.stmt_idx;
                             exec.stmt_idx += 1;
                             // `i` was bounds-checked against `stmts_len()`.
-                            let stmt_node: *const ast::Stmt = &raw const exec.stmts()[i as usize];
-                            Action::SpawnStmt(stmt_node)
+                            let stmts = exec.stmts;
+                            Action::SpawnStmt(bun_ptr::BackRef::new(&stmts.get()[i as usize]))
                         }
                     }
                 }
@@ -167,11 +158,8 @@ impl If {
             return match action {
                 Action::Done(exit) => interp.child_done(parent, this, exit),
                 Action::SpawnStmt(stmt_node) => {
-                    let (shell, io) = {
-                        let me = interp.as_if(this);
-                        (me.base.shell, me.io.clone())
-                    };
-                    let new_stmt = Stmt::init(interp, shell, stmt_node, this, io);
+                    let shell = Rc::clone(&interp.as_if(this).base.shell);
+                    let new_stmt = Stmt::init(interp, shell, stmt_node, this);
                     Stmt::start(interp, new_stmt)
                 }
             };
@@ -189,7 +177,7 @@ impl If {
             let parent = interp.as_if(this).base.parent;
             return interp.child_done(parent, this, exit_code);
         }
-        let me = interp.as_if_mut(this);
+        let mut me = interp.as_if_mut(this);
         let IfState::Exec(exec) = &mut me.state else {
             panic!(
                 "Expected `exec` state in If, this indicates a bug in Bun. Please file a GitHub issue."
@@ -206,5 +194,5 @@ impl If {
 
 pub(crate) enum Action {
     Done(ExitCode),
-    SpawnStmt(*const ast::Stmt),
+    SpawnStmt(bun_ptr::BackRef<ast::Stmt>),
 }

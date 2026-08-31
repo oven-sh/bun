@@ -164,6 +164,33 @@ pub trait Taskable {
     unsafe fn release_unrun(this: *mut Self);
 }
 
+/// [`Taskable`] for a type that is only ever queued as a leaked `Box<Self>`
+/// (`heap::into_raw` / `Box::into_raw` at every post site, `Box::from_raw` in
+/// its `bun_runtime::dispatch` arm). Released unrun by reclaiming the box and
+/// handing it to `|this| $release` (default: drop it).
+///
+/// ```ignore
+/// bun_event_loop::boxed_taskable!(ShellGlobTask, ShellGlobTask, |this| this.task.unref_unrun());
+/// ```
+#[macro_export]
+macro_rules! boxed_taskable {
+    ($ty:ty, $tag:ident) => {
+        $crate::boxed_taskable!($ty, $tag, |this| ());
+    };
+    ($ty:ty, $tag:ident, |$this:ident| $release:expr) => {
+        impl $crate::Taskable for $ty {
+            const TAG: $crate::TaskTag = $crate::task_tag::$tag;
+            unsafe fn release_unrun(this: *mut Self) {
+                // SAFETY: `release_unrun` contract — `this` is the queued
+                // `Task::ptr` under `TAG`, which for this type is a leaked `Box<Self>`.
+                #[allow(unused_mut)]
+                let mut $this: ::std::boxed::Box<Self> = unsafe { ::bun_core::heap::take(this) };
+                $release;
+            }
+        }
+    };
+}
+
 impl TaskTag {
     /// The tag's identifier, for diagnostics.
     pub fn name(self) -> &'static str {

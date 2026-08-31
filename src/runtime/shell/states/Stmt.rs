@@ -1,9 +1,9 @@
 use crate::shell::ExitCode;
 use crate::shell::ast;
-use crate::shell::interpreter::{Interpreter, Node, NodeId, ShellExecEnv, StateKind, log};
-use crate::shell::io::IO;
+use crate::shell::interpreter::{EnvRc, Interpreter, Node, NodeId, StateKind, log};
 use crate::shell::states::base::Base;
 use crate::shell::yield_::Yield;
+use std::rc::Rc;
 
 pub struct Stmt {
     pub(crate) base: Base,
@@ -11,29 +11,24 @@ pub struct Stmt {
     pub(crate) idx: usize,
     pub(crate) last_exit_code: Option<ExitCode>,
     pub(crate) currently_executing: Option<NodeId>,
-    pub(crate) io: IO,
 }
 
 impl Stmt {
+    /// A statement runs its children with its parent's (`Script`/`If`) env
+    /// and IO, so it stores neither an IO of its own nor a separate env
+    /// handle beyond `base.shell`.
     pub(crate) fn init(
         interp: &Interpreter,
-        shell: *mut ShellExecEnv,
-        node: *const ast::Stmt,
+        shell: EnvRc,
+        node: bun_ptr::BackRef<ast::Stmt>,
         parent: NodeId,
-        io: IO,
     ) -> NodeId {
         let id = interp.alloc_node(Node::Stmt(Stmt {
             base: Base::new(parent, shell),
-            // SAFETY: `node` is non-null and points into the AST arena
-            // (`ShellArgs::__arena`), which the interpreter holds for its
-            // entire lifetime — strictly outliving every state node (the
-            // BackRef invariant). Callers pass `&raw const` only to escape
-            // borrowck across the `&Interpreter` reborrow.
-            node: unsafe { bun_ptr::BackRef::from_raw(node as *mut ast::Stmt) },
+            node,
             idx: 0,
             last_exit_code: None,
             currently_executing: None,
-            io,
         }));
         log!("Stmt {} init", id);
         id
@@ -48,22 +43,22 @@ impl Stmt {
     }
 
     pub(crate) fn next(interp: &Interpreter, this: NodeId) -> Yield {
-        let (idx, len, parent, last, shell) = {
+        let (idx, shell, node, io) = {
             let me = interp.as_stmt(this);
+            if me.idx >= Self::expr_count(&me) {
+                let (parent, last) = (me.base.parent, me.last_exit_code);
+                drop(me);
+                return interp.child_done(parent, this, last.unwrap_or(0));
+            }
             (
                 me.idx,
-                Self::expr_count(me),
-                me.base.parent,
-                me.last_exit_code,
-                me.base.shell,
+                Rc::clone(&me.base.shell),
+                me.node,
+                interp.io_of(me.base.parent),
             )
         };
-        if idx >= len {
-            return interp.child_done(parent, this, last.unwrap_or(0));
-        }
-        let expr: ast::Expr = interp.as_stmt(this).node.exprs[idx];
-        let io = interp.as_stmt(this).io.clone();
-        let (child, y) = interp.spawn_expr(shell, &expr, this, io);
+        let expr = &node.get().exprs[idx];
+        let (child, y) = interp.spawn_expr(&shell, expr, this, io);
         interp.as_stmt_mut(this).currently_executing = child;
         y
     }
@@ -76,19 +71,19 @@ impl Stmt {
     ) -> Yield {
         log!("Stmt {} childDone exit={}", this, exit_code);
         {
-            let me = interp.as_stmt_mut(this);
+            let mut me = interp.as_stmt_mut(this);
             me.last_exit_code = Some(exit_code);
             me.idx += 1;
             me.currently_executing = None;
         }
         // Async children are *not* freed here (they outlive their parent's
         // notion of "done"); see `Async`'s empty `deinit`.
-        if !matches!(interp.node(child).kind(), StateKind::Async) {
+        if !matches!(interp.kind(child), StateKind::Async) {
             interp.deinit_node(child);
         }
         if interp.interrupted(this) {
-            let me = interp.as_stmt_mut(this);
-            me.idx = Self::expr_count(me);
+            let mut me = interp.as_stmt_mut(this);
+            me.idx = Self::expr_count(&me);
         }
         Yield::Next(this)
     }

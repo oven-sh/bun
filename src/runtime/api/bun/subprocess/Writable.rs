@@ -195,7 +195,7 @@ impl<'a> Writable<'a> {
                 Stdio::Memfd(_) | Stdio::Path(_) | Stdio::Ignore => {
                     return Ok(Writable::Ignore);
                 }
-                Stdio::Ipc | Stdio::Capture(_) => {
+                Stdio::Ipc | Stdio::Capture => {
                     return Ok(Writable::Ignore);
                 }
                 // Rejected at i < 3 in Stdio::extract(); stdin never sees this.
@@ -293,7 +293,7 @@ impl<'a> Writable<'a> {
             Stdio::Fd(_) => Ok(Writable::Fd(result.unwrap())),
             Stdio::Inherit => Ok(Writable::Inherit),
             Stdio::Path(_) | Stdio::Ignore => Ok(Writable::Ignore),
-            Stdio::Ipc | Stdio::Capture(_) => Ok(Writable::Ignore),
+            Stdio::Ipc | Stdio::Capture => Ok(Writable::Ignore),
             // Rejected at i < 3 in Stdio::extract(); stdin never sees this.
             Stdio::SocketFd => unreachable!("SocketFd at stdin"),
         }

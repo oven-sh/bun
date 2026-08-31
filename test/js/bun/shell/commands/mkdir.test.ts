@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 
 // A relative operand was joined onto the cwd in a fixed 4096-byte buffer, so an
@@ -73,5 +74,34 @@ test("operands longer than the path buffers are reported, not a crash", async ()
       ? { exitCode: 0, stderr: "", created: true }
       : { ...failed(`${dir}/${dotSlashes}as-written`), created: false },
   });
+  expect(exitCode).toBe(0);
+});
+
+// `-v` output goes through one OutputTask per operand; once the reader side of
+// the pipe is gone (EPIPE) the remaining tasks must still complete.
+// `head` is not a shell builtin, so this needs a system `head` (not on Windows CI).
+test.skipIf(isWindows)("mkdir -v into a closed pipe finishes", async () => {
+  using dir = tempDir("mkdir-epipe", {});
+  const names = Array.from({ length: 40 }, (_, i) => `d${i}`).join(" ");
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const r = await Bun.$\`mkdir -v ${names} | head -1\`.quiet().nothrow(); console.log(JSON.stringify([r.stdout.toString(), r.exitCode]));`,
+    ],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  // `head -1` passes exactly one line through (the directories are created
+  // concurrently, so which one is not fixed); the rest hit EPIPE.
+  const [out, code] = JSON.parse(stdout);
+  const prefix = join(String(dir), "d");
+  expect(out.startsWith(prefix)).toBe(true);
+  expect(out.slice(prefix.length)).toMatch(/^\d+\n$/);
+  expect(code).toBe(0);
+  expect(existsSync(join(String(dir), "d39"))).toBe(true);
   expect(exitCode).toBe(0);
 });

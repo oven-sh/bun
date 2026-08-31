@@ -1,9 +1,9 @@
-use std::sync::Arc;
+use bun_ptr::RefPtr;
 
 use crate::shell::ExitCode;
 use crate::shell::builtin::{Builtin, BuiltinIO, BuiltinInput, BuiltinState, IoKind, Kind};
 use crate::shell::interpreter::{
-    FlagParser, Interpreter, NodeId, ParseFlagResult, parse_flags, shell_openat, unsupported_flag,
+    FlagParser, Interpreter, NodeId, ParseFlagResult, shell_openat, unsupported_flag,
 };
 use crate::shell::io_reader::{ChildPtr as ReaderChildPtr, IOReader, ReaderTag};
 use crate::shell::io_writer::{ChildPtr, WriterTag};
@@ -30,7 +30,7 @@ pub enum CatState {
         /// Current index into the filepath args.
         idx: usize,
         /// Per-file reader.
-        reader: Option<Arc<IOReader>>,
+        reader: Option<RefPtr<IOReader>>,
         chunks_queued: usize,
         chunks_done: usize,
         out_done: bool,
@@ -59,16 +59,12 @@ impl Step {
 impl Cat {
     pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
         let mut opts = Opts::default();
-        let filepath_start = {
-            let args = Builtin::of(interp, cmd).args_slice();
-            match parse_flags(&mut opts, args) {
-                Ok(Some(rest)) => Some(args.len() - rest.len()),
-                Ok(None) => None,
-                Err(e) => {
-                    return Builtin::fail_parse(interp, cmd, Kind::Cat, &e, || {
-                        Self::state_mut(interp, cmd).state = CatState::WaitingWriteErr
-                    });
-                }
+        let filepath_start = match Builtin::parse_flags(interp, cmd, &mut opts) {
+            Ok(start) => start,
+            Err(e) => {
+                return Builtin::fail_parse(interp, cmd, Kind::Cat, &e, || {
+                    Self::state_mut(interp, cmd).state = CatState::WaitingWriteErr
+                });
             }
         };
 
@@ -103,12 +99,11 @@ impl Cat {
         buf: &[u8],
         exit_code: ExitCode,
     ) -> Yield {
-        if let Some(safeguard) = Builtin::of(interp, cmd).stderr.needs_io() {
+        let stderr_needs_io = Builtin::of(interp, cmd).stderr.needs_io();
+        if let Some(safeguard) = stderr_needs_io {
             Self::state_mut(interp, cmd).state = CatState::WaitingWriteErr;
             let child = ChildPtr::new(cmd, WriterTag::Builtin);
-            return Builtin::of_mut(interp, cmd)
-                .stderr
-                .enqueue(child, buf, safeguard);
+            return Builtin::write_out(interp, cmd, IoKind::Stderr, child, buf, safeguard);
         }
         let _ = Builtin::write_no_io(interp, cmd, IoKind::Stderr, buf);
         Builtin::done(interp, cmd, exit_code)
@@ -145,25 +140,30 @@ impl Cat {
                     }
                     // Copy stdin bytes so the &mut on `stdout`/`write_no_io`
                     // doesn't overlap a borrow of `stdin`.
-                    let buf = Builtin::read_stdin_no_io(interp, cmd).to_vec();
-                    if let Some(safeguard) = Builtin::of(interp, cmd).stdout.needs_io() {
+                    let buf = Builtin::of(interp, cmd).read_stdin_no_io().to_vec();
+                    let stdout_needs_io = Builtin::of(interp, cmd).stdout.needs_io();
+                    if let Some(safeguard) = stdout_needs_io {
                         let child = ChildPtr::new(cmd, WriterTag::Builtin);
-                        return Builtin::of_mut(interp, cmd)
-                            .stdout
-                            .enqueue(child, &buf, safeguard);
+                        return Builtin::write_out(
+                            interp,
+                            cmd,
+                            IoKind::Stdout,
+                            child,
+                            &buf,
+                            safeguard,
+                        );
                     }
                     let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &buf);
                     return Builtin::done(interp, cmd, 0);
                 }
-                // Clone the `Arc<IOReader>`
+                // Clone the `Rc<IOReader>`
                 // out of `stdin` so we hold no borrow of `interp` across
-                // `start()` (which may re-enter via the raw interp backref).
-                let interp_ptr: *mut Interpreter = interp.as_ctx_ptr();
+                // `start()` (which may re-enter via the interp backref).
                 let reader = match &Builtin::of(interp, cmd).stdin {
-                    BuiltinInput::Fd(r) => Arc::clone(r),
+                    BuiltinInput::Fd(r) => r.clone(),
                     _ => unreachable!("needs_io() returned true"),
                 };
-                reader.set_interp(interp_ptr);
+                reader.set_interp(interp);
                 reader.add_reader(ReaderChildPtr {
                     node: cmd,
                     tag: ReaderTag::Cat,
@@ -188,8 +188,6 @@ impl Cat {
                     *reader = None;
                 }
 
-                let path = Builtin::of(interp, cmd).arg_zstr(args_start + idx);
-
                 if let CatState::ExecFilepathArgs { idx: i, .. } =
                     &mut Self::state_mut(interp, cmd).state
                 {
@@ -197,20 +195,23 @@ impl Cat {
                 }
 
                 let dir = Builtin::cwd(interp, cmd);
-                let fd = match shell_openat(dir, path, bun_sys::O::RDONLY, 0) {
+                let opened = {
+                    let bltn = Builtin::of(interp, cmd);
+                    let path = bltn.arg_zstr(args_start + idx);
+                    shell_openat(dir, path, bun_sys::O::RDONLY, 0)
+                };
+                let fd = match opened {
                     Ok(fd) => fd,
                     Err(e) => {
-                        let buf =
-                            Builtin::task_error_to_string(interp, cmd, Kind::Cat, &e).to_vec();
+                        let buf = Builtin::task_error_to_string(Kind::Cat, &e);
                         // The reader was already taken to `None` above.
                         return Self::write_failing_error(interp, cmd, &buf, 1);
                     }
                 };
 
                 let evtloop = Builtin::event_loop(interp, cmd);
-                let interp_ptr: *mut Interpreter = interp.as_ctx_ptr();
                 let reader = IOReader::init(fd, evtloop);
-                reader.set_interp(interp_ptr);
+                reader.set_interp(interp);
                 if let CatState::ExecFilepathArgs {
                     reader: slot,
                     chunks_done,
@@ -224,7 +225,7 @@ impl Cat {
                     *chunks_queued = 0;
                     *in_done = false;
                     *out_done = false;
-                    *slot = Some(Arc::clone(&reader));
+                    *slot = Some(reader.clone());
                 }
                 reader.add_reader(ReaderChildPtr {
                     node: cmd,
@@ -249,29 +250,34 @@ impl Cat {
                 tag: ReaderTag::Cat,
             };
             // Writing to stdout errored: cancel everything and finish.
-            // Pull the reader `Arc` out of
+            // Pull the reader out of
             // state before calling `remove_reader`, then drop it.
-            match &mut Self::state_mut(interp, cmd).state {
-                CatState::ExecStdin {
-                    in_done,
-                    errno: st_errno,
-                    ..
-                } => {
-                    *st_errno = errno;
-                    let was_done = core::mem::replace(in_done, true);
-                    if !was_done {
-                        if let BuiltinInput::Fd(r) = &Builtin::of(interp, cmd).stdin {
+            {
+                let mut bltn = Builtin::of_mut(interp, cmd);
+                let bltn = &mut *bltn;
+                let stdin = &bltn.stdin;
+                match &mut Self::extract(&mut bltn.impl_).state {
+                    CatState::ExecStdin {
+                        in_done,
+                        errno: st_errno,
+                        ..
+                    } => {
+                        *st_errno = errno;
+                        let was_done = core::mem::replace(in_done, true);
+                        if !was_done {
+                            if let BuiltinInput::Fd(r) = stdin {
+                                r.remove_reader(rchild);
+                            }
+                        }
+                    }
+                    CatState::ExecFilepathArgs { reader, .. } => {
+                        if let Some(r) = reader.take() {
                             r.remove_reader(rchild);
                         }
                     }
+                    CatState::WaitingWriteErr => {}
+                    _ => panic!("Invalid state"),
                 }
-                CatState::ExecFilepathArgs { reader, .. } => {
-                    if let Some(r) = reader.take() {
-                        r.remove_reader(rchild);
-                    }
-                }
-                CatState::WaitingWriteErr => {}
-                _ => panic!("Invalid state"),
             }
             return Builtin::done(interp, cmd, errno);
         }
@@ -321,18 +327,20 @@ impl Cat {
     ) -> Yield {
         *remove = false;
         let stdout_needs_io = Builtin::of(interp, cmd).stdout.needs_io();
-        match &mut Self::state_mut(interp, cmd).state {
-            CatState::ExecStdin { chunks_queued, .. }
-            | CatState::ExecFilepathArgs { chunks_queued, .. } => {
-                if let Some(safeguard) = stdout_needs_io {
-                    *chunks_queued += 1;
-                    let child = ChildPtr::new(cmd, WriterTag::Builtin);
-                    return Builtin::of_mut(interp, cmd)
-                        .stdout
-                        .enqueue(child, chunk, safeguard);
-                }
+        if let Some(safeguard) = stdout_needs_io {
+            match &mut Self::state_mut(interp, cmd).state {
+                CatState::ExecStdin { chunks_queued, .. }
+                | CatState::ExecFilepathArgs { chunks_queued, .. } => *chunks_queued += 1,
+                _ => panic!("Invalid state"),
             }
-            _ => panic!("Invalid state"),
+            let child = ChildPtr::new(cmd, WriterTag::Builtin);
+            return Builtin::write_out(interp, cmd, IoKind::Stdout, child, chunk, safeguard);
+        }
+        if !matches!(
+            Self::state_mut(interp, cmd).state,
+            CatState::ExecStdin { .. } | CatState::ExecFilepathArgs { .. }
+        ) {
+            panic!("Invalid state");
         }
         let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, chunk);
         Yield::done()
@@ -421,9 +429,7 @@ impl FlagParser for Opts {
             b't' => Some(ParseFlagResult::Unsupported(unsupported_flag(b"-t"))),
             b'u' => Some(ParseFlagResult::Unsupported(unsupported_flag(b"-u"))),
             b'v' => Some(ParseFlagResult::Unsupported(unsupported_flag(b"-v"))),
-            _ => Some(ParseFlagResult::IllegalOption(
-                &raw const smallflags[1 + i..],
-            )),
+            _ => Some(ParseFlagResult::IllegalOption(smallflags[1 + i..].into())),
         }
     }
 }

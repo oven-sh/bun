@@ -180,25 +180,6 @@
       "ThreadIsolated<T>"
     ]
   },
-  "src/runtime/shell/IOReader.rs": {
-    "unsafe impl Send": [
-      "IOReader"
-    ],
-    "unsafe impl Sync": [
-      "IOReader"
-    ]
-  },
-  "src/runtime/shell/IOWriter.rs": {
-    "unsafe impl Send": [
-      "IOWriter"
-    ],
-    "unsafe impl Sync": [
-      "IOWriter"
-    ]
-  },
-  "src/runtime/shell/builtin/cp.rs": {
-    "WorkPool::schedule*": 1
-  },
   "src/runtime/shell/builtin/rm.rs": {
     "WorkPool::schedule*": 2,
     "unsafe impl Send": [
@@ -207,7 +188,7 @@
     ]
   },
   "src/runtime/shell/interpreter.rs": {
-    "WorkPool::schedule*": 1
+    "WorkPool::schedule*": 2
   },
   "src/runtime/webcore/Blob.rs": {
     "WorkPool::schedule*": 1

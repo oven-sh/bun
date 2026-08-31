@@ -15,16 +15,6 @@ use bun_core::{String as BunString, strings};
 // `strings::Cursor` aliased as `CodepointCursor` for readability.
 type CodepointCursor = strings::Cursor;
 
-/// Opaque stand-in for `bun_jsc::JSValue` — the parser only *stores* the
-/// jsobjs slice (never inspects it), so the lower-tier crate can stay
-/// JSC-free. `bun_jsc::JSValue` is `#[repr(transparent)] usize`, so callers
-/// in `bun_runtime` may safely reinterpret `&mut [JSValue]` ↔ `&mut [JSValueRaw]`
-/// via a typed pointer cast.
-#[repr(transparent)]
-#[derive(Clone, Copy)]
-pub struct JSValueRaw(pub usize);
-type JSValue = JSValueRaw;
-
 bun_core::define_scoped_log!(log, SHELL, hidden);
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr, Clone, Copy, PartialEq, Eq)]
@@ -50,6 +40,108 @@ impl From<ParseError> for crate::Error {
             ParseError::Unknown => crate::Error::Unknown,
             ParseError::Lex => crate::Error::Lex,
         }
+    }
+}
+
+// ───────────────────────────── ParsedScript ─────────────────────────────
+
+/// Why [`ParsedScript::parse`] failed.
+pub enum ParseFailure {
+    /// The lexer or parser reported errors; the payload is their combined
+    /// message.
+    Diagnostic(Box<[u8]>),
+    Lexer(LexerError),
+    Other(crate::Error),
+}
+
+/// A parsed script together with the arena every AST node lives in.
+///
+/// The tree is stored with its arena lifetime erased (`ast::Script<'static>`)
+/// because it sits next to the arena that owns it. [`root`](Self::root) lends
+/// it for the borrow of `self`; [`root_backref`](Self::root_backref) hands out
+/// the erased form under the `bun_ptr::BackRef` obligation: every `ast::*`
+/// reached through it points into `self` and is valid until `self` is
+/// [`reset`](Self::reset), moved or dropped — the holder must not outlive that.
+pub struct ParsedScript {
+    arena: Bump,
+    root: ast::Script<'static>,
+}
+
+impl Default for ParsedScript {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ParsedScript {
+    pub fn new() -> Self {
+        Self {
+            arena: Bump::new(),
+            root: ast::Script { stmts: &[] },
+        }
+    }
+
+    /// Lex and parse `src` into this arena, replacing any previous tree.
+    /// `jsstrings_to_escape` are the interpolated JS strings the lexer
+    /// splices in; `jsobjs_len` bounds `\x08__bun_N` object references.
+    pub fn parse(
+        &mut self,
+        src: &[u8],
+        jsstrings_to_escape: &[BunString],
+        jsobjs_len: u32,
+    ) -> Result<(), ParseFailure> {
+        self.root = ast::Script { stmts: &[] };
+        let arena = &self.arena;
+        let lex_result = if bun_core::is_all_ascii(src) {
+            let mut lexer = LexerAscii::new(arena, src, jsstrings_to_escape, jsobjs_len);
+            lexer.lex().map_err(ParseFailure::Lexer)?;
+            lexer.get_result()
+        } else {
+            let mut lexer = LexerUnicode::new(arena, src, jsstrings_to_escape, jsobjs_len);
+            lexer.lex().map_err(ParseFailure::Lexer)?;
+            lexer.get_result()
+        };
+        if !lex_result.errors.is_empty() {
+            return Err(ParseFailure::Diagnostic(
+                lex_result.combine_errors(arena).into(),
+            ));
+        }
+        let mut parser = Parser::new(arena, lex_result);
+        let root = match parser.parse() {
+            Ok(root) => root,
+            Err(e) if parser.errors.is_empty() => return Err(ParseFailure::Other(e)),
+            Err(_) => return Err(ParseFailure::Diagnostic(parser.combine_errors().into())),
+        };
+        // SAFETY: lifetime-only transmute (`Script<'_>` → `Script<'static>`).
+        // Every node `root` reaches was allocated in `self.arena`, which lives
+        // exactly as long as `self.root` and is only reset together with it
+        // (`reset`/`parse` clear `root` first); see the type-level contract.
+        self.root = unsafe { core::mem::transmute::<ast::Script<'_>, ast::Script<'static>>(root) };
+        Ok(())
+    }
+
+    /// The root of the tree, for the borrow of `self`.
+    #[inline]
+    pub fn root(&self) -> &ast::Script<'_> {
+        &self.root
+    }
+
+    /// The root with the arena lifetime erased; see the type docs for the
+    /// holder's obligation.
+    #[inline]
+    pub fn root_backref(&self) -> bun_ptr::BackRef<ast::Script<'static>> {
+        bun_ptr::BackRef::new(&self.root)
+    }
+
+    /// Free every node and return the arena's pages. The tree is empty
+    /// afterwards.
+    pub fn reset(&mut self) {
+        self.root = ast::Script { stmts: &[] };
+        self.arena.reset();
+    }
+
+    pub fn memory_cost(&self) -> usize {
+        core::mem::size_of::<Self>() + self.arena.allocated_bytes()
     }
 }
 
@@ -715,7 +807,6 @@ pub struct Parser<'bump> {
     /// refs). See `Lexer::js_string_ranges`.
     pub(crate) js_string_ranges: &'bump [TextRange],
     pub(crate) alloc: &'bump Bump,
-    pub(crate) jsobjs: &'bump mut [JSValue],
     pub(crate) current: u32,
     pub errors: bun_alloc::ArenaVec<'bump, ParserError<'bump>>,
     pub(crate) inside_subshell: Option<SubshellKind>,
@@ -744,21 +835,16 @@ pub struct ParserError<'bump> {
 type ParseResult<T> = crate::Result<T>;
 
 impl<'bump> Parser<'bump> {
-    pub fn new(
-        bump: &'bump Bump,
-        lex_result: LexResult<'bump>,
-        jsobjs: &'bump mut [JSValue],
-    ) -> ParseResult<Parser<'bump>> {
-        Ok(Parser {
+    pub fn new(bump: &'bump Bump, lex_result: LexResult<'bump>) -> Parser<'bump> {
+        Parser {
             strpool: lex_result.strpool,
             tokens: lex_result.tokens,
             js_string_ranges: lex_result.js_string_ranges,
             alloc: bump,
-            jsobjs,
             current: 0,
             errors: bun_alloc::ArenaVec::new_in(bump),
             inside_subshell: None,
-        })
+        }
     }
 
     /// __WARNING__:
@@ -772,9 +858,6 @@ impl<'bump> Parser<'bump> {
             tokens: self.tokens,
             js_string_ranges: self.js_string_ranges,
             alloc: self.alloc,
-            // reshaped for borrowck — move the
-            // exclusive borrow into the subparser and restore it in continue_from_subparser.
-            jsobjs: core::mem::take(&mut self.jsobjs),
             current: self.current,
             errors: core::mem::replace(&mut self.errors, bun_alloc::ArenaVec::new_in(self.alloc)),
             inside_subshell: Some(kind),
@@ -791,7 +874,6 @@ impl<'bump> Parser<'bump> {
             &mut subparser.errors,
             bun_alloc::ArenaVec::new_in(self.alloc),
         );
-        self.jsobjs = core::mem::take(&mut subparser.jsobjs);
     }
 
     /// Main parse function

@@ -17,18 +17,24 @@
 //!
 //! A parent/child back-pointer tree would be borrow-checker hostile
 //! (overlapping `&mut` of parent and child), so all state nodes live in a
-//! flat `Vec<Node>` owned by the `Interpreter`. Nodes refer to each other
-//! (and to their parent) by `NodeId` — a `u32` index. Dispatch is a single
-//! hoisted `match` on the parent's tag (`Interpreter::child_done`), which
-//! keeps the per-tick hot path inlined (see PORTING.md §Dispatch hot-path).
+//! flat arena owned by the `Interpreter`. Nodes refer to each other (and to
+//! their parent) by `NodeId` — a `u32` index. Dispatch is a single hoisted
+//! `match` on the parent's tag (`Interpreter::child_done`), which keeps the
+//! per-tick hot path inlined (see PORTING.md §Dispatch hot-path).
 //!
-//! State methods take `(&mut Interpreter, this: NodeId)` and look their
-//! own data up via `interp.node_mut(this)` / `interp.nodes[this]`.
+//! Slots are `JsRefCell<Node>`s in boxed chunks, so a borrowed node stays put
+//! while the arena grows and (in debug builds) overlapping borrows of one
+//! node are a checked panic rather than aliasing. State methods take
+//! `(&Interpreter, this: NodeId)` and look their own data up via
+//! `interp.as_<kind>(this)` / `interp.as_<kind>_mut(this)`; keep those borrows
+//! short and never hold one across a call that re-enters the same node.
 
 use bun_collections::VecExt;
 use bun_jsc::JsCell;
+use bun_ptr::{JsCellRef, JsCellRefMut, JsRefCell};
 use core::cell::Cell;
 use core::fmt;
+use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use bun_sys::{self, Fd};
@@ -51,7 +57,6 @@ use crate::shell::yield_::Yield;
 use crate::shell::{ShellErr, ast};
 
 bun_core::declare_scope!(SHELL, visible);
-bun_core::declare_scope!(CowFd, hidden);
 
 /// `log!("...")` — scoped debug logger for the shell interpreter. Expands to
 /// nothing in release; the `SHELL` static is referenced by absolute path so
@@ -98,9 +103,20 @@ impl fmt::Display for NodeId {
     }
 }
 
+const NODE_CHUNK: usize = 8;
+type NodeChunk = [JsRefCell<Node>; NODE_CHUNK];
+
+/// A chunk of free slots, built in place on the heap (an array literal would
+/// be assembled on the stack and copied over).
+fn new_node_chunk() -> Box<NodeChunk> {
+    let chunk: Box<[JsRefCell<Node>]> = core::iter::repeat_with(|| JsRefCell::new(Node::Free))
+        .take(NODE_CHUNK)
+        .collect();
+    chunk.try_into().ok().expect("exactly NODE_CHUNK slots")
+}
+
 /// One slot in the interpreter's state arena. All state structs
-/// live as enum variants in a single `Vec<Node>` so the only outstanding
-/// borrow at any time is `&mut Interpreter`.
+/// live as enum variants so the arena is a single homogeneous vector.
 pub enum Node {
     /// Freed slot, available for reuse by `alloc_node`.
     Free,
@@ -135,8 +151,7 @@ impl Node {
         }
     }
 
-    /// Every state struct embeds a `Base` header at a known field; this is the
-    /// hoisted accessor.
+    /// Every state struct embeds a `Base` header; `None` for a freed slot.
     pub(crate) fn base(&self) -> Option<&Base> {
         match self {
             Node::Free => None,
@@ -172,35 +187,35 @@ impl Node {
     }
 }
 
+#[cold]
+#[inline(never)]
+#[track_caller]
+fn node_kind_mismatch(expected: &'static str, id: NodeId, got: StateKind) -> ! {
+    panic!("expected Node::{expected} at {id}, got {got:?}")
+}
+
 /// Generate `Interpreter::as_<kind>{,_mut}` typed accessors. These panic on
-/// tag mismatch.
+/// tag mismatch, and (in debug builds) on an overlapping borrow of
+/// the same node.
 macro_rules! node_accessors {
     ($($variant:ident => $ty:ty, $get:ident, $get_mut:ident);* $(;)?) => {
         impl Interpreter {
             $(
-                #[inline]
+                #[inline(always)]
                 #[track_caller]
-                pub fn $get(&self, id: NodeId) -> &$ty {
-                    match &self.nodes.get()[id.idx()] {
+                pub fn $get(&self, id: NodeId) -> JsCellRef<'_, $ty> {
+                    JsCellRef::map(self.node(id), |n| match n {
                         Node::$variant(v) => v,
-                        other => panic!(
-                            concat!("expected Node::", stringify!($variant), " at {}, got {:?}"),
-                            id, other.kind()
-                        ),
-                    }
+                        other => node_kind_mismatch(stringify!($variant), id, other.kind()),
+                    })
                 }
-                #[inline]
+                #[inline(always)]
                 #[track_caller]
-                #[allow(clippy::mut_from_ref)]
-                pub fn $get_mut(&self, id: NodeId) -> &mut $ty {
-                    // SAFETY: R-2 single-JS-thread invariant — see `nodes_mut`.
-                    match unsafe { &mut self.nodes.get_mut()[id.idx()] } {
+                pub fn $get_mut(&self, id: NodeId) -> JsCellRefMut<'_, $ty> {
+                    JsCellRefMut::map(self.node_mut(id), |n| match n {
                         Node::$variant(v) => v,
-                        other => panic!(
-                            concat!("expected Node::", stringify!($variant), " at {}, got {:?}"),
-                            id, other.kind()
-                        ),
-                    }
+                        other => node_kind_mismatch(stringify!($variant), id, other.kind()),
+                    })
                 }
             )*
         }
@@ -267,9 +282,16 @@ pub enum OutputNeedsIOSafeGuard {
 // interpreter entirely — see `DbgDepthGuard::MAX_DEPTH`). With every field
 // behind `UnsafeCell`, an overlapping `&Interpreter` is sound.
 pub struct Interpreter {
-    /// Flat arena of state-machine nodes. Indices are `NodeId`s; freed slots
-    /// are recycled via `free_list`.
-    pub(crate) nodes: JsCell<Vec<Node>>,
+    /// State-machine node arena. Indices are `NodeId`s; freed slots are
+    /// recycled via `free_list`. Slots live in fixed-size boxed chunks that
+    /// are only ever appended, so a `JsCellRef`/`JsCellRefMut` into one stays valid
+    /// while the arena grows; refilling a slot goes through its own cell.
+    nodes_head: Box<NodeChunk>,
+    /// Chunks after the first (most scripts never need one).
+    #[allow(clippy::vec_box, reason = "chunk address stability across growth")]
+    nodes_tail: JsCell<Vec<Box<NodeChunk>>>,
+    /// Slots handed out so far (high-water mark).
+    node_len: Cell<u32>,
     free_list: JsCell<Vec<u32>>,
 
     pub(crate) event_loop: EventLoopHandle,
@@ -288,7 +310,7 @@ pub struct Interpreter {
     /// the mini-event-loop path always passes an empty vec.
     pub(crate) jsobjs: Vec<crate::jsc::JSValue>,
 
-    pub(crate) root_shell: JsCell<ShellExecEnv>,
+    pub(crate) root_shell: EnvRc,
     pub(crate) root_io: JsCell<IO>,
 
     pub(crate) has_pending_activity: AtomicU32,
@@ -308,12 +330,13 @@ pub struct Interpreter {
     pub(crate) estimated_size_for_gc: Cell<usize>,
 
     /// Lazily-populated UTF-8 cache for the JS-side argv (`$@`/`$N` expansion
-    /// when running under a Worker). See [`Interpreter::get_vm_args_utf8`].
+    /// when running under a Worker). See [`Interpreter::append_var_argv`].
     pub(crate) vm_args_utf8: JsCell<Vec<bun_core::Utf8Bytes<'static>>>,
 
-    /// `bun run` CLI context for `$N` expansion on the mini event loop.
-    /// Null when constructed from JS (no `ContextData` is reachable).
-    pub(crate) command_ctx: *mut bun_options_types::context::ContextData,
+    /// `bun run` CLI context for `$N` expansion on the mini event loop; the
+    /// caller of `init_and_run_*` owns it for longer than the interpreter
+    /// lives. `None` when constructed from JS.
+    command_ctx: Option<bun_ptr::BackRef<bun_options_types::context::ContextData>>,
 }
 
 #[repr(transparent)]
@@ -345,107 +368,10 @@ pub enum CleanupState {
 // Construction / standalone-exec entrypoints
 // ────────────────────────────────────────────────────────────────────────────
 
-impl ShellArgs {
-    /// Heap-allocated (returned as `Box`) because the interpreter stores
-    /// `Box<ShellArgs>` and state nodes hold `*const ast::*` into the arena;
-    /// the box must not move once `parse()` has filled `script_ast`.
-    pub(crate) fn init() -> Box<ShellArgs> {
-        Box::new(ShellArgs {
-            __arena: bun_alloc::Arena::new(),
-            // Overwritten by `parse()` before `run()`. An empty stmt list is
-            // a safe placeholder.
-            script_ast: ast::Script { stmts: &[] },
-        })
-    }
-
-    #[inline]
-    pub(crate) fn arena(&self) -> &bun_alloc::Arena {
-        &self.__arena
-    }
-
-    /// Store the parsed AST root alongside its owning arena. This is the single
-    /// self-referential lifetime-erasure point: `script` borrows `self.__arena`
-    /// for `'a`, but `ShellArgs` is heap-allocated and the arena is never moved
-    /// or dropped while the interpreter (and thus every state node holding
-    /// `*const ast::*`) is live. Widening `'a` → `'static` here is therefore
-    /// sound — every later dereference happens through raw pointers under
-    /// `unsafe`, which is where the real invariant is checked.
-    ///
-    /// `Interpreter::parse` returns the lifetime-tied `Script<'a>` so callers
-    /// that *don't* store (e.g. `TestingAPIs::shell_parse`) get the correct
-    /// borrow scope; only callers that move the arena into long-lived storage
-    /// route through this helper.
-    #[inline]
-    pub(crate) fn set_script_ast(&mut self, script: bun_shell_parser::ast::Script<'_>) {
-        // `ast::Script` is `bun_shell_parser::ast::Script<'static>` — identical
-        // type, only the lifetime parameter differs. `self.__arena` owns every
-        // node `script.stmts` references and is dropped only when this
-        // `ShellArgs` is, so the widened references remain valid for the
-        // interpreter's lifetime. Re-construct field-by-field via a slice
-        // pointer cast (`Stmt<'a>` and `Stmt<'static>` are layout-identical).
-        let stmts = script.stmts;
-        // SAFETY: lifetime-only widen; arena outlives `self` (see above).
-        let stmts: &'static [ast::Stmt] =
-            unsafe { core::slice::from_raw_parts(stmts.as_ptr().cast::<ast::Stmt>(), stmts.len()) };
-        self.script_ast = ast::Script { stmts };
-    }
-
-    /// Reports the arena's `allocated_bytes()` (a superset — tokens + strpool
-    /// + AST nodes). This is for GC `estimatedSize` reporting only, where
-    /// over-approximation is preferable to a tree walk on a lifetime-erased
-    /// AST mirror.
-    pub(crate) fn memory_cost(&self) -> usize {
-        core::mem::size_of::<ShellArgs>() + self.__arena.allocated_bytes()
-    }
-}
-
 /// Only used by the construction path (`Interpreter::init`).
 pub(crate) type ShellResult<T> = Result<T, ShellErr>;
 
 impl Interpreter {
-    /// Lex `src` (ASCII or Unicode), build a `Parser`, and return the root
-    /// `ast::Script`. Tokens and AST nodes are bump-allocated into `arena`.
-    ///
-    /// On lex error, `out_lex_err` is populated and `ParseError::Lex` returned
-    /// so the caller can `combineErrors()` for diagnostics; on parse error
-    /// `out_parse_err` is populated likewise.
-    pub(crate) fn parse<'a>(
-        arena: &'a bun_alloc::Arena,
-        src: &'a [u8],
-        jsobjs: &'a mut [crate::jsc::JSValue],
-        jsstrings_to_escape: &'a [bun_core::String],
-        out_parser: &mut Option<bun_shell_parser::Parser<'a>>,
-        out_lex_result: &mut Option<bun_shell_parser::LexResult<'a>>,
-    ) -> crate::Result<bun_shell_parser::ast::Script<'a>> {
-        use crate::shell::shell_body::{LexerAscii, LexerUnicode, ParseError, Parser};
-        let jsobjs_len = jsobjs.len() as u32;
-        let lex_result = if bun_core::is_all_ascii(src) {
-            let mut lexer = LexerAscii::new(arena, src, jsstrings_to_escape, jsobjs_len);
-            lexer.lex().map_err(crate::Error::from)?;
-            lexer.get_result()
-        } else {
-            let mut lexer = LexerUnicode::new(arena, src, jsstrings_to_escape, jsobjs_len);
-            lexer.lex().map_err(crate::Error::from)?;
-            lexer.get_result()
-        };
-        if !lex_result.errors.is_empty() {
-            *out_lex_result = Some(lex_result);
-            return Err(ParseError::Lex.into());
-        }
-        let jsobjs_raw: &'a mut [bun_shell_parser::JSValueRaw] = {
-            let len = jsobjs.len();
-            let ptr = jsobjs.as_mut_ptr().cast::<bun_shell_parser::JSValueRaw>();
-            // SAFETY: `bun_jsc::JSValue` and `bun_shell_parser::JSValueRaw` are both
-            // `#[repr(transparent)]` over `usize` — see the `JSValueRaw` doc in
-            // `shell_parser/parse.rs`. Reinterpret in place via a typed pointer cast.
-            // Compute `len` before deriving the raw mut pointer so the shared
-            // reborrow inside `len()` does not stack on top of the Unique tag.
-            unsafe { core::slice::from_raw_parts_mut(ptr, len) }
-        };
-        *out_parser = Some(Parser::new(arena, lex_result, jsobjs_raw)?);
-        Ok(out_parser.as_mut().unwrap().parse()?)
-    }
-
     /// Builds the root `ShellExecEnv` (export env from the event loop's
     /// `DotEnv::Loader`, cwd from `getcwd()`, cwd_fd from `open(O_DIRECTORY)`),
     /// dups stdin into an `IOReader`, and heap-allocates the interpreter.
@@ -454,17 +380,12 @@ impl Interpreter {
     ///
     /// On success the returned box owns `shargs`; on error `shargs` is
     /// dropped.
-    ///
-    /// Note: `allocator` parameter dropped (always global mimalloc).
-    /// `ctx` is stored for `bun run` argv access from builtins; held as a raw
-    /// pointer because the interpreter outlives any single `&mut ContextData`
-    /// borrow.
     // `ShellErr` is the shared shell-wide error type defined in `shell_body.rs`;
     // boxing it here would change `pub fn` signatures across every
     // `?`-propagating shell caller.
     #[allow(clippy::result_large_err)]
     pub(crate) fn init(
-        ctx: *mut bun_options_types::context::ContextData,
+        ctx: Option<&bun_options_types::context::ContextData>,
         event_loop: EventLoopHandle,
         shargs: Box<ShellArgs>,
         jsobjs: Vec<crate::jsc::JSValue>,
@@ -473,22 +394,19 @@ impl Interpreter {
     ) -> ShellResult<Box<Interpreter>> {
         // ── export_env ─────────────────────────────────────────────────────
         // On the `.js` event loop, take `export_env_` (or empty); on `.mini`,
-        // populate from `event_loop.env()` (the loop's `DotEnv::Loader`).
+        // populate from the loop's `DotEnv::Loader`.
         let export_env = if matches!(event_loop, EventLoopHandle::Js { .. }) {
             export_env_.unwrap_or_else(EnvMap::init)
         } else {
-            // SAFETY: `event_loop.env()` returns the `MiniEventLoop`'s
-            // `DotEnv::Loader`, which is set by `init_global()` and outlives
-            // the interpreter (thread-lifetime singleton).
-            let env_loader = unsafe { &mut *event_loop.env() };
-            let mut export_env = EnvMap::init_with_capacity(env_loader.map.map.count());
-            let mut iter = env_loader.iterator();
-            while let Some(entry) = iter.next() {
-                let key = crate::shell::EnvStr::init_slice(&entry.key_ptr[..]);
-                let value = crate::shell::EnvStr::init_slice(&entry.value_ptr.value[..]);
-                export_env.insert(key, value);
-            }
-            export_env
+            event_loop.with_env(|env_loader| {
+                let mut export_env = EnvMap::init_with_capacity(env_loader.map.map.count());
+                for (key, value) in env_loader.map.map.iter() {
+                    let key = crate::shell::EnvStr::init_slice(&key[..]);
+                    let value = crate::shell::EnvStr::init_slice(&value.value[..]);
+                    export_env.insert(key, value);
+                }
+                export_env
+            })
         };
 
         // ── cwd / cwd_fd ───────────────────────────────────────────────────
@@ -514,6 +432,18 @@ impl Interpreter {
         cwd_arr.extend_from_slice(&pathbuf[..cwd_len + 1]);
         debug_assert_eq!(*cwd_arr.last().unwrap(), 0);
 
+        let (buffered_stdout, buffered_stderr) = CapturedBuf::new_pair();
+        let root_shell = Rc::new(JsRefCell::new(ShellExecEnv {
+            buffered_stdout,
+            buffered_stderr,
+            shell_env: EnvMap::init(),
+            cmd_local_env: EnvMap::init(),
+            export_env,
+            __prev_cwd: cwd_arr.clone(),
+            __cwd: cwd_arr,
+            cwd_fd,
+        }));
+
         // ── stdin ──────────────────────────────────────────────────────────
         log!("Duping stdin");
         let stdin_fd_res = if bun_core::output::stdio::is_stdin_null() {
@@ -532,33 +462,24 @@ impl Interpreter {
         } else {
             shell_dup(Fd::stdin())
         };
+        // On error `root_shell` drops here, closing `cwd_fd`.
         let stdin_fd = match stdin_fd_res {
             Ok(fd) => fd,
-            Err(e) => {
-                closefd(cwd_fd);
-                return Err(ShellErr::new_sys(&e));
-            }
+            Err(e) => return Err(ShellErr::new_sys(&e)),
         };
 
         let stdin_reader = IOReader::init(stdin_fd, event_loop);
 
         // ── assemble ───────────────────────────────────────────────────────
         let interpreter = Box::new(Interpreter {
-            nodes: JsCell::new(Vec::new()),
+            nodes_head: new_node_chunk(),
+            nodes_tail: JsCell::new(Vec::new()),
+            node_len: Cell::new(0),
             free_list: JsCell::new(Vec::new()),
             event_loop,
             args: JsCell::new(shargs),
             jsobjs,
-            root_shell: JsCell::new(ShellExecEnv {
-                _buffered_stdout: Bufio::default(),
-                _buffered_stderr: Bufio::default(),
-                shell_env: EnvMap::init(),
-                cmd_local_env: EnvMap::init(),
-                export_env,
-                __prev_cwd: cwd_arr.clone(),
-                __cwd: cwd_arr,
-                cwd_fd,
-            }),
+            root_shell,
             root_io: JsCell::new(IO {
                 stdin: crate::shell::io::InKind::Fd(stdin_reader),
                 // By default stdout/stderr should be IOWriters on dup'd
@@ -581,26 +502,20 @@ impl Interpreter {
             cleanup_state: Cell::new(CleanupState::NeedsFullCleanup),
             estimated_size_for_gc: Cell::new(0),
             vm_args_utf8: JsCell::new(Vec::new()),
-            command_ctx: ctx,
+            command_ctx: ctx.map(bun_ptr::BackRef::new),
         });
         // Wire the interpreter backref into root stdin so async poll
         // callbacks can drive `Yield::run`.
-        let interp_ptr: *mut Interpreter = Interpreter::as_ctx_ptr(&interpreter);
         if let crate::shell::io::InKind::Fd(ref r) = interpreter.root_io.get().stdin {
-            // SAFETY: `interp_ptr` is the live `Interpreter` just constructed.
-            r.set_interp(interp_ptr);
+            r.set_interp(&interpreter);
         }
 
         // ── optional cwd override ───────────────────────────────────────────
         if let Some(c) = cwd_ {
-            // On failure, deref root_io + deinit root_shell + free.
-            if let Err(e) = interpreter
-                .root_shell
-                .with_mut(|rs| rs.change_cwd_impl(c, true))
-            {
+            let res = interpreter.root_shell.borrow_mut().change_cwd_impl(c, true);
+            if let Err(e) = res {
                 // `deinit_from_exec` performs the full teardown (drops
-                // `root_io` Arcs, frees env maps, closes `cwd_fd`, consumes
-                // the box).
+                // `root_io`, frees env maps, closes `cwd_fd`, consumes the box).
                 interpreter.deinit_from_exec();
                 return Err(ShellErr::new_sys(&e));
             }
@@ -611,15 +526,14 @@ impl Interpreter {
 
     /// Full teardown for the standalone (`MiniEventLoop`) path. Drops root IO
     /// refcounts, frees the root shell env, and consumes the box.
-    fn deinit_from_exec(self) {
+    #[allow(clippy::boxed_local, reason = "consumes and frees the interpreter")]
+    pub(crate) fn deinit_from_exec(self: Box<Self>) {
         log!("deinit interpreter");
         self.this_jsvalue.set(crate::jsc::JSValue::ZERO);
-        // `root_io` holds `Arc<IOReader>`/`Arc<IOWriter>`; replacing with
+        // `root_io` holds `Rc<IOReader>`/`Rc<IOWriter>`; replacing with
         // default drops the refs.
         self.root_io.set(IO::default());
-        // Free buffered IO, env
-        // maps, cwd fd; do NOT free the struct itself (it's embedded).
-        self.root_shell.with_mut(|rs| rs.deinit_embedded(true));
+        self.root_shell.borrow_mut().clear(true);
     }
 
     /// Standalone-shell entrypoint for `bun <file>.sh`: parse `src` (already
@@ -629,7 +543,7 @@ impl Interpreter {
     /// ("Failed to run <basename>" vs "Failed to run script <name>") and in
     /// not bumping `standalone_shell` analytics.
     pub(crate) fn init_and_run_from_file(
-        ctx: &mut bun_options_types::context::ContextData,
+        ctx: &bun_options_types::context::ContextData,
         mini: &'static mut bun_event_loop::MiniEventLoop::MiniEventLoop,
         path: &[u8],
         src: &[u8],
@@ -646,7 +560,7 @@ impl Interpreter {
     /// directly; the `Result` only carries lexer/parser errors that escaped
     /// without a diagnostic.
     pub(crate) fn init_and_run_from_source(
-        ctx: &mut bun_options_types::context::ContextData,
+        ctx: &bun_options_types::context::ContextData,
         mini: &'static mut bun_event_loop::MiniEventLoop::MiniEventLoop,
         path_for_errors: &[u8],
         src: &[u8],
@@ -660,72 +574,41 @@ impl Interpreter {
     /// the parse-error diagnostic — the only two behavioural deltas between
     /// the two entrypoints.
     fn init_and_run_impl(
-        ctx: &mut bun_options_types::context::ContextData,
+        ctx: &bun_options_types::context::ContextData,
         mini: &'static mut bun_event_loop::MiniEventLoop::MiniEventLoop,
         label: &[u8],
         src: &[u8],
         cwd: Option<&[u8]>,
         from_source: bool,
     ) -> crate::Result<ExitCode> {
+        use bun_shell_parser::ParseFailure;
         if from_source {
             bun_analytics::features::standalone_shell.fetch_add(1, Ordering::Relaxed);
         }
         // We are the script's shell (`bun run <script>`, `bun exec`, `bun x.sh`).
         bun_spawn::ctrl_c::install();
 
-        let mut shargs = ShellArgs::init();
-
         // ── parse ──────────────────────────────────────────────────────────
-        // `out_parser`/`out_lex_result` borrow `shargs.__arena`, so they're
-        // scoped to a block that ends before `shargs.set_script_ast` below.
-        let arena_ptr: *const bun_alloc::Arena = shargs.arena();
-        let script = {
-            // SAFETY: `shargs` lives on this stack frame for the whole block;
-            // arena is not moved/dropped while `out_parser`/`out_lex_result`
-            // borrow it.
-            let arena = unsafe { &*arena_ptr };
-            let mut out_parser: Option<bun_shell_parser::Parser<'_>> = None;
-            let mut out_lex_result: Option<bun_shell_parser::LexResult<'_>> = None;
-            match Self::parse(
-                arena,
-                src,
-                &mut [],
-                &[],
-                &mut out_parser,
-                &mut out_lex_result,
-            ) {
-                Ok(s) => s,
-                Err(err) => {
-                    let what = if from_source { "script " } else { "" };
-                    let errstr: &[u8] = if let Some(lex) = out_lex_result.as_ref() {
-                        lex.combine_errors(arena)
-                    } else if let Some(p) = out_parser.as_mut() {
-                        p.combine_errors()
-                    } else {
-                        return Err(err);
-                    };
-                    bun_core::pretty_errorln!(
-                        "<r><red>error<r>: Failed to run {}<b>{}<r> due to error <b>{}<r>",
-                        what,
-                        bstr::BStr::new(label),
-                        bstr::BStr::new(errstr),
-                    );
-                    bun_core::Global::exit(1);
-                }
-            }
-        };
-        shargs.set_script_ast(script);
+        let mut shargs = ShellArgs::init();
+        if let Err(err) = shargs.parse(src, &[], 0) {
+            let errstr = match err {
+                ParseFailure::Diagnostic(msg) => msg,
+                ParseFailure::Lexer(e) => return Err(e.into()),
+                ParseFailure::Other(e) => return Err(e.into()),
+            };
+            let what = if from_source { "script " } else { "" };
+            bun_core::pretty_errorln!(
+                "<r><red>error<r>: Failed to run {}<b>{}<r> due to error <b>{}<r>",
+                what,
+                bstr::BStr::new(label),
+                bstr::BStr::new(&errstr),
+            );
+            bun_core::Global::exit(1);
+        }
 
         // ── init ───────────────────────────────────────────────────────────
         let evtloop = EventLoopHandle::init_mini(std::ptr::from_mut(mini));
-        let interp = match Self::init(
-            std::ptr::from_mut(ctx),
-            evtloop,
-            shargs,
-            Vec::new(),
-            None,
-            cwd,
-        ) {
+        let interp = match Self::init(Some(ctx), evtloop, shargs, Vec::new(), None, cwd) {
             Ok(i) => i,
             Err(e) => e.throw_mini(),
         };
@@ -744,15 +627,7 @@ impl Interpreter {
         }
 
         // ── tick until done ────────────────────────────────────────────────
-        // The closure captures a raw pointer so borrowck doesn't see an
-        // overlap with `tick`'s `&mut self` on `mini`.
-        let interp_ptr: *const Interpreter = &raw const *interp;
-        mini.tick(core::ptr::null_mut(), |_ctx| {
-            // SAFETY: `interp` lives in this stack frame for the whole tick
-            // loop; `flags` is `Cell<InterpreterFlags>` (interior-mutable), so
-            // the read is sound even while tasks `tick` drains mutate it.
-            unsafe { (*interp_ptr).flags.get().done() }
-        });
+        mini.tick(core::ptr::null_mut(), |_ctx| interp.flags.get().done());
 
         let code = interp.exit_code.get().expect("exit_code set by finish()");
         interp.deinit_from_exec();
@@ -789,7 +664,7 @@ macro_rules! shell_state_dispatch {
             if parent == NodeId::INTERPRETER {
                 return self.on_root_child_done(child, exit_code);
             }
-            match self.nodes.get()[parent.idx()].kind() {
+            match self.kind(parent) {
                 $( StateKind::$v => $h::child_done(self, parent, child, exit_code), )+
                 StateKind::Free => unreachable!("child_done on freed {}", parent),
             }
@@ -798,7 +673,7 @@ macro_rules! shell_state_dispatch {
         /// Advance node `id` by one step. The trampoline (`Yield::run`) calls
         /// this; replaces the per-variant `&mut State` dispatch in Yield.
         pub fn next_node(&self, id: NodeId) -> Yield {
-            match self.nodes.get()[id.idx()].kind() {
+            match self.kind(id) {
                 $( StateKind::$v => $h::next(self, id), )+
                 StateKind::Free => unreachable!("next on freed {}", id),
             }
@@ -807,7 +682,7 @@ macro_rules! shell_state_dispatch {
         /// Start node `id`. Most states return `Yield::<Kind>(id)` immediately;
         /// the trampoline then calls `next_node`.
         pub fn start_node(&self, id: NodeId) -> Yield {
-            match self.nodes.get()[id.idx()].kind() {
+            match self.kind(id) {
                 $( StateKind::$v => $h::start(self, id), )+
                 StateKind::Free => unreachable!("start on freed {}", id),
             }
@@ -822,15 +697,6 @@ macro_rules! shell_state_dispatch {
 impl Interpreter {
     // ─── R-2 interior-mutability helpers ─────────────────────────────────────
 
-    /// `&self` → `*mut Self` for ctx slots. Kept inherent (NOT via the
-    /// `bun_ptr::AsCtxPtr` blanket trait) so `Box<Interpreter>` callers
-    /// auto-deref to `&Interpreter` and get `*mut Interpreter`, not
-    /// `*mut Box<Interpreter>`.
-    #[inline]
-    pub(crate) fn as_ctx_ptr(&self) -> *mut Self {
-        std::ptr::from_ref::<Self>(self).cast_mut()
-    }
-
     /// Read-modify-write the packed `Cell<InterpreterFlags>` through `&self`.
     #[inline]
     fn update_flags(&self, f: impl FnOnce(&mut InterpreterFlags)) {
@@ -839,36 +705,30 @@ impl Interpreter {
         self.flags.set(v);
     }
 
-    /// Mutable projection of the node arena from `&self`.
-    ///
-    /// # Safety
-    /// R-2 single-JS-thread invariant: the state machine never holds two
-    /// `&mut` into `nodes` simultaneously (borrowck previously enforced this
-    /// via `&mut Interpreter`; that discipline is preserved at every call
-    /// site). Do **not** hold the returned borrow across any call that may
-    /// reach `finish()`/`throw()` (the only paths that re-enter JS).
-    #[inline]
-    #[allow(clippy::mut_from_ref)]
-    unsafe fn nodes_mut(&self) -> &mut Vec<Node> {
-        // SAFETY: forwarded to caller — see fn-level contract.
-        unsafe { self.nodes.get_mut() }
-    }
-
     // ── arena management ───────────────────────────────────────────────────
 
     /// Allocate a fresh slot in the node arena and return its id. Reuses
     /// freed slots when available.
+    #[inline]
     pub(crate) fn alloc_node(&self, node: Node) -> NodeId {
         if let Some(slot) = self.free_list.with_mut(|f| f.pop()) {
-            // SAFETY: no other borrow of `nodes` is live across this store.
-            unsafe { self.nodes_mut()[slot as usize] = node };
-            return NodeId(slot);
+            let id = NodeId(slot);
+            self.slot(id).set(node);
+            return id;
         }
-        self.nodes.with_mut(|n| {
-            let id = NodeId(n.len() as u32);
-            n.push(node);
-            id
-        })
+        self.alloc_node_slow(node)
+    }
+
+    #[inline(never)]
+    fn alloc_node_slow(&self, node: Node) -> NodeId {
+        let n = self.node_len.get();
+        if n as usize == (self.nodes_tail.get().len() + 1) * NODE_CHUNK {
+            self.nodes_tail.with_mut(|c| c.push(new_node_chunk()));
+        }
+        self.node_len.set(n + 1);
+        let id = NodeId(n);
+        self.slot(id).set(node);
+        id
     }
 
     /// Free a slot. The node's own
@@ -882,10 +742,14 @@ impl Interpreter {
         if id == NodeId::NONE || id == NodeId::INTERPRETER {
             return;
         }
-        self.nodes.with_mut(|n| {
-            debug_assert!(!matches!(n[id.idx()], Node::Free), "double-free of {}", id);
-            n[id.idx()] = Node::Free;
-        });
+        debug_assert!(
+            !matches!(self.kind(id), StateKind::Free),
+            "double-free of {}",
+            id
+        );
+        // Dropped in place: a node's fields (`IO`, env handles) never re-enter
+        // the arena on drop.
+        self.slot(id).set(Node::Free);
         self.free_list.with_mut(|f| f.push(id.0));
     }
 
@@ -897,7 +761,7 @@ impl Interpreter {
     /// member only. Anywhere else it ends us the way it ended the child, so
     /// `a; b` and `a || b` stop at `a`.
     fn propagate_interrupt(&self, parent: NodeId, child: NodeId) {
-        if !self.node(child).base().is_some_and(|b| b.interrupted) {
+        if !self.interrupted(child) {
             if bun_spawn::ctrl_c::Child::alive() == 0 {
                 // A Ctrl+C the job handled is used up with the job (bash resets it per wait).
                 bun_spawn::ctrl_c::take_received();
@@ -907,13 +771,14 @@ impl Interpreter {
         if parent == NodeId::INTERPRETER {
             bun_spawn::ctrl_c::exit_like_child();
         }
-        if let Node::Pipeline(p) = self.node(parent) {
+        if self.kind(parent) == StateKind::Pipeline {
+            let mut p = self.as_pipeline_mut(parent);
             let rightmost = p.cmds.as_deref().is_none_or(|c| {
                 c.len() < 2
                     || matches!(c.last(), Some(crate::shell::states::pipeline::CmdOrResult::Cmd(id)) if *id == child)
             });
             if rightmost {
-                self.as_pipeline_mut(parent).base.interrupted = true;
+                p.base.interrupted = true;
             }
             return;
         }
@@ -934,17 +799,17 @@ impl Interpreter {
     /// Some ancestor is a member of a multi-command pipeline.
     fn in_pipeline(&self, mut id: NodeId) -> bool {
         while id != NodeId::INTERPRETER {
-            let Some(base) = self.node(id).base() else {
+            let Some(parent) = self.node(id).base().map(|b| b.parent) else {
                 return false;
             };
-            if base.parent != NodeId::INTERPRETER {
-                if let Node::Pipeline(p) = self.node(base.parent) {
+            if parent != NodeId::INTERPRETER {
+                if let Node::Pipeline(p) = &*self.node(parent) {
                     if p.cmds.as_deref().is_some_and(|c| c.len() >= 2) {
                         return true;
                     }
                 }
             }
-            id = base.parent;
+            id = parent;
         }
         false
     }
@@ -964,16 +829,50 @@ impl Interpreter {
         false
     }
 
-    #[inline]
-    pub fn node(&self, id: NodeId) -> &Node {
-        &self.nodes.get()[id.idx()]
+    #[inline(always)]
+    fn slot(&self, id: NodeId) -> &JsRefCell<Node> {
+        let i = id.idx();
+        if i < NODE_CHUNK {
+            &self.nodes_head[i]
+        } else {
+            let i = i - NODE_CHUNK;
+            &self.nodes_tail.get()[i / NODE_CHUNK][i % NODE_CHUNK]
+        }
     }
 
+    #[cfg(not(windows))]
     #[inline]
-    #[allow(clippy::mut_from_ref)]
-    pub(crate) fn node_mut(&self, id: NodeId) -> &mut Node {
-        // SAFETY: see `nodes_mut` — single-JS-thread, no overlapping borrow.
-        unsafe { &mut self.nodes_mut()[id.idx()] }
+    pub(crate) fn node_count(&self) -> usize {
+        self.node_len.get() as usize
+    }
+
+    #[inline(always)]
+    #[track_caller]
+    pub fn node(&self, id: NodeId) -> JsCellRef<'_, Node> {
+        self.slot(id).borrow()
+    }
+
+    #[inline(always)]
+    #[track_caller]
+    pub(crate) fn node_mut(&self, id: NodeId) -> JsCellRefMut<'_, Node> {
+        self.slot(id).borrow_mut()
+    }
+
+    /// The state tag of node `id`.
+    #[inline(always)]
+    #[track_caller]
+    pub fn kind(&self, id: NodeId) -> StateKind {
+        self.node(id).kind()
+    }
+
+    /// The IO a `Stmt` under `parent` (a `Script` or `If`) hands its children.
+    #[inline]
+    pub(crate) fn io_of(&self, parent: NodeId) -> IO {
+        match &*self.node(parent) {
+            Node::Script(s) => s.io.clone(),
+            Node::If(i) => i.io.clone(),
+            other => node_kind_mismatch("Script|If", parent, other.kind()),
+        }
     }
 
     // ── hoisted dispatch (PORTING.md §Dispatch hot-path) ───────────────────
@@ -993,32 +892,32 @@ impl Interpreter {
     }
 
     /// Init + start a child state node for an `ast::Expr`. For `.subshell`,
-    /// dupes the parent shell env first; all other variants borrow `shell`.
+    /// dupes the parent shell env first; all other variants share `shell`.
     ///
     /// Note: `Async` must NOT call this — `Async` restricts its child to
     /// pipeline/cmd/if/condexpr and inits without starting (see `Async::next`).
     pub(crate) fn spawn_expr(
         &self,
-        shell: *mut ShellExecEnv,
+        shell: &EnvRc,
         expr: &ast::Expr,
         parent: NodeId,
         io: IO,
     ) -> (Option<NodeId>, Yield) {
         let child = match expr {
-            ast::Expr::Cmd(c) => Cmd::init(self, shell, *c, parent, io),
-            ast::Expr::Binary(b) => Binary::init(self, shell, *b, parent, io),
-            ast::Expr::Pipeline(p) => Pipeline::init(self, shell, *p, parent, io),
-            ast::Expr::Assign(a) => Assigns::init(self, shell, *a, parent, AssignCtx::Shell),
-            ast::Expr::If(i) => If::init(self, shell, *i, parent, io),
-            ast::Expr::CondExpr(c) => CondExpr::init(self, shell, *c, parent, io),
+            ast::Expr::Cmd(c) => Cmd::init(self, Rc::clone(shell), c, parent, io),
+            ast::Expr::Binary(b) => Binary::init(self, Rc::clone(shell), b, parent, io),
+            ast::Expr::Pipeline(p) => Pipeline::init(self, Rc::clone(shell), p, parent, io),
+            ast::Expr::Assign(a) => {
+                Assigns::init(self, Rc::clone(shell), a, parent, AssignCtx::Shell)
+            }
+            ast::Expr::If(i) => If::init(self, Rc::clone(shell), i, parent, io),
+            ast::Expr::CondExpr(c) => CondExpr::init(self, Rc::clone(shell), c, parent, io),
             ast::Expr::Subshell(s) => {
                 // Stmt/Binary callers dupe
                 // the env here so `Subshell::start`/`next` can use `base.shell`
                 // as-is. (Pipeline dupes itself and calls `Subshell::init`
                 // directly, so it does NOT go through this path.)
-                // SAFETY: `shell` is the live parent `ShellExecEnv` borrowed for the
-                // dupe; `self` is the live interpreter.
-                match Subshell::init_dupe_shell_state(self, shell, *s, parent, io) {
+                match Subshell::init_dupe_shell_state(self, shell, s, parent, io) {
                     Ok(id) => id,
                     Err(e) => {
                         self.throw(ShellErr::new_sys(&e));
@@ -1030,7 +929,7 @@ impl Interpreter {
                     }
                 }
             }
-            ast::Expr::Async(e) => Async::init(self, shell, *e, parent, io),
+            ast::Expr::Async(e) => Async::init(self, Rc::clone(shell), e, parent, io),
         };
         let y = self.start_node(child);
         (Some(child), y)
@@ -1045,7 +944,7 @@ impl Interpreter {
             return;
         }
         // NOTE: keep in sync with shell_state_dispatch! table (irregular Async/Free arms keep this hand-rolled for v1).
-        match self.nodes.get()[id.idx()].kind() {
+        match self.kind(id) {
             StateKind::Script => Script::deinit(self, id),
             StateKind::Stmt => Stmt::deinit(self, id),
             StateKind::Binary => Binary::deinit(self, id),
@@ -1055,7 +954,7 @@ impl Interpreter {
             StateKind::Expansion => Expansion::deinit(self, id),
             StateKind::IfClause => If::deinit(self, id),
             StateKind::Condexpr => CondExpr::deinit(self, id),
-            StateKind::Async => return, // Async deinit is purposefully empty; freed later by async_cmd_done → actually_deinit.
+            StateKind::Async => return, // Async deinit is purposefully empty; freed later by async_cmd_done.
             StateKind::Subshell => Subshell::deinit(self, id),
             StateKind::Free => return,
         }
@@ -1066,7 +965,7 @@ impl Interpreter {
 
     fn on_root_child_done(&self, child: NodeId, exit_code: ExitCode) -> Yield {
         // Only `Script` can be a direct child of the interpreter.
-        debug_assert!(matches!(self.nodes.get()[child.idx()], Node::Script(_)));
+        debug_assert!(matches!(self.kind(child), StateKind::Script));
         log!("Interpreter script finish {}", exit_code);
         self.free_node(child);
         self.exit_code.set(Some(exit_code));
@@ -1077,7 +976,6 @@ impl Interpreter {
     }
 
     pub(crate) fn async_cmd_done(&self, async_id: NodeId) {
-        Async::actually_deinit(self, async_id);
         self.free_node(async_id);
         self.async_commands_executing
             .set(self.async_commands_executing.get() - 1);
@@ -1096,7 +994,7 @@ impl Interpreter {
     pub(crate) fn compute_estimated_size_for_gc(&self) -> usize {
         let mut size = core::mem::size_of::<Interpreter>();
         size += self.args.get().memory_cost();
-        size += self.root_shell.get().memory_cost();
+        size += self.root_shell.borrow().memory_cost();
         size += self.root_io.get().memory_cost();
         size += self.jsobjs.len() * core::mem::size_of::<crate::jsc::JSValue>();
         let vm_args = self.vm_args_utf8.get();
@@ -1118,9 +1016,8 @@ impl Interpreter {
 
     /// Safe accessor for the set-once `global_this: Cell<*mut JSGlobalObject>`
     /// backref. `None` on the mini-event-loop path (never set); `Some` once
-    /// `create_shell_interpreter` populates it. Single `unsafe` deref site —
-    /// callers (`throw`, `finish_internal`) read through this instead of
-    /// open-coding the raw `&*self.global_this.get()` deref.
+    /// `create_shell_interpreter` populates it. Callers (`throw`,
+    /// `finish_internal`) read through this instead of open-coding the deref.
     #[inline]
     pub(crate) fn global_this_ref(&self) -> Option<&crate::jsc::JSGlobalObject> {
         let g = self.global_this.get();
@@ -1150,7 +1047,7 @@ impl Interpreter {
     /// the null device if the process was started with that stream closed),
     /// wrap each in an `IOWriter`, and install them as `root_io.stdout/stderr`
     /// so command output reaches the terminal. On the JS event loop the
-    /// `captured` slot is also wired to `_buffered_stdout/err` so
+    /// `captured` slot is also wired to `buffered_stdout/err` so
     /// `Bun.$` callers can read it back.
     fn setup_io_before_run(&self) -> bun_sys::Result<()> {
         if self.flags.get().quiet() {
@@ -1181,7 +1078,6 @@ impl Interpreter {
             }
         };
 
-        let interp_ptr: *mut Interpreter = self.as_ctx_ptr();
         let stdout_writer = IOWriter::init(
             stdout_fd,
             crate::shell::io_writer::Flags {
@@ -1190,8 +1086,7 @@ impl Interpreter {
             },
             event_loop,
         );
-        // SAFETY: `interp_ptr` is the live `Interpreter` being initialized.
-        stdout_writer.set_interp(interp_ptr);
+        stdout_writer.set_interp(self);
         let stderr_writer = IOWriter::init(
             stderr_fd,
             crate::shell::io_writer::Flags {
@@ -1200,15 +1095,17 @@ impl Interpreter {
             },
             event_loop,
         );
-        // SAFETY: `interp_ptr` is the live `Interpreter` being initialized.
-        stderr_writer.set_interp(interp_ptr);
+        stderr_writer.set_interp(self);
 
         // On the JS event loop, hook captured buffers so the JS
         // `Bun.$` API can read stdout/stderr after completion. The mini path
         // does not capture (it writes straight to the dup'd fd).
         let (cap_out, cap_err) = if matches!(event_loop, EventLoopHandle::Js { .. }) {
-            self.root_shell
-                .with_mut(|rs| (Some(rs.buffered_stdout()), Some(rs.buffered_stderr())))
+            let rs = self.root_shell.borrow();
+            (
+                Some(rs.buffered_stdout.clone()),
+                Some(rs.buffered_stderr.clone()),
+            )
         } else {
             (None, None)
         };
@@ -1231,10 +1128,15 @@ impl Interpreter {
         log!("Interpreter(0x{:x}) run", std::ptr::from_ref(self) as usize);
         self.setup_io_before_run()?;
 
-        let shell = self.root_shell.as_ptr();
-        let ast = &raw const self.args.get().script_ast;
+        let root_node = self.args.get().script_ast();
         let io = self.root_io.get().clone();
-        let root = Script::init(self, shell, ast, NodeId::INTERPRETER, io);
+        let root = Script::init(
+            self,
+            Rc::clone(&self.root_shell),
+            root_node,
+            NodeId::INTERPRETER,
+            io,
+        );
         self.started.store(true, Ordering::SeqCst);
         Script::start(self, root).run(self);
         Ok(())
@@ -1355,10 +1257,15 @@ impl Interpreter {
         }
         Self::incr_pending_activity_flag(&self.has_pending_activity);
 
-        let shell = self.root_shell.as_ptr();
-        let ast = &raw const self.args.get().script_ast;
+        let root_node = self.args.get().script_ast();
         let io = self.root_io.get().clone();
-        let root = Script::init(self, shell, ast, NodeId::INTERPRETER, io);
+        let root = Script::init(
+            self,
+            Rc::clone(&self.root_shell),
+            root_node,
+            NodeId::INTERPRETER,
+            io,
+        );
         self.started.store(true, Ordering::SeqCst);
         Script::start(self, root).run(self);
         if global_this.has_exception() {
@@ -1379,23 +1286,16 @@ impl Interpreter {
 
         if free_buffered_io {
             // Can safely be called multiple times.
-            self.root_shell.with_mut(|rs| {
-                if let Bufio::Owned(o) = &mut rs._buffered_stderr {
-                    o.clear_and_free();
-                }
-                if let Bufio::Owned(o) = &mut rs._buffered_stdout {
-                    o.clear_and_free();
-                }
-            });
+            self.root_shell.borrow().free_buffered_io();
         }
 
         // Has this already been finalized?
         if self.this_jsvalue.get() != crate::jsc::JSValue::ZERO {
             // Cannot be safely called multiple times.
-            // `root_io` holds `Arc<IOReader>`/`Arc<IOWriter>`; replacing with
+            // `root_io` holds `Rc<IOReader>`/`Rc<IOWriter>`; replacing with
             // default drops the refs.
             self.root_io.set(IO::default());
-            self.root_shell.with_mut(|rs| rs.deinit_embedded(false));
+            self.root_shell.borrow_mut().clear(false);
         }
 
         // Note: free the parse arena eagerly. `bun_alloc::Arena` is
@@ -1410,29 +1310,30 @@ impl Interpreter {
         // (`memid.initially_zero == false` → the expensive scan is skipped)
         // and memory stays flat. The new heap created by `reset()` allocates
         // no pages until first use, so the per-interpreter footprint left for
-        // the finalizer is just the bare `mi_heap_t`. `script_ast` is cleared
-        // first because every node it references lives in the arena being
-        // destroyed; nothing dereferences it after this point (the only
-        // remaining reader is `memory_cost()`, which queries
-        // `__arena.allocated_bytes()` and never touches the AST).
-        self.args.with_mut(|a| {
-            a.script_ast = ast::Script { stmts: &[] };
-            a.__arena.reset();
-        });
+        // the finalizer is just the bare `mi_heap_t`. Every state node holding
+        // a back-reference into the tree has been freed by now (the script
+        // finished); the only remaining reader is `memory_cost()`, which
+        // queries the arena's size and never touches the AST.
+        debug_assert!(
+            self.nodes_head
+                .iter()
+                .chain(self.nodes_tail.get().iter().flat_map(|c| c.iter()))
+                .all(|slot| matches!(&*slot.borrow(), Node::Free)),
+            "AST arena reset with live state nodes"
+        );
+        self.args.with_mut(|a| a.reset());
 
         self.this_jsvalue.set(crate::jsc::JSValue::ZERO);
         self.cleanup_state.set(CleanupState::RuntimeCleaned);
     }
 
-    /// GC finalizer body — runs
-    /// whatever teardown `finish()` didn't, then frees the box.
-    ///
-    /// # Safety
-    /// `this` must be the `heap::alloc`'d pointer stored in the JS wrapper's
-    /// `m_ctx`; called exactly once from the GC thread's finalizer.
-    pub(crate) unsafe fn deinit_from_finalizer(this: *mut Self) {
-        // SAFETY: caller contract — `this` is a live `heap::alloc` payload.
-        let this = unsafe { bun_core::heap::take(this) };
+    /// GC finalizer body — runs whatever teardown `finish()` didn't, then
+    /// frees the box. `this` is the payload the JS wrapper's `m_ctx` owned.
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "consumes and frees the m_ctx payload"
+    )]
+    pub(crate) fn deinit_from_finalizer(this: Box<Self>) {
         log!(
             "Interpreter(0x{:x}) deinitFromFinalizer (cleanup_state={})",
             &raw const *this as usize,
@@ -1442,51 +1343,23 @@ impl Interpreter {
         match this.cleanup_state.get() {
             CleanupState::NeedsFullCleanup => {
                 // The script is still in flight (e.g. `worker.terminate()`
-                // mid-command) and `Node` has no `Drop` for its raw-pointer
-                // resources: deinit every live `Cmd` (kills the child, frees
-                // the `ShellSubprocess`, readers, redirection fd). Slots stay
-                // occupied so the env walk below still sees pipeline-duped
-                // Cmd envs. Windows: leak-over-UAF, see
+                // mid-command): deinit every live `Cmd` (kills the child,
+                // frees the `ShellSubprocess`, readers, redirection fd) before
+                // the slots drop with the box. Windows: leak-over-UAF, see
                 // `ShellSubprocess::abort_after_failed_start`.
                 #[cfg(not(windows))]
                 {
-                    let node_count = this.nodes.get().len();
-                    for i in 0..node_count {
+                    for i in 0..this.node_count() {
                         let id = NodeId(i as u32);
-                        if matches!(this.nodes.get()[id.idx()].kind(), StateKind::Cmd) {
+                        if matches!(this.kind(id), StateKind::Cmd) {
                             Cmd::deinit_from_finalizer(&this, id);
                         }
                     }
                 }
-                // A node owns `base.shell` iff it was created via `dupe_for_subshell`,
-                // i.e. its `base.shell` differs from its parent's.
-                {
-                    let root_shell_ptr: *mut ShellExecEnv = this.root_shell.as_ptr();
-                    let nodes = this.nodes.get();
-                    let owned_envs: Vec<*mut ShellExecEnv> = nodes
-                        .iter()
-                        .filter_map(|n| {
-                            let base = n.base()?;
-                            if base.shell.is_null() {
-                                return None;
-                            }
-                            let parent_shell: *mut ShellExecEnv =
-                                if base.parent == NodeId::INTERPRETER {
-                                    root_shell_ptr
-                                } else {
-                                    nodes.get(base.parent.idx())?.base()?.shell
-                                };
-                            (base.shell != parent_shell).then_some(base.shell)
-                        })
-                        .collect();
-                    for env in owned_envs {
-                        // each `env` was returned by `dupe_for_subshell`
-                        // and is owned by exactly one node (filtered above).
-                        ShellExecEnv::deinit_impl(env);
-                    }
-                }
+                // Duped envs (`Base.shell`) drop with their nodes when the
+                // arena drops below; the root env is cleared here.
                 this.root_io.set(IO::default());
-                this.root_shell.with_mut(|rs| rs.deinit_embedded(true));
+                this.root_shell.borrow_mut().clear(true);
             }
             CleanupState::RuntimeCleaned => {
                 // `finish()` already cleaned up via
@@ -1495,6 +1368,8 @@ impl Interpreter {
         }
 
         this.keep_alive.with_mut(|k| k.disable());
+        // `nodes` is declared (and so dropped) before `args`, so no node's AST
+        // back-reference outlives the arena.
     }
 
     pub(crate) fn is_running(
@@ -1519,20 +1394,14 @@ impl Interpreter {
         &self,
         global_this: &crate::jsc::JSGlobalObject,
     ) -> bun_jsc::JsResult<crate::jsc::JSValue> {
-        io_to_js_value(
-            global_this,
-            self.root_shell.with_mut(|rs| rs.buffered_stdout()),
-        )
+        io_to_js_value(global_this, &self.root_shell.borrow().buffered_stdout)
     }
 
     pub(crate) fn get_buffered_stderr(
         &self,
         global_this: &crate::jsc::JSGlobalObject,
     ) -> bun_jsc::JsResult<crate::jsc::JSValue> {
-        io_to_js_value(
-            global_this,
-            self.root_shell.with_mut(|rs| rs.buffered_stderr()),
-        )
+        io_to_js_value(global_this, &self.root_shell.borrow().buffered_stderr)
     }
 
     /// GC finalizer hook — called from the
@@ -1540,10 +1409,7 @@ impl Interpreter {
     /// `host_fn::host_fn_finalize`.
     pub fn finalize(self: Box<Self>) {
         log!("Interpreter(0x{:x}) finalize", &raw const *self as usize);
-        // See [`deinit_from_finalizer`](Self::deinit_from_finalizer).
-        // SAFETY: `self` is the unique GC-owned `m_ctx` payload; round-trip via
-        // raw ptr so `deinit_from_finalizer` can `heap::take` it.
-        unsafe { Self::deinit_from_finalizer(Box::into_raw(self)) };
+        Self::deinit_from_finalizer(self);
     }
 
     /// GC `hasPendingActivity()` hook.
@@ -1567,24 +1433,10 @@ impl Interpreter {
         );
     }
 
-    /// Appends the value of `$N` to
-    /// `out`. Takes the relevant interpreter fields by-part so callers can
-    /// split-borrow alongside the node arena.
-    ///
-    /// # Safety
-    /// `command_ctx` must be null or point to a live `ContextData` that
-    /// outlives this call.
-    // `*mut T` sig forced by trait/callback contract; the body's internal deref is SAFETY-commented.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub(crate) fn append_var_argv(
-        out: &mut Vec<u8>,
-        original_int: u8,
-        event_loop: EventLoopHandle,
-        command_ctx: *mut bun_options_types::context::ContextData,
-        vm_args_utf8: &mut Vec<bun_core::Utf8Bytes<'static>>,
-    ) {
+    /// Appends the value of `$N` to `out`.
+    pub(crate) fn append_var_argv(&self, out: &mut Vec<u8>, original_int: u8) {
         let mut int = original_int;
-        match event_loop {
+        match self.event_loop {
             EventLoopHandle::Js { .. } => {
                 if int == 0 {
                     if let Ok(p) = bun_core::self_exe_path() {
@@ -1594,15 +1446,10 @@ impl Interpreter {
                 }
                 int -= 1;
 
-                let vm_ptr = event_loop
-                    .bun_vm()
-                    .cast::<bun_jsc::virtual_machine::VirtualMachine>();
-                if vm_ptr.is_null() {
+                let Some(global) = self.global_this_ref() else {
                     return;
-                }
-                // SAFETY: `bun_vm()` on a JS event loop returns the live
-                // `*VirtualMachine` owning that loop.
-                let vm = unsafe { &*vm_ptr };
+                };
+                let vm = global.bun_vm();
                 let main = vm.main();
                 if !main.is_empty() {
                     if int == 0 {
@@ -1612,22 +1459,22 @@ impl Interpreter {
                     int -= 1;
                 }
 
-                if let Some(worker_ptr) = vm.worker {
-                    // SAFETY: `vm.worker` is set in `VirtualMachine::init_worker`
-                    // to a live `*WebWorker` for the worker's lifetime.
-                    let worker = unsafe { &*worker_ptr.cast::<bun_jsc::web_worker::WebWorker>() };
+                if let Some(worker) = vm.worker_ref() {
                     let argv = worker.argv();
                     if int as usize >= argv.len() {
                         return;
                     }
-                    if vm_args_utf8.len() != argv.len() {
-                        vm_args_utf8.reserve(argv.len());
-                        for arg in argv {
-                            vm_args_utf8
-                                .push(crate::node::process::worker_option_string(*arg).into_utf8());
+                    self.vm_args_utf8.with_mut(|vm_args_utf8| {
+                        if vm_args_utf8.len() != argv.len() {
+                            vm_args_utf8.reserve(argv.len());
+                            for arg in argv {
+                                vm_args_utf8.push(
+                                    crate::node::process::worker_option_string(*arg).into_utf8(),
+                                );
+                            }
                         }
-                    }
-                    out.extend_from_slice(vm_args_utf8[int as usize].slice());
+                        out.extend_from_slice(vm_args_utf8[int as usize].slice());
+                    });
                     return;
                 }
 
@@ -1636,12 +1483,9 @@ impl Interpreter {
                 }
             }
             EventLoopHandle::Mini(_) => {
-                if command_ctx.is_null() {
+                let Some(ctx) = self.command_ctx else {
                     return;
-                }
-                // SAFETY: `command_ctx` is the process-global `ContextData`
-                // (see `init`); it outlives the interpreter.
-                let ctx = unsafe { &*command_ctx };
+                };
                 if int as usize > ctx.passthrough.len() {
                     return;
                 }
@@ -1662,10 +1506,9 @@ impl Interpreter {
 /// and resets the source to empty.
 fn io_to_js_value(
     global_this: &crate::jsc::JSGlobalObject,
-    buf: *mut Vec<u8>,
+    buf: &CapturedBuf,
 ) -> bun_jsc::JsResult<crate::jsc::JSValue> {
-    // SAFETY: `buf` points into a live `ShellExecEnv` (root or borrowed).
-    let bytelist = core::mem::take(unsafe { &mut *buf });
+    let bytelist = core::mem::take(&mut *buf.borrow_mut());
     // The moved-out `Vec<u8>` storage is handed to JSC directly; the
     // `Vec<u8>` value itself is `mem::forget`-ed since JSC now owns the bytes.
     let mut bytelist = core::mem::ManuallyDrop::new(bytelist);
@@ -1695,40 +1538,72 @@ pub(crate) fn throw_shell_err(
 // ShellExecEnv
 // ────────────────────────────────────────────────────────────────────────────
 
+/// A captured stdout/stderr buffer. Shared between an env and the envs of
+/// its subshell/pipeline children (whose output bubbles up), the root
+/// `IO`'s tee slot, and the `IOWriter` chunks that tee into it. Minted in
+/// stdout/stderr pairs that share one allocation.
+#[derive(Clone)]
+pub struct CapturedBuf {
+    pair: Rc<[JsRefCell<Vec<u8>>; 2]>,
+    idx: u8,
+}
+
+impl CapturedBuf {
+    /// A fresh `(stdout, stderr)` pair.
+    pub fn new_pair() -> (CapturedBuf, CapturedBuf) {
+        let pair: Rc<[JsRefCell<Vec<u8>>; 2]> = Rc::default();
+        (
+            CapturedBuf {
+                pair: Rc::clone(&pair),
+                idx: 0,
+            },
+            CapturedBuf { pair, idx: 1 },
+        )
+    }
+
+    #[inline]
+    #[track_caller]
+    pub fn borrow(&self) -> JsCellRef<'_, Vec<u8>> {
+        self.pair[self.idx as usize].borrow()
+    }
+
+    #[inline]
+    #[track_caller]
+    pub fn borrow_mut(&self) -> JsCellRefMut<'_, Vec<u8>> {
+        self.pair[self.idx as usize].borrow_mut()
+    }
+}
+
+/// Handle to a [`ShellExecEnv`]. Every state node holds one in its `Base`:
+/// nodes that dupe (Script for command substitution, Subshell, pipeline
+/// children) hold the only handle to the fresh env, everything else shares
+/// its parent's. The env is freed when its last holder is.
+pub type EnvRc = Rc<JsRefCell<ShellExecEnv>>;
+
 /// Shell execution environment (env vars, cwd, captured stdout/stderr).
-/// Every state node holds a `*mut ShellExecEnv` in its `Base`; some nodes
-/// (Script, Subshell, command-substitution, pipeline children) own a duped
-/// env that they must `deinit`.
 pub struct ShellExecEnv {
-    pub(crate) _buffered_stdout: Bufio,
-    pub(crate) _buffered_stderr: Bufio,
+    pub(crate) buffered_stdout: CapturedBuf,
+    pub(crate) buffered_stderr: CapturedBuf,
     pub(crate) shell_env: EnvMap,
     pub(crate) cmd_local_env: EnvMap,
     pub(crate) export_env: EnvMap,
     pub(crate) __prev_cwd: Vec<u8>,
     pub(crate) __cwd: Vec<u8>,
+    /// `Fd::INVALID` once [`clear`](Self::clear)ed; closed on drop otherwise.
     pub(crate) cwd_fd: Fd,
 }
 
-pub enum Bufio {
-    Owned(Vec<u8>),
-    Borrowed(*mut Vec<u8>),
-}
-
-impl Default for Bufio {
-    fn default() -> Self {
-        Bufio::Owned(Vec::<u8>::default())
-    }
-}
-
-impl Bufio {
-    pub(crate) fn memory_cost(&self) -> usize {
-        match self {
-            Bufio::Owned(o) => o.memory_cost(),
-            // SAFETY: borrowed buffer points into a live parent `ShellExecEnv`
-            // (set by `dupe_for_subshell`); the parent outlives the child.
-            Bufio::Borrowed(b) => unsafe { (**b).memory_cost() },
+impl Drop for ShellExecEnv {
+    fn drop(&mut self) {
+        log!(
+            "[ShellExecEnv] deinit 0x{:x}",
+            std::ptr::from_ref(self) as usize
+        );
+        if self.cwd_fd != Fd::INVALID {
+            closefd(self.cwd_fd);
         }
+        // EnvMap/Vec drop impls free their storage; the captured buffers are
+        // shared and free with their last holder.
     }
 }
 
@@ -1749,8 +1624,8 @@ impl ShellExecEnv {
         size += self.export_env.memory_cost();
         size += self.__cwd.capacity();
         size += self.__prev_cwd.capacity();
-        size += self._buffered_stderr.memory_cost();
-        size += self._buffered_stdout.memory_cost();
+        size += self.buffered_stderr.borrow().memory_cost();
+        size += self.buffered_stdout.borrow().memory_cost();
         size
     }
 
@@ -1770,152 +1645,96 @@ impl ShellExecEnv {
         &self.__prev_cwd[..self.__prev_cwd.len().saturating_sub(1)]
     }
 
-    pub(crate) fn buffered_stdout(&mut self) -> *mut Vec<u8> {
-        // Return the raw `*mut` directly — no `&mut Vec<u8>` is materialised,
-        // so the `Bufio::Borrowed` aliasing concern (which forces
-        // [`buffered_stdout_mut`] to be `unsafe fn`) does not apply here. The
-        // dereference obligation is on whoever later writes through it.
-        match &mut self._buffered_stdout {
-            Bufio::Owned(o) => std::ptr::from_mut(o),
-            Bufio::Borrowed(b) => *b,
-        }
-    }
-
-    pub(crate) fn buffered_stderr(&mut self) -> *mut Vec<u8> {
-        match &mut self._buffered_stderr {
-            Bufio::Owned(o) => std::ptr::from_mut(o),
-            Bufio::Borrowed(b) => *b,
-        }
-    }
-
-    /// Mutably borrow the captured-stdout buffer (owned, or the parent env's
-    /// buffer for subshell/pipeline children — see `Bufio`).
-    ///
-    /// # Safety
-    /// In the `Bufio::Borrowed` arm the returned `&mut Vec<u8>` aliases the
-    /// PARENT `ShellExecEnv`'s buffer. Caller must ensure no other
-    /// `&`/`&mut` to that buffer is live (including via a `&mut` of the
-    /// parent env). The shell trampoline mutates one node at a time so this
-    /// holds in practice, but `&mut self` alone does not encode it — hence
-    /// `unsafe fn`. The parent env strictly outlives this child (parents
-    /// `deinit` after children), so the pointer is never dangling.
+    /// The captured buffer for `which` (stdout or stderr).
     #[inline]
-    pub(crate) unsafe fn buffered_stdout_mut(&mut self) -> &mut Vec<u8> {
-        match &mut self._buffered_stdout {
-            Bufio::Owned(o) => o,
-            // SAFETY: caller contract.
-            Bufio::Borrowed(b) => unsafe { &mut **b },
+    pub(crate) fn captured(&self, which: crate::shell::builtin::IoKind) -> &CapturedBuf {
+        match which {
+            crate::shell::builtin::IoKind::Stdout => &self.buffered_stdout,
+            crate::shell::builtin::IoKind::Stderr => &self.buffered_stderr,
         }
     }
 
-    /// See [`buffered_stdout_mut`].
-    ///
-    /// # Safety
-    /// See [`buffered_stdout_mut`].
-    #[inline]
-    pub(crate) unsafe fn buffered_stderr_mut(&mut self) -> &mut Vec<u8> {
-        match &mut self._buffered_stderr {
-            Bufio::Owned(o) => o,
-            // SAFETY: caller contract; see `buffered_stdout_mut`.
-            Bufio::Borrowed(b) => unsafe { &mut **b },
-        }
+    /// Release the captured stdout/stderr storage (the JS side has taken
+    /// what it wanted). Idempotent.
+    pub(crate) fn free_buffered_io(&self) {
+        self.buffered_stdout.borrow_mut().clear_and_free();
+        self.buffered_stderr.borrow_mut().clear_and_free();
     }
 
-    /// Heap-allocates a
-    /// fresh env for a subshell/pipeline child: dups `cwd_fd`, clones
+    /// A fresh env for a subshell/pipeline child: dups `cwd_fd`, clones
     /// `shell_env`/`export_env`, gives it a fresh empty `cmd_local_env`, and
-    /// borrows or owns buffered stdout/stderr per `kind` (subshell/pipeline
-    /// borrow the parent's buffers so output bubbles up; cmd-subst owns).
-    ///
-    /// Caller frees with `ShellExecEnv::deinit_impl(p)`.
+    /// shares or owns buffered stdout/stderr per `kind` (subshell/pipeline
+    /// share the parent's buffers so output bubbles up; cmd-subst owns).
     pub(crate) fn dupe_for_subshell(
-        &mut self,
+        &self,
         io: &IO,
         kind: ShellExecEnvKind,
-    ) -> bun_sys::Result<*mut ShellExecEnv> {
+    ) -> bun_sys::Result<EnvRc> {
         use crate::shell::io::OutKind;
 
         let dupedfd = bun_sys::dup(self.cwd_fd)?;
 
         // For `.fd` with a captured
-        // buffer, borrow that; for `.ignore`, own a fresh one; for `.pipe`,
-        // own when normal/cmd_subst, borrow parent's when subshell/pipeline.
-        let bufio_for = |out: &OutKind, parent_buf: *mut Vec<u8>| -> Bufio {
+        // buffer, share that; for `.ignore`, own a fresh one; for `.pipe`,
+        // own when normal/cmd_subst, share parent's when subshell/pipeline.
+        let (fresh_out, fresh_err) = CapturedBuf::new_pair();
+        let bufio_for = |out: &OutKind,
+                         parent_buf: &CapturedBuf,
+                         fresh: CapturedBuf|
+         -> CapturedBuf {
             match out {
-                OutKind::Fd(f) => match f.captured {
-                    Some(cap) => Bufio::Borrowed(cap),
-                    None => Bufio::Owned(Vec::<u8>::default()),
+                OutKind::Fd(f) => match &f.captured {
+                    Some(cap) => cap.clone(),
+                    None => fresh,
                 },
-                OutKind::Ignore => Bufio::Owned(Vec::<u8>::default()),
+                OutKind::Ignore => fresh,
                 OutKind::Pipe => match kind {
-                    ShellExecEnvKind::Normal | ShellExecEnvKind::CmdSubst => {
-                        Bufio::Owned(Vec::<u8>::default())
-                    }
-                    ShellExecEnvKind::Subshell | ShellExecEnvKind::Pipeline => {
-                        Bufio::Borrowed(parent_buf)
-                    }
+                    ShellExecEnvKind::Normal | ShellExecEnvKind::CmdSubst => fresh,
+                    ShellExecEnvKind::Subshell | ShellExecEnvKind::Pipeline => parent_buf.clone(),
                 },
             }
         };
-        let stdout = bufio_for(&io.stdout, self.buffered_stdout());
-        let stderr = bufio_for(&io.stderr, self.buffered_stderr());
+        let stdout = bufio_for(&io.stdout, &self.buffered_stdout, fresh_out);
+        let stderr = bufio_for(&io.stderr, &self.buffered_stderr, fresh_err);
 
-        let duped = Box::new(ShellExecEnv {
-            _buffered_stdout: stdout,
-            _buffered_stderr: stderr,
+        let duped = ShellExecEnv {
+            buffered_stdout: stdout,
+            buffered_stderr: stderr,
             shell_env: self.shell_env.clone(),
             cmd_local_env: EnvMap::init(),
             export_env: self.export_env.clone(),
             __prev_cwd: self.__prev_cwd.clone(),
             __cwd: self.__cwd.clone(),
             cwd_fd: dupedfd,
-        });
-        Ok(bun_core::heap::into_raw(duped))
-    }
-
-    /// Teardown for the heap-allocated subshell/pipeline-child case.
-    ///
-    /// # Safety
-    /// `this` must have been returned by `dupe_for_subshell` (or otherwise
-    /// `heap::alloc`'d) and not yet freed.
-    // `*mut T` sig forced by trait/callback contract; the body's internal deref is SAFETY-commented.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub(crate) fn deinit_impl(this: *mut ShellExecEnv) {
-        log!("[ShellExecEnv] deinit 0x{:x}", this as usize);
-        // SAFETY: precondition above. Reclaim the Box; `Drop` for the env
-        // maps / vecs / owned `Bufio` runs on drop. Only `cwd_fd` needs an
-        // explicit close.
-        let boxed = unsafe { bun_core::heap::take(this) };
-        closefd(boxed.cwd_fd);
-        // EnvMap/Vec/Vec<u8> drop impls free their storage; `Bufio::Borrowed`
-        // is a raw ptr so its drop is a no-op.
-        drop(boxed);
-    }
-
-    /// Teardown for the *embedded* root env (held by value in `Interpreter`).
-    /// `deinit_impl(this: *mut)` covers the heap-allocated subshell case.
-    pub(crate) fn deinit_embedded(&mut self, free_buffered_io: bool) {
+        };
         log!(
-            "[ShellExecEnv] deinit 0x{:x}",
+            "[ShellExecEnv] dupe 0x{:x}",
+            std::ptr::from_ref(&duped) as usize
+        );
+        Ok(Rc::new(JsRefCell::new(duped)))
+    }
+
+    /// Early teardown for the root env (held by the `Interpreter` until it is
+    /// finalized): free the env maps and cwd storage and close `cwd_fd` now,
+    /// leaving a valid empty env behind. `free_buffered_io` also releases the
+    /// captured output.
+    pub(crate) fn clear(&mut self, free_buffered_io: bool) {
+        log!(
+            "[ShellExecEnv] clear 0x{:x}",
             std::ptr::from_ref(self) as usize
         );
         if free_buffered_io {
-            if let Bufio::Owned(o) = &mut self._buffered_stdout {
-                o.clear_and_free();
-            }
-            if let Bufio::Owned(o) = &mut self._buffered_stderr {
-                o.clear_and_free();
-            }
+            self.free_buffered_io();
         }
-        // EnvMap has a Drop impl; replace with fresh to free now and leave
-        // valid state for any later `Drop` of the outer `Interpreter` box.
         self.shell_env = EnvMap::init();
         self.cmd_local_env = EnvMap::init();
         self.export_env = EnvMap::init();
         self.__cwd = Vec::new();
         self.__prev_cwd = Vec::new();
-        closefd(self.cwd_fd);
-        self.cwd_fd = bun_sys::Fd::INVALID;
+        if self.cwd_fd != Fd::INVALID {
+            closefd(self.cwd_fd);
+            self.cwd_fd = Fd::INVALID;
+        }
     }
 
     /// `cd -`.
@@ -2087,11 +1906,52 @@ impl ShellExecEnv {
 // ShellArgs (AST + arena)
 // ────────────────────────────────────────────────────────────────────────────
 
+/// The parsed script and the arena its nodes live in. State nodes hold
+/// `bun_ptr::BackRef<ast::*>` into it; they are all freed before the arena is
+/// reset (`Interpreter::deref_root_shell_and_io_if_needed`) or dropped.
 pub struct ShellArgs {
-    /// Arena owning the parsed AST nodes, tokens, and string pool.
-    pub(crate) __arena: bun_alloc::Arena,
-    /// Root AST node. State nodes hold `*const ast::*` into this arena.
-    pub(crate) script_ast: ast::Script,
+    script: bun_shell_parser::ParsedScript,
+}
+
+impl ShellArgs {
+    /// Heap-allocated (returned as `Box`) because it is handed from
+    /// `ParsedShellScript` to the interpreter as one unit.
+    pub(crate) fn init() -> Box<ShellArgs> {
+        Box::new(ShellArgs {
+            script: bun_shell_parser::ParsedScript::new(),
+        })
+    }
+
+    /// See [`bun_shell_parser::ParsedScript::parse`].
+    #[inline]
+    pub(crate) fn parse(
+        &mut self,
+        src: &[u8],
+        jsstrings_to_escape: &[bun_core::String],
+        jsobjs_len: u32,
+    ) -> Result<(), bun_shell_parser::ParseFailure> {
+        self.script.parse(src, jsstrings_to_escape, jsobjs_len)
+    }
+
+    /// The root AST node; see [`bun_shell_parser::ParsedScript`] for how long
+    /// it stays valid (until `reset`, which `deref_root_shell_and_io_if_needed`
+    /// runs only once every state node is freed).
+    #[inline]
+    pub(crate) fn script_ast(&self) -> bun_ptr::BackRef<ast::Script> {
+        self.script.root_backref()
+    }
+
+    #[inline]
+    pub(crate) fn reset(&mut self) {
+        self.script.reset();
+    }
+
+    /// Reports the arena's `allocated_bytes()` (a superset — tokens + strpool
+    /// + AST nodes). This is for GC `estimatedSize` reporting only, where
+    /// over-approximation is preferable to a tree walk.
+    pub(crate) fn memory_cost(&self) -> usize {
+        self.script.memory_cost()
+    }
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -2103,45 +1963,6 @@ pub struct ShellArgs {
 /// `bun_event_loop` and re-exported through `bun_jsc`; shell re-exports it
 /// here so `IOReader`/`IOWriter`/builtin tasks keep their existing import path.
 pub use bun_event_loop::EventLoopHandle;
-
-// ────────────────────────────────────────────────────────────────────────────
-// CowFd
-// ────────────────────────────────────────────────────────────────────────────
-
-/// Copy-on-write file descriptor: avoids multiple non-blocking writers on the
-/// same fd (which breaks epoll/kqueue).
-pub struct CowFd {
-    __fd: Fd,
-    refcount: u32,
-}
-
-impl CowFd {
-    pub(crate) fn init(fd: Fd) -> *mut CowFd {
-        let new = bun_core::heap::into_raw(Box::new(CowFd {
-            __fd: fd,
-            refcount: 1,
-        }));
-        bun_core::scoped_log!(CowFd, "init {:x} fd={}", new as usize, fd);
-        new
-    }
-
-    /// # Safety
-    /// `this` must point to a live `CowFd` (refcount ≥ 1). If this drops the
-    /// refcount to 0, `this` is freed and must not be used again.
-    // `*mut T` sig forced by trait/callback contract; the body's internal deref is SAFETY-commented.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub fn deref(this: *mut CowFd) {
-        // SAFETY: caller upholds the precondition above (`this` is a live `CowFd`).
-        unsafe {
-            (*this).refcount -= 1;
-            if (*this).refcount == 0 {
-                // Close the fd before freeing; `closefd` tolerates EBADF.
-                closefd((*this).__fd);
-                drop(bun_core::heap::take(this));
-            }
-        }
-    }
-}
 
 // ────────────────────────────────────────────────────────────────────────────
 // Convenience re-exports for state modules
@@ -2385,28 +2206,20 @@ pub(crate) fn shell_openat(
 // Builtin flag-parsing infra
 // ────────────────────────────────────────────────────────────────────────────
 
-/// Custom parse error for invalid options.
-///
-/// Payload slices borrow from the builtin's argv (NUL-terminated arena strings)
-/// or are `'static` literals; the builtin formats them into an error message
-/// before the next argv mutation, so a raw fat pointer is safe.
+/// Custom parse error for invalid options. The payload is the offending
+/// option name.
 pub(crate) enum ParseError {
-    IllegalOption(*const [u8]),
-    Unsupported(*const [u8]),
+    IllegalOption(Box<[u8]>),
+    Unsupported(Box<[u8]>),
     ShowUsage,
 }
 
 impl ParseError {
-    /// Borrow the option-name payload. The pointer borrows either a `'static`
-    /// literal (e.g. `b"-"`) or the owning `Builtin`'s argv storage
-    /// (NUL-terminated `Vec<u8>` in `Cmd::args`, live for the `Builtin`'s
-    /// lifetime — see [`Builtin::arg_bytes`](crate::shell::builtin::Builtin::arg_bytes)).
-    /// Builtins format the error before any argv mutation.
+    /// The option-name payload (empty for `ShowUsage`).
     #[inline]
     pub(crate) fn opt(&self) -> &[u8] {
         match self {
-            // SAFETY: see doc comment.
-            ParseError::IllegalOption(s) | ParseError::Unsupported(s) => unsafe { &**s },
+            ParseError::IllegalOption(s) | ParseError::Unsupported(s) => s,
             ParseError::ShowUsage => b"",
         }
     }
@@ -2415,15 +2228,15 @@ impl ParseError {
 pub enum ParseFlagResult {
     ContinueParsing,
     Done,
-    IllegalOption(*const [u8]),
-    Unsupported(*const [u8]),
+    IllegalOption(Box<[u8]>),
+    Unsupported(Box<[u8]>),
 }
 
 /// Returns just `name` and lets the caller's `fmt_error_arena` add the
 /// "unsupported option" prefix once.
 #[inline]
-pub(crate) const fn unsupported_flag(name: &'static [u8]) -> *const [u8] {
-    std::ptr::from_ref::<[u8]>(name)
+pub(crate) fn unsupported_flag(name: &'static [u8]) -> Box<[u8]> {
+    name.into()
 }
 
 /// Per-builtin opts type implements this to plug into `FlagParser::parse_flags`.
@@ -2434,18 +2247,19 @@ pub trait FlagParser {
     fn parse_short(&mut self, ch: u8, smallflags: &[u8], i: usize) -> Option<ParseFlagResult>;
 }
 
-/// Returns the trailing non-flag args (`args[idx..]`) on success.
+/// Parses leading flags out of `args` (a builtin's argv, each entry
+/// NUL-terminated). Returns the trailing non-flag args (`args[idx..]`) on
+/// success.
 pub(crate) fn parse_flags<'a, O: FlagParser>(
     opts: &mut O,
-    args: &'a [*const core::ffi::c_char],
-) -> Result<Option<&'a [*const core::ffi::c_char]>, ParseError> {
+    args: &'a [Vec<u8>],
+) -> Result<Option<&'a [Vec<u8>]>, ParseError> {
     if args.is_empty() {
         return Ok(None);
     }
     let mut idx = 0usize;
     while idx < args.len() {
-        // SAFETY: argv entries are NUL-terminated C strings (see Builtin::init).
-        let flag = unsafe { bun_core::ffi::cstr(args[idx]) }.to_bytes();
+        let flag = crate::shell::builtin::Builtin::arg_bytes_of(&args[idx]);
         match parse_one_flag(opts, flag) {
             ParseFlagResult::Done => return Ok(Some(&args[idx..])),
             ParseFlagResult::ContinueParsing => {}
@@ -2462,7 +2276,7 @@ fn parse_one_flag<O: FlagParser>(opts: &mut O, flag: &[u8]) -> ParseFlagResult {
         return ParseFlagResult::Done;
     }
     if flag.len() == 1 {
-        return ParseFlagResult::IllegalOption(std::ptr::from_ref::<[u8]>(b"-"));
+        return ParseFlagResult::IllegalOption(b"-".as_slice().into());
     }
     if flag.len() > 2 && flag[1] == b'-' {
         if let Some(r) = opts.parse_long(flag) {
@@ -2501,133 +2315,172 @@ impl OutputSrc {
 pub enum OutputTaskState {
     WaitingWriteErr,
     WaitingWriteOut,
-    Done,
 }
 
-/// Vtable trait the parent builtin implements. All hooks
-/// take `(&mut Interpreter, NodeId)` (NodeId style — the parent builtin lives
-/// inside the interpreter's node arena).
-///
-/// `child` is the heap-allocated `OutputTask` itself, passed so `write_*` can
-/// register it as the IOWriter callback target.
-pub trait OutputTaskVTable: Sized {
-    fn write_err(
-        interp: &Interpreter,
-        cmd: NodeId,
-        child: *mut OutputTask<Self>,
-        errbuf: &[u8],
-    ) -> Option<Yield>;
-    fn on_write_err(interp: &Interpreter, cmd: NodeId);
-    fn write_out(
-        interp: &Interpreter,
-        cmd: NodeId,
-        child: *mut OutputTask<Self>,
-        output: &mut OutputSrc,
-    ) -> Option<Yield>;
-    fn on_write_out(interp: &Interpreter, cmd: NodeId);
+/// The in-flight [`OutputTask`]s of one builtin. A task whose chunk is
+/// queued on an IOWriter is parked here under the sequence number carried
+/// in that chunk's [`ChildPtr`](crate::shell::io_writer::ChildPtr), so every
+/// chunk completion (or failure) finds exactly its task.
+pub struct OutputQueue<P: OutputTaskVTable> {
+    next_seq: u32,
+    /// Chunks queued on a writer that have not called back yet.
+    waiting: u32,
+    parked: Vec<OutputTask<P>>,
+}
+
+impl<P: OutputTaskVTable> Default for OutputQueue<P> {
+    fn default() -> Self {
+        Self {
+            next_seq: 0,
+            waiting: 0,
+            parked: Vec::new(),
+        }
+    }
+}
+
+impl<P: OutputTaskVTable> OutputQueue<P> {
+    /// No chunk is still out on a writer.
+    #[inline]
+    pub(crate) fn drained(&self) -> bool {
+        self.waiting == 0
+    }
+}
+
+/// Implemented by the builtins that print through [`OutputTask`]s
+/// (ls/mkdir/touch/cp).
+pub trait OutputTaskVTable: Sized + 'static {
+    fn output_queue(interp: &Interpreter, cmd: NodeId) -> JsCellRefMut<'_, OutputQueue<Self>>;
+    /// A task finished both writes; usually re-runs the builtin's `next`.
     fn on_done(interp: &Interpreter, cmd: NodeId) -> Yield;
 }
 
-/// A task that can write to stdout and/or stderr.
-///
-/// Heap-allocated (`heap::alloc`) so the IOWriter can hold a raw pointer to
-/// it across async chunks; freed by `deinit`.
+/// Writes one sub-task's error message (stderr) and then its output (stdout)
+/// for the builtin at `parent`, then reports `on_done`.
 pub struct OutputTask<P: OutputTaskVTable> {
     /// Owning Cmd node (the builtin's `cmd` id).
     pub(crate) parent: NodeId,
     pub(crate) output: OutputSrc,
     pub(crate) state: OutputTaskState,
+    /// Key in the builtin's [`OutputQueue`] while a chunk is out.
+    seq: u32,
     _marker: core::marker::PhantomData<P>,
 }
 
 impl<P: OutputTaskVTable> OutputTask<P> {
-    pub(crate) fn new(parent: NodeId, output: OutputSrc) -> Box<Self> {
-        Box::new(OutputTask {
+    pub(crate) fn new(parent: NodeId, output: OutputSrc) -> Self {
+        OutputTask {
             parent,
             output,
             state: OutputTaskState::WaitingWriteErr,
+            seq: 0,
             _marker: core::marker::PhantomData,
+        }
+    }
+
+    /// Write `errbuf` (if any) to stderr, then the output to stdout, then
+    /// `on_done`. Returns as soon as a write has to wait for a writer.
+    pub(crate) fn start(mut me: Self, interp: &Interpreter, errbuf: Option<&[u8]>) -> Yield {
+        log!(
+            "OutputTask(0x{:x}) start errbuf={:?}",
+            &raw const me as usize,
+            errbuf.map(|b| b.len())
+        );
+        if let Some(err) = errbuf {
+            me.state = OutputTaskState::WaitingWriteErr;
+            match Self::write(me, interp, crate::shell::builtin::IoKind::Stderr, Some(err)) {
+                Ok(y) => return y,
+                Err(done) => me = done,
+            }
+        }
+        Self::write_output(me, interp)
+    }
+
+    fn write_output(mut me: Self, interp: &Interpreter) -> Yield {
+        me.state = OutputTaskState::WaitingWriteOut;
+        match Self::write(me, interp, crate::shell::builtin::IoKind::Stdout, None) {
+            Ok(y) => y,
+            Err(done) => Self::finish(done, interp),
+        }
+    }
+
+    /// Write `bytes` (or, for `None`, `me.output`) to `to`. `Ok`: the chunk
+    /// is queued and `me` parked until [`on_chunk`](Self::on_chunk); `Err`:
+    /// written without IO, carry on with `me`.
+    fn write(
+        mut me: Self,
+        interp: &Interpreter,
+        to: crate::shell::builtin::IoKind,
+        bytes: Option<&[u8]>,
+    ) -> Result<Yield, Self> {
+        use crate::shell::builtin::{Builtin, IoKind};
+        use crate::shell::io_writer::ChildPtr;
+        let parent = me.parent;
+        let needs_io = {
+            let b = Builtin::of(interp, parent);
+            match to {
+                IoKind::Stdout => b.stdout.needs_io(),
+                IoKind::Stderr => b.stderr.needs_io(),
+            }
+        };
+        let Some(safeguard) = needs_io else {
+            let _ = match bytes {
+                Some(b) => Builtin::write_no_io(interp, parent, to, b),
+                None => Builtin::write_no_io(interp, parent, to, me.output.slice()),
+            };
+            return Err(me);
+        };
+        // Park first: the writer may complete (or fail) the chunk from inside
+        // `enqueue`.
+        let seq = {
+            let mut q = P::output_queue(interp, parent);
+            q.next_seq += 1;
+            q.waiting += 1;
+            me.seq = q.next_seq;
+            let seq = me.seq;
+            q.parked.push(me);
+            seq
+        };
+        let child = ChildPtr::builtin_task(parent, seq);
+        Ok(match bytes {
+            Some(b) => Builtin::write_out(interp, parent, to, child, b, safeguard),
+            None => Builtin::write_out_with(interp, parent, to, child, safeguard, |buf| {
+                let q = P::output_queue(interp, parent);
+                if let Some(t) = q.parked.iter().rev().find(|t| t.seq == seq) {
+                    buf.extend_from_slice(t.output.slice());
+                }
+            }),
         })
     }
 
-    /// Takes the freshly-constructed task by `Box` (callers always pair `new`
-    /// → `start`), leaks it to the raw `*mut Self` the IOWriter callback chain
-    /// needs, and drives the first state transition. The box is reclaimed by
-    /// [`Self::deinit`] (via `heap::take`) when the task reaches `Done`.
-    pub(crate) fn start(me: Box<Self>, interp: &Interpreter, errbuf: Option<&[u8]>) -> Yield {
-        // Leak so `P::write_*` can stash `this` as the IOWriter's `ChildPtr`;
-        // address is stable for the task's lifetime. Re-derive `&mut` per
-        // step (the `P::*` callbacks re-enter via raw `this`, not a reborrow
-        // of `me`).
-        let this = bun_core::heap::into_raw(me);
-        // SAFETY: `this` is a fresh, uniquely-owned heap allocation.
-        unsafe {
-            let me = &mut *this;
-            log!(
-                "OutputTask(0x{:x}) start errbuf={:?}",
-                this as usize,
-                errbuf.map(|b| b.len())
-            );
-            me.state = OutputTaskState::WaitingWriteErr;
-            if let Some(err) = errbuf {
-                if let Some(y) = P::write_err(interp, me.parent, this, err) {
-                    return y;
-                }
-                return Self::next(this, interp);
-            }
-            me.state = OutputTaskState::WaitingWriteOut;
-            if let Some(y) = P::write_out(interp, me.parent, this, &mut me.output) {
-                return y;
-            }
-            P::on_write_out(interp, me.parent);
-            me.state = OutputTaskState::Done;
-            Self::deinit(this, interp)
-        }
-    }
-
-    pub(crate) unsafe fn next(this: *mut Self, interp: &Interpreter) -> Yield {
-        // SAFETY: caller contract — see `start`.
-        unsafe {
-            let me = &mut *this;
-            match me.state {
-                OutputTaskState::WaitingWriteErr => {
-                    P::on_write_err(interp, me.parent);
-                    me.state = OutputTaskState::WaitingWriteOut;
-                    if let Some(y) = P::write_out(interp, me.parent, this, &mut me.output) {
-                        return y;
-                    }
-                    P::on_write_out(interp, me.parent);
-                    me.state = OutputTaskState::Done;
-                    Self::deinit(this, interp)
-                }
-                OutputTaskState::WaitingWriteOut => {
-                    P::on_write_out(interp, me.parent);
-                    me.state = OutputTaskState::Done;
-                    Self::deinit(this, interp)
-                }
-                OutputTaskState::Done => panic!("Invalid state"),
-            }
-        }
-    }
-
-    pub(crate) unsafe fn on_io_writer_chunk(
-        this: *mut Self,
+    /// The chunk parked under `seq` completed (or its writer failed).
+    pub(crate) fn on_chunk(
         interp: &Interpreter,
+        cmd: NodeId,
+        seq: u32,
         _written: usize,
         _err: Option<bun_sys::SystemError>,
     ) -> Yield {
-        log!("OutputTask(0x{:x}) onIOWriterChunk", this as usize);
-        // SAFETY: `this` is the live heap-allocated `OutputTask` guaranteed by
-        // this fn's caller contract; forwarded unchanged to `next`.
-        unsafe { Self::next(this, interp) }
+        let me = {
+            let mut q = P::output_queue(interp, cmd);
+            let pos = q.parked.iter().position(|t| t.seq == seq);
+            pos.map(|i| {
+                q.waiting -= 1;
+                q.parked.swap_remove(i)
+            })
+        };
+        let Some(me) = me else {
+            debug_assert!(false, "OutputTask chunk {seq} of {cmd} has no parked task");
+            return P::on_done(interp, cmd);
+        };
+        log!("OutputTask(0x{:x}) onIOWriterChunk", &raw const me as usize);
+        match me.state {
+            OutputTaskState::WaitingWriteErr => Self::write_output(me, interp),
+            OutputTaskState::WaitingWriteOut => Self::finish(me, interp),
+        }
     }
 
-    /// Fires `on_done` then frees.
-    unsafe fn deinit(this: *mut Self, interp: &Interpreter) -> Yield {
-        // SAFETY: `this` was heap-allocated in `new`; reclaim and drop.
-        let me = unsafe { bun_core::heap::take(this) };
-        debug_assert!(me.state == OutputTaskState::Done);
-        log!("OutputTask(0x{:x}) deinit", this as usize);
+    fn finish(me: Self, interp: &Interpreter) -> Yield {
+        log!("OutputTask(0x{:x}) deinit", &raw const me as usize);
         let parent = me.parent;
         drop(me);
         P::on_done(interp, parent)
@@ -2638,56 +2491,48 @@ impl<P: OutputTaskVTable> OutputTask<P> {
 // ShellTask
 // ────────────────────────────────────────────────────────────────────────────
 
-/// Thread-pool task wrapper used by mv/rm/ls/mkdir/touch/cp builtins.
+/// Thread-pool round-trip used by mv/rm/ls/mkdir/touch/cp builtins, glob
+/// expansion and `[ -f ]`-style tests: a boxed context embedding a
+/// [`ShellTask`] is handed to the [`WorkPool`], runs its pool-side body
+/// there, and is posted back to the owning event loop where
+/// [`run_from_main_thread`](Self::run_from_main_thread) consumes it.
 ///
-/// A trait the per-builtin task struct implements. The container-of chain
-/// (WorkPoolTask → ShellTask → Ctx) is built from `core::mem::offset_of!` in
-/// [`ShellTaskCtx::TASK_OFFSET`] + the `#[repr(C)]` first-field guarantee on
-/// [`ShellTask::task`].
-///
-/// `Taskable` is a supertrait so [`ShellTask::on_finish`] can build the
-/// JS-side `ConcurrentTask`.
-pub trait ShellTaskCtx: Sized + bun_event_loop::Taskable {
-    /// Byte offset of the embedded `task: ShellTask` field within `Self`.
-    /// Implementors define this as `core::mem::offset_of!(Self, task)`.
-    const TASK_OFFSET: usize;
-    /// Worker-thread body. Takes `&mut Self`: the trampoline recovers the
-    /// heap allocation from the intrusive task node and forms the unique
-    /// borrow once; no impl re-enters or frees `self` here (that happens in
-    /// `run_from_main_thread`).
-    fn run_from_thread_pool(this: &mut Self);
-    fn run_from_main_thread(this: *mut Self, interp: &Interpreter);
+/// The pool-side entry ([`schedule`](ShellTask::schedule)) is
+/// [`bun_threading::work_pool::OwnedTask::run`]; each context declares it with
+/// `bun_threading::owned_task!(Ty, task.task, run = ...)`, normally pointing
+/// at [`ShellTask::run_owned`] (do the work, then [`ShellTask::on_finish`]).
+/// The main-thread side is delivered by tag: `bun_runtime::dispatch` reboxes
+/// the pointer and calls [`ShellTask::run_from_main_thread`], so each context
+/// is also `bun_event_loop::boxed_taskable!`.
+/// Stamp the pool/dispatch glue for a [`ShellTaskCtx`] whose [`ShellTask`]
+/// lives in a field named `task`: `OwnedTask` (pool entry), `Taskable`
+/// (dispatch tag; released unrun by dropping the keep-alive) and the two
+/// accessors. `run = path` overrides the pool-side body.
+#[macro_export]
+macro_rules! shell_task {
+    ($ty:ident) => {
+        $crate::shell_task!($ty, run = $crate::shell::interpreter::ShellTask::run_owned);
+    };
+    ($ty:ident, run = $run:path) => {
+        ::bun_threading::owned_task!($ty, task.task, run = $run);
+        ::bun_event_loop::boxed_taskable!($ty, $ty, |this| this.task.unref_unrun());
+    };
+}
 
-    /// Recover `*mut Self` from the intrusive `*mut WorkPoolTask` that the
-    /// thread pool hands the callback. `WorkPoolTask` is the first
-    /// `#[repr(C)]` field of [`ShellTask`], so the `WorkPoolTask*` and
-    /// `ShellTask*` coincide; one `byte_sub(TASK_OFFSET)` walks back to the
-    /// outer `Self`.
-    ///
-    /// Provided so the two opt-out builtins (`cp`/`rm`, which install a
-    /// custom `work_pool_callback` and bypass [`shell_task_trampoline`]) can
-    /// reuse the exact recovery the generic trampoline performs, instead of
-    /// each open-coding the `byte_sub` walk.
-    ///
-    /// # Safety
-    /// `task` must point at the [`WorkPoolTask`] node embedded in a live
-    /// `Self` allocation at `Self::TASK_OFFSET` (i.e. the `task.task` field
-    /// of the `ShellTask` field), with provenance covering the whole `Self`.
-    #[inline(always)]
-    unsafe fn from_work_task(task: *mut WorkPoolTask) -> *mut Self {
-        // SAFETY: caller contract — `task` is the first `#[repr(C)]` field of
-        // `ShellTask`, embedded in `Self` at `TASK_OFFSET`.
-        unsafe { bun_core::container_of::<Self, _>(task, Self::TASK_OFFSET) }
-    }
+pub trait ShellTaskCtx: bun_event_loop::Taskable + Sized + 'static {
+    fn shell_task(&self) -> &ShellTask;
+    fn shell_task_mut(&mut self) -> &mut ShellTask;
+    /// Worker-thread body.
+    fn run_from_thread_pool(&mut self);
+    /// Main thread, after the round-trip; consumes the task.
+    fn run_from_main_thread(self: Box<Self>, interp: &Interpreter);
 }
 
 pub type WorkPoolTask = bun_threading::work_pool::Task;
 
 #[repr(C)]
 pub struct ShellTask {
-    /// Intrusive thread-pool node. MUST be the first field so the
-    /// `*mut WorkPoolTask` → `*mut ShellTask` cast in the trampoline is a
-    /// no-op`).
+    /// Intrusive thread-pool node (`owned_task!(Ctx, task.task)`).
     pub task: WorkPoolTask,
     pub(crate) event_loop: EventLoopHandle,
     /// How the pool thread bounces the task back to its owning loop; held only
@@ -2696,15 +2541,50 @@ pub struct ShellTask {
     /// interpreter state a JS wrapper may own.
     pub(crate) poster: Option<bun_jsc::ConcurrentPoster>,
     pub(crate) keep_alive: bun_io::KeepAlive,
-    /// Back-ref to the owning [`Interpreter`]. The high-tier dispatch
-    /// (`runtime::dispatch::run_task`) recovers `&mut Interpreter` from this
-    /// field. Set at `ShellTask::new`; cleared (raw-ptr) only when the task
-    /// is freed.
-    pub(crate) interp: *mut Interpreter,
-    /// Intrusive concurrent-task node for the worker→main bounce. JS arm holds
-    /// a [`ConcurrentTask`](bun_event_loop::ConcurrentTask::ConcurrentTask),
-    /// mini arm holds an `AnyTaskWithExtraContext`.
+    /// The owning [`Interpreter`], handed to `run_from_main_thread`.
+    pub(crate) interp: InterpRef,
+    /// Intrusive node for the worker→owner bounce (`on_finish`), so the
+    /// round-trip allocates nothing.
     pub(crate) concurrent_task: bun_event_loop::EventLoopTask,
+}
+
+/// The owning interpreter as carried by payloads that visit other threads.
+/// It is opened only back on the owning thread (`ShellTask::run_from_main_thread`
+/// and the rm verbose hop); debug builds assert that.
+#[derive(Clone, Copy)]
+pub(crate) struct InterpRef {
+    ptr: bun_ptr::ParentRef<Interpreter>,
+    #[cfg(debug_assertions)]
+    owner: bun_core::thread_id::ThreadId,
+}
+
+impl InterpRef {
+    pub(crate) fn new(interp: &Interpreter) -> Self {
+        Self {
+            ptr: bun_ptr::ParentRef::new(interp),
+            #[cfg(debug_assertions)]
+            owner: bun_core::thread_id::current(),
+        }
+    }
+
+    pub(crate) fn get(&self) -> &Interpreter {
+        #[cfg(debug_assertions)]
+        debug_assert!(
+            bun_core::thread_id::current() == self.owner,
+            "shell interpreter touched off its owning thread"
+        );
+        &self.ptr
+    }
+}
+
+/// Mini-loop receiver for [`ShellTaskCtx`] payloads.
+pub(crate) struct ShellTaskRunner;
+impl<C: ShellTaskCtx> bun_event_loop::AnyTaskWithExtraContext::BoxedMiniTaskRunner<C>
+    for ShellTaskRunner
+{
+    fn run_from_loop_thread(ctx: Box<C>) {
+        ShellTask::run_from_main_thread(ctx);
+    }
 }
 
 impl ShellTask {
@@ -2732,62 +2612,43 @@ impl ShellTask {
             },
             event_loop: parent.event_loop,
             keep_alive: Default::default(),
-            interp: core::ptr::null_mut(),
+            interp: parent.interp,
             concurrent_task: bun_event_loop::EventLoopTask::from_event_loop(parent.event_loop),
         }
     }
 
-    pub(crate) fn new(event_loop: EventLoopHandle) -> Self {
+    pub(crate) fn new(interp: &Interpreter) -> Self {
         ShellTask {
             task: WorkPoolTask {
                 node: Default::default(),
-                // Real callback is installed by `schedule::<C>()`; this only
-                // fires if a caller forgets the `<C>` (debug-asserted there).
+                // Real callback is installed by `WorkPool::schedule_owned`.
                 callback: shell_task_unset_callback,
             },
             poster: None,
-            event_loop,
+            event_loop: interp.event_loop,
             keep_alive: Default::default(),
-            interp: core::ptr::null_mut(),
-            concurrent_task: bun_event_loop::EventLoopTask::from_event_loop(event_loop),
+            interp: InterpRef::new(interp),
+            concurrent_task: bun_event_loop::EventLoopTask::from_event_loop(interp.event_loop),
         }
     }
 
-    /// Installs the per-`C`
-    /// trampoline and hands the intrusive task to the global [`WorkPool`].
-    ///
-    /// SAFETY: `ctx` must be a live heap allocation that embeds this
-    /// `ShellTask` at `C::TASK_OFFSET` and outlives the worker-thread call.
-    pub(crate) unsafe fn schedule<C: ShellTaskCtx>(ctx: *mut C) {
+    /// Owning thread: take a keep-alive on the loop and hand `ctx` to the
+    /// [`WorkPool`](bun_threading::work_pool::WorkPool).
+    pub(crate) fn schedule<C: ShellTaskCtx + bun_threading::work_pool::OwnedTask>(mut ctx: Box<C>) {
         log!("ShellTask schedule");
-        // SAFETY: caller contract — `ctx` embeds `ShellTask` at `TASK_OFFSET`.
-        unsafe {
-            let this = ctx.byte_add(C::TASK_OFFSET).cast::<ShellTask>();
-            (*this)
-                .keep_alive
-                .ref_((*this).event_loop.as_event_loop_ctx());
-            Self::schedule_no_ref::<C>(ctx);
-        }
+        let this = ctx.shell_task_mut();
+        this.keep_alive.ref_(this.event_loop.as_event_loop_ctx());
+        Self::schedule_no_ref(ctx);
     }
 
-    /// Install the per-`C` trampoline and hand the intrusive task to
-    /// [`WorkPool`] WITHOUT a `keep_alive.ref` — for tasks scheduled
-    /// recursively from a worker thread where no JS-thread VM thread-local
-    /// exists (e.g. `ls`).
-    ///
-    /// SAFETY: same as [`Self::schedule`].
-    pub(crate) unsafe fn schedule_no_ref<C: ShellTaskCtx>(ctx: *mut C) {
-        use bun_threading::work_pool::WorkPool;
-        // SAFETY: caller contract — `ctx` embeds `ShellTask` at `TASK_OFFSET`.
-        // Stay on raw pointers: once `WorkPool::schedule` returns the worker
-        // thread may already be touching `*this`, so we must not hold a live
-        // `&mut ShellTask` across that call.
-        unsafe {
-            let this = ctx.byte_add(C::TASK_OFFSET).cast::<ShellTask>();
-            (*this).task.callback = shell_task_trampoline::<C>;
-            (*this).arm();
-            WorkPool::schedule(&raw mut (*this).task);
-        }
+    /// [`schedule`](Self::schedule) WITHOUT a `keep_alive.ref` — for tasks
+    /// scheduled recursively from a worker thread where no JS-thread VM
+    /// thread-local exists (e.g. `ls`).
+    pub(crate) fn schedule_no_ref<C: ShellTaskCtx + bun_threading::work_pool::OwnedTask>(
+        mut ctx: Box<C>,
+    ) {
+        ctx.shell_task_mut().arm();
+        bun_threading::work_pool::WorkPool::schedule_owned(ctx);
     }
 
     /// About to leave the owning thread: take the poster (for a JS loop, a
@@ -2802,100 +2663,53 @@ impl ShellTask {
         }
     }
 
-    /// Called from the worker
-    /// thread once `C::run_from_thread_pool` returns; enqueues the embedded
-    /// concurrent task so the main thread re-enters via
-    /// [`run_from_main_thread`](Self::run_from_main_thread) (which performs the
-    /// `keep_alive.unref` paired with [`schedule`](Self::schedule)).
-    ///
-    /// # Safety
-    /// `ctx` must be the same live heap allocation passed to
-    /// [`schedule`](Self::schedule); not touched again on the worker thread
-    /// after this returns.
-    pub(crate) unsafe fn on_finish<C: ShellTaskCtx>(ctx: *mut C) {
-        use bun_event_loop::{ConcurrentTask::AutoDeinit, EventLoopTask};
+    /// The default [`OwnedTask::run`](bun_threading::work_pool::OwnedTask::run)
+    /// body: run the pool-side work, then post back.
+    pub fn run_owned<C: ShellTaskCtx>(mut ctx: Box<C>) {
+        ctx.run_from_thread_pool();
+        Self::on_finish(ctx);
+    }
+
+    /// Worker thread: post `ctx` back to its owning loop, where
+    /// [`run_from_main_thread`](Self::run_from_main_thread) picks it up (and
+    /// performs the `keep_alive.unref` paired with [`schedule`](Self::schedule)).
+    pub(crate) fn on_finish<C: ShellTaskCtx>(mut ctx: Box<C>) {
         log!("ShellTask onFinish");
-        // SAFETY: caller contract — `ctx` embeds `ShellTask` at `TASK_OFFSET`.
-        // Stay on raw pointers: once `enqueue_task_concurrent` returns, the
-        // main thread may already be touching `*this`, so no live `&mut`
-        // into it may span that call. `this` is live and exclusively owned by
-        // this thread until the enqueue below.
-        unsafe {
-            let this = ctx.byte_add(C::TASK_OFFSET).cast::<ShellTask>();
-            // Moved out: the owning thread may free `*this` once it is queued.
-            let poster = (*this)
-                .poster
-                .take()
-                .expect("shell task on the pool is armed");
-            match &mut (*this).concurrent_task {
-                EventLoopTask::Js(ct) => {
-                    // Tag resolved via `C: Taskable`.
-                    ct.from(ctx, AutoDeinit::ManualDeinit);
-                    poster.post_js(core::ptr::NonNull::from(ct));
-                }
-                EventLoopTask::Mini(at) => {
-                    // Pass the monomorphised callback explicitly.
-                    let at = at.from(this, shell_task_run_from_main_thread_mini::<C>);
-                    poster.post_mini(core::ptr::NonNull::new(at).expect("intrusive task"));
-                }
-            }
-            drop(poster);
-        }
+        // Moved out first: the owning thread may free `ctx` once it is queued.
+        let poster = ctx
+            .shell_task_mut()
+            .poster
+            .take()
+            .expect("shell task on the pool is armed");
+        // JS arm: reboxed by the `C::TAG` arm of `bun_runtime::dispatch::run_task`.
+        poster.post(
+            bun_event_loop::EventLoopTask::arm_boxed::<C, ShellTaskRunner>(ctx, |c| {
+                &mut c.shell_task_mut().concurrent_task
+            }),
+        );
+        drop(poster);
     }
 
-    /// Unrefs the
-    /// event-loop keep-alive paired with [`schedule`], then dispatches to
-    /// `C::run_from_main_thread`. The high-tier `runtime::dispatch::run_task`
-    /// `shell_dispatch!` arm calls this so the ref/unref pairing is kept at
-    /// the seam.
-    ///
-    /// # Safety
-    /// `ctx` must be a live heap allocation that embeds a `ShellTask` at
-    /// `C::TASK_OFFSET` whose `interp` back-ref is valid; called on the main
-    /// thread after the worker bounce-back.
-    pub(crate) unsafe fn run_from_main_thread<C: ShellTaskCtx>(ctx: *mut C) {
+    /// Main thread, after the worker bounce-back: unref the keep-alive paired
+    /// with [`schedule`](Self::schedule), then hand off to
+    /// `C::run_from_main_thread`.
+    pub fn run_from_main_thread<C: ShellTaskCtx>(mut ctx: Box<C>) {
         log!("ShellTask runFromJS");
-        // SAFETY: caller contract — `ctx` embeds `ShellTask` at `TASK_OFFSET`.
-        unsafe {
-            let this = ctx.byte_add(C::TASK_OFFSET).cast::<ShellTask>();
-            (*this)
-                .keep_alive
-                .unref((*this).event_loop.as_event_loop_ctx());
-            let interp = &*(*this).interp;
-            C::run_from_main_thread(ctx, interp);
-        }
+        let this = ctx.shell_task_mut();
+        this.keep_alive.unref(this.event_loop.as_event_loop_ctx());
+        let interp = this.interp;
+        C::run_from_main_thread(ctx, interp.get());
     }
-}
-
-/// Recover `*Ctx` from the
-/// intrusive `*WorkPoolTask`, run the user body, then post back to main.
-unsafe fn shell_task_trampoline<C: ShellTaskCtx>(task: *mut WorkPoolTask) {
-    // SAFETY: `task` is the first `#[repr(C)]` field of `ShellTask`, which is
-    // embedded in `C` at `TASK_OFFSET`. `ctx`
-    // remains the live heap allocation handed to `schedule`.
-    unsafe {
-        let ctx = C::from_work_task(task);
-        // The worker thread is the sole accessor until `on_finish` publishes
-        // the task back; the `&mut` ends before that call.
-        C::run_from_thread_pool(&mut *ctx);
-        ShellTask::on_finish::<C>(ctx);
-    }
-}
-
-/// Mini-loop `AnyTaskWithExtraContext` callback shape (`fn(*mut T, *mut ())`).
-fn shell_task_run_from_main_thread_mini<C: ShellTaskCtx>(this: *mut ShellTask, _: *mut ()) {
-    // SAFETY: `this` is the `ShellTask` embedded in a live `C` at `TASK_OFFSET`;
-    // mini-loop dispatch runs on the main thread.
-    unsafe {
-        ShellTask::run_from_main_thread::<C>(bun_core::container_of::<C, _>(this, C::TASK_OFFSET))
-    };
 }
 
 // Body never dereferences the pointer; a safe `fn` item coerces to the
 // `WorkPoolTask::callback` field type at the assignment site.
 #[cold]
 fn shell_task_unset_callback(_: *mut WorkPoolTask) {
-    debug_assert!(false, "ShellTask scheduled without schedule::<C>()");
+    debug_assert!(
+        false,
+        "ShellTask scheduled without WorkPool::schedule_owned"
+    );
 }
 
 #[cold]
@@ -2914,12 +2728,11 @@ pub(crate) fn unreachable_state(context: &str, state: &str) -> ! {
 // across the boundary, layout is irrelevant. Defined `extern "C" SYSV_ABI`.
 bun_jsc::jsc_abi_extern! {
     #[allow(improper_ctypes)]
-    // PRECONDITION: `ptr` must point to a live `Interpreter` — C++ calls back
-    // into `ShellInterpreter__estimatedSize(ptr)` which dereferences it, and
-    // the JS wrapper takes ownership of the allocation (freed via `finalize`).
-    // Cannot be `safe fn`: `NonNull` alone does not encode points-to-valid-T.
-    fn Bun__createShellInterpreter(
-        global: *const crate::jsc::JSGlobalObject,
+    // `ptr` is a leaked `Box<Interpreter>` whose ownership moves to the JS
+    // wrapper (released via `ShellInterpreterClass__finalize`); the only
+    // caller is `interpreter_to_js` below.
+    safe fn Bun__createShellInterpreter(
+        global: *mut crate::jsc::JSGlobalObject,
         ptr: *mut Interpreter,
         parsed_shell_script: crate::jsc::JSValue,
         resolve: crate::jsc::JSValue,
@@ -2927,14 +2740,32 @@ bun_jsc::jsc_abi_extern! {
     ) -> crate::jsc::JSValue;
 }
 
+/// Wrap `interpreter` in its JS cell; the wrapper owns it from here on.
+fn interpreter_to_js(
+    interpreter: Box<Interpreter>,
+    global: &crate::jsc::JSGlobalObject,
+    parsed_shell_script: crate::jsc::JSValue,
+    resolve: crate::jsc::JSValue,
+    reject: crate::jsc::JSValue,
+) -> crate::jsc::JSValue {
+    Bun__createShellInterpreter(
+        global.as_mut_ptr(),
+        bun_core::heap::into_raw(interpreter),
+        parsed_shell_script,
+        resolve,
+        reject,
+    )
+}
+
+bun_jsc::impl_js_class_via_generated!(Interpreter => crate::generated_classes::js_ShellInterpreter, no_constructor);
+
 pub(crate) fn create_shell_interpreter(
     global: &crate::jsc::JSGlobalObject,
     callframe: &crate::jsc::CallFrame,
 ) -> crate::jsc::JsResult<crate::jsc::JSValue> {
-    use crate::jsc::{ArgumentsSlice, JsClass as _};
+    use crate::jsc::ArgumentsSlice;
     use crate::shell::parsed_shell_script::ParsedShellScript;
 
-    // SAFETY: bun_vm() returns the live thread-local VM for a Bun-owned global.
     let vm = global.bun_vm();
     let mut arguments = ArgumentsSlice::init(vm, callframe.arguments());
 
@@ -2948,13 +2779,9 @@ pub(crate) fn create_shell_interpreter(
         .next_eat()
         .ok_or_else(|| global.throw(format_args!("shell: expected 3 arguments, got 0")))?;
 
-    let parsed_shell_script = ParsedShellScript::from_js(parsed_shell_script_js)
+    let parsed_shell_script = parsed_shell_script_js
+        .as_class_ref::<ParsedShellScript>()
         .ok_or_else(|| global.throw(format_args!("shell: expected a ParsedShellScript")))?;
-    // SAFETY: from_js returned a live wrapper-owned heap pointer. R-2: deref as
-    // shared (`&*const`) — `ParsedShellScript`'s methods/fields are `&self` +
-    // interior-mutable, so no `&mut` is required (and forming one here would
-    // alias if JS re-enters another host fn on the same wrapper).
-    let parsed_shell_script: &ParsedShellScript = unsafe { &*parsed_shell_script };
 
     if parsed_shell_script.args.get().is_none() {
         return Err(global.throw(format_args!(
@@ -2971,7 +2798,7 @@ pub(crate) fn create_shell_interpreter(
     let event_loop = EventLoopHandle::init(global.bun_vm().as_mut().event_loop().cast::<()>());
     let interpreter: Box<Interpreter> = match Interpreter::init(
         // command_ctx — unused on the JS event-loop path.
-        core::ptr::null_mut(),
+        None,
         event_loop,
         shargs,
         jsobjs,
@@ -2986,33 +2813,21 @@ pub(crate) fn create_shell_interpreter(
         }
     };
 
-    let interpreter = bun_core::heap::into_raw(interpreter);
-    // SAFETY: `interpreter` is a fresh heap allocation; the C++ wrapper takes
-    // ownership of the raw pointer and `interpreter` outlives this call.
-    // Single-threaded.
-    let js_value = unsafe {
-        let it = &*interpreter;
-        it.update_flags(|f| f.set_quiet(quiet));
-        it.global_this
-            .set(std::ptr::from_ref::<crate::jsc::JSGlobalObject>(global).cast_mut());
-        it.estimated_size_for_gc
-            .set(it.compute_estimated_size_for_gc());
-        let js_value = Bun__createShellInterpreter(
-            global,
-            interpreter,
-            parsed_shell_script_js,
-            resolve,
-            reject,
-        );
-        it.this_jsvalue.set(js_value);
-        it.keep_alive.with_mut(|k| {
-            // `bun_vm_ptr()` is the live per-thread VM singleton.
-            k.ref_(crate::jsc::VirtualMachineRef::event_loop_ctx(
-                global.bun_vm_ptr(),
-            ))
-        });
-        js_value
-    };
+    interpreter.update_flags(|f| f.set_quiet(quiet));
+    interpreter
+        .global_this
+        .set(std::ptr::from_ref::<crate::jsc::JSGlobalObject>(global).cast_mut());
+    interpreter
+        .estimated_size_for_gc
+        .set(interpreter.compute_estimated_size_for_gc());
+    let js_value = interpreter_to_js(interpreter, global, parsed_shell_script_js, resolve, reject);
+    let interpreter = js_value
+        .as_class_ref::<Interpreter>()
+        .expect("Bun__createShellInterpreter returns a JSShellInterpreter");
+    interpreter.this_jsvalue.set(js_value);
+    interpreter
+        .keep_alive
+        .with_mut(|k| k.ref_(interpreter.event_loop.as_event_loop_ctx()));
     bun_analytics::features::shell.fetch_add(1, Ordering::Relaxed);
     Ok(js_value)
 }

@@ -368,7 +368,6 @@ int32_t bun_coregraphics_decode(const uint8_t* bytes, size_t len, uint64_t max_p
         VBuf src { const_cast<uint8_t*>(s->CFDataGetBytePtr(r.px)), h, w, row };
         if (s->vImageConvert_AnyToAny(r.conv, &src, &dst, nullptr, kBunVImageDoNotTile) == 0) return CG_OK;
     }
-    std::memset(out, 0, w * h * 4);
     r.ctx = s->CGBitmapContextCreate(out, w, h, 8, w * 4, r.cs, kBunCGImageAlphaPremultipliedLast);
     if (!r.ctx) return CG_DECODE_FAILED;
     s->CGContextDrawImage(r.ctx, BunRect { 0, 0, static_cast<double>(w), static_cast<double>(h) }, r.img);

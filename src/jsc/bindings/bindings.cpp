@@ -4014,6 +4014,11 @@ JSC::JSPromise* JSC__JSPromise__resolvedPromise(JSC::JSGlobalObject* globalObjec
     promise->markAsHandled();
 }
 
+[[ZIG_EXPORT(nothrow)]] bool JSC__JSPromise__isThenFastAndNonObservable(JSC::JSPromise* promise)
+{
+    return promise->isThenFastAndNonObservable();
+}
+
 #pragma mark - JSC::JSInternalPromise (now aliased to JSPromise)
 
 JSC::JSPromise* JSC__JSInternalPromise__create(JSC::JSGlobalObject* globalObject)

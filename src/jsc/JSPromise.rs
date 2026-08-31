@@ -271,6 +271,49 @@ impl JSPromise {
         JSC__JSPromise__setHandled(self)
     }
 
+    /// True when `then()` on this promise is the built-in one: a plain `Promise` whose
+    /// realm has not patched `Promise.prototype.then`. Attaching a reaction to its
+    /// internal state is then not observable. A `Promise` subclass, an own `then`, or a
+    /// patched prototype returns false, and `await`-like code has to call `then()`.
+    pub fn is_then_fast_and_non_observable(&self) -> bool {
+        crate::cpp::JSC__JSPromise__isThenFastAndNonObservable(self)
+    }
+
+    /// Returns the promise whose settlement is `value`'s outcome, or `None` when `value`
+    /// is not a thenable. Use it on a value that user code returned and native code
+    /// wants to await: a test callback, a hook, a handler.
+    ///
+    /// A reaction attached to a promise's internal state (`JSValue::then`,
+    /// `wait_for_promise`) never calls the value's own `then()`. A `Promise` subclass
+    /// that starts its work inside an overridden `then()` (Bun.SQL's `Query`, `Bun.$`'s
+    /// `ShellPromise`) never settles that way, and a plain thenable has no internal
+    /// state at all. Such a value is adopted by a fresh native promise through the spec
+    /// resolve steps, which read `then` once and call it, the same as `await` does. The
+    /// adopter is marked handled: the caller observes its outcome, and a `then` getter
+    /// that throws rejects it before the caller can attach a reaction.
+    ///
+    /// A promise that already settled, or a pending promise with the built-in `then`,
+    /// is returned as is. A pending promise whose `then` is not callable counts as a
+    /// plain object, as `typeof value.then !== "function"` does in Jest.
+    pub fn awaitable(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<&mut JSPromise>> {
+        if let Some(promise) = value.as_promise() {
+            // `JSPromise` is an `opaque_ffi!` ZST: safe `*mut` to `&mut` deref.
+            let promise = JSPromise::opaque_mut(promise);
+            if promise.status() != Status::Pending || promise.is_then_fast_and_non_observable() {
+                return Ok(Some(promise));
+            }
+        } else if !value.is_object() {
+            return Ok(None);
+        }
+        let adopter = JSPromise::create(global);
+        adopter.set_handled();
+        adopter.resolve(global, value)?;
+        Ok(match adopter.status() {
+            Status::Fulfilled => None,
+            Status::Pending | Status::Rejected => Some(adopter),
+        })
+    }
+
     /// Create a new resolved promise resolving to a given value.
     ///
     /// Note: If you want the result as a `JSValue`, use `resolved_promise_value` instead.

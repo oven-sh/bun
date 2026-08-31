@@ -583,7 +583,13 @@ impl<const SSL: bool> HTTPContext<SSL> {
             request_cert: 1,
             ..Default::default()
         };
-        self.init_with_opts(&opts)
+        match self.init_with_opts(&opts) {
+            // The file replaces the inline `ca`, so a rejected CA came from it.
+            Err(InitError::InvalidCA) if !opts.ca_file_name.is_null() => {
+                Err(InitError::InvalidCAFile)
+            }
+            result => result,
+        }
     }
 
     pub(crate) fn init(&mut self) {

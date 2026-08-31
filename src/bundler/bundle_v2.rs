@@ -6691,9 +6691,11 @@ pub mod bv2_impl {
                                     interned_slice(
                                         self.arena()
                                             .alloc_str(&format!(
-                                                "{}/{:016x}{}",
+                                                "{}/{}{}",
                                                 bake_types::ASSET_PREFIX,
-                                                hash,
+                                                bun_core::fmt::bytes_to_hex_lower_string(
+                                                    &hash.to_ne_bytes()
+                                                ),
                                                 bstr::BStr::new(bun_paths::extension(path.text)),
                                             ))
                                             .as_bytes(),

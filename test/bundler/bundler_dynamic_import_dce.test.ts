@@ -564,6 +564,387 @@ describe("bundler", () => {
     },
   });
 
+  // ── ported from webpack / rspack (cases/chunks/statical-dynamic-import*,
+  //    cjs-tree-shaking/*, configCases/tree-shaking/side-effects-free-dynamic-import*) ──
+
+  // webpack configCases/cjs-tree-shaking/side-effect-free-dynamic-import{,-transitive}:
+  // an observe-nothing `import()` of a `sideEffects:false` package still
+  // evaluates the module exactly once; only exports are dropped, and what the
+  // module body itself reads from its own imports stays.
+  for (const splitting of [true, false]) {
+    itBundled(`dynamic_import_dce/WebpackSideEffectFreeDynamicImportEvaluates${splitting ? "Splitting" : "NoSplit"}`, {
+      files: {
+        "/entry.js": /* js */ `
+          const ns = await import("lib");
+          const {} = await import("lib");
+          await import("lib").then(m => {});
+          await import("lib");
+          console.log(globalThis.ran, globalThis.v);
+        `,
+        "/node_modules/lib/package.json": JSON.stringify({ name: "lib", main: "index.js", sideEffects: false }),
+        "/node_modules/lib/index.js": /* js */ `
+          import { obj } from "./dep.js";
+          globalThis.ran = (globalThis.ran || 0) + 1;
+          globalThis.v = obj.value;
+          export const a = 1;
+          export const b = "DROPPED_B";
+        `,
+        "/node_modules/lib/dep.js": `export const obj = { value: 42 }; export const other = "DROPPED_OTHER";`,
+      },
+      splitting,
+      format: "esm",
+      outdir: "/out",
+      run: { file: "/out/entry.js", stdout: "1 42" },
+      onAfterBundle(api) {
+        expect(readAllOutputs(api.outdir)).not.toContain("DROPPED");
+      },
+    });
+  }
+
+  // webpack cases/cjs-tree-shaking/reexport-require-binding (#21135): exporting
+  // the namespace local is an escape; exporting a picked member is not.
+  itBundled("dynamic_import_dce/WebpackReexportNamespaceBindingEscapes", {
+    files: {
+      "/mid.js": /* js */ `
+        const ns = await import("./lib.js"); console.log(ns.a); export { ns };
+        export const ns2 = require("./lib2.ts");
+        const r = require("./lib3.ts"); export const picked = r.a;
+      `,
+      "/entry.js": /* js */ `
+        import { ns, ns2, picked } from "./mid.js";
+        console.log(JSON.stringify(Object.keys(ns).sort()), JSON.stringify(Object.keys(ns2).sort()), picked);
+      `,
+      "/lib.js": `export const a = "a", b = "b";`,
+      "/lib2.ts": `export const c = "c", d = "d";`,
+      "/lib3.ts": `export const a = "A3", dropped = "DROPPED_3";`,
+    },
+    entryPoints: ["/entry.js"],
+    target: "bun",
+    format: "esm",
+    outdir: "/out",
+    run: { file: "/out/entry.js", stdout: 'a\n["a","b"] ["c","d"] A3' },
+    onAfterBundle(api) {
+      expect(readAllOutputs(api.outdir)).not.toContain("DROPPED_3");
+    },
+  });
+
+  // rspack statical-dynamic-import: a spread in Promise.all's array makes the
+  // element positions unknowable.
+  itBundled("dynamic_import_dce/RspackPromiseAllSpreadInputKeepsAll", {
+    files: {
+      "/entry.js": /* js */ `
+        const arr = [import("./a.js")];
+        const [ns, { foo }] = await Promise.all([...arr, import("./b.js")]);
+        console.log(JSON.stringify(Object.keys(ns).sort()), foo, JSON.stringify(Object.keys(await import("./b.js")).sort()));
+      `,
+      "/a.js": `export const bar = 1, x = 2;`,
+      "/b.js": `export const foo = 1, y = "KEEP";`,
+    },
+    splitting: true,
+    format: "esm",
+    outdir: "/out",
+    run: { file: "/out/entry.js", stdout: '["bar","x"] 1 ["foo","y"]' },
+  });
+
+  // webpack statical-dynamic-import dir4 / rspack -members: `export * as ns`
+  // barrels behind import(). Only the first level is narrowed.
+  itBundled("dynamic_import_dce/WebpackExportStarAsBehindImport", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log((await import("./lib.js")).b.f());
+        const { b: { bbb } } = await import("./lib.js");
+        console.log(bbb);
+      `,
+      "/lib.js": `export * as a from "./a.js"; export * as b from "./b.js";`,
+      "/a.js": `export const aaa = 1, drop_a = "DROP_A";`,
+      "/b.js": `export function f() { return 1; } export const bbb = 2, keep_b = "KEEP_B";`,
+    },
+    splitting: true,
+    format: "esm",
+    outdir: "/out",
+    run: { file: "/out/entry.js", stdout: "1\n2" },
+    onAfterBundle(api) {
+      const all = readAllOutputs(api.outdir);
+      expect(all).not.toContain("DROP_A");
+      expect(all).toContain("KEEP_B");
+    },
+  });
+
+  // webpack statical-dynamic-import dir2 + require-member-access-trimming: JSON importees.
+  itBundled("dynamic_import_dce/WebpackJsonImportee", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log((await import("./data.json")).leaf);
+        const { default: d } = await import("./data2.json");
+        console.log(d.unused, (await import("./arr.json")).default.includes(2), require("./data3.json").leaf);
+      `,
+      "/data.json": `{ "leaf": "kept", "unused": "SENTINEL_1" }`,
+      "/data2.json": `{ "leaf": "x", "unused": "SENTINEL_2" }`,
+      "/data3.json": `{ "leaf": "kept3", "unused": "SENTINEL_3" }`,
+      "/arr.json": `[1, 2, 3]`,
+    },
+    target: "bun",
+    format: "esm",
+    outdir: "/out",
+    run: { file: "/out/entry.js", stdout: "kept\nSENTINEL_2 true kept3" },
+    onAfterBundle(api) {
+      expect(readAllOutputs(api.outdir)).toContain("SENTINEL_2");
+    },
+  });
+
+  // webpack ImportParserPlugin getNonOptionalPart: an optional link *after* the
+  // first member still narrows; only `ns?.a` keeps everything.
+  itBundled("dynamic_import_dce/WebpackOptionalAfterFirstMember", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log((await import("./b.js")).a?.x, (await import("./b.js")).f?.());
+        const ns = await import("./b.js");
+        console.log(ns.g?.());
+      `,
+      "/b.js": `export const a = { x: 1 }; export const f = () => 2; export const g = undefined; export const z = "DROPPED";`,
+    },
+    splitting: true,
+    format: "esm",
+    outdir: "/out",
+    run: { file: "/out/entry.js", stdout: "1 2\nundefined" },
+    onAfterBundle(api) {
+      expect(readAllOutputs(api.outdir)).not.toContain("DROPPED");
+    },
+  });
+
+  // webpack statical-dynamic-import "arguments in call member chain" /
+  // cjs-tree-shaking/parsing nested-require: tracked calls nested in the
+  // argument list of another tracked member call.
+  itBundled("dynamic_import_dce/WebpackNestedTrackedCallsInArguments", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log((await import("./l.js")).inc((await import("./l.js")).one));
+        console.log(require("./m.ts").fn(require("./m.ts").value));
+        const ns = await import("./l.js");
+        await ns.wait((async () => { const m2 = await import("./k.js"); console.log(m2.a); })());
+      `,
+      "/l.js": `export const inc = x => x + 1, one = 1, wait = p => p, dropL = "DROP_L";`,
+      "/m.ts": `export const fn = (a: number) => a + 1, value = 41, dropM = "DROP_M";`,
+      "/k.js": `export const a = "a", dropK = "DROP_K";`,
+    },
+    target: "bun",
+    splitting: true,
+    format: "esm",
+    outdir: "/out",
+    run: { file: "/out/entry.js", stdout: "2\n42\na" },
+    onAfterBundle(api) {
+      expect(readAllOutputs(api.outdir)).not.toContain("DROP_");
+    },
+  });
+
+  // rspack esmOutputCases/dynamic-import/import-self: importer top-level name
+  // collides with the narrowed importee's export; same file also statically imported.
+  itBundled("dynamic_import_dce/RspackImportSelfNameCollision", {
+    files: {
+      "/entry.js": /* js */ `
+        import "./value.js";
+        const conflict = 42;
+        const { conflict: c } = await import("./value.js");
+        console.log(conflict, c);
+      `,
+      "/value.js": `export const conflict = 24; export const other = "DROPPED";`,
+    },
+    format: "esm",
+    run: { stdout: "42 24" },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("DROPPED");
+    },
+  });
+
+  // webpack cases/chunks/circular-correctness: import() cycles across chunks
+  // with narrowed targets and dead-branch bare imports.
+  itBundled("dynamic_import_dce/WebpackCircularDynamicImports", {
+    files: {
+      "/entry.js": `import("./a.js").then(r => r.default()).then(r2 => console.log(r2.default()));`,
+      "/a.js": `export default () => import("./c.js"); export const dropA = "DROP_A";`,
+      "/b.js": `import "./x.js"; export default () => import("./c.js");`,
+      "/c.js": `import x from "./x.js"; export default function () { if (Math.random() < -1) { import("./a.js"); import("./b.js"); } return x; }`,
+      "/x.js": `export default "x";`,
+    },
+    splitting: true,
+    format: "esm",
+    outdir: "/out",
+    run: { file: "/out/entry.js", stdout: "x" },
+    onAfterBundle(api) {
+      expect(readAllOutputs(api.outdir)).not.toContain("DROP_A");
+    },
+  });
+
+  // webpack cjs-tree-shaking/require-member-access-deferred (whatwg-url): a
+  // use that precedes `const Impl = require()` textually keeps everything.
+  itBundled("dynamic_import_dce/WebpackRequireForwardReferenceKeepsAll", {
+    files: {
+      "/wrapper.ts": /* ts */ `
+        export const setup = (o: any, a: any) => { o.impl = new Impl.implementation(a); return o; };
+        export class URL { impl: any; constructor(u: string) { return setup(Object.create(URL.prototype), [u]); } }
+        const Impl = require("./impl.ts");
+      `,
+      "/impl.ts": `export class implementation { href: string; constructor(a: string[]) { this.href = a[0]; } } export const unused = "KEEP_SENTINEL";`,
+      "/entry.ts": `const { URL } = require("./wrapper.ts"); console.log(new URL("h").impl.href);`,
+    },
+    entryPoints: ["/entry.ts"],
+    target: "bun",
+    outdir: "/out",
+    run: { file: "/out/entry.js", stdout: "h" },
+    onAfterBundle(api) {
+      expect(readAllOutputs(api.outdir)).toContain("KEEP_SENTINEL");
+    },
+  });
+
+  // webpack require-member-access: calling the namespace itself observes it whole.
+  itBundled("dynamic_import_dce/WebpackCallingNamespaceKeepsAll", {
+    files: {
+      "/entry.js": /* js */ `
+        const m = require("./b.ts"); let r; try { r = m(); } catch { r = "threw"; }
+        const n = await import("./b.ts"); try { n(); } catch {}
+        console.log(r, JSON.stringify(Object.keys(m).sort()), JSON.stringify(Object.keys(n).sort()));
+      `,
+      "/b.ts": `export const x = "x", y = "y";`,
+    },
+    target: "bun",
+    format: "esm",
+    outdir: "/out",
+    run: { file: "/out/entry.js", stdout: 'threw ["x","y"] ["x","y"]' },
+  });
+
+  // webpack JavascriptParser._preWalkObjectPattern: string-literal keys narrow;
+  // a computed key (even a constant one) keeps everything.
+  itBundled("dynamic_import_dce/WebpackStringAndComputedKeys", {
+    files: {
+      "/entry.js": /* js */ `
+        const { "a": x, 'b': y } = await import("./l.js");
+        const { ["c"]: z } = await import("./l2.js");
+        console.log(x, y, z);
+      `,
+      "/l.js": `export const a = 1, b = 2, dropL = "DROP_L";`,
+      "/l2.js": `export const c = 3, keepL2 = "KEEP_L2";`,
+    },
+    splitting: true,
+    format: "esm",
+    outdir: "/out",
+    run: { file: "/out/entry.js", stdout: "1 2 3" },
+    onAfterBundle(api) {
+      const all = readAllOutputs(api.outdir);
+      expect(all).not.toContain("DROP_L");
+      expect(all).toContain("KEEP_L2");
+    },
+  });
+
+  // rspack builtinCases/rspack/dynamic-import: a no-substitution template
+  // literal specifier is a plain string; a folded concatenation is too.
+  itBundled("dynamic_import_dce/RspackTemplateAndConcatSpecifier", {
+    files: {
+      "/entry.js": /* js */ `
+        await import(\`./b.js\`).then(({ b }) => console.log(b));
+        await import("./chi" + "ld.js").then(({ a }) => console.log(a));
+      `,
+      "/b.js": `export const b = "b", dropB = "DROP_B";`,
+      "/child.js": `export const a = "a", x = "X_OTHER";`,
+    },
+    splitting: true,
+    format: "esm",
+    outdir: "/out",
+    run: { file: "/out/entry.js", stdout: "b\na" },
+    onAfterBundle(api) {
+      expect(readAllOutputs(api.outdir)).not.toContain("DROP_B");
+    },
+  });
+
+  // webpack cases/cjs-tree-shaking/require-destructuring: the require() twins
+  // of default value / alias / body destructure / member mix.
+  for (const splitting of [true, false]) {
+    itBundled(`dynamic_import_dce/WebpackRequireDestructuringShapes${splitting ? "Splitting" : "NoSplit"}`, {
+      files: {
+        "/entry.ts": /* ts */ `
+          function t() {
+            const { a = "fb", b: rb } = require("./m.ts");
+            const m = require("./m2.ts");
+            const { c } = m;
+            const { d } = m;
+            return [a, rb, c, d, m.e];
+          }
+          console.log(JSON.stringify(t()));
+        `,
+        "/m.ts": `export const a = undefined, b = "b", dropM = "DROP_M";`,
+        "/m2.ts": `export const c = 1, d = 2, e = 3, dropM2 = "DROP_M2";`,
+      },
+      target: "bun",
+      splitting,
+      format: "esm",
+      outdir: "/out",
+      run: { file: "/out/entry.js", stdout: '["fb","b",1,2,3]' },
+      onAfterBundle(api) {
+        expect(readAllOutputs(api.outdir)).not.toContain("DROP_M");
+      },
+    });
+  }
+
+  // webpack ImportParserPlugin getImportAttributes: an options argument does
+  // not disable the analysis.
+  itBundled("dynamic_import_dce/WebpackImportOptionsArgument", {
+    files: {
+      "/entry.js": /* js */ `
+        const { d } = await import("./d.js", { with: { type: "javascript" } });
+        console.log(d);
+        await import("./e.js", {}).then(({ e }) => console.log(e));
+      `,
+      "/d.js": `export const d = "k", dropD = "DROP_D";`,
+      "/e.js": `export const e = 1, dropE = "DROP_E";`,
+    },
+    format: "esm",
+    outdir: "/out",
+    run: { file: "/out/entry.js", stdout: "k\n1" },
+    onAfterBundle(api) {
+      expect(readAllOutputs(api.outdir)).not.toContain("DROP_");
+    },
+  });
+
+  // webpack statical-dynamic-import-then-destructuring "deep": nested pattern
+  // in the `.then` parameter; rspack: empty nested pattern in Promise.all.
+  itBundled("dynamic_import_dce/WebpackNestedPatternInThenAndPromiseAll", {
+    files: {
+      "/entry.js": /* js */ `
+        await import("./l.js").then(({ cfg: { name }, list: [first] }) => console.log(name, first));
+        const [{ bar: {}, used }] = await Promise.all([import("./a.js")]);
+        console.log(used);
+      `,
+      "/l.js": `export const cfg = { name: "n" }, list = ["f"], dropped = "DROP_L";`,
+      "/a.js": `export const bar = {}, used = 1, dropped = "DROP_A";`,
+    },
+    splitting: true,
+    format: "esm",
+    outdir: "/out",
+    run: { file: "/out/entry.js", stdout: "n f\n1" },
+    onAfterBundle(api) {
+      expect(readAllOutputs(api.outdir)).not.toContain("DROP_");
+    },
+  });
+
+  // webpack cases/cjs-tree-shaking/remove-unused-requires: all of these observe
+  // nothing; the module's side effect still runs once.
+  itBundled("dynamic_import_dce/WebpackUnusedRequireForms", {
+    files: {
+      "/entry.ts": /* ts */ `
+        const {} = require("./p.ts");
+        if ((globalThis as any).c) require("./p.ts");
+        (require)("./p.ts");
+        console.log((globalThis as any).n);
+      `,
+      "/p.ts": `export const unused = "DROP_P"; (globalThis as any).n = ((globalThis as any).n || 0) + 1;`,
+    },
+    target: "bun",
+    outdir: "/out",
+    run: { file: "/out/entry.js", stdout: "1" },
+    onAfterBundle(api) {
+      expect(readAllOutputs(api.outdir)).not.toContain("DROP_P");
+    },
+  });
+
   // rolldown: tree_shaking/dynamic_import_body_destructure — destructuring a
   // namespace local in a later statement narrows the same as `ns.foo`; keys
   // accumulate across statements and merge with member accesses; a

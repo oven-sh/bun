@@ -98,6 +98,24 @@ describe("spawnSync", () => {
       expect({ stdout: stdout.toString(), exitedDueToTimeout }).toEqual({ stdout: "A", exitedDueToTimeout: true });
     });
   });
+
+  // The result object is created from native code. It used to get a structure
+  // with zero inline capacity, which trips ASSERT(hasInlineStorage()) in JSC's
+  // object spread fast path on debug builds.
+  it("result object can be spread", async () => {
+    const fixture = `
+      const result = Bun.spawnSync({ cmd: [process.execPath, "--version"] });
+      const copy = { ...result };
+      console.log(JSON.stringify({ success: copy.success, exitCode: copy.exitCode, pid: copy.pid === result.pid }));
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", fixture], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: '{"success":true,"exitCode":0,"pid":true}',
+      stderr: "",
+      exitCode: 0,
+    });
+  });
 });
 
 // A Buffer holds at most kMaxLength (2^32) bytes. spawnSync hands the captured

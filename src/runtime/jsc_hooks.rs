@@ -3801,7 +3801,13 @@ export default db;
         return Some(ResolvedSource {
             source_code: file.to_wtf_string(),
             source_url: specifier.clone(),
-            bytecode_origin_path: bun_core::String::from_bytes(file.bytecode_origin_path),
+            // An embedded file is served through the builtin-module path but is a file: its origin is its own path
+            // (or, with --bytecode, the path the cache was generated under, which must match exactly).
+            origin_path: if file.bytecode_origin_path.is_empty() {
+                specifier.clone()
+            } else {
+                bun_core::String::from_bytes(file.bytecode_origin_path)
+            },
             bytecode_cache: Bytecode::persistent(bytecode),
             source_code_hash: file.source_hash,
             module_info: if !module_info.is_empty() {

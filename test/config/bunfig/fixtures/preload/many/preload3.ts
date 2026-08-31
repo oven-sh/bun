@@ -1,1 +1,1 @@
-(globalThis.preload ??= []).push("multi/preload3.ts");
+(globalThis.preload ??= []).push("many/preload3.ts");

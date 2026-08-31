@@ -531,6 +531,46 @@ impl ProxyEnvSlots {
         sync_one!(b"NO_PROXY", NO_PROXY);
         sync_one!(b"no_proxy", no_proxy);
     }
+
+    /// Undo every `Bun__setEnvValue` since `snapshot` was captured: drop the
+    /// slot refs and put the captured values back into `map`. Caller holds
+    /// the `ProxyEnvStorage` lock, like the setter.
+    pub(crate) fn restore(&mut self, map: &mut bun_dotenv::Map, snapshot: &ProxyEnvSnapshot) {
+        for_each_proxy_field!(self, |_name, field| {
+            *field = None;
+        });
+        for (key, value) in &snapshot.entries {
+            match value {
+                Some(value) => bun_core::handle_oom(map.put(key, value)),
+                None => map.remove(key),
+            }
+        }
+    }
+}
+
+const PROXY_ENV_KEYS: [&[u8]; 6] = [
+    b"HTTP_PROXY",
+    b"http_proxy",
+    b"HTTPS_PROXY",
+    b"https_proxy",
+    b"NO_PROXY",
+    b"no_proxy",
+];
+
+/// The six proxy keys as the env map held them when the test runner started.
+/// `process.env` writes to these keys go through `Bun__setEnvValue` into the
+/// per-VM env map, which seeds every later global's `process.env`, so
+/// `--isolate` restores them from this between files.
+pub struct ProxyEnvSnapshot {
+    entries: [(&'static [u8], Option<Box<[u8]>>); 6],
+}
+
+impl ProxyEnvSnapshot {
+    pub fn capture(map: &bun_dotenv::Map) -> Self {
+        Self {
+            entries: PROXY_ENV_KEYS.map(|key| (key, map.get(key).map(Box::from))),
+        }
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

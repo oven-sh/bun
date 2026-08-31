@@ -77,7 +77,7 @@ match File::openat(Fd::cwd(), path, O::RDONLY, 0) {
 
 ## Strings (`bun_core::String` and `bun_core::strings`)
 
-`bun_core::String` is the FFI-compatible 5-variant tagged union shared with C++
+`bun_core::String` is the FFI-compatible 6-variant tagged union shared with C++
 (`BunString` in `BunString.cpp`). It bridges Rust and JSC and can hold a
 `WTFStringImpl` (Latin-1 or UTF-16). **Latin-1 is NOT UTF-8** — bytes 128–255
 are single chars in Latin-1 but invalid UTF-8 — so converting either direction
@@ -258,7 +258,6 @@ let mime = mime_type::by_extension(b"html");            // MimeType
 let mime = mime_type::by_extension_no_default(b"xyz");  // Option<MimeType>
 
 mime.category   // Category::Javascript | Css | Html | Json | Image | Text | Wasm | ...
-mime.category.is_text_like()
 ```
 
 Common constants: `JAVASCRIPT`, `JSON`, `HTML`, `CSS`, `TEXT`, `WASM`, `ICO`, `OTHER`.

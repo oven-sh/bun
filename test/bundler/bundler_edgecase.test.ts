@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isBroken, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { decodeSourceMappingsLine, itBundled } from "./expectBundled";
@@ -1519,7 +1519,6 @@ describe("bundler", () => {
     },
     target: "bun",
     run: true,
-    todo: isBroken && isWindows,
     timeoutScale: 5,
   });
   itBundled("edgecase/PackageExternalDoNotBundleNodeModules", {
@@ -2632,6 +2631,163 @@ describe("bundler", () => {
       stdout: "",
     },
   });
+  // https://github.com/oven-sh/bun/issues/14588
+  // A function parameter must not be collision-renamed into the name of a
+  // hoisted top-level function that is declared later in the same file.
+  itBundled("identifiers/NestedParamDoesNotShadowLaterHoistedFunction", {
+    files: {
+      "/dep.js": `
+        export var e = "outer_e";
+        export var e2 = "outer_e2";
+      `,
+      "/entry.js": `
+        import { e as _e, e2 as _e2 } from "./dep.js";
+
+        function ZI(t, e, n) {
+          return e3(t, e, n);
+        }
+
+        function e3(a, b, c) {
+          return "range:" + b;
+        }
+
+        console.log(ZI(1, 2, 3), _e, _e2);
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    minifyIdentifiers: false,
+    run: { stdout: "range:2 outer_e outer_e2" },
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).not.toContain("function ZI(t, e3, n)");
+    },
+  });
+  // https://github.com/oven-sh/bun/issues/14588
+  // Same bug for a module wrapped in `__esm` via dynamic `import()`: the
+  // module's own top-level declarations are hoisted outside the closure, so a
+  // parameter in that module must not be renamed into one of them.
+  itBundled("identifiers/NestedParamDoesNotShadowLaterHoistedFunctionInEsmWrap", {
+    files: {
+      "/names.js": `
+        export var e = "E";
+        export var e2 = "E2";
+      `,
+      "/lib.js": `
+        var sideEffect = Date.now();
+        export function ZI(t, e, n) {
+          return e3(t, e, n);
+        }
+        function e3(a, b, c) {
+          return "range:" + b;
+        }
+      `,
+      "/entry.js": `
+        import { e as _e, e2 as _e2 } from "./names.js";
+        const mod = await import("./lib.js");
+        console.log(mod.ZI(1, 2, 3), _e, _e2);
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    target: "bun",
+    minifyIdentifiers: false,
+    run: { stdout: "range:2 E E2" },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toContain("__esm");
+      expect(out).not.toMatch(/function ZI\(\w+, e3,/);
+    },
+  });
+  // https://github.com/oven-sh/bun/issues/30269
+  // Same bug for a nested `let` binding instead of a function parameter.
+  itBundled("identifiers/NestedLocalDoesNotShadowLaterHoistedFunction", {
+    files: {
+      "/conflict.js": `
+        export function r() { return "top-level r"; }
+      `,
+      "/module.js": `
+        class Expression {}
+
+        export function run() {
+          const result = typecheck({ left: new Expression(), op: {}, right: {} });
+          if (result !== true) throw new Error("expected true, got " + result);
+          return result;
+        }
+
+        function typecheck(node) {
+          let r, t, c;
+          block: {
+            r = node.left;
+            t = node.op;
+            c = node.right;
+            break block;
+          }
+          return r2().bo4(r, t, c).a();
+        }
+
+        function r2() {
+          return { bo4() { return { a() { return true; } }; } };
+        }
+      `,
+      "/entry.js": `
+        import * as conflict from "./conflict.js";
+        import { run } from "./module.js";
+        conflict.r();
+        console.log("ok:" + run());
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    minifyIdentifiers: false,
+    run: { stdout: "ok:true" },
+  });
+  // https://github.com/oven-sh/bun/issues/41054
+  // Same bug in a single file: the local `n` collides with the top-level `n`,
+  // so the renamer numbers it. The numbered name must not collide with `n2`,
+  // a top-level symbol declared in a later part and called from the same
+  // function. The broken output renamed the local to `n2`, which shadowed the
+  // `n2` function.
+  itBundled("identifiers/NestedLocalDoesNotShadowLaterTopLevelSymbol", {
+    files: {
+      "/entry.js": /* js */ `
+        const n = 1;
+        export function f() {
+          let n = 2;
+          return n2(n);
+        }
+        function n2(x) {
+          return x + n + 40;
+        }
+        console.log(f());
+      `,
+    },
+    target: "bun",
+    minifyIdentifiers: false,
+    run: { stdout: "43" },
+  });
+  // Same bug for a module scope deferred as one nested scope because the
+  // module is wrapped in a CommonJS closure: a local inside the closure must
+  // not be renamed into the name of another module's wrapper (`require_*`),
+  // which is registered as a top-level symbol only when its own file is
+  // reached. The circular require makes a.js's closure call entry.js's
+  // wrapper, which is registered later.
+  itBundled("identifiers/CjsClosureLocalDoesNotShadowLaterWrapper", {
+    files: {
+      "/entry.js": /* js */ `
+        module.exports.val = 2;
+        const a = require("./a.js");
+        console.log(a.f());
+      `,
+      "/a.js": /* js */ `
+        module.exports.f = function f() {
+          let require_entry = 40;
+          const e = require("./entry.js");
+          return e.val + require_entry + 1;
+        };
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    target: "bun",
+    minifyIdentifiers: false,
+    run: { stdout: "43" },
+  });
   itBundled("edgecase/MacroProtoKeyIsOwnProperty", {
     files: {
       "/entry.ts": /* js */ `
@@ -2817,6 +2973,8 @@ describe("bundler", () => {
       ...deepChainFiles,
     },
     backend: "cli",
+    // (local runs: writing 7000 fixture files is slow on Windows; the build itself is well under a second)
+    timeoutScale: 6,
     run: { stdout: String(deepChainDepth) },
   });
   // Top-level await in the entry makes `validate_tla` / `propagate_async` walk
@@ -2830,6 +2988,7 @@ describe("bundler", () => {
       ...deepChainFiles,
     },
     backend: "cli",
+    timeoutScale: 6,
     onAfterBundle(api) {
       const out = api.readFile("out.js");
       expect(out).toContain(`init_m${deepChainDepth - 2}`);

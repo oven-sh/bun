@@ -132,6 +132,8 @@ pub(crate) fn run_as_coordinator(
             alive: false,
             exit_status: None,
             reap_pending: false,
+            reached_ready: false,
+            startup_failures: 0,
         });
         let w: *mut Worker = workers.last_mut().unwrap();
         // SAFETY: w points into workers; Vec will not reallocate (capacity == k)
@@ -520,6 +522,25 @@ impl<'a> WorkerLoop<'a> {
         // SAFETY: single-threaded worker; WORKER_CMDS is only read on this thread
         unsafe {
             WORKER_CMDS.write(Some(&raw mut self.cmds));
+        }
+
+        // Test hook: "abort" dies by SIGABRT (the startup-panic branch),
+        // anything else exits 1 (the bounded-respawn branch). Real init
+        // failures aren't reproducible from a test. Debug/ASAN builds only,
+        // so a stray env var can't disable --parallel in a release build.
+        if cfg!(any(debug_assertions, bun_asan)) {
+            // SAFETY: env loader is initialized before the test runner runs.
+            let env = unsafe { &*vm.transpiler.env };
+            if let Some(mode) = env.get(b"BUN_TEST_WORKER_EXIT_BEFORE_READY") {
+                bun_core::pretty_errorln!(
+                    "test worker exiting before ready (BUN_TEST_WORKER_EXIT_BEFORE_READY)"
+                );
+                Output::flush();
+                if bun_core::strings::eql(mode, b"abort") {
+                    std::process::abort();
+                }
+                Global::exit(1);
+            }
         }
 
         // SAFETY: single-threaded worker; WORKER_FRAME is a process-global scratch buffer

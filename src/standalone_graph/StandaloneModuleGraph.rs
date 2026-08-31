@@ -21,7 +21,7 @@ use bun_paths::{self as path, PathBuffer, strings};
 #[cfg(windows)]
 use bun_paths::{OSPathBuffer, WPathBuffer};
 use bun_sourcemap as SourceMap;
-use bun_sys::{self as Syscall, Fd, FdExt as _, Stat};
+use bun_sys::{self as Syscall, E, Fd, FdExt as _, Stat};
 
 bun_core::declare_scope!(StandaloneModuleGraph, hidden);
 
@@ -227,6 +227,24 @@ impl StandaloneModuleGraph {
         self.dirs.contains_key(name)
     }
 
+    /// Directory `name`'s stored key (posix-separated, no trailing `/`), or
+    /// the errno an `open(O_DIRECTORY)` of it would produce.
+    pub fn dir_key(&self, name: &[u8]) -> Result<&[u8], E> {
+        if !is_bun_standalone_file_path(name) {
+            return Err(E::ENOENT);
+        }
+        let mut buf = PathBuffer::uninit();
+        let name = Self::normalize_dir_path(name, &mut buf);
+        if let Some(index) = self.dirs.get_index(name) {
+            return Ok(&self.dirs.keys()[index]);
+        }
+        Err(if self.lookup_file(name).is_some() {
+            E::ENOTDIR
+        } else {
+            E::ENOENT
+        })
+    }
+
     /// `(entry, is_dir)`; `entry` is the basename, or the `name`-relative path when `recursive`.
     pub fn readdir(&self, name: &[u8], recursive: bool) -> Option<Vec<(Box<[u8]>, bool)>> {
         if !is_bun_standalone_file_path(name) {
@@ -309,12 +327,8 @@ impl bun_resolver::StandaloneModuleGraph for StandaloneModuleGraph {
         self.find_ref(name)
             .is_some_and(|file| !file.module_info.is_empty())
     }
-    fn find_assume_standalone_path(&self, name: &[u8]) -> Option<&[u8]> {
+    fn find_assume_standalone_path(&self, name: &[u8]) -> Option<&'static [u8]> {
         self.lookup_file(name).map(|f| f.name)
-    }
-
-    fn find(&self, name: &[u8]) -> Option<&[u8]> {
-        self.find_ref(name).map(|f| f.name)
     }
 
     fn base_public_path_with_default_suffix(&self) -> &'static [u8] {
@@ -329,6 +343,21 @@ impl bun_resolver::StandaloneModuleGraph for StandaloneModuleGraph {
     }
     fn bytecode_string_table(&self) -> &'static [u8] {
         self.bytecode_string_table
+    }
+    fn module_graph_load_bytes(&self) -> usize {
+        let modules: usize = self
+            .files
+            .values()
+            .iter()
+            .filter(|f| f.loader.is_javascript_like() || !f.bytecode.is_empty())
+            .map(|f| if f.bytecode.is_empty() { f.contents.len() } else { f.bytecode.len() } + f.module_info.len())
+            .sum();
+        let builtins: usize = self
+            .builtin_bytecode
+            .iter()
+            .map(|&(_, bytes)| bytes.len())
+            .sum();
+        modules + builtins + self.bytecode_string_table.len()
     }
 }
 
@@ -1179,24 +1208,8 @@ fn encode_text_module(
 }
 
 /// The embedded bunfs key for an output file, relative to the prefix.
-///
-/// Windows: store the key with `/`. The template printer emits native
-/// `\` into `dest_path`, but `find_assume_standalone_path` normalizes
-/// lookups to `/`, so a `\` key would miss (ENOENT). `src/bundler/Chunk.rs`
-/// only normalizes a scratch copy, so we re-normalize here.
-fn module_dest_path(output_file: &OutputFile) -> std::borrow::Cow<'_, [u8]> {
-    let dest_path = bun_core::strings::remove_leading_dot_slash(&output_file.dest_path);
-    #[cfg(windows)]
-    {
-        let mut buf = bun_paths::path_buffer_pool::get();
-        std::borrow::Cow::Owned(
-            path::resolve_path::platform_to_posix_buf::<u8>(dest_path, &mut buf).to_vec(),
-        )
-    }
-    #[cfg(not(windows))]
-    {
-        std::borrow::Cow::Borrowed(dest_path)
-    }
+fn module_dest_path(output_file: &OutputFile) -> &[u8] {
+    bun_core::strings::remove_leading_dot_slash(&output_file.dest_path)
 }
 
 pub(crate) fn to_bytes(
@@ -1280,7 +1293,7 @@ pub(crate) fn to_bytes(
 
         // Same `[name]` and `[hash]` means the same bytes: keep the first copy.
         if seen_paths
-            .get_or_put(&module_dest_path(output_file))?
+            .get_or_put(module_dest_path(output_file))?
             .found_existing
         {
             continue;
@@ -1373,7 +1386,7 @@ pub(crate) fn to_bytes(
 
         if Environment::IS_CANARY || Environment::IS_DEBUG {
             if let Some(dump_code_dir) = bun_core::env_var::BUN_FEATURE_FLAG_DUMP_CODE.get() {
-                let dest_path = &*module_dest_path(output_file);
+                let dest_path = module_dest_path(output_file);
                 // `dest_path` keeps `..` for the embedded bunfs key below; neutralize
                 // every `..` segment here so the on-disk dump can't escape
                 // `dump_code_dir` (the join would otherwise normalize `..` above it).
@@ -1486,7 +1499,7 @@ pub(crate) fn to_bytes(
         module.name = string_builder.fmt_append_count_z(format_args!(
             "{}{}",
             bstr::BStr::new(prefix),
-            bstr::BStr::new(&*module_dest_path(output_file))
+            bstr::BStr::new(module_dest_path(output_file))
         ));
         // The bytecode cache was generated under the bytecode output file's
         // path; the runtime must present exactly the same path to hit it.

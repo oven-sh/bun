@@ -667,4 +667,134 @@ describe("bundler", () => {
     cjs2esm: true,
     run: { stdout: "[1,2]" },
   });
+
+  // When an ESM entry point re-exports a name from a CommonJS module that is
+  // not converted to ESM, the linker declares a copy binding named
+  // `export_<alias>` in the entry point tail and exports that. The copy must be
+  // renamed around every other binding of that name in the chunk.
+  const printNamespace = {
+    "/test.js": /* js */ `
+      import * as ns from './out.js';
+      console.log(JSON.stringify(ns));
+    `,
+  };
+  itBundled("cjs2esm/ReExportCJSCopyKeepsUserBinding", {
+    files: {
+      "/entry.js": /* js */ `
+        export { foo } from './cjs.cjs';
+        export { bar } from './esm.js';
+        export const export_foo = "user-foo";
+        export const export_bar = "user-bar";
+      `,
+      "/cjs.cjs": /* js */ `
+        Object.defineProperty(exports, "foo", { enumerable: true, get: () => 42 });
+      `,
+      "/esm.js": /* js */ `
+        export const bar = 1;
+      `,
+    },
+    format: "esm",
+    runtimeFiles: printNamespace,
+    onAfterBundle(api) {
+      // The user bindings keep their names. The copy is the numbered one.
+      api.expectFile("/out.js").toContain('var export_foo = "user-foo"');
+      api.expectFile("/out.js").toContain('var export_bar = "user-bar"');
+      api.expectFile("/out.js").toContain("var export_foo2 = ");
+    },
+    run: {
+      file: "/test.js",
+      stdout: '{"bar":1,"export_bar":"user-bar","export_foo":"user-foo","foo":42}',
+    },
+  });
+  itBundled("cjs2esm/ReExportCJSCopyKeepsClassBinding", {
+    // `module.exports = {...}` is not converted either, so it takes the same
+    // path. A `class` with the copy's name used to make the output a
+    // SyntaxError at load: `var` cannot redeclare a class binding.
+    files: {
+      "/entry.js": /* js */ `
+        export { foo } from './cjs.cjs';
+        export class export_foo {}
+      `,
+      "/cjs.cjs": /* js */ `
+        module.exports = { foo: 42 };
+      `,
+    },
+    format: "esm",
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        import * as ns from './out.js';
+        console.log(typeof ns.export_foo, ns.foo);
+      `,
+    },
+    run: {
+      file: "/test.js",
+      stdout: "function 42",
+    },
+  });
+  itBundled("cjs2esm/ReExportCJSCopiesWithSameMangledName", {
+    // The copy's name is built from the alias with every run of non-identifier
+    // characters folded into "_", so distinct aliases can collide with each
+    // other even when the entry point declares nothing else.
+    files: {
+      "/entry.js": /* js */ `
+        export { "x-y", "x.y" } from './cjs.cjs';
+      `,
+      "/cjs.cjs": /* js */ `
+        Object.defineProperty(exports, "x-y", { enumerable: true, get: () => "dash" });
+        Object.defineProperty(exports, "x.y", { enumerable: true, get: () => "dot" });
+      `,
+    },
+    format: "esm",
+    runtimeFiles: printNamespace,
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain('var export_x_y = import_cjs["x-y"]');
+      api.expectFile("/out.js").toContain('var export_x_y2 = import_cjs["x.y"]');
+    },
+    run: {
+      file: "/test.js",
+      stdout: '{"x-y":"dash","x.y":"dot"}',
+    },
+  });
+  // An unbound global is a reserved name for the chunk. The copy must be
+  // numbered around it in both renamers: with minified identifiers the user
+  // bindings are short, so this is the collision that remains.
+  const unboundGlobalFiles = {
+    "/entry.js": /* js */ `
+      import './side.js';
+      export { foo } from './cjs.cjs';
+    `,
+    "/side.js": /* js */ `
+      globalThis.export_foo = "global";
+      console.log("side sees", export_foo);
+    `,
+    "/cjs.cjs": /* js */ `
+      Object.defineProperty(exports, "foo", { enumerable: true, get: () => 42 });
+    `,
+  };
+  itBundled("cjs2esm/ReExportCJSCopyKeepsUnboundGlobal", {
+    files: unboundGlobalFiles,
+    format: "esm",
+    runtimeFiles: printNamespace,
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("var export_foo2 = import_cjs.foo");
+    },
+    run: {
+      file: "/test.js",
+      stdout: 'side sees global\n{"foo":42}',
+    },
+  });
+  itBundled("cjs2esm/ReExportCJSCopyKeepsUnboundGlobalMinified", {
+    files: unboundGlobalFiles,
+    format: "esm",
+    minifyIdentifiers: true,
+    runtimeFiles: printNamespace,
+    onAfterBundle(api) {
+      // The copy gets a short name like every other top-level symbol.
+      api.expectFile("/out.js").not.toContain("var export_foo");
+    },
+    run: {
+      file: "/test.js",
+      stdout: 'side sees global\n{"foo":42}',
+    },
+  });
 });

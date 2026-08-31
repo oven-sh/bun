@@ -86,15 +86,10 @@ Ref<SourceProvider> SourceProvider::create(
         shouldGenerateCodeCoverage = BunTest__shouldGenerateCodeCoverage(&sourceURLBunString);
     }
 
-    // Compute source origin: use explicit bytecode_origin_path if provided, otherwise derive from source_url.
-    // bytecode_origin_path is used for bytecode cache validation where the origin must match
-    // exactly what was used at build time.
     const auto getSourceOrigin = [&]() -> SourceOrigin {
-        auto bytecodeOriginPath = resolvedSource.bytecode_origin_path.transferToWTFString();
-        if (!bytecodeOriginPath.isNull() && !bytecodeOriginPath.isEmpty()) {
-            // Convert file path to file:// URL (same as build time)
-            return SourceOrigin(WTF::URL::fileURLWithFileSystemPath(bytecodeOriginPath));
-        }
+        auto originPath = resolvedSource.origin_path.transferToWTFString();
+        if (!originPath.isEmpty())
+            return SourceOrigin(WTF::URL::fileURLWithFileSystemPath(originPath));
         return toSourceOrigin(sourceURLString, isBuiltin);
     };
 
@@ -218,6 +213,11 @@ extern "C" void Bun__EncoderStringTable__serialize(JSC::EncoderStringTable* tabl
 {
     Vector<uint8_t> bytes = table->serialize();
     append(ctx, bytes.span().data(), bytes.size());
+}
+
+extern "C" void JSC__Heap__setInitialAllocationBudget(JSC::VM* vm, size_t bytes)
+{
+    vm->heap.setInitialAllocationBudget(bytes);
 }
 
 extern "C" void Bun__DecoderStringTable__install(JSC::VM* vm, const uint8_t* bytes, size_t len)

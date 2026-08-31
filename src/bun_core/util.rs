@@ -2842,15 +2842,11 @@ pub fn get_thread_count() -> u16 {
             None
         };
         let raw = from_env().unwrap_or_else(|| {
-            // `WTF::numberOfProcessorCores()` → sysconf(_SC_NPROCESSORS_ONLN)
-            // on POSIX / GetSystemInfo on Windows. **Not** the same as
-            // `std::thread::available_parallelism()`, which on Linux also
-            // consults sched_getaffinity + cgroup cpu.max quota; on
-            // cgroup-limited CI runners or P/E-core machines the two diverge,
-            // changing bundler `max_threads` (and per-thread mimalloc arena
-            // RSS). Declare the C symbol locally — `jsc`
-            // is above `bun_core` in the crate DAG so we can't `use` it, but
-            // the symbol is always linked (wtf-bindings.cpp).
+            // `WTF::numberOfProcessorCores()`: on Linux Bun's fork takes the
+            // minimum of _SC_NPROCESSORS_ONLN, the sched_getaffinity mask and
+            // the cgroup cpu quota (uv_get_constrained_cpu), so this is the
+            // same number as navigator.hardwareConcurrency. `jsc` is above
+            // `bun_core` in the crate DAG; the symbol comes from wtf-bindings.cpp.
             unsafe extern "C" {
                 safe fn WTF__numberOfProcessorCores() -> core::ffi::c_int;
             }

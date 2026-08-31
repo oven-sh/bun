@@ -27,22 +27,29 @@ for (let backend of ["api", "cli"] as const) {
         },
       });
 
+    // A variable from the process environment (not a .env file) is inlined at build time. It has to be one this
+    // process started with (the api backend builds in-process), spelled as the environment spells it (on Windows the
+    // inlined name is case-sensitive even though process.env is not: `Path`, not `PATH`).
+    const systemKey = ["HOME", "OS", "NUMBER_OF_PROCESSORS", "COMPUTERNAME", "USER", "LANG"].find(
+      key => process.env[key] && /^[\x20-\x7e]+$/.test(process.env[key]!) && !/["`$\\]/.test(process.env[key]!),
+    )!;
+    const systemValue = process.env[systemKey]!;
     itBundled("env/inline system", {
       env: {
-        PATH: process.env.PATH,
+        [systemKey]: systemValue,
       },
       backend: backend,
       dotenv: "inline",
       files: {
         "/a.js": `
-        console.log(process.env.PATH);
+        console.log(process.env.${systemKey});
       `,
       },
       run: {
         env: {
-          PATH: "/fail",
+          [systemKey]: "the run-time value, which inlining should have replaced",
         },
-        stdout: process.env.PATH + "\n",
+        stdout: systemValue + "\n",
       },
     });
 

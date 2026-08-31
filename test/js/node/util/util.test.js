@@ -636,4 +636,31 @@ describe("util.parseEnv", () => {
   it("accepts a String object without crashing", () => {
     expect(util.parseEnv(new String("FOO=bar"))).toEqual({ FOO: "bar" });
   });
+
+  it("stores array-index keys as indexed properties", () => {
+    // 4294967295 is 2^32 - 1, the first integer that is not an array index.
+    const parsed = util.parseEnv("A=1\n0=zero\n2023=y\n4294967295=notidx\n");
+    expect(parsed[0]).toBe("zero");
+    expect(parsed["0"]).toBe("zero");
+    expect(0 in parsed).toBe(true);
+    expect(parsed[2023]).toBe("y");
+    expect(parsed[4294967295]).toBe("notidx");
+    expect(Object.getOwnPropertyDescriptor(parsed, "0")).toEqual({
+      value: "zero",
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    });
+    // Index keys come first, in ascending order. The rest keep file order.
+    expect(Object.entries(parsed)).toEqual([
+      ["0", "zero"],
+      ["2023", "y"],
+      ["A", "1"],
+      ["4294967295", "notidx"],
+    ]);
+
+    parsed[0] = "set";
+    expect(parsed[0]).toBe("set");
+    expect(JSON.parse(JSON.stringify(parsed))).toEqual({ 0: "set", 2023: "y", A: "1", 4294967295: "notidx" });
+  });
 });

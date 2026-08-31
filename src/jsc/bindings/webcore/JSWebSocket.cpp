@@ -665,10 +665,17 @@ JSC_DEFINE_CUSTOM_GETTER(jsWebSocket_extensions, (JSGlobalObject * lexicalGlobal
 
 static inline JSValue jsWebSocket_binaryTypeGetter(JSGlobalObject& lexicalGlobalObject, JSWebSocket& thisObject)
 {
-    auto& vm = JSC::getVM(&lexicalGlobalObject);
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto& impl = thisObject.wrapped();
-    RELEASE_AND_RETURN(throwScope, (toJS<IDLDOMString>(lexicalGlobalObject, throwScope, impl.binaryType())));
+    auto& commonStrings = Bun::commonStrings(lexicalGlobalObject.vm());
+    switch (thisObject.wrapped().binaryType()) {
+    case WebSocket::BinaryType::Blob:
+        return commonStrings.binaryTypeBlobString();
+    case WebSocket::BinaryType::ArrayBuffer:
+        return commonStrings.binaryTypeArrayBufferString();
+    case WebSocket::BinaryType::NodeBuffer:
+        return commonStrings.binaryTypeNodeBufferString();
+    }
+    ASSERT_NOT_REACHED();
+    return jsUndefined();
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsWebSocket_binaryType, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName attributeName))

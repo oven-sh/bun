@@ -2890,6 +2890,22 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // not `*this`.
         let global = this_ref.global_this();
 
+        if let server_config::Address::Tcp {
+            hostname: Some(hostname),
+            ..
+        } = &this_ref.config.address
+        {
+            let hostname = hostname.as_bytes();
+            if !bun_dns::is_valid_hostname(strip_ipv6_brackets(hostname)) {
+                let _ = global.throw_value(crate::dns_jsc::cares_jsc::not_a_hostname_error(
+                    global, hostname,
+                ));
+                // SAFETY: caller contract — `this` is the live boxed server from `init()`.
+                Self::deinit(this);
+                return JSValue::ZERO;
+            }
+        }
+
         let app: *mut uws_sys::NewApp<SSL>;
         let route_list_value;
 
@@ -3132,14 +3148,14 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     let mut host: *const c_char = core::ptr::null();
                     if let Some(existing) = hostname.as_deref() {
                         let bytes = existing.as_bytes();
-                        if bytes.len() > 2 && bytes[0] == b'[' {
-                            // strip "[" and "]" from IPv6 literal
-                            host = stripped_hostname
-                                .insert(bun_core::ZBox::from_bytes(&bytes[1..bytes.len() - 1]))
-                                .as_ptr();
+                        let bare = strip_ipv6_brackets(bytes);
+                        host = if bare.len() == bytes.len() {
+                            existing.as_ptr()
                         } else {
-                            host = existing.as_ptr();
-                        }
+                            stripped_hostname
+                                .insert(bun_core::ZBox::from_bytes(bare))
+                                .as_ptr()
+                        };
                     }
                     Addr::Tcp { port: *port, host }
                 }
@@ -3650,6 +3666,16 @@ mod ffi {
             node_response_ptr: &mut *mut NodeHTTPResponse,
         ) -> jsc::JSValue;
     }
+}
+
+/// `Bun.serve({ hostname: "[::1]" })`: uSockets wants the IPv6 literal bare.
+fn strip_ipv6_brackets(hostname: &[u8]) -> &[u8] {
+    if let [b'[', inner @ .., b']'] = hostname {
+        if bun_core::ip_address::to_ip_address(inner).is_some_and(|ip| ip.is_ipv6()) {
+            return inner;
+        }
+    }
+    hostname
 }
 
 /// Drain the BoringSSL error queue; if non-empty, throw the top error on

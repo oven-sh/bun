@@ -1335,6 +1335,11 @@ impl<const SSL: bool> SocketHandler<SSL> {
         _: i32,
         _: Option<*mut c_void>,
     ) {
+        // usockets frees this socket at end-of-tick; drop the stored pointer
+        // now so nothing (timer callbacks, ref()/unref()) dereferences it
+        // after the free.
+        this.socket
+            .set(Socket::SocketTcp(uws::SocketTCP::detached()));
         this.on_close();
     }
 
@@ -1343,6 +1348,10 @@ impl<const SSL: bool> SocketHandler<SSL> {
     }
 
     pub fn on_connect_error(this: &PostgresSQLConnection, _socket: SocketType<SSL>, _: i32) {
+        // The dispatch trampoline already closed the connecting socket; it is
+        // freed at end-of-tick, so detach before any user-visible callback.
+        this.socket
+            .set(Socket::SocketTcp(uws::SocketTCP::detached()));
         Self::guarded(this, |t| t.on_connect_error());
     }
 

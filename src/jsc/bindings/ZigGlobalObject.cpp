@@ -597,7 +597,9 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
                 }
 
 #if OS(WINDOWS)
-                JSC::JSObject* env = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), size >= JSFinalObject::maxInlineCapacity ? JSFinalObject::maxInlineCapacity : size);
+                JSC::JSObject* env = size
+                    ? JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), size >= JSFinalObject::maxInlineCapacity ? JSFinalObject::maxInlineCapacity : size)
+                    : JSC::constructEmptyObject(globalObject);
 #else
                 // Same exotic object as the main thread so writes inside the
                 // worker coerce to string, reject symbol keys, and validate
@@ -2044,7 +2046,6 @@ void GlobalObject::finishCreation(VM& vm)
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
 
-    m_commonStrings.initialize();
     m_bakeAdditions.initialize();
     m_markdownTagStrings.initialize();
 

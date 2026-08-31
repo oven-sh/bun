@@ -9,10 +9,13 @@
 #include <sys/stat.h>
 #include <signal.h>
 #include <unistd.h>
+#include <atomic>
+#include <cerrno>
 #include <cstring>
 #include <csignal>
 #include <cstdint>
 #include <cstdlib>
+#include <pthread.h>
 #include <termios.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
@@ -93,7 +96,7 @@ extern "C" ssize_t bun_sysconf__SC_CLK_TCK()
 #endif
 }
 
-// Host CPU count, ignoring sched_getaffinity and cgroup cpu.max.
+// Host CPU count, ignoring sched_getaffinity and cgroup cpu.max (unlike WTF::numberOfProcessorCores).
 // Used to size os.cpus() so it matches the native cpus() result count.
 extern "C" int32_t bun_sysconf__SC_NPROCESSORS_ONLN()
 {
@@ -353,6 +356,55 @@ extern "C" void on_before_reload_process_posix()
     sigemptyset(&signal_set);
     sigprocmask(SIG_SETMASK, &signal_set, nullptr);
 }
+
+#if OS(LINUX)
+// Linked in with -Wl,--wrap=execve -Wl,--wrap=pthread_create (scripts/build/flags.ts).
+// While a thread is inside execve(2), until de_thread() has killed the other threads or the
+// exec has failed, the kernel fails every clone(CLONE_FS) in the process with EAGAIN
+// (fs/exec.c check_unsafe_exec, kernel/fork.c copy_fs). WTF::Thread::create aborts on a
+// failed pthread_create, which killed --watch reloads. A pthread_create EAGAIN that overlaps
+// an exec of this process is retried instead. `execve_generation` counts execs ever started
+// so one that began and ended inside a single pthread_create is still seen; it is bumped
+// after `threads_in_execve` and read before it.
+static std::atomic<int> threads_in_execve { 0 };
+static std::atomic<unsigned> execve_generation { 0 };
+// The clone(CLONE_VM) child of posix_spawn_bun execs in this address space and never returns
+// to undo a count, so only the pid recorded in bun_initialize_process counts its execs.
+static pid_t execve_counting_pid = 0;
+
+extern "C" int __real_execve(const char*, char* const[], char* const[]);
+extern "C" int __real_pthread_create(pthread_t*, const pthread_attr_t*, void* (*)(void*), void*);
+
+extern "C" int __wrap_execve(const char* path, char* const argv[], char* const envp[])
+{
+    if (getpid() != execve_counting_pid)
+        return __real_execve(path, argv, envp);
+    threads_in_execve.fetch_add(1, std::memory_order_seq_cst);
+    execve_generation.fetch_add(1, std::memory_order_seq_cst);
+    int rc = __real_execve(path, argv, envp);
+    // Only reached when execve failed and the old image keeps running.
+    threads_in_execve.fetch_sub(1, std::memory_order_seq_cst);
+    return rc;
+}
+
+// The attempt bound keeps a real limit, hit while an exec never completes, from looping forever.
+extern "C" int __wrap_pthread_create(pthread_t* thread, const pthread_attr_t* attr, void* (*start_routine)(void*), void* arg)
+{
+    for (int attempt = 0;; attempt++) {
+        unsigned generation = execve_generation.load(std::memory_order_seq_cst);
+        bool execInFlight = threads_in_execve.load(std::memory_order_seq_cst) > 0;
+        int rc = __real_pthread_create(thread, attr, start_routine, arg);
+        if (rc != EAGAIN || attempt >= 1000)
+            return rc;
+        if (!execInFlight && threads_in_execve.load(std::memory_order_seq_cst) == 0
+            && execve_generation.load(std::memory_order_seq_cst) == generation) {
+            // No exec overlapped this attempt: a real limit.
+            return rc;
+        }
+        usleep(1000);
+    }
+}
+#endif // OS(LINUX)
 
 #endif // !OS(WINDOWS)
 
@@ -652,6 +704,8 @@ extern "C" void bun_initialize_process()
     // This is best effort, not all linux kernels support close_range or CLOSE_RANGE_CLOEXEC
     // To avoid breaking --watch, we skip stdin, stdout, stderr and IPC.
     bun_close_range(4, ~0U, CLOSE_RANGE_CLOEXEC);
+
+    execve_counting_pid = getpid();
 #endif
 
 #if OS(LINUX) || OS(DARWIN) || OS(FREEBSD)

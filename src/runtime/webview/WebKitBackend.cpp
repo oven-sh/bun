@@ -340,11 +340,10 @@ void HostClient::handleReply(const Frame& h, Reader r)
         WTF::String err = r.str();
         view->m_loading = false;
         JSValue errValue = createError(g, err);
-        // Settle before the callback so a retry with navigate() from inside
-        // onNavigationFailed sees an empty slot instead of ERR_INVALID_STATE.
-        // The NavFailed that follows settles an already-empty slot (no-op),
-        // and the reply's microtask still resumes the await after this
-        // callback (event before reply).
+        // This event both settles the slot and fires the callback, in that
+        // order: a retry with navigate() from inside onNavigationFailed
+        // sees an empty slot instead of ERR_INVALID_STATE. The host sends
+        // no NavFailed after it (that would reject the retry's promise).
         settleSlot(g, view, view->m_pendingNavigate, false, errValue);
         if (JSObject* cb = view->m_onNavigationFailed.get()) {
             Bun__EventLoop__runCallback2(g, JSValue::encode(cb), JSValue::encode(jsUndefined()),
@@ -411,10 +410,9 @@ void HostClient::handleReply(const Frame& h, Reader r)
         settleSlot(g, view, view->m_pendingNavigate, true, jsUndefined());
         return;
     case Reply::NavFailed:
-        // Usually a no-op: the NavFailEvent handler settled the slot. This is
-        // the backstop for the NavFailed-only paths (host_main's invalid
-        // viewId, navigateIPC's navigation-already-pending), which send no
-        // event.
+        // Only the NavFailed-only paths send this (host_main's invalid
+        // viewId, navigateIPC's navigation-already-pending). A navigation
+        // failure settles through NavFailEvent instead.
         view->m_loading = false;
         settleSlot(g, view, view->m_pendingNavigate, false, createError(g, r.str()));
         return;

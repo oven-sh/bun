@@ -555,7 +555,7 @@ impl<'a, T: 'a> HostReceiver<'a, T> for &'a T {
         unsafe { &*this }
     }
 }
-impl<'a, T: 'a> HostReceiver<'a, T> for bun_ptr::ThisPtr<T> {
+impl<'a, T: bun_ptr::AnyRefCounted + 'a> HostReceiver<'a, T> for bun_ptr::ThisPtr<T> {
     #[inline(always)]
     unsafe fn from_m_ctx(this: *mut T) -> Self {
         // SAFETY: trait contract.

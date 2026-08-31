@@ -47,7 +47,7 @@ unsafe impl Sync for AddrInfoResult {}
 impl addrinfo_result_entry {
     /// An unchained entry: `info`'s pointer fields are rewritten when it is
     /// chained into an [`AddrInfoResult`] (`ai_addr` to this entry's `addr`
-    /// when `Some`, else null with `addr` zeroed).
+    /// when `Some`, else null with `addr` zeroed and `ai_addrlen` 0).
     #[inline]
     pub fn new(mut info: addrinfo, addr: Option<&sockaddr_storage>) -> Self {
         info.ai_canonname = core::ptr::null_mut();
@@ -56,6 +56,7 @@ impl addrinfo_result_entry {
         info.ai_addr = if addr.is_some() {
             NonNull::<sockaddr>::dangling().as_ptr()
         } else {
+            info.ai_addrlen = 0;
             core::ptr::null_mut()
         };
         Self {
@@ -150,15 +151,15 @@ impl DnsWaitingSocket {
 }
 
 /// The lookup `socket` asked for had already finished: link it into its loop's
-/// DNS-ready list without waking the loop. `&ConnectingSocket` is `!Send`, so
-/// this is the socket's own thread.
+/// DNS-ready list and wake the loop. The wakeup matters even on the socket's
+/// own thread: this can run inside the `dns_ready_head` drain itself (a
+/// connect issued from a connect-error callback), after the list was taken.
 #[inline]
 pub fn dns_ready(socket: &ConnectingSocket) {
-    us_internal_dns_callback(socket, core::ptr::null_mut());
+    us_internal_dns_callback_threadsafe(socket, core::ptr::null_mut());
 }
 
-// `addrinfo_req` is unused by both (the socket already stores it).
+// `addrinfo_req` is unused (the socket already stores it).
 unsafe extern "C" {
-    safe fn us_internal_dns_callback(s: &ConnectingSocket, addrinfo_req: *mut c_void);
     safe fn us_internal_dns_callback_threadsafe(s: &ConnectingSocket, addrinfo_req: *mut c_void);
 }

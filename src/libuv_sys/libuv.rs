@@ -3035,8 +3035,8 @@ impl Drop for UvAddrInfo {
 
 /// The owner of a `uv_getaddrinfo` lookup.
 pub trait GetAddrInfoRequest: Sized {
-    /// The completion (event-loop thread): `status` is 0, a `UV_EAI_*` code, or
-    /// `UV_ECANCELED`.
+    /// The completion (event-loop thread): `status` is 0, or a `UV_EAI_*` code
+    /// (`UV_EAI_CANCELED` for a `uv_cancel`led lookup).
     fn on_complete(this: Box<Self>, status: c_int, result: UvAddrInfo);
 }
 
@@ -3055,7 +3055,7 @@ pub struct InflightGetAddrInfo(std::rc::Rc<Cell<*mut uv_getaddrinfo_t>>);
 
 impl InflightGetAddrInfo {
     /// `uv_cancel`: if the work has not started, complete it soon with
-    /// `UV_ECANCELED`; otherwise (or once completed) no effect.
+    /// `UV_EAI_CANCELED`; otherwise (or once completed) no effect.
     #[inline]
     pub fn cancel(&self) {
         let req = self.0.get();

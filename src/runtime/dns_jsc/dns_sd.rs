@@ -11,20 +11,8 @@ use bun_sys::dns_sd as sd;
 pub(crate) use sd::DNSServiceProtocol;
 use sd::{DNSServiceErrorType, DNSServiceFlags};
 
-/// Map a DNSServiceErrorType to the EAI_* code the existing error paths expect.
-pub(crate) fn to_eai(err: DNSServiceErrorType) -> c_int {
-    match err {
-        sd::ERR_NO_ERROR => 0,
-        sd::ERR_NO_SUCH_NAME | sd::ERR_NO_SUCH_RECORD => libc::EAI_NONAME,
-        sd::ERR_TIMEOUT
-        | sd::ERR_NO_ROUTER
-        | sd::ERR_DEFUNCT_CONNECTION
-        | sd::ERR_SERVICE_NOT_RUNNING => libc::EAI_AGAIN,
-        sd::ERR_NO_MEMORY => libc::EAI_MEMORY,
-        sd::ERR_POLICY_DENIED | sd::ERR_NOT_PERMITTED | sd::ERR_REFUSED => libc::EAI_FAIL,
-        _ => libc::EAI_FAIL,
-    }
-}
+/// No address: libinfo's `getaddrinfo` reports this as EAI_NONAME whatever the daemon's error was.
+pub(crate) const EMPTY_STATUS: c_int = libc::EAI_NONAME;
 
 pub(crate) fn protocol_for_family(family: bun_dns::Family) -> DNSServiceProtocol {
     match family {
@@ -94,7 +82,7 @@ pub(crate) struct QueryState {
     pub(crate) results: bun_dns::ResultList,
     /// First hard error (NoSuchRecord/Timeout are per-family negatives, not errors).
     pub(crate) sd_error: DNSServiceErrorType,
-    /// A family timed out: with no results this is EAI_AGAIN, not EAI_NONAME.
+    /// A family timed out: an unsuppressed reissue would only wait out the timeout again.
     saw_timeout: bool,
     /// Last reply had `MoreComing` and no other request's reply followed: more is queued daemon-side.
     awaiting_more: bool,
@@ -202,17 +190,6 @@ impl QueryState {
         }
     }
 
-    /// EAI_* status for a completed query with no results.
-    pub(crate) fn empty_status(&self) -> c_int {
-        if self.sd_error != 0 {
-            to_eai(self.sd_error)
-        } else if self.saw_timeout {
-            libc::EAI_AGAIN
-        } else {
-            libc::EAI_NONAME
-        }
-    }
-
     pub(crate) fn take_results(&mut self) -> bun_dns::ResultList {
         let mut results = core::mem::take(&mut self.results);
         // Family arrival order races upstream; match getaddrinfo's RFC 6724 default (IPv6 first).
@@ -300,7 +277,9 @@ impl sd::GetAddrInfoReply for GetAddrInfoRequest {
 }
 
 /// One per event loop: owns the primary connection + its `FilePoll`; lookups are ShareConnection subordinates.
-/// Only ever torn down through [`destroy`](Self::destroy) (fields in that order).
+/// Held as `Rc` by [`SHARED`]; its poll owner and timer container are `Rc::as_ptr` of that same `Rc`,
+/// which dispatch.rs turns back into a counted `Rc` for the callback. `file_poll` is declared (so
+/// dropped) before `connection`: the poll is returned before its fd goes away.
 pub(crate) struct SharedConnection {
     inflight: RefCell<Vec<Inflight>>,
     file_poll: RefCell<Option<OwnedFilePoll>>,
@@ -436,11 +415,9 @@ impl SharedConnection {
         this.last_ctx.set(context);
     }
 
-    /// Socket readable: drain every buffered reply (callbacks fire inline), then finish complete queries.
-    pub(crate) fn on_readable() {
-        let Some(this) = Self::current() else {
-            return;
-        };
+    /// Socket readable (via dispatch.rs, `this` recovered from the poll owner): drain every buffered
+    /// reply (callbacks fire inline), then finish complete queries.
+    pub(crate) fn on_readable(this: Rc<Self>) {
         // One scope across `finish()` so the microtask drain runs after we let go of `this`.
         let _exit = event_loop_scope();
 
@@ -449,13 +426,13 @@ impl SharedConnection {
         let rc = this.connection.process_result();
         if rc != sd::ERR_NO_ERROR {
             bun_output::scoped_log!(dns, "DNSServiceProcessResult: {}", rc);
-            // Defunct primary: detach, fail every subordinate, destroy.
+            // Defunct primary: detach, fail every subordinate, then the last `Rc` (ours) frees it.
             let ready = core::mem::take(&mut *this.inflight.borrow_mut());
             drop(Self::detach());
             for inf in ready {
                 Self::finish(inf, Some(rc));
             }
-            Self::destroy(this);
+            drop(this);
             return;
         }
         let ready = this.take_ready(|q| q.is_ready());
@@ -515,11 +492,8 @@ impl SharedConnection {
         self.early_out_armed_for.set(deadline);
     }
 
-    /// Timer fire (via dispatch.rs): complete overdue queries.
-    pub(crate) fn on_early_out() {
-        let Some(this) = Self::current() else {
-            return;
-        };
+    /// Timer fire (via dispatch.rs, `this` recovered from the timer's container): complete overdue queries.
+    pub(crate) fn on_early_out(this: Rc<Self>) {
         let _exit = event_loop_scope();
         // The heap pops without updating state; mark FIRED so a re-arm inserts instead of removing.
         this.early_out_timer
@@ -537,19 +511,6 @@ impl SharedConnection {
         for inf in ready {
             Self::finish(inf, None);
         }
-    }
-
-    /// Free a connection already removed from `SHARED` with `inflight` empty.
-    fn destroy(this: Rc<Self>) {
-        debug_assert!(this.inflight.borrow().is_empty());
-        if this.early_out_timer.get().state == EventLoopTimerState::ACTIVE
-            && VirtualMachine::is_loaded()
-        {
-            timer_all_mut().remove(this.early_out_timer.as_ptr());
-        }
-        // Return the `FilePoll` before its fd goes away with `connection`.
-        drop(this.file_poll.borrow_mut().take());
-        drop(this);
     }
 
     /// `force_err` drops partial results so teardown rejects instead of resolving.
@@ -631,7 +592,19 @@ impl SharedConnection {
                 InflightRequest::Jsc(_) => Self::finish(inf, Some(sd::ERR_DEFUNCT_CONNECTION)),
             }
         }
-        Self::destroy(conn);
+        drop(conn);
+    }
+}
+
+impl Drop for SharedConnection {
+    /// Runs once `SHARED` and any dispatch-held `Rc` are gone, with `inflight` drained.
+    fn drop(&mut self) {
+        debug_assert!(self.inflight.get_mut().is_empty());
+        if self.early_out_timer.get().state == EventLoopTimerState::ACTIVE
+            && VirtualMachine::is_loaded()
+        {
+            timer_all_mut().remove(self.early_out_timer.as_ptr());
+        }
     }
 }
 

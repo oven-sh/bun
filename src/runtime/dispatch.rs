@@ -735,7 +735,15 @@ pub(crate) unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i6
         poll_tag::GET_ADDR_INFO_REQUEST => {
             #[cfg(target_os = "macos")]
             {
-                crate::dns_jsc::dns_sd::SharedConnection::on_readable();
+                use crate::dns_jsc::dns_sd::SharedConnection;
+                let p = owner.ptr.cast::<SharedConnection>().cast_const();
+                // SAFETY: tag set at `SharedConnection::get` with `Rc::as_ptr` of the
+                // `Rc` that owns this poll (so is live); take a counted handle for the callback.
+                let this = unsafe {
+                    std::rc::Rc::increment_strong_count(p);
+                    std::rc::Rc::from_raw(p)
+                };
+                SharedConnection::on_readable(this);
             }
             #[cfg(not(target_os = "macos"))]
             {
@@ -1005,8 +1013,15 @@ pub(crate) unsafe fn __bun_fire_timer(
         EventLoopTimerTag::DnsSdConnection => {
             #[cfg(target_os = "macos")]
             {
-                // One connection per thread; it owns the timer that fired.
-                crate::dns_jsc::dns_sd::SharedConnection::on_early_out();
+                use crate::dns_jsc::dns_sd::SharedConnection;
+                let p = owner!(SharedConnection, early_out_timer).cast_const();
+                // SAFETY: the container is the `Rc`-held connection whose armed timer
+                // fired (its `Drop` removes the timer first); take a counted handle for the callback.
+                let this = unsafe {
+                    std::rc::Rc::increment_strong_count(p);
+                    std::rc::Rc::from_raw(p)
+                };
+                SharedConnection::on_early_out(this);
                 Ok(())
             }
             #[cfg(not(target_os = "macos"))]

@@ -997,33 +997,18 @@ it("close() with in-flight work raises no unhandled rejection", async () => {
 });
 
 it("a failed constructor url navigation fires onNavigationFailed, not an unhandled rejection", async () => {
-  // Subprocess-isolated like the test above. Port 1 on loopback refuses the
-  // connection at once: a local, DNS-free failure on the delegate path (the
-  // same path the onNavigationFailed test above exercises). A structurally
-  // invalid url is not used here: WKWebView handled "http://[" by neither
-  // failing nor loading in CI.
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `
-        const unhandled = [];
-        process.on("unhandledRejection", e => unhandled.push(e.message));
-        const view = new Bun.WebView({ width: 200, height: 200, url: "http://127.0.0.1:1/" });
-        const failed = await new Promise(resolve => { view.onNavigationFailed = resolve; });
-        view.close();
-        // Nothing announces "no unhandled rejection is coming"; this is a
-        // bounded window for one to appear (the reject itself ran synchronously).
-        await Bun.sleep(100);
-        console.log(JSON.stringify({ isError: failed instanceof Error, unhandled }));
-      `,
-    ],
-    env: bunEnv,
-    stderr: "inherit",
-  });
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-  expect(JSON.parse(stdout)).toEqual({ isError: true, unhandled: [] });
-  expect(exitCode).toBe(0);
+  // In-process, with the same .invalid NXDOMAIN failure the test above
+  // proves on these machines (a loopback connection refusal and "http://["
+  // never reached the delegate in a bun -e subprocess in CI). The quiet
+  // half needs no listener here: `bun test` fails the running test on any
+  // unhandled rejection, so the internal constructor promise rejecting
+  // loudly would fail this test by itself.
+  const view = new Bun.WebView({ width: 200, height: 200, url: "http://does-not-exist.invalid/" });
+  const { promise, resolve } = Promise.withResolvers<unknown>();
+  view.onNavigationFailed = resolve;
+  const failed = await promise;
+  view.close();
+  expect(failed).toBeInstanceOf(Error);
 });
 
 it("WebView.closeAll() kills the host subprocess and pending promises reject", async () => {

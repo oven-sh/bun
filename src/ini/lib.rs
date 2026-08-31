@@ -1077,11 +1077,11 @@ mod draft {
                                 return Some(IniOption::None);
                             }
                         }
-                        // `//host/...:word=` where `word` is none of the seven options: a
-                        // typo like `_authtoken` would otherwise be silent and its credential
-                        // dropped. Only an option-shaped word with a string value qualifies,
-                        // so a bare `//host:port` line or a missing `=` never names a value.
-                        // The word sits right after the key's last `/` as `:word`, with no
+                        // `//host/...:word=` where `word` is none of the seven options. Only a
+                        // misspelling of a credential option warns (`_authtoken`, `authToken`,
+                        // `password`); `always-auth`, `tokenHelper`, `cafile` and anything else
+                        // npm or pnpm accept per registry are ignored silently, as npm ignores
+                        // them. The word sits right after the key's last `/` as `:word`, with no
                         // second colon: `//host/:_auth:dXNl…` (a `:` typed for `=`) would
                         // otherwise name the credential as the option.
                         if let Some(colon) = bun_core::strings::last_index_of_char(key, b':')
@@ -1089,16 +1089,10 @@ mod draft {
                             .filter(|&colon| colon > 0 && key[colon - 1] == b'/')
                         {
                             let word = &key[colon + 1..];
-                            let option_shaped = word
-                                .first()
-                                .is_some_and(|&c| c == b'_' || c.is_ascii_alphabetic())
-                                && word
-                                    .iter()
-                                    .all(|&c| c == b'_' || c == b'-' || c.is_ascii_alphanumeric());
                             let has_string_value = prop
                                 .value
                                 .is_some_and(|value| value.as_utf8_string_literal().is_some());
-                            if option_shaped && has_string_value {
+                            if has_string_value && folds_to_credential_option(word) {
                                 return Some(IniOption::Unknown {
                                     suffix: Box::from(word),
                                     loc: keyexpr.loc,
@@ -1111,6 +1105,19 @@ mod draft {
 
             Some(IniOption::None)
         }
+    }
+
+    /// `word` spells a credential option once case, `_` and `-` are ignored.
+    fn folds_to_credential_option(word: &[u8]) -> bool {
+        const NAMES: [&[u8]; 5] = [b"_authToken", b"_auth", b"username", b"_password", b"email"];
+        let fold = |s: &[u8]| -> Vec<u8> {
+            s.iter()
+                .filter(|&&c| c != b'_' && c != b'-')
+                .map(u8::to_ascii_lowercase)
+                .collect()
+        };
+        let folded = fold(word);
+        !folded.is_empty() && NAMES.iter().any(|name| fold(name) == folded)
     }
 
     /// npm writes a key with `nerfDart(new URL(registry))`: no scheme, a lowercase
@@ -1298,16 +1305,17 @@ mod draft {
         log.reset();
     }
 
-    /// npm's `regKey.replace(/([^/]+|\/)$/, '')`: strip one trailing `/`, else the
-    /// trailing run of non-`/` bytes.
-    fn strip_one_key_component(key: &mut Vec<u8>) {
+    /// npm's `regKey.replace(/([^/]+|\/)$/, '')`: the length left after stripping one
+    /// trailing `/`, else the trailing run of non-`/` bytes.
+    fn strip_one_key_component(key: &[u8]) -> usize {
+        let mut end = key.len();
         if key.last() == Some(&b'/') {
-            key.pop();
-            return;
+            return end - 1;
         }
-        while key.last().is_some_and(|&b| b != b'/') {
-            key.pop();
+        while end > 0 && key[end - 1] != b'/' {
+            end -= 1;
         }
+        end
     }
 
     fn url_or_default(url: &[u8]) -> &[u8] {
@@ -1336,6 +1344,11 @@ mod draft {
                 Some(owned) => owned.url(),
                 None => URL::parse(url_bytes),
             };
+            RegistryKey::from_parsed(&url)
+        }
+
+        /// The key of a URL that is already a WHATWG serialisation, without parsing it again.
+        pub fn from_parsed(url: &URL) -> RegistryKey {
             // `pathname` carries the query; `path` is query-free but collapses a
             // one-byte path such as `/r/` to `/`, so cut the query off `pathname`.
             let pathname = url.pathname;
@@ -1356,13 +1369,13 @@ mod draft {
 
         /// npm's `regFromURI`: this key, then one component shorter each time, down
         /// to the bare host. For `h/a/` that is `h/a/`, `h/a`, `h/`, `h`.
-        pub fn walk(&self) -> impl Iterator<Item = Vec<u8>> {
-            let mut next = Some(self.key.to_vec());
+        pub fn walk(&self) -> impl Iterator<Item = &[u8]> {
+            let mut next = Some(self.key.len());
             core::iter::from_fn(move || {
-                let current = next.take()?;
-                let mut shorter = current.clone();
-                strip_one_key_component(&mut shorter);
-                next = (!shorter.is_empty()).then_some(shorter);
+                let end = next.take()?;
+                let current = &self.key[..end];
+                let shorter = strip_one_key_component(current);
+                next = (shorter > 0).then_some(shorter);
                 Some(current)
             })
         }

@@ -1240,6 +1240,19 @@ describe(".npmrc diagnostics", () => {
     expect(stderr).not.toContain("SECRETTOKEN");
   });
 
+  it("accepts per-registry options npm or pnpm know without a warning", async () => {
+    const stderr = await stderrOf(
+      [
+        "registry=https://example.com/",
+        "//example.com/:always-auth=true",
+        "//example.com/:tokenHelper=/usr/local/bin/token",
+        "//example.com/:cafile=/etc/ssl/ca.pem",
+        "",
+      ].join("\n"),
+    );
+    expect(stderr).not.toContain("not a known .npmrc option");
+  });
+
   it("says nothing about a key that matches once normalized", async () => {
     const stderr = await stderrOf(`registry=https://example.com/api/\n//Example.COM:443/:_authToken=SECRETTOKEN\n`);
     expect(stderr).toBe("No packages! Deleted empty lockfile\n");
@@ -2161,16 +2174,15 @@ describe.concurrent("//host/ credential lines are matched against the request UR
   });
 
   // The one spelling a single parse cannot settle: a dot segment behind an encoded `/` or
-  // `\`, which WHATWG keeps opaque and a decoding server re-routes. Refused outright.
+  // `\`, which WHATWG keeps opaque and a decoding server re-routes. Requested as written,
+  // with no `.npmrc` line of its own.
   test.each([
     "/npm/team-a/..%2Fteam-b/x.tgz",
     "/npm/team-a/%2f../team-b/x.tgz",
     "/npm/team-a/a%2f..%2fteam-b/x.tgz",
     "/npm/team-a/%5c..%5cteam-b/x.tgz",
-    "/npm/team-a/.\t./team-b/x.tgz",
-    "/npm/team-a/%2e\t%2e/team-b/x.tgz",
     "/npm/team-a/%2e%2e%5Cteam-b/x.tgz",
-  ])("a dist.tarball at %s is not requested at all", async tarballPath => {
+  ])("a dist.tarball at %s is requested as written with no line", async tarballPath => {
     using cdn = await rawServer();
     using registry = mockRegistry("Bearer registry-token", { tarballOrigin: () => cdn.origin, tarballPath });
     using dir = tempDir("npmrc-url-auth-cdn-encoded-separator", {
@@ -2183,12 +2195,57 @@ describe.concurrent("//host/ credential lines are matched against the request UR
       ].join("\n"),
     });
 
-    const { stderr, exitCode } = await install(String(dir));
+    await install(String(dir));
 
-    expect(cdn.requests).toEqual([]);
-    expect(stderr).toContain("Invalid tarball URL");
-    expect(exitCode).toBe(1);
+    expect(cdn.requests.length).toBeGreaterThan(0);
+    expect(cdn.requests).toEqual(cdn.requests.map(() => ({ path: tarballPath, auth: null })));
   });
+
+  // On the registry's own origin such a tarball still carries the registry's credentials.
+  test("a dist.tarball with an encoded separator on the registry's origin carries the registry's credentials", async () => {
+    const registryPath = "/npm/team-a";
+    const tarballPath = "/npm/team-a/..%2fteam-b/x.tgz";
+    using registry = mockRegistry("Bearer team-a-token", { registryPath, tarballPath });
+    using dir = tempDir("npmrc-url-auth-encoded-separator-same-origin", {
+      "package.json": packageJson,
+      ".npmrc": [
+        `registry=${registry.origin}${registryPath}/`,
+        `//${registry.host}/npm/team-a/:_authToken=team-a-token`,
+        `//${registry.host}/npm/team-b/:_authToken=team-b-token`,
+        "",
+      ].join("\n"),
+    });
+
+    await install(String(dir));
+
+    expect(registry.requests.length).toBeGreaterThan(1);
+    expect(registry.requests.slice(1)).toEqual(
+      registry.requests.slice(1).map(() => ({ path: tarballPath, auth: "Bearer team-a-token" })),
+    );
+  });
+
+  // A tab or another control byte never reaches the wire: the HTTP client refuses the URL, as before.
+  test.each(["/npm/team-a/.\t./team-b/x.tgz", "/npm/team-a/%2e\t%2e/team-b/x.tgz"])(
+    "a dist.tarball at %s is not requested at all",
+    async tarballPath => {
+      using cdn = await rawServer();
+      using registry = mockRegistry("Bearer registry-token", { tarballOrigin: () => cdn.origin, tarballPath });
+      using dir = tempDir("npmrc-url-auth-cdn-control-byte", {
+        "package.json": packageJson,
+        ".npmrc": [
+          `registry=${registry.origin}/`,
+          `//${registry.host}/:_authToken=registry-token`,
+          `//${cdn.host}/npm/team-a/:_authToken=cdn-a`,
+          "",
+        ].join("\n"),
+      });
+
+      const { exitCode } = await install(String(dir));
+
+      expect(cdn.requests).toEqual([]);
+      expect(exitCode).toBe(1);
+    },
+  );
 
   // `https://<registry>#@<cdn>/x.tgz`: everything after `#` is a fragment, so the
   // request goes to the registry's root and the cdn is never contacted, let alone

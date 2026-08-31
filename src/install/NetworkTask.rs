@@ -828,30 +828,21 @@ impl NetworkTask {
             None => None,
         };
 
-        // One parse decides the authority, the path on the wire and the `.npmrc` key.
-        match npm::registry::normalize_tarball_url(&self.url_buf) {
-            Some(normalized) => self.url_buf = normalized,
-            None => {
-                pm.log_mut().add_error_fmt(
-                    None,
-                    bun_ast::Loc::EMPTY,
-                    format_args!(
-                        "Invalid tarball URL {} while fetching package {}",
-                        quote(&self.url_buf),
-                        quote(tarball.name.slice()),
-                    ),
-                );
-                return Err(ForTarballError::InvalidURL);
+        // One parse decides the authority, the wire path and the `.npmrc` key; a URL it cannot settle is requested as written with no line.
+        let normalized = match npm::registry::normalize_tarball_url(&self.url_buf) {
+            Some(normalized) => {
+                self.url_buf = normalized;
+                true
             }
-        }
+            None => false,
+        };
 
-        // The empty-`tarball_url` branch above built the URL from `scope.url`, so it
-        // is under the registry and gets the scope's credentials.
         let credentials = match authorization {
             Authorization::NoAuthorization => None,
-            Authorization::AllowAuthorization => pm
-                .options
-                .tarball_credentials(scope, &URL::parse(&self.url_buf)),
+            Authorization::AllowAuthorization => {
+                pm.options
+                    .tarball_credentials(scope, &URL::parse(&self.url_buf), normalized)
+            }
         };
 
         self.response_buffer = MutableString::init_empty();

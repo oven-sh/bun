@@ -722,6 +722,7 @@ fn fetch_registry_tree(
         pm,
         scope,
         URL::parse(manifest_url),
+        true,
         // The abbreviated packument has versions + dist, all this needs; full ones run to tens of MB.
         b"application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*",
         Some((name, version)),
@@ -822,18 +823,16 @@ fn fetch_registry_tree(
         )?;
     }
     // The same serialisation `bun install` requests and keys `.npmrc` lines by.
-    let Some(tarball_url) = bun_install::npm::registry::normalize_tarball_url(&tarball_url) else {
-        Status::clear();
-        Output::err_generic(
-            "invalid tarball URL {} for {}",
-            (bun_fmt::quote(&tarball_url), BStr::new(&label)),
-        );
-        Global::exit(1);
-    };
+    let (tarball_url, normalized) =
+        match bun_install::npm::registry::normalize_tarball_url(&tarball_url) {
+            Some(normalized) => (normalized, true),
+            None => (tarball_url.into_boxed_slice(), false),
+        };
     let tarball = registry_get(
         pm,
         scope,
         URL::parse(&tarball_url),
+        normalized,
         b"application/octet-stream",
         None,
     )?;
@@ -863,14 +862,14 @@ fn registry_get(
     pm: &PackageManager,
     scope: &npm::registry::Scope,
     url: URL<'_>,
+    normalized: bool,
     accept: &[u8],
     for_error: Option<(&[u8], &[u8])>,
 ) -> Result<MutableString, crate::Error> {
     let mut headers = http::HeaderBuilder::default();
     headers.count(b"Accept", accept);
-    // `dist.tarball` is registry-controlled; the same rule as `bun install` decides
-    // which credentials, if any, follow it.
-    let authorization = match pm.options.tarball_credentials(scope, &url) {
+    // The same rule as `bun install` decides which credentials, if any, follow the URL.
+    let authorization = match pm.options.tarball_credentials(scope, &url, normalized) {
         Some(credentials) => credentials.authorization_parts(),
         None => None,
     };

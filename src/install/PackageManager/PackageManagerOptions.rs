@@ -283,37 +283,26 @@ impl Options {
         }
     }
 
-    /// The credentials a tarball download carries, in npm's order: the deepest
-    /// `.npmrc` key on the tarball URL's own walk, else the registry's credentials
-    /// when the tarball is on the registry's origin (same scheme, host and effective
-    /// port), whatever its path. That fallback serves GitLab's instance-level
-    /// registry, whose tarballs live under a project path with no key of their own.
-    ///
-    /// One refinement to npm's order: when the tarball resolves to the same key the
-    /// registry URL resolved to, that key is already reflected in `scope`, behind any
-    /// bunfig, env or CLI credential, so `scope` wins; any other key is the tarball's
-    /// own and wins as in npm.
-    /// An `http://` tarball on another host never gets a key's credential.
+    /// npm's `getAuth` order: the tarball's own `.npmrc` line, else the registry's credentials on its origin.
     pub fn tarball_credentials<'a>(
         &'a self,
         scope: &'a Npm::registry::Scope,
-        // The WHATWG serialisation the request is built from.
         tarball: &bun_url::URL,
+        // `tarball` is the WHATWG serialisation the request goes to; a URL one parse could not settle gets no line.
+        normalized: bool,
     ) -> Option<&'a Npm::registry::Scope> {
-        // `dist.tarball` is registry-controlled and `.npmrc` keys carry no scheme, so a
-        // key's credential goes over plaintext only back to the registry's own origin,
-        // which already sees the registry's credentials that way; never to another host.
-        let plaintext_to_another_host =
-            !tarball.is_https() && !same_origin(tarball, &scope.url.url());
-        let own = if plaintext_to_another_host {
-            None
+        let registry_url = scope.url.url();
+        let on_registry_origin = same_origin(tarball, &registry_url);
+        // A `.npmrc` line's credential goes over plaintext only back to the registry's own origin.
+        let own = if normalized && (tarball.is_https() || on_registry_origin) {
+            Npm::registry::UrlAuth::find_entry_serialized(&self.url_auth, tarball)
         } else {
-            Npm::registry::UrlAuth::find_entry(&self.url_auth, tarball)
+            None
         };
-        if scope.has_credentials() && same_origin(tarball, &scope.url.url()) {
-            let registry_own = Npm::registry::UrlAuth::find_entry(&self.url_auth, &scope.url.url());
+        if scope.has_credentials() && on_registry_origin {
+            // The key the registry itself resolved to is already reflected in `scope`, behind any bunfig, env or CLI credential.
             return match own {
-                Some(entry) if !registry_own.is_some_and(|r| r.same_key(entry)) => {
+                Some(entry) if scope.url_auth_key.as_deref() != Some(entry.key()) => {
                     Some(entry.credentials())
                 }
                 _ => Some(scope),
@@ -322,9 +311,7 @@ impl Options {
         own.map(|entry| entry.credentials())
     }
 
-    /// A `--registry` or env registry at or under the current default registry keeps
-    /// the default's credentials, unless `.npmrc` has a line specific to the new
-    /// path: then the key walk supplies that line instead, as npm would resolve it.
+    /// A `--registry` or env registry under the default keeps its credentials unless `.npmrc` has a deeper line.
     fn inherits_default_credentials(&self, new_registry: &[u8]) -> bool {
         let owned = bun_url::URL::from_string(&bun_core::String::borrow_utf8(new_registry)).ok();
         let new_url = &match &owned {
@@ -337,7 +324,7 @@ impl Options {
         }
         match Npm::registry::UrlAuth::find_entry(&self.url_auth, new_url) {
             Some(own) => Npm::registry::UrlAuth::find_entry(&self.url_auth, &old_url)
-                .is_some_and(|old| old.same_key(own)),
+                .is_some_and(|old| old.key() == own.key()),
             None => true,
         }
     }
@@ -353,11 +340,13 @@ impl Options {
         }
         let url_auth = &self.url_auth;
         for scope in core::iter::once(&mut self.scope).chain(self.registries.values_mut()) {
+            let own = Npm::registry::UrlAuth::find_entry(url_auth, &scope.url.url());
+            scope.url_auth_key = own.map(|entry| Box::from(entry.key()));
             if scope.has_credentials() && !scope.credentials_from_url {
                 continue;
             }
-            if let Some(credentials) = Npm::registry::UrlAuth::find(url_auth, &scope.url.url()) {
-                scope.copy_credentials_from(credentials);
+            if let Some(entry) = own {
+                scope.copy_credentials_from(entry.credentials());
             }
         }
     }

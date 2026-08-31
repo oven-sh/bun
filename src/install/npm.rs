@@ -304,6 +304,9 @@ pub mod registry {
         /// `.npmrc` line for the URL replaces it, where a bunfig, env or CLI credential
         /// stands. Cleared when an explicit token is set later.
         pub credentials_from_url: bool,
+
+        /// The `.npmrc` key this registry's URL resolves to, computed once after every source applied.
+        pub url_auth_key: Option<Box<[u8]>>,
     }
 
     /// yarn-style credentials embedded in a registry URL's pathname, e.g.
@@ -655,21 +658,26 @@ pub mod registry {
             }))
         }
 
-        /// The credentials `.npmrc` configures for `url`: the first key on npm's walk
-        /// from `url` that has an entry, so `//host/a/b/` beats `//host/`.
-        pub(crate) fn find<'a>(list: &'a [UrlAuth], url: &URL) -> Option<&'a Scope> {
-            UrlAuth::find_entry(list, url).map(|entry| &entry.credentials)
-        }
-
-        /// `url` is a WHATWG serialisation (a `Scope`'s URL, or a tarball URL after
-        /// `NetworkTask::for_tarball` normalised it), so the key names the authority and
-        /// path the request goes to.
         pub(crate) fn find_entry<'a>(list: &'a [UrlAuth], url: &URL) -> Option<&'a UrlAuth> {
             if list.is_empty() {
                 return None;
             }
-            bun_ini::RegistryKey::from_url(url.href)
-                .walk()
+            UrlAuth::find_key(list, &bun_ini::RegistryKey::from_url(url.href))
+        }
+
+        /// For a URL that is already a WHATWG serialisation (a tarball after `normalize_tarball_url`).
+        pub(crate) fn find_entry_serialized<'a>(
+            list: &'a [UrlAuth],
+            url: &URL,
+        ) -> Option<&'a UrlAuth> {
+            if list.is_empty() {
+                return None;
+            }
+            UrlAuth::find_key(list, &bun_ini::RegistryKey::from_parsed(url))
+        }
+
+        fn find_key<'a>(list: &'a [UrlAuth], key: &bun_ini::RegistryKey) -> Option<&'a UrlAuth> {
+            key.walk()
                 .find_map(|key| list.iter().find(|entry| *entry.key == *key))
         }
 
@@ -677,15 +685,12 @@ pub mod registry {
             &self.credentials
         }
 
-        pub(crate) fn same_key(&self, other: &UrlAuth) -> bool {
-            self.key == other.key
+        pub(crate) fn key(&self) -> &[u8] {
+            &self.key
         }
     }
 
-    /// `dist.tarball` parsed once, as npm's `new URL()` does: the serialisation the request
-    /// is built from and `.npmrc` lines are keyed by. Refused, not repaired: whitespace or
-    /// a control byte, a URL WHATWG rejects, and a dot segment spelled with `%2f` or `%5c`
-    /// (opaque to WHATWG, but a decoding server routes it to another path than the key's).
+    /// `dist.tarball` as npm's `new URL()` serialises it, or `None` for a URL one parse cannot settle.
     pub fn normalize_tarball_url(raw: &[u8]) -> Option<Box<[u8]>> {
         if raw.iter().any(|&b| b <= 0x20 || b == 0x7f) {
             return None;

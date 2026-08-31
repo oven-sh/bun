@@ -249,8 +249,18 @@ impl Environment {
     /// Name the unnamed temporary `identifier_id` `#t<n>` after its
     /// declaration id, so it is kept as a variable in the output.
     pub fn promote_temporary(&mut self, identifier_id: IdentifierId) {
+        self.promote_temporary_with_kind(identifier_id, b't');
+    }
+
+    /// Like [`Self::promote_temporary`], but `#T<n>`: a JSX tag has to
+    /// start with a capital letter to be read as a component.
+    pub fn promote_temporary_jsx_tag(&mut self, identifier_id: IdentifierId) {
+        self.promote_temporary_with_kind(identifier_id, b'T');
+    }
+
+    fn promote_temporary_with_kind(&mut self, identifier_id: IdentifierId, kind: u8) {
         let identifier = &mut self.identifiers[identifier_id.0 as usize];
-        identifier.name = Some(IdentifierName::promoted(b't', identifier.declaration_id.0));
+        identifier.name = Some(IdentifierName::promoted(kind, identifier.declaration_id.0));
     }
 
     /// Allocate a new ReactiveScope in the arena, returns its ScopeId.

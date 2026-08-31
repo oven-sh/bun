@@ -424,6 +424,27 @@ describe("bundler", () => {
     },
   });
 
+  // `await require(x);` reads `then` off the namespace; `require(x).catch()`
+  // is a member access on the namespace, not on a promise.
+  itBundled("dynamic_import_dce/AwaitedRequireStatementKeepsThen", {
+    files: {
+      "/entry.ts": /* ts */ `
+        export async function f() { await require("./x.ts"); require("./y.ts").catch(); }
+        await f();
+        console.log(globalThis.hit, globalThis.caught);
+      `,
+      "/x.ts": `export function then(r: any) { (globalThis as any).hit = "then"; r(); } export const other = "DROPPED_X";`,
+      "/y.ts": `function c() { (globalThis as any).caught = "catch"; } export { c as catch }; export const other = "DROPPED_Y";`,
+    },
+    target: "bun",
+    format: "esm",
+    outdir: "/out",
+    run: { file: "/out/entry.js", stdout: "then catch" },
+    onAfterBundle(api) {
+      expect(readAllOutputs(api.outdir)).not.toContain("DROPPED");
+    },
+  });
+
   // The value of a bare statement is discarded, but `return import(x)` and an
   // arrow expression body hand the namespace on: those keep everything.
   itBundled("dynamic_import_dce/ReturnedImportKeepsAll", {

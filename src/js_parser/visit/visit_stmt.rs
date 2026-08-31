@@ -1380,17 +1380,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.react_compiler_candidate_name = None;
         p.react_compiler_in_react_hoc = false;
 
-        // `import(x);` / `await import(x);` / `await import(x).catch(..);` /
-        // `require(x);` as a statement: the namespace is never looked at, so the
-        // importee is loaded for its side effects only.
+        // `import(x);` / `await import(x);` / `[await] import(x).catch(..);` /
+        // `require(x);` / `await require(x);` as a statement: the namespace is
+        // never looked at (an awaited `require()` result only has its `then`
+        // read), so the importee is loaded for its side effects only.
         if p.options.bundle {
-            let mut e = data.value.data;
-            if let js_ast::ExprData::EAwait(aw) = e {
-                e = aw.value.data;
-            }
+            let (awaited, mut e) = match data.value.data {
+                js_ast::ExprData::EAwait(aw) => (true, aw.value.data),
+                e => (false, e),
+            };
+            // `.catch` / `.finally` on the import() promise, not on a namespace.
             if let js_ast::ExprData::ECall(call) = e
                 && let js_ast::ExprData::EDot(dot) = call.target.data
                 && matches!(dot.name.slice(), b"catch" | b"finally")
+                && matches!(dot.target.data, js_ast::ExprData::EImport(_))
             {
                 e = dot.target.data;
             }
@@ -1399,8 +1402,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     p.ignore_usage(im.namespace_ref)
                 }
                 js_ast::ExprData::ERequireString(req) => {
-                    // A namespace with no recorded use: nothing observed.
-                    let _ = p.require_namespace_ref(req);
+                    if let Some(ns) = p.require_namespace_ref(req)
+                        && awaited
+                    {
+                        p.import_items_for_namespace
+                            .get_mut(&ns)
+                            .unwrap()
+                            .put(
+                                b"then",
+                                js_ast::LocRef {
+                                    loc: stmt.loc,
+                                    ref_: js_ast::Ref::NONE,
+                                },
+                            )
+                            .expect("oom");
+                    }
                 }
                 _ => {}
             }

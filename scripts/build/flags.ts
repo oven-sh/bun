@@ -1394,7 +1394,7 @@ export const linkerFlags: Flag[] = [
     // for clone(CLONE_FS) during that window (the --watch reload). Behavioral,
     // not a version pin, so it applies to every Linux libc.
     flag: ["-Wl,--wrap=execve", "-Wl,--wrap=pthread_create"],
-    when: c => c.linux,
+    when: c => c.linux || c.ohos,
     desc: "Retry pthread_create EAGAIN caused by an in-flight execve",
   },
   {

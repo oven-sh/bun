@@ -679,6 +679,9 @@ function expectBundled(
   if (ESBUILD && splitRequire !== undefined) {
     throw new UnsupportedOptionError("splitRequire not possible in esbuild backend");
   }
+  if (ESBUILD && deprecatedNamespaceObjectSetters !== undefined) {
+    throw new UnsupportedOptionError("deprecatedNamespaceObjectSetters not possible in esbuild backend");
+  }
   if (ESBUILD && allowUnresolved !== undefined) {
     throw new UnsupportedOptionError("allowUnresolved not possible in esbuild backend");
   }

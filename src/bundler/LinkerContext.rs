@@ -1612,8 +1612,6 @@ impl SourceMapData {
     }
 }
 
-// Clone: bitwise OK — `alias` borrows from the AST arena (non-owning); all
-// other fields are POD.
 /// Where export `name` of some file finally resolves to, plus the re-export
 /// statements walked to get there (see `LinkerContext::import_member_resolutions`).
 #[derive(Clone)]
@@ -1623,6 +1621,8 @@ pub(crate) struct ImportMemberResolution {
     re_exports: std::rc::Rc<[Dependency]>,
 }
 
+// Clone: bitwise OK — `alias` borrows from the AST arena (non-owning); all
+// other fields are POD.
 #[derive(Clone, Default)]
 pub struct MatchImport {
     alias: bun_ast::StoreStr, // string borrowed from AST arena
@@ -4281,21 +4281,14 @@ impl<'a> LinkerContext<'a> {
         }
     }
 
-    /// Records a `Normal`/`NormalAndNamespace` match for `import_ref`; returns
-    /// false for every other kind.
+    /// Records a `Normal`/`NormalAndNamespace` match for `import_ref`.
     fn bind_matched_import(
         &mut self,
         imports_to_bind: &mut crate::RefImportData,
         import_ref: Ref,
         result: &MatchImport,
         re_exports: bun_alloc::AstVec<Dependency>,
-    ) -> bool {
-        if !matches!(
-            result.kind,
-            MatchImportKind::Normal | MatchImportKind::NormalAndNamespace
-        ) {
-            return false;
-        }
+    ) {
         imports_to_bind
             .put(
                 import_ref,
@@ -4320,7 +4313,6 @@ impl<'a> LinkerContext<'a> {
                 ..Default::default()
             }));
         }
-        true
     }
 
     /// Thin inherent-method shim so callers can write

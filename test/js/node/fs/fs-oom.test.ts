@@ -1,10 +1,19 @@
 import { memfd_create, setSyntheticAllocationLimitForTesting } from "bun:internal-for-testing";
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 import { closeSync, readFileSync, truncateSync, writeFileSync, writeSync } from "fs";
 import { bunEnv, bunExe, isASAN, isLinux, isPosix, tempDir } from "harness";
 import os from "node:os";
 import { join } from "path";
-setSyntheticAllocationLimitForTesting(128 * 1024 * 1024);
+
+// The limit is process-wide and a `--parallel` worker runs many files in one
+// process, so put it back for whatever runs after this file. A later file in
+// the same worker would otherwise fail to build any string over the lowered
+// limit with ERR_STRING_TOO_LONG.
+const FILE_LIMIT = 128 * 1024 * 1024;
+const previousLimit = setSyntheticAllocationLimitForTesting(FILE_LIMIT);
+afterAll(() => {
+  setSyntheticAllocationLimitForTesting(previousLimit);
+});
 
 // /dev/zero reports a size of 0. So we need a separate test for reDgular files that are huge.
 if (isPosix) {
@@ -42,6 +51,7 @@ if (isLinux) {
           "ENOMEM: not enough memory",
         );
       } finally {
+        setSyntheticAllocationLimitForTesting(FILE_LIMIT);
         Bun.gc(true);
         closeSync(memfd);
       }

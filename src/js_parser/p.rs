@@ -167,6 +167,7 @@ impl<'a> core::ops::DerefMut for NamedImportsType<'a> {
 /// See [`P::parser_snapshot`].
 pub(crate) struct ParserSnapshot<'a> {
     lexer: js_lexer::LexerSnapshot<'a>,
+    comments_to_preserve_before: Vec<js_ast::G::Comment>,
     log_msgs_len: usize,
     log_errors: u32,
     log_warnings: u32,
@@ -7377,10 +7378,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// dynamic imports and logs through `P::log()`, which ignores
     /// `lexer.is_log_disabled`. Lists are captured as lengths and truncated
     /// on restore; the attempt's arena allocations just become unreachable.
-    pub(crate) fn parser_snapshot(&self) -> ParserSnapshot<'a> {
+    /// The legal comments waiting for the next statement are moved out
+    /// instead: a block body or `import()` drains them, so a length cannot
+    /// restore them.
+    pub(crate) fn parser_snapshot(&mut self) -> ParserSnapshot<'a> {
+        let comments_to_preserve_before =
+            core::mem::take(&mut self.lexer.comments_to_preserve_before);
         let log = self.log();
         ParserSnapshot {
             lexer: self.lexer.snapshot(),
+            comments_to_preserve_before,
             log_msgs_len: log.msgs.len(),
             log_errors: log.errors,
             log_warnings: log.warnings,
@@ -7411,6 +7418,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// Undo every parse-pass mutation made since [`Self::parser_snapshot`].
     pub(crate) fn restore_parser_snapshot(&mut self, snapshot: ParserSnapshot<'a>) {
         self.lexer.restore(&snapshot.lexer);
+        self.lexer.comments_to_preserve_before = snapshot.comments_to_preserve_before;
 
         let log = self.log();
         log.msgs.truncate(snapshot.log_msgs_len);

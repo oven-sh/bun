@@ -3670,16 +3670,15 @@ impl<'a> Resolver<'a> {
                         let ends_with_star = esm_resolution.status == Status::ExactEndsWithStar;
                         esm_resolution.status = Status::ModuleNotFound;
 
-                        if ends_with_star
-                            && self.probe_wildcard_extensions(
-                                resolved_dir_info,
-                                dirname_fd,
-                                package_json,
-                                base,
-                                extension_order,
-                                out,
-                            )
-                        {
+                        if self.probe_target_extensions(
+                            resolved_dir_info,
+                            dirname_fd,
+                            package_json,
+                            base,
+                            extension_order,
+                            ends_with_star,
+                            out,
+                        ) {
                             return MatchStatus::Success;
                         }
                         return MatchStatus::NotFound;
@@ -3693,12 +3692,13 @@ impl<'a> Resolver<'a> {
                 {
                     let ends_with_star = esm_resolution.status == Status::ExactEndsWithStar;
                     if ends_with_star
-                        && self.probe_wildcard_extensions(
+                        && self.probe_target_extensions(
                             resolved_dir_info,
                             dirname_fd,
                             package_json,
                             base,
                             extension_order,
+                            true,
                             out,
                         )
                     {
@@ -3810,24 +3810,26 @@ impl<'a> Resolver<'a> {
         }
     }
 
-    /// Wildcard `exports`/`imports` target isn't a file: probe extensions like `load_as_file` does.
+    /// `exports`/`imports` target isn't a file: probe extensions like `load_as_file` does.
+    /// `is_wildcard` enables the extensionless probe (oven-sh/bun#29679). The
+    /// TypeScript rewrite (oven-sh/bun#10001) runs for every target, as in esbuild.
     ///
     /// Each probe goes through [`DirInfo::get_entry`] so the map walk happens
     /// under `entries_mutex`; `dirname_fd` was captured under the caller's
     /// critical section.
-    fn probe_wildcard_extensions(
+    fn probe_target_extensions(
         &mut self,
         resolved_dir_info: DirInfoRef,
         dirname_fd: FD,
         package_json: &PackageJSON,
         base: &[u8],
         extension_order: options::ExtOrder,
+        is_wildcard: bool,
         out: &mut MatchResult,
     ) -> bool {
         let rfs = self.rfs_ptr();
 
-        // Extensionless target (`"./*": "./dist/*"`): append extension_order (oven-sh/bun#29679).
-        if bun_paths::extension(base).is_empty() {
+        if is_wildcard && bun_paths::extension(base).is_empty() {
             let buf = bufs!(load_as_file);
             buf[..base.len()].copy_from_slice(base);
             for ext in self.opts.ext_order_slice(extension_order).iter() {
@@ -3862,20 +3864,11 @@ impl<'a> Resolver<'a> {
             }
         }
 
-        // `.js`/`.jsx`/`.mjs` → `.ts`/`.tsx`/`.mts`: same rewrite as `load_as_file` (oven-sh/bun#10001).
         if let Some(last_dot) = strings::last_index_of_char(base, b'.') {
             let ext = &base[last_dot..];
-            let ts_exts: &[&[u8]] = if ext == b".js" || ext == b".jsx" {
-                &[b".ts", b".tsx", b".mts"]
-            } else if ext == b".mjs"
-                && (!FeatureFlags::DISABLE_AUTO_JS_TO_TS_IN_NODE_MODULES
-                    || !(resolved_dir_info.is_node_modules()
-                        || resolved_dir_info.is_inside_node_modules()))
-            {
-                &[b".mts"]
-            } else {
-                &[]
-            };
+            let ts_exts = rewritten_file_extensions(ext, || {
+                resolved_dir_info.is_node_modules() || resolved_dir_info.is_inside_node_modules()
+            });
 
             if !ts_exts.is_empty() {
                 let segment = &base[..last_dot];
@@ -4788,6 +4781,10 @@ impl<'a> Resolver<'a> {
             {
                 if strings::eql_long(key, path, true) {
                     for original_path in value.iter() {
+                        if self.is_type_only_tsconfig_path(original_path) {
+                            continue;
+                        }
+
                         let mut absolute_original_path: &[u8] = original_path;
 
                         if !bun_paths::is_absolute(absolute_original_path) {
@@ -4869,6 +4866,10 @@ impl<'a> Resolver<'a> {
             }
 
             for original_path in longest_match.original_paths.iter() {
+                if self.is_type_only_tsconfig_path(original_path) {
+                    continue;
+                }
+
                 // Swap out the "*" in the original path for whatever the "*" matched
                 let matched_text =
                     &path[longest_match.prefix.len()..path.len() - longest_match.suffix.len()];
@@ -4931,6 +4932,30 @@ impl<'a> Resolver<'a> {
         }
 
         MatchStatus::NotFound
+    }
+
+    /// A `paths` substitution written as a declaration file exists for type checking
+    /// only. Skip it, like esbuild's `matchTSConfigPaths` (which checks `.d.ts` only).
+    /// This looks at the tsconfig text, not the `*` expansion: `"@/*": ["./src/*"]`
+    /// must still resolve `import "@/env.d.ts"`.
+    fn is_type_only_tsconfig_path(&mut self, substitution: &[u8]) -> bool {
+        const DECLARATION_EXTS: [&[u8]; 3] = [b".d.ts", b".d.mts", b".d.cts"];
+        let Some(ext) = DECLARATION_EXTS.iter().find(|ext| {
+            substitution
+                .len()
+                .checked_sub(ext.len())
+                .is_some_and(|start| substitution[start..].eq_ignore_ascii_case(ext))
+        }) else {
+            return false;
+        };
+        if let Some(debug) = self.debug_logs.as_mut() {
+            debug.add_note_fmt(format_args!(
+                "Ignoring substitution \"{}\" because it ends in \"{}\"",
+                bstr::BStr::new(substitution),
+                bstr::BStr::new(ext)
+            ));
+        }
+        true
     }
 
     pub(crate) fn load_package_imports(
@@ -5878,39 +5903,15 @@ impl<'a> Resolver<'a> {
             }
         }
 
-        // TypeScript-specific behavior: if the extension is ".js" or ".jsx", try
-        // replacing it with ".ts" or ".tsx". At the time of writing this specific
-        // behavior comes from the function "loadModuleFromFile()" in the file
-        // "moduleNameThisResolver.ts" in the TypeScript compiler source code. It
-        // contains this comment:
-        //
-        //   If that didn't work, try stripping a ".js" or ".jsx" extension and
-        //   replacing it with a TypeScript one; e.g. "./foo.js" can be matched
-        //   by "./foo.ts" or "./foo.d.ts"
-        //
-        // We don't care about ".d.ts" files because we can't do anything with
-        // those, so we ignore that part of the behavior.
-        //
-        // See the discussion here for more historical context:
-        // https://github.com/microsoft/TypeScript/issues/4595
+        // TypeScript-specific behavior: try rewriting ".js" to ".ts".
         if let Some(last_dot) = strings::last_index_of_char(base, b'.') {
             let ext = &base[last_dot..base.len()];
-            // NOTE: the node_modules gate only applies to the `.mjs` arm.
-            if ext == b".js"
-                || ext == b".jsx"
-                || (ext == b".mjs"
-                    && (!FeatureFlags::DISABLE_AUTO_JS_TO_TS_IN_NODE_MODULES
-                        || !strings::path_contains_node_modules_folder(path)))
-            {
+            let exts =
+                rewritten_file_extensions(ext, || strings::path_contains_node_modules_folder(path));
+            if !exts.is_empty() {
                 let segment = &base[0..last_dot];
                 let tail = &mut bufs!(load_as_file)[path.len() - base.len()..];
                 tail[..segment.len()].copy_from_slice(segment);
-
-                let exts: &[&[u8]] = if ext == b".mjs" {
-                    &[b".mts"]
-                } else {
-                    &[b".ts", b".tsx", b".mts"]
-                };
 
                 for ext_to_replace in exts {
                     let buffer = &mut tail[0..segment.len() + ext_to_replace.len()];
@@ -6753,6 +6754,28 @@ bun_core::comptime_string_map! {
 #[inline]
 fn module_type_from_ext(ext: &[u8]) -> Option<options::ModuleType> {
     MODULE_TYPE_FROM_EXT.get(ext).copied()
+}
+
+/// TypeScript matches `./foo.js` with `./foo.ts` (microsoft/TypeScript#4595). This
+/// is esbuild's `rewrittenFileExtensions` table plus Bun's `.js` → `.mts`
+/// (oven-sh/bun#12580). `inside_node_modules` gates only `.mjs` and `.cjs`:
+/// `DISABLE_AUTO_JS_TO_TS_IN_NODE_MODULES` never applied to `.js`/`.jsx`.
+fn rewritten_file_extensions(
+    ext: &[u8],
+    inside_node_modules: impl Fn() -> bool,
+) -> &'static [&'static [u8]] {
+    match ext {
+        // tsc tries `.ts` before `.tsx` even for a `.jsx` import.
+        b".js" | b".jsx" => &[b".ts", b".tsx", b".mts"],
+        b".mjs" | b".cjs"
+            if FeatureFlags::DISABLE_AUTO_JS_TO_TS_IN_NODE_MODULES && inside_node_modules() =>
+        {
+            &[]
+        }
+        b".mjs" => &[b".mts"],
+        b".cjs" => &[b".cts"],
+        _ => &[],
+    }
 }
 
 pub struct Dirname;

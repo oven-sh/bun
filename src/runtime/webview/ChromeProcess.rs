@@ -79,12 +79,12 @@ static INSTANCE: AtomicPtr<ChromeProcess> = AtomicPtr::new(ptr::null_mut());
 #[cfg(windows)]
 static GENERATION: AtomicU32 = AtomicU32::new(0);
 
-/// Called from WebView.closeAll() and dispatchOnExit. Chrome spawns its own
-/// renderer/gpu/utility children (the "process model" zygote tree) — tracked
-/// by Chrome's own ProcessSingleton, they exit when the browser process
-/// dies. SIGKILL here takes the browser process, the zygote tree follows.
-/// The C++ side doesn't touch JS state; EVFILT_PROC → Bun__Chrome__died →
-/// rejectAllAndMarkDead handles promise rejection on the next loop tick.
+/// Called from dispatchOnExit. Chrome spawns its own renderer/gpu/utility
+/// children (the "process model" zygote tree) — tracked by Chrome's own
+/// ProcessSingleton, they exit when the browser process dies. SIGKILL here
+/// takes the browser process, the zygote tree follows. The C++ side doesn't
+/// touch JS state; EVFILT_PROC → Bun__Chrome__died → rejectAllAndMarkDead
+/// handles promise rejection on the next loop tick.
 #[unsafe(no_mangle)]
 extern "C" fn Bun__Chrome__kill() {
     // SAFETY: JS-thread-only global; see INSTANCE decl.
@@ -95,7 +95,7 @@ extern "C" fn Bun__Chrome__kill() {
     }
 }
 
-/// Transport::retireGlobal (`bun test --isolate`): unpublish and kill this Chrome so the next file can spawn its own at once.
+/// Transport::rejectAllAndMarkDead: unpublish and kill this Chrome so the next `new Bun.WebView()` spawns its own at once.
 #[unsafe(no_mangle)]
 extern "C" fn Bun__Chrome__retire() {
     let this = INSTANCE.swap(ptr::null_mut(), Ordering::Relaxed);

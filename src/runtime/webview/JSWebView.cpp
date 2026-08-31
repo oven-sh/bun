@@ -387,6 +387,14 @@ void retireWebViewsForTestIsolation(Zig::GlobalObject* global)
 #endif
 }
 
+void closeAllWebViews()
+{
+    CDP::transport().rejectAllAndMarkDead("WebView closed by WebView.closeAll()"_s);
+#if OS(DARWIN)
+    WK::client().rejectAllAndMarkDead("WebView closed by WebView.closeAll()"_s);
+#endif
+}
+
 // --- Setup -----------------------------------------------------------------
 
 void setupJSWebViewClassStructure(LazyClassStructure::Initializer& init)
@@ -403,14 +411,14 @@ void setupJSWebViewClassStructure(LazyClassStructure::Initializer& init)
 
 // ---------------------------------------------------------------------------
 // Termination hook. Called from dispatchOnExit (same path as SQLite's
-// Bun__closeAllSQLiteDatabasesForTermination) and from WebView.closeAll().
-// SIGKILLs both browser subprocesses — no CDP Browser.close, no promise
-// rejection, no socket teardown. At dispatchOnExit the event loop is past
-// the point of processing any reply; the only thing that matters is the
-// subprocesses don't outlive us. Chrome's zygote tree (renderer/gpu/utility)
-// exits when the browser process dies; WebKit's WebContent/GPU/Network
-// helpers exit via XPC-invalidated when the host dies. Idempotent: kill(9)
-// on a reaped pid returns ESRCH and we discard it.
+// Bun__closeAllSQLiteDatabasesForTermination). SIGKILLs both browser
+// subprocesses — no CDP Browser.close, no promise rejection, no socket
+// teardown. At dispatchOnExit the event loop is past the point of processing
+// any reply; the only thing that matters is the subprocesses don't outlive
+// us. Chrome's zygote tree (renderer/gpu/utility) exits when the browser
+// process dies; WebKit's WebContent/GPU/Network helpers exit via
+// XPC-invalidated when the host dies. Idempotent: kill(9) on a reaped pid
+// returns ESRCH and we discard it. WebView.closeAll() is closeAllWebViews().
 // ---------------------------------------------------------------------------
 
 extern "C" void Bun__Chrome__kill();

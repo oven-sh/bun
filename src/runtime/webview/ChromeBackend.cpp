@@ -1295,6 +1295,8 @@ void Transport::rejectAllAndMarkDead(const WTF::String& reason)
         ws->setNativeCallbacks({}); // prevent wsOnClose re-entry
         ws->close(std::nullopt, WTF::String());
     }
+    // A dead transport leaves no published Chrome behind, so the next `new Bun.WebView()` spawns at once.
+    Bun__Chrome__retire();
     m_mode = TransportMode::None;
     m_wsOpen = false;
     m_wsPending.clear();
@@ -1357,7 +1359,6 @@ void Transport::retireGlobal(Zig::GlobalObject* global)
 {
     if (m_global != global) return;
     rejectAllAndMarkDead("WebView closed: its test file finished"_s);
-    Bun__Chrome__retire();
     m_global = nullptr;
 }
 

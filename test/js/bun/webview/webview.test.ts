@@ -965,9 +965,7 @@ it("close() rejects pending promises", async () => {
 
 it("WebView.closeAll() kills the host subprocess and pending promises reject", async () => {
   // Subprocess-isolated — closeAll() SIGKILLs the one shared WKWebView host,
-  // which would break subsequent tests. ensureSpawned respawns on the next
-  // WebView construction, but only after EVFILT_PROC has cleared the Zig
-  // instance global — race prone in-process.
+  // which would break subsequent tests.
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -977,12 +975,9 @@ it("WebView.closeAll() kills the host subprocess and pending promises reject", a
         await view.navigate("data:text/html," + encodeURIComponent("<body>test</body>"));
         const p = view.evaluate("new Promise(() => {})"); // never resolves
         Bun.WebView.closeAll();
-        // SIGKILL → socket EOF or EVFILT_PROC (whichever wins) →
-        // rejectAllAndMarkDead on next tick. Both paths reject; the message
-        // differs ("host process died" vs "killed by signal").
         await p.then(
           () => { throw new Error("should have rejected"); },
-          e => { if (!/died|signal|killed/i.test(e.message)) throw e; },
+          e => { if (e.message !== "WebView closed by WebView.closeAll()") throw e; },
         );
         console.log("rejected");
       `,
@@ -1037,20 +1032,7 @@ it("views orphaned by a host death are closed, even after a new view respawns th
           blank: probe(() => blank.navigate(html("<body>blank</body>"))),
         };
 
-        // The client is marked dead as soon as the event loop sees the
-        // socket EOF or the exit notification, whichever comes first; a
-        // respawn is refused until the exit has been reaped, so the
-        // constructor can throw briefly after closeAll(). Retry.
-        let fresh;
-        for (let attempt = 0; ; attempt++) {
-          try {
-            fresh = open();
-            break;
-          } catch (e) {
-            if (attempt === 500) throw e;
-            await Bun.sleep(10);
-          }
-        }
+        const fresh = open();
         await fresh.navigate(html("<body>fresh</body>"));
         const freshBody = await fresh.evaluate("document.body.textContent");
 
@@ -1076,8 +1058,7 @@ it("views orphaned by a host death are closed, even after a new view respawns th
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stdout, stderr).toEndWith("}\n");
   expect(JSON.parse(stdout)).toEqual({
-    // Socket EOF and the exit notification race; the wording follows the winner.
-    death: expect.stringMatching(/^WebView host process (died|killed by signal \d+|exited)$/),
+    death: "WebView closed by WebView.closeAll()",
     whileDead: {
       busy: "ERR_INVALID_STATE",
       idle: "ERR_INVALID_STATE",

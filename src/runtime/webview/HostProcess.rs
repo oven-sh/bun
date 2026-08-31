@@ -44,10 +44,10 @@ pub(crate) struct HostProcess {
 static INSTANCE: core::sync::atomic::AtomicPtr<HostProcess> =
     core::sync::atomic::AtomicPtr::new(ptr::null_mut());
 
-/// Called from WebView.closeAll() and dispatchOnExit. Socket EOF handles
-/// normal parent-death (including SIGKILL of Bun — kernel closes fds, child
-/// reads 0, CFRunLoopStop). This catches the clean-exit path where the child
-/// hasn't yet noticed EOF before we return from main(). WKWebView's own
+/// Called from dispatchOnExit. Socket EOF handles normal parent-death
+/// (including SIGKILL of Bun — kernel closes fds, child reads 0,
+/// CFRunLoopStop). This catches the clean-exit path where the child hasn't
+/// yet noticed EOF before we return from main(). WKWebView's own
 /// WebContent/GPU/Network helpers are XPC-connected to the child — when the
 /// child dies they get connection-invalidated and exit.
 #[unsafe(no_mangle)]
@@ -65,7 +65,7 @@ extern "C" fn Bun__WebViewHost__kill() {
     }
 }
 
-/// HostClient::retireGlobal (`bun test --isolate`): unpublish and kill this host so the next file can spawn its own at once.
+/// HostClient::rejectAllAndMarkDead: unpublish and kill this host so the next `new Bun.WebView()` spawns its own at once.
 #[unsafe(no_mangle)]
 extern "C" fn Bun__WebViewHost__retire() {
     let this = INSTANCE.swap(ptr::null_mut(), core::sync::atomic::Ordering::Relaxed);

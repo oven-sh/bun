@@ -9413,11 +9413,12 @@ declare module "bun" {
     constructor(options?: WebView.ConstructorOptions);
 
     /**
-     * Force-kill all browser subprocesses (Chrome and the WKWebView host).
-     * Pending promises on all views reject on the next event loop tick.
+     * Close every view and force-kill all browser subprocesses (Chrome and
+     * the WKWebView host). Pending promises on all views reject with
+     * `Error("WebView closed by WebView.closeAll()")`.
      *
      * Called automatically at process exit. Call manually to reclaim browser
-     * resources early — subsequent `new Bun.WebView()` calls respawn them.
+     * resources early — the next `new Bun.WebView()` spawns a fresh browser.
      * Idempotent: calling when no subprocesses are alive is a no-op.
      */
     static closeAll(): void;

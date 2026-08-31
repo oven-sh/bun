@@ -193,6 +193,19 @@ describe("vi members", () => {
     }
   });
 
+  test("an integer-like name stubs and restores without crashing", () => {
+    const g = globalThis as Record<string, unknown>;
+    try {
+      vi.stubGlobal("0", "zero");
+      expect(g["0"]).toBe("zero");
+      vi.unstubAllGlobals();
+      expect("0" in g).toBe(false);
+    } finally {
+      vi.unstubAllGlobals();
+      delete g["0"];
+    }
+  });
+
   test("restore keeps a global that was already undefined", () => {
     const g = globalThis as Record<string, unknown>;
     try {

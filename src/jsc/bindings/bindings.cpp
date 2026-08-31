@@ -4166,7 +4166,8 @@ void JSC__JSValue__putNonEnumerable(JSC::EncodedJSValue JSValue0, JSC::JSGlobalO
 }
 
 // Encoding-aware variant of JSC__JSValue__getIfPropertyExistsImpl: the key's
-// EncodedSlice bits decide Latin-1 vs UTF-8 vs UTF-16.
+// EncodedSlice bits decide Latin-1 vs UTF-8 vs UTF-16, and integer-index
+// names ("0") are safe. Returns deleted if the property does not exist.
 extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue JSC__JSValue__getIfPropertyExistsEncoded(JSC::EncodedJSValue target, JSC::JSGlobalObject* globalObject, const EncodedSlice* key)
 {
     ASSERT_NO_PENDING_EXCEPTION(globalObject);
@@ -4182,7 +4183,18 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue JSC__JSValue__getIf
     const auto identifier = Zig::toIdentifier(*key, globalObject);
     const auto property = JSC::PropertyName(identifier);
 
-    return JSC::JSValue::encode(Bun::getIfPropertyExistsPrototypePollutionMitigationUnsafe(vm, globalObject, object, property));
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    PropertySlot slot(object, PropertySlot::InternalMethodType::Get);
+    if (!object->getPropertySlot(globalObject, property, slot)) {
+        RETURN_IF_EXCEPTION(scope, {});
+        return JSValue::encode(JSValue::decode(JSC::JSValue::ValueDeleted));
+    }
+    RETURN_IF_EXCEPTION(scope, {});
+
+    JSValue result = slot.getValue(globalObject, property);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    return JSValue::encode(result);
 }
 
 // Generic (method-table) put: runs custom `put` overrides such as

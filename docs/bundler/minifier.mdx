@@ -757,7 +757,7 @@ foo&&bar||baz
 
 **Mode:** `--minify-whitespace`
 
-Removes comments except legal comments. A legal comment starts with `/*!` or `//!`, or contains `@license` or `@preserve`.
+Removes comments except legal comments. A legal comment starts with `/*!` or `//!`, or contains the word `@license` or `@preserve`. A longer word such as `@licensee` does not count.
 
 ```ts Input
 // This comment is removed

@@ -1,7 +1,6 @@
 //! YAML parser.
 //!
-//! `Encoding` is modeled as a trait with an associated `Unit` type, and
-//! `Parser<Enc>` is generic over `Enc: Encoding`. `Utf8` is its only impl.
+//! `Parser<Enc>` is generic over `Enc: Encoding`; `Utf8` is the only impl.
 //!
 //! Several scanners are state-machine loops written as
 //! `let mut __c = x; loop { match __c { ... } }` with `__c = y; continue;`.

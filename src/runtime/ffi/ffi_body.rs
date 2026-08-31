@@ -1221,7 +1221,11 @@ impl FFI {
                         function.symbol_from_dynamic_library,
                     );
                     // `cb` is rooted by the `symbolsValue` cached own-property set below.
-                    obj.put(global_this, symbol_name, cb);
+                    obj.put_may_be_index(
+                        global_this,
+                        &bun_core::String::borrow_utf8(function_name.as_bytes()),
+                        cb,
+                    )?;
                 }
             }
         }
@@ -1560,7 +1564,14 @@ impl FFI {
                         return ret;
                     }
                 };
-            obj.put(global, symbol_name, cb);
+            // The user picks the symbol names, so one can be an array index like "0".
+            let key = bun_core::String::borrow_utf8(function_name.as_bytes());
+            if let Err(err) = obj.put_may_be_index(global, &key, cb) {
+                dylib.close();
+                // SAFETY: lib_ptr is the live, JS-owned FFI allocation (from into_raw).
+                unsafe { &*lib_ptr }.do_close();
+                return Err(err);
+            }
         }
 
         // SAFETY: lib_ptr is the live, JS-owned FFI allocation (from into_raw).
@@ -1645,7 +1656,13 @@ impl FFI {
                         return err;
                     }
                 };
-            obj.put(global, symbol_name, cb);
+            // The user picks the symbol names, so one can be an array index like "0".
+            let key = bun_core::String::borrow_utf8(function_name.as_bytes());
+            if let Err(err) = obj.put_may_be_index(global, &key, cb) {
+                // SAFETY: lib_ptr is the live, JS-owned FFI allocation (from into_raw).
+                unsafe { &*lib_ptr }.do_close();
+                return Err(err);
+            }
         }
 
         // SAFETY: lib_ptr is the live, JS-owned FFI allocation (from into_raw).

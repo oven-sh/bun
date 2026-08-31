@@ -1394,6 +1394,43 @@ describe.if(!!libPath)("can open more than 63 symbols via", () => {
   }
 });
 
+// A symbol name that is a canonical array index ("0") has to land in the
+// indexed storage of `symbols`. A named property of the same spelling shows up
+// in Object.keys() but `symbols[0]` cannot find it.
+describe("symbols named like an array index", () => {
+  it("linkSymbols() stores the function under the index", () => {
+    let calls = 0;
+    const callback = new JSCallback(() => void calls++, { args: [], returns: "void" });
+    try {
+      const lib = linkSymbols({ "0": { ptr: callback.ptr, args: [], returns: "void" } });
+      expect(Object.keys(lib.symbols)).toEqual(["0"]);
+      expect(typeof lib.symbols[0]).toBe("function");
+      expect(lib.symbols["0"]).toBe(lib.symbols[0]);
+      expect(0 in lib.symbols).toBe(true);
+      lib.symbols[0]();
+      expect(calls).toBe(1);
+      lib.close();
+    } finally {
+      callback.close();
+    }
+  });
+
+  it.if(!!libPath)("dlopen() stores a ptr-backed symbol under the index", () => {
+    const { strlen } = dlopen(libPath, { strlen: libSymbols.strlen }).symbols;
+    const lib = dlopen(libPath, {
+      "0": { ptr: strlen.ptr, args: ["ptr"], returns: "usize" },
+      "4294967294": { ptr: strlen.ptr, args: ["ptr"], returns: "usize" },
+      strlen: libSymbols.strlen,
+    });
+    expect(Object.keys(lib.symbols).sort()).toEqual(["0", "4294967294", "strlen"]);
+    expect(typeof lib.symbols[0]).toBe("function");
+    expect(typeof lib.symbols[4294967294]).toBe("function");
+    expect(lib.symbols[0](Buffer.from("bunbun\0", "ascii"))).toBe(6n);
+    expect(lib.symbols["4294967294"](Buffer.from("bun\0", "ascii"))).toBe(3n);
+    lib.close();
+  });
+});
+
 // oven-sh/bun#35405: toBuffer without a finalizer used to mi_free caller-owned
 // memory on GC. Subprocess because unpatched builds crash.
 describe("toBuffer borrowed-pointer ownership (no bad-free on GC)", () => {

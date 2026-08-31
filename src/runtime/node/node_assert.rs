@@ -239,16 +239,8 @@ where
         Output::Lines { colors, .. } => {
             let (out, skipped) = render_lines::<C, T>(diff_list, colors);
             let result = JSValue::create_empty_object(global, 2);
-            result.put(
-                global,
-                BunString::static_("message"),
-                C::to_bun_string(&out).into_js(global)?,
-            );
-            result.put(
-                global,
-                BunString::static_("skipped"),
-                JSValue::from(skipped),
-            );
+            result.put(global, b"message", C::to_bun_string(&out).into_js(global)?);
+            result.put(global, b"skipped", JSValue::from(skipped));
             Ok(result)
         }
     }

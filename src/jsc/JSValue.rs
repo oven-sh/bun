@@ -1421,19 +1421,16 @@ impl JSValue {
         const I52_MAX: i64 = (1i64 << 51) - 1;
         Ok(len.clamp(0.0, I52_MAX as f64) as u64)
     }
-    /// Set a property. Key dispatch goes through the [`PutKey`] trait so
-    /// callers may pass `&[u8]`, `EncodedSlice`, `String`, or `&String`.
+    /// Set a property whose name is known at compile time. Key dispatch goes
+    /// through the [`PutKey`] trait, which only `'static` byte and string
+    /// slices implement. A name that comes from data (a column, a header, a
+    /// symbol, a file name) goes through [`put_may_be_index`](Self::put_may_be_index).
     pub fn put<K: PutKey>(self, global: &JSGlobalObject, key: K, value: JSValue) {
         key.put(self, global, value)
     }
     /// [`put`] with `PropertyAttribute::DontEnum`.
-    pub fn put_non_enumerable(
-        self,
-        global: &JSGlobalObject,
-        key: impl AsRef<[u8]>,
-        value: JSValue,
-    ) {
-        let key = bun_core::EncodedSlice::latin1(key.as_ref());
+    pub fn put_non_enumerable(self, global: &JSGlobalObject, key: &'static [u8], value: JSValue) {
+        let key = bun_core::EncodedSlice::latin1(key);
         JSC__JSValue__putNonEnumerable(self, global, &key, value)
     }
     /// [`put`] only when `val` is `Some`; the property is *omitted* (not set to
@@ -1479,9 +1476,9 @@ impl JSValue {
         let key = bun_core::EncodedSlice::latin1(key.as_ref());
         crate::call_check_slow(global, || JSC__JSValue__deleteProperty(self, global, &key))
     }
-    /// `JSValue.putMayBeIndex` — same as [`put`] but accepts
-    /// both non-numeric and numeric keys. Prefer [`put`] when the key is
-    /// guaranteed non-numeric.
+    /// `JSValue.putMayBeIndex` — same as [`put`](Self::put) but for a key that
+    /// comes from data. An array-index name such as `"0"` is stored as an
+    /// indexed property, which plain `putDirect` cannot do.
     pub fn put_may_be_index(
         self,
         global: &JSGlobalObject,
@@ -1842,42 +1839,26 @@ impl<T: FromAny> FromAny for Option<T> {
     }
 }
 
-/// Dispatch trait for [`JSValue::put`]'s key parameter: routes
-/// `EncodedSlice`/`String`/byte-slice keys to the matching FFI.
+/// Dispatch trait for [`JSValue::put`]'s key parameter. Only a key that is
+/// known at compile time implements it: the C++ side is a plain `putDirect`,
+/// which asserts on an array-index name such as `"0"`. A key that comes from
+/// data goes through [`JSValue::put_may_be_index`].
 pub trait PutKey {
     fn put(self, target: JSValue, global: &JSGlobalObject, value: JSValue);
 }
-impl PutKey for bun_core::EncodedSlice<'_> {
+impl PutKey for &'static [u8] {
     #[inline]
     fn put(self, target: JSValue, global: &JSGlobalObject, value: JSValue) {
-        JSC__JSValue__put(target, global, &self, value)
+        JSC__JSValue__put(target, global, &bun_core::EncodedSlice::latin1(self), value)
     }
 }
-impl PutKey for &bun_core::String {
-    #[inline]
-    fn put(self, target: JSValue, global: &JSGlobalObject, value: JSValue) {
-        JSC__JSValue__putBunString(target, global, self, value)
-    }
-}
-impl PutKey for bun_core::String {
-    #[inline]
-    fn put(self, target: JSValue, global: &JSGlobalObject, value: JSValue) {
-        (&self).put(target, global, value)
-    }
-}
-impl PutKey for &[u8] {
-    #[inline]
-    fn put(self, target: JSValue, global: &JSGlobalObject, value: JSValue) {
-        bun_core::EncodedSlice::latin1(self).put(target, global, value)
-    }
-}
-impl<const N: usize> PutKey for &[u8; N] {
+impl<const N: usize> PutKey for &'static [u8; N] {
     #[inline]
     fn put(self, target: JSValue, global: &JSGlobalObject, value: JSValue) {
         self.as_slice().put(target, global, value)
     }
 }
-impl PutKey for &str {
+impl PutKey for &'static str {
     #[inline]
     fn put(self, target: JSValue, global: &JSGlobalObject, value: JSValue) {
         self.as_bytes().put(target, global, value)
@@ -2065,12 +2046,6 @@ unsafe extern "C" {
         global: &JSGlobalObject,
         key: &bun_core::EncodedSlice,
     ) -> bool;
-    safe fn JSC__JSValue__putBunString(
-        this: JSValue,
-        global: &JSGlobalObject,
-        key: &bun_core::String,
-        value: JSValue,
-    );
     safe fn JSC__JSValue__putMayBeIndex(
         this: JSValue,
         global: &JSGlobalObject,

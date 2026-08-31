@@ -1385,23 +1385,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // never looked at (an awaited `require()` result only has its `then`
         // read), so the importee is loaded for its side effects only.
         if p.options.bundle {
-            let (awaited, mut e) = match data.value.data {
-                js_ast::ExprData::EAwait(aw) => (true, aw.value.data),
-                e => (false, e),
-            };
-            // `.catch` / `.finally` on the import() promise, not on a namespace.
-            if let js_ast::ExprData::ECall(call) = e
-                && let js_ast::ExprData::EDot(dot) = call.target.data
-                && matches!(dot.name.slice(), b"catch" | b"finally")
-                && matches!(dot.target.data, js_ast::ExprData::EImport(_))
-            {
-                e = dot.target.data;
-            }
-            match e {
-                js_ast::ExprData::EImport(im) if im.namespace_ref.is_valid() => {
-                    p.note_tracked_namespace_use(im.namespace_ref)
-                }
-                js_ast::ExprData::ERequireString(req) => {
+            match bare_statement_namespace(data.value.data) {
+                BareStatementNamespace::Import(ns) => p.note_tracked_namespace_use(ns),
+                BareStatementNamespace::Require(req, awaited) => {
                     if let Some(ns) = p.require_namespace_ref(req)
                         && awaited
                     {
@@ -1418,7 +1404,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             .expect("oom");
                     }
                 }
-                _ => {}
+                BareStatementNamespace::None => {}
             }
         }
 
@@ -2432,5 +2418,37 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             false,
         )?;
         Ok(())
+    }
+}
+
+enum BareStatementNamespace {
+    None,
+    /// `import(x);`, `await import(x);`, `[await] import(x).catch/finally(..);`
+    Import(js_ast::Ref),
+    /// `require(x);` / `await require(x);` (the bool: awaited)
+    Require(E::RequireString, bool),
+}
+
+/// Classify an expression statement whose value is a discarded
+/// `import()` / `require()` result.
+fn bare_statement_namespace(value: js_ast::ExprData) -> BareStatementNamespace {
+    let (awaited, mut e) = match value {
+        js_ast::ExprData::EAwait(aw) => (true, aw.value.data),
+        e => (false, e),
+    };
+    // `.catch` / `.finally` on the import() promise, not on a namespace.
+    if let js_ast::ExprData::ECall(call) = e
+        && let js_ast::ExprData::EDot(dot) = call.target.data
+        && matches!(dot.name.slice(), b"catch" | b"finally")
+        && matches!(dot.target.data, js_ast::ExprData::EImport(_))
+    {
+        e = dot.target.data;
+    }
+    match e {
+        js_ast::ExprData::EImport(im) if im.namespace_ref.is_valid() => {
+            BareStatementNamespace::Import(im.namespace_ref)
+        }
+        js_ast::ExprData::ERequireString(req) => BareStatementNamespace::Require(req, awaited),
+        _ => BareStatementNamespace::None,
     }
 }

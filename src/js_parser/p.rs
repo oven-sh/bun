@@ -1049,60 +1049,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         properties: &[bun_ast::B::Property],
         keep_all: bool,
     ) -> Option<()> {
-        let mut rest_ref: Option<(Ref, bun_ast::Loc)> = None;
-        for (i, prop) in properties.iter().enumerate() {
-            if prop.flags.contains(bun_ast::flags::Property::IsSpread) {
-                // An exported `...rest` is observed whole by importers of this file.
-                if i + 1 != properties.len() || keep_all {
-                    return None;
-                }
-                let bun_ast::binding::Data::BIdentifier(id) = prop.value.data else {
-                    return None;
-                };
-                rest_ref = Some((id.r#ref, prop.value.loc));
-                continue;
-            }
-            if prop.flags.contains(bun_ast::flags::Property::IsComputed) {
-                return None;
-            }
-            prop.key.data.as_e_string()?;
-        }
-        let arena = self.arena;
-        for prop in properties {
-            if prop.flags.contains(bun_ast::flags::Property::IsSpread) {
-                continue;
-            }
-            let alias: &'a [u8] = prop
-                .key
-                .data
-                .as_e_string()
-                .expect("infallible: checked above")
-                .slice(arena);
-            // `Ref::NONE` keeps the alias regardless of whether the local is
-            // read: a default value makes reading the (possibly absent) export
-            // observable, a nested pattern reads through it, and a repeated key
-            // (`{x, x: y}`) has two locals.
-            let map = self
-                .import_items_for_namespace
-                .get_mut(&namespace_ref)
-                .unwrap();
-            let local_ref = match prop.value.data {
-                bun_ast::binding::Data::BIdentifier(id)
-                    if !keep_all && prop.default_value.is_none() && !map.contains(alias) =>
-                {
-                    id.r#ref
-                }
-                _ => Ref::NONE,
-            };
-            map.put(
-                alias,
-                LocRef {
-                    loc: prop.key.loc,
-                    ref_: local_ref,
-                },
-            )
-            .expect("oom");
-        }
+        let map = self
+            .import_items_for_namespace
+            .get_mut(&namespace_ref)
+            .unwrap();
+        let rest_ref = record_destructured_aliases(self.arena, map, properties, keep_all)?;
         if let Some((rest, loc)) = rest_ref {
             self.register_dynamic_import_namespace_local_multi(rest, loc, records);
         }
@@ -9797,4 +9748,65 @@ pub(crate) fn null_stmt_data() -> js_ast::StmtData {
 #[inline]
 pub(crate) fn null_value_expr() -> js_ast::ExprData {
     js_ast::ExprData::ENull(E::Null {})
+}
+
+/// The property walk of `try_track_dynamic_import_destructure`, which does not
+/// depend on the parser's const generics: validate the pattern, record each
+/// key into `map`, and hand back the trailing `...rest` binding if any.
+fn record_destructured_aliases(
+    arena: &Bump,
+    map: &mut ImportItemForNamespaceMap,
+    properties: &[bun_ast::B::Property],
+    keep_all: bool,
+) -> Option<Option<(Ref, bun_ast::Loc)>> {
+    let mut rest_ref: Option<(Ref, bun_ast::Loc)> = None;
+    for (i, prop) in properties.iter().enumerate() {
+        if prop.flags.contains(bun_ast::flags::Property::IsSpread) {
+            // An exported `...rest` is observed whole by importers of this file.
+            if i + 1 != properties.len() || keep_all {
+                return None;
+            }
+            let bun_ast::binding::Data::BIdentifier(id) = prop.value.data else {
+                return None;
+            };
+            rest_ref = Some((id.r#ref, prop.value.loc));
+            continue;
+        }
+        if prop.flags.contains(bun_ast::flags::Property::IsComputed) {
+            return None;
+        }
+        prop.key.data.as_e_string()?;
+    }
+    for prop in properties {
+        if prop.flags.contains(bun_ast::flags::Property::IsSpread) {
+            continue;
+        }
+        let alias: &[u8] = prop
+            .key
+            .data
+            .as_e_string()
+            .expect("infallible: checked above")
+            .slice(arena);
+        // `Ref::NONE` keeps the alias regardless of whether the local is
+        // read: a default value makes reading the (possibly absent) export
+        // observable, a nested pattern reads through it, and a repeated key
+        // (`{x, x: y}`) has two locals.
+        let local_ref = match prop.value.data {
+            bun_ast::binding::Data::BIdentifier(id)
+                if !keep_all && prop.default_value.is_none() && !map.contains(alias) =>
+            {
+                id.r#ref
+            }
+            _ => Ref::NONE,
+        };
+        map.put(
+            alias,
+            LocRef {
+                loc: prop.key.loc,
+                ref_: local_ref,
+            },
+        )
+        .expect("oom");
+    }
+    Some(rest_ref)
 }

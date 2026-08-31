@@ -4214,14 +4214,15 @@ impl<'a> LinkerContext<'a> {
             )
             .expect("unreachable");
         if result.kind == MatchImportKind::NormalAndNamespace {
-            // SAFETY: one-shot field store after `imports_to_bind.put` (disjoint
-            // map) has fully returned; no other live borrow aliases this symbol slot.
-            unsafe { self.graph.symbol_mut(import_ref) }.namespace_alias =
-                Some(bun_alloc::ast_box(G::NamespaceAlias {
-                    namespace_ref: result.namespace_ref,
-                    alias: result.alias,
-                    ..Default::default()
-                }));
+            self.graph
+                .symbols
+                .get_mut(import_ref)
+                .unwrap()
+                .namespace_alias = Some(bun_alloc::ast_box(G::NamespaceAlias {
+                namespace_ref: result.namespace_ref,
+                alias: result.alias,
+                ..Default::default()
+            }));
         }
         true
     }

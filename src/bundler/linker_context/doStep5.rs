@@ -257,15 +257,15 @@ impl LinkerContext<'_> {
                 None => Vec::new(),
                 Some(m) => m.keys().to_vec(),
             };
+            let symbol_uses = &mut part.symbol_uses;
             for ref_ in &prop_use_refs {
-                // Re-fetch each iteration to avoid overlapping &mut.
-                let properties: *const _ = part
+                let properties = part
                     .import_symbol_property_uses
                     .as_ref()
                     .unwrap()
                     .get(ref_)
                     .unwrap();
-                let use_: &mut SymbolUse = part.symbol_uses.get_ptr_mut(ref_).unwrap();
+                let use_: &mut SymbolUse = symbol_uses.get_ptr_mut(ref_).unwrap();
 
                 // Rare path: this import is a TypeScript enum
                 if let Some(import_data) = our_imports_to_bind.get(ref_) {
@@ -275,10 +275,7 @@ impl LinkerContext<'_> {
                             if let Some(enum_data) = c.graph.ts_enums.get(&import_ref) {
                                 let mut found_non_inlined_enum = false;
 
-                                // SAFETY: `properties` points into
-                                // `part.import_symbol_property_uses` which is not
-                                // mutated for the lifetime of this borrow.
-                                for (name, prop_use) in unsafe { (*properties).iter() } {
+                                for (name, prop_use) in properties.iter() {
                                     if enum_data.get(name).is_none() {
                                         found_non_inlined_enum = true;
                                         use_.count_estimate += prop_use.count_estimate;
@@ -287,7 +284,7 @@ impl LinkerContext<'_> {
 
                                 if !found_non_inlined_enum {
                                     if use_.count_estimate == 0 {
-                                        let _ = part.symbol_uses.swap_remove(ref_);
+                                        let _ = symbol_uses.swap_remove(ref_);
                                     }
                                     continue;
                                 }
@@ -300,8 +297,7 @@ impl LinkerContext<'_> {
                 // resolved to (`bind_import_property_accesses`): the use
                 // belongs to that binding, not to `X`.
                 if let Some(bindings) = c.graph.import_member_bindings.get(ref_) {
-                    // SAFETY: see above.
-                    for (name, prop_use) in unsafe { (*properties).iter() } {
+                    for (name, prop_use) in properties.iter() {
                         match bindings.get(&**name) {
                             Some(&binding) => {
                                 bound_member_uses.push((binding, prop_use.count_estimate))
@@ -310,10 +306,10 @@ impl LinkerContext<'_> {
                         }
                     }
                     if use_.count_estimate == 0 {
-                        let _ = part.symbol_uses.swap_remove(ref_);
+                        let _ = symbol_uses.swap_remove(ref_);
                     }
                     for (binding, count) in bound_member_uses.drain(..) {
-                        part.symbol_uses
+                        symbol_uses
                             .get_or_put_value(binding, SymbolUse::default())
                             .expect("OOM")
                             .value_ptr
@@ -323,8 +319,7 @@ impl LinkerContext<'_> {
                 }
 
                 // Common path: this import isn't a TypeScript enum
-                // SAFETY: see above.
-                for prop_use in unsafe { (*properties).values() } {
+                for prop_use in properties.values() {
                     use_.count_estimate += prop_use.count_estimate;
                 }
             }

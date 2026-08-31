@@ -337,17 +337,15 @@ void HostClient::handleReply(const Frame& h, Reader r)
         return;
     }
     case Reply::NavFailEvent: {
+        // Callback only. The slot settles on the NavFailed that follows when
+        // the failure belongs to an IPC navigate; the delegate also fails
+        // for navigations no IPC navigate owns (reload, back/forward, the
+        // page itself), and only the host can tell them apart.
         WTF::String err = r.str();
         view->m_loading = false;
-        JSValue errValue = createError(g, err);
-        // This event both settles the slot and fires the callback, in that
-        // order: a retry with navigate() from inside onNavigationFailed
-        // sees an empty slot instead of ERR_INVALID_STATE. The host sends
-        // no NavFailed after it (that would reject the retry's promise).
-        settleSlot(g, view, view->m_pendingNavigate, false, errValue);
         if (JSObject* cb = view->m_onNavigationFailed.get()) {
             Bun__EventLoop__runCallback2(g, JSValue::encode(cb), JSValue::encode(jsUndefined()),
-                JSValue::encode(errValue), JSValue::encode(jsUndefined()));
+                JSValue::encode(createError(g, err)), JSValue::encode(jsUndefined()));
         }
         return;
     }
@@ -410,9 +408,9 @@ void HostClient::handleReply(const Frame& h, Reader r)
         settleSlot(g, view, view->m_pendingNavigate, true, jsUndefined());
         return;
     case Reply::NavFailed:
-        // Only the NavFailed-only paths send this (host_main's invalid
-        // viewId, navigateIPC's navigation-already-pending). A navigation
-        // failure settles through NavFailEvent instead.
+        // NavFailEvent precedes this on navigation failures. host_main's
+        // invalid-viewId NavFailed has no event, so keep the m_loading
+        // reset here too.
         view->m_loading = false;
         settleSlot(g, view, view->m_pendingNavigate, false, createError(g, r.str()));
         return;

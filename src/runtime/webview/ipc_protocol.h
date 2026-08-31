@@ -211,11 +211,9 @@ enum class Reply : uint8_t {
     Ack = 8, // no payload — Create/Close/Resize/Go*/Reload
     Error = 9, // u32 errLen, err bytes
 
-    // Unsolicited, same viewId in header. NavEvent fires onNavigated and
-    // arrives BEFORE the NavDone reply, so the callback runs before
-    // `await navigate()` resumes. NavFailEvent settles m_pendingNavigate
-    // itself and then fires onNavigationFailed; no NavFailed follows it
-    // (one would reject a retry navigate() issued from the callback).
+    // Unsolicited — fires the onNavigated/onNavigationFailed callback.
+    // Same viewId in header; these arrive BEFORE the corresponding
+    // NavDone/NavFailed reply so the callback fires before `await` resumes.
     NavEvent = 10, // u32 urlLen, url, u32 titleLen, title
     NavFailEvent = 11, // u32 errLen, err
 

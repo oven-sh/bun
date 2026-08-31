@@ -3,8 +3,6 @@
 #include "BunCommonStrings.h"
 #include <JavaScriptCore/JSString.h>
 #include <JavaScriptCore/JSGlobalObject.h>
-#include <JavaScriptCore/LazyProperty.h>
-#include <JavaScriptCore/LazyPropertyInlines.h>
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/SlotVisitorInlines.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
@@ -12,54 +10,63 @@
 namespace Bun {
 using namespace JSC;
 
-#define BUN_COMMON_STRINGS_LITERAL_ENTRY(name) ASCIILiteral(),
+// Every entry's text, by Index. Identifier-backed entries share the identifier's atom (see identifierAt).
+#define BUN_COMMON_STRINGS_LITERAL_ENTRY(name, builtinName) #builtinName##_s,
+#define BUN_COMMON_STRINGS_LITERAL_ENTRY_VM_PROPERTY_NAME(name, propertyName, literal) literal##_s,
 #define BUN_COMMON_STRINGS_LITERAL_ENTRY_NOT_BUILTIN_NAMES(name, literal) literal##_s,
 // clang-format off
 static constexpr ASCIILiteral commonStringLiterals[] = {
     BUN_COMMON_STRINGS_EACH_NAME(BUN_COMMON_STRINGS_LITERAL_ENTRY)
+    BUN_COMMON_STRINGS_EACH_VM_PROPERTY_NAME(BUN_COMMON_STRINGS_LITERAL_ENTRY_VM_PROPERTY_NAME)
     BUN_COMMON_STRINGS_EACH_NAME_NOT_BUILTIN_NAMES(BUN_COMMON_STRINGS_LITERAL_ENTRY_NOT_BUILTIN_NAMES)
 };
 // clang-format on
 #undef BUN_COMMON_STRINGS_LITERAL_ENTRY
+#undef BUN_COMMON_STRINGS_LITERAL_ENTRY_VM_PROPERTY_NAME
 #undef BUN_COMMON_STRINGS_LITERAL_ENTRY_NOT_BUILTIN_NAMES
 static_assert(std::size(commonStringLiterals) == static_cast<size_t>(CommonStrings::Index::Count));
 
-static const JSC::Identifier& builtinNameAt(VM& vm, CommonStrings::Index index)
+// The identifier an entry shares its atom with, or null for a literal-only entry.
+static const JSC::Identifier* identifierAt(VM& vm, CommonStrings::Index index)
 {
-    auto& names = WebCore::builtinNames(vm);
     switch (index) {
-#define BUN_COMMON_STRINGS_BUILTIN_NAME_CASE(name) \
-    case CommonStrings::Index::name:               \
-        return names.name##PublicName();
+#define BUN_COMMON_STRINGS_BUILTIN_NAME_CASE(name, builtinName) \
+    case CommonStrings::Index::name:                            \
+        return &WebCore::builtinNames(vm).builtinName##PublicName();
         BUN_COMMON_STRINGS_EACH_NAME(BUN_COMMON_STRINGS_BUILTIN_NAME_CASE)
 #undef BUN_COMMON_STRINGS_BUILTIN_NAME_CASE
+#define BUN_COMMON_STRINGS_VM_PROPERTY_NAME_CASE(name, propertyName, literal) \
+    case CommonStrings::Index::name:                                          \
+        return &vm.propertyNames->propertyName;
+        BUN_COMMON_STRINGS_EACH_VM_PROPERTY_NAME(BUN_COMMON_STRINGS_VM_PROPERTY_NAME_CASE)
+#undef BUN_COMMON_STRINGS_VM_PROPERTY_NAME_CASE
     default:
-        RELEASE_ASSERT_NOT_REACHED();
+        return nullptr;
     }
 }
 
-void CommonStrings::initialize()
+void CommonStrings::initialize(JSString*& slot, Index index)
 {
-    for (auto& string : m_strings) {
-        string.initLater([](const JSC::LazyProperty<JSGlobalObject, JSString>::Initializer& init) {
-            auto& self = defaultGlobalObject(init.owner)->commonStrings();
-            size_t i = &init.property - self.m_strings;
-            ASSERT(i < std::size(self.m_strings));
-            auto literal = commonStringLiterals[i];
-            if (literal.isNull()) {
-                init.set(jsOwnedString(init.vm, builtinNameAt(init.vm, static_cast<Index>(i)).string()));
-                return;
-            }
-            init.set(jsString(init.vm, AtomString(literal)));
-        });
+    ASSERT(m_vm.currentThreadIsHoldingAPILock());
+    auto literal = commonStringLiterals[static_cast<size_t>(index)];
+    if (const auto* identifier = identifierAt(m_vm, index)) {
+        ASSERT(identifier->string() == literal);
+        slot = jsOwnedString(m_vm, identifier->string());
+        return;
     }
+    slot = jsString(m_vm, AtomString(literal));
 }
 
 template<typename Visitor>
 void CommonStrings::visit(Visitor& visitor)
 {
-    for (auto& string : m_strings)
-        string.visit(visitor);
+#define BUN_COMMON_STRINGS_VISIT(name, ...) \
+    if (m_##name)                           \
+        visitor.appendUnbarriered(m_##name);
+    BUN_COMMON_STRINGS_EACH_NAME(BUN_COMMON_STRINGS_VISIT)
+    BUN_COMMON_STRINGS_EACH_VM_PROPERTY_NAME(BUN_COMMON_STRINGS_VISIT)
+    BUN_COMMON_STRINGS_EACH_NAME_NOT_BUILTIN_NAMES(BUN_COMMON_STRINGS_VISIT)
+#undef BUN_COMMON_STRINGS_VISIT
 }
 
 template void CommonStrings::visit(JSC::AbstractSlotVisitor&);
@@ -68,18 +75,7 @@ template void CommonStrings::visit(JSC::SlotVisitor&);
 #if ASSERT_ENABLED
 bool CommonStrings::isCommonStringLiteral(std::span<const Latin1Character> literal)
 {
-    // The builtin-name entries have a null literal above; their text is the name itself.
-#define BUN_COMMON_STRINGS_BUILTIN_NAME_LITERAL(name) #name##_s,
-    static constexpr ASCIILiteral builtinNameLiterals[] = {
-        BUN_COMMON_STRINGS_EACH_NAME(BUN_COMMON_STRINGS_BUILTIN_NAME_LITERAL)
-    };
-#undef BUN_COMMON_STRINGS_BUILTIN_NAME_LITERAL
-
     for (const auto& entry : commonStringLiterals) {
-        if (!entry.isNull() && equalSpans(entry.span8(), literal))
-            return true;
-    }
-    for (const auto& entry : builtinNameLiterals) {
         if (equalSpans(entry.span8(), literal))
             return true;
     }
@@ -130,9 +126,10 @@ enum class HTTPMethod : uint8_t {
 
 static JSC::JSValue toJS(Zig::GlobalObject* globalObject, HTTPMethod method)
 {
+    auto& commonStrings = Bun::commonStrings(globalObject->vm());
 #define FOR_EACH_METHOD(method)    \
     case HTTPMethod::http##method: \
-        return globalObject->commonStrings().http##method##String(globalObject);
+        return commonStrings.http##method##String();
 
     switch (method) {
         FOR_EACH_METHOD(ACL)
@@ -215,56 +212,56 @@ enum class CommonStringsForRust : uint8_t {
 
 static JSC::JSValue toJS(Zig::GlobalObject* globalObject, CommonStringsForRust commonString)
 {
-    auto& commonStrings = globalObject->commonStrings();
+    auto& commonStrings = Bun::commonStrings(globalObject->vm());
     switch (commonString) {
     case CommonStringsForRust::IPv4:
-        return commonStrings.IPv4String(globalObject);
+        return commonStrings.IPv4String();
     case CommonStringsForRust::IPv6:
-        return commonStrings.IPv6String(globalObject);
+        return commonStrings.IPv6String();
     case CommonStringsForRust::IN4Loopback:
-        return commonStrings.IN4LoopbackString(globalObject);
+        return commonStrings.IN4LoopbackString();
     case CommonStringsForRust::IN6Any:
-        return commonStrings.IN6AnyString(globalObject);
+        return commonStrings.IN6AnyString();
     case CommonStringsForRust::ipv4Lower:
-        return commonStrings.ipv4LowerString(globalObject);
+        return commonStrings.ipv4LowerString();
     case CommonStringsForRust::ipv6Lower:
-        return commonStrings.ipv6LowerString(globalObject);
+        return commonStrings.ipv6LowerString();
     case CommonStringsForRust::fetchDefault:
         return globalObject->vm().smallStrings.defaultString();
     case CommonStringsForRust::fetchError:
-        return commonStrings.fetchErrorString(globalObject);
+        return commonStrings.fetchErrorString();
     case CommonStringsForRust::fetchInclude:
-        return commonStrings.fetchIncludeString(globalObject);
+        return commonStrings.fetchIncludeString();
     case CommonStringsForRust::buffer:
-        return commonStrings.bufferString(globalObject);
+        return commonStrings.bufferString();
     case CommonStringsForRust::binaryTypeArrayBuffer:
-        return commonStrings.binaryTypeArrayBufferString(globalObject);
+        return commonStrings.binaryTypeArrayBufferString();
     case CommonStringsForRust::binaryTypeNodeBuffer:
-        return commonStrings.binaryTypeNodeBufferString(globalObject);
+        return commonStrings.binaryTypeNodeBufferString();
     case CommonStringsForRust::binaryTypeUint8Array:
-        return commonStrings.binaryTypeUint8ArrayString(globalObject);
+        return commonStrings.binaryTypeUint8ArrayString();
     case CommonStringsForRust::binaryTypeBlob:
-        return commonStrings.binaryTypeBlobString(globalObject);
+        return commonStrings.binaryTypeBlobString();
     case CommonStringsForRust::unknown:
-        return commonStrings.unknownString(globalObject);
+        return commonStrings.unknownString();
     case CommonStringsForRust::protocolHttp:
-        return commonStrings.protocolHttpString(globalObject);
+        return commonStrings.protocolHttpString();
     case CommonStringsForRust::protocolHttps:
-        return commonStrings.protocolHttpsString(globalObject);
+        return commonStrings.protocolHttpsString();
     case CommonStringsForRust::alpnH2:
-        return commonStrings.alpnH2String(globalObject);
+        return commonStrings.alpnH2String();
     case CommonStringsForRust::alpnHttp11:
-        return commonStrings.alpnHttp11String(globalObject);
+        return commonStrings.alpnHttp11String();
     case CommonStringsForRust::utf8WithDash:
-        return commonStrings.utf8WithDashString(globalObject);
+        return commonStrings.utf8WithDashString();
     case CommonStringsForRust::quicDatagramAbandoned:
-        return commonStrings.quicDatagramAbandonedString(globalObject);
+        return commonStrings.quicDatagramAbandonedString();
     case CommonStringsForRust::quicDatagramAcknowledged:
-        return commonStrings.quicDatagramAcknowledgedString(globalObject);
+        return commonStrings.quicDatagramAcknowledgedString();
     case CommonStringsForRust::quicDatagramLost:
-        return commonStrings.quicDatagramLostString(globalObject);
+        return commonStrings.quicDatagramLostString();
     case CommonStringsForRust::base64:
-        return commonStrings.base64String(globalObject);
+        return commonStrings.base64String();
     default: {
         ASSERT_NOT_REACHED();
         return jsUndefined();
@@ -289,20 +286,20 @@ enum class FetchCacheMode : uint8_t {
 
 extern "C" JSC::EncodedJSValue Bun__FetchCacheMode__toJS(FetchCacheMode mode, Zig::GlobalObject* globalObject)
 {
-    auto& commonStrings = globalObject->commonStrings();
+    auto& commonStrings = Bun::commonStrings(globalObject->vm());
     switch (mode) {
     case FetchCacheMode::Default:
         return JSValue::encode(globalObject->vm().smallStrings.defaultString());
     case FetchCacheMode::NoStore:
-        return JSValue::encode(commonStrings.fetchNoStoreString(globalObject));
+        return JSValue::encode(commonStrings.fetchNoStoreString());
     case FetchCacheMode::Reload:
-        return JSValue::encode(commonStrings.fetchReloadString(globalObject));
+        return JSValue::encode(commonStrings.fetchReloadString());
     case FetchCacheMode::NoCache:
-        return JSValue::encode(commonStrings.fetchNoCacheString(globalObject));
+        return JSValue::encode(commonStrings.fetchNoCacheString());
     case FetchCacheMode::ForceCache:
-        return JSValue::encode(commonStrings.fetchForceCacheString(globalObject));
+        return JSValue::encode(commonStrings.fetchForceCacheString());
     case FetchCacheMode::OnlyIfCached:
-        return JSValue::encode(commonStrings.fetchOnlyIfCachedString(globalObject));
+        return JSValue::encode(commonStrings.fetchOnlyIfCachedString());
     default: {
         ASSERT_NOT_REACHED();
         return JSValue::encode(jsUndefined());
@@ -319,14 +316,14 @@ enum class FetchRedirect : uint8_t {
 
 extern "C" JSC::EncodedJSValue Bun__FetchRedirect__toJS(FetchRedirect redirect, Zig::GlobalObject* globalObject)
 {
-    auto& commonStrings = globalObject->commonStrings();
+    auto& commonStrings = Bun::commonStrings(globalObject->vm());
     switch (redirect) {
     case FetchRedirect::Follow:
-        return JSValue::encode(commonStrings.fetchFollowString(globalObject));
+        return JSValue::encode(commonStrings.fetchFollowString());
     case FetchRedirect::Manual:
-        return JSValue::encode(commonStrings.fetchManualString(globalObject));
+        return JSValue::encode(commonStrings.fetchManualString());
     case FetchRedirect::Error:
-        return JSValue::encode(commonStrings.fetchErrorString(globalObject));
+        return JSValue::encode(commonStrings.fetchErrorString());
     default: {
         ASSERT_NOT_REACHED();
         return JSValue::encode(jsUndefined());
@@ -344,16 +341,16 @@ enum class FetchRequestMode : uint8_t {
 
 extern "C" JSC::EncodedJSValue Bun__FetchRequestMode__toJS(FetchRequestMode mode, Zig::GlobalObject* globalObject)
 {
-    auto& commonStrings = globalObject->commonStrings();
+    auto& commonStrings = Bun::commonStrings(globalObject->vm());
     switch (mode) {
     case FetchRequestMode::SameOrigin:
-        return JSValue::encode(commonStrings.fetchSameOriginString(globalObject));
+        return JSValue::encode(commonStrings.fetchSameOriginString());
     case FetchRequestMode::NoCors:
-        return JSValue::encode(commonStrings.fetchNoCorsString(globalObject));
+        return JSValue::encode(commonStrings.fetchNoCorsString());
     case FetchRequestMode::Cors:
-        return JSValue::encode(commonStrings.fetchCorsString(globalObject));
+        return JSValue::encode(commonStrings.fetchCorsString());
     case FetchRequestMode::Navigate:
-        return JSValue::encode(commonStrings.fetchNavigateString(globalObject));
+        return JSValue::encode(commonStrings.fetchNavigateString());
     default: {
         ASSERT_NOT_REACHED();
         return JSValue::encode(jsUndefined());

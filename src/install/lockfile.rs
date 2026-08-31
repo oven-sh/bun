@@ -3057,14 +3057,7 @@ impl Lockfile {
         }
 
         let mut digest = ZERO_HASH;
-        // SAFETY: engine is null (default).
-        unsafe {
-            Crypto::SHA512_256::hash(
-                alphabetized_name_version_string,
-                &mut digest,
-                core::ptr::null_mut(),
-            )
-        };
+        Crypto::SHA512_256::hash(alphabetized_name_version_string, &mut digest, None);
 
         Ok(digest)
     }

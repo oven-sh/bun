@@ -332,6 +332,34 @@ impl ArrayBuffer {
         })
     }
 
+    /// A `Uint8Array` that takes over `bytes`' allocation (no copy); JSC frees
+    /// it when the array is collected. An empty `bytes` yields a fresh empty
+    /// array and its allocation (if any) is released here.
+    pub fn create_uint8_array_from_vec(
+        global: &JSGlobalObject,
+        bytes: Vec<u8>,
+    ) -> JsResult<JSValue> {
+        if bytes.is_empty() {
+            return Self::create_uint8_array(global, &[]);
+        }
+        let mut bytes = core::mem::ManuallyDrop::new(bytes);
+        let len = bytes.len();
+        let ptr = bytes.as_mut_ptr();
+        // SAFETY: `ptr[..len]` is the `Vec`'s live global-allocator (mimalloc)
+        // allocation, now owned by JSC and freed exactly once by
+        // `MarkedArrayBuffer_deallocator` (`mi_free`, which needs no capacity).
+        unsafe {
+            make_typed_array_with_bytes_no_copy(
+                global,
+                TypedArrayType::TypeUint8,
+                ptr.cast::<c_void>(),
+                len,
+                Some(MarkedArrayBuffer_deallocator),
+                ptr.cast::<c_void>(),
+            )
+        }
+    }
+
     pub fn create_uint8_array(global: &JSGlobalObject, bytes: &[u8]) -> JsResult<JSValue> {
         crate::mark_binding!();
         // SAFETY: FFI — `global` is a live opaque ZST handle (coerces to *const); bytes ptr/len
@@ -1038,6 +1066,36 @@ pub(crate) unsafe fn make_array_buffer_with_bytes_no_copy(
             Bun__makeArrayBufferWithBytesNoCopy(global, ptr, len, deallocator, deallocator_context)
         }
     })
+}
+
+/// A `Uint8Array` over `map`'s bytes. JSC takes over the mapping and unmaps it
+/// when the buffer is collected.
+#[cfg(not(windows))]
+pub fn uint8_array_from_mapped_file(
+    global: &JSGlobalObject,
+    map: bun_sys::MappedFile,
+) -> JsResult<JSValue> {
+    extern "C" fn munmap_dealloc(ptr: *mut c_void, len: *mut c_void) {
+        // `ptr` is `base + delta` where `base` is page-aligned and
+        // `delta < page_size`, so rounding down recovers the mapping base.
+        let page = bun_sys::page_size();
+        let addr = ptr as usize;
+        let _ = bun_sys::munmap((addr - addr % page) as *mut u8, len as usize);
+    }
+
+    let (base, len, delta) = map.into_raw();
+    // SAFETY: `base[..len]` is a live mapping we now own; JSC frees it exactly
+    // once through `munmap_dealloc`, which gets the whole mapping's length as ctx.
+    unsafe {
+        make_typed_array_with_bytes_no_copy(
+            global,
+            TypedArrayType::TypeUint8,
+            base.as_ptr().add(delta).cast::<c_void>(),
+            len - delta,
+            Some(munmap_dealloc),
+            len as *mut c_void,
+        )
+    }
 }
 
 /// Wrap caller-provided bytes in a JS typed array of `array_type` without

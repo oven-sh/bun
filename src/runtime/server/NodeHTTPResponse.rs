@@ -16,7 +16,7 @@ use bun_uws_sys as uws_sys;
 use crate::server::jsc::{
     self, CallFrame, ErrorCode, JSGlobalObject, JSValue, JsResult, StrongOptional, VirtualMachine,
 };
-use crate::server::{AnyServer, AnyServerTag, HTTPStatusText, ServerWebSocket};
+use crate::server::{AnyServer, HTTPStatusText, ServerWebSocket};
 use crate::webcore::AutoFlusher;
 
 bun_core::declare_scope!(NodeHTTPResponse, visible);
@@ -257,8 +257,7 @@ fn vm_get<'a>() -> &'a mut VirtualMachine {
 /// call-site symmetry but reads the thread-local directly:
 /// `VirtualMachine::as_mut()` ignores its receiver and re-reads the TLS slot,
 /// so routing through `global.bun_vm()` was pure overhead on the per-request
-/// path (`NodeHTTPResponse__createForJS` disasm showed the `bunVM` FFI result
-/// dropped on the floor).
+/// path (`NodeHTTPResponse::create`).
 #[inline(always)]
 fn bun_vm_mut(_global: &JSGlobalObject) -> &mut VirtualMachine {
     VirtualMachine::get_mut()
@@ -324,28 +323,6 @@ extern "C" fn on_auto_flush_trampoline(ctx: *mut c_void) -> bool {
     // `register_auto_flush`; `DeferredTaskQueue::run` feeds it back unchanged
     // on the JS thread. `on_auto_flush` takes `&self`.
     unsafe { (*(ctx.cast_const().cast::<NodeHTTPResponse>())).on_auto_flush() }
-}
-
-/// Unpack the `AnyServer` tagged-pointer u64 handed across FFI from C++.
-///
-/// The packed repr is bits 0..49 = ptr,
-/// bits 49..64 = tag, with tag = `1024 - index` (see `bun_ptr::tagged_pointer`).
-/// The Rust `AnyServer` stores `(tag, ptr)` unpacked, so map the wire tag back
-/// to `AnyServerTag` here.
-#[inline]
-fn any_server_from_packed(packed: u64) -> AnyServer {
-    let repr = bun_ptr::TaggedPtr::from(packed);
-    let tag = match repr.data() {
-        1024 => AnyServerTag::HTTPServer,
-        1023 => AnyServerTag::HTTPSServer,
-        1022 => AnyServerTag::DebugHTTPServer,
-        1021 => AnyServerTag::DebugHTTPSServer,
-        _ => unreachable!("Invalid pointer tag"),
-    };
-    AnyServer {
-        tag,
-        ptr: repr.get::<()>(),
-    }
 }
 
 /// `jsc.Codegen.JSNodeHTTPResponse` cached-property accessors.
@@ -534,17 +511,11 @@ impl NodeHTTPResponse {
         if upgrade_ctx.is_null() {
             return false;
         }
-        // `AnyServer` is a `Copy` type-erased pointer; copy it so the
-        // `&mut self`-taking accessor can be called from this `&self` body.
-        // The pointee is the long-lived server, not `*self`.
-        let mut server = self.server;
-        let Some(ws_handler) = server.web_socket_handler() else {
+        // The pointee is the long-lived server (and its websocket config), not `*self`.
+        let server = self.server;
+        let Some(ws_handler) = server.config().websocket.as_ref().map(|ws| &ws.handler) else {
             return false;
         };
-        // Lifetime-extend the handler past the method calls below.
-        // SAFETY: JS-thread only; the server (and its websocket config) outlives this call.
-        let ws_handler: &mut crate::server::WebSocketServerHandler =
-            unsafe { &mut *std::ptr::from_mut(ws_handler) };
         let socket_value = self.get_server_socket_value();
         if socket_value.is_empty() {
             return false;
@@ -725,7 +696,7 @@ impl NodeHTTPResponse {
 
         self.buffered_request_body_data_during_pause
             .with_mut(|b| b.clear_and_free());
-        let mut server = self.server;
+        let server = self.server;
         self.poll_ref.with_mut(|r| r.unref(vm));
         self.unregister_auto_flush();
 
@@ -2557,17 +2528,14 @@ impl Drop for NodeHTTPResponse {
 }
 
 /// # Safety
-/// `response` is the pointer written to `node_response_ptr` by
-/// `NodeHTTPResponse__createForJS` earlier in the same dispatch and is live;
-/// `data`/`length` describe a caller-owned buffer valid for the call.
+/// `response` is the JS wrapper's `m_ctx`; `data`/`length` describe a
+/// caller-owned buffer valid for the call.
 #[unsafe(no_mangle)]
 pub(crate) unsafe extern "C" fn NodeHTTPResponse__adoptRawRequestHeaders(
-    response: *mut NodeHTTPResponse,
+    response: &NodeHTTPResponse,
     data: *const u8,
     length: usize,
 ) {
-    // SAFETY: see the function-level contract above.
-    let response = unsafe { &*response };
     // SAFETY: `data`/`length` describe a caller-owned buffer valid for the
     // call (function-level contract above).
     let bytes = unsafe { core::slice::from_raw_parts(data, length) };
@@ -2576,96 +2544,85 @@ pub(crate) unsafe extern "C" fn NodeHTTPResponse__adoptRawRequestHeaders(
         .with_mut(|v| v.append_slice(bytes));
 }
 
-/// # Safety
-/// `has_body`, `request`, `response_ptr`, `upgrade_ctx`, and `node_response_ptr`
-/// are provided by C++ NodeHTTPServer and must be valid for the duration of the
-/// call; `has_body` and `node_response_ptr` must be writable.
-#[unsafe(no_mangle)]
-pub(crate) unsafe extern "C" fn NodeHTTPResponse__createForJS(
-    any_server_tag: u64,
-    global_object: &JSGlobalObject,
-    has_body: *mut bool,
-    request: *mut uws_sys::Request,
-    is_ssl: i32,
-    response_ptr: *mut c_void,
-    upgrade_ctx: *mut uws_sys::WebSocketUpgradeContext,
-    node_response_ptr: *mut *mut NodeHTTPResponse,
-) -> JSValue {
-    // SAFETY: all pointers are provided by C++ NodeHTTPServer and are live for the call.
-    let has_body = unsafe { &mut *has_body };
-    // S008: `uws::Request` is an `opaque_ffi!` ZST — safe deref.
-    let request_ref = bun_opaque::opaque_deref(request.cast_const());
+impl NodeHTTPResponse {
+    /// Allocate the native response (three refs: the HTTP response, the JS
+    /// object, the server's request handler — the last one returned) and its JS
+    /// wrapper for a `node:http` request. Also reports whether a body follows.
+    pub(crate) fn create(
+        server: AnyServer,
+        global_object: &JSGlobalObject,
+        request: &mut uws_sys::Request,
+        raw_response: uws::AnyResponse,
+        upgrade_ctx: *mut uws_sys::WebSocketUpgradeContext,
+    ) -> (bun_ptr::RefPtr<NodeHTTPResponse>, JSValue, bool) {
+        let mut has_body = false;
+        let request_ptr: *mut uws_sys::Request = request;
+        let request_ref = &*request;
 
-    let vm = bun_vm_mut(global_object);
-    let method = HttpMethod::which(request_ref.method()).unwrap_or(HttpMethod::OPTIONS);
-    // GET in node.js can have a body
-    if method.has_request_body() || method == HttpMethod::GET {
-        let req_len: usize = 'brk: {
-            if let Some(content_length) = request_ref.header(b"content-length") {
-                scoped_log!(
-                    NodeHTTPResponse,
-                    "content-length: {}",
-                    BStr::new(content_length)
-                );
-                break 'brk bun_http_types::parse_content_length(content_length);
-            }
-            break 'brk 0;
-        };
+        let vm = bun_vm_mut(global_object);
+        let method = HttpMethod::which(request_ref.method()).unwrap_or(HttpMethod::OPTIONS);
+        // GET in node.js can have a body
+        if method.has_request_body() || method == HttpMethod::GET {
+            let req_len: usize = 'brk: {
+                if let Some(content_length) = request_ref.header(b"content-length") {
+                    scoped_log!(
+                        NodeHTTPResponse,
+                        "content-length: {}",
+                        BStr::new(content_length)
+                    );
+                    break 'brk bun_http_types::parse_content_length(content_length);
+                }
+                break 'brk 0;
+            };
 
-        *has_body = req_len > 0 || request_ref.has_transfer_encoding();
+            has_body = req_len > 0 || request_ref.has_transfer_encoding();
+        }
+
+        let response = bun_core::heap::into_raw(Box::new(NodeHTTPResponse {
+            // 1 - the HTTP response
+            // 1 - the JS object
+            // 1 - the Server handler.
+            ref_count: bun_ptr::RefCount::init_exact_refs(3),
+            upgrade_context: JsCell::new(UpgradeCTX {
+                context: upgrade_ctx,
+                request: request_ptr,
+                sec_websocket_key: Box::default(),
+                sec_websocket_protocol: Box::default(),
+                sec_websocket_extensions: Box::default(),
+            }),
+            server,
+            raw_response: Cell::new(Some(raw_response)),
+            body_read_state: Cell::new(if has_body {
+                BodyReadState::Pending
+            } else {
+                BodyReadState::None
+            }),
+            flags: Cell::new(Flags::default()),
+            poll_ref: JsCell::new(jsc::Ref::default()),
+            body_read_ref: JsCell::new(jsc::Ref::default()),
+            promise: JsCell::new(StrongOptional::empty()),
+            buffered_request_body_data_during_pause: JsCell::new(Vec::new()),
+            request_trailers: JsCell::new(Vec::new()),
+            armed_this_value: Cell::new(JSValue::ZERO),
+            raw_request_headers: JsCell::new(Vec::new()),
+            bytes_written: Cell::new(0),
+            pending_pinned_write: Cell::new(PendingPinnedWrite::default()),
+            pending_pinned_write_owner: JsCell::new(crate::node::StringOrBuffer::EMPTY),
+            auto_flusher: JsCell::new(AutoFlusher::default()),
+        }));
+
+        // The server handler's ref (one of the initial 3).
+        // SAFETY: `response` was just allocated and leaked with that ref counted in.
+        let response = unsafe { bun_ptr::RefPtr::from_raw(response) };
+        if has_body {
+            response.body_read_ref.with_mut(|r| r.r#ref(vm));
+        }
+        response.poll_ref.with_mut(|r| r.r#ref(vm));
+        // SAFETY: `response` is a fresh `heap::alloc` heap payload; ownership of
+        // the +1 wrapper ref transfers to the GC (`NodeHTTPResponseClass__finalize`
+        // calls `finalize` → `deref`). `to_js_ptr` is the `#[JsClass]`-generated
+        // no-rebox wrapper around `NodeHTTPResponse__create`.
+        let js_this = unsafe { NodeHTTPResponse::to_js_ptr(response.as_ptr(), global_object) };
+        (response, js_this, has_body)
     }
-
-    let raw_response = if is_ssl != 0 {
-        uws::AnyResponse::SSL(response_ptr.cast())
-    } else {
-        uws::AnyResponse::TCP(response_ptr.cast())
-    };
-
-    let response = bun_core::heap::into_raw(Box::new(NodeHTTPResponse {
-        // 1 - the HTTP response
-        // 1 - the JS object
-        // 1 - the Server handler.
-        ref_count: bun_ptr::RefCount::init_exact_refs(3),
-        upgrade_context: JsCell::new(UpgradeCTX {
-            context: upgrade_ctx,
-            request,
-            sec_websocket_key: Box::default(),
-            sec_websocket_protocol: Box::default(),
-            sec_websocket_extensions: Box::default(),
-        }),
-        server: any_server_from_packed(any_server_tag),
-        raw_response: Cell::new(Some(raw_response)),
-        body_read_state: Cell::new(if *has_body {
-            BodyReadState::Pending
-        } else {
-            BodyReadState::None
-        }),
-        flags: Cell::new(Flags::default()),
-        poll_ref: JsCell::new(jsc::Ref::default()),
-        body_read_ref: JsCell::new(jsc::Ref::default()),
-        promise: JsCell::new(StrongOptional::empty()),
-        buffered_request_body_data_during_pause: JsCell::new(Vec::new()),
-        request_trailers: JsCell::new(Vec::new()),
-        armed_this_value: Cell::new(JSValue::ZERO),
-        raw_request_headers: JsCell::new(Vec::new()),
-        bytes_written: Cell::new(0),
-        pending_pinned_write: Cell::new(PendingPinnedWrite::default()),
-        pending_pinned_write_owner: JsCell::new(crate::node::StringOrBuffer::EMPTY),
-        auto_flusher: JsCell::new(AutoFlusher::default()),
-    }));
-
-    // SAFETY: `response` was just allocated and leaked; we hold the only reference.
-    let response_ref = unsafe { &*response };
-    if *has_body {
-        response_ref.body_read_ref.with_mut(|r| r.r#ref(vm));
-    }
-    response_ref.poll_ref.with_mut(|r| r.r#ref(vm));
-    // SAFETY: `response` is a fresh `heap::alloc` heap payload; ownership of
-    // the +1 wrapper ref transfers to the GC (`NodeHTTPResponseClass__finalize`
-    // calls `finalize` → `deref`). `to_js_ptr` is the `#[JsClass]`-generated
-    // no-rebox wrapper around `NodeHTTPResponse__create`.
-    let js_this = unsafe { NodeHTTPResponse::to_js_ptr(response, global_object) };
-    // SAFETY: out-param provided by caller.
-    unsafe { *node_response_ptr = response };
-    js_this
 }

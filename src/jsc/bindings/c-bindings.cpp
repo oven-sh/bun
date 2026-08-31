@@ -1165,6 +1165,51 @@ extern "C" void Bun__signpost_emit(os_log_t log, os_signpost_type_t type, os_sig
 
 #endif // OS(DARWIN) signpost code
 
+// NAPI link slots. Layout is ABI shared with src/standalone_graph/napi_link.rs
+// (which documents the scheme) and with external patch tools; the table gets
+// its own section so those tools can find it by name.
+#define BUN_NAPI_LINK_SLOT_COUNT 8
+#define BUN_NAPI_LINK_SLOT_MAGIC 0x006B6E696C6E7562ULL // "bunlink\0" LE
+
+extern "C" {
+struct BunNapiLinkSlot {
+    uint64_t magic; // BUN_NAPI_LINK_SLOT_MAGIC | (index << 56)
+    uint64_t offset; // from the start of the .bun section; 0 = unused
+    uint64_t length;
+    uint64_t hash;
+    char path[224]; // NUL-terminated /$bunfs/ path
+};
+static_assert(sizeof(BunNapiLinkSlot) == 256);
+}
+
+#define BUN_NAPI_LINK_SLOT_INIT(i) { BUN_NAPI_LINK_SLOT_MAGIC | ((uint64_t)(i) << 56), 0, 0, 0, { 0 } }
+#define BUN_NAPI_LINK_SLOTS_INIT                                                                                      \
+    { BUN_NAPI_LINK_SLOT_INIT(0), BUN_NAPI_LINK_SLOT_INIT(1), BUN_NAPI_LINK_SLOT_INIT(2), BUN_NAPI_LINK_SLOT_INIT(3), \
+        BUN_NAPI_LINK_SLOT_INIT(4), BUN_NAPI_LINK_SLOT_INIT(5), BUN_NAPI_LINK_SLOT_INIT(6), BUN_NAPI_LINK_SLOT_INIT(7) }
+
+#if OS(DARWIN)
+extern "C" __attribute__((section("__DATA,__bun_napi_lnk"), used, aligned(16))) BunNapiLinkSlot BUN_NAPI_LINK_SLOTS[BUN_NAPI_LINK_SLOT_COUNT] = BUN_NAPI_LINK_SLOTS_INIT;
+#elif defined(_WIN32)
+#pragma section(".bnapi", read, write)
+extern "C" __declspec(allocate(".bnapi")) BunNapiLinkSlot BUN_NAPI_LINK_SLOTS[BUN_NAPI_LINK_SLOT_COUNT] = BUN_NAPI_LINK_SLOTS_INIT;
+#else
+extern "C" __attribute__((section(".bun_napi_link"), used, aligned(16))) BunNapiLinkSlot BUN_NAPI_LINK_SLOTS[BUN_NAPI_LINK_SLOT_COUNT] = BUN_NAPI_LINK_SLOTS_INIT;
+#endif
+
+extern "C" BunNapiLinkSlot* Bun__getNapiLinkSlots()
+{
+    return &BUN_NAPI_LINK_SLOTS[0];
+}
+
+extern "C" uint32_t Bun__getNapiLinkSlotCount()
+{
+    return BUN_NAPI_LINK_SLOT_COUNT;
+}
+
+// Start of the .bun section (what BunNapiLinkSlot::offset is relative to);
+// defined per platform below.
+extern "C" const uint8_t* Bun__getNapiLinkSectionBase();
+
 #if OS(DARWIN) || defined(__linux__) || defined(__FreeBSD__)
 
 #if OS(DARWIN)
@@ -1195,6 +1240,59 @@ extern "C" uint64_t* Bun__getStandaloneModuleGraphMachoLength()
     return &BUN_COMPILED.size;
 }
 
+extern "C" const uint8_t* Bun__getNapiLinkSectionBase()
+{
+    return reinterpret_cast<const uint8_t*>(&BUN_COMPILED);
+}
+
+// dlopen() cannot load an image from a byte range, so link slots go through
+// the deprecated NSObjectFileImage API. The result is an NSModule, not a
+// dlopen handle; Process_functionDlopen uses Bun__darwinLookupSymbolInModule
+// on it instead of dlsym.
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+#include <mach-o/dyld.h>
+#include <mach-o/loader.h>
+
+extern "C" void* Bun__darwinLoadMachOFromMemory(const uint8_t* bytes, size_t len, const char* name)
+{
+    if (len < sizeof(mach_header_64)) return nullptr;
+
+    // NSCreateObjectFileImageFromMemory takes ownership of a writable buffer.
+    void* copy = ::malloc(len);
+    if (!copy) return nullptr;
+    ::memcpy(copy, bytes, len);
+
+    // It also only accepts MH_BUNDLE; an MH_DYLIB has the same layout.
+    auto* mh = reinterpret_cast<mach_header_64*>(copy);
+    if (mh->magic == MH_MAGIC_64 && mh->filetype == MH_DYLIB) {
+        mh->filetype = MH_BUNDLE;
+    }
+
+    NSObjectFileImage image = nullptr;
+    if (NSCreateObjectFileImageFromMemory(copy, len, &image) != NSObjectFileImageSuccess) {
+        ::free(copy);
+        return nullptr;
+    }
+    // PRIVATE == RTLD_LOCAL; RETURN_ON_ERROR keeps an unresolved import from aborting the process.
+    NSModule module = NSLinkModule(image, name,
+        NSLINKMODULE_OPTION_PRIVATE | NSLINKMODULE_OPTION_RETURN_ON_ERROR | NSLINKMODULE_OPTION_BINDNOW);
+    NSDestroyObjectFileImage(image); // releases `copy` on failure; dyld owns it on success
+    return reinterpret_cast<void*>(module);
+}
+
+extern "C" void* Bun__darwinLookupSymbolInModule(void* module, const char* name)
+{
+    if (!module) return nullptr;
+    // Unlike dlsym, NSLookupSymbolInModule wants the raw Mach-O name with its leading underscore.
+    char prefixed[256];
+    int n = ::snprintf(prefixed, sizeof(prefixed), "_%s", name);
+    if (n <= 0 || static_cast<size_t>(n) >= sizeof(prefixed)) return nullptr;
+    NSSymbol sym = NSLookupSymbolInModule(reinterpret_cast<NSModule>(module), prefixed);
+    return sym ? NSAddressOfSymbol(sym) : nullptr;
+}
+#pragma clang diagnostic pop
+
 #else // __linux__ / __FreeBSD__ — both ELF, same .bun section approach
 
 extern "C" BlobHeader __attribute__((section(".bun"), aligned(BLOB_HEADER_ALIGNMENT), used)) BUN_COMPILED = { 0 };
@@ -1202,6 +1300,14 @@ extern "C" BlobHeader __attribute__((section(".bun"), aligned(BLOB_HEADER_ALIGNM
 extern "C" uint64_t* Bun__getStandaloneModuleGraphELFVaddr()
 {
     return &BUN_COMPILED.size;
+}
+
+extern "C" const uint8_t* Bun__getNapiLinkSectionBase()
+{
+    // On ELF, BUN_COMPILED.size is the vaddr of the relocated .bun payload (see elf.rs).
+    uint64_t vaddr = BUN_COMPILED.size;
+    if (vaddr == 0) return nullptr;
+    return reinterpret_cast<const uint8_t*>(static_cast<uintptr_t>(vaddr));
 }
 
 #endif // OS(DARWIN) / __linux__
@@ -1255,6 +1361,12 @@ extern "C" uint8_t* Bun__getStandaloneModuleGraphPEData()
 {
     if (!initializePESection()) return nullptr;
     return pe_section_data;
+}
+
+extern "C" const uint8_t* Bun__getNapiLinkSectionBase()
+{
+    if (!initializePESection()) return nullptr;
+    return reinterpret_cast<const uint8_t*>(pe_section_size);
 }
 
 #endif

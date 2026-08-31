@@ -143,8 +143,7 @@ class SlotVisitor;
 
 namespace Bun {
 
-// One JSString per entry above, created on first use. A member of JSVMClientData
-// (reach it with Bun::commonStrings(vm)), rooted by the "Bcs" marking constraint.
+// One JSString per entry above, created on first use; see Bun::commonStrings(vm) in BunClientData.h.
 struct CommonStrings {
     // clang-format off
     enum class Index : uint8_t {

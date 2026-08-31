@@ -11,6 +11,7 @@
 //!
 //! Ported from TypeScript `src/HIR/BuildReactiveScopeTerminalsHIR.ts`.
 
+use bun_collections::index_sort;
 use std::collections::HashSet;
 
 use crate::collections::IdMap;
@@ -107,7 +108,7 @@ fn collect_scope_rewrites(func: &HirFunction, env: &mut Environment) -> Vec<Term
 
     // Sort: ascending by start, descending by end for ties
     let mut items: Vec<ScopeId> = scope_ids;
-    items.sort_unstable_by(|a, b| {
+    index_sort::sort_slice_unstable_by(&mut items, |a, b| {
         let a_range = &env.scopes[a.0 as usize].range;
         let b_range = &env.scopes[b.0 as usize].range;
         let start_diff = a_range.start.0.cmp(&b_range.start.0);

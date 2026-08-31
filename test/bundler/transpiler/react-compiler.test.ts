@@ -1127,6 +1127,88 @@ describe("bundler", () => {
       expect(out).toMatch(/__MEMO_CACHE_SENTINEL\)\s*\{[^}]*globalFn\(\)/);
     },
   });
+
+  // The compiler's sorts (src/react_compiler, via bun_collections::index_sort)
+  // decide the order of everything below. std's unstable sort is a plain
+  // insertion sort up to 20 elements and only switches to the real quicksort
+  // above that, so every list here has more than 20 entries; shorter lists
+  // would pass with any sort that gets the small case right. Names are
+  // compared bytewise, so `a10` sorts between `a1` and `a2`.
+  const deps = Array.from({ length: 22 }, (_, i) => `a${i}`);
+  const decls = Array.from({ length: 21 }, (_, i) => `b${i}`);
+  const scopes = Array.from({ length: 22 }, (_, i) => `c${i}`);
+
+  // One scope whose 22 dependencies all reach it through a closure:
+  // gather_captured_context (build_hir) orders the captured variables, and
+  // codegen orders the `$[n] !== dep` checks by name.
+  itBundled("react-compiler/SortsLargeDependencyList", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        export function Comp({ ${deps.join(", ")} }) {
+          const cb = () => [${deps.join(", ")}];
+          return <div onClick={cb} />;
+        }
+      `,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    external: ["*"],
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      const checked = Array.from(out.matchAll(/\$\[\d+\] !== (\w+)/g), m => m[1]);
+      expect(checked).toEqual(deps.toSorted());
+    },
+  });
+
+  // One scope with 21 declarations (`link` may mutate all of them, so they
+  // share a scope, and the JSX that reads them is a separate scope because it
+  // also depends on `props.title`): codegen orders the cache slots the
+  // declarations are written to by name.
+  itBundled("react-compiler/SortsLargeDeclarationList", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        export function Comp(props) {
+          ${decls.map(name => `const ${name} = {};`).join("\n")}
+          link(${decls.join(", ")});
+          return <div title={props.title}>{[${decls.join(", ")}]}</div>;
+        }
+      `,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    external: ["*"],
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      const cached = Array.from(out.matchAll(/\$\[\d+\] = (\w+)/g), m => m[1]);
+      expect(cached.filter(name => name.startsWith("b"))).toEqual(decls.toSorted());
+    },
+  });
+
+  // 22 independent scopes plus the JSX scope that depends on all of them:
+  // build_reactive_scope_terminals_hir and merge_overlapping_reactive_scopes_hir
+  // order the scopes, so the per-scope checks come out in source order
+  // (p.x0, p.x1, ..., p.x21), followed by the JSX scope's 22 checks in name order.
+  itBundled("react-compiler/SortsLargeScopeList", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        export function Comp(p) {
+          ${scopes.map((name, i) => `const ${name} = [p.x${i}];`).join("\n")}
+          return <div>{[${scopes.join(", ")}]}</div>;
+        }
+      `,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    external: ["*"],
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      const checked = Array.from(out.matchAll(/\$\[\d+\] !== ([\w.]+)/g), m => m[1]);
+      expect(checked).toEqual([...scopes.map((_, i) => `p.x${i}`), ...scopes.toSorted()]);
+    },
+  });
 });
 
 // validate_locals_not_reassigned_after_render (src/react_compiler/validation)

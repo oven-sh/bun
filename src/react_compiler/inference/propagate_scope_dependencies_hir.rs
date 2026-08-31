@@ -13,6 +13,7 @@
 //! - `src/HIR/DeriveMinimalDependenciesHIR.ts`
 
 use crate::collections::{IdMap, IndexMap};
+use bun_collections::index_sort;
 use std::collections::BTreeSet;
 
 use crate::collections::{FxHashMap as HashMap, FxHashSet as HashSet};
@@ -1560,7 +1561,7 @@ impl ReactiveScopeDependencyTreeHIR {
         // instruction-based entries, and the first insertion determines the
         // root access type.
         let mut sorted_deps: Vec<&ReactiveScopeDependency> = hoistable_objects.collect();
-        sorted_deps.sort_unstable_by(|a, b| {
+        index_sort::sort_slice_unstable_by(&mut sorted_deps, |a, b| {
             let a_optional = !a.path.is_empty() && a.path[0].optional;
             let b_optional = !b.path.is_empty() && b.path[0].optional;
             b_optional.cmp(&a_optional)

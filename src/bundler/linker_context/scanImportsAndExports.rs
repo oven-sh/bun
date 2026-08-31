@@ -167,24 +167,38 @@ pub(crate) fn scan_imports_and_exports(
                 continue;
             }
 
-            // Export names each static import record of this file binds, bucketed
-            // once so the per-record merge below is O(records + named imports).
-            // `None` = the record binds `* as ns`.
-            let mut static_aliases: Vec<Option<Vec<bun_ast::StoreStr>>> =
-                vec![Some(Vec::new()); col_ref!(import_records_list)[id].len() as usize];
+            // Named static imports contribute exactly their aliases to the
+            // importee's observable-export set (see below); `* as ns` and
+            // `export * from` make everything observable.
             for ni in col_ref!(named_imports)[id].values() {
-                let Some(slot) = static_aliases.get_mut(ni.import_record_index as usize) else {
+                let Some(record) = col_ref!(import_records_list)[id]
+                    .as_slice()
+                    .get(ni.import_record_index as usize)
+                else {
                     continue;
                 };
+                if record.kind != ImportKind::Stmt || !record.source_index.is_valid() {
+                    continue;
+                }
+                let other = record.source_index.get() as usize;
+                if other >= col_ref!(exports_kind).len()
+                    || col_ref!(exports_kind)[other] != ExportsKind::Esm
+                {
+                    continue;
+                }
                 if ni.alias_is_star {
-                    *slot = None;
-                } else if let (Some(list), Some(alias)) = (slot.as_mut(), ni.alias) {
-                    list.push(alias);
+                    col!(dyn_ref_aliases)[other].merge_all();
+                } else if let Some(alias) = ni.alias {
+                    col!(dyn_ref_aliases)[other].insert(alias.slice());
                 }
             }
             for &star in col_ref!(export_star_import_records)[id].iter() {
-                if let Some(slot) = static_aliases.get_mut(star as usize) {
-                    *slot = None;
+                if let Some(record) = col_ref!(import_records_list)[id]
+                    .as_slice()
+                    .get(star as usize)
+                    && record.source_index.is_valid()
+                {
+                    col!(dyn_ref_aliases)[record.source_index.get() as usize].merge_all();
                 }
             }
 
@@ -217,19 +231,11 @@ pub(crate) fn scan_imports_and_exports(
                     col!(dyn_ref_aliases)[other_file].merge_all();
                 } else {
                     match record.kind {
+                        // Named / bare static imports were accounted for above.
                         ImportKind::Stmt
                             if !record
                                 .flags
-                                .contains(ImportRecordFlags::CONTAINS_IMPORT_STAR) =>
-                        {
-                            match &static_aliases[import_record_index] {
-                                None => col!(dyn_ref_aliases)[other_file].merge_all(),
-                                Some(aliases) if !aliases.is_empty() => {
-                                    col!(dyn_ref_aliases)[other_file].merge_partial(aliases)
-                                }
-                                Some(_) => {}
-                            }
-                        }
+                                .contains(ImportRecordFlags::CONTAINS_IMPORT_STAR) => {}
                         ImportKind::Dynamic | ImportKind::Require => {
                             match col_ref!(dynamic_import_aliases)[id]
                                 .get(&(import_record_index as u32))
@@ -242,15 +248,13 @@ pub(crate) fn scan_imports_and_exports(
                                     // resolves through a `then` export, and `require()`
                                     // of an ES module returns its `module.exports`
                                     // export when it has one.
-                                    col!(dyn_ref_aliases)[other_file].merge_partial(&[
-                                        bun_ast::StoreStr::new(
-                                            if record.kind == ImportKind::Require {
-                                                b"module.exports"
-                                            } else {
-                                                b"then"
-                                            },
-                                        ),
-                                    ]);
+                                    col!(dyn_ref_aliases)[other_file].insert(
+                                        if record.kind == ImportKind::Require {
+                                            b"module.exports"
+                                        } else {
+                                            b"then"
+                                        },
+                                    );
                                 }
                             }
                         }

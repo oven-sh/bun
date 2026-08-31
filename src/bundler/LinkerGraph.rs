@@ -104,36 +104,39 @@ pub mod js_meta {
     pub type ProbablyTypescriptType = ArrayHashMap<Ref, (), AutoContext, AstAlloc>;
     pub type SortedAndFilteredExportAliases = AstVec<Box<[u8], AstAlloc>>;
     pub type CjsExportCopies = AstVec<Ref>;
-    /// Union of export aliases observed across every `import()` that targets
-    /// this file. `None` is the default before any importer is seen; `All`
-    /// means at least one importer captured the full namespace (sticky), so
-    /// the dynamic-import chunk must keep every export.
+    /// Union, per file, of the export names its importers can observe: named
+    /// static imports, tracked `import()` / `require()` reads. `None` until an
+    /// importer is seen; `All` once any importer can see the whole namespace
+    /// (sticky). Keys borrow parser-arena strings; nothing is copied.
     #[derive(Default)]
     pub enum DynamicImportReferencedAliases {
         #[default]
         None,
-        Partial(StringArrayHashMap<(), StringContext, AstAlloc>),
+        Partial(ArrayHashMap<&'static [u8], (), AutoContext, AstAlloc>),
         All,
     }
     impl DynamicImportReferencedAliases {
         pub fn merge_all(&mut self) {
             *self = Self::All;
         }
-        pub fn merge_partial(&mut self, aliases: &[bun_ast::StoreStr]) {
+        pub fn insert(&mut self, alias: &'static [u8]) {
             match self {
                 Self::All => {}
                 Self::None => {
-                    let mut set = StringArrayHashMap::<(), StringContext, AstAlloc>::default();
-                    for a in aliases {
-                        bun_core::handle_oom(set.put(a.slice(), ()));
-                    }
+                    let mut set =
+                        ArrayHashMap::<&'static [u8], (), AutoContext, AstAlloc>::default();
+                    bun_core::handle_oom(set.put(alias, ()));
                     *self = Self::Partial(set);
                 }
-                Self::Partial(set) => {
-                    for a in aliases {
-                        bun_core::handle_oom(set.put(a.slice(), ()));
-                    }
-                }
+                Self::Partial(set) => bun_core::handle_oom(set.put(alias, ())),
+            }
+        }
+        pub fn merge_partial(&mut self, aliases: &[bun_ast::StoreStr]) {
+            if aliases.is_empty() && matches!(self, Self::None) {
+                *self = Self::Partial(Default::default());
+            }
+            for a in aliases {
+                self.insert(a.slice());
             }
         }
     }

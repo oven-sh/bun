@@ -185,7 +185,7 @@ impl LinkerContext<'_> {
                 if let Some(js_meta::DynamicImportReferencedAliases::Partial(set)) =
                     referenced_filter
                 {
-                    if !set.contains(alias) {
+                    if !set.contains(&alias) {
                         continue;
                     }
                 }

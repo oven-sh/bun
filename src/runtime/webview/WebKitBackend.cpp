@@ -655,10 +655,8 @@ JSPromise* reload(JSGlobalObject* g, JSWebView* view)
     return sendOp(g, view, view->m_pendingMisc, Op::Reload, nullptr, 0);
 }
 
-// close() variant of the slot teardown, mirror of ChromeBackend's
-// rejectViewSlotsAsHandled: the user asked for the teardown, so a pending
-// op's rejection must not surface as an unhandled rejection. A held promise
-// (an unawaited navigate()) still rejects catchably.
+// close() variant, mirror of ChromeBackend's rejectViewSlotsAsHandled:
+// see rejectSlotAsHandled (JSWebView.h).
 static void rejectViewSlotsAsHandled(JSGlobalObject* g, JSWebView* view, JSValue err)
 {
     view->m_loading = false;

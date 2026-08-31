@@ -359,9 +359,8 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(constructWebView, __attribute__((minsiz
         }
         view->m_consoleIsGlobal = consoleIsGlobal;
         if (consoleCallback) view->m_onConsole.set(vm, view, consoleCallback);
-        // No user code ever holds this promise, so mark it handled: a later
-        // rejection (close() mid-load, a crash, a detach) must not surface
-        // as an unhandled rejection the caller cannot catch.
+        // No user code ever holds this promise; handled, so a rejection
+        // (close mid-load, crash) cannot surface as unhandledRejection.
         if (!initialUrl.isEmpty()) {
             if (auto* p = view->navigate(globalObject, initialUrl)) p->markAsHandled();
         }
@@ -384,8 +383,8 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(constructWebView, __attribute__((minsiz
     // Navigate promise lands in m_pendingNavigate; the user's first await
     // (including the next navigate()) serializes behind it. If it rejects
     // (bad URL), the next op's checkSlot sees the slot cleared and proceeds.
-    // No user code ever holds this promise, so mark it handled: a rejection
-    // must not surface as an unhandled rejection the caller cannot catch.
+    // No user code ever holds this promise; handled, so a rejection cannot
+    // surface as unhandledRejection.
     if (!initialUrl.isEmpty()) {
         if (auto* p = view->navigate(globalObject, initialUrl)) p->markAsHandled();
     }

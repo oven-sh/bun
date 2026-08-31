@@ -655,9 +655,7 @@ static void settle(JSGlobalObject* g, JSWebView* view, PendingSlot slot, bool ok
 }
 
 // Reject one op's slot on a CDP failure. A Navigate-slot failure also fires
-// onNavigationFailed and clears loading: the constructor-url promise is
-// marked handled, so the callback can be the failure's only signal. Matches
-// WebKit, where NavFailEvent precedes NavFailed.
+// onNavigationFailed and clears loading, like WebKit's NavFailEvent.
 static void settleFailure(JSGlobalObject* g, JSWebView* view, PendingSlot slot, JSValue errValue)
 {
     if (slot == PendingSlot::Navigate) {
@@ -682,9 +680,7 @@ static void rejectViewSlots(JSGlobalObject* g, JSWebView* view, JSValue err)
     settleSlot(g, view, view->m_pendingCdp, false, err);
 }
 
-// close() variant: the user asked for the teardown, so a pending op's
-// rejection must not surface as an unhandled rejection. A held promise
-// (an unawaited navigate()) still rejects catchably.
+// close() variant of rejectViewSlots: see rejectSlotAsHandled (JSWebView.h).
 static void rejectViewSlotsAsHandled(JSGlobalObject* g, JSWebView* view, JSValue err)
 {
     view->m_loading = false;

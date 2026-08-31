@@ -2,7 +2,10 @@ import { connect, listen } from "bun";
 import { fillRepeating } from "harness";
 
 // The test passes the transfer size; it is smaller on debug and ASAN builds.
-const size = process.argv[2] ? parseInt(process.argv[2]) : 1024 * 1024 * 1024;
+const size = process.argv[2] ? Number.parseInt(process.argv[2], 10) : 1024 * 1024 * 1024;
+if (!Number.isInteger(size) || size <= 0) {
+  throw new Error(`transfer size must be a positive integer, got ${process.argv[2]}`);
+}
 const huge = Buffer.alloc(size);
 for (let i = 0; i < 1024; i++) {
   huge[i] = (Math.random() * 255) | 0;

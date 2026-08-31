@@ -4143,16 +4143,13 @@ describe.concurrent("connect() failure promise settlement", () => {
   });
 
   it("an error thrown by connectError() becomes the connect() rejection", async () => {
-    // Grab a port nothing is listening on anymore.
-    const probe = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
-    const port = probe.port;
-    probe.stop(true);
+    using refused = await refusedPort();
 
     const boom = new Error("boom-connect-error");
     await expect(
       Bun.connect({
         hostname: "127.0.0.1",
-        port,
+        port: refused.port,
         socket: {
           connectError() {
             throw boom;

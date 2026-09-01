@@ -424,8 +424,10 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                     {
                         continue;
                     }
-                    let name = match &mut prop.key.as_mut().unwrap().data {
-                        ExprData::EString(s) => s.slice(temp_arena),
+                    let name: &[u8] = match &prop.key.as_ref().unwrap().data {
+                        ExprData::EString(s) => {
+                            bun_core::handle_oom(s.flattened(temp_arena).string(temp_arena))
+                        }
                         _ => unreachable!(),
                     };
                     if name == b"default" || name == b"__esModule" || !js_lexer::is_identifier(name)

@@ -869,6 +869,12 @@ impl AlreadyBundled {
             AlreadyBundled::SourceCodeCjs | AlreadyBundled::BytecodeCjs(_)
         )
     }
+    pub fn into_bytecode(self) -> Box<[u8]> {
+        match self {
+            AlreadyBundled::Bytecode(bytes) | AlreadyBundled::BytecodeCjs(bytes) => bytes,
+            _ => Box::default(),
+        }
+    }
 }
 
 /// Output of the transpiler's parse step: the parsed AST plus its source and
@@ -1582,6 +1588,7 @@ impl<'a> Transpiler<'a> {
                     framework: None,
                     repl_mode: self.options.repl_mode,
                     lower_toml_datetimes: false,
+                    is_entry_point: false,
                 };
 
                 opts.features.emit_decorator_metadata = this_parse.emit_decorator_metadata;
@@ -1637,6 +1644,7 @@ impl<'a> Transpiler<'a> {
                     .bundler_feature_flags
                     .as_deref()
                     .and_then(|s| s.clone().ok().map(Box::new));
+                opts.features.define_hash = self.options.define.user_hash;
                 opts.features.repl_mode = self.options.repl_mode;
 
                 // we'll just always enable top-level await
@@ -3064,7 +3072,7 @@ impl<'a> Transpiler<'a> {
         output: &[u8],
     ) -> Box<[u8]> {
         let rel_to_root = bun_paths::resolve_path::relative_platform::<
-            bun_paths::resolve_path::platform::Loose,
+            bun_paths::resolve_path::platform::Auto,
             false,
         >(&self.options.root_dir, file_path_text);
         let pathname = Fs::PathName::init(rel_to_root);

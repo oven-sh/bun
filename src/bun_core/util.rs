@@ -1042,10 +1042,17 @@ impl Fd {
             .copied()
             .unwrap_or(Fd::INVALID)
     }
+    /// The Windows `AT_FDCWD`; [`Fd::decode_windows`] maps it to the PEB's
+    /// current directory handle. Handles fit in 32 bits, bit 63 is the uv tag
+    /// and `INVALID_HANDLE_VALUE` masks to all of bits 0..63, so bit 62 alone
+    /// is out of band.
+    #[cfg(windows)]
+    const WINDOWS_CWD: u64 = 1 << 62;
+
     #[cfg(windows)]
     #[inline]
     pub fn cwd() -> Fd {
-        Fd::from_system(fd::windows_current_directory_handle())
+        Fd(Self::WINDOWS_CWD)
     }
 
     /// Whether this is the process's stdin/stdout/stderr.
@@ -1097,9 +1104,12 @@ impl Fd {
         match self.kind() {
             FdKind::System => {
                 // A stored value of 0 decodes to INVALID_HANDLE_VALUE.
-                let n = self.value_as_system();
-                let h = if n == 0 { usize::MAX } else { n as usize };
-                DecodeWindows::Windows(h as *mut core::ffi::c_void)
+                let h = match self.value_as_system() {
+                    0 => usize::MAX as *mut core::ffi::c_void,
+                    Self::WINDOWS_CWD => fd::windows_current_directory_handle(),
+                    n => n as usize as *mut core::ffi::c_void,
+                };
+                DecodeWindows::Windows(h)
             }
             // Direct extract — do NOT recurse into self.uv() (which calls decode_windows).
             FdKind::Uv => DecodeWindows::Uv((self.0 & FD_VALUE_MASK) as u32 as i32),
@@ -1450,6 +1460,9 @@ impl core::fmt::Display for Fd {
         }
         #[cfg(windows)]
         {
+            if fd == Fd::cwd() {
+                return w.write_str("[cwd]");
+            }
             match fd.decode_windows() {
                 DecodeWindows::Windows(_) => write!(w, "{}[handle]", fd.value_as_system()),
                 DecodeWindows::Uv(n) => write!(w, "{}[libuv]", n),
@@ -2829,15 +2842,11 @@ pub fn get_thread_count() -> u16 {
             None
         };
         let raw = from_env().unwrap_or_else(|| {
-            // `WTF::numberOfProcessorCores()` → sysconf(_SC_NPROCESSORS_ONLN)
-            // on POSIX / GetSystemInfo on Windows. **Not** the same as
-            // `std::thread::available_parallelism()`, which on Linux also
-            // consults sched_getaffinity + cgroup cpu.max quota; on
-            // cgroup-limited CI runners or P/E-core machines the two diverge,
-            // changing bundler `max_threads` (and per-thread mimalloc arena
-            // RSS). Declare the C symbol locally — `jsc`
-            // is above `bun_core` in the crate DAG so we can't `use` it, but
-            // the symbol is always linked (wtf-bindings.cpp).
+            // `WTF::numberOfProcessorCores()`: on Linux Bun's fork takes the
+            // minimum of _SC_NPROCESSORS_ONLN, the sched_getaffinity mask and
+            // the cgroup cpu quota (uv_get_constrained_cpu), so this is the
+            // same number as navigator.hardwareConcurrency. `jsc` is above
+            // `bun_core` in the crate DAG; the symbol comes from wtf-bindings.cpp.
             unsafe extern "C" {
                 safe fn WTF__numberOfProcessorCores() -> core::ffi::c_int;
             }

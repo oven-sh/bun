@@ -77,6 +77,9 @@ devTest("image tag", {
       });
       await dev.fetch("/").expect.toInclude('alt="modified image"');
     });
+    // The image did not change, so the reloaded page keeps its URL and the asset is still served.
+    expect(await c.js`document.querySelector("img").src`).toBe(url);
+    await dev.fetch(url).expect.toBe("FIRST");
 
     // Editing image content causes a hard reload because the html must reflect the new image content
     await c.expectReload(async () => {
@@ -368,5 +371,41 @@ devTest("error report endpoint blanks stray non-text bytes in reported frames", 
     expect(res.status).toBe(200);
 
     await dev.fetch("/").expect.toInclude("<h1>Frame Bytes</h1>");
+  },
+});
+devTest("editing a file imported from outside the project root hot-reloads", {
+  // The Windows watcher does not watch files outside the project directory.
+  skip: ["win32"],
+  files: {
+    "web/index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "web/index.ts": `
+      import { value } from "../outside/dep";
+      console.log(value);
+      import.meta.hot.accept();
+    `,
+    "outside/dep.ts": `
+      export const value = "one";
+    `,
+  },
+  cwd: "web",
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("one");
+    await dev.write(
+      "outside/dep.ts",
+      `
+        export const value = "two";
+      `,
+    );
+    await c.expectMessage("two");
+    await dev.write(
+      "outside/dep.ts",
+      `
+        export const value = "three";
+      `,
+    );
+    await c.expectMessage("three");
   },
 });

@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { Readable } from "node:stream";
 import { request, fetch as undiciFetch } from "undici";
 
 import { createServer } from "../../../http-test-server";
@@ -48,6 +49,44 @@ describe("undici", () => {
       expect(body).toBeDefined();
       const json = (await body.json()) as { data: string };
       expect(json.data).toBe("Hello world");
+    });
+
+    it("should stream a node:stream Readable body", async () => {
+      const firstChunkReceived = Promise.withResolvers<void>();
+      await using server = Bun.serve({
+        port: 0,
+        async fetch(req) {
+          const received: number[] = [];
+          for await (const chunk of req.body!) {
+            received.push(...chunk);
+            firstChunkReceived.resolve();
+          }
+          return Response.json({
+            received,
+            transferEncoding: req.headers.get("transfer-encoding"),
+            contentLength: req.headers.get("content-length"),
+          });
+        },
+      });
+
+      // The second chunk exists only after the server has the first one, so
+      // the body has to go out while the Readable is still open.
+      async function* chunks() {
+        yield Buffer.from([0x00, 0xff, 0xfe]); // not valid UTF-8
+        await firstChunkReceived.promise;
+        yield "h\u00e9llo"; // string chunks go out as UTF-8
+      }
+
+      const { statusCode, body } = await request(server.url.href, {
+        method: "POST",
+        body: Readable.from(chunks()),
+      });
+      expect(await body.json()).toEqual({
+        received: [0x00, 0xff, 0xfe, ...Buffer.from("h\u00e9llo")],
+        transferEncoding: "chunked",
+        contentLength: null,
+      });
+      expect(statusCode).toBe(200);
     });
 
     it("should accept a URL class object", async () => {

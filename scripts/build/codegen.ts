@@ -662,13 +662,17 @@ function emitHostExports({ n, cfg, sources, o, dirStamp }: Ctx): void {
   const script = resolve(cfg.cwd, "src", "codegen", "generate-host-exports.ts");
   const output = resolve(cfg.codegenDir, "generated_host_exports.rs");
 
-  // Inputs: every .rs under src/runtime + src/jsc (the scrape scope). The
+  // Inputs: every .rs under src/runtime + src/jsc + src/http_jsc (the scrape scope). The
   // `sources.rust` glob already covers these plus Cargo manifests; filter to
-  // the two crates so unrelated edits (e.g. src/bundler) don't re-run the
+  // those crates so unrelated edits (e.g. src/bundler) don't re-run the
   // scrape. restat=1 + writeIfNotChanged means a no-marker-change edit
   // produces identical output and the cargo step is pruned.
   const slashed = (p: string) => p.replace(/\\/g, "/");
-  const scrapeDirs = [slashed(`${cfg.cwd}/src/runtime/`), slashed(`${cfg.cwd}/src/jsc/`)];
+  const scrapeDirs = [
+    slashed(`${cfg.cwd}/src/runtime/`),
+    slashed(`${cfg.cwd}/src/jsc/`),
+    slashed(`${cfg.cwd}/src/http_jsc/`),
+  ];
   const rsInputs = sources.rust.filter(p => {
     const q = slashed(p);
     return q.endsWith(".rs") && scrapeDirs.some(d => q.includes(d)) && !q.endsWith("generated_host_exports.rs");
@@ -765,6 +769,7 @@ function emitJsModules({ n, cfg, sources, o, dirStamp }: Ctx): void {
     resolve(cfg.codegenDir, "InternalModuleRegistry+numberOfModules.h"),
     resolve(cfg.codegenDir, "NativeModuleImpl.h"),
     resolve(cfg.codegenDir, "SyntheticModuleType.h"),
+    resolve(cfg.codegenDir, "BuiltinModuleKeys.h"),
     resolve(cfg.codegenDir, "GeneratedJS2Native.h"),
     // Rust sibling: include!()'d by src/runtime/generated_js2native.rs. Must be
     // a declared output so the cargo edge re-invokes when bundle-modules.ts /
@@ -774,6 +779,8 @@ function emitJsModules({ n, cfg, sources, o, dirStamp }: Ctx): void {
     // `resolved_source_tag` module in src/jsc/lib.rs. Declared for the same
     // reason as generated_js2native.rs.
     resolve(cfg.codegenDir, "generated_resolved_source_tag.rs"),
+    // Canonical builtin key -> BuiltinModuleKeys.h index: include!()'d by `builtin_module_key_index` in src/jsc/lib.rs.
+    resolve(cfg.codegenDir, "generated_builtin_module_key_index.rs"),
     o.internalModulesAsm,
     o.internalModulesBin,
   ];

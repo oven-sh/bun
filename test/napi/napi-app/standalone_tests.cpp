@@ -2854,6 +2854,76 @@ static napi_value test_external_buffer_with_pending_exception(
   return ok(env);
 }
 
+// External buffers for module.js's transfer tests
+// (test_external_buffer_untransferable, test_external_buffer_worker_exit).
+// The finalizer receives the env of the thread that created the buffer, so it
+// records whether it ran on that thread. The counters are process-wide: the
+// worker test creates its buffers in a worker and reads the counters from the
+// main thread after the worker has exited.
+static std::atomic<int> external_for_transfer_finalized{0};
+static std::atomic<int> external_for_transfer_finalized_off_thread{0};
+
+struct ExternalForTransfer {
+  std::thread::id creating_thread;
+};
+
+static void external_for_transfer_finalize(napi_env, void *data, void *hint) {
+  auto *owner = static_cast<ExternalForTransfer *>(hint);
+  if (owner->creating_thread != std::this_thread::get_id()) {
+    external_for_transfer_finalized_off_thread++;
+  }
+  external_for_transfer_finalized++;
+  delete owner;
+  free(data);
+}
+
+// The bytes are 1, 2, 3, ... so a copy made on another thread can be checked.
+// Never NULL, even for length 0: both runtimes treat a NULL pointer as its own
+// case (node runs the finalizer on the next loop turn).
+static uint8_t *external_for_transfer_bytes(size_t length) {
+  auto *bytes = static_cast<uint8_t *>(malloc(length == 0 ? 1 : length));
+  for (size_t i = 0; i < length; i++) {
+    bytes[i] = static_cast<uint8_t>(i + 1);
+  }
+  return bytes;
+}
+
+// create_external_arraybuffer_for_transfer(length): ArrayBuffer
+static napi_value
+create_external_arraybuffer_for_transfer(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  size_t length = info[0].As<Napi::Number>().Uint32Value();
+  uint8_t *bytes = external_for_transfer_bytes(length);
+  napi_value result;
+  NODE_API_CALL(env, napi_create_external_arraybuffer(
+                         env, bytes, length, external_for_transfer_finalize,
+                         new ExternalForTransfer{std::this_thread::get_id()},
+                         &result));
+  return result;
+}
+
+// create_external_buffer_for_transfer(length): Buffer
+static napi_value
+create_external_buffer_for_transfer(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  size_t length = info[0].As<Napi::Number>().Uint32Value();
+  uint8_t *bytes = external_for_transfer_bytes(length);
+  napi_value result;
+  NODE_API_CALL(env, napi_create_external_buffer(
+                         env, length, bytes, external_for_transfer_finalize,
+                         new ExternalForTransfer{std::this_thread::get_id()},
+                         &result));
+  return result;
+}
+
+static napi_value external_for_transfer_stats(const Napi::CallbackInfo &info) {
+  Napi::Object stats = Napi::Object::New(info.Env());
+  stats.Set("finalized", external_for_transfer_finalized.load());
+  stats.Set("finalizedOffThread",
+            external_for_transfer_finalized_off_thread.load());
+  return stats;
+}
+
 // With an exception pending (via napi_throw_error), every napi call that
 // Node.js gates with NAPI_PREAMBLE must return napi_pending_exception and
 // perform NO side effects. Before the fix, NAPI_PREAMBLE only consulted the
@@ -4499,6 +4569,9 @@ void register_standalone_tests(Napi::Env env, Napi::Object exports) {
                     test_external_arraybuffer_with_pending_exception);
   REGISTER_FUNCTION(env, exports,
                     test_external_buffer_with_pending_exception);
+  REGISTER_FUNCTION(env, exports, create_external_arraybuffer_for_transfer);
+  REGISTER_FUNCTION(env, exports, create_external_buffer_for_transfer);
+  REGISTER_FUNCTION(env, exports, external_for_transfer_stats);
   REGISTER_FUNCTION(env, exports, test_pending_exception_gate);
   REGISTER_FUNCTION(env, exports, make_ungated_calls_spinner);
   REGISTER_FUNCTION(env, exports, test_ungated_calls_with_engine_exception);

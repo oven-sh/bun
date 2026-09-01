@@ -14,7 +14,6 @@ use crate::collections::IdMap;
 use crate::hir::DeclarationId;
 use crate::hir::FunctionId;
 use crate::hir::IdentifierId;
-use crate::hir::IdentifierName;
 use crate::hir::InstructionKind;
 use crate::hir::InstructionValue;
 use crate::hir::JsxTag;
@@ -1173,13 +1172,10 @@ fn promote_identifier(identifier_id: IdentifierId, state: &mut State, env: &mut 
         "promoteTemporary: Expected to be called only for temporary variables"
     );
     let decl_id = identifier.declaration_id;
-    // JSX tag temporaries use a capitalized name.
-    let kind = if state.tags.contains(&decl_id) {
-        b'T'
+    if state.tags.contains(&decl_id) {
+        env.promote_temporary_jsx_tag(identifier_id);
     } else {
-        b't'
-    };
-    env.identifiers[identifier_id.0 as usize].name =
-        Some(IdentifierName::promoted(kind, decl_id.0));
+        env.promote_temporary(identifier_id);
+    }
     state.promoted.insert(decl_id);
 }

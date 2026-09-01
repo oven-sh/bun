@@ -3,6 +3,7 @@
 // A counted reference to a VM's handle (bun_jsc::VmHandle): what any thread other than the
 // VM's own uses to post work to it, keep its loop alive, or ask whether it may still run
 // script. retain / retainRef take a count, release gives one up; valid however long it is held.
+#include "BunLoopKind.h"
 struct BunVmHandleRef;
 extern "C" const BunVmHandleRef* Bun__VmHandle__retain(void* bunVM); // JS thread
 extern "C" const BunVmHandleRef* Bun__VmHandle__retainRef(const BunVmHandleRef*); // any thread
@@ -23,9 +24,10 @@ namespace WebCore {
 class WorkerMessagingProxy;
 class EventLoopTask;
 }
-// Post through a reference and give it up in one step (a reference taken only to outlive a lock).
-extern "C" void Bun__VmHandle__postAndRelease(const BunVmHandleRef*, WebCore::EventLoopTask*);
-extern "C" void Bun__VmHandle__refKeepAlive(const BunVmHandleRef*, int delta);
+// Post to the VM's `kind` loop through a reference and give it up in one step (a reference taken only
+// to outlive a lock).
+extern "C" void Bun__VmHandle__postAndRelease(const BunVmHandleRef*, WebCore::EventLoopTask*, BunLoopKind);
+extern "C" void Bun__VmHandle__refKeepAlive(const BunVmHandleRef*, BunLoopKind, int delta);
 // Node's can_call_into_js(): false once the VM's stop was requested (terminate()/exit/teardown). Any thread.
 extern "C" bool Bun__VmHandle__scriptAllowed(const BunVmHandleRef*);
 // The handle's state byte, so hot paths test it inline (BUN_VM_HANDLE_STATE_OPEN == bun_jsc::vm_handle::State::Open).
@@ -67,6 +69,7 @@ class DOMWrapperWorld;
 #include <wtf/WeakHashSet.h>
 #include "JSCTaskScheduler.h"
 #include "HTTPHeaderIdentifiers.h"
+#include "BunCommonStrings.h"
 #include "DOMURLBaseCache.h"
 #include <JavaScriptCore/HeapObserver.h>
 namespace Zig {
@@ -122,6 +125,7 @@ private:
 
 namespace JSC {
 struct HashTableValue;
+class DecoderStringTable;
 }
 
 namespace Bun {
@@ -232,6 +236,9 @@ public:
     // so there is no startup cost worth deferring.
     WebCore::HTTPHeaderIdentifiers& httpHeaderIdentifiers() { return m_httpHeaderIdentifiers; }
 
+    // Public so Bun::commonStrings(vm) below is a static_cast and a member load.
+    Bun::CommonStrings commonStrings;
+
     WebCore::DOMURLBaseCache& urlBaseCache() { return m_urlBaseCache; }
 
     // Live size of the heap as measured by the most recent collection, eden or full.
@@ -249,6 +256,11 @@ public:
     // this thread and JSC forbids execution. Either way no script may be entered on this VM.
     ALWAYS_INLINE bool isStoppingOrStopped(const JSC::VM& vm) const { return !scriptAllowed() || vm.executionForbidden(); }
     Bun::JSCTaskScheduler deferredWorkTimer;
+
+    // One slot per string of the executable's module-info string table,
+    // filled on first use so each name is atomized once however many chunks
+    // import or export it (BunAnalyzeTranspiledModule.cpp).
+    Vector<JSC::Identifier> sharedModuleInfoIdentifiers;
 
     // Linked list of StrongRootBlock cells backing bun_jsc::Strong handles
     // (see StrongRootBlock.h). Raw pointers into the GC heap: they are rooted
@@ -270,8 +282,12 @@ public:
     // after every swap.
     WTF::UncheckedKeyHashMap<WTF::String, RefPtr<JSC::SourceProvider>> isolationSourceProviderCache;
 
+    JSC::DecoderStringTable* decoderStringTable() final { return m_decoderStringTable.get(); }
+    void setDecoderStringTable(std::span<const uint8_t>);
+
 private:
     bool isWebCoreJSClientData() const final { return true; }
+    std::unique_ptr<JSC::DecoderStringTable> m_decoderStringTable;
 
     // Frees a per-VM `JSHeapData` but leaves the process-wide `useGlobalGC`
     // singleton alone (it is shared by every VM). On the default `!useGlobalGC`
@@ -386,6 +402,15 @@ static inline BunBuiltinNames& builtinNames(JSC::VM& vm)
 }
 
 } // namespace WebCore
+
+namespace Bun {
+
+ALWAYS_INLINE CommonStrings& commonStrings(JSC::VM& vm)
+{
+    return static_cast<WebCore::JSVMClientData*>(vm.clientData)->commonStrings;
+}
+
+} // namespace Bun
 
 inline void* bunVM(JSC::VM& vm)
 {

@@ -14,7 +14,7 @@ import { NODEJS_ABI_VERSION, NODEJS_V8_VERSION, NODEJS_VERSION } from "./deps/no
 import { WEBKIT_VERSION } from "./deps/webkit.ts";
 import { assert, BuildError } from "./error.ts";
 import { resolveMacosSdkPath } from "./macos-sdk.ts";
-import { clangTargetArch } from "./tools.ts";
+import { clangTargetArch, toolchainOverride } from "./tools.ts";
 import { cyan, dim, green } from "./tty.ts";
 
 export type OS = "linux" | "darwin" | "windows" | "freebsd";
@@ -29,7 +29,7 @@ export type WebKitMode = "prebuilt" | "local";
  * (Config.os/arch/windows) which is what we're building FOR.
  *
  * Host vs target matters for rust-only cross-compile: a linux CI box
- * can cross-compile libbun_rust.a for any linux abi/arch and (with the
+ * can cross-compile libbun_runtime.a for any linux abi/arch and (with the
  * right SDK) darwin. Target determines cargo's `--target` triple and
  * rustflags; host determines shell syntax (cmd vs sh), quoting, and
  * tool executable suffixes.
@@ -43,14 +43,6 @@ export interface Host {
   arch: Arch;
   /** ".exe" on a Windows host, "" elsewhere. Mirrors Config.exeSuffix (target). */
   exeSuffix: string;
-  /**
-   * Host's Rust target triple — `host:` line from `rustc -vV`. Also the
-   * `${sysroot}/lib/rustlib/<triple>/` directory name. Stamped at
-   * `resolveConfig()` from `Toolchain.rustHostTriple` (so the toolchain
-   * probe is the single source of truth); `undefined` only when no rustc
-   * is installed.
-   */
-  rustTriple: string | undefined;
 }
 
 /**
@@ -122,7 +114,7 @@ export interface Config {
   lto: boolean;
   /**
    * Cross-language LTO: rustc emits LLVM bitcode (`-Clinker-plugin-lto`) into
-   * `libbun_rust.a` so the final lld `-flto=thin` link sees through Rust↔C++
+   * `libbun_runtime.a` so the final lld `-flto=thin` link sees through Rust↔C++
    * call edges. When false but `lto` is true, both halves still LTO
    * independently (C++ via `-flto=thin`, Rust via `[profile.release] lto =
    * "fat"`); only the cross-language inlining is lost.
@@ -235,14 +227,6 @@ export interface Config {
   rustLld: string | undefined;
   /** Parsed `LLVM version:` from `rustc -vV`. Captured once; feeds workarounds.ts. */
   rustLlvmVersion: string | undefined;
-  /**
-   * `rustc --print sysroot`. Used to locate rustc's bundled `llvm-nm` for
-   * reading LTO bitcode in `libbun_rust.a` — clang's `llvm-nm` may lag
-   * rustc's LLVM major and reject the bitcode (#53609, #53656). Unlike
-   * `rustLld`, this is needed regardless of whether cross-language LTO is
-   * actually using rust-lld as the linker.
-   */
-  rustSysroot: string | undefined;
   strip: string;
   /** llvm-nm, for `DirectBuild.forbidUndefined`; undefined skips those checks. */
   nm: string | undefined;
@@ -276,6 +260,8 @@ export interface Config {
    * would otherwise pick up that worktree's pin).
    */
   rustToolchain: string | undefined;
+  /** Explicit rustc for cargo to drive (BUN_TOOLCHAIN_RUST); undefined = cargo's own resolution (rustup proxy). */
+  rustc: string | undefined;
   /** Windows: MSVC link.exe path (to avoid Git's /usr/bin/link shadowing). */
   msvcLinker: string | undefined;
   /** Windows: llvm-rc for nested cmake (CMAKE_RC_COMPILER). */
@@ -441,10 +427,6 @@ export interface Toolchain {
   rustLld: string | undefined;
   /** Parsed `LLVM version:` from `rustc -vV` (X.Y.Z). */
   rustLlvmVersion: string | undefined;
-  /** `rustc --print sysroot` — see `Config.rustSysroot`. */
-  rustSysroot: string | undefined;
-  /** `host:` line from `rustc -vV` — stamped onto `Host.rustTriple` at resolveConfig. */
-  rustHostTriple: string | undefined;
   strip: string;
   /**
    * llvm-strip. On Linux hosts GNU strip is the default (`strip` above) but
@@ -518,9 +500,7 @@ export function detectHost(): Host {
             throw new BuildError(`Unsupported host architecture: ${a}`, { hint: "Bun builds on x64 or arm64" });
           })();
 
-  // rustTriple is stamped later from Toolchain.rustHostTriple in resolveConfig
-  // (the rustc probe is authoritative — distinguishes glibc/musl host etc.).
-  return { os, arch, exeSuffix: os === "windows" ? ".exe" : "", rustTriple: undefined };
+  return { os, arch, exeSuffix: os === "windows" ? ".exe" : "" };
 }
 
 /**
@@ -720,7 +700,6 @@ function linkNdkRuntimesIntoClang(cc: string, ndk: string, host: Host, triple: s
  */
 export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Config {
   const host = detectHost();
-  host.rustTriple = toolchain.rustHostTriple;
 
   // ─── Target platform ───
   const os = partial.os ?? host.os;
@@ -828,7 +807,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   const crossLangLto = lto && !(windows && host.os === "windows");
 
   // Cross-language LTO bitcode-version skew: `-Clinker-plugin-lto` makes
-  // rustc emit raw LLVM bitcode into libbun_rust.a. LLVM bitcode is
+  // rustc emit raw LLVM bitcode into libbun_runtime.a. LLVM bitcode is
   // forward-compatible only (newer reader, older writer), so when rustc's
   // bundled LLVM is ahead of clang's, clang's ld.lld rejects the rust .o
   // files ("Unknown attribute kind"). rust-lld is built against rustc's
@@ -1231,7 +1210,6 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     ld: ld64StripSwap?.ld ?? ld,
     rustLld: toolchain.rustLld,
     rustLlvmVersion: toolchain.rustLlvmVersion,
-    rustSysroot: toolchain.rustSysroot,
     // Cross strips: linux-gnu uses <triple>-strip (GNU, handles -R .eh_frame
     // fully; host strip rejects foreign-arch ELF); other cross targets use
     // llvm-strip.
@@ -1252,7 +1230,9 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     cargo: toolchain.cargo,
     cargoHome: toolchain.cargoHome,
     rustupHome: toolchain.rustupHome,
-    rustToolchain: readRustToolchainChannel(cwd),
+    rustToolchain: toolchainOverride.rust !== undefined ? undefined : readRustToolchainChannel(cwd),
+    rustc:
+      toolchainOverride.rust !== undefined ? join(toolchainOverride.rust, "bin", `rustc${host.exeSuffix}`) : undefined,
     // Cargo-driven links (the bun_shim_impl.exe edge, any future target
     // cdylib) must keep using a real lld-link/link.exe, not the gcc-ld/
     // lld-link wrapper `ld` may have been swapped to above: rustc treats a

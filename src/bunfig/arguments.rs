@@ -141,9 +141,8 @@ pub fn load_config(
     // If running as a standalone executable with autoloadBunfig disabled, skip config loading
     // unless an explicit config path was provided via --config
     if user_config_path_.is_none() {
-        if let Some(graph) = StandaloneModuleGraph::get() {
-            // SAFETY: `get()` returns a non-null process-global pointer when Some.
-            if unsafe { (*graph).flags }.contains(
+        if let Some(graph) = StandaloneModuleGraph::get_ref() {
+            if graph.flags.contains(
                 bun_standalone_graph::StandaloneModuleGraph::Flags::DISABLE_AUTOLOAD_BUNFIG,
             ) {
                 return Ok(());
@@ -178,7 +177,14 @@ pub fn load_config(
                         || (!ctx.positionals.is_empty()
                             && options::DEFAULT_LOADERS
                                 .contains_key(bun_paths::extension(&ctx.positionals[0])))
-                )))
+                ))
+            // "bun [run] --filter/--workspaces/--parallel/--sequential": these
+            // dispatch to their own runners right after argument parsing and
+            // never reach the lazy load in `RunCommand::exec_with_cfg`. Loading
+            // here keeps the `[run]` flags applied later in `Arguments::parse`
+            // (`--bun`, `--elide-lines`, ...) ahead of the file.
+            || (matches!(cmd, CommandTag::RunCommand | CommandTag::AutoCommand)
+                && (ctx.parallel || ctx.sequential || ctx.workspaces || !ctx.filters.is_empty())))
     {
         config_path_ = b"bunfig.toml";
         auto_loaded = true;

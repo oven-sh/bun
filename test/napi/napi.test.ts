@@ -456,6 +456,60 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     });
   });
 
+  // The finalizer of an external buffer belongs to the env that created it, and that env's
+  // teardown frees the bytes, so the bytes must not be transferred to another thread.
+  describe("external buffers are untransferable", () => {
+    it("every transfer entry point throws DataCloneError and leaves the buffer intact", async () => {
+      const result = await checkSameOutput("test_external_buffer_untransferable", []);
+      const expected = (kind: string) =>
+        [
+          `${kind}: isMarkedAsUntransferable(created)=${kind === "arraybuffer"} isMarkedAsUntransferable(arrayBuffer)=true ownKeys=0`,
+          `${kind}: structuredClone: DataCloneError code=25`,
+          `${kind}: MessagePort.postMessage: DataCloneError code=25`,
+          `${kind}: new Worker transferList: DataCloneError code=25`,
+          `${kind}: structuredClone after a plain ArrayBuffer: DataCloneError code=25`,
+          `${kind}: byteLength=8 plain.byteLength=2`,
+          `${kind}: copy=[1,2,3,4,5,6,7,8] byteLength=8`,
+        ].join("\n");
+      const expectedEmpty = (kind: string) =>
+        [
+          `empty ${kind}: isMarkedAsUntransferable(arrayBuffer)=true`,
+          `empty ${kind}: structuredClone: DataCloneError code=25`,
+        ].join("\n");
+      expect(result).toBe(
+        [
+          expected("arraybuffer"),
+          expected("buffer"),
+          expectedEmpty("arraybuffer"),
+          expectedEmpty("buffer"),
+          'stats: {"finalized":0,"finalizedOffThread":0}',
+        ].join("\n"),
+      );
+    });
+
+    it("a worker's buffers reach the parent as copies and are finalized by the worker's env teardown", async () => {
+      const result = await checkSameOutput("test_external_buffer_worker_exit", []);
+      const message = JSON.stringify({
+        transfers: {
+          arraybuffer: "DataCloneError code=25",
+          arraybufferByteLength: 4,
+          buffer: "DataCloneError code=25",
+          bufferByteLength: 4,
+        },
+        copies: { arraybuffer: [1, 2, 3, 4], buffer: [1, 2, 3, 4] },
+        stats: { finalized: 0, finalizedOffThread: 0 },
+      });
+      expect(result).toBe(
+        [
+          "worker exited with 0",
+          `messages: [${message}]`,
+          'stats after exit: {"finalized":2,"finalizedOffThread":0}',
+          "resolved to undefined",
+        ].join("\n"),
+      );
+    });
+  });
+
   describe("pending-exception gate", () => {
     it("refuses and performs no side effects while a napi exception is pending", async () => {
       const result = await checkSameOutput("test_pending_exception_gate", []);
@@ -1707,6 +1761,90 @@ describe.skipIf(!canBuildNodeAddons())("cleanup hooks", () => {
     it("executes in reverse insertion order like Node.js", async () => {
       // Test that cleanup hooks execute in reverse insertion order (LIFO)
       await checkSameOutput("test_cleanup_hook_order", []);
+    });
+  });
+
+  // Node frees the main thread's environment, which is what runs an addon's
+  // cleanup hooks and the finalizers of everything it still has alive, only
+  // after the event loop runs dry. process.exit() and a fatal error call exit()
+  // instead, so an addon's teardown code never runs on those paths (Node
+  // v26.3.0). Bun used to run it on every exit, calling into addons where Node
+  // does not. Under BUN_DESTRUCT_VM_ON_EXIT (the sanitizer lanes set it for
+  // every child) the main thread's VM is destroyed like a worker's, and the envs
+  // are still torn down first, so these children opt out of it and of the leak
+  // check that goes with it.
+  describe.concurrent("env teardown on the main thread", () => {
+    const noDestruct = {
+      BUN_DESTRUCT_VM_ON_EXIT: "0",
+      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
+    };
+    const hooksAddon = join(__dirname, "napi-app/build/Debug/test_cleanup_hook_order.node");
+    const wrapsAddon = join(__dirname, "napi-app/build/Debug/test_wrap_cleanup_order.node");
+    // test() prints these two lines when called; each hook prints a line when it
+    // runs. createParentAndChildren() prints "finalize order: ..." from the
+    // parent's napi_wrap finalizer.
+    const setupLines = ["Added hooks in order: 1, 2, 3", "They should execute in reverse order: 3, 2, 1"];
+    const teardownLines = [
+      ...setupLines,
+      "hook3 executed at position 0",
+      "hook2 executed at position 1",
+      "hook1 executed at position 2",
+      "finalize order: 1 0",
+    ];
+    const setup = `
+      const hooks = require(${JSON.stringify(hooksAddon)});
+      const wraps = require(${JSON.stringify(wrapsAddon)});
+      hooks.test();
+      globalThis.keep = wraps.createParentAndChildren(1);
+    `;
+
+    // Returns stdout as a sorted list of lines. The addons print with printf(),
+    // which on Windows ends lines with \r\n and buffers each addon's output in
+    // its own CRT until exit, so only the set of lines is stable there.
+    async function run(code: string, env: Record<string, string>) {
+      await using proc = spawn({
+        cmd: [bunExe(), "-e", code],
+        env: { ...bunEnv, ...env },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { lines: stdout.split(/\r?\n/).filter(Boolean).sort(), stderr, exitCode };
+    }
+
+    it("process.exit() skips it, like Node", async () => {
+      await checkSameOutput("test_env_teardown_skipped_by_process_exit", [], noDestruct);
+    });
+
+    it("an uncaught exception while the entry point runs skips it", async () => {
+      const { lines, stderr, exitCode } = await run(`${setup}; throw new Error("fatal");`, noDestruct);
+      expect(stderr).toContain("fatal");
+      expect(lines).toEqual(setupLines.toSorted());
+      expect(exitCode).toBe(1);
+    });
+
+    it("an uncaught exception from the event loop skips it", async () => {
+      const { lines, stderr, exitCode } = await run(
+        `${setup}; setTimeout(() => { throw new Error("fatal"); }, 1);`,
+        noDestruct,
+      );
+      expect(stderr).toContain("fatal");
+      expect(lines).toEqual(setupLines.toSorted());
+      expect(exitCode).toBe(1);
+    });
+
+    it("an event loop that runs dry tears it down", async () => {
+      const { lines, stderr, exitCode } = await run(setup, noDestruct);
+      expect(stderr).toBe("");
+      expect(lines).toEqual(teardownLines.toSorted());
+      expect(exitCode).toBe(0);
+    });
+
+    it("process.exit() still tears it down when the VM is destroyed on exit", async () => {
+      const { lines, stderr, exitCode } = await run(`${setup}; process.exit(0);`, { BUN_DESTRUCT_VM_ON_EXIT: "1" });
+      expect(stderr).toBe("");
+      expect(lines).toEqual(teardownLines.toSorted());
+      expect(exitCode).toBe(0);
     });
   });
 

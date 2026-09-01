@@ -1433,6 +1433,18 @@ nativeTests.test_cleanup_hook_order = () => {
   addon.test();
 };
 
+// Node tears an addon's env down (its cleanup hooks, then the finalizers of
+// whatever it still has alive) only when the main thread's event loop runs dry.
+// process.exit() skips all of it, so only the two lines printed by test() are
+// expected here: no "hookN executed" lines and no "finalize order" line.
+nativeTests.test_env_teardown_skipped_by_process_exit = () => {
+  const hooks = require("./build/Debug/test_cleanup_hook_order.node");
+  const wraps = require("./build/Debug/test_wrap_cleanup_order.node");
+  hooks.test();
+  globalThis.keep = wraps.createParentAndChildren(1);
+  process.exit(0);
+};
+
 nativeTests.test_cleanup_hook_remove_nonexistent = () => {
   const addon = require("./build/Debug/test_cleanup_hook_remove_nonexistent.node");
   addon.test();
@@ -1614,6 +1626,87 @@ nativeTests.test_threadsafe_function_orphaned_by_worker = async () => {
 nativeTests.test_finalizer_registered_during_env_cleanup = async () => {
   console.log("worker exited with", await runOrphanWorker({ lateFinalizer: true }));
   console.log("late=" + nativeTests.late_finalizer_run_count());
+};
+
+// The ArrayBuffer behind napi_create_external_arraybuffer / napi_create_external_buffer is
+// untransferable (node: Buffer::New with a free callback marks it so): its finalizer belongs
+// to the env that created it, and that env's teardown frees the bytes. Every transfer entry
+// point refuses it with a DataCloneError and leaves it, the rest of the transfer list, and the
+// finalizer untouched; cloning without a transfer still copies it.
+nativeTests.test_external_buffer_untransferable = () => {
+  const { MessageChannel, Worker, isMarkedAsUntransferable } = require("node:worker_threads");
+  const attempt = (label, transfer) => {
+    try {
+      transfer();
+      console.log(`${label}: transferred`);
+    } catch (e) {
+      console.log(`${label}: ${e.name} code=${e.code}`);
+    }
+  };
+  // Everything created here stays alive until the stats are printed, so the
+  // only way a finalizer can run is a transfer attempt running it.
+  const keepAlive = [];
+  for (const kind of ["arraybuffer", "buffer"]) {
+    const created =
+      kind === "arraybuffer"
+        ? nativeTests.create_external_arraybuffer_for_transfer(8)
+        : nativeTests.create_external_buffer_for_transfer(8);
+    keepAlive.push(created);
+    const arrayBuffer = kind === "arraybuffer" ? created : created.buffer;
+    console.log(
+      `${kind}: isMarkedAsUntransferable(created)=${isMarkedAsUntransferable(created)}`,
+      `isMarkedAsUntransferable(arrayBuffer)=${isMarkedAsUntransferable(arrayBuffer)}`,
+      `ownKeys=${Reflect.ownKeys(arrayBuffer).length}`,
+    );
+
+    attempt(`${kind}: structuredClone`, () => structuredClone(arrayBuffer, { transfer: [arrayBuffer] }));
+    const { port1, port2 } = new MessageChannel();
+    attempt(`${kind}: MessagePort.postMessage`, () => port1.postMessage(arrayBuffer, [arrayBuffer]));
+    port1.close();
+    port2.close();
+    attempt(
+      `${kind}: new Worker transferList`,
+      () => new Worker("", { eval: true, workerData: arrayBuffer, transferList: [arrayBuffer] }),
+    );
+    const plain = new ArrayBuffer(2);
+    attempt(`${kind}: structuredClone after a plain ArrayBuffer`, () =>
+      structuredClone([plain, arrayBuffer], { transfer: [plain, arrayBuffer] }),
+    );
+    console.log(`${kind}: byteLength=${arrayBuffer.byteLength} plain.byteLength=${plain.byteLength}`);
+
+    const copy = structuredClone(arrayBuffer);
+    console.log(`${kind}: copy=[${new Uint8Array(copy).join(",")}] byteLength=${arrayBuffer.byteLength}`);
+  }
+  // Length 0 is a separate path inside napi_create_external_buffer; it is marked all the same.
+  // (Only the mark and the transfer are compared: bun detaches this buffer, node does not.)
+  for (const kind of ["arraybuffer", "buffer"]) {
+    const created =
+      kind === "arraybuffer"
+        ? nativeTests.create_external_arraybuffer_for_transfer(0)
+        : nativeTests.create_external_buffer_for_transfer(0);
+    keepAlive.push(created);
+    const arrayBuffer = kind === "arraybuffer" ? created : created.buffer;
+    console.log(`empty ${kind}: isMarkedAsUntransferable(arrayBuffer)=${isMarkedAsUntransferable(arrayBuffer)}`);
+    attempt(`empty ${kind}: structuredClone`, () => structuredClone(arrayBuffer, { transfer: [arrayBuffer] }));
+  }
+  console.log("stats:", JSON.stringify(nativeTests.external_for_transfer_stats()));
+};
+
+// A worker creates the buffers and exits: the parent can only ever have copies,
+// and the worker's env teardown finalizes both on the thread that created them.
+nativeTests.test_external_buffer_worker_exit = async () => {
+  const { Worker } = require("node:worker_threads");
+  const path = require("node:path");
+  const worker = new Worker(path.join(__dirname, "external-buffer-worker.js"));
+  const messages = [];
+  const exitCode = await new Promise((resolve, reject) => {
+    worker.on("message", message => messages.push(message));
+    worker.on("error", reject);
+    worker.on("exit", resolve);
+  });
+  console.log("worker exited with", exitCode);
+  console.log("messages:", JSON.stringify(messages));
+  console.log("stats after exit:", JSON.stringify(nativeTests.external_for_transfer_stats()));
 };
 
 // Bun-only: an orphaned threadsafe function is freed by whichever thread drops

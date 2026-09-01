@@ -39,7 +39,7 @@ pub(crate) trait S3CredentialsExt {
     fn get_credentials_with_options(
         // Takes `&S3Credentials` (not by-value) — `bun_s3_signing::S3Credentials`
         // has a private `ref_count` field and no `Clone`, so callers holding a borrow
-        // (e.g. `&IntrusiveRc<S3Credentials>` deref) cannot produce an owned copy. The
+        // (e.g. `&RefPtr<S3Credentials>` deref) cannot produce an owned copy. The
         // real impl in `s3/credentials_jsc.rs` deep-copies internally.
         this: &S3Credentials,
         default_options: MultiPartUploadOptions,
@@ -248,21 +248,11 @@ where
 
 #[bun_jsc::JsClass]
 pub struct S3Client {
-    pub(crate) credentials: bun_ptr::IntrusiveRc<S3Credentials>,
+    pub(crate) credentials: bun_ptr::RefPtr<S3Credentials>,
     pub(crate) options: MultiPartUploadOptions,
     pub(crate) acl: Option<ACL>,
     pub(crate) storage_class: Option<StorageClass>,
     pub(crate) request_payer: bool,
-}
-
-impl Drop for S3Client {
-    fn drop(&mut self) {
-        // `IntrusiveRc<T>` is `bun_ptr::RefPtr<T>`, which has no `Drop` impl
-        // of its own (only `ScopedRef<T>` does), so the +1 taken by
-        // `aws_options.credentials.dupe()` in `constructor` must be released
-        // explicitly.
-        self.credentials.deref();
-    }
 }
 
 impl S3Client {
@@ -354,7 +344,7 @@ impl S3Client {
     fn construct_blob(
         &self,
         global: &JSGlobalObject,
-        path: PathLike,
+        path: PathLike<'static>,
         options: Option<JSValue>,
     ) -> JsResult<crate::webcore::blob::Blob> {
         S3File::construct_s3_file_with_s3_credentials_and_options(
@@ -549,7 +539,6 @@ impl S3Client {
         let object_keys = args[0];
         let options = opt_js(args[1]);
 
-        // `defer blob.detach()` — handled by Drop of `Option<StoreRef>` field.
         let blob = S3File::construct_s3_file_with_s3_credentials_and_options(
             global,
             PathLike::default(),
@@ -657,7 +646,6 @@ impl S3Client {
                 .get_s3_credentials(),
         );
 
-        // `defer blob.detach()` — handled by Drop of `Option<StoreRef>` field.
         let blob = S3File::construct_s3_file_with_s3_credentials(
             global,
             PathLike::default(),

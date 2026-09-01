@@ -112,6 +112,68 @@ describe("body-mixin-errors", () => {
     });
   });
 
+  // The body can also have failed before anything reads it: here the whole response arrives at
+  // once and its body does not decode, so the Response is created with the failure already in
+  // hand. `.body` then has to be the body's stream all the same: the same stream each time, read
+  // once it counts as used, and the readers see "already used" afterwards instead of the
+  // network error again.
+  async function withUndecodableBodyServer<T>(fn: (url: string) => Promise<T>): Promise<T> {
+    const server = net.createServer(socket => {
+      socket.resume();
+      socket.end(
+        "HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: 16\r\nConnection: close\r\n\r\nthis is not gzip",
+      );
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as net.AddressInfo;
+    try {
+      return await fn(`http://127.0.0.1:${port}/`);
+    } finally {
+      await new Promise<void>(r => server.close(() => r()));
+    }
+  }
+
+  it.concurrent("fetch: .body of a body that failed before it was read is still the body", async () => {
+    await withUndecodableBodyServer(async url => {
+      const res = await fetch(url);
+      const body = res.body!;
+      expect(res.body).toBe(body);
+      expect(res.bodyUsed).toBe(false);
+
+      let firstErr: unknown;
+      await body
+        .getReader()
+        .read()
+        .catch(e => (firstErr = e));
+      expect(firstErr).toBeInstanceOf(TypeError);
+      expect(res.bodyUsed).toBe(true);
+
+      let secondErr: unknown;
+      await res.text().catch(e => (secondErr = e));
+      expectBodyAlreadyUsed(secondErr);
+    });
+  });
+
+  // textStream() is one shot: handing it out uses the body up, failed or not.
+  it.concurrent("fetch: textStream() of a body that failed before it was read uses the body up", async () => {
+    await withUndecodableBodyServer(async url => {
+      const res = await fetch(url);
+      expect(res.bodyUsed).toBe(false);
+
+      let firstErr: unknown;
+      await res
+        .textStream()
+        .getReader()
+        .read()
+        .catch(e => (firstErr = e));
+      expect(firstErr).toBeInstanceOf(TypeError);
+      expect(res.bodyUsed).toBe(true);
+
+      expect(() => res.textStream()).toThrow(TypeError);
+    });
+  });
+
   it.concurrent.each(["arrayBuffer", "bytes", "blob", "json"] as const)(
     "fetch: truncated body %s() marks body used",
     async method => {

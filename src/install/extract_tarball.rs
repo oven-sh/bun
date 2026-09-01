@@ -37,6 +37,11 @@ pub struct ExtractTarball {
     pub(crate) in_trusted_dependencies: bool,
     pub(crate) integrity: Integrity, // = Integrity::default()
     pub(crate) url: StringOrTinyString,
+    /// The lockfile's bun-tag (`repository.resolved`) for a Github resolution,
+    /// copied out because extract workers must not read lockfile buffers. When
+    /// set it names the cache folder and `.bun-tag` (cache lookups are keyed by
+    /// it); empty on a fresh resolve, which uses the archive's root dir name.
+    pub(crate) github_resolved: StringOrTinyString,
     /// BACKREF: PackageManager owns the task pool that owns this struct.
     pub(crate) package_manager: bun_ptr::BackRef<PackageManager>,
 }
@@ -377,6 +382,14 @@ impl ExtractTarball {
                             ..Default::default()
                         },
                     )?;
+
+                    let lockfile_tag = self.github_resolved.slice();
+                    if !lockfile_tag.is_empty() {
+                        resolved = FileSystem::instance()
+                            .dirname_store()
+                            .append(lockfile_tag)
+                            .expect("unreachable");
+                    }
 
                     // This tag is used to know which version of the package was
                     // installed from GitHub. package.json version becomes sort of

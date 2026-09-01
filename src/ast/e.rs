@@ -313,6 +313,12 @@ pub struct Dot {
     /// unwrapped if the resulting value is unused. Unwrapping means discarding
     /// the call target but keeping any arguments with side effects.
     pub call_can_be_unwrapped_if_unused: CallUnwrap,
+
+    /// `target` is an `EImportIdentifier` and this read was counted in
+    /// `Part::import_symbol_property_uses` instead of as a use of the import,
+    /// so the linker may bind it straight to the export it names
+    /// (`LinkerGraph::import_member_bindings`).
+    pub is_import_property_use: bool,
 }
 impl Default for Dot {
     fn default() -> Self {
@@ -323,6 +329,7 @@ impl Default for Dot {
             optional_chain: None,
             can_be_removed_if_unused: false,
             call_can_be_unwrapped_if_unused: CallUnwrap::Never,
+            is_import_property_use: false,
         }
     }
 }
@@ -330,6 +337,8 @@ pub struct Index {
     pub index: ExprNodeIndex,
     pub target: ExprNodeIndex,
     pub optional_chain: Option<OptionalChain>,
+    /// See `Dot::is_import_property_use`.
+    pub is_import_property_use: bool,
 }
 
 pub struct Arrow {
@@ -1685,6 +1694,23 @@ pub struct EString {
 // Also exported as `String`; `EString` avoids colliding with bun_core::String.
 pub use EString as String;
 
+/// [`EString::flattened`] result: the node itself, or an owned copy when a rope was flattened.
+pub enum Flattened<'a> {
+    Borrowed(&'a EString),
+    Owned(EString),
+}
+
+impl core::ops::Deref for Flattened<'_> {
+    type Target = EString;
+    #[inline]
+    fn deref(&self) -> &EString {
+        match self {
+            Flattened::Borrowed(s) => s,
+            Flattened::Owned(s) => s,
+        }
+    }
+}
+
 impl Default for EString {
     fn default() -> Self {
         Self {
@@ -1875,10 +1901,28 @@ impl EString {
         true
     }
 
+    /// Flatten in place. Parser only; shared-AST readers use [`Self::flattened`].
     pub fn resolve_rope_if_needed(&mut self, bump: &Bump) {
         if self.next.is_none() || !self.is_utf8() {
             return;
         }
+        self.data = Str::new(self.flatten_rope(bump));
+        self.next = None;
+    }
+
+    /// `self` if not a rope, else a copy flattened into `bump`. Never writes to `self`.
+    pub fn flattened(&self, bump: &Bump) -> Flattened<'_> {
+        if self.next.is_none() || !self.is_utf8() {
+            return Flattened::Borrowed(self);
+        }
+        let mut copy = self.shallow_clone();
+        copy.data = Str::new(self.flatten_rope(bump));
+        copy.next = None;
+        Flattened::Owned(copy)
+    }
+
+    /// The rope's bytes, concatenated into a fresh `bump` slice.
+    fn flatten_rope<'b>(&self, bump: &'b Bump) -> &'b [u8] {
         let mut bytes = bun_alloc::ArenaVec::<u8>::with_capacity_in(self.rope_len as usize, bump);
         bytes.extend_from_slice(&self.data);
         let mut str_ = self.next;
@@ -1886,8 +1930,7 @@ impl EString {
             bytes.extend_from_slice(&part.get().data);
             str_ = part.get().next;
         }
-        self.data = Str::new(bytes.into_bump_slice());
-        self.next = None;
+        bytes.into_bump_slice()
     }
 
     /// Return UTF-8 bytes, transcoding if UTF-16.
@@ -2411,6 +2454,12 @@ pub struct Import {
     pub expr: ExprNodeIndex,
     pub options: ExprNodeIndex,
     pub import_record_index: u32,
+    /// When bundling a string-literal `import("...")`, this is the synthetic
+    /// namespace symbol minted by `transpose_import`. Property accesses /
+    /// destructuring of the awaited result are recorded under this ref so the
+    /// linker can tree-shake unused exports of the importee. `Ref::NONE` when
+    /// not bundling or the specifier is non-constant.
+    pub namespace_ref: Ref,
     // TODO:
     // Comments inside "import()" expressions have special meaning for Webpack.
     // Preserving comments inside these expressions makes it possible to use

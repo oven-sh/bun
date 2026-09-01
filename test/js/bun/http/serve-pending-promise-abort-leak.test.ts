@@ -12,22 +12,29 @@ async function stopAndAssertDrained(server: ReturnType<typeof Bun.serve>) {
   expect(server.pendingRequests).toBe(0);
 }
 
-test("RequestContext is freed when client aborts before Promise<Response> settles", async () => {
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), join(import.meta.dir, "serve-pending-promise-abort-leak-fixture.ts")],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+test.each([false, true])(
+  "RequestContext is freed when client aborts before Promise<Response> settles (http2: %p)",
+  async http2 => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        join(import.meta.dir, "serve-pending-promise-abort-leak-fixture.ts"),
+        ...(http2 ? ["--http2"] : []),
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr).toBe("");
-  const result = JSON.parse(stdout.trim());
-  expect(result.pending).toBe(0);
-  expect(result.abortCount).toBe(result.iterations);
-  expect(exitCode).toBe(0);
-});
+    expect(stderr).toBe("");
+    const result = JSON.parse(stdout.trim());
+    expect(result.pending).toBe(0);
+    expect(result.abortCount).toBe(result.iterations);
+    expect(exitCode).toBe(0);
+  },
+);
 
 test("Promise<Response> still works normally when not aborted", async () => {
   using server = Bun.serve({
@@ -427,6 +434,71 @@ test("pendingRequests drops when the client aborts a parked direct-stream pull()
   expect(server.pendingRequests).toBe(0);
 });
 
+// The abort tears the context down before the stream pump settles, so the
+// pump's cleanup of the Response body never runs. The body kept a strong ref
+// on the stream. When the stream can reach the Response (hono's streamSSE
+// keeps a WeakMap from the body stream to its Context), that ref closed a
+// cycle through a GC root and every disconnect leaked the Response, the
+// stream, and everything the handler closed over.
+test.each(["sync", "async"])(
+  "client abort of a streaming Response releases the body stream it held (%s handler)",
+  async kind => {
+    const stash = new WeakMap<ReadableStream, Response>();
+    const streams: WeakRef<ReadableStream>[] = [];
+    const respond = () => {
+      const stream = new ReadableStream({
+        pull(controller) {
+          controller.enqueue("data: x\n\n");
+          return new Promise<void>(() => {});
+        },
+      });
+      streams.push(new WeakRef(stream));
+      const response = new Response(stream, { headers: { "Content-Type": "text/event-stream" } });
+      stash.set(stream, response);
+      return response;
+    };
+
+    using server = Bun.serve({
+      port: 0,
+      idleTimeout: 0,
+      fetch:
+        kind === "async"
+          ? async () => {
+              await Promise.resolve();
+              return respond();
+            }
+          : () => respond(),
+    });
+
+    async function abortAfterFirstChunk() {
+      const ac = new AbortController();
+      const res = await fetch(server.url, { signal: ac.signal });
+      const reader = res.body!.getReader();
+      await reader.read();
+      ac.abort();
+      await reader.closed.catch(() => {});
+    }
+
+    const iterations = 8;
+    for (let i = 0; i < iterations; i++) {
+      await abortAfterFirstChunk();
+    }
+    expect(streams).toHaveLength(iterations);
+
+    // stop() resolves once every abort tore its context down, which is when
+    // the body's ref must be gone.
+    await stopAndAssertDrained(server);
+
+    let alive = iterations;
+    for (let i = 0; i < 20 && alive > 0; i++) {
+      Bun.gc(true);
+      await Bun.sleep(1);
+      alive = streams.filter(ref => ref.deref() !== undefined).length;
+    }
+    expect(alive).toBe(0);
+  },
+);
+
 // Between the abort and the late settle, the server itself goes away: stop()
 // (issued before or after the abort) plus pendingRequests reaching 0 lets the
 // server release its JS wrapper, and dropping the last reference lets GC free
@@ -606,4 +678,287 @@ test("413 on a chunked upload frees the context while the handler promise stays 
   } finally {
     socket.destroy();
   }
+});
+
+// A request subscribes to its connection's close only once its dispatch is
+// over (to_async), so a close that lands before that was lost. server.stop(true)
+// inside the handler closes the connection right there. A request with its body
+// in flight then went async on the closed socket and was parked forever: no
+// abort, a pending body read that never settled, pendingRequests stuck at 1,
+// and a stop() promise that never resolved. A request without a body rendered
+// a 204 into the closed socket instead of aborting.
+const stoppedRequests: Array<[string, string, string[]]> = [
+  ["a GET", "GET /stopped HTTP/1.1\r\nHost: example.com\r\n\r\n", ["abort http://example.com/stopped example.com"]],
+  [
+    "a POST with its body in flight",
+    // Declares 1000 bytes and sends 10.
+    "POST /stopped HTTP/1.1\r\nHost: example.com\r\nContent-Length: 1000\r\n\r\n0123456789",
+    ["abort http://example.com/stopped example.com", "text rejected: AbortError"],
+  ],
+];
+test.each(stoppedRequests)("server.stop(true) inside the handler of %s aborts it", async (_what, head, expected) => {
+  const events: string[] = [];
+  const { promise: reached, resolve: signalReached, reject: failReached } = Promise.withResolvers<void>();
+  let stopped: Promise<void>;
+  using server = Bun.serve({
+    port: 0,
+    idleTimeout: 0,
+    fetch(req, srv) {
+      // url and headers are read lazily from inside the listener: an abort
+      // delivered this way must still see them, like any other abort.
+      req.signal.addEventListener("abort", () => events.push(`abort ${req.url} ${req.headers.get("host")}`), {
+        once: true,
+      });
+      if (req.method === "POST") {
+        req.text().then(
+          () => events.push("text resolved"),
+          e => events.push(`text rejected: ${(e as Error).name}`),
+        );
+      }
+      stopped = srv.stop(true);
+      signalReached();
+      return new Promise<Response>(() => {});
+    },
+  });
+
+  const client = connect(Number(server.port), "127.0.0.1", () => client.write(head));
+  // A reset after the server closed the connection is expected; a failure
+  // before the handler ran is not.
+  client.on("error", failReached);
+
+  await reached;
+  // The abort is delivered as the dispatch finishes; an immediate queued from
+  // inside it runs after that.
+  await new Promise(resolve => setImmediate(resolve));
+  expect(events).toEqual(expected);
+  expect(server.pendingRequests).toBe(0);
+  await stopped!;
+});
+
+// A Response the server will never render still owns a body stream that
+// somebody produces into. The server has to cancel it, like a client abort
+// after the stream was attached does, or the producer waits for a pull that
+// never comes: a `pull()` source is never told, and a writer feeding a
+// TransformStream (hono's streamSSE) blocks forever with everything it
+// closes over.
+test("a Promise<Response> that settles after the client aborted has its body stream cancelled", async () => {
+  const { promise: handlerEntered, resolve: signalHandler } = Promise.withResolvers<void>();
+  const { promise: abortObserved, resolve: signalAbort } = Promise.withResolvers<void>();
+  const { promise: gate, resolve: openGate } = Promise.withResolvers<void>();
+  let handlerResult: Promise<Response> | undefined;
+  const cancelReasons: unknown[] = [];
+
+  using server = Bun.serve({
+    port: 0,
+    idleTimeout: 0,
+    fetch(req) {
+      req.signal.addEventListener("abort", () => signalAbort(), { once: true });
+      signalHandler();
+      handlerResult = (async () => {
+        await gate;
+        return new Response(
+          new ReadableStream({
+            cancel(reason) {
+              cancelReasons.push(reason);
+            },
+          }),
+          { headers: { "Content-Type": "text/event-stream" } },
+        );
+      })();
+      return handlerResult;
+    },
+  });
+
+  const ac = new AbortController();
+  const p = fetch(server.url, { signal: ac.signal }).catch(() => {});
+  await handlerEntered;
+  ac.abort();
+  await p;
+  await abortObserved;
+
+  // The abort tore the context down. Only now does the handler produce its Response.
+  openGate();
+  // The native reaction was attached when the handler returned, so it runs
+  // before this continuation: the cancel is already done here.
+  await handlerResult!;
+  // The same `undefined` reason a client abort after attachment delivers.
+  expect(cancelReasons).toStrictEqual([undefined]);
+  await stopAndAssertDrained(server);
+});
+
+test("a TransformStream writer behind a Response that settles after the client aborted is released", async () => {
+  // hono's streamSSE shape: the handler writes into a TransformStream whose
+  // readable side is the Response body. Nothing reads the body, so the first
+  // write parks on backpressure. Cancelling the body errors the writable side
+  // and settles that write.
+  const { promise: handlerEntered, resolve: signalHandler } = Promise.withResolvers<void>();
+  const { promise: abortObserved, resolve: signalAbort } = Promise.withResolvers<void>();
+  const { promise: gate, resolve: openGate } = Promise.withResolvers<void>();
+  let handlerResult: Promise<Response> | undefined;
+  let writeOutcome: Promise<string> | undefined;
+
+  using server = Bun.serve({
+    port: 0,
+    idleTimeout: 0,
+    fetch(req) {
+      req.signal.addEventListener("abort", () => signalAbort(), { once: true });
+      signalHandler();
+      handlerResult = (async () => {
+        await gate;
+        const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>();
+        const writer = writable.getWriter();
+        writeOutcome = writer.write(new TextEncoder().encode("data: hello\n\n")).then(
+          () => "written",
+          () => "rejected",
+        );
+        return new Response(readable, { headers: { "Content-Type": "text/event-stream" } });
+      })();
+      return handlerResult;
+    },
+  });
+
+  const ac = new AbortController();
+  const p = fetch(server.url, { signal: ac.signal }).catch(() => {});
+  await handlerEntered;
+  ac.abort();
+  await p;
+  await abortObserved;
+
+  openGate();
+  await handlerResult!;
+  expect(await writeOutcome!).toBe("rejected");
+  await stopAndAssertDrained(server);
+});
+
+// server.stop(true) inside the handler closes the connection under the
+// request. The handler's result is then a Response the server drops: a plain
+// one, an already-settled promise (an async handler with no await), or a
+// promise that settles after the dispatch is over. The request's signal
+// aborts through the regular teardown either way; the body cancel is the
+// part that was missing.
+type StoppingHandler = (req: Request, srv: ReturnType<typeof Bun.serve>) => Response | Promise<Response>;
+const stoppedServers: Promise<void>[] = [];
+const stoppedHandlers: Array<[string, (body: () => ReadableStream, gate: Promise<void>) => StoppingHandler]> = [
+  [
+    "a Response",
+    body => (_req, srv) => {
+      stoppedServers.push(srv.stop(true));
+      return new Response(body());
+    },
+  ],
+  [
+    "a settled Promise<Response>",
+    body => async (_req, srv) => {
+      stoppedServers.push(srv.stop(true));
+      return new Response(body());
+    },
+  ],
+  [
+    "a pending Promise<Response>",
+    (body, gate) => async (_req, srv) => {
+      stoppedServers.push(srv.stop(true));
+      await gate;
+      return new Response(body());
+    },
+  ],
+];
+
+test.each(stoppedHandlers)(
+  "%s returned after server.stop(true) in the handler has its body stream cancelled",
+  async (_what, makeFetch) => {
+    const { promise: gate, resolve: openGate } = Promise.withResolvers<void>();
+    const events: string[] = [];
+    const body = () =>
+      new ReadableStream({
+        cancel(reason) {
+          events.push(`cancel ${reason}`);
+        },
+      });
+    const handler = makeFetch(body, gate);
+
+    using server = Bun.serve({
+      port: 0,
+      idleTimeout: 0,
+      fetch(req, srv) {
+        req.signal.addEventListener("abort", () => events.push("abort"), { once: true });
+        return handler(req, srv);
+      },
+    });
+
+    await fetch(server.url).then(
+      () => {
+        throw new Error("the request should not get a response");
+      },
+      () => {},
+    );
+    // The stopped server tears the request down as the dispatch ends. A
+    // pending handler result settles only now, into a context that is gone.
+    await stoppedServers.pop()!;
+    expect(server.pendingRequests).toBe(0);
+    openGate();
+    // The cancel runs inside the promise reaction the server attached, which
+    // was registered before anything this test awaits.
+    await gate;
+    await new Promise(resolve => setImmediate(resolve));
+    expect(events.sort()).toEqual(["abort", "cancel undefined"]);
+  },
+);
+
+test("error() returning a streaming Response after server.stop(true) has its body stream cancelled", async () => {
+  let stopped: Promise<void> | undefined;
+  const cancelReasons: unknown[] = [];
+
+  using server = Bun.serve({
+    port: 0,
+    idleTimeout: 0,
+    fetch() {
+      throw new Error("boom");
+    },
+    error() {
+      stopped = server.stop(true);
+      return new Response(
+        new ReadableStream({
+          cancel(reason) {
+            cancelReasons.push(reason);
+          },
+        }),
+      );
+    },
+  });
+
+  await fetch(server.url).then(
+    () => {
+      throw new Error("the request should not get a response");
+    },
+    () => {},
+  );
+  await stopped!;
+  expect(cancelReasons).toStrictEqual([undefined]);
+  expect(server.pendingRequests).toBe(0);
+});
+
+// A null-body status is sent without its body, as HEAD is: the stream behind
+// it has to be cancelled the same way.
+test.each([204, 304])("a %d Response with a ReadableStream body cancels the stream", async status => {
+  const cancelReasons: unknown[] = [];
+  using server = Bun.serve({
+    port: 0,
+    idleTimeout: 0,
+    fetch() {
+      return new Response(
+        new ReadableStream({
+          cancel(reason) {
+            cancelReasons.push(reason);
+          },
+        }),
+        { status },
+      );
+    },
+  });
+
+  const res = await fetch(server.url);
+  expect(res.status).toBe(status);
+  expect(await res.text()).toBe("");
+  expect(cancelReasons).toStrictEqual([undefined]);
+  await stopAndAssertDrained(server);
 });

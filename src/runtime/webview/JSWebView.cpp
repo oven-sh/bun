@@ -66,6 +66,16 @@ void settleSlot(JSGlobalObject* g, JSWebView* v,
         p->reject(g->vm(), value);
 }
 
+void rejectSlotAsHandled(JSGlobalObject* g, JSWebView* v,
+    WriteBarrier<JSPromise>& slot, JSValue err)
+{
+    JSPromise* p = slot.get();
+    if (!p) return;
+    slot.clear();
+    v->m_pendingActivityCount.fetch_sub(1, std::memory_order_release);
+    p->rejectAsHandled(g->vm(), err);
+}
+
 // --- WebViewEventTarget ----------------------------------------------------
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(WebViewEventTarget);
@@ -117,7 +127,11 @@ JSWebView::~JSWebView()
     if (m_closed) return;
     if (m_backend == WebViewBackend::Chrome) {
         auto& t = CDP::transport();
-        if (!m_sessionId.isEmpty()) t.m_sessions.remove(m_sessionId);
+        // Only this view's own entry: a browser spawned after a retire can reuse the session id string.
+        if (!m_sessionId.isEmpty()) {
+            auto it = t.m_sessions.find(m_sessionId);
+            if (it != t.m_sessions.end() && it->value == m_viewId) t.m_sessions.remove(it);
+        }
         if (m_viewId) t.m_views.remove(m_viewId);
         t.updateKeepAlive();
         return;
@@ -373,6 +387,14 @@ JSWebView* JSWebView::createChrome(JSGlobalObject* g, Structure* structure,
     // synchronous and the attach chain owned by the navigate promise (which
     // resolves on Page.loadEventFired, so one await covers the whole sequence).
     return view;
+}
+
+void retireWebViewsForTestIsolation(Zig::GlobalObject* global)
+{
+    CDP::transport().retireGlobal(global);
+#if OS(DARWIN)
+    WK::client().retireGlobal(global);
+#endif
 }
 
 // --- Setup -----------------------------------------------------------------

@@ -62,6 +62,20 @@ describe("bundler", () => {
       expect(exitCode).toBe(0);
     });
   }
+  // A chunk with non-ASCII text is embedded as UTF-16; reading it back as a file must still give the UTF-8 text.
+  itBundled("compile/NonAsciiChunkReadsBackAsUTF8", {
+    compile: true,
+    banner: "// ✓ résumé",
+    files: {
+      "/entry.ts": /* js */ `
+        import { readFileSync, statSync } from "node:fs";
+        const text = readFileSync(Bun.main, "utf8");
+        const viaBlob = await Bun.file(Bun.main).text();
+        console.log(text.includes("// ✓ résumé"), viaBlob === text, statSync(Bun.main).size === Buffer.byteLength(text));
+      `,
+    },
+    run: { stdout: "true true true" },
+  });
   itBundled("compile/HelloWorldWithProcessVersionsBun", {
     compile: true,
     files: {
@@ -423,6 +437,185 @@ describe("bundler", () => {
     outfile: "dist/out",
     run: { stdout: "Hello, world!\nWorker loaded!\n", file: "dist/out", setCwd: true },
   });
+  // Every way of naming an embedded worker entry point resolves against the executable, not the cwd: a relative
+  // specifier with the source extension, with the embedded `.js` extension, or with none, a `file:` URL made from
+  // import.meta.url with either extension, and an absolute path in the platform's own syntax.
+  itBundled("compile/WorkerSpecifierForms", {
+    backend: "cli",
+    compile: true,
+    files: {
+      "/entry.ts": /* js */ `
+        import { rmSync } from "fs";
+        import { tmpdir } from "os";
+        import { join } from "path";
+        rmSync("./wjs.js", { force: true });
+        rmSync("./wts.ts", { force: true });
+        rmSync("./wmjs.mjs", { force: true });
+        process.chdir(tmpdir());
+        const specs = [
+          "./wjs.js", "./wjs", "./wts.ts", "./wts", "./wmjs.mjs",
+          new URL("./wjs.js", import.meta.url), new URL("./wts.ts", import.meta.url), new URL("./wmjs.mjs", import.meta.url),
+          new URL("./wts.ts", import.meta.url).href,
+          join(import.meta.dir, "wmjs.mjs"),
+        ];
+        for (const spec of specs) {
+          const w = new Worker(spec);
+          const msg = await new Promise(resolve => {
+            w.onmessage = e => resolve(e.data);
+            w.onerror = e => resolve("error: " + e.message);
+          });
+          w.terminate();
+          console.log(msg);
+        }
+      `,
+      "/wjs.js": `postMessage("wjs");`,
+      "/wts.ts": `postMessage("wts" as string);`,
+      "/wmjs.mjs": `postMessage("wmjs");`,
+    },
+    entryPointsRaw: ["./entry.ts", "./wjs.js", "./wts.ts", "./wmjs.mjs"],
+    outfile: "dist/out",
+    run: { stdout: "wjs\nwjs\nwts\nwts\nwmjs\nwjs\nwts\nwmjs\nwts\nwmjs\n", file: "dist/out", setCwd: true },
+  });
+  // The same resolution for import()/require() at run time (specifiers the bundler could not see), relative to the
+  // embedded importer: by source extension, by embedded name, without extension, and by file: URL.
+  itBundled("compile/DynamicImportEmbeddedEntryPoint", {
+    backend: "cli",
+    compile: true,
+    files: {
+      "/entry.ts": /* js */ `
+        import { rmSync } from "fs";
+        import { tmpdir } from "os";
+        rmSync("./mod.ts", { force: true });
+        process.chdir(tmpdir());
+        const specs = ["./mod.ts", "./mod.js", "./mod", new URL("./mod.ts", import.meta.url).href];
+        for (const spec of specs) console.log((await import(spec)).default, require(spec).default);
+        await import("./nope.ts").catch(e => console.log(e.constructor.name));
+      `,
+      "/mod.ts": `export default "mod" as string;`,
+    },
+    entryPointsRaw: ["./entry.ts", "./mod.ts"],
+    outfile: "dist/out",
+    run: { stdout: "mod mod\nmod mod\nmod mod\nmod mod\nResolveMessage\n", file: "dist/out", setCwd: true },
+  });
+  // Nested embedded entry points, from the entry and from inside the subdirectory (`../`), by every spelling.
+  itBundled("compile/EmbeddedResolveNested", {
+    backend: "cli",
+    compile: true,
+    files: {
+      "/entry.ts": /* js */ `
+        import { rmSync } from "fs";
+        import { tmpdir } from "os";
+        rmSync("./sub", { recursive: true, force: true });
+        rmSync("./top.ts", { force: true });
+        process.chdir(tmpdir());
+        const s = (x: string) => x; // keeps the bundler from resolving the specifier at build time
+        for (const spec of ["./sub/inner.ts", "./sub/inner", "./sub/inner.js"]) console.log((await import(s(spec))).default);
+        const w = new Worker("./sub/worker.ts");
+        console.log(await new Promise(r => { w.onmessage = e => r(e.data); w.onerror = e => r("error: " + e.message); }));
+        w.terminate();
+        // sub/inner.js (the embedded module, not a copy bundled into this one) resolves its sibling and its parent
+        console.log((await import(s("./sub/inner.ts"))).fromInside());
+      `,
+      "/top.ts": `export default "top" as string;`,
+      "/sub/inner.ts": /* js */ `
+        export default "inner" as string;
+        export function fromInside() {
+          const s = (x: string) => x;
+          return [require(s("../top.ts")).default, require(s("../top")).default, require(s("./sibling.ts")).default].join(",");
+        }
+      `,
+      "/sub/sibling.ts": `export default "sibling" as string;`,
+      "/sub/worker.ts": /* js */ `
+        const s = (x: string) => x;
+        postMessage([(await import(s("./sibling.ts"))).default, (await import(s("../top"))).default].join(","));
+      `,
+    },
+    entryPointsRaw: ["./entry.ts", "./top.ts", "./sub/inner.ts", "./sub/sibling.ts", "./sub/worker.ts"],
+    outfile: "dist/out",
+    run: { stdout: "inner\ninner\ninner\nsibling,top\ntop,top,sibling\n", file: "dist/out", setCwd: true },
+  });
+  // What resolves where: an embedded module wins over a file of the same name in the cwd; a relative specifier that
+  // is not embedded still resolves against the cwd; the resolved name of an embedded module is the graph's own.
+  itBundled("compile/EmbeddedResolvePrecedence", {
+    backend: "cli",
+    compile: true,
+    files: {
+      "/entry.ts": /* js */ `
+        const s = (x: string) => x;
+        console.log(require(s("./both.js")).default);
+        console.log(require(s("./disk-only.js")).default);
+        const w1 = new Worker("./both.js");
+        console.log(await new Promise(r => { w1.onmessage = e => r(e.data); w1.onerror = e => r("error: " + e.message); }));
+        w1.terminate();
+        const w2 = new Worker("./disk-only-worker.js");
+        console.log(await new Promise(r => { w2.onmessage = e => r(e.data); w2.onerror = e => r("error: " + e.message); }));
+        w2.terminate();
+        const root = process.platform === "win32" ? "B:/~BUN/root/" : "/$bunfs/root/";
+        console.log(require.resolve(s("./both.ts")) === root + "both.js", Bun.resolveSync("./both", import.meta.dir) === root + "both.js");
+        console.log(import.meta.path.replaceAll("\\\\", "/") === root + "out");
+      `,
+      "/both.js": `export default "both:embedded"; if (!Bun.isMainThread) postMessage("both:embedded worker");`,
+    },
+    runtimeFiles: {
+      "/both.js": `export default "both:disk"; if (!Bun.isMainThread) postMessage("both:disk worker");`,
+      "/disk-only.js": `export default "disk-only";`,
+      "/disk-only-worker.js": `postMessage("disk-only worker");`,
+    },
+    entryPointsRaw: ["./entry.ts", "./both.js"],
+    outfile: "dist/out",
+    run: {
+      stdout: "both:embedded\ndisk-only\nboth:embedded worker\ndisk-only worker\ntrue true\ntrue\n",
+      file: "dist/out",
+      setCwd: true,
+    },
+  });
+  // Spellings that must not map to an embedded module, and inputs that must fail cleanly rather than crash.
+  itBundled("compile/EmbeddedResolveMisses", {
+    backend: "cli",
+    compile: true,
+    files: {
+      "/entry.ts": /* js */ `
+        import { rmSync } from "fs";
+        import { tmpdir } from "os";
+        rmSync("./mod.ts", { force: true });
+        rmSync("./UP.TS", { force: true });
+        process.chdir(tmpdir());
+        const s = (x: string) => x;
+        const outcome = async (spec: string) => {
+          try {
+            return (await import(spec)).default;
+          } catch (e: any) {
+            return e?.constructor?.name ?? String(e);
+          }
+        };
+        console.log(await outcome(s("./mod.ts")));          // maps to mod.js
+        console.log(await outcome(s("./UP.ts")), await outcome(s("./up.TS"))); // the extension is case-insensitive, the name is not
+        console.log(await outcome(s("./mod.css")));         // not a source extension: no mapping
+        console.log(await outcome(s("./mod.js/")));         // trailing slash
+        console.log(await outcome(s("../mod.ts")));         // escapes the embedded root
+        console.log(await outcome(s("./" + Buffer.alloc(70000, "a").toString() + ".ts"))); // longer than any path buffer
+        console.log(await outcome(s(".\\\\mod.ts")));      // a relative specifier on Windows only
+      `,
+      "/mod.ts": `export default "mod" as string;`,
+      "/UP.TS": `export default "UP" as string;`,
+    },
+    entryPointsRaw: ["./entry.ts", "./mod.ts", "./UP.TS"],
+    outfile: "dist/out",
+    run: {
+      stdout: [
+        "mod",
+        "UP ResolveMessage",
+        "ResolveMessage",
+        "ResolveMessage",
+        "ResolveMessage",
+        "ResolveMessage",
+        isWindows ? "mod" : "ResolveMessage",
+        "",
+      ].join("\n"),
+      file: "dist/out",
+      setCwd: true,
+    },
+  });
   itBundled("compile/WorkerRelativePathTSExtension", {
     backend: "cli",
     compile: true,
@@ -536,6 +729,36 @@ describe("bundler", () => {
     outfile: "dist/out",
     run: { stdout: "Hello, world!", setCwd: true },
   });
+  itBundled("compile/EmbeddedFileNamesPerThread", {
+    compile: true,
+    assetNaming: "[name].[ext]",
+    files: {
+      "/entry.ts": /* js */ `
+        import { isMainThread, Worker } from "node:worker_threads";
+        import "./asset.file";
+        import txt from "./t.txt" with { type: "text" };
+        function probe() {
+          const f = [...Bun.embeddedFiles][0];
+          const p = {};
+          p[f.name] = 1;
+          const o = {};
+          o[txt] = 1;
+          return p[f.name.split("").join("")] + " " + o[["embedded", "text", "module"].join("-")];
+        }
+        console.log(probe());
+        if (isMainThread) {
+          const w = new Worker(new URL(import.meta.url));
+          await new Promise(resolve => w.on("exit", resolve));
+          Bun.gc(true);
+          console.log(probe());
+        }
+      `,
+      "/asset.file": "abcd",
+      "/t.txt": "embedded-text-module",
+    },
+    outfile: "dist/out",
+    run: { stdout: "1 1\n1 1\n1 1", setCwd: true },
+  });
   itBundled("compile/Bun.isStandaloneExecutable", {
     compile: true,
     assetNaming: "[name].[ext]",
@@ -624,12 +847,12 @@ describe("bundler", () => {
       stdout:
         process.platform !== "win32"
           ? `file:///$bunfs/root/out /$bunfs/root/out`
-          : `file:///B:/~BUN/root/out B:\\~BUN\\root\\out`,
+          : // pathToFileURL percent-encodes '~' (matches Node.js)
+            `file:///B:/%7EBUN/root/out B:\\~BUN\\root\\out`,
       setCwd: true,
     },
   });
   itBundled("compile/VariousBunAPIs", {
-    todo: isWindows, // TODO
     compile: true,
     files: {
       "/entry.ts": `
@@ -910,6 +1133,150 @@ describe("bundler", () => {
       })(),
     },
     run: { stdout: "Hello, world!", setCwd: true },
+  });
+
+  // A text import in a compiled executable is embedded as a string body
+  // (8-bit when ASCII, UTF-16LE otherwise) that the runtime hands back without
+  // a parse or a copy, instead of a JS module with a string literal. The same source also checks `require()`, `import()`, and that
+  // `Bun.embeddedFiles` keeps listing only real assets.
+  // Buffers: `files` strings go through dedent(), which would trim them.
+  const textImportFiles = {
+    "/ascii.txt": Buffer.from("hello world\nline 2\n"),
+    "/latin1.txt": Buffer.from("caf\u00e9 na\u00efve\n"),
+    "/wide.txt": Buffer.from("em \u2014 dash \u{1F600} emoji \u65e5\u672c\n"),
+    "/empty.txt": Buffer.alloc(0),
+    "/invalid.txt": Buffer.from([0x62, 0x61, 0x64, 0x20, 0xff, 0xfe, 0x20, 0xc3, 0x28, 0x0a]),
+    "/doc.md": Buffer.from("# Title\n\nsome *markdown* \u2014 with dash\n"),
+    "/asset.file": "abcd",
+  };
+  const textImportEntry = /* js */ `
+    import ascii from "./ascii.txt";
+    import latin1 from "./latin1.txt";
+    import wide from "./wide.txt";
+    import empty from "./empty.txt";
+    import invalid from "./invalid.txt";
+    import doc from "./doc.md";
+    import asset from "./asset.file" with { type: "file" };
+    import { readdirSync, readFileSync } from "node:fs";
+    import { dirname, join } from "node:path";
+
+    // No top-level await: the bytecode variant is CommonJS output.
+    async function main() {
+      // The embedded root. \`import.meta.dir\` is inlined at build time in CommonJS output.
+      const root = dirname(Bun.main);
+      const expected = {
+        ascii: "hello world\\nline 2\\n",
+        latin1: "caf\\u00e9 na\\u00efve\\n",
+        wide: "em \\u2014 dash \\u{1F600} emoji \\u65e5\\u672c\\n",
+        empty: "",
+        // Invalid UTF-8 decodes like TextDecoder: one U+FFFD per bad byte.
+        invalid: "bad \\ufffd\\ufffd \\ufffd(\\n",
+        doc: "# Title\\n\\nsome *markdown* \\u2014 with dash\\n",
+      };
+      const actual = { ascii, latin1, wide, empty, invalid, doc };
+      for (const [name, value] of Object.entries(actual)) {
+        if (typeof value !== "string") throw new Error(name + " is a " + typeof value);
+        if (value !== expected[name]) throw new Error(name + " mismatch: " + JSON.stringify(value));
+      }
+      if (require("./ascii.txt") !== ascii) throw new Error("require() returned " + JSON.stringify(require("./ascii.txt")));
+      if ((await import("./wide.txt")).default !== wide) throw new Error("import() mismatch");
+
+      // Text modules are not assets; only the file loader import is listed.
+      const embedded = Bun.embeddedFiles.map(blob => blob.name);
+      if (embedded.length !== 1 || !embedded[0].startsWith("asset-")) throw new Error("embeddedFiles: " + embedded);
+      if ((await Bun.file(asset).text()) !== "abcd") throw new Error("asset: " + asset);
+
+      // Reading the embedded module as a file gives its text as UTF-8, whichever width the body is stored in.
+      const encoded = {
+        "ascii.txt": Buffer.from(expected.ascii),
+        "latin1.txt": Buffer.from(expected.latin1),
+        "wide.txt": Buffer.from(expected.wide),
+        "empty.txt": Buffer.alloc(0),
+        "invalid.txt": Buffer.from(expected.invalid),
+        "doc.md": Buffer.from(expected.doc),
+      };
+      const embeddedNames = readdirSync(root);
+      for (const [name, bytes] of Object.entries(encoded)) {
+        const [base, ext] = name.split(".");
+        const file = embeddedNames.find(entry => entry.startsWith(base + "-") && entry.endsWith("." + ext));
+        if (!file) throw new Error("no embedded module for " + name + " in " + JSON.stringify(embeddedNames));
+        const got = readFileSync(join(root, file));
+        if (!got.equals(bytes)) throw new Error(name + ": " + got.toString("hex") + " != " + bytes.toString("hex"));
+      }
+      console.log("PASS");
+    }
+    main();
+  `;
+  for (const [suffix, options] of [
+    ["", {}],
+    ["Bytecode", { bytecode: true }],
+    ["BytecodeESM", { bytecode: true, format: "esm" }],
+  ] as const) {
+    itBundled(`compile/TextImport${suffix}`, {
+      compile: true,
+      ...options,
+      loader: { ".md": "text" },
+      files: { "/entry.ts": textImportEntry, ...textImportFiles },
+      run: { stdout: "PASS" },
+    });
+  }
+
+  // Text modules keep their own `[name]-[hash]` path: a user `--asset-naming`
+  // without `[hash]` must not make two same-named text files share one path.
+  itBundled("compile/TextImportSameBasename", {
+    compile: true,
+    assetNaming: "[name].[ext]",
+    files: {
+      "/entry.ts": /* js */ `
+        import a from "./a/readme.txt";
+        import b from "./b/readme.txt";
+        import sameA from "./a/same.txt";
+        import sameB from "./b/same.txt";
+        import icon from "./a/icon.file" with { type: "file" };
+        console.log(JSON.stringify({ a, b, sameA, sameB, icon: await Bun.file(icon).text() }));
+      `,
+      "/a/readme.txt": "from a",
+      "/b/readme.txt": "from b",
+      "/a/same.txt": "same",
+      "/b/same.txt": "same",
+      "/a/icon.file": "icon",
+    },
+    run: { stdout: JSON.stringify({ a: "from a", b: "from b", sameA: "same", sameB: "same", icon: "icon" }) },
+  });
+
+  // A browser chunk of a full-stack executable cannot reach the embedded
+  // module graph, so its text imports stay inline string literals.
+  itBundled("compile/TextImportClientChunkStaysInline", {
+    compile: true,
+    files: {
+      "/entry.ts": /* js */ `
+        import index from "./index.html";
+        import note from "./note.txt";
+        using server = Bun.serve({ port: 0, routes: { "/": index } });
+        const html = await (await fetch(server.url)).text();
+        const src = html.match(/<script[^>]*src="([^"]+)"/)[1];
+        const js = await (await fetch(new URL(src, server.url))).text();
+        console.log(JSON.stringify({
+          server: note,
+          clientHasLiteral: js.includes("client sees the text"),
+          clientHasBunfs: js.includes("$bunfs"),
+        }));
+      `,
+      "/index.html": /* html */ `
+        <!DOCTYPE html>
+        <html>
+          <body>
+            <script type="module" src="./app.ts"></script>
+          </body>
+        </html>
+      `,
+      "/app.ts": /* js */ `
+        import note from "./note.txt";
+        document.body.textContent = note;
+      `,
+      "/note.txt": "client sees the text",
+    },
+    run: { stdout: JSON.stringify({ server: "client sees the text", clientHasLiteral: true, clientHasBunfs: false }) },
   });
   itBundled("compile/Utf8", {
     compile: true,
@@ -1391,3 +1758,37 @@ test("compile --compile-executable-path rejects a template shorter than the exec
     expect(exitCode).toBe(1);
   }
 }, 60_000);
+
+// The startup path used to release weak refs, drop every unlinked code block and run a synchronous full collection right
+// after a standalone executable's entry module finished evaluating, i.e. before its first turn of the event loop.
+test("a standalone executable does not run a synchronous full GC after loading its entry point", async () => {
+  using dir = tempDir("compile-no-postload-gc", {
+    "app.js": `setTimeout(() => console.log("done"), 1);`,
+  });
+  const cwd = String(dir);
+  await using build = Bun.spawn({
+    cmd: [bunExe(), "build", "--compile", "app.js", "--outfile", "app"],
+    env: bunEnv,
+    cwd,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, buildStderr, buildExit] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+  expect(buildStderr).not.toContain("error");
+  expect(buildExit).toBe(0);
+  await using proc = Bun.spawn({
+    cmd: [join(cwd, isWindows ? "app.exe" : "app")],
+    // BUN_DESTRUCT_VM_ON_EXIT would add an exit-time full collection to the log.
+    env: { ...bunEnv, BUN_JSC_logGC: "1", BUN_DESTRUCT_VM_ON_EXIT: undefined },
+    cwd,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("done\n");
+  // Heap::notifyIsSafeToCollect logs this at VM creation whenever logGC is on, collection or not, so it proves the
+  // option reached the compiled binary without depending on any GC happening.
+  expect(stderr).toMatch(/\[GC<(0x)?[0-9a-fA-F]+>: starting /); // %p: "0x7f…" on POSIX, "00007FF6…" on Windows
+  expect(stderr).not.toContain("FullCollection");
+  expect(exitCode).toBe(0);
+});

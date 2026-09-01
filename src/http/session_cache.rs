@@ -1,6 +1,6 @@
 //! Client-side TLS session cache for `fetch()`.
 //!
-//! Keyed on the keep-alive pool tuple `(hostname, port, proxy_auth_hash)` and
+//! Keyed on the keep-alive pool tuple `(hostname, port, proxy_auth_hash, unix_path)` and
 //! scoped to one [`HTTPContext<true>`] per interned `SSLConfig`. A sink is
 //! installed before the handshake and armed only after `checkServerIdentity`
 //! passes, so an unverified handshake never inserts: a resumed handshake
@@ -25,6 +25,8 @@ struct CacheEntry {
     hostname: Box<[u8]>,
     port: u16,
     proxy_auth_hash: u64,
+    /// AF_UNIX socket path; empty for TCP.
+    unix_path: Box<[u8]>,
     /// `Option` so [`SessionCache::take`] can move ownership out.
     session: Option<NonNull<SSL_SESSION>>,
 }
@@ -58,6 +60,7 @@ impl SessionCache {
         hostname: &[u8],
         port: u16,
         proxy_auth_hash: u64,
+        unix_path: &[u8],
     ) -> Option<NonNull<SSL_SESSION>> {
         if hostname.len() > MAX_KEEPALIVE_HOSTNAME {
             return None;
@@ -67,6 +70,7 @@ impl SessionCache {
             e.port == port
                 && e.proxy_auth_hash == proxy_auth_hash
                 && strings::eql_long(&e.hostname, hostname, true)
+                && *e.unix_path == *unix_path
         })?;
         entries.remove(idx).session.take()
     }
@@ -77,6 +81,7 @@ impl SessionCache {
         hostname: &[u8],
         port: u16,
         proxy_auth_hash: u64,
+        unix_path: &[u8],
         session: NonNull<SSL_SESSION>,
     ) {
         if hostname.len() > MAX_KEEPALIVE_HOSTNAME {
@@ -89,6 +94,7 @@ impl SessionCache {
             e.port == port
                 && e.proxy_auth_hash == proxy_auth_hash
                 && strings::eql_long(&e.hostname, hostname, true)
+                && *e.unix_path == *unix_path
         }) {
             let _ = entries.remove(idx);
         } else if entries.len() >= SESSION_CACHE_CAPACITY {
@@ -98,6 +104,7 @@ impl SessionCache {
             hostname: Box::<[u8]>::from(hostname),
             port,
             proxy_auth_hash,
+            unix_path: Box::<[u8]>::from(unix_path),
             session: Some(session),
         });
     }
@@ -110,6 +117,7 @@ pub(crate) struct SessionSink {
     hostname: Box<[u8]>,
     port: u16,
     proxy_auth_hash: u64,
+    unix_path: Box<[u8]>,
     /// Set once `checkServerIdentity` passes. TLS 1.2 delivers the session
     /// inside `SSL_do_handshake`, before `on_handshake` can verify the peer.
     armed: bool,
@@ -145,6 +153,7 @@ extern "C" fn sink_on_new_session(owner: *mut c_void, session: *mut SSL_SESSION)
             &sink.hostname,
             sink.port,
             sink.proxy_auth_hash,
+            &sink.unix_path,
             session,
         );
     } else {
@@ -182,7 +191,6 @@ unsafe extern "C" {
 pub(crate) fn eligible(client: &crate::HTTPClient<'_>) -> bool {
     client.flags.reject_unauthorized
         && !client.signals.get(signals::Field::CertErrors)
-        && client.unix_socket_path.slice().is_empty()
         && !bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_FETCH_TLS_SESSION_CACHE
             .get()
             .unwrap_or(false)
@@ -198,12 +206,13 @@ pub(crate) unsafe fn install(
     hostname: &[u8],
     port: u16,
     proxy_auth_hash: u64,
+    unix_path: &[u8],
 ) {
     debug_assert!(!ssl.is_null());
     debug_assert!(!ctx.is_null());
     // SAFETY: caller contract.
     let cache = unsafe { &(*ctx).session_cache };
-    if let Some(session) = cache.take(hostname, port, proxy_auth_hash) {
+    if let Some(session) = cache.take(hostname, port, proxy_auth_hash, unix_path) {
         // SAFETY: `ssl` is live and pre-handshake; `SSL_set_session` takes
         // its own reference, so release ours after.
         unsafe {
@@ -216,6 +225,7 @@ pub(crate) unsafe fn install(
         hostname: Box::<[u8]>::from(hostname),
         port,
         proxy_auth_hash,
+        unix_path: Box::<[u8]>::from(unix_path),
         armed: false,
         pending: None,
     });
@@ -256,6 +266,7 @@ pub(crate) unsafe fn arm(ssl: *mut SSL) {
             &sink.hostname,
             sink.port,
             sink.proxy_auth_hash,
+            &sink.unix_path,
             session,
         );
     }

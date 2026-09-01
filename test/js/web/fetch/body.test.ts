@@ -696,17 +696,29 @@ for (const { body, fn } of bodyTypes) {
           },
         );
         test("rejects a fetch textStream() when the connection drops after an empty decode", async () => {
+          // The client must consume "A" before the drop reaches the HTTP
+          // thread: a failure that arrives in the same progress update as
+          // unread body bytes errors the body and discards those bytes.
+          const consumedFirstChunk = Promise.withResolvers<void>();
           await using server = await rawChunkedServer(async sock => {
-            for (const p of [[0x41], [0xf0], [0x9f]]) await writeChunk(sock, p);
+            await writeChunk(sock, [0x41]);
+            await consumedFirstChunk.promise;
+            for (const p of [[0xf0], [0x9f]]) await writeChunk(sock, p);
             sock.destroy();
           });
           const res = await fetch(`http://127.0.0.1:${server.port}/`);
           let received = "";
           let error: any;
           try {
-            for await (const ch of res.textStream()) received += ch;
+            for await (const ch of res.textStream()) {
+              received += ch;
+              consumedFirstChunk.resolve();
+            }
           } catch (e) {
             error = e;
+          } finally {
+            // Let the server finish (and close the socket) if the stream ended early.
+            consumedFirstChunk.resolve();
           }
           expect({ code: error?.code, received }).toEqual({ code: "ECONNRESET", received: "A" });
         });
@@ -1415,11 +1427,11 @@ describe.concurrent("a fetch() Response that cannot have a body", () => {
     expect(await response.text()).toBe("");
   });
 
-  test("content that arrives after a 205 resolved is drained, so the process can exit", async () => {
+  test("content still arriving after a 205 resolved does not hold the process", async () => {
     // The server sends 3 of the 5 declared bytes with the head and the other 2
     // only once fetch() has resolved. Nothing but the fetch refs the event loop,
-    // so the process only exits if the fetch takes those 2 bytes off the socket
-    // instead of keeping them for a body reader that cannot exist.
+    // so the process only exits if the fetch stops waiting for a body no reader
+    // can exist for: it closes the connection instead (the server sees the reset).
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -1430,6 +1442,7 @@ describe.concurrent("a fetch() Response that cannot have a body", () => {
           const server = net.createServer(socket => {
             upstream = socket;
             socket.unref();
+            socket.on("error", () => {});
             socket.once("data", () => {
               socket.write("HTTP/1.1 205 Reset Content\\r\\nContent-Length: 5\\r\\n\\r\\nhel");
             });

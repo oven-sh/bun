@@ -120,7 +120,7 @@ private:
 
 using HookSet = std::unordered_set<EitherCleanupHook, EitherCleanupHook::Hash>;
 
-napi_status defineProperty(napi_env env, JSC::JSObject* to, const napi_property_descriptor& property, JSC::ThrowScope& scope);
+napi_status defineProperty(napi_env env, JSC::JSObject* to, const napi_property_descriptor& property, JSC::ExceptionScope& scope);
 }
 
 // Owned by the addon: allocated by napi_add_async_cleanup_hook and freed only
@@ -139,13 +139,6 @@ struct napi_async_cleanup_hook_handle__ {
     do {                                                       \
         napi_internal_suppress_crash_on_abort_if_desired();    \
         Bun__crashHandler(message "", sizeof(message "") - 1); \
-    } while (0)
-
-#define NAPI_PERISH(...)                                                      \
-    do {                                                                      \
-        WTFReportError(__FILE__, __LINE__, __PRETTY_FUNCTION__, __VA_ARGS__); \
-        WTFReportBacktrace();                                                 \
-        NAPI_ABORT("Aborted");                                                \
     } while (0)
 
 #define NAPI_RELEASE_ASSERT(assertion, ...)                                                                         \

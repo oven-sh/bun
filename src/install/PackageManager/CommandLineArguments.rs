@@ -89,6 +89,12 @@ const SHARED_TAIL_PARAMS: &[ParamType] = &[
         "--no-verify                           Skip verifying integrity of newly downloaded packages"
     ),
     clap::param!(
+        "--offline                             Never touch the network: resolve and install only from the local cache"
+    ),
+    clap::param!(
+        "--prefer-offline                      Use cached package metadata regardless of age; only fetch what is missing"
+    ),
+    clap::param!(
         "--ignore-scripts                      Skip lifecycle scripts in the project's package.json (dependency scripts are never run)"
     ),
     clap::param!(
@@ -477,7 +483,7 @@ const PRUNE_HELP_PARAMS: &[ParamType] = &[
         "--cpu <STR>...                         Prune for a different CPU architecture than the current one"
     ),
     clap::param!(
-        "--linker <STR>                         Prune a node_modules installed with the given linker (one of \"isolated\" or \"hoisted\")"
+        "--linker <STR>                         Linker to assume when node_modules mixes isolated and hoisted installs (one of \"isolated\" or \"hoisted\")"
     ),
     clap::param!(
         "-F, --filter <STR>...                  Only prune the node_modules folders of the matching workspaces"
@@ -520,6 +526,8 @@ pub struct CommandLineArguments {
     pub log_level: Options::LogLevel,
     pub(crate) no_progress: bool,
     pub(crate) no_verify: bool,
+    pub(crate) offline: bool,
+    pub(crate) prefer_offline: bool,
     pub(crate) ignore_scripts: bool,
     pub(crate) trusted: bool,
     pub(crate) no_summary: bool,
@@ -622,6 +630,8 @@ impl Default for CommandLineArguments {
             log_level: Options::LogLevel::default(),
             no_progress: false,
             no_verify: false,
+            offline: false,
+            prefer_offline: false,
             ignore_scripts: false,
             trusted: false,
             no_summary: false,
@@ -1288,6 +1298,8 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
         cli.global = args.flag(b"--global");
         cli.force = args.flag(b"--force");
         cli.no_verify = args.flag(b"--no-verify");
+        cli.offline = args.flag(b"--offline");
+        cli.prefer_offline = args.flag(b"--prefer-offline");
         cli.no_cache = args.flag(b"--no-cache");
         // --silent checked first so `is_silent()` matches `--silent` exactly:
         // callers read it to suppress summaries/errors independently of verbose.
@@ -1719,21 +1731,19 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
         }
 
         if cli.global
-            && (!cli.filters.is_empty() || cli.recursive)
             && matches!(
                 subcommand,
                 Subcommand::Install | Subcommand::Add | Subcommand::Remove | Subcommand::Update
             )
         {
-            Output::err_generic(
-                if cli.filters.is_empty() {
-                    "--recursive cannot be used with --global\n"
-                } else {
-                    "--filter cannot be used with --global\n"
-                },
-                (),
-            );
-            Global::crash();
+            if !cli.filters.is_empty() {
+                Output::err_generic("--filter cannot be used with --global\n", ());
+                Global::crash();
+            }
+            // The global dir has no workspaces, so --recursive selects nothing
+            // extra. Pre-1.4 accepted the combination, so treat it as a no-op
+            // instead of an error.
+            cli.recursive = false;
         }
 
         if cli.global && subcommand == Subcommand::Prune {

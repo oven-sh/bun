@@ -680,10 +680,10 @@ impl ErrorDeferred {
         };
         let system_error = SystemError {
             errno: self.errno as i32,
-            code: bstr::String::static_(code).into(),
-            message: message.into(),
-            syscall: bstr::String::clone_utf8(self.syscall).into(),
-            hostname: self.hostname.take().unwrap_or(bstr::String::empty()).into(),
+            code: bstr::String::static_(code),
+            message,
+            syscall: bstr::String::clone_utf8(self.syscall),
+            hostname: self.hostname.take().unwrap_or(bstr::String::EMPTY),
             ..Default::default()
         };
 
@@ -692,7 +692,7 @@ impl ErrorDeferred {
         instance.put(
             global_this,
             b"name",
-            bstr::String::static_(b"DNSException").to_js(global_this)?,
+            bstr::String::static_("DNSException").to_js(global_this)?,
         );
 
         // `self` (and thus self.promise / self.hostname) drops at scope exit;
@@ -766,21 +766,20 @@ pub(crate) fn error_to_js_with_syscall(
     let code = this.code();
     let instance = SystemError {
         errno: this as i32,
-        code: bstr::String::static_(&code[4..]).into(),
-        syscall: bstr::String::static_(syscall).into(),
+        code: bstr::String::static_(&code[4..]),
+        syscall: bstr::String::static_(syscall),
         message: bstr::String::create_format(format_args!(
             "{} {}",
             BStr::new(syscall),
             BStr::new(&code[4..])
-        ))
-        .into(),
+        )),
         ..Default::default()
     }
     .to_error_instance(global_this);
     instance.put(
         global_this,
         b"name",
-        bstr::String::static_(b"DNSException").to_js(global_this)?,
+        bstr::String::static_("DNSException").to_js(global_this)?,
     );
     Ok(instance)
 }
@@ -798,16 +797,15 @@ pub(crate) fn system_error_with_syscall_and_hostname(
     let code = this.code();
     SystemError {
         errno: this as i32,
-        code: bstr::String::static_(&code[4..]).into(),
+        code: bstr::String::static_(&code[4..]),
         message: bstr::String::create_format(format_args!(
             "{} {} {}",
             BStr::new(syscall),
             BStr::new(&code[4..]),
             BStr::new(hostname)
-        ))
-        .into(),
-        syscall: bstr::String::static_(syscall).into(),
-        hostname: bstr::String::clone_utf8(hostname).into(),
+        )),
+        syscall: bstr::String::static_(syscall),
+        hostname: bstr::String::clone_utf8(hostname),
         ..Default::default()
     }
 }
@@ -823,9 +821,15 @@ pub(crate) fn error_to_js_with_syscall_and_hostname(
     instance.put(
         global_this,
         b"name",
-        bstr::String::static_(b"DNSException").to_js(global_this)?,
+        bstr::String::static_("DNSException").to_js(global_this)?,
     );
     Ok(instance)
+}
+
+/// Thrown before uSockets' synchronous `getaddrinfo` can block on a name that can never resolve.
+pub(crate) fn not_a_hostname_error(global_this: &JSGlobalObject, hostname: &[u8]) -> JSValue {
+    system_error_with_syscall_and_hostname(c_ares::Error::ENOTFOUND, b"getaddrinfo", hostname)
+        .to_error_instance(global_this)
 }
 
 // ── canonicalizeIP host fn ─────────────────────────────────────────────────
@@ -842,7 +846,7 @@ fn bun_canonicalize_ip(global_this: &JSGlobalObject, callframe: &CallFrame) -> J
         )));
     }
 
-    let addr_arg = arguments[0].to_slice(global_this)?;
+    let addr_arg = arguments[0].to_utf8(global_this)?;
     let addr_str = addr_arg.slice();
 
     // CIDR not allowed

@@ -2,106 +2,16 @@ use core::fmt;
 use std::sync::OnceLock;
 
 use bstr::BStr;
-
-use crate::Error;
 use bun_alloc::AllocError;
+use bun_core::ZBox;
 use bun_core::strings;
-use bun_core::{self, Output};
-use bun_paths::{self as Path, PathBuffer};
+use bun_paths::PathBuffer;
 use bun_semver::string::Buf as StringBuf;
 
 use crate::dependency as Dependency;
 use crate::hosted_git_info;
-use crate::install::{self as Install, ExtractData, PackageManager};
+use crate::install::{self as Install};
 use crate::resolution::fmt_store_url;
-
-// Thread-local scratch buffers. Callers return slices that outlive the access
-// (`try_ssh`/`try_https` hand a slice straight to `download`). `thread_local!`
-// closures cannot express that without unsafe, so this is a leaked per-thread
-// allocation with per-field projection accessors and a documented
-// single-use-per-field invariant (see `tl_bufs()` / the `TlBufs` accessor docs
-// below).
-struct TlBufs {
-    final_path_buf: PathBuffer,
-    ssh_path_buf: PathBuffer,
-    folder_name_buf: PathBuffer,
-    json_path_buf: PathBuffer,
-}
-
-thread_local! {
-    // bun.ThreadlocalBuffers: store only a pointer in TLS; lazily heap-allocate the
-    // 4×PathBuffer payload on first use so the static-TLS template stays small
-    // (see test/js/bun/binary/tls-segment-size).
-    static TL_BUFS: core::cell::Cell<*mut TlBufs> =
-        const { core::cell::Cell::new(core::ptr::null_mut()) };
-}
-
-fn tl_bufs() -> *mut TlBufs {
-    // SAFETY (audited):
-    // - `TL_BUFS` is thread-local `Cell<*mut TlBufs>`: no cross-thread sharing; the
-    //   pointer is `Copy` so `.get()/.set()` are zero-unsafe. The payload itself is a
-    //   leaked heap alloc (lazy-init below), so the `*mut` stays valid for thread life.
-    // - This function returns `*mut TlBufs` (a freely-aliasing raw ptr) and never
-    //   asserts uniqueness over sibling buffers: call sites project a SINGLE field via
-    //   raw-ptr place expr `unsafe { &mut (*tl_bufs()).<field> }` so only that one
-    //   field is retagged Unique under Stacked Borrows.
-    // - This is load-bearing: `try_https`/`try_ssh` return a slice into
-    //   `final_path_buf`/`ssh_path_buf` which is then passed straight into
-    //   `download(..., url, ...)`. `download` itself
-    //   borrows `folder_name_buf`. Materializing `&mut TlBufs` over the WHOLE struct
-    //   here would create a fresh Unique tag that invalidates the live `url` slice — UB.
-    //   The invariant is therefore disjoint-FIELD access, not whole-struct uniqueness.
-    // - The raw pointer is valid for the lifetime of the current thread (thread-local
-    //   outlives all in-thread borrows; `TlBufs` has no `Drop`). Callers reborrow into
-    //   a raw `*mut PathBuffer` per field as a deliberate escape hatch so
-    //   `try_ssh`/`try_https` can return slices into the buffer.
-    //   Callers must not retain a slice into a given field across a subsequent reborrow
-    //   of that SAME field.
-    TL_BUFS.with(|c| {
-        let mut p = c.get();
-        if p.is_null() {
-            p = bun_core::heap::into_raw(Box::new(TlBufs {
-                final_path_buf: PathBuffer::ZEROED,
-                ssh_path_buf: PathBuffer::ZEROED,
-                folder_name_buf: PathBuffer::ZEROED,
-                json_path_buf: PathBuffer::ZEROED,
-            }));
-            c.set(p);
-        }
-        p
-    })
-}
-
-impl TlBufs {
-    // Per-field projection accessors. Each returns `&'static mut` over a
-    // disjoint thread-local `PathBuffer`; see [`tl_bufs`] for the
-    // Stacked-Borrows rationale (forming `&mut TlBufs` over the whole struct
-    // would invalidate live slices into sibling fields). Callers must not hold
-    // a returned borrow across a re-entry into the *same* accessor — the same
-    // single-thread non-reentrant-scratch contract the prior inline raw-ptr
-    // field projections imposed, now centralised here.
-    #[inline]
-    fn ssh_path_buf() -> &'static mut PathBuffer {
-        // SAFETY: see `tl_bufs()` — thread-local leaked alloc; per-field
-        // projection retags only this field.
-        unsafe { &mut (*tl_bufs()).ssh_path_buf }
-    }
-    #[inline]
-    fn final_path_buf() -> &'static mut PathBuffer {
-        // SAFETY: see `tl_bufs()`.
-        unsafe { &mut (*tl_bufs()).final_path_buf }
-    }
-    #[inline]
-    fn folder_name_buf() -> &'static mut PathBuffer {
-        // SAFETY: see `tl_bufs()`.
-        unsafe { &mut (*tl_bufs()).folder_name_buf }
-    }
-    #[inline]
-    fn json_path_buf() -> &'static mut PathBuffer {
-        // SAFETY: see `tl_bufs()`.
-        unsafe { &mut (*tl_bufs()).json_path_buf }
-    }
-}
 
 #[derive(Clone, Copy, Default)]
 struct SloppyGlobalGitConfig {
@@ -226,57 +136,59 @@ impl SloppyGlobalGitConfig {
 // once `RepositoryExt` is in scope.
 pub use bun_install_types::resolver_hooks::Repository;
 
-pub(crate) struct SharedEnv {
-    env: Option<bun_dotenv::Map>,
+/// The environment every `git` the install spawns runs with (see `GitEnv::get`).
+pub(crate) struct GitEnv {
+    /// `KEY=VALUE\0` array for spawn.
+    pub(crate) envp: bun_dotenv::NullDelimitedEnvMap,
+    /// `git` resolved on the env's `PATH`. `None` when git is not installed.
+    pub(crate) git: Option<ZBox>,
 }
 
-// Process-global env map. `get()` lazily clones `other.map` once; `Map` owns
-// its storage and is not `Copy`, so we hand out a `&'static Map` into the
-// global; callers (`GitCloneRequest.env`, `GitCheckoutRequest.env`) store the
-// reference. The map is written exactly once on first call from the main
-// install thread and never freed.
-// Lazy-init on the install main thread, then `&'static`-read from worker
-// threads. RacyCell — the install enqueue path is single-threaded at the
-// write point.
-static SHARED_ENV: bun_core::RacyCell<SharedEnv> = bun_core::RacyCell::new(SharedEnv { env: None });
+// Written once from the install thread (the only one that spawns git), then read-only.
+static GIT_ENV: bun_core::RacyCell<Option<GitEnv>> = bun_core::RacyCell::new(None);
 
-impl SharedEnv {
-    pub(crate) fn get(other: &mut bun_dotenv::Loader) -> &'static bun_dotenv::Map {
-        // SAFETY: `SHARED_ENV` is only initialised from the main install thread
-        // during enqueue (single-threaded at that point). Once
-        // `env` is `Some` it is never reassigned, so the returned `&'static`
-        // remains valid for the program lifetime.
+impl GitEnv {
+    pub(crate) fn get(loader: &mut bun_dotenv::Loader) -> &'static GitEnv {
+        let slot = GIT_ENV.get();
+        // SAFETY: only the install thread reaches this. The slot is written
+        // once, before any reference into it exists, and never reassigned.
         unsafe {
-            let this = &mut *SHARED_ENV.get();
-            if this.env.is_none() {
-                // Note: currently if the user sets this to some value that causes
-                // a prompt for a password, the stdout of the prompt will be masked
-                // by further output of the rest of the install process.
-                // A value can still be entered, but we need to find a workaround
-                // so the user can see what is being prompted. By default the settings
-                // below will cause no prompt and throw instead.
-                let mut cloned = bun_core::handle_oom(other.map.clone_with_allocator());
-
-                if cloned.get(b"GIT_ASKPASS").is_none() {
-                    let config = SloppyGlobalGitConfig::get();
-                    if !config.has_askpass {
-                        bun_core::handle_oom(cloned.put(b"GIT_ASKPASS", b"echo"));
-                    }
-                }
-
-                if cloned.get(b"GIT_SSH_COMMAND").is_none() {
-                    let config = SloppyGlobalGitConfig::get();
-                    if !config.has_ssh_command {
-                        bun_core::handle_oom(cloned.put(
-                            b"GIT_SSH_COMMAND",
-                            b"ssh -oStrictHostKeyChecking=accept-new",
-                        ));
-                    }
-                }
-
-                this.env = Some(cloned);
+            if (*slot).is_none() {
+                *slot = Some(Self::init(loader));
             }
-            this.env.as_ref().unwrap()
+            (*slot).as_ref().unwrap()
+        }
+    }
+
+    fn init(loader: &mut bun_dotenv::Loader) -> GitEnv {
+        // No prompts by default: the install's own output would hide them.
+        let mut map = bun_core::handle_oom(loader.map.clone_with_allocator());
+
+        if map.get(b"GIT_ASKPASS").is_none() {
+            let config = SloppyGlobalGitConfig::get();
+            if !config.has_askpass {
+                bun_core::handle_oom(map.put(b"GIT_ASKPASS", b"echo"));
+            }
+        }
+
+        if map.get(b"GIT_SSH_COMMAND").is_none() {
+            let config = SloppyGlobalGitConfig::get();
+            if !config.has_ssh_command {
+                bun_core::handle_oom(map.put(
+                    b"GIT_SSH_COMMAND",
+                    b"ssh -oStrictHostKeyChecking=accept-new",
+                ));
+            }
+        }
+
+        // The spawn does no `PATH` search; resolve `git` on the child's `PATH`.
+        let mut git_buf = bun_paths::path_buffer_pool::get();
+        let git = bun_which::which(&mut git_buf, map.get(b"PATH").unwrap_or(b""), b"", b"git")
+            .map(|git| ZBox::from_bytes(git.as_bytes()));
+
+        GitEnv {
+            envp: bun_core::handle_oom(map.create_null_delimited_env_map()),
+            git,
         }
     }
 }
@@ -313,11 +225,7 @@ pub(crate) fn is_safe_resolved_tag(resolved: &[u8]) -> bool {
             .all(|&b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
 }
 
-/// Install-tier `Repository` behaviour (parsing, formatting, git CLI exec,
-/// download/checkout). Data struct + buffer-relative `order`/`count`/`clone`/
-/// `eql` are inherent on [`Repository`] (defined in `bun_install_types`).
-/// Re-exported from `bun_install::repository` so existing
-/// `Repository::method(...)` / `repo.method(...)` call sites resolve via UFCS.
+/// Install-tier `Repository` behaviour: parsing, formatting, clone URL forms.
 pub trait RepositoryExt: Sized {
     fn parse_append_git(input: &[u8], buf: &mut StringBuf<'_>) -> Result<Repository, AllocError>;
     fn parse_append_github(input: &[u8], buf: &mut StringBuf<'_>)
@@ -331,165 +239,10 @@ pub trait RepositoryExt: Sized {
     fn fmt_store_path<'a>(&'a self, label: &'a str, string_buf: &'a [u8])
     -> StorePathFormatter<'a>;
     fn fmt<'a>(&'a self, label: &'a str, buf: &'a [u8]) -> Formatter<'a>;
-    fn try_ssh(url: &[u8]) -> Option<&[u8]>;
-    fn try_https(url: &[u8]) -> Option<&[u8]>;
-    fn download(
-        env: &bun_dotenv::Map,
-        log: &mut bun_ast::Log,
-        cache_dir: bun_sys::Fd,
-        task_id: crate::package_manager_task::Id,
-        name: &[u8],
-        url: &[u8],
-        attempt: u8,
-    ) -> Result<bun_sys::Dir, Error>;
-    fn find_commit(
-        env: &mut bun_dotenv::Loader,
-        log: &mut bun_ast::Log,
-        repo_dir: bun_sys::Fd,
-        name: &[u8],
-        committish: &[u8],
-        task_id: crate::package_manager_task::Id,
-    ) -> Result<Vec<u8>, Error>;
-    fn checkout(
-        env: &bun_dotenv::Map,
-        log: &mut bun_ast::Log,
-        cache_dir: bun_sys::Fd,
-        repo_dir: bun_sys::Fd,
-        name: &[u8],
-        url: &[u8],
-        resolved: &[u8],
-    ) -> Result<ExtractData, Error>;
-}
-
-/// A module-level free fn because trait methods cannot be private; called only
-/// from this file's `download`/`find_commit`/`checkout`.
-fn exec(env: &bun_dotenv::Map, argv: &[&[u8]]) -> Result<Vec<u8>, Error> {
-    // `Map` is move-only; clone via `clone_with_allocator` so callers can
-    // hand us a shared `&Map` (matches `PackageManagerTask` call sites).
-    let mut env = bun_core::handle_oom(env.clone_with_allocator());
-    let std_map = env.std_env_map()?;
-
-    // `bun_spawn::run` does POSIX argv/envp marshalling
-    // + `process::sync::spawn`. On Windows it supplies the thread's
-    // `MiniEventLoop` (idempotent `init_global` — same handle PackageManager
-    // already published) so `spawn_process_windows` has a real `uv_loop_t*`.
-    let result = bun_spawn::run(bun_spawn::RunOptions {
-        argv,
-        env_map: std_map.get(),
-    })?;
-
-    match result.term {
-        bun_spawn::Term::Exited(sig) => {
-            if sig == 0 {
-                return Ok(result.stdout);
-            } else if
-            // remote: The page could not be found <-- for non git
-            // remote: Repository not found. <-- for git
-            // remote: fatal repository '<url>' does not exist <-- for git
-            (strings::contains(&result.stderr, b"remote:")
-                && strings::contains(&result.stderr, b"not")
-                && strings::contains(&result.stderr, b"found"))
-                || strings::contains(&result.stderr, b"does not exist")
-            {
-                return Err(crate::Error::RepositoryNotFound);
-            }
-        }
-        _ => {}
-    }
-
-    // Surface git's own diagnostics — the "git fetch/clone failed" log messages
-    // at the call sites only mention the package name, which leaves CI failures
-    // (auth, ssh, signal) opaque. Mirror git's stderr to ours and report the
-    // termination kind so the actual cause is visible.
-    {
-        let term = match result.term {
-            bun_spawn::Term::Exited(code) => format!("exit code {code}"),
-            bun_spawn::Term::Signal(sig) => format!("signal {sig}"),
-            bun_spawn::Term::Unknown(_) => "unknown status".to_string(),
-        };
-        Output::err_generic("{} failed with {}", (BStr::new(argv[0]), term.as_str()));
-        if !result.stderr.is_empty() {
-            let ew = Output::error_writer();
-            let _ = ew.write_all(&result.stderr);
-            if result.stderr.last() != Some(&b'\n') {
-                let _ = ew.write_all(b"\n");
-            }
-        }
-        Output::flush();
-    }
-
-    Err(crate::Error::InstallFailed)
-}
-
-/// A cache folder is built under a temporary sibling name and renamed onto `folder_name` once complete.
-struct CacheStaging {
-    cache_dir: bun_sys::Fd,
-    tmp_name_buf: [u8; 64],
-    tmp_name_len: usize,
-}
-
-impl CacheStaging {
-    fn new(cache_dir: bun_sys::Fd) -> Result<Self, Error> {
-        let mut tmp_name_buf = [0u8; 64];
-        let tmp_name_len =
-            Path::fs::FileSystem::tmpname(b"tmp", &mut tmp_name_buf, bun_core::fast_random())
-                .map_err(|_| crate::Error::Sys(bun_errno::SystemErrno::ENOSPC))?
-                .len();
-        Ok(Self {
-            cache_dir,
-            tmp_name_buf,
-            tmp_name_len,
-        })
-    }
-
-    fn tmp_name(&self) -> &[u8] {
-        &self.tmp_name_buf[..self.tmp_name_len]
-    }
-
-    fn tmp_path(&self) -> &'static [u8] {
-        Path::resolve_path::join_abs_string::<Path::platform::Auto>(
-            &PackageManager::get().cache_directory_path,
-            &[self.tmp_name()],
-        )
-    }
-
-    fn discard(&self) {
-        let _ = bun_sys::Dir::borrow(&self.cache_dir).delete_tree(self.tmp_name());
-    }
-
-    fn publish(
-        self,
-        log: &mut bun_ast::Log,
-        name: &[u8],
-        folder_name: &[u8],
-    ) -> Result<bun_sys::Dir, Error> {
-        let renamed = bun_sys::renameat_concurrently_a(
-            self.cache_dir,
-            self.tmp_name(),
-            self.cache_dir,
-            folder_name,
-            bun_sys::RenameatConcurrentlyOptions {
-                move_fallback: false,
-            },
-        );
-        // After an exchange the temporary name holds the folder that was replaced.
-        self.discard();
-        if let Err(err) = renamed {
-            log.add_error_fmt(
-                None,
-                bun_ast::Loc::EMPTY,
-                format_args!(
-                    "moving \"{}\" to cache dir failed: {}",
-                    BStr::new(name),
-                    err
-                ),
-            );
-            return Err(crate::Error::InstallFailed);
-        }
-        bun_sys::Dir::borrow(&self.cache_dir)
-            .open_at(folder_name)
-            .map_err(Error::from)
-    }
+    /// The ssh form of a git URL; `None` for an explicit `http(s)://` URL.
+    fn try_ssh(url: &[u8]) -> Option<Vec<u8>>;
+    /// The https form of a git URL, or `None` when it has none.
+    fn try_https(url: &[u8]) -> Option<Vec<u8>>;
 }
 
 impl RepositoryExt for Repository {
@@ -611,29 +364,17 @@ impl RepositoryExt for Repository {
         }
     }
 
-    fn try_ssh(url: &[u8]) -> Option<&[u8]> {
-        // May return a slice into the thread-local `ssh_path_buf` (see `tl_bufs()`);
-        // it is only valid until the next `try_ssh` call on this thread.
-        let ssh_path_buf = TlBufs::ssh_path_buf();
+    fn try_ssh(url: &[u8]) -> Option<Vec<u8>> {
         // Do not cast explicit http(s) URLs to SSH
         if url.starts_with(b"http") {
             return None;
         }
 
         if url.starts_with(b"git@") {
-            return Some(url);
-        }
-
-        if url.len() + b"ssh://git@".len() + b".org".len() > ssh_path_buf.len() {
-            return None;
+            return Some(url.to_vec());
         }
 
         if url.starts_with(b"ssh://") {
-            // TODO(markovejnovic): This is a stop-gap. One of the problems with the implementation
-            // here is that we should integrate hosted_git_info more thoroughly into the codebase
-            // to avoid the allocation and copy here. For now, the thread-local buffer is a good
-            // enough solution to avoid having to handle init/deinit.
-
             // Fix malformed ssh:// URLs with colons using hosted_git_info.correctUrl
             // ssh://git@github.com:user/repo -> ssh://git@github.com/user/repo
             let pair = hosted_git_info::UrlProtocolPair {
@@ -643,480 +384,57 @@ impl RepositoryExt for Repository {
                 ),
             };
 
-            let Ok(corrected) = hosted_git_info::correct_url(&pair) else {
-                return Some(url); // If correction fails, return original
-            };
-
-            // Copy corrected URL to thread-local buffer
-            let corrected_str = corrected.url_slice();
-            if corrected_str.len() > ssh_path_buf.len() {
-                return Some(url);
-            }
-            let result = &mut ssh_path_buf[..corrected_str.len()];
-            result.copy_from_slice(corrected_str);
-            return Some(&ssh_path_buf[..corrected_str.len()]);
+            return Some(match hosted_git_info::correct_url(&pair) {
+                Ok(corrected) => corrected.url_slice().to_vec(),
+                // If correction fails, return original
+                Err(_) => url.to_vec(),
+            });
         }
 
         if Dependency::is_scp_like_path(url) {
-            const PREFIX: &[u8] = b"ssh://git@";
-            if PREFIX.len() + url.len() > ssh_path_buf.len() {
-                return None;
-            }
-            ssh_path_buf[..PREFIX.len()].copy_from_slice(PREFIX);
-            let rest = &mut ssh_path_buf[PREFIX.len()..];
-
-            let colon_index = strings::index_of_char(url, b':');
-
-            if let Some(colon) = colon_index {
-                let colon = colon as usize;
-                // make sure known hosts have `.com` or `.org`
-                if let Some(tld) = host_tld(&url[..colon])
-                    && url.len() + tld.len() <= rest.len()
-                {
-                    rest[..colon].copy_from_slice(&url[..colon]);
-                    rest[colon..colon + tld.len()].copy_from_slice(tld);
-                    rest[colon + tld.len()] = b'/';
-                    rest[colon + tld.len() + 1..colon + tld.len() + 1 + (url.len() - colon - 1)]
-                        .copy_from_slice(&url[colon + 1..]);
-                    let out = &ssh_path_buf[..url.len() + PREFIX.len() + tld.len()];
-                    return Some(out);
-                }
-            }
-
-            rest[..url.len()].copy_from_slice(url);
-            if let Some(colon) = colon_index {
-                rest[colon as usize] = b'/';
-            }
-            let final_ = &ssh_path_buf[..url.len() + b"ssh://".len()];
-            return Some(final_);
+            return Some(scp_like_to_url(b"ssh://git@", url));
         }
 
         None
     }
 
-    fn try_https(url: &[u8]) -> Option<&[u8]> {
-        // May return a slice into the thread-local `final_path_buf` (see `tl_bufs()`);
-        // it is only valid until the next use of `TlBufs::final_path_buf()` on this
-        // thread (another `try_https` call, or `checkout`'s `get_fd_path`).
-        let final_path_buf = TlBufs::final_path_buf();
+    fn try_https(url: &[u8]) -> Option<Vec<u8>> {
         if url.starts_with(b"http") {
-            return Some(url);
-        }
-
-        if url.len() + b"https://".len() + b".org".len() > final_path_buf.len() {
-            return None;
+            return Some(url.to_vec());
         }
 
         if url.starts_with(b"ssh://") {
-            if url.len() - b"ssh".len() + b"https".len() > final_path_buf.len() {
-                return None;
-            }
-            final_path_buf[..b"https".len()].copy_from_slice(b"https");
-            let tail = &url[b"ssh".len()..];
-            final_path_buf[b"https".len()..b"https".len() + tail.len()].copy_from_slice(tail);
-            let out = &final_path_buf[..url.len() - b"ssh".len() + b"https".len()];
+            let mut out = Vec::with_capacity(url.len() + 2);
+            out.extend_from_slice(b"https");
+            out.extend_from_slice(&url[b"ssh".len()..]);
             return Some(out);
         }
 
         if Dependency::is_scp_like_path(url) {
-            const PREFIX: &[u8] = b"https://";
-            if PREFIX.len() + url.len() > final_path_buf.len() {
-                return None;
-            }
-            final_path_buf[..PREFIX.len()].copy_from_slice(PREFIX);
-            let rest = &mut final_path_buf[PREFIX.len()..];
-
-            let colon_index = strings::index_of_char(url, b':');
-
-            if let Some(colon) = colon_index {
-                let colon = colon as usize;
-                // make sure known hosts have `.com` or `.org`
-                if let Some(tld) = host_tld(&url[..colon])
-                    && url.len() + tld.len() <= rest.len()
-                {
-                    rest[..colon].copy_from_slice(&url[..colon]);
-                    rest[colon..colon + tld.len()].copy_from_slice(tld);
-                    rest[colon + tld.len()] = b'/';
-                    rest[colon + tld.len() + 1..colon + tld.len() + 1 + (url.len() - colon - 1)]
-                        .copy_from_slice(&url[colon + 1..]);
-                    let out = &final_path_buf[..url.len() + PREFIX.len() + tld.len()];
-                    return Some(out);
-                }
-            }
-
-            rest[..url.len()].copy_from_slice(url);
-            if let Some(colon) = colon_index {
-                rest[colon as usize] = b'/';
-            }
-            return Some(&final_path_buf[..url.len() + PREFIX.len()]);
+            return Some(scp_like_to_url(b"https://", url));
         }
 
         None
     }
+}
 
-    fn download(
-        env: &bun_dotenv::Map,
-        log: &mut bun_ast::Log,
-        cache_dir: bun_sys::Fd,
-        task_id: crate::package_manager_task::Id,
-        name: &[u8],
-        url: &[u8],
-        attempt: u8,
-    ) -> Result<bun_sys::Dir, Error> {
-        // `cache_dir` is a borrowed view of the manager's cache directory fd;
-        // we never own/close it — only the freshly-opened repo `Dir` is owned.
-        bun_analytics::features::git_dependencies
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        // Per-field accessor — retags only `folder_name_buf`, leaving any live
-        // shared borrow of `final_path_buf`/`ssh_path_buf` (the `url` argument
-        // handed over by `try_https`/`try_ssh` callers) valid under Stacked
-        // Borrows.
-        let folder_name_buf = TlBufs::folder_name_buf();
-        let folder_name = {
-            use std::io::Write;
-            let total = folder_name_buf.len();
-            let mut cursor = &mut folder_name_buf[..];
-            write!(
-                &mut cursor,
-                "{}.git\0",
-                bun_core::fmt::hex_int_lower::<16>(task_id.get())
-            )
-            .map_err(|_| crate::Error::Sys(bun_errno::SystemErrno::ENOSPC))?;
-            let written = total - cursor.len() - 1;
-            bun_core::ZStr::from_buf(&folder_name_buf[..], written)
-        };
-
-        match bun_sys::Dir::borrow(&cache_dir).open_dir_z(folder_name) {
-            Ok(dir) => {
-                let path = Path::resolve_path::join_abs_string::<Path::platform::Auto>(
-                    &PackageManager::get().cache_directory_path,
-                    &[folder_name.as_bytes()],
-                );
-
-                if let Err(err) = exec(env, &[b"git", b"-C", path, b"fetch", b"--quiet"]) {
-                    log.add_error_fmt(
-                        None,
-                        bun_ast::Loc::EMPTY,
-                        format_args!("\"git fetch\" for \"{}\" failed", BStr::new(name)),
-                    );
-                    return Err(err);
-                }
-                Ok(dir)
+/// `host:path` → `<prefix>host/path`; a shorthand host gets its TLD (`github` → `github.com`).
+fn scp_like_to_url(prefix: &[u8], url: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(prefix.len() + url.len() + b".org".len());
+    out.extend_from_slice(prefix);
+    match strings::index_of_char(url, b':') {
+        Some(colon) => {
+            let colon = colon as usize;
+            out.extend_from_slice(&url[..colon]);
+            if let Some(tld) = host_tld(&url[..colon]) {
+                out.extend_from_slice(tld);
             }
-            Err(not_found) => {
-                if not_found.get_errno() != bun_sys::E::ENOENT {
-                    return Err(not_found.into());
-                }
-
-                let staging = CacheStaging::new(cache_dir)?;
-                if let Err(err) = exec(
-                    env,
-                    &[
-                        b"git",
-                        b"clone",
-                        b"-c",
-                        b"core.longpaths=true",
-                        b"--quiet",
-                        b"--bare",
-                        url,
-                        staging.tmp_path(),
-                    ],
-                ) {
-                    staging.discard();
-                    if err == crate::Error::RepositoryNotFound || attempt > 1 {
-                        log.add_error_fmt(
-                            None,
-                            bun_ast::Loc::EMPTY,
-                            format_args!("\"git clone\" for \"{}\" failed", BStr::new(name)),
-                        );
-                    }
-                    return Err(err);
-                }
-
-                staging.publish(log, name, folder_name.as_bytes())
-            }
+            out.push(b'/');
+            out.extend_from_slice(&url[colon + 1..]);
         }
+        None => out.extend_from_slice(url),
     }
-
-    fn find_commit(
-        env: &mut bun_dotenv::Loader,
-        log: &mut bun_ast::Log,
-        repo_dir: bun_sys::Fd,
-        name: &[u8],
-        committish: &[u8],
-        task_id: crate::package_manager_task::Id,
-    ) -> Result<Vec<u8>, Error> {
-        let folder_name_buf = TlBufs::folder_name_buf();
-        let folder_name = {
-            use std::io::Write;
-            let total = folder_name_buf.len();
-            let mut cursor = &mut folder_name_buf[..];
-            write!(
-                &mut cursor,
-                "{}.git",
-                bun_core::fmt::hex_int_lower::<16>(task_id.get())
-            )
-            .map_err(|_| crate::Error::Sys(bun_errno::SystemErrno::ENOSPC))?;
-            let written = total - cursor.len();
-            &folder_name_buf[..written]
-        };
-        let path = Path::resolve_path::join_abs_string::<Path::platform::Auto>(
-            &PackageManager::get().cache_directory_path,
-            &[folder_name],
-        );
-
-        let _ = repo_dir;
-
-        let shared = SharedEnv::get(env);
-
-        let argv_with: [&[u8]; 8] = [
-            b"git",
-            b"-C",
-            path,
-            b"log",
-            b"--format=%H",
-            b"-1",
-            b"--end-of-options",
-            committish,
-        ];
-        let argv_without: [&[u8]; 6] = [b"git", b"-C", path, b"log", b"--format=%H", b"-1"];
-        let argv: &[&[u8]] = if !committish.is_empty() {
-            &argv_with
-        } else {
-            &argv_without
-        };
-
-        let out = match exec(shared, argv) {
-            Ok(v) => v,
-            Err(err) => {
-                log.add_error_fmt(
-                    None,
-                    bun_ast::Loc::EMPTY,
-                    format_args!(
-                        "no commit matching \"{}\" found for \"{}\" (but repository exists)",
-                        BStr::new(committish),
-                        BStr::new(name)
-                    ),
-                );
-                return Err(err);
-            }
-        };
-
-        // The trimmed bytes are copied so the return value owns its storage.
-        Ok(strings::trim(&out, b" \t\r\n").to_vec())
-    }
-
-    fn checkout(
-        env: &bun_dotenv::Map,
-        log: &mut bun_ast::Log,
-        cache_dir: bun_sys::Fd,
-        repo_dir: bun_sys::Fd,
-        name: &[u8],
-        url: &[u8],
-        resolved: &[u8],
-    ) -> Result<ExtractData, Error> {
-        // `cache_dir`/`repo_dir` are borrowed views; only `package_dir` is owned.
-        bun_analytics::features::git_dependencies
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-
-        if !is_safe_resolved_tag(resolved) {
-            log.add_error_fmt(
-                None,
-                bun_ast::Loc::EMPTY,
-                format_args!(
-                    "invalid git commit \"{}\" for \"{}\"",
-                    BStr::new(resolved),
-                    BStr::new(name)
-                ),
-            );
-            return Err(crate::Error::InstallFailed);
-        }
-
-        let folder_name_buf = TlBufs::folder_name_buf();
-        let folder_name = crate::package_manager_real::cached_git_folder_name_print(
-            &mut folder_name_buf[..],
-            resolved,
-            None,
-        )
-        .as_bytes();
-
-        let package_dir = 'brk: {
-            match bun_sys::Dir::borrow(&cache_dir).open_at(folder_name) {
-                Ok(dir) => {
-                    if bun_sys::exists_at(dir.fd(), bun_core::zstr!(".bun-tag")) {
-                        break 'brk dir;
-                    }
-                    dir.close();
-                }
-                Err(err) if err.get_errno() == bun_sys::E::ENOENT => {}
-                Err(err) => return Err(err.into()),
-            }
-            let repo_path = bun_sys::get_fd_path(
-                repo_dir,
-                // Per-field accessor — disjoint from `folder_name_buf`
-                // borrow above. See `TlBufs` accessor doc.
-                TlBufs::final_path_buf(),
-            )?;
-
-            let staging = CacheStaging::new(cache_dir)?;
-            if let Err(err) = exec(
-                env,
-                &[
-                    b"git",
-                    b"clone",
-                    b"-c",
-                    b"core.longpaths=true",
-                    b"--quiet",
-                    b"--no-checkout",
-                    repo_path,
-                    staging.tmp_path(),
-                ],
-            ) {
-                staging.discard();
-                log.add_error_fmt(
-                    None,
-                    bun_ast::Loc::EMPTY,
-                    format_args!("\"git clone\" for \"{}\" failed", BStr::new(name)),
-                );
-                return Err(err);
-            }
-
-            if let Err(err) = exec(
-                env,
-                // `is_safe_resolved_tag` above rejects a leading `-`, so
-                // `resolved` cannot be parsed as a git option.
-                &[
-                    b"git",
-                    b"-C",
-                    staging.tmp_path(),
-                    b"checkout",
-                    b"--quiet",
-                    resolved,
-                ],
-            ) {
-                staging.discard();
-                log.add_error_fmt(
-                    None,
-                    bun_ast::Loc::EMPTY,
-                    format_args!("\"git checkout\" for \"{}\" failed", BStr::new(name)),
-                );
-                return Err(err);
-            }
-            {
-                let dir = match bun_sys::Dir::borrow(&cache_dir).open_at(staging.tmp_name()) {
-                    Ok(dir) => dir,
-                    Err(err) => {
-                        staging.discard();
-                        return Err(err.into());
-                    }
-                };
-                let _ = dir.delete_tree(b".git");
-                // Unlinks a `node_modules` link only; directories are kept (bundleDependencies).
-                let _ = dir.delete_file_z(bun_core::zstr!("node_modules"));
-
-                // `.bun-tag` is the cache-hit marker, so anything the repository checked in under that name is replaced.
-                let _ = dir.delete_tree(b".bun-tag");
-                let tagged = bun_sys::File::openat(
-                    dir.fd(),
-                    bun_core::zstr!(".bun-tag"),
-                    bun_sys::O::WRONLY
-                        | bun_sys::O::CREAT
-                        | bun_sys::O::EXCL
-                        | if cfg!(windows) {
-                            0
-                        } else {
-                            bun_sys::O::NOFOLLOW
-                        },
-                    0o664,
-                )
-                .and_then(|f| f.write_all(resolved));
-                // Windows cannot rename a directory with an open handle inside it.
-                dir.close();
-                if let Err(err) = tagged {
-                    staging.discard();
-                    log.add_error_fmt(
-                        None,
-                        bun_ast::Loc::EMPTY,
-                        format_args!(
-                            "writing \".bun-tag\" for \"{}\" failed: {}",
-                            BStr::new(name),
-                            BStr::new(err.name())
-                        ),
-                    );
-                    return Err(crate::Error::InstallFailed);
-                }
-            }
-
-            staging.publish(log, name, folder_name)?
-        };
-
-        let (json_file, json_buf) =
-            match bun_sys::File::read_file_from(package_dir.fd(), b"package.json") {
-                Ok(v) => v,
-                Err(err) => {
-                    if err.get_errno() == bun_sys::E::ENOENT {
-                        // allow git dependencies without package.json
-                        package_dir.close();
-                        return Ok(ExtractData {
-                            url: url.into(),
-                            resolved: resolved.into(),
-                            ..Default::default()
-                        });
-                    }
-
-                    log.add_error_fmt(
-                        None,
-                        bun_ast::Loc::EMPTY,
-                        format_args!(
-                            "\"package.json\" for \"{}\" failed to open: {}",
-                            BStr::new(name),
-                            BStr::new(err.name())
-                        ),
-                    );
-                    package_dir.close();
-                    return Err(crate::Error::InstallFailed);
-                }
-            };
-
-        let json_path = match json_file.get_path(TlBufs::json_path_buf()) {
-            Ok(p) => p,
-            Err(err) => {
-                log.add_error_fmt(
-                    None,
-                    bun_ast::Loc::EMPTY,
-                    format_args!(
-                        "\"package.json\" for \"{}\" failed to resolve: {}",
-                        BStr::new(name),
-                        BStr::new(err.name())
-                    ),
-                );
-                let _ = json_file.close(); // close error is non-actionable
-                package_dir.close();
-                return Err(crate::Error::InstallFailed);
-            }
-        };
-
-        // `json_path` lives in the thread-local
-        // `json_path_buf` (not in `json_file`), and `json_buf` is an owned alloc,
-        // so both fds are dead here — close before the fallible append so the
-        // `?`-propagation path doesn't leak them.
-        let _ = json_file.close(); // close error is non-actionable
-        package_dir.close();
-
-        let ret_json_path = bun_resolver::fs::FileSystem::instance()
-            .dirname_store()
-            .append(json_path)?;
-
-        Ok(ExtractData {
-            url: url.into(),
-            resolved: resolved.into(),
-            json: Some(Install::ExtractDataJson {
-                path: ret_json_path.into(),
-                buf: json_buf,
-            }),
-            ..Default::default()
-        })
-    }
+    out
 }
 
 pub struct StorePathFormatter<'a> {

@@ -114,8 +114,8 @@ impl GarbageCollectionController {
 
     /// Decides whether this tick's collection should be a full one. After the first `BUN_IDLE_GC_SECONDS` entry (main
     /// thread only) of ticks in which the heap did not grow, the tick's collection is made Full (it collects what the
-    /// last burst left and lets JSC snapshot which code is still running; a standalone executable's embedded module
-    /// graph is paged out too), and again after each further entry of quiet: JSC drops code that has not run since the
+    /// last burst left and lets JSC snapshot which code is still running), and again after each further entry of quiet
+    /// (the second also pages out a standalone executable's embedded module graph): JSC drops code that has not run since the
     /// previous one, and each round makes a little more releasable (code whose last owner died in that collection,
     /// pages it emptied). Returns (full, ms until the next such tick is due).
     fn idle_tick(&self, vm: &VirtualMachine, grew: bool, interval_ms: i32) -> (bool, Option<u32>) {
@@ -132,8 +132,10 @@ impl GarbageCollectionController {
         self.idle_quiet_ms.set(quiet);
         let dues = dues.into_iter().filter(|&due| due != 0);
         let crossed = |due: u32| before < due && quiet >= due;
+        // The module-graph page-out goes with the second collection (or the only one): after a pause of a few seconds
+        // the user is likely to come straight back, and those file-backed pages would just fault in again.
         #[cfg(target_os = "linux")]
-        if crossed(self.idle_gc_at_ms.get()[0]) {
+        if crossed(dues.clone().nth(1).unwrap_or(self.idle_gc_at_ms.get()[0])) {
             if let Some(graph) = vm.standalone_module_graph {
                 let _ = std::thread::Builder::new()
                     .name("idle page-out".into())

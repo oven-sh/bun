@@ -132,7 +132,7 @@ const shortId = Bun.randomCUID2(12);
 
 CUID2 hashes the current timestamp, a counter, random salt, and a per-VM random fingerprint with SHA3-512. Bun gets the random values from the same BoringSSL-backed generator used by `crypto.randomUUID()`.
 
-CUID2 values are opaque: they do not expose their timestamp and are not monotonic or sortable by creation time. Store a separate timestamp when you need chronological ordering.
+CUID2 values are opaque: they do not expose their timestamp and are not monotonic or sortable by creation time. Store a separate timestamp when you need chronological ordering, or use `Bun.randomUUIDv7()` when the identifier itself needs to sort by creation time.
 
 ## `Bun.randomUUIDv7()`
 

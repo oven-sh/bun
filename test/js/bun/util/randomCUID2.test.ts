@@ -12,10 +12,12 @@ describe("randomCUID2", () => {
     }
   });
 
-  test.each([2, 3, 10, 24, 32])("supports length %d", length => {
-    const id = Bun.randomCUID2(length);
-    expect(id).toHaveLength(length);
-    expect(id).toMatch(CUID2_PATTERN);
+  describe.each([2, 3, 10, 24, 32])("supports length %d", length => {
+    test("returns the requested length", () => {
+      const id = Bun.randomCUID2(length);
+      expect(id).toHaveLength(length);
+      expect(id).toMatch(CUID2_PATTERN);
+    });
   });
 
   test("uses the default length for undefined", () => {
@@ -27,7 +29,7 @@ describe("randomCUID2", () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 
-  test.each([
+  describe.each([
     ["negative", -1],
     ["zero", 0],
     ["one", 1],
@@ -36,7 +38,9 @@ describe("randomCUID2", () => {
     ["positive infinity", Infinity],
     ["negative infinity", -Infinity],
   ])("rejects %s", (_, length) => {
-    expect(() => Bun.randomCUID2(length)).toThrow(RangeError);
+    test("throws a RangeError", () => {
+      expect(() => Bun.randomCUID2(length)).toThrow(RangeError);
+    });
   });
 
   test("rejects fractional and non-numeric lengths", () => {

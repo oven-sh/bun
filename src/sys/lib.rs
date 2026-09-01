@@ -412,10 +412,11 @@ pub mod dir_iterator {
                             self.received_eof = true;
                             return Ok(None);
                         }
-                        return Err(Error::from_code_int(
-                            super::last_errno(),
-                            Tag::getdirentries64,
-                        ));
+                        let e = super::last_errno();
+                        if e == libc::EINTR {
+                            continue;
+                        }
+                        return Err(Error::from_code_int(e, Tag::getdirentries64));
                     }
                     self.index = 0;
                     self.end_index = rc as usize;

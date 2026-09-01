@@ -25,7 +25,10 @@ test.skipIf(!isMacOS)("fs.openSync retries EINTR instead of surfacing it", async
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr).not.toContain("EINTR");
+  if (exitCode !== 0) {
+    // Surface the fixture's stderr (the EINTR error) in the failure message.
+    expect(stderr).toBe("");
+  }
   expect(stdout).toBe("unblocked\n");
   expect(exitCode).toBe(0);
 });

@@ -1,4 +1,4 @@
-//! Idle GC timer: JSC's own `GCActivityCallback` (via `WTFTimer`) paces eden/full against allocation rate; this adds a 1 s / 30 s idle `collect_async()` so a process that stops allocating still releases memory, and once the heap has been quiet for `BUN_IDLE_RELEASE_SECONDS` (default 30, 0 = off; main thread only) two full collections so JSC can age out code that no longer runs, plus a page-out of a standalone executable's embedded module graph. Knobs: `BUN_GC_TIMER_INTERVAL` (ms), `BUN_GC_TIMER_DISABLE`. One per JS thread, not thread-safe.
+//! Idle GC timer: JSC's own `GCActivityCallback` (via `WTFTimer`) paces eden/full against allocation rate; this adds a 1 s / 30 s idle `collect_async()` so a process that stops allocating still releases memory, and once the heap has been quiet for `BUN_IDLE_GC_SECONDS` (default "10,65,65": first after 10 s of quiet, then one per CodeBlock-aging lease; 0 = off; main thread only) full collections so JSC can age out code that no longer runs, plus a page-out of a standalone executable's embedded module graph. Knobs: `BUN_GC_TIMER_INTERVAL` (ms), `BUN_GC_TIMER_DISABLE`. One per JS thread, not thread-safe.
 
 use core::cell::Cell;
 use core::ffi::c_int;
@@ -20,7 +20,9 @@ pub struct GarbageCollectionController {
     pub(crate) gc_timer_interval: Cell<i32>,
     pub(crate) gc_repeating_timer_fast: Cell<bool>,
     pub(crate) disabled: Cell<bool>,
-    /// Nominal time (from tick intervals) since the JS heap last grew; drives the idle full collections.
+    /// Idle full collections: cumulative quiet thresholds (ms; empty = off) parsed from `BUN_IDLE_GC_SECONDS`, and the
+    /// nominal time (from tick intervals) since the JS heap last grew.
+    idle_gc_at_ms: Cell<[u32; 3]>,
     idle_quiet_ms: Cell<u32>,
 }
 
@@ -38,6 +40,7 @@ impl Default for GarbageCollectionController {
             gc_timer_interval: Cell::new(0),
             gc_repeating_timer_fast: Cell::new(true),
             disabled: Cell::new(false),
+            idle_gc_at_ms: Cell::new([0; 3]),
             idle_quiet_ms: Cell::new(0),
         }
     }
@@ -89,20 +92,35 @@ impl GarbageCollectionController {
 
         self.disabled
             .set(env_var::BUN_GC_TIMER_DISABLE::get().unwrap_or(false));
+
+        if vm.is_main_thread() {
+            // "a,b,c,...": seconds of quiet before the first idle full collection, then between consecutive ones (spaced a
+            // CodeBlock-aging lease apart so each can expire what has not run since the previous); "0"/"" = off.
+            let spec = env_var::BUN_IDLE_GC_SECONDS::get().unwrap_or(b"10,65,65");
+            let mut at = [0u32; 3];
+            let mut sum = 0u32;
+            for (slot, part) in at.iter_mut().zip(bun_core::strings::split(spec, b",")) {
+                let secs = bun_core::fmt::parse_int::<u32>(bun_core::strings::trim(part, b" "), 10)
+                    .unwrap_or(0);
+                if secs == 0 {
+                    break;
+                }
+                sum = sum.saturating_add(secs.min(3600) * 1000);
+                *slot = sum;
+            }
+            self.idle_gc_at_ms.set(at);
+        }
     }
 
-    /// Decides whether this tick's collection should be a full one. After `BUN_IDLE_RELEASE_SECONDS` (main thread only;
-    /// 0 = off) of ticks in which the heap did not grow, the tick's collection is made Full (it collects what the last
-    /// burst left and lets JSC snapshot which code is still running; a standalone executable's embedded module graph
-    /// is paged out too), and once more `SECOND_GC_AFTER_MS` of quiet later, which is when JSC can drop code that has
-    /// not run since. Returns (full, ms until the next such tick is due).
+    /// Decides whether this tick's collection should be a full one. After the first `BUN_IDLE_GC_SECONDS` entry (main
+    /// thread only) of ticks in which the heap did not grow, the tick's collection is made Full (it collects what the
+    /// last burst left and lets JSC snapshot which code is still running; a standalone executable's embedded module
+    /// graph is paged out too), and again after each further entry of quiet: JSC drops code that has not run since the
+    /// previous one, and each round makes a little more releasable (code whose last owner died in that collection,
+    /// pages it emptied). Returns (full, ms until the next such tick is due).
     fn idle_tick(&self, vm: &VirtualMachine, grew: bool, interval_ms: i32) -> (bool, Option<u32>) {
-        const SECOND_GC_AFTER_MS: u32 = 65_000;
-        let first = env_var::BUN_IDLE_RELEASE_SECONDS::get()
-            .unwrap_or(30)
-            .min(3600) as u32
-            * 1000;
-        if first == 0 || !vm.is_main_thread() || vm.is_inspector_enabled() {
+        let dues = self.idle_gc_at_ms.get();
+        if dues[0] == 0 || vm.is_inspector_enabled() {
             return (false, None);
         }
         if grew {
@@ -112,23 +130,20 @@ impl GarbageCollectionController {
         let before = self.idle_quiet_ms.get();
         let quiet = before.saturating_add(interval_ms.max(0) as u32);
         self.idle_quiet_ms.set(quiet);
-        let second = first.saturating_add(SECOND_GC_AFTER_MS);
+        let dues = dues.into_iter().filter(|&due| due != 0);
         let crossed = |due: u32| before < due && quiet >= due;
         #[cfg(target_os = "linux")]
-        if crossed(first) {
+        if crossed(self.idle_gc_at_ms.get()[0]) {
             if let Some(graph) = vm.standalone_module_graph {
                 let _ = std::thread::Builder::new()
                     .name("idle page-out".into())
                     .spawn(move || graph.page_out());
             }
         }
-        let full = crossed(first) || crossed(second);
+        let full = dues.clone().any(crossed);
         (
             full,
-            [first, second]
-                .into_iter()
-                .find(|&due| quiet < due)
-                .map(|due| due - quiet),
+            dues.clone().find(|&due| quiet < due).map(|due| due - quiet),
         )
     }
 

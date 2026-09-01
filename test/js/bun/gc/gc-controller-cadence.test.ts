@@ -151,7 +151,7 @@ describe.skipIf(isDebug)("GarbageCollectionController eden cadence", () => {
   });
 });
 
-// After BUN_IDLE_RELEASE_SECONDS of timer ticks in which the JS heap did not grow,
+// After BUN_IDLE_GC_SECONDS of timer ticks in which the JS heap did not grow,
 // the controller requests a full collection (so JSC can age out code that no
 // longer runs and return memory). An app parked at a prompt still fires the odd
 // timer and still counts as idle.
@@ -168,7 +168,7 @@ describe("idle release", () => {
       cmd: [bunExe(), "-e", script],
       env: {
         ...bunEnv,
-        BUN_IDLE_RELEASE_SECONDS: seconds,
+        BUN_IDLE_GC_SECONDS: seconds,
         BUN_JSC_logGC: "1",
         BUN_GC_TIMER_DISABLE: undefined,
         BUN_GC_TIMER_INTERVAL: undefined,
@@ -188,7 +188,7 @@ describe("idle release", () => {
     expect(exitCode).toBe(0);
   });
 
-  test.concurrent("BUN_IDLE_RELEASE_SECONDS=0 disables it", async () => {
+  test.concurrent("BUN_IDLE_GC_SECONDS=0 disables it", async () => {
     const { fulls, exitCode } = await run("0");
     expect(fulls).toBe(0);
     expect(exitCode).toBe(0);

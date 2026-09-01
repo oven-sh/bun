@@ -90,7 +90,6 @@
 "generic_body_not_generic:src/router/lib.rs" = 1
 
 [bun_runtime]
-"defaulted_failure:src/runtime/server/RequestContext.rs" = 1
 "defaulted_failure:src/runtime/test_runner/pretty_format.rs" = 4
 "error_collapsed_to_bool:src/runtime/api/bun/Terminal.rs" = 1
 "error_collapsed_to_bool:src/runtime/api/bun/h2_frame_parser.rs" = 31

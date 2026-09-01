@@ -1318,7 +1318,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                     }
                 };
                 #[cfg(not(windows))]
-                let cwd = bun_resolver::fs::FileSystem::get().top_level_dir;
+                let cwd = bun_resolver::fs::FileSystem::get().top_level_dir();
 
                 // SAFETY: bun_vm() returns the live thread-local VM pointer.
                 let main = global_this.bun_vm().as_mut().main();

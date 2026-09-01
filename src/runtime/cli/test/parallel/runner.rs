@@ -154,7 +154,7 @@ pub(crate) fn run_as_coordinator(
         files: sorted,
         costs,
         // SAFETY: FileSystem singleton is initialized before any test runner code runs.
-        cwd: FileSystem::get().top_level_dir,
+        cwd: FileSystem::get().top_level_dir(),
         argv,
         envps,
         // Coordinator borrows the workers slice while each Worker holds a raw

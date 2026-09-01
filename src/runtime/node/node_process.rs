@@ -502,7 +502,7 @@ mod _impl {
         // path=cwd, dest=target so the
         // resulting Node SystemError carries `path: cwd`, `dest: target` and the
         // `chdir '<cwd>' -> '<target>'` message format (test-process-chdir-errormessage).
-        let prev_cwd: Box<[u8]> = Box::from(fs.top_level_dir);
+        let prev_cwd: Box<[u8]> = Box::from(fs.top_level_dir());
         match vm.set_process_cwd(slice) {
             bun_sys::Result::Ok(()) => {
                 vm.test_isolation_scope(|state| {
@@ -516,7 +516,7 @@ mod _impl {
                 let without_trailing_slash = strings::without_trailing_slash;
                 bun_string_jsc::create_utf8_for_js(
                     global_object,
-                    without_trailing_slash(fs.top_level_dir),
+                    without_trailing_slash(fs.top_level_dir()),
                 )
             }
             bun_sys::Result::Err(e) => {

@@ -1726,7 +1726,7 @@ impl<'a> Printer<'a> {
 
         // Capture the `'static` cwd slice
         // before borrowing `fs.fs` mutably.
-        let top_level_dir = fs.top_level_dir;
+        let top_level_dir = fs.top_level_dir();
         // Erase to raw so the `entries_mutex` reborrow below doesn't conflict
         // with the `&mut self` borrow `read_directory` took.
         let entries_option: *const Fs::EntriesOption =

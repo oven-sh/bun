@@ -329,7 +329,7 @@ impl UpdateInteractiveCommand {
         while let Some((workspace_path, workspace_update_idxs)) = it.next() {
             // Build the package.json path for this workspace
             // SAFETY: `FileSystem::init` ran during `PackageManager::init`.
-            let root_dir = FileSystem::get().top_level_dir;
+            let root_dir = FileSystem::get().top_level_dir();
             let mut path_buf = PathBuffer::uninit();
             let package_json_path =
                 Self::build_package_json_path(root_dir, workspace_path, &mut path_buf);
@@ -459,7 +459,7 @@ impl UpdateInteractiveCommand {
         while let Some((workspace_path, updates_for_workspace)) = workspace_it.next() {
             // Build the package.json path for this workspace
             // SAFETY: `FileSystem::init` ran during `PackageManager::init`.
-            let root_dir = FileSystem::get().top_level_dir;
+            let root_dir = FileSystem::get().top_level_dir();
             let mut path_buf = PathBuffer::uninit();
             let package_json_path =
                 Self::build_package_json_path(root_dir, workspace_path, &mut path_buf);

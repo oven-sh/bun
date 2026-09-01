@@ -100,13 +100,12 @@ impl<'a> Scanner<'a> {
 
     #[inline]
     fn top_level_dir(&self) -> &'static [u8] {
-        // SAFETY: field-precise projection; never spans the mutably-borrowed `fs` field.
-        unsafe { (*self.fs).top_level_dir }
+        bun_core::top_level_dir()
     }
 
     #[inline]
     fn filename_store(&self) -> &'static fs::FilenameStore {
-        // SAFETY: same as `top_level_dir`.
+        // SAFETY: field-precise projection; never spans the mutably-borrowed `fs` field.
         unsafe { (*self.fs).filename_store }
     }
 

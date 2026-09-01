@@ -1195,7 +1195,7 @@ where
 
         let bb = DevErrorPage {
             message,
-            cwd: bun_resolver::fs::FileSystem::get().top_level_dir,
+            cwd: bun_resolver::fs::FileSystem::get().top_level_dir(),
             exceptions,
             log: Some(log),
         }
@@ -3079,7 +3079,7 @@ where
 
         let bb = DevErrorPage {
             message: b"Stream error during server-side rendering",
-            cwd: bun_resolver::fs::FileSystem::get().top_level_dir,
+            cwd: bun_resolver::fs::FileSystem::get().top_level_dir(),
             exceptions: &exception_list,
             log: None,
         }

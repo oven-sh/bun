@@ -338,7 +338,7 @@ fn spawn_maybe_sync(
     // outlives this call frame.
     let jsc_vm: &mut jsc::VirtualMachineRef = global_this.bun_vm().as_mut();
 
-    let mut cwd: &[u8] = bun_resolver::fs::FileSystem::get().top_level_dir;
+    let mut cwd: &[u8] = bun_resolver::fs::FileSystem::get().top_level_dir();
     let mut user_specified_cwd = false;
 
     let mut stdio: [Stdio; 3] = [Stdio::Ignore, Stdio::Pipe, Stdio::Inherit];

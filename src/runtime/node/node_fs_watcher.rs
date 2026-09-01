@@ -1117,7 +1117,7 @@ impl FSWatcher {
         };
         // SAFETY: `FileSystem::instance()` returns the process-global singleton
         // initialized at startup; never null once init has run.
-        let cwd = bun_resolver::fs::FileSystem::get().top_level_dir;
+        let cwd = bun_resolver::fs::FileSystem::get().top_level_dir();
         let joined_buf_len = joined_buf.len();
         let Some(joined) = Path::join_abs_string_buf_checked::<platform::Auto>(
             cwd,

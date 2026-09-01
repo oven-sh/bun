@@ -765,7 +765,7 @@ fn register_macro(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsRe
 }
 
 fn get_cwd(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    EncodedSlice::from_bytes(bun_resolver::fs::FileSystem::get().top_level_dir).to_js(global_this)
+    EncodedSlice::from_bytes(bun_resolver::fs::FileSystem::get().top_level_dir()).to_js(global_this)
 }
 
 fn get_origin(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {

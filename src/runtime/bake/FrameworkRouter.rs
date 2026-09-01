@@ -1802,7 +1802,7 @@ impl JSFrameworkRouter {
             paths::platform::Auto,
         >(
             // SAFETY: FileSystem::instance() returns the process-global singleton; live for the program.
-            bun_resolver::fs::FileSystem::get().top_level_dir,
+            bun_resolver::fs::FileSystem::get().top_level_dir(),
             root.slice(),
         ))
         .into();

@@ -155,7 +155,7 @@ impl FileSystemRouter {
                     root_dir_path = Utf8Bytes::Borrowed(path::resolve_path::join_abs_string_buf::<
                         path::platform::Auto,
                     >(
-                        Fs::FileSystem::instance().top_level_dir,
+                        Fs::FileSystem::instance().top_level_dir(),
                         &mut out_buf,
                         &parts,
                     ));
@@ -907,7 +907,7 @@ impl MatchedRoute {
             if let Some(ref base_dir) = this.base_dir {
                 base_dir.leak()
             } else {
-                Fs::FileSystem::get().top_level_dir
+                Fs::FileSystem::get().top_level_dir()
             },
             &origin_url,
             if let Some(ref prefix) = this.asset_prefix {

@@ -2068,7 +2068,7 @@ static int ssl_renegotiate(struct us_socket_t *s) {
 
 /* Returns 1 if shutdown is complete (or impossible) and the TCP socket may be
  * closed; 0 if we sent close_notify but must wait for the peer's. */
-static int ssl_handle_shutdown(struct us_socket_t *s, int force_fast_shutdown) {
+static int ssl_handle_shutdown(struct us_socket_t *s) {
     if (!s->ssl || us_internal_ssl_is_shut_down(s) || s->ssl_fatal_error || !SSL_is_init_finished(s_ssl(s)))
     return 1;
 
@@ -2078,7 +2078,6 @@ static int ssl_handle_shutdown(struct us_socket_t *s, int force_fast_shutdown) {
   if (!sent_shutdown || !received_shutdown) {
     ssl_set_loop_data(s);
     int ret = SSL_shutdown(s_ssl(s));
-    if (ret == 0 && force_fast_shutdown) ret = SSL_shutdown(s_ssl(s));
     if (ret < 0) {
       int err = SSL_get_error(s_ssl(s), ret);
       if (err == SSL_ERROR_SSL || err == SSL_ERROR_SYSCALL) {
@@ -2172,9 +2171,14 @@ struct us_socket_t *us_internal_ssl_close(struct us_socket_t *s, int code, void 
     if (ssl_gone(s)) return s;
   }
 
-  /* code == 2 (forceful — `_destroy()` / `_handle.close()`): send close_notify
-   * best-effort and raw-close now. The destroy path detaches + poll_ref.unref()
-   * right after, so deferring would orphan the us_socket_t.
+  /* code == 2 (forceful — `_destroy()` / `_handle.close()`): raw-close now,
+   * with no close_notify — a bare FIN, like node's destroy (crypto_tls.cc
+   * only sends the alert from DoShutdown, the end() path). A destroy-time
+   * alert would land in the peer's receive buffer ahead of the FIN, and a
+   * peer whose stream is paused never reads it, which holds that stream's
+   * 'end'/'close' back forever (node semantics). The destroy path also
+   * detaches + poll_ref.unref() right after, so deferring would orphan the
+   * us_socket_t.
    *
    * code == 1 (reset — terminate() / abort): no close_notify, only the RST,
    * like node's resetAndDestroy().
@@ -2187,7 +2191,7 @@ struct us_socket_t *us_internal_ssl_close(struct us_socket_t *s, int code, void 
    * under low-prio fan-out (connectionListener race). The actual raw-close
    * happens via on_end/ZERO_RETURN re-entering this function with
    * SSL_SENT_SHUTDOWN already set (ssl_handle_shutdown then returns 1). */
-  if (code == LIBUS_SOCKET_CLOSE_CODE_CONNECTION_RESET || ssl_handle_shutdown(s, code != 0)) {
+  if (code != LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN || ssl_handle_shutdown(s)) {
     return us_internal_socket_close_raw(s, code, reason);
   }
   return s;
@@ -2898,7 +2902,7 @@ void us_internal_ssl_shutdown(struct us_socket_t *s) {
     /* ssl_handle_shutdown sends the close_notify (BoringSSL's do_tls_write
      * prepends any pending TLS 1.3 NewSessionTicket flight to the alert, so
      * tickets are still delivered) and owns the error handling. */
-    ssl_handle_shutdown(s, 0);
+    ssl_handle_shutdown(s);
     us_internal_socket_raw_shutdown(s);
     return;
   }

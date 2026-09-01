@@ -168,10 +168,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        func.body = G::FnBody {
-            stmts: bun_ast::StoreSlice::new_mut(stmts.into_bump_slice_mut()),
-            loc: body_loc,
-        };
+        func.body.stmts = bun_ast::StoreSlice::new_mut(stmts.into_bump_slice_mut());
 
         // A sloppy-mode function with a simple parameter list has a mapped
         // `arguments` object: `arguments[0] = v` rebinds the first parameter.
@@ -1382,6 +1379,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     args: bun_ast::StoreSlice::EMPTY,
                                     body: G::FnBody {
                                         loc,
+                                        close_brace_loc: bun_ast::Loc::EMPTY,
                                         stmts: bun_ast::StoreSlice::from_bump(ctor_stmts),
                                     },
                                     flags: flags::FUNCTION_NONE,

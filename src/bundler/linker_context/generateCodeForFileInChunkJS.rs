@@ -165,6 +165,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                             body: G::FnBody {
                                 stmts: inner,
                                 loc: bun_ast::Loc::EMPTY,
+                                close_brace_loc: bun_ast::Loc::EMPTY,
                             },
                             ..Default::default()
                         },
@@ -588,6 +589,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                             body: G::FnBody {
                                 stmts: body_stmts,
                                 loc: bun_ast::Loc::EMPTY,
+                                close_brace_loc: bun_ast::Loc::EMPTY,
                             },
                             ..Default::default()
                         },
@@ -812,6 +814,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                             body: G::FnBody {
                                 stmts: inner_stmts,
                                 loc: bun_ast::Loc::EMPTY,
+                                close_brace_loc: bun_ast::Loc::EMPTY,
                             },
                             ..Default::default()
                         },
@@ -874,6 +877,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                                 body: G::FnBody {
                                     stmts: inner_stmts,
                                     loc: bun_ast::Loc::EMPTY,
+                                    close_brace_loc: bun_ast::Loc::EMPTY,
                                 },
                                 ..Default::default()
                             },

@@ -6543,6 +6543,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     args: func_args,
                     body: G::FnBody {
                         loc: stmt_loc,
+                        close_brace_loc: bun_ast::Loc::EMPTY,
                         stmts: arena.alloc_slice_copy(stmts_inside_closure).into(),
                     },
                     prefer_expr: true,
@@ -7097,6 +7098,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     args: bun_ast::StoreSlice::EMPTY,
                                     body: G::FnBody {
                                         loc: stmt.loc,
+                                        close_brace_loc: bun_ast::Loc::EMPTY,
                                         stmts: bun_ast::StoreSlice::new_mut(
                                             constructor_stmts.into_bump_slice_mut(),
                                         ),
@@ -8307,6 +8309,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     body: G::FnBody {
                         stmts: bun_ast::StoreSlice::new_mut(self.arena.alloc_slice_copy(&[ret])),
                         loc,
+                        close_brace_loc: bun_ast::Loc::EMPTY,
                     },
                     prefer_expr: true,
                     ..Default::default()
@@ -8702,6 +8705,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         args: bun_ast::StoreSlice::new_mut(args),
                         body: G::FnBody {
                             loc: bun_ast::Loc::EMPTY,
+                            close_brace_loc: bun_ast::Loc::EMPTY,
                             stmts: bun_ast::StoreSlice::new_mut(stmts_to_copy),
                         },
                         flags: Flags::FUNCTION_NONE,
@@ -9697,15 +9701,18 @@ impl LowerUsingDeclarationsContext {
             S::Try {
                 body: non_exported_statements,
                 body_loc: loc,
+                close_brace_loc: bun_ast::Loc::EMPTY,
                 catch: Some(js_ast::Catch {
                     binding: Some(catch_binding),
                     body: catch_body,
                     body_loc: loc,
+                    close_brace_loc: bun_ast::Loc::EMPTY,
                     loc,
                 }),
                 finally: Some(js_ast::Finally {
                     loc,
                     stmts: bun_ast::StoreSlice::new_mut(finally_stmts),
+                    close_brace_loc: bun_ast::Loc::EMPTY,
                 }),
             },
             loc,

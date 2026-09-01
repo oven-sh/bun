@@ -116,6 +116,7 @@ pub(crate) fn post_process_css_chunk(
                             LineColumnOffsetOptional::Null => unreachable!(),
                         },
                         source_index: compile_result.source_index(),
+                        is_null_entry: false,
                     },
                 ));
             }
@@ -123,6 +124,23 @@ pub(crate) fn post_process_css_chunk(
             line_offset.reset();
         } else {
             line_offset.advance(compile_result.code());
+
+            // The null entry ends the previous file's last mapping where this code starts.
+            if c.options.source_maps != options::SourceMapOption::None
+                && !compile_result.code().is_empty()
+            {
+                let n = compile_results_for_source_map.len();
+                if n > 0 && !compile_results_for_source_map.items_is_null_entry()[n - 1] {
+                    bun_core::handle_oom(compile_results_for_source_map.append(
+                        CompileResultForSourceMap {
+                            source_map_chunk: bun_sourcemap::Chunk::init_empty(),
+                            generated_offset: Default::default(),
+                            source_index: compile_result.source_index(),
+                            is_null_entry: true,
+                        },
+                    ));
+                }
+            }
         }
     }
 

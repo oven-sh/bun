@@ -778,7 +778,8 @@ impl ByteRangeMapping {
                 let mut min_line: u32 = u32::MAX;
                 let mut max_line: u32 = 0;
 
-                for byte_offset in min..max {
+                // `end_offset` is the last byte of the function (its `}`).
+                for byte_offset in min..=max {
                     let Some(new_line_index) = LineOffsetTable::find_index(
                         line_starts,
                         Loc {
@@ -787,11 +788,6 @@ impl ByteRangeMapping {
                     ) else {
                         continue;
                     };
-                    let line_start_byte_offset = line_starts[new_line_index];
-                    if (line_start_byte_offset as usize) >= byte_offset {
-                        continue;
-                    }
-
                     let line: u32 = u32::try_from(new_line_index).expect("int cast");
                     min_line = min_line.min(line);
                     max_line = max_line.max(line);
@@ -801,10 +797,10 @@ impl ByteRangeMapping {
 
                 // only mark the lines as executable if the function has not executed
                 // functions that have executed have non-executable lines in them and thats fine.
-                if !did_fn_execute {
-                    let end = max_line.min(line_count);
-                    line_hits_slice[min_line as usize..end as usize].fill(0);
-                    for line in min_line..end {
+                // A one-line function shares its line with the statement that created it, which ran.
+                if !did_fn_execute && min_line < max_line {
+                    line_hits_slice[min_line as usize..=max_line as usize].fill(0);
+                    for line in min_line..=max_line {
                         executable_lines.set(line as usize);
                         lines_which_have_executed.unset(line as usize);
                     }
@@ -914,7 +910,8 @@ impl ByteRangeMapping {
                 let mut min_line: u32 = u32::MAX;
                 let mut max_line: u32 = 0;
 
-                for byte_offset in min..max {
+                // `end_offset` is the last byte of the function (its `}`).
+                for byte_offset in min..=max {
                     let Some(new_line_index) = LineOffsetTable::find_index(
                         line_starts,
                         Loc {
@@ -924,10 +921,6 @@ impl ByteRangeMapping {
                         continue;
                     };
                     let line_start_byte_offset = line_starts[new_line_index];
-                    if (line_start_byte_offset as usize) >= byte_offset {
-                        continue;
-                    }
-
                     let column_position =
                         byte_offset.saturating_sub(line_start_byte_offset as usize);
 
@@ -966,7 +959,7 @@ impl ByteRangeMapping {
                 }
 
                 // no sourcemaps? ignore it
-                if min_line == u32::MAX && max_line == 0 {
+                if min_line == u32::MAX {
                     continue;
                 }
 
@@ -974,9 +967,9 @@ impl ByteRangeMapping {
 
                 // only mark the lines as executable if the function has not executed
                 // functions that have executed have non-executable lines in them and thats fine.
-                if !did_fn_execute {
-                    let end = max_line.min(line_count);
-                    for line in min_line..end {
+                // A one-line function shares its line with the statement that created it, which ran.
+                if !did_fn_execute && min_line < max_line {
+                    for line in min_line..=max_line {
                         executable_lines.set(line as usize);
                         lines_which_have_executed.unset(line as usize);
                         line_hits_slice[line as usize] = 0;

@@ -503,6 +503,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.lexer.expect(T::TOpenBrace)?;
         let mut opts = ParseStatementOptions::default();
         let stmts = p.parse_stmts_up_to(T::TCloseBrace, &mut opts)?;
+        let close_brace_loc = p.lexer.loc();
         p.lexer.next()?;
 
         if pushed_scope_for_function_body {
@@ -513,6 +514,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.fn_or_arrow_data_parse = old_fn_or_arrow_data;
         Ok(G::FnBody {
             loc,
+            close_brace_loc,
             stmts: bun_ast::StoreSlice::new_mut(stmts.into_bump_slice_mut()),
         })
     }
@@ -596,6 +598,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             prefer_expr: true,
             body: G::FnBody {
                 loc: arrow_loc,
+                close_brace_loc: bun_ast::Loc::EMPTY,
                 stmts: bun_ast::StoreSlice::new_mut(stmts),
             },
             has_react_hooks_suppression,

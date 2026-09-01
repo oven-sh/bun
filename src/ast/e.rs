@@ -353,12 +353,13 @@ pub struct Arrow {
     pub has_react_hooks_suppression: bool,
 }
 // The fourth bool fits in existing trailing padding.
-const _: () = assert!(core::mem::size_of::<Arrow>() == 32);
+const _: () = assert!(core::mem::size_of::<Arrow>() == 36);
 impl Arrow {
     pub const NOOP_RETURN_UNDEFINED: Arrow = Arrow {
         args: crate::StoreSlice::EMPTY,
         body: G::FnBody {
             loc: crate::Loc::EMPTY,
+            close_brace_loc: crate::Loc::EMPTY,
             stmts: crate::StoreSlice::EMPTY,
         },
         is_async: false,
@@ -373,6 +374,7 @@ impl Default for Arrow {
             args: crate::StoreSlice::EMPTY,
             body: G::FnBody {
                 loc: crate::Loc::EMPTY,
+                close_brace_loc: crate::Loc::EMPTY,
                 stmts: crate::StoreSlice::EMPTY,
             },
             is_async: false,

@@ -260,13 +260,7 @@ impl Entry {
             ChunkKind::HmrChunk => bun_core::strings::count_char(HMR_CHUNK_PREFIX, b'\n') as u32,
         };
 
-        let mut prev_end_state = SourceMapState {
-            generated_line: 0,
-            generated_column: 0,
-            source_index: 0,
-            original_line: 0,
-            original_column: 0,
-        };
+        let mut prev_end_state = SourceMapState::default();
 
         // The runtime.line_count counts newlines (e.g., 2941 for a 2942-line file).
         // The runtime ends at line 2942 with })({ so modules start after that.
@@ -281,25 +275,24 @@ impl Entry {
                     let start_state = SourceMapState {
                         source_index: i32::try_from(source_index).expect("int cast"),
                         generated_line: i32::try_from(lines_between).expect("int cast"),
-                        generated_column: 0,
-                        original_line: 0,
-                        original_column: 0,
+                        ..Default::default()
                     };
                     lines_between = 0;
 
+                    // Dev server chunks carry no names (`record_names` is off for InternalBakeDev).
                     source_map::append_source_map_chunk(
                         j,
                         prev_end_state,
                         start_state,
                         content.vlq(),
+                        None,
                     )?;
 
                     prev_end_state = SourceMapState {
                         source_index: i32::try_from(source_index).expect("int cast"),
-                        generated_line: 0,
-                        generated_column: 0,
                         original_line: content.end_state.original_line,
                         original_column: content.end_state.original_column,
+                        ..Default::default()
                     };
                 }
                 packed_map::Shared::LineCount(count) => {

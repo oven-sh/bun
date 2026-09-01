@@ -355,6 +355,7 @@ fn generate_client_reference_proxy(
                     body: G::FnBody {
                         stmts: bun_ast::StoreSlice::new_mut(arrow_body_stmts),
                         loc: Loc::EMPTY,
+                        close_brace_loc: Loc::EMPTY,
                     },
                     ..Default::default()
                 }),

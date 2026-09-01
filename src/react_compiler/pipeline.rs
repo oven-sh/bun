@@ -301,6 +301,7 @@ pub(crate) fn compile_outlined_fn(
         args: StoreSlice::new_mut(params.leak()),
         body: G::FnBody {
             loc: Loc::EMPTY,
+            close_brace_loc: Loc::EMPTY,
             stmts: StoreSlice::new_mut(body.leak()),
         },
         flags: fn_flags,

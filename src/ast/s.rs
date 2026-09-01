@@ -172,6 +172,7 @@ pub struct With {
 
 pub struct Try {
     pub body_loc: crate::Loc,
+    pub close_brace_loc: crate::Loc,
     pub body: StmtNodeList,
 
     pub catch: Option<Catch>,     // = None
@@ -181,6 +182,7 @@ pub struct Try {
 pub struct Switch {
     pub test: ExprNodeIndex,
     pub body_loc: crate::Loc,
+    pub close_brace_loc: crate::Loc,
     pub cases: StoreSlice<Case>, // arena-owned
 }
 

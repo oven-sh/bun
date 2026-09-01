@@ -594,6 +594,7 @@ pub(crate) fn post_process_js_chunk(
                                 SourceMap::LineColumnOffsetOptional::Null => Default::default(),
                             },
                             source_index: compile_result.source_index(),
+                            is_null_entry: false,
                         },
                     ));
                 }
@@ -601,6 +602,23 @@ pub(crate) fn post_process_js_chunk(
                 line_offset.reset();
             } else {
                 line_offset.advance(compile_result.code());
+
+                // No chunk means no mappings (a loader shim); the null entry ends the previous mapping here.
+                if c.options.source_maps != options::SourceMapOption::None
+                    && !compile_result.code().is_empty()
+                {
+                    let n = compile_results_for_source_map.len();
+                    if n > 0 && !compile_results_for_source_map.items_is_null_entry()[n - 1] {
+                        bun_core::handle_oom(compile_results_for_source_map.append(
+                            CompileResultForSourceMap {
+                                source_map_chunk: SourceMap::Chunk::init_empty(),
+                                generated_offset: Default::default(),
+                                source_index: compile_result.source_index(),
+                                is_null_entry: true,
+                            },
+                        ));
+                    }
+                }
             }
         }
 
@@ -1045,6 +1063,7 @@ pub(crate) fn generate_entry_point_tail_js<'a>(
                                                 func: G::Fn {
                                                     body: G::FnBody {
                                                         loc: bun_ast::Loc::EMPTY,
+                                                        close_brace_loc: bun_ast::Loc::EMPTY,
                                                         stmts: bun_ast::StoreSlice::new_mut(
                                                             fn_body,
                                                         ),

@@ -44,28 +44,33 @@ export function dedent(str: string | TemplateStringsArray, ...args: any[]) {
   );
 }
 
-export function decodeSourceMappingsLine(line: string) {
+function decodeVLQFields(raw: string): number[] {
   const B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  const f: number[] = [];
+  let v = 0;
+  let sh = 0;
+  for (const c of raw) {
+    const d = B64.indexOf(c);
+    v |= (d & 31) << sh;
+    if (d & 32) {
+      sh += 5;
+      continue;
+    }
+    f.push(v & 1 ? -(v >>> 1) : v >>> 1);
+    v = 0;
+    sh = 0;
+  }
+  return f;
+}
+
+export function decodeSourceMappingsLine(line: string) {
   const segs: { gen: number; src: number; ol: number; oc: number }[] = [];
   let gen = 0;
   let src = 0;
   let ol = 0;
   let oc = 0;
   for (const raw of line ? line.split(",") : []) {
-    const f: number[] = [];
-    let v = 0;
-    let sh = 0;
-    for (const c of raw) {
-      const d = B64.indexOf(c);
-      v |= (d & 31) << sh;
-      if (d & 32) {
-        sh += 5;
-        continue;
-      }
-      f.push(v & 1 ? -(v >>> 1) : v >>> 1);
-      v = 0;
-      sh = 0;
-    }
+    const f = decodeVLQFields(raw);
     gen += f[0];
     if (f.length > 1) {
       src += f[1];
@@ -75,6 +80,52 @@ export function decodeSourceMappingsLine(line: string) {
     segs.push({ gen, src, ol, oc });
   }
   return segs;
+}
+
+/** One decoded segment of a source map `mappings` string. All positions are 0-based. */
+export interface DecodedMapping {
+  genLine: number;
+  genCol: number;
+  /** `null` for a 1-field segment: generated code with no original position. */
+  src: number | null;
+  origLine: number | null;
+  origCol: number | null;
+  /** The `names` entry, when the segment has the optional fifth field. */
+  name: string | null;
+}
+
+/**
+ * Decodes a whole `mappings` string. Unlike `SourceMapConsumer`, this keeps
+ * 1-field segments and reports exactly the segments the map contains, in
+ * order, so a test can assert specific generated -> original positions.
+ */
+export function decodeSourceMappings(map: { mappings: string; names?: string[] }): DecodedMapping[] {
+  const out: DecodedMapping[] = [];
+  let src = 0;
+  let origLine = 0;
+  let origCol = 0;
+  let name = 0;
+  map.mappings.split(";").forEach((line, genLine) => {
+    let genCol = 0;
+    for (const raw of line ? line.split(",") : []) {
+      const f = decodeVLQFields(raw);
+      genCol += f[0];
+      if (f.length === 1) {
+        out.push({ genLine, genCol, src: null, origLine: null, origCol: null, name: null });
+        continue;
+      }
+      src += f[1];
+      origLine += f[2];
+      origCol += f[3];
+      let nameText: string | null = null;
+      if (f.length > 4) {
+        name += f[4];
+        nameText = map.names?.[name] ?? `<invalid name index ${name}>`;
+      }
+      out.push({ genLine, genCol, src, origLine, origCol, name: nameText });
+    }
+  });
+  return out;
 }
 
 let currentFile: string | undefined;
@@ -1704,6 +1755,13 @@ for (const [key, blob] of build.outputs) {
               expect(m.source).toBeDefined();
               expect(m.generatedLine).toBeGreaterThanOrEqual(1);
               expect(m.generatedColumn).toBeGreaterThanOrEqual(0);
+              if (m.source === null) {
+                // A 1-field segment: generated code with no original position.
+                // The bundler emits one where a file without mappings starts.
+                expect(m.originalLine).toBeNull();
+                expect(m.originalColumn).toBeNull();
+                return;
+              }
               expect(m.originalLine).toBeGreaterThanOrEqual(1);
               expect(m.originalColumn).toBeGreaterThanOrEqual(0);
 

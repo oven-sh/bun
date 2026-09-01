@@ -128,6 +128,7 @@ pub struct Comment {
 pub struct ClassStaticBlock {
     pub stmts: Vec<Stmt, bun_alloc::AstAlloc>,
     pub loc: crate::Loc,
+    pub close_brace_loc: crate::Loc,
 }
 
 pub struct Property {
@@ -200,6 +201,7 @@ impl Property {
         if let Some(csb_ref) = self.class_static_block_ref() {
             let new_block: &mut ClassStaticBlock = bump.alloc(ClassStaticBlock {
                 loc: csb_ref.loc,
+                close_brace_loc: csb_ref.close_brace_loc,
                 stmts: bun_alloc::AstAlloc::vec_from_slice(csb_ref.stmts.slice()),
             });
             class_static_block = Some(crate::StoreRef::from_bump(new_block));
@@ -245,6 +247,7 @@ pub enum PropertyKind {
 
 pub struct FnBody {
     pub loc: crate::Loc,
+    pub close_brace_loc: crate::Loc,
     pub stmts: StmtNodeList,
 }
 
@@ -259,6 +262,7 @@ impl FnBody {
         Ok(FnBody {
             stmts: StoreSlice::new_mut(stmts),
             loc: expr.loc,
+            close_brace_loc: crate::Loc::EMPTY,
         })
     }
 }
@@ -285,6 +289,7 @@ impl Default for Fn {
             args: StoreSlice::EMPTY,
             body: FnBody {
                 loc: crate::Loc::EMPTY,
+                close_brace_loc: crate::Loc::EMPTY,
                 stmts: StmtNodeList::EMPTY,
             },
             arguments_ref: Ref::NONE,
@@ -310,6 +315,7 @@ impl Fn {
             args: StoreSlice::new_mut(args),
             body: FnBody {
                 loc: self.body.loc,
+                close_brace_loc: self.body.close_brace_loc,
                 stmts: self.body.stmts,
             },
             arguments_ref: self.arguments_ref,

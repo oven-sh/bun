@@ -104,7 +104,7 @@ test("Error inside minified file (no color) ", () => {
 
       error: error inside long minified file!
             at <anonymous> ([dir]/inspect-error-fixture.min.js:26:2850)
-            at <anonymous> ([dir]/inspect-error-fixture.min.js:26:2890)
+            at <anonymous> ([dir]/inspect-error-fixture.min.js:26:2891)
             at <anonymous> ([dir]/inspect-error.test.js:86:7)"
     `);
   }
@@ -133,7 +133,7 @@ test("Error inside minified file (color) ", () => {
 
       error: error inside long minified file!
             at <anonymous> ([dir]/inspect-error-fixture.min.js:26:2850)
-            at <anonymous> ([dir]/inspect-error-fixture.min.js:26:2890)
+            at <anonymous> ([dir]/inspect-error-fixture.min.js:26:2891)
             at <anonymous> ([dir]/inspect-error.test.js:114:7)"
     `);
   }

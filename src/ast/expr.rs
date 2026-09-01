@@ -1528,8 +1528,8 @@ const _: () = assert!(core::mem::size_of::<E::RequireString>() <= 8);
 const _: () = assert!(core::mem::size_of::<E::NewTarget>() <= 8);
 const _: () = assert!(core::mem::size_of::<StoreRef<E::Binary>>() == core::mem::size_of::<usize>());
 // Heap-payload shrinks unlocked by the 12-byte StoreSlice<T>:
-const _: () = assert!(core::mem::size_of::<crate::G::FnBody>() == 16);
-const _: () = assert!(core::mem::size_of::<E::Arrow>() <= 32);
+const _: () = assert!(core::mem::size_of::<crate::G::FnBody>() == 20);
+const _: () = assert!(core::mem::size_of::<E::Arrow>() <= 36);
 const _: () = assert!(core::mem::size_of::<crate::S::Block>() == 16);
 
 // Field-style accessors (`data.e_string()`, `data.e_object()`). The match arms
@@ -2036,6 +2036,7 @@ impl Data {
                     args: crate::StoreSlice::new(args.into_bump_slice()),
                     body: G::FnBody {
                         loc: el.body.loc,
+                        close_brace_loc: el.body.close_brace_loc,
                         stmts: el.body.stmts,
                     },
                     is_async: el.is_async,

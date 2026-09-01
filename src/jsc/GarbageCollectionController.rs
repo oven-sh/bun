@@ -135,8 +135,14 @@ impl GarbageCollectionController {
         // The module-graph page-out goes with the second collection (or the only one): after a pause of a few seconds
         // the user is likely to come straight back, and those file-backed pages would just fault in again.
         #[cfg(target_os = "linux")]
-        if crossed(dues.clone().nth(1).unwrap_or(self.idle_gc_at_ms.get()[0])) {
-            if let Some(graph) = vm.standalone_module_graph {
+        {
+            let at = self.idle_gc_at_ms.get();
+            if let Some(graph) = vm
+                .standalone_module_graph
+                .filter(|_| crossed(if at[1] != 0 { at[1] } else { at[0] }))
+            {
+                // SAFETY: VM-free — `graph` is the process-lifetime, immutable embedded module graph; the thread only
+                // madvise()s its pages and touches no VM or JS state.
                 let _ = std::thread::Builder::new()
                     .name("idle page-out".into())
                     .spawn(move || graph.page_out());

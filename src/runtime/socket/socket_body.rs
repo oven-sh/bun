@@ -272,11 +272,8 @@ extern "C" fn select_alpn_callback(
     }
 }
 
-/// BoringSSL looks up the server ALPN callback on the *current* `ssl->ctx`,
-/// which SNI replaces with `SSL_set_SSL_CTX` before ALPN negotiation, so every
-/// context SNI can install needs the registration `on_open` gives the default
-/// one. The selector is keyed on per-SSL ex_data (NOACK when unset), so the
-/// registration is inert for every other connection on a shared context.
+/// BoringSSL reads the server ALPN callback off the *current* `ssl->ctx`, and
+/// SNI replaces that with `SSL_set_SSL_CTX` before ALPN negotiation.
 pub(in crate::socket) fn install_sni_alpn_selector(ctx: *mut boringssl_sys::SSL_CTX) {
     if ctx.is_null() {
         return;

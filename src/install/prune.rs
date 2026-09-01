@@ -363,7 +363,6 @@ pub fn prune(manager: &mut PackageManager, original_cwd: &[u8]) -> crate::Result
     Ok(())
 }
 
-// Store entries are symlinks into the global store when `globalStore` is on.
 fn store_has_entries() -> bool {
     let Ok(store) = Dir::open(STORE_DIR) else {
         return false;
@@ -397,9 +396,7 @@ fn lockfile_extracts(lockfile: &Lockfile, name: &[u8]) -> bool {
     })
 }
 
-/// What the importer folders (the root and workspace `node_modules`) say about how they were
-/// installed: the hoisted linker extracts packages into real directories there, the isolated
-/// linker links them into `node_modules/.bun`.
+/// Which linkers the entries of the importer folders (root and workspace `node_modules`) come from.
 #[derive(Default)]
 struct LayoutEvidence {
     hoisted: bool,
@@ -434,7 +431,7 @@ impl LayoutEvidence {
         }
     }
 
-    // A link into a store that is gone is junk either linker's prune removes, not evidence.
+    // A dangling store link is junk, not evidence.
     fn vote(&mut self, lockfile: &Lockfile, dir: &Dir, alias: &[u8], name: &[u8], kind: EntryKind) {
         match kind {
             EntryKind::Directory if lockfile_extracts(lockfile, alias) => self.hoisted = true,
@@ -448,8 +445,7 @@ impl LayoutEvidence {
     }
 }
 
-/// Picks the planner from the layout on disk. `configured` (the linker `bun install` would use,
-/// or `--linker`) only decides when the folders hold both layouts.
+/// `configured` only decides when the folders hold both layouts.
 fn detect_layout(manager: &PackageManager, node_modules: &Dir, configured: Layout) -> Layout {
     let lockfile: &Lockfile = &manager.lockfile;
     let mut evidence = LayoutEvidence::default();
@@ -941,8 +937,7 @@ impl<'a> HoistedTree<'a> {
             ResolutionTag::Folder if kind == EntryKind::SymLink => return Installed::Matches,
             _ => {}
         }
-        // A link (an isolated install's, or the user's) counts as whatever it points at, as it does
-        // for the installer's own check.
+        // A link counts as what it points at, as in `PackageInstall::verify`.
         let package = match kind {
             EntryKind::SymLink if is_dangling(&folder, alias) => return Installed::Missing,
             EntryKind::SymLink => folder.open_at(alias).ok(),

@@ -625,19 +625,6 @@ impl<'a> Formatter<'a> {
                     let next_value = self.remaining_values[0];
                     self.remaining_values = &self.remaining_values[1..];
                     let r = match token {
-                        Tag::String => self.print_as::<W, { Tag::String }, ENABLE_ANSI_COLORS>(
-                            writer.ctx, next_value, next_value.js_type(),
-                        ),
-                        Tag::Double => self.print_as::<W, { Tag::Double }, ENABLE_ANSI_COLORS>(
-                            writer.ctx, next_value, next_value.js_type(),
-                        ),
-                        Tag::Object => self.print_as::<W, { Tag::Object }, ENABLE_ANSI_COLORS>(
-                            writer.ctx, next_value, next_value.js_type(),
-                        ),
-                        Tag::Integer => self.print_as::<W, { Tag::Integer }, ENABLE_ANSI_COLORS>(
-                            writer.ctx, next_value, next_value.js_type(),
-                        ),
-
                         // undefined is overloaded to mean the '%o" field
                         Tag::Undefined => match Tag::get(next_value, global_this) {
                             Ok(tag) => self.format::<W, ENABLE_ANSI_COLORS>(
@@ -645,8 +632,12 @@ impl<'a> Formatter<'a> {
                             ),
                             Err(_) => return,
                         },
-
-                        _ => unreachable!(),
+                        _ => self.print_as::<W, ENABLE_ANSI_COLORS>(
+                            token,
+                            writer.ctx,
+                            next_value,
+                            next_value.js_type(),
+                        ),
                     };
                     if r.is_err() {
                         return;
@@ -1032,8 +1023,9 @@ impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
 }
 
 impl<'a> Formatter<'a> {
-    pub(crate) fn print_as<W: bun_io::Write, const FORMAT: Tag, const ENABLE_ANSI_COLORS: bool>(
+    pub(crate) fn print_as<W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>(
         &mut self,
+        format: Tag,
         writer_: &mut W,
         value: JSValue,
         js_type: JSType,
@@ -1047,7 +1039,7 @@ impl<'a> Formatter<'a> {
         // methods in this file, so we leave it None here.
         let mut writer = WrappedWriter::new(writer_);
 
-        if FORMAT.can_have_circular_references() {
+        if format.can_have_circular_references() {
             if self.map_node.is_none() {
                 // `visited::Pool::get()` returns an RAII `PoolGuard` that
                 // would release on scope exit; instead the raw node is stashed on
@@ -1082,1401 +1074,1589 @@ impl<'a> Formatter<'a> {
             }
         }
 
-        // Wrap the match in a closure and unconditionally
-        // call `self.map.remove(&value)` after it returns (Ok or Err). A scopeguard
-        // cannot be used here because it would hold `&mut self` across the match body.
-        let result: JsResult<()> = (|| {
-            match FORMAT {
-                Tag::StringPossiblyFormatted => {
-                    let str = value.to_utf8(self.global_this)?;
-                    let slice = str.slice();
-                    self.add_for_new_line(slice.len());
-                    self.write_with_formatting::<W, _, ENABLE_ANSI_COLORS>(
-                        writer.ctx,
-                        slice,
-                        self.global_this,
-                    );
-                }
-                Tag::String => {
-                    let view = value.to_js_string_view(self.global_this)?;
-                    let str = view.to_encoded_slice();
-                    self.add_for_new_line(str.len);
-
-                    if value.js_type() == JSType::StringObject
-                        || value.js_type() == JSType::DerivedStringObject
-                    {
-                        if str.len == 0 {
-                            writer.write_all(b"String {}");
-                            return Ok(());
-                        }
-                        if self.indent == 0 && str.len > 0 {
-                            writer.write_all(b"\n");
-                        }
-                        writer.write_all(b"String {\n");
-                        self.indent += 1;
-                        self.reset_line();
-                        self.write_indent(writer.ctx).expect("unreachable");
-                        let length = str.len;
-                        for (i, c) in str.slice().iter().enumerate() {
-                            writer.print(format_args!("\"{}\": \"{}\",\n", i, *c as char));
-                            if i != length - 1 {
-                                self.write_indent(writer.ctx).expect("unreachable");
-                            }
-                        }
-                        self.reset_line();
-                        writer.write_all(b"}\n");
-                        self.indent = self.indent.saturating_sub(1);
-                        return Ok(());
-                    }
-
-                    if self.quote_strings && js_type != JSType::RegExpObject {
-                        if str.len == 0 {
-                            writer.write_all(b"\"\"");
-                            return Ok(());
-                        }
-
-                        if ENABLE_ANSI_COLORS {
-                            writer.write_all(pretty_fmt_const!(true, "<r><green>").as_bytes());
-                        }
-
-                        let mut has_newline = false;
-
-                        if str.index_of_any(b"\n\r").is_some() {
-                            has_newline = true;
-                            writer.write_all(b"\n");
-                        }
-
-                        writer.write_all(b"\"");
-                        let mut remaining = str;
-                        // `EncodedSlice::char_at` returns u16; use explicit u16
-                        // consts so the match arms type-check.
-                        const BACKSLASH: u16 = b'\\' as u16;
-                        const CR: u16 = b'\r' as u16;
-                        const LF: u16 = b'\n' as u16;
-                        while let Some(i) = remaining.index_of_any(b"\\\r") {
-                            match remaining.char_at(i) {
-                                BACKSLASH => {
-                                    writer.print(format_args!(
-                                        "{}\\",
-                                        remaining.substring_with_len(0, i)
-                                    ));
-                                    remaining = remaining.substring(i + 1);
-                                }
-                                CR => {
-                                    if i + 1 < remaining.len
-                                        && remaining.char_at(i + 1) == LF
-                                    {
-                                        writer.print(format_args!(
-                                            "{}",
-                                            remaining.substring_with_len(0, i)
-                                        ));
-                                    } else {
-                                        writer.print(format_args!(
-                                            "{}\n",
-                                            remaining.substring_with_len(0, i)
-                                        ));
-                                    }
-
-                                    remaining = remaining.substring(i + 1);
-                                }
-                                _ => unreachable!(),
-                            }
-                        }
-
-                        writer.print(format_args!("{}", remaining));
-                        writer.write_all(b"\"");
-
-                        if has_newline {
-                            writer.write_all(b"\n");
-                        }
-                        // The `<r>` reset must come AFTER the trailing `\n`
-                        // to keep byte-for-byte parity with colored output.
-                        if ENABLE_ANSI_COLORS {
-                            writer.write_all(pretty_fmt_const!(true, "<r>").as_bytes());
-                        }
-                        return Ok(());
-                    }
-
-                    if js_type == JSType::RegExpObject && ENABLE_ANSI_COLORS {
-                        writer.print(format_args!(
-                            "{}",
-                            pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r><red>")
-                        ));
-                    }
-
-                    if str.is_16bit() {
-                        // streaming print
-                        writer.print(format_args!("{}", str));
-                    } else if strings::is_all_ascii(str.slice()) {
-                        // fast path
-                        writer.write_all(str.slice());
-                    } else if str.len > 0 {
-                        // slow path
-                        let buf = strings::allocate_latin1_into_utf8_with_list(
-                            Vec::with_capacity(str.len),
-                            0,
-                            str.slice(),
-                        );
-                        if !buf.is_empty() {
-                            writer.write_all(&buf);
-                        }
-                    }
-
-                    if js_type == JSType::RegExpObject && ENABLE_ANSI_COLORS {
-                        writer.print(format_args!(
-                            "{}",
-                            pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>")
-                        ));
-                    }
-                }
-                Tag::Integer => {
-                    let int = value.to_int64();
-                    self.add_for_new_line(bun_fmt::digit_count(int));
-                    writer.print(format_args!(
-                        "{}{}{}",
-                        pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r><yellow>"),
-                        int,
-                        pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
-                    ));
-                }
-                Tag::BigInt => {
-                    let view = value.to_js_string_view(self.global_this)?;
-                    let out_str = view.latin1();
-                    self.add_for_new_line(out_str.len());
-
-                    writer.print(format_args!(
-                        "{}{}n{}",
-                        pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r><yellow>"),
-                        bstr::BStr::new(out_str),
-                        pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
-                    ));
-                }
-                Tag::Double => {
-                    if value.is_cell() {
-                        self.print_as::<W, { Tag::Object }, ENABLE_ANSI_COLORS>(
-                            writer.ctx, value, JSType::Object,
-                        )?;
-                        return Ok(());
-                    }
-
-                    let num = value.as_number();
-
-                    if num.is_infinite() && num.is_sign_positive() {
-                        self.add_for_new_line(b"Infinity".len());
-                        writer.print(format_args!(
-                            "{}Infinity{}",
-                            pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r><yellow>"),
-                            pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
-                        ));
-                    } else if num.is_infinite() && num.is_sign_negative() {
-                        self.add_for_new_line(b"-Infinity".len());
-                        writer.print(format_args!(
-                            "{}-Infinity{}",
-                            pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r><yellow>"),
-                            pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
-                        ));
-                    } else if num.is_nan() {
-                        self.add_for_new_line(b"NaN".len());
-                        writer.print(format_args!(
-                            "{}NaN{}",
-                            pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r><yellow>"),
-                            pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
-                        ));
-                    } else {
-                        // WTF::dtoa drops the sign bit on -0; preserve it.
-                        let mut dtoa_buf = [0u8; 124];
-                        let dtoa =
-                            bun_fmt::FormatDouble::dtoa_with_negative_zero(&mut dtoa_buf, num);
-                        self.add_for_new_line(dtoa.len());
-                        writer.write_all(
-                            pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r><yellow>").as_bytes(),
-                        );
-                        writer.write_all(dtoa);
-                        writer.write_all(
-                            pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>").as_bytes(),
-                        );
-                    }
-                }
-                Tag::Undefined => {
-                    self.add_for_new_line(9);
-                    writer.print(format_args!(
-                        "{}undefined{}",
-                        pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r><d>"),
-                        pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
-                    ));
-                }
-                Tag::Null => {
-                    self.add_for_new_line(4);
-                    writer.print(format_args!(
-                        "{}null{}",
-                        pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r><yellow>"),
-                        pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
-                    ));
-                }
-                Tag::Symbol => {
-                    let description = value.get_description(self.global_this);
-                    self.add_for_new_line(b"Symbol".len());
-
-                    if !description.is_empty() {
-                        self.add_for_new_line(description.length() + b"()".len());
-                        writer.print(format_args!(
-                            "{}Symbol({}){}",
-                            pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r><blue>"),
-                            description,
-                            pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
-                        ));
-                    } else {
-                        writer.print(format_args!(
-                            "{}Symbol{}",
-                            pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r><blue>"),
-                            pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
-                        ));
-                    }
-                }
-                Tag::Error => {
-                    let classname = value.get_class_name(self.global_this)?;
-                    let mut message_string = bun_core::String::EMPTY;
-
-                    if let Some(message_prop) = value.fast_get(self.global_this, jsc::BuiltinName::Message)? {
-                        message_string = message_prop.to_bun_string(self.global_this)?;
-                    }
-
-                    if message_string.is_empty() {
-                        writer.print(format_args!("[{}]", classname));
-                        return Ok(());
-                    }
-                    writer.print(format_args!("[{}: {}]", classname, message_string));
-                    return Ok(());
-                }
-                Tag::Class => {
-                    let printable = value.get_class_name(self.global_this)?;
-                    self.add_for_new_line(printable.length());
-
-                    if printable.is_empty() {
-                        writer.print(format_args!(
-                            "{}[class]{}",
-                            pretty_fmt_const!(ENABLE_ANSI_COLORS, "<cyan>"),
-                            pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
-                        ));
-                    } else {
-                        writer.print(format_args!(
-                            "{}[class {}]{}",
-                            pretty_fmt_const!(ENABLE_ANSI_COLORS, "<cyan>"),
-                            printable,
-                            pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
-                        ));
-                    }
-                }
-                Tag::Function => {
-                    let printable = value.get_name_property(self.global_this)?;
-
-                    if printable.is_empty() {
-                        writer.print(format_args!(
-                            "{}[Function]{}",
-                            pretty_fmt_const!(ENABLE_ANSI_COLORS, "<cyan>"),
-                            pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
-                        ));
-                    } else {
-                        writer.print(format_args!(
-                            "{}[Function: {}]{}",
-                            pretty_fmt_const!(ENABLE_ANSI_COLORS, "<cyan>"),
-                            printable,
-                            pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
-                        ));
-                    }
-                }
-                Tag::Array => {
-                    let len: u32 = value.get_length(self.global_this)? as u32;
-                    if len == 0 {
-                        writer.write_all(b"[]");
-                        self.add_for_new_line(2);
-                        return Ok(());
-                    }
-
-                    if self.indent == 0 {
-                        writer.write_all(b"\n");
-                    }
-
-                    let mut was_good_time = self.always_newline_scope;
-                    {
-                        self.indent += 1;
-
-                        self.add_for_new_line(2);
-
-                        let prev_quote_strings = self.quote_strings;
-                        self.quote_strings = true;
-
-                        // `indent` and `quote_strings` must be
-                        // restored even when `Tag::get` / `format` throw. Wrap the fallible body in
-                        // a closure and restore unconditionally afterward.
-                        let inner: JsResult<()> = (|| {
-                            {
-                                let element = value.get_index(self.global_this, 0)?;
-                                let tag = Tag::get(element, self.global_this)?;
-
-                                was_good_time = was_good_time
-                                    || !tag.tag.is_primitive()
-                                    || self.good_time_for_a_new_line();
-
-                                self.reset_line();
-                                writer.write_all(b"[");
-                                writer.write_all(b"\n");
-                                self.write_indent(writer.ctx).expect("unreachable");
-                                self.add_for_new_line(1);
-
-                                self.format::<W, ENABLE_ANSI_COLORS>(
-                                    tag, writer.ctx, element, self.global_this,
-                                )?;
-
-                                if tag.cell.is_string_like() {
-                                    if ENABLE_ANSI_COLORS {
-                                        writer.write_all(
-                                            pretty_fmt_const!(true, "<r>").as_bytes(),
-                                        );
-                                    }
-                                }
-
-                                if len == 1 {
-                                    self.print_comma::<W, ENABLE_ANSI_COLORS>(writer.ctx)
-                                        .expect("unreachable");
-                                }
-                            }
-
-                            let mut i: u32 = 1;
-                            while i < len {
-                                self.print_comma::<W, ENABLE_ANSI_COLORS>(writer.ctx)
-                                    .expect("unreachable");
-
-                                writer.write_all(b"\n");
-                                self.write_indent(writer.ctx).expect("unreachable");
-
-                                let element = value.get_index(self.global_this, i)?;
-                                let tag = Tag::get(element, self.global_this)?;
-
-                                self.format::<W, ENABLE_ANSI_COLORS>(
-                                    tag, writer.ctx, element, self.global_this,
-                                )?;
-
-                                if tag.cell.is_string_like() {
-                                    if ENABLE_ANSI_COLORS {
-                                        writer.write_all(
-                                            pretty_fmt_const!(true, "<r>").as_bytes(),
-                                        );
-                                    }
-                                }
-
-                                if i == len - 1 {
-                                    self.print_comma::<W, ENABLE_ANSI_COLORS>(writer.ctx)
-                                        .expect("unreachable");
-                                }
-                                i += 1;
-                            }
-                            Ok(())
-                        })();
-
-                        self.quote_strings = prev_quote_strings;
-                        self.indent = self.indent.saturating_sub(1);
-                        inner?;
-                    }
-
-                    self.reset_line();
-                    writer.write_all(b"\n");
-                    let _ = self.write_indent(writer.ctx);
-                    writer.write_all(b"]");
-                    if self.indent == 0 {
-                        writer.write_all(b"\n");
-                    }
-                    self.reset_line();
-                    self.add_for_new_line(1);
-                }
-                Tag::Private => {
-                    // Per-type `write_format` dispatch for Bun-native cells.
-                    // Downcast via the `JsClass`/FFI hooks on each type; the `write_format`
-                    // bodies re-enter this formatter through the `ConsoleFormatter` impl
-                    // below for nested values, so the byte sink is wrapped in `AsFmt` (a
-                    // `core::fmt::Write` view of the same writer).
-                    if let Some(response) = value.as_::<crate::webcore::Response>() {
-                        // SAFETY: `as_` returned non-null; the GC keeps the cell alive while
-                        // `value` is on the stack (conservative scan). `write_format` does not
-                        // re-enter `as_` for the same cell, so the `&mut` is unique here.
-                        let response = unsafe { &mut *response };
-                        let mut bridge = AsFmt::new(&mut *writer.ctx);
-                        if response
-                            .write_format::<_, _, ENABLE_ANSI_COLORS>(self, &mut bridge)
-                            .is_err()
-                        {
-                            self.failed = true;
-                            // TODO: make this better
-                            if !self.global_this.has_exception() {
-                                return Err(self.global_this.throw_error(
-                                    bun_core::Error::FmtError,
-                                    "failed to print Response",
-                                ));
-                            }
-                            return Err(JsError::Thrown);
-                        }
-                    } else if let Some(request) = value.as_::<crate::webcore::Request>() {
-                        // SAFETY: see Response branch above.
-                        let request = unsafe { &mut *request };
-                        let mut bridge = AsFmt::new(&mut *writer.ctx);
-                        if request
-                            .write_format::<_, _, ENABLE_ANSI_COLORS>(value, self, &mut bridge)
-                            .is_err()
-                        {
-                            self.failed = true;
-                            // TODO: make this better
-                            if !self.global_this.has_exception() {
-                                return Err(self.global_this.throw_error(
-                                    bun_core::Error::FmtError,
-                                    "failed to print Request",
-                                ));
-                            }
-                            return Err(JsError::Thrown);
-                        }
-                        return Ok(());
-                    } else if let Some(build) = value.as_::<crate::api::BuildArtifact>() {
-                        // SAFETY: see Response branch above. `write_format` is
-                        // `&self` post-R-2, so a shared borrow is sufficient.
-                        let build = unsafe { &*build };
-                        let mut bridge = AsFmt::new(&mut *writer.ctx);
-                        if build
-                            .write_format::<_, _, ENABLE_ANSI_COLORS>(value, self, &mut bridge)
-                            .is_err()
-                        {
-                            self.failed = true;
-                            // TODO: make this better
-                            if !self.global_this.has_exception() {
-                                return Err(self.global_this.throw_error(
-                                    bun_core::Error::FmtError,
-                                    "failed to print BuildArtifact",
-                                ));
-                            }
-                            return Err(JsError::Thrown);
-                        }
-                    } else if let Some(blob) = value.as_::<crate::webcore::Blob>() {
-                        // SAFETY: see Response branch above.
-                        let blob = unsafe { &mut *blob };
-                        let mut bridge = AsFmt::new(&mut *writer.ctx);
-                        if blob
-                            .write_format::<_, _, ENABLE_ANSI_COLORS>(self, &mut bridge)
-                            .is_err()
-                        {
-                            self.failed = true;
-                            // TODO: make this better
-                            if !self.global_this.has_exception() {
-                                return Err(self.global_this.throw_error(
-                                    bun_core::Error::FmtError,
-                                    "failed to print Blob",
-                                ));
-                            }
-                            return Err(JsError::Thrown);
-                        }
-                        return Ok(());
-                    } else if bun_jsc::DOMFormData::from_js(value).is_some() {
-                        if let Some(to_json_function) = value
-                            .get(self.global_this, "toJSON")?
-                            .filter(|f| f.is_callable())
-                        {
-                            self.add_for_new_line(b"FormData (entries) ".len());
-                            writer.write_all(
-                                pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r><blue>FormData<r> <d>(entries)<r> ")
-                                .as_bytes(),
-                            );
-
-                            return self.print_as::<W, { Tag::Object }, ENABLE_ANSI_COLORS>(
-                                writer.ctx,
-                                to_json_function.call(self.global_this, value, &[])?,
-                                JSType::Object,
-                            );
-                        }
-
-                        return self.print_as::<W, { Tag::Object }, ENABLE_ANSI_COLORS>(
-                            writer.ctx, value, JSType::Event,
-                        );
-                    } else if let Some(timer) = value.as_class_ref::<crate::timer::TimeoutObject>() {
-                        self.add_for_new_line(
-                            b"Timeout(# ) ".len()
-                                + bun_fmt::digit_count(timer.internals.id.max(0)),
-                        );
-                        if timer.internals.flags.get().kind() == crate::timer::Kind::SetInterval {
-                            self.add_for_new_line(
-                                b"repeats ".len()
-                                    + bun_fmt::digit_count(timer.internals.id.max(0)),
-                            );
-                            writer.print(format_args!(
-                                "{}Timeout{} {}(#{}{}{}{}, repeats){}",
-                                pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r><blue>"),
-                                pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
-                                pretty_fmt_const!(ENABLE_ANSI_COLORS, "<d>"),
-                                pretty_fmt_const!(ENABLE_ANSI_COLORS, "<yellow>"),
-                                timer.internals.id,
-                                pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
-                                pretty_fmt_const!(ENABLE_ANSI_COLORS, "<d>"),
-                                pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
-                            ));
-                        } else {
-                            writer.print(format_args!(
-                                "{}Timeout{} {}(#{}{}{}{}){}",
-                                pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r><blue>"),
-                                pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
-                                pretty_fmt_const!(ENABLE_ANSI_COLORS, "<d>"),
-                                pretty_fmt_const!(ENABLE_ANSI_COLORS, "<yellow>"),
-                                timer.internals.id,
-                                pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
-                                pretty_fmt_const!(ENABLE_ANSI_COLORS, "<d>"),
-                                pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
-                            ));
-                        }
-
-                        return Ok(());
-                    } else if let Some(immediate) =
-                        value.as_class_ref::<crate::timer::ImmediateObject>()
-                    {
-                        self.add_for_new_line(
-                            b"Immediate(# ) ".len()
-                                + bun_fmt::digit_count(immediate.internals.id.max(0)),
-                        );
-                        writer.print(format_args!(
-                            "{}Immediate{} {}(#{}{}{}{}){}",
-                            pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r><blue>"),
-                            pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
-                            pretty_fmt_const!(ENABLE_ANSI_COLORS, "<d>"),
-                            pretty_fmt_const!(ENABLE_ANSI_COLORS, "<yellow>"),
-                            immediate.internals.id,
-                            pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
-                            pretty_fmt_const!(ENABLE_ANSI_COLORS, "<d>"),
-                            pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
-                        ));
-
-                        return Ok(());
-                    } else if let Some(build_log) = value.as_class_ref::<crate::api::BuildMessage>() {
-                        let mut bridge = AsFmt::new(&mut *writer.ctx);
-                        let _ = build_log.msg.write_format::<ENABLE_ANSI_COLORS>(&mut bridge);
-                        return Ok(());
-                    } else if let Some(resolve_log) = value.as_class_ref::<crate::api::ResolveMessage>() {
-                        let mut bridge = AsFmt::new(&mut *writer.ctx);
-                        let _ = resolve_log.msg.write_format::<ENABLE_ANSI_COLORS>(&mut bridge);
-                        return Ok(());
-                    } else if JestPrettyFormat::print_asymmetric_matcher::<_, W, ENABLE_ANSI_COLORS>(
-                        self, &mut writer, value,
-                    )? {
-                        return Ok(());
-                    } else if js_type != JSType::DOMWrapper {
-                        if value.is_callable() {
-                            return self.print_as::<W, { Tag::Function }, ENABLE_ANSI_COLORS>(
-                                writer.ctx, value, js_type,
-                            );
-                        }
-
-                        return self.print_as::<W, { Tag::Object }, ENABLE_ANSI_COLORS>(
-                            writer.ctx, value, js_type,
-                        );
-                    }
-                    return self.print_as::<W, { Tag::Object }, ENABLE_ANSI_COLORS>(
-                        writer.ctx, value, JSType::Event,
-                    );
-                }
-                Tag::NativeCode => {
-                    self.add_for_new_line(b"[native code]".len());
-                    writer.write_all(b"[native code]");
-                }
-                Tag::Promise => {
-                    if self.good_time_for_a_new_line() {
-                        writer.write_all(b"\n");
-                        let _ = self.write_indent(writer.ctx);
-                    }
-                    writer.write_all(b"Promise {}");
-                }
-                Tag::Boolean => {
-                    if value.is_cell() {
-                        self.print_as::<W, { Tag::Object }, ENABLE_ANSI_COLORS>(
-                            writer.ctx, value, JSType::Object,
-                        )?;
-                        return Ok(());
-                    }
-                    if value.to_boolean() {
-                        self.add_for_new_line(4);
-                        writer.write_all(
-                            pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r><yellow>true<r>").as_bytes(),
-                        );
-                    } else {
-                        self.add_for_new_line(5);
-                        writer.write_all(
-                            pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r><yellow>false<r>").as_bytes(),
-                        );
-                    }
-                }
-                Tag::GlobalObject => {
-                    const FMT: &str = "[this.globalThis]";
-                    self.add_for_new_line(FMT.len());
-                    writer.write_all(
-                        pretty_fmt_const!(ENABLE_ANSI_COLORS, "<cyan>[this.globalThis]<r>")
-                        .as_bytes(),
-                    );
-                }
-                Tag::Map => {
-                    let length_value = value
-                        .get(self.global_this, "size")?
-                        .unwrap_or_else(|| JSValue::js_number_from_int32(0));
-                    let length = length_value.to_int32();
-
-                    let prev_quote_strings = self.quote_strings;
-                    self.quote_strings = true;
-
-                    let map_name: &str =
-                        if value.js_type() == JSType::WeakMap { "WeakMap" } else { "Map" };
-
-                    if length == 0 {
-                        self.quote_strings = prev_quote_strings;
-                        writer.print(format_args!("{} {{}}", map_name));
-                        return Ok(());
-                    }
-
-                    writer.print(format_args!("\n{} {{\n", map_name));
-                    {
-                        self.indent += 1;
-                        // hoist global_this (Copy &ref) before iter mutably
-                        // borrows `self`/`writer.ctx`; NLL releases both once `iter`
-                        // is dead after `for_each` returns.
-                        let global = self.global_this;
-                        let mut iter = MapIterator::<W, ENABLE_ANSI_COLORS> {
-                            formatter: self,
-                            writer: writer.ctx,
-                        };
-                        let result = value.for_each(
-                            global,
-                            (&raw mut iter).cast::<c_void>(),
-                            MapIterator::<W, ENABLE_ANSI_COLORS>::for_each,
-                        );
-                        // `indent` / `quote_strings` must be restored on every exit,
-                        // including thrown exceptions — restore before propagating.
-                        self.indent = self.indent.saturating_sub(1);
-                        self.quote_strings = prev_quote_strings;
-                        result?;
-                    }
-                    let _ = self.write_indent(writer.ctx);
-                    writer.write_all(b"}");
-                    writer.write_all(b"\n");
-                }
-                Tag::Set => {
-                    let length_value = value
-                        .get(self.global_this, "size")?
-                        .unwrap_or_else(|| JSValue::js_number_from_int32(0));
-                    let length = length_value.to_int32();
-
-                    let prev_quote_strings = self.quote_strings;
-                    self.quote_strings = true;
-
-                    let _ = self.write_indent(writer.ctx);
-
-                    let set_name: &str =
-                        if value.js_type() == JSType::WeakSet { "WeakSet" } else { "Set" };
-
-                    if length == 0 {
-                        self.quote_strings = prev_quote_strings;
-                        writer.print(format_args!("{} {{}}", set_name));
-                        return Ok(());
-                    }
-
-                    writer.print(format_args!("\n{} {{\n", set_name));
-                    {
-                        self.indent += 1;
-                        let global = self.global_this;
-                        let mut iter = SetIterator::<W, ENABLE_ANSI_COLORS> {
-                            formatter: self,
-                            writer: writer.ctx,
-                        };
-                        let result = value.for_each(
-                            global,
-                            (&raw mut iter).cast::<c_void>(),
-                            SetIterator::<W, ENABLE_ANSI_COLORS>::for_each,
-                        );
-                        // `indent` / `quote_strings` must be restored on every exit,
-                        // including thrown exceptions — restore before propagating.
-                        self.indent = self.indent.saturating_sub(1);
-                        self.quote_strings = prev_quote_strings;
-                        result?;
-                    }
-                    let _ = self.write_indent(writer.ctx);
-                    writer.write_all(b"}");
-                    writer.write_all(b"\n");
-                }
-                Tag::JSON => {
-                    let str = value.json_stringify(self.global_this, self.indent)?;
-                    self.add_for_new_line(str.length());
-                    if js_type == JSType::JSDate {
-                        // in the code for printing dates, it never exceeds this amount
-                        let mut iso_string_buf = [0u8; 36];
-                        let mut out_buf: &[u8] = {
-                            use std::io::Write;
-                            let mut cursor = &mut iso_string_buf[..];
-                            match write!(cursor, "{}", str) {
-                                Ok(()) => {
-                                    let written = 36 - cursor.len();
-                                    &iso_string_buf[..written]
-                                }
-                                Err(_) => b"",
-                            }
-                        };
-                        if out_buf.len() > 2 {
-                            // trim the quotes
-                            out_buf = &out_buf[1..out_buf.len() - 1];
-                        }
-
-                        writer.print(format_args!(
-                            "{}{}{}",
-                            pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r><magenta>"),
-                            bstr::BStr::new(out_buf),
-                            pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
-                        ));
-                        return Ok(());
-                    }
-
-                    writer.print(format_args!("{}", str));
-                }
-                Tag::Event => {
-                    let event_type_value: JSValue = 'brk: {
-                        let value_: JSValue = match value.get(self.global_this, "type")? {
-                            Some(v) => v,
-                            None => break 'brk JSValue::UNDEFINED,
-                        };
-                        if value_.is_string() {
-                            break 'brk value_;
-                        }
-
-                        JSValue::UNDEFINED
-                    };
-
-                    let event_type = match EVENT_TYPE_MAP
-                        .from_js(self.global_this, event_type_value)?
-                        .unwrap_or(EventType::Unknown)
-                    {
-                        evt @ (EventType::MessageEvent | EventType::ErrorEvent) => evt,
-                        _ => {
-                            return self.print_as::<W, { Tag::Object }, ENABLE_ANSI_COLORS>(
-                                writer.ctx, value, JSType::Event,
-                            );
-                        }
-                    };
-
-                    writer.print(format_args!(
-                        "{}{}{} {{\n",
-                        pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r><cyan>"),
-                        <&'static str>::from(event_type),
-                        pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
-                    ));
-                    {
-                        self.indent += 1;
-                        let old_quote_strings = self.quote_strings;
-                        self.quote_strings = true;
-                        // `indent` and `quote_strings` must be
-                        // restored even when `fast_get` / `Tag::get` / `format` throw.
-                        // Wrap the fallible body and restore unconditionally afterward.
-                        let inner: JsResult<()> = (|| {
-                        self.write_indent(writer.ctx).expect("unreachable");
-
-                        writer.print(format_args!(
-                            "{}type: {}\"{}\"{}{},{}\n",
-                            pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
-                            pretty_fmt_const!(ENABLE_ANSI_COLORS, "<green>"),
-                            bstr::BStr::new(event_type.label()),
-                            pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
-                            pretty_fmt_const!(ENABLE_ANSI_COLORS, "<d>"),
-                            pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
-                        ));
-
-                        if let Some(message_value) =
-                            value.fast_get(self.global_this, jsc::BuiltinName::Message)?
-                        {
-                            if message_value.is_string() {
-                                self.write_indent(writer.ctx).expect("unreachable");
-                                writer.print(format_args!(
-                                    "{}message{}:{} ",
-                                    pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r><blue>"),
-                                    pretty_fmt_const!(ENABLE_ANSI_COLORS, "<d>"),
-                                    pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
-                                ));
-
-                                let tag = Tag::get(message_value, self.global_this)?;
-                                self.format::<W, ENABLE_ANSI_COLORS>(
-                                    tag, writer.ctx, message_value, self.global_this,
-                                )?;
-                                writer.write_all(b", \n");
-                            }
-                        }
-
-                        match event_type {
-                            EventType::MessageEvent => {
-                                self.write_indent(writer.ctx).expect("unreachable");
-                                writer.print(format_args!(
-                                    "{}data{}:{} ",
-                                    pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r><blue>"),
-                                    pretty_fmt_const!(ENABLE_ANSI_COLORS, "<d>"),
-                                    pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
-                                ));
-                                let data: JSValue = value
-                                    .fast_get(self.global_this, jsc::BuiltinName::Data)?
-                                    .unwrap_or(JSValue::UNDEFINED);
-                                let tag = Tag::get(data, self.global_this)?;
-
-                                self.format::<W, ENABLE_ANSI_COLORS>(
-                                    tag, writer.ctx, data, self.global_this,
-                                )?;
-                                writer.write_all(b", \n");
-                            }
-                            EventType::ErrorEvent => {
-                                if let Some(data) =
-                                    value.fast_get(self.global_this, jsc::BuiltinName::Error)?
-                                {
-                                    self.write_indent(writer.ctx).expect("unreachable");
-                                    writer.print(format_args!(
-                                        "{}error{}:{} ",
-                                        pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r><blue>"),
-                                        pretty_fmt_const!(ENABLE_ANSI_COLORS, "<d>"),
-                                        pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
-                                    ));
-
-                                    let tag = Tag::get(data, self.global_this)?;
-                                    self.format::<W, ENABLE_ANSI_COLORS>(
-                                        tag, writer.ctx, data, self.global_this,
-                                    )?;
-                                    writer.write_all(b"\n");
-                                }
-                            }
-                            _ => unreachable!(),
-                        }
-                        Ok(())
-                        })();
-
-                        self.quote_strings = old_quote_strings;
-                        self.indent = self.indent.saturating_sub(1);
-                        inner?;
-                    }
-
-                    self.write_indent(writer.ctx).expect("unreachable");
-                    writer.write_all(b"}");
-                }
-                Tag::JSX => {
-                    writer.write_all(pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>").as_bytes());
-
-                    writer.write_all(b"<");
-
-                    let mut needs_space;
-
-                    let tag_name_view;
-                    let tag_name_slice: Utf8Bytes;
-                    let mut is_tag_kind_primitive = false;
-
-                    if let Some(type_value) = value.get(self.global_this, "type")? {
-                        let _tag = Tag::get(type_value, self.global_this)?;
-
-                        if _tag.cell == JSType::Symbol {
-                            tag_name_slice = Utf8Bytes::EMPTY;
-                        } else if _tag.cell.is_string_like() {
-                            tag_name_view = type_value.to_js_string_view(self.global_this)?;
-                            tag_name_slice = tag_name_view.to_utf8();
-                            is_tag_kind_primitive = true;
-                        } else if _tag.cell.is_object() || type_value.is_callable() {
-                            let name = type_value.get_name_property(self.global_this)?;
-                            tag_name_slice = if name.is_empty() {
-                                Utf8Bytes::Borrowed(b"NoName")
-                            } else {
-                                name.into_utf8()
-                            };
-                        } else {
-                            tag_name_view = type_value.to_js_string_view(self.global_this)?;
-                            tag_name_slice = tag_name_view.to_utf8();
-                        }
-
-                        needs_space = true;
-                    } else {
-                        tag_name_slice = Utf8Bytes::Borrowed(b"unknown");
-
-                        needs_space = true;
-                    }
-
-                    if !is_tag_kind_primitive {
-                        writer.write_all(
-                            pretty_fmt_const!(ENABLE_ANSI_COLORS, "<cyan>").as_bytes(),
-                        );
-                    } else {
-                        writer.write_all(
-                            pretty_fmt_const!(ENABLE_ANSI_COLORS, "<green>").as_bytes(),
-                        );
-                    }
-                    writer.write_all(tag_name_slice.slice());
-                    if ENABLE_ANSI_COLORS {
-                        writer.write_all(
-                            pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>").as_bytes(),
-                        );
-                    }
-
-                    if let Some(key_value) = value.get(self.global_this, "key")? {
-                        if !key_value.is_undefined_or_null() {
-                            if needs_space {
-                                writer.write_all(b" key=");
-                            } else {
-                                writer.write_all(b"key=");
-                            }
-
-                            let old_quote_strings = self.quote_strings;
-                            self.quote_strings = true;
-
-                            let inner: JsResult<()> = (|| {
-                                self.format::<W, ENABLE_ANSI_COLORS>(
-                                    Tag::get(key_value, self.global_this)?,
-                                    writer.ctx,
-                                    key_value,
-                                    self.global_this,
-                                )
-                            })();
-                            self.quote_strings = old_quote_strings;
-                            inner?;
-                            needs_space = true;
-                        }
-                    }
-
-                    if let Some(props) = value.get(self.global_this, "props")? {
-                        let prev_quote_strings = self.quote_strings;
-                        self.quote_strings = true;
-
-                        // `quote_strings` (and nested `indent` scopes) must be restored on
-                        // every exit, including thrown exceptions. Wrap the fallible body in a
-                        // closure (Ok(true) ⇒ children path printed the closing tag, so the
-                        // trailing " />" is skipped) and restore unconditionally afterward.
-                        let inner: JsResult<bool> = (|| {
-                        let Some(props_obj) = props.get_object() else { return Ok(false); };
-                        let props_iter = JSPropertyIterator::init(
-                            self.global_this,
-                            props_obj,
-                            jsc::PropertyIteratorOptions {
-                                skip_empty_name: true,
-                                include_value: true,
-                            },
-                        )?;
-
-                        let children_prop = props.get(self.global_this, "children")?;
-                        if props_iter.len > 0 {
-                            {
-                                self.indent += 1;
-                                let count_without_children =
-                                    props_iter.len - usize::from(children_prop.is_some());
-
-                                let loop_result: JsResult<()> = (|| {
-                                // `JSPropertyIterator::i` is private upstream;
-                                // track the 1-based iteration index locally.
-                                let mut iter_i: usize = 0;
-                                while let Some((prop, property_value)) = props_iter.next()? {
-                                    iter_i += 1;
-                                    if prop.eq_ascii(b"children") {
-                                        continue;
-                                    }
-
-                                    let tag = Tag::get(property_value, self.global_this)?;
-
-                                    if tag.cell.is_hidden() {
-                                        continue;
-                                    }
-
-                                    if needs_space {
-                                        writer.write_all(b" ");
-                                    }
-                                    needs_space = false;
-
-                                    writer.print(format_args!(
-                                        "{}{}{}={}",
-                                        pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r><blue>"),
-                                        prop.trunc(128),
-                                        pretty_fmt_const!(ENABLE_ANSI_COLORS, "<d>"),
-                                        pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
-                                    ));
-
-                                    if tag.cell.is_string_like() {
-                                        if ENABLE_ANSI_COLORS {
-                                            writer.write_all(
-                                                pretty_fmt_const!(true, "<r><green>").as_bytes(),
-                                            );
-                                        }
-                                    }
-
-                                    self.format::<W, ENABLE_ANSI_COLORS>(
-                                        tag, writer.ctx, property_value, self.global_this,
-                                    )?;
-
-                                    if tag.cell.is_string_like() {
-                                        if ENABLE_ANSI_COLORS {
-                                            writer.write_all(
-                                                pretty_fmt_const!(true, "<r>").as_bytes(),
-                                            );
-                                        }
-                                    }
-
-                                    if
-                                    // count_without_children is necessary to prevent printing an extra newline
-                                    // if there are children and one prop and the child prop is the last prop
-                                    iter_i + 1 < count_without_children
-                                        // 3 is arbitrary but basically
-                                        //  <input type="text" value="foo" />
-                                        //  ^ should be one line
-                                        // <input type="text" value="foo" bar="true" baz={false} />
-                                        //  ^ should be multiple lines
-                                        && iter_i > 3
-                                    {
-                                        writer.write_all(b"\n");
-                                        self.write_indent(writer.ctx).expect("unreachable");
-                                    } else if iter_i + 1 < count_without_children {
-                                        writer.write_all(b" ");
-                                    }
-                                }
-                                Ok(())
-                                })();
-                                self.indent = self.indent.saturating_sub(1);
-                                loop_result?;
-                            }
-
-                            if let Some(children) = children_prop {
-                                let tag = Tag::get(children, self.global_this)?;
-
-                                let print_children =
-                                    matches!(tag.tag, Tag::String | Tag::JSX | Tag::Array);
-
-                                if print_children {
-                                    'print_children: {
-                                        match tag.tag {
-                                            Tag::String => {
-                                                let children_string =
-                                                    children.to_js_string_view(self.global_this)?;
-                                                if children_string.is_empty() {
-                                                    break 'print_children;
-                                                }
-                                                if ENABLE_ANSI_COLORS {
-                                                    writer.write_all(
-                                                        pretty_fmt_const!(true, "<r>").as_bytes(),
-                                                    );
-                                                }
-
-                                                writer.write_all(b">");
-                                                if children_string.length() < 128 {
-                                                    writer.write_string(&children_string);
-                                                } else {
-                                                    self.indent += 1;
-                                                    writer.write_all(b"\n");
-                                                    self.write_indent(writer.ctx)
-                                                        .expect("unreachable");
-                                                    self.indent = self.indent.saturating_sub(1);
-                                                    writer.write_string(&children_string);
-                                                    writer.write_all(b"\n");
-                                                    self.write_indent(writer.ctx)
-                                                        .expect("unreachable");
-                                                }
-                                            }
-                                            Tag::JSX => {
-                                                writer.write_all(b">\n");
-
-                                                {
-                                                    self.indent += 1;
-                                                    let r: JsResult<()> = (|| {
-                                                        self.write_indent(writer.ctx)
-                                                            .expect("unreachable");
-                                                        self.format::<W, ENABLE_ANSI_COLORS>(
-                                                            Tag::get(children, self.global_this)?,
-                                                            writer.ctx,
-                                                            children,
-                                                            self.global_this,
-                                                        )
-                                                    })();
-                                                    self.indent = self.indent.saturating_sub(1);
-                                                    r?;
-                                                }
-
-                                                writer.write_all(b"\n");
-                                                self.write_indent(writer.ctx)
-                                                    .expect("unreachable");
-                                            }
-                                            Tag::Array => {
-                                                let length =
-                                                    children.get_length(self.global_this)? as usize;
-                                                if length == 0 {
-                                                    break 'print_children;
-                                                }
-                                                writer.write_all(b">\n");
-
-                                                {
-                                                    self.indent += 1;
-                                                    self.write_indent(writer.ctx)
-                                                        .expect("unreachable");
-                                                    let _prev_quote_strings = self.quote_strings;
-                                                    self.quote_strings = false;
-
-                                                    let r: JsResult<()> = (|| {
-                                                        let mut j: usize = 0;
-                                                        while j < length {
-                                                            let child = JSObject::get_index(
-                                                                children,
-                                                                self.global_this,
-                                                                u32::try_from(j).unwrap(),
-                                                            )?;
-                                                            self.format::<W, ENABLE_ANSI_COLORS>(
-                                                                Tag::get(child, self.global_this)?,
-                                                                writer.ctx,
-                                                                child,
-                                                                self.global_this,
-                                                            )?;
-                                                            if j + 1 < length {
-                                                                writer.write_all(b"\n");
-                                                                self.write_indent(writer.ctx)
-                                                                    .expect("unreachable");
-                                                            }
-                                                            j += 1;
-                                                        }
-                                                        Ok(())
-                                                    })();
-
-                                                    self.quote_strings = _prev_quote_strings;
-                                                    self.indent = self.indent.saturating_sub(1);
-                                                    r?;
-                                                }
-
-                                                writer.write_all(b"\n");
-                                                self.write_indent(writer.ctx)
-                                                    .expect("unreachable");
-                                            }
-                                            _ => unreachable!(),
-                                        }
-
-                                        writer.write_all(b"</");
-                                        if !is_tag_kind_primitive {
-                                            writer.write_all(
-                                                pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r><cyan>")
-                                                .as_bytes(),
-                                            );
-                                        } else {
-                                            writer.write_all(
-                                                pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r><green>")
-                                                .as_bytes(),
-                                            );
-                                        }
-                                        writer.write_all(tag_name_slice.slice());
-                                        if ENABLE_ANSI_COLORS {
-                                            writer.write_all(
-                                                pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>")
-                                                    .as_bytes(),
-                                            );
-                                        }
-                                        writer.write_all(b">");
-                                    }
-
-                                    return Ok(true);
-                                }
-                            }
-                        }
-                        Ok(false)
-                        })();
-
-                        self.quote_strings = prev_quote_strings;
-                        if inner? {
-                            return Ok(());
-                        }
-                    }
-
-                    writer.write_all(b" />");
-                }
-                Tag::Object => {
-                    let prev_quote_strings = self.quote_strings;
-                    self.quote_strings = true;
-
-                    // We want to figure out if we should print this object
-                    // on one line or multiple lines
-                    //
-                    // The 100% correct way would be to print everything to
-                    // a temporary buffer and then check how long each line was
-                    //
-                    // But it's important that console.log() is fast. So we
-                    // do a small compromise to avoid multiple passes over input
-                    //
-                    // We say:
-                    //
-                    //   If the object has at least 2 properties and ANY of the following conditions are met:
-                    //      - total length of all the property names is more than
-                    //        14 characters
-                    //     - the parent object is printing each property on a new line
-                    //     - The first property is a DOM object, ESM namespace, Map, Set, or Blob
-                    //
-                    //   Then, we print it each property on a new line, recursively.
-                    //
-                    let prev_always_newline_scope = self.always_newline_scope;
-                    let always_newline =
-                        self.always_newline_scope || self.good_time_for_a_new_line();
-                    let global = self.global_this;
-                    let mut iter = PropertyIterator::<W, ENABLE_ANSI_COLORS> {
-                        formatter: self,
-                        writer: writer.ctx,
-                        i: 0,
-                        always_newline,
-                        parent: value,
-                    };
-
-                    let result = value.for_each_property_ordered(
-                        global,
-                        (&raw mut iter).cast::<c_void>(),
-                        PropertyIterator::<W, ENABLE_ANSI_COLORS>::for_each,
-                    );
-
-                    let iter_i = iter.i;
-                    let iter_always_newline = iter.always_newline;
-                    // `always_newline_scope` / `quote_strings` must be restored on every
-                    // exit — restore before propagating any exception from the property iterator.
-                    self.always_newline_scope = prev_always_newline_scope;
-                    self.quote_strings = prev_quote_strings;
-                    result?;
-
-                    if iter_i == 0 {
-                        let object_name = value.get_class_name(self.global_this)?;
-
-                        if !object_name.eq_ascii(b"Object") {
-                            writer.print(format_args!("{} {{}}", object_name));
-                        } else {
-                            // don't write "Object"
-                            writer.write_all(b"{}");
-                        }
-                    } else {
-                        self.print_comma::<W, ENABLE_ANSI_COLORS>(writer.ctx)
-                            .expect("unreachable");
-
-                        if iter_always_newline {
-                            self.indent = self.indent.saturating_sub(1);
-                            writer.write_all(b"\n");
-                            let _ = self.write_indent(writer.ctx);
-                            writer.write_all(b"}");
-                            self.estimated_line_length += 1;
-                        } else {
-                            self.estimated_line_length += 2;
-                            writer.write_all(b" }");
-                        }
-
-                        if self.indent == 0 {
-                            writer.write_all(b"\n");
-                        }
-                    }
-                }
-                Tag::TypedArray => {
-                    let array_buffer = value.as_array_buffer(self.global_this).unwrap();
-                    let slice = array_buffer.byte_slice();
-
-                    if self.indent == 0 && !slice.is_empty() {
-                        writer.write_all(b"\n");
-                    }
-
-                    if js_type == JSType::Uint8Array {
-                        let buffer_name = value.get_class_name(self.global_this)?;
-                        if buffer_name.eq_ascii(b"Buffer") {
-                            // special formatting for 'Buffer' snapshots only
-                            if slice.is_empty() && self.indent == 0 {
-                                writer.write_all(b"\n");
-                            }
-                            writer.write_all(b"{\n");
-                            self.indent += 1;
-                            let _ = self.write_indent(writer.ctx);
-                            writer.write_all(b"\"data\": [");
-
-                            self.indent += 1;
-                            for el in slice {
-                                writer.write_all(b"\n");
-                                let _ = self.write_indent(writer.ctx);
-                                writer.print(format_args!("{},", el));
-                            }
-                            self.indent = self.indent.saturating_sub(1);
-
-                            if !slice.is_empty() {
-                                writer.write_all(b"\n");
-                                let _ = self.write_indent(writer.ctx);
-                                writer.write_all(b"],\n");
-                            } else {
-                                writer.write_all(b"],\n");
-                            }
-
-                            let _ = self.write_indent(writer.ctx);
-                            writer.write_all(b"\"type\": \"Buffer\",\n");
-
-                            self.indent = self.indent.saturating_sub(1);
-                            let _ = self.write_indent(writer.ctx);
-                            writer.write_all(b"}");
-
-                            if self.indent == 0 {
-                                writer.write_all(b"\n");
-                            }
-
-                            return Ok(());
-                        }
-                        writer.write_all(array_buffer.typed_array_type.typed_array_name());
-                    } else {
-                        writer.write_all(array_buffer.typed_array_type.typed_array_name());
-                    }
-
-                    writer.write_all(b" [");
-
-                    macro_rules! print_typed_slice {
-                        ($t:ty) => {{
-                            // SAFETY: `Unaligned<$t>` has align 1 and the same size as `$t`, so any
-                            // `*const u8` is a valid `*const Unaligned<$t>`; `slice` is the live
-                            // backing store of a JSC typed array whose elements are valid `$t`.
-                            let slice_with_type: &[bun_core::Unaligned<$t>] = unsafe {
-                                core::slice::from_raw_parts(
-                                    slice.as_ptr().cast::<bun_core::Unaligned<$t>>(),
-                                    slice.len() / core::mem::size_of::<$t>(),
-                                )
-                            };
-                            self.indent += 1;
-                            for el in slice_with_type {
-                                writer.write_all(b"\n");
-                                let _ = self.write_indent(writer.ctx);
-                                writer.print(format_args!("{},", el.get()));
-                            }
-                            self.indent = self.indent.saturating_sub(1);
-                        }};
-                    }
-
-                    if !slice.is_empty() {
-                        match js_type {
-                            JSType::Int8Array => print_typed_slice!(i8),
-                            JSType::Int16Array => print_typed_slice!(i16),
-                            JSType::Uint16Array => print_typed_slice!(u16),
-                            JSType::Int32Array => print_typed_slice!(i32),
-                            JSType::Uint32Array => print_typed_slice!(u32),
-                            JSType::Float16Array => print_typed_slice!(bun_core::f16),
-                            JSType::Float32Array => print_typed_slice!(f32),
-                            JSType::Float64Array => print_typed_slice!(f64),
-                            JSType::BigInt64Array => print_typed_slice!(i64),
-                            JSType::BigUint64Array => print_typed_slice!(u64),
-
-                            // Uint8Array, Uint8ClampedArray, DataView, ArrayBuffer
-                            _ => print_typed_slice!(u8),
-                        }
-                    }
-
-                    if !slice.is_empty() {
-                        writer.write_all(b"\n");
-                        let _ = self.write_indent(writer.ctx);
-                        writer.write_all(b"]");
-                        if self.indent == 0 {
-                            writer.write_all(b"\n");
-                        }
-                    } else {
-                        writer.write_all(b"]");
-                    }
-                }
+        // One `#[inline(never)]` method per tag, so each body is compiled once
+        // per colour mode (not once per tag) and the recursive `print_as` frame
+        // holds only the arm it takes. The map cleanup below runs on Ok and Err.
+        let result = match format {
+            Tag::StringPossiblyFormatted => {
+                self.print_string_possibly_formatted::<W, ENABLE_ANSI_COLORS>(&mut writer, value)
             }
+            Tag::String => self.print_string::<W, ENABLE_ANSI_COLORS>(&mut writer, value, js_type),
+            Tag::Integer => self.print_integer::<W, ENABLE_ANSI_COLORS>(&mut writer, value),
+            Tag::BigInt => self.print_bigint::<W, ENABLE_ANSI_COLORS>(&mut writer, value),
+            Tag::Double => self.print_double::<W, ENABLE_ANSI_COLORS>(&mut writer, value),
+            Tag::Undefined => self.print_undefined::<W, ENABLE_ANSI_COLORS>(&mut writer),
+            Tag::Null => self.print_null::<W, ENABLE_ANSI_COLORS>(&mut writer),
+            Tag::Symbol => self.print_symbol::<W, ENABLE_ANSI_COLORS>(&mut writer, value),
+            Tag::Error => self.print_error::<W, ENABLE_ANSI_COLORS>(&mut writer, value),
+            Tag::Class => self.print_class::<W, ENABLE_ANSI_COLORS>(&mut writer, value),
+            Tag::Function => self.print_function::<W, ENABLE_ANSI_COLORS>(&mut writer, value),
+            Tag::Array => self.print_array::<W, ENABLE_ANSI_COLORS>(&mut writer, value),
+            Tag::Private => {
+                self.print_private::<W, ENABLE_ANSI_COLORS>(&mut writer, value, js_type)
+            }
+            Tag::NativeCode => self.print_native_code::<W, ENABLE_ANSI_COLORS>(&mut writer),
+            Tag::Promise => self.print_promise::<W, ENABLE_ANSI_COLORS>(&mut writer),
+            Tag::Boolean => self.print_boolean::<W, ENABLE_ANSI_COLORS>(&mut writer, value),
+            Tag::GlobalObject => self.print_global_object::<W, ENABLE_ANSI_COLORS>(&mut writer),
+            Tag::Map => self.print_map::<W, ENABLE_ANSI_COLORS>(&mut writer, value),
+            Tag::Set => self.print_set::<W, ENABLE_ANSI_COLORS>(&mut writer, value),
+            Tag::JSON => self.print_json::<W, ENABLE_ANSI_COLORS>(&mut writer, value, js_type),
+            Tag::Event => self.print_event::<W, ENABLE_ANSI_COLORS>(&mut writer, value),
+            Tag::JSX => self.print_jsx::<W, ENABLE_ANSI_COLORS>(&mut writer, value),
+            Tag::Object => self.print_object::<W, ENABLE_ANSI_COLORS>(&mut writer, value),
+            Tag::TypedArray => {
+                self.print_typed_array::<W, ENABLE_ANSI_COLORS>(&mut writer, value, js_type)
+            }
+        };
 
-            Ok(())
-        })();
-
-        if FORMAT.can_have_circular_references() {
+        if format.can_have_circular_references() {
             let _ = self.map.remove(&value);
         }
         if writer.failed {
             self.failed = true;
         }
         result
+    }
+
+    #[inline(never)]
+    fn print_string_possibly_formatted<W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>(
+        &mut self,
+        writer: &mut WrappedWriter<'_, W>,
+        value: JSValue,
+    ) -> JsResult<()> {
+        let str = value.to_utf8(self.global_this)?;
+        let slice = str.slice();
+        self.add_for_new_line(slice.len());
+        self.write_with_formatting::<W, _, ENABLE_ANSI_COLORS>(
+            writer.ctx,
+            slice,
+            self.global_this,
+        );
+        Ok(())
+    }
+
+    #[inline(never)]
+    fn print_string<W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>(
+        &mut self,
+        writer: &mut WrappedWriter<'_, W>,
+        value: JSValue,
+        js_type: JSType,
+    ) -> JsResult<()> {
+        let view = value.to_js_string_view(self.global_this)?;
+        let str = view.to_encoded_slice();
+        self.add_for_new_line(str.len);
+
+        if value.js_type() == JSType::StringObject
+            || value.js_type() == JSType::DerivedStringObject
+        {
+            if str.len == 0 {
+                writer.write_all(b"String {}");
+                return Ok(());
+            }
+            if self.indent == 0 && str.len > 0 {
+                writer.write_all(b"\n");
+            }
+            writer.write_all(b"String {\n");
+            self.indent += 1;
+            self.reset_line();
+            self.write_indent(writer.ctx).expect("unreachable");
+            let length = str.len;
+            for (i, c) in str.slice().iter().enumerate() {
+                writer.print(format_args!("\"{}\": \"{}\",\n", i, *c as char));
+                if i != length - 1 {
+                    self.write_indent(writer.ctx).expect("unreachable");
+                }
+            }
+            self.reset_line();
+            writer.write_all(b"}\n");
+            self.indent = self.indent.saturating_sub(1);
+            return Ok(());
+        }
+
+        if self.quote_strings && js_type != JSType::RegExpObject {
+            if str.len == 0 {
+                writer.write_all(b"\"\"");
+                return Ok(());
+            }
+
+            if ENABLE_ANSI_COLORS {
+                writer.write_all(pretty_fmt_const!(true, "<r><green>").as_bytes());
+            }
+
+            let mut has_newline = false;
+
+            if str.index_of_any(b"\n\r").is_some() {
+                has_newline = true;
+                writer.write_all(b"\n");
+            }
+
+            writer.write_all(b"\"");
+            let mut remaining = str;
+            // `EncodedSlice::char_at` returns u16; use explicit u16
+            // consts so the match arms type-check.
+            const BACKSLASH: u16 = b'\\' as u16;
+            const CR: u16 = b'\r' as u16;
+            const LF: u16 = b'\n' as u16;
+            while let Some(i) = remaining.index_of_any(b"\\\r") {
+                match remaining.char_at(i) {
+                    BACKSLASH => {
+                        writer.print(format_args!(
+                            "{}\\",
+                            remaining.substring_with_len(0, i)
+                        ));
+                        remaining = remaining.substring(i + 1);
+                    }
+                    CR => {
+                        if i + 1 < remaining.len
+                            && remaining.char_at(i + 1) == LF
+                        {
+                            writer.print(format_args!(
+                                "{}",
+                                remaining.substring_with_len(0, i)
+                            ));
+                        } else {
+                            writer.print(format_args!(
+                                "{}\n",
+                                remaining.substring_with_len(0, i)
+                            ));
+                        }
+
+                        remaining = remaining.substring(i + 1);
+                    }
+                    _ => unreachable!(),
+                }
+            }
+
+            writer.print(format_args!("{}", remaining));
+            writer.write_all(b"\"");
+
+            if has_newline {
+                writer.write_all(b"\n");
+            }
+            // The `<r>` reset must come AFTER the trailing `\n`
+            // to keep byte-for-byte parity with colored output.
+            if ENABLE_ANSI_COLORS {
+                writer.write_all(pretty_fmt_const!(true, "<r>").as_bytes());
+            }
+            return Ok(());
+        }
+
+        if js_type == JSType::RegExpObject && ENABLE_ANSI_COLORS {
+            writer.print(format_args!(
+                "{}",
+                pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r><red>")
+            ));
+        }
+
+        if str.is_16bit() {
+            // streaming print
+            writer.print(format_args!("{}", str));
+        } else if strings::is_all_ascii(str.slice()) {
+            // fast path
+            writer.write_all(str.slice());
+        } else if str.len > 0 {
+            // slow path
+            let buf = strings::allocate_latin1_into_utf8_with_list(
+                Vec::with_capacity(str.len),
+                0,
+                str.slice(),
+            );
+            if !buf.is_empty() {
+                writer.write_all(&buf);
+            }
+        }
+
+        if js_type == JSType::RegExpObject && ENABLE_ANSI_COLORS {
+            writer.print(format_args!(
+                "{}",
+                pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>")
+            ));
+        }
+        Ok(())
+    }
+
+    #[inline(never)]
+    fn print_integer<W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>(
+        &mut self,
+        writer: &mut WrappedWriter<'_, W>,
+        value: JSValue,
+    ) -> JsResult<()> {
+        let int = value.to_int64();
+        self.add_for_new_line(bun_fmt::digit_count(int));
+        writer.print(format_args!(
+            "{}{}{}",
+            pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r><yellow>"),
+            int,
+            pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
+        ));
+        Ok(())
+    }
+
+    #[inline(never)]
+    fn print_bigint<W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>(
+        &mut self,
+        writer: &mut WrappedWriter<'_, W>,
+        value: JSValue,
+    ) -> JsResult<()> {
+        let view = value.to_js_string_view(self.global_this)?;
+        let out_str = view.latin1();
+        self.add_for_new_line(out_str.len());
+
+        writer.print(format_args!(
+            "{}{}n{}",
+            pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r><yellow>"),
+            bstr::BStr::new(out_str),
+            pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
+        ));
+        Ok(())
+    }
+
+    #[inline(never)]
+    fn print_double<W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>(
+        &mut self,
+        writer: &mut WrappedWriter<'_, W>,
+        value: JSValue,
+    ) -> JsResult<()> {
+        if value.is_cell() {
+            self.print_as::<W, ENABLE_ANSI_COLORS>(
+                Tag::Object, writer.ctx, value, JSType::Object,
+            )?;
+            return Ok(());
+        }
+
+        let num = value.as_number();
+
+        if num.is_infinite() && num.is_sign_positive() {
+            self.add_for_new_line(b"Infinity".len());
+            writer.print(format_args!(
+                "{}Infinity{}",
+                pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r><yellow>"),
+                pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
+            ));
+        } else if num.is_infinite() && num.is_sign_negative() {
+            self.add_for_new_line(b"-Infinity".len());
+            writer.print(format_args!(
+                "{}-Infinity{}",
+                pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r><yellow>"),
+                pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
+            ));
+        } else if num.is_nan() {
+            self.add_for_new_line(b"NaN".len());
+            writer.print(format_args!(
+                "{}NaN{}",
+                pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r><yellow>"),
+                pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
+            ));
+        } else {
+            // WTF::dtoa drops the sign bit on -0; preserve it.
+            let mut dtoa_buf = [0u8; 124];
+            let dtoa =
+                bun_fmt::FormatDouble::dtoa_with_negative_zero(&mut dtoa_buf, num);
+            self.add_for_new_line(dtoa.len());
+            writer.write_all(
+                pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r><yellow>").as_bytes(),
+            );
+            writer.write_all(dtoa);
+            writer.write_all(
+                pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>").as_bytes(),
+            );
+        }
+        Ok(())
+    }
+
+    #[inline(never)]
+    fn print_undefined<W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>(
+        &mut self,
+        writer: &mut WrappedWriter<'_, W>,
+    ) -> JsResult<()> {
+        self.add_for_new_line(9);
+        writer.print(format_args!(
+            "{}undefined{}",
+            pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r><d>"),
+            pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
+        ));
+        Ok(())
+    }
+
+    #[inline(never)]
+    fn print_null<W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>(
+        &mut self,
+        writer: &mut WrappedWriter<'_, W>,
+    ) -> JsResult<()> {
+        self.add_for_new_line(4);
+        writer.print(format_args!(
+            "{}null{}",
+            pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r><yellow>"),
+            pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
+        ));
+        Ok(())
+    }
+
+    #[inline(never)]
+    fn print_symbol<W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>(
+        &mut self,
+        writer: &mut WrappedWriter<'_, W>,
+        value: JSValue,
+    ) -> JsResult<()> {
+        let description = value.get_description(self.global_this);
+        self.add_for_new_line(b"Symbol".len());
+
+        if !description.is_empty() {
+            self.add_for_new_line(description.length() + b"()".len());
+            writer.print(format_args!(
+                "{}Symbol({}){}",
+                pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r><blue>"),
+                description,
+                pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
+            ));
+        } else {
+            writer.print(format_args!(
+                "{}Symbol{}",
+                pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r><blue>"),
+                pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
+            ));
+        }
+        Ok(())
+    }
+
+    #[inline(never)]
+    fn print_error<W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>(
+        &mut self,
+        writer: &mut WrappedWriter<'_, W>,
+        value: JSValue,
+    ) -> JsResult<()> {
+        let classname = value.get_class_name(self.global_this)?;
+        let mut message_string = bun_core::String::EMPTY;
+
+        if let Some(message_prop) = value.fast_get(self.global_this, jsc::BuiltinName::Message)? {
+            message_string = message_prop.to_bun_string(self.global_this)?;
+        }
+
+        if message_string.is_empty() {
+            writer.print(format_args!("[{}]", classname));
+            return Ok(());
+        }
+        writer.print(format_args!("[{}: {}]", classname, message_string));
+        Ok(())
+    }
+
+    #[inline(never)]
+    fn print_class<W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>(
+        &mut self,
+        writer: &mut WrappedWriter<'_, W>,
+        value: JSValue,
+    ) -> JsResult<()> {
+        let printable = value.get_class_name(self.global_this)?;
+        self.add_for_new_line(printable.length());
+
+        if printable.is_empty() {
+            writer.print(format_args!(
+                "{}[class]{}",
+                pretty_fmt_const!(ENABLE_ANSI_COLORS, "<cyan>"),
+                pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
+            ));
+        } else {
+            writer.print(format_args!(
+                "{}[class {}]{}",
+                pretty_fmt_const!(ENABLE_ANSI_COLORS, "<cyan>"),
+                printable,
+                pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
+            ));
+        }
+        Ok(())
+    }
+
+    #[inline(never)]
+    fn print_function<W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>(
+        &mut self,
+        writer: &mut WrappedWriter<'_, W>,
+        value: JSValue,
+    ) -> JsResult<()> {
+        let printable = value.get_name_property(self.global_this)?;
+
+        if printable.is_empty() {
+            writer.print(format_args!(
+                "{}[Function]{}",
+                pretty_fmt_const!(ENABLE_ANSI_COLORS, "<cyan>"),
+                pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
+            ));
+        } else {
+            writer.print(format_args!(
+                "{}[Function: {}]{}",
+                pretty_fmt_const!(ENABLE_ANSI_COLORS, "<cyan>"),
+                printable,
+                pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
+            ));
+        }
+        Ok(())
+    }
+
+    #[inline(never)]
+    fn print_array<W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>(
+        &mut self,
+        writer: &mut WrappedWriter<'_, W>,
+        value: JSValue,
+    ) -> JsResult<()> {
+        let len: u32 = value.get_length(self.global_this)? as u32;
+        if len == 0 {
+            writer.write_all(b"[]");
+            self.add_for_new_line(2);
+            return Ok(());
+        }
+
+        if self.indent == 0 {
+            writer.write_all(b"\n");
+        }
+
+        let mut was_good_time = self.always_newline_scope;
+        {
+            self.indent += 1;
+
+            self.add_for_new_line(2);
+
+            let prev_quote_strings = self.quote_strings;
+            self.quote_strings = true;
+
+            // `indent` and `quote_strings` must be
+            // restored even when `Tag::get` / `format` throw. Wrap the fallible body in
+            // a closure and restore unconditionally afterward.
+            let inner: JsResult<()> = (|| {
+                {
+                    let element = value.get_index(self.global_this, 0)?;
+                    let tag = Tag::get(element, self.global_this)?;
+
+                    was_good_time = was_good_time
+                        || !tag.tag.is_primitive()
+                        || self.good_time_for_a_new_line();
+
+                    self.reset_line();
+                    writer.write_all(b"[");
+                    writer.write_all(b"\n");
+                    self.write_indent(writer.ctx).expect("unreachable");
+                    self.add_for_new_line(1);
+
+                    self.format::<W, ENABLE_ANSI_COLORS>(
+                        tag, writer.ctx, element, self.global_this,
+                    )?;
+
+                    if tag.cell.is_string_like() {
+                        if ENABLE_ANSI_COLORS {
+                            writer.write_all(
+                                pretty_fmt_const!(true, "<r>").as_bytes(),
+                            );
+                        }
+                    }
+
+                    if len == 1 {
+                        self.print_comma::<W, ENABLE_ANSI_COLORS>(writer.ctx)
+                            .expect("unreachable");
+                    }
+                }
+
+                let mut i: u32 = 1;
+                while i < len {
+                    self.print_comma::<W, ENABLE_ANSI_COLORS>(writer.ctx)
+                        .expect("unreachable");
+
+                    writer.write_all(b"\n");
+                    self.write_indent(writer.ctx).expect("unreachable");
+
+                    let element = value.get_index(self.global_this, i)?;
+                    let tag = Tag::get(element, self.global_this)?;
+
+                    self.format::<W, ENABLE_ANSI_COLORS>(
+                        tag, writer.ctx, element, self.global_this,
+                    )?;
+
+                    if tag.cell.is_string_like() {
+                        if ENABLE_ANSI_COLORS {
+                            writer.write_all(
+                                pretty_fmt_const!(true, "<r>").as_bytes(),
+                            );
+                        }
+                    }
+
+                    if i == len - 1 {
+                        self.print_comma::<W, ENABLE_ANSI_COLORS>(writer.ctx)
+                            .expect("unreachable");
+                    }
+                    i += 1;
+                }
+                Ok(())
+            })();
+
+            self.quote_strings = prev_quote_strings;
+            self.indent = self.indent.saturating_sub(1);
+            inner?;
+        }
+
+        self.reset_line();
+        writer.write_all(b"\n");
+        let _ = self.write_indent(writer.ctx);
+        writer.write_all(b"]");
+        if self.indent == 0 {
+            writer.write_all(b"\n");
+        }
+        self.reset_line();
+        self.add_for_new_line(1);
+        Ok(())
+    }
+
+    #[inline(never)]
+    fn print_private<W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>(
+        &mut self,
+        writer: &mut WrappedWriter<'_, W>,
+        value: JSValue,
+        js_type: JSType,
+    ) -> JsResult<()> {
+        // Per-type `write_format` dispatch for Bun-native cells.
+        // Downcast via the `JsClass`/FFI hooks on each type; the `write_format`
+        // bodies re-enter this formatter through the `ConsoleFormatter` impl
+        // below for nested values, so the byte sink is wrapped in `AsFmt` (a
+        // `core::fmt::Write` view of the same writer).
+        if let Some(response) = value.as_::<crate::webcore::Response>() {
+            // SAFETY: `as_` returned non-null; the GC keeps the cell alive while
+            // `value` is on the stack (conservative scan). `write_format` does not
+            // re-enter `as_` for the same cell, so the `&mut` is unique here.
+            let response = unsafe { &mut *response };
+            let mut bridge = AsFmt::new(&mut *writer.ctx);
+            if response
+                .write_format::<_, _, ENABLE_ANSI_COLORS>(self, &mut bridge)
+                .is_err()
+            {
+                self.failed = true;
+                if !self.global_this.has_exception() {
+                    return Err(self.global_this.throw_error(
+                        bun_core::Error::FmtError,
+                        "failed to print Response",
+                    ));
+                }
+                return Err(JsError::Thrown);
+            }
+        } else if let Some(request) = value.as_::<crate::webcore::Request>() {
+            // SAFETY: see Response branch above.
+            let request = unsafe { &mut *request };
+            let mut bridge = AsFmt::new(&mut *writer.ctx);
+            if request
+                .write_format::<_, _, ENABLE_ANSI_COLORS>(value, self, &mut bridge)
+                .is_err()
+            {
+                self.failed = true;
+                if !self.global_this.has_exception() {
+                    return Err(self.global_this.throw_error(
+                        bun_core::Error::FmtError,
+                        "failed to print Request",
+                    ));
+                }
+                return Err(JsError::Thrown);
+            }
+            return Ok(());
+        } else if let Some(build) = value.as_::<crate::api::BuildArtifact>() {
+            // SAFETY: see Response branch above. `write_format` is
+            // `&self` post-R-2, so a shared borrow is sufficient.
+            let build = unsafe { &*build };
+            let mut bridge = AsFmt::new(&mut *writer.ctx);
+            if build
+                .write_format::<_, _, ENABLE_ANSI_COLORS>(value, self, &mut bridge)
+                .is_err()
+            {
+                self.failed = true;
+                if !self.global_this.has_exception() {
+                    return Err(self.global_this.throw_error(
+                        bun_core::Error::FmtError,
+                        "failed to print BuildArtifact",
+                    ));
+                }
+                return Err(JsError::Thrown);
+            }
+        } else if let Some(blob) = value.as_::<crate::webcore::Blob>() {
+            // SAFETY: see Response branch above.
+            let blob = unsafe { &mut *blob };
+            let mut bridge = AsFmt::new(&mut *writer.ctx);
+            if blob
+                .write_format::<_, _, ENABLE_ANSI_COLORS>(self, &mut bridge)
+                .is_err()
+            {
+                self.failed = true;
+                if !self.global_this.has_exception() {
+                    return Err(self.global_this.throw_error(
+                        bun_core::Error::FmtError,
+                        "failed to print Blob",
+                    ));
+                }
+                return Err(JsError::Thrown);
+            }
+            return Ok(());
+        } else if bun_jsc::DOMFormData::from_js(value).is_some() {
+            if let Some(to_json_function) = value
+                .get(self.global_this, "toJSON")?
+                .filter(|f| f.is_callable())
+            {
+                self.add_for_new_line(b"FormData (entries) ".len());
+                writer.write_all(
+                    pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r><blue>FormData<r> <d>(entries)<r> ")
+                    .as_bytes(),
+                );
+
+                return self.print_as::<W, ENABLE_ANSI_COLORS>(
+                    Tag::Object,
+                    writer.ctx,
+                    to_json_function.call(self.global_this, value, &[])?,
+                    JSType::Object,
+                );
+            }
+
+            return self.print_as::<W, ENABLE_ANSI_COLORS>(
+                Tag::Object, writer.ctx, value, JSType::Event,
+            );
+        } else if let Some(timer) = value.as_class_ref::<crate::timer::TimeoutObject>() {
+            self.add_for_new_line(
+                b"Timeout(# ) ".len()
+                    + bun_fmt::digit_count(timer.internals.id.max(0)),
+            );
+            if timer.internals.flags.get().kind() == crate::timer::Kind::SetInterval {
+                self.add_for_new_line(
+                    b"repeats ".len()
+                        + bun_fmt::digit_count(timer.internals.id.max(0)),
+                );
+                writer.print(format_args!(
+                    "{}Timeout{} {}(#{}{}{}{}, repeats){}",
+                    pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r><blue>"),
+                    pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
+                    pretty_fmt_const!(ENABLE_ANSI_COLORS, "<d>"),
+                    pretty_fmt_const!(ENABLE_ANSI_COLORS, "<yellow>"),
+                    timer.internals.id,
+                    pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
+                    pretty_fmt_const!(ENABLE_ANSI_COLORS, "<d>"),
+                    pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
+                ));
+            } else {
+                writer.print(format_args!(
+                    "{}Timeout{} {}(#{}{}{}{}){}",
+                    pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r><blue>"),
+                    pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
+                    pretty_fmt_const!(ENABLE_ANSI_COLORS, "<d>"),
+                    pretty_fmt_const!(ENABLE_ANSI_COLORS, "<yellow>"),
+                    timer.internals.id,
+                    pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
+                    pretty_fmt_const!(ENABLE_ANSI_COLORS, "<d>"),
+                    pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
+                ));
+            }
+
+            return Ok(());
+        } else if let Some(immediate) =
+            value.as_class_ref::<crate::timer::ImmediateObject>()
+        {
+            self.add_for_new_line(
+                b"Immediate(# ) ".len()
+                    + bun_fmt::digit_count(immediate.internals.id.max(0)),
+            );
+            writer.print(format_args!(
+                "{}Immediate{} {}(#{}{}{}{}){}",
+                pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r><blue>"),
+                pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
+                pretty_fmt_const!(ENABLE_ANSI_COLORS, "<d>"),
+                pretty_fmt_const!(ENABLE_ANSI_COLORS, "<yellow>"),
+                immediate.internals.id,
+                pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
+                pretty_fmt_const!(ENABLE_ANSI_COLORS, "<d>"),
+                pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
+            ));
+
+            return Ok(());
+        } else if let Some(build_log) = value.as_class_ref::<crate::api::BuildMessage>() {
+            let mut bridge = AsFmt::new(&mut *writer.ctx);
+            let _ = build_log.msg.write_format::<ENABLE_ANSI_COLORS>(&mut bridge);
+            return Ok(());
+        } else if let Some(resolve_log) = value.as_class_ref::<crate::api::ResolveMessage>() {
+            let mut bridge = AsFmt::new(&mut *writer.ctx);
+            let _ = resolve_log.msg.write_format::<ENABLE_ANSI_COLORS>(&mut bridge);
+            return Ok(());
+        } else if JestPrettyFormat::print_asymmetric_matcher::<_, W, ENABLE_ANSI_COLORS>(
+            self, writer, value,
+        )? {
+            return Ok(());
+        } else if js_type != JSType::DOMWrapper {
+            if value.is_callable() {
+                return self.print_as::<W, ENABLE_ANSI_COLORS>(
+                    Tag::Function, writer.ctx, value, js_type,
+                );
+            }
+
+            return self.print_as::<W, ENABLE_ANSI_COLORS>(
+                Tag::Object, writer.ctx, value, js_type,
+            );
+        }
+        self.print_as::<W, ENABLE_ANSI_COLORS>(
+            Tag::Object, writer.ctx, value, JSType::Event,
+        )
+    }
+
+    #[inline(never)]
+    fn print_native_code<W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>(
+        &mut self,
+        writer: &mut WrappedWriter<'_, W>,
+    ) -> JsResult<()> {
+        self.add_for_new_line(b"[native code]".len());
+        writer.write_all(b"[native code]");
+        Ok(())
+    }
+
+    #[inline(never)]
+    fn print_promise<W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>(
+        &mut self,
+        writer: &mut WrappedWriter<'_, W>,
+    ) -> JsResult<()> {
+        if self.good_time_for_a_new_line() {
+            writer.write_all(b"\n");
+            let _ = self.write_indent(writer.ctx);
+        }
+        writer.write_all(b"Promise {}");
+        Ok(())
+    }
+
+    #[inline(never)]
+    fn print_boolean<W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>(
+        &mut self,
+        writer: &mut WrappedWriter<'_, W>,
+        value: JSValue,
+    ) -> JsResult<()> {
+        if value.is_cell() {
+            self.print_as::<W, ENABLE_ANSI_COLORS>(
+                Tag::Object, writer.ctx, value, JSType::Object,
+            )?;
+            return Ok(());
+        }
+        if value.to_boolean() {
+            self.add_for_new_line(4);
+            writer.write_all(
+                pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r><yellow>true<r>").as_bytes(),
+            );
+        } else {
+            self.add_for_new_line(5);
+            writer.write_all(
+                pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r><yellow>false<r>").as_bytes(),
+            );
+        }
+        Ok(())
+    }
+
+    #[inline(never)]
+    fn print_global_object<W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>(
+        &mut self,
+        writer: &mut WrappedWriter<'_, W>,
+    ) -> JsResult<()> {
+        const FMT: &str = "[this.globalThis]";
+        self.add_for_new_line(FMT.len());
+        writer.write_all(
+            pretty_fmt_const!(ENABLE_ANSI_COLORS, "<cyan>[this.globalThis]<r>")
+            .as_bytes(),
+        );
+        Ok(())
+    }
+
+    #[inline(never)]
+    fn print_map<W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>(
+        &mut self,
+        writer: &mut WrappedWriter<'_, W>,
+        value: JSValue,
+    ) -> JsResult<()> {
+        let length_value = value
+            .get(self.global_this, "size")?
+            .unwrap_or_else(|| JSValue::js_number_from_int32(0));
+        let length = length_value.to_int32();
+
+        let prev_quote_strings = self.quote_strings;
+        self.quote_strings = true;
+
+        let map_name: &str =
+            if value.js_type() == JSType::WeakMap { "WeakMap" } else { "Map" };
+
+        if length == 0 {
+            self.quote_strings = prev_quote_strings;
+            writer.print(format_args!("{} {{}}", map_name));
+            return Ok(());
+        }
+
+        writer.print(format_args!("\n{} {{\n", map_name));
+        {
+            self.indent += 1;
+            // hoist global_this (Copy &ref) before iter mutably
+            // borrows `self`/`writer.ctx`; NLL releases both once `iter`
+            // is dead after `for_each` returns.
+            let global = self.global_this;
+            let mut iter = MapIterator::<W, ENABLE_ANSI_COLORS> {
+                formatter: self,
+                writer: writer.ctx,
+            };
+            let result = value.for_each(
+                global,
+                (&raw mut iter).cast::<c_void>(),
+                MapIterator::<W, ENABLE_ANSI_COLORS>::for_each,
+            );
+            // `indent` / `quote_strings` must be restored on every exit,
+            // including thrown exceptions — restore before propagating.
+            self.indent = self.indent.saturating_sub(1);
+            self.quote_strings = prev_quote_strings;
+            result?;
+        }
+        let _ = self.write_indent(writer.ctx);
+        writer.write_all(b"}");
+        writer.write_all(b"\n");
+        Ok(())
+    }
+
+    #[inline(never)]
+    fn print_set<W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>(
+        &mut self,
+        writer: &mut WrappedWriter<'_, W>,
+        value: JSValue,
+    ) -> JsResult<()> {
+        let length_value = value
+            .get(self.global_this, "size")?
+            .unwrap_or_else(|| JSValue::js_number_from_int32(0));
+        let length = length_value.to_int32();
+
+        let prev_quote_strings = self.quote_strings;
+        self.quote_strings = true;
+
+        let _ = self.write_indent(writer.ctx);
+
+        let set_name: &str =
+            if value.js_type() == JSType::WeakSet { "WeakSet" } else { "Set" };
+
+        if length == 0 {
+            self.quote_strings = prev_quote_strings;
+            writer.print(format_args!("{} {{}}", set_name));
+            return Ok(());
+        }
+
+        writer.print(format_args!("\n{} {{\n", set_name));
+        {
+            self.indent += 1;
+            let global = self.global_this;
+            let mut iter = SetIterator::<W, ENABLE_ANSI_COLORS> {
+                formatter: self,
+                writer: writer.ctx,
+            };
+            let result = value.for_each(
+                global,
+                (&raw mut iter).cast::<c_void>(),
+                SetIterator::<W, ENABLE_ANSI_COLORS>::for_each,
+            );
+            // `indent` / `quote_strings` must be restored on every exit,
+            // including thrown exceptions — restore before propagating.
+            self.indent = self.indent.saturating_sub(1);
+            self.quote_strings = prev_quote_strings;
+            result?;
+        }
+        let _ = self.write_indent(writer.ctx);
+        writer.write_all(b"}");
+        writer.write_all(b"\n");
+        Ok(())
+    }
+
+    #[inline(never)]
+    fn print_json<W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>(
+        &mut self,
+        writer: &mut WrappedWriter<'_, W>,
+        value: JSValue,
+        js_type: JSType,
+    ) -> JsResult<()> {
+        let str = value.json_stringify(self.global_this, self.indent)?;
+        self.add_for_new_line(str.length());
+        if js_type == JSType::JSDate {
+            // in the code for printing dates, it never exceeds this amount
+            let mut iso_string_buf = [0u8; 36];
+            let mut out_buf: &[u8] = {
+                use std::io::Write;
+                let mut cursor = &mut iso_string_buf[..];
+                match write!(cursor, "{}", str) {
+                    Ok(()) => {
+                        let written = 36 - cursor.len();
+                        &iso_string_buf[..written]
+                    }
+                    Err(_) => b"",
+                }
+            };
+            if out_buf.len() > 2 {
+                // trim the quotes
+                out_buf = &out_buf[1..out_buf.len() - 1];
+            }
+
+            writer.print(format_args!(
+                "{}{}{}",
+                pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r><magenta>"),
+                bstr::BStr::new(out_buf),
+                pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
+            ));
+            return Ok(());
+        }
+
+        writer.print(format_args!("{}", str));
+        Ok(())
+    }
+
+    #[inline(never)]
+    fn print_event<W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>(
+        &mut self,
+        writer: &mut WrappedWriter<'_, W>,
+        value: JSValue,
+    ) -> JsResult<()> {
+        let event_type_value: JSValue = 'brk: {
+            let value_: JSValue = match value.get(self.global_this, "type")? {
+                Some(v) => v,
+                None => break 'brk JSValue::UNDEFINED,
+            };
+            if value_.is_string() {
+                break 'brk value_;
+            }
+
+            JSValue::UNDEFINED
+        };
+
+        let event_type = match EVENT_TYPE_MAP
+            .from_js(self.global_this, event_type_value)?
+            .unwrap_or(EventType::Unknown)
+        {
+            evt @ (EventType::MessageEvent | EventType::ErrorEvent) => evt,
+            _ => {
+                return self.print_as::<W, ENABLE_ANSI_COLORS>(
+                    Tag::Object, writer.ctx, value, JSType::Event,
+                );
+            }
+        };
+
+        writer.print(format_args!(
+            "{}{}{} {{\n",
+            pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r><cyan>"),
+            <&'static str>::from(event_type),
+            pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
+        ));
+        {
+            self.indent += 1;
+            let old_quote_strings = self.quote_strings;
+            self.quote_strings = true;
+            // `indent` and `quote_strings` must be
+            // restored even when `fast_get` / `Tag::get` / `format` throw.
+            // Wrap the fallible body and restore unconditionally afterward.
+            let inner: JsResult<()> = (|| {
+            self.write_indent(writer.ctx).expect("unreachable");
+
+            writer.print(format_args!(
+                "{}type: {}\"{}\"{}{},{}\n",
+                pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
+                pretty_fmt_const!(ENABLE_ANSI_COLORS, "<green>"),
+                bstr::BStr::new(event_type.label()),
+                pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
+                pretty_fmt_const!(ENABLE_ANSI_COLORS, "<d>"),
+                pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
+            ));
+
+            if let Some(message_value) =
+                value.fast_get(self.global_this, jsc::BuiltinName::Message)?
+            {
+                if message_value.is_string() {
+                    self.write_indent(writer.ctx).expect("unreachable");
+                    writer.print(format_args!(
+                        "{}message{}:{} ",
+                        pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r><blue>"),
+                        pretty_fmt_const!(ENABLE_ANSI_COLORS, "<d>"),
+                        pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
+                    ));
+
+                    let tag = Tag::get(message_value, self.global_this)?;
+                    self.format::<W, ENABLE_ANSI_COLORS>(
+                        tag, writer.ctx, message_value, self.global_this,
+                    )?;
+                    writer.write_all(b", \n");
+                }
+            }
+
+            match event_type {
+                EventType::MessageEvent => {
+                    self.write_indent(writer.ctx).expect("unreachable");
+                    writer.print(format_args!(
+                        "{}data{}:{} ",
+                        pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r><blue>"),
+                        pretty_fmt_const!(ENABLE_ANSI_COLORS, "<d>"),
+                        pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
+                    ));
+                    let data: JSValue = value
+                        .fast_get(self.global_this, jsc::BuiltinName::Data)?
+                        .unwrap_or(JSValue::UNDEFINED);
+                    let tag = Tag::get(data, self.global_this)?;
+
+                    self.format::<W, ENABLE_ANSI_COLORS>(
+                        tag, writer.ctx, data, self.global_this,
+                    )?;
+                    writer.write_all(b", \n");
+                }
+                EventType::ErrorEvent => {
+                    if let Some(data) =
+                        value.fast_get(self.global_this, jsc::BuiltinName::Error)?
+                    {
+                        self.write_indent(writer.ctx).expect("unreachable");
+                        writer.print(format_args!(
+                            "{}error{}:{} ",
+                            pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r><blue>"),
+                            pretty_fmt_const!(ENABLE_ANSI_COLORS, "<d>"),
+                            pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
+                        ));
+
+                        let tag = Tag::get(data, self.global_this)?;
+                        self.format::<W, ENABLE_ANSI_COLORS>(
+                            tag, writer.ctx, data, self.global_this,
+                        )?;
+                        writer.write_all(b"\n");
+                    }
+                }
+                _ => unreachable!(),
+            }
+            Ok(())
+            })();
+
+            self.quote_strings = old_quote_strings;
+            self.indent = self.indent.saturating_sub(1);
+            inner?;
+        }
+
+        self.write_indent(writer.ctx).expect("unreachable");
+        writer.write_all(b"}");
+        Ok(())
+    }
+
+    #[inline(never)]
+    fn print_jsx<W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>(
+        &mut self,
+        writer: &mut WrappedWriter<'_, W>,
+        value: JSValue,
+    ) -> JsResult<()> {
+        writer.write_all(pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>").as_bytes());
+
+        writer.write_all(b"<");
+
+        let mut needs_space;
+
+        let tag_name_view;
+        let tag_name_slice: Utf8Bytes;
+        let mut is_tag_kind_primitive = false;
+
+        if let Some(type_value) = value.get(self.global_this, "type")? {
+            let _tag = Tag::get(type_value, self.global_this)?;
+
+            if _tag.cell == JSType::Symbol {
+                tag_name_slice = Utf8Bytes::EMPTY;
+            } else if _tag.cell.is_string_like() {
+                tag_name_view = type_value.to_js_string_view(self.global_this)?;
+                tag_name_slice = tag_name_view.to_utf8();
+                is_tag_kind_primitive = true;
+            } else if _tag.cell.is_object() || type_value.is_callable() {
+                let name = type_value.get_name_property(self.global_this)?;
+                tag_name_slice = if name.is_empty() {
+                    Utf8Bytes::Borrowed(b"NoName")
+                } else {
+                    name.into_utf8()
+                };
+            } else {
+                tag_name_view = type_value.to_js_string_view(self.global_this)?;
+                tag_name_slice = tag_name_view.to_utf8();
+            }
+
+            needs_space = true;
+        } else {
+            tag_name_slice = Utf8Bytes::Borrowed(b"unknown");
+
+            needs_space = true;
+        }
+
+        if !is_tag_kind_primitive {
+            writer.write_all(
+                pretty_fmt_const!(ENABLE_ANSI_COLORS, "<cyan>").as_bytes(),
+            );
+        } else {
+            writer.write_all(
+                pretty_fmt_const!(ENABLE_ANSI_COLORS, "<green>").as_bytes(),
+            );
+        }
+        writer.write_all(tag_name_slice.slice());
+        if ENABLE_ANSI_COLORS {
+            writer.write_all(
+                pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>").as_bytes(),
+            );
+        }
+
+        if let Some(key_value) = value.get(self.global_this, "key")? {
+            if !key_value.is_undefined_or_null() {
+                if needs_space {
+                    writer.write_all(b" key=");
+                } else {
+                    writer.write_all(b"key=");
+                }
+
+                let old_quote_strings = self.quote_strings;
+                self.quote_strings = true;
+
+                let inner: JsResult<()> = (|| {
+                    self.format::<W, ENABLE_ANSI_COLORS>(
+                        Tag::get(key_value, self.global_this)?,
+                        writer.ctx,
+                        key_value,
+                        self.global_this,
+                    )
+                })();
+                self.quote_strings = old_quote_strings;
+                inner?;
+                needs_space = true;
+            }
+        }
+
+        if let Some(props) = value.get(self.global_this, "props")? {
+            let prev_quote_strings = self.quote_strings;
+            self.quote_strings = true;
+
+            // `quote_strings` (and nested `indent` scopes) must be restored on
+            // every exit, including thrown exceptions. Wrap the fallible body in a
+            // closure (Ok(true) ⇒ children path printed the closing tag, so the
+            // trailing " />" is skipped) and restore unconditionally afterward.
+            let inner: JsResult<bool> = (|| {
+            let Some(props_obj) = props.get_object() else { return Ok(false); };
+            let props_iter = JSPropertyIterator::init(
+                self.global_this,
+                props_obj,
+                jsc::PropertyIteratorOptions {
+                    skip_empty_name: true,
+                    include_value: true,
+                },
+            )?;
+
+            let children_prop = props.get(self.global_this, "children")?;
+            if props_iter.len > 0 {
+                {
+                    self.indent += 1;
+                    let count_without_children =
+                        props_iter.len - usize::from(children_prop.is_some());
+
+                    let loop_result: JsResult<()> = (|| {
+                    // `JSPropertyIterator::i` is private upstream;
+                    // track the 1-based iteration index locally.
+                    let mut iter_i: usize = 0;
+                    while let Some((prop, property_value)) = props_iter.next()? {
+                        iter_i += 1;
+                        if prop.eq_ascii(b"children") {
+                            continue;
+                        }
+
+                        let tag = Tag::get(property_value, self.global_this)?;
+
+                        if tag.cell.is_hidden() {
+                            continue;
+                        }
+
+                        if needs_space {
+                            writer.write_all(b" ");
+                        }
+                        needs_space = false;
+
+                        writer.print(format_args!(
+                            "{}{}{}={}",
+                            pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r><blue>"),
+                            prop.trunc(128),
+                            pretty_fmt_const!(ENABLE_ANSI_COLORS, "<d>"),
+                            pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
+                        ));
+
+                        if tag.cell.is_string_like() {
+                            if ENABLE_ANSI_COLORS {
+                                writer.write_all(
+                                    pretty_fmt_const!(true, "<r><green>").as_bytes(),
+                                );
+                            }
+                        }
+
+                        self.format::<W, ENABLE_ANSI_COLORS>(
+                            tag, writer.ctx, property_value, self.global_this,
+                        )?;
+
+                        if tag.cell.is_string_like() {
+                            if ENABLE_ANSI_COLORS {
+                                writer.write_all(
+                                    pretty_fmt_const!(true, "<r>").as_bytes(),
+                                );
+                            }
+                        }
+
+                        if
+                        // count_without_children is necessary to prevent printing an extra newline
+                        // if there are children and one prop and the child prop is the last prop
+                        iter_i + 1 < count_without_children
+                            // 3 is arbitrary but basically
+                            //  <input type="text" value="foo" />
+                            //  ^ should be one line
+                            // <input type="text" value="foo" bar="true" baz={false} />
+                            //  ^ should be multiple lines
+                            && iter_i > 3
+                        {
+                            writer.write_all(b"\n");
+                            self.write_indent(writer.ctx).expect("unreachable");
+                        } else if iter_i + 1 < count_without_children {
+                            writer.write_all(b" ");
+                        }
+                    }
+                    Ok(())
+                    })();
+                    self.indent = self.indent.saturating_sub(1);
+                    loop_result?;
+                }
+
+                if let Some(children) = children_prop {
+                    let tag = Tag::get(children, self.global_this)?;
+
+                    let print_children =
+                        matches!(tag.tag, Tag::String | Tag::JSX | Tag::Array);
+
+                    if print_children {
+                        'print_children: {
+                            match tag.tag {
+                                Tag::String => {
+                                    let children_string =
+                                        children.to_js_string_view(self.global_this)?;
+                                    if children_string.is_empty() {
+                                        break 'print_children;
+                                    }
+                                    if ENABLE_ANSI_COLORS {
+                                        writer.write_all(
+                                            pretty_fmt_const!(true, "<r>").as_bytes(),
+                                        );
+                                    }
+
+                                    writer.write_all(b">");
+                                    if children_string.length() < 128 {
+                                        writer.write_string(&children_string);
+                                    } else {
+                                        self.indent += 1;
+                                        writer.write_all(b"\n");
+                                        self.write_indent(writer.ctx)
+                                            .expect("unreachable");
+                                        self.indent = self.indent.saturating_sub(1);
+                                        writer.write_string(&children_string);
+                                        writer.write_all(b"\n");
+                                        self.write_indent(writer.ctx)
+                                            .expect("unreachable");
+                                    }
+                                }
+                                Tag::JSX => {
+                                    writer.write_all(b">\n");
+
+                                    {
+                                        self.indent += 1;
+                                        let r: JsResult<()> = (|| {
+                                            self.write_indent(writer.ctx)
+                                                .expect("unreachable");
+                                            self.format::<W, ENABLE_ANSI_COLORS>(
+                                                Tag::get(children, self.global_this)?,
+                                                writer.ctx,
+                                                children,
+                                                self.global_this,
+                                            )
+                                        })();
+                                        self.indent = self.indent.saturating_sub(1);
+                                        r?;
+                                    }
+
+                                    writer.write_all(b"\n");
+                                    self.write_indent(writer.ctx)
+                                        .expect("unreachable");
+                                }
+                                Tag::Array => {
+                                    let length =
+                                        children.get_length(self.global_this)? as usize;
+                                    if length == 0 {
+                                        break 'print_children;
+                                    }
+                                    writer.write_all(b">\n");
+
+                                    {
+                                        self.indent += 1;
+                                        self.write_indent(writer.ctx)
+                                            .expect("unreachable");
+                                        let _prev_quote_strings = self.quote_strings;
+                                        self.quote_strings = false;
+
+                                        let r: JsResult<()> = (|| {
+                                            let mut j: usize = 0;
+                                            while j < length {
+                                                let child = JSObject::get_index(
+                                                    children,
+                                                    self.global_this,
+                                                    u32::try_from(j).unwrap(),
+                                                )?;
+                                                self.format::<W, ENABLE_ANSI_COLORS>(
+                                                    Tag::get(child, self.global_this)?,
+                                                    writer.ctx,
+                                                    child,
+                                                    self.global_this,
+                                                )?;
+                                                if j + 1 < length {
+                                                    writer.write_all(b"\n");
+                                                    self.write_indent(writer.ctx)
+                                                        .expect("unreachable");
+                                                }
+                                                j += 1;
+                                            }
+                                            Ok(())
+                                        })();
+
+                                        self.quote_strings = _prev_quote_strings;
+                                        self.indent = self.indent.saturating_sub(1);
+                                        r?;
+                                    }
+
+                                    writer.write_all(b"\n");
+                                    self.write_indent(writer.ctx)
+                                        .expect("unreachable");
+                                }
+                                _ => unreachable!(),
+                            }
+
+                            writer.write_all(b"</");
+                            if !is_tag_kind_primitive {
+                                writer.write_all(
+                                    pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r><cyan>")
+                                    .as_bytes(),
+                                );
+                            } else {
+                                writer.write_all(
+                                    pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r><green>")
+                                    .as_bytes(),
+                                );
+                            }
+                            writer.write_all(tag_name_slice.slice());
+                            if ENABLE_ANSI_COLORS {
+                                writer.write_all(
+                                    pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>")
+                                        .as_bytes(),
+                                );
+                            }
+                            writer.write_all(b">");
+                        }
+
+                        return Ok(true);
+                    }
+                }
+            }
+            Ok(false)
+            })();
+
+            self.quote_strings = prev_quote_strings;
+            if inner? {
+                return Ok(());
+            }
+        }
+
+        writer.write_all(b" />");
+        Ok(())
+    }
+
+    #[inline(never)]
+    fn print_object<W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>(
+        &mut self,
+        writer: &mut WrappedWriter<'_, W>,
+        value: JSValue,
+    ) -> JsResult<()> {
+        let prev_quote_strings = self.quote_strings;
+        self.quote_strings = true;
+
+        // We want to figure out if we should print this object
+        // on one line or multiple lines
+        //
+        // The 100% correct way would be to print everything to
+        // a temporary buffer and then check how long each line was
+        //
+        // But it's important that console.log() is fast. So we
+        // do a small compromise to avoid multiple passes over input
+        //
+        // We say:
+        //
+        //   If the object has at least 2 properties and ANY of the following conditions are met:
+        //      - total length of all the property names is more than
+        //        14 characters
+        //     - the parent object is printing each property on a new line
+        //     - The first property is a DOM object, ESM namespace, Map, Set, or Blob
+        //
+        //   Then, we print it each property on a new line, recursively.
+        //
+        let prev_always_newline_scope = self.always_newline_scope;
+        let always_newline =
+            self.always_newline_scope || self.good_time_for_a_new_line();
+        let global = self.global_this;
+        let mut iter = PropertyIterator::<W, ENABLE_ANSI_COLORS> {
+            formatter: self,
+            writer: writer.ctx,
+            i: 0,
+            always_newline,
+            parent: value,
+        };
+
+        let result = value.for_each_property_ordered(
+            global,
+            (&raw mut iter).cast::<c_void>(),
+            PropertyIterator::<W, ENABLE_ANSI_COLORS>::for_each,
+        );
+
+        let iter_i = iter.i;
+        let iter_always_newline = iter.always_newline;
+        // `always_newline_scope` / `quote_strings` must be restored on every
+        // exit — restore before propagating any exception from the property iterator.
+        self.always_newline_scope = prev_always_newline_scope;
+        self.quote_strings = prev_quote_strings;
+        result?;
+
+        if iter_i == 0 {
+            let object_name = value.get_class_name(self.global_this)?;
+
+            if !object_name.eq_ascii(b"Object") {
+                writer.print(format_args!("{} {{}}", object_name));
+            } else {
+                // don't write "Object"
+                writer.write_all(b"{}");
+            }
+        } else {
+            self.print_comma::<W, ENABLE_ANSI_COLORS>(writer.ctx)
+                .expect("unreachable");
+
+            if iter_always_newline {
+                self.indent = self.indent.saturating_sub(1);
+                writer.write_all(b"\n");
+                let _ = self.write_indent(writer.ctx);
+                writer.write_all(b"}");
+                self.estimated_line_length += 1;
+            } else {
+                self.estimated_line_length += 2;
+                writer.write_all(b" }");
+            }
+
+            if self.indent == 0 {
+                writer.write_all(b"\n");
+            }
+        }
+        Ok(())
+    }
+
+    #[inline(never)]
+    fn print_typed_array<W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>(
+        &mut self,
+        writer: &mut WrappedWriter<'_, W>,
+        value: JSValue,
+        js_type: JSType,
+    ) -> JsResult<()> {
+        let array_buffer = value.as_array_buffer(self.global_this).unwrap();
+        let slice = array_buffer.byte_slice();
+
+        if self.indent == 0 && !slice.is_empty() {
+            writer.write_all(b"\n");
+        }
+
+        if js_type == JSType::Uint8Array {
+            let buffer_name = value.get_class_name(self.global_this)?;
+            if buffer_name.eq_ascii(b"Buffer") {
+                // special formatting for 'Buffer' snapshots only
+                if slice.is_empty() && self.indent == 0 {
+                    writer.write_all(b"\n");
+                }
+                writer.write_all(b"{\n");
+                self.indent += 1;
+                let _ = self.write_indent(writer.ctx);
+                writer.write_all(b"\"data\": [");
+
+                self.indent += 1;
+                for el in slice {
+                    writer.write_all(b"\n");
+                    let _ = self.write_indent(writer.ctx);
+                    writer.print(format_args!("{},", el));
+                }
+                self.indent = self.indent.saturating_sub(1);
+
+                if !slice.is_empty() {
+                    writer.write_all(b"\n");
+                    let _ = self.write_indent(writer.ctx);
+                    writer.write_all(b"],\n");
+                } else {
+                    writer.write_all(b"],\n");
+                }
+
+                let _ = self.write_indent(writer.ctx);
+                writer.write_all(b"\"type\": \"Buffer\",\n");
+
+                self.indent = self.indent.saturating_sub(1);
+                let _ = self.write_indent(writer.ctx);
+                writer.write_all(b"}");
+
+                if self.indent == 0 {
+                    writer.write_all(b"\n");
+                }
+
+                return Ok(());
+            }
+            writer.write_all(array_buffer.typed_array_type.typed_array_name());
+        } else {
+            writer.write_all(array_buffer.typed_array_type.typed_array_name());
+        }
+
+        writer.write_all(b" [");
+
+        macro_rules! print_typed_slice {
+            ($t:ty) => {{
+                // SAFETY: `Unaligned<$t>` has align 1 and the same size as `$t`, so any
+                // `*const u8` is a valid `*const Unaligned<$t>`; `slice` is the live
+                // backing store of a JSC typed array whose elements are valid `$t`.
+                let slice_with_type: &[bun_core::Unaligned<$t>] = unsafe {
+                    core::slice::from_raw_parts(
+                        slice.as_ptr().cast::<bun_core::Unaligned<$t>>(),
+                        slice.len() / core::mem::size_of::<$t>(),
+                    )
+                };
+                self.indent += 1;
+                for el in slice_with_type {
+                    writer.write_all(b"\n");
+                    let _ = self.write_indent(writer.ctx);
+                    writer.print(format_args!("{},", el.get()));
+                }
+                self.indent = self.indent.saturating_sub(1);
+            }};
+        }
+
+        if !slice.is_empty() {
+            match js_type {
+                JSType::Int8Array => print_typed_slice!(i8),
+                JSType::Int16Array => print_typed_slice!(i16),
+                JSType::Uint16Array => print_typed_slice!(u16),
+                JSType::Int32Array => print_typed_slice!(i32),
+                JSType::Uint32Array => print_typed_slice!(u32),
+                JSType::Float16Array => print_typed_slice!(bun_core::f16),
+                JSType::Float32Array => print_typed_slice!(f32),
+                JSType::Float64Array => print_typed_slice!(f64),
+                JSType::BigInt64Array => print_typed_slice!(i64),
+                JSType::BigUint64Array => print_typed_slice!(u64),
+
+                // Uint8Array, Uint8ClampedArray, DataView, ArrayBuffer
+                _ => print_typed_slice!(u8),
+            }
+        }
+
+        if !slice.is_empty() {
+            writer.write_all(b"\n");
+            let _ = self.write_indent(writer.ctx);
+            writer.write_all(b"]");
+            if self.indent == 0 {
+                writer.write_all(b"\n");
+            }
+        } else {
+            writer.write_all(b"]");
+        }
+        Ok(())
     }
 
     pub(crate) fn format<W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>(
@@ -2490,81 +2670,7 @@ impl<'a> Formatter<'a> {
         // `self.global_this` is restored to the previous value at the end.
         self.global_this = global_this;
 
-        // This looks incredibly redundant. Each tag variant dispatches to its
-        // own small formatting function; that _should_ limit the stack usage
-        // because each version of the function will be relatively small.
-        let r = match result.tag {
-            Tag::StringPossiblyFormatted => self
-                .print_as::<W, { Tag::StringPossiblyFormatted }, ENABLE_ANSI_COLORS>(
-                    writer, value, result.cell,
-                ),
-            Tag::String => {
-                self.print_as::<W, { Tag::String }, ENABLE_ANSI_COLORS>(writer, value, result.cell)
-            }
-            Tag::Undefined => self
-                .print_as::<W, { Tag::Undefined }, ENABLE_ANSI_COLORS>(writer, value, result.cell),
-            Tag::Double => {
-                self.print_as::<W, { Tag::Double }, ENABLE_ANSI_COLORS>(writer, value, result.cell)
-            }
-            Tag::Integer => {
-                self.print_as::<W, { Tag::Integer }, ENABLE_ANSI_COLORS>(writer, value, result.cell)
-            }
-            Tag::Null => {
-                self.print_as::<W, { Tag::Null }, ENABLE_ANSI_COLORS>(writer, value, result.cell)
-            }
-            Tag::Boolean => {
-                self.print_as::<W, { Tag::Boolean }, ENABLE_ANSI_COLORS>(writer, value, result.cell)
-            }
-            Tag::Array => {
-                self.print_as::<W, { Tag::Array }, ENABLE_ANSI_COLORS>(writer, value, result.cell)
-            }
-            Tag::Object => {
-                self.print_as::<W, { Tag::Object }, ENABLE_ANSI_COLORS>(writer, value, result.cell)
-            }
-            Tag::Function => self
-                .print_as::<W, { Tag::Function }, ENABLE_ANSI_COLORS>(writer, value, result.cell),
-            Tag::Class => {
-                self.print_as::<W, { Tag::Class }, ENABLE_ANSI_COLORS>(writer, value, result.cell)
-            }
-            Tag::Error => {
-                self.print_as::<W, { Tag::Error }, ENABLE_ANSI_COLORS>(writer, value, result.cell)
-            }
-            Tag::TypedArray => self
-                .print_as::<W, { Tag::TypedArray }, ENABLE_ANSI_COLORS>(writer, value, result.cell),
-            Tag::Map => {
-                self.print_as::<W, { Tag::Map }, ENABLE_ANSI_COLORS>(writer, value, result.cell)
-            }
-            Tag::Set => {
-                self.print_as::<W, { Tag::Set }, ENABLE_ANSI_COLORS>(writer, value, result.cell)
-            }
-            Tag::Symbol => {
-                self.print_as::<W, { Tag::Symbol }, ENABLE_ANSI_COLORS>(writer, value, result.cell)
-            }
-            Tag::BigInt => {
-                self.print_as::<W, { Tag::BigInt }, ENABLE_ANSI_COLORS>(writer, value, result.cell)
-            }
-            Tag::GlobalObject => self
-                .print_as::<W, { Tag::GlobalObject }, ENABLE_ANSI_COLORS>(
-                    writer, value, result.cell,
-                ),
-            Tag::Private => {
-                self.print_as::<W, { Tag::Private }, ENABLE_ANSI_COLORS>(writer, value, result.cell)
-            }
-            Tag::Promise => {
-                self.print_as::<W, { Tag::Promise }, ENABLE_ANSI_COLORS>(writer, value, result.cell)
-            }
-            Tag::JSON => {
-                self.print_as::<W, { Tag::JSON }, ENABLE_ANSI_COLORS>(writer, value, result.cell)
-            }
-            Tag::NativeCode => self
-                .print_as::<W, { Tag::NativeCode }, ENABLE_ANSI_COLORS>(writer, value, result.cell),
-            Tag::JSX => {
-                self.print_as::<W, { Tag::JSX }, ENABLE_ANSI_COLORS>(writer, value, result.cell)
-            }
-            Tag::Event => {
-                self.print_as::<W, { Tag::Event }, ENABLE_ANSI_COLORS>(writer, value, result.cell)
-            }
-        };
+        let r = self.print_as::<W, ENABLE_ANSI_COLORS>(result.tag, writer, value, result.cell);
         self.global_this = prev_global_this;
         r
     }

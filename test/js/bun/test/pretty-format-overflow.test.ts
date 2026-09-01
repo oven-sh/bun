@@ -1,6 +1,8 @@
-// Test for integer overflow fix in pretty_format.zig
-// Previously crashed with: panic: integer overflow at writeIndent in pretty_format.zig:648
-// Platform: Windows x86_64_baseline, Bun v1.3.0
+// The toEqual diff of a 500-level object must print every level and exit 1.
+// Two past failures are pinned here: an integer overflow in writeIndent
+// (Bun v1.3.0, Windows x64 baseline) and, in the debug build, stack
+// exhaustion (exit 139) when each Formatter::print_as frame held the locals
+// of every formatting arm.
 
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
@@ -20,7 +22,7 @@ test("deep nesting", () => {
   let nested = obj;
   for (let i = 0; i < 500; i++) {
     const newObj = {};
-    for (let j = 0; j < 50; j++) {
+    for (let j = 0; j < 5; j++) {
       newObj[\`key\${j}\`] = \`val\${j}\`;
     }
     newObj.nested = nested;
@@ -32,7 +34,7 @@ test("deep nesting", () => {
 `,
     });
 
-    const proc = Bun.spawn({
+    await using proc = Bun.spawn({
       cmd: [bunExe(), "test", "nested.test.ts"],
       env: bunEnv,
       cwd: dir,
@@ -40,14 +42,15 @@ test("deep nesting", () => {
       stdout: "pipe",
     });
 
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    // The diff goes to stderr. Drain stdout too so the child never blocks on it.
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited, proc.stdout.text()]);
 
-    // The test should fail due to assertion mismatch, but should NOT crash
-    expect(exitCode).toBe(1);
-    expect(stderr).not.toContain("panic");
-    expect(stderr).not.toContain("integer overflow");
-    expect(stderr).not.toContain("SIGTRAP");
-    // Verify it actually formatted and showed the diff (not just crashed)
+    // The diff header proves the formatter ran; the innermost property proves
+    // it walked all 500 levels instead of dying part-way down.
     expect(stderr).toContain("expect(received).toEqual(expected)");
-  }, 30000);
+    expect(stderr).toContain('"prop99": "value99"');
+    // The assertion mismatch exits 1. A crash exits with a signal code instead.
+    expect(proc.signalCode).toBeNull();
+    expect(exitCode).toBe(1);
+  });
 });

@@ -21,6 +21,7 @@ struct Http3ContextData {
      * the CONNECT route opens a session through the router. */
     void (*onWebTransportDatagram)(Http3WebTransportSession *, const char *, unsigned) = nullptr;
     void (*onWebTransportClose)(Http3WebTransportSession *, uint32_t, const char *, size_t) = nullptr;
+    void (*onWebTransportDrain)(Http3WebTransportSession *) = nullptr;
 };
 
 }

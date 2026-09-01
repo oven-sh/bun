@@ -330,6 +330,11 @@ webtransport: {
 Without an `upgrade` handler, Bun accepts every WebTransport `CONNECT` on the server. Authentication and routing by path
 belong here — there are no `routes` for sessions.
 
+The `Response` is the one refusal, and the status is yours to pick. Everything else is data: returning `false` accepts a
+session whose `data` is `false`, and there is no `{ data }` unwrapping as in `server.upgrade()` for WebSockets — what
+comes back is stored as-is. A throwing `upgrade` also refuses, but reports the exception the way a throwing WebSocket
+handler does; a deliberate refusal is a returned `Response`, not a `throw`.
+
 `upgrade` receives the server as its second argument, as `fetch` does, and `server.requestIP(req)` answers inside
 `upgrade` — and only there, since it needs the connection the request arrived on. Per-address limits belong here for the
 same reason the rest of the gatekeeping does: a server that relays datagrams and cannot cap sessions per source address
@@ -381,10 +386,16 @@ Bun.serve({ tls, http3: true, webtransport, fetch: () => new Response() });
 | `0`      | The connection's queue had no room, or the session has already ended.                                  |
 | `-1`     | The payload is larger than `session.maxDatagramSize`.                                                  |
 
-A `0` means drop it. There is no retransmission on this path, and the next datagram is worth more than a late one.
+A `0` means drop it. There is no retransmission on this path, and the next datagram is worth more than a late one. The
+queue lives on the connection — 64 KB of it, shared by the connection's sessions — and when it has refused a send and
+then emptied, the `drain` handler fires for each session on that connection. A bulk sender writes until `0`, stops, and
+resumes in `drain`; polling on a timer is never needed. Because the queue is per connection, a session that never saw a
+`0` can still hear a `drain` that another session's burst caused.
 
 `maxDatagramSize` is the server's own limit capped by the `max_datagram_frame_size` the peer advertised, less the
-session's frame prefix. A `0` there means the peer offered no datagram support at all — that session carries no
+session's frame prefix. It bounds what the server sends; the browser's `wt.datagrams.maxDatagramSize` bounds the other
+direction, and the two need not agree — each side computes its own limit from what its peer advertised. A `-1` from an
+oversized payload is not backpressure: unlike `0`, it never comes back on its own. A `0` there means the peer offered no datagram support at all — that session carries no
 datagrams and every `sendDatagram` returns `-1`. A closed session also reports `0`, so check `session.closed` to tell
 the two apart.
 
@@ -398,9 +409,10 @@ handshake took at least one round trip.
 `close(code?, reason?)` sends a `WT_CLOSE_SESSION` capsule and ends the session's stream. The `close` handler runs
 before `close()` returns, with the `code` and `reason` you passed.
 
-`drain()` asks the peer to wind the session up without ending it. Datagrams still flow and the `close` handler does not
-run until something actually closes the session; a browser surfaces the signal as `WebTransport.draining`. Use it to let
-sessions finish before a redeploy, and `close()` when they should stop now.
+`startDraining()` asks the peer to wind the session up without ending it. Datagrams still flow and the `close` handler
+does not run until something actually closes the session; a browser surfaces the signal as `WebTransport.draining`. Use
+it to let sessions finish before a redeploy, and `close()` when they should stop now. It is unrelated to the `drain`
+handler, which is the send queue regaining room.
 
 In the `close` handler the session is already gone: `sendDatagram` returns `0` and `closed` is `true`. `code` and
 `reason` are whatever ended the session: the peer's capsule, the arguments of your own `close()`, or `0` and `""` when

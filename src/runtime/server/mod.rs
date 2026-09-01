@@ -2415,6 +2415,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 h3_app.on_webtransport(
                     web_transport_session::on_datagram,
                     web_transport_session::on_close,
+                    web_transport_session::on_drain,
                 );
             }
         }
@@ -3377,7 +3378,7 @@ mod cached_values {
             bun_jsc::codegen_cached_accessors!(
                 $ty; routeList, onRequest, onError, onNodeHTTPRequest, onClientError, onConnection,
                 wsOnOpen, wsOnMessage, wsOnClose, wsOnDrain, wsOnError, wsOnPing, wsOnPong,
-                wtOnUpgrade, wtOnOpen, wtOnDatagram, wtOnClose
+                wtOnUpgrade, wtOnOpen, wtOnDatagram, wtOnDrain, wtOnClose
             );
         };
     }
@@ -3440,6 +3441,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     slot_setter!(js_gc_wt_on_upgrade_set, wt_on_upgrade_set_cached);
     slot_setter!(js_gc_wt_on_open_set, wt_on_open_set_cached);
     slot_setter!(js_gc_wt_on_datagram_set, wt_on_datagram_set_cached);
+    slot_setter!(js_gc_wt_on_drain_set, wt_on_drain_set_cached);
     slot_setter!(js_gc_wt_on_close_set, wt_on_close_set_cached);
 
     /// Mirror all 7 `Handler.on_*` shadows into the wrapper's `m_wsOn*`
@@ -3525,19 +3527,22 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     /// is written, so a reload whose block leaves one out drops its root rather
     /// than keeping it live under a handler that no longer mentions it.
     pub(crate) fn write_wt_handler_slots(&mut self, server_js: JSValue, global: &JSGlobalObject) {
-        let mut zeros = [JSValue::ZERO; 4];
-        let [upgrade, open, datagram, close] = match self.config.webtransport_handler.as_mut() {
-            Some(h) => [
-                &mut h.on_upgrade,
-                &mut h.on_open,
-                &mut h.on_datagram,
-                &mut h.on_close,
-            ],
-            None => zeros.each_mut(),
-        };
+        let mut zeros = [JSValue::ZERO; 5];
+        let [upgrade, open, datagram, drain, close] =
+            match self.config.webtransport_handler.as_mut() {
+                Some(h) => [
+                    &mut h.on_upgrade,
+                    &mut h.on_open,
+                    &mut h.on_datagram,
+                    &mut h.on_drain,
+                    &mut h.on_close,
+                ],
+                None => zeros.each_mut(),
+            };
         wrap_handler_slot(upgrade, server_js, global, Self::js_gc_wt_on_upgrade_set);
         wrap_handler_slot(open, server_js, global, Self::js_gc_wt_on_open_set);
         wrap_handler_slot(datagram, server_js, global, Self::js_gc_wt_on_datagram_set);
+        wrap_handler_slot(drain, server_js, global, Self::js_gc_wt_on_drain_set);
         wrap_handler_slot(close, server_js, global, Self::js_gc_wt_on_close_set);
     }
 }

@@ -1843,6 +1843,77 @@ describe("Bun.serve WebTransport", () => {
     }
   });
 
+  test("the drain handler fires once the refused queue empties", async () => {
+    let refusals = 0;
+    let drains = 0;
+    let sentAfterDrain = -1;
+    await using server = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      webtransport: {
+        datagram(session) {
+          // Fill the connection's queue to its first refusal. Nothing drains
+          // it until this handler returns, so the 0 always arrives.
+          const payload = new Uint8Array(session.maxDatagramSize);
+          for (let i = 0; i < 200; i++) {
+            if (session.sendDatagram(payload) === 0) {
+              refusals++;
+              break;
+            }
+          }
+        },
+        drain(session) {
+          drains++;
+          sentAfterDrain = session.sendDatagram(new TextEncoder().encode("drained"));
+        },
+      },
+      fetch: () => new Response("plain http/3"),
+    });
+
+    const wt = await webTransportSession(server.port);
+    try {
+      wt.send("go");
+      // The burst datagrams flush to loopback, the queue empties, drain runs,
+      // and its own send is the observable proof it ran after the refusal.
+      expect(await wt.until(() => wt.text().includes("drained"), 5000)).toBe(true);
+      expect(refusals).toBe(1);
+      expect(drains).toBe(1);
+      expect(sentAfterDrain).toBeGreaterThan(0);
+    } finally {
+      await wt.close();
+    }
+  });
+
+  test("upgrade() returning false accepts a session whose data is false", async () => {
+    // The Response is the one refusal; every other return value is stored as
+    // session.data verbatim, false included, with no { data } unwrapping.
+    let opened: unknown = "never ran";
+    await using server = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      webtransport: {
+        upgrade() {
+          return false;
+        },
+        open(session) {
+          opened = session.data;
+          session.sendDatagram(new TextEncoder().encode("in"));
+        },
+      },
+      fetch: () => new Response("plain http/3"),
+    });
+
+    const wt = await webTransportSession(server.port);
+    try {
+      expect(await wt.until(() => wt.datagrams.length >= 1, 3000)).toBe(true);
+      expect(opened).toBe(false);
+    } finally {
+      await wt.close();
+    }
+  });
+
   test("close() writes a CLOSE_WEBTRANSPORT_SESSION capsule and nothing else", async () => {
     await using server = Bun.serve({
       port: 0,
@@ -2109,7 +2180,7 @@ describe("Bun.serve WebTransport", () => {
     }
   });
 
-  test("drain() signals the peer without ending the session", async () => {
+  test("startDraining() signals the peer without ending the session", async () => {
     const closes: number[] = [];
     await using server = Bun.serve({
       port: 0,
@@ -2118,7 +2189,7 @@ describe("Bun.serve WebTransport", () => {
       webtransport: {
         datagram(session, bytes) {
           if (Buffer.from(bytes).toString() === "wind up") {
-            session.drain();
+            session.startDraining();
             return;
           }
           session.sendDatagram(bytes);

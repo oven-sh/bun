@@ -103,7 +103,7 @@ Bun.serve({
       return { seen: 0 };
     },
     open(session) {
-      session.drain();
+      session.startDraining();
       expectType(session.data).is<unknown>();
       expectType(session.closed).is<boolean>();
       expectType(session.maxDatagramSize).is<number>();
@@ -114,6 +114,9 @@ Bun.serve({
     datagram(session, data) {
       expectType(data).is<Uint8Array>();
       session.sendDatagram("text");
+    },
+    drain(session) {
+      expectType(session.sendDatagram(new Uint8Array([1]))).is<number>();
     },
     close(_session, code, reason) {
       expectType(code).is<number>();

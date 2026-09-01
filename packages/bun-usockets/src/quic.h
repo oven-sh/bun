@@ -203,6 +203,8 @@ unsigned int us_quic_wt_max_datagram_size(us_quic_stream_t *s);
  * session this connection does not have. */
 void us_quic_socket_context_on_wt_datagram(us_quic_socket_context_t *ctx,
     void (*on_datagram)(us_quic_stream_t *, const char *, unsigned int));
+void us_quic_socket_context_on_wt_drain(us_quic_socket_context_t *ctx,
+    void (*on_drain)(us_quic_stream_t *));
 
 /* Connection accessors */
 void *us_quic_socket_ext(us_quic_socket_t *s);

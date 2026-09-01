@@ -13,6 +13,7 @@ pub struct WebTransportHandler {
     pub(crate) on_upgrade: JSValue,
     pub(crate) on_open: JSValue,
     pub(crate) on_datagram: JSValue,
+    pub(crate) on_drain: JSValue,
     pub(crate) on_close: JSValue,
 }
 
@@ -22,13 +23,15 @@ impl WebTransportHandler {
             on_upgrade: JSValue::ZERO,
             on_open: JSValue::ZERO,
             on_datagram: JSValue::ZERO,
+            on_drain: JSValue::ZERO,
             on_close: JSValue::ZERO,
         };
 
-        let pairs: [(&'static str, &mut JSValue); 4] = [
+        let pairs: [(&'static str, &mut JSValue); 5] = [
             ("upgrade", &mut handler.on_upgrade),
             ("open", &mut handler.on_open),
             ("datagram", &mut handler.on_datagram),
+            ("drain", &mut handler.on_drain),
             ("close", &mut handler.on_close),
         ];
         for (key, field) in pairs {

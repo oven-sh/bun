@@ -285,13 +285,15 @@ typedef struct uws_h3_wt_s uws_h3_wt_t;
 
 typedef void (*uws_h3_wt_datagram_handler)(uws_h3_wt_t*, const char*, unsigned int);
 typedef void (*uws_h3_wt_close_handler)(uws_h3_wt_t*, uint32_t, const char*, size_t);
+typedef void (*uws_h3_wt_drain_handler)(uws_h3_wt_t*);
 
 void uws_h3_app_on_webtransport(uws_h3_app_t* app, uws_h3_wt_datagram_handler on_datagram,
-    uws_h3_wt_close_handler on_close)
+    uws_h3_wt_close_handler on_close, uws_h3_wt_drain_handler on_drain)
 {
     ((H3App*)app)->onWebTransport(
         (void (*)(Http3WebTransportSession*, const char*, unsigned))on_datagram,
-        (void (*)(Http3WebTransportSession*, uint32_t, const char*, size_t))on_close);
+        (void (*)(Http3WebTransportSession*, uint32_t, const char*, size_t))on_close,
+        (void (*)(Http3WebTransportSession*))on_drain);
 }
 
 /* Extended CONNECT with `:protocol: webtransport` (RFC 9220). Anything else on

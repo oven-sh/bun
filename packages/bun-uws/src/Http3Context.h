@@ -27,6 +27,13 @@ struct Http3Context {
             }
         });
 
+        us_quic_socket_context_on_wt_drain(ctx, [](us_quic_stream_t *s) {
+            Http3ContextData *cd = (Http3ContextData *) us_quic_socket_context_ext(us_quic_stream_context(s));
+            if (cd->onWebTransportDrain) {
+                cd->onWebTransportDrain((Http3WebTransportSession *) s);
+            }
+        });
+
         us_quic_socket_context_on_stream_open(ctx, [](us_quic_stream_t *s, int) {
             new (us_quic_stream_ext(s)) Http3ResponseData();
         });

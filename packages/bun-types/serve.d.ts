@@ -549,10 +549,14 @@ declare module "bun" {
      *
      * Returns `0` when the connection's queue had no room. Drop the datagram:
      * this path has no retransmission, and the next one is worth more than a
-     * late one. A send on a session that has already ended also returns `0`,
-     * rather than throwing, since racing the peer's close is normal.
+     * late one. The queue lives on the connection and is shared by its
+     * sessions; the {@link WebTransportHandler.drain} handler says when it
+     * has emptied. A send on a session that has already ended also returns
+     * `0`, rather than throwing, since racing the peer's close is normal.
      *
      * Returns `-1` when the payload is larger than {@link maxDatagramSize}.
+     * Unlike `0` this is not backpressure and never comes back on its own:
+     * retrying the same payload returns `-1` forever.
      */
     sendDatagram(data: string | BufferSource): number;
 
@@ -573,9 +577,10 @@ declare module "bun" {
      * session. A browser surfaces the signal as `WebTransport.draining`.
      *
      * Use this to let sessions finish before a redeploy. Use {@link close}
-     * when they should stop now.
+     * when they should stop now. The other direction — the send queue
+     * regaining room — is the {@link WebTransportHandler.drain} handler.
      */
-    drain(): void;
+    startDraining(): void;
 
     /**
      * Arbitrary data attached to this session. Set from whatever
@@ -587,7 +592,10 @@ declare module "bun" {
      * The largest payload {@link sendDatagram} will queue.
      *
      * This is the server's own limit, capped by the `max_datagram_frame_size`
-     * the peer advertised, less the session's frame prefix.
+     * the peer advertised, less the session's frame prefix. It bounds what
+     * this server sends; the browser's `datagrams.maxDatagramSize` bounds the
+     * other direction, and the two differ because each side computes its own
+     * limit from what its peer advertised.
      *
      * `0` means the peer offered no datagram support. That session carries no
      * datagrams, and every {@link sendDatagram} returns `-1`. A session that
@@ -596,7 +604,12 @@ declare module "bun" {
      */
     readonly maxDatagramSize: number;
 
-    /** Whether the session has ended. */
+    /**
+     * Whether the session has ended. A boolean, deliberately not the W3C
+     * API's `closed` promise — `await session.closed` would await a boolean
+     * and resolve immediately. The end of a session is delivered to
+     * {@link WebTransportHandler.close}.
+     */
     readonly closed: boolean;
 
     /**
@@ -627,8 +640,10 @@ declare module "bun" {
      * on a `CONNECT`, and answers `500` instead.
      *
      * Return anything else, or nothing, to accept. What you return becomes the
-     * session's {@link WebTransportSession.data}, so build per-session state
-     * from the request here.
+     * session's {@link WebTransportSession.data}, exactly as returned — there
+     * is no `{ data }` unwrapping as in `server.upgrade()` for WebSockets,
+     * and returning `false` accepts a session whose `data` is `false`. The
+     * `Response` return is the one refusal.
      *
      * Without this handler Bun accepts every WebTransport `CONNECT` on the
      * server. Authentication and routing by path belong here. This is the only
@@ -680,6 +695,20 @@ declare module "bun" {
      * and `closed` is `true`.
      */
     close?(session: WebTransportSession<T>, code: number, reason: string): void | Promise<void>;
+
+    /**
+     * The connection's send queue has emptied after refusing a datagram.
+     *
+     * Fires once per refusal-then-empty cycle: after a
+     * {@link WebTransportSession.sendDatagram} returns `0`, the next time the
+     * queued datagrams have all been handed to the network, every session on
+     * that connection hears `drain`. Resume sending here rather than polling.
+     *
+     * The queue belongs to the connection, so a session that never saw a `0`
+     * can still hear a drain when another session on the same connection
+     * filled the queue.
+     */
+    drain?(session: WebTransportSession<T>): void | Promise<void>;
   }
 
   namespace Serve {

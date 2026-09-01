@@ -450,10 +450,13 @@ impl App {
         &mut self,
         on_datagram: unsafe extern "C" fn(*mut WebTransport, *const u8, c_uint),
         on_close: unsafe extern "C" fn(*mut WebTransport, u32, *const u8, usize),
+        on_drain: unsafe extern "C" fn(*mut WebTransport),
     ) {
-        // SAFETY: self is a live FFI handle; both fn pointers are non-null and
+        // SAFETY: self is a live FFI handle; the fn pointers are non-null and
         // outlive the app (they are `extern "C" fn` items, not closures)
-        unsafe { c::uws_h3_app_on_webtransport(self, Some(on_datagram), Some(on_close)) }
+        unsafe {
+            c::uws_h3_app_on_webtransport(self, Some(on_datagram), Some(on_close), Some(on_drain))
+        }
     }
 
     fn route<UD, H>(which: RouteKind, this: &mut App, pattern: &[u8], ud: *mut UD, _handler: H)
@@ -889,6 +892,7 @@ mod c {
             app: *mut App,
             on_datagram: WtDatagramHandler,
             on_close: WtCloseHandler,
+            on_drain: WtDrainHandler,
         );
         pub(super) fn uws_h3_res_upgrade_webtransport(
             res: *mut Response,
@@ -917,4 +921,5 @@ mod c {
         Option<unsafe extern "C" fn(*mut WebTransport, *const u8, c_uint)>;
     pub(super) type WtCloseHandler =
         Option<unsafe extern "C" fn(*mut WebTransport, u32, *const u8, usize)>;
+    pub(super) type WtDrainHandler = Option<unsafe extern "C" fn(*mut WebTransport)>;
 }

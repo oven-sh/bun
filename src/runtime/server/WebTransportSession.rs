@@ -292,6 +292,29 @@ impl WebTransportSession {
         }
     }
 
+    fn dispatch_drain(&self) {
+        let cb = self.handler.get().on_drain;
+        if cb.is_empty_or_undefined_or_null() {
+            return;
+        }
+        // The queue is per connection and the empty-again signal fans out to
+        // every session on it, so a close racing the fire is ordinary — not
+        // worth a callback into a session already told it is over.
+        if self.session.get().is_none() {
+            return;
+        }
+        let global = self.global.get();
+        let Some(this_value) = self.js_value() else {
+            return;
+        };
+        let vm = VirtualMachine::get();
+        let _loop_guard = vm.enter_event_loop_scope();
+        if let Err(e) = cb.call(global, JSValue::UNDEFINED, &[this_value]) {
+            let err = global.take_exception(e);
+            report(global, err);
+        }
+    }
+
     fn dispatch_close(&self, code: u32, reason: &[u8]) {
         let cb = self.handler.get().on_close;
         let global = self.global.get();
@@ -483,6 +506,14 @@ pub(crate) extern "C" fn on_datagram(wt: *mut WebTransport, data: *const u8, len
     // SAFETY: uWS hands a pointer/length pair valid for the call.
     let bytes = unsafe { bun_core::ffi::slice(data, len as usize) };
     this.dispatch_datagram(bytes);
+}
+
+pub(crate) extern "C" fn on_drain(wt: *mut WebTransport) {
+    // SAFETY: as for `on_datagram`.
+    let Some(this) = (unsafe { session_from(wt) }) else {
+        return;
+    };
+    this.dispatch_drain();
 }
 
 pub(crate) extern "C" fn on_close(

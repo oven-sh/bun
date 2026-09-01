@@ -63,10 +63,12 @@ struct H3App {
      * there is no `open` here. */
     void onWebTransport(
         void (*onDatagram)(Http3WebTransportSession *, const char *, unsigned),
-        void (*onClose)(Http3WebTransportSession *, uint32_t, const char *, size_t))
+        void (*onClose)(Http3WebTransportSession *, uint32_t, const char *, size_t),
+        void (*onDrain)(Http3WebTransportSession *))
     {
         http3Context->getContextData()->onWebTransportDatagram = onDatagram;
         http3Context->getContextData()->onWebTransportClose = onClose;
+        http3Context->getContextData()->onWebTransportDrain = onDrain;
     }
 
     void clearRoutes() {

@@ -107,6 +107,7 @@ function generate(name) {
       "wtOnUpgrade",
       "wtOnOpen",
       "wtOnDatagram",
+      "wtOnDrain",
       "wtOnClose",
     ],
   });
@@ -390,7 +391,11 @@ export default [
         fn: "close",
         length: 2,
       },
-      drain: {
+      // `startDraining`, not `drain`: the config's `drain` handler is the
+      // send queue regaining room, and this is the opposite direction — the
+      // DRAIN capsule asking the peer to wind the session up. One name for
+      // both read as nonsense (`drain(session) { session.drain() }`).
+      startDraining: {
         fn: "drain",
         length: 0,
       },

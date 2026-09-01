@@ -90,6 +90,10 @@ struct us_quic_socket_context_s {
     void (*on_stream_writable)(us_quic_stream_t *);
     void (*on_stream_close)(us_quic_stream_t *);
     void (*on_wt_datagram)(us_quic_stream_t *, const char *, unsigned int);
+    void (*on_wt_drain)(us_quic_stream_t *);
+    /* Connections whose datagram ring refused a send and has since emptied;
+     * nonzero makes the post-process walk of ctx->conns actually happen. */
+    unsigned int wt_drain_pending;
     /* Fixed at engine creation: lsquic reads es_* once, in lsquic_engine_new. */
     int webtransport;
 
@@ -126,6 +130,9 @@ struct us_quic_socket_s {
     /* Peer's max_datagram_frame_size, read once at first accept — transport
      * parameters are fixed by then. 0 means the peer offered no datagrams. */
     uint64_t wt_peer_max_dgram;
+    /* 0 = never refused; 1 = a send got the ring-full 0 since it last
+     * emptied; 2 = it has emptied again and the drain callback is owed. */
+    int wt_dgram_blocked;
     /* ext follows */
 };
 
@@ -170,6 +177,8 @@ static void us_quic_on_timer(struct us_timer_t *t) {
 }
 #endif
 
+static void us_quic_wt_fire_drains(us_quic_socket_context_t *ctx);
+
 void us_quic_loop_process(struct us_loop_t *loop) {
     int min_diff = 0, have_tick = 0;
     for (us_quic_socket_context_t *ctx = loop->data.quic_head; ctx; ctx = ctx->next) {
@@ -178,6 +187,7 @@ void us_quic_loop_process(struct us_loop_t *loop) {
         ctx->pending_write_bytes = 0;
         lsquic_engine_process_conns(ctx->engine);
         ctx->processing = 0;
+        us_quic_wt_fire_drains(ctx);
         int diff;
         if (lsquic_engine_earliest_adv_tick(ctx->engine, &diff)) {
             if (!have_tick || diff < min_diff) min_diff = diff;
@@ -216,6 +226,7 @@ static void us_quic_process(us_quic_socket_context_t *ctx) {
     ctx->processing = 1;
     lsquic_engine_process_conns(ctx->engine);
     ctx->processing = 0;
+    us_quic_wt_fire_drains(ctx);
 }
 
 /* ───── packets out ───── */
@@ -592,6 +603,7 @@ static void us_quic_on_conn_closed(lsquic_conn_t *conn) {
         if (*pp == qs) { *pp = qs->next; break; }
     }
     us_free(qs->hostname);
+    if (qs->wt_dgram_blocked == 2) ctx->wt_drain_pending--;
     /* Streams are freed by their own on_close; this drops the index. */
     us_free(qs->wt_sessions);
     us_free(qs->wt_dgram_ring);
@@ -815,7 +827,37 @@ static ssize_t us_quic_on_dg_write(lsquic_conn_t *conn, void *buf, size_t sz) {
     memcpy(buf, rec + 2, len);
     qs->wt_dgram_head += (unsigned int) (2 + len);
     us_quic_wt_arm_dgram(qs);
+    /* Owed, not fired: this callback runs inside lsquic's packet generation,
+     * where a handler closing a stream is not a call lsquic promises to
+     * survive. The fire happens after process_conns returns. */
+    if (qs->wt_dgram_head == qs->wt_dgram_tail && qs->wt_dgram_blocked == 1) {
+        qs->wt_dgram_blocked = 2;
+        qs->ctx->wt_drain_pending++;
+    }
     return (ssize_t) len;
+}
+
+/* Fire the owed drain callbacks, one per session on each connection whose
+ * ring refused a send and has since emptied. Runs after process_conns, so a
+ * handler may send (queued for the next tick) or close without re-entering
+ * lsquic. The ring is per connection, so every session on it regains room at
+ * once; a handler that never saw a 0 may still hear a drain. */
+static void us_quic_wt_fire_drains(us_quic_socket_context_t *ctx) {
+    if (!ctx->wt_drain_pending) return;
+    for (us_quic_socket_t *qs = ctx->conns; qs && ctx->wt_drain_pending; qs = qs->next) {
+        if (qs->wt_dgram_blocked != 2) continue;
+        qs->wt_dgram_blocked = 0;
+        ctx->wt_drain_pending--;
+        if (!ctx->on_wt_drain) continue;
+        /* A handler can detach sessions (swap-remove) mid-walk; re-check
+         * membership rather than trusting the index. The array holds one or
+         * two entries, so the rescan costs nothing. */
+        for (unsigned int i = 0; i < qs->wt_session_count; i++) {
+            us_quic_stream_t *session = qs->wt_sessions[i];
+            ctx->on_wt_drain(session);
+            if (i >= qs->wt_session_count || qs->wt_sessions[i] != session) i--;
+        }
+    }
 }
 
 int us_quic_stream_is_webtransport(us_quic_stream_t *s) { return s->wt_conn != NULL; }
@@ -900,7 +942,10 @@ int us_quic_wt_send_datagram(us_quic_stream_t *s, const char *data, unsigned int
         qs->wt_dgram_head = 0;
         qs->wt_dgram_tail = live;
     }
-    if (qs->wt_dgram_tail + need > US_QUIC_WT_DGRAM_RING) return 0;
+    if (qs->wt_dgram_tail + need > US_QUIC_WT_DGRAM_RING) {
+        qs->wt_dgram_blocked = 1;
+        return 0;
+    }
 
     /* After the room check on purpose: this setter is the one step with a side
      * effect, and leaving the minimum pointing at a record that was never
@@ -926,6 +971,12 @@ void us_quic_socket_context_on_wt_datagram(us_quic_socket_context_t *ctx,
     void (*on_datagram)(us_quic_stream_t *, const char *, unsigned int))
 {
     ctx->on_wt_datagram = on_datagram;
+}
+
+void us_quic_socket_context_on_wt_drain(us_quic_socket_context_t *ctx,
+    void (*on_drain)(us_quic_stream_t *))
+{
+    ctx->on_wt_drain = on_drain;
 }
 
 /* ───── public API ───── */

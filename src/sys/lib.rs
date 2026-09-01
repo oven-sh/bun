@@ -146,9 +146,9 @@ pub unsafe fn getdirentries64(fd: Fd, buf: *mut u8, len: usize, basep: *mut i64)
 }
 
 pub mod dir_iterator {
+    use super::{EntryKind, Fd, Result};
     #[cfg(not(target_os = "macos"))]
     use super::{Error, Tag};
-    use super::{EntryKind, Fd, Result};
     use bun_paths::OSPathChar;
 
     const BUF_SIZE: usize = 8192;

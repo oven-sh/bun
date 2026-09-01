@@ -563,19 +563,29 @@ describe("CompressionStream chunk handling (Node v26 semantics)", () => {
   // 32 MiB is beyond any of that, so a source that gets this far was never paused.
   const RUNAWAY = 512;
 
-  /** A pull source of copies of `chunk` that keeps producing until `endAfter()` or RUNAWAY. */
-  function countingSource(chunk: Uint8Array) {
+  /**
+   * A pull source of copies of `chunk` that keeps producing until `endAfter()` or RUNAWAY.
+   * With `numbered`, each copy carries its 1-based pull number in its first 4 bytes, so a
+   * consumer can check that it received every block in order.
+   */
+  function countingSource(chunk: Uint8Array, numbered = false) {
     let pulls = 0;
     let closeAt = RUNAWAY;
+    const block = (n: number) => {
+      const copy = Buffer.from(chunk);
+      if (numbered) copy.writeUInt32BE(n, 0);
+      return copy;
+    };
     const stream = new ReadableStream({
       pull(c) {
         pulls++;
-        c.enqueue(chunk.slice());
+        c.enqueue(block(pulls));
         if (pulls >= closeAt) c.close();
       },
     });
     return {
       stream,
+      block,
       get pulls() {
         return pulls;
       },
@@ -624,7 +634,7 @@ describe("CompressionStream chunk handling (Node v26 semantics)", () => {
     await using server = Bun.serve({
       port: 0,
       fetch() {
-        source = countingSource(chunk);
+        source = countingSource(chunk, true);
         onRequest();
         return new Response(source.stream.pipeThrough(new CompressionStream("gzip")));
       },
@@ -658,7 +668,7 @@ describe("CompressionStream chunk handling (Node v26 semantics)", () => {
     expect(source.pulls).toBe(closeAt);
 
     // The stall and the resume must not lose or reorder output: de-chunk the
-    // response and compare the gunzipped body with the source.
+    // response and compare the gunzipped body with the numbered source blocks.
     const raw = Buffer.concat(received);
     const headEnd = raw.indexOf("\r\n\r\n");
     const head = raw.subarray(0, headEnd).toString();
@@ -675,9 +685,10 @@ describe("CompressionStream chunk handling (Node v26 semantics)", () => {
     }
     const out = zlib.gunzipSync(Buffer.concat(body));
     expect(out.byteLength).toBe(closeAt * chunk.byteLength);
-    for (let i = 0; i < closeAt; i++) {
-      if (!out.subarray(i * chunk.byteLength, (i + 1) * chunk.byteLength).equals(chunk)) {
-        throw new Error(`chunk ${i} of ${closeAt} does not match the source`);
+    for (let n = 1; n <= closeAt; n++) {
+      const got = out.subarray((n - 1) * chunk.byteLength, n * chunk.byteLength);
+      if (!got.equals(source.block(n))) {
+        throw new Error(`block ${n} of ${closeAt} is block ${got.readUInt32BE(0)} of the source, or corrupt`);
       }
     }
   });

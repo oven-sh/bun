@@ -72,8 +72,6 @@ pub trait DependencyExt {
         log: impl Into<Option<&'a mut bun_ast::Log>>,
         package_manager: impl Into<Option<&'b mut PackageManager>>,
     ) -> Option<Version>;
-    fn is_less_than(string_buf: &[u8], lhs: &Dependency, rhs: &Dependency) -> bool;
-    fn cmp(string_buf: &[u8], lhs: &Dependency, rhs: &Dependency) -> Ordering;
     fn count_with_different_buffers<SB: StringBuilderLike>(
         &self,
         name_buf: &[u8],
@@ -95,7 +93,6 @@ pub trait DependencyExt {
         builder: &mut SB,
     ) -> Result<Dependency, crate::Error>;
     fn realname(&self) -> String;
-    fn is_aliased(&self, buf: &[u8]) -> bool;
     fn eql(&self, b: &Dependency, lhs_buf: &[u8], rhs_buf: &[u8]) -> bool;
     fn is_remote_tarball(dep: &[u8]) -> bool;
     fn parse<'a, 'b>(
@@ -157,32 +154,6 @@ impl DependencyExt for Dependency {
             log,
             package_manager,
         )
-    }
-
-    /// Sorting order for dependencies is:
-    /// 1. [ `workspaces`, `devDependencies`, `optionalDependencies`, `dependencies`, `peerDependencies` ]
-    /// 2. name ASC
-    /// "name" must be ASC so that later, when we rebuild the lockfile
-    /// we insert it back in reverse order without an extra sorting pass
-    fn is_less_than(string_buf: &[u8], lhs: &Dependency, rhs: &Dependency) -> bool {
-        let behavior = lhs.behavior.cmp(rhs.behavior);
-        if behavior != Ordering::Equal {
-            return behavior == Ordering::Less;
-        }
-
-        let lhs_name = lhs.name.slice(string_buf);
-        let rhs_name = rhs.name.slice(string_buf);
-        strings::cmp_strings_asc((), lhs_name, rhs_name)
-    }
-
-    /// Total-order comparator for `slice::sort_by`. Same key as
-    /// `is_less_than`: behavior group, then name ASC.
-    fn cmp(string_buf: &[u8], lhs: &Dependency, rhs: &Dependency) -> Ordering {
-        let behavior = lhs.behavior.cmp(rhs.behavior);
-        if behavior != Ordering::Equal {
-            return behavior;
-        }
-        lhs.name.slice(string_buf).cmp(rhs.name.slice(string_buf))
     }
 
     fn count_with_different_buffers<SB: StringBuilderLike>(
@@ -254,18 +225,6 @@ impl DependencyExt for Dependency {
             Tag::Npm => self.version.npm().name,
             Tag::Tarball => self.version.tarball().package_name,
             _ => self.name,
-        }
-    }
-
-    #[inline]
-    fn is_aliased(&self, buf: &[u8]) -> bool {
-        match self.version.tag {
-            Tag::Npm => !self.version.npm().name.eql(self.name, buf, buf),
-            Tag::DistTag => !self.version.dist_tag().name.eql(self.name, buf, buf),
-            Tag::Git => !self.version.git().package_name.eql(self.name, buf, buf),
-            Tag::Github => !self.version.github().package_name.eql(self.name, buf, buf),
-            Tag::Tarball => !self.version.tarball().package_name.eql(self.name, buf, buf),
-            _ => false,
         }
     }
 
@@ -440,7 +399,14 @@ fn is_github_tarball_path(dependency: &[u8]) -> bool {
 // before I add that.
 #[inline]
 fn is_tarball(dependency: &[u8]) -> bool {
-    dependency.ends_with(b".tgz") || dependency.ends_with(b".tar.gz")
+    has_suffix_ignore_ascii_case(dependency, b".tgz")
+        || has_suffix_ignore_ascii_case(dependency, b".tar.gz")
+        || has_suffix_ignore_ascii_case(dependency, b".tar")
+}
+
+#[inline]
+fn has_suffix_ignore_ascii_case(s: &[u8], suffix: &[u8]) -> bool {
+    s.len() >= suffix.len() && s[s.len() - suffix.len()..].eq_ignore_ascii_case(suffix)
 }
 
 /// the input is assumed to be either a remote or local tarball
@@ -461,24 +427,6 @@ pub mod version {
 }
 pub mod tarball {
     pub use super::{TarballInfo, URI as Uri};
-}
-
-pub(crate) fn split_version_and_maybe_name(str: &[u8]) -> (&[u8], Option<&[u8]>) {
-    if let Some(at_index) = strings::index_of_char(str, b'@') {
-        let at_index = at_index as usize;
-        if at_index != 0 {
-            return (&str[at_index + 1..], Some(&str[0..at_index]));
-        }
-
-        let Some(second) = strings::index_of_char(&str[1..], b'@') else {
-            return (str, None);
-        };
-        let second_at_index = second as usize + 1;
-
-        return (&str[second_at_index + 1..], Some(&str[0..second_at_index]));
-    }
-
-    (str, None)
 }
 
 /// Turns `foo@1.1.1` into `foo`, `1.1.1`, or `@foo/bar@1.1.1` into `@foo/bar`, `1.1.1`, or `foo` into `foo`, `null`.
@@ -602,12 +550,6 @@ pub fn without_build_tag(version: &[u8]) -> &[u8] {
 pub(crate) type VersionExternal = [u8; 9];
 
 pub trait VersionExt {
-    fn zeroed() -> Version;
-    fn clone_in<SB: StringBuilderLike>(
-        &self,
-        buf: &[u8],
-        builder: &mut SB,
-    ) -> Result<Version, crate::Error>;
     fn is_less_than_with_tag(string_buf: &[u8], lhs: &Version, rhs: &Version) -> bool;
     fn to_version(
         alias: String,
@@ -620,24 +562,6 @@ pub trait VersionExt {
 }
 
 impl VersionExt for Version {
-    #[inline]
-    fn zeroed() -> Version {
-        Version::default()
-    }
-
-    /// Named `clone_in` so it doesn't shadow `std::clone::Clone::clone`.
-    fn clone_in<SB: StringBuilderLike>(
-        &self,
-        buf: &[u8],
-        builder: &mut SB,
-    ) -> Result<Version, crate::Error> {
-        Ok(Version {
-            tag: self.tag,
-            literal: builder.append_string(self.literal.slice(buf)),
-            value: self.value.clone_in(self.tag, buf, builder)?,
-        })
-    }
-
     fn is_less_than_with_tag(string_buf: &[u8], lhs: &Version, rhs: &Version) -> bool {
         let tag_order = lhs.tag.cmp(rhs.tag);
         if tag_order != Ordering::Equal {
@@ -734,6 +658,7 @@ impl VersionExt for Version {
             Tag::Tarball => self.tarball().eql(rhs.tarball(), lhs_buf, rhs_buf),
             Tag::Symlink => self.symlink().eql(*rhs.symlink(), lhs_buf, rhs_buf),
             Tag::Workspace => self.workspace().eql(*rhs.workspace(), lhs_buf, rhs_buf),
+            Tag::Catalog => self.catalog().eql(*rhs.catalog(), lhs_buf, rhs_buf),
             _ => true,
         }
     }
@@ -1103,40 +1028,6 @@ impl TagExt for Tag {
         }
 
         Tag::Npm
-    }
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-// Version payload types
-// ──────────────────────────────────────────────────────────────────────────
-
-pub trait ValueExt {
-    fn clone_in<SB: StringBuilderLike>(
-        &self,
-        _tag: Tag,
-        _buf: &[u8],
-        _builder: &mut SB,
-    ) -> Result<Value, crate::Error>;
-}
-
-impl ValueExt for Value {
-    fn clone_in<SB: StringBuilderLike>(
-        &self,
-        tag: Tag,
-        _buf: &[u8],
-        _builder: &mut SB,
-    ) -> Result<Value, crate::Error> {
-        Ok(match tag {
-            Tag::Npm => {
-                // SAFETY: `tag == Npm` selects the `npm` union arm.
-                let npm = unsafe { (*self.npm).clone() };
-                Value {
-                    npm: ManuallyDrop::new(npm),
-                }
-            }
-            // SAFETY: every other arm is `Copy` (no heap), so a bitwise read is a true clone.
-            _ => unsafe { core::ptr::read(self) },
-        })
     }
 }
 
@@ -1590,7 +1481,11 @@ pub(crate) fn parse_with_tag(
                 literal: sliced.value(),
             })
         }
-        Tag::Uninitialized => None,
+        Tag::Uninitialized => Some(Version {
+            tag: Tag::Uninitialized,
+            literal: sliced.value(),
+            value: Value::default(),
+        }),
         Tag::Symlink => {
             if let Some(colon) = strings::index_of_char(dependency, b':') {
                 return Some(Version {

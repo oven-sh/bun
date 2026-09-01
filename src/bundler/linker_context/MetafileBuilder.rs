@@ -34,6 +34,7 @@ use std::io::Write;
 
 use bstr::BStr;
 use bun_collections::VecExt;
+use bun_collections::index_sort;
 use bun_collections::{DynamicBitSet, StringHashMap};
 use bun_core::fmt as bfmt;
 use bun_core::string_joiner::StringJoiner;
@@ -43,7 +44,7 @@ use bun_ast::ExportsKind;
 use bun_ast::ImportKind;
 use bun_ast::ImportRecordFlags;
 
-use crate::chunk::Content as ChunkContent;
+use crate::chunk::{Content as ChunkContent, ReferencePathStyle, SourceMapShiftTracking};
 use crate::options::Loader;
 use crate::{Chunk, Index, LinkerContext};
 
@@ -83,7 +84,7 @@ pub(crate) fn generate_chunk_json(
         let file_source_index = *file_source_index;
         // Counters are `AtomicUsize` because they're populated by the parallel
         // codegen workers; metafile emission runs strictly after the
-        // `wait_for_all` join in `generate_chunks_in_parallel`, so a relaxed
+        // `group.wait()` join in `generate_chunks_in_parallel`, so a relaxed
         // load observes the final value.
         let bytes_in_output = bytes_in_output.load(core::sync::atomic::Ordering::Relaxed);
         if file_source_index as usize >= sources.len() {
@@ -218,7 +219,6 @@ pub(crate) fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> crate::Re
 
     // Iterate through all files in chunks to collect unique source indices
     let mut seen_sources = DynamicBitSet::init_empty(sources.len())?;
-    // defer seen_sources.deinit() — handled by Drop
 
     // Mark all files that appear in chunks
     for chunk in chunks.iter() {
@@ -226,6 +226,14 @@ pub(crate) fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> crate::Re
             if (source_index as usize) < sources.len() {
                 seen_sources.set(source_index as usize);
             }
+        }
+    }
+    // ...and live files that contribute no code to any chunk (every part
+    // tree-shaken), which esbuild lists too.
+    for source_index in c.graph.reachable_files.slice() {
+        let i = source_index.get() as usize;
+        if i < sources.len() && i != 0 && c.graph.files_live.is_set(i) {
+            seen_sources.set(i);
         }
     }
 
@@ -446,9 +454,9 @@ pub(crate) fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> crate::Re
         b"", // no import prefix for metafile
         &chunks[0],
         chunks,
-        None,  // no display size
-        false, // not force absolute path
-        false, // no source map shifts
+        None, // no display size
+        ReferencePathStyle::ImporterRelative,
+        SourceMapShiftTracking::Disabled,
     )?;
 
     Ok(code_result.buffer)
@@ -762,7 +770,6 @@ pub fn generate_markdown(metafile_json: &[u8]) -> crate::Result<Box<[u8]>> {
         Ok(v) => v,
         Err(_) => return Err(crate::Error::InvalidJSON),
     };
-    // defer parsed.deinit() — handled by Drop
 
     let JsonValue::Object(root_obj) = &root else {
         return Err(crate::Error::InvalidJSON);
@@ -813,7 +820,6 @@ pub fn generate_markdown(metafile_json: &[u8]) -> crate::Result<Box<[u8]>> {
     // Build a map of module path -> bytesInOutput (bytes contributed to output)
     // This aggregates from all outputs since a module may appear in multiple chunks
     let mut bytes_in_output: StringHashMap<u64> = StringHashMap::default();
-    // defer bytes_in_output.deinit() — handled by Drop
 
     // First pass through outputs to collect bytesInOutput for each module
     for (_, out_value) in outputs_obj.iter() {
@@ -847,7 +853,6 @@ pub fn generate_markdown(metafile_json: &[u8]) -> crate::Result<Box<[u8]>> {
     let mut input_files: Vec<InputFileInfo> = Vec::new();
 
     let mut imported_by: StringHashMap<Vec<&[u8]>> = StringHashMap::default();
-    // defer { ... imported_by.deinit() } — handled by Drop (Vec values drop automatically)
 
     // Second pass: collect all input file info and build reverse dependency map
     for (path, input) in inputs_obj.iter() {
@@ -1019,7 +1024,9 @@ pub fn generate_markdown(metafile_json: &[u8]) -> crate::Result<Box<[u8]>> {
     md.extend_from_slice(b"Modules sorted by bytes contributed to the output bundle. Large modules may indicate bloat.\n\n");
 
     // Sort by bytes_in_output descending
-    input_files.sort_by_key(|b| std::cmp::Reverse(b.bytes_in_output));
+    index_sort::sort_slice_by(&mut input_files, |a, b| {
+        b.bytes_in_output.cmp(&a.bytes_in_output)
+    });
 
     md.extend_from_slice(b"| Output Bytes | % of Total | Module | Format |\n");
     md.extend_from_slice(b"|--------------|------------|--------|--------|\n");
@@ -1206,7 +1213,7 @@ pub fn generate_markdown(metafile_json: &[u8]) -> crate::Result<Box<[u8]>> {
                         }
                     }
 
-                    module_sizes.sort_by_key(|b| std::cmp::Reverse(b.bytes));
+                    index_sort::sort_slice_by(&mut module_sizes, |a, b| b.bytes.cmp(&a.bytes));
 
                     let max_modules: usize = 15;
                     for (i, ms) in module_sizes.iter().enumerate() {
@@ -1243,7 +1250,7 @@ pub fn generate_markdown(metafile_json: &[u8]) -> crate::Result<Box<[u8]>> {
         });
     }
 
-    highly_imported.sort_by_key(|b| std::cmp::Reverse(b.count));
+    index_sort::sort_slice_by(&mut highly_imported, |a, b| b.count.cmp(&a.count));
 
     // Show most commonly imported modules
     if !highly_imported.is_empty() {
@@ -1294,7 +1301,7 @@ pub fn generate_markdown(metafile_json: &[u8]) -> crate::Result<Box<[u8]>> {
         sorted_paths.push(PathOnly { path: key });
     }
 
-    sorted_paths.sort_by(|a, b| a.path.cmp(b.path));
+    index_sort::sort_slice_by(&mut sorted_paths, |a, b| a.path.cmp(b.path));
 
     for sp in sorted_paths.iter() {
         let input_path = sp.path;

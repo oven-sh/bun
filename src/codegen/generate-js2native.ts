@@ -56,7 +56,6 @@ const rustIdentifierPaths: Record<string, string> = {
   "collections/linear_fifo.rs": "collections/linear_fifo.rs",
   "crash_handler.rs": "crash_handler/crash_handler.rs",
   "css_internals.rs": "css_jsc/css_internals.rs",
-  "dependency.rs": "install/dependency.rs",
   "escapeRegExp.rs": "string/escapeRegExp.rs",
   "event_loop.rs": "jsc/event_loop.rs",
   "ffi.rs": "runtime/ffi/ffi.rs",
@@ -67,6 +66,7 @@ const rustIdentifierPaths: Record<string, string> = {
   "ini.rs": "ini/ini.rs",
   "install_binding.rs": "install_jsc/install_binding.rs",
   "jest.rs": "runtime/test_runner/jest.rs",
+  "memory_pressure.rs": "runtime/node/memory_pressure.rs",
   "mysql.rs": "sql_jsc/mysql.rs",
   "napi_body.rs": "runtime/napi/napi_body.rs",
   "node_assert_binding.rs": "runtime/node/node_assert_binding.rs",
@@ -223,15 +223,13 @@ export function getJS2NativeCPP() {
             })});`,
           ),
         "") || "",
-        `static ALWAYS_INLINE JSC::JSValue ${x.symbol_generated}(Zig::GlobalObject* globalObject) {`,
-        `  return JSC::JSFunction::create(globalObject->vm(), globalObject, ${x.call_length}, ${JSON.stringify(
-          x.display_name,
-        )}_s, ${symbol({
+        `static JSC::JSValue ${x.symbol_generated}(Zig::GlobalObject* globalObject) {`,
+        `  return js2nativeNewFunction(globalObject, ${x.call_length}, ${JSON.stringify(x.display_name)}_s, ${symbol({
           type: x.type,
           symbol: x.symbol_target,
 
           filename: x.filename,
-        })}, JSC::ImplementationVisibility::Public);`,
+        })});`,
         `}`,
       ].join("\n");
     }
@@ -247,6 +245,10 @@ export function getJS2NativeCPP() {
     "using namespace Bun;",
     "using namespace JSC;",
     "using namespace WebCore;" + "\n",
+    // One out-of-line JSFunction::create for all the `new-function` wrappers below.
+    `static NEVER_INLINE JSC::JSValue js2nativeNewFunction(Zig::GlobalObject* globalObject, unsigned length, ASCIILiteral name, JSC::NativeFunction function) {`,
+    `  return JSC::JSFunction::create(globalObject->vm(), globalObject, length, name, function, JSC::ImplementationVisibility::Public);`,
+    `}` + "\n",
     ...nativeCallStrings,
     ...wrapperCallStrings,
     ...nativeCalls
@@ -297,6 +299,8 @@ export function getJS2NativeRust() {
     "JS2Rust___src_runtime_dns_jsc_dns_rs__Resolver_getRuntimeDefaultResultOrderOption",
     "JS2Rust___src_runtime_dns_jsc_dns_rs__Resolver_newResolver",
     "JS2Rust___src_runtime_dns_jsc_dns_rs__internal_seedCacheForTesting",
+    "JS2Rust___src_runtime_dns_jsc_dns_rs__internal_isLocalhostNameForTesting",
+    "JS2Rust___src_runtime_dns_jsc_dns_rs__internal_isAllLoopbackOfOneFamilyForTesting",
   ]);
 
   const srcRoot = path.resolve(import.meta.dir, "..");

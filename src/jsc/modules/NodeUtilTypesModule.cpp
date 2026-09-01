@@ -11,7 +11,7 @@
 #include <JavaScriptCore/StringObject.h>
 #include <JavaScriptCore/RegExpObject.h>
 #include <JavaScriptCore/JSSetIterator.h>
-#include <JavaScriptCore/ObjectPrototype.h>
+#include <JavaScriptCore/ObjectPrototypeInlines.h>
 #include <cmath>
 #include "JSEventTarget.h"
 #include "JavaScriptCore/TopExceptionScope.h"
@@ -901,19 +901,22 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsError,
         PropertySlot slot(object, PropertySlot::InternalMethodType::VMInquiry, &vm);
         bool has = object->getPropertySlot(globalObject, vm.propertyNames->toStringTagSymbol, slot);
         scope.assertNoException();
+        slot.disallowVMEntry.reset();
         if (has) {
             if (slot.isValue()) {
                 JSValue value = slot.getValue(globalObject, vm.propertyNames->toStringTagSymbol);
                 if (value.isString()) {
                     String tag = asString(value)->value(globalObject);
-                    CLEAR_IF_EXCEPTION(scope);
+                    RETURN_IF_EXCEPTION(scope, {});
                     if (tag == "Error"_s)
                         return JSValue::encode(jsBoolean(true));
                 }
             }
         }
 
+        // May call a Proxy's getPrototypeOf trap.
         JSValue proto = object->getPrototype(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
         if (proto.isCell() && (proto.inherits<JSC::ErrorInstance>() || proto.asCell()->type() == ErrorInstanceType || proto.inherits<JSC::ErrorPrototype>()))
             return JSValue::encode(jsBoolean(true));
     }

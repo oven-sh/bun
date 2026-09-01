@@ -35,7 +35,12 @@ impl ColumnIdentifier {
             }
         }
 
-        Ok(Self::Name(Data::Owned(name.to_owned()?)))
+        let owned = name.to_owned()?;
+        let owned = match bstr::ByteSlice::to_str_lossy(owned.as_slice()) {
+            std::borrow::Cow::Owned(replaced) => replaced.into_bytes(),
+            std::borrow::Cow::Borrowed(_) => owned,
+        };
+        Ok(Self::Name(Data::Owned(owned)))
     }
 }
 

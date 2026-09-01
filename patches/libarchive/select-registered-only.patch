@@ -1,0 +1,116 @@
+--- a/libarchive/archive_read_set_format.c
++++ b/libarchive/archive_read_set_format.c
+@@ -40,9 +40,12 @@
+   const char *str;
+   struct archive_read *a = (struct archive_read *)_a;
+ 
+-  if ((r1 = archive_read_support_format_by_code(_a, code)) < (ARCHIVE_OK))
+-    return r1;
+-
++  /*
++   * BUN PATCH: select only among formats the caller already registered.
++   * Upstream first calls archive_read_support_format_by_code(), whose
++   * switch references every reader, so the whole reader set (7zip, rar,
++   * zip, ...) stays linked even though bun only ever registers tar.
++   */
+   r1 = r2 = (ARCHIVE_OK);
+   if (a->format)
+     r2 = (ARCHIVE_WARN);
+@@ -108,7 +111,7 @@
+   if (!a->format->name || strcmp(a->format->name, str))
+   {
+     archive_set_error(&a->archive, ARCHIVE_ERRNO_PROGRAMMER,
+-        "Internal error: Unable to set format");
++        "Format is not registered");
+     r1 = (ARCHIVE_FATAL);
+   }
+ 
+--- a/libarchive/archive_read_append_filter.c
++++ b/libarchive/archive_read_append_filter.c
+@@ -42,7 +42,12 @@
+   struct archive_read_filter *filter;
+   struct archive_read *a = (struct archive_read *)_a;
+ 
+-  r2 = (ARCHIVE_OK);
++  /*
++   * BUN PATCH: append only a filter the caller already registered.
++   * Upstream registers it here via archive_read_support_filter_<code>(),
++   * which keeps every filter linked; bun only ever appends gzip.
++   */
++  r1 = r2 = (ARCHIVE_OK);
+   switch (code)
+   {
+     case ARCHIVE_FILTER_NONE:
+@@ -50,19 +55,15 @@
+        * NOTE: An initial "NONE" type filter is always set at the end of the
+        * filter chain.
+        */
+-      r1 = (ARCHIVE_OK);
+       break;
+     case ARCHIVE_FILTER_GZIP:
+       strcpy(str, "gzip");
+-      r1 = archive_read_support_filter_gzip(_a);
+       break;
+     case ARCHIVE_FILTER_BZIP2:
+       strcpy(str, "bzip2");
+-      r1 = archive_read_support_filter_bzip2(_a);
+       break;
+     case ARCHIVE_FILTER_COMPRESS:
+       strcpy(str, "compress (.Z)");
+-      r1 = archive_read_support_filter_compress(_a);
+       break;
+     case ARCHIVE_FILTER_PROGRAM:
+       archive_set_error(&a->archive, ARCHIVE_ERRNO_PROGRAMMER,
+@@ -70,43 +71,33 @@
+       return (ARCHIVE_FATAL);
+     case ARCHIVE_FILTER_LZMA:
+       strcpy(str, "lzma");
+-      r1 = archive_read_support_filter_lzma(_a);
+       break;
+     case ARCHIVE_FILTER_XZ:
+       strcpy(str, "xz");
+-      r1 = archive_read_support_filter_xz(_a);
+       break;
+     case ARCHIVE_FILTER_UU:
+       strcpy(str, "uu");
+-      r1 = archive_read_support_filter_uu(_a);
+       break;
+     case ARCHIVE_FILTER_RPM:
+       strcpy(str, "rpm");
+-      r1 = archive_read_support_filter_rpm(_a);
+       break;
+     case ARCHIVE_FILTER_LZ4:
+       strcpy(str, "lz4");
+-      r1 = archive_read_support_filter_lz4(_a);
+       break;
+     case ARCHIVE_FILTER_ZSTD:
+       strcpy(str, "zstd");
+-      r1 = archive_read_support_filter_zstd(_a);
+       break;
+     case ARCHIVE_FILTER_LZIP:
+       strcpy(str, "lzip");
+-      r1 = archive_read_support_filter_lzip(_a);
+       break;
+     case ARCHIVE_FILTER_LZOP:
+       strcpy(str, "lzop");
+-      r1 = archive_read_support_filter_lzop(_a);
+       break;
+     case ARCHIVE_FILTER_LRZIP:
+       strcpy(str, "lrzip");
+-      r1 = archive_read_support_filter_lrzip(_a);
+       break;
+     case ARCHIVE_FILTER_GRZIP:
+       strcpy(str, "grzip");
+-      r1 = archive_read_support_filter_grzip(_a);
+       break;
+     default:
+       archive_set_error(&a->archive, ARCHIVE_ERRNO_PROGRAMMER,
+@@ -127,7 +118,7 @@
+     if (!bidder->name || strcmp(bidder->name, str))
+     {
+       archive_set_error(&a->archive, ARCHIVE_ERRNO_PROGRAMMER,
+-          "Internal error: Unable to append filter");
++          "Filter is not registered");
+       return (ARCHIVE_FATAL);
+     }
+ 

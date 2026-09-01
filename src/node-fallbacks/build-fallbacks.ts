@@ -68,7 +68,8 @@ for (let fileIndex = 0; fileIndex < allFiles.length; fileIndex++) {
       if (
         outfile.includes("$isObject(") ||
         outfile.includes("$isPromise(") ||
-        outfile.includes("$isUndefinedOrNull(")
+        outfile.includes("$isUndefinedOrNull(") ||
+        outfile.includes("$newPromiseCapability(")
       ) {
         throw new Error("Unsupported function in " + name);
       }

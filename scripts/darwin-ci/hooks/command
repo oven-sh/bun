@@ -1,0 +1,2 @@
+#!/bin/bash
+exec /usr/local/bin/bun "$BUILDKITE_HOOKS_PATH/command.ts"

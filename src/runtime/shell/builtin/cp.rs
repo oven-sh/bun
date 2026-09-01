@@ -1,5 +1,6 @@
 use bun_paths::resolve_path;
 
+use crate::node::PathLike;
 use crate::shell::builtin::{Builtin, BuiltinState, IoKind, Kind};
 use crate::shell::interpreter::{
     EventLoopHandle, FlagParser, Interpreter, NodeId, OutputSrc, OutputTask, OutputTaskVTable,
@@ -397,6 +398,8 @@ pub struct ShellCpTask {
     pub(crate) operands: usize,
     pub(crate) src: Vec<u8>,
     pub(crate) tgt: Vec<u8>,
+    /// The absolute paths handed to the `ShellAsyncCpTask`, moved back by
+    /// [`cp_on_finish`](Self::cp_on_finish) for the EBUSY bookkeeping.
     pub(crate) src_absolute: Option<Vec<u8>>,
     pub(crate) tgt_absolute: Option<Vec<u8>>,
     pub(crate) cwd_path: Vec<u8>,
@@ -482,12 +485,19 @@ impl ShellCpTask {
     /// `this` is the live `heap::alloc`'d task originally passed to
     /// [`schedule`](Self::schedule); not touched again on this thread after
     /// return.
-    pub(crate) unsafe fn cp_on_finish(this: *mut ShellCpTask, result: bun_sys::Maybe<()>) {
+    pub(crate) unsafe fn cp_on_finish(
+        this: *mut ShellCpTask,
+        src: PathLike<'static>,
+        dest: PathLike<'static>,
+        result: bun_sys::Maybe<()>,
+    ) {
         // SAFETY: caller contract — JS thread, from the `ShellAsyncCpTask`'s
         // completion; `this` is live and ours. The pool side finished (and
-        // stopped counting) when it handed the copy to that task, so continue
+        // dropped its poster) when it handed the copy to that task, so continue
         // in place rather than bouncing through the concurrent queue again.
         unsafe {
+            (*this).src_absolute = Some(src.into_vec());
+            (*this).tgt_absolute = Some(dest.into_vec());
             if let Err(e) = result {
                 (*this).err = Some(ShellErr::new_sys(&e));
             }
@@ -514,8 +524,7 @@ impl ShellCpTask {
             let st = &raw mut (*this).task;
             (*st).task.callback = Self::work_pool_callback;
             (*st).keep_alive.ref_((*st).event_loop.as_event_loop_ctx());
-            // Counted until `ShellTask::on_finish` (see `ShellTask::schedule_no_ref`).
-            (*st).poster.embedded_work_scheduled();
+            (*st).arm();
             WorkPool::schedule(&raw mut (*st).task);
         }
     }
@@ -533,15 +542,22 @@ impl ShellCpTask {
                 task,
                 <Self as crate::shell::interpreter::ShellTaskCtx>::TASK_OFFSET,
             );
-            let poster = (*this).task.poster.clone();
-            if let Some(e) = (*this).run_from_thread_pool_impl() {
+            // Moved out first: on success the copy is handed to a
+            // `ShellAsyncCpTask` whose completion may free `*this` at once.
+            let poster = (*this)
+                .task
+                .poster
+                .take()
+                .expect("shell cp task on the pool is armed");
+            if let Some(e) = (*this).run_from_thread_pool_impl(&poster) {
                 (*this).err = Some(e);
+                (*this).task.poster = Some(poster);
                 Self::enqueue_to_event_loop(this);
             } else {
-                // The copy now belongs to a `ShellAsyncCpTask` (counted on its
-                // own, completes on the JS thread via `cp_on_finish`); this
-                // task's pool part is over.
-                poster.embedded_work_finished();
+                // The copy now belongs to a `ShellAsyncCpTask` (holding its
+                // own poster, completing on the JS thread via `cp_on_finish`);
+                // this task's pool part is over.
+                drop(poster);
             }
         }
     }
@@ -585,7 +601,10 @@ impl ShellCpTask {
     /// POSIX `cp` synopses
     /// (<https://man7.org/linux/man-pages/man1/cp.1p.html>), then hands off to
     /// the node:fs async cp implementation.
-    fn run_from_thread_pool_impl(&mut self) -> Option<ShellErr> {
+    fn run_from_thread_pool_impl(
+        &mut self,
+        poster: &bun_jsc::ConcurrentPoster,
+    ) -> Option<ShellErr> {
         use resolve_path::{Platform, platform};
 
         let mut buf2 = bun_paths::PathBuffer::uninit();
@@ -697,31 +716,22 @@ impl ShellCpTask {
             _copying_many = true;
         }
 
-        self.src_absolute = Some(src.as_bytes().to_vec());
-        self.tgt_absolute = Some(tgt.as_bytes().to_vec());
-
-        let args = crate::node::fs::args::Cp {
-            src: bun_jsc::node::PathLike::String(bun_ptr::cow_slice::CowSlice::init_unchecked(
-                self.src_absolute.as_deref().unwrap(),
-                false,
-            )),
-            dest: bun_jsc::node::PathLike::String(bun_ptr::cow_slice::CowSlice::init_unchecked(
-                self.tgt_absolute.as_deref().unwrap(),
-                false,
-            )),
-            flags: crate::node::fs::args::CpFlags {
+        let args = crate::node::fs::args::Cp::owned(
+            src.as_bytes().to_vec(),
+            tgt.as_bytes().to_vec(),
+            crate::node::fs::args::CpFlags {
                 recursive: self.opts.recursive,
                 force: true,
                 error_on_exist: false,
             },
-        };
+        );
 
         // Pool thread: hand the copy to an fs.cp task bound to the loop and
         // poster this shell task captured on its own thread.
         let _ = crate::node::fs::ShellAsyncCpTask::create_for_shell(
             args,
             self.task.event_loop,
-            self.task.poster.clone(),
+            poster.clone(),
             std::ptr::from_mut::<ShellCpTask>(self),
         );
 

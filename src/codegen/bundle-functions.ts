@@ -79,11 +79,7 @@ interface ParsedBuiltin {
 interface BundledBuiltin {
   name: string;
   directives: Record<string, any>;
-  isGetter: boolean;
   constructAbility: string;
-  constructKind: string;
-  isLinkTimeConstant: boolean;
-  intrinsic: string;
   overriddenName: string;
   source: string;
   params: string[];
@@ -193,9 +189,6 @@ async function processFileSplit(filename: string): Promise<{ functions: BundledB
       }
       if (name === "constructor") {
         directives.ConstructAbility = "CanConstruct";
-      } else if (name === "nakedConstructor") {
-        directives.ConstructAbility = "CanConstruct";
-        directives.ConstructKind = "Naked";
       } else {
         directives[name] = value;
       }
@@ -328,15 +321,13 @@ $$capture_start$$(${fn.async ? "async " : ""}${
     let usesAssert = output.includes("$assert");
     const captured = output.match(/\$\$capture_start\$\$([\s\S]+)\.\$\$capture_end\$\$/)![1];
     const finalReplacement =
-      (fn.directives.sloppy
-        ? captured
-        : captured.replace(
-            /function\s*\(.*?\)\s*{/,
-            '$&"use strict";' +
-              (usesDebug ? createLogClientJS("BUILTINS", fn.name) : "") +
-              (usesAssert ? createAssertClientJS(fn.name) : ""),
-          )
-      )
+      captured
+        .replace(
+          /function\s*\(.*?\)\s*{/,
+          '$&"use strict";' +
+            (usesDebug ? createLogClientJS("BUILTINS", fn.name) : "") +
+            (usesAssert ? createAssertClientJS(fn.name) : ""),
+        )
         .replace(/^\((async )?function\(/, "($1function (")
         .replace(/__intrinsic__/g, "@")
         .replace(/__no_intrinsic__/g, "") + "\n";
@@ -354,11 +345,7 @@ $$capture_start$$(${fn.async ? "async " : ""}${
       // Async functions automatically get Private visibility because the parser
       // upgrades them when they use await (see Parser.cpp parseFunctionBody)
       visibility: fn.directives.visibility ?? (fn.directives.linkTimeConstant || fn.async ? "Private" : "Public"),
-      isGetter: !!fn.directives.getter,
       constructAbility: fn.directives.ConstructAbility ?? "CannotConstruct",
-      constructKind: fn.directives.ConstructKind ?? "None",
-      isLinkTimeConstant: !!fn.directives.linkTimeConstant,
-      intrinsic: fn.directives.intrinsic ?? "NoIntrinsic",
 
       // Not known yet.
       sourceOffset: 0,
@@ -622,7 +609,7 @@ JSBuiltinInternalFunctions::JSBuiltinInternalFunctions(JSC::VM& vm) : m_vm(vm)
     #define WEBCORE_BUILTIN_${basename.toUpperCase()}_${fn.name.toUpperCase()} 1
     static constexpr JSC::ConstructAbility s_${name}ConstructAbility = JSC::ConstructAbility::${fn.constructAbility};
     static constexpr JSC::InlineAttribute s_${name}InlineAttribute = JSC::InlineAttribute::${fn.directives.alwaysInline ? "Always" : "None"};
-    static constexpr JSC::ConstructorKind s_${name}ConstructorKind = JSC::ConstructorKind::${fn.constructKind};
+    static constexpr JSC::ConstructorKind s_${name}ConstructorKind = JSC::ConstructorKind::None;
     static constexpr JSC::ImplementationVisibility s_${name}ImplementationVisibility = JSC::ImplementationVisibility::${fn.visibility};
 
     `;

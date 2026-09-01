@@ -484,6 +484,95 @@ it.skipIf(isWindows)("browser map resolution handles relative paths longer than 
   expect(exitCode).toBe(0);
 });
 
+// Parsing a package.json normalized every key of the "browser" map into a fixed
+// 1024-byte threadlocal buffer without a bounds check, so a longer key aborted
+// the process (`panic: range end index 1103 out of range for slice of length
+// 1024`) as soon as the package.json was read, whatever the target.
+describe.concurrent("browser map with a key longer than 1024 bytes", () => {
+  const longKey = Buffer.alloc(1100, "k").toString();
+
+  it("does not crash reading the package.json of a dependency at runtime", async () => {
+    using dir = tempDir("resolver-browser-long-key-runtime", {
+      "node_modules/dep/package.json": JSON.stringify({
+        name: "dep",
+        main: "index.js",
+        browser: { [`./${longKey}.js`]: "./browser.js" },
+      }),
+      "node_modules/dep/index.js": "module.exports = 1;",
+      "index.js": `console.log(require("dep"));`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(stdout).toBe("1\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it("still applies the other entries of the map to a browser build", async () => {
+    using dir = tempDir("resolver-browser-long-key-build", {
+      "package.json": JSON.stringify({
+        name: "pkg",
+        browser: {
+          [`./${longKey}.js`]: "./unused.js",
+          "./node-only.js": "./browser-only.js",
+        },
+      }),
+      "entry.js": `import { x } from "./node-only.js"; console.log(x);`,
+      "node-only.js": `export const x = "node-only";`,
+      "browser-only.js": `export const x = "browser-only";`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--target=browser", "entry.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(stdout).toContain('"browser-only"');
+    expect(stdout).not.toContain('"node-only"');
+    expect(exitCode).toBe(0);
+  });
+
+  // Looking a specifier up in the map goes through a PATH_MAX-sized buffer,
+  // which on macOS is itself 1024 bytes, so a key this long can only ever be
+  // matched on Linux and Windows.
+  it.skipIf(isMacOS)("remaps a package path that long in a browser build", async () => {
+    using dir = tempDir("resolver-browser-long-key-remap", {
+      "package.json": JSON.stringify({
+        name: "pkg",
+        browser: { [longKey]: "./shim.js" },
+      }),
+      "entry.js": `import { x } from ${JSON.stringify(longKey)}; console.log(x);`,
+      "shim.js": `export const x = "remapped";`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--target=browser", "entry.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(stdout).toContain('"remapped"');
+    expect(exitCode).toBe(0);
+  });
+});
+
 // ESModule.Package.parse scanned the entire specifier for an `@` to split off a
 // version. For wildcard `exports` maps the matched substring can contain `@`
 // (e.g. `ember-source/@ember/renderer/...`, `pkg/@scope/sub`) — those `@`s
@@ -1274,11 +1363,10 @@ describe("wildcard exports with extensionless target", () => {
 });
 
 // https://github.com/oven-sh/bun/issues/10001
-// Wildcard `imports`/`exports` that point at a `.js` target should also
-// pick up `.ts`/`.tsx`/`.mts` the same way Bun already does for plain
-// file loads (e.g. `import './foo.js'` finds `./foo.ts`). The rewrite
-// is gated on wildcard patterns only — users writing an explicit
-// `"./foo": "./foo.js"` target still get exactly what they asked for.
+// `imports`/`exports` that point at a `.js` target should also pick up
+// `.ts`/`.tsx`/`.mts` the same way Bun already does for plain file loads
+// (e.g. `import './foo.js'` finds `./foo.ts`). Wildcard and exact targets
+// alike, as in esbuild. A target that exists on disk is never rewritten.
 describe("wildcard imports/exports with `.js` → `.ts` rewrite", () => {
   test.concurrent("package.json `imports` wildcard with `.js` target resolves `.ts` file", async () => {
     using dir = tempDir("wildcard-imports-ts", {
@@ -1396,8 +1484,8 @@ describe("wildcard imports/exports with `.js` → `.ts` rewrite", () => {
     });
   });
 
-  test.concurrent("exact (non-wildcard) `.js` target is not rewritten to `.ts`", async () => {
-    using dir = tempDir("exact-no-rewrite", {
+  test.concurrent("exact (non-wildcard) `.js` target is rewritten to `.ts` too", async () => {
+    using dir = tempDir("exact-rewrite", {
       "package.json": JSON.stringify({
         name: "exact-pkg",
         type: "module",
@@ -1410,8 +1498,262 @@ describe("wildcard imports/exports with `.js` → `.ts` rewrite", () => {
       `,
     });
 
+    expect(await runWildcardScript(String(dir), "index.ts")).toEqual({
+      stdout: "ts feature",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
+// The TypeScript extension rewrite (`import "./x.js"` finds `x.ts`) uses the
+// same table as esbuild's `rewrittenFileExtensions`, plus Bun's `.js` → `.mts`.
+// It applies to relative imports and to every `exports`/`imports` target,
+// exact or wildcard.
+const tsExtensionRewrites: [from: string, to: string][] = [
+  ["js", "ts"],
+  ["js", "tsx"],
+  ["jsx", "ts"],
+  ["jsx", "tsx"],
+  ["mjs", "mts"],
+  ["cjs", "cts"],
+  // Bun-specific (oven-sh/bun#12580). esbuild and tsc only try `.ts`/`.tsx` here.
+  ["js", "mts"],
+];
+
+describe("TypeScript extension rewrite matrix", () => {
+  test.concurrent.each(tsExtensionRewrites)("`.%s` specifier resolves a `.%s` file everywhere", async (from, to) => {
+    using dir = tempDir(`ts-rewrite-${from}-${to}`, {
+      "package.json": JSON.stringify({
+        name: "rewrite-pkg",
+        type: "module",
+        exports: {
+          "./exact": `./src/exports-exact.${from}`,
+          "./wild/*": `./src/exports-wild/*.${from}`,
+        },
+        imports: {
+          "#exact": `./src/imports-exact.${from}`,
+          "#wild/*": `./src/imports-wild/*.${from}`,
+        },
+      }),
+      [`src/relative.${to}`]: `export const relative = "relative.${to}";`,
+      [`src/exports-exact.${to}`]: `export const exportsExact = "exports-exact.${to}";`,
+      [`src/exports-wild/a.${to}`]: `export const exportsWild = "exports-wild.${to}";`,
+      [`src/imports-exact.${to}`]: `export const importsExact = "imports-exact.${to}";`,
+      [`src/imports-wild/a.${to}`]: `export const importsWild = "imports-wild.${to}";`,
+      "src/entry.ts": `
+        import { relative } from "./relative.${from}";
+        import { exportsExact } from "rewrite-pkg/exact";
+        import { exportsWild } from "rewrite-pkg/wild/a";
+        import { importsExact } from "#exact";
+        import { importsWild } from "#wild/a";
+        console.log(JSON.stringify({ relative, exportsExact, exportsWild, importsExact, importsWild }));
+      `,
+    });
+
+    expect(await runWildcardScript(String(dir), "src/entry.ts")).toEqual({
+      stdout: JSON.stringify({
+        relative: `relative.${to}`,
+        exportsExact: `exports-exact.${to}`,
+        exportsWild: `exports-wild.${to}`,
+        importsExact: `imports-exact.${to}`,
+        importsWild: `imports-wild.${to}`,
+      }),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent.each([
+    ["cjs", ["ts", "tsx", "mts"]],
+    ["mjs", ["ts", "tsx", "cts"]],
+    ["js", ["cts"]],
+  ] as [from: string, present: string[]][])("`.%s` specifier does not pick up %j files", async (from, present) => {
+    using dir = tempDir(`ts-rewrite-negative-${from}`, {
+      ...Object.fromEntries(present.map(ext => [`lib.${ext}`, `export const lib = "${ext}";`])),
+      "entry.ts": `
+          import { lib } from "./lib.${from}";
+          console.log(lib);
+        `,
+    });
+
+    const result = await runWildcardScript(String(dir), "entry.ts");
+    expect(result.stderr).toContain(`Cannot find module './lib.${from}'`);
+    expect(result.exitCode).not.toBe(0);
+  });
+
+  test.concurrent("an exact target that exists on disk is never rewritten", async () => {
+    using dir = tempDir("ts-rewrite-exact-js-wins", {
+      "package.json": JSON.stringify({
+        name: "exact-js-wins",
+        type: "module",
+        exports: { "./feature": "./src/feature.js" },
+        imports: { "#feature": "./src/feature.js" },
+      }),
+      "src/feature.js": `export const feature = "js file";`,
+      "src/feature.ts": `export const feature = "ts file";`,
+      "index.ts": `
+        import { feature } from "exact-js-wins/feature";
+        import { feature as feature2 } from "#feature";
+        console.log(feature, feature2);
+      `,
+    });
+
+    expect(await runWildcardScript(String(dir), "index.ts")).toEqual({
+      stdout: "js file js file",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent("an exact target with no extension is not probed", async () => {
+    using dir = tempDir("ts-rewrite-exact-extensionless", {
+      "package.json": JSON.stringify({
+        name: "exact-extensionless",
+        type: "module",
+        imports: { "#feature": "./src/feature" },
+      }),
+      "src/feature.ts": `export const feature = "ts file";`,
+      "index.ts": `
+        import { feature } from "#feature";
+        console.log(feature);
+      `,
+    });
+
     const result = await runWildcardScript(String(dir), "index.ts");
     expect(result.stderr).toContain("Cannot find");
+    expect(result.exitCode).not.toBe(0);
+  });
+
+  // Inside node_modules the `.mjs` → `.mts` and `.cjs` → `.cts` rewrites are
+  // off (`DISABLE_AUTO_JS_TO_TS_IN_NODE_MODULES`); `.js` → `.ts` stays on.
+  test.concurrent.each([
+    ["dep/c", null],
+    ["dep/m", null],
+    ["dep/j", "ts"],
+  ] as [specifier: string, resolved: string | null][])(
+    "`%s` inside node_modules resolves to %j",
+    async (specifier, resolved) => {
+      using dir = tempDir("ts-rewrite-node-modules-gate", {
+        "node_modules/dep/package.json": JSON.stringify({
+          name: "dep",
+          exports: { "./c": "./c.cjs", "./m": "./m.mjs", "./j": "./j.js" },
+        }),
+        "node_modules/dep/c.cts": `export const c = "cts";`,
+        "node_modules/dep/m.mts": `export const m = "mts";`,
+        "node_modules/dep/j.ts": `export const j = "ts";`,
+        "index.ts": `
+          import * as dep from "${specifier}";
+          console.log(Object.values(dep)[0]);
+        `,
+      });
+
+      const result = await runWildcardScript(String(dir), "index.ts");
+      if (resolved === null) {
+        expect(result.stderr).toContain(`Cannot find module '${specifier}'`);
+        expect(result.exitCode).not.toBe(0);
+      } else {
+        expect(result).toEqual({ stdout: resolved, stderr: "", exitCode: 0 });
+      }
+    },
+  );
+});
+
+// A tsconfig `paths` substitution that names a declaration file (`.d.ts`,
+// `.d.mts`, `.d.cts`, any case) is there for type checking only. The resolver
+// skips it, like esbuild does for `.d.ts`, and falls through to the next
+// substitution or to node_modules.
+describe("tsconfig paths skip `.d.ts` substitutions", () => {
+  test.concurrent("exact, wildcard, upper-case, `.d.mts` and `.d.cts` entries fall through", async () => {
+    using dir = tempDir("tsconfig-paths-dts", {
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: {
+          baseUrl: ".",
+          paths: {
+            "foo": ["./types/foo.d.ts"],
+            "bar/*": ["./types/*.d.ts"],
+            "upper": ["./types/upper.D.TS"],
+            "upper-star/*": ["./types/*.D.TS"],
+            "fallback": ["./types/fallback.d.ts", "./src/fallback.ts"],
+            "esm-types": ["./types/esm-types.d.mts"],
+            "cjs-types/*": ["./types/*.d.cts"],
+          },
+        },
+      }),
+      "types/foo.d.ts": `export declare const x: number;`,
+      "types/lib.d.ts": `export declare const y: number;`,
+      "types/upper.D.TS": `export declare const u: number;`,
+      "types/up.D.TS": `export declare const v: number;`,
+      "types/fallback.d.ts": `export declare const f: string;`,
+      "types/esm-types.d.mts": `export declare const m: number;`,
+      "types/lib.d.cts": `export declare const c: number;`,
+      "src/fallback.ts": `export const f = "fallback.ts";`,
+      "node_modules/foo/package.json": JSON.stringify({ name: "foo", type: "module", main: "index.js" }),
+      "node_modules/foo/index.js": `export const x = 123;`,
+      "node_modules/bar/package.json": JSON.stringify({ name: "bar", type: "module" }),
+      "node_modules/bar/lib.js": `export const y = 456;`,
+      "node_modules/upper/package.json": JSON.stringify({ name: "upper", type: "module", main: "index.js" }),
+      "node_modules/upper/index.js": `export const u = 7;`,
+      "node_modules/upper-star/package.json": JSON.stringify({ name: "upper-star", type: "module" }),
+      "node_modules/upper-star/up.js": `export const v = 8;`,
+      "node_modules/esm-types/package.json": JSON.stringify({ name: "esm-types", main: "index.mjs" }),
+      "node_modules/esm-types/index.mjs": `export const m = 9;`,
+      "node_modules/cjs-types/package.json": JSON.stringify({ name: "cjs-types" }),
+      "node_modules/cjs-types/lib.js": `module.exports.c = 10;`,
+      "entry.ts": `
+        import { x } from "foo";
+        import { y } from "bar/lib";
+        import { u } from "upper";
+        import { v } from "upper-star/up";
+        import { f } from "fallback";
+        import { m } from "esm-types";
+        import { c } from "cjs-types/lib";
+        console.log(x, y, u, v, f, m, c);
+      `,
+    });
+
+    expect(await runWildcardScript(String(dir), "entry.ts")).toEqual({
+      stdout: "123 456 7 8 fallback.ts 9 10",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // Only the tsconfig text counts. A catch-all alias still resolves a specifier
+  // that names a declaration file itself.
+  test.concurrent("a `.d.ts` specifier through a catch-all alias still resolves", async () => {
+    using dir = tempDir("tsconfig-paths-dts-specifier", {
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: { baseUrl: ".", paths: { "@/*": ["./src/*"] } },
+      }),
+      "src/env.d.ts": `declare global { interface Env { FOO: string } }\nexport {};`,
+      "entry.ts": `
+        import "@/env.d.ts";
+        console.log("ok");
+      `,
+    });
+
+    expect(await runWildcardScript(String(dir), "entry.ts")).toEqual({
+      stdout: "ok",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent("a `.d.ts`-only alias with no real module still reports the original specifier", async () => {
+    using dir = tempDir("tsconfig-paths-dts-missing", {
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: { baseUrl: ".", paths: { "types-only": ["./types/types-only.d.ts"] } },
+      }),
+      "types/types-only.d.ts": `export declare const z: number;`,
+      "entry.ts": `
+        import { z } from "types-only";
+        console.log(z);
+      `,
+    });
+
+    const result = await runWildcardScript(String(dir), "entry.ts");
+    expect(result.stderr).toContain(`Cannot find package 'types-only'`);
     expect(result.exitCode).not.toBe(0);
   });
 });

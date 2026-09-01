@@ -14,17 +14,10 @@ for (const type of types) {
       name: `${type}Connection`,
       rustPath: rustPaths[`${type}Connection`],
       construct: true,
-      finalize: true,
+      refCounted: true,
       configurable: false,
       hasPendingActivity: type === "PostgresSQL",
-      klass: {
-        //   escapeString: {
-        //     fn: "escapeString",
-        //   },
-        //   escapeIdentifier: {
-        //     fn: "escapeIdentifier",
-        //   },
-      },
+      klass: {},
       JSType: "0b11101110",
       proto: {
         close: {
@@ -56,8 +49,20 @@ for (const type of types) {
           setter: "setOnClose",
           this: true,
         },
+        ...(type === "PostgresSQL"
+          ? {
+              onnotification: {
+                getter: "getOnNotification",
+                setter: "setOnNotification",
+                this: true,
+              },
+            }
+          : {}),
       },
-      values: ["onconnect", "onclose", "queries"],
+      values:
+        type === "PostgresSQL"
+          ? ["onconnect", "onclose", "queries", "onnotification"]
+          : ["onconnect", "onclose", "queries"],
     }),
   );
 
@@ -66,7 +71,7 @@ for (const type of types) {
       name: `${type}Query`,
       rustPath: rustPaths[`${type}Query`],
       construct: true,
-      finalize: true,
+      refCounted: true,
       configurable: false,
       JSType: "0b11101110",
       klass: {},

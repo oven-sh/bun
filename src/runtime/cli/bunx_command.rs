@@ -7,7 +7,7 @@ use bstr::BStr;
 
 use crate::cli::command::ContextData;
 use crate::cli::{self, Command};
-use crate::run_command::RunCommand as Run;
+use crate::run_command::{ConfigureEnvOptions, RunCommand as Run};
 
 use bun_alloc::AllocError;
 use bun_ast::ExprData;
@@ -745,8 +745,15 @@ impl BunxCommand {
         let mut this_transpiler_slot = ::core::mem::MaybeUninit::<Transpiler<'static>>::uninit();
         let mut original_path: Vec<u8> = Vec::new();
 
-        let root_dir_info =
-            Run::configure_env_for_run(ctx, &mut this_transpiler_slot, None, true, true)?;
+        let root_dir_info = Run::configure_env_for_run(
+            ctx,
+            &mut this_transpiler_slot,
+            None,
+            ConfigureEnvOptions {
+                log_errors: true,
+                store_root_fd: true,
+            },
+        )?;
         // SAFETY: `configure_env_for_run` returned `Ok`, so the slot is fully
         // initialized via `MaybeUninit::write`.
         let this_transpiler = unsafe { this_transpiler_slot.assume_init_mut() };

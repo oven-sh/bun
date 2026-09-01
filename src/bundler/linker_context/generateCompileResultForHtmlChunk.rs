@@ -56,15 +56,12 @@ pub(crate) unsafe fn generate_compile_result_for_html_chunk(task: *mut ThreadPoo
     let i = part_range.i as usize;
     let ctx: &GenerateChunkCtx = part_range.ctx;
 
-    // `ctx.chunks` is a `BackRef<[Chunk]>` constructed via `new_mut` (write
-    // provenance); recover the raw `*mut [Chunk]` for the HTML loader, which
-    // still needs `&mut [Chunk]` for `get_{js,css}_chunk_for_html`.
-    let chunks: *mut [Chunk] = ctx.chunks.as_ptr();
-    // `ctx.c` is `ParentRef<LinkerContext>` and `ctx.chunk` is `BackRef<Chunk>`
-    // — both yield safe shared borrows via `.get()`. `chunk` is this task's
+    // `ctx.c` is a `ParentRef` and `ctx.chunk` / `ctx.chunks` are `BackRef`s;
+    // all yield safe shared borrows via `.get()`. `chunk` is this task's
     // exclusively-owned HTML chunk for the duration of the compile step.
     let c_ref: &LinkerContext = ctx.c.get();
     let chunk_ref: &Chunk = ctx.chunk.get();
+    let chunks: &[Chunk] = ctx.chunks.get();
     let result = generate_compile_result_for_html_chunk_impl(c_ref, chunk_ref, chunks);
     // SAFETY: HTML chunks have exactly one part-range (i == 0); see
     // `Chunk::write_compile_result_slot` for the disjoint-slot contract.
@@ -82,11 +79,9 @@ struct HTMLLoader<'a> {
     linker: &'a LinkerContext<'a>,
     import_records: &'a [ImportRecord],
     current_import_record_index: u32,
-    /// Backref to this task's HTML chunk (an element of `*chunks`). The chunk
-    /// outlives this `HTMLLoader` (link-step duration), so `BackRef`'s
-    /// owner-outlives-holder invariant holds and reads go through safe `Deref`.
-    chunk: bun_ptr::BackRef<Chunk>,
-    chunks: *mut [Chunk],
+    /// This task's HTML chunk, an element of `chunks`.
+    chunk: &'a Chunk,
+    chunks: &'a [Chunk],
     compile_to_standalone_html: bool,
     output: Vec<u8>,
     end_tag_indices: EndTagIndices,
@@ -273,9 +268,7 @@ impl<'a> HTMLLoader<'a> {
     /// The inline `<script type="module">…</script>` holding this HTML
     /// chunk's JavaScript chunk, if it has one.
     fn standalone_body_script(&self) -> Option<String> {
-        // SAFETY: `self.chunks` raw `*mut [Chunk]` valid for the link step; sole live `&mut`.
-        let chunks = unsafe { &mut *self.chunks };
-        let js_chunk = self.chunk.get_js_chunk_for_html(chunks)?;
+        let js_chunk = self.chunk.get_js_chunk_for_html(self.chunks)?;
         Some(format!(
             "<script type=\"module\">{}</script>",
             BStr::new(js_chunk.unique_key)
@@ -284,13 +277,9 @@ impl<'a> HTMLLoader<'a> {
 
     fn get_head_tags(&self) -> Vec<String> {
         let mut array: Vec<String> = Vec::with_capacity(2);
-        // `self.chunk` is a `BackRef` (safe `Deref`).
-        let chunk: &Chunk = &self.chunk;
-        // SAFETY: `chunks` raw pointer valid for the link step; sole live `&mut`.
-        let chunks = unsafe { &mut *self.chunks };
         if self.compile_to_standalone_html {
             // In standalone HTML mode, only put CSS in <head>; JS goes before </body>
-            if let Some(css_chunk) = chunk.get_css_chunk_for_html(chunks) {
+            if let Some(css_chunk) = self.chunk.get_css_chunk_for_html(self.chunks) {
                 array.push(format!(
                     "<style>{}</style>",
                     BStr::new(css_chunk.unique_key)
@@ -298,13 +287,13 @@ impl<'a> HTMLLoader<'a> {
             }
         } else {
             // Put CSS before JS to reduce chances of flash of unstyled content
-            if let Some(css_chunk) = chunk.get_css_chunk_for_html(chunks) {
+            if let Some(css_chunk) = self.chunk.get_css_chunk_for_html(self.chunks) {
                 array.push(format!(
                     "<link rel=\"stylesheet\" crossorigin href=\"{}\">",
                     BStr::new(css_chunk.unique_key)
                 ));
             }
-            if let Some(js_chunk) = chunk.get_js_chunk_for_html(chunks) {
+            if let Some(js_chunk) = self.chunk.get_js_chunk_for_html(self.chunks) {
                 // type="module" scripts do not block rendering, so it is okay to put them in head
                 array.push(format!(
                     "<script type=\"module\" crossorigin src=\"{}\"></script>",
@@ -360,15 +349,10 @@ impl<'a> HTMLLoader<'a> {
     }
 }
 
-/// `chunk` is the HTML chunk being compiled (held read-only via `BackRef`
-/// inside `HTMLLoader`). `chunks` is the raw `*mut [Chunk]` from
-/// `GenerateChunkCtx.chunks` (write provenance, valid for the link step) —
-/// stored as-is and only deref'd at the guarded `&mut *` sites in
-/// `HTMLLoader::{on_tag,get_head_tags}` and the standalone-HTML branch below.
 fn generate_compile_result_for_html_chunk_impl<'a>(
     c: &'a LinkerContext<'a>,
-    chunk: &Chunk,
-    chunks: *mut [Chunk],
+    chunk: &'a Chunk,
+    chunks: &'a [Chunk],
 ) -> CompileResult {
     let parse_graph = c.parse_graph();
     let sources = parse_graph.input_files.items_source();
@@ -397,7 +381,7 @@ fn generate_compile_result_for_html_chunk_impl<'a>(
         import_records: records,
         current_import_record_index: 0,
         compile_to_standalone_html,
-        chunk: bun_ptr::BackRef::new(chunk),
+        chunk,
         chunks,
         output: Vec::new(),
         end_tag_indices: EndTagIndices {

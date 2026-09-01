@@ -1,0 +1,8 @@
+{
+  "name": "testing-peer-deps-nested",
+  "version": "1.0.0",
+  "license": "ISC",
+  "dependencies": {
+    "@isaacs/testing-peer-deps": "2 || 3"
+  }
+}

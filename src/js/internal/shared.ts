@@ -1,5 +1,3 @@
-const { SafeArrayIterator } = require("internal/primordials");
-
 const ObjectFreeze = Object.freeze;
 
 class NotImplementedError extends Error {
@@ -91,7 +89,7 @@ class ExceptionWithHostPort extends Error {
 
 class NodeAggregateError extends AggregateError {
   constructor(errors, message) {
-    super(new SafeArrayIterator(errors), message);
+    super(new (require("internal/primordials").SafeArrayIterator)(errors), message);
     this.code = errors[0]?.code;
   }
   get ["constructor"]() {
@@ -146,6 +144,11 @@ function once(callback, { preserveReturnValue = false } = kEmptyObject) {
 }
 
 const kEmptyObject = ObjectFreeze(Object.create(null));
+
+// process.send() options marking cluster-internal traffic; the flag is a private name so user code cannot set it.
+const kInternalSendOptions: any = Object.create(null);
+$putByIdDirectPrivate(kInternalSendOptions, "internal", true);
+ObjectFreeze(kInternalSendOptions);
 
 // Node invokes fs/dns callbacks via InternalMakeCallback, so a throw becomes uncaughtException
 // (not unhandledRejection); Bun runs them from a promise reaction so we reroute the throw.
@@ -422,8 +425,10 @@ export default {
   PerformanceNodeEntry,
 
   kHandle: Symbol("kHandle"),
+  kClusterOwner: Symbol("kClusterOwner"),
   kAutoDestroyed: Symbol("kAutoDestroyed"),
   kWeakHandler: Symbol("kWeak"),
-  kGetNativeReadableProto: Symbol("kGetNativeReadableProto"),
+  kCustomPromisifyArgsSymbol: Symbol("customPromisifyArgs"),
   kEmptyObject,
+  kInternalSendOptions,
 };

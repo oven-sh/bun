@@ -1,3 +1,4 @@
+import { S3Client } from "bun";
 import { afterAll, describe, expect, test } from "bun:test";
 import { isMacOS, isWindows, tempDir } from "harness";
 import zlib from "node:zlib";
@@ -175,6 +176,62 @@ describe("Bun.Image", () => {
     const res = new Response(new Bun.Image(Bun.file(p)).resize(2, 2).webp());
     expect(res.headers.get("content-type")).toBe("image/webp");
     expect((await res.bytes()).subarray(8, 12)).toEqual(Buffer.from("WEBP"));
+  });
+
+  // Store-backed Blob sources are read at terminal time through the Blob's
+  // own store dispatch. The Bun.file() test above covers the file store; this
+  // covers the S3 download callback (bytes and error arm) and the synchronous
+  // in-memory delivery.
+  test("S3 and zero-length in-memory Blob sources are read through the same chain", async () => {
+    using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const { pathname } = new URL(req.url);
+        if (req.method === "GET" && pathname.endsWith("/src.png")) {
+          return new Response(cornersPng, { headers: { "Content-Type": "image/png" } });
+        }
+        return new Response("", { status: 404 });
+      },
+    });
+    const client = new S3Client({
+      accessKeyId: "test",
+      secretAccessKey: "test",
+      region: "us-east-1",
+      bucket: "images",
+      endpoint: server.url.href,
+    });
+
+    // The S3 client sends every request through an ambient HTTP_PROXY, even
+    // one to the loopback endpoint above (#32045). Blank the variables for the
+    // duration of the test; an assignment (not a delete) is what the native
+    // env loader observes, and an empty value means "no proxy".
+    const proxyKeys = ["HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy"] as const;
+    const savedProxyEnv = Object.fromEntries(proxyKeys.map(k => [k, process.env[k]]));
+    for (const k of proxyKeys) process.env[k] = "";
+    try {
+      const fromS3 = new Bun.Image(client.file("src.png"));
+      expect(await fromS3.metadata()).toEqual({ width: 4, height: 3, format: "png" });
+      // Second terminal reuses the downloaded bytes.
+      expect((await fromS3.png().bytes())[0]).toBe(0x89);
+      expect(await client.file("src.png").image().metadata()).toEqual({ width: 4, height: 3, format: "png" });
+
+      // Download failure rejects the terminal with the S3 error.
+      expect(
+        await new Bun.Image(client.file("missing.png")).metadata().then(
+          () => null,
+          (e: any) => e.code,
+        ),
+      ).toBe("NoSuchKey");
+    } finally {
+      for (const k of proxyKeys) process.env[k] = savedProxyEnv[k] ?? "";
+    }
+
+    // A zero-length slice of an in-memory Blob still has a store but nothing
+    // to copy at construction, so it is delivered synchronously at terminal
+    // time; the empty buffer then fails to decode.
+    const empty = new Blob([cornersPng]).slice(0, 0);
+    await expect(new Bun.Image(empty).metadata()).rejects.toThrow(/unrecognised format/);
+    await expect(empty.image().png().bytes()).rejects.toThrow(/unrecognised format/);
   });
 
   test("metadata() reads PNG dimensions", async () => {
@@ -832,6 +889,52 @@ describe("Bun.Image", () => {
     }
   });
 
+  // Fixtures are 64×48 gradients whose pixel formula is asserted below.
+  describe.skipIf(!isMacOS)("HEIC decode via ImageIO", () => {
+    const fixture = (name: string) => join(import.meta.dir, "fixtures", name);
+    async function gradientError(name: string, pixelOf: (x: number, y: number) => [number, number, number]) {
+      const { w, h, data } = decodePngRaw(await new Bun.Image(fixture(name)).png().bytes());
+      expect([w, h]).toEqual([64, 48]);
+      let sum = 0;
+      for (let y = 0; y < h; y++)
+        for (let x = 0; x < w; x++) {
+          const i = (y * w + x) * 4;
+          const [r, g, b] = pixelOf(x, y);
+          sum += Math.abs(data[i] - r) + Math.abs(data[i + 1] - g) + Math.abs(data[i + 2] - b);
+        }
+      return sum / (w * h * 3);
+    }
+
+    test("8-bit HEIC decodes to the source gradient", async () => {
+      expect(await new Bun.Image(fixture("gradient-8bit.heic")).metadata()).toMatchObject({
+        width: 64,
+        height: 48,
+        format: "heic",
+      });
+      expect(await gradientError("gradient-8bit.heic", (x, y) => [x * 4, y * 5, 128])).toBeLessThan(4);
+    });
+
+    test("10-bit HEIC decodes to the source gradient", async () => {
+      // Encoded from a 16-bit source, so ImageIO hands back a packed 10-bit CGImage that vImage cannot convert.
+      expect(
+        await gradientError("gradient-10bit.heic", (x, y) => [
+          Math.floor((x * 255) / 64),
+          Math.floor((y * 255) / 48),
+          128,
+        ]),
+      ).toBeLessThan(4);
+    });
+
+    test("HEIC with an undecodable HEVC payload rejects instead of returning black pixels", async () => {
+      // The 8-bit fixture with its mdat scrambled: the container parses, the HEVC decode fails.
+      const img = new Bun.Image(fixture("gradient-corrupt-hevc.heic"));
+      expect(await img.metadata()).toMatchObject({ width: 64, height: 48, format: "heic" });
+      await expect(new Bun.Image(fixture("gradient-corrupt-hevc.heic")).png().bytes()).rejects.toMatchObject({
+        code: "ERR_IMAGE_DECODE_FAILED",
+      });
+    });
+  });
+
   // @intFromFloat on NaN/Inf is UB; these used to abort the process.
   test("non-finite / huge numeric inputs are clamped by coerceInt", async () => {
     // rotate: coerceInt clamps to ±1e15, neither of which is a multiple of 90,
@@ -987,6 +1090,31 @@ describe("Bun.Image", () => {
       expect((await out3.bytes())[0]).toBe(0x89);
       // 4. fs error propagates from Bun.write, not the Image layer.
       await expect(new Bun.Image(cornersPng).png().write(String(dir))).rejects.toThrow();
+    });
+
+    test(".write(dest) refuses the Blob destinations Bun.write refuses, with the same error", async () => {
+      using dir = tempDir("image-write-blob-dest", { "src.png": Buffer.from(cornersPng) });
+      const caught = async (fn: () => unknown): Promise<any> => {
+        try {
+          await fn();
+        } catch (e) {
+          return e;
+        }
+        throw new Error("did not throw or reject");
+      };
+      const errorShape = (e: any) => ({ name: e.name, code: e.code, message: e.message });
+      // A Blob backed by bytes and a Blob with no store at all. Bun.write()
+      // throws for both; .write() used to hand them to the file write path
+      // unchecked, which aborted the process for the byte-backed one.
+      for (const dest of [new Blob(["not a file"]), new Blob([])] as any[]) {
+        const expected = await caught(() => Bun.write(dest, "x"));
+        // An in-memory source and a Bun.file() source enter the pipeline
+        // through different schedulers; both deliver to the same write step.
+        for (const source of [cornersPng, Bun.file(join(String(dir), "src.png"))]) {
+          const actual = await caught(() => new Bun.Image(source).png().write(dest));
+          expect(errorShape(actual)).toEqual(errorShape(expected));
+        }
+      }
     });
 
     test(".toBase64() produces valid base64", async () => {

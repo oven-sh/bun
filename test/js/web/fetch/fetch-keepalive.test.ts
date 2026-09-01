@@ -1,5 +1,7 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tls } from "harness";
+import { once } from "node:events";
+import { createServer } from "node:net";
 
 test("keepalive", async () => {
   using server = Bun.serve({
@@ -36,7 +38,7 @@ test("keepalive", async () => {
   }
 });
 
-test("fetch does not reuse a pooled TLS connection for a request with a different Host header", async () => {
+test("fetch reuses a pooled TLS connection across requests with different Host headers", async () => {
   using server = Bun.serve({
     port: 0,
     tls,
@@ -58,43 +60,61 @@ test("fetch does not reuse a pooled TLS connection for a request with a differen
     return await res.text();
   };
 
-  // Two requests whose TLS handshake used the Host-header override
-  // "wrong.example" for SNI/certificate verification share one pooled
-  // connection (legitimate keep-alive still works).
-  const overrideA = await get({ Host: "wrong.example" });
-  const overrideB = await get({ Host: "wrong.example" });
-  expect(overrideB).toBe(overrideA);
-
-  // A request without the override expects the server identity to match
-  // url.hostname ("localhost"), so it must not be handed the connection
-  // that was only ever negotiated as "wrong.example". It has to open a new
-  // connection, which cannot have the same client port.
-  const plain = await get();
-  expect(plain).not.toBe(overrideA);
+  // The TLS handshake is keyed to the URL host (SNI and certificate
+  // verification both use url.hostname). A request-level Host header is only
+  // an HTTP field, so three requests with differing Host headers share one
+  // pooled connection.
+  const first = await get({ Host: "wrong.example" });
+  const second = await get({ Host: "another.example" });
+  const third = await get();
+  expect({ second, third }).toEqual({ second: first, third: first });
 });
 
-// RFC 9112 §9.6: a server's `Connection: close` applies regardless of status
-// code. Previously bun only honored it for 2xx, so a 4xx/5xx with
-// `Connection: close` was pooled; a concurrent fetch that picked the pooled
-// socket before the server's FIN landed failed with ECONNRESET. Subprocess
-// so the pool can't leak into other tests. The server here keeps the socket
-// open and answers every request on it, so the connection count is exactly
-// how many times bun dialed (pooled reuse => 1, correct => 4).
+// Whether a completed response leaves its connection in the keep-alive pool is
+// decided from the status line and the Connection header:
+//   - RFC 9112 §9.6: `close` ends persistence whatever the status code (bun used
+//     to honour it on 2xx only, so a 4xx/5xx with `Connection: close` was
+//     pooled and the next fetch raced the server's FIN into ECONNRESET), and it
+//     wins over a keep-alive token on the same or another Connection line.
+//   - RFC 9112 §9.3: an HTTP/1.0 response is persistent only if it says
+//     `Connection: keep-alive`; a bare Keep-Alive header is not that. bun never
+//     looked at the version, so every HTTP/1.0 response with a Content-Length
+//     was pooled and, since nearly every HTTP/1.0 server closes after
+//     responding, the next fetch (or a followed redirect's hop) was written
+//     onto a dying socket. Node and curl dial again here.
+// The server below keeps every socket open and answers each request on the
+// connection it arrived on, so `connections` is exactly how many times bun
+// dialed for four sequential fetches: pooled => 1, not pooled => 4. Subprocess
+// so the pool can't leak between rows.
 test.concurrent.each([
-  [200, "close"],
-  [400, "close"],
-  [413, "close"],
-  [500, "close"],
-  [200, "close, keep-alive"],
-  [200, "Keep-Alive ,\tClose"],
-  [200, "upgrade, close"],
-  [200, "close\\r\\nConnection: keep-alive"],
-] as const)("a %d response with Connection: %s is not pooled", async (status, connection) => {
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `
+  ["HTTP/1.1 200 X", ["Connection: close"], 4],
+  ["HTTP/1.1 400 X", ["Connection: close"], 4],
+  ["HTTP/1.1 413 X", ["Connection: close"], 4],
+  ["HTTP/1.1 500 X", ["Connection: close"], 4],
+  ["HTTP/1.1 200 X", ["Connection: close, keep-alive"], 4],
+  ["HTTP/1.1 200 X", ["Connection: Keep-Alive ,\tClose"], 4],
+  ["HTTP/1.1 200 X", ["Connection: upgrade, close"], 4],
+  ["HTTP/1.1 200 X", ["Connection: close", "Connection: keep-alive"], 4],
+  ["HTTP/1.1 200 X", [], 1],
+  ["HTTP/1.1 404 X", [], 1],
+  ["HTTP/1.0 200 X", [], 4],
+  ["HTTP/1.0 404 X", [], 4],
+  ["HTTP/1.0 200 X", ["Keep-Alive: timeout=5"], 4],
+  ["HTTP/1.0 200 X", ["Connection: keep-alive"], 1],
+  ["HTTP/1.0 404 X", ["Connection: Keep-Alive"], 1],
+  ["HTTP/1.0 200 X", ["Connection: keep-alive, close"], 4],
+  ["HTTP/1.0 200 X", ["Connection: keep-alive", "Connection: close"], 4],
+  ["HTTP/1.0 200 X", ["Connection: close", "Connection: keep-alive"], 4],
+] as [statusLine: string, headers: string[], connections: number][])(
+  "%s %j: four fetches use %d connection(s)",
+  async (statusLine, headers, connections) => {
+    const status = Number(statusLine.split(" ")[1]);
+    const head = [statusLine, ...headers, "Content-Length: 2"].join("\r\n") + "\r\n\r\nok";
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
         import net from "node:net";
         let connections = 0;
         const server = net.createServer(sock => {
@@ -105,7 +125,7 @@ test.concurrent.each([
             buf += d.toString("latin1");
             while (buf.includes("\\r\\n\\r\\n")) {
               buf = buf.slice(buf.indexOf("\\r\\n\\r\\n") + 4);
-              sock.write("HTTP/1.1 ${status} X\\r\\nContent-Length: 2\\r\\nConnection: ${connection}\\r\\n\\r\\nok");
+              sock.write(${JSON.stringify(head)});
             }
           });
         });
@@ -121,19 +141,119 @@ test.concurrent.each([
         console.log(JSON.stringify({ statuses, connections }));
         process.exit(0);
         `,
-    ],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  const result = stdout.startsWith("{") ? JSON.parse(stdout.trim()) : { stdout, stderr };
-  expect({ result, exitCode }).toEqual({
-    result: { statuses: [status, status, status, status], connections: 4 },
-    exitCode: 0,
-  });
-});
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const result = stdout.startsWith("{") ? JSON.parse(stdout.trim()) : { stdout, stderr };
+    expect({ result, exitCode }).toEqual({
+      result: { statuses: [status, status, status, status], connections },
+      exitCode: 0,
+    });
+  },
+);
+
+// Through a CONNECT proxy two status lines arrive on one connection. The
+// proxy's reply to CONNECT only describes the hop to the proxy (tinyproxy,
+// Apache mod_proxy_connect and older Squid all answer it with `HTTP/1.0 200`),
+// so its version must not decide anything; the origin's response travelling
+// inside the tunnel decides whether the tunnel is pooled, and its HTTP/1.0
+// status line counts like a direct one. `tunnels` is how many times bun dialed
+// the proxy for three sequential fetches: a pooled tunnel serves all three.
+// Subprocess so the pool is private and so the machine's own NO_PROXY /
+// HTTP_PROXY can't make fetch bypass the explicit proxy.
+test.concurrent.each([
+  ["HTTP/1.0 200 Connection established", "HTTP/1.1 200 OK", 1],
+  ["HTTP/1.0 200 Connection established", "HTTP/1.0 200 OK\r\nConnection: keep-alive", 1],
+  ["HTTP/1.1 200 Connection established", "HTTP/1.0 200 OK", 3],
+] as [connectReply: string, originHead: string, tunnels: number][])(
+  "CONNECT answered %j, origin answering %j: three fetches open %d tunnel(s)",
+  async (connectReply, originHead, tunnels) => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        import net from "node:net";
+        import { createServer as createTlsServer } from "node:tls";
+        // Answers every request on the connection it arrived on and never
+        // closes, so a tunnel bun pooled keeps working and shows up as reuse.
+        const origin = createTlsServer(${JSON.stringify(tls)}, sock => {
+          sock.on("error", () => {});
+          let buf = "";
+          sock.on("data", d => {
+            buf += d.toString("latin1");
+            while (buf.includes("\\r\\n\\r\\n")) {
+              buf = buf.slice(buf.indexOf("\\r\\n\\r\\n") + 4);
+              sock.write(${JSON.stringify(originHead + "\r\nContent-Length: 2\r\n\r\nok")});
+            }
+          });
+        });
+        origin.listen(0, "127.0.0.1");
+        await new Promise(r => origin.on("listening", r));
+
+        let tunnels = 0;
+        const proxy = net.createServer(client => {
+          tunnels++;
+          client.on("error", () => {});
+          let head = "";
+          const onHead = chunk => {
+            head += chunk.toString("latin1");
+            if (!head.includes("\\r\\n\\r\\n")) return;
+            client.off("data", onHead);
+            // bun sends nothing more until it has the reply, so piping right
+            // after writing it can't miss any tunnel bytes.
+            const upstream = net.connect(origin.address().port, "127.0.0.1", () => {
+              client.write(${JSON.stringify(connectReply + "\r\n\r\n")});
+              client.pipe(upstream);
+              upstream.pipe(client);
+            });
+            upstream.on("error", () => client.destroy());
+          };
+          client.on("data", onHead);
+        });
+        proxy.listen(0, "127.0.0.1");
+        await new Promise(r => proxy.on("listening", r));
+
+        const responses = [];
+        for (let i = 0; i < 3; i++) {
+          const res = await fetch("https://localhost:" + origin.address().port + "/", {
+            proxy: "http://127.0.0.1:" + proxy.address().port,
+            tls: { rejectUnauthorized: false },
+          });
+          responses.push(res.status + ":" + (await res.text()));
+        }
+        console.log(JSON.stringify({ responses, tunnels }));
+        process.exit(0);
+        `,
+      ],
+      env: {
+        ...bunEnv,
+        NO_PROXY: undefined,
+        no_proxy: undefined,
+        HTTP_PROXY: undefined,
+        http_proxy: undefined,
+        HTTPS_PROXY: undefined,
+        https_proxy: undefined,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const result = stdout.startsWith("{") ? JSON.parse(stdout.trim()) : { stdout, stderr };
+    expect({ result, exitCode }).toEqual({
+      result: { responses: ["200:ok", "200:ok", "200:ok"], tunnels },
+      exitCode: 0,
+    });
+  },
+  // Subprocess start plus up to three TLS handshakes takes ~2s on a debug
+  // ASAN build here; leave room for slower CI runners.
+  20_000,
+);
 
 // A reused keep-alive connection reset during a streaming PUT must reject with
 // ECONNRESET, not retry: the stream body is already consumed, and the retry
@@ -375,6 +495,8 @@ test("a completed streaming POST keeps its connection in the keep-alive pool", a
 //   /302, /303, /307  bodyless redirect to /legit on a reusable connection
 //   /302-close        the same 302 with Connection: close
 //   /302-body         a 302 that carries a body
+//   /302-http10       the same 302 from an HTTP/1.0 server (socket left open)
+//   /302-http10-ka    ... that says Connection: keep-alive
 //   anything else     200 whose body is "<method>:<request body length>"
 const redirectServer = `
   import net from "node:net";
@@ -397,6 +519,8 @@ const redirectServer = `
           "/302": "302 Found",
           "/302-close": "302 Found",
           "/302-body": "302 Found",
+          "/302-http10": "302 Found",
+          "/302-http10-ka": "302 Found",
           "/303": "303 See Other",
           "/307": "307 Temporary Redirect",
         }[path];
@@ -407,6 +531,10 @@ const redirectServer = `
           sock.end("HTTP/1.1 " + redirect + "\\r\\nLocation: /legit\\r\\nContent-Length: 0\\r\\nConnection: close\\r\\n\\r\\n");
         } else if (path === "/302-body") {
           sock.write("HTTP/1.1 " + redirect + "\\r\\nLocation: /legit\\r\\nContent-Length: 5\\r\\n\\r\\nmoved");
+        } else if (path === "/302-http10") {
+          sock.write("HTTP/1.0 " + redirect + "\\r\\nLocation: /legit\\r\\nContent-Length: 0\\r\\n\\r\\n");
+        } else if (path === "/302-http10-ka") {
+          sock.write("HTTP/1.0 " + redirect + "\\r\\nLocation: /legit\\r\\nContent-Length: 0\\r\\nConnection: keep-alive\\r\\n\\r\\n");
         } else {
           sock.write("HTTP/1.1 " + redirect + "\\r\\nLocation: /legit\\r\\nContent-Length: 0\\r\\n\\r\\n");
         }
@@ -430,10 +558,14 @@ test.concurrent.each([
   ["GET -> 302", "/302", "{}", "GET:0", 1],
   ["POST -> 303 (hop is a bodyless GET)", "/303", '{ method: "POST", body: "payload" }', "GET:0", 1],
   ["POST -> 307 (hop resends the body)", "/307", '{ method: "POST", body: "payload" }', "POST:7", 1],
+  ["GET -> HTTP/1.0 302 with Connection: keep-alive", "/302-http10-ka", "{}", "GET:0", 1],
   // Not reusable, so every fetch dials once more for the hop; the hop's own
-  // connection is pooled and carries the next fetch's 3xx.
+  // connection is pooled and carries the next fetch's 3xx. The HTTP/1.0 row is
+  // what python -m http.server and its kind send: bun used to pool that
+  // connection and write the hop onto it while the server was closing it.
   ["GET -> 302 with Connection: close", "/302-close", "{}", "GET:0", 5],
   ["GET -> 302 carrying a body", "/302-body", "{}", "GET:0", 5],
+  ["GET -> HTTP/1.0 302", "/302-http10", "{}", "GET:0", 5],
 ])("redirect keep-alive: %s", async (_, path, init, hopBody, connections) => {
   await using proc = Bun.spawn({
     cmd: [
@@ -567,3 +699,37 @@ for (const [label, earlyReply, body, first, onWindows] of earlyReplyCases) {
     });
   });
 }
+
+test.skipIf(isWindows)("a full keep-alive pool evicts the longest-idle connection", async () => {
+  function makeServer() {
+    let connections = 0;
+    const srv = createServer(sock => {
+      connections++;
+      let buf = "";
+      sock.on("error", () => {});
+      sock.on("data", d => {
+        buf += d.toString("latin1");
+        let i: number;
+        while ((i = buf.indexOf("\r\n\r\n")) >= 0) {
+          buf = buf.slice(i + 4);
+          sock.write("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok");
+        }
+      });
+    });
+    return { srv, connections: () => connections };
+  }
+  // One more distinct origin than the pool holds (64). Without eviction the
+  // last connection is closed instead of parked and its second request
+  // opens a new one.
+  const servers = Array.from({ length: 65 }, () => makeServer());
+  for (const s of servers) s.srv.listen(0, "127.0.0.1");
+  await Promise.all(servers.map(s => once(s.srv, "listening")));
+  try {
+    const urls = servers.map(s => `http://127.0.0.1:${(s.srv.address() as import("net").AddressInfo).port}/x`);
+    for (const url of urls) expect(await (await fetch(url)).text()).toBe("ok");
+    expect(await (await fetch(urls[64])).text()).toBe("ok");
+    expect(servers[64].connections()).toBe(1);
+  } finally {
+    for (const s of servers) s.srv.close();
+  }
+});

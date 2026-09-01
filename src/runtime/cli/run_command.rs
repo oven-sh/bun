@@ -4,7 +4,7 @@
 //! bun-shell / system shell. PATH stitching, `node_modules/.bin` lookup,
 //! markdown rendering, and the Windows bunx fast-path are all handled here.
 
-use ::core::ffi::{c_char, c_void};
+use ::core::ffi::c_char;
 use ::core::sync::atomic::{AtomicBool, Ordering};
 use std::io::Write as _;
 
@@ -80,14 +80,18 @@ pub struct ExecCfg {
     pub(crate) allow_fast_run_for_extensions: bool,
 }
 
-impl Default for ExecCfg {
-    fn default() -> Self {
-        Self {
-            bin_dirs_only: false,
-            log_errors: true,
-            allow_fast_run_for_extensions: true,
-        }
-    }
+/// Per-caller knobs for [`RunCommand::configure_env_for_run`] and
+/// [`RunCommand::configure_env_for_run_without_linker`].
+#[derive(Clone, Copy)]
+pub(crate) struct ConfigureEnvOptions {
+    /// Report a current directory that cannot be read on stderr. When `false`
+    /// it is only returned, as [`crate::Error::CouldntReadCurrentDirectory`].
+    pub(crate) log_errors: bool,
+    /// Keep the current directory's fd open on the returned `DirInfo` (only
+    /// that one: the resolver's `store_fd` is turned back off right after),
+    /// for callers that go on to read files through it, like `bunx` resolving
+    /// a package's `bin`.
+    pub(crate) store_root_fd: bool,
 }
 
 pub(crate) struct RunCommand;
@@ -291,6 +295,17 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
         for part in passthrough {
             copy_script.push(b' ');
+            if cfg!(windows) && use_system_shell && bun_which::batch_arg_has_cmd_metachars(part) {
+                if !silent {
+                    pretty_errorln!(
+                        "<r><red>error<r>: Failed to run script <b>{}<r>: argument {} contains a cmd.exe special character and cannot be passed to the system shell",
+                        bstr::BStr::new(name),
+                        bun_core::fmt::quote(&part[..]),
+                    );
+                    Output::flush();
+                }
+                Global::exit(1);
+            }
             if needs_escape_utf8_ascii_latin1(part) {
                 escape_8bit::<true, false>(part, &mut copy_script).unwrap_or_oom();
                 continue;
@@ -378,6 +393,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // in the meantime we don't need to free it.
         let envp = env.map.create_null_delimited_env_map()?;
 
+        #[cfg(windows)]
+        bun_spawn::ctrl_c::install();
         let spawn_result = match sync::spawn(&sync::Options {
             argv,
             argv0: Some(shell_bin.as_ptr().cast::<::core::ffi::c_char>()),
@@ -447,6 +464,14 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
                         Global::raise_ignoring_panic_handler(sig);
                     }
+                }
+
+                // cmd.exe exits 0 after abandoning a line whose command was Ctrl+C'd.
+                #[cfg(windows)]
+                if exit_code.raw == bun_sys::windows::STATUS_CONTROL_C_EXIT
+                    || (bun_spawn::ctrl_c::take_received() && exit_code.raw == 0)
+                {
+                    bun_spawn::ctrl_c::exit_like_child();
                 }
 
                 if exit_code.code != 0 {
@@ -530,10 +555,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         ctx: &mut ContextData,
         this_transpiler: &mut ::core::mem::MaybeUninit<Transpiler<'static>>,
         env: Option<*mut DotEnv::Loader>,
-        log_errors: bool,
-        store_root_fd: bool,
+        opts: ConfigureEnvOptions,
     ) -> crate::Result<bun_resolver::DirInfoRef> {
-        Self::configure_env_for_run_impl(ctx, this_transpiler, env, log_errors, store_root_fd, true)
+        Self::configure_env_for_run_impl(ctx, this_transpiler, env, opts, true)
     }
 
     /// Like [`Self::configure_env_for_run`] but does **not** construct the
@@ -544,17 +568,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         ctx: &mut ContextData,
         this_transpiler: &mut ::core::mem::MaybeUninit<Transpiler<'static>>,
         env: Option<*mut DotEnv::Loader>,
-        log_errors: bool,
-        store_root_fd: bool,
+        opts: ConfigureEnvOptions,
     ) -> crate::Result<bun_resolver::DirInfoRef> {
-        Self::configure_env_for_run_impl(
-            ctx,
-            this_transpiler,
-            env,
-            log_errors,
-            store_root_fd,
-            false,
-        )
+        Self::configure_env_for_run_impl(ctx, this_transpiler, env, opts, false)
     }
 
     /// `configure_linker()` + `load_tsconfig_json` setup, factored into a
@@ -576,8 +592,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         ctx: &mut ContextData,
         this_transpiler: &mut ::core::mem::MaybeUninit<Transpiler<'static>>,
         env: Option<*mut DotEnv::Loader>,
-        log_errors: bool,
-        store_root_fd: bool,
+        opts: ConfigureEnvOptions,
         with_linker: bool,
     ) -> crate::Result<bun_resolver::DirInfoRef> {
         let args = ctx.args.clone();
@@ -598,7 +613,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
         this_transpiler.resolver.care_about_bin_folder = true;
         this_transpiler.resolver.care_about_scripts = true;
-        this_transpiler.resolver.store_fd = store_root_fd;
+        this_transpiler.resolver.store_fd = opts.store_root_fd;
 
         // Bundler-linker + JSX-runtime config: only callers that actually
         // transpile through this `Transpiler` need it. `configure_linker`'s
@@ -614,7 +629,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         let root_dir_info: bun_resolver::DirInfoRef =
             match this_transpiler.resolver.read_dir_info(top_level_dir) {
                 Err(err) => {
-                    if !log_errors {
+                    if !opts.log_errors {
                         return Err(crate::Error::CouldntReadCurrentDirectory);
                     }
                     // SAFETY: `ctx.log` set in `create_context_data` (single-
@@ -933,7 +948,11 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // dispatch hooks (`jsc_hooks::install_jsc_hooks`) are installed by
         // `main.rs` before `Cli::start`, so `VirtualMachine::init` already sees
         // a populated `RuntimeHooks` table.
-        bun_jsc::initialize(ctx.runtime_options.eval.eval_and_print);
+        bun_jsc::initialize(bun_jsc::InitializeOptions {
+            eval_mode: ctx.runtime_options.eval.eval_and_print,
+            one_shot: bun_jsc::is_one_shot_eval_invocation(),
+            ..Default::default()
+        });
         bun_ast::initialize_store();
 
         let vm_ptr = VirtualMachine::init(VmInitOptions {
@@ -959,15 +978,13 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // it to `bun_dns::Order`; the enum is `#[repr(u8)]` so `as u8` is exact.
         vm.dns_result_order =
             bun_dns::Order::from_string_or_die(&ctx.runtime_options.dns_result_order) as u8;
-        // `vm.main` is a BACKREF into these bytes; convert the `Box` to a raw
-        // heap pointer now so the address
-        // is stable for both `set_main` and the `RUN` write below. The runner
-        // never returns, so the allocation is process-lifetime by construction.
-        // `mut` because the cron-execution branch below may swap in a synthetic
-        // `cwd/[eval]` path.
-        let mut entry_ptr: *const [u8] = bun_core::heap::into_raw(entry_path);
-        // SAFETY: freshly-allocated heap bytes, never freed (see above).
-        let entry: &[u8] = unsafe { &*entry_ptr };
+        // `vm.main` is a BACKREF into these bytes and the runner never returns,
+        // so the allocation is process-lifetime by construction.
+        let entry: &'static [u8] = Box::leak(entry_path);
+        // What `Run::start` passes to `vm.load_entry_point`; `mut` because the
+        // cron-execution branch below may swap in a synthetic `cwd/[eval]` path
+        // while `entry` stays the user's path for the loader check further down.
+        let mut run_entry = entry;
         vm.set_main(entry);
 
         if !ctx.runtime_options.eval.script.is_empty() {
@@ -1026,7 +1043,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             )));
             // Override what
             // `Run::start` will pass to `vm.load_entry_point`.
-            entry_ptr = std::ptr::from_ref::<[u8]>(heap_entry);
+            run_entry = heap_entry;
             vm.set_main(heap_entry);
         }
 
@@ -1052,7 +1069,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             if !tz.is_empty() {
                 let _ = vm
                     .global()
-                    .set_time_zone(&bun_jsc::zig_string::ZigString::init(tz));
+                    .set_time_zone(&bun_core::EncodedSlice::from_bytes(tz));
             }
         }
 
@@ -1079,40 +1096,17 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             .unwrap_or_else(|| vm.transpiler.options.loader(paths::extension(entry)))
             == Loader::Html;
 
-        // ── enter `Run::start` under the JSC API lock ──────────────────────
-        // SAFETY: `RUN` is the process-global singleton;
-        // written exactly once here on the main thread before the API-lock
-        // trampoline reads it, never freed (`global_exit` ends the process).
-        unsafe {
-            RUN.get().write(Run {
-                ctx: std::ptr::from_mut::<ContextData>(ctx),
-                vm: vm_ptr,
-                entry_path: entry_ptr,
-            });
-        }
         // `ctx.debug.hot_reload` → `vm.hot_reload` (a `u8` until the
         // b2-cycle widens it to `cli::HotReload`); `Run::start` re-reads it
         // from `self.ctx` to drive the hot-reloader enable.
-        vm.hot_reload = ctx.debug.hot_reload as u8;
+        vm.hot_reload = ctx.debug.hot_reload;
 
-        extern "C" fn trampoline(ctx: *mut c_void) {
-            // SAFETY: `ctx` is `&mut RUN` passed through `holdAPILock`'s
-            // opaque slot; the API lock is held for the full call so no
-            // other thread touches the VM.
-            let this = unsafe { &mut *ctx.cast::<Run>() };
-            this.start();
+        Run {
+            ctx,
+            vm,
+            entry_path: run_entry,
         }
-        // SAFETY: `vm.global` set in `init`; `vm()` borrows the JSC VM for
-        // the API-lock FFI call. `&raw mut RUN` yields a stable raw pointer
-        // to the static.
-        #[allow(deprecated)]
-        vm.global()
-            .vm()
-            .hold_api_lock(RUN.get().cast::<c_void>(), trampoline);
-
-        // `Run::start` never returns (ends in `global_exit`); this is dead
-        // code kept so the type unifies with the `?`-early-return above.
-        Ok(())
+        .start()
     }
 
     /// Entry point for
@@ -1126,8 +1120,12 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
     ) -> crate::Result<()> {
         use bun_standalone_graph::StandaloneModuleGraph::Flags as GraphFlags;
 
-        bun_jsc::initialize(false);
+        // argv belongs to the compiled program, so a `-e` or `-p` in it is not ours.
+        bun_jsc::initialize(bun_jsc::InitializeOptions::default());
         bun_analytics::features::standalone_executable.fetch_add(1, Ordering::Relaxed);
+        if graph.flags.contains(GraphFlags::CROSS_COMPILED_BYTECODE) {
+            bun_analytics::features::cross_compiled_bytecode.fetch_add(1, Ordering::Relaxed);
+        }
         bun_ast::initialize_store();
 
         // Load bunfig.toml unless disabled by compile flags. Config loading
@@ -1175,13 +1173,10 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         vm.argv = std::mem::take(&mut ctx.passthrough);
 
         // `vm.main` is a BACKREF (`*const [u8]`) into `entry_path`'s heap
-        // buffer; convert the `Box` to a raw heap pointer now
-        // so the address is stable for both
-        // `set_main` and the `RUN` write below. The runner never returns, so
-        // the allocation is process-lifetime by construction.
-        let entry_ptr: *const [u8] = bun_core::heap::into_raw(entry_path);
-        // SAFETY: freshly-allocated heap bytes, never freed (see above).
-        vm.set_main(unsafe { &*entry_ptr });
+        // buffer and the runner never returns, so the allocation is
+        // process-lifetime by construction.
+        let entry: &'static [u8] = Box::leak(entry_path);
+        vm.set_main(entry);
 
         // reshaped for borrowck — `b` borrows `vm.transpiler`
         // exclusively; `fail_with_build_error(vm)` needs the whole `vm`, so
@@ -1221,32 +1216,12 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         );
         Self::do_preconnect(&ctx.runtime_options.preconnect);
 
-        // SAFETY: `RUN` is the process-global singleton;
-        // written exactly once here on the main thread before the API-lock
-        // trampoline reads it, never freed (`global_exit` ends the process).
-        unsafe {
-            RUN.get().write(Run {
-                ctx: std::ptr::from_mut::<ContextData>(ctx),
-                vm: vm_ptr,
-                entry_path: entry_ptr,
-            });
+        Run {
+            ctx,
+            vm,
+            entry_path: entry,
         }
-
-        extern "C" fn trampoline(ctx: *mut c_void) {
-            // SAFETY: `ctx` is `&mut RUN` passed through `holdAPILock`'s
-            // opaque slot; the API lock is held for the full call.
-            let this = unsafe { &mut *ctx.cast::<Run>() };
-            this.start();
-        }
-        // SAFETY: `vm.global` set in `init`; `vm()` borrows the JSC VM for
-        // the API-lock FFI call.
-        #[allow(deprecated)]
-        vm.global()
-            .vm()
-            .hold_api_lock(RUN.get().cast::<c_void>(), trampoline);
-
-        // `Run::start` never returns; dead code for `?`-early-return type unify.
-        Ok(())
+        .start()
     }
 }
 
@@ -1256,40 +1231,22 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 // without a crate-cycle; `crate::run_main` re-exports it.
 // ──────────────────────────────────────────────────────────────────────────
 
-pub struct Run {
-    /// The CLI's
-    /// `ContextData` is parse-once / process-lifetime; `boot()` writes the raw
-    /// pointer here so [`Run::start`] can read profiler / preconnect /
-    /// hot-reload flags under the API lock without re-threading every field.
-    ctx: *mut ContextData,
-    vm: *mut VirtualMachine,
-    /// Heap bytes (from `boot`'s `heap::alloc`) or a borrow into the standalone graph's
-    /// `entryPoint().name` (from `boot_standalone`). Either way the bytes live
-    /// for the process — `Run::start` never returns — so a raw `*const [u8]`
-    /// works without forcing a `'static`
-    /// borrow or a `MaybeUninit` static for `Box<[u8]>`.
-    entry_path: *const [u8],
+/// Everything [`Run::start`] needs; built on the stack at the end of
+/// `RunCommand::boot` / `boot_standalone`.
+pub struct Run<'a> {
+    ctx: &'a ContextData,
+    vm: &'a mut VirtualMachine,
+    /// `vm.main` already points into these bytes; `'static` because the hot
+    /// reloader stores them too (`boot` leaks the `Box<[u8]>`, cron mode uses
+    /// the runner arena).
+    entry_path: &'static [u8],
 }
 
-// Process-global, written once in `boot`.
-// PORTING.md §Global mutable state: `Run` is `!Sync` (raw ptrs); RacyCell so
-// `boot`/`boot_standalone` can `ptr::write` it on the single CLI thread and
-// the `holdAPILock` trampoline can re-derive `&mut Run` from the static.
-static RUN: bun_core::RacyCell<Run> = bun_core::RacyCell::new(Run {
-    ctx: ::core::ptr::null_mut(),
-    vm: ::core::ptr::null_mut(),
-    entry_path: ::core::ptr::slice_from_raw_parts(::core::ptr::null(), 0),
-});
-
-// The unhandled-rejection callback fires
-// while `Run::start` holds `&mut self` (via the
-// `holdAPILock` trampoline). Storing the flag on `Run` and writing through a
-// fresh `&raw mut RUN` would alias that exclusive borrow (PORTING.md
-// §Forbidden — Stacked Borrows UB). Keep it as a sibling static instead so the
-// callback's write and `start()`'s reads never overlap a `&mut`.
+// `on_unhandled_rejection_before_close` is a plain fn pointer stored on the
+// VM, so it has no way to reach the stack-local `Run`; the flag lives here.
 static ANY_UNHANDLED: AtomicBool = AtomicBool::new(false);
 
-impl Run {
+impl Run<'_> {
     /// `onUnhandledRejectionBeforeClose` — record that *something* rejected so
     /// `start()` sets a non-zero exit code, then route through the VM's
     /// default error printer.
@@ -1308,16 +1265,12 @@ impl Run {
 
     /// Wire `--eval`/`--print`
     /// node-module globals and `--expose-gc` into the JSC global object.
-    fn add_conditional_globals(&mut self) {
+    fn add_conditional_globals(vm: &VirtualMachine, ctx: &ContextData) {
         unsafe extern "C" {
             fn Bun__ExposeNodeModuleGlobals(global: *const JSGlobalObject);
             fn JSC__JSGlobalObject__addGc(global: *const JSGlobalObject);
         }
-        // SAFETY: `self.vm`/`self.ctx` are process-lifetime; written by
-        // `boot()` before the API-lock trampoline runs.
-        let vm = unsafe { &*self.vm };
-        // SAFETY: `self.ctx` is process-lifetime; see comment on `vm` above.
-        let ro = unsafe { &(*self.ctx).runtime_options };
+        let ro = &ctx.runtime_options;
         if !ro.eval.script.is_empty() {
             // SAFETY: FFI; `vm.global` is live for the VM lifetime.
             unsafe { Bun__ExposeNodeModuleGlobals(vm.global) };
@@ -1328,24 +1281,18 @@ impl Run {
         }
     }
 
-    /// `Run.start` — load the entry point, run the event loop until idle,
-    /// fire `beforeExit`/`exit`, then `globalExit`. Called under the JSC API
-    /// lock via `hold_api_lock`.
-    fn start(&mut self) -> ! {
-        // deref the raw VM/ctx pointers once so the rest of this
-        // body can borrow `vm` and `ctx` alongside `self.entry_path`.
-        // SAFETY: `self.vm` is the boxed-and-leaked main-thread VM; `self.ctx`
-        // is the CLI's process-lifetime `ContextData`. Both are written by
-        // `boot()`/`boot_standalone()` before the API-lock trampoline runs.
-        let vm = unsafe { &mut *self.vm };
-        // SAFETY: `self.ctx` is process-lifetime; see comment on `vm` above.
-        let ctx = unsafe { &*self.ctx };
-        // SAFETY: `entry_path` is process-lifetime (heap from `heap::alloc`
-        // or a borrow into the standalone graph); deref to a `'static` slice
-        // so `enable_hot_module_reloading` can store it without re-erasing.
-        let mut entry: &'static [u8] = unsafe { &*self.entry_path };
+    /// `Run.start`: take the JSC API lock, load the entry point, run the event
+    /// loop until idle, fire `beforeExit`/`exit`, then `globalExit`. The lock
+    /// guard is never dropped because this never returns.
+    fn start(self) -> ! {
+        let Run {
+            ctx,
+            vm,
+            entry_path: mut entry,
+        } = self;
+        let _api_lock = vm.global().vm().get_api_lock();
 
-        vm.hot_reload = ctx.debug.hot_reload as u8;
+        vm.hot_reload = ctx.debug.hot_reload;
         vm.on_unhandled_rejection = Run::on_unhandled_rejection_before_close;
 
         // ── CPU profiler ────────────────────────────────────────────────────
@@ -1384,7 +1331,7 @@ impl Run {
             bun_analytics::features::heap_snapshot.fetch_add(1, Ordering::Relaxed);
         }
 
-        self.add_conditional_globals();
+        Self::add_conditional_globals(vm, ctx);
 
         // ── redis preconnect (must run under the API lock) ─────────────────
         'do_redis_preconnect: {
@@ -1394,30 +1341,25 @@ impl Run {
             // Go through the global object's getter because `Bun.redis` is a
             // PropertyCallback (no direct WriteBarrier handle to read).
             let global = vm.global();
-            let bun_object = match global.to_js_value().get(global, "Bun") {
-                Ok(Some(v)) => v,
-                Ok(None) => break 'do_redis_preconnect,
-                Err(e) => {
-                    global.report_active_exception_as_unhandled(e);
-                    break 'do_redis_preconnect;
-                }
+            let preconnect = || -> bun_jsc::JsResult<()> {
+                let Some(bun_object) = global.to_js_value().get(global, "Bun")? else {
+                    return Ok(());
+                };
+                let Some(redis) = bun_object.get(global, "redis")? else {
+                    return Ok(());
+                };
+                let Some(client) = redis.as_::<crate::valkey_jsc::js_valkey::JSValkeyClient>()
+                else {
+                    return Ok(());
+                };
+                // SAFETY: `as_` returns a live `m_ctx` pointer owned by the JS
+                // wrapper; accessed here under the API lock.
+                unsafe { &*client }.do_connect(global, redis)?;
+                Ok(())
             };
-            let redis = match bun_object.get(global, "redis") {
-                Ok(Some(v)) => v,
-                Ok(None) => break 'do_redis_preconnect,
-                Err(e) => {
-                    global.report_active_exception_as_unhandled(e);
-                    break 'do_redis_preconnect;
-                }
-            };
-            let Some(client) = redis.as_::<crate::valkey_jsc::js_valkey::JSValkeyClient>() else {
-                break 'do_redis_preconnect;
-            };
-            // SAFETY: `as_` returns a live `m_ctx` pointer owned by the JS
-            // wrapper; accessed here under the API lock.
-            if let Err(e) = unsafe { &*client }.do_connect(global, redis) {
-                global.report_active_exception_as_unhandled(e);
-            }
+            // The process entry is the outermost frame: a preconnect that threw
+            // is reported here, before the entry point loads.
+            crate::dispatch::fold(preconnect());
         }
 
         // ── postgres/sql preconnect ───────────────────────────────────────
@@ -1426,53 +1368,40 @@ impl Run {
                 break 'do_postgres_preconnect;
             }
             let global = vm.global();
-            let bun_object = match global.to_js_value().get(global, "Bun") {
-                Ok(Some(v)) => v,
-                Ok(None) => break 'do_postgres_preconnect,
-                Err(e) => {
-                    global.report_active_exception_as_unhandled(e);
-                    break 'do_postgres_preconnect;
-                }
+            let preconnect = || -> bun_jsc::JsResult<()> {
+                let Some(bun_object) = global.to_js_value().get(global, "Bun")? else {
+                    return Ok(());
+                };
+                let Some(sql_object) = bun_object.get(global, "sql")? else {
+                    return Ok(());
+                };
+                let Some(connect_fn) = sql_object.get(global, "connect")? else {
+                    return Ok(());
+                };
+                connect_fn.call(global, sql_object, &[])?;
+                Ok(())
             };
-            let sql_object = match bun_object.get(global, "sql") {
-                Ok(Some(v)) => v,
-                Ok(None) => break 'do_postgres_preconnect,
-                Err(e) => {
-                    global.report_active_exception_as_unhandled(e);
-                    break 'do_postgres_preconnect;
-                }
-            };
-            let connect_fn = match sql_object.get(global, "connect") {
-                Ok(Some(v)) => v,
-                Ok(None) => break 'do_postgres_preconnect,
-                Err(e) => {
-                    global.report_active_exception_as_unhandled(e);
-                    break 'do_postgres_preconnect;
-                }
-            };
-            if let Err(e) = connect_fn.call(global, sql_object, &[]) {
-                global.report_active_exception_as_unhandled(e);
-            }
+            crate::dispatch::fold(preconnect());
         }
 
         // ── hot-reloader enable ─────────────────────────────────────────────
         match ctx.debug.hot_reload {
             cli::command::HotReload::Hot => {
-                // SAFETY: `self.vm` is the boxed-and-leaked main-thread VM
+                // SAFETY: `vm` is the boxed-and-leaked main-thread VM
                 // (process-lifetime); it outlives the leaked reloader.
                 unsafe {
                     bun_jsc::hot_reloader::HotReloader::enable_hot_module_reloading(
-                        self.vm,
+                        std::ptr::from_mut::<VirtualMachine>(vm),
                         Some(entry),
                     )
                 }
             }
             cli::command::HotReload::Watch => {
-                // SAFETY: `self.vm` is the boxed-and-leaked main-thread VM
+                // SAFETY: `vm` is the boxed-and-leaked main-thread VM
                 // (process-lifetime); it outlives the leaked reloader.
                 unsafe {
                     bun_jsc::hot_reloader::WatchReloader::enable_hot_module_reloading(
-                        self.vm,
+                        std::ptr::from_mut::<VirtualMachine>(vm),
                         Some(entry),
                     )
                 }
@@ -1513,7 +1442,7 @@ impl Run {
                     // `uncaughtException` handler swallowed the error), keep the
                     // process alive instead of hard-exiting on a rejected entry.
                     // The core run-loop below does the actual waiting.
-                    if vm.hot_reload != 0 || handled {
+                    if vm.hot_reload != cli::command::HotReload::None || handled {
                         vm.add_main_to_watcher_if_needed();
                         // SAFETY: `event_loop` is a self-pointer into this VM;
                         // uniquely accessed here.
@@ -1534,12 +1463,15 @@ impl Run {
             Err(err) => entry_point_load_failed(vm, &err.into()),
         }
 
-        // don't run the GC if we don't actually need to
-        if vm.is_event_loop_alive() || vm.event_loop_ref().tick_concurrent_with_count() > 0 {
+        // Drop what transpiling and linking the entry graph left behind before settling into the event loop. A
+        // standalone executable has no transpiler garbage, and its unlinked code blocks came from the embedded bytecode
+        // cache — deleting them here only means decoding them again on first call — so leave its heap to the collector.
+        if vm.standalone_module_graph.is_none()
+            && (vm.is_event_loop_alive() || vm.event_loop_ref().tick_concurrent_with_count() > 0)
+        {
             vm.global().vm().release_weak_refs();
-            // `bun_alloc::Arena = bumpalo::Bump` has no
-            // per-heap collect, so this is a no-op unless the arena type
-            // changes. Semantically a memory-usage hint, not correctness.
+            // `bun_alloc::Arena` has no per-heap collect to run alongside this
+            // GC; it would only be a memory-usage hint, not correctness.
             let _ = vm.global().vm().run_gc(false);
             vm.tick();
         }
@@ -1630,7 +1562,11 @@ impl Run {
         }
 
         vm.on_unhandled_rejection = Run::on_unhandled_rejection_before_close;
-        vm.global().handle_rejected_promises();
+        let _ = vm.global().handle_rejected_promises();
+        // The loop stopped on an uncaught error: Node's fatal-exception exit, not a drain.
+        if vm.unhandled_error_counter > 0 {
+            vm.exit_handler.requested = true;
+        }
         vm.on_exit();
 
         if ANY_UNHANDLED.load(Ordering::Relaxed) {
@@ -1700,6 +1636,7 @@ fn dump_build_error(vm: &mut VirtualMachine) {
 )]
 fn exit_with_unhandled_note(vm: &mut VirtualMachine) -> ! {
     vm.exit_handler.exit_code = 1;
+    vm.exit_handler.requested = true;
     vm.on_exit();
     if ANY_UNHANDLED.load(Ordering::Relaxed) {
         bun_sourcemap::SavedSourceMap::MissingSourceMapNoteInfo::print();
@@ -2148,6 +2085,10 @@ impl RunCommand {
         // in the meantime we don't need to free it.
         let envp = env.map.create_null_delimited_env_map()?;
 
+        // POSIX forwards signals inside `sync::spawn`; on Windows the child shares
+        // our console and gets Ctrl+C itself, we just have to outlive it.
+        #[cfg(windows)]
+        bun_spawn::ctrl_c::install();
         let spawn_result = match sync::spawn(&sync::Options {
             argv,
             argv0: Some(executable_z.as_ptr().cast::<c_char>()),
@@ -2273,6 +2214,11 @@ impl RunCommand {
                             }
 
                             Global::raise_ignoring_panic_handler(sc);
+                        }
+
+                        #[cfg(windows)]
+                        if exit_code.raw == bun_sys::windows::STATUS_CONTROL_C_EXIT {
+                            bun_spawn::ctrl_c::exit_like_child();
                         }
 
                         let code = exit_code.code;
@@ -2403,8 +2349,10 @@ impl RunCommand {
             ctx,
             this_transpiler,
             None,
-            log_errors,
-            false,
+            ConfigureEnvOptions {
+                log_errors,
+                store_root_fd: false,
+            },
         )?;
         // SAFETY: `configure_env_for_run_without_linker` returned `Ok`, so the
         // slot is fully initialized via `MaybeUninit::write`.
@@ -2708,18 +2656,6 @@ impl RunCommand {
         // ── failure ─────────────────────────────────────────────────────────
         if ctx.runtime_options.if_present {
             return Ok(true);
-        }
-
-        // `bun feedback`.
-        // SAFETY: `cli::CMD` is written once during single-threaded CLI
-        // startup before any worker thread is spawned; read-only here.
-        let current_cmd = unsafe { cli::CMD.read() };
-        if ctx.filters.is_empty()
-            && !ctx.workspaces
-            && current_cmd == Some(CommandTag::AutoCommand)
-            && target_name == b"feedback"
-        {
-            Self::bun_feedback(ctx)?;
         }
 
         if log_errors {
@@ -3182,33 +3118,6 @@ impl RemoteImageDownload {
 }
 
 impl RunCommand {
-    /// `bun feedback` — boots the embedded `eval/feedback.ts` script.
-    fn bun_feedback(ctx: &mut ContextData) -> crate::Result<::core::convert::Infallible> {
-        let mut entry_point_buf = [0u8; MAX_PATH_BYTES + EVAL_TRIGGER.len()];
-        // SAFETY: bun_paths::PathBuffer and bun_core::PathBuffer are
-        // layout-identical newtypes over [u8; MAX_PATH_BYTES].
-        let cwd = bun_core::getcwd_or_exe_dir(unsafe {
-            &mut *entry_point_buf.as_mut_ptr().cast::<bun_core::PathBuffer>()
-        });
-        let cwd_len = cwd.as_bytes().len();
-        entry_point_buf[cwd_len..cwd_len + EVAL_TRIGGER.len()].copy_from_slice(EVAL_TRIGGER);
-
-        ctx.runtime_options.eval.script =
-            bun_core::runtime_embed_file!(Codegen, "eval/feedback.ts")
-                .as_bytes()
-                .to_vec()
-                .into_boxed_slice();
-
-        Self::boot(
-            ctx,
-            entry_point_buf[..cwd_len + EVAL_TRIGGER.len()]
-                .to_vec()
-                .into_boxed_slice(),
-            None,
-        )?;
-        Global::exit(0);
-    }
-
     fn unlink_staged_path(path: &[u8]) {
         let mut zbuf = [0u8; MAX_PATH_BYTES + 1];
         if path.len() >= zbuf.len() {
@@ -3449,9 +3358,7 @@ impl RunCommand {
         // hyperlinks when colors are on. Light/dark detected from env.
         let colors = Output::enable_ansi_colors_stdout();
         let columns: u16 = 'brk: {
-            // Output.terminal_size is never populated; query stdout
-            // directly. Honor COLUMNS so piped output and tests can
-            // pin a width.
+            // Honor COLUMNS so piped output and tests can pin a width.
             if let Some(env) = bun_core::getenv_z(bun_core::zstr!("COLUMNS")) {
                 if let Ok(n) = bun_core::fmt::parse_int::<u16>(env, 10) {
                     if n > 0 {
@@ -3893,7 +3800,7 @@ impl RunCommand {
             .map(|k| -> &'static [u8] {
                 // SAFETY: every key is a freshly-boxed `Box<[u8]>` owned by
                 // `results`. The owning `ArrayHashMap` is parked in the
-                // process-lifetime `runner_arena()` below and `bumpalo::Bump`
+                // process-lifetime `runner_arena()` below and `bun_alloc::Arena`
                 // never runs `Drop`, so the boxed bytes live until process
                 // exit and erasing to `'static` is sound.
                 unsafe { ::core::slice::from_raw_parts(k.as_ptr(), k.len()) }

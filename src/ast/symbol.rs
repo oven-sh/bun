@@ -118,7 +118,9 @@ bitflags::bitflags! {
 
         const REMOVE_OVERWRITTEN_FUNCTION_DECLARATION = 1 << 4;
 
-        /// Used in HMR to decide when live binding code is needed.
+        /// The file assigns this variable after its declaration (or a mapped
+        /// `arguments` object can). Set on the root of the symbol's link
+        /// chain. Read by HMR live bindings and the printer's same-target fold.
         const HAS_BEEN_ASSIGNED_TO = 1 << 5;
     }
 }
@@ -529,7 +531,7 @@ impl Map {
         // non-null source index and a non-SourceContentsSlice tag was emitted
         // by the parser as an index into this table (`declare_symbol` /
         // `new_symbol` write `inner_index = symbols.len()` then push) or
-        // minted by the linker (`LinkerGraph::generate_symbol`, which appends
+        // minted by the linker (`LinkerGraph::generate_new_symbol`, which appends
         // to the same per-source Vec). Both indices are therefore in-bounds.
         // The bundler never fabricates Refs from untrusted input.
         //
@@ -543,14 +545,6 @@ impl Map {
             debug_assert!(idx < (*inner).len());
             &*(*inner).as_ptr().add(idx)
         })
-    }
-
-    pub fn init(source_count: usize) -> Map {
-        let mut v: NestedList = Vec::with_capacity(source_count);
-        v.resize_with(source_count, Vec::new);
-        Map {
-            symbols_for_source: v,
-        }
     }
 
     // Takes ownership of `list` and boxes it into a one-element NestedList.
@@ -624,7 +618,7 @@ impl Map {
         // writers of `Symbol::link` are (a) the default `Ref::NONE`
         // (tag=Invalid — rejected by `is_valid()` above), (b) `merge()`,
         // which stores a Ref that came from `declare_symbol` / `new_symbol` /
-        // `LinkerGraph::generate_symbol`, and (c) prior `follow()` path
+        // `LinkerGraph::generate_new_symbol`, and (c) prior `follow()` path
         // compression, which stores a `root` that itself satisfied (b). All
         // such refs satisfy the in-bounds contract (see `get_const`):
         // `(source_index, inner_index)` with tag ∈ {Symbol, AllocatedName},

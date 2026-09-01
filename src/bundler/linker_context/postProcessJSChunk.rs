@@ -1,5 +1,5 @@
 use crate::LinkerContext;
-use crate::analyze_transpiled_module::{self, ModuleInfo};
+use crate::analyze_transpiled_module::ModuleInfo;
 use crate::bundle_v2::bake_types::{HmrRuntimeSide, get_hmr_runtime};
 use crate::linker_context_mod::{GenerateChunkCtx, LinkerOptionsMode};
 use crate::mal_prelude::*;
@@ -10,9 +10,7 @@ use crate::{
     ThreadPool,
 };
 use bun_alloc::Arena;
-use bun_ast::{
-    self as js_ast, B, Binding, E, Expr, G, Part, Ref, S, Scope, Stmt, StmtData, StmtOrExpr,
-};
+use bun_ast::{self as js_ast, B, Binding, E, Expr, G, Part, Ref, S, Scope, Stmt, StmtOrExpr};
 use bun_ast::{ImportRecord, ImportRecordFlags, ImportRecordTag};
 use bun_collections::MultiArrayList;
 use bun_collections::VecExt;
@@ -95,22 +93,41 @@ pub(crate) fn post_process_js_chunk(
         )
     };
 
-    // Create ModuleInfo for ESM bytecode in --compile builds
-    let generate_module_info = c.options.generate_bytecode_cache
-        && c.options.output_format == options::OutputFormat::Esm
-        && c.options.compile_mode.is_executable();
-    let loader =
-        c.parse_graph().input_files.items_loader()[chunk.entry_point.source_index() as usize];
-    let is_typescript = loader.is_type_script();
+    // The chunk's module record, assembled in output order: the printer records
+    // the cross-chunk prefix imports below, then the per-part-range results
+    // (printed in parallel into their own ModuleInfo) are appended, then the
+    // cross-chunk suffix and entry point tail exports are printed into it.
     // Stored on chunk.content.javascript.module_info — owned `Box<ModuleInfo>`.
-    let mut module_info: Option<Box<ModuleInfo>> = if generate_module_info {
-        Some(ModuleInfo::create(is_typescript))
-    } else {
-        None
-    };
+    let mut module_info: Option<Box<ModuleInfo>> = c.options.generates_module_info().then(|| {
+        let loader =
+            c.parse_graph().input_files.items_loader()[chunk.entry_point.source_index() as usize];
+        ModuleInfo::create(loader.is_type_script())
+    });
 
     // SAFETY: worker.arena is set in Worker::init() before any task runs.
     let worker_arena: &Arena = worker.arena();
+
+    // An ESM entry point already ends in an `export { }` clause
+    // (`generate_entry_point_tail_js`); its cross-chunk exports join that
+    // clause instead of adding a second one.
+    let joined_cross_chunk_exports: Option<bun_ast::StoreSlice<bun_ast::ClauseItem>> = if chunk
+        .is_entry_point()
+        && c.options.output_format == options::OutputFormat::Esm
+        && c.graph.meta.items_flags()[chunk.entry_point.source_index() as usize].wrap
+            != crate::WrapKind::Cjs
+    {
+        match chunk.content.javascript().cross_chunk_suffix_stmts.slice() {
+            [] => Some(bun_ast::StoreSlice::EMPTY),
+            [stmt] => match &stmt.data {
+                bun_ast::StmtData::SExportClause(clause) => Some(clause.items),
+                _ => None,
+            },
+            _ => None,
+        }
+    } else {
+        None
+    };
+    let exports_join_entry_tail = joined_cross_chunk_exports.is_some();
 
     {
         // `Options` is not `Copy` (holds `&mut ModuleInfo`), and a closure
@@ -177,13 +194,15 @@ pub(crate) fn post_process_js_chunk(
                 .cross_chunk_prefix_stmts
                 .slice_mut(),
         );
-        let suffix_stmts = bun_ast::StoreSlice::new_mut(
+        let suffix_stmts = bun_ast::StoreSlice::new_mut(if exports_join_entry_tail {
+            &mut []
+        } else {
             chunk
                 .content
                 .javascript_mut()
                 .cross_chunk_suffix_stmts
-                .slice_mut(),
-        );
+                .slice_mut()
+        });
 
         cross_chunk_prefix = js_printer::print::<false>(
             worker_arena,
@@ -201,6 +220,18 @@ pub(crate) fn post_process_js_chunk(
             }],
             chunk.renamer.as_renamer(),
         );
+        if let Some(mi) = module_info.as_deref_mut() {
+            // One result per entry of `parts_in_chunk_in_order`, in that order.
+            for compile_result in chunk.compile_results_for_chunk.iter() {
+                if let CompileResult::Javascript {
+                    module_info: Some(part_module_info),
+                    ..
+                } = compile_result
+                {
+                    mi.append(part_module_info);
+                }
+            }
+        }
         cross_chunk_suffix = js_printer::print::<false>(
             worker_arena,
             target,
@@ -219,155 +250,27 @@ pub(crate) fn post_process_js_chunk(
         );
     }
 
-    // Populate ModuleInfo with the import.meta flag and the external
-    // import records from the original AST.
+    // The printer does not know about top-level await, so derive that flag from
+    // the AST. The JSC module loader decides sync vs async evaluation from
+    // JSModuleRecord::hasTLA(), which is set from this bit when the record is
+    // constructed from module_info (BunAnalyzeTranspiledModule). Without it, a
+    // bytecode-compiled module that contains TLA gets evaluated on the sync path
+    // and the suspended generator is dropped — the entry promise resolves
+    // immediately and the process exits before the awaited value lands.
     if let Some(mi) = module_info.as_deref_mut() {
-        // Check if any source in this chunk uses import.meta. The per-part
-        // parallel printer does not have module_info, so the printer cannot set
-        // this flag during per-part printing. We derive it from the AST instead.
-        // Note: the runtime source (index 0) also uses import.meta (e.g.
-        // `import.meta.require`), so we must not skip it.
-        {
-            let all_ast_flags = c.graph.ast.items_flags();
-            for part_range in chunk.content.javascript().parts_in_chunk_in_order.iter() {
-                if all_ast_flags[part_range.source_index.get() as usize]
-                    .contains(crate::bundled_ast::Flags::HAS_IMPORT_META)
-                {
-                    mi.flags.contains_import_meta = true;
-                    break;
-                }
-            }
-        }
-
-        // 1c. Same idea for top-level await. The new JSC module loader decides
-        // sync vs async evaluation from JSModuleRecord::hasTLA(), which we set
-        // from this bit when constructing the record from cached module_info
-        // (BunAnalyzeTranspiledModule). Without it, a bytecode-compiled module
-        // that contains TLA gets evaluated on the sync path and the suspended
-        // generator is dropped — the entry promise resolves immediately and the
-        // process exits before the awaited value lands.
-        {
-            let tla_keywords = c.parse_graph().ast.items_top_level_await_keyword();
-            let wraps = c.graph.meta.items_flags();
-            for part_range in chunk.content.javascript().parts_in_chunk_in_order.iter() {
-                let idx = part_range.source_index.get() as usize;
-                if idx >= tla_keywords.len() {
-                    continue;
-                }
-                if wraps[idx].wrap != crate::WrapKind::None {
-                    continue;
-                }
-                if !tla_keywords[idx].is_empty() {
-                    mi.flags.has_tla = true;
-                    break;
-                }
-            }
-        }
-
-        // 2. Collect truly-external imports from the original AST. Bundled imports
-        // (where source_index is valid) are removed by convertStmtsForChunk and
-        // re-created as cross-chunk imports — those are already captured by the
-        // printer when it prints cross_chunk_prefix_stmts above. Only truly-external
-        // imports (node built-ins, etc.) survive as s_import in per-file parts and
-        // need recording here.
-        let all_parts = c.graph.ast.items_parts();
-        let all_flags = c.graph.meta.items_flags();
-        let all_import_records = c.graph.ast.items_import_records();
+        let tla_keywords = c.parse_graph().ast.items_top_level_await_keyword();
+        let wraps = c.graph.meta.items_flags();
         for part_range in chunk.content.javascript().parts_in_chunk_in_order.iter() {
-            if all_flags[part_range.source_index.get() as usize].wrap == crate::WrapKind::Cjs {
+            let idx = part_range.source_index.get() as usize;
+            if idx >= tla_keywords.len() {
                 continue;
             }
-            let source_parts = all_parts[part_range.source_index.get() as usize].as_slice();
-            let source_import_records =
-                all_import_records[part_range.source_index.get() as usize].as_slice();
-            let mut part_i = part_range.part_index_begin;
-            while part_i < part_range.part_index_end {
-                // `Part.stmts: StoreSlice<Stmt>` — arena-backed, safe `Deref`.
-                for stmt in source_parts[part_i as usize].stmts.iter() {
-                    match &stmt.data {
-                        StmtData::SImport(s) => {
-                            let record = &source_import_records[s.import_record_index as usize];
-                            if record.path.is_disabled {
-                                continue;
-                            }
-                            if record.tag == ImportRecordTag::Bun {
-                                continue;
-                            }
-                            // Skip bundled imports — these are converted to cross-chunk
-                            // imports by the linker. The printer already recorded them
-                            // when printing cross_chunk_prefix_stmts.
-                            if record.source_index.is_valid() {
-                                continue;
-                            }
-                            // Skip barrel-optimized-away imports — marked is_unused by
-                            // `barrel_imports`. Never resolved (source_index invalid),
-                            // and removed by convertStmtsForChunk. Not in emitted code.
-                            if record.flags.contains(ImportRecordFlags::IS_UNUSED) {
-                                continue;
-                            }
-
-                            let import_path = record.path.text;
-                            let irp_id = mi.str(import_path);
-                            mi.request_module(
-                                irp_id,
-                                analyze_transpiled_module::ImportAttributes::None,
-                            );
-
-                            if let Some(name) = &s.default_name {
-                                if let Some(name_ref) = name.ref_.to_nullable() {
-                                    let local_name_id = {
-                                        let local_name = chunk.renamer.name_for_symbol(name_ref);
-                                        mi.str(local_name)
-                                    };
-                                    let default_id = mi.str(b"default");
-                                    mi.add_import_info_single(
-                                        irp_id,
-                                        default_id,
-                                        local_name_id,
-                                        analyze_transpiled_module::ImportAttributes::None,
-                                        false,
-                                    );
-                                }
-                            }
-
-                            // `S::Import.items: StoreSlice<ClauseItem>` — safe `Deref`.
-                            for item in s.items.iter() {
-                                if let Some(name_ref) = item.name.ref_.to_nullable() {
-                                    let local_name_id = {
-                                        let local_name = chunk.renamer.name_for_symbol(name_ref);
-                                        mi.str(local_name)
-                                    };
-                                    // SAFETY: ClauseItem.alias is an arena `*const [u8]`; never null.
-                                    let alias_id = mi.str(item.alias.slice());
-                                    mi.add_import_info_single(
-                                        irp_id,
-                                        alias_id,
-                                        local_name_id,
-                                        analyze_transpiled_module::ImportAttributes::None,
-                                        false,
-                                    );
-                                }
-                            }
-
-                            if record
-                                .flags
-                                .contains(ImportRecordFlags::CONTAINS_IMPORT_STAR)
-                            {
-                                let local_name_id = {
-                                    let local_name = chunk.renamer.name_for_symbol(s.namespace_ref);
-                                    mi.str(local_name)
-                                };
-                                mi.add_import_info_namespace(
-                                    irp_id,
-                                    local_name_id,
-                                    analyze_transpiled_module::ImportAttributes::None,
-                                );
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-                part_i += 1;
+            if wraps[idx].wrap != crate::WrapKind::None {
+                continue;
+            }
+            if !tla_keywords[idx].is_empty() {
+                mi.flags.has_tla = true;
+                break;
             }
         }
     }
@@ -377,6 +280,10 @@ pub(crate) fn post_process_js_chunk(
     // can populate export entries in module_info.
     let entry_point_tail = 'brk: {
         if chunk.is_entry_point() {
+            let cross_chunk_exports: &[bun_ast::ClauseItem] = match &joined_cross_chunk_exports {
+                Some(items) => items.slice(),
+                None => &[],
+            };
             break 'brk generate_entry_point_tail_js(
                 c,
                 to_common_js_ref,
@@ -386,6 +293,7 @@ pub(crate) fn post_process_js_chunk(
                 &arena,
                 chunk.renamer.as_renamer(),
                 module_info.as_deref_mut(),
+                cross_chunk_exports,
             );
         }
 
@@ -395,6 +303,7 @@ pub(crate) fn post_process_js_chunk(
                 code: Box::default(),
                 source_map: None,
             }),
+            module_info: None,
         };
     };
 
@@ -752,11 +661,6 @@ pub(crate) fn post_process_js_chunk(
                 line_offset.advance(&quoted);
                 j.push_owned(quoted.into_boxed_slice());
             }
-            // {
-            //     let str = b"\n  react_refresh: ";
-            //     j.push_static(str);
-            //     line_offset.advance(str);
-            // }
             {
                 let str = b"\n});";
                 j.push_static(str);
@@ -844,6 +748,7 @@ pub(crate) fn generate_entry_point_tail_js<'a>(
     temp_arena: &Arena,
     r: js_printer::renamer::Renamer<'a, 'a>,
     module_info: Option<&'a mut ModuleInfo>,
+    cross_chunk_exports: &[bun_ast::ClauseItem],
 ) -> CompileResult {
     let flags: crate::js_meta::Flags = c.graph.meta.items_flags()[source_index as usize];
     let mut stmts: Vec<Stmt> = Vec::new();
@@ -927,7 +832,9 @@ pub(crate) fn generate_entry_point_tail_js<'a>(
                         &c.graph.meta.items_sorted_and_filtered_export_aliases()
                             [source_index as usize];
 
-                    if !sorted_and_filtered_export_aliases.is_empty() {
+                    if !sorted_and_filtered_export_aliases.is_empty()
+                        || !cross_chunk_exports.is_empty()
+                    {
                         let resolved_exports: &ResolvedExports =
                             &c.graph.meta.items_resolved_exports()[source_index as usize];
                         let imports_to_bind: &RefImportData =
@@ -1078,6 +985,13 @@ pub(crate) fn generate_entry_point_tail_js<'a>(
                             }
                         }
 
+                        let own_len = items.len();
+                        items.extend(cross_chunk_exports.iter().map(|item| bun_ast::ClauseItem {
+                            alias: item.alias,
+                            alias_loc: item.alias_loc,
+                            name: item.name,
+                            original_name: item.original_name,
+                        }));
                         // arena-owned `*mut [ClauseItem]` — move the
                         // collected Vec into the linker arena. The arena slice is also iterated
                         // below for the synthetic-default-export path.
@@ -1089,8 +1003,12 @@ pub(crate) fn generate_entry_point_tail_js<'a>(
                             },
                             bun_ast::Loc::EMPTY,
                         ));
+                        let items = &items[..own_len];
 
-                        if flags.needs_synthetic_default_export && !had_default_export {
+                        if flags.needs_synthetic_default_export
+                            && !had_default_export
+                            && !items.is_empty()
+                        {
                             let mut properties = G::PropertyList::init_capacity(items.len());
                             let getter_fn_body: &mut [Stmt] =
                                 arena.alloc_slice_fill_default(items.len());
@@ -1236,6 +1154,7 @@ pub(crate) fn generate_entry_point_tail_js<'a>(
                 code: Box::default(),
                 source_map: None,
             }),
+            module_info: None,
         };
     }
 
@@ -1281,5 +1200,7 @@ pub(crate) fn generate_entry_point_tail_js<'a>(
             r,
         ),
         source_index,
+        // The exports were recorded straight into the chunk's ModuleInfo above.
+        module_info: None,
     }
 }

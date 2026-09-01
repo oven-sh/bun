@@ -1,0 +1,41 @@
+lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+  injectWorkspacePackages: true
+
+importers:
+
+  .:
+    dependencies:
+      pkg-a:
+        specifier: workspace:*
+        version: 'file:packages/pkg-a(peer@1.0.0)'
+
+  packages/peer: {}
+
+  packages/pkg-a:
+    peerDependencies:
+      peer:
+        specifier: 1.0.0
+        version: 1.0.0
+
+packages:
+
+  'pkg-a@file:packages/pkg-a(peer@1.0.0)':
+    dependencies:
+      peer: 1.0.0
+
+  'peer@1.0.0':
+    resolution: { directory: packages/peer, type: directory }
+
+snapshots:
+
+  'pkg-a@file:packages/pkg-a': {}
+
+  'pkg-a@file:packages/pkg-a(peer@1.0.0)':
+    dependencies:
+      peer: 1.0.0
+
+  'peer@1.0.0': {}

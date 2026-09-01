@@ -18,10 +18,7 @@ pub const DEFAULT_ALGORITHM: Algorithm = Algorithm::Sha256;
 /// Error types for CSRF operations
 #[derive(strum::IntoStaticStr, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Error {
-    InvalidToken,
-    ExpiredToken,
     TokenCreationFailed,
-    DecodingFailed,
 }
 bun_core::impl_tag_error!(Error);
 

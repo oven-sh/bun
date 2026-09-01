@@ -461,9 +461,7 @@ impl CreateCommand {
 
                 progress.refresh();
 
-                let file_buf = vec![0u8; 16384];
-
-                let mut tarball_buf_list: Vec<u8> = file_buf;
+                let mut tarball_buf_list: Vec<u8> = Vec::with_capacity(16384);
                 let mut gunzip = Zlib::ZlibReaderArrayList::init(
                     tarball_bytes.list.as_slice(),
                     &mut tarball_buf_list,
@@ -492,7 +490,6 @@ impl CreateCommand {
 
                 let mut archive_context = archiver::Context {
                     pluckers,
-                    all_files: Default::default(),
                     overwrite_list: bun_collections::StringArrayHashMap::<()>::default(),
                 };
 
@@ -736,7 +733,6 @@ impl CreateCommand {
                     }
                 }
             }
-            _ => unreachable!(),
         }
 
         node.end();
@@ -1539,25 +1535,14 @@ fn file_copier_copy(
                             }
                         }
 
-                        use bun_sys::windows::Win32ErrorExt as _;
-                        if let Some(err) = bun_sys::windows::Win32Error::get().to_system_errno() {
-                            Output::err(
-                                err,
-                                "failed to copy file {}",
-                                format_args!(
-                                    "{}",
-                                    bun_core::fmt::fmt_os_path(entry.path, Default::default())
-                                ),
-                            );
-                        } else {
-                            Output::err_generic(
-                                "failed to copy file {}",
-                                format_args!(
-                                    "{}",
-                                    bun_core::fmt::fmt_os_path(entry.path, Default::default())
-                                ),
-                            );
-                        }
+                        Output::err(
+                            bun_sys::windows::last_system_errno(),
+                            "failed to copy file {}",
+                            format_args!(
+                                "{}",
+                                bun_core::fmt::fmt_os_path(entry.path, Default::default())
+                            ),
+                        );
                         node_.end();
                         progress_.refresh();
                         Global::crash();
@@ -1708,7 +1693,6 @@ impl Default for Example {
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, strum::IntoStaticStr)]
 pub enum ExampleTag {
-    Unknown,
     GithubRepository,
     Official,
     LocalFolder,
@@ -1955,7 +1939,6 @@ impl Example {
             headers_buf,
             b"",
             http_proxy,
-            None,
             HTTP::FetchRedirect::Follow,
         ));
         async_http.client.progress_node = Some(core::ptr::NonNull::from(&mut *progress));
@@ -2058,7 +2041,6 @@ impl Example {
                 b"",
                 b"",
                 http_proxy,
-                None,
                 HTTP::FetchRedirect::Follow,
             ));
         async_http.client.progress_node = Some(core::ptr::NonNull::from(&mut *progress));
@@ -2151,7 +2133,6 @@ impl Example {
             b"",
             b"",
             http_proxy,
-            None,
             HTTP::FetchRedirect::Follow,
         );
         async_http.client.progress_node = Some(core::ptr::NonNull::from(&mut *progress));
@@ -2196,7 +2177,6 @@ impl Example {
             b"",
             b"",
             http_proxy,
-            None,
             HTTP::FetchRedirect::Follow,
         ));
         async_http.client.flags.reject_unauthorized = env_loader.get_tls_reject_unauthorized();

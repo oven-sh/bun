@@ -4,8 +4,6 @@
 //! against lower-tier crates. `Command::start()` (full dispatch) and
 //! per-command exec bodies live in the sibling `*_command.rs` modules.
 
-use core::cell::Cell;
-
 use bun_core::strings;
 use bun_core::{self as bun, Global, Output};
 use bun_core::{pretty, pretty_error, pretty_errorln};
@@ -338,6 +336,8 @@ pub mod upgrade_command;
 pub(crate) mod add_command;
 #[path = "audit_command.rs"]
 pub mod audit_command;
+#[path = "dedupe_command.rs"]
+pub(crate) mod dedupe_command;
 #[path = "filter_arg.rs"]
 pub mod filter_arg;
 #[path = "filter_run.rs"]
@@ -354,6 +354,14 @@ pub mod pack_command;
 pub(crate) mod patch_command;
 #[path = "patch_commit_command.rs"]
 pub(crate) mod patch_commit_command;
+#[path = "pm_diff_command.rs"]
+pub mod pm_diff_command;
+pub mod pm_diff_normalize;
+pub mod pm_diff_profile;
+pub mod pm_diff_relayout;
+pub mod pm_diff_semantic;
+#[path = "pm_licenses_command.rs"]
+pub(crate) mod pm_licenses_command;
 #[path = "pm_pkg_command.rs"]
 pub mod pm_pkg_command;
 #[path = "pm_trusted_command.rs"]
@@ -365,6 +373,8 @@ pub mod pm_version_command;
 pub mod pm_view_command;
 #[path = "pm_why_command.rs"]
 pub(crate) mod pm_why_command;
+#[path = "prune_command.rs"]
+pub(crate) mod prune_command;
 #[path = "publish_command.rs"]
 pub mod publish_command;
 #[path = "remove_command.rs"]
@@ -420,15 +430,14 @@ pub(crate) static Bun__Node__DisabledWarnings: std::sync::OnceLock<Vec<Box<[u8]>
 /// Backing storage for [`cli_arena`]. Written exactly once in [`Cli::start`]
 /// during single-threaded process startup (before `Command::start`, hence
 /// before any `cli_arena()` / `cli_dupe` caller), then read freely — same
-/// "init once in `start()`" shape as `cli::LOG_` and [`CMD`].
+/// "init once in `start()`" shape as `cli::LOG_`.
 ///
 /// `RacyCell<MaybeUninit<…>>`, **not** `std::sync::LazyLock`: `LazyLock`'s init
 /// thunk and the `std::sync::Once` poison/slow path it forces are `#[cold]`, and
-/// fat-LTO parks them tens of MB away from the startup symbol cluster (the same
-/// pathology documented for `OnceLock::set` on [`CMD`]). `cli_arena()` is on the
-/// hot `bun <file>` / `bun run <script>` path (via `cli_dupe` / `cli_dupe_z` /
-/// `runner_arena`), so a `LazyLock` there faults a fresh cold page on every
-/// `bun` invocation; a plain cell is the correct shape.
+/// fat-LTO parks them tens of MB away from the startup symbol cluster.
+/// `cli_arena()` is on the hot `bun <file>` / `bun run <script>` path (via
+/// `cli_dupe` / `cli_dupe_z` / `runner_arena`), so a `LazyLock` there faults a
+/// fresh cold page on every `bun` invocation; a plain cell is the correct shape.
 static CLI_ARENA: bun_core::RacyCell<core::mem::MaybeUninit<bun_alloc::Arena>> =
     bun_core::RacyCell::new(core::mem::MaybeUninit::uninit());
 
@@ -484,21 +493,6 @@ fn cli_dupe_z(s: &[u8]) -> *const core::ffi::c_char {
     buf.as_ptr().cast::<core::ffi::c_char>()
 }
 
-thread_local! {
-    pub(crate) static IS_MAIN_THREAD: Cell<bool> = const { Cell::new(false) };
-}
-
-/// `Cli.cmd` — set in `create_context_data` so crash reports / debug logging
-/// can ask "which subcommand are we in". Set once during single-threaded
-/// startup; read freely thereafter.
-///
-/// `RacyCell`, not `OnceLock`: `OnceLock::set` routes through stdlib's
-/// `#[cold] fn initialize`, which fat-LTO places ~36 MB away from the
-/// startup.order cluster and faults a fresh page on every `bun` invocation.
-/// The write happens before any
-/// thread is spawned, so a bare cell is the correct shape.
-static CMD: bun_core::RacyCell<Option<command::Tag>> = bun_core::RacyCell::new(None);
-
 /// This is set `true` during `Command.which()` if argv0 is "node", in which the CLI is going
 /// to pretend to be node.js by always choosing RunCommand with a relative filepath.
 ///
@@ -545,7 +539,7 @@ pub mod cli {
         bun_core::RacyCell::new(core::mem::MaybeUninit::uninit());
 
     /// `#[inline(never)]`: this is the first Rust call after `main()` (see
-    /// `src/bun_bin/lib.rs`) and the head of the `bun <file>` / `bun run`
+    /// `src/runtime/bin_entry/mod.rs`) and the head of the `bun <file>` / `bun run`
     /// startup chain. It must stay a concrete symbol so lld's
     /// `--symbol-ordering-file` (`src/startup.order`) can cluster it — and the
     /// callees it walks (`Command::start` → `which` → `create_context_data` →
@@ -555,12 +549,8 @@ pub mod cli {
     /// shared with bundler/install/css/panic-format bodies.
     #[inline(never)]
     pub fn start() {
-        IS_MAIN_THREAD.with(|c| c.set(true));
-        // Mirror the threadlocal into the crash-handler crate's global so
         // `bun_crash_handler::cli_state::is_main_thread()` (used to print the
-        // `panic(main thread): …` header) returns true on this thread. The
-        // crash handler lives in a lower tier and can't read `IS_MAIN_THREAD`
-        // directly, so it compares against a stored OS tid instead.
+        // `panic(main thread): …` header) compares against a stored OS tid.
         bun_crash_handler::cli_state::set_main_thread_id(bun_threading::current_thread_id());
         bun_core::set_start_time(bun_core::time::nano_timestamp());
         // SAFETY: single-threaded process startup
@@ -572,7 +562,7 @@ pub mod cli {
         // SAFETY: single-threaded process startup; `mimalloc` is already init.
         unsafe { (*super::CLI_ARENA.get()).write(bun_alloc::Arena::new()) };
 
-        // (The panic hook is installed by `bun_crash_handler::init()` in bun_bin.)
+        // (The panic hook is installed by `bun_crash_handler::init()` in `bin_entry::main`.)
         // SAFETY: just initialized above; single-threaded for the lifetime of `log`.
         let log = unsafe { (*LOG_.get()).assume_init_mut() };
         if let Err(err) = Command::start(log) {
@@ -584,7 +574,7 @@ pub mod cli {
             let _ = log.print(std::ptr::from_mut::<bun_core::io::Writer>(
                 bun_core::Output::error_writer(),
             ));
-            bun_crash_handler::handle_root_error(err, None);
+            bun_crash_handler::handle_root_error(err);
         }
     }
 }
@@ -663,6 +653,8 @@ pub mod help_command {
   <b><blue>remove<r>    <d>{:<16}<r>     Remove a dependency from package.json <d>(bun rm)<r>
   <b><blue>update<r>    <d>{:<16}<r>     Update outdated dependencies
   <b><blue>audit<r>                          Check installed packages for vulnerabilities
+  <b><blue>dedupe<r>                         Remove duplicate versions from the lockfile
+  <b><blue>prune<r>                          Remove packages that are not in the lockfile from node_modules
   <b><blue>outdated<r>                       Display latest versions of outdated dependencies
   <b><blue>link<r>      <d>[\\<package\\>]<r>          Register or link a local npm package
   <b><blue>unlink<r>                         Unregister a local npm package
@@ -677,7 +669,6 @@ pub mod help_command {
   <b><cyan>init<r>                           Start an empty Bun project from a built-in template
   <b><cyan>create<r>    <d>{:<16}<r>     Create a new project from a template <d>(bun c)<r>
   <b><cyan>upgrade<r>                        Upgrade to latest version of Bun.
-  <b><cyan>feedback<r>  <d>./file1 ./file2<r>      Provide feedback to the Bun team.
 
   <d>\\<command\\><r> <b><cyan>--help<r>               Print help text for command.
 "),
@@ -790,8 +781,6 @@ pub use reserved_command as ReservedCommand;
 // ─── Command (Tag + which() + dispatch skeleton) ─────────────────────────────
 pub mod command {
     use super::*;
-    // Self-referential alias so `crate::command::Command` resolves.
-    pub use super::Command;
 
     /// Collect `bun::argv()` into an indexable slice of `&'static ZStr`.
     /// `Argv` only exposes `.get(i)` / `.iter() -> &[u8]`; several call
@@ -1020,7 +1009,7 @@ pub mod command {
         if x == RootCommandMatcher::case(b"add") || x == RootCommandMatcher::case(b"a") {
             return Tag::AddCommand;
         }
-        if x == RootCommandMatcher::case(b"update") {
+        if x == RootCommandMatcher::case(b"update") || x == RootCommandMatcher::case(b"up") {
             return Tag::UpdateCommand;
         }
         if x == RootCommandMatcher::case(b"patch") {
@@ -1057,6 +1046,12 @@ pub mod command {
         if x == RootCommandMatcher::case(b"info") {
             return Tag::InfoCommand;
         }
+        if x == RootCommandMatcher::case(b"dedupe") {
+            return Tag::DedupeCommand;
+        }
+        if x == RootCommandMatcher::case(b"prune") {
+            return Tag::PruneCommand;
+        }
         // reserved
         if x == RootCommandMatcher::case(b"deploy")
             || x == RootCommandMatcher::case(b"cloud")
@@ -1065,7 +1060,6 @@ pub mod command {
             || x == RootCommandMatcher::case(b"auth")
             || x == RootCommandMatcher::case(b"login")
             || x == RootCommandMatcher::case(b"logout")
-            || x == RootCommandMatcher::case(b"prune")
         {
             return Tag::ReservedCommand;
         }
@@ -1129,12 +1123,6 @@ pub mod command {
         cmd: Tag,
         log: &mut bun_ast::Log,
     ) -> crate::Result<&'static mut ContextData> {
-        // SAFETY: single-threaded CLI startup — no other thread exists yet.
-        // `CMD` is read by debug logging and `run_command` (feedback dispatch).
-        unsafe { CMD.write(Some(cmd)) };
-        // The crash handler can't read `CMD` (lower-tier crate); mirror the
-        // one-byte command tag into its `cli_state` so crash-report trace
-        // strings encode the running subcommand (Zig: `Cli.cmd = command`).
         bun_crash_handler::cli_state::set_cmd_char(cmd.char());
 
         let ctx = write_context_no_parse(log);
@@ -1315,6 +1303,8 @@ pub mod command {
             Tag::UpdateInteractiveCommand => exec_update_interactive(log),
             Tag::PublishCommand => exec_publish(log),
             Tag::AuditCommand => exec_audit(log),
+            Tag::DedupeCommand => exec_dedupe(log),
+            Tag::PruneCommand => exec_prune(log),
             Tag::WhyCommand => exec_why(log),
             Tag::BunxCommand => exec_bunx(log),
             Tag::ReplCommand => exec_repl(log),
@@ -1353,7 +1343,7 @@ pub mod command {
         let offset_for_passthrough: usize;
 
         let ctx: &mut ContextData = 'brk: {
-            // The entry point (`bun_bin::main`) defers argv
+            // The entry point (`bin_entry::main`) defers argv
             // init to `bun_core::argv()`'s lazy `Once`, so force that init
             // now — otherwise `bun_options_argc()` reads 0 here and the
             // standalone executable silently drops `BUN_OPTIONS` flags.
@@ -1619,6 +1609,8 @@ pub mod command {
         exec_update_interactive => (UpdateInteractiveCommand, super::update_interactive_command::UpdateInteractiveCommand::exec),
         exec_publish            => (PublishCommand,        super::publish_command::PublishCommand::exec),
         exec_why                => (WhyCommand,            super::why_command::WhyCommand::exec),
+        exec_dedupe             => (DedupeCommand,         super::dedupe_command::DedupeCommand::exec),
+        exec_prune              => (PruneCommand,          super::prune_command::PruneCommand::exec),
         exec_remove             => (RemoveCommand,         super::remove_command::RemoveCommand::exec),
         exec_link               => (LinkCommand,           super::link_command::LinkCommand::exec),
         exec_unlink             => (UnlinkCommand,         super::unlink_command::UnlinkCommand::exec),
@@ -2175,6 +2167,12 @@ Execute a shell script directly from Bun.
             }
             Tag::AuditCommand => {
                 pm_print_help(PmSubcommand::Audit);
+            }
+            Tag::DedupeCommand => {
+                pm_print_help(PmSubcommand::Dedupe);
+            }
+            Tag::PruneCommand => {
+                pm_print_help(PmSubcommand::Prune);
             }
             Tag::InfoCommand => {
                 pretty!(

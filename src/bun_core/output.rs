@@ -62,29 +62,16 @@ impl QuietWriter {
         output_sink().quiet_writer_adapt(self, buf.as_mut_ptr(), buf.len())
     }
     #[inline]
-    pub fn flush(&mut self) {
-        output_sink().quiet_writer_flush(self)
-    }
-    #[inline]
     pub(crate) fn context_handle(&self) -> Fd {
         output_sink().quiet_writer_fd(self)
     }
-    /// Inherent forwarder so call sites don't need `use fmt::Write`.
+    /// One `write(2)` loop for all of `bytes`. Returns `false` when the fd
+    /// rejected them, so the caller can stop trying.
     #[inline]
-    pub(crate) fn write_fmt(&mut self, args: core::fmt::Arguments<'_>) -> core::fmt::Result {
-        <Self as core::fmt::Write>::write_fmt(self, args)
+    pub(crate) fn write_all(&mut self, bytes: &[u8]) -> bool {
+        output_sink().quiet_writer_write_all(self, bytes)
     }
 }
-impl core::fmt::Write for QuietWriter {
-    fn write_str(&mut self, s: &str) -> core::fmt::Result {
-        if output_sink().quiet_writer_write_all(self, s.as_bytes()) {
-            Ok(())
-        } else {
-            Err(core::fmt::Error)
-        }
-    }
-}
-// `qw.write_fmt(args)` resolves through `fmt::Write`.
 
 /// Opaque adapter wrapping a QuietWriter and exposing `crate::io::Writer`.
 /// Layout contract: bun_sys's concrete `SysQuietWriterAdapter` must fit in
@@ -254,17 +241,6 @@ fn stdio_tty_flag(idx: usize) -> bool {
     bun_stdio_tty[idx].load(Ordering::Relaxed) != 0
 }
 
-// TYPE_ONLY: bun_sys::Winsize → bun_core (move-in pass).
-// `AtomicCell` because the SIGWINCH handler writes this from signal context
-// while any thread may read it. `Winsize` is 4×u16 = 8 bytes, padding-free.
-pub static TERMINAL_SIZE: crate::AtomicCell<crate::Winsize> =
-    crate::AtomicCell::new(crate::Winsize {
-        row: 0,
-        col: 0,
-        xpixel: 0,
-        ypixel: 0,
-    });
-
 // ──────────────────────────────────────────────────────────────────────────
 // Source
 // ──────────────────────────────────────────────────────────────────────────
@@ -412,7 +388,7 @@ impl Source {
     ///
     /// Threads that *may* run JS (web workers, debugger, the main VM thread)
     /// must keep using [`configure_thread`] / [`configure_named_thread`].
-    pub(crate) fn configure_thread_no_js() {
+    pub fn configure_thread_no_js() {
         if SOURCE_SET.get() {
             return;
         }
@@ -454,21 +430,6 @@ impl Source {
         Self::get_force_color_depth().unwrap_or(ColorDepth::None) != ColorDepth::None
     }
 
-    pub(crate) fn is_color_terminal() -> bool {
-        #[cfg(windows)]
-        {
-            // https://github.com/chalk/supports-color/blob/d4f413efaf8da045c5ab440ed418ef02dbb28bf1/index.js#L100C11-L112
-            // Windows 10 build 10586 is the first Windows release that supports 256 colors.
-            // Windows 10 build 14931 is the first release that supports 16m/TrueColor.
-            // Every other version supports 16 colors.
-            return true;
-        }
-        #[cfg(not(windows))]
-        {
-            Self::color_depth() != ColorDepth::None
-        }
-    }
-
     pub fn color_depth() -> ColorDepth {
         *LAZY_COLOR_DEPTH.get_or_init(compute_color_depth)
     }
@@ -491,13 +452,12 @@ impl Source {
                     let _ = STDERR_DESCRIPTOR_TYPE.set(OutputStreamDescriptor::Terminal);
                 }
 
+                // FORCE_COLOR and NO_COLOR override both streams; otherwise each stream uses its own isatty result.
                 let mut enable_color: Option<bool> = None;
                 if Self::is_force_color() {
                     enable_color = Some(true);
                 } else if Self::is_no_color() {
                     enable_color = Some(false);
-                } else if Self::is_color_terminal() && (is_stdout_tty || is_stderr_tty) {
-                    enable_color = Some(true);
                 }
 
                 ENABLE_ANSI_COLORS_STDOUT
@@ -894,6 +854,10 @@ pub fn is_stdout_tty() -> bool {
 pub fn is_stdin_tty() -> bool {
     stdio_tty_flag(0)
 }
+#[inline]
+pub fn is_stderr_tty() -> bool {
+    stdio_tty_flag(2)
+}
 
 pub fn is_github_action() -> bool {
     if env_var::GITHUB_ACTIONS.get().unwrap_or(false) {
@@ -1073,6 +1037,11 @@ pub fn reset_terminal() {
 }
 
 pub fn reset_terminal_all() {
+    // Reached from `reload_process`, which any thread may call. A thread that
+    // never ran `Source::configure_thread` has zeroed writers, not stdio.
+    if !SOURCE_SET.get() {
+        return;
+    }
     SOURCE.with_borrow_mut(|s| {
         if ENABLE_ANSI_COLORS_STDERR.load(Ordering::Relaxed) {
             let _ = s.error_stream().write_all(b"\x1B[2J\x1B[3J\x1B[H");
@@ -1375,6 +1344,11 @@ pub fn print(args: fmt::Arguments<'_>) {
     print_to(Destination::Stdout, args);
 }
 
+/// Bytes to stdout exactly as given (no UTF-8 replacement), through the same writer `print` uses.
+pub fn print_bytes(bytes: &[u8]) {
+    write_bytes(Destination::Stdout, bytes);
+}
+
 /// `bun.Output.println(fmt, args)` — `print()` with a trailing newline.
 #[inline]
 pub fn println(args: fmt::Arguments<'_>) {
@@ -1403,9 +1377,6 @@ pub struct ScopedLogger {
     pub tagname: &'static str,
     really_disable: AtomicBool,
     is_visible_once: std::sync::Once,
-    lock: Mutex<()>,
-    // There is no per-scope `[4096]u8` buffered writer; logs route
-    // through `scoped_writer()` directly (debug-logging perf only).
 }
 
 impl ScopedLogger {
@@ -1414,7 +1385,6 @@ impl ScopedLogger {
             tagname,
             really_disable: AtomicBool::new(matches!(visibility, Visibility::Hidden)),
             is_visible_once: std::sync::Once::new(),
-            lock: Mutex::new(()),
         }
     }
 
@@ -1472,6 +1442,8 @@ impl ScopedLogger {
     ///   BUN_DEBUG_foo=1
     /// To enable all logs, set the environment variable
     ///   BUN_DEBUG_ALL=1
+    // The line buffer is 4 KB of stack; keep that frame out of the callers.
+    #[inline(never)]
     pub fn log(&self, args: fmt::Arguments<'_>) {
         if !Environment::ENABLE_LOGS {
             return;
@@ -1493,20 +1465,19 @@ impl ScopedLogger {
             return;
         }
 
-        let _lock = self.lock.lock();
+        // Format the whole line first, then hand it to the fd in one write,
+        // so lines from other scopes and threads cannot land inside it.
+        // `LineBuffer` never fails; an `Err` here is a `Display` impl that
+        // gave up, and the line keeps what it produced.
+        let mut line = scoped_debug_writer::LineBuffer::new();
+        let _ = fmt::Write::write_fmt(&mut line, args);
 
         let mut out = scoped_writer();
-        // The colored/plain selection now happens at the `scoped_log!` call site
-        // (single arg evaluation) via `_scoped_use_ansi()`.
-        let result = out.write_fmt(args);
-        if result.is_err() {
-            // Write failure → disable scope and skip the flush.
+        let _lock = scoped_debug_writer::WRITE_LOCK.lock();
+        if !out.write_all(line.as_bytes()) {
+            // Write failure → disable scope.
             self.really_disable.store(true, Ordering::Relaxed);
-            return;
         }
-        // `QuietWriter::flush()` returns `()` through the OutputSink vtable,
-        // so flush errors are not observable here (debug logging only).
-        out.flush();
     }
 }
 
@@ -1797,7 +1768,7 @@ impl fmt::Display for PrettyBuf {
 /// Positional-argument bundle for runtime template substitution.
 pub trait FmtTuple {
     /// Write the `idx`-th positional into `f`. Returns `false` if `idx` is out
-    /// of range (caller emits the literal `{}` then).
+    /// of range.
     fn write_nth(&self, idx: usize, f: &mut dyn fmt::Write) -> Result<bool, fmt::Error>;
     fn len(&self) -> usize;
 }
@@ -1877,7 +1848,7 @@ impl_fmt_tuple!(0 A, 1 B, 2 C, 3 D, 4 E, 5 F, 6 G, 7 H);
 
 /// Substitute `{}` / `{s}` / `{d}` / `{any}` / `{f}` placeholders in `template`
 /// with successive entries from `args`. `{{` / `}}` are emitted as literal
-/// braces. Unrecognised specs are passed through verbatim.
+/// braces. The spec inside any other `{...}` is ignored.
 fn substitute_template(
     template: &[u8],
     args: &impl FmtTuple,
@@ -1901,7 +1872,14 @@ fn substitute_template(
             }
             if j < t.len() {
                 // consume placeholder
-                if args.write_nth(argi, f)? {
+                let filled = args.write_nth(argi, f)?;
+                debug_assert!(
+                    filled,
+                    "template has more placeholders than the {} arg(s) passed with it (a format_args! counts as one; pass a tuple): {:?}",
+                    args.len(),
+                    bstr::BStr::new(t),
+                );
+                if filled {
                     argi += 1;
                 }
                 i = j + 1;
@@ -2413,6 +2391,13 @@ pub fn err(error_name: impl ErrName, fmt: &str, args: impl FmtTuple) {
     // pretty_errorln! add exactly one.
     let fmt = fmt.strip_suffix('\n').unwrap_or(fmt);
     let body = pretty_fmt_args(fmt, enable_ansi_colors_stderr(), args);
+    err_with_body(&error_name, &body);
+}
+
+/// The type-independent tail of [`err`], so its several format sites are not
+/// re-instantiated for every `(ErrName, FmtTuple)` pair.
+#[inline(never)]
+fn err_with_body(error_name: &dyn ErrName, body: &dyn fmt::Display) {
     if let Some(e) = error_name.as_sys_err_info() {
         // MOVE_DOWN: bun_sys::coreutils_error_map → bun_core (move-in pass).
         if let Some(label) = crate::coreutils_error_map::get(e.errno) {
@@ -2509,8 +2494,56 @@ pub mod scoped_debug_writer {
     pub(crate) static SCOPED_FILE_WRITER: crate::RacyCell<QuietWriter> =
         crate::RacyCell::new(QuietWriter::ZEROED);
 
+    /// Every scope writes to the same fd. Held across the `write(2)` loop of
+    /// one line so a short write cannot let another thread's line in.
+    pub(crate) static WRITE_LOCK: Mutex<()> = Mutex::new(());
+
     thread_local! {
         pub(crate) static DISABLE_INSIDE_LOG: Cell<isize> = const { Cell::new(0) };
+    }
+
+    /// One fully formatted log line. Fits most lines on the stack and spills
+    /// the whole line to the heap when it grows past that, so the caller can
+    /// always write it in one piece.
+    pub(crate) struct LineBuffer {
+        stack: [u8; 4096],
+        len: usize,
+        heap: Vec<u8>,
+    }
+
+    impl LineBuffer {
+        pub(crate) fn new() -> Self {
+            Self {
+                stack: [0; 4096],
+                len: 0,
+                heap: Vec::new(),
+            }
+        }
+
+        pub(crate) fn as_bytes(&self) -> &[u8] {
+            if self.heap.is_empty() {
+                &self.stack[..self.len]
+            } else {
+                &self.heap
+            }
+        }
+    }
+
+    impl fmt::Write for LineBuffer {
+        fn write_str(&mut self, s: &str) -> fmt::Result {
+            let bytes = s.as_bytes();
+            if self.heap.is_empty() {
+                if let Some(dst) = self.stack.get_mut(self.len..self.len + bytes.len()) {
+                    dst.copy_from_slice(bytes);
+                    self.len += bytes.len();
+                    return Ok(());
+                }
+                self.heap.reserve(self.len + bytes.len());
+                self.heap.extend_from_slice(&self.stack[..self.len]);
+            }
+            self.heap.extend_from_slice(bytes);
+            Ok(())
+        }
     }
 
     /// RAII guard that suppresses scoped logging for the lifetime of the guard.

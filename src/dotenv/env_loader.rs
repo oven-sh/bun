@@ -4,13 +4,14 @@ use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 
 use bun_alloc::AllocError;
-use bun_collections::{ArrayHashMapExt, GetOrPutResult, StringArrayHashMap};
+use bun_collections::{ArrayHashMapExt, GetOrPutResult, StringSet};
 use bun_core::{self, Output};
 use bun_core::{ZStr, strings};
 use bun_paths::{self, MAX_PATH_BYTES, PathBuffer};
 use bun_sys;
 use bun_url::URL;
 use bun_which::which;
+use enumset::EnumSet;
 
 use bun_core::analytics;
 
@@ -19,6 +20,34 @@ pub enum DotEnvFileSuffix {
     Development,
     Production,
     Test,
+}
+
+/// Declaration order is the order `print_loaded` lists the files in.
+#[derive(enumset::EnumSetType)]
+pub(crate) enum DefaultEnvFile {
+    DevelopmentLocal,
+    ProductionLocal,
+    TestLocal,
+    Local,
+    Development,
+    Production,
+    Test,
+    Env,
+}
+
+impl DefaultEnvFile {
+    fn name(self) -> &'static [u8] {
+        match self {
+            Self::DevelopmentLocal => b".env.development.local",
+            Self::ProductionLocal => b".env.production.local",
+            Self::TestLocal => b".env.test.local",
+            Self::Local => b".env.local",
+            Self::Development => b".env.development",
+            Self::Production => b".env.production",
+            Self::Test => b".env.test",
+            Self::Env => b".env",
+        }
+    }
 }
 
 /// Directory-entry probe used by `Loader::load`. `bun_dotenv` sits below
@@ -111,17 +140,10 @@ pub struct S3Credentials {
 pub struct Loader {
     pub map: Map,
     // allocator dropped — global mimalloc (see PORTING.md §Allocators)
-    pub(crate) env_local: Option<bun_ast::Source>,
-    pub(crate) env_development: Option<bun_ast::Source>,
-    pub(crate) env_production: Option<bun_ast::Source>,
-    pub(crate) env_test: Option<bun_ast::Source>,
-    pub(crate) env_development_local: Option<bun_ast::Source>,
-    pub(crate) env_production_local: Option<bun_ast::Source>,
-    pub(crate) env_test_local: Option<bun_ast::Source>,
-    pub(crate) env: Option<bun_ast::Source>,
+    pub(crate) default_files_loaded: EnumSet<DefaultEnvFile>,
 
     /// only populated with files specified explicitly (e.g. --env-file arg)
-    pub(crate) custom_files_loaded: StringArrayHashMap<bun_ast::Source>,
+    pub(crate) custom_files_loaded: StringSet,
 
     pub quiet: bool,
 
@@ -252,13 +274,13 @@ impl Loader {
 
             let mut endpoint: Box<[u8]> = Box::default();
             let mut insecure_http = false;
-            if let Some(endpoint_) = self
+            if let Some(parsed) = self
                 .get(b"S3_ENDPOINT")
                 .or_else(|| self.get(b"AWS_ENDPOINT"))
+                .and_then(URL::parse_s3_endpoint)
             {
-                let url = URL::parse(endpoint_);
-                endpoint = Box::from(url.host_with_path());
-                insecure_http = url.is_http();
+                endpoint = parsed.host_with_path;
+                insecure_http = parsed.is_http;
             }
 
             let bucket: Box<[u8]> = self
@@ -564,20 +586,26 @@ impl Loader {
     pub fn init_with_map(map: Map) -> Loader {
         Loader {
             map,
-            env_local: None,
-            env_development: None,
-            env_production: None,
-            env_test: None,
-            env_development_local: None,
-            env_production_local: None,
-            env_test_local: None,
-            env: None,
-            custom_files_loaded: StringArrayHashMap::default(),
+            default_files_loaded: EnumSet::empty(),
+            custom_files_loaded: StringSet::new(),
             quiet: false,
             did_load_process: false,
             reject_unauthorized: Cell::new(None),
             aws_credentials: None,
         }
+    }
+
+    /// A `Worker`'s loader: the map, with the explicit entries marked loaded so a pipe is not read twice.
+    pub fn clone_for_worker(&self) -> Result<Loader, AllocError> {
+        Ok(Loader {
+            map: self.map.clone_with_allocator()?,
+            default_files_loaded: EnumSet::empty(),
+            custom_files_loaded: self.custom_files_loaded.clone()?,
+            quiet: false,
+            did_load_process: false,
+            reject_unauthorized: Cell::new(None),
+            aws_credentials: None,
+        })
     }
 
     pub fn load_process(&mut self) -> Result<(), AllocError> {
@@ -611,9 +639,6 @@ impl Loader {
         &mut self,
         str: &[u8],
     ) -> Result<(), AllocError> {
-        // Go straight to `parse_bytes` to avoid the
-        // `Source.contents: &'static [u8]` lifetime constraint (callers like
-        // `node:util.parseEnv` pass JS-owned non-'static buffers).
         let mut value_buffer: Vec<u8> = Vec::new();
         Parser::parse_bytes::<OVERWRITE, false, EXPAND>(str, &mut self.map, &mut value_buffer)
     }
@@ -627,6 +652,7 @@ impl Loader {
     ) -> crate::Result<()> {
         // `suffix` is a runtime arg (avoids unstable adt_const_params; cold path).
         let start = bun_core::time::nano_timestamp();
+        let loaded_before = self.loaded_count();
 
         // Create a reusable buffer for parsing multiple files.
         let mut value_buffer: Vec<u8> = Vec::new();
@@ -646,10 +672,14 @@ impl Loader {
             }
         }
 
-        if !self.quiet {
+        if !self.quiet && self.loaded_count() > loaded_before {
             self.print_loaded(start);
         }
         Ok(())
+    }
+
+    fn loaded_count(&self) -> usize {
+        self.default_files_loaded.len() + self.custom_files_loaded.count()
     }
 
     fn load_explicit_files(
@@ -688,107 +718,78 @@ impl Loader {
         let dir_handle = bun_sys::Fd::cwd();
 
         match suffix {
-            DotEnvFileSuffix::Development => {
-                self.try_load_default(dir, dir_handle, b".env.development.local", value_buffer)?
-            }
-            DotEnvFileSuffix::Production => {
-                self.try_load_default(dir, dir_handle, b".env.production.local", value_buffer)?
-            }
+            DotEnvFileSuffix::Development => self.try_load_default(
+                dir,
+                dir_handle,
+                DefaultEnvFile::DevelopmentLocal,
+                value_buffer,
+            )?,
+            DotEnvFileSuffix::Production => self.try_load_default(
+                dir,
+                dir_handle,
+                DefaultEnvFile::ProductionLocal,
+                value_buffer,
+            )?,
             DotEnvFileSuffix::Test => {
-                self.try_load_default(dir, dir_handle, b".env.test.local", value_buffer)?
+                self.try_load_default(dir, dir_handle, DefaultEnvFile::TestLocal, value_buffer)?
             }
         }
 
         if suffix != DotEnvFileSuffix::Test {
-            self.try_load_default(dir, dir_handle, b".env.local", value_buffer)?;
+            self.try_load_default(dir, dir_handle, DefaultEnvFile::Local, value_buffer)?;
         }
 
         match suffix {
             DotEnvFileSuffix::Development => {
-                self.try_load_default(dir, dir_handle, b".env.development", value_buffer)?
+                self.try_load_default(dir, dir_handle, DefaultEnvFile::Development, value_buffer)?
             }
             DotEnvFileSuffix::Production => {
-                self.try_load_default(dir, dir_handle, b".env.production", value_buffer)?
+                self.try_load_default(dir, dir_handle, DefaultEnvFile::Production, value_buffer)?
             }
             DotEnvFileSuffix::Test => {
-                self.try_load_default(dir, dir_handle, b".env.test", value_buffer)?
+                self.try_load_default(dir, dir_handle, DefaultEnvFile::Test, value_buffer)?
             }
         }
 
-        self.try_load_default(dir, dir_handle, b".env", value_buffer)
+        self.try_load_default(dir, dir_handle, DefaultEnvFile::Env, value_buffer)
     }
 
-    /// Probe `dir` for a known `.env*` filename and, if present, load it into
-    /// its dedicated slot and bump the analytics counter. Shared body for the
-    /// eight call sites in `load_default_files`.
     #[inline]
     fn try_load_default<D: DirEntryProbe + ?Sized>(
         &mut self,
         dir: &D,
         dir_handle: bun_sys::Fd,
-        name: &'static [u8],
+        env_file: DefaultEnvFile,
         value_buffer: &mut Vec<u8>,
     ) -> crate::Result<()> {
-        if dir.has_comptime_query(name) {
-            self.load_env_file::<false>(dir_handle, name, value_buffer)?;
+        if dir.has_comptime_query(env_file.name()) {
+            self.load_env_file::<false>(dir_handle, env_file, value_buffer)?;
             analytics::Features::dotenv_inc();
         }
         Ok(())
     }
 
     pub(crate) fn print_loaded(&self, start: i128) {
-        let count: usize = (self.env_development_local.is_some() as usize)
-            + (self.env_production_local.is_some() as usize)
-            + (self.env_test_local.is_some() as usize)
-            + (self.env_local.is_some() as usize)
-            + (self.env_development.is_some() as usize)
-            + (self.env_production.is_some() as usize)
-            + (self.env_test.is_some() as usize)
-            + (self.env.is_some() as usize)
-            + self.custom_files_loaded.count();
+        let count = self.loaded_count();
 
         if count == 0 {
             return;
         }
         let elapsed = (bun_core::time::nano_timestamp() - start) as f64 / 1_000_000.0;
 
-        const ALL: [&[u8]; 8] = [
-            b".env.development.local",
-            b".env.production.local",
-            b".env.test.local",
-            b".env.local",
-            b".env.development",
-            b".env.production",
-            b".env.test",
-            b".env",
-        ];
-        let loaded: [bool; 8] = [
-            self.env_development_local.is_some(),
-            self.env_production_local.is_some(),
-            self.env_test_local.is_some(),
-            self.env_local.is_some(),
-            self.env_development.is_some(),
-            self.env_production.is_some(),
-            self.env_test.is_some(),
-            self.env.is_some(),
-        ];
-
         let mut loaded_i: usize = 0;
         Output::print_elapsed(elapsed);
         bun_core::pretty_error!(" <d>");
 
-        for (i, &yes) in loaded.iter().enumerate() {
-            if yes {
-                loaded_i += 1;
-                if count == 1 || (loaded_i >= count && count > 1) {
-                    bun_core::pretty_error!("\"{}\"", bstr::BStr::new(ALL[i]));
-                } else {
-                    bun_core::pretty_error!("\"{}\", ", bstr::BStr::new(ALL[i]));
-                }
+        for env_file in self.default_files_loaded.iter() {
+            loaded_i += 1;
+            if count == 1 || (loaded_i >= count && count > 1) {
+                bun_core::pretty_error!("\"{}\"", bstr::BStr::new(env_file.name()));
+            } else {
+                bun_core::pretty_error!("\"{}\", ", bstr::BStr::new(env_file.name()));
             }
         }
 
-        // `iterator()` requires `&mut self`; iterate `keys()` slice instead.
         for k in self.custom_files_loaded.keys() {
             loaded_i += 1;
             if count == 1 || (loaded_i >= count && count > 1) {
@@ -802,64 +803,48 @@ impl Loader {
         Output::flush();
     }
 
-    /// Helper: maps a known `.env*` filename to its `Option<Source>` field.
-    fn default_file_slot(&mut self, base: &'static [u8]) -> &mut Option<bun_ast::Source> {
-        match base {
-            b".env.local" => &mut self.env_local,
-            b".env.development" => &mut self.env_development,
-            b".env.production" => &mut self.env_production,
-            b".env.test" => &mut self.env_test,
-            b".env.development.local" => &mut self.env_development_local,
-            b".env.production.local" => &mut self.env_production_local,
-            b".env.test.local" => &mut self.env_test_local,
-            b".env" => &mut self.env,
-            _ => unreachable!(),
-        }
-    }
-
     pub(crate) fn load_env_file<const OVERRIDE: bool>(
         &mut self,
         dir: bun_sys::Fd,
-        base: &'static [u8],
+        env_file: DefaultEnvFile,
         value_buffer: &mut Vec<u8>,
     ) -> crate::Result<()> {
-        if self.default_file_slot(base).is_some() {
+        if self.default_files_loaded.contains(env_file) {
             return Ok(());
         }
+        let base = env_file.name();
 
         // `bun_sys` is errno-based; the match arms below group the recoverable
         // errnos. Any errno not listed propagates.
-        let file =
-            match bun_sys::File::openat(dir, base, bun_sys::O::RDONLY | bun_sys::O::CLOEXEC, 0) {
-                Ok(file) => file,
-                Err(err) => {
-                    use bun_sys::E;
-                    match err.get_errno() {
-                        E::EISDIR | E::ENOENT => {
-                            // prevent retrying
-                            *self.default_file_slot(base) =
-                                Some(bun_ast::Source::init_path_string(base, b""));
-                            return Ok(());
-                        }
-                        E::EBUSY | E::EACCES => {
-                            if !self.quiet {
-                                bun_core::pretty_errorln!(
-                                    "<r><red>{}<r> error loading {} file",
-                                    bstr::BStr::new(err.name()),
-                                    bstr::BStr::new(base)
-                                );
-                            }
-                            // prevent retrying
-                            *self.default_file_slot(base) =
-                                Some(bun_ast::Source::init_path_string(base, b""));
-                            return Ok(());
-                        }
-                        _ => return Err(err.into()),
+        let file = match bun_sys::File::openat(dir, base, DEFAULT_ENV_FILE_OPEN_FLAGS, 0) {
+            Ok(file) => file,
+            Err(err) => {
+                use bun_sys::E;
+                match err.get_errno() {
+                    // A unix socket: ENXIO on Linux, EOPNOTSUPP on macOS and FreeBSD.
+                    E::EISDIR | E::ENOENT | E::ENXIO | E::EOPNOTSUPP => {
+                        // prevent retrying
+                        self.default_files_loaded.insert(env_file);
+                        return Ok(());
                     }
+                    E::EBUSY | E::EACCES => {
+                        if !self.quiet {
+                            bun_core::pretty_errorln!(
+                                "<r><red>{}<r> error loading {} file",
+                                bstr::BStr::new(err.name()),
+                                bstr::BStr::new(base)
+                            );
+                        }
+                        // prevent retrying
+                        self.default_files_loaded.insert(env_file);
+                        return Ok(());
+                    }
+                    _ => return Err(err.into()),
                 }
-            };
+            }
+        };
 
-        match read_env_file_contents(&file)? {
+        match read_env_file_contents(&file, EnvFileSource::Default)? {
             ReadEnvFile::Empty => {}
             ReadEnvFile::ReadErr(err) => {
                 if !self.quiet {
@@ -875,11 +860,7 @@ impl Loader {
             }
         }
 
-        // The file buffer is dropped after parsing because
-        // `bun_ast::Source.contents` is `&'static [u8]` and §Forbidden bans
-        // `Box::leak`. The stored `Source` is only ever checked for
-        // `.is_some()` / its path printed, so dropping the bytes is fine.
-        *self.default_file_slot(base) = Some(bun_ast::Source::init_path_string(base, b""));
+        self.default_files_loaded.insert(env_file);
         Ok(())
     }
 
@@ -892,21 +873,22 @@ impl Loader {
             return Ok(());
         }
 
-        let file = match bun_sys::open_file(file_path, bun_sys::OpenFlags::READ_ONLY) {
+        // No `O_NONBLOCK`: an explicit FIFO waits for its writer, as in Node.
+        let file = match bun_sys::File::openat(
+            bun_sys::Fd::cwd(),
+            file_path,
+            bun_sys::O::RDONLY | bun_sys::O::CLOEXEC,
+            0,
+        ) {
             Ok(f) => f,
             Err(_) => {
                 // prevent retrying
-                // `Source::init_path_string` requires a `'static` path; the
-                // map key already carries `file_path` (boxed), and the value is never
-                // read for its path/contents — only `.contains()` and key iteration —
-                // so an empty placeholder is observationally identical.
-                self.custom_files_loaded
-                    .put(file_path, bun_ast::Source::default())?;
+                self.custom_files_loaded.insert(file_path)?;
                 return Ok(());
             }
         };
 
-        match read_env_file_contents(&file)? {
+        match read_env_file_contents(&file, EnvFileSource::Explicit)? {
             ReadEnvFile::Empty => {}
             ReadEnvFile::ReadErr(err) => {
                 if !self.quiet {
@@ -922,21 +904,31 @@ impl Loader {
             }
         }
 
-        // See `load_env_file` — `Source.contents` is not retained; only
-        // `.contains()` / key iteration are ever observed.
-        self.custom_files_loaded
-            .put(file_path, bun_ast::Source::default())?;
+        self.custom_files_loaded.insert(file_path)?;
         Ok(())
     }
 }
 
-/// Shared post-open tail of `load_env_file` / `load_env_file_dynamic`:
-/// `File::read_to_end` (fstat-presized) with the recoverable-errno filter.
-/// The two callers differ in their open path, open-error handling, and the
-/// memo slot they write — those stay in the callers. Only the shared read
-/// tail is factored here.
+/// `O_NONBLOCK`: a blocking `open` of a FIFO named `.env` waits for a writer.
+#[cfg(unix)]
+const DEFAULT_ENV_FILE_OPEN_FLAGS: i32 =
+    bun_sys::O::RDONLY | bun_sys::O::CLOEXEC | bun_sys::O::NONBLOCK;
+/// No `O_NONBLOCK`: an overlapped Windows handle cannot be read synchronously.
+#[cfg(not(unix))]
+const DEFAULT_ENV_FILE_OPEN_FLAGS: i32 = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC;
+
+/// Decides what happens to an env file that is not a regular file.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum EnvFileSource {
+    /// A `.env*` name from the cwd listing: skipped.
+    Default,
+    /// An `--env-file` argument: read whatever its kind, as in Node.
+    Explicit,
+}
+
+/// Shared post-open tail of `load_env_file` / `load_env_file_dynamic`.
 enum ReadEnvFile {
-    /// Zero-length — caller marks the slot and returns.
+    /// Zero-length, or a default entry that is not a regular file. The caller marks the slot.
     Empty,
     /// Recoverable read errno (ENOMEM/EPIPE/EACCES/EISDIR) — caller prints
     /// (unless `quiet`), marks the slot, and returns.
@@ -945,8 +937,24 @@ enum ReadEnvFile {
     Bytes(Vec<u8>),
 }
 
-fn read_env_file_contents(file: &bun_sys::File) -> crate::Result<ReadEnvFile> {
-    match file.read_to_end() {
+fn read_env_file_contents(
+    file: &bun_sys::File,
+    source: EnvFileSource,
+) -> crate::Result<ReadEnvFile> {
+    let stat = file.stat()?;
+    let result = if bun_sys::is_regular_file(stat.st_mode as _) {
+        if stat.st_size == 0 {
+            return Ok(ReadEnvFile::Empty);
+        }
+        file.read_to_end()
+    } else if source == EnvFileSource::Explicit {
+        // A pipe or device is not seekable, so `read(2)` until EOF, not `pread`.
+        let mut buf = Vec::new();
+        file.read_to_end_into(&mut buf).map(|_| buf)
+    } else {
+        return Ok(ReadEnvFile::Empty);
+    };
+    match result {
         Ok(buf) if buf.is_empty() => Ok(ReadEnvFile::Empty),
         Ok(buf) => Ok(ReadEnvFile::Bytes(buf)),
         Err(err) => {
@@ -1295,9 +1303,7 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    /// Same as [`parse`] but takes the source bytes directly. Exists so
-    /// `load_env_file*` can parse a transient `Vec<u8>` without constructing a
-    /// `bun_ast::Source` (whose `contents` field is currently `&'static [u8]`).
+    /// Builds a [`Parser`] over `src` (minus any UTF-8 BOM) and runs [`Parser::parse`] into `map`.
     fn parse_bytes<const OVERRIDE: bool, const IS_PROCESS: bool, const EXPAND: bool>(
         src: &[u8],
         map: &mut Map,
@@ -1336,12 +1342,6 @@ pub struct Map {
     pub map: HashTable,
 }
 
-impl Default for Map {
-    fn default() -> Self {
-        Self::init()
-    }
-}
-
 impl Map {
     /// Builds a NULL-terminated `K=V\0` envp array. Returns an owning struct so
     /// dropping it frees the joined buffers (PORTING.md §Forbidden: no Box::leak).
@@ -1368,25 +1368,6 @@ impl Map {
         Ok(NullDelimitedEnvMap {
             _storage: storage,
             envp: envp_buf.into_boxed_slice(),
-        })
-    }
-
-    /// Returns a wrapper around the env map that does not duplicate the memory of
-    /// the keys and values, but instead points into the memory of the bun env map.
-    // `bun_sys::EnvMap` is `HashMap<String, String>`, which copies and is
-    // UTF-8-lossy; the lossy round-trip is accepted here.
-    #[allow(clippy::disallowed_methods)] // lossy round-trip documented above
-    pub fn std_env_map(&mut self) -> Result<StdEnvMapWrapper, AllocError> {
-        let mut env_map = bun_sys::EnvMap::default();
-        let mut it = self.map.iterator();
-        while let Some(entry) = it.next() {
-            env_map.insert(
-                String::from_utf8_lossy(entry.key_ptr).into_owned(),
-                String::from_utf8_lossy(&entry.value_ptr.value).into_owned(),
-            );
-        }
-        Ok(StdEnvMapWrapper {
-            unsafe_map: env_map,
         })
     }
 
@@ -1555,15 +1536,11 @@ impl NullDelimitedEnvMap {
     pub fn as_ptr(&self) -> *const *const c_char {
         self.envp.as_ptr()
     }
-}
-
-pub struct StdEnvMapWrapper {
-    pub(crate) unsafe_map: bun_sys::EnvMap,
-}
-
-impl StdEnvMapWrapper {
-    pub fn get(&self) -> &bun_sys::EnvMap {
-        &self.unsafe_map
+    /// The `KEY=VALUE` entries as C strings.
+    pub fn iter(&self) -> impl Iterator<Item = &core::ffi::CStr> {
+        self._storage.iter().map(|s| {
+            core::ffi::CStr::from_bytes_until_nul(s).expect("entries are built NUL-terminated")
+        })
     }
 }
 

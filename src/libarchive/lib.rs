@@ -8,7 +8,7 @@
 use core::ffi::c_int;
 use core::ptr;
 
-use bun_collections::{ArrayHashMap, StringArrayHashMap};
+use bun_collections::StringArrayHashMap;
 use bun_core::{MutableString, slice_to_nul, strings};
 use bun_core::{Output, ZStr, slice_as_bytes};
 #[cfg(unix)]
@@ -638,6 +638,14 @@ pub mod lib {
         pub kind: bun_sys::FileKind,
     }
 
+    impl NextEntry {
+        /// The header `next()` just read; valid until the iterator advances.
+        pub fn entry(&self) -> &Entry {
+            // SAFETY: `entry` is the non-null header libarchive handed to `next()` and stays live until the next read.
+            unsafe { &*self.entry }
+        }
+    }
+
     impl ArchiveIterator {
         /// Borrow the underlying libarchive handle.
         ///
@@ -646,9 +654,17 @@ pub mod lib {
         /// until `read_free()` in [`close`]. All `Archive` methods take
         /// `&self` (FFI interior mutability), so a shared borrow suffices.
         #[inline]
-        fn archive(&self) -> &Archive {
+        pub fn archive(&self) -> &Archive {
             // SAFETY: see doc comment — non-null for the lifetime of `self`.
             unsafe { &*self.archive }
+        }
+
+        /// Reads the body of the entry `next()` just returned.
+        pub fn read_entry_data(
+            &mut self,
+            next: &NextEntry,
+        ) -> core::result::Result<IteratorResult<Box<[u8]>>, bun_core::OOM> {
+            next.read_entry_data(self.archive())
         }
 
         pub fn init(tarball_bytes: &[u8]) -> IteratorResult<Self> {
@@ -753,21 +769,34 @@ pub mod lib {
         ) -> core::result::Result<IteratorResult<Box<[u8]>>, bun_core::OOM> {
             // SAFETY: self.entry is the libarchive-owned entry from read_next_header.
             let size = unsafe { (*self.entry).size() };
-            if size < 0 || size > 64 * 1024 * 1024 {
+            let Ok(size) = usize::try_from(size) else {
                 return Ok(IteratorResult::init_err(
                     archive.as_mut_ptr(),
                     b"invalid archive entry size",
                 ));
+            };
+            // Read data incrementally so untrusted entry sizes don't drive allocation.
+            let mut buf: Vec<u8> = Vec::new();
+            while buf.len() < size {
+                let to_read = (size - buf.len()).min(64 * 1024);
+                buf.try_reserve(to_read).map_err(|_| bun_core::AllocError)?;
+                // SAFETY: `archive_read_data` only writes into the slice; the written prefix is committed below.
+                let dest = unsafe { &mut bun_core::vec::spare_bytes_mut(&mut buf)[..to_read] };
+                let read = archive.read_data(dest);
+                if read < 0 {
+                    return Ok(IteratorResult::init_err(
+                        archive.as_mut_ptr(),
+                        b"failed to read archive data",
+                    ));
+                }
+                if read == 0 {
+                    break;
+                }
+                // SAFETY: `archive_read_data` returns exactly the byte count it wrote (`<= to_read`).
+                unsafe {
+                    bun_core::vec::commit_spare(&mut buf, usize::try_from(read).expect("int cast"))
+                };
             }
-            let mut buf = vec![0u8; usize::try_from(size).expect("int cast")];
-            let read = archive.read_data(&mut buf);
-            if read < 0 {
-                return Ok(IteratorResult::init_err(
-                    archive.as_mut_ptr(),
-                    b"failed to read archive data",
-                ));
-            }
-            buf.truncate(usize::try_from(read).expect("int cast"));
             Ok(IteratorResult::init_res(buf.into_boxed_slice()))
         }
     }
@@ -917,14 +946,6 @@ impl BufferReadStream {
     }
 
     pub(crate) fn open_read(&mut self) -> lib::Result {
-        // lib.archive_read_set_open_callback(this.archive, this.);
-        // _ = lib.archive_read_set_read_callback(this.archive, archive_read_callback);
-        // _ = lib.archive_read_set_seek_callback(this.archive, archive_seek_callback);
-        // _ = lib.archive_read_set_skip_callback(this.archive, archive_skip_callback);
-        // _ = lib.archive_read_set_close_callback(this.archive, archive_close_callback);
-        // // lib.archive_read_set_switch_callback(this.archive, this.archive_s);
-        // _ = lib.archive_read_set_callback_data(this.archive, this);
-
         let archive = self.archive();
 
         let _ = archive.read_support_format_tar();
@@ -937,47 +958,12 @@ impl BufferReadStream {
         // the first concatenated archive would be read.
         let _ = archive.read_set_options(c"read_concatenated_archives");
 
-        // _ = lib.archive_read_support_filter_none(this.archive);
-
         let rc = archive.read_open_memory(self.buf());
 
         self.reading = (rc as c_int) > -1;
 
-        // _ = lib.archive_read_support_compression_all(this.archive);
-
         rc
     }
-
-    // pub fn archive_write_callback(
-    //     archive: *Archive,
-    //     ctx_: *anyopaque,
-    //     buffer: *const anyopaque,
-    //     len: usize,
-    // ) callconv(.c) lib.la_ssize_t {
-    //     var this = fromCtx(ctx_);
-    // }
-
-    // pub fn archive_close_callback(
-    //     archive: *Archive,
-    //     ctx_: *anyopaque,
-    // ) callconv(.c) c_int {
-    //     var this = fromCtx(ctx_);
-    // }
-    // pub fn archive_free_callback(
-    //     archive: *Archive,
-    //     ctx_: *anyopaque,
-    // ) callconv(.c) c_int {
-    //     var this = fromCtx(ctx_);
-    // }
-
-    // pub fn archive_switch_callback(
-    //     archive: *Archive,
-    //     ctx1: *anyopaque,
-    //     ctx2: *anyopaque,
-    // ) callconv(.c) c_int {
-    //     var this = fromCtx(ctx1);
-    //     var that = fromCtx(ctx2);
-    // }
 }
 
 impl Drop for BufferReadStream {
@@ -995,14 +981,14 @@ impl Drop for BufferReadStream {
 /// path with leading `..` preserved; the target is unsafe if the result
 /// climbs above the extraction root.
 #[cfg(unix)]
-fn is_symlink_target_safe(
+pub fn is_symlink_target_safe(
     symlink_path: &[u8],
     link_target: &ZStr,
     symlink_join_buf: &mut Option<bun_paths::path_buffer_pool::Guard>,
 ) -> bool {
     // Absolute symlink targets are never safe - they could point anywhere
     let link_target_bytes = link_target.as_bytes();
-    if !link_target_bytes.is_empty() && link_target_bytes[0] == b'/' {
+    if link_target_bytes.is_empty() || link_target_bytes[0] == b'/' {
         return false;
     }
 
@@ -1053,35 +1039,95 @@ fn is_symlink_target_safe(
     !(strings::eql(resolved, b"..") || strings::has_prefix_comptime(resolved, b"../"))
 }
 
-/// Returns true if any leading component of `path` (including the full path)
-/// matches a symlink already created by this extraction. `is_symlink_target_safe`
-/// is purely lexical, so once a symlink is on disk the kernel will follow it
-/// during later `mkdirat`/`openat`/`symlinkat` calls — such entries must be
-/// rejected rather than resolved.
 #[cfg(unix)]
-pub fn path_traverses_created_symlink(path: &[u8], created_symlinks: &[Vec<u8>]) -> bool {
-    if created_symlinks.is_empty() {
-        return false;
+pub struct DeferredSymlink {
+    path: bun_core::ZBox,
+    target: bun_core::ZBox,
+}
+
+#[cfg(unix)]
+impl DeferredSymlink {
+    pub fn new(path: &[u8], target: &[u8]) -> Self {
+        Self {
+            path: bun_core::ZBox::from_bytes(path),
+            target: bun_core::ZBox::from_bytes(target),
+        }
     }
-    let sep = b'/';
-    let mut end = 0usize;
-    while end <= path.len() {
-        if end == path.len() || path[end] == sep {
-            let prefix = &path[..end];
-            // Compare case-insensitively: on case-insensitive filesystems (APFS
-            // default on macOS) an entry `LINK/x` traverses a symlink stored as
-            // `link`, but a byte-exact compare would miss it.
-            if !prefix.is_empty()
-                && created_symlinks
-                    .iter()
-                    .any(|s| strings::eql_case_insensitive_ascii_check_length(s, prefix))
-            {
-                return true;
+}
+
+#[cfg(unix)]
+fn open_dir_with_stat(dir_fd: Fd, sub_path: &[u8]) -> Option<(Fd, bun_sys::Stat)> {
+    let fd = bun_sys::open_dir_at(dir_fd, sub_path).ok()?;
+    match bun_sys::fstat(fd) {
+        Ok(st) => Some((fd, st)),
+        Err(_) => {
+            fd.close();
+            None
+        }
+    }
+}
+
+#[cfg(unix)]
+pub fn create_deferred_symlinks(dir_fd: Fd, symlinks: &[DeferredSymlink], log: bool) -> u32 {
+    let mut parents: Vec<Option<bun_sys::Stat>> = Vec::with_capacity(symlinks.len());
+    for symlink in symlinks {
+        let dirname = bun_paths::dirname_simple(symlink.path.as_bytes());
+        if dirname.is_empty() {
+            parents.push(None);
+            continue;
+        }
+        let _ = dir_fd.make_path_u8(dirname);
+        parents.push(open_dir_with_stat(dir_fd, dirname).map(|(fd, st)| {
+            fd.close();
+            st
+        }));
+    }
+
+    let mut created: u32 = 0;
+    for (symlink, expected) in symlinks.iter().zip(parents) {
+        let dirname = bun_paths::dirname_simple(symlink.path.as_bytes());
+        let target = symlink.target.as_zstr();
+        let result = if dirname.is_empty() {
+            bun_sys::symlinkat(target, dir_fd, symlink.path.as_zstr())
+        } else {
+            let name =
+                ZStr::from_slice_with_nul(&symlink.path.as_bytes_with_nul()[dirname.len() + 1..]);
+            match (open_dir_with_stat(dir_fd, dirname), expected) {
+                (Some((parent, st)), Some(expected))
+                    if st.st_dev == expected.st_dev && st.st_ino == expected.st_ino =>
+                {
+                    let result = bun_sys::symlinkat(target, parent, name);
+                    parent.close();
+                    result
+                }
+                (parent, _) => {
+                    if let Some((parent, _)) = parent {
+                        parent.close();
+                    }
+                    if log {
+                        bun_core::warn!(
+                            "Skipping symlink whose parent directory changed during extraction: {}\n",
+                            bstr::BStr::new(symlink.path.as_bytes()),
+                        );
+                    }
+                    continue;
+                }
+            }
+        };
+        match result {
+            Ok(()) => created += 1,
+            Err(_) => {
+                if log {
+                    bun_core::warn!(
+                        "Skipping symlink that could not be created: {} -> {}\n",
+                        bstr::BStr::new(symlink.path.as_bytes()),
+                        bstr::BStr::new(symlink.target.as_bytes()),
+                    );
+                }
             }
         }
-        end += 1;
     }
-    false
+    created
 }
 
 /// Recursive mkdir over a WTF-16 path: component-iterates the
@@ -1123,34 +1169,6 @@ pub mod archiver {
     pub struct Context {
         pub pluckers: Vec<Plucker>,
         pub overwrite_list: StringArrayHashMap<()>,
-        pub all_files: EntryMap,
-    }
-
-    // U64Context: hash = truncate u64→u32, eql = ==; the
-    // keys are already wyhash u64s, so truncation is the entire hash.
-    pub type EntryMap = ArrayHashMap<u64, *mut u8, U64Context>;
-
-    #[derive(Default, Clone, Copy)]
-    pub struct U64Context;
-    impl bun_collections::array_hash_map::ArrayHashContext<u64> for U64Context {
-        #[inline]
-        fn hash(&self, k: &u64) -> u32 {
-            *k as u32 // @truncate
-        }
-        #[inline]
-        fn eql(&self, a: &u64, b: &u64, _: usize) -> bool {
-            a == b
-        }
-    }
-    impl bun_collections::array_hash_map::ArrayHashAdapter<u64, u64> for U64Context {
-        #[inline]
-        fn hash(&self, k: &u64) -> u32 {
-            *k as u32 // @truncate
-        }
-        #[inline]
-        fn eql(&self, a: &u64, b: &u64, _: usize) -> bool {
-            a == b
-        }
     }
 
     pub struct Plucker {
@@ -1196,8 +1214,6 @@ pub use archiver::{Context, ExtractOptions, Plucker};
 pub trait ArchiveAppender {
     /// Mirrors `@hasDecl(Child, "onFirstDirectoryName")`.
     const HAS_ON_FIRST_DIRECTORY_NAME: bool = false;
-    /// Mirrors `@hasDecl(Child, "appendMutable")`.
-    const HAS_APPEND_MUTABLE: bool = false;
 
     fn needs_first_dirname(&self) -> bool {
         false
@@ -1205,10 +1221,6 @@ pub trait ArchiveAppender {
     fn on_first_directory_name(&mut self, _name: &[u8]) {}
 
     fn append(&mut self, path: &[u8]) -> crate::Result<&[u8]> {
-        let _ = path;
-        unreachable!()
-    }
-    fn append_mutable(&mut self, path: &[OSPathChar]) -> crate::Result<&mut [OSPathChar]> {
         let _ = path;
         unreachable!()
     }
@@ -1332,7 +1344,6 @@ impl Archiver {
                         else {
                             continue 'loop_;
                         };
-                        // defer opened.close()
                         let _close_guard = scopeguard::guard(opened, |fd| fd.close());
                         let stat_size = bun_sys::get_file_size(opened)?;
 
@@ -1393,7 +1404,7 @@ impl Archiver {
         let mut symlink_join_buf: Option<bun_paths::path_buffer_pool::Guard> = None;
 
         #[cfg(unix)]
-        let mut created_symlinks: Vec<Vec<u8>> = Vec::new();
+        let mut deferred_symlinks: Vec<DeferredSymlink> = Vec::new();
 
         let mut normalized_buf = OSPathBuffer::uninit();
         let mut use_pwrite = cfg!(unix);
@@ -1564,17 +1575,6 @@ impl Archiver {
 
                     let path_slice: &[OSPathChar] = &path[..];
 
-                    #[cfg(unix)]
-                    if path_traverses_created_symlink(path_slice, &created_symlinks) {
-                        if options.log {
-                            bun_core::warn!(
-                                "Skipping entry that traverses a previously extracted symlink: {}\n",
-                                bun_core::fmt::fmt_os_path(path_slice, Default::default()),
-                            );
-                        }
-                        continue;
-                    }
-
                     if options.log {
                         bun_core::prettyln!(
                             " {}",
@@ -1664,26 +1664,8 @@ impl Archiver {
                                     }
                                     continue;
                                 }
-                                // SAFETY: normalized_buf[path_slice.len()] == 0 (written above),
-                                // so path_slice is a NUL-terminated [:0]u8.
-                                let path_z: &ZStr = unsafe {
-                                    ZStr::from_raw(path_slice.as_ptr(), path_slice.len())
-                                };
-                                match bun_sys::symlinkat(link_target, dir_fd, path_z) {
-                                    Ok(()) => {}
-                                    Err(err) => match err.get_errno() {
-                                        bun_sys::E::EPERM | bun_sys::E::ENOENT => {
-                                            let dirname = bun_paths::dirname_simple(path_slice);
-                                            if dirname.is_empty() {
-                                                return Err(err.into());
-                                            }
-                                            let _ = dir.make_path_u8(dirname);
-                                            bun_sys::symlinkat(link_target, dir_fd, path_z)?;
-                                        }
-                                        _ => return Err(err.into()),
-                                    },
-                                }
-                                created_symlinks.push(path_slice.to_vec());
+                                deferred_symlinks
+                                    .push(DeferredSymlink::new(path_slice, link_target.as_bytes()));
                             }
                             #[cfg(not(unix))]
                             {
@@ -1704,23 +1686,6 @@ impl Archiver {
                             )
                             .unwrap();
 
-                            // `path_traverses_created_symlink` is a lexical check: on
-                            // filesystems that alias differently-encoded names (Unicode
-                            // NFC/NFD normalization on APFS/HFS+), a path component can
-                            // reach a created symlink without byte-matching its recorded
-                            // path. Once this extraction has created any symlink, ask the
-                            // kernel to refuse to follow symlinks while opening file
-                            // entries. `NOFOLLOW_ANY` is 0 on non-Darwin targets.
-                            #[cfg(unix)]
-                            let flags = {
-                                let mut flags =
-                                    bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC;
-                                if !created_symlinks.is_empty() {
-                                    flags |= bun_sys::O::NOFOLLOW_ANY;
-                                }
-                                flags
-                            };
-                            #[cfg(not(unix))]
                             let flags = bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC;
 
                             #[cfg(windows)]
@@ -1813,19 +1778,6 @@ impl Archiver {
                                     } else {
                                         0u64
                                     };
-
-                                    if A::HAS_APPEND_MUTABLE {
-                                        let result = ctx_
-                                            .all_files
-                                            .get_or_put_adapted(&h, &archiver::U64Context)
-                                            .expect("unreachable");
-                                        if !result.found_existing {
-                                            *result.value_ptr = appender
-                                                .append_mutable(path_slice)?
-                                                .as_mut_ptr()
-                                                .cast::<u8>();
-                                        }
-                                    }
 
                                     for plucker_ in ctx_.pluckers.iter_mut() {
                                         if plucker_.filename_hash == h {
@@ -1944,6 +1896,9 @@ impl Archiver {
                 }
             }
         }
+
+        #[cfg(unix)]
+        create_deferred_symlinks(dir_fd, &deferred_symlinks, options.log);
 
         Ok(count)
     }

@@ -8,7 +8,7 @@ mode: center
 
 ```ts
 const stream = new ReadableStream();
-const str = await Bun.readableStreamToArray(stream);
+const chunks = await Bun.readableStreamToArray(stream);
 ```
 
 ---

@@ -147,6 +147,31 @@ it("navigate + evaluate round-trip", async () => {
   expect(result).toBe("hi");
 });
 
+// #40951: every view used to get its own implicit WKProcessPool, so each
+// lifetime instance spent capped per-process OS resources (one
+// CVDisplayLink per pool; CoreVideo allows 64 per process). After exactly
+// 64 create/close cycles, the 65th view's navigate() hung forever. The
+// host now shares one WKProcessPool across all views. Sequential on
+// purpose: the cap is on lifetime instances, not concurrent ones.
+it("survives more than 64 lifetime create/navigate/close cycles", async () => {
+  for (let i = 1; i <= 70; i++) {
+    const view = new Bun.WebView({ width: 64, height: 64, backend: "webkit", dataStore: "ephemeral" });
+    let watchdog: ReturnType<typeof setTimeout> | undefined;
+    try {
+      // Watchdog so a regression fails with the iteration number instead
+      // of a bare test timeout. Cleared every iteration.
+      const hung = new Promise<never>((_, reject) => {
+        watchdog = setTimeout(() => reject(new Error(`navigate() hung at lifetime instance #${i}`)), 10_000);
+      });
+      await Promise.race([view.navigate(html(`<p>v${i}</p>`)), hung]);
+      expect(view.url).toStartWith("data:text/html");
+    } finally {
+      clearTimeout(watchdog);
+      view.close();
+    }
+  }
+});
+
 it("url constructor option fires navigate()", async () => {
   // `url:` is sugar for navigate() right after Create. The promise lands in
   // m_pendingNavigate; the user's next await serializes behind it. Here
@@ -968,6 +993,107 @@ it("WebView.closeAll() kills the host subprocess and pending promises reject", a
   const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
   expect(stdout.trim()).toBe("rejected");
   expect(exitCode).toBe(0);
+});
+
+it("views orphaned by a host death are closed, even after a new view respawns the host", async () => {
+  // Subprocess-isolated for the same reason as the closeAll() test above.
+  // Three views die with the host: one with an op in flight, one idle, one
+  // never navigated. All three must end up closed. Without that, once a
+  // new view respawns the host, an op on an old view is written to the
+  // new host with a viewId it has never seen and the failure reply is
+  // dropped, so the promise never settles and its slot is never freed.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const html = h => "data:text/html," + encodeURIComponent(h);
+        const open = () => new Bun.WebView({ width: 200, height: 200 });
+        // An op on a dead view must throw synchronously, not hand back a
+        // promise. The catch handler keeps an unfixed build's promise from
+        // surfacing as an unhandled rejection, so its exit code stays 0
+        // and the comparison below is what fails.
+        const probe = fn => {
+          try {
+            fn().catch(() => {});
+            return "returned a promise";
+          } catch (e) {
+            return e.code;
+          }
+        };
+
+        const busy = open();
+        const idle = open();
+        const blank = open();
+        await busy.navigate(html("<body>busy</body>"));
+        await idle.navigate(html("<body>idle</body>"));
+        const inFlight = busy.evaluate("new Promise(() => {})");
+        Bun.WebView.closeAll();
+        const death = await inFlight.then(() => "resolved", e => e.message);
+
+        const whileDead = {
+          busy: probe(() => busy.evaluate("1")),
+          idle: probe(() => idle.evaluate("1")),
+          blank: probe(() => blank.navigate(html("<body>blank</body>"))),
+        };
+
+        // The client is marked dead as soon as the event loop sees the
+        // socket EOF or the exit notification, whichever comes first; a
+        // respawn is refused until the exit has been reaped, so the
+        // constructor can throw briefly after closeAll(). Retry.
+        let fresh;
+        for (let attempt = 0; ; attempt++) {
+          try {
+            fresh = open();
+            break;
+          } catch (e) {
+            if (attempt === 500) throw e;
+            await Bun.sleep(10);
+          }
+        }
+        await fresh.navigate(html("<body>fresh</body>"));
+        const freshBody = await fresh.evaluate("document.body.textContent");
+
+        const afterRespawn = {
+          evaluate: probe(() => busy.evaluate("1")),
+          navigate: probe(() => busy.navigate(html("<body>again</body>"))),
+          screenshot: probe(() => busy.screenshot()),
+          click: probe(() => busy.click(1, 1)),
+          idle: probe(() => idle.evaluate("1")),
+          blank: probe(() => blank.navigate(html("<body>blank</body>"))),
+        };
+        // close() must still be safe to call on the views that died.
+        busy.close();
+        idle.close();
+        blank.close();
+        fresh.close();
+        console.log(JSON.stringify({ death, whileDead, freshBody, afterRespawn }));
+      `,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout, stderr).toEndWith("}\n");
+  expect(JSON.parse(stdout)).toEqual({
+    // Socket EOF and the exit notification race; the wording follows the winner.
+    death: expect.stringMatching(/^WebView host process (died|killed by signal \d+|exited)$/),
+    whileDead: {
+      busy: "ERR_INVALID_STATE",
+      idle: "ERR_INVALID_STATE",
+      blank: "ERR_INVALID_STATE",
+    },
+    freshBody: "fresh",
+    afterRespawn: {
+      evaluate: "ERR_INVALID_STATE",
+      navigate: "ERR_INVALID_STATE",
+      screenshot: "ERR_INVALID_STATE",
+      click: "ERR_INVALID_STATE",
+      idle: "ERR_INVALID_STATE",
+      blank: "ERR_INVALID_STATE",
+    },
+  });
+  expect(exitCode, stderr).toBe(0);
 });
 
 it("reload() fires onNavigated", async () => {

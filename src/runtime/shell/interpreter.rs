@@ -26,7 +26,6 @@
 //! own data up via `interp.node_mut(this)` / `interp.nodes[this]`.
 
 use bun_collections::VecExt;
-use bun_core::WTFStringImplExt as _;
 use bun_jsc::JsCell;
 use core::cell::Cell;
 use core::fmt;
@@ -310,7 +309,7 @@ pub struct Interpreter {
 
     /// Lazily-populated UTF-8 cache for the JS-side argv (`$@`/`$N` expansion
     /// when running under a Worker). See [`Interpreter::get_vm_args_utf8`].
-    pub(crate) vm_args_utf8: JsCell<Vec<bun_core::ZigStringSlice>>,
+    pub(crate) vm_args_utf8: JsCell<Vec<bun_core::Utf8Bytes<'static>>>,
 
     /// `bun run` CLI context for `$N` expansion on the mini event loop.
     /// Null when constructed from JS (no `ContextData` is reachable).
@@ -414,7 +413,7 @@ impl Interpreter {
         arena: &'a bun_alloc::Arena,
         src: &'a [u8],
         jsobjs: &'a mut [crate::jsc::JSValue],
-        jsstrings_to_escape: &'a mut [bun_core::String],
+        jsstrings_to_escape: &'a [bun_core::String],
         out_parser: &mut Option<bun_shell_parser::Parser<'a>>,
         out_lex_result: &mut Option<bun_shell_parser::LexResult<'a>>,
     ) -> crate::Result<bun_shell_parser::ast::Script<'a>> {
@@ -621,8 +620,6 @@ impl Interpreter {
         // Free buffered IO, env
         // maps, cwd fd; do NOT free the struct itself (it's embedded).
         self.root_shell.with_mut(|rs| rs.deinit_embedded(true));
-        // `vm_args_utf8` slices Drop themselves (`ZigStringSlice` has a Drop
-        // impl that derefs the WTF backing); the Vec frees on box drop.
     }
 
     /// Standalone-shell entrypoint for `bun <file>.sh`: parse `src` (already
@@ -673,6 +670,8 @@ impl Interpreter {
         if from_source {
             bun_analytics::features::standalone_shell.fetch_add(1, Ordering::Relaxed);
         }
+        // We are the script's shell (`bun run <script>`, `bun exec`, `bun x.sh`).
+        bun_spawn::ctrl_c::install();
 
         let mut shargs = ShellArgs::init();
 
@@ -691,7 +690,7 @@ impl Interpreter {
                 arena,
                 src,
                 &mut [],
-                &mut [],
+                &[],
                 &mut out_parser,
                 &mut out_lex_result,
             ) {
@@ -786,6 +785,7 @@ macro_rules! shell_state_dispatch {
         /// Signal to `parent` that `child` finished with `exit_code`. This is the
         /// single hoisted `match` dispatching on the parent's state tag.
         pub fn child_done(&self, parent: NodeId, child: NodeId, exit_code: ExitCode) -> Yield {
+            self.propagate_interrupt(parent, child);
             if parent == NodeId::INTERPRETER {
                 return self.on_root_child_done(child, exit_code);
             }
@@ -887,6 +887,81 @@ impl Interpreter {
             n[id.idx()] = Node::Free;
         });
         self.free_list.with_mut(|f| f.push(id.0));
+    }
+
+    /// A child that a Ctrl+C we left to it killed marks its node `interrupted`
+    /// (see `bun_spawn::ctrl_c`). bash runs each member of a pipeline in its own
+    /// process, so inside one the interrupt only cuts that member short — the mark
+    /// flows up through the sequencing states (which finish early on it, see
+    /// `interrupted`) to the member, and the pipeline takes it from its rightmost
+    /// member only. Anywhere else it ends us the way it ended the child, so
+    /// `a; b` and `a || b` stop at `a`.
+    fn propagate_interrupt(&self, parent: NodeId, child: NodeId) {
+        if !self.node(child).base().is_some_and(|b| b.interrupted) {
+            if bun_spawn::ctrl_c::Child::alive() == 0 {
+                // A Ctrl+C the job handled is used up with the job (bash resets it per wait).
+                bun_spawn::ctrl_c::take_received();
+            }
+            return;
+        }
+        if parent == NodeId::INTERPRETER {
+            bun_spawn::ctrl_c::exit_like_child();
+        }
+        if let Node::Pipeline(p) = self.node(parent) {
+            let rightmost = p.cmds.as_deref().is_none_or(|c| {
+                c.len() < 2
+                    || matches!(c.last(), Some(crate::shell::states::pipeline::CmdOrResult::Cmd(id)) if *id == child)
+            });
+            if rightmost {
+                self.as_pipeline_mut(parent).base.interrupted = true;
+            }
+            return;
+        }
+        if !self.in_pipeline(parent) {
+            bun_spawn::ctrl_c::exit_like_child();
+        }
+        if let Some(base) = self.node_mut(parent).base_mut() {
+            base.interrupted = true;
+        }
+    }
+
+    /// For sequencing states' `child_done`: an interrupted pipeline member stops
+    /// where it is instead of running its next command.
+    pub(crate) fn interrupted(&self, id: NodeId) -> bool {
+        self.node(id).base().is_some_and(|b| b.interrupted)
+    }
+
+    /// Some ancestor is a member of a multi-command pipeline.
+    fn in_pipeline(&self, mut id: NodeId) -> bool {
+        while id != NodeId::INTERPRETER {
+            let Some(base) = self.node(id).base() else {
+                return false;
+            };
+            if base.parent != NodeId::INTERPRETER {
+                if let Node::Pipeline(p) = self.node(base.parent) {
+                    if p.cmds.as_deref().is_some_and(|c| c.len() >= 2) {
+                        return true;
+                    }
+                }
+            }
+            id = base.parent;
+        }
+        false
+    }
+
+    /// Inside an `&` command: not a foreground job.
+    pub(crate) fn in_background(&self, mut id: NodeId) -> bool {
+        while id != NodeId::INTERPRETER {
+            let node = self.node(id);
+            if node.kind() == StateKind::Async {
+                return true;
+            }
+            id = match node.base() {
+                Some(b) => b.parent,
+                None => return false,
+            };
+        }
+        false
     }
 
     #[inline]
@@ -993,7 +1068,6 @@ impl Interpreter {
         // Only `Script` can be a direct child of the interpreter.
         debug_assert!(matches!(self.nodes.get()[child.idx()], Node::Script(_)));
         log!("Interpreter script finish {}", exit_code);
-        Script::deinit_from_interpreter(self, child);
         self.free_node(child);
         self.exit_code.set(Some(exit_code));
         if self.async_commands_executing.get() == 0 {
@@ -1029,7 +1103,7 @@ impl Interpreter {
         for arg in vm_args {
             size += arg.slice().len();
         }
-        size += vm_args.capacity() * core::mem::size_of::<bun_core::ZigStringSlice>();
+        size += vm_args.capacity() * core::mem::size_of::<bun_core::Utf8Bytes>();
         size
     }
 
@@ -1205,21 +1279,38 @@ impl Interpreter {
                     self.keep_alive.with_mut(|k| k.disable());
                     self.deref_root_shell_and_io_if_needed(true);
                     let _entered = loop_.entered();
-                    let called = buffers.and_then(|(buffered_stdout, buffered_stderr)| {
-                        resolve
-                            .call(
-                                global_this,
-                                JSValue::UNDEFINED,
-                                &[
-                                    JSValue::js_number_from_int32(i32::from(exit_code)),
-                                    buffered_stdout,
-                                    buffered_stderr,
-                                ],
-                            )
-                            .map(|_| ())
-                    });
-                    if let Err(err) = called {
-                        global_this.report_active_exception_as_unhandled(err);
+                    // The shell state machine (`Yield`) has no exception channel,
+                    // so the promise is settled by a top-level call of its own:
+                    // what it throws is reported there, and the interpreter
+                    // finishes. If the output buffers could not be built
+                    // (allocation failure), the promise is rejected with that
+                    // instead; a terminating VM settles nothing.
+                    let event_loop = global_this.bun_vm().event_loop_mut();
+                    match buffers {
+                        Ok((buffered_stdout, buffered_stderr)) => event_loop.run_callback(
+                            resolve,
+                            global_this,
+                            JSValue::UNDEFINED,
+                            &[
+                                JSValue::js_number_from_int32(i32::from(exit_code)),
+                                buffered_stdout,
+                                buffered_stderr,
+                            ],
+                        ),
+                        Err(err) if !global_this.has_pending_termination_exception() => {
+                            let error = global_this.take_error(err);
+                            if let Some(reject) =
+                                JSShellInterpreter::reject_get_cached(this_jsvalue)
+                            {
+                                event_loop.run_callback(
+                                    reject,
+                                    global_this,
+                                    JSValue::UNDEFINED,
+                                    &[error],
+                                );
+                            }
+                        }
+                        Err(_) => {}
                     }
                     JSShellInterpreter::resolve_set_cached(
                         this_jsvalue,
@@ -1404,9 +1495,6 @@ impl Interpreter {
         }
 
         this.keep_alive.with_mut(|k| k.disable());
-        // `args: Box<ShellArgs>` and `vm_args_utf8: Vec<ZigStringSlice>` drop
-        // with the box; `ZigStringSlice` has a `Drop` impl that derefs its
-        // WTF backing.
     }
 
     pub(crate) fn is_running(
@@ -1493,7 +1581,7 @@ impl Interpreter {
         original_int: u8,
         event_loop: EventLoopHandle,
         command_ctx: *mut bun_options_types::context::ContextData,
-        vm_args_utf8: &mut Vec<bun_core::ZigStringSlice>,
+        vm_args_utf8: &mut Vec<bun_core::Utf8Bytes<'static>>,
     ) {
         let mut int = original_int;
         match event_loop {
@@ -1525,7 +1613,7 @@ impl Interpreter {
                 }
 
                 if let Some(worker_ptr) = vm.worker {
-                    // SAFETY: `vm.worker` is set in `VirtualMachine::initWorker`
+                    // SAFETY: `vm.worker` is set in `VirtualMachine::init_worker`
                     // to a live `*WebWorker` for the worker's lifetime.
                     let worker = unsafe { &*worker_ptr.cast::<bun_jsc::web_worker::WebWorker>() };
                     let argv = worker.argv();
@@ -1535,9 +1623,8 @@ impl Interpreter {
                     if vm_args_utf8.len() != argv.len() {
                         vm_args_utf8.reserve(argv.len());
                         for arg in argv {
-                            // SAFETY: each `WTFStringImpl` in `argv` is a live
-                            // `*WTF::StringImpl` borrowed from `worker.argv`.
-                            vm_args_utf8.push(unsafe { (**arg).to_utf8() });
+                            vm_args_utf8
+                                .push(crate::node::process::worker_option_string(*arg).into_utf8());
                         }
                     }
                     out.extend_from_slice(vm_args_utf8[int as usize].slice());
@@ -2060,7 +2147,6 @@ impl CowFd {
 // Convenience re-exports for state modules
 // ────────────────────────────────────────────────────────────────────────────
 
-pub use crate::shell::builtin::Builtin;
 pub use crate::shell::io_reader::IOReader;
 pub use crate::shell::io_writer::IOWriter;
 pub use crate::shell::states::assigns::AssignCtx;
@@ -2210,7 +2296,7 @@ fn shell_get_path<'a>(
 /// Windows: rewrite the path via `shell_get_path` then `bun_sys::stat`, tagging
 /// the error with the *original* `path_` (not the rewritten one). POSIX: plain
 /// `bun_sys::fstatat(dir, path_)`.
-// consumed by states/CondExpr (`[[ -e/-f/-d ... ]]`)
+// consumed by states/CondExpr (`[[ -e/-f/-d ... ]]`) and the `ls` builtin
 pub(crate) fn shell_statat(dir: Fd, path_: &bun_core::ZStr) -> bun_sys::Result<bun_sys::Stat> {
     #[cfg(windows)]
     {
@@ -2221,6 +2307,20 @@ pub(crate) fn shell_statat(dir: Fd, path_: &bun_core::ZStr) -> bun_sys::Result<b
     #[cfg(not(windows))]
     {
         bun_sys::fstatat(dir, path_)
+    }
+}
+
+/// `shell_statat` without following a final symlink.
+pub(crate) fn shell_lstatat(dir: Fd, path_: &bun_core::ZStr) -> bun_sys::Result<bun_sys::Stat> {
+    #[cfg(windows)]
+    {
+        let mut buf = bun_paths::path_buffer_pool::get();
+        let p = shell_get_path(dir, path_, &mut buf)?;
+        return bun_sys::lstat(p).map_err(|e| e.with_path(path_.as_bytes()));
+    }
+    #[cfg(not(windows))]
+    {
+        bun_sys::lstatat(dir, path_)
     }
 }
 
@@ -2317,7 +2417,6 @@ pub enum ParseFlagResult {
     Done,
     IllegalOption(*const [u8]),
     Unsupported(*const [u8]),
-    ShowUsage,
 }
 
 /// Returns just `name` and lets the caller's `fmt_error_arena` add the
@@ -2352,7 +2451,6 @@ pub(crate) fn parse_flags<'a, O: FlagParser>(
             ParseFlagResult::ContinueParsing => {}
             ParseFlagResult::IllegalOption(s) => return Err(ParseError::IllegalOption(s)),
             ParseFlagResult::Unsupported(s) => return Err(ParseError::Unsupported(s)),
-            ParseFlagResult::ShowUsage => return Err(ParseError::ShowUsage),
         }
         idx += 1;
     }
@@ -2592,8 +2690,11 @@ pub struct ShellTask {
     /// no-op`).
     pub task: WorkPoolTask,
     pub(crate) event_loop: EventLoopHandle,
-    /// How the pool thread bounces the task back to its owning loop.
-    pub(crate) poster: bun_jsc::ConcurrentPoster,
+    /// How the pool thread bounces the task back to its owning loop; held only
+    /// while the task is out on the pool (`arm` until `on_finish`). For a JS
+    /// loop this is the ticket its VM waits for: the context lives in
+    /// interpreter state a JS wrapper may own.
+    pub(crate) poster: Option<bun_jsc::ConcurrentPoster>,
     pub(crate) keep_alive: bun_io::KeepAlive,
     /// Back-ref to the owning [`Interpreter`]. The high-tier dispatch
     /// (`runtime::dispatch::run_task`) recovers `&mut Interpreter` from this
@@ -2616,13 +2717,19 @@ impl ShellTask {
     /// A subtask created on a pool thread (`ls -R` discovering a directory):
     /// it reports to the same loop as `parent`, whose poster was captured on
     /// the JS thread — nothing here derives one from the VM.
+    #[track_caller]
     pub(crate) fn new_child(parent: &ShellTask) -> Self {
         ShellTask {
             task: WorkPoolTask {
                 node: Default::default(),
                 callback: shell_task_unset_callback,
             },
-            poster: parent.poster.clone(),
+            // Spelled out so `#[track_caller]` names this site, not `Option::clone`.
+            #[allow(clippy::manual_map)]
+            poster: match &parent.poster {
+                Some(p) => Some(p.clone()),
+                None => None,
+            },
             event_loop: parent.event_loop,
             keep_alive: Default::default(),
             interp: core::ptr::null_mut(),
@@ -2630,7 +2737,6 @@ impl ShellTask {
         }
     }
 
-    /// JS thread (the interpreter's): derives the poster for `event_loop`.
     pub(crate) fn new(event_loop: EventLoopHandle) -> Self {
         ShellTask {
             task: WorkPoolTask {
@@ -2639,7 +2745,7 @@ impl ShellTask {
                 // fires if a caller forgets the `<C>` (debug-asserted there).
                 callback: shell_task_unset_callback,
             },
-            poster: bun_jsc::ConcurrentPoster::from_event_loop_handle(&event_loop),
+            poster: None,
             event_loop,
             keep_alive: Default::default(),
             interp: core::ptr::null_mut(),
@@ -2679,11 +2785,20 @@ impl ShellTask {
         unsafe {
             let this = ctx.byte_add(C::TASK_OFFSET).cast::<ShellTask>();
             (*this).task.callback = shell_task_trampoline::<C>;
-            // The context lives in interpreter state a JS wrapper may own:
-            // counted until `on_finish`, so that VM waits for it (see
-            // `VmHandle::embedded_work_scheduled`).
-            (*this).poster.embedded_work_scheduled();
+            (*this).arm();
             WorkPool::schedule(&raw mut (*this).task);
+        }
+    }
+
+    /// About to leave the owning thread: take the poster (for a JS loop, a
+    /// ticket on its VM) unless a pool-thread parent already handed one down
+    /// (`new_child`). Owning thread otherwise.
+    #[track_caller]
+    pub(crate) fn arm(&mut self) {
+        if self.poster.is_none() {
+            self.poster = Some(bun_jsc::ConcurrentPoster::from_event_loop_handle(
+                &self.event_loop,
+            ));
         }
     }
 
@@ -2707,17 +2822,16 @@ impl ShellTask {
         // this thread until the enqueue below.
         unsafe {
             let this = ctx.byte_add(C::TASK_OFFSET).cast::<ShellTask>();
-            let poster = (*this).poster.clone();
+            // Moved out: the owning thread may free `*this` once it is queued.
+            let poster = (*this)
+                .poster
+                .take()
+                .expect("shell task on the pool is armed");
             match &mut (*this).concurrent_task {
                 EventLoopTask::Js(ct) => {
                     // Tag resolved via `C: Taskable`.
                     ct.from(ctx, AutoDeinit::ManualDeinit);
-                    // Counted work: the VM has not closed its handle.
-                    let bun_jsc::vm_handle::Posted::Queued =
-                        poster.post_js(core::ptr::NonNull::from(ct))
-                    else {
-                        unreachable!("VM handle closed with shell pool work outstanding");
-                    };
+                    poster.post_js(core::ptr::NonNull::from(ct));
                 }
                 EventLoopTask::Mini(at) => {
                     // Pass the monomorphised callback explicitly.
@@ -2725,9 +2839,7 @@ impl ShellTask {
                     poster.post_mini(core::ptr::NonNull::new(at).expect("intrusive task"));
                 }
             }
-            // The pool side is done with this context (`this` may already be
-            // freed by the main thread; the poster is ours).
-            poster.embedded_work_finished();
+            drop(poster);
         }
     }
 
@@ -2852,8 +2964,7 @@ pub(crate) fn create_shell_interpreter(
 
     let (shargs, jsobjs, quiet, cwd, export_env) = parsed_shell_script.take(global);
 
-    let cwd = cwd.map(bun_core::OwnedString::new);
-    let cwd_slice = cwd.as_deref().map(|c| c.to_utf8());
+    let cwd_slice = cwd.as_ref().map(|c| c.to_utf8());
 
     // bun_vm() returns the live thread-local VM for a Bun-owned global; that
     // pointer is the live `jsc::EventLoop` `EventLoopHandle::init` expects.
@@ -2874,14 +2985,6 @@ pub(crate) fn create_shell_interpreter(
             return Err(e.throw_js(global));
         }
     };
-
-    if global.has_exception() {
-        // `deinit_from_finalizer` derefs root_io and closes `root_shell.cwd_fd`.
-        // Neither `Interpreter` nor `ShellExecEnv` implements `Drop`, so a plain
-        // box drop would leak the raw `cwd_fd`; run the explicit teardown.
-        interpreter.deinit_from_exec();
-        return Err(crate::jsc::JsError::Thrown);
-    }
 
     let interpreter = bun_core::heap::into_raw(interpreter);
     // SAFETY: `interpreter` is a fresh heap allocation; the C++ wrapper takes

@@ -1,8 +1,11 @@
 // clang-format off
 #pragma once
 #include "JSBuffer.h"
+#include <JavaScriptCore/GetterSetter.h>
+#include <JavaScriptCore/JSFunctionInlines.h>
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/ObjectConstructor.h>
+#include <JavaScriptCore/PropertyNameArray.h>
 #include "ZigGlobalObject.h"
 #include "NativeModuleList.h"
 
@@ -57,6 +60,12 @@
       JSC::JSGlobalObject *lexicalGlobalObject, JSC::Identifier moduleKey,     \
       Vector<JSC::Identifier, 4> &exportNames,                                 \
       JSC::MarkedArgumentBuffer &exportValues)
+// For modules in BUN_FOREACH_LAZY_ESM_NATIVE_MODULE; the body usually ends in exportObjectProperties().
+#define DEFINE_LAZY_NATIVE_MODULE(name)                                        \
+  inline JSC::JSObject *generateNativeModule_##name(                           \
+      JSC::JSGlobalObject *lexicalGlobalObject, JSC::Identifier moduleKey,     \
+      Vector<JSC::Identifier, 4> &exportNames,                                 \
+      JSC::MarkedArgumentBuffer &exportValues)
 
 #define INIT_NATIVE_MODULE(slot, numberOfExportNames)                          \
   Zig::GlobalObject *globalObject =                                            \
@@ -70,8 +79,10 @@
   [[maybe_unused]] const bool defaultObjectWasCached = !!nativeModuleDefaultSlot; \
   JSC::JSObject *defaultObject = defaultObjectWasCached                        \
       ? nativeModuleDefaultSlot.get()                                          \
-      : JSC::constructEmptyObject(                                             \
-            globalObject, globalObject->objectPrototype(), numberOfExportNames); \
+      : (numberOfExportNames)                                                  \
+          ? JSC::constructEmptyObject(globalObject,                            \
+                globalObject->objectPrototype(), numberOfExportNames)          \
+          : JSC::constructEmptyObject(globalObject);                           \
   if (!defaultObjectWasCached)                                                 \
     nativeModuleDefaultSlot.set(vm, globalObject, defaultObject);              \
   __NATIVE_MODULE_ASSERT_DECL(numberOfExportNames);                            \
@@ -127,4 +138,72 @@ void generateNativeModule_##enumName( \
   Vector<JSC::Identifier, 4> &exportNames, \
   JSC::MarkedArgumentBuffer &exportValues);
 BUN_FOREACH_ESM_NATIVE_MODULE(FORWARD_DECL_GENERATOR)
+// Returns the object that exports appended as an empty JSValue are read from on first binding.
+#define FORWARD_DECL_LAZY_GENERATOR(id, enumName) \
+JSC::JSObject* generateNativeModule_##enumName( \
+  JSC::JSGlobalObject *lexicalGlobalObject, JSC::Identifier moduleKey, \
+  Vector<JSC::Identifier, 4> &exportNames, \
+  JSC::MarkedArgumentBuffer &exportValues);
+BUN_FOREACH_LAZY_ESM_NATIVE_MODULE(FORWARD_DECL_LAZY_GENERATOR)
+
+// An export declared without a value is read off its object by JSC while a module that imports it is
+// being linked (SyntheticModuleRecord::materializeLazyExport, called from
+// CyclicModuleRecord::initializeEnvironment). Linking cannot run user code: a getter that require()s
+// an ES module starts a second link() inside the one in progress, and once either of them fails, the
+// records they leave behind crash the next import() that evaluates them. So only a getter that is
+// Bun's own (native, or compiled from src/js) may be deferred; an accessor user code defined is read
+// while the module loads, as every export was before exports became lazy.
+inline bool isBunDefinedGetter(JSC::JSObject *getter) {
+  auto *function = dynamicDowncast<JSC::JSFunction>(getter);
+  return function && (function->isNonBoundHostFunction() || function->isBuiltinFunction());
+}
+
+// The lazy modules each mirror an object that already exists (the Bun object, process, the Module
+// constructor): `default` is the object and each of propertyNames is an export. An export is
+// declared without a value, so that JSC reads object[name] when something first binds to it, only
+// when Bun's own code produces the value: a static table entry nothing has constructed yet or a
+// native accessor (see isBunDefinedGetter). Loading the module therefore does not construct the
+// object's lazy properties. A value already stored on the object, an accessor user code defined and
+// a property inherited from the prototype chain are read now. Returns the object, as the
+// LazySyntheticSourceGenerator contract wants, or nullptr if reading a property threw.
+inline JSC::JSObject *exportObjectProperties(
+    JSC::JSGlobalObject *globalObject, JSC::JSObject *object,
+    const JSC::PropertyNameArrayBuilder &propertyNames,
+    Vector<JSC::Identifier, 4> &exportNames,
+    JSC::MarkedArgumentBuffer &exportValues) {
+  auto &vm = JSC::getVM(globalObject);
+  auto scope = DECLARE_THROW_SCOPE(vm);
+
+  exportNames.reserveCapacity(propertyNames.size() + 1);
+  exportValues.ensureCapacity(propertyNames.size() + 1);
+
+  exportNames.append(vm.propertyNames->defaultKeyword);
+  exportValues.append(object);
+
+  for (const auto &propertyName : propertyNames) {
+    if (propertyName == vm.propertyNames->defaultKeyword) [[unlikely]]
+      continue;
+    JSC::JSValue value = object->getDirect(vm, propertyName);
+    bool deferred;
+    if (value) {
+      deferred = value.isCustomGetterSetter() ||
+                 (value.isGetterSetter() &&
+                  isBunDefinedGetter(uncheckedDowncast<JSC::GetterSetter>(value)->getter()));
+    } else {
+      deferred = object->hasNonReifiedStaticProperties() &&
+                 object->findPropertyHashEntry(propertyName).has_value();
+    }
+    if (deferred) {
+      value = JSC::JSValue();
+    } else if (!value || value.isGetterSetter()) {
+      // Inherited, or an accessor user code defined: read it here, outside of any link().
+      value = object->get(globalObject, propertyName);
+      RETURN_IF_EXCEPTION(scope, nullptr);
+    }
+    exportNames.append(propertyName);
+    exportValues.append(value);
+  }
+
+  return object;
+}
 } // namespace Zig

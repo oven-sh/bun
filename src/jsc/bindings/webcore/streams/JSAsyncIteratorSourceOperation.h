@@ -43,9 +43,6 @@ public:
     bool m_cancelled : 1 { false };
     bool m_done : 1 { false };
     bool m_running : 1 { false };
-    // {done:true, value} still writes the value first; this remembers the done across a
-    // backpressure suspension on that final write.
-    bool m_iteratorDone : 1 { false };
 
 private:
     JSAsyncIteratorSourceOperation(JSC::VM&, JSC::Structure*);

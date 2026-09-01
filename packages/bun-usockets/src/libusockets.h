@@ -107,7 +107,7 @@
 /* close() codes — two orthogonal bits collapsed into three states:
  *   0  graceful: TLS sends close_notify and DEFERS the fd close until the
  *      peer replies; TCP FINs.
- *   1  reset: TLS fast-shutdown (no wait), TCP arms SO_LINGER{1,0} → RST.
+ *   1  reset: TLS sends no close_notify (abortive), TCP arms SO_LINGER{1,0} → RST.
  *      Drops any unflushed kernel send buffer; only for terminate()/abort.
  *   2  fast-shutdown: TLS fast-shutdown (no wait), TCP FINs normally. For
  *      net.Socket._destroy() / _handle.close() where the wrapper detaches
@@ -160,6 +160,12 @@ enum {
      * unconnected socket it also makes the next send fail for a datagram
      * bound to a different, live peer. */
     LIBUS_UDP_LINUX_RECVERR = 128,
+    /* A socket adopted by us_socket_from_fd, or accepted by a listener created with this option,
+     * is registered as if us_socket_pause had been called on it, so no extra poll change is needed
+     * per connection (node:net's pauseOnConnect; cluster adopts every connection this way). Not
+     * for connects, and ignored for TLS sockets: the handshake needs the reads, the owner pauses
+     * those sockets itself. */
+    LIBUS_SOCKET_OPEN_PAUSED = 256,
 };
 
 /* Library types publicly available */
@@ -180,12 +186,6 @@ struct us_udp_packet_buffer_t;
 struct ssl_ctx_st;
 struct ssl_st;
 
-
-struct us_cert_string_t {
-    const char* str;
-    size_t len;
-};
-
 /* Public interface for UDP sockets */
 
 /* Peeks data and length of UDP payload */
@@ -195,9 +195,6 @@ int us_udp_packet_buffer_payload_length(struct us_udp_packet_buffer_t *buf, int 
 /* Returns 1 if the received datagram was truncated (larger than recv buffer),
  * 0 otherwise. Backed by MSG_TRUNC in msg_hdr.msg_flags on POSIX. */
 int us_udp_packet_buffer_truncated(struct us_udp_packet_buffer_t *buf, int index);
-
-/* Copies out local (received destination) ip (4 or 16 bytes) of received packet */
-int us_udp_packet_buffer_local_ip(struct us_udp_packet_buffer_t *buf, int index, char *ip);
 
 /* Get the bound port in host byte order */
 int us_udp_socket_bound_port(struct us_udp_socket_t *s);
@@ -227,6 +224,7 @@ struct us_udp_packet_buffer_t *us_create_udp_packet_buffer();
 
 struct us_udp_socket_t *us_create_udp_socket(us_loop_r loop, void (*data_cb)(struct us_udp_socket_t *, void *, int), void (*drain_cb)(struct us_udp_socket_t *), void (*close_cb)(struct us_udp_socket_t *), void (*recv_error_cb)(struct us_udp_socket_t *, int, int), const char *host, unsigned short port, int flags, int *err, void *user);
 
+
 void us_udp_socket_close(struct us_udp_socket_t *s);
 
 int us_udp_socket_set_broadcast(struct us_udp_socket_t *s, int enabled);
@@ -242,7 +240,7 @@ LIBUS_SOCKET_DESCRIPTOR us_udp_socket_fd(struct us_udp_socket_t *s);
 /* Adopts an already created (and usually already bound) UDP socket descriptor
  * instead of creating a new one. The fd is made non-blocking and the standard
  * receive-path options are applied. Returns null with *err set on failure. */
-struct us_udp_socket_t *us_create_udp_socket_from_fd(us_loop_r loop, void (*data_cb)(struct us_udp_socket_t *, void *, int), void (*drain_cb)(struct us_udp_socket_t *), void (*close_cb)(struct us_udp_socket_t *), void (*recv_error_cb)(struct us_udp_socket_t *, int, int), LIBUS_SOCKET_DESCRIPTOR fd, int *err, void *user);
+struct us_udp_socket_t *us_create_udp_socket_from_fd(us_loop_r loop, void (*data_cb)(struct us_udp_socket_t *, void *, int), void (*drain_cb)(struct us_udp_socket_t *), void (*close_cb)(struct us_udp_socket_t *), void (*recv_error_cb)(struct us_udp_socket_t *, int, int), LIBUS_SOCKET_DESCRIPTOR fd, int shared, int *err, void *user);
 
 /* This one is ugly, should be ext! not user */
 void *us_udp_socket_user(struct us_udp_socket_t *s);
@@ -395,6 +393,10 @@ struct us_listen_socket_t *us_socket_group_listen_unix(us_socket_group_r group,
     unsigned char kind, struct ssl_ctx_st *ssl_ctx,
     const char *path, size_t pathlen, int options, int socket_ext_size, int *error)
     __attribute__((nonnull(1, 4, 8)));  /* ssl_ctx nullable */
+struct us_listen_socket_t *us_socket_group_listen_fd(us_socket_group_r group,
+    unsigned char kind, struct ssl_ctx_st *ssl_ctx,
+    LIBUS_SOCKET_DESCRIPTOR fd, int backlog, int options, int socket_ext_size, int *error)
+    __attribute__((nonnull(1, 8)));  /* ssl_ctx nullable */
 void us_listen_socket_close(struct us_listen_socket_t *ls) nonnull_fn_decl;
 
 /* SNI: tree hangs off the listen socket. ssl_ctx is up_ref'd; user is opaque
@@ -431,6 +433,7 @@ void us_ssl_ctx_set_sni_policy(struct ssl_ctx_st *ctx, int request_cert,
 /* 1 iff the SNI-selected context for this connection demands closing on a
  * client-certificate verification error. */
 int us_socket_server_name_reject_unauthorized(us_socket_r s);
+int us_ssl_ctx_reject_unauthorized(struct ssl_ctx_st *ctx);
 /* Socket-level SNI resolver, for a server-side socket adopted into TLS with no
  * listen socket behind it. Same contract as the listener resolver: an owned
  * SSL_CTX ref or NULL; *abort_handshake 1 = drop silently, 2 = suspend. */
@@ -467,7 +470,6 @@ int us_connecting_socket_get_error(struct us_connecting_socket_t *c) nonnull_fn_
  * returns the same getaddrinfo code, not an errno (the two namespaces overlap). */
 int us_connecting_socket_get_dns_error(struct us_connecting_socket_t *c) nonnull_fn_decl;
 void *us_connecting_socket_get_native_handle(struct us_connecting_socket_t *c) nonnull_fn_decl;
-struct us_loop_t *us_connecting_socket_get_loop(struct us_connecting_socket_t *c) nonnull_fn_decl;
 struct us_socket_group_t *us_connecting_socket_group(struct us_connecting_socket_t *c) nonnull_fn_decl;
 unsigned char us_connecting_socket_kind(struct us_connecting_socket_t *c) nonnull_fn_decl;
 
@@ -548,6 +550,11 @@ struct ssl_ctx_st *us_ssl_ctx_from_options(
  * (uWS App.h) that don't pull in BoringSSL headers. */
 void us_internal_ssl_ctx_up_ref(struct ssl_ctx_st *ssl_ctx);
 void us_internal_ssl_ctx_unref(struct ssl_ctx_st *ssl_ctx);
+/* Install an ALPN selector that prefers "h2", then "http/1.1" (when
+ * allow_http1). Used by uWS when an App has an HTTP/2 context attached. */
+void us_ssl_ctx_enable_http2_alpn(struct ssl_ctx_st *ssl_ctx, int allow_http1);
+/* 1 iff the completed handshake on `s` negotiated ALPN "h2". */
+int us_socket_alpn_is_h2(us_socket_r s);
 long us_ssl_ctx_live_count(void);
 /* Appends the certificates in the PEM `content` to `ctx`'s trust store;
  * returns 0 when nothing could be added. */
@@ -594,9 +601,6 @@ void us_wakeup_loop(us_loop_r loop) nonnull_fn_decl;
 /* Hook up timers in existing loop */
 void us_loop_integrate(us_loop_r loop) nonnull_fn_decl;
 
-/* Returns the loop iteration number */
-long long us_loop_iteration_number(us_loop_r loop) nonnull_fn_decl;
-
 /* Public interfaces for polls */
 
 /* A fallthrough poll does not keep the loop running, it falls through */
@@ -612,14 +616,13 @@ void us_poll_init(us_poll_r p, LIBUS_SOCKET_DESCRIPTOR fd, int poll_type);
 void us_poll_start(us_poll_r p, us_loop_r loop, int events) nonnull_fn_decl;
 /* Returns 0 if successful */
 int us_poll_start_rc(us_poll_r p, us_loop_r loop, int events) nonnull_fn_decl;
-void us_poll_change(us_poll_r p, us_loop_r loop, int events) nonnull_fn_decl;
+/* Returns 0 unless the fd had to be registered anew (a poll parked by the
+ * dispatcher while paused) and that registration failed; errno is set then. */
+int us_poll_change(us_poll_r p, us_loop_r loop, int events) nonnull_fn_decl;
 void us_poll_stop(us_poll_r p, struct us_loop_t *loop) nonnull_fn_decl;
 
 /* Return what events we are polling for */
 int us_poll_events(us_poll_r p) nonnull_fn_decl;
-
-/* Returns the user data extension of this poll */
-void *us_poll_ext(us_poll_r p) nonnull_fn_decl;
 
 /* Get associated socket descriptor from a poll */
 LIBUS_SOCKET_DESCRIPTOR us_poll_fd(us_poll_r p) nonnull_fn_decl;
@@ -674,7 +677,6 @@ void us_socket_shutdown(us_socket_r s) nonnull_fn_decl;
 void us_socket_shutdown_read(us_socket_r s) nonnull_fn_decl;
 int us_socket_is_shut_down(us_socket_r s) nonnull_fn_decl;
 int us_socket_is_closed(us_socket_r s) nonnull_fn_decl;
-int us_socket_is_tls(us_socket_r s) nonnull_fn_decl;
 int us_socket_is_ssl_handshake_finished(us_socket_r s) nonnull_fn_decl;
 int us_socket_ssl_handshake_callback_has_fired(us_socket_r s) nonnull_fn_decl;
 /* TLS ciphertext bytes already sealed for this socket and reported as
@@ -706,10 +708,11 @@ LIBUS_SOCKET_DESCRIPTOR us_socket_get_fd(us_socket_r s) nonnull_fn_decl;
 
 /* Bun extras */
 struct us_socket_t *us_socket_pair(us_socket_group_r group, unsigned char kind, int socket_ext_size, LIBUS_SOCKET_DESCRIPTOR *fds) nonnull_fn_decl;
-struct us_socket_t *us_socket_from_fd(us_socket_group_r group, unsigned char kind, struct ssl_ctx_st *ssl_ctx, int socket_ext_size, LIBUS_SOCKET_DESCRIPTOR fd, int ipc)
+struct us_socket_t *us_socket_from_fd(us_socket_group_r group, unsigned char kind, struct ssl_ctx_st *ssl_ctx, int socket_ext_size, LIBUS_SOCKET_DESCRIPTOR fd, int options, int ipc)
     __attribute__((nonnull(1)));  /* ssl_ctx nullable */
 struct us_socket_t *us_socket_open(struct us_socket_t *s, int is_client, char *ip, int ip_length);
-int us_raw_root_certs(struct us_cert_string_t **out);
+/* The bundled Mozilla root certificates, DER-encoded, in static memory. Returns the count. */
+size_t us_bundled_root_certs_der(const uint8_t *const **out_certs, const size_t **out_lens);
 unsigned int us_get_remote_address_info(char *buf, us_socket_r s, const char **dest, int *port, int *is_ipv6);
 unsigned int us_get_local_address_info(char *buf, us_socket_r s, const char **dest, int *port, int *is_ipv6);
 int us_socket_get_error(us_socket_r s);

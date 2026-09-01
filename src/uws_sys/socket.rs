@@ -512,7 +512,7 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
             connected s => if s.is_established() { s.pause(); true } else { false },
             connecting _c => false,
             detached => true,
-            duplex _d => false, // TODO: pause/resume upgraded duplex
+            duplex d => d.pause(),
             pipe p => p.pause_stream(),
         )
     }
@@ -522,7 +522,7 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
             connected s => if s.is_established() { s.resume(); true } else { false },
             connecting _c => false,
             detached => true,
-            duplex _d => false, // TODO: pause/resume upgraded duplex
+            duplex d => d.resume(),
             pipe p => p.resume_stream(),
         )
     }

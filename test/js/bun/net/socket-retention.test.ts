@@ -130,11 +130,11 @@ test("active TCP socket wrapper survives GC until closed", async () => {
 // making a tight GC bound unreliable there. The Strong-release path this
 // guards is platform-independent, so Linux/macOS coverage suffices.
 test.skipIf(isWindows)("upgradeTLS raw + tls wrappers are both collectable after close", async () => {
-  // upgradeTLS produces two TLSSocket wrappers (the raw passthrough and the
-  // TLS socket) sharing one underlying connection. When the connection closes,
-  // the raw socket is cleaned up via WrappedHandler.onClose which must release
-  // its strong ref so both wrappers can be GC'd. A missed transition here pins
-  // one of them forever.
+  // upgradeTLS leaves two wrappers sharing one underlying connection: the
+  // original socket (now the raw passthrough) and the TLSSocket. When the
+  // connection closes, the raw half is closed from the TLS half's onClose,
+  // which must release its strong ref so both wrappers can be GC'd. A missed
+  // transition here pins one of them forever.
   await using tlsServer = Bun.serve({
     port: 0,
     tls: tlsCert,
@@ -144,6 +144,7 @@ test.skipIf(isWindows)("upgradeTLS raw + tls wrappers are both collectable after
   });
 
   const baseline = heapStats().objectTypeCounts.TLSSocket || 0;
+  const baselineTCP = heapStats().objectTypeCounts.TCPSocket || 0;
 
   for (let i = 0; i < 5; i++) {
     const { promise: done, resolve } = Promise.withResolvers<void>();
@@ -183,10 +184,14 @@ test.skipIf(isWindows)("upgradeTLS raw + tls wrappers are both collectable after
   }
 
   // All upgradeTLS-created wrappers should be collectable now. We created
-  // 5 × 2 = 10 TLSSocket wrappers; if the Strong release on close is missed,
-  // they all pin and the count stays ≥ baseline + 10.
+  // 5 TLSSocket wrappers; if the Strong release on close is missed, they all
+  // pin and the count stays ≥ baseline + 5.
   const count = await gcUntilCountAtMost("TLSSocket", baseline + 2);
   expect(count).toBeLessThanOrEqual(baseline + 2);
+  // The raw halves (the original TCPSockets) are released from the TLS half's
+  // close; a missed chain there pins them instead.
+  const countTCP = await gcUntilCountAtMost("TCPSocket", baselineTCP + 2);
+  expect(countTCP).toBeLessThanOrEqual(baselineTCP + 2);
 });
 
 test("tls.connect over a Duplex roots the origin and listener thunks through the wrapper, not as Strong handles", async () => {

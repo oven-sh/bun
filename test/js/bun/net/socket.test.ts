@@ -836,6 +836,111 @@ describe.concurrent("socket", () => {
       expect(rawData.byteLength).toBeGreaterThanOrEqual(1980);
     }
   });
+  it("upgradeTLS: the tls half's close handler still fires when the raw half's close handler ends it", async () => {
+    using listener = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      tls,
+      socket: {
+        data(s) {
+          s.end();
+        },
+        open() {},
+        close() {},
+        error() {},
+      },
+    });
+    const rawClosed = Promise.withResolvers<void>();
+    const tlsClosed = Promise.withResolvers<void>();
+    let secure: Socket | undefined;
+    const socket = await Bun.connect({
+      hostname: "127.0.0.1",
+      port: listener.port,
+      socket: {
+        data() {},
+        open() {},
+        close() {
+          secure?.end();
+          rawClosed.resolve();
+        },
+        error() {},
+      },
+    });
+    [, secure] = socket.upgradeTLS({
+      tls: { rejectUnauthorized: false },
+      socket: {
+        handshake(s) {
+          s.write("hello");
+        },
+        data() {},
+        close() {
+          tlsClosed.resolve();
+        },
+        error() {},
+      },
+    });
+    await Promise.all([rawClosed.promise, tlsClosed.promise]);
+    expect().pass();
+  });
+  it("upgradeTLS: the raw half's close handler still fires when the tls half's close handler ends it", async () => {
+    using listener = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      tls,
+      socket: {
+        data(s) {
+          s.end();
+        },
+        open() {},
+        close() {},
+        error() {},
+      },
+    });
+    const rawClosed = Promise.withResolvers<void>();
+    const tlsClosed = Promise.withResolvers<void>();
+    const socket = await Bun.connect({
+      hostname: "127.0.0.1",
+      port: listener.port,
+      socket: { data() {}, open() {}, close: () => rawClosed.resolve(), error() {} },
+    });
+    const [raw] = socket.upgradeTLS({
+      tls: { rejectUnauthorized: false },
+      socket: {
+        handshake(s) {
+          s.write("hello");
+        },
+        data() {},
+        close() {
+          raw.end();
+          tlsClosed.resolve();
+        },
+        error() {},
+      },
+    });
+    await Promise.all([rawClosed.promise, tlsClosed.promise]);
+    expect().pass();
+  });
+  it("upgradeTLS keeps the original socket as the raw half; upgrading that again is a no-op", async () => {
+    using listener = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      tls,
+      socket: { data() {}, open() {}, close() {}, error() {} },
+    });
+    const { promise: closed, resolve } = Promise.withResolvers<void>();
+    const socket = await Bun.connect({
+      hostname: "127.0.0.1",
+      port: listener.port,
+      socket: { data() {}, open() {}, close: () => resolve(), error() {} },
+    });
+    const opts = { tls: { rejectUnauthorized: false }, socket: { data() {}, open() {}, close() {}, error() {} } };
+    const [raw, secure] = socket.upgradeTLS(opts);
+    expect(raw).toBe(socket);
+    expect(raw.upgradeTLS(opts)).toBeUndefined();
+    secure.end();
+    raw.end();
+    await closed;
+  });
   it("upgradeTLS feeds the initialData bytes captured at call time", async () => {
     const handshake = Promise.withResolvers<void>();
     const echoed = Promise.withResolvers<string>();

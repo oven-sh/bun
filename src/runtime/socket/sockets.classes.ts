@@ -28,6 +28,7 @@ function generate(ssl) {
         fn: "pauseFromJS",
         length: 0,
       },
+      ...(ssl ? { startTLSHandshake: { fn: "startTLSHandshake", length: 0 } } : { fdIsTLS: { getter: "getFdIsTLS" } }),
 
       getTLSFinishedMessage: {
         fn: "getTLSFinishedMessage",

@@ -853,6 +853,78 @@ if (cluster.isPrimary) {
   expect(stdout).toContain("reply: echo:hi");
 }, 30_000);
 
+// https://github.com/oven-sh/bun/issues/32239
+test("round-robin worker wrapping an accepted socket in TLS does not surface the TLS traffic on that socket", async () => {
+  // A round-robin worker builds the accepted net.Socket around the fd the
+  // primary handed over (a different native handler set than a locally
+  // accepted socket). Once the worker layers TLS on top of it, none of the
+  // connection's bytes may show up on the plain socket, neither as `data` nor
+  // left in its readable buffer.
+  const dir = tempDirWithFiles("bun-test", {
+    "cert.pem": tlsCerts.cert,
+    "key.pem": tlsCerts.key,
+    "main.ts": `
+const cluster = require("node:cluster");
+const net = require("node:net");
+const tls = require("node:tls");
+const fs = require("node:fs");
+const path = require("node:path");
+const key = fs.readFileSync(path.join(__dirname, "key.pem"));
+const cert = fs.readFileSync(path.join(__dirname, "cert.pem"));
+
+if (cluster.isPrimary) {
+  const worker = cluster.fork();
+  const outcome = { reply: null, plainSocket: null };
+  const finish = () => {
+    if (outcome.reply === null || outcome.plainSocket === null) return;
+    console.log(JSON.stringify(outcome));
+    worker.kill();
+    process.exit(0);
+  };
+  worker.on("message", msg => {
+    outcome.plainSocket = msg;
+    finish();
+  });
+  cluster.on("listening", (_, address) => {
+    const client = tls.connect({ port: address.port, host: "127.0.0.1", ca: cert, servername: "localhost" }, () => {
+      client.write("hi");
+    });
+    client.setEncoding("utf8");
+    client.on("data", reply => {
+      outcome.reply = reply;
+      client.end();
+      finish();
+    });
+    client.on("error", e => {
+      outcome.reply = "client error: " + e.message;
+      finish();
+    });
+  });
+} else {
+  net
+    .createServer(plain => {
+      const secure = new tls.TLSSocket(plain, { isServer: true, key, cert });
+      let emitted = 0;
+      plain.on("data", chunk => (emitted += chunk.length));
+      plain.on("error", e => process.send({ error: "plain: " + e.message }));
+      secure.on("error", e => process.send({ error: "secure: " + e.message }));
+      secure.once("data", d => {
+        secure.end("echo:" + d);
+        process.send({ emitted, buffered: plain.readableLength });
+      });
+    })
+    .listen(0);
+}
+`,
+  });
+  const { stdout, stderr, exitCode } = await bunRun(joinP(dir, "main.ts"), bunEnv);
+  expect({ outcome: JSON.parse(stdout), stderr, exitCode }).toEqual({
+    outcome: { reply: "echo:hi", plainSocket: { emitted: 0, buffered: 0 } },
+    stderr: "",
+    exitCode: 0,
+  });
+}, 30_000);
+
 test("plain worker listening on a key already owned by a TLS shared-only handle fails with EINVAL", async () => {
   const dir = tempDirWithFiles("bun-test", {
     "cert.pem": tlsCerts.cert,

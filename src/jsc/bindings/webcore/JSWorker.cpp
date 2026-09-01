@@ -308,13 +308,16 @@ template<> __attribute__((minsize)) JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES
 
         // Node reads argv and execArgv by index, not through Symbol.iterator.
         auto appendStrings = [&](JSObject* arrayLike, Vector<String>& out) {
-            forEachInArrayLike(lexicalGlobalObject, arrayLike, [&](JSValue item) -> bool {
-                auto scope = DECLARE_THROW_SCOPE(vm);
+            auto scope = DECLARE_THROW_SCOPE(vm);
+            uint64_t length = toLength(lexicalGlobalObject, arrayLike);
+            RETURN_IF_EXCEPTION(scope, );
+            for (uint64_t i = 0; i < length; i++) {
+                JSValue item = arrayLike->getIndex(lexicalGlobalObject, i);
+                RETURN_IF_EXCEPTION(scope, );
                 String str = coerceToIsolatedString(item);
-                RETURN_IF_EXCEPTION(scope, false);
+                RETURN_IF_EXCEPTION(scope, );
                 out.append(str);
-                return true;
-            });
+            }
         };
 
         JSValue argvValue = optionsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "argv"_s));

@@ -1773,6 +1773,8 @@ export function computeFlags(cfg: Config): ComputedFlags {
     ldflags.push(...resolveFlagValue(f.flag, cfg));
   }
   ldflags.push(...cfg.extraLdflags);
+  cflags.push(...cfg.extraCflags);
+  cxxflags.push(...cfg.extraCflags);
   for (const f of stripFlags) {
     if (f.when && !f.when(cfg)) continue;
     stripflags.push(...resolveFlagValue(f.flag, cfg));
@@ -1789,6 +1791,8 @@ export function computeDepFlags(cfg: Config): { cflags: string[]; cxxflags: stri
   const cflags: string[] = [];
   const cxxflags: string[] = [];
   evalTable(globalFlags, cfg, cflags, cxxflags);
+  cflags.push(...cfg.extraCflags);
+  cxxflags.push(...cfg.extraCflags);
   return { cflags, cxxflags };
 }
 

@@ -132,6 +132,8 @@ export interface Config {
   extraRustflags: string[];
   /** Extra flags appended to the final link (experiments: `--extra-ldflags="-Wl,-mllvm,..."`). */
   extraLdflags: string[];
+  /** Extra flags appended to every C/C++ compile of bun and the direct deps (experiments: `--extra-cflags=-Oz`). */
+  extraCflags: string[];
   asan: boolean;
   assertions: boolean;
   logs: boolean;
@@ -333,6 +335,7 @@ export interface PartialConfig {
   pgoUse?: string;
   extraRustflags?: string;
   extraLdflags?: string;
+  extraCflags?: string;
   asan?: boolean;
   assertions?: boolean;
   logs?: boolean;
@@ -862,6 +865,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   }
   const extraRustflags = (partial.extraRustflags ?? "").split(/\s+/).filter(Boolean);
   const extraLdflags = (partial.extraLdflags ?? "").split(/\s+/).filter(Boolean);
+  const extraCflags = (partial.extraCflags ?? "").split(/\s+/).filter(Boolean);
 
   // Logs: on by default in debug non-test
   const logs = partial.logs ?? debug;
@@ -1185,6 +1189,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     pgoUse,
     extraRustflags,
     extraLdflags,
+    extraCflags,
     asan,
     assertions,
     logs,

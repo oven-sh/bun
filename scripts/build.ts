@@ -469,6 +469,7 @@ function parseArgs(argv: string[]): CliArgs {
     "pgoUse",
     "extraRustflags",
     "extraLdflags",
+    "extraCflags",
     "androidNdk",
     "macosSdk",
     "osxDeploymentTarget",

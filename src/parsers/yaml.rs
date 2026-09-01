@@ -1088,7 +1088,7 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
             NodeTag::Str => {
                 // always becomes string
             }
-            NodeTag::Verbatim(_) | NodeTag::Unknown(_) => {
+            NodeTag::Verbatim | NodeTag::Unknown => {
                 // also always becomes a string
             }
         }
@@ -1538,9 +1538,9 @@ pub enum NodeTag {
     /// '!!str'
     Str,
     /// '!<...>'
-    Verbatim(StringRange),
+    Verbatim,
     /// '!!unknown'
-    Unknown(StringRange),
+    Unknown,
 }
 
 impl NodeTag {
@@ -1551,8 +1551,8 @@ impl NodeTag {
             | NodeTag::Int
             | NodeTag::Float
             | NodeTag::Null
-            | NodeTag::Verbatim(_)
-            | NodeTag::Unknown(_) => Expr::init(E::Null {}, loc),
+            | NodeTag::Verbatim
+            | NodeTag::Unknown => Expr::init(E::Null {}, loc),
 
             // non-specific tags become seq, map, or str
             NodeTag::NonSpecific | NodeTag::Str => Expr::init(E::String::default(), loc),
@@ -5557,21 +5557,15 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 // c-verbatim-tag
                 self.inc(1);
 
-                let prefix = 'prefix: {
-                    if Enc::wide(self.next()) == 0x21 /* '!' */ {
-                        self.inc(1);
-                        let range = self.string_range();
-                        self.skip_ns_uri_chars();
-                        break 'prefix range.end(self.pos);
-                    }
-                    if let Some(len) = self.is_ns_tag_char() {
-                        let range = self.string_range();
-                        self.inc(len as usize);
-                        self.skip_ns_uri_chars();
-                        break 'prefix range.end(self.pos);
-                    }
+                if Enc::wide(self.next()) == 0x21 /* '!' */ {
+                    self.inc(1);
+                    self.skip_ns_uri_chars();
+                } else if let Some(len) = self.is_ns_tag_char() {
+                    self.inc(len as usize);
+                    self.skip_ns_uri_chars();
+                } else {
                     return Err(ParseError::UnexpectedCharacter);
-                };
+                }
 
                 self.try_skip_char(Enc::ch(b'>'))?;
 
@@ -5579,7 +5573,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     start,
                     indent: self.line_indent,
                     line: self.line,
-                    tag: NodeTag::Verbatim(prefix),
+                    tag: NodeTag::Verbatim,
                 }));
             }
             0x21 /* '!' */ => {
@@ -5612,7 +5606,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             }
             _ => {
                 // c-ns-shorthand-tag / named tag handle
-                let mut range = self.string_range();
+                let range = self.string_range();
                 let off = range.off;
                 self.try_skip_ns_word_chars()?;
                 let mut handle_or_shorthand = range.end(self.pos);
@@ -5627,15 +5621,13 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         return Err(ParseError::UnresolvedTagHandle);
                     }
 
-                    range = self.string_range();
                     self.try_skip_ns_tag_chars()?;
-                    let shorthand = range.end(self.pos);
 
                     return Ok(Token::tag(TagInit {
                         start,
                         indent: self.line_indent,
                         line: self.line,
-                        tag: NodeTag::Unknown(shorthand),
+                        tag: NodeTag::Unknown,
                     }));
                 }
 
@@ -5672,7 +5664,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         if eq_ascii::<Enc>(s, b"str") {
             return NodeTag::Str;
         }
-        NodeTag::Unknown(shorthand)
+        NodeTag::Unknown
     }
 
     // ── scan ────────────────────────────────────────────────────────────────

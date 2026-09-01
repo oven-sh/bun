@@ -14,9 +14,7 @@
 // Canonical `<mach-o/loader.h>` POD layouts live in `bun_sys::macho` (lower-tier
 // crate, also consumed by `crash_handler`). Re-export so `exe_format::macho`
 // keeps its existing `macho::segment_command_64` etc. paths.
-pub use bun_sys::macho::{
-    cpu_subtype_t, cpu_type_t, load_command, mach_header_64, segment_command_64, vm_prot_t,
-};
+pub use bun_sys::macho::{cpu_type_t, mach_header_64, segment_command_64, vm_prot_t};
 
 pub(crate) const CPU_TYPE_ARM64: cpu_type_t = 0x0100_000C;
 
@@ -193,7 +191,7 @@ unsafe impl bytemuck::NoUninit for SuperBlob {}
 // ── load-command iterator ─────────────────────────────────────────────────
 // Canonical impl lives in `bun_sys::macho` (raw-ptr storage; see module-level
 // SAFETY note above for why a borrowed `&[u8]` does not work for `macho.rs`).
-pub use bun_sys::macho::{LoadCommand, LoadCommandIterator, RawSlice};
+pub use bun_sys::macho::LoadCommandIterator;
 
 #[inline]
 fn parse_name(name: &[u8; 16]) -> &[u8] {

@@ -157,7 +157,7 @@ pub enum OptionsData {
         // arena dropped — global mimalloc.
         data: Box<[u8]>,
     },
-    Saved(usize),
+    Saved,
 }
 
 pub struct Options {
@@ -185,7 +185,7 @@ impl OutputFile {
     pub(crate) fn init(options: Options) -> OutputFile {
         let size = options.size.unwrap_or(match &options.data {
             OptionsData::Buffer { data } => data.len(),
-            OptionsData::Saved(_) => 0,
+            OptionsData::Saved => 0,
         });
         let owned_src_path_text: Box<[u8]> = options.input_path;
         // SAFETY: `owned_src_path_text` is a sibling field that outlives `src_path`; the boxed buffer never moves.
@@ -208,7 +208,7 @@ impl OutputFile {
             is_executable: options.is_executable,
             value: match options.data {
                 OptionsData::Buffer { data } => Value::Buffer { bytes: data },
-                OptionsData::Saved(_) => Value::Saved(SavedFile::default()),
+                OptionsData::Saved => Value::Saved(SavedFile::default()),
             },
             side: options.side,
             entry_point_index: options.entry_point_index,

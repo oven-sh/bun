@@ -257,7 +257,7 @@ pub enum BuiltinIO {
 /// Input stream of a builtin.
 pub enum BuiltinInput {
     Fd(Arc<IOReader>),
-    ArrayBuf { buf: PinnedArrayBuffer, i: u32 },
+    ArrayBuf { buf: PinnedArrayBuffer },
     Blob(Arc<BuiltinBlob>),
     Ignore,
 }
@@ -431,7 +431,7 @@ impl Builtin {
     /// only.
     #[cfg(not(windows))]
     pub(crate) fn defuse_array_buf_pins(&mut self) {
-        if let BuiltinInput::ArrayBuf { buf, .. } = &mut self.stdin {
+        if let BuiltinInput::ArrayBuf { buf } = &mut self.stdin {
             buf.defuse();
         }
         if let BuiltinIO::ArrayBuf { buf, .. } = &mut self.stdout {
@@ -707,7 +707,7 @@ impl Builtin {
                         let Some(buf) = root() else {
                             return Some(Yield::failed());
                         };
-                        me.stdin = BuiltinInput::ArrayBuf { buf, i: 0 };
+                        me.stdin = BuiltinInput::ArrayBuf { buf };
                     }
                     if redirect.stdout() {
                         let Some(buf) = root() else {
@@ -873,7 +873,7 @@ impl Builtin {
     /// (arraybuf / piped buf / blob).
     pub(crate) fn read_stdin_no_io<'a>(interp: &'a Interpreter, cmd: NodeId) -> &'a [u8] {
         match &Self::of(interp, cmd).stdin {
-            BuiltinInput::ArrayBuf { buf, .. } => buf.slice(),
+            BuiltinInput::ArrayBuf { buf } => buf.slice(),
             BuiltinInput::Blob(b) => b.blob.shared_view(),
             BuiltinInput::Fd(_) | BuiltinInput::Ignore => b"",
         }

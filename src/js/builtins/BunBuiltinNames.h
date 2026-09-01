@@ -44,7 +44,6 @@ using namespace JSC;
     macro(_owner) \
     macro(_store) \
     macro(abort) \
-    macro(addAbortAlgorithmToSignal) \
     macro(arrayBuffer) \
     macro(asUint8Array) \
     macro(atimeMs) \
@@ -104,7 +103,6 @@ using namespace JSC;
     macro(internalMessage) \
     macro(internalModuleRegistry) \
     macro(internalRequire) \
-    macro(isAbortSignal) \
     macro(isAbsolute) \
     macro(isUncloneable) \
     macro(isUntransferable) \
@@ -117,9 +115,7 @@ using namespace JSC;
     macro(loadEsmIntoCjs) \
     macro(main) \
     macro(makeAbortError) \
-    macro(makeDOMException) \
     macro(makeErrorWithCode) \
-    macro(makeGetterTypeError) \
     macro(maxAge) \
     macro(metafileJson) \
     macro(method) \
@@ -155,7 +151,6 @@ using namespace JSC;
     macro(readableType) \
     macro(redirect) \
     macro(relative) \
-    macro(removeAbortAlgorithmFromSignal) \
     macro(require) \
     macro(requireESM) \
     macro(requireMap) \

@@ -152,7 +152,7 @@ pub(crate) fn write_output_files_to_disk(
                             input_loader: Loader::File,
                             output_kind: options::OutputKind::Sourcemap,
                             size: Some(output_source_map.len()),
-                            data: OutputFileData::Saved(0),
+                            data: OutputFileData::Saved,
                             side: Some(options::Side::Client),
                             entry_point_index: None,
                             is_executable: false,
@@ -172,7 +172,7 @@ pub(crate) fn write_output_files_to_disk(
             };
 
             let _ = output_files.insert_for_chunk(OutputFile::init(OutputFileInit {
-                data: OutputFileData::Saved(0),
+                data: OutputFileData::Saved,
                 hash: None,
                 loader: chunk.content.loader(),
                 input_path: Box::default(),
@@ -348,7 +348,7 @@ pub(crate) fn write_output_files_to_disk(
                     input_loader: Loader::File,
                     output_kind: options::OutputKind::Sourcemap,
                     size: Some(output_source_map.len()),
-                    data: OutputFileData::Saved(0),
+                    data: OutputFileData::Saved,
                     side: Some(options::Side::Client),
                     entry_point_index: None,
                     is_executable: false,
@@ -476,7 +476,7 @@ pub(crate) fn write_output_files_to_disk(
                             loader: Loader::File,
                             size: Some(bytecode.len()),
                             display_size: bytecode.len() as u32,
-                            data: OutputFileData::Saved(0),
+                            data: OutputFileData::Saved,
                             side: None,
                             entry_point_index: None,
                             is_executable: false,
@@ -558,7 +558,7 @@ pub(crate) fn write_output_files_to_disk(
             size: Some(code_result.buffer.len()),
             display_size: display_size as u32,
             is_executable: chunk.flags.contains(ChunkFlags::IS_EXECUTABLE),
-            data: OutputFileData::Saved(0),
+            data: OutputFileData::Saved,
             side: Some(if matches!(chunk.content, Content::Css(_)) {
                 options::Side::Client
             } else {

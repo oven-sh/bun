@@ -172,7 +172,7 @@ pub enum AnyRoute {
     /// Bundle an HTML import — `import html from "./index.html"; "/": html`
     Html(bun_ptr::RefPtr<html_bundle::Route>),
     /// Use file-system routing — `"/*": { dir: …, style: "nextjs-pages" }`
-    FrameworkRouter(crate::bake::framework_router::TypeIndex),
+    FrameworkRouter,
 }
 
 impl AnyRoute {
@@ -182,9 +182,7 @@ impl AnyRoute {
             AnyRoute::File(r) => r.memory_cost(),
             AnyRoute::Directory(r) => r.memory_cost(),
             AnyRoute::Html(r) => r.memory_cost(),
-            AnyRoute::FrameworkRouter(_) => {
-                core::mem::size_of::<crate::bake::FileSystemRouterType>()
-            }
+            AnyRoute::FrameworkRouter => core::mem::size_of::<crate::bake::FileSystemRouterType>(),
         }
     }
 
@@ -2553,7 +2551,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     }
                     needs_plugins = true;
                 }
-                AnyRoute::FrameworkRouter(_) => {}
+                AnyRoute::FrameworkRouter => {}
             }
         }
 

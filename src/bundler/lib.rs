@@ -228,7 +228,7 @@ pub use thread_pool::{ThreadPool, Worker};
 /// See `transpiler`.
 pub use transpiler::Transpiler;
 pub enum AdditionalFile {
-    SourceIndex(u32),
+    SourceIndex,
     OutputFile(u32),
 }
 

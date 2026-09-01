@@ -3002,16 +3002,10 @@ impl<'a> Resolver<'a> {
                         &esm,
                         dependency_behavior,
                         &mut resolved_package_id,
-                        dependency_version.clone(),
+                        &dependency_version,
                         string_buf,
                     ) {
                         DependencyToResolve::Resolution(res) => break 'brk res,
-                        DependencyToResolve::Pending(pending) => {
-                            if let Some(d) = self.debug_logs.as_mut() {
-                                d.decrease_indent();
-                            }
-                            return MatchStatus::Pending(pending);
-                        }
                         DependencyToResolve::Failure(err) => {
                             if let Some(d) = self.debug_logs.as_mut() {
                                 d.decrease_indent();
@@ -3479,7 +3473,7 @@ impl<'a> Resolver<'a> {
         esm: &crate::package_json::Package<'_>,
         behavior: Dependency::Behavior,
         input_package_id_: &mut Install::PackageID,
-        version: Dependency::Version,
+        version: &Dependency::Version,
         version_buf: &[u8],
     ) -> DependencyToResolve {
         if let Some(debug) = self.debug_logs.as_mut() {
@@ -3507,7 +3501,7 @@ impl<'a> Resolver<'a> {
             };
         }
         // we should never be trying to resolve a dependency that is already resolved
-        debug_assert!(pm!().lockfile_resolve(esm.name, &version).is_none());
+        debug_assert!(pm!().lockfile_resolve(esm.name, version).is_none());
 
         // Add the containing package to the lockfile
 
@@ -3547,7 +3541,7 @@ impl<'a> Resolver<'a> {
         }
 
         if self.opts.install_preference == bun_options_types::offline_mode::OfflineMode::Offline {
-            if let Some(package_id) = pm!().resolve_from_disk_cache(esm.name, &version) {
+            if let Some(package_id) = pm!().resolve_from_disk_cache(esm.name, version) {
                 *input_package_id_ = package_id;
                 return DependencyToResolve::Resolution(
                     pm!().lockfile_package_resolution(package_id),
@@ -3558,25 +3552,13 @@ impl<'a> Resolver<'a> {
         if input_package_id == Install::INVALID_PACKAGE_ID || input_package_id == 0 {
             // All packages are enqueued to the root
             // because we download all the npm package dependencies
-            match pm!().enqueue_dependency_to_root(esm.name, &version, version_buf, behavior) {
+            match pm!().enqueue_dependency_to_root(esm.name, version, version_buf, behavior) {
                 Install::EnqueueResult::Resolution {
                     package_id,
                     resolution,
                 } => {
                     *input_package_id_ = package_id;
                     return DependencyToResolve::Resolution(resolution);
-                }
-                Install::EnqueueResult::Pending(id) => {
-                    let (cloned, string_buf) = esm.copy().expect("unreachable");
-
-                    return DependencyToResolve::Pending(Box::new(PendingResolution {
-                        esm: cloned,
-                        dependency: version,
-                        root_dependency_id: id,
-                        string_buf,
-                        tag: PendingResolutionTag::Resolve,
-                        ..Default::default()
-                    }));
                 }
                 Install::EnqueueResult::NotFound => {
                     return DependencyToResolve::NotFound;
@@ -6600,7 +6582,6 @@ impl<'a> Resolver<'a> {
 
 enum DependencyToResolve {
     NotFound,
-    Pending(Box<PendingResolution>),
     Failure(crate::Error),
     Resolution(Resolution),
 }

@@ -818,8 +818,6 @@ pub mod resolved_source_tag {
 
     #[allow(non_upper_case_globals)]
     impl ResolvedSourceTag {
-        /// `InternalModuleRegistryFlag` in SyntheticModuleType.h: builtin-module tags are `(1 << 9) | InternalModuleRegistry id`.
-        pub const INTERNAL_MODULE_REGISTRY_FLAG: u32 = 1 << 9;
         // Structural variants — keep in lock-step with the generated
         // `build/*/codegen/SyntheticModuleType.h` and
         // `src/jsc/bindings/headers-handwritten.h` (`ResolvedSourceTagPackageJSONTypeModule = 1`).

@@ -99,6 +99,7 @@
 #include "JavaScriptCore/WasmFaultSignalHandler.h"
 #include "ZigGlobalObject.h"
 #include "helpers.h"
+#include "CollectArrayLike.h"
 #include "JavaScriptCore/JSObjectInlines.h"
 
 #include "wtf/Assertions.h"
@@ -6978,10 +6979,10 @@ extern "C" JSC::EncodedJSValue Bun__REPL__formatValue(
 
 // Collects every ArrayBufferView in a JSArray and the (data, byteLength) span
 // of each. Two passes, mirroring Buffer.concat: the first reads every element
-// into a MarkedArgumentBuffer, so any user code an indexed read can run
-// (getters, proxy traps) finishes before the second pass takes raw pointers.
-// A backing store detached during the first pass reads back as a zero-length
-// span.
+// into a MarkedArgumentBuffer and stops at the first one that is not an
+// ArrayBufferView, so any user code an indexed read can run (getters, proxy
+// traps) finishes before the second pass takes raw pointers. A backing store
+// detached during the first pass reads back as a zero-length span.
 //
 // When `pinBuffers` is true, each view's backing ArrayBuffer is materialized
 // and pinned before its data pointer is read, so the span stays valid after
@@ -7007,22 +7008,19 @@ extern "C" int32_t Bun__JSArray__collectBufferSpans(
     JSC::JSArray* array = uncheckedDowncast<JSC::JSArray>(value.asCell());
 
     JSC::MarkedArgumentBuffer values;
-    values.ensureCapacity(array->length());
-    if (values.hasOverflowed()) [[unlikely]]
-        return 2;
-
-    JSC::forEachInArrayLike(globalObject, array, [&](JSC::JSValue element) -> bool {
-        values.append(element);
-        return true;
+    bool allViews = true;
+    Bun::collectArrayLike(globalObject, array, values, [&](JSC::JSValue element) -> bool {
+        allViews = !!dynamicDowncast<JSC::JSArrayBufferView>(element);
+        return allViews;
     });
     RETURN_IF_EXCEPTION(scope, -1);
+    if (!allViews)
+        return 1;
     if (values.hasOverflowed()) [[unlikely]]
         return 2;
 
     for (unsigned i = 0; i < unsigned(values.size()); i++) {
-        auto* view = dynamicDowncast<JSC::JSArrayBufferView>(values.at(i));
-        if (!view)
-            return 1;
+        auto* view = uncheckedDowncast<JSC::JSArrayBufferView>(values.at(i));
         if (pinBuffers) {
             // possiblySharedBuffer() converts a FastTypedArray (GC-movable
             // storage, no ArrayBuffer yet) into a malloc-backed one and can

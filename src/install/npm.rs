@@ -356,46 +356,35 @@ pub mod registry {
     /// The rightmost credential marker in `pathname`, as `(start, marker, opt)`.
     /// Anchoring on the marker rather than on any `:` or `/` keeps a colon or slash
     /// inside the value (base64 holds `/`) from ending the scan, and leaves one that
-    /// merely belongs to the path alone. Names match case-insensitively, so
-    /// `:_AuthToken=` is adopted rather than left in the request path.
+    /// merely belongs to the path alone. A name is matched as spelled, as on a
+    /// `.npmrc` line: `:_authtoken=` is a misspelling, stripped by
+    /// `trailing_misspelt_marker` and never adopted.
     fn last_embedded_marker(pathname: &[u8]) -> Option<(usize, &'static [u8], EmbeddedOpt)> {
         EMBEDDED_MARKERS
             .iter()
             .filter_map(|&(marker, opt)| {
-                last_index_of_ignore_case(pathname, marker).map(|i| (i, marker, opt))
+                bun_core::last_index_of(pathname, marker).map(|i| (i, marker, opt))
             })
             .max_by_key(|&(i, _, _)| i)
     }
 
-    fn last_index_of_ignore_case(hay: &[u8], needle: &[u8]) -> Option<usize> {
-        (0..=hay.len().checked_sub(needle.len())?)
-            .rev()
-            .find(|&i| hay[i..i + needle.len()].eq_ignore_ascii_case(needle))
-    }
-
-    /// A trailing `:<word>=` segment, or `/_<word>=`, whose word names no known option
-    /// (`:_passwd=`, `:authtoken=`): a typo'd credential. Its start, so the value is
-    /// stripped from the request path; it is never adopted. `/<word>=` without the
-    /// underscore is left alone, since a plain path segment may hold `=`.
-    fn last_unknown_credential_marker(pathname: &[u8]) -> Option<usize> {
-        let mut end = pathname.len();
-        while let Some(start) = strings::last_index_of_any(&pathname[..end], b":/") {
-            let rest = &pathname[start + 1..];
-            if let Some(eq) = strings::index_of_char_usize(rest, b'=') {
-                let word = &rest[..eq];
-                let shaped = word
-                    .first()
-                    .is_some_and(|&c| c == b'_' || c.is_ascii_alphabetic())
-                    && word
-                        .iter()
-                        .all(|&c| c == b'_' || c == b'-' || c.is_ascii_alphanumeric());
-                if shaped && (pathname[start] == b':' || word[0] == b'_') {
-                    return Some(start);
-                }
-            }
-            end = start;
-        }
-        None
+    /// A `:<word>=` run at the very end of the path, the one place yarn writes a
+    /// credential, whose word is no known option (`:_passwd=`, `:authtoken=`): a
+    /// misspelt credential, stripped from the request path and never adopted. A `=`
+    /// anywhere else in the path is a plain path segment and stays.
+    fn trailing_misspelt_marker(pathname: &[u8]) -> Option<usize> {
+        let unslashed = pathname.strip_suffix(b"/").unwrap_or(pathname);
+        let start = strings::last_index_of_char(unslashed, b'/')? + 1;
+        let tail = &unslashed[start..];
+        let word = &tail.get(1..)?[..strings::index_of_char_usize(tail.get(1..)?, b'=')?];
+        let shaped = tail[0] == b':'
+            && word
+                .first()
+                .is_some_and(|&c| c == b'_' || c.is_ascii_alphabetic())
+            && word
+                .iter()
+                .all(|&c| c == b'_' || c == b'-' || c.is_ascii_alphanumeric());
+        shaped.then_some(start)
     }
 
     /// Strip trailing credential segments out of `url.pathname`. Runs before the
@@ -410,15 +399,14 @@ pub mod registry {
         // Right to left: the credentials are appended after the path.
         loop {
             let Some((start, marker, opt)) = last_embedded_marker(pathname) else {
-                // No known marker left; a typo'd one still must not ship in the path.
-                let Some(start) = last_unknown_credential_marker(pathname) else {
+                // No known marker left; a misspelt one at the end still must not ship in the path.
+                let Some(start) = trailing_misspelt_marker(pathname) else {
                     break;
                 };
-                pathname = if pathname[start] == b'/' {
-                    &pathname[..start + 1]
-                } else {
-                    &pathname[..start]
-                };
+                pathname = &pathname[..start];
+                if pathname.len() > 1 && pathname[pathname.len() - 1] == b'/' {
+                    pathname = &pathname[..pathname.len() - 1];
+                }
                 continue;
             };
             let mut value = &pathname[start + marker.len()..];

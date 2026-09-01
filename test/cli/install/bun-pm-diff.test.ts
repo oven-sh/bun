@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, normalizeBunSnapshot, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, normalizeBunSnapshot, tempDir, tls } from "harness";
 import { chmodSync, readdirSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 
@@ -349,6 +349,68 @@ diffme@1.0.0 → diffme@2.0.0
       "new binary file logo.bin (6 bytes)",
     ]);
     expect(j.totals).toEqual({ files: 6, added: 2, deleted: 1, linesAdded: 10, linesRemoved: 6, formattingOnly: 0 });
+    expect(exitCode).toBe(0);
+  });
+
+  test("a dist.tarball on another https host carries that host's own .npmrc line", async () => {
+    // The same rule as `bun install`: the tarball's own `.npmrc` line, not the registry's token.
+    const seen = { registry: [] as (string | null)[], cdn: [] as (string | null)[] };
+    using cdn = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      tls,
+      fetch(req) {
+        seen.cdn.push(req.headers.get("authorization"));
+        return new Response(Bun.file(tarballs["2.0.0"]));
+      },
+    });
+    using authed = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req) {
+        seen.registry.push(req.headers.get("authorization"));
+        if (req.headers.get("authorization") !== "Bearer sekrit") return new Response("no", { status: 401 });
+        const url = new URL(req.url);
+        if (url.pathname === "/diffme") {
+          return Response.json({
+            name: "diffme",
+            "dist-tags": { latest: "2.0.0" },
+            versions: {
+              "1.0.0": {
+                name: "diffme",
+                version: "1.0.0",
+                dist: { tarball: `${authed.url.origin}/diffme/-/diffme-1.0.0.tgz` },
+              },
+              "2.0.0": {
+                name: "diffme",
+                version: "2.0.0",
+                dist: { tarball: `${cdn.url.origin}/npm/diffme-2.0.0.tgz` },
+              },
+            },
+          });
+        }
+        return new Response(Bun.file(tarballs["1.0.0"]));
+      },
+    });
+    using dir = tempDir("pm-diff-cdn-line", {
+      "ca.pem": tls.cert,
+      "bunfig.toml": `[install]\nregistry = { url = "${authed.url.origin}/", token = "sekrit" }\ncafile = "ca.pem"\n`,
+      ".npmrc": `//${cdn.url.host}/:_authToken=cdn-line\n`,
+      "home/.gitkeep": "",
+    });
+    const home = join(String(dir), "home");
+    await using p = Bun.spawn({
+      cmd: [bunExe(), "pm", "diff", "diffme@1.0.0", "2.0.0", "--name-only"],
+      cwd: String(dir),
+      env: { ...bunEnv, NO_COLOR: "1", HOME: home, USERPROFILE: home, XDG_CONFIG_HOME: home },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
+    expect(seen.cdn).toEqual(["Bearer cdn-line"]);
+    expect(seen.registry.every(a => a === "Bearer sekrit")).toBe(true);
+    expect(stderr).toBe("");
+    expect(stdout.split("\n")[0]).toBe("diffme@1.0.0 → diffme@2.0.0");
     expect(exitCode).toBe(0);
   });
 

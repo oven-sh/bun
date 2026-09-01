@@ -519,17 +519,14 @@ describe("can publish with only _auth from .npmrc", () => {
   ];
 
   test.each(cases)("%s reaches the registry verbatim", async (_name, blob) => {
-    const { promise: sawPublish, resolve: onPublish, reject: onUnexpected } = Promise.withResolvers<string | null>();
+    const requests: Array<{ method: string; path: string; auth: string | null }> = [];
     using mockRegistry = Bun.serve({
       port: 0,
       hostname: "127.0.0.1",
       fetch(req) {
         const pathname = new URL(req.url).pathname;
-        if (req.method === "PUT" && pathname === "/npmrc-auth-pkg") {
-          onPublish(req.headers.get("authorization"));
-          return new Response("OK", { status: 200 });
-        }
-        onUnexpected(new Error(`unexpected request: ${req.method} ${pathname}`));
+        requests.push({ method: req.method, path: pathname, auth: req.headers.get("authorization") });
+        if (req.method === "PUT" && pathname === "/npmrc-auth-pkg") return new Response("OK", { status: 200 });
         return new Response("not found", { status: 404 });
       },
     });
@@ -549,7 +546,7 @@ describe("can publish with only _auth from .npmrc", () => {
     );
     expect(err).not.toContain("error:");
     expect(out).toContain("+ npmrc-auth-pkg@1.0.0");
-    expect(await sawPublish).toBe(`Basic ${blob}`);
+    expect(requests).toEqual([{ method: "PUT", path: "/npmrc-auth-pkg", auth: `Basic ${blob}` }]);
     expect(exitCode).toBe(0);
   });
 });

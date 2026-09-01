@@ -1109,7 +1109,7 @@ mod draft {
 
     /// `word` spells a credential option once case, `_` and `-` are ignored.
     fn folds_to_credential_option(word: &[u8]) -> bool {
-        const NAMES: [&[u8]; 5] = [b"_authToken", b"_auth", b"username", b"_password", b"email"];
+        const NAMES: [&[u8]; 4] = [b"_authToken", b"_auth", b"username", b"_password"];
         let fold = |s: &[u8]| -> Vec<u8> {
             s.iter()
                 .filter(|&&c| c != b'_' && c != b'-')

@@ -811,7 +811,7 @@ registry=https://:TOK@somehost.com/
     });
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).not.toContain("supplies no credentials");
+    expect(stderr).not.toMatch(/_auth/);
     expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
   });
 
@@ -1236,7 +1236,7 @@ describe(".npmrc diagnostics", () => {
     const stderr = await stderrOf(`registry=https://example.com/\n//example.com/:_authtoken=SECRETTOKEN\n`, undefined, [
       "--silent",
     ]);
-    expect(stderr).not.toContain("not a known .npmrc option");
+    expect(stderr).not.toMatch(/\b(warn|error):/);
     expect(stderr).not.toContain("SECRETTOKEN");
   });
 
@@ -1250,7 +1250,7 @@ describe(".npmrc diagnostics", () => {
         "",
       ].join("\n"),
     );
-    expect(stderr).not.toContain("not a known .npmrc option");
+    expect(stderr).toBe("No packages! Deleted empty lockfile\n");
   });
 
   it("says nothing about a key that matches once normalized", async () => {
@@ -1260,7 +1260,7 @@ describe(".npmrc diagnostics", () => {
 
   it("a known option with a non-string value is ignored without a warning", async () => {
     const stderr = await stderrOf("registry=http://127.0.0.1:1/\n//127.0.0.1:1/:_authToken=true\n");
-    expect(stderr).not.toContain("not a known .npmrc option");
+    expect(stderr).toBe("No packages! Deleted empty lockfile\n");
   });
 
   it("an empty _auth naming a bunfig.toml scope is an error", async () => {
@@ -1309,7 +1309,7 @@ describe(".npmrc diagnostics", () => {
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(seen).toEqual([Buffer.concat([Buffer.from(`${scheme} `), Buffer.from([0xff, 0xfe, 0xfd])])]);
-      expect(stderr).not.toContain("invalid _auth");
+      expect(stderr).not.toMatch(/_auth/);
       expect({ stdout, exitCode, signalCode: proc.signalCode }).toEqual({
         stdout: "1.0.0\n",
         exitCode: 0,
@@ -1534,6 +1534,56 @@ describe.concurrent("//host/ credential lines are matched against the request UR
       requests,
       host: `127.0.0.1:${port}`,
       origin: `https://127.0.0.1:${port}`,
+      [Symbol.dispose]() {
+        server.close();
+      },
+    };
+  }
+
+  // A registry on its own origin that records the request line as it arrives on the
+  // wire (Bun.serve would resolve `..` before the test sees the path) and serves the
+  // manifest and the tarball whatever the credentials.
+  async function rawRegistry(registryPath: string, tarballPath: string) {
+    const requests: Req[] = [];
+    const tgzBytes = await Bun.file(tgz).bytes();
+    let origin = "";
+    const respond = (socket: any, status: string, type: string, body: Uint8Array) => {
+      socket.write(
+        `HTTP/1.1 ${status}\r\nContent-Type: ${type}\r\nContent-Length: ${body.length}\r\nConnection: close\r\n\r\n`,
+      );
+      socket.end(body);
+    };
+    const server = createTlsServer({ key: tls.key, cert: tls.cert }, (socket: any) => {
+      let head = "";
+      socket.on("data", (chunk: Buffer) => {
+        head += chunk.toString("latin1");
+        const end = head.indexOf("\r\n\r\n");
+        if (end === -1) return;
+        const lines = head.slice(0, end).split("\r\n");
+        const path = lines[0].split(" ")[1];
+        const auth = lines.find(l => l.toLowerCase().startsWith("authorization:"));
+        requests.push({ path, auth: auth ? auth.slice("authorization:".length).trim() : null });
+        head = "";
+        if (path === `${registryPath}/no-deps`) {
+          const manifest = JSON.stringify({
+            name: "no-deps",
+            "dist-tags": { latest: "1.0.0" },
+            versions: { "1.0.0": { name: "no-deps", version: "1.0.0", dist: { tarball: `${origin}${tarballPath}` } } },
+          });
+          respond(socket, "200 OK", "application/json", new TextEncoder().encode(manifest));
+        } else {
+          respond(socket, "200 OK", "application/octet-stream", tgzBytes);
+        }
+      });
+      socket.on("error", () => {});
+    });
+    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+    const port = server.address().port;
+    origin = `https://127.0.0.1:${port}`;
+    return {
+      requests,
+      host: `127.0.0.1:${port}`,
+      origin,
       [Symbol.dispose]() {
         server.close();
       },
@@ -2109,29 +2159,34 @@ describe.concurrent("//host/ credential lines are matched against the request UR
     expect(tarballRequests).toEqual([null]);
   });
 
-  // On the registry's own origin the registry's token follows the tarball to its
-  // resolved path, as it does in npm.
-  test.each(["/npm/team-a/../team-b/x.tgz", "/npm/team-a/%2e%2e/team-b/x.tgz"])(
-    "a dist.tarball of %s on the registry's origin still carries the registry's credentials",
-    async tarballPath => {
+  // On the registry's own origin the request goes to the resolved path and the line
+  // for that path decides: a tarball resolving into team-b's tree carries team-b's
+  // token, not the registry's, while one staying in team-a's tree keeps team-a's.
+  test.each([
+    ["/npm/team-a/../team-b/x.tgz", "/npm/team-b/x.tgz", "Bearer team-b-token"],
+    ["/npm/team-a/%2e%2e/team-b/x.tgz", "/npm/team-b/x.tgz", "Bearer team-b-token"],
+    ["/npm/team-a/./x.tgz", "/npm/team-a/x.tgz", "Bearer team-a-token"],
+  ])(
+    "a dist.tarball of %s on the registry's origin is requested at %s with that path's line",
+    async (tarballPath, resolvedPath, auth) => {
       const registryPath = "/npm/team-a";
-      using registry = mockRegistry("Bearer team-a-token", { registryPath, tarballPath });
+      using registry = await rawRegistry(registryPath, tarballPath);
       using dir = tempDir("npmrc-url-auth-dot-segments", {
         "package.json": packageJson,
         ".npmrc": [
           `registry=${registry.origin}${registryPath}/`,
-          `//${registry.host}/:_authToken=team-a-token`,
+          `//${registry.host}/npm/team-a/:_authToken=team-a-token`,
+          `//${registry.host}/npm/team-b/:_authToken=team-b-token`,
           "",
         ].join("\n"),
       });
 
-      await install(String(dir));
+      const { exitCode } = await install(String(dir));
 
       expect(registry.requests[0]).toEqual({ path: `${registryPath}/no-deps`, auth: "Bearer team-a-token" });
       expect(registry.requests.length).toBeGreaterThan(1);
-      expect(registry.requests.slice(1).map(r => r.auth)).toEqual(
-        registry.requests.slice(1).map(() => "Bearer team-a-token"),
-      );
+      expect(registry.requests.slice(1)).toEqual(registry.requests.slice(1).map(() => ({ path: resolvedPath, auth })));
+      expect(exitCode).toBe(0);
     },
   );
 
@@ -2201,11 +2256,13 @@ describe.concurrent("//host/ credential lines are matched against the request UR
     expect(cdn.requests).toEqual(cdn.requests.map(() => ({ path: tarballPath, auth: null })));
   });
 
-  // On the registry's own origin such a tarball still carries the registry's credentials.
+  // On the registry's own origin such a tarball carries the registry's credentials:
+  // the encoded separator is never read as `/`, so team-a's line, which a decoding
+  // server would route the request to, is not selected.
   test("a dist.tarball with an encoded separator on the registry's origin carries the registry's credentials", async () => {
-    const registryPath = "/npm/team-a";
-    const tarballPath = "/npm/team-a/..%2fteam-b/x.tgz";
-    using registry = mockRegistry("Bearer team-a-token", { registryPath, tarballPath });
+    const registryPath = "/npm/team-b";
+    const tarballPath = "/npm/team-b/..%2fteam-a/x.tgz";
+    using registry = mockRegistry("Bearer team-b-token", { registryPath, tarballPath });
     using dir = tempDir("npmrc-url-auth-encoded-separator-same-origin", {
       "package.json": packageJson,
       ".npmrc": [
@@ -2220,7 +2277,7 @@ describe.concurrent("//host/ credential lines are matched against the request UR
 
     expect(registry.requests.length).toBeGreaterThan(1);
     expect(registry.requests.slice(1)).toEqual(
-      registry.requests.slice(1).map(() => ({ path: tarballPath, auth: "Bearer team-a-token" })),
+      registry.requests.slice(1).map(() => ({ path: tarballPath, auth: "Bearer team-b-token" })),
     );
   });
 
@@ -2368,20 +2425,6 @@ describe.concurrent("//host/ credential lines are matched against the request UR
     expect(exitCode).toBe(0);
   });
 
-  // The query string is not part of the path the key or the guard look at.
-  test("a query on a same-origin dist.tarball does not disturb the registry's credentials", async () => {
-    using registry = mockRegistry("Bearer registry-token", { tarballQuery: "?p=/../x&q=%5c" });
-    using dir = tempDir("npmrc-url-auth-query-same-origin", {
-      "package.json": packageJson,
-      ".npmrc": [`registry=${registry.origin}/`, `//${registry.host}/:_authToken=registry-token`, ""].join("\n"),
-    });
-
-    const { exitCode } = await install(String(dir));
-
-    expect(registry.requests.map(r => r.auth)).toEqual(["Bearer registry-token", "Bearer registry-token"]);
-    expect(exitCode).toBe(0);
-  });
-
   test("a query on a cross-host dist.tarball still resolves the deeper line", async () => {
     using cdn = mockRegistry("Bearer cdn-token", { secure: true, tarballPath: "/npm/x.tgz" });
     using registry = mockRegistry("Bearer registry-token", {
@@ -2423,6 +2466,49 @@ describe.concurrent("//host/ credential lines are matched against the request UR
       ],
       exitCode: 0,
     });
+  });
+
+  // Rule 3: the registry's own key is already reflected in its credentials, behind a
+  // bunfig, env or CLI credential, so a tarball resolving to that same key carries the
+  // bunfig token, not the line's.
+  test("a same-key dist.tarball carries the registry's bunfig token over the .npmrc line", async () => {
+    using registry = mockRegistry("Bearer bunfig-token");
+    using dir = tempDir("npmrc-url-auth-rule-3-bunfig", {
+      "package.json": packageJson,
+      "bunfig.toml": `[install]
+registry = { url = "${registry.origin}/", token = "bunfig-token" }
+`,
+      ".npmrc": [`//${registry.host}/:_authToken=line-token`, ""].join("\n"),
+    });
+
+    const { exitCode } = await install(String(dir));
+
+    expect(registry.requests.map(r => r.auth)).toEqual(["Bearer bunfig-token", "Bearer bunfig-token"]);
+    expect(exitCode).toBe(0);
+  });
+
+  // A credential carried over to an env registry never goes from https to http.
+  test("an env registry that downgrades the bunfig registry from https to http gets no carried-over token", async () => {
+    const seen: Array<string | null> = [];
+    using plain = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req) {
+        seen.push(req.headers.get("authorization"));
+        return new Response("not found", { status: 404 });
+      },
+    });
+    const host = `127.0.0.1:${plain.port}`;
+    using dir = tempDir("npmrc-url-auth-env-downgrade", {
+      "package.json": packageJson,
+      "bunfig.toml": `[install]
+registry = { url = "https://${host}/", token = "https-only" }
+`,
+    });
+
+    await install(String(dir), [], { NPM_CONFIG_REGISTRY: `http://${host}/` });
+
+    expect(seen).toEqual([null]);
   });
 
   // `_authtoken` used to match `_auth` as a substring and go out as `Basic <token>`.

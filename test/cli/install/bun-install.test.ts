@@ -1268,7 +1268,8 @@ describe.concurrent("bun-install", () => {
       });
 
       it("sends a decodable _auth verbatim rather than re-encoding it", async () => {
-        const value = b64("ab:cd");
+        // Unpadded: a decode/re-encode round trip would add the `=`.
+        const value = "YWI6Y2Q";
         const auth = await probeAuthorization(host => `//${host}${registryPath}:_auth=${value}`);
         expect(auth).toBe(`Basic ${value}`);
       });
@@ -1306,7 +1307,7 @@ describe.concurrent("bun-install", () => {
         registryPath: string,
         authLines: (host: string) => string,
         userinfo = "",
-        { cli = false }: { cli?: boolean } = {},
+        { cli = false, source = "scoped" }: { cli?: boolean; source?: "scoped" | "default" | "env" | "bunfig" } = {},
       ) {
         const seen: Array<{ path: string; auth: string | null }> = [];
         await using registry = Bun.serve({
@@ -1319,16 +1320,29 @@ describe.concurrent("bun-install", () => {
         });
         const host = `127.0.0.1:${registry.port}`;
         const registryUrl = `http://${userinfo}${host}${registryPath}`;
+        const npmrcRegistryLine =
+          cli || source === "env" || source === "bunfig"
+            ? ""
+            : source === "default"
+              ? `registry=${registryUrl}\n`
+              : `@myorg:registry=${registryUrl}\n`;
         using dir = tempDir("npmrc-embedded-auth", {
-          ".npmrc": cli ? `${authLines(host)}\n` : `@myorg:registry=${registryUrl}\n${authLines(host)}\n`,
+          ".npmrc": `${npmrcRegistryLine}${authLines(host)}\n`,
           "package.json": JSON.stringify({ name: "probe", version: "0.0.0", dependencies: { "@myorg/pkg": "1.0.0" } }),
           "home/.gitkeep": "",
+          ...(source === "bunfig" ? { "bunfig.toml": `[install]\nregistry = "${registryUrl}"\n` } : {}),
         });
         const home = join(String(dir), "home");
         await using proc = Bun.spawn({
           cmd: [bunExe(), "install", "--no-cache", ...(cli ? ["--registry", registryUrl] : [])],
           cwd: String(dir),
-          env: { ...env, HOME: home, USERPROFILE: home, XDG_CONFIG_HOME: home },
+          env: {
+            ...env,
+            HOME: home,
+            USERPROFILE: home,
+            XDG_CONFIG_HOME: home,
+            ...(source === "env" ? { NPM_CONFIG_REGISTRY: registryUrl } : {}),
+          },
           stdout: "pipe",
           stderr: "pipe",
           stdin: "ignore",
@@ -1401,19 +1415,47 @@ describe.concurrent("bun-install", () => {
         expect(seen).toEqual({ path: "/api/npm=1/@myorg%2fpkg", auth: null });
       });
 
-      // Marker names match case-insensitively; a value under a case variant is adopted.
-      it("adopts an embedded _AuthToken spelled with a capital", async () => {
+      // A marker is matched as spelled, as a `.npmrc` line is: a case variant is a
+      // misspelling, stripped from the path and never adopted.
+      it("strips an embedded _AuthToken spelled with a capital without adopting it", async () => {
         const seen = await probeEmbedded("/api/:_AuthToken=T", () => "");
-        expect(seen).toEqual({ path: "/api/@myorg%2fpkg", auth: "Bearer T" });
+        expect(seen).toEqual({ path: "/api/@myorg%2fpkg", auth: null });
       });
 
-      // A typo'd credential name is still a credential: stripped from the path, never
+      // A `:word=` run at the very end of the path is the one place yarn writes a
+      // credential; a misspelt name there is still a credential, stripped and never
       // adopted. main's blunt colon split removed it too.
-      it.each(["/api/:_passwd=SECRET", "/api/:authtoken=SECRET", "/api/_secret=SECRET"])(
-        "strips a typo'd credential segment %s without adopting it",
+      it.each(["/api/:_passwd=SECRET", "/api/:authtoken=SECRET"])(
+        "strips a misspelt credential segment %s at the end of the path without adopting it",
         async registryPath => {
           const seen = await probeEmbedded(registryPath, () => "");
           expect(seen).toEqual({ path: "/api/@myorg%2fpkg", auth: null });
+        },
+      );
+
+      // A `:word=` or `_word=` segment anywhere else is a plain path segment: npm has
+      // no heuristic for it, and stripping it lost the rest of the registry path.
+      it.each([
+        ["/a:b=c/npm/", "/a:b=c/npm/@myorg%2fpkg"],
+        ["/api/_v=1/npm/", "/api/_v=1/npm/@myorg%2fpkg"],
+        ["/api/_secret=x/", "/api/_secret=x/@myorg%2fpkg"],
+      ])("leaves a `=` segment inside the registry path alone: %s", async (registryPath, expectedPath) => {
+        const seen = await probeEmbedded(registryPath, () => "");
+        expect(seen).toEqual({ path: expectedPath, auth: null });
+      });
+
+      it("leaves a `:word=` segment inside a --registry path alone", async () => {
+        const seen = await probeEmbedded("/a:b=c/npm/", () => "", "", { cli: true });
+        expect(seen).toEqual({ path: "/a:b=c/npm/@myorg%2fpkg", auth: null });
+      });
+
+      // The default registry reaches the scope builder from a `.npmrc` `registry=` line,
+      // `$NPM_CONFIG_REGISTRY` and bunfig's string form as well; the strip is the same.
+      it.each(["default", "env", "bunfig"] as const)(
+        "strips an embedded _authToken from a %s registry URL",
+        async source => {
+          const seen = await probeEmbedded("/api/:_authToken=S", () => "", "", { source });
+          expect(seen).toEqual({ path: "/api/@myorg%2fpkg", auth: "Bearer S" });
         },
       );
 

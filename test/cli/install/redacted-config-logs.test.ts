@@ -294,16 +294,20 @@ describe.concurrent("redact", async () => {
   for (const { title, bunfig, npmrc, expected, secret, forbidden } of tests) {
     test(title + (bunfig ? " (bunfig)" : " (npmrc)"), async () => {
       const testDir = tmpdirSync();
+      // An empty home, so the machine's own `.npmrc` cannot add a warning or an error.
+      const home = join(testDir, "home");
       await Promise.all([
         write(join(testDir, bunfig ? "bunfig.toml" : ".npmrc"), (bunfig || npmrc)!),
         write(join(testDir, "package.json"), "{}"),
+        write(join(home, ".gitkeep"), ""),
       ]);
+      const isolated = { HOME: home, USERPROFILE: home, XDG_CONFIG_HOME: home };
 
       // once without color
       await using proc1 = Bun.spawn({
         cmd: [bunExe(), "install"],
         cwd: testDir,
-        env: { ...bunEnv, NO_COLOR: "1" },
+        env: { ...bunEnv, NO_COLOR: "1", ...isolated },
         stdout: "pipe",
         stderr: "pipe",
       });
@@ -320,7 +324,7 @@ describe.concurrent("redact", async () => {
       await using proc2 = Bun.spawn({
         cmd: [bunExe(), "install"],
         cwd: testDir,
-        env: { ...bunEnv, NO_COLOR: undefined, FORCE_COLOR: "1" },
+        env: { ...bunEnv, NO_COLOR: undefined, FORCE_COLOR: "1", ...isolated },
         stdout: "pipe",
         stderr: "pipe",
       });

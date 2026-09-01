@@ -1,21 +1,43 @@
 import { describe, expect } from "bun:test";
 import { readdirSync, readFileSync } from "fs";
 import path from "path";
-import { itBundled } from "./expectBundled";
+import { BundlerTestInput, itBundled as itBundledBase } from "./expectBundled";
 
-function readAllOutputs(outdir: string) {
+function jsOutputs(outdir: string) {
   return readdirSync(outdir)
     .filter(f => f.endsWith(".js"))
-    .map(f => readFileSync(path.join(outdir, f), "utf8"))
-    .join("\n");
+    .sort()
+    .map(f => readFileSync(path.join(outdir, f), "utf8").replaceAll("\r\n", "\n"));
 }
+
+function readAllOutputs(outdir: string) {
+  return jsOutputs(outdir).join("\n");
+}
+
+// The part of a bundle these cases are about: the runtime helpers (`__export`,
+// `__esm`, ... before the first `// file` comment) are dropped and the
+// `[name]-[hash].js` chunk hash is replaced, so an inline snapshot pins the
+// narrowed export object or chunk and nothing else.
+function bundleBody(code: string) {
+  const start = code.search(/^\/\/ [\w./-]+$/m);
+  return (start === -1 ? code : code.slice(start)).replace(/-[a-z0-9]{8}\.js/g, "-[hash].js");
+}
+
+function outputBodies(outdir: string) {
+  return jsOutputs(outdir).map(bundleBody).join("\n");
+}
+
+// Default to the CLI backend: itBundled registers API-backend cases with
+// it.serial (the harness chdirs into the case root around Bun.build), so only
+// CLI-backend cases overlap under describe.concurrent.
+const itBundled = (id: string, opts: BundlerTestInput) => itBundledBase(id, { backend: "cli", ...opts });
 
 // Tree-shaking of `import()` results. esbuild does not implement this
 // (evanw/esbuild#3987, #4255); coverage here is ported from rolldown's
 // `tree_shaking/dynamic_import_*` and rspack's `statical-dynamic-import*`
 // fixtures plus Bun-specific cases.
 
-describe("bundler", () => {
+describe.concurrent("bundler", () => {
   // ──────────────────────────────────────────────────────────────────────
   // No code-splitting: the `import()` stays a lazy `init_x()` of the
   // ESM-wrapped importee, but its `exports_x` object is narrowed to the
@@ -41,8 +63,22 @@ describe("bundler", () => {
     run: { stdout: "43" },
     onAfterBundle(api) {
       // Still lazy (namespace served from `exports_b`), `d` tree-shaken.
-      api.expectFile("/out.js").toContain("exports_b");
-      api.expectFile("/out.js").not.toContain("99");
+      expect(bundleBody(api.readFile("/out.js"))).toMatchInlineSnapshot(`
+        "// b.js
+        var exports_b = {};
+        __export(exports_b, {
+          c: () => c
+        });
+        var c = (x) => x + 1;
+
+        // entry.js
+        async function foo() {
+          const { c: c2 } = await Promise.resolve().then(() => exports_b);
+          return c2(42);
+        }
+        console.log(await foo());
+        "
+      `);
     },
   });
 
@@ -136,7 +172,22 @@ describe("bundler", () => {
     dce: true,
     run: { stdout: "1 2" },
     onAfterBundle(api) {
-      api.expectFile("/out.js").not.toContain("DROPPED");
+      // The export object is the union of both sites.
+      expect(bundleBody(api.readFile("/out.js"))).toMatchInlineSnapshot(`
+        "// b.js
+        var exports_b = {};
+        __export(exports_b, {
+          c: () => c,
+          d: () => d
+        });
+        var c = 1, d = 2;
+
+        // entry.js
+        var { c: c2 } = await Promise.resolve().then(() => exports_b);
+        var { d: d2 } = await Promise.resolve().then(() => exports_b);
+        console.log(c2, d2);
+        "
+      `);
     },
   });
 
@@ -155,7 +206,21 @@ describe("bundler", () => {
     },
     run: { stdout: "1 99" },
     onAfterBundle(api) {
-      api.expectFile("/out.js").toContain("99");
+      // `...rest` observes the whole namespace: every export stays.
+      expect(bundleBody(api.readFile("/out.js"))).toMatchInlineSnapshot(`
+        "// b.js
+        var exports_b = {};
+        __export(exports_b, {
+          c: () => c,
+          d: () => d
+        });
+        var c = 1, d = 99;
+
+        // entry.js
+        var { c: c2, ...rest } = await Promise.resolve().then(() => exports_b);
+        console.log(c2, rest.d);
+        "
+      `);
     },
   });
 
@@ -218,9 +283,21 @@ describe("bundler", () => {
     onAfterBundle(api) {
       // The entry chunk must keep the lazy `import()`; the `b` chunk must
       // not export (or even contain) `d`.
-      const entry = api.readFile("/out/entry.js");
-      expect(entry).toContain("import(");
-      expect(readAllOutputs(api.outdir)).not.toContain("DROPPED");
+      expect(outputBodies(api.outdir)).toMatchInlineSnapshot(`
+        "// b.js
+        var c = (x) => x + 1;
+        export {
+          c
+        };
+
+        // entry.js
+        async function foo() {
+          const { c } = await import("./b-[hash].js");
+          return c(42);
+        }
+        console.log(await foo());
+        "
+      `);
     },
   });
 
@@ -249,7 +326,25 @@ describe("bundler", () => {
       { file: "/out/b.js", stdout: "b 2" },
     ],
     onAfterBundle(api) {
-      expect(readAllOutputs(api.outdir)).not.toContain("DROPPED");
+      // The shared chunk exports the union of what each importer reads.
+      expect(outputBodies(api.outdir)).toMatchInlineSnapshot(`
+        "// a.js
+        var { c } = await import("./lib-[hash].js");
+        console.log("a", c);
+
+        // b.js
+        var { d } = await import("./lib-[hash].js");
+        console.log("b", d);
+
+        // lib.js
+        var c = 1;
+        var d = 2;
+        export {
+          c,
+          d
+        };
+        "
+      `);
     },
   });
 
@@ -568,7 +663,7 @@ describe("bundler", () => {
       target: "bun",
       format: "esm",
       outdir: "/out",
-      run: { file: "/out/entry.js", stdout: '["a","b"] ["a","b"]' },
+      run: { file: "/out/entry.js", stdout: '["a","b"] ["a","b"]', stderr: "" },
     });
   }
 
@@ -826,9 +921,30 @@ describe("bundler", () => {
     outdir: "/out",
     run: { file: "/out/entry.js", stdout: "1\n2" },
     onAfterBundle(api) {
-      const all = readAllOutputs(api.outdir);
-      expect(all).not.toContain("DROP_A");
-      expect(all).toContain("KEEP_B");
+      // `a` is dropped whole, `b` is kept whole (`keep_b` is never read).
+      expect(outputBodies(api.outdir)).toMatchInlineSnapshot(`
+        "// entry.js
+        console.log((await import("./lib-[hash].js")).b.f());
+        var { b: { bbb } } = await import("./lib-[hash].js");
+        console.log(bbb);
+
+        // b.js
+        var exports_b = {};
+        __export(exports_b, {
+          bbb: () => bbb,
+          f: () => f,
+          keep_b: () => keep_b
+        });
+        function f() {
+          return 1;
+        }
+        var bbb = 2;
+        var keep_b = "KEEP_B";
+        export {
+          exports_b as b
+        };
+        "
+      `);
     },
   });
 
@@ -971,7 +1087,7 @@ describe("bundler", () => {
     target: "bun",
     format: "esm",
     outdir: "/out",
-    run: { file: "/out/entry.js", stdout: 'threw ["x","y"] ["x","y"]' },
+    run: { file: "/out/entry.js", stdout: 'threw ["x","y"] ["x","y"]', stderr: "" },
   });
 
   // webpack JavascriptParser._preWalkObjectPattern: string-literal keys narrow;
@@ -1352,8 +1468,25 @@ describe("bundler", () => {
     outdir: "/out",
     run: { file: "/out/entry.js", stdout: "43" },
     onAfterBundle(api) {
-      expect(api.readFile("/out/entry.js")).toContain("import.meta.require(");
-      expect(readAllOutputs(api.outdir)).not.toContain("DROPPED");
+      // The importee is its own chunk behind `import.meta.require()`, narrowed to `c`.
+      expect(outputBodies(api.outdir)).toMatchInlineSnapshot(`
+        "// b.ts
+        var c = (x) => x + 1;
+        export {
+          c
+        };
+
+        // entry.ts
+        function tool() {
+          const { c } = import.meta.require("./b-[hash].js");
+          return c(42);
+        }
+        console.log(tool());
+        export {
+          tool
+        };
+        "
+      `);
     },
   });
 
@@ -1516,7 +1649,27 @@ describe("bundler", () => {
     target: "bun",
     run: { stdout: "3" },
     onAfterBundle(api) {
-      api.expectFile("/out.js").not.toContain("DROPPED");
+      // `__toCommonJS(exports_b)` sees only the two exports the importer reads.
+      expect(bundleBody(api.readFile("/out.js"))).toMatchInlineSnapshot(`
+        "// b.ts
+        var exports_b = {};
+        __export(exports_b, {
+          c: () => c,
+          e: () => e
+        });
+        var c = 1, e = 2;
+
+        // entry.ts
+        function tool() {
+          const { c: c2 } = __toCommonJS(exports_b);
+          return c2 + __toCommonJS(exports_b).e;
+        }
+        console.log(tool());
+        export {
+          tool
+        };
+        "
+      `);
     },
   });
 
@@ -1541,13 +1694,21 @@ describe("bundler", () => {
     outdir: "/out",
     run: { file: "/out/entry.js", stdout: "foo" },
     onAfterBundle(api) {
-      const all = readAllOutputs(api.outdir);
-      expect(all).not.toContain("DROPPED1");
-      expect(all).not.toContain("DROPPED2");
       // `thing` is destructured but `a` is never read; per-reference
       // filtering drops it from the chunk (the property name still appears
-      // in the entry's destructure pattern, so check for the value form).
-      expect(all).not.toContain('"thing"');
+      // in the entry's destructure pattern).
+      expect(outputBodies(api.outdir)).toMatchInlineSnapshot(`
+        "// entry.js
+        var { foo: x, thing: a } = await import("./lib-[hash].js");
+        console.log(x);
+
+        // lib.js
+        var foo = "foo";
+        export {
+          foo
+        };
+        "
+      `);
     },
   });
 
@@ -1900,8 +2061,15 @@ describe("bundler", () => {
     },
     run: { stdout: "dep\nentry" },
     onAfterBundle(api) {
-      api.expectFile("/out.js").not.toContain("DROPPED");
-      api.expectFile("/out.js").not.toContain("loadTS");
+      // `loadTS` is unused, so it and the `import()` it holds are dropped.
+      expect(bundleBody(api.readFile("/out.js"))).toMatchInlineSnapshot(`
+        "// dep.js
+        console.log("dep");
+
+        // entry.js
+        console.log("entry");
+        "
+      `);
     },
   });
 
@@ -1970,8 +2138,24 @@ describe("bundler", () => {
     onAfterBundle(api) {
       // .then((res) => res.a) tracks `res.a` as the only used export and
       // hoists it; the unused re-export `b` is tree-shaken.
-      api.expectFile("/out.js").toContain("KEPT_A");
-      api.expectFile("/out.js").not.toContain("DROPPED_B");
+      expect(bundleBody(api.readFile("/out.js"))).toMatchInlineSnapshot(`
+        "// module.js
+        var a = "KEPT_A";
+
+        // lib.js
+        var exports_lib = {};
+        __export(exports_lib, {
+          a: () => a
+        });
+        var init_lib = () => {};
+
+        // entry.js
+        Promise.resolve().then(() => (init_lib(), exports_lib)).then((res) => {
+          console.log(res.a);
+          return res.a;
+        });
+        "
+      `);
     },
   });
 
@@ -2549,9 +2733,24 @@ describe("bundler", () => {
       `,
       "/b.js": `throw new Error("boom"); export const c = 1;`,
     },
-    run: { stdout: "caught boom" },
+    run: { stdout: "caught boom", stderr: "" },
     onAfterBundle(api) {
-      api.expectFile("/out.js").toContain("__esm");
+      // The importee stays `__esm`-wrapped, so the throw rejects the promise.
+      expect(bundleBody(api.readFile("/out.js"))).toMatchInlineSnapshot(`
+        "// b.js
+        var exports_b = {};
+        __export(exports_b, {
+          c: () => c
+        });
+        var c = 1;
+        var init_b = __esm(() => {
+          throw new Error("boom");
+        });
+
+        // entry.js
+        Promise.resolve().then(() => (init_b(), exports_b)).then(({ c: c2 }) => console.log(c2), (err) => console.log("caught", err.message));
+        "
+      `);
     },
   });
 
@@ -2673,8 +2872,18 @@ describe("bundler", () => {
     format: "esm",
     run: { stdout: "after" },
     onAfterBundle(api) {
-      api.expectFile("/out.js").toContain("exports_b");
-      api.expectFile("/out.js").not.toContain("DROPPED");
+      expect(bundleBody(api.readFile("/out.js"))).toMatchInlineSnapshot(`
+        "// b.js
+        var exports_b = {};
+
+        // entry.js
+        async function main() {
+          let { c } = await Promise.resolve().then(() => exports_b);
+          console.log("after");
+        }
+        await main();
+        "
+      `);
     },
   });
 
@@ -3174,7 +3383,7 @@ describe("bundler", () => {
       "/b.js": `if (!globalThis.NO_BOOM) throw new Error("x"); export const c = 1;`,
     },
     format: "esm",
-    run: { stdout: "caught" },
+    run: { stdout: "caught", stderr: "" },
   });
 
   itBundled("dynamic_import_dce/NoSplitTryAwaitThenCatches", {
@@ -3189,7 +3398,7 @@ describe("bundler", () => {
       "/b.js": `throw new Error("boom"); export const c = 1;`,
     },
     format: "esm",
-    run: { stdout: "caught boom" },
+    run: { stdout: "caught boom", stderr: "" },
   });
 
   // The `await` checkpoint stays.
@@ -3239,31 +3448,21 @@ describe("bundler", () => {
   // Importee exports `then`: `await import()` resolves through it. `then` is
   // observed by the `await` itself, so it must be kept even though no
   // importer names it.
-  itBundled("dynamic_import_dce/NoSplitThenableImportee", {
-    files: {
-      "/entry.js": /* js */ `
-        const { v } = await import("./b.js");
-        console.log(v);
-      `,
-      "/b.js": `export const v = "direct"; export function then(r) { r({ v: "unwrapped" }); }`,
-    },
-    format: "esm",
-    run: { stdout: "unwrapped" },
-  });
-
-  itBundled("dynamic_import_dce/SplittingThenableImportee", {
-    files: {
-      "/entry.js": /* js */ `
-        const { v } = await import("./b.js");
-        console.log(v);
-      `,
-      "/b.js": `export const v = "direct"; export function then(r) { r({ v: "unwrapped" }); }`,
-    },
-    splitting: true,
-    format: "esm",
-    outdir: "/out",
-    run: { file: "/out/entry.js", stdout: "unwrapped" },
-  });
+  for (const splitting of [true, false]) {
+    itBundled(`dynamic_import_dce/${splitting ? "Splitting" : "NoSplit"}ThenableImportee`, {
+      files: {
+        "/entry.js": /* js */ `
+          const { v } = await import("./b.js");
+          console.log(v);
+        `,
+        "/b.js": `export const v = "direct"; export function then(r) { r({ v: "unwrapped" }); }`,
+      },
+      splitting,
+      format: "esm",
+      outdir: "/out",
+      run: { file: "/out/entry.js", stdout: "unwrapped" },
+    });
+  }
 
   // `const {x}` is a snapshot, not a live binding.
   itBundled("dynamic_import_dce/NoSplitDestructureIsSnapshot", {
@@ -3327,7 +3526,7 @@ describe("bundler", () => {
       `,
       "/b.js": `throw new Error("boom"); export const c = 1;`,
     },
-    run: { stdout: "caught boom" },
+    run: { stdout: "caught boom", stderr: "" },
     onAfterBundle(api) {
       api.expectFile("/out.js").toContain("__esm");
     },
@@ -3448,7 +3647,19 @@ describe("bundler", () => {
     run: { stdout: "3 3" },
     onAfterBundle(api) {
       // The original destructure must survive so both bindings are declared.
-      api.expectFile("/out.js").toMatch(/\{\s*foo:\s*\w+,\s*foo:\s*bar\s*\}/);
+      expect(bundleBody(api.readFile("/out.js"))).toMatchInlineSnapshot(`
+        "// b.js
+        var exports_b = {};
+        __export(exports_b, {
+          foo: () => foo
+        });
+        var foo = 3;
+
+        // entry.js
+        var { foo: foo2, foo: bar } = await Promise.resolve().then(() => exports_b);
+        console.log(foo2, bar);
+        "
+      `);
     },
   });
 
@@ -3488,6 +3699,25 @@ describe("bundler", () => {
     },
     format: "esm",
     run: { stdout: "1" },
+    onAfterBundle(api) {
+      expect(bundleBody(api.readFile("/out.js"))).toMatchInlineSnapshot(`
+        "// b.js
+        var exports_b = {};
+        __export(exports_b, {
+          x: () => x
+        });
+        var x = 1;
+
+        // a.js
+        var exports_a = {};
+        var init_a = () => {};
+
+        // entry.js
+        init_a();
+        await Promise.resolve().then(() => exports_b).then(({ x: x2 }) => console.log(x2));
+        "
+      `);
+    },
   });
 
   // `.then(...).finally(...).catch(err)` — `.finally` must propagate the
@@ -3502,7 +3732,7 @@ describe("bundler", () => {
       `,
       "/b.js": `throw new Error("boom"); export const c = 1;`,
     },
-    run: { stdout: "cleanup\ncaught boom" },
+    run: { stdout: "cleanup\ncaught boom", stderr: "" },
     onAfterBundle(api) {
       api.expectFile("/out.js").toContain("__esm");
     },

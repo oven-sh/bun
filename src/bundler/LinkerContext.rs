@@ -1653,6 +1653,8 @@ pub(crate) enum MatchImportKind {
 pub struct ChunkMeta {
     pub(crate) imports: ChunkMetaMap,
     pub(crate) exports: ChunkMetaMap,
+    /// ESM entry chunk: the export name of each binding its entry point exports directly.
+    pub(crate) export_aliases: bun_collections::HashMap<Ref, bun_ast::StoreStr>,
     pub(crate) dynamic_imports: ArrayHashMap<crate::IndexInt, ()>,
     /// Split `require()` targets, kept apart from `dynamic_imports`
     /// only so the metafile labels them `require-call`.
@@ -2232,6 +2234,7 @@ impl<'a> LinkerContext<'a> {
         source_index: Index,
         source: &Source,
         module_info: Option<&mut crate::analyze_transpiled_module::ModuleInfo>,
+        import_meta_main_value: Option<bool>,
     ) -> js_printer::PrintResult {
         let parts_to_print = &[Part {
             stmts: bun_ast::StoreSlice::new_mut(out_stmts),
@@ -2291,6 +2294,7 @@ impl<'a> LinkerContext<'a> {
             module_type: self.options.output_format,
             print_dce_annotations: self.options.emit_dce_annotations,
             has_run_symbol_renamer: true,
+            import_meta_main_value,
 
             to_esm_ref,
             to_commonjs_ref,

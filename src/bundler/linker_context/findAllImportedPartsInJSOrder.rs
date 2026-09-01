@@ -18,20 +18,18 @@ pub(crate) fn find_all_imported_parts_in_js_order(
         return Ok(());
     }
 
-    // With code splitting a live JS file is in exactly one chunk. The walk
-    // below orders each chunk's cross-chunk imports by where it reaches the
-    // files that run something when loaded; the rest (and every file without
-    // code splitting) map to `u32::MAX`.
+    // With code splitting a live JS file prints in exactly one chunk; `u32::MAX`: none, or no code splitting.
     let mut chunk_of_file: Vec<u32> = vec![u32::MAX; this.graph.files.len()];
+    let mut runs_when_loaded: Vec<bool> = vec![false; this.graph.files.len()];
     if this.graph.code_splitting {
         for (chunk_index, chunk) in chunks.iter().enumerate() {
             if !matches!(chunk.content, chunk::Content::Javascript(_)) {
                 continue;
             }
             for &source_index in chunk.files_with_parts_in_chunk.keys() {
-                if !this.loading_file_has_no_side_effects(source_index) {
-                    chunk_of_file[source_index as usize] = chunk_index as u32;
-                }
+                chunk_of_file[source_index as usize] = chunk_index as u32;
+                runs_when_loaded[source_index as usize] =
+                    !this.loading_file_has_no_side_effects(source_index);
             }
         }
     }
@@ -39,6 +37,7 @@ pub(crate) fn find_all_imported_parts_in_js_order(
     struct Ctx<'a, 'f> {
         inner: crate::linker_context_mod::GenerateChunkCtx<'a>,
         chunk_of_file: &'f [u32],
+        runs_when_loaded: &'f [bool],
     }
 
     // One chunk per task. Each task writes only its own `Chunk` and, for
@@ -54,6 +53,7 @@ pub(crate) fn find_all_imported_parts_in_js_order(
             chunks: bun_ptr::BackRef::new(&*chunks),
         },
         chunk_of_file: &chunk_of_file,
+        runs_when_loaded: &runs_when_loaded,
     };
     let chunks_len = chunks.len();
     this.worker_pool().each_ptr(
@@ -73,6 +73,7 @@ pub(crate) fn find_all_imported_parts_in_js_order(
                 &mut Vec::new(),
                 u32::try_from(index).expect("int cast"),
                 ctx.chunk_of_file,
+                ctx.runs_when_loaded,
                 chunks_len,
             ));
         },
@@ -81,6 +82,7 @@ pub(crate) fn find_all_imported_parts_in_js_order(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn find_imported_parts_in_js_order(
     this: &LinkerContext,
     chunk: &mut Chunk,
@@ -88,6 +90,7 @@ pub(crate) fn find_imported_parts_in_js_order(
     parts_prefix_shared: &mut Vec<PartRange>,
     chunk_index: u32,
     chunk_of_file: &[u32],
+    runs_when_loaded: &[bool],
     chunks_len: usize,
 ) -> Result<(), bun_alloc::AllocError> {
     let mut chunk_order_array: Vec<Order> =
@@ -138,6 +141,7 @@ pub(crate) fn find_imported_parts_in_js_order(
             entry_point_chunk_indices,
             stack: Vec::new(),
             chunk_of_file,
+            runs_when_loaded,
             reached_chunks: Vec::new(),
             reached_chunk_set: AutoBitSet::init_empty(chunks_len)?,
         };
@@ -202,9 +206,10 @@ pub(crate) struct FindImportedPartsVisitor<'a, 'ctx> {
     /// `visit` (see the raw-pointer note above).
     entry_point_chunk_indices: *mut [u32],
     stack: Vec<PartsFrame>,
-    /// The chunk of each file that runs something when loaded; `u32::MAX`
-    /// for the others (and everywhere without code splitting).
+    /// The chunk each file prints in; `u32::MAX` when none (or no code splitting).
     chunk_of_file: &'a [u32],
+    /// Files that run something when loaded.
+    runs_when_loaded: &'a [bool],
     /// `JavaScriptChunk::reached_chunks_in_order` under construction.
     reached_chunks: Vec<u32>,
     reached_chunk_set: AutoBitSet,
@@ -333,6 +338,7 @@ impl<'a, 'ctx> FindImportedPartsVisitor<'a, 'ctx> {
                         let other = self.chunk_of_file[source_index as usize];
                         if other != u32::MAX
                             && other != self.chunk_index
+                            && self.runs_when_loaded[source_index as usize]
                             && !self.reached_chunk_set.is_set(other as usize)
                         {
                             self.reached_chunk_set.set(other as usize);
@@ -353,9 +359,13 @@ impl<'a, 'ctx> FindImportedPartsVisitor<'a, 'ctx> {
                     let is_file_in_chunk = if WITH_CODE_SPLITTING
                         && self.c.graph.ast.items_css()[source_index as usize].is_none()
                     {
-                        // when code splitting, include the file in the chunk if ALL of the entry points overlap
-                        self.entry_bits
-                            .eql(&self.c.graph.files.items_entry_bits()[source_index as usize])
+                        // when code splitting, the chunk that prints the file (none: the one keyed by its entry points)
+                        match self.chunk_of_file[source_index as usize] {
+                            u32::MAX => self
+                                .entry_bits
+                                .eql(&self.c.graph.files.items_entry_bits()[source_index as usize]),
+                            chunk_index => chunk_index == self.chunk_index,
+                        }
                     } else {
                         // when NOT code splitting, include the file in the chunk if ANY of the entry points overlap
                         self.entry_bits.has_intersection(

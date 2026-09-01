@@ -24,6 +24,7 @@ pub(crate) fn compute_cross_chunk_dependencies(
         .map(|_| ChunkMeta {
             imports: ChunkMetaMap::default(),
             exports: ChunkMetaMap::default(),
+            export_aliases: Default::default(),
             dynamic_imports: ArrayHashMap::<IndexInt, ()>::default(),
             require_imports: ArrayHashMap::<IndexInt, ()>::default(),
         })
@@ -291,6 +292,12 @@ impl<'a, 'bump> CrossChunkDependencies<'a, 'bump> {
                             &symbols.get_const(target_ref).unwrap().namespace_alias
                         {
                             target_ref = namespace_alias.namespace_ref;
+                        } else if ctx.options.output_format == OutputFormat::Esm {
+                            // `generate_entry_point_tail_js` exports the binding under this alias.
+                            chunk_meta
+                                .export_aliases
+                                .entry(target_ref)
+                                .or_insert_with(|| bun_ast::StoreStr::new(alias));
                         }
 
                         if cfg!(debug_assertions) {
@@ -451,19 +458,27 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                         );
                     }
 
+                    // Imported by the entry point's own export name, else the other chunk exports it.
+                    let alias = chunk_metas[other_chunk_index as usize]
+                        .export_aliases
+                        .get(&import_ref)
+                        .copied();
                     {
                         let js = chunks[chunk_index].content.javascript_mut();
                         let entry = js.imports_from_other_chunks.get_or_put_value(
                             other_chunk_index,
                             CrossChunkImportItemList::default(),
                         )?;
-                        entry
-                            .value_ptr
-                            .push(CrossChunkImportItem { r#ref: import_ref });
+                        entry.value_ptr.push(CrossChunkImportItem {
+                            r#ref: import_ref,
+                            alias: alias.unwrap_or(bun_ast::StoreStr::EMPTY),
+                        });
                     }
-                    let _ = chunk_metas[other_chunk_index as usize]
-                        .exports
-                        .get_or_put(import_ref);
+                    if alias.is_none() {
+                        let _ = chunk_metas[other_chunk_index as usize]
+                            .exports
+                            .get_or_put(import_ref);
+                    }
                 } else {
                     // SAFETY: arena slice valid for the link pass.
                     let name = symbol.original_name.slice();
@@ -679,7 +694,7 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                                     ref_: item.r#ref,
                                     loc: bun_ast::Loc::EMPTY,
                                 },
-                                alias: bun_ast::StoreStr::EMPTY,
+                                alias: item.alias,
                                 alias_loc: bun_ast::Loc::EMPTY,
                                 original_name: bun_ast::StoreStr::new(b"" as &[u8]),
                             });

@@ -56,6 +56,7 @@ pub struct Chunk {
     /// `AtomicUsize` rather than `usize` to avoid materializing aliased `&mut`.
     pub(crate) files_with_parts_in_chunk: ArrayHashMap<IndexInt, core::sync::atomic::AtomicUsize>,
 
+    /// The entry points that load this chunk (an entry chunk keeping its entry's module: that file's).
     /// We must not keep pointers to this type until all chunks have been allocated.
     pub(crate) entry_bits: AutoBitSet,
 
@@ -1538,6 +1539,8 @@ pub(crate) type ImportsFromOtherChunks = ArrayHashMap<IndexInt, cross_chunk_impo
 #[derive(Default, Clone)]
 pub struct CrossChunkImportItem {
     pub(crate) r#ref: Ref,
+    /// The declaring entry point's export name to import by; empty: the bundle-wide name.
+    pub(crate) alias: bun_ast::StoreStr,
 }
 pub type CrossChunkImportItemList = Vec<CrossChunkImportItem>;
 #[derive(Default)]
@@ -1574,9 +1577,9 @@ impl CrossChunkImport {
                     .content
                     .javascript()
                     .exports_to_other_chunks;
-                imports_from_other_chunks.values()[i]
-                    .iter()
-                    .all(|item| exports_to_other_chunks.contains(&item.r#ref))
+                imports_from_other_chunks.values()[i].iter().all(|item| {
+                    !item.alias.is_empty() || exports_to_other_chunks.contains(&item.r#ref)
+                })
             });
             let import_items = &mut imports_from_other_chunks.values_mut()[i];
             // Deterministic order; the names are only known after renaming.

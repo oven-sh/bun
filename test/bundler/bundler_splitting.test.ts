@@ -1777,6 +1777,155 @@ describe("bundler", () => {
     run: { file: "/out/main.js", stdout: "main\ntool evaluated\ntool:helped" },
   });
 
+  // An entry point that another entry point imports keeps its own module in
+  // its own output file, so `import.meta.main` / `import.meta.file` in it
+  // describe that file. The other entry imports from it, as written, instead
+  // of both importing a shared chunk that holds the entry's code.
+  itBundled("splitting/EntryImportedByAnotherEntryKeepsItsModule", {
+    files: {
+      "/cli.js": /* js */ `
+        export const v = 1
+        console.log('cli main=' + import.meta.main + ' file=' + import.meta.file)
+        if (import.meta.main) console.log('CLI-IS-MAIN')
+      `,
+      "/lib.js": /* js */ `
+        import { v } from './cli.js'
+        console.log('lib', v, 'main=' + import.meta.main)
+      `,
+    },
+    entryPoints: ["/cli.js", "/lib.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      expect(jsFilesIn(api)).toEqual(["cli.js", "lib.js"]);
+      api.expectFile("/out/cli.js").toContain("CLI-IS-MAIN");
+      api.expectFile("/out/lib.js").toMatch(/import\s*\{\s*v\s*\}\s*from "\.\/cli\.js"/);
+    },
+    run: [
+      { file: "/out/cli.js", stdout: "cli main=true file=cli.js\nCLI-IS-MAIN" },
+      { file: "/out/lib.js", stdout: "cli main=false file=cli.js\nlib 1 main=true" },
+    ],
+  });
+
+  // The importing entry takes each of the imported entry's own bindings by the
+  // export name it already has, so the imported entry's module namespace stays
+  // exactly as written: no extra exports, no renamed ones. What both entries
+  // reach (helper.js) still lives in a shared chunk.
+  itBundled("splitting/EntryImportedByAnotherEntryKeepsNamespace", {
+    files: {
+      "/entry.js": /* js */ `
+        import { helper } from './helper.js'
+        export let count = 0
+        export function inc() { count++ }
+        export { helper as util }
+        export default function main() { return 'main' }
+        console.log('entry main=' + import.meta.main)
+      `,
+      "/helper.js": /* js */ `
+        export function helper() { return 'helped' }
+      `,
+      "/other.js": /* js */ `
+        import main, { count, inc, util } from './entry.js'
+        inc()
+        inc()
+        console.log('other', main(), util(), count, 'main=' + import.meta.main)
+      `,
+      "/check.js": /* js */ `
+        import * as m from './out/entry.js'
+        console.log(Object.keys(m).sort().join(','))
+      `,
+    },
+    entryPoints: ["/entry.js", "/other.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      expect(jsOutputs(api)).toEqual(["entry.js", "entry.js", "other.js"]);
+      api.expectFile("/out/entry.js").toContain("entry main=");
+      expect(api.readFile("/out/entry.js").match(/^\s*export\b/gm)).toHaveLength(1);
+      const other = api.readFile("/out/other.js");
+      const fromEntry = other.match(/import\s*\{([^}]*)\}\s*from "\.\/entry\.js"/)!;
+      expect(
+        fromEntry[1]
+          .split(",")
+          .map(s => s.trim())
+          .filter(Boolean)
+          .sort(),
+      ).toEqual(["count", "default as main", "inc"]);
+    },
+    run: [
+      { file: "/out/entry.js", stdout: "entry main=true" },
+      { file: "/out/other.js", stdout: "entry main=false\nother main helped 2 main=true" },
+      { file: "/check.js", stdout: "entry main=false\ncount,default,inc,util" },
+    ],
+  });
+
+  // A barrel that is both an entry point and imported by two other entries.
+  // Its `import.meta.main` block runs only when it is the process entry; the
+  // modules it re-exports are shared by all three entries and stay in one
+  // chunk that each of them loads once.
+  itBundled("splitting/BarrelEntryImportedByTwoEntries", {
+    files: {
+      "/index.js": /* js */ `
+        export { a } from './a.js'
+        export { b } from './b.js'
+        if (import.meta.main) console.log('INDEX-IS-MAIN')
+      `,
+      "/a.js": `console.log('a evaluated'); export const a = 'a'`,
+      "/b.js": `console.log('b evaluated'); export const b = 'b'`,
+      "/use-a.js": `import { a } from './index.js'; console.log('use-a', a, import.meta.main)`,
+      "/use-b.js": `import { b } from './index.js'; console.log('use-b', b, import.meta.main)`,
+      "/both.js": /* js */ `
+        await import('./out/use-a.js')
+        await import('./out/use-b.js')
+      `,
+    },
+    entryPoints: ["/index.js", "/use-a.js", "/use-b.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      expect(jsOutputs(api)).toEqual(["index.js", "index.js", "use-a.js", "use-b.js"]);
+      api.expectFile("/out/index.js").toContain("INDEX-IS-MAIN");
+      // use-a runs index.js for its side effects, after the chunk it shares with it.
+      expect(api.readFile("/out/use-a.js")).toMatch(/from "\.\/index-[a-z0-9]{8}\.js";\s*import\s*"\.\/index\.js";/);
+    },
+    run: [
+      { file: "/out/index.js", stdout: "a evaluated\nb evaluated\nINDEX-IS-MAIN" },
+      { file: "/out/use-a.js", stdout: "a evaluated\nb evaluated\nuse-a a true" },
+      { file: "/both.js", stdout: "a evaluated\nb evaluated\nuse-a a false\nuse-b b false" },
+    ],
+  });
+
+  // When an importer needs more than the entry's exports (here its namespace
+  // object), the entry's code still moves to a shared chunk so that its
+  // namespace is not extended.
+  itBundled("splitting/EntryNamespaceObjectImportedByAnotherEntry", {
+    files: {
+      "/entry.js": /* js */ `
+        export const x = 1
+        export const y = 2
+      `,
+      "/other.js": /* js */ `
+        import * as ns from './entry.js'
+        console.log(JSON.stringify(ns))
+      `,
+      "/check.js": /* js */ `
+        import * as m from './out/entry.js'
+        console.log(Object.keys(m).sort().join(','))
+      `,
+    },
+    entryPoints: ["/entry.js", "/other.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: [
+      { file: "/out/other.js", stdout: '{"x":1,"y":2}' },
+      { file: "/check.js", stdout: "x,y" },
+    ],
+  });
+
   // N same-named cross-chunk exports must get unique aliases in O(N) total
   // (ExportRenamer::next_renamed_name). Debug/ASAN builds blow past the 15s
   // cap with far fewer files than release, hence the scaled N.

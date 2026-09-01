@@ -221,14 +221,17 @@ pub(crate) fn assign_minified(
         }
         for items in js.imports_from_other_chunks.values() {
             for item in items.iter() {
-                r.pin(item.r#ref, *c.cross_chunk_names.get(&item.r#ref).unwrap())?;
+                // None: imported by an entry point's own export name (`CrossChunkImportItem::alias`).
+                if let Some(name) = c.cross_chunk_names.get(&item.r#ref) {
+                    r.pin(item.r#ref, *name)?;
+                }
             }
         }
     }
     Ok(())
 }
 
-/// Writes the names into the cross-chunk `export {}` / `import {}` clause items.
+/// Writes the names into the cross-chunk clause items; an import by an entry's export name keeps its alias.
 pub(crate) fn apply_to_clauses(c: &LinkerContext, chunks: &mut [Chunk]) {
     if c.cross_chunk_names.is_empty() {
         return;
@@ -248,8 +251,9 @@ pub(crate) fn apply_to_clauses(c: &LinkerContext, chunks: &mut [Chunk]) {
                 _ => continue,
             };
             for item in items {
-                item.alias =
-                    bun_ast::StoreStr::new(*c.cross_chunk_names.get(&item.name.ref_).unwrap());
+                if let Some(name) = c.cross_chunk_names.get(&item.name.ref_) {
+                    item.alias = bun_ast::StoreStr::new(*name);
+                }
             }
         }
     }

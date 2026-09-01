@@ -2155,6 +2155,33 @@ describe("bundler", () => {
       api.expectFile("/out.js").not.toContain("module");
     },
   });
+  // Without code splitting, an entry point that another entry point imports
+  // is copied into that entry's bundle. The copy is a dependency there, so its
+  // `import.meta.main` is false, as when the two files run unbundled.
+  itBundled("edgecase/ImportMetaMainEntryInlinedIntoOtherEntry", {
+    files: {
+      "/cli.js": /* js */ `
+        export const v = 1
+        console.log('cli main=' + import.meta.main)
+        if (import.meta.main) console.log('CLI-IS-MAIN')
+      `,
+      "/lib.js": /* js */ `
+        import { v } from './cli.js'
+        console.log('lib', v, 'main=' + import.meta.main)
+      `,
+    },
+    entryPoints: ["/cli.js", "/lib.js"],
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      api.expectFile("/out/cli.js").toContain("import.meta.main");
+      api.expectFile("/out/lib.js").toContain("import.meta.main");
+    },
+    run: [
+      { file: "/out/cli.js", stdout: "cli main=true\nCLI-IS-MAIN" },
+      { file: "/out/lib.js", stdout: "cli main=false\nlib 1 main=true" },
+    ],
+  });
   itBundled("edgecase/ImportMetaMainTargetNode", {
     files: {
       "/entry.ts": /* js */ `

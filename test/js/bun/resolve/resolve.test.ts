@@ -1942,3 +1942,68 @@ describe.concurrent("dot specifiers resolve to the directory index, not a siblin
     expect(exitCode).toBe(0);
   });
 });
+
+// A package's "exports" map defines the only subpath spellings it exposes.
+// Node rejects "pkg/key.js" when only "./key" is declared; Bun previously
+// retried with the ".js" suffix stripped, so unexported spellings loaded.
+it("exports map does not alias a .js suffix onto an extensionless key", async () => {
+  using dir = tempDir("exports-js-suffix", {
+    "node_modules/pk/package.json": JSON.stringify({
+      name: "pk",
+      exports: {
+        ".": "./main.js",
+        "./pub": "./lib/pub.js",
+        "./esm": "./lib/e.mjs",
+        "./data": "./lib/d.json",
+        "./exact.js": "./lib/exact.js",
+        "./pat/*": "./src/*.js",
+      },
+    }),
+    "node_modules/pk/main.js": "module.exports = 'MAIN'",
+    "node_modules/pk/lib/pub.js": "module.exports = 'PUB'",
+    "node_modules/pk/lib/e.mjs": "export default 'ESM'",
+    "node_modules/pk/lib/d.json": '{"v":"DATA"}',
+    "node_modules/pk/lib/exact.js": "module.exports = 'EXACT'",
+    "node_modules/pk/src/x.js": "module.exports = 'X'",
+    "node_modules/pk/src/x.js.js": "module.exports = 'XJSJS'",
+    "index.cjs": `
+      const { createRequire } = require("node:module");
+      const req = createRequire(__filename);
+      const probe = (spec, fn) => {
+        try { console.log(spec + " " + JSON.stringify(fn())); }
+        catch (e) { console.log(spec + " ERR:" + e.code); }
+      };
+      probe("pk/pub", () => req("pk/pub"));
+      probe("pk/pub.js", () => req("pk/pub.js"));
+      probe("pk/esm.js", () => req.resolve("pk/esm.js"));
+      probe("pk/data.js", () => req("pk/data.js"));
+      probe("pk/pat/x", () => req("pk/pat/x"));
+      probe("pk/pat/x.js.js", () => req("pk/pat/x.js.js"));
+      probe("pk/exact.js", () => req("pk/exact.js"));
+      probe("pk/main.js", () => req("pk/main.js"));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.cjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  // Node distinguishes ERR_PACKAGE_PATH_NOT_EXPORTED (no key) from MODULE_NOT_FOUND
+  // (pattern matched, target missing). Bun currently reports MODULE_NOT_FOUND for
+  // both; error-code parity is tracked separately.
+  expect(stdout.trim().split("\n")).toEqual([
+    'pk/pub "PUB"',
+    "pk/pub.js ERR:MODULE_NOT_FOUND",
+    "pk/esm.js ERR:MODULE_NOT_FOUND",
+    "pk/data.js ERR:MODULE_NOT_FOUND",
+    'pk/pat/x "X"',
+    "pk/pat/x.js.js ERR:MODULE_NOT_FOUND",
+    'pk/exact.js "EXACT"',
+    "pk/main.js ERR:MODULE_NOT_FOUND",
+  ]);
+  expect(exitCode).toBe(0);
+});

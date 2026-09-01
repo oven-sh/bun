@@ -89,7 +89,7 @@ declare module "react-server-dom-bun/client.browser" {
   export function createFromReadableStream<T = any>(readable: ReadableStream<Uint8Array>): Promise<T>;
 }
 
-declare module "react-server-dom-bun/client.node.unbundled.js" {
+declare module "react-server-dom-bun/client.node.unbundled" {
   import type { ReactClientManifest } from "bun:bake/server";
   import type { Readable } from "node:stream";
   export interface Manifest {
@@ -108,7 +108,7 @@ declare module "react-server-dom-bun/client.node.unbundled.js" {
   export function createFromNodeStream<T = any>(readable: Readable, manifest?: Manifest): Promise<T>;
 }
 
-declare module "react-server-dom-bun/server.node.unbundled.js" {
+declare module "react-server-dom-bun/server.node.unbundled" {
   import type { ReactServerManifest } from "bun:bake/server";
   import type { ReactElement } from "react";
 
@@ -136,7 +136,7 @@ declare module "react-server-dom-bun/server.node.unbundled.js" {
 
 declare module "react-dom/server.node" {
   import type { ReactElement } from "react";
-  import type { PipeableStream } from "react-server-dom-bun/server.node.unbundled.js";
+  import type { PipeableStream } from "react-server-dom-bun/server.node.unbundled";
 
   export type RenderToPipeableStreamOptions = any;
   export function renderToPipeableStream(

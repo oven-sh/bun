@@ -2071,8 +2071,7 @@ JSC::EncodedJSValue jsBufferToStringFromBytes(JSGlobalObject* lexicalGlobalObjec
         std::span<Latin1Character> data;
         auto str = String::tryCreateUninitialized(bytes.size(), data);
         if (str.isNull()) [[unlikely]] {
-            throwOutOfMemoryError(lexicalGlobalObject, scope);
-            return {};
+            return Bun::ERR::MEMORY_ALLOCATION_FAILED(scope, lexicalGlobalObject);
         }
 
         memcpy(data.data(), bytes.data(), bytes.size());
@@ -2087,8 +2086,7 @@ JSC::EncodedJSValue jsBufferToStringFromBytes(JSGlobalObject* lexicalGlobalObjec
         }
         auto str = String::tryCreateUninitialized(u16length, data);
         if (str.isNull()) [[unlikely]] {
-            throwOutOfMemoryError(lexicalGlobalObject, scope);
-            return {};
+            return Bun::ERR::MEMORY_ALLOCATION_FAILED(scope, lexicalGlobalObject);
         }
         memcpy(reinterpret_cast<void*>(data.data()), bytes.data(), u16length * 2);
         return JSValue::encode(jsString(vm, WTF::move(str)));
@@ -2097,8 +2095,7 @@ JSC::EncodedJSValue jsBufferToStringFromBytes(JSGlobalObject* lexicalGlobalObjec
         std::span<Latin1Character> data;
         auto str = String::tryCreateUninitialized(bytes.size(), data);
         if (str.isNull()) [[unlikely]] {
-            throwOutOfMemoryError(lexicalGlobalObject, scope);
-            return {};
+            return Bun::ERR::MEMORY_ALLOCATION_FAILED(scope, lexicalGlobalObject);
         }
         Bun__encoding__writeLatin1(bytes.data(), bytes.size(), data.data(), data.size(), static_cast<uint8_t>(encoding));
         return JSValue::encode(jsString(vm, WTF::move(str)));

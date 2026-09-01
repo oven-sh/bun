@@ -378,6 +378,9 @@ pub struct TestIsolationState {
     /// The proxy env keys as the env map held them at startup, restored after
     /// every file. See [`crate::rare_data::ProxyEnvSnapshot`].
     pub proxy_env: Option<crate::rare_data::ProxyEnvSnapshot>,
+    /// The synthetic allocation limit at startup, restored after every file.
+    /// `setSyntheticAllocationLimitForTesting` lowers it process-wide.
+    pub synthetic_allocation_limit: Option<usize>,
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -5232,6 +5235,16 @@ impl VirtualMachine {
         }
 
         self.undo_process_env_side_effects();
+        self.undo_synthetic_allocation_limit();
+    }
+
+    /// `setSyntheticAllocationLimitForTesting` lowers a process-wide limit.
+    /// Put the startup value back so a file's limit stays with that file.
+    fn undo_synthetic_allocation_limit(&mut self) {
+        if let Some(limit) = self.test_isolation_state.synthetic_allocation_limit {
+            SYNTHETIC_ALLOCATION_LIMIT.store(limit, core::sync::atomic::Ordering::Relaxed);
+            STRING_ALLOCATION_LIMIT.store(limit, core::sync::atomic::Ordering::Relaxed);
+        }
     }
 
     /// The `process.env` keys with a custom setter (`applySharedEnvSideEffects`

@@ -1323,6 +1323,10 @@ pub struct BundleOptions<'a> {
 
     pub ignore_dce_annotations: bool,
     pub emit_dce_annotations: bool,
+    /// Namespace objects (`import *`, `export * as`) get a setter per export so
+    /// assigning to them is silently accepted instead of throwing. Deprecated;
+    /// off makes them getter-only like real module namespace objects.
+    pub deprecated_namespace_object_setters: bool,
     pub bytecode: bool,
     /// How many levels of nested functions get bytecode (`u32::MAX` = all; 0 = only each module's top level).
     pub bytecode_depth: u32,
@@ -1520,6 +1524,7 @@ impl<'a> BundleOptions<'a> {
             min_chunk_size: self.min_chunk_size,
             ignore_dce_annotations: self.ignore_dce_annotations,
             emit_dce_annotations: self.emit_dce_annotations,
+            deprecated_namespace_object_setters: self.deprecated_namespace_object_setters,
             bytecode: self.bytecode,
             bytecode_depth: self.bytecode_depth,
             compile_target_builtins: self.compile_target_builtins.clone(),
@@ -1764,6 +1769,7 @@ impl<'a> BundleOptions<'a> {
             repl_mode: false,
             ignore_dce_annotations: false,
             emit_dce_annotations: false,
+            deprecated_namespace_object_setters: true,
             bytecode: false,
             bytecode_depth: u32::MAX,
             compile_target_builtins: CompileTargetBuiltins::Host,

@@ -415,8 +415,6 @@ export function resolveLlvmToolchain(
   | "ld64Lld"
   | "rustLld"
   | "rustLlvmVersion"
-  | "rustSysroot"
-  | "rustHostTriple"
   | "strip"
   | "llvmStrip"
   | "nm"
@@ -575,7 +573,7 @@ export function resolveLlvmToolchain(
 
   // rust-lld: optional alternative linker for cross-language LTO when
   // rustc's bundled LLVM is newer than clang's. See findRustLld().
-  const { rustLld, rustLlvmVersion, rustSysroot, rustHostTriple } = findRustLld(os);
+  const { rustLld, rustLlvmVersion } = findRustLld(os);
 
   // ccache: optional. If found, used as compiler launcher.
   const ccache = findTool({ names: ["ccache"], required: false })?.path;
@@ -602,8 +600,6 @@ export function resolveLlvmToolchain(
     ld64Lld,
     rustLld,
     rustLlvmVersion,
-    rustSysroot,
-    rustHostTriple,
     strip,
     llvmStrip,
     nm,
@@ -661,12 +657,8 @@ export interface CargoToolchain {
 export function findRustLld(os: OS): {
   rustLld: string | undefined;
   rustLlvmVersion: string | undefined;
-  /** `rustc --print sysroot` — needed for bundled `llvm-nm` even when rust-lld itself isn't used. */
-  rustSysroot: string | undefined;
-  /** `host:` line from `rustc -vV` — the rustlib subdirectory name. */
-  rustHostTriple: string | undefined;
 } {
-  const none = { rustLld: undefined, rustLlvmVersion: undefined, rustSysroot: undefined, rustHostTriple: undefined };
+  const none = { rustLld: undefined, rustLlvmVersion: undefined };
   // Look up rustc the same way findCargo does cargo: $CARGO_HOME/bin first.
   const cargoHome = process.env.CARGO_HOME ?? join(homedir(), ".cargo");
   const rustc =
@@ -720,8 +712,18 @@ export function findRustLld(os: OS): {
 
   // One spawn for both sysroot and host triple / LLVM version. `-vV` prints
   // `host: <triple>` and `LLVM version: X.Y.Z`; sysroot needs its own query.
-  // Generous timeout: if the toolchain install above was skipped (no rustup),
-  // this proxy invocation may still be the one that auto-installs.
+  //
+  // RUSTUP_TOOLCHAIN pins the proxy to the channel the pre-flight just
+  // ensured. Without it the proxy, running in the repo root, applies
+  // rust-toolchain.toml in full: besides selecting the channel it installs
+  // every entry of its `components` and `targets` lists that is missing
+  // (rustfmt, clippy, miri and the std of 11 targets — ~2.4 GB),
+  // with its output piped into nowhere here. The build itself installs what
+  // it needs (rust-src above, the target's std in the rust_build_cross rule),
+  // and the toml still applies to anyone running cargo directly. Generous
+  // timeout: without rustup there is no pre-flight and this proxy invocation
+  // may still be the one that auto-installs the channel.
+  const env = channel !== undefined ? { ...process.env, RUSTUP_TOOLCHAIN: channel } : process.env;
   const sysroot = spawnSync(rustc, ["--print", "sysroot"], {
     encoding: "utf8",
     timeout: 300_000,
@@ -736,7 +738,7 @@ export function findRustLld(os: OS): {
 
   const rustHostTriple = vv.match(/^host:\s*(\S+)/m)?.[1];
   const rustLlvmVersion = vv.match(/^LLVM version:\s*(\d+\.\d+\.\d+)/m)?.[1];
-  if (rustHostTriple === undefined) return { ...none, rustSysroot: sysroot, rustLlvmVersion };
+  if (rustHostTriple === undefined) return { ...none, rustLlvmVersion };
 
   const bin = join(sysroot, "lib", "rustlib", rustHostTriple, "bin");
   const candidate =
@@ -746,7 +748,7 @@ export function findRustLld(os: OS): {
         ? join(bin, "gcc-ld", "ld64.lld")
         : join(bin, "gcc-ld", "ld.lld");
   const rustLld = isExecutable(candidate) ? candidate : undefined;
-  return { rustLld, rustLlvmVersion, rustSysroot: sysroot, rustHostTriple };
+  return { rustLld, rustLlvmVersion };
 }
 
 /**

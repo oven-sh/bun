@@ -43,14 +43,6 @@ export interface Host {
   arch: Arch;
   /** ".exe" on a Windows host, "" elsewhere. Mirrors Config.exeSuffix (target). */
   exeSuffix: string;
-  /**
-   * Host's Rust target triple — `host:` line from `rustc -vV`. Also the
-   * `${sysroot}/lib/rustlib/<triple>/` directory name. Stamped at
-   * `resolveConfig()` from `Toolchain.rustHostTriple` (so the toolchain
-   * probe is the single source of truth); `undefined` only when no rustc
-   * is installed.
-   */
-  rustTriple: string | undefined;
 }
 
 /**
@@ -236,14 +228,6 @@ export interface Config {
   rustLld: string | undefined;
   /** Parsed `LLVM version:` from `rustc -vV`. Captured once; feeds workarounds.ts. */
   rustLlvmVersion: string | undefined;
-  /**
-   * `rustc --print sysroot`. Used to locate rustc's bundled `llvm-nm` for
-   * reading LTO bitcode in `libbun_runtime.a` — clang's `llvm-nm` may lag
-   * rustc's LLVM major and reject the bitcode (#53609, #53656). Unlike
-   * `rustLld`, this is needed regardless of whether cross-language LTO is
-   * actually using rust-lld as the linker.
-   */
-  rustSysroot: string | undefined;
   strip: string;
   /** llvm-nm, for `DirectBuild.forbidUndefined`; undefined skips those checks. */
   nm: string | undefined;
@@ -444,10 +428,6 @@ export interface Toolchain {
   rustLld: string | undefined;
   /** Parsed `LLVM version:` from `rustc -vV` (X.Y.Z). */
   rustLlvmVersion: string | undefined;
-  /** `rustc --print sysroot` — see `Config.rustSysroot`. */
-  rustSysroot: string | undefined;
-  /** `host:` line from `rustc -vV` — stamped onto `Host.rustTriple` at resolveConfig. */
-  rustHostTriple: string | undefined;
   strip: string;
   /**
    * llvm-strip. On Linux hosts GNU strip is the default (`strip` above) but
@@ -521,9 +501,7 @@ export function detectHost(): Host {
             throw new BuildError(`Unsupported host architecture: ${a}`, { hint: "Bun builds on x64 or arm64" });
           })();
 
-  // rustTriple is stamped later from Toolchain.rustHostTriple in resolveConfig
-  // (the rustc probe is authoritative — distinguishes glibc/musl host etc.).
-  return { os, arch, exeSuffix: os === "windows" ? ".exe" : "", rustTriple: undefined };
+  return { os, arch, exeSuffix: os === "windows" ? ".exe" : "" };
 }
 
 /**
@@ -723,7 +701,6 @@ function linkNdkRuntimesIntoClang(cc: string, ndk: string, host: Host, triple: s
  */
 export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Config {
   const host = detectHost();
-  host.rustTriple = toolchain.rustHostTriple;
 
   // ─── Target platform ───
   const os = partial.os ?? host.os;
@@ -1260,7 +1237,6 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     ld: ld64StripSwap?.ld ?? ld,
     rustLld: toolchain.rustLld,
     rustLlvmVersion: toolchain.rustLlvmVersion,
-    rustSysroot: toolchain.rustSysroot,
     // Cross strips: linux-gnu uses <triple>-strip (GNU, handles -R .eh_frame
     // fully; host strip rejects foreign-arch ELF); other cross targets use
     // llvm-strip.

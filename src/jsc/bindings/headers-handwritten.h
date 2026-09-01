@@ -46,6 +46,9 @@ enum class BunStringTag : uint8_t {
     EncodedSlice = 2,
     StaticEncodedSlice = 3,
     Empty = 4,
+    // A constructor could not allocate the string. Holds no string like Dead,
+    // but reaches JS as ERR_MEMORY_ALLOCATION_FAILED, not ERR_STRING_TOO_LONG.
+    OutOfMemory = 5,
 };
 
 /// Mirrors `ErrorKind` in src/jsc/bun_string_jsc.rs.
@@ -99,6 +102,9 @@ typedef struct BunString {
     WTF::String toWTFString() const;
 
     bool isEmpty() const;
+
+    // Dead or OutOfMemory: no string at all. Empty is a string.
+    bool isDead() const { return tag == BunStringTag::Dead || tag == BunStringTag::OutOfMemory; }
 
     void appendToBuilder(WTF::StringBuilder& builder) const;
 

@@ -25,12 +25,11 @@
  */
 
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 import type { Abi, Arch, Config, OS } from "./config.ts";
 import { assert } from "./error.ts";
 import { computeCpuTargetFlags } from "./flags.ts";
 import type { Ninja } from "./ninja.ts";
-import { rustLtoFixCliPath } from "./rust-lto-fix-cli.ts";
 import { quote, quoteArgs } from "./shell.ts";
 import { streamPath } from "./stream.ts";
 
@@ -250,18 +249,6 @@ export function rustLibPath(cfg: Config): string {
 export function registerRustRules(n: Ninja, cfg: Config): void {
   const hostWin = cfg.host.os === "windows";
   const q = (p: string) => quote(p, hostWin);
-
-  // Regular-LTO summary fix-up for the ELF cross-language LTO link (see
-  // rustLtoLinkInputs() below). Registered before the cargo gate: the
-  // link-only CI agents emit this edge too, and it needs rustc's
-  // llvm-tools, not cargo. Not darwin/windows: their ThinLTO links keep the
-  // per-CGU summaries (CARGO_PROFILE_RELEASE_LTO=off) and need no fix-up.
-  if (cfg.crossLangLto && !cfg.darwin && !cfg.windows) {
-    n.rule("rust_lto_fix", {
-      command: `${cfg.jsRuntime} ${q(rustLtoFixCliPath)} $in $out $llvm_bin $ar`,
-      description: "regular-LTO summary → $out",
-    });
-  }
 
   if (cfg.cargo === undefined) return; // emitRust() asserts with a hint
   const stream = `${cfg.jsRuntime} ${q(streamPath)} rust`;
@@ -949,44 +936,6 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
   n.blank();
 
   return [lib];
-}
-
-/**
- * Link inputs for the Rust side of the binary.
- *
- * On ELF cross-language LTO targets the fat Rust bitcode member can't go
- * into the link as-is: it has no per-module summary, so lld reads it as
- * EnableSplitLTOUnit=0 while every clang-produced full-LTO object (ours,
- * the deps', the WebKit -lto prebuilts') says 1, and the link aborts with
- * "inconsistent LTO Unit splitting". rustc has no way to emit a regular-LTO
- * summary (clang hardcodes one in shouldEmitRegularLTOSummary()), so a
- * build step rewrites the bitcode with rustc's own LLVM tools — see
- * rust-lto-fix-cli.ts and the `rustc-no-regular-lto-summary` workaround
- * entry.
- *
- * Returns [fixed bitcode .o, original .a]: the .o defines every Rust symbol
- * (so the archive's bitcode member is never pulled), and the archive still
- * supplies its native members (compiler_builtins). On every other config
- * this is the identity function.
- */
-export function rustLtoLinkInputs(n: Ninja, cfg: Config, rustObjects: string[]): string[] {
-  const rustLib = rustObjects[0];
-  if (!cfg.crossLangLto || cfg.darwin || cfg.windows || rustLib === undefined) return rustObjects;
-  assert(
-    cfg.rustSysroot !== undefined && cfg.host.rustTriple !== undefined,
-    "ELF cross-language LTO needs rustc's sysroot to locate its LLVM tools (llvm-link/opt) for the regular-LTO summary fix-up, but rustc wasn't found",
-    { hint: "Install the pinned rust toolchain (rustup show active-toolchain), or build with --lto=off" },
-  );
-  const llvmBin = join(cfg.rustSysroot, "lib", "rustlib", cfg.host.rustTriple, "bin");
-  const out = resolve(cfg.buildDir, "bun_runtime.lto.o");
-  n.build({
-    outputs: [out],
-    rule: "rust_lto_fix",
-    inputs: [rustLib],
-    implicitInputs: [rustLtoFixCliPath],
-    vars: { llvm_bin: llvmBin, ar: cfg.ar },
-  });
-  return [out, ...rustObjects];
 }
 
 /**

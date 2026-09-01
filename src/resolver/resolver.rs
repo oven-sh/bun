@@ -339,7 +339,6 @@ type Path = crate::fs::Path<'static>;
 pub struct Bufs {
     pub(crate) extension_path: PathBuffer,
     pub(crate) tsconfig_match_full_buf: PathBuffer,
-    pub(crate) tsconfig_match_full_buf2: PathBuffer,
     pub(crate) tsconfig_match_full_buf3: PathBuffer,
 
     pub(crate) esm_subpath: [u8; 512],
@@ -4890,47 +4889,38 @@ impl<'a> Resolver<'a> {
                 let matched_text =
                     &path[longest_match.prefix.len()..path.len() - longest_match.suffix.len()];
 
-                let total_length: Option<u32> = strings::index_of_char(original_path, b'*');
-                let prefix_end = total_length
-                    .map(|v| v as usize)
-                    .unwrap_or(original_path.len());
-                let prefix_parts: [&[u8]; 2] = [abs_base_url, &original_path[0..prefix_end]];
-
-                // Concatenate the matched text with the suffix from the wildcard path
-                let matched_text_with_suffix = bufs!(tsconfig_match_full_buf3);
-                let mut matched_text_with_suffix_len: usize = 0;
-                if total_length.is_some() {
-                    let suffix = strings::trim_left(&original_path[prefix_end..], b"*");
-                    matched_text_with_suffix_len = matched_text.len() + suffix.len();
-                    if matched_text_with_suffix_len > matched_text_with_suffix.len() {
-                        continue;
-                    }
-                    ::bun_core::concat_into(matched_text_with_suffix, &[matched_text, suffix]);
-                }
-
-                // 1. Normalize the base path
-                // so that "/Users/foo/project/", "../components/*" => "/Users/foo/components/""
-                let Some(prefix) = self
-                    .fs_ref()
-                    .abs_buf_checked(&prefix_parts, bufs!(tsconfig_match_full_buf2))
-                else {
-                    continue;
-                };
-
-                // 2. Join the new base path with the matched result
-                // so that "/Users/foo/components/", "/foo/bar" => /Users/foo/components/foo/bar
-                let parts: [&[u8]; 3] = [
-                    prefix,
-                    if matched_text_with_suffix_len > 0 {
-                        strings::trim_left(
-                            &matched_text_with_suffix[0..matched_text_with_suffix_len],
-                            b"/",
-                        )
+                // Build the substituted target path as a contiguous string. The
+                // previous implementation split the target at '*' and rejoined
+                // the pieces via the path joiner, which inserts a separator
+                // between parts and so only worked when '*' sat on a segment
+                // boundary. Substitute textually instead, then resolve once.
+                let substituted_buf = bufs!(tsconfig_match_full_buf3);
+                let substituted: &[u8] =
+                    if let Some(star) = strings::index_of_char(original_path, b'*') {
+                        let star = star as usize;
+                        let before = &original_path[..star];
+                        let after = &original_path[star + 1..];
+                        let total = before.len() + matched_text.len() + after.len();
+                        if total > substituted_buf.len() {
+                            continue;
+                        }
+                        ::bun_core::concat_into(substituted_buf, &[before, matched_text, after]);
+                        &substituted_buf[..total]
                     } else {
-                        b""
-                    },
-                    strings::trim_left(longest_match.suffix, b"/"),
-                ];
+                        original_path
+                    };
+
+                // An absolute template (e.g. an expanded `${configDir}/src/*`)
+                // is normalized on its own; a relative one joins `baseUrl` —
+                // even when the substituted text happens to start with a
+                // separator (key "~*" → target "*", import "~/util" →
+                // matched_text "/util"), so strip leading separators first
+                // since the joiner resets on a rooted part.
+                let parts: [&[u8]; 2] = if bun_paths::is_absolute(original_path) {
+                    [substituted, b""]
+                } else {
+                    [abs_base_url, strings::trim_left(substituted, b"/\\")]
+                };
                 let Some(absolute_original_path) = self
                     .fs_ref()
                     .abs_buf_checked(&parts, bufs!(tsconfig_match_full_buf))

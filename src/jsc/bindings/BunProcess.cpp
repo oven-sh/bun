@@ -512,7 +512,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
     if (filename.startsWith(StandaloneModuleGraph__base_path)) {
         BunString bunStr = Bun::toString(filename);
         BunString resolved = Bun__resolveEmbeddedNodeFile(&bunStr);
-        if (resolved.tag != BunStringTag::Dead) {
+        if (!resolved.isDead()) {
             filename = resolved.transferToWTFString();
             // The extracted file is content-hashed and shared across dlopens
             // and restarts (#29587), so it is never deleted here.
@@ -1710,7 +1710,7 @@ JSObject* Process::ensureOnWarning(Zig::GlobalObject* globalObject)
     // --redirect-warnings, then NODE_REDIRECT_WARNINGS.
     JSValue redirectPath = jsUndefined();
     BunString redirect = Bun__Node__getRedirectWarnings();
-    if (redirect.tag != BunStringTag::Dead) {
+    if (!redirect.isDead()) {
         redirectPath = jsString(vm, redirect.transferToWTFString());
     } else {
         EncodedSlice name = toEncodedSlice("NODE_REDIRECT_WARNINGS"_s);

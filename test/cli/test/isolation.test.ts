@@ -187,6 +187,54 @@ describe.concurrent("bun test --isolate", () => {
     expect(exitCode).toBe(0);
   });
 
+  // The synthetic allocation limit is process-wide. A file that lowers it and
+  // does not put it back (or dies before its restore runs) must not make every
+  // later file in the same process fail to build strings.
+  test("with --isolate, a file's lowered synthetic allocation limit is undone before the next file", async () => {
+    const MiB = 1024 * 1024;
+    const limitFixtures = {
+      "a-limit.test.ts": `
+        import { test, expect } from "bun:test";
+        import { setSyntheticAllocationLimitForTesting } from "bun:internal-for-testing";
+        test("lower the limit and leave it lowered", async () => {
+          setSyntheticAllocationLimitForTesting(${MiB});
+          await expect(new Response(Buffer.alloc(${2 * MiB}, 97)).text()).rejects.toMatchObject({
+            code: "ERR_STRING_TOO_LONG",
+          });
+        });
+      `,
+      "b-limit.test.ts": `
+        import { test, expect } from "bun:test";
+        test("strings over the previous file's limit can be built again", async () => {
+          const text = await new Response(Buffer.alloc(${8 * MiB}, 97)).text();
+          expect(text.length).toBe(${8 * MiB});
+          expect(Buffer.alloc(${8 * MiB}, 97).toString().length).toBe(${8 * MiB});
+        });
+      `,
+    };
+    const files = ["./a-limit.test.ts", "./b-limit.test.ts"];
+    // The second file builds 8 MiB strings, so the runner must start at the
+    // default limit even on a machine that lowers it through the environment.
+    const env = { ...bunEnv, BUN_FEATURE_FLAG_SYNTHETIC_MEMORY_LIMIT: undefined };
+
+    using isolated = tempDir("isolate-alloc-limit", limitFixtures);
+    const serial = await runTests(String(isolated), ["--isolate"], files, env);
+    expect(normalizeBunSnapshot(serial.stderr, isolated)).toContain("2 pass");
+    expect(serial.exitCode).toBe(0);
+
+    using parallel = tempDir("isolate-alloc-limit-parallel", limitFixtures);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--parallel=2", ...files],
+      env: { ...env, BUN_TEST_PARALLEL_SCALE_MS: "60000" },
+      cwd: String(parallel),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(normalizeBunSnapshot(stderr, parallel)).toContain("2 pass");
+    expect(exitCode).toBe(0);
+  });
+
   test("with --isolate, --preload re-runs in each file's fresh global", async () => {
     using dir = tempDir("isolate-preload", {
       "preload.ts": `

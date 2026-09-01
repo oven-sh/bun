@@ -2773,8 +2773,8 @@ impl RunCommand {
         let Ok(fd) = bun_sys::open(open_z, bun_sys::O::RDONLY, 0) else {
             return false;
         };
-        // `.makeLibUVOwnedForSyscall(.open, .close_on_fail)` — hands the
-        // HANDLE off to libuv ownership on Windows; pass-through on POSIX.
+        // Hands the HANDLE off to libuv ownership on Windows; pass-through on
+        // POSIX.
         let Ok(fd) = fd.make_lib_uv_owned_for_syscall(sys::Tag::open) else {
             return false;
         };

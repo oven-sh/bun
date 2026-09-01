@@ -3087,6 +3087,24 @@ mod posix_impl {
     // (Darwin defines MSG_NOSIGNAL=0x80000).
     #[cfg(unix)]
     pub(crate) const SEND_FLAGS_NONBLOCK: i32 = libc::MSG_DONTWAIT | libc::MSG_NOSIGNAL;
+    /// `setsockopt(2)` with an `int` option value.
+    pub fn setsockopt_int(fd: Fd, level: i32, optname: i32, value: i32) -> Maybe<()> {
+        // SAFETY: `value` lives for the call and `optlen` is its exact size.
+        let rc = unsafe {
+            libc::setsockopt(
+                fd.native(),
+                level,
+                optname,
+                core::ptr::from_ref(&value).cast(),
+                core::mem::size_of::<libc::c_int>() as libc::socklen_t,
+            )
+        };
+        if rc != 0 {
+            return Err(Error::from_code_int(last_errno(), Tag::setsockopt));
+        }
+        Ok(())
+    }
+
     /// `fcntl(F_GETFD)` then OR in `FD_CLOEXEC`.
     pub fn set_close_on_exec(fd: Fd) -> Maybe<()> {
         let fl = fcntl(fd, libc::F_GETFD, 0)?;

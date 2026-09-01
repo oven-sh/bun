@@ -22,7 +22,7 @@ async function resultsUnderCap(env: Record<string, string | undefined>, script: 
       bunExe(),
       "-e",
       `
-      const { StringDecoder } = require("node:string_decoder");
+      import { StringDecoder } from "node:string_decoder";
       const results = {};
       const run = async (label, fn) => {
         try { results[label] = "unexpected success: " + String(await fn()).length; }

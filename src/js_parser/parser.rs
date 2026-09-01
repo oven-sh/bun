@@ -359,7 +359,7 @@ pub mod Runtime {
         pub(crate) fn hash_for_runtime_transpiler(&self, hasher: &mut Wyhash) {
             debug_assert!(self.runtime_transpiler_cache.is_some());
 
-            let bools: [bool; 18] = [
+            let bools: [bool; 17] = [
                 self.top_level_await,
                 self.auto_import_jsx,
                 self.allow_runtime,
@@ -377,9 +377,9 @@ pub mod Runtime {
                 self.standard_decorators,
                 self.lower_using,
                 self.repl_mode,
-                // `bun test` output differs (`keep_matcher_call_frame`) and uses its own
-                // cache filename (`write_cache_filename`); the hash carries the mode too.
-                self.inject_jest_globals,
+                // `.inject_jest_globals` is not hashed: the modes share entries, and the
+                // one output divergence (`keep_matcher_call_frame`) is rejected at read
+                // time through `Metadata::flags` (RuntimeTranspilerCache.rs).
             ];
 
             // `[bool; N]` is N bytes of 0x00/0x01.

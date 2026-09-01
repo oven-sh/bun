@@ -1,4 +1,4 @@
-//! Idle GC timer: JSC's own `GCActivityCallback` (via `WTFTimer`) paces eden/full against allocation rate; this only adds a 1 s / 30 s idle `collect_async()` so a process that stops allocating still releases memory, and — once per idle period, after `BUN_IDLE_RELEASE_SECONDS` (default 30, 0 = off) of the process using under 2% CPU — drops JIT code and pages out a standalone executable's embedded module graph (main thread only). Knobs: `BUN_GC_TIMER_INTERVAL` (ms), `BUN_GC_TIMER_DISABLE`. One per JS thread, not thread-safe.
+//! Idle GC timer: JSC's own `GCActivityCallback` (via `WTFTimer`) paces eden/full against allocation rate; this adds a 1 s / 30 s idle `collect_async()` so a process that stops allocating still releases memory, and once the heap has been quiet for `BUN_IDLE_RELEASE_SECONDS` (default 30, 0 = off; main thread only) two full collections so JSC can age out code that no longer runs, plus a page-out of a standalone executable's embedded module graph. Knobs: `BUN_GC_TIMER_INTERVAL` (ms), `BUN_GC_TIMER_DISABLE`. One per JS thread, not thread-safe.
 
 use core::cell::Cell;
 use core::ffi::c_int;
@@ -20,14 +20,13 @@ pub struct GarbageCollectionController {
     pub(crate) gc_timer_interval: Cell<i32>,
     pub(crate) gc_repeating_timer_fast: Cell<bool>,
     pub(crate) disabled: Cell<bool>,
-    /// Idle release: process CPU time (µs) at the last fire, how long the process has stayed under the idle CPU
-    /// threshold, CPU time at the last release (`u64::MAX` = armed), and the configured delay (0 = off).
-    idle_last_cpu_us: Cell<u64>,
-    idle_last_tick: Cell<Option<std::time::Instant>>,
+    /// Idle release: how long the heap must stay unchanged before the first idle full collection (0 = off), nominal
+    /// quiet time accumulated from tick intervals, full collections requested this quiet streak, and whether the
+    /// last tick requested one (its own effect on the heap is not activity).
+    idle_release_after_ms: Cell<u32>,
     idle_quiet_ms: Cell<u32>,
     idle_full_gcs: Cell<u8>,
     idle_requested_gc: Cell<bool>,
-    idle_release_after_ms: Cell<u32>,
 }
 
 bun_event_loop::impl_timer_owner!(
@@ -44,12 +43,10 @@ impl Default for GarbageCollectionController {
             gc_timer_interval: Cell::new(0),
             gc_repeating_timer_fast: Cell::new(true),
             disabled: Cell::new(false),
-            idle_last_cpu_us: Cell::new(0),
-            idle_last_tick: Cell::new(None),
+            idle_release_after_ms: Cell::new(0),
             idle_quiet_ms: Cell::new(0),
             idle_full_gcs: Cell::new(0),
             idle_requested_gc: Cell::new(false),
-            idle_release_after_ms: Cell::new(0),
         }
     }
 }
@@ -111,40 +108,32 @@ impl GarbageCollectionController {
         }
     }
 
-    /// Called on every repeating-timer fire with the interval that just elapsed. "Idle" is judged by process CPU
-    /// time rather than by whether any JS ran: an interactive app sitting at a prompt still fires the odd timer.
-    /// Two full collections per idle period: one once the process has been idle for `BUN_IDLE_RELEASE_SECONDS`
-    /// (collects what the last burst left behind, lets JSC snapshot which code is still running, pages out a
-    /// standalone executable's embedded module graph) and one a CodeBlock-aging lease later, which is when JSC
-    /// can drop code that has not run since and the memory behind it.
-    /// Returns how long until the next idle collection is due, if one is pending, so the caller can tick by then.
-    fn note_tick_for_idle_release(&self, vm: &VirtualMachine, elapsed_ms: i32) -> Option<u32> {
-        const IDLE_CPU_PERCENT: u64 = 2;
+    /// Called from the repeating timer with whether this tick saw the heap grow and the tick's nominal interval.
+    /// After `BUN_IDLE_RELEASE_SECONDS` of ticks without growth, request a full collection (collects what the last
+    /// burst left, lets JSC snapshot which code is still running, pages out a standalone executable's embedded module
+    /// graph), and `SECOND_GC_AFTER_MS` of further quiet later a second one, which is when JSC can drop code that has
+    /// not run since. Returns how long until the next one is due so the caller can tick by then.
+    fn note_tick_for_idle_release(
+        &self,
+        vm: &VirtualMachine,
+        grew: bool,
+        interval_ms: i32,
+    ) -> Option<u32> {
         const SECOND_GC_AFTER_MS: u32 = 65_000;
         let after = self.idle_release_after_ms.get();
         if after == 0 {
             return None;
         }
-        // A parked interactive app averages well under IDLE_CPU_PERCENT but is bursty at 1 s resolution, so a tick
-        // also needs an absolute amount of CPU to count as busy; real work is whole cores for seconds.
-        const MIN_BUSY_CPU_US: u64 = 100_000;
-        let cpu_us = process_cpu_time_us()?;
-        let now = std::time::Instant::now();
-        let elapsed_ms = (self.idle_last_tick.replace(Some(now)))
-            .map_or(elapsed_ms.max(1) as u64, |t| {
-                now.duration_since(t).as_millis().max(1) as u64
-            });
-        let used = cpu_us.saturating_sub(self.idle_last_cpu_us.get());
-        // Our own collection burns CPU; don't let the one requested last tick count as activity.
-        let busy = !self.idle_requested_gc.replace(false)
-            && used >= MIN_BUSY_CPU_US.max(elapsed_ms * 10 * IDLE_CPU_PERCENT);
-        self.idle_last_cpu_us.set(cpu_us);
-        if busy {
+        if grew && !self.idle_requested_gc.get() {
             self.idle_quiet_ms.set(0);
             self.idle_full_gcs.set(0);
             return None;
         }
-        let quiet = self.idle_quiet_ms.get().saturating_add(elapsed_ms as u32);
+        self.idle_requested_gc.set(false);
+        let quiet = self
+            .idle_quiet_ms
+            .get()
+            .saturating_add(interval_ms.max(0) as u32);
         self.idle_quiet_ms.set(quiet);
         let due_at = match self.idle_full_gcs.get() {
             0 => after,
@@ -222,11 +211,14 @@ impl GarbageCollectionController {
         if this.disabled.get() {
             return;
         }
-        // SAFETY: per fn contract.
-        let idle_gc_due_in =
-            this.note_tick_for_idle_release(unsafe { &*vm }, this.repeat_interval());
+        let interval = this.repeat_interval();
         let prev_heap_size = this.gc_last_heap_size.get();
         this.perform_gc();
+        // Timer chatter in a parked app churns a few blocks per tick; real work grows the heap by far more.
+        const IDLE_GROWTH_SLACK: usize = 2 * 1024 * 1024;
+        let grew = this.gc_last_heap_size.get() > prev_heap_size + IDLE_GROWTH_SLACK;
+        // SAFETY: per fn contract.
+        let idle_gc_due_in = this.note_tick_for_idle_release(unsafe { &*vm }, grew, interval);
         if prev_heap_size == this.gc_last_heap_size.get() {
             let ticks = this
                 .heap_size_didnt_change_for_repeating_timer_ticks_count
@@ -254,26 +246,6 @@ impl GarbageCollectionController {
                 .cast_mut(),
             interval,
         );
-    }
-}
-
-/// User + system CPU time of the whole process (all threads), in microseconds.
-fn process_cpu_time_us() -> Option<u64> {
-    #[cfg(unix)]
-    {
-        let mut ru = core::mem::MaybeUninit::<libc::rusage>::zeroed();
-        // SAFETY: getrusage writes a complete rusage into `ru`.
-        if unsafe { libc::getrusage(libc::RUSAGE_SELF, ru.as_mut_ptr()) } != 0 {
-            return None;
-        }
-        // SAFETY: initialised by the successful call above.
-        let ru = unsafe { ru.assume_init() };
-        let us = |t: libc::timeval| t.tv_sec as u64 * 1_000_000 + t.tv_usec as u64;
-        Some(us(ru.ru_utime) + us(ru.ru_stime))
-    }
-    #[cfg(not(unix))]
-    {
-        None
     }
 }
 

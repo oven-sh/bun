@@ -151,23 +151,21 @@ describe.skipIf(isDebug)("GarbageCollectionController eden cadence", () => {
   });
 });
 
-// After BUN_IDLE_RELEASE_SECONDS during which the process used (almost) no CPU, the
-// controller starts requesting full collections (so JSC can age out code that no
-// longer runs and return memory). Idle is judged by process CPU time, not by
-// whether any JS ran: an app parked at a prompt still fires the odd timer and
-// should count as idle; one that keeps a core busy should not.
+// After BUN_IDLE_RELEASE_SECONDS of timer ticks in which the JS heap did not grow,
+// the controller requests a full collection (so JSC can age out code that no
+// longer runs and return memory). An app parked at a prompt still fires the odd
+// timer and still counts as idle.
 describe("idle release", () => {
-  // Count FullCollection lines from BUN_JSC_logGC=1 while the script sits idle (or spins) for a few seconds. Nothing
-  // allocates in that window, so a full collection there is the idle one.
-  const script = (mode: "idle" | "busy") => `
+  // Count FullCollection lines from BUN_JSC_logGC=1 while the script sits idle for a few seconds. Nothing allocates in
+  // that window, so a full collection there is the idle one.
+  const script = `
     setTimeout(() => console.error("MARK"), 1200);
-    ${mode === "busy" ? `const iv = setInterval(() => { const end = performance.now() + 150; while (performance.now() < end) {} }, 200);` : ``}
-    setTimeout(() => { ${mode === "busy" ? `clearInterval(iv);` : ``} console.error("DONE"); }, 4200);
+    setTimeout(() => console.error("DONE"), 4200);
   `;
 
-  async function run(mode: "idle" | "busy", seconds: string) {
+  async function run(seconds: string) {
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", script(mode)],
+      cmd: [bunExe(), "-e", script],
       env: {
         ...bunEnv,
         BUN_IDLE_RELEASE_SECONDS: seconds,
@@ -184,21 +182,14 @@ describe("idle release", () => {
     return { fulls, exitCode };
   }
 
-  // The idle signal is process CPU time via getrusage; not implemented on Windows yet.
-  test.skipIf(isWindows).concurrent("requests full collections once the process has been idle long enough", async () => {
-    const { fulls, exitCode } = await run("idle", "2");
+  test.concurrent("requests a full collection once the heap has been quiet long enough", async () => {
+    const { fulls, exitCode } = await run("2");
     expect(fulls).toBeGreaterThanOrEqual(1);
     expect(exitCode).toBe(0);
   });
 
-  test.concurrent("does not while the process is busy", async () => {
-    const { fulls, exitCode } = await run("busy", "2");
-    expect(fulls).toBe(0);
-    expect(exitCode).toBe(0);
-  });
-
   test.concurrent("BUN_IDLE_RELEASE_SECONDS=0 disables it", async () => {
-    const { fulls, exitCode } = await run("idle", "0");
+    const { fulls, exitCode } = await run("0");
     expect(fulls).toBe(0);
     expect(exitCode).toBe(0);
   });

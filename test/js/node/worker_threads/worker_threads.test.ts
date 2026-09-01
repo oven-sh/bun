@@ -330,6 +330,13 @@ test("filename accepts a URL-like object that is not a URL instance", async () =
   expect(message).toBe("from url-like");
   await worker.terminate();
 
+  // A data: URL-like object runs its href, not its string form.
+  const dataHref = `data:text/javascript,postMessage("from data url")`;
+  const dataWorker = new Worker({ href: dataHref, protocol: "data:", pathname: dataHref.slice(5) } as any);
+  const [dataMessage] = await once(dataWorker, "message");
+  expect(dataMessage).toBe("from data url");
+  await dataWorker.terminate();
+
   // Like node, a URL-like object goes through fileURLToPath, so a non-file
   // scheme fails on the scheme and not on the argument type.
   expect(() => new Worker({ ...urlLike, href: "http://example.com/worker.js", protocol: "http:" } as any)).toThrow(

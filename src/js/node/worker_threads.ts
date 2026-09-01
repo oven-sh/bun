@@ -29,9 +29,9 @@ const { isURL } = require("internal/url");
 // paths and file: URL objects; bare specifiers and string URLs are rejected.
 function validateWorkerFilename(filename) {
   if (isURL(filename)) {
-    if (filename.protocol === "data:") return `${filename}`;
-    // throws ERR_INVALID_URL_SCHEME (TypeError) for non-file: URLs. The href,
-    // so a URL-like object that is not a URL instance works like in node.
+    // The href, so a URL-like object that is not a URL instance works like in
+    // node. Bun.fileURLToPath throws ERR_INVALID_URL_SCHEME for non-file: URLs.
+    if (filename.protocol === "data:") return filename.href;
     return Bun.fileURLToPath(filename.href);
   }
   if (typeof filename !== "string") {

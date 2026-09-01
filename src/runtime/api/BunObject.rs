@@ -69,10 +69,12 @@ use std::io::Write as _;
 use bun_core::Output;
 use bun_jsc::{
     self as jsc, ArrayBuffer, CallFrame, ConsoleObject, JSFunction, JSGlobalObject, JSObject,
-    JSPromise, JSValue, JsResult,
+    JSPromise, JSPromiseStrong, JSValue, JsResult,
 };
+use crate::webcore as WebCore;
 // `bun_jsc::VirtualMachine` is the *module* re-export; the struct lives one level deeper.
 use crate::cli::open::Editor;
+use crate::api::open::{self as open_api, OpenOptions};
 use bun_core::{EncodedSlice, String as BunString, strings};
 use bun_jsc::virtual_machine::{ResolveMode, VirtualMachine};
 use bun_paths::MAX_PATH_BYTES;
@@ -265,6 +267,7 @@ pub mod bun_object {
         BunObject_callback_jest => Jest::call,
         BunObject_callback_listen => super::static_adapters::listener_listen,
         BunObject_callback_mmap => super::mmap_file,
+        BunObject_callback_open => super::open,
         BunObject_callback_openInEditor => super::open_in_editor,
         BunObject_callback_registerMacro => super::register_macro,
         BunObject_callback_resolve => super::resolve,
@@ -999,6 +1002,473 @@ fn open_in_editor(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResu
 
         Ok(JSValue::UNDEFINED)
     })
+}
+
+/// `Bun.open(target, options?)` — open a URL, file, or folder with the
+/// platform's default handler.
+///
+/// See `src/runtime/api/open.rs` for the per-OS argv construction; this
+/// function decodes the JS arguments, builds the argv, and hands it to
+/// `Bun.spawn` with the fire-and-forget stdio + detached posture.
+///
+/// Every failure mode (argument validation, unsupported platform, spawn
+/// errors from the OS) rejects the returned promise rather than throwing
+/// synchronously, matching the npm `open` package's all-async contract.
+#[bun_jsc::host_fn]
+fn open(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    let vm = global_this.bun_vm();
+    let mut arguments = ArgumentsSlice::init(vm, callframe.arguments());
+    // Every path through do_open hands back an actual JSC promise value:
+    // fulfilled results and rejections are both built explicitly here rather
+    // than left to the host-fn boundary, whose sync-throw on `Err` would
+    // break the all-async npm-`open` contract.
+    match do_open(global_this, &mut arguments) {
+        Ok(value) => Ok(value),
+        Err(err) => {
+            let thrown = global_this.take_error(err);
+            let mut promise = JSPromiseStrong::init(global_this);
+            let value = promise.value();
+            let _ = promise.reject_with_async_stack(global_this, Ok(thrown));
+            Ok(value)
+        }
+    }
+}
+
+fn do_open(global_this: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<JSValue> {
+    // Required positional arg: the URL / path / folder to open.
+    let target_value = arguments
+        .next_eat()
+        .ok_or_else(|| global_this.throw_invalid_arguments(format_args!("Expected a `target`")))?;
+    if !target_value.is_string() {
+        return Err(global_this.throw_invalid_arguments(format_args!("Expected a `target` string")));
+    }
+    let target = target_value.to_utf8(global_this)?;
+    let target_str = std::str::from_utf8(target.slice())
+        .map_err(|_| global_this.throw_invalid_arguments(format_args!("`target` is not valid UTF-8")))?;
+
+    // Optional second arg: the options object. All fields are optional; the
+    // default `OpenOptions` launches the platform's default opener.
+    let mut options = OpenOptions::default();
+    let mut wait = false;
+    let mut abort_signal: Option<bun_jsc::AbortSignalRef> = None;
+    if let Some(opts_value) = arguments.next_eat() {
+        if !opts_value.is_undefined_or_null() {
+            if !opts_value.is_object() || opts_value.js_type().is_array() {
+                return Err(
+                    global_this
+                        .throw_invalid_arguments(format_args!(
+                            "`options` must be an object when provided"
+                        )),
+                );
+            }
+
+            // Coerce each option individually so a bad type on one field
+            // doesn't abandon the rest of the parse.
+            if let Some(app_value) = opts_value.get(global_this, b"app")? {
+                if !app_value.is_undefined_or_null() {
+                    parse_open_app(global_this, app_value, &mut options)?;
+                }
+            }
+            if let Some(w) = opts_value.get_truthy(global_this, "wait")? {
+                wait = w.to_boolean();
+                options.wait = wait;
+            }
+            if let Some(bg) = opts_value.get_truthy(global_this, "background")? {
+                options.background = bg.to_boolean();
+            }
+            if let Some(ni) = opts_value.get_truthy(global_this, "newInstance")? {
+                options.new_instance = ni.to_boolean();
+            }
+            if let Some(edit) = opts_value.get_truthy(global_this, "edit")? {
+                options.edit = edit.to_boolean();
+            }
+
+            // AbortSignal: pre-launch cancellation only. A signal that is or
+            // becomes aborted after the launch does not chase the handler.
+            if let Some(signal_value) = opts_value.get(global_this, b"signal")? {
+                if !signal_value.is_undefined_or_null() {
+                    if let Some(signal) = WebCore::AbortSignal::ref_from_js(signal_value) {
+                        // `AbortSignalRef` (`ExternalShared<AbortSignal>`):
+                        // `Clone` → `ref()`, `Drop` → `unref()`, `Deref` → the
+                        // AbortSignal methods. Holding the ref keeps the
+                        // underlying signal alive until the launch settles.
+                        if let Some(abort_error) = signal.node_abort_error_if_aborted(global_this) {
+                            return Err(global_this.throw_value(abort_error));
+                        }
+                        abort_signal = Some(signal);
+                    } else {
+                        return Err(global_this.throw_invalid_argument_type_value(
+                            b"signal",
+                            b"AbortSignal",
+                            signal_value,
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
+    // The stored `AbortSignalRef` must be released on every path from here;
+    // `Drop` performs the balancing `unref()` (scopeguard).
+    let _signal_guard = scopeguard::guard(abort_signal, drop);
+
+    // Build the launch. Errors here are caller-input failures (NUL bytes,
+    // empty target, unsupported OS) and reject the promise without ever
+    // reaching the OS dispatch.
+    open_api::validate_target(target_str).map_err(|err| open_error_to_js(global_this, err))?;
+
+    #[cfg(windows)]
+    {
+        // A bare directory target would go through ShellExecuteExW → Explorer
+        // singleton (DDE handshake): `hProcess` comes back null (pid 0), the
+        // test's `pid>0` contract breaks, and the DDE state left on the COM
+        // apartment crashes at process exit. Route directory targets to
+        // `explorer.exe` via `Bun.spawn` instead — real pid, real exited
+        // promise, no COM. URLs, files, and `options.app` still take the
+        // ShellExecute path.
+        if options.app.is_none() {
+            let target_wide: Vec<u16> = target_str
+                .encode_utf16()
+                .chain(core::iter::once(0))
+                .collect();
+            let attrs = unsafe { bun_sys::c::GetFileAttributesW(target_wide.as_ptr()) };
+            const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x10;
+            if attrs != 0xFFFF_FFFF && attrs & FILE_ATTRIBUTE_DIRECTORY != 0 {
+                let explorer = BunString::from_bytes(b"explorer.exe");
+                let target_s = BunString::from_bytes(target_str.as_bytes());
+                let cmd_array =
+                    bun_string_jsc::to_js_array(global_this, &[explorer, target_s])?;
+                let ignore_string = BunString::from_bytes(b"ignore");
+                let spawn_options = JSValue::create_empty_object(global_this, 4);
+                spawn_options.put(global_this, b"stdin", ignore_string.to_js(global_this)?);
+                spawn_options.put(global_this, b"stdout", ignore_string.to_js(global_this)?);
+                spawn_options.put(global_this, b"stderr", ignore_string.to_js(global_this)?);
+                spawn_options.put(global_this, b"detached", JSValue::from(true));
+                let subprocess = crate::api::js_bun_spawn_bindings::spawn(
+                    global_this,
+                    cmd_array,
+                    Some(spawn_options),
+                )?;
+                let pid = subprocess
+                    .get(global_this, b"pid")?
+                    .unwrap_or(JSValue::ZERO);
+                let exited = subprocess.get(global_this, b"exited")?;
+                let exited = exited.unwrap_or_else(|| {
+                    JSPromise::resolved_promise_value(global_this, JSValue::ZERO)
+                });
+                let result = JSValue::create_empty_object(global_this, 3);
+                result.put(global_this, b"ok", JSValue::from(true));
+                result.put(global_this, b"pid", pid);
+                result.put(global_this, b"exited", exited);
+                let mut outer = JSPromiseStrong::init(global_this);
+                let value = outer.value();
+                if wait {
+                    // Honor `wait` for directory targets too: park the outer
+                    // promise until the spawned `explorer.exe` exits, matching
+                    // the ShellExecute branch's settle contract.
+                    let ctx = JSValue::create_empty_object(global_this, 2);
+                    ctx.put(global_this, b"result", result);
+                    ctx.put(global_this, b"outer", outer.value());
+                    exited.then_with_value(
+                        global_this,
+                        ctx,
+                        __jsc_host_open_wait_resolve,
+                        __jsc_host_open_wait_reject,
+                    );
+                } else {
+                    let _ = outer.resolve(global_this, result);
+                }
+                return Ok(value);
+            }
+        }
+
+        let verb: &str = if options.edit { "edit" } else { "open" };
+        let app_name: Option<&str> = options
+            .app
+            .as_ref()
+            .map(|a| core::str::from_utf8(a.slice()))
+            .transpose()
+            .map_err(|_| {
+                global_this.throw_invalid_arguments(format_args!("`options.app` is not valid UTF-8"))
+            })?;
+        let launch = open_api::native::shell_execute_open(
+            target_str,
+            app_name,
+            &options.app_arguments,
+            verb,
+            /* hide_errors */ true,
+        )
+        .map_err(|err| open_error_to_js(global_this, err))?;
+
+        make_open_result_windows(global_this, launch, wait)
+    }
+
+    #[cfg(not(windows))]
+    {
+        // Probe the freedesktop opener chain so a missing desktop environment
+        // fails with a precise message instead of a spawn ENOENT.
+        let mut resolved_opener: Option<String> = None;
+        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+        if options.app.is_none() {
+            let jsc_vm: &mut jsc::VirtualMachineRef = global_this.bun_vm().as_mut();
+            let path_env = jsc_vm.env_loader().get(b"PATH").unwrap_or(b"");
+            let cwd = bun_resolver::fs::FileSystem::get().top_level_dir;
+            for candidate in open_api::OPENER_CANDIDATES {
+                let mut buf: Box<bun_core::PathBuffer> = Box::default();
+                if bun_which::which(&mut buf, path_env, cwd, candidate.as_bytes()).is_some() {
+                    resolved_opener = Some((*candidate).to_string());
+                    break;
+                }
+            }
+        }
+
+        let argv = open_api::argv_for(target_str, &options, resolved_opener.as_deref())
+            .map_err(|err| open_error_to_js(global_this, err))?;
+
+        let cmd_strings: Vec<BunString> =
+            argv.iter().map(|arg| BunString::from_bytes(arg)).collect();
+        let cmd_array = bun_string_jsc::to_js_array(global_this, &cmd_strings)?;
+
+        let ignore_string = BunString::from_bytes(b"ignore");
+        let spawn_options = JSValue::create_empty_object(global_this, 4);
+        spawn_options.put(global_this, b"stdin", ignore_string.to_js(global_this)?);
+        spawn_options.put(global_this, b"stdout", ignore_string.to_js(global_this)?);
+        spawn_options.put(global_this, b"stderr", ignore_string.to_js(global_this)?);
+        spawn_options.put(global_this, b"detached", JSValue::from(true));
+
+        // Reuse the full `Bun.spawn` machinery: PID reporting, zombie
+        // reaping, and the exited promise all come from the same code path
+        // user code exercises.
+        let subprocess =
+            crate::api::js_bun_spawn_bindings::spawn(global_this, cmd_array, Some(spawn_options))?;
+
+        let pid = subprocess
+            .get(global_this, b"pid")?
+            .unwrap_or(JSValue::ZERO);
+        let exited = subprocess
+            .get(global_this, b"exited")?
+            .unwrap_or_else(|| JSPromise::resolved_promise_value(global_this, JSValue::ZERO));
+
+        let result = JSValue::create_empty_object(global_this, 3);
+        result.put(global_this, b"ok", JSValue::from(true));
+        result.put(global_this, b"pid", pid);
+        result.put(global_this, b"exited", exited);
+
+        // Wrap in our own promise so every platform returns the same shape.
+        let mut outer = JSPromiseStrong::init(global_this);
+        let value = outer.value();
+        let _ = outer.resolve(global_this, result);
+        Ok(value)
+    }
+}
+
+/// Convert an [`open_api::OpenError`] into the pending JS error. A missing
+/// desktop opener surfaces as a real `ENOENT` system error (same shape as
+/// `Bun.spawn`'s command-not-found); validation failures are
+/// `ERR_INVALID_ARG_VALUE` TypeErrors.
+fn open_error_to_js(global_this: &JSGlobalObject, err: open_api::OpenError) -> jsc::JsError {
+    match err {
+        open_api::OpenError::OpenerMissing(candidates) => {
+            let sys_err = jsc::SystemError {
+                message: bun_core::String::create_format(format_args!(
+                    "no desktop opener found; looked for {}",
+                    candidates.join(", ")
+                )),
+                code: bun_core::String::static_("ENOENT"),
+                errno: -sys::UV_E::NOENT,
+                ..Default::default()
+            };
+            global_this.throw_value(sys_err.to_error_instance(global_this))
+        }
+        // Keep the OpenError's own machine code (e.g. `ERR_UNSUPPORTED_OP` on
+        // Android) instead of folding it into an invalid-argument TypeError;
+        // the generated ErrCode table has no UNSUPPORTED_OP variant.
+        open_api::OpenError::UnsupportedOs(_) => {
+            let sys_err = jsc::SystemError {
+                message: bun_core::String::create_format(format_args!("{}", err)),
+                code: bun_core::String::static_(err.code()),
+                errno: -sys::UV_E::NOTSUP,
+                ..Default::default()
+            };
+            global_this.throw_value(sys_err.to_error_instance(global_this))
+        }
+        _ => global_this
+            .err(jsc::ErrCode::INVALID_ARG_VALUE, format_args!("{}", err))
+            .throw(),
+    }
+}
+
+/// Reaction for the Windows directory-target `wait: true` path: once the
+/// spawned `explorer.exe` exits, resolve the parked outer promise with the
+/// result object. `ctx` (`{ result, outer }`) is rooted by the promise
+/// reaction, so both survive whether the promise settles or not.
+#[bun_jsc::host_fn]
+fn open_wait_resolve(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    let arguments = callframe.arguments_as_array::<2>();
+    let ctx = arguments[1];
+    let result = ctx.get(global_this, b"result")?.unwrap_or(JSValue::UNDEFINED);
+    let outer = ctx.get(global_this, b"outer")?.unwrap_or(JSValue::UNDEFINED);
+    let mut promise = jsc::JSPromiseStrong::from_value(outer, global_this);
+    let _ = promise.resolve(global_this, result)?;
+    Ok(JSValue::UNDEFINED)
+}
+
+/// Reject counterpart of [`open_wait_resolve`]: a failed `explorer.exe`
+/// launch rejects the parked outer promise with the spawn error.
+#[bun_jsc::host_fn]
+fn open_wait_reject(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    let arguments = callframe.arguments_as_array::<2>();
+    let outer = arguments[1]
+        .get(global_this, b"outer")?
+        .unwrap_or(JSValue::UNDEFINED);
+    let mut promise = jsc::JSPromiseStrong::from_value(outer, global_this);
+    let _ = promise.reject(global_this, Ok(arguments[0]))?;
+    Ok(JSValue::UNDEFINED)
+}
+
+/// Parse `options.app`: either an application name string, or an object
+/// `{ name, arguments }` matching the npm `open` package's shape. An empty
+/// name fails loud instead of silently falling back to the default opener.
+fn parse_open_app(
+    global_this: &JSGlobalObject,
+    app_value: JSValue,
+    options: &mut OpenOptions,
+) -> JsResult<()> {
+    if app_value.is_string() {
+        let bytes = app_value.to_utf8(global_this)?;
+        if bytes.slice().is_empty() {
+            return Err(
+                global_this.throw_invalid_arguments(format_args!(
+                    "`options.app` must be a non-empty string"
+                )),
+            );
+        }
+        options.app = Some(bytes);
+        return Ok(());
+    }
+    if !app_value.is_object() || app_value.js_type().is_array() {
+        return Err(
+            global_this
+                .throw_invalid_arguments(format_args!("`options.app` must be a string or an object")),
+        );
+    }
+    let Some(name_value) = app_value.get_truthy(global_this, "name")? else {
+        return Err(
+            global_this.throw_invalid_arguments(format_args!(
+                "`options.app.name` is required when `options.app` is an object"
+            )),
+        );
+    };
+    if !name_value.is_string() {
+        return Err(
+            global_this
+                .throw_invalid_arguments(format_args!("`options.app.name` must be a string")),
+        );
+    }
+    let name_bytes = name_value.to_utf8(global_this)?;
+    if name_bytes.slice().is_empty() {
+        return Err(
+            global_this.throw_invalid_arguments(format_args!(
+                "`options.app.name` must be a non-empty string"
+            )),
+        );
+    }
+    options.app = Some(name_bytes);
+    if let Some(args_value) = app_value.get(global_this, b"arguments")? {
+        if !args_value.is_undefined_or_null() {
+            read_string_array(
+                global_this,
+                args_value,
+                b"options.app.arguments",
+                &mut options.app_arguments,
+            )?;
+        }
+    }
+    Ok(())
+}
+
+/// Read one JS array of strings into `out`, failing loud on any non-string
+/// element. `field_name` names the option in the error message.
+fn read_string_array(
+    global_this: &JSGlobalObject,
+    value: JSValue,
+    field_name: &[u8],
+    out: &mut Vec<String>,
+) -> JsResult<()> {
+    if !value.js_type().is_array() {
+        return Err(
+            global_this.throw_invalid_arguments(format_args!(
+                "`{}` must be an array of strings",
+                core::str::from_utf8(field_name).unwrap_or("options")
+            )),
+        );
+    }
+    let mut iter = value.array_iterator(global_this)?;
+    while let Some(item) = iter.next()? {
+        if !item.is_string() {
+            return Err(
+                global_this.throw_invalid_arguments(format_args!(
+                    "`{}` must be an array of strings",
+                    core::str::from_utf8(field_name).unwrap_or("options")
+                )),
+            );
+        }
+        out.push(String::from_utf8_lossy(item.to_utf8(global_this)?.slice()).into_owned());
+    }
+    Ok(())
+}
+
+/// Windows result assembly: hand back `{pid, exited}` immediately, or — under
+/// `wait: true` — park both behind the exit watcher so the outer promise
+/// settles only when the launched handler's process exits.
+#[cfg(windows)]
+fn make_open_result_windows(
+    global_this: &JSGlobalObject,
+    launch: open_api::native::ShellLaunch,
+    wait: bool,
+) -> JsResult<JSValue> {
+
+    let exited_promise = JSPromiseStrong::init(global_this);
+    let exited_value = exited_promise.value();
+
+    if launch.process.is_null() {
+        // DDE singletons reuse a running process: no handle, nothing to wait
+        // for. The handler accepted the target, so report success now.
+        drop(exited_promise);
+        let exited = JSPromise::resolved_promise_value(global_this, JSValue::js_number(0.0));
+        let result = JSValue::create_empty_object(global_this, 3);
+        result.put(global_this, b"ok", JSValue::from(true));
+        result.put(global_this, b"pid", JSValue::ZERO);
+        result.put(global_this, b"exited", exited);
+
+        let mut outer = JSPromiseStrong::init(global_this);
+        let value = outer.value();
+        let _ = outer.resolve(global_this, result);
+        return Ok(value);
+    }
+
+    if wait {
+        let outer = JSPromiseStrong::init(global_this);
+        let outer_value = outer.value();
+        open_api::watch::arm(global_this, launch, Some(outer), exited_promise);
+        return Ok(outer_value);
+    }
+
+    // Build the result BEFORE moving the promise into the watcher: a moved
+    // JSPromiseStrong releases its root, so `exited_value` must already be
+    // safely held by the (still-live) result object.
+    let pid = launch.pid;
+    let result = JSValue::create_empty_object(global_this, 3);
+    result.put(global_this, b"ok", JSValue::from(true));
+    result.put(global_this, b"pid", JSValue::js_number(f64::from(pid)));
+    result.put(global_this, b"exited", exited_value);
+
+    open_api::watch::arm(global_this, launch, None, exited_promise);
+
+    let mut outer = JSPromiseStrong::init(global_this);
+    let outer_value = outer.value();
+    let _ = outer.resolve(global_this, result);
+    Ok(outer_value)
 }
 
 #[bun_jsc::host_fn]

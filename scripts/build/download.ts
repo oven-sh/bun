@@ -254,9 +254,22 @@ export async function downloadWithRetry(
  *   archives. 0 for tarballs that are already flat (e.g. prebuilt WebKit
  *   has `bun-webkit/` that the caller wants to keep for a rename step).
  */
-export async function extractTarGz(tarball: string, dest: string, stripComponents = 1): Promise<void> {
+export async function extractTarGz(
+  tarball: string,
+  dest: string,
+  stripComponents = 1,
+  excludes: string[] = [],
+): Promise<void> {
   const args = ["-xzmf", tarball, "-C", dest];
   if (stripComponents > 0) args.push(`--strip-components=${stripComponents}`);
+  // Windows bsdtar can't create symlinks without Developer Mode / admin; skip
+  // any entry that would require symlink creation. The deps we ship never
+  // need them at build time.
+  if (process.platform === "win32") {
+    for (const pattern of excludes) {
+      args.push(`--exclude=${pattern}`);
+    }
+  }
 
   const result = spawnSync(tarExe, args, {
     stdio: ["ignore", "ignore", "pipe"],

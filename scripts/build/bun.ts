@@ -116,6 +116,13 @@ function systemLibs(cfg: Config): string[] {
       "wsock32.lib", // ws2_32 + wsock32 — wsock32 has TransmitFile (sendfile equiv)
       "ws2_32.lib",
       "delayimp.lib", // required for /delayload: in release
+      // WIC image backend (src/runtime/image/backend_wic.rs): Clipboard + COM
+      "ole32.lib",
+      "oleaut32.lib",
+      // WebKit WTF::FileSystemImpl::storageDirectory + clipboard / message
+      // loop APIs referenced from Rust code paths
+      "user32.lib",
+      "shell32.lib",
     );
   }
 
@@ -335,7 +342,12 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   }
 
   // Windows-only cpp sources (rescle — PE resource editor for --compile).
-  if (cfg.windows) {
+  // Skip when DSH_SKIP_RESCLE=1 — rescle needs ATL/MFC, which is not part
+  // of the default VS Build Tools C++ workload. The icon-patching path
+  // (`bun build --compile` icon injection) is the only consumer; everything
+  // else in Bun works without it. Local-only build convenience; never set
+  // in CI / release builds.
+  if (cfg.windows && process.env.DSH_SKIP_RESCLE !== "1") {
     // rescle.h does `#define UNICODE` before including ATL; with PCH the
     // headers are already past in MBCS mode and ATL's TCHAR mismatches.
     const rescle = resolve(cfg.cwd, "src/jsc/bindings/windows/rescle.cpp");

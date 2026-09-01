@@ -207,6 +207,7 @@ fn read_config_patch_paths(
             log,
             &arena,
             bun_parsers::yaml::CyclicAliases::Reject,
+            false,
         ) {
             if let Some(patched) = ws_root.get_object(b"patchedDependencies") {
                 collect_patch_paths(&patched, &mut paths)?;
@@ -237,6 +238,7 @@ fn read_named_registries(
             log,
             &arena,
             bun_parsers::yaml::CyclicAliases::Reject,
+            false,
         ) {
             if let Some(named) = ws_root.get_object(b"namedRegistries") {
                 for prop in e_object(&named).properties.slice() {
@@ -497,6 +499,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
         log,
         &yaml_arena,
         bun_parsers::yaml::CyclicAliases::Reject,
+    false,
     ) {
         Ok(r) => r,
         Err(_) => return Err(MigratePnpmLockfileError::YamlParseError),
@@ -2531,6 +2534,7 @@ fn update_package_json_after_migration(
                 log,
                 &arena,
                 bun_parsers::yaml::CyclicAliases::Reject,
+            false,
             ) else {
                 break 'read_pnpm_workspace_yaml;
             };

@@ -59,6 +59,7 @@
     macro(jest) \
     macro(listen) \
     macro(mmap) \
+    macro(open) \
     macro(openInEditor) \
     macro(registerMacro) \
     macro(resolve) \

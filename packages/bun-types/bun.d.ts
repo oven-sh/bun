@@ -1477,6 +1477,18 @@ declare module "bun" {
    * YAML related APIs
    */
   namespace YAML {
+    /** Options controlling YAML parse behavior. */
+    export interface ParseOptions {
+      /**
+       * Reject documents with duplicate keys (last-wins by default).
+       * When `true`, `Bun.YAML.parse` throws with a positional "Duplicate key"
+       * error at the second occurrence. Mirrors yaml@2's `uniqueKeys: true`
+       * opt-in; `false` (default) keeps js-yaml / yaml@2 default semantics.
+       * @default false
+       */
+      uniqueKeys?: boolean;
+    }
+
     /**
      * Parse a YAML string into a JavaScript value. Every alias (`*name`) of an anchored collection yields the
      * same object, and an alias may refer to a collection that contains it, so the result can be cyclic.
@@ -1484,6 +1496,7 @@ declare module "bun" {
      * @category Utilities
      *
      * @param input The YAML string to parse
+     * @param options Optional parse behavior controls
      * @returns A JavaScript value, or an array of them for a multi-document stream
      *
      * @example
@@ -1496,9 +1509,12 @@ declare module "bun" {
      * console.log(YAML.parse("abc")) // "abc"
      * console.log(YAML.parse("- abc")) // [ "abc" ]
      * console.log(YAML.parse("abc: def")) // { "abc": "def" }
+     *
+     * // Reject duplicate keys
+     * YAML.parse("a: 1\na: 2", { uniqueKeys: true }) // throws "Duplicate key"
      * ```
      */
-    export function parse(input: string): unknown;
+    export function parse(input: string, options?: ParseOptions): unknown;
 
     /**
      * Convert a JavaScript value into a YAML string. Strings are double quoted if they contain keywords, non-printable or
@@ -1540,6 +1556,51 @@ declare module "bun" {
      * ```
      */
     export function stringify(input: unknown, replacer?: undefined | null, space?: string | number): string;
+
+    /**
+     * Parse a YAML string into a comment-preserving {@link Document}. The
+     * document retains any comments found in the source and can be mutated
+     * with `setIn` / `deleteIn` and serialized back with `toString`.
+     *
+     * @category Utilities
+     *
+     * @param input The YAML string to parse
+     * @param options Optional parse behavior controls
+     * @returns A mutable, comment-preserving YAML document
+     *
+     * @example
+     * ```ts
+     * import { YAML } from "bun";
+     *
+     * const doc = YAML.parseDocument("key: value # note");
+     * doc.setIn("key", "changed");
+     * doc.comment("top");
+     * console.log(doc.toString());
+     * ```
+     */
+    export function parseDocument(input: string | null | undefined, options?: ParseOptions): Document;
+
+    /**
+     * A comment-preserving YAML document, mirroring the `yaml` npm package's
+     * `Document` API. Created either with {@link parseDocument} or directly
+     * via `new Bun.YAML.Document(value)`.
+     *
+     * @category Utilities
+     */
+    export class Document {
+      /** Construct a document wrapping a JavaScript value. */
+      constructor(value?: unknown);
+      /** The document's JavaScript value. */
+      toJS(): unknown;
+      /** Serialize the document back to YAML, with comments appended. */
+      toString(space?: string | number): string;
+      /** Set a value at `path`; returns `this` for chaining. */
+      setIn(path: string | readonly (string | number)[], value: unknown): Document;
+      /** Delete the value at `path`; returns `this` for chaining. */
+      deleteIn(path: string | readonly (string | number)[]): Document;
+      /** Append a comment line; returns `this` for chaining. */
+      comment(text: string): Document;
+    }
   }
 
   /**
@@ -5506,6 +5567,115 @@ declare module "bun" {
     editor?: "vscode" | "subl";
     line?: number;
     column?: number;
+  }
+
+  /**
+   * Open a file, URL, or folder with the platform's default handler.
+   *
+   * Windows dispatches through the shell (`ShellExecuteEx`) and reports the
+   * launched handler's real PID; macOS uses `/usr/bin/open`; Linux uses the
+   * first available of `xdg-open`, `gio`, `kde-open`, or `wslview`. The
+   * launched process runs detached from Bun with every stdio stream ignored,
+   * so it keeps running after Bun exits and never pops a console window. All
+   * failures — argument validation, a missing opener binary, OS spawn
+   * errors, an already-aborted signal — reject the returned promise.
+   *
+   * @category Utilities
+   *
+   * @param target The URL, file path, or folder to open
+   * @param options Behavior overrides (app, wait, signal, background, newInstance, edit)
+   * @returns A {@link BunOpenResult} describing the launch
+   *
+   * @example
+   * ```ts
+   * // Open a URL in the default browser
+   * await Bun.open("https://example.com");
+   *
+   * // Open a file in its default app
+   * await Bun.open(import.meta.path);
+   *
+   * // Open a URL in Chrome with extra arguments
+   * await Bun.open("https://example.com", {
+   *   app: { name: "chrome", arguments: ["--incognito"] },
+   * });
+   *
+   * // Emulate the npm `open` package's `wait: true`: settle after exit
+   * await Bun.open("https://example.com", { wait: true });
+   *
+   * // Cancel a launch that has not happened yet
+   * const controller = new AbortController();
+   * controller.abort();
+   * await Bun.open("https://example.com", { signal: controller.signal }); // rejects
+   * ```
+   */
+  function open(target: string, options?: BunOpenOptions): Promise<BunOpenResult>;
+
+  interface BunOpenOptions {
+    /**
+     * Application to open with: either its name/path, or an object carrying
+     * the name plus extra command-line arguments passed before the target
+     * (macOS forwards them after the target via `--args`). When given, the
+     * platform default opener is bypassed entirely.
+     */
+    app?: string | { name: string; arguments?: string[] };
+
+    /**
+     * Keep the returned promise pending until the launched handler's process
+     * exits (Windows always honors this via the shell-returned process
+     * handle; macOS maps it to `/usr/bin/open -W`; on Linux the opener exits
+     * immediately after handing off, so this is effectively a no-op).
+     * Regardless of `wait`, `exited` resolves with the same exit code.
+     */
+    wait?: boolean;
+
+    /**
+     * Cancel a launch that has not started yet. An already-aborted signal
+     * rejects immediately; aborting after resolution has no effect.
+     */
+    signal?: AbortSignal;
+
+    /**
+     * macOS only. Maps to `open -g` — launch the app without bringing it
+     * to the foreground. Ignored on other platforms.
+     */
+    background?: boolean;
+
+    /**
+     * macOS only. Maps to `open -n` — force a new instance even if the
+     * named app is already running. Ignored on other platforms.
+     */
+    newInstance?: boolean;
+
+    /**
+     * Use the platform's "edit" verb instead of "open": macOS passes `-e`,
+     * Windows dispatches the `edit` shell verb (whose DDE negotiation can
+     * stall the dispatch for some handlers). Ignored on Linux.
+     */
+    edit?: boolean;
+  }
+
+  interface BunOpenResult {
+    /**
+     * Always `true` when the outer promise resolves. Launch failures are
+     * reported by rejecting the outer promise (or, for `wait: true`,
+     * rejecting `exited`), so `ok` is only read on the success path.
+     */
+    ok: true;
+
+    /**
+     * PID of the launched handler process. On Windows this is the process
+     * the shell actually created (not an intermediate cmd.exe); `0` when the
+     * shell reused an already-running singleton and no fresh handle exists.
+     */
+    pid: number;
+
+    /**
+     * Resolves with the launched handler's exit code once its process exits.
+     * On Windows this reflects the real handler even though `Bun.open`
+     * itself resolved long before; awaiting it emulates the npm `open`
+     * package's `wait: true`.
+     */
+    exited: Promise<number>;
   }
 
   /**
@@ -9717,7 +9887,15 @@ declare module "bun" {
    * Compression format for archive output.
    * Only `"gzip"` is supported.
    */
-  type ArchiveCompression = "gzip";
+  type ArchiveCompression = "gzip" | "deflate";
+
+  /**
+   * Archive container format.
+   *
+   * - `"tar"`: POSIX tar (default). Pair with `compress: "gzip"` for tgz.
+   * - `"zip"`: ZIP with per-entry DEFLATE (or stored entries at `level: 0`).
+   */
+  type ArchiveFormat = "tar" | "zip";
 
   /**
    * Options for creating an Archive instance.
@@ -9739,15 +9917,21 @@ declare module "bun" {
   interface ArchiveOptions {
     /**
      * Compression algorithm to use.
-     * Only `"gzip"` is supported.
+     * - `"gzip"`: whole-archive gzip filter (tar only).
+     * - `"deflate"`: per-entry DEFLATE inside the ZIP writer (`format: "zip"`
+     *   only); `level: 0` selects stored (uncompressed) entries.
      * If not specified, no compression is applied.
      */
     compress?: ArchiveCompression;
     /**
-     * Compression level (1-12). Only applies when `compress` is set.
-     * - 1: Fastest compression, lowest ratio
-     * - 6: Default balance of speed and ratio
-     * - 12: Best compression ratio, slowest
+     * Container format. `"tar"` (default) writes a POSIX pax-restricted tar;
+     * `"zip"` writes a standard ZIP archive readable by every unzip tool.
+     */
+    format?: ArchiveFormat;
+    /**
+     * Compression level. Only applies when `compress` is set.
+     * - gzip: 1 (fastest) to 12 (best ratio)
+     * - deflate/zip: 0 (stored entries) to 9 (best ratio)
      *
      * @default 6
      */

@@ -1851,6 +1851,97 @@ unsafe extern "system" {
     ) -> BOOL;
 }
 
+// ──────────────────────────────────────────────────────────────────────────
+// `shell32` / `user32`: `ShellExecuteExW`, the documented entry into the
+// shell's file-association and URL-protocol launch path (`Bun.open`).
+// ──────────────────────────────────────────────────────────────────────────
+
+/// `SHELLEXECUTEINFOW` (`shellapi.h`). `cbSize` must be set before calling;
+/// the union `hIcon`/`hMonitor` is unused without `SEE_MASK_ICON`/`HMONITOR`
+/// and stored as a bare handle.
+#[repr(C)]
+pub struct SHELLEXECUTEINFOW {
+    pub cbSize: DWORD,
+    pub fMask: ULONG,
+    pub hwnd: HANDLE,
+    pub lpVerb: LPCWSTR,
+    pub lpFile: LPCWSTR,
+    pub lpParameters: LPCWSTR,
+    pub lpDirectory: LPCWSTR,
+    pub nShow: c_int,
+    pub hInstApp: HINSTANCE,
+    pub lpIDList: *mut c_void,
+    pub lpClass: LPCWSTR,
+    pub hkeyClass: HANDLE,
+    pub dwHotKey: DWORD,
+    /// Union `hIcon` / `hMonitor`.
+    pub hIconOrMonitor: HANDLE,
+    pub hProcess: HANDLE,
+}
+
+pub type HINSTANCE = HANDLE;
+pub type HKEY = HANDLE;
+
+/// `fMask` bits (`shellapi.h`) used by `Bun.open`.
+pub const SEE_MASK_DEFAULT: ULONG = 0x0000_0000;
+/// Return an `hProcess` for the launched handler so callers can report a PID
+/// and wait for exit.
+pub const SEE_MASK_NOCLOSEPROCESS: ULONG = 0x0000_0040;
+/// Suppress the shell's "no application is associated" error UI; the failure
+/// surfaces as a `FALSE` return + `GetLastError()` instead.
+pub const SEE_MASK_FLAG_NO_UI: ULONG = 0x0000_0400;
+/// `nShow` — `SW_SHOWNORMAL`: activate and display normally.
+pub const SW_SHOWNORMAL: c_int = 1;
+
+// `ShellExecuteExW` performs in-place string marshalling by the caller; all
+// `LPCWSTR` fields must stay valid for the duration of the call.
+#[cfg_attr(windows, link(name = "shell32"))]
+unsafe extern "system" {
+    pub fn ShellExecuteExW(pExecInfo: *mut SHELLEXECUTEINFOW) -> BOOL;
+}
+
+// Process-id query on a process handle. Requires
+// `PROCESS_QUERY_LIMITED_INFORMATION` (which `SEE_MASK_NOCLOSEPROCESS`
+// handles satisfy).
+#[cfg_attr(windows, link(name = "kernel32"))]
+unsafe extern "system" {
+    pub fn GetProcessId(hProcess: HANDLE) -> DWORD;
+}
+
+// Wait on a kernel handle; a bad handle yields `WAIT_FAILED`, never UB.
+#[cfg_attr(windows, link(name = "kernel32"))]
+unsafe extern "system" {
+    pub fn WaitForSingleObject(hHandle: HANDLE, dwMilliseconds: DWORD) -> DWORD;
+}
+
+/// `WaitForSingleObject` signaled the handle.
+pub const WAIT_OBJECT_0: DWORD = 0x0000_0000;
+
+// ──────────────────────────────────────────────────────────────────────────
+// `ole32`: COM apartment entry for threads that call into the shell.
+// ──────────────────────────────────────────────────────────────────────────
+
+/// `COINIT_APARTMENTTHREADED` — single-threaded apartment; ShellExecute's DDE
+/// handshake requires it.
+pub const COINIT_APARTMENTTHREADED: DWORD = 0x2;
+/// `COINIT_DISABLE_OLE1DDE` — skip the legacy OLE1 DDE negotiation entirely.
+pub const COINIT_DISABLE_OLE1DDE: DWORD = 0x4;
+
+/// COM initialization outcomes `CoInitializeEx` callers must distinguish:
+/// `S_OK`/`S_FALSE` mean the apartment is usable (and a balancing
+/// `CoUninitialize` is owed when `S_OK`), while `RPC_E_CHANGED_MODE`
+/// means the thread already runs a different apartment model, which is fine
+/// to proceed in but must NOT be balanced with `CoUninitialize`.
+pub const S_OK: HRESULT = 0;
+pub const S_FALSE: HRESULT = 1;
+pub const RPC_E_CHANGED_MODE: HRESULT = 0x8001_0106_u32 as HRESULT; // -2147417850
+
+#[cfg_attr(windows, link(name = "ole32"))]
+unsafe extern "system" {
+    pub fn CoInitializeEx(pvReserved: *mut c_void, dwCoInit: DWORD) -> HRESULT;
+    pub fn CoUninitialize();
+}
+
 unsafe extern "C" {
     pub fn windows_enable_stdio_inheritance();
 }

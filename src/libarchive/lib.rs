@@ -78,6 +78,7 @@ pub mod lib {
         fn archive_read_free(a: *mut Archive) -> Result;
         fn archive_read_support_format_tar(a: *mut Archive) -> Result;
         fn archive_read_support_format_gnutar(a: *mut Archive) -> Result;
+        fn archive_read_support_format_zip(a: *mut Archive) -> Result;
         fn archive_read_support_filter_gzip(a: *mut Archive) -> Result;
         fn archive_read_set_options(a: *mut Archive, opts: *const c_char) -> Result;
         fn archive_read_open_memory(a: *mut Archive, buf: *const c_void, size: usize) -> Result;
@@ -106,6 +107,8 @@ pub mod lib {
         fn archive_write_free(a: *mut Archive) -> Result;
         fn archive_write_close(a: *mut Archive) -> Result;
         fn archive_write_set_format_pax_restricted(a: *mut Archive) -> Result;
+        fn archive_write_set_format_zip(a: *mut Archive) -> Result;
+        fn archive_write_set_bytes_in_last_block(a: *mut Archive, bytes: c_int) -> Result;
         fn archive_write_add_filter_gzip(a: *mut Archive) -> Result;
         fn archive_write_set_filter_option(
             a: *mut Archive,
@@ -184,6 +187,10 @@ pub mod lib {
             // SAFETY: self valid.
             unsafe { archive_read_support_format_gnutar(self.as_mut_ptr()) }
         }
+        pub fn read_support_format_zip(&self) -> Result {
+            // SAFETY: self valid.
+            unsafe { archive_read_support_format_zip(self.as_mut_ptr()) }
+        }
         pub fn read_support_filter_gzip(&self) -> Result {
             // SAFETY: self valid.
             unsafe { archive_read_support_filter_gzip(self.as_mut_ptr()) }
@@ -216,7 +223,12 @@ pub mod lib {
             let r = unsafe {
                 archive_read_data_block(self.as_mut_ptr(), &raw mut buff, &raw mut size, offset)
             };
-            if r == Result::Eof {
+            // The ZIP reader signals the end of a stored (method-0) entry as
+            // ARCHIVE_OK with a null buffer and size 0 — the ARCHIVE_EOF only
+            // comes on the following call. Treat the null-buffer marker as
+            // EOF here instead of handing `&[]`-sized (NULL, 0) to
+            // `from_raw_parts`, which trips the slice precondition panic.
+            if r == Result::Eof || (r == Result::Ok && buff.is_null()) {
                 return None;
             }
             if r != Result::Ok {
@@ -226,8 +238,8 @@ pub mod lib {
                     result: r,
                 });
             }
-            // SAFETY: on ARCHIVE_OK, libarchive guarantees buff[0..size] is
-            // readable until the next read call on this archive.
+            // SAFETY: on ARCHIVE_OK with a non-null buffer, libarchive
+            // guarantees buff[0..size] is readable until the next read call.
             let bytes = unsafe { core::slice::from_raw_parts(buff.cast::<u8>(), size) };
             Some(Block {
                 bytes,
@@ -381,6 +393,22 @@ pub mod lib {
         pub fn write_set_format_pax_restricted(&self) -> Result {
             // SAFETY: self valid.
             unsafe { archive_write_set_format_pax_restricted(self.as_mut_ptr()) }
+        }
+        pub fn write_set_format_zip(&self) -> Result {
+            // SAFETY: self valid.
+            unsafe { archive_write_set_format_zip(self.as_mut_ptr()) }
+        }
+        /// `archive_write_set_bytes_in_last_block` — 0 pads the final block to
+        /// the full block size; 1 writes the final block unpadded.
+        pub fn write_set_bytes_in_last_block(&self, bytes: c_int) -> Result {
+            // SAFETY: self valid.
+            unsafe { archive_write_set_bytes_in_last_block(self.as_mut_ptr(), bytes) }
+        }
+        /// `archive_write_set_options` with a libarchive option string, e.g.
+        /// `c"zip:compression=deflate"` or `c"zip:compression-level=6"`.
+        pub fn write_set_options_str(&self, opts: &core::ffi::CStr) -> Result {
+            // SAFETY: self valid; opts is a live NUL-terminated C string.
+            unsafe { archive_write_set_options(self.as_mut_ptr(), opts.as_ptr()) }
         }
         pub fn write_add_filter_gzip(&self) -> Result {
             // SAFETY: self valid.
@@ -690,6 +718,15 @@ pub mod lib {
                 }
                 _ => {}
             }
+            match a.read_support_format_zip() {
+                Result::Failed | Result::Fatal | Result::Warn => {
+                    return IteratorResult::init_err(
+                        archive,
+                        b"failed to enable zip format support",
+                    );
+                }
+                _ => {}
+            }
             match a.read_support_filter_gzip() {
                 Result::Failed | Result::Fatal | Result::Warn => {
                     return IteratorResult::init_err(
@@ -950,6 +987,7 @@ impl BufferReadStream {
 
         let _ = archive.read_support_format_tar();
         let _ = archive.read_support_format_gnutar();
+        let _ = archive.read_support_format_zip();
         let _ = archive.read_support_filter_gzip();
 
         // Ignore zeroed blocks in the archive, which occurs when multiple tar archives

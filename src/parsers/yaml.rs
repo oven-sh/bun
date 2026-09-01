@@ -41,11 +41,13 @@ impl YAML {
         log: &mut bun_ast::Log,
         bump: &bun_alloc::Arena,
         cyclic_aliases: CyclicAliases,
+        unique_keys: bool,
     ) -> Result<Expr, YamlParseError> {
         bun_core::analytics::Features::yaml_parse_inc();
         source.check_parseable_len(log, "YAML document")?;
 
-        let mut parser: Parser<Utf8> = Parser::init(bump, source.contents(), cyclic_aliases);
+        let mut parser: Parser<Utf8> =
+            Parser::init(bump, source.contents(), cyclic_aliases, unique_keys);
 
         let stream = match parser.parse() {
             Ok(s) => s,
@@ -76,6 +78,71 @@ impl YAML {
             }
         }
     }
+
+    /// Like `parse`, but also returns the comments collected during parsing.
+    /// `comments` is keyed on `doc_index` so multi-document streams can
+    /// associate comments with the document they appeared in. The returned
+    /// root `Expr` is identical to `parse`'s output for the single-doc case.
+    pub fn parse_with_comments(
+        source: &bun_ast::Source,
+        log: &mut bun_ast::Log,
+        bump: &bun_alloc::Arena,
+        cyclic_aliases: CyclicAliases,
+        unique_keys: bool,
+    ) -> Result<ParsedYaml, YamlParseError> {
+        bun_core::analytics::Features::yaml_parse_inc();
+        source.check_parseable_len(log, "YAML document")?;
+
+        let mut parser: Parser<Utf8> =
+            Parser::init(bump, source.contents(), cyclic_aliases, unique_keys);
+
+        let stream = match parser.parse() {
+            Ok(s) => s,
+            Err(e) => {
+                let err = ParseResultError::from_parse_error(e, &parser);
+                err.add_to_log(source, log)?;
+                return Err(YamlParseError::SyntaxError);
+            }
+        };
+
+        let docs = stream.docs;
+        let n_docs = docs.len();
+
+        let root = match n_docs {
+            0 => Expr::init(E::Null {}, Loc::EMPTY),
+            1 => docs[0].root,
+            _ => {
+                let mut items: ast::ExprNodeList =
+                    ast::ExprNodeList::init_capacity(n_docs);
+                for doc in &docs {
+                    items.push(doc.root);
+                }
+                Expr::init(
+                    E::Array {
+                        items,
+                        ..Default::default()
+                    },
+                    Loc::EMPTY,
+                )
+            }
+        };
+
+        Ok(ParsedYaml {
+            root,
+            docs,
+            source_text: source.contents().to_vec(),
+        })
+    }
+}
+
+/// Parser output that includes retained comments, for `Bun.YAML.Document`.
+#[allow(dead_code)]
+pub struct ParsedYaml {
+    pub root: Expr,
+    pub docs: Vec<Document>,
+    /// Raw source bytes the parser read, kept so comment text can be sliced
+    /// out of it later without re-parsing.
+    pub source_text: Vec<u8>,
 }
 
 #[derive(Debug, thiserror::Error, strum::IntoStaticStr)]
@@ -719,6 +786,8 @@ pub enum ParseError {
     CyclicAlias,
     #[error("CyclicMerge")]
     CyclicMerge,
+    #[error("DuplicateKey")]
+    DuplicateKey { pos: Pos },
 }
 
 bun_core::oom_from_alloc!(ParseError);
@@ -1617,8 +1686,23 @@ pub(crate) enum Directive {
     Other,
 }
 
-pub(crate) struct Document {
-    pub(crate) root: Expr,
+pub struct Document {
+    pub root: Expr,
+    /// Comments collected during parsing, in source order. Each entry records
+    /// the start/end byte offsets and the line the comment appears on.
+    #[allow(dead_code)]
+    pub comments: Vec<ParsedComment>,
+}
+
+/// A single `#`-comment retained during parsing. `start` points at the `#`
+/// character; `end` is one past the last character before the line break
+/// (or eof). `line` is the 1-based line number, matching what positional
+/// parse errors report.
+#[allow(dead_code)]
+pub struct ParsedComment {
+    pub start: Pos,
+    pub end: Pos,
+    pub line: Line,
 }
 
 /// Should only be used with expressions created with the YAML parser. It assumes
@@ -1942,6 +2026,7 @@ pub enum ParseResultError {
     ExcessiveAliasing { pos: Pos },
     CyclicAlias { pos: Pos },
     CyclicMerge { pos: Pos },
+    DuplicateKey { pos: Pos },
 }
 
 impl ParseResultError {
@@ -2013,6 +2098,9 @@ impl ParseResultError {
                     b"Merge key cannot reference an enclosing node",
                 );
             }
+            ParseResultError::DuplicateKey { pos } => {
+                log.add_error(Some(source), pos.loc(), b"Duplicate key");
+            }
         }
         Ok(())
     }
@@ -2078,6 +2166,7 @@ impl ParseResultError {
             ParseError::CyclicMerge => ParseResultError::CyclicMerge {
                 pos: parser.token.start,
             },
+            ParseError::DuplicateKey { pos } => ParseResultError::DuplicateKey { pos },
         }
     }
 }
@@ -2140,6 +2229,14 @@ pub struct Parser<'i, Enc: Encoding> {
 
     pub(crate) merge_props_budget: usize,
     pub(crate) alias_expansion_budget: usize,
+    /// When `true`, `append_entry` rejects duplicate keys with
+    /// `ParseError::DuplicateKey` (positioned at the second occurrence).
+    /// Matches yaml@2's `uniqueKeys: true` opt-in; `false` (default) keeps
+    /// last-wins semantics to match js-yaml and yaml@2 defaults.
+    pub(crate) unique_keys: bool,
+    /// Comments collected during parsing, in source order. Appended to by
+    /// `try_skip_to_new_line` whenever a `#`-comment is consumed.
+    pub(crate) comments: Vec<ParsedComment>,
 }
 
 impl<'i, Enc: Encoding> Parser<'i, Enc> {
@@ -2155,6 +2252,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         bump: &'i bun_alloc::Arena,
         input: &'i [Enc::Unit],
         cyclic_aliases: CyclicAliases,
+        unique_keys: bool,
     ) -> Self {
         // [206] l-document-prefix ::= c-byte-order-mark? l-comment*
         let start = Pos::from(Enc::bom_len(input));
@@ -2183,6 +2281,8 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             stack_check: StackCheck::init(),
             merge_props_budget: MappingProps::MAX_MERGED_PROPERTIES,
             alias_expansion_budget: Self::MAX_ALIAS_EXPANSION,
+            unique_keys,
+            comments: Vec::new(),
         }
     }
 
@@ -2417,7 +2517,10 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             }
         }
 
-        Ok(Document { root })
+        Ok(Document {
+            root,
+            comments: core::mem::take(&mut self.comments),
+        })
     }
 
     /// [149] c-ns-flow-map-json-key-entry — when a JSON-style key (quoted
@@ -2651,11 +2754,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 match self.token.data {
                     TokenData::CollectEntry => {
                         let value = Expr::init(E::Null {}, self.token.start.loc());
-                        props.append(G::Property {
-                            key: Some(key),
-                            value: Some(value),
-                            ..Default::default()
-                        })?;
+                        self.append_flow_null(&mut props, key, value)?;
 
                         self.context.set(Context::FlowKey)?;
                         let r = self.scan(ScanOptions::default());
@@ -2665,11 +2764,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     }
                     TokenData::MappingEnd => {
                         let value = Expr::init(E::Null {}, self.token.start.loc());
-                        props.append(G::Property {
-                            key: Some(key),
-                            value: Some(value),
-                            ..Default::default()
-                        })?;
+                        self.append_flow_null(&mut props, key, value)?;
                         continue;
                     }
                     TokenData::MappingValue => {}
@@ -2685,11 +2780,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     TokenData::MappingEnd | TokenData::CollectEntry
                 ) {
                     let value = Expr::init(E::Null {}, self.token.start.loc());
-                    props.append(G::Property {
-                        key: Some(key),
-                        value: Some(value),
-                        ..Default::default()
-                    })?;
+                    self.append_flow_null(&mut props, key, value)?;
                 } else {
                     // [147] the value is ns-flow-node; threading the value's
                     // own indent as current_mapping_indent makes the Scalar
@@ -3120,6 +3211,35 @@ impl MappingProps {
         Ok(())
     }
 
+/// Index one newly-to-be-appended key by its eventual list position.
+/// Called by `append_entry` *before* `append`, so the index is the current
+/// length of `self.list` (the slot `append` will fill next). `self.merge_indexed`
+/// is advanced past it so future scans do not re-index the same entry.
+pub(crate) fn record_key(&mut self, key: &Expr) -> Result<(), AllocError> {
+    let hash = yaml_merge_key_expr_hash(key);
+    let idx = self.list.len() as u32;
+    self.merge_index
+        .get_or_put(hash)?
+        .value_ptr
+        .push(idx);
+    self.merge_indexed = self.list.len() + 1;
+    Ok(())
+}
+
+    /// Return `true` when a key equal to `key` already appears in `self.list`
+    /// (either as a direct `append` or inside a prior `<<:` merge). Used by
+    /// `append_entry` to enforce `uniqueKeys: true`.
+    pub(crate) fn contains_key(&self, key: &Expr) -> bool {
+        let hash = yaml_merge_key_expr_hash(key);
+        let Some(candidates) = self.merge_index.get(&hash) else {
+            return false;
+        };
+        candidates.iter().any(|idx| {
+            let existing_key = self.list[*idx as usize].key.as_ref().unwrap();
+            yaml_merge_key_expr_eql(existing_key, key)
+        })
+    }
+
     pub(crate) fn merge(
         &mut self,
         merge_props: &[G::Property],
@@ -3179,6 +3299,13 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
     /// Appends `key: value` to `props`, expanding a `<<` merge key. A merge
     /// cannot pull in a collection that is still being parsed (its properties
     /// are not there yet).
+    ///
+    /// When `self.unique_keys` is `true`, any key that already appears in
+    /// `props` (either as a direct entry or inside a prior `<<:` merge) is
+    /// rejected with `ParseError::DuplicateKey`, positioned at the second
+    /// occurrence. Matches yaml@2's `uniqueKeys: true` opt-in; when `false`
+    /// (the default) duplicates keep last-wins semantics, matching js-yaml
+    /// and yaml@2 defaults.
     fn append_entry(
         &mut self,
         props: &mut MappingProps,
@@ -3211,6 +3338,41 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             }
         }
 
+        if self.unique_keys && props.contains_key(&key) {
+            // Position at the duplicate key itself, not the token that
+            // happened to follow its value (delimiter/EOF/newline).
+            return Err(ParseError::DuplicateKey {
+                pos: Pos::from(key.loc.to_usize()),
+            });
+        }
+
+        props.record_key(&key)?;
+        Ok(props.append(G::Property {
+            key: Some(key),
+            value: Some(value),
+            ..Default::default()
+        })?)
+    }
+
+    /// Append a value-less flow-map entry (`{a}` / `{a,}`, implicit null
+    /// value). The null value cannot be a merge key, but its key still takes
+    /// the `unique_keys` path so `{a, a: 1}` is rejected exactly like a
+    /// valued duplicate would be. `record_key` stays gated on `unique_keys`
+    /// to avoid touching the merge index in the default (last-wins) mode.
+    fn append_flow_null(
+        &mut self,
+        props: &mut MappingProps,
+        key: Expr,
+        value: Expr,
+    ) -> Result<(), ParseError> {
+        if self.unique_keys {
+            if props.contains_key(&key) {
+                return Err(ParseError::DuplicateKey {
+                    pos: Pos::from(key.loc.to_usize()),
+                });
+            }
+            props.record_key(&key)?;
+        }
         Ok(props.append(G::Property {
             key: Some(key),
             value: Some(value),
@@ -4816,6 +4978,10 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     self.inc(1);
                     self.skip_s_white();
                     if Enc::wide(self.next()) == 0x23 /* '#' */ {
+                        // A header comment (`value: | # note`) is a real
+                        // comment: record it so Document.comments and
+                        // toString() round-trips keep it.
+                        let start = self.pos;
                         self.inc(1);
                         while !self.is_b_char_or_eof() {
                             if Enc::wide(self.next()) == 0 {
@@ -4823,6 +4989,13 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                             }
                             self.inc(1);
                         }
+                        let end = self.pos;
+                        let line = self.line;
+                        self.comments.push(ParsedComment {
+                            start,
+                            end,
+                            line,
+                        });
                     }
                     __c = Enc::wide(self.next());
                     continue;
@@ -5853,6 +6026,13 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         }
                         self.inc(1);
                     }
+                    let end = self.pos;
+                    let line = self.line;
+                    self.comments.push(ParsedComment {
+                        start,
+                        end,
+                        line,
+                    });
                     continue;
                 }
                 0x26 /* '&' */ => {
@@ -6126,7 +6306,9 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
     }
 
     /// s-l-comments
-    /// positions `pos` on the next newline, or eof.
+    /// positions `pos` on the next newline, or eof. Records any `#`-comment
+    /// into `self.comments` before advancing past it so `Bun.YAML.Document`
+    /// can round-trip it.
     fn try_skip_to_new_line(&mut self) -> Result<(), ParseError> {
         let mut whitespace = false;
 
@@ -6139,6 +6321,8 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             if !whitespace {
                 return Err(ParseError::UnexpectedCharacter);
             }
+            let start = self.pos;
+            let line = self.line;
             self.inc(1);
             while !self.is_b_char_or_eof() {
                 if Enc::wide(self.next()) == 0 {
@@ -6146,6 +6330,12 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 }
                 self.inc(1);
             }
+            let end = self.pos;
+            self.comments.push(ParsedComment {
+                start,
+                end,
+                line,
+            });
         }
 
         if self.pos.is_less_than(self.input.len())

@@ -789,37 +789,40 @@ test.concurrent("TLS over TLS: the peer closing the outer connection closes both
   }
 });
 
-test.concurrent("TLS over TLS: reconnecting the outer socket while the inner layer is live fails with EISCONN", async () => {
-  // Same rule as for an fd-adopted socket: the outer socket is the inner
-  // layer's transport now, and connect() must not swap the connection out from
-  // under it (which would leave the inner socket with no close and its records
-  // going to an unrelated peer).
-  const { promise: failure, reject } = Promise.withResolvers<never>();
-  const outerServer = tls.createServer(serverTLS, outer => {
-    outer.on("error", () => {});
-    const inner = new tls.TLSSocket(outer, { isServer: true, ...serverTLS });
-    inner.on("error", () => {});
-    inner.on("data", chunk => inner.write(chunk));
-  });
-  outerServer.listen(0, "127.0.0.1");
-  await once(outerServer, "listening");
-  const port = (outerServer.address() as net.AddressInfo).port;
-  try {
-    const outer = tls.connect({ port, host: "127.0.0.1", ...clientTLS });
-    outer.on("error", () => {});
-    await Promise.race([once(outer, "secureConnect"), failure]);
-    const inner = tls.connect({ socket: outer, ...clientTLS });
-    inner.on("error", reject);
-    await Promise.race([once(inner, "secureConnect"), failure]);
-    inner.off("error", reject).on("error", () => {});
-    const [err] = await Promise.race([once(outer.connect(port, "127.0.0.1"), "error"), failure]);
-    expect((err as NodeJS.ErrnoException).code).toBe("EISCONN");
-    await Promise.race([once(inner, "close"), failure]);
-    expect(inner.destroyed).toBe(true);
-  } finally {
-    outerServer.close();
-  }
-});
+test.concurrent(
+  "TLS over TLS: reconnecting the outer socket while the inner layer is live fails with EISCONN",
+  async () => {
+    // Same rule as for an fd-adopted socket: the outer socket is the inner
+    // layer's transport now, and connect() must not swap the connection out from
+    // under it (which would leave the inner socket with no close and its records
+    // going to an unrelated peer).
+    const { promise: failure, reject } = Promise.withResolvers<never>();
+    const outerServer = tls.createServer(serverTLS, outer => {
+      outer.on("error", () => {});
+      const inner = new tls.TLSSocket(outer, { isServer: true, ...serverTLS });
+      inner.on("error", () => {});
+      inner.on("data", chunk => inner.write(chunk));
+    });
+    outerServer.listen(0, "127.0.0.1");
+    await once(outerServer, "listening");
+    const port = (outerServer.address() as net.AddressInfo).port;
+    try {
+      const outer = tls.connect({ port, host: "127.0.0.1", ...clientTLS });
+      outer.on("error", () => {});
+      await Promise.race([once(outer, "secureConnect"), failure]);
+      const inner = tls.connect({ socket: outer, ...clientTLS });
+      inner.on("error", reject);
+      await Promise.race([once(inner, "secureConnect"), failure]);
+      inner.off("error", reject).on("error", () => {});
+      const [err] = await Promise.race([once(outer.connect(port, "127.0.0.1"), "error"), failure]);
+      expect((err as NodeJS.ErrnoException).code).toBe("EISCONN");
+      await Promise.race([once(inner, "close"), failure]);
+      expect(inner.destroyed).toBe(true);
+    } finally {
+      outerServer.close();
+    }
+  },
+);
 
 test.concurrent("ref() on the wrapped socket still holds the event loop after the upgrade", async () => {
   // node: the wrapped socket and the TLS socket share one uv handle, so

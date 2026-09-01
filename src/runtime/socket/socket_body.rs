@@ -2796,7 +2796,8 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
 
         let socket = self.socket.get();
-        if socket.is_shutdown() || socket.is_closed() || self.flags.get().contains(Flags::REJECTED) {
+        if socket.is_shutdown() || socket.is_closed() || self.flags.get().contains(Flags::REJECTED)
+        {
             return WriteResult::Success {
                 wrote: -1,
                 total: buffer.slice().len() + self.buffered_data_for_node_net.get().len() as usize,

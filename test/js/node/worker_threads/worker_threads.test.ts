@@ -376,7 +376,8 @@ test("argv option is read by index, like Node", async () => {
     Object.setPrototypeOf(["a", "b"], null),
   ];
   const workers = argvs.map(argv => new Worker(src, { eval: true, argv }));
-  const got = await Promise.all(workers.map(w => new Promise(res => w.once("message", res))));
+  // events.once rejects when the worker emits "error" instead
+  const got = await Promise.all(workers.map(w => once(w, "message").then(([data]) => data)));
   expect(got).toEqual([
     ["a", "b"],
     ["a", "b"],

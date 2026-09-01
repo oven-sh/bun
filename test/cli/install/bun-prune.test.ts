@@ -2683,6 +2683,29 @@ test.concurrent("mixed: a stale store under a hoisted install does not make the 
   expect(storeEntries(dir)).toStrictEqual(["no-deps@1.0.1", "one-dep@1.0.0"]);
 });
 
+// The hoisted linker installs an `npm:` alias under the alias, a name only the dependency rows know.
+test.concurrent("mixed: real directories of npm: aliases are hoisted evidence", async () => {
+  const dir = await setupWithLinker("isolated", {
+    name: "foo",
+    dependencies: { x: "npm:no-deps@1.0.0", y: "npm:no-deps@2.0.0" },
+  });
+  const nm = join(dir, "node_modules");
+  for (const name of readdirSync(nm)) {
+    if (!name.startsWith(".")) rmSync(join(nm, name), { recursive: true });
+  }
+  await install(dir, "--linker", "hoisted");
+  expect(isSymlink(join(nm, "x"))).toBeFalse();
+  expect(existsSync(join(nm, "x", "package.json"))).toBeTrue();
+  expect(existsSync(join(nm, "y", "package.json"))).toBeTrue();
+  expect(storeEntries(dir)).toStrictEqual(["no-deps@1.0.0", "no-deps@2.0.0"]);
+
+  // The hoisted planner checks the two directories; the isolated planner would check the store too.
+  const { stdout, stderr, exitCode } = await prune(dir, "--linker", "isolated");
+  expect(stderr).toBe("");
+  expect(lines(stdout)).toStrictEqual([BANNER, "", NOTHING(2, 1)]);
+  expect(exitCode).toBe(0);
+});
+
 // pnpm#5960
 test.concurrent.each(["hoisted", "isolated"] as Linker[])(
   "%s: --production keeps an npm: alias whose real name is also a dev-only dependency",

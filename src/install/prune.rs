@@ -383,32 +383,45 @@ fn extracted(tag: ResolutionTag) -> bool {
     )
 }
 
-fn lockfile_extracts(lockfile: &Lockfile, name: &[u8]) -> bool {
-    let name_hash = bun_semver::string::Builder::string_hash(name);
-    let Some(entry) = lockfile.package_index.get(&name_hash) else {
-        return false;
-    };
-    let pkg_res = lockfile.packages.items_resolution();
-    entry.as_slice().iter().any(|&id| {
-        pkg_res
-            .get(id as usize)
-            .is_some_and(|res| extracted(res.tag))
-    })
-}
-
 /// Which linkers the entries of the importer folders (root and workspace `node_modules`) come from.
-#[derive(Default)]
-struct LayoutEvidence {
+struct LayoutEvidence<'a> {
+    /// Every dependency name (alias) that resolves to an extracted package: the names the hoisted
+    /// linker installs real directories under.
+    extracted_aliases: Vec<&'a [u8]>,
     hoisted: bool,
     isolated: bool,
 }
 
-impl LayoutEvidence {
+impl<'a> LayoutEvidence<'a> {
+    fn init(lockfile: &'a Lockfile) -> LayoutEvidence<'a> {
+        let buf = lockfile.buffers.string_bytes.as_slice();
+        let deps = lockfile.buffers.dependencies.as_slice();
+        let resolutions = lockfile.buffers.resolutions.as_slice();
+        let pkg_res = lockfile.packages.items_resolution();
+        let mut extracted_aliases: Vec<&[u8]> = deps
+            .iter()
+            .zip(resolutions)
+            .filter(|(_, pkg_id)| {
+                pkg_res
+                    .get(**pkg_id as usize)
+                    .is_some_and(|res| extracted(res.tag))
+            })
+            .map(|(dep, _)| dep.name.slice(buf))
+            .collect();
+        index_sort::sort_vec_unstable_by(&mut extracted_aliases, |a, b| a.cmp(b));
+        extracted_aliases.dedup();
+        LayoutEvidence {
+            extracted_aliases,
+            hoisted: false,
+            isolated: false,
+        }
+    }
+
     fn mixed(&self) -> bool {
         self.hoisted && self.isolated
     }
 
-    fn scan(&mut self, lockfile: &Lockfile, dir: &Dir) {
+    fn scan(&mut self, dir: &Dir) {
         let mut alias = Vec::new();
         for (name, kind) in read_entries(dir) {
             if self.mixed() {
@@ -423,18 +436,20 @@ impl LayoutEvidence {
                     alias.extend_from_slice(&name);
                     alias.push(b'/');
                     alias.extend_from_slice(&inner);
-                    self.vote(lockfile, &scope_dir, &alias, &inner, inner_kind);
+                    self.vote(&scope_dir, &alias, &inner, inner_kind);
                 }
                 continue;
             }
-            self.vote(lockfile, dir, &name, &name, kind);
+            self.vote(dir, &name, &name, kind);
         }
     }
 
     // A dangling store link is junk, not evidence.
-    fn vote(&mut self, lockfile: &Lockfile, dir: &Dir, alias: &[u8], name: &[u8], kind: EntryKind) {
+    fn vote(&mut self, dir: &Dir, alias: &[u8], name: &[u8], kind: EntryKind) {
         match kind {
-            EntryKind::Directory if lockfile_extracts(lockfile, alias) => self.hoisted = true,
+            EntryKind::Directory if self.extracted_aliases.binary_search(&alias).is_ok() => {
+                self.hoisted = true;
+            }
             EntryKind::SymLink
                 if store_link_target(dir, name).is_some() && !is_dangling(dir, name) =>
             {
@@ -448,8 +463,8 @@ impl LayoutEvidence {
 /// `configured` only decides when the folders hold both layouts.
 fn detect_layout(manager: &PackageManager, node_modules: &Dir, configured: Layout) -> Layout {
     let lockfile: &Lockfile = &manager.lockfile;
-    let mut evidence = LayoutEvidence::default();
-    evidence.scan(lockfile, node_modules);
+    let mut evidence = LayoutEvidence::init(lockfile);
+    evidence.scan(node_modules);
     for pkg_id in 0..lockfile.packages.len() {
         if evidence.mixed() {
             break;
@@ -461,7 +476,7 @@ fn detect_layout(manager: &PackageManager, node_modules: &Dir, configured: Layou
             continue;
         };
         if let Ok(dir) = Dir::open(&folder) {
-            evidence.scan(lockfile, &dir);
+            evidence.scan(&dir);
         }
     }
     match (evidence.isolated, evidence.hoisted) {

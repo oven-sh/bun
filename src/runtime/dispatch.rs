@@ -80,7 +80,7 @@ use crate::shell::interpreter::ShellTask;
 use crate::shell::io_writer::Poll as ShellBufferedWriterPoll;
 use crate::shell::states::r#async::Async as ShellAsync;
 
-use crate::webcore::fetch::fetch_tasklet::FetchTasklet;
+use crate::webcore::fetch::fetch_tasklet as fetch;
 use crate::webcore::file_sink::FlushPendingTask as FlushPendingFileSinkTask;
 #[cfg(not(windows))]
 use crate::webcore::file_sink::Poll as FileSinkPoll;
@@ -189,6 +189,17 @@ pub(crate) fn run_task(
             task.ptr.cast::<$ty>()
         };
     }
+    /// `<$hop as TaskHop>::run` on the queued `ThisPtr`, SAFETY spelled once.
+    macro_rules! hop {
+        ($hop:ty) => {{
+            // SAFETY: §Dispatch — `task.tag` is `<$hop>::TAG`, set together with
+            // `task.ptr` from a `ThisPtr` whose pointee keeps itself alive for
+            // the queued task; not touched here after the call.
+            <$hop as bun_event_loop::TaskHop>::run(unsafe {
+                bun_ptr::ThisPtr::new(cast_ptr!(<$hop as bun_event_loop::TaskHop>::Target))
+            })
+        }};
+    }
     /// `CompressionStream::<T>::run_from_js_thread` takes `*mut T` (full
     /// allocation provenance — R-2) so its trailing `T::deref()` may free the box.
     macro_rules! compression_arm {
@@ -243,15 +254,6 @@ pub(crate) fn run_task(
             crate::api::js_bundle_completion_task::JSBundleCompletionTask::on_complete_anytask(
                 cast_ptr!(crate::api::js_bundle_completion_task::JSBundleCompletionTask),
             )?;
-        }
-        task_tag::FetchTaskletPromiseSettle => {
-            // SAFETY: boxed at the fetch completion site; the arm consumes it.
-            let holder = unsafe {
-                bun_core::heap::take(cast_ptr!(
-                    crate::webcore::fetch::fetch_tasklet::FetchTaskletPromiseSettle
-                ))
-            };
-            holder.run()?;
         }
         task_tag::DuplexUpgradeContext => {
             // SAFETY: tag identifies pointee; the queue owns the live context
@@ -333,17 +335,10 @@ pub(crate) fn run_task(
         | task_tag::ShellYesTask => run_task_cold(task),
 
         // ── fetch / S3 ───────────────────────────────────────────────────
-        task_tag::FetchTasklet => {
-            cast!(FetchTasklet).on_progress_update()?;
-        }
-        task_tag::FetchTaskletDeinit => {
-            // SAFETY: posted by `deref_from_thread` with the last ref.
-            unsafe {
-                crate::webcore::fetch::FetchTaskletDeinitHop::run(cast_ptr!(
-                    crate::webcore::fetch::FetchTaskletDeinitHop
-                ))
-            };
-        }
+        task_tag::FetchTasklet => hop!(fetch::ProgressHop)?,
+        task_tag::FetchTaskletHandBack => hop!(fetch::HandBackHop)?,
+        task_tag::FetchTaskletPromiseSettle => hop!(fetch::PromiseSettleHop)?,
+        task_tag::FetchTaskletRequestDataDrain => hop!(fetch::RequestBodyDrainHop)?,
         // `cast_ptr!` yields the heap-allocated S3 task; JS-thread dispatch
         // is the sole owner here.
         task_tag::S3HttpSimpleTask => {
@@ -589,7 +584,7 @@ fn run_task_cold(task: Task) {
 /// `release_task_unrun` track `bun_event_loop::task_tag::COUNT`. Bump when
 /// adding a variant — and give it an arm in both.
 const _: () = assert!(
-    task_tag::COUNT == 61,
+    task_tag::COUNT == 62,
     "dispatch::run_task / release_task_unrun arm count out of sync with bun_event_loop::task_tag",
 );
 
@@ -1219,6 +1214,15 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
             unsafe { <$ty as Taskable>::release_unrun(task.ptr.cast::<$ty>()) }
         }};
     }
+    /// `<$hop as TaskHop>::release_unrun` on the queued `ThisPtr`, SAFETY spelled once.
+    macro_rules! release_hop {
+        ($hop:ty) => {{
+            // SAFETY: as `release!`; the tag is `<$hop>::TAG`.
+            <$hop as bun_event_loop::TaskHop>::release_unrun(unsafe {
+                bun_ptr::ThisPtr::new(task.ptr.cast::<<$hop as bun_event_loop::TaskHop>::Target>())
+            })
+        }};
+    }
     match task.tag {
         task_tag::AnyTaskJob => {
             // The one erased tag: every payload is a `Job<C>` reached through its header.
@@ -1235,11 +1239,10 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         task_tag::ShellYesTask => release!(ShellYesTask),
         task_tag::CppTask => release!(CppTask),
         task_tag::DuplexUpgradeContext => release!(crate::socket::DuplexUpgradeContext),
-        task_tag::FetchTasklet => release!(FetchTasklet),
-        task_tag::FetchTaskletDeinit => release!(crate::webcore::fetch::FetchTaskletDeinitHop),
-        task_tag::FetchTaskletPromiseSettle => {
-            release!(crate::webcore::fetch::fetch_tasklet::FetchTaskletPromiseSettle)
-        }
+        task_tag::FetchTasklet => release_hop!(fetch::ProgressHop),
+        task_tag::FetchTaskletHandBack => release_hop!(fetch::HandBackHop),
+        task_tag::FetchTaskletPromiseSettle => release_hop!(fetch::PromiseSettleHop),
+        task_tag::FetchTaskletRequestDataDrain => release_hop!(fetch::RequestBodyDrainHop),
         task_tag::FSWatchTask => release!(FSWatchTask),
         task_tag::HotReloadTask => release!(hot_reloader::HotReloadTask),
         task_tag::WatchReloadTask => release!(hot_reloader::WatchReloadTask),

@@ -234,7 +234,11 @@ impl Ticket {
     /// before this returns, so `self` must not live inside that memory: move
     /// the ticket out of the work's struct first, post, then drop it.
     pub fn post(&self, task: NonNull<ConcurrentTaskItem>) {
-        test_gate::before_ticket_post(self);
+        test_gate::before_ticket_post(
+            &self.shared,
+            #[cfg(debug_assertions)]
+            self.id,
+        );
         debug_assert!(
             self.shared.state() != State::Closed,
             "ticket post after its VM closed (a ticket was created after the wait)"
@@ -262,6 +266,28 @@ impl Ticket {
     pub fn cancelled(&self) -> bool {
         self.shared.state() >= State::Draining
     }
+
+    /// This ticket in a form that can be handed back through `&self`
+    /// ([`InFlightTicket::hand_back`]), for work whose state is shared.
+    pub fn in_flight(self) -> InFlightTicket {
+        let this = core::mem::ManuallyDrop::new(self);
+        InFlightTicket {
+            // SAFETY: `this` is never dropped; its one `shared` moves here.
+            shared: unsafe { core::ptr::read(&raw const this.shared) },
+            kind: this.kind,
+            #[cfg(debug_assertions)]
+            id: this.id,
+            returned: core::sync::atomic::AtomicBool::new(false),
+        }
+    }
+
+    fn give_back(shared: &Shared, #[cfg(debug_assertions)] id: u64) {
+        #[cfg(debug_assertions)]
+        shared.debug.live.lock().at.remove(&id);
+        if shared.tickets.fetch_sub(1, Ordering::SeqCst) == 1 && shared.state() >= State::Draining {
+            shared.notify();
+        }
+    }
 }
 
 impl Clone for Ticket {
@@ -274,13 +300,59 @@ impl Clone for Ticket {
 
 impl Drop for Ticket {
     fn drop(&mut self) {
-        #[cfg(debug_assertions)]
-        self.shared.debug.live.lock().at.remove(&self.id);
-        if self.shared.tickets.fetch_sub(1, Ordering::SeqCst) == 1
-            && self.shared.state() >= State::Draining
-        {
-            self.shared.notify();
+        Ticket::give_back(
+            &self.shared,
+            #[cfg(debug_assertions)]
+            self.id,
+        );
+    }
+}
+
+/// A [`Ticket`] kept in state shared with the JS thread: the other thread
+/// posts through it and hands it back, once, through `&self` when its last
+/// touch of the VM is done. Dropping it unreturned hands it back.
+pub struct InFlightTicket {
+    shared: Arc<Shared>,
+    kind: LoopKind,
+    #[cfg(debug_assertions)]
+    id: u64,
+    returned: core::sync::atomic::AtomicBool,
+}
+
+impl InFlightTicket {
+    /// [`Ticket::post`]. Not after [`hand_back`](Self::hand_back).
+    pub fn post(&self, task: NonNull<ConcurrentTaskItem>) {
+        debug_assert!(
+            !self.returned.load(Ordering::Relaxed),
+            "post after hand_back"
+        );
+        test_gate::before_ticket_post(
+            &self.shared,
+            #[cfg(debug_assertions)]
+            self.id,
+        );
+        debug_assert!(
+            self.shared.state() != State::Closed,
+            "ticket post after its VM closed (a ticket was created after the wait)"
+        );
+        self.shared.deliver(self.kind, task);
+    }
+
+    /// Give the ticket back (what dropping a [`Ticket`] does); later calls do nothing.
+    pub fn hand_back(&self) {
+        if !self.returned.swap(true, Ordering::SeqCst) {
+            Ticket::give_back(
+                &self.shared,
+                #[cfg(debug_assertions)]
+                self.id,
+            );
         }
+    }
+}
+
+impl Drop for InFlightTicket {
+    fn drop(&mut self) {
+        self.hand_back();
     }
 }
 
@@ -543,7 +615,7 @@ pub extern "C" fn Bun__VM__currentLoopKind(vm: &VirtualMachine) -> LoopKind {
 // under the gate, not in production.
 #[cfg(debug_assertions)]
 mod test_gate {
-    use super::{Ordering, Posted, Shared, State, Ticket, VmHandle};
+    use super::{Ordering, Posted, Shared, State, VmHandle};
     type Task = core::ptr::NonNull<super::ConcurrentTaskItem>;
 
     impl VmHandle {
@@ -574,17 +646,10 @@ mod test_gate {
         let _ = w.flush();
     }
 
-    pub(super) fn before_ticket_post(t: &Ticket) {
-        if armed(&t.shared) {
-            park_until_draining(&t.shared);
-            let l = *t
-                .shared
-                .debug
-                .live
-                .lock()
-                .at
-                .get(&t.id)
-                .expect("live ticket");
+    pub(super) fn before_ticket_post(shared: &Shared, id: u64) {
+        if armed(shared) {
+            park_until_draining(shared);
+            let l = *shared.debug.live.lock().at.get(&id).expect("live ticket");
             say(format_args!(
                 "late completion from {}:{}",
                 l.file(),
@@ -621,14 +686,14 @@ mod test_gate {
 }
 #[cfg(not(debug_assertions))]
 mod test_gate {
-    use super::{Posted, Shared, Ticket, VmHandle};
+    use super::{Posted, Shared, VmHandle};
     type Task = core::ptr::NonNull<super::ConcurrentTaskItem>;
     impl VmHandle {
         #[inline(always)]
         pub(crate) fn arm_test_gate(&self) {}
     }
     #[inline(always)]
-    pub(super) fn before_ticket_post(_: &Ticket) {}
+    pub(super) fn before_ticket_post(_: &Shared) {}
     #[inline(always)]
     pub(super) fn weak_post(_: &Shared, task: Task, post: impl FnOnce(Task) -> Posted) -> Posted {
         post(task)

@@ -866,7 +866,7 @@ pub enum SourceHandle {
     /// `Subprocess<'a>`; the pointed-at allocation outlives this handle.
     Subprocess(BackRef<crate::api::bun::subprocess::Subprocess<'static>>),
     ShellWritable(BackRef<crate::shell::subproc::Writable, bun_ptr::Mut>),
-    FetchResponseBody(BackRef<crate::webcore::fetch::fetch_tasklet::FetchTasklet, bun_ptr::Mut>),
+    FetchResponseBody(BackRef<crate::webcore::fetch::fetch_tasklet::FetchTasklet>),
     ServerRequestBody(crate::server::AnyRequestContext),
     S3DownloadBody(BackRef<crate::webcore::s3::client::S3DownloadStreamWrapper>),
     HTMLRewriter(BackRef<crate::api::html_rewriter::RewriterPipe>),
@@ -955,6 +955,72 @@ impl SourceHandle {
             | SourceHandle::FileReader(_)
             | SourceHandle::Subprocess(_)
             | SourceHandle::ShellWritable(_)
+            | SourceHandle::HTMLRewriter(_)
+            | SourceHandle::TestingCancelOnDrain(_) => {}
+        }
+    }
+
+    /// `Body::PendingValue` producer hook: a consumer wants the whole body
+    /// buffered. `true` if this producer handles it.
+    pub fn start_buffering(&self) -> bool {
+        match *self {
+            SourceHandle::FetchResponseBody(p) => {
+                p.on_start_buffering();
+                true
+            }
+            SourceHandle::None
+            | SourceHandle::JSController(_)
+            | SourceHandle::ServerRequestBody(_)
+            | SourceHandle::ByteStream(_)
+            | SourceHandle::FileReader(_)
+            | SourceHandle::Subprocess(_)
+            | SourceHandle::ShellWritable(_)
+            | SourceHandle::S3DownloadBody(_)
+            | SourceHandle::HTMLRewriter(_)
+            | SourceHandle::TestingCancelOnDrain(_) => false,
+        }
+    }
+
+    /// Whether [`start_streaming`](Self::start_streaming) would hand over a
+    /// buffer, i.e. the body can be realised as a stream right now.
+    pub fn can_start_streaming(&self) -> bool {
+        matches!(self, SourceHandle::FetchResponseBody(_))
+    }
+
+    /// `Body::PendingValue` producer hook: the body is being realised as a
+    /// `ByteStream`; hand over whatever is already buffered.
+    pub fn start_streaming(&self) -> Option<crate::webcore::DrainResult> {
+        match *self {
+            SourceHandle::FetchResponseBody(p) => Some(p.on_start_streaming_http_response_body()),
+            SourceHandle::None
+            | SourceHandle::JSController(_)
+            | SourceHandle::ServerRequestBody(_)
+            | SourceHandle::ByteStream(_)
+            | SourceHandle::FileReader(_)
+            | SourceHandle::Subprocess(_)
+            | SourceHandle::ShellWritable(_)
+            | SourceHandle::S3DownloadBody(_)
+            | SourceHandle::HTMLRewriter(_)
+            | SourceHandle::TestingCancelOnDrain(_) => None,
+        }
+    }
+
+    /// `Body::PendingValue` producer hook: the body's `ByteStream` now exists.
+    pub fn readable_stream_available(
+        &self,
+        global: &JSGlobalObject,
+        readable: &crate::webcore::ReadableStream,
+    ) {
+        match *self {
+            SourceHandle::FetchResponseBody(p) => p.on_readable_stream_available(global, readable),
+            SourceHandle::None
+            | SourceHandle::JSController(_)
+            | SourceHandle::ServerRequestBody(_)
+            | SourceHandle::ByteStream(_)
+            | SourceHandle::FileReader(_)
+            | SourceHandle::Subprocess(_)
+            | SourceHandle::ShellWritable(_)
+            | SourceHandle::S3DownloadBody(_)
             | SourceHandle::HTMLRewriter(_)
             | SourceHandle::TestingCancelOnDrain(_) => {}
         }

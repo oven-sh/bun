@@ -233,6 +233,9 @@ pub struct PendingValue {
     /// may resolve or fail this body synchronously from inside the call —
     /// replacing the `Value` this `PendingValue` lives in — so callers install
     /// their `promise`/`on_receive_value` first and touch nothing afterwards.
+    /// A producer that leaves these three hooks unset is signalled through
+    /// `producer` (`SourceHandle::{start_buffering, start_streaming,
+    /// readable_stream_available}`) instead.
     pub(crate) on_start_buffering: Option<fn(ctx: NonNull<c_void>)>,
     pub(crate) on_start_streaming: Option<fn(ctx: NonNull<c_void>) -> DrainResult>,
     pub(crate) on_readable_stream_available:
@@ -278,7 +281,7 @@ impl Default for PendingValue {
 
 impl PendingValue {
     /// Once `readable` is set the live handle is `NewSource.producer`; these
-    /// hooks go stale when the producer (e.g. `FetchTasklet`) is freed.
+    /// hooks go stale when the producer is freed.
     fn detach_producer(&mut self) {
         self.on_start_buffering = None;
         self.on_start_streaming = None;
@@ -423,11 +426,14 @@ impl PendingValue {
             self.promise = Some(promise_value);
             promise_value.protect();
 
+            // Last use of `self`: the producer may settle the body (and so
+            // replace `*self`) before this returns.
             if let Some(on_start_buffering) = self.on_start_buffering.take() {
-                // Last use of `self`: the producer may settle the body (and so
-                // replace `*self`) before this returns.
                 let task = self.task.unwrap();
                 on_start_buffering(task);
+            } else {
+                let producer = self.producer;
+                producer.start_buffering();
             }
             Ok(promise_value)
         }
@@ -862,6 +868,8 @@ impl Value {
 
         if let Some(drain) = locked.on_start_streaming.take() {
             drain_result = drain(locked.task.unwrap());
+        } else if let Some(drained) = locked.producer.start_streaming() {
+            drain_result = drained;
         }
 
         if matches!(drain_result, DrainResult::Aborted) {
@@ -900,6 +908,10 @@ impl Value {
 
         if let Some(on_readable_stream_available) = locked.on_readable_stream_available.take() {
             on_readable_stream_available(locked.task.unwrap(), global_this, readable);
+        } else {
+            locked
+                .producer
+                .readable_stream_available(global_this, &readable);
         }
         locked.detach_producer();
 
@@ -1460,6 +1472,8 @@ impl Value {
 
         if let Some(drain) = locked.on_start_streaming.take() {
             drain_result = drain(locked.task.unwrap());
+        } else if let Some(drained) = locked.producer.start_streaming() {
+            drain_result = drained;
         }
 
         if matches!(drain_result, DrainResult::Aborted) {
@@ -1503,6 +1517,10 @@ impl Value {
                 global_this,
                 locked.readable.get().unwrap(),
             );
+        } else {
+            locked
+                .producer
+                .readable_stream_available(global_this, &locked.readable.get().unwrap());
         }
         locked.detach_producer();
 

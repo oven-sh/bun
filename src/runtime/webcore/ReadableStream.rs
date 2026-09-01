@@ -4,6 +4,7 @@ use core::ptr::NonNull;
 
 use crate::webcore::jsc::SysErrorJsc as _;
 use crate::webcore::jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult};
+use bun_jsc::JsCellRefExt as _;
 // `bun_jsc` not yet a dep; alias to local shim so `bun_jsc::Strong` etc. resolve.
 use crate::webcore::jsc as bun_jsc;
 use bun_collections::VecExt;
@@ -819,10 +820,12 @@ pub trait SourceContext: Sized {
 // With Rust's default repr the field is reordered and the cast reads
 // adjacent fields as the loader, returning empty bodies.
 #[repr(C)]
+#[derive(bun_ptr::CellRefCounted)]
+#[ref_count(destroy = Self::destroy)]
 pub struct NewSource<C: SourceContext> {
     pub context: C,
     pub cancelled: bool,
-    pub ref_count: u32,
+    pub ref_count: Cell<u32>,
     pub pending_err: Option<syscall::Error>,
     pub close_handler: Option<fn(Option<*mut c_void>)>,
     /// Borrowed opaque context for native `close_handler`s (never
@@ -844,7 +847,7 @@ pub struct NewSource<C: SourceContext> {
     /// only the wrapper's own ref remains. [`Self::finalize`] flips it to
     /// `Finalized` so [`Self::on_js_close`] reads `None` instead of a
     /// dead-but-unswept cell.
-    pub this_jsvalue: jsc::JsRef,
+    pub this_jsvalue: bun_jsc::JsCell<jsc::JsRef>,
     /// The producer holding a native ref has parked ([`Self::unroot_wrapper`]):
     /// its ref keeps this allocation, not the wrapper, so an unread stream can
     /// be collected. Cleared by [`Self::root_wrapper`].
@@ -860,13 +863,13 @@ impl<C: SourceContext + Default> Default for NewSource<C> {
         Self {
             context: C::default(),
             cancelled: false,
-            ref_count: 1,
+            ref_count: Cell::new(1),
             pending_err: None,
             close_handler: None,
             close_ctx: None,
             producer: Cell::new(streams::SourceHandle::None),
             global_this: None,
-            this_jsvalue: jsc::JsRef::empty(),
+            this_jsvalue: bun_jsc::JsCell::new(jsc::JsRef::empty()),
             wrapper_unrooted: Cell::new(false),
             is_closed: Cell::new(false),
         }
@@ -990,6 +993,55 @@ impl<C: SourceContext> NewSourceCodegen for NewSource<C> {
     }
     fn sink_owner_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue) {
         C::js_sink_owner_set_cached(this, global, value)
+    }
+}
+
+/// A producer's counted reference to a [`NewSource`]: keeps the allocation
+/// alive and, unless the producer parked it ([`NewSource::unroot_wrapper`]),
+/// the JS wrapper rooted. Released on drop.
+pub struct SourceRef<C: SourceContext>(bun_ptr::BackRef<NewSource<C>>);
+
+impl<C: SourceContext> SourceRef<C> {
+    fn retain(source: bun_ptr::BackRef<NewSource<C>>) -> Self {
+        source.increment_count();
+        Self(source)
+    }
+
+    /// One more reference on `source` (a live [`NewSource::new`] allocation, which every
+    /// `&NewSource` handed out by the stream machinery is).
+    pub fn new(source: &NewSource<C>) -> Self {
+        Self::retain(bun_ptr::BackRef::new(source))
+    }
+}
+
+impl SourceRef<ByteStream> {
+    /// A reference on the `ByteStream` source behind `stream`, if that is what it is.
+    pub fn byte_stream(stream: &ReadableStream) -> Option<Self> {
+        stream
+            .ptr
+            .bytes()
+            .map(|bytes| Self::retain(bun_ptr::BackRef::new(bytes.parent_const())))
+    }
+}
+
+impl<C: SourceContext> Clone for SourceRef<C> {
+    fn clone(&self) -> Self {
+        Self::retain(self.0)
+    }
+}
+
+impl<C: SourceContext> core::ops::Deref for SourceRef<C> {
+    type Target = NewSource<C>;
+    #[inline]
+    fn deref(&self) -> &NewSource<C> {
+        self.0.get()
+    }
+}
+
+impl<C: SourceContext> Drop for SourceRef<C> {
+    fn drop(&mut self) {
+        self.0.will_release_ref();
+        <NewSource<C> as bun_ptr::CellRefCounted>::deref_nn(self.0.into());
     }
 }
 
@@ -1133,61 +1185,64 @@ impl<C: SourceContext> NewSource<C> {
         );
     }
 
-    pub fn increment_count(&mut self) {
-        self.ref_count += 1;
+    pub fn increment_count(&self) {
+        self.ref_();
         // A ref beyond the JS wrapper's own is held (in practice a FileReader
         // `waiting_for_on_reader_done` I/O ref). Root the wrapper so
         // `on_js_close`, reached from `on_reader_done` off the event loop with
         // no JS frame on the stack, never reads a dead-but-unswept cell.
         if !self.wrapper_unrooted.get() {
-            // SAFETY: `self` is live for the call.
-            unsafe { Self::upgrade_wrapper(self) };
+            self.upgrade_wrapper();
         }
     }
 
-    /// # Safety
-    /// `this` points at a live `NewSource<C>`.
-    unsafe fn upgrade_wrapper(this: *mut Self) {
-        // SAFETY: fn contract; field places only, see `unroot_wrapper`.
-        unsafe {
-            if let Some(global) = (*this).global_this.as_deref() {
-                if (*this).this_jsvalue.is_not_empty() {
-                    (*this).this_jsvalue.upgrade(global);
+    fn upgrade_wrapper(&self) {
+        if let Some(global) = self.global_this.as_deref() {
+            self.this_jsvalue.with_mut(|this_jsvalue| {
+                if this_jsvalue.is_not_empty() {
+                    this_jsvalue.upgrade(global);
                 }
-            }
+            });
         }
     }
 
     /// The producer keeps its native ref but stops rooting the wrapper: nothing
     /// is reading, so the stream should be collectable. [`SourceContext::wrapper_finalized`]
     /// tells the producer if that happens.
-    ///
-    /// Takes a raw pointer: the producer reaches this while it holds a `&C` into
-    /// `this` (the chunk it is delivering to), so only the fields written here
-    /// are touched, never a `&mut Self` that would cover the context too.
-    ///
-    /// # Safety
-    /// `this` points at a live `NewSource<C>`.
-    pub unsafe fn unroot_wrapper(this: *mut Self) {
-        // SAFETY: fn contract.
-        unsafe {
-            (*this).wrapper_unrooted.set(true);
-            (*this).this_jsvalue.downgrade();
-        }
+    pub fn unroot_wrapper(&self) {
+        self.wrapper_unrooted.set(true);
+        self.this_jsvalue.with_mut(jsc::JsRef::downgrade);
     }
 
     /// Undo [`Self::unroot_wrapper`]: a consumer is reading again.
+    pub fn root_wrapper(&self) {
+        self.wrapper_unrooted.set(false);
+        if self.ref_count.get() > 1 {
+            self.upgrade_wrapper();
+        }
+    }
+
+    /// Bookkeeping ahead of releasing one reference: once only the JS wrapper's
+    /// own ref will remain, drop the Strong root so the wrapper becomes
+    /// collectable again. Returns the count after the release.
+    fn will_release_ref(&self) -> u32 {
+        let rc = self.ref_count.get();
+        debug_assert!(rc > 0, "Attempted to decrement ref count below zero");
+        if rc == 2 {
+            self.this_jsvalue.with_mut(jsc::JsRef::downgrade);
+        }
+        rc - 1
+    }
+
+    /// `CellRefCounted` destroy: context teardown, then free.
     ///
     /// # Safety
-    /// As [`Self::unroot_wrapper`].
-    pub unsafe fn root_wrapper(this: *mut Self) {
+    /// Only for the `#[ref_count(destroy = …)]` derive: `this` is the sole
+    /// live owner of the `Box` from [`Self::new`].
+    unsafe fn destroy(this: *mut Self) {
         // SAFETY: fn contract.
-        unsafe {
-            (*this).wrapper_unrooted.set(false);
-            if (*this).ref_count > 1 {
-                Self::upgrade_wrapper(this);
-            }
-        }
+        let mut source = unsafe { Box::from_raw(this) };
+        source.context.deinit_fn();
     }
 
     /// Release one reference. If the count hits zero, runs context teardown and
@@ -1201,33 +1256,10 @@ impl<C: SourceContext> NewSource<C> {
     /// [`Self::new`] (i.e. `Box::into_raw`). Caller must not dereference `this`
     /// — nor any interior pointer such as `&mut context` — after this returns.
     pub unsafe fn decrement_count(this: *mut Self) -> u32 {
-        // SAFETY: caller contract — `this` is live for the duration of this block.
-        let remaining = unsafe {
-            let r = &mut (*this).ref_count;
-            #[cfg(debug_assertions)]
-            if *r == 0 {
-                panic!("Attempted to decrement ref count below zero");
-            }
-            *r -= 1;
-            *r
-        };
-        if remaining == 1 {
-            // Only the JS wrapper's own ref remains: drop the Strong root so
-            // the wrapper becomes collectable again.
-            // SAFETY: caller contract — `this` is live while remaining > 0.
-            unsafe { (*this).this_jsvalue.downgrade() };
-        }
-        if remaining == 0 {
-            // SAFETY: still live; run side-effect teardown while fields are valid.
-            unsafe {
-                (*this).context.deinit_fn();
-            }
-            // SAFETY: `this` originated from `Box::into_raw` in `Self::new`. No
-            // `&mut` borrow of `*this` is live at this point — reclaim and drop,
-            // which runs `Drop` on `context` and all other fields, then frees.
-            drop(unsafe { bun_core::heap::take(this) });
-            return 0;
-        }
+        // SAFETY: caller contract — `this` is live.
+        let remaining = unsafe { &*this }.will_release_ref();
+        // SAFETY: caller contract — `this` came from `Self::new` and is not used again.
+        unsafe { <Self as bun_ptr::CellRefCounted>::deref(this) };
         remaining
     }
 
@@ -1246,8 +1278,8 @@ impl<C: SourceContext> NewSource<C> {
             <Self as NewSourceCodegen>::to_js(self, global_this)
         };
         out_value.ensure_still_alive();
-        if self.this_jsvalue.is_empty() {
-            self.this_jsvalue = jsc::JsRef::init_weak(out_value);
+        if self.this_jsvalue.get().is_empty() {
+            self.this_jsvalue.set(jsc::JsRef::init_weak(out_value));
         }
         from_native(global_this, out_value)
     }
@@ -1482,11 +1514,11 @@ impl<C: SourceContext> NewSource<C> {
         // the raw refcount via a raw pointer (the call may free `*this`).
         let this = Box::into_raw(self);
         // SAFETY: `this` is live — just unwrapped from `Box`.
-        unsafe { (*this).this_jsvalue.finalize() };
+        unsafe { (*this).this_jsvalue.with_mut(jsc::JsRef::finalize) };
         // SAFETY: `this` is live; the JS-wrapper +1 (released last) keeps ref_count > 0
         // across whatever ref the producer drops in response.
         unsafe {
-            if (*this).ref_count > 1 {
+            if (*this).ref_count.get() > 1 {
                 (*this).context.wrapper_finalized();
             }
         }

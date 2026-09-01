@@ -75,6 +75,14 @@ pub struct Header {
     value_len: usize,
 }
 
+// SAFETY: a `Header` is two borrowed `&[u8]` views spelled as (ptr, len) for C
+// layout; it owns nothing and has `&[u8]`'s thread-safety. The borrow's
+// lifetime is erased (see `Header::new`), so whoever sends one must keep the
+// backing buffer alive and unchanged for as long as the receiver reads it.
+unsafe impl Send for Header {}
+// SAFETY: as above.
+unsafe impl Sync for Header {}
+
 impl Default for Header {
     #[inline]
     fn default() -> Self {

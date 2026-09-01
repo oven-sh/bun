@@ -73,6 +73,34 @@ pub trait AbortListener {
     fn on_abort(&mut self, reason: JSValue);
 }
 
+/// A native `abort` listener registered with [`AbortSignal::listen_native`];
+/// called on the signal's JS thread.
+pub trait NativeAbortListener: Sized {
+    fn on_abort(this: bun_ptr::ThisPtr<Self>, reason: JSValue);
+}
+
+/// A native listener's registration on an [`AbortSignal`]: holds a reference
+/// on the signal and one unit of its pending activity, and removes the
+/// listener when dropped. The listener keeps this for as long as it lives at
+/// the address it registered.
+pub struct AbortListenerRegistration {
+    signal: AbortSignalRef,
+    ctx: *mut c_void,
+}
+
+impl AbortListenerRegistration {
+    pub fn signal(&self) -> &AbortSignal {
+        &self.signal
+    }
+}
+
+impl Drop for AbortListenerRegistration {
+    fn drop(&mut self) {
+        self.signal.clean_native_bindings(self.ctx);
+        self.signal.pending_activity_unref();
+    }
+}
+
 impl AbortSignal {
     pub fn listen<C: AbortListener>(&self, ctx: *mut C) -> &AbortSignal {
         extern "C" fn callback<C: AbortListener>(ptr: *mut c_void, reason: JSValue) {
@@ -82,6 +110,25 @@ impl AbortSignal {
             C::on_abort(val, reason);
         }
         self.add_listener(ctx.cast::<c_void>(), callback::<C>)
+    }
+
+    /// Call `C::on_abort` on `listener`'s pointee when the signal aborts, for
+    /// as long as the returned registration is held.
+    pub fn listen_native<C: NativeAbortListener>(
+        &self,
+        listener: bun_ptr::BackRef<C, bun_ptr::Root>,
+    ) -> AbortListenerRegistration {
+        extern "C" fn callback<C: NativeAbortListener>(ptr: *mut c_void, reason: JSValue) {
+            // SAFETY: `ptr` is the root pointer `listen_native` registered; its
+            // pointee holds the registration, which unregisters this callback
+            // before the pointee goes away.
+            C::on_abort(unsafe { bun_ptr::ThisPtr::new(ptr.cast::<C>()) }, reason);
+        }
+        let ctx = listener.this_ptr().as_ptr().cast::<c_void>();
+        let signal = self.ref_();
+        self.pending_activity_ref();
+        self.add_listener(ctx, callback::<C>);
+        AbortListenerRegistration { signal, ctx }
     }
 
     pub fn add_listener(

@@ -45,7 +45,7 @@ use bun_core::{String as BunString, Tag as BunStringTag};
 use bun_http::{self as http, FetchRedirect, Headers, HeadersExt as _, MimeType};
 use bun_http_jsc::method_jsc;
 use bun_http_types::Method::Method;
-use bun_jsc::{HTTPHeaderName, StringJsc as _, SysErrorJsc as _, URLJsc as _};
+use bun_jsc::{GlobalRef, HTTPHeaderName, StringJsc as _, SysErrorJsc as _, URLJsc as _};
 use bun_paths::{self, PathBuffer};
 use bun_sys::FdExt as _;
 // `FromJsEnum for FetchRedirect` lives in bun_http_jsc; importing the impl crate
@@ -65,7 +65,6 @@ use crate::webcore::{
 use crate::webcore::{blob, readable_stream, response};
 use bun_http_jsc as _;
 use bun_http_jsc::headers_jsc::from_fetch_headers;
-use bun_jsc::AbortSignalRef;
 #[cfg(windows)]
 use bun_paths::resolve_path::PosixToWinNormalizer;
 use bun_picohttp as picohttp;
@@ -74,8 +73,8 @@ use bun_s3_signing::{SignOptions, SignResult};
 use bun_url::PercentEncoding;
 use bun_url::URL as ZigURL;
 
+pub use self::fetch_tasklet::FetchTasklet;
 use self::fetch_tasklet::{FetchOptions, HTTPRequestBody};
-pub use self::fetch_tasklet::{FetchTasklet, FetchTaskletDeinitHop};
 
 // ──────────────────────────────────────────────────────────────────────────
 // Local extension shims (upstream methods not yet ported / not in scope)
@@ -234,32 +233,17 @@ fn bun_fetch_preconnect(
     }
 
     // bun.handleOom(url_str.toOwnedSlice(...)) → to_owned_slice() aborts on OOM.
-    // `preconnect` takes a `URL<'static>` that borrows a `Box<[u8]>` href and
-    // assumes ownership when `is_url_owned == true` (it reconstructs the Box
-    // to free it). Hand the allocation off via `heap::alloc`.
-    let href_box: Box<[u8]> = url_str.to_owned_slice().into_boxed_slice();
-    let href_raw: *mut [u8] = bun_core::heap::into_raw(href_box);
-    // SAFETY: `href_raw` is a freshly-leaked Box<[u8]>; we either pass ownership
-    // to `preconnect` (which frees it) or reclaim it on the early-return paths.
-    let href: &'static [u8] = unsafe { &*href_raw };
-    let url = ZigURL::parse(href);
-
-    macro_rules! reclaim_href {
-        () => {
-            // SAFETY: paired with the `heap::alloc` above; not yet handed to preconnect.
-            drop(unsafe { bun_core::heap::take(href_raw) });
-        };
-    }
+    let preconnect =
+        http::async_http::PreparedPreconnect::new(url_str.to_owned_slice().into_boxed_slice());
+    let url = preconnect.url();
 
     if !url.is_http() && !url.is_https() && !url.is_s3() {
-        reclaim_href!();
         return Err(
             global_object.throw_invalid_arguments(format_args!("URL must be HTTP or HTTPS"))
         );
     }
 
     if url.hostname.is_empty() {
-        reclaim_href!();
         return Err(global_object
             .err(
                 jsc::ErrorCode::INVALID_ARG_TYPE,
@@ -269,13 +253,10 @@ fn bun_fetch_preconnect(
     }
 
     if !url.has_valid_port() {
-        reclaim_href!();
         return Err(global_object.throw_invalid_arguments(format_args!("Invalid port")));
     }
 
-    // `preconnect` is a free fn in `bun_http::async_http`. Ownership
-    // of `href_raw` transfers here (`is_url_owned: true`).
-    http::async_http::preconnect(url, true);
+    preconnect.start();
     Ok(JSValue::UNDEFINED)
 }
 
@@ -414,23 +395,12 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
     let mut proxy: Option<ZigURL> = None;
     let mut redirect_type: FetchRedirect = FetchRedirect::Follow;
-    let signal: Option<AbortSignalRef>;
+    // Our reference on the AbortSignal (set at `'extract_signal`): released on
+    // every early-return path, or moved into `FetchOptions`.
+    let mut signal: Option<jsc::AbortSignalRef>;
     let mut range: Option<bun_core::ZBox> = None;
     let mut unix_socket_path: Box<[u8]> = Box::default();
 
-    // `url_proxy_buffer` gets reassigned while `url`/`proxy`
-    // still point into it (or into the buffer about to replace it). Detach the
-    // borrow-checker by parsing through a raw-pointer slice; the caller is
-    // responsible for keeping the backing allocation alive (it always becomes
-    // the new `url_proxy_buffer` before the old one is dropped).
-    macro_rules! parse_url_detached {
-        ($slice:expr) => {{
-            let s: &[u8] = $slice;
-            // SAFETY: `s` points into a Vec that is immediately adopted as
-            // `url_proxy_buffer` (or already is it); see note above.
-            ZigURL::parse(unsafe { bun_ptr::detach_lifetime(s) })
-        }};
-    }
     let mut url_type = URLType::Remote;
 
     let mut ssl_config: Option<http::ssl_config::SharedPtr> = None;
@@ -450,24 +420,12 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         break 'brk None;
     };
 
-    // kept as raw `*mut Request` because the body re-borrows it
-    // multiple times across long-lived option/init reads.
-    let request: Option<*mut Request> = 'brk: {
-        if first_arg.is_cell() {
-            if let Some(request_) = first_arg.as_direct::<Request>() {
-                break 'brk Some(request_);
-            }
-        }
-        break 'brk None;
+    // The JS-owned Request `first_arg` wraps (kept alive by `arguments`).
+    let request: Option<&Request> = if first_arg.is_cell() {
+        first_arg.as_direct_class_ref::<Request>()
+    } else {
+        None
     };
-    // Helper macro: short-lived `&mut Request` reborrow of the optional pointer.
-    macro_rules! request_mut {
-        () => {
-            // SAFETY: `request` was obtained from a live JS-owned Request via
-            // `as_direct`; each reborrow is non-overlapping at the call site.
-            request.map(|p| unsafe { &mut *p })
-        };
-    }
 
     // If it's NOT a Request or a subclass of Request, treat the first argument as a URL.
     let url_str_optional = if first_arg.as_::<Request>().is_none() {
@@ -494,7 +452,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             break 'extract_url str;
         }
 
-        if let Some(req) = request_mut!() {
+        if let Some(req) = request {
             let _ = req.ensure_url(); // bun.handleOom — aborts on OOM
             break 'extract_url req.url.get().clone();
         }
@@ -546,7 +504,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         }
     };
     let mut url_proxy_buffer = owned_url.into_href().into_vec();
-    let mut url = parse_url_detached!(&url_proxy_buffer[..]);
+    let mut url = ZigURL::parse(&url_proxy_buffer[..]);
     if url.is_file() {
         url_type = URLType::File;
     } else if url.is_blob() {
@@ -563,7 +521,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             }
         }
 
-        if let Some(req) = request_mut!() {
+        if let Some(req) = request {
             break 'extract_method Some(req.method);
         }
 
@@ -778,7 +736,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // redirect: "follow" | "error" | "manual" | undefined;
     redirect_type = 'extract_redirect_type: {
         // First, try to use the Request object's redirect if available
-        if let Some(req) = request_mut!() {
+        if let Some(req) = request {
             redirect_type = req.flags.redirect;
         }
 
@@ -853,7 +811,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // proxy: string | { url: string, headers?: Headers } | undefined;
     let mut proxy_headers: Option<Headers> = None;
     // `defer if (proxy_headers) |*hdrs| hdrs.deinit();` → Headers impls Drop.
-    url_proxy_buffer = 'extract_proxy: {
+    'extract_proxy: {
         let objects_to_try = [
             options_object.unwrap_or_default(),
             request_init_object.unwrap_or_default(),
@@ -880,20 +838,21 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                                 ),
                             );
                         }
+                        let url_len = url.href.len();
                         let mut buffer: Vec<u8> = Vec::with_capacity(url_proxy_buffer.len());
                         buffer.extend_from_slice(&url_proxy_buffer);
                         write!(&mut buffer, "{}", href).expect("write to Vec cannot fail");
-                        let url_len = url.href.len();
-                        url = parse_url_detached!(&buffer[0..url_len]);
+                        // allocator.free(url_proxy_buffer) — old Vec dropped on reassign.
+                        url_proxy_buffer = buffer;
+                        url = ZigURL::parse(&url_proxy_buffer[0..url_len]);
                         if url.is_file() {
                             url_type = URLType::File;
                         } else if url.is_blob() {
                             url_type = URLType::Blob;
                         }
 
-                        proxy = Some(parse_url_detached!(&buffer[url_len..]));
-                        // allocator.free(url_proxy_buffer) — old Vec dropped on reassign.
-                        break 'extract_proxy buffer;
+                        proxy = Some(ZigURL::parse(&url_proxy_buffer[url_len..]));
+                        break 'extract_proxy;
                     }
                     // Handle object format: proxy: { url: "http://proxy.example.com:8080", headers?: Headers }
                     // If the proxy object doesn't have a 'url' property, ignore it.
@@ -915,21 +874,21 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                                         ),
                                     );
                                 }
+                                let url_len = url.href.len();
                                 let mut buffer: Vec<u8> =
                                     Vec::with_capacity(url_proxy_buffer.len());
                                 buffer.extend_from_slice(&url_proxy_buffer);
                                 write!(&mut buffer, "{}", href).expect("write to Vec cannot fail");
-                                let url_len = url.href.len();
-                                url = parse_url_detached!(&buffer[0..url_len]);
+                                // allocator.free(url_proxy_buffer) — old Vec dropped on reassign.
+                                url_proxy_buffer = buffer;
+                                url = ZigURL::parse(&url_proxy_buffer[0..url_len]);
                                 if url.is_file() {
                                     url_type = URLType::File;
                                 } else if url.is_blob() {
                                     url_type = URLType::Blob;
                                 }
 
-                                proxy = Some(parse_url_detached!(&buffer[url_len..]));
-                                // allocator.free(url_proxy_buffer) — old Vec dropped on reassign.
-                                url_proxy_buffer = buffer;
+                                proxy = Some(ZigURL::parse(&url_proxy_buffer[url_len..]));
 
                                 // Get the headers from the proxy object (optional)
                                 if let Some(headers_value) =
@@ -952,16 +911,14 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                                     }
                                 }
 
-                                break 'extract_proxy url_proxy_buffer;
+                                break 'extract_proxy;
                             }
                         }
                     }
                 }
             }
         }
-
-        break 'extract_proxy url_proxy_buffer;
-    };
+    }
 
     // signal: AbortSignal | null | undefined;
     // WebIDL `AbortSignal?` member: present iff not undefined. A present `null`
@@ -973,8 +930,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 if signal_.is_null() {
                     break 'extract_signal None;
                 }
-                if let Some(signal) = AbortSignal::ref_from_js(signal_) {
-                    break 'extract_signal Some(signal);
+                if let Some(signal__) = AbortSignal::ref_from_js(signal_) {
+                    break 'extract_signal Some(signal__);
                 }
                 let err = ctx.to_type_error(
                     jsc::ErrorCode::INVALID_ARG_TYPE,
@@ -989,9 +946,9 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             }
         }
 
-        if let Some(req) = request_mut!() {
+        if let Some(req) = request {
             if let Some(signal_) = req.abort_signal() {
-                break 'extract_signal Some(signal_.ref_());
+                break 'extract_signal Some(signal_.clone());
             }
             break 'extract_signal None;
         }
@@ -1001,8 +958,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 if signal_.is_null() {
                     break 'extract_signal None;
                 }
-                if let Some(signal) = AbortSignal::ref_from_js(signal_) {
-                    break 'extract_signal Some(signal);
+                if let Some(signal__) = AbortSignal::ref_from_js(signal_) {
+                    break 'extract_signal Some(signal__);
                 }
                 let err = ctx.to_type_error(
                     jsc::ErrorCode::INVALID_ARG_TYPE,
@@ -1041,7 +998,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             }
         }
 
-        if let Some(req) = request_mut!() {
+        if let Some(req) = request {
             let body_value = req.get_body_value();
             let already_used = match body_value {
                 BodyValue::Used => true,
@@ -1150,7 +1107,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 }
             }
 
-            if let Some(req) = request_mut!() {
+            if let Some(req) = request {
                 if let Some(head) = req.get_fetch_headers_unless_empty() {
                     break 'brk Some(head.as_ptr());
                 }
@@ -1411,7 +1368,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // Fetch spec step 11: reject synchronously for a pre-aborted signal. Runs
     // after body/header extraction so Request-constructor errors (GET+body,
     // already-used body) win and `request.bodyUsed` is set, matching Node.
-    if let Some(sig) = &signal {
+    if let Some(sig) = signal.as_deref() {
         if sig.aborted() {
             let reason = sig.js_reason(global_this);
             if let HTTPRequestBody::ReadableStream(stream_ref) = &body {
@@ -1699,39 +1656,21 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             let promise = jsc::JSPromiseStrong::init(global_this);
             let promise_value = promise.value();
 
-            // `S3StreamWrapper.url` borrows `url_proxy_buffer`; box
-            // the buffer first (stable heap address) and re-parse so the
-            // detached-lifetime slices remain valid after the Vec → Box move.
-            let owned_buffer: Box<[u8]> = core::mem::take(&mut url_proxy_buffer).into_boxed_slice();
             let url_len = url.href.len();
-            // SAFETY: `owned_buffer` is moved into `s3_stream` alongside the
-            // re-parsed URL; the slices stay valid for the buffer's lifetime.
-            let url_static =
-                ZigURL::parse(unsafe { bun_ptr::detach_lifetime(&owned_buffer[..url_len]) });
-            let s3_path = url_static.s3_path();
+            let s3_path = url.s3_path();
 
             // Proxy href (if any) lives in the same buffer, immediately after `url`.
             let proxy_url: Option<&[u8]> = if proxy.is_some() {
-                // SAFETY: see `url_static` SAFETY note above.
-                Some(unsafe { bun_ptr::detach_lifetime(&owned_buffer[url_len..]) })
+                Some(&url_proxy_buffer[url_len..])
             } else {
                 None
             };
 
-            let s3_stream = Box::new(S3StreamWrapper {
-                url: url_static,
-                _url_proxy_buffer: owned_buffer,
+            let s3_stream = S3StreamWrapper {
+                url: Box::from(&url_proxy_buffer[..url_len]),
                 promise,
-                global: global_this,
-            });
-            // Shim: erases both the payload type and the `Result` return when
-            // coercing to the `fn (S3UploadResult, *mut c_void)` callback shape.
-            fn s3_stream_wrapper_resolve(result: s3::S3UploadResult<'_>, ctx: *mut libc::c_void) {
-                // SAFETY: ctx was produced by `heap::alloc(s3_stream)` below; the
-                // 'static lifetime is a raw-pointer fiction (the pointee's real
-                // lifetime is managed by the resolve callback itself).
-                let _ = S3StreamWrapper::resolve(result, ctx.cast::<S3StreamWrapper<'static>>());
-            }
+                global: GlobalRef::from(global_this),
+            };
             // `dupe()` heap-allocates a fresh intrusive-refcounted copy.
             // `upload_stream` adopts the ref by value (no extra bump) and the
             // MultiPartUpload derefs on completion.
@@ -1748,10 +1687,12 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 headers.as_ref().and_then(|h| h.get_content_encoding()),
                 proxy_url,
                 credentials_with_options.request_payer,
-                Some(s3_stream_wrapper_resolve),
-                bun_core::heap::into_raw(s3_stream).cast::<libc::c_void>(),
+                Some(Box::new(move |result| {
+                    // The outcome reaches the caller through the promise; a
+                    // pending exception from settling it is left for the caller's fold.
+                    let _ = s3_stream.resolve(result);
+                })),
             )?;
-            // url/url_proxy_buffer ownership moved into s3_stream above.
             return Ok(promise_value);
         }
         if method == Method::POST {
@@ -1780,21 +1721,20 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
         if let Some(proxy_) = &proxy {
             // proxy and url are in the same buffer lets replace it
-            let old_buffer = core::mem::take(&mut url_proxy_buffer);
-            // `defer allocator.free(old_buffer)` → drop(old_buffer) at end of scope.
             let mut buffer = vec![0u8; result.url.len() + proxy_.href.len()];
             buffer[0..result.url.len()].copy_from_slice(&result.url);
             buffer[result.url.len()..].copy_from_slice(proxy_.href);
+            // `defer allocator.free(old_buffer)` → old Vec dropped on reassign.
             url_proxy_buffer = buffer;
 
-            url = parse_url_detached!(&url_proxy_buffer[0..result.url.len()]);
-            proxy = Some(parse_url_detached!(&url_proxy_buffer[result.url.len()..]));
-            drop(old_buffer);
+            url = ZigURL::parse(&url_proxy_buffer[0..result.url.len()]);
+            proxy = Some(ZigURL::parse(&url_proxy_buffer[result.url.len()..]));
         } else {
+            proxy = None;
             // replace headers and url of the request
             // allocator.free(url_proxy_buffer) — old Vec dropped on reassign.
             url_proxy_buffer = core::mem::take(&mut result.url).into();
-            url = parse_url_detached!(&url_proxy_buffer[..]);
+            url = ZigURL::parse(&url_proxy_buffer[..]);
             // result.url = ""; — fetch now owns this (mem::take above)
         }
 
@@ -1829,34 +1769,14 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
     let promise_val = promise.value();
 
-    // `FetchOptions.{url,proxy}` are `ZigURL<'static>` borrowing the
-    // `url_proxy_buffer: Box<[u8]>` stored alongside them — a self-referential
-    // struct. `Vec::into_boxed_slice` may realloc when `cap > len` (the
-    // proxy-string path above triggers this), so the existing `url`/`proxy`
-    // slices may dangle after the conversion. Convert to `Box<[u8]>` first
-    // (stable heap address), then re-parse the URLs from the boxed buffer.
-    let url_len = url.href.len(); // fat-pointer len read; no deref
+    // The tasklet's request re-parses `url` / `proxy` from the buffer it keeps.
+    let url_len = url.href.len();
     let has_proxy = proxy.is_some();
-    let url_proxy_boxed: Box<[u8]> = core::mem::take(&mut url_proxy_buffer).into_boxed_slice();
-    // SAFETY: `url_proxy_boxed` is moved into `FetchOptions` alongside the URLs
-    // that borrow it; `FetchTasklet` keeps the buffer alive for as long as the
-    // URLs are read. Erase the borrow to a raw slice so borrowck doesn't tie
-    // `url_static` to the local `url_proxy_boxed` binding.
-    let buf_ptr: *const [u8] = &raw const *url_proxy_boxed;
-    // SAFETY: `buf_ptr` points into `url_proxy_boxed` which the FetchTasklet
-    // keeps alive for the lifetime of the parsed URLs (see comment above).
-    // Explicit `&*` first to satisfy `dangerous_implicit_autorefs` — the
-    // `Index` call would otherwise create an implicit `&` to `*buf_ptr`.
-    let buf: &'static [u8] = unsafe { &*buf_ptr };
-    let url_static: ZigURL<'static> = ZigURL::parse(&buf[..url_len]);
-    let proxy_static: Option<ZigURL<'static>> = if has_proxy {
-        Some(ZigURL::parse(&buf[url_len..]))
-    } else {
-        None
-    };
     let fetch_options = FetchOptions {
         method,
-        url: url_static,
+        url_proxy_buffer: url_proxy_buffer.into_boxed_slice(),
+        url_len,
+        has_proxy,
         headers: headers.take().unwrap_or_default(),
         body,
         disable_keepalive,
@@ -1867,10 +1787,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         reject_unauthorized,
         redirect_type,
         verbose,
-        proxy: proxy_static,
         proxy_headers: proxy_headers.take(),
-        url_proxy_buffer: url_proxy_boxed,
-        signal,
+        signal: signal.take(),
         ssl_config: ssl_config.take(),
         upgraded_connection,
         forced_protocol,
@@ -1905,21 +1823,17 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 // `impl` blocks inside fn bodies for types referenced by external fn pointers.
 // ──────────────────────────────────────────────────────────────────────────
 
-struct S3StreamWrapper<'a> {
+struct S3StreamWrapper {
     promise: jsc::JSPromiseStrong,
-    url: ZigURL<'a>,
-    _url_proxy_buffer: Box<[u8]>,
-    global: &'a JSGlobalObject,
+    /// The request URL's href.
+    url: Box<[u8]>,
+    global: GlobalRef,
 }
 
-impl<'a> S3StreamWrapper<'a> {
-    fn resolve(result: s3::S3UploadResult, self_: *mut Self) -> JsResult<()> {
-        // SAFETY: self_ was created via heap::alloc in fetch_impl; we reclaim
-        // ownership here exactly once on the resolve callback.
-        let mut self_ = unsafe { bun_core::heap::take(self_) };
-        let global = self_.global;
-        // `defer bun.destroy(self)` + `defer free(url_proxy_buffer)` →
-        // Box<Self> and Box<[u8]> Drop at end of scope.
+impl S3StreamWrapper {
+    fn resolve(self, result: s3::S3UploadResult) -> JsResult<()> {
+        let mut self_ = self;
+        let global: &JSGlobalObject = &self_.global;
         match result {
             s3::S3UploadResult::Success => {
                 let response = Box::new(Response::init(
@@ -1929,11 +1843,10 @@ impl<'a> S3StreamWrapper<'a> {
                         ..Default::default()
                     },
                     Body::new(BodyValue::Empty),
-                    BunString::create_atom_if_possible(self_.url.href),
+                    BunString::create_atom_if_possible(&self_.url),
                     false,
                 ));
-                // SAFETY: `into_raw` yields a freshly allocated heap `Response`;
-                // ownership transfers to JSC.
+                // Ownership of the freshly boxed `Response` transfers to JSC.
                 let response_js =
                     Response::make_maybe_pooled(global, bun_core::heap::into_raw(response));
                 response_js.ensure_still_alive();
@@ -1951,12 +1864,11 @@ impl<'a> S3StreamWrapper<'a> {
                         bytes: err.message.to_vec(),
                         was_string: true,
                     })),
-                    BunString::create_atom_if_possible(self_.url.href),
+                    BunString::create_atom_if_possible(&self_.url),
                     false,
                 ));
 
-                // SAFETY: `into_raw` yields a freshly allocated heap `Response`;
-                // ownership transfers to JSC.
+                // Ownership of the freshly boxed `Response` transfers to JSC.
                 let response_js =
                     Response::make_maybe_pooled(global, bun_core::heap::into_raw(response));
                 response_js.ensure_still_alive();

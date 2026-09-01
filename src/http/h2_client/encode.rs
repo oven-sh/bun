@@ -340,9 +340,8 @@ pub(crate) fn drain_send_body(session: &mut ClientSession, stream: &mut Stream, 
             // SAFETY: data_ptr[cursor..cursor+data_len] is the readable slice.
             let data = unsafe { bun_core::ffi::slice(data_ptr.add(cursor), data_len) };
             let sent = write_data_windowed(session, stream, data, ended, cap);
-            // We still hold the lock from `acquire()` above; `sb` is the sole
-            // live borrow, so reborrowing `&mut sb.buffer` is a child access.
-            let buffer = &mut sb.buffer;
+            // We still hold the lock from `acquire()` above.
+            let buffer = sb.buffer_held();
             buffer.cursor += sent;
             let drained = buffer.is_empty();
             if drained {

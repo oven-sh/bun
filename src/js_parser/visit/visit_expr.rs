@@ -25,7 +25,7 @@ use js_ast::OpCode as Op;
 // The 25+ per-variant `e_*` helpers are private; only `visit_expr` /
 // `visit_expr_in_out` are surfaced.
 
-impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
+impl<'a> P<'a> {
     // PERF(port:noalias): `e: &mut Expr` is lowered to a `noalias` LLVM param, so reads
     // through `e` can be cached in registers across child recursion. The by-value
     // `Expr -> Expr` shape moved 24B in + 24B out per frame; the in-place form moves 8B

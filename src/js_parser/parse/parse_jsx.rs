@@ -8,7 +8,7 @@ use bun_ast::op::Level;
 use bun_ast::{E, Expr, ExprNodeIndex, ExprNodeList, G};
 use bun_collections::VecExt;
 
-impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
+impl<'a> P<'a> {
     pub(crate) fn parse_jsx_element(&mut self, loc: bun_ast::Loc) -> crate::CrateResult<Expr> {
         let p = self;
         // Nested child elements (`<a><b><c>...`) recurse back into this function,
@@ -23,7 +23,7 @@ impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
         let tag = JSXTag::parse(p)?;
 
         // The tag may have TypeScript type arguments: "<Foo<T>/>"
-        if TYPESCRIPT {
+        if p.ts {
             // Pass a flag to the type argument skipper because we need to call
             let _ = p.skip_type_script_type_arguments::<true, false>()?;
         }

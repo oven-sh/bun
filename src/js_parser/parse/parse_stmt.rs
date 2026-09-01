@@ -24,7 +24,7 @@ type Result<T> = crate::CrateResult<T>;
 
 // The 25+ per-token `t_*` helpers are private; only `parse_stmt` is surfaced.
 
-impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
+impl<'a> P<'a> {
     // Note on `#[inline]` / `#[inline(never)]` / `#[cold]` annotations across the `t_*` arms:
     // `parse_stmt` is invoked once per leading statement token; profiling showed its
     // stack-adjust prologue/epilogue dominating because LLVM was hoisting the larger
@@ -66,7 +66,7 @@ impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
         opts: &mut ParseStatementOptions<'a>,
         loc: bun_ast::Loc,
     ) -> Result<Stmt> {
-        if !Self::IS_TYPESCRIPT_ENABLED {
+        if !p.ts {
             p.lexer.unexpected()?;
             return Err(crate::Error::SyntaxError);
         }
@@ -77,7 +77,7 @@ impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
     #[inline(never)]
     fn t_at(p: &mut Self, opts: &mut ParseStatementOptions<'a>) -> Result<Stmt> {
         // Parse decorators before class statements, which are potentially exported
-        if Self::IS_TYPESCRIPT_ENABLED || p.options.features.standard_decorators {
+        if p.ts || p.options.features.standard_decorators {
             let scope_index = p.scopes_in_order.len();
             let ts_decorators = p.parse_type_script_decorators()?;
 
@@ -114,8 +114,8 @@ impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
             // (but reject "export @decorator export class Foo {}")
             if p.lexer.token != T::TClass
                 && !(p.lexer.token == T::TExport && !opts.is_export)
-                && !(Self::IS_TYPESCRIPT_ENABLED && p.lexer.is_contextual_keyword(b"abstract"))
-                && !(Self::IS_TYPESCRIPT_ENABLED && p.lexer.is_contextual_keyword(b"declare"))
+                && !(p.ts && p.lexer.is_contextual_keyword(b"abstract"))
+                && !(p.ts && p.lexer.is_contextual_keyword(b"declare"))
             {
                 p.lexer.expected(T::TClass)?;
             }
@@ -174,7 +174,7 @@ impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
 
         p.lexer.next()?;
 
-        if Self::IS_TYPESCRIPT_ENABLED && p.lexer.token == T::TEnum {
+        if p.ts && p.lexer.token == T::TEnum {
             return p.parse_typescript_enum_stmt(loc, opts);
         }
 
@@ -429,7 +429,7 @@ impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
                 let mut value = p.parse_binding(Default::default())?;
 
                 // Skip over types
-                if Self::IS_TYPESCRIPT_ENABLED && p.lexer.token == T::TColon {
+                if p.ts && p.lexer.token == T::TColon {
                     p.lexer.expect(T::TColon)?;
                     p.skip_type_script_type(Level::Lowest)?;
                 }
@@ -862,7 +862,7 @@ impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
 
             T::TImport => {
                 // "export import foo = bar"
-                if Self::IS_TYPESCRIPT_ENABLED && opts.scope != StatementScope::Nested {
+                if p.ts && opts.scope != StatementScope::Nested {
                     opts.is_export = true;
                     return p.parse_stmt(opts);
                 }
@@ -872,7 +872,7 @@ impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
             }
 
             T::TEnum => {
-                if !Self::IS_TYPESCRIPT_ENABLED {
+                if !p.ts {
                     p.lexer.unexpected()?;
                     return Err(crate::Error::SyntaxError);
                 }
@@ -887,7 +887,7 @@ impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
                     return p.parse_stmt(opts);
                 }
 
-                if Self::IS_TYPESCRIPT_ENABLED {
+                if p.ts {
                     if p.lexer.is_contextual_keyword(b"as") {
                         // "export as namespace ns;"
                         p.lexer.next()?;
@@ -915,7 +915,7 @@ impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
                     return p.parse_fn_stmt(loc, opts, Some(async_range));
                 }
 
-                if Self::IS_TYPESCRIPT_ENABLED {
+                if p.ts {
                     use typescript::identifier::StmtIdentifier;
                     if let Some(ident) = typescript::identifier::for_str(p.lexer.identifier) {
                         match ident {
@@ -1116,7 +1116,7 @@ impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
                 let expr = p.parse_expr(Level::Comma)?;
 
                 // Handle the default export of an abstract class in TypeScript
-                if Self::IS_TYPESCRIPT_ENABLED
+                if p.ts
                     && is_identifier
                     && (p.lexer.token == T::TClass || opts.ts_decorators.is_some())
                     && name == b"abstract"
@@ -1289,7 +1289,7 @@ impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
 
                     p.lexer.expect_or_insert_semicolon()?;
 
-                    if Self::IS_TYPESCRIPT_ENABLED {
+                    if p.ts {
                         // export {type Foo} from 'bar';
                         // ->
                         // nothing
@@ -1350,7 +1350,7 @@ impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
                 }
                 p.lexer.expect_or_insert_semicolon()?;
 
-                if Self::IS_TYPESCRIPT_ENABLED {
+                if p.ts {
                     // export {type Foo};
                     // ->
                     // nothing
@@ -1374,7 +1374,7 @@ impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
                 // "export = value;"
 
                 p.esm_export_keyword = previous_export_keyword; // This wasn't an ESM export statement after all
-                if Self::IS_TYPESCRIPT_ENABLED {
+                if p.ts {
                     p.lexer.next()?;
                     let value = p.parse_expr(Level::Lowest)?;
                     p.lexer.expect_or_insert_semicolon()?;
@@ -1462,7 +1462,7 @@ impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
                     return Err(crate::Error::SyntaxError);
                 }
                 let import_clause = p.parse_import_clause()?;
-                if Self::IS_TYPESCRIPT_ENABLED {
+                if p.ts {
                     if import_clause.had_type_only_imports && import_clause.items.is_empty() {
                         p.lexer.expect_contextual_keyword(b"from")?;
                         let _ = p.parse_path()?;
@@ -1543,7 +1543,7 @@ impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
                     return p.process_import_statement(stmt, path, loc, false);
                 }
 
-                if Self::IS_TYPESCRIPT_ENABLED {
+                if p.ts {
                     // Skip over type-only imports
                     if default_name == b"type" {
                         match p.lexer.token {
@@ -1742,7 +1742,7 @@ impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
                     return Self::parse_labeled_stmt(p, opts, loc, expr.loc, ident.ref_);
                 }
 
-                if Self::IS_TYPESCRIPT_ENABLED {
+                if p.ts {
                     if let Some(ts_stmt) = js_lexer::TypescriptStmtKeyword::from_bytes(name) {
                         // Hand the cold TS-keyword statement forms (`type`/`interface`/`namespace`/
                         // `module`/`abstract`/`global`/`declare`) to an out-of-line helper so the

@@ -14,7 +14,7 @@ use bun_ast::{E, Expr, Flags, G, S, Stmt};
 
 type Error = crate::Error;
 
-impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
+impl<'a> P<'a> {
     /// This assumes the "function" token has already been parsed
     pub(crate) fn parse_fn_stmt(
         &mut self,
@@ -64,7 +64,7 @@ impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
         }
 
         // Even anonymous functions can have TypeScript type parameters
-        if Self::IS_TYPESCRIPT_ENABLED {
+        if p.ts {
             let _ = p.skip_type_script_type_parameters(TypeParameterFlag::ALLOW_CONST_MODIFIER)?;
         }
 
@@ -95,13 +95,13 @@ impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
                 is_typescript_declare: opts.is_typescript_declare,
 
                 // Only allow omitting the body if we're parsing TypeScript
-                allow_missing_body_for_type_script: Self::IS_TYPESCRIPT_ENABLED,
+                allow_missing_body_for_type_script: p.ts,
                 ..Default::default()
             },
         )?;
         p.fn_or_arrow_data_parse.has_argument_decorators = false;
 
-        if Self::IS_TYPESCRIPT_ENABLED {
+        if p.ts {
             // Don't output anything if it's just a forward declaration of a function
             if opts.is_typescript_declare
                 || func.flags.contains(Flags::Function::IsForwardDeclaration)
@@ -212,7 +212,7 @@ impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
         let mut args = bun_alloc::ArenaVec::<G::Arg>::new_in(p.arena);
         while p.lexer.token != T::TCloseParen {
             // Skip over "this" type annotations
-            if Self::IS_TYPESCRIPT_ENABLED && p.lexer.token == T::TThis {
+            if p.ts && p.lexer.token == T::TThis {
                 p.lexer.next()?;
                 if p.lexer.token == T::TColon {
                     p.lexer.next()?;
@@ -247,7 +247,7 @@ impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
             let mut arg = p.parse_binding(Default::default())?;
             let mut ts_metadata = bun_ast::ts::Metadata::default();
 
-            if Self::IS_TYPESCRIPT_ENABLED {
+            if p.ts {
                 if is_identifier && opts.is_constructor {
                     // Skip over TypeScript accessibility modifiers, which turn this argument
                     // into a class field when used inside a class constructor. This is known
@@ -368,7 +368,7 @@ impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
         p.fn_or_arrow_data_parse.has_argument_decorators = arg_has_decorators;
 
         // "function foo(): any {}"
-        if Self::IS_TYPESCRIPT_ENABLED {
+        if p.ts {
             if p.lexer.token == T::TColon {
                 p.lexer.next()?;
 
@@ -453,7 +453,7 @@ impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
         }
 
         // Even anonymous functions can have TypeScript type parameters
-        if Self::IS_TYPESCRIPT_ENABLED {
+        if p.ts {
             let _ = p.skip_type_script_type_parameters(TypeParameterFlag::ALLOW_CONST_MODIFIER)?;
         }
 

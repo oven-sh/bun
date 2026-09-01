@@ -37,7 +37,7 @@ use core::ptr::NonNull;
 // In the AST crate, ListManaged is arena-backed.
 type ListManaged<'bump, T> = BumpVec<'bump, T>;
 
-impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
+impl<'a> P<'a> {
     // Thin alias of `current_scope_mut()` kept for local readability.
     #[inline(always)]
     fn vis_scope(&mut self) -> &mut js_ast::Scope {
@@ -1089,7 +1089,7 @@ impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
                         }
                     }
                 } else if property.flags.contains(flags::Property::IsMethod) {
-                    if Self::IS_TYPESCRIPT_ENABLED
+                    if self.ts
                         && !property.flags.contains(flags::Property::IsStatic)
                         && !property.flags.contains(flags::Property::IsComputed)
                     {
@@ -1129,7 +1129,7 @@ impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
                         self.visit_expr(property.value.as_mut().unwrap());
                     }
 
-                    if Self::IS_TYPESCRIPT_ENABLED {
+                    if self.ts {
                         if constructor_function_.is_some() {
                             if let Some(value) = property.value {
                                 if let ExprData::EFunction(e_func) = value.data {
@@ -1167,7 +1167,7 @@ impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
                 self.fn_only_data_visit.is_this_nested = old_is_this_captured;
             }
 
-            if Self::IS_TYPESCRIPT_ENABLED {
+            if self.ts {
                 // `lower_standard_decorators_stmt` owns field placement for such classes.
                 let use_define = self.options.use_define_for_class_fields
                     || class.should_lower_standard_decorators;

@@ -8,7 +8,7 @@ use bun_ast::expr::Data as ExprData;
 use bun_ast::op::Level;
 use bun_ast::{ClauseItem, E, Expr, LocRef, Ref};
 
-impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
+impl<'a> P<'a> {
     /// Note: The caller has already parsed the "import" keyword
     pub(crate) fn parse_import_expr(
         &mut self,
@@ -134,7 +134,7 @@ impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
             let mut original_name = alias;
             p.lexer.next()?;
 
-            let probably_type_only_import = if TYPESCRIPT {
+            let probably_type_only_import = if p.ts {
                 alias == b"type" && p.lexer.token != T::TComma && p.lexer.token != T::TCloseBrace
             } else {
                 false
@@ -280,11 +280,7 @@ impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
         Ok(ImportClause {
             items: items.into_bump_slice_mut(),
             is_single_line,
-            had_type_only_imports: if TYPESCRIPT {
-                had_type_only_imports
-            } else {
-                false
-            },
+            had_type_only_imports: if p.ts { had_type_only_imports } else { false },
         })
     }
 
@@ -321,7 +317,7 @@ impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
             }
             p.lexer.next()?;
 
-            if TYPESCRIPT {
+            if p.ts {
                 if alias == b"type" && p.lexer.token != T::TComma && p.lexer.token != T::TCloseBrace
                 {
                     if p.lexer.is_contextual_keyword(b"as") {

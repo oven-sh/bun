@@ -20,9 +20,9 @@ enum Continuation {
 
 type CResult = core::result::Result<Continuation, Error>;
 
-impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
+impl<'a> P<'a> {
     fn sfx_handle_typescript_as(p: &mut Self, level: Level) -> CResult {
-        if Self::IS_TYPESCRIPT_ENABLED
+        if p.ts
             && level.lt(Level::Compare)
             && !p.lexer.has_newline_before
             && (p.lexer.is_contextual_keyword(b"as") || p.lexer.is_contextual_keyword(b"satisfies"))
@@ -187,7 +187,7 @@ impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
             }
             T::TLessThan | T::TLessThanLessThan => {
                 // "a?.<T>()"
-                if !Self::IS_TYPESCRIPT_ENABLED {
+                if !p.ts {
                     p.lexer.expected(T::TIdentifier)?;
                     return Err(crate::Error::SyntaxError);
                 }
@@ -418,7 +418,7 @@ impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
         // "(a?) => {}"
         // "(a?: b) => {}"
         // "(a?, b?) => {}"
-        if Self::IS_TYPESCRIPT_ENABLED
+        if p.ts
             && left.loc.start == p.latest_arrow_arg_loc.start
             && (p.lexer.token == T::TColon
                 || p.lexer.token == T::TCloseParen
@@ -493,7 +493,7 @@ impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
             return Ok(Continuation::Done);
         }
 
-        if !Self::IS_TYPESCRIPT_ENABLED {
+        if !p.ts {
             p.lexer.unexpected()?;
             return Err(crate::Error::SyntaxError);
         }
@@ -879,8 +879,7 @@ impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
         // TypeScript allows type arguments to be specified with angle brackets
         // inside an expression. Unlike in other languages, this unfortunately
         // appears to require backtracking to parse.
-        if Self::IS_TYPESCRIPT_ENABLED && p.try_skip_type_script_type_arguments_with_backtracking()
-        {
+        if p.ts && p.try_skip_type_script_type_arguments_with_backtracking() {
             *optional_chain = old_optional_chain;
             return Ok(Continuation::Next);
         }
@@ -970,8 +969,7 @@ impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
         // TypeScript allows type arguments to be specified with angle brackets
         // inside an expression. Unlike in other languages, this unfortunately
         // appears to require backtracking to parse.
-        if Self::IS_TYPESCRIPT_ENABLED && p.try_skip_type_script_type_arguments_with_backtracking()
-        {
+        if p.ts && p.try_skip_type_script_type_arguments_with_backtracking() {
             *optional_chain = old_optional_chain;
             return Ok(Continuation::Next);
         }
@@ -1486,7 +1484,7 @@ impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
                 }
             }
 
-            if Self::IS_TYPESCRIPT_ENABLED {
+            if p.ts {
                 // Stop now if this token is forbidden to follow a TypeScript "as" cast
                 if p.forbid_suffix_after_as_loc.start > -1
                     && p.lexer.loc().start == p.forbid_suffix_after_as_loc.start

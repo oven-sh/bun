@@ -36,7 +36,7 @@ use bun_ast::{B, Binding, E, Expr, ExprNodeIndex, ExprNodeList, Flags, G, LocRef
 // File-split mixin: Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`,
 // so this is a direct `impl P` block.
 
-impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
+impl<'a> P<'a> {
     #[inline]
     pub(crate) fn parse_expr_or_bindings(
         &mut self,
@@ -154,12 +154,12 @@ impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
             // This seems kind of wasteful to me but it's what the official compiler
             // does and it probably doesn't have that high of a performance overhead
             // because "extends" clauses aren't that frequent, so it should be ok.
-            if Self::IS_TYPESCRIPT_ENABLED {
+            if p.ts {
                 let _ = p.skip_type_script_type_arguments::<false, false>()?; // isInsideJSXElement
             }
         }
 
-        if Self::IS_TYPESCRIPT_ENABLED {
+        if p.ts {
             if p.lexer.is_contextual_keyword(b"implements") {
                 p.lexer.next()?;
 
@@ -456,14 +456,14 @@ impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
             }
 
             // Skip over types
-            if Self::IS_TYPESCRIPT_ENABLED && p.lexer.token == T::TColon {
+            if p.ts && p.lexer.token == T::TColon {
                 type_colon_range = p.lexer.range();
                 p.lexer.next()?;
                 p.skip_type_script_type(Level::Lowest)?;
             }
 
             // There may be a "=" after the type (but not after an "as" cast)
-            if Self::IS_TYPESCRIPT_ENABLED
+            if p.ts
                 && p.lexer.token == T::TEquals
                 && !p.forbid_suffix_after_as_loc.eql(p.lexer.loc())
             {
@@ -499,10 +499,7 @@ impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
 
         // Are these arguments to an arrow function?
         let mut is_arrow_fn = p.lexer.token == T::TEqualsGreaterThan;
-        if is_arrow_fn
-            || opts.force_arrow_fn
-            || (Self::IS_TYPESCRIPT_ENABLED && p.lexer.token == T::TColon)
-        {
+        if is_arrow_fn || opts.force_arrow_fn || (p.ts && p.lexer.token == T::TColon) {
             // Arrow functions are not allowed inside certain expressions
             if level.gt(Level::Assign) {
                 p.lexer.unexpected()?;
@@ -556,7 +553,7 @@ impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
             // attempt to convert the expressions to bindings first before deciding
             // whether this is an arrow function, and only pick an arrow function if
             // there were no conversion errors.
-            if Self::IS_TYPESCRIPT_ENABLED && p.lexer.token == T::TColon && invalid_log.is_empty() {
+            if p.ts && p.lexer.token == T::TColon && invalid_log.is_empty() {
                 if opts.is_after_question_and_before_colon {
                     // Only do this very expensive check if we must
                     is_arrow_fn = p
@@ -678,8 +675,7 @@ impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
         let is_identifier = p.lexer.token == T::TIdentifier;
 
         if !opts.is_name_optional
-            || (is_identifier
-                && (!Self::IS_TYPESCRIPT_ENABLED || p.lexer.identifier != b"implements"))
+            || (is_identifier && (!p.ts || p.lexer.identifier != b"implements"))
         {
             let name_loc = p.lexer.loc();
             let name_text = p.lexer.identifier;
@@ -715,7 +711,7 @@ impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
         }
 
         // Even anonymous classes can have TypeScript type parameters
-        if Self::IS_TYPESCRIPT_ENABLED {
+        if p.ts {
             let _ = p.skip_type_script_type_parameters(
                 TypeParameterFlag::ALLOW_IN_OUT_VARIANCE_ANNOTATIONS
                     | TypeParameterFlag::ALLOW_CONST_MODIFIER,
@@ -735,7 +731,7 @@ impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
             .expect("unreachable");
         let class = p.parse_class(class_keyword, name, &class_opts)?;
 
-        if Self::IS_TYPESCRIPT_ENABLED {
+        if p.ts {
             if opts.is_typescript_declare {
                 p.pop_and_discard_scope(scope_index);
                 if opts.scope.is_namespace() && opts.is_export {
@@ -1290,7 +1286,7 @@ impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
                 .expect("unreachable");
 
             // Skip over types
-            if Self::IS_TYPESCRIPT_ENABLED {
+            if p.ts {
                 // "let foo!"
                 let is_definite_assignment_assertion =
                     p.lexer.token == T::TExclamation && !p.lexer.has_newline_before;
@@ -1480,7 +1476,7 @@ impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
             let mut stmt = p.parse_stmt(&mut current_opts)?;
 
             // Skip TypeScript types entirely
-            if Self::IS_TYPESCRIPT_ENABLED {
+            if p.ts {
                 if let js_ast::stmt::Data::STypeScript(_) = stmt.data {
                     continue;
                 }
@@ -1622,8 +1618,7 @@ impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
                         // In TypeScript, "async <ident>" not followed by "=>" treats "async" as
                         // a plain identifier (e.g. "async as T"), matching tsc's two-token
                         // lookahead in isUnParenthesizedAsyncArrowFunctionWorker (TypeScript#8444).
-                        let is_arrow_fn = !Self::IS_TYPESCRIPT_ENABLED
-                            || p.check_for_arrow_after_the_current_token();
+                        let is_arrow_fn = !p.ts || p.check_for_arrow_after_the_current_token();
 
                         if is_arrow_fn {
                             let ref_ = p.store_name_in_ref(p.lexer.identifier);
@@ -1680,9 +1675,7 @@ impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
                 // "async<T>()"
                 // "async <T>() => {}"
                 T::TLessThan => {
-                    if Self::IS_TYPESCRIPT_ENABLED
-                        && (!p.is_jsx_enabled() || p.is_ts_arrow_fn_jsx()?)
-                    {
+                    if p.ts && (!p.is_jsx_enabled() || p.is_ts_arrow_fn_jsx()?) {
                         match p
                             .try_skip_type_script_type_parameters_then_open_paren_with_backtracking(
                             ) {

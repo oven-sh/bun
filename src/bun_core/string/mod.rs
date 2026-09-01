@@ -502,14 +502,19 @@ impl String {
     /// allocated: `DEAD` when the result could not have fit in a string anyway,
     /// `OUT_OF_MEMORY` otherwise.
     pub fn utf16_transcode_failure(utf8: &[u8]) -> Self {
-        // UTF-16 never has more units than UTF-8 has bytes.
-        if utf8.len() > Self::max_length()
-            && strings::element_length_utf8_into_utf16(utf8) > Self::max_length()
-        {
+        if Self::utf16_transcode_too_long(utf8) {
             Self::DEAD
         } else {
             Self::OUT_OF_MEMORY
         }
+    }
+
+    /// Whether the UTF-16 form of `utf8` would be longer than
+    /// [`Self::max_length`].
+    pub fn utf16_transcode_too_long(utf8: &[u8]) -> bool {
+        // UTF-16 never has more units than UTF-8 has bytes.
+        utf8.len() > Self::max_length()
+            && strings::element_length_utf8_into_utf16(utf8) > Self::max_length()
     }
 
     /// Clone an OS-native path slice into a WTF-backed string (UTF-8 on

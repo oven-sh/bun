@@ -763,14 +763,24 @@ pub enum ValueLocation<'p> {
 
 impl ValueLocation<'_> {
     /// First byte of the value, falling back to the nearest key/container location.
+    /// Iterative: the chain is as long as the array nesting, which can be deep enough to overflow the stack.
     pub fn resolve(&self, contents: &[u8]) -> bun_ast::Loc {
-        match self {
-            ValueLocation::Property(key_loc) => property_value_loc_or_key(contents, *key_loc),
-            ValueLocation::ArrayItem(array, index) => {
-                let array_loc = array.resolve(contents);
-                array_item_loc(contents, array_loc, *index).unwrap_or(array_loc)
+        let mut indices: Vec<usize> = Vec::new();
+        let mut cur = self;
+        let key_loc = loop {
+            match cur {
+                ValueLocation::Property(key_loc) => break *key_loc,
+                ValueLocation::ArrayItem(array, index) => {
+                    indices.push(*index);
+                    cur = array;
+                }
             }
+        };
+        let mut loc = property_value_loc_or_key(contents, key_loc);
+        for &index in indices.iter().rev() {
+            loc = array_item_loc(contents, loc, index).unwrap_or(loc);
         }
+        loc
     }
 }
 

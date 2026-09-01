@@ -1,7 +1,19 @@
 import { pathToFileURL } from "bun";
 import { describe, expect, it, test } from "bun:test";
 import { chmodSync, chownSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, bunRun, isLinux, isMacOS, isWindows, joinP, tempDir, tempDirWithFiles } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  bunRun,
+  isASAN,
+  isDebug,
+  isLinux,
+  isMacOS,
+  isWindows,
+  joinP,
+  tempDir,
+  tempDirWithFiles,
+} from "harness";
 import { join, resolve, sep } from "path";
 
 const fixture = (...segs: string[]) => resolve(import.meta.dir, "fixtures", ...segs);
@@ -839,6 +851,79 @@ describe("package.json exports targets longer than the maximum path length", () 
       expect({ stdout, exitCode }).toEqual({ stdout: "caught MODULE_NOT_FOUND\n", exitCode: 0 });
     },
   );
+});
+
+// The resolver walks an `exports` target once per nesting level, with larger
+// native frames than the JSON parser that produced it. A target the parser
+// accepts can therefore still run the resolver off the end of the stack.
+describe("package.json exports targets nested too deeply", () => {
+  // Shallow enough for the JSON parser, which stops at about 800 levels on
+  // debug builds, yet deep enough to exhaust the native stack that is left at
+  // the deepest JS frame. JS may use all but the last 1 to 2 MiB of the main
+  // stack (the engine default is 5 MiB): the linker gives bun an 18 MiB main
+  // stack on macOS and Windows, Linux has the 8 MiB rlimit default.
+  const depth = isDebug || isASAN ? 400 : 10000;
+  const jsStackMiB = isMacOS || isWindows ? 16 : 7;
+  const env = { ...bunEnv, BUN_JSC_maxPerThreadStackUsage: String(jsStackMiB * 1024 * 1024) };
+  const targets = {
+    array: "[".repeat(depth) + '"./t.js"' + "]".repeat(depth),
+    conditions:
+      Array.from({ length: depth }, (_, i) => (i % 2 ? '{"node":' : '{"default":')).join("") +
+      '"./t.js"' +
+      "}".repeat(depth),
+  };
+
+  for (const [shape, target] of Object.entries(targets)) {
+    it.concurrent(`does not crash on a deeply nested ${shape} target`, async () => {
+      using dir = tempDir(`resolver-exports-deep-${shape}`, {
+        "package.json": JSON.stringify({ name: "host" }),
+        "node_modules/test-pkg/package.json": `{"name":"test-pkg","exports":{".":${target},"./shallow":"./t.js"}}`,
+        "node_modules/test-pkg/t.js": "module.exports = 1;\n",
+        // Resolve a shallow entry first so package.json is parsed and cached
+        // while plenty of stack remains. Then resolve the deep entry from the
+        // deepest JS frame the engine allows, where little native stack is left.
+        "index.js": `
+          require.resolve("test-pkg/shallow");
+          let outcome;
+          function deep() {
+            try {
+              deep();
+            } catch (e) {
+              if (!(e instanceof RangeError)) throw e;
+              if (outcome !== undefined) return;
+              try {
+                require.resolve("test-pkg");
+                outcome = "resolved";
+              } catch (e2) {
+                // Still too deep to enter the call: the frame above retries.
+                if (e2 instanceof RangeError) throw e2;
+                outcome = "caught " + e2.code;
+              }
+            }
+          }
+          deep();
+          console.log(outcome);
+        `,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "index.js"],
+        env,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      // The stack check turns the walk into a resolution error when too little
+      // stack remains. With more stack the target resolves. Neither may crash.
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: expect.stringMatching(/^(caught MODULE_NOT_FOUND|resolved)\n$/),
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+  }
 });
 
 // A package.json `imports` entry whose value is a bare package specifier

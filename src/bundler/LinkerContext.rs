@@ -3048,6 +3048,19 @@ impl<'a> LinkerContext<'a> {
         self.top_level_symbols_to_parts(Index::RUNTIME.get(), r#ref)
     }
 
+    /// The unbound `require` a CommonJS wrapper must declare for a direct `eval` in its body (ESM output only, see `auto_polyfill_require`).
+    pub(crate) fn direct_eval_require_ref(&self, source_index: crate::IndexInt) -> Option<Ref> {
+        if self.options.output_format != Format::Esm {
+            return None;
+        }
+        let scope = &self.graph.ast.items_module_scope()[source_index as usize];
+        if !scope.contains_direct_eval {
+            return None;
+        }
+        let ref_ = scope.members.get(&b"require"[..])?.ref_;
+        (self.graph.symbols.get_const(ref_)?.kind == bun_ast::symbol::Kind::Unbound).then_some(ref_)
+    }
+
     /// Note: returns `'static` so callers can hold the source across a
     /// `&mut self.log` borrow; the underlying `parse_graph.input_files` slab
     /// is append-only and outlives the link step (LIFETIMES.tsv: GRAPHBACKED).
@@ -3237,6 +3250,17 @@ impl<'a> LinkerContext<'a> {
                             crate::Index::RUNTIME,
                         )
                         .expect("unreachable");
+
+                    if self.direct_eval_require_ref(source_index).is_some() {
+                        self.graph
+                            .generate_runtime_symbol_import_and_use(
+                                source_index,
+                                crate::Index::part(part_index),
+                                b"__require",
+                                1,
+                            )
+                            .expect("unreachable");
+                    }
                 }
             }
 

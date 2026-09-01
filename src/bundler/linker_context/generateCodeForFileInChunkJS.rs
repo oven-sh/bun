@@ -274,6 +274,39 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
             .expect("unreachable");
     }
 
+    // "var require = __require;" so a direct eval in the body can reach it.
+    if flags.wrap == WrapKind::Cjs {
+        if let (Some(require_ref), Some(runtime_require_ref)) = (
+            c.direct_eval_require_ref(source_index as crate::IndexInt),
+            runtime_require_ref,
+        ) {
+            let decls = G::DeclList::from_slice(&[G::Decl {
+                binding: Binding::alloc(
+                    temp_arena,
+                    B::Identifier { r#ref: require_ref },
+                    bun_ast::Loc::EMPTY,
+                ),
+                value: Some(Expr::init(
+                    E::Identifier {
+                        ref_: runtime_require_ref,
+                        ..Default::default()
+                    },
+                    bun_ast::Loc::EMPTY,
+                )),
+            }]);
+            stmts
+                .inside_wrapper_prefix
+                .append_non_dependency(Stmt::alloc(
+                    S::Local {
+                        decls,
+                        ..Default::default()
+                    },
+                    bun_ast::Loc::EMPTY,
+                ))
+                .expect("unreachable");
+        }
+    }
+
     // `convert_stmts_for_chunk` takes `&mut c` inside the loop body, so capture
     // the per-file bitset as a BackRef once. The `parts_live` Vec doesn't
     // reallocate after `tree_shaking_and_code_splitting` initializes it.

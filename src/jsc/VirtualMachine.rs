@@ -250,6 +250,22 @@ pub struct VirtualMachine {
     // LAYERING: values are `MacroEntryPoint` from `bun_bundler::entry_points`
     // (forward dep); stored type-erased and cast back by the consumers.
     pub macro_entry_points: bun_collections::ArrayHashMap<i32, *mut c_void>,
+    /// The options of the build whose macros this VM ran last. `Some` only for
+    /// a VM that `Macro::init` created on a bundler or transpiler worker
+    /// thread. Such a VM outlives the build that created it;
+    /// [`serve_macro_build`] moves it to the next build. Every transpiler of
+    /// one build shares one `Arc`, so pointer identity tells the builds apart;
+    /// this strong reference keeps a later build from allocating its options
+    /// at the same address.
+    ///
+    /// [`serve_macro_build`]: Self::serve_macro_build
+    pub macro_build_options:
+        Option<std::sync::Arc<bun_options_types::schema::api::TransformOptions>>,
+    /// Bumped when [`serve_macro_build`](Self::serve_macro_build) moves the VM
+    /// to other options. A `Macro` entry records the value it was loaded under,
+    /// so a call that comes after another build moved the VM loads the macro
+    /// again instead of calling into a module graph that is gone.
+    pub macro_options_generation: u32,
     pub macro_mode: bool,
     /// Depth of live [`MacroModeGuard`]s on this thread. Nonzero exactly while
     /// macro JS may be executing — both `MacroContext::call` and `Macro::init`
@@ -1617,6 +1633,47 @@ impl VirtualMachine {
         promise.ok_or(crate::CrateError::JSError)
     }
 
+    /// The start of a macro load for `build` on a macro VM (see
+    /// [`macro_build_options`]). A no-op on every other VM, and while macro JS
+    /// runs on this thread (a `Bun.Transpiler` used inside a macro keeps the
+    /// VM as it is).
+    ///
+    /// If `build` is not the build the VM served last, the VM moves to it. The
+    /// transpiler options come from `transform_options` (the build's options
+    /// as the macro VM takes them), and everything the VM evaluated for the
+    /// previous build goes: the module registry, the require map and the
+    /// registered macro callbacks. The next [`load_macro_entry_point`] then
+    /// transpiles the macro modules again, with the build's `--define` and
+    /// loaders. Returns whether the VM moved; the caller then loads the
+    /// defines, as it does for a new VM.
+    ///
+    /// [`macro_build_options`]: Self::macro_build_options
+    /// [`load_macro_entry_point`]: Self::load_macro_entry_point
+    pub fn serve_macro_build(
+        &mut self,
+        build: &std::sync::Arc<bun_options_types::schema::api::TransformOptions>,
+        transform_options: impl FnOnce() -> bun_options_types::schema::api::TransformOptions,
+    ) -> crate::CrateResult<bool> {
+        let Some(current) = &self.macro_build_options else {
+            return Ok(false);
+        };
+        if self.macro_guard_depth != 0 || std::sync::Arc::ptr_eq(current, build) {
+            return Ok(false);
+        }
+        self.transpiler
+            .reset_transform_options(transform_options())?;
+        for callback in self.macros.values() {
+            callback.unprotect();
+        }
+        self.macros.clear_retaining_capacity();
+        // The same clear as `bun --hot`: every module, ESM and CommonJS, goes.
+        self.run_with_api_lock(|| VirtualMachine::get().global().reload())
+            .map_err(|_| crate::CrateError::JSError)?;
+        self.macro_options_generation += 1;
+        self.macro_build_options = Some(std::sync::Arc::clone(build));
+        Ok(true)
+    }
+
     pub fn is_watcher_enabled(&self) -> bool {
         !self.bun_watcher.is_null()
     }
@@ -2667,6 +2724,7 @@ impl VirtualMachine {
             addr_of_mut!((*vm).resolved_path_dups).write(Vec::new());
             addr_of_mut!((*vm).macros).write(Default::default());
             addr_of_mut!((*vm).macro_entry_points).write(Default::default());
+            addr_of_mut!((*vm).macro_build_options).write(None);
             addr_of_mut!((*vm).auto_killer).write(Default::default());
             addr_of_mut!((*vm).commonjs_custom_extensions).write(Default::default());
             addr_of_mut!((*vm).entry_point).write(Default::default());
@@ -4887,6 +4945,7 @@ impl VirtualMachine {
 
         drop(core::mem::take(&mut self.resolved_path_dups));
         drop(core::mem::take(&mut self.main_resolved_path));
+        self.macro_build_options = None;
 
         self.overridden_main.deinit();
 

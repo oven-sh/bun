@@ -7,7 +7,7 @@ use std::sync::Arc;
 use bun_ast::DisableStoreReset;
 use bun_ast::{E, Expr, ExprData, ExprNodeList, G, ToJSError};
 use bun_ast::{Log, Range, Source};
-use bun_bundler::options::TransformOptions;
+use bun_bundler::options::{TransformOptions, TransformTarget};
 use bun_bundler::{Transpiler, entry_points::MacroEntryPoint};
 use bun_collections::{ArrayHashMap, HashMap};
 use bun_core::Output;
@@ -182,16 +182,23 @@ impl MacroContext {
         );
 
         let macro_entry = self.macros.get_or_put(hash).expect("unreachable");
-        if !macro_entry.found_existing {
-            *macro_entry.value_ptr = match Macro::init(
+        // An entry loaded before another build moved this thread's VM to its
+        // options (`VirtualMachine::serve_macro_build`) points at a module
+        // graph that is gone. Load it again, under this build's options.
+        let stale = macro_entry.found_existing
+            && !macro_entry.value_ptr.disabled
+            && macro_entry.value_ptr.generation != VirtualMachine::get().macro_options_generation;
+        if !macro_entry.found_existing || stale {
+            let loaded = Macro::init(
                 input_specifier,
-                log,
                 self.env,
                 &self.transform_options,
                 function_name,
                 &specifier_buf[0..specifier_buf_len as usize],
                 hash,
-            ) {
+            );
+            drain_macro_vm_log(log);
+            *macro_entry.value_ptr = match loaded {
                 Ok(m) => m,
                 Err(e) => {
                     *macro_entry.value_ptr = Macro::disabled_sentinel();
@@ -243,8 +250,29 @@ impl MacroContext {
                 javascript_object,
             )
         });
+        drain_macro_vm_log(log);
         Ok(ret?)
         // this.macros.getOrPut(key: K)
+    }
+}
+
+/// Moves what a macro VM logged into `log`, the build's log. A macro VM (see
+/// `VirtualMachine::macro_build_options`) outlives every build, so it keeps a
+/// log of its own instead of writing into a build's. Runtime and Worker VMs log
+/// into the program's log and are left alone.
+fn drain_macro_vm_log(log: &mut Log) {
+    if !VirtualMachine::is_loaded() {
+        return;
+    }
+    let vm = VirtualMachine::get();
+    if vm.macro_build_options.is_none() {
+        return;
+    }
+    if let Some(vm_log) = vm.log_mut() {
+        if !vm_log.msgs.is_empty() {
+            vm_log.append_to_with_recycled(log, true);
+        }
+        vm_log.reset();
     }
 }
 
@@ -380,6 +408,8 @@ fn __bun_macro_context_get_remap(
 // is checked before any access (see `MacroContext::call`).
 pub struct Macro {
     pub(crate) vm: Option<NonNull<VirtualMachine>>,
+    /// `VirtualMachine::macro_options_generation` when the macro was loaded.
+    pub(crate) generation: u32,
 
     pub(crate) disabled: bool,
 }
@@ -390,12 +420,27 @@ impl Default for Macro {
     }
 }
 
+/// The build's options as the macro VM's transpiler takes them.
+fn macro_vm_transform_options(build: &TransformOptions) -> TransformOptions {
+    let mut transform_options = build.clone();
+    // Build-only flags about the output bundle. The macro module's own
+    // imports must still resolve.
+    transform_options.external = Vec::new();
+    transform_options.packages = None;
+    // What `init_runtime_state` forces for every VM: the macro VM runs on bun
+    // and never writes the build's output directory.
+    transform_options.write = Some(false);
+    transform_options.target = Some(TransformTarget::Bun);
+    transform_options
+}
+
 impl Macro {
     /// Sentinel stored in the `MacroMap` when `Macro::init` fails, so subsequent
     /// calls with the same hash short-circuit instead of retrying the load.
     fn disabled_sentinel() -> Self {
         Macro {
             vm: None,
+            generation: 0,
             disabled: true,
         }
     }
@@ -413,33 +458,38 @@ impl Macro {
 
     pub(crate) fn init(
         input_specifier: &[u8],
-        log: &mut Log,
         env: *mut DotEnvLoader,
-        transform_options: &TransformOptions,
+        build_options: &Arc<TransformOptions>,
         function_name: &[u8],
         specifier: &[u8],
         hash: i32,
     ) -> crate::Result<Macro> {
-        let (vm, is_new_vm): (*mut VirtualMachine, bool) = if VirtualMachine::is_loaded() {
-            (VirtualMachine::get_mut_ptr(), false)
+        // `needs_defines`: the VM's transpiler options are new (a new VM, or a
+        // macro VM moved to this build) and have no defines loaded yet.
+        let (vm, needs_defines): (*mut VirtualMachine, bool) = if VirtualMachine::is_loaded() {
+            let vm = VirtualMachine::get_mut_ptr();
+            // SAFETY: `vm` is the per-thread VM; uniquely accessed here.
+            let moved = unsafe {
+                (*vm).serve_macro_build(build_options, || {
+                    macro_vm_transform_options(build_options)
+                })?
+            };
+            (vm, moved)
         } else {
-            let mut transform_options = transform_options.clone();
-            // Build-only flags about the output bundle. The macro module's own
-            // imports must still resolve.
-            transform_options.external = Vec::new();
-            transform_options.packages = None;
-
             // JSC needs to be initialized if building from CLI
             jsc::initialize(jsc::InitializeOptions::default());
 
-            let _vm = VirtualMachine::init(VirtualMachineInitOptions {
-                transform_options,
-                log: Some(NonNull::from(&mut *log)),
+            // No `log`: the VM outlives the build, so it keeps a log of its
+            // own that `drain_macro_vm_log` moves into the build's.
+            let vm = VirtualMachine::init(VirtualMachineInitOptions {
+                transform_options: macro_vm_transform_options(build_options),
                 env_loader: NonNull::new(env),
                 is_main_thread: false,
                 ..Default::default()
             })?;
-            (_vm, true)
+            // SAFETY: `vm` is the freshly-allocated per-thread VM.
+            unsafe { (*vm).macro_build_options = Some(Arc::clone(build_options)) };
+            (vm, true)
         };
 
         // Covers `configure_defines` (new-VM path) and `load_macro_entry_point`
@@ -451,8 +501,8 @@ impl Macro {
         let _init_guard = MacroModeGuard::new(vm);
         // SAFETY: `vm` is the per-thread VM; uniquely accessed here.
         unsafe { (*(*vm).event_loop()).ensure_waker() };
-        if is_new_vm {
-            // SAFETY: `vm` is the freshly-allocated per-thread VM.
+        if needs_defines {
+            // SAFETY: `vm` is the per-thread VM; uniquely accessed here.
             unsafe { (*vm).transpiler.configure_defines()? };
         }
 
@@ -477,6 +527,8 @@ impl Macro {
 
         Ok(Macro {
             vm: NonNull::new(vm),
+            // SAFETY: `vm` is the per-thread VM; a plain field read.
+            generation: unsafe { (*vm).macro_options_generation },
             disabled: false,
         })
     }

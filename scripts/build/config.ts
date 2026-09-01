@@ -128,6 +128,10 @@ export interface Config {
   pgoGenerate: string | undefined;
   /** IR PGO: .profdata file path (optimized build). Mutually exclusive with pgoGenerate. */
   pgoUse: string | undefined;
+  /** Extra rustflags appended to CARGO_ENCODED_RUSTFLAGS (experiments: `--extra-rustflags="-Cllvm-args=..."`). */
+  extraRustflags: string[];
+  /** Extra flags appended to the final link (experiments: `--extra-ldflags="-Wl,-mllvm,..."`). */
+  extraLdflags: string[];
   asan: boolean;
   assertions: boolean;
   logs: boolean;
@@ -327,6 +331,8 @@ export interface PartialConfig {
   lto?: boolean;
   pgoGenerate?: string;
   pgoUse?: string;
+  extraRustflags?: string;
+  extraLdflags?: string;
   asan?: boolean;
   assertions?: boolean;
   logs?: boolean;
@@ -854,6 +860,8 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   if (pgoGenerate && pgoUse) {
     throw new BuildError("--pgo-generate and --pgo-use are mutually exclusive");
   }
+  const extraRustflags = (partial.extraRustflags ?? "").split(/\s+/).filter(Boolean);
+  const extraLdflags = (partial.extraLdflags ?? "").split(/\s+/).filter(Boolean);
 
   // Logs: on by default in debug non-test
   const logs = partial.logs ?? debug;
@@ -1175,6 +1183,8 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     crossLangLto,
     pgoGenerate,
     pgoUse,
+    extraRustflags,
+    extraLdflags,
     asan,
     assertions,
     logs,

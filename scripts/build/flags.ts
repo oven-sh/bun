@@ -1772,6 +1772,7 @@ export function computeFlags(cfg: Config): ComputedFlags {
     if (f.when && !f.when(cfg)) continue;
     ldflags.push(...resolveFlagValue(f.flag, cfg));
   }
+  ldflags.push(...cfg.extraLdflags);
   for (const f of stripFlags) {
     if (f.when && !f.when(cfg)) continue;
     stripflags.push(...resolveFlagValue(f.flag, cfg));

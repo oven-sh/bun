@@ -677,6 +677,7 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
     // (debug builds) already defaults it on, so this is a no-op there.
     env.CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS = "true";
   }
+  rustflags.push(...cfg.extraRustflags);
   if (rustflags.length > 0) env.CARGO_ENCODED_RUSTFLAGS = rustflags.join("\x1f");
 
   return { args, env, targetDir, triple };

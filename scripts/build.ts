@@ -467,6 +467,8 @@ function parseArgs(argv: string[]): CliArgs {
     "webkitVersion",
     "pgoGenerate",
     "pgoUse",
+    "extraRustflags",
+    "extraLdflags",
     "androidNdk",
     "macosSdk",
     "osxDeploymentTarget",

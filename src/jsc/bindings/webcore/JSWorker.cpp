@@ -298,8 +298,7 @@ template<> __attribute__((minsize)) JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES
             }
         }
 
-        // Node reads argv and execArgv by index, not through Symbol.iterator. argv goes through
-        // `String(value)`, which describes a Symbol. execArgv goes through ToString, which throws on one.
+        // Node reads both options by index. argv uses String(value), which describes a Symbol. execArgv uses ToString, which throws on one.
         enum class SymbolToString { Describe, Throw };
         auto appendStrings = [&](JSObject* arrayLike, Vector<String>& out, SymbolToString symbolToString) {
             auto scope = DECLARE_THROW_SCOPE(vm);

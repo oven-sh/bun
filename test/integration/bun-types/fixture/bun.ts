@@ -1,4 +1,4 @@
-import type { BunFile, BunPlugin, FileBlob } from "bun";
+import { randomULID, type BunFile, type BunPlugin, type FileBlob } from "bun";
 import * as tsd from "./utilities";
 {
   const _plugin: BunPlugin = {
@@ -93,3 +93,13 @@ tsd
 
 tsd.expectType(Bun.mmap("./data.bin", { offset: 4096 })).is<Uint8Array<ArrayBuffer>>();
 tsd.expectType(Bun.mmap("./data.bin", { size: 1024 })).is<Uint8Array<ArrayBuffer>>();
+
+tsd.expectType(Bun.randomULID()).is<string>();
+tsd.expectType(Bun.randomULID(0)).is<string>();
+tsd.expectType(Bun.randomULID(new Date())).is<string>();
+tsd.expectType(randomULID()).is<string>();
+
+// @ts-expect-error `timestamp` must be a number or Date.
+Bun.randomULID("0");
+// @ts-expect-error `randomULID` accepts at most one argument.
+Bun.randomULID(0, 1);

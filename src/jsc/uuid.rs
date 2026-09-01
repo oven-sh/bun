@@ -90,6 +90,47 @@ fn print_bytes(bytes: &[u8; 16], buf: &mut [u8; 36]) {
     }
 }
 
+pub const ULID_STRING_LENGTH: usize = 26;
+
+/// Encode a 48-bit timestamp and 80 bits of randomness as a canonical ULID.
+///
+/// The layout and alphabet follow <https://github.com/ulid/spec>.
+pub fn print_ulid(timestamp: u64, randomness: &[u8; 10], buf: &mut [u8; ULID_STRING_LENGTH]) {
+    const ALPHABET: &[u8; 32] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+
+    debug_assert!(timestamp < 1u64 << 48);
+
+    for (index, output) in buf[..10].iter_mut().enumerate() {
+        let shift = 45 - index * 5;
+        *output = ALPHABET[((timestamp >> shift) & 0x1f) as usize];
+    }
+
+    // Each five-byte block maps exactly to eight Base32 characters.
+    for (block_index, block) in randomness.chunks_exact(5).enumerate() {
+        let bits = u64::from_be_bytes([0, 0, 0, block[0], block[1], block[2], block[3], block[4]]);
+        for char_index in 0..8 {
+            let shift = 35 - char_index * 5;
+            buf[10 + block_index * 8 + char_index] = ALPHABET[((bits >> shift) & 0x1f) as usize];
+        }
+    }
+}
+
+#[cfg(test)]
+mod ulid_tests {
+    use super::*;
+
+    #[test]
+    fn print_ulid_matches_canonical_vector() {
+        let mut output = [0; ULID_STRING_LENGTH];
+        print_ulid(
+            1_469_918_176_385,
+            &[0xd6, 0x76, 0x4c, 0x61, 0xef, 0xb9, 0x93, 0x02, 0xbd, 0x5b],
+            &mut output,
+        );
+        assert_eq!(&output, b"01ARYZ6S41TSV4RRFFQ69G5FAV");
+    }
+}
+
 /// # --- 48 ---   -- 4 --   - 12 -   -- 2 --   - 62 -
 /// # unix_ts_ms | version | rand_a | variant | rand_b
 #[derive(Clone, Copy)]

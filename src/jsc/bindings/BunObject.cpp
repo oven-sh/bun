@@ -72,6 +72,7 @@ BUN_DECLARE_HOST_FUNCTION(Bun__DNS__prefetch);
 BUN_DECLARE_HOST_FUNCTION(Bun__DNS__getCacheStats);
 BUN_DECLARE_HOST_FUNCTION(Bun__fetch);
 BUN_DECLARE_HOST_FUNCTION(Bun__fetchPreconnect);
+BUN_DECLARE_HOST_FUNCTION(Bun__randomULID);
 BUN_DECLARE_HOST_FUNCTION(Bun__randomUUIDv7);
 BUN_DECLARE_HOST_FUNCTION(Bun__randomUUIDv5);
 
@@ -985,6 +986,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     pathToFileURL                                  functionPathToFileURL                                               DontDelete|Function 1
     peek                                           constructBunPeekObject                                              DontDelete|PropertyCallback
     plugin                                         constructPluginObject                                               ReadOnly|DontDelete|PropertyCallback
+    randomULID                                     Bun__randomULID                                                     DontDelete|Function 1
     randomUUIDv7                                   Bun__randomUUIDv7                                                   DontDelete|Function 2
     randomUUIDv5                                   Bun__randomUUIDv5                                                   DontDelete|Function 3
     readableStreamToArray                          WebCore::jsFunctionReadableStreamToArray           DontDelete|Function 1

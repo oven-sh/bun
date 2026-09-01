@@ -483,7 +483,7 @@ const PRUNE_HELP_PARAMS: &[ParamType] = &[
         "--cpu <STR>...                         Prune for a different CPU architecture than the current one"
     ),
     clap::param!(
-        "--linker <STR>                         Prune a node_modules installed with the given linker (one of \"isolated\" or \"hoisted\")"
+        "--linker <STR>                         Linker to assume when node_modules mixes isolated and hoisted installs (one of \"isolated\" or \"hoisted\")"
     ),
     clap::param!(
         "-F, --filter <STR>...                  Only prune the node_modules folders of the matching workspaces"

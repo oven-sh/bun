@@ -74,7 +74,7 @@ describe("bundler", () => {
     run: true,
   });
   itBundled("edgecase/BunPluginTreeShakeImport", {
-    todo: true,
+    todo: true, // runtime test (not bundler): plugin() now validates its argument so this needs a real setup() before it can exercise the original tree-shake repro
     // This only appears at runtime and not with bun build, even with --no-bundle
     files: {
       "/entry.ts": /* js */ `
@@ -172,6 +172,9 @@ describe("bundler", () => {
     },
   });
   itBundled("edgecase/NodeEnvOptionalChaining", {
+    // Matching `process?.env?.NODE_ENV` against the `process.env.NODE_ENV`
+    // define would also match `Symbol?.for` etc. as side-effect-free; esbuild
+    // bails on optional-chain links for the same reason.
     todo: true,
     files: {
       "/entry.js": /* js */ `
@@ -221,7 +224,7 @@ describe("bundler", () => {
     },
   });
   itBundled("edgecase/ExternalES6ConvertedToCommonJSSimplified", {
-    todo: true,
+    todo: true, // linker emits `import "x"` instead of `import * as ns from "x"` for the wrapped re-export, leaving the __reExport target unbound
     files: {
       "/entry.js": /* js */ `
         console.log(JSON.stringify(require('./e')));
@@ -289,7 +292,7 @@ describe("bundler", () => {
     },
   });
   itBundled("edgecase/ScriptTagEscape", {
-    todo: true,
+    todo: true, // string printer needs to escape "</script" (and "<!--") in emitted literals; touches the hot-path SIMD escaper
     files: {
       "/entry.js": /* js */ `
         console.log('<script></script>');
@@ -334,7 +337,7 @@ describe("bundler", () => {
     },
   });
   itBundled("edgecase/JSONDefaultAndNamedImport", {
-    todo: true,
+    todo: true, // requires per-property tree-shaking on the JSON default object when only some keys are read
     files: {
       "/entry.js": /* js */ `
         import def from './test.json'
@@ -362,7 +365,7 @@ describe("bundler", () => {
     },
   });
   itBundled("edgecase/JSONWithDefaultKeyNamespace", {
-    todo: true,
+    todo: true, // semantics undecided: namespace import of JSON currently yields {default: <object>} (matches Node ESM); test expects the raw object
     files: {
       "/entry.js": /* js */ `
         import * as ns from './test.json'
@@ -459,7 +462,6 @@ describe("bundler", () => {
     },
   });
   itBundled("edgecase/TSConfigPathStarAnywhere", {
-    todo: true,
     files: {
       "/entry.ts": /* ts */ `
         import test0 from 'test3/foo'
@@ -480,6 +482,52 @@ describe("bundler", () => {
     run: {
       stdout: "success",
     },
+  });
+  itBundled("edgecase/TSConfigPathStarBareTargetSlashMatch", {
+    // Key prefix without a trailing "/" — matched_text starts with "/", but
+    // the target template is relative so the substituted result must still
+    // join against baseUrl (not be treated as filesystem-absolute).
+    files: {
+      "/entry.ts": /* ts */ `
+        import x from "~/util";
+        console.log(x);
+      `,
+      "/tsconfig.json": /* json */ `
+        {
+          "compilerOptions": {
+            "baseUrl": "./packages",
+            "paths": { "~*": ["*"] }
+          }
+        }
+      `,
+      "/packages/util.ts": `export default "ok";`,
+    },
+    run: { stdout: "ok" },
+  });
+
+  itBundled("edgecase/TSConfigPathAbsoluteTemplateNormalized", {
+    // An absolute target template (here via ${configDir}) must be normalized
+    // after substitution so it resolves to the same module instance as a
+    // relative import of the file (no `/proj//src/...` duplicate).
+    files: {
+      "/entry.ts": /* ts */ `
+        import { inc } from "@lib/state";
+        import { count } from "./src/lib/state";
+        inc();
+        console.log(count);
+      `,
+      "/tsconfig.json": /* json */ `
+        { "compilerOptions": { "paths": { "@lib/*": ["\${configDir}//src/lib/*"], "@up/*": ["\${configDir}/src/../src/lib/*"] } } }
+      `,
+      "/src/lib/state.ts": `export let count = 0; export function inc() { count++; } console.log("evaluated");`,
+      "/entry2.ts": `import { inc } from "@up/state"; import { count } from "./src/lib/state"; inc(); console.log(count);`,
+    },
+    entryPoints: ["/entry.ts", "/entry2.ts"],
+    outdir: "/out",
+    run: [
+      { file: "/out/entry.js", stdout: "evaluated\n1" },
+      { file: "/out/entry2.js", stdout: "evaluated\n1" },
+    ],
   });
 
   itBundled("edgecase/StaticClassNameIssue2806", {
@@ -608,7 +656,6 @@ describe("bundler", () => {
     },
   });
   itBundled("edgecase/DCEVarRedeclarationIssue2815", {
-    todo: true,
     files: {
       "/entry.ts": /* ts */ `
         var x = 1;
@@ -649,9 +696,10 @@ describe("bundler", () => {
     run: {
       stdout: `
         1
-        123 67
-        number
-        2
+        try2
+        3
+        5try3
+        8
       `,
     },
   });
@@ -772,7 +820,7 @@ describe("bundler", () => {
     },
   });
   itBundled("edgecase/RuntimeExternalImport", {
-    todo: true,
+    todo: true, // depends on runtime export-condition priority ("bun" vs first-match-wins); not a bundler bug
     files: {
       "/entry.ts": /* ts */ `
         import { type as a1 } from 'hello-1';
@@ -837,7 +885,7 @@ describe("bundler", () => {
     },
   });
   itBundled("edgecase/RuntimeExternalImport2", {
-    todo: true,
+    todo: true, // fixture has no default export; expectation needs revisiting (runtime resolver behavior, not bundler)
     files: {
       "/entry.ts": /* ts */ `
         import t from 'hello';
@@ -991,7 +1039,7 @@ describe("bundler", () => {
     },
   });
   itBundled("edgecase/OverwriteInputWithOutdir", {
-    todo: true,
+    todo: true, // bundler does not yet detect output paths that overwrite inputs
     files: {
       "/entry.js": /* js */ `
         import { version } from './library';
@@ -1007,7 +1055,7 @@ describe("bundler", () => {
     },
   });
   itBundled("edgecase/OverwriteInputWithOutfile", {
-    todo: true,
+    todo: true, // bundler does not yet detect output paths that overwrite inputs
     files: {
       "/entry.js": /* js */ `
         import { version } from './library';
@@ -1023,7 +1071,7 @@ describe("bundler", () => {
     },
   });
   itBundled("edgecase/OverwriteInputNonEntrypoint", {
-    todo: true,
+    todo: true, // bundler does not yet detect output paths that overwrite inputs
     files: {
       "/entry.js": /* js */ `
         import { version } from './library';
@@ -1754,9 +1802,13 @@ describe("bundler", () => {
       `,
     },
     run: {
-      stdout: "side effect",
+      stdout: "",
     },
   });
+  // A bare `import("./file2.js")` observes none of file2's exports, so — like a
+  // bare static `import "./file2.js"` — nothing from a `"sideEffects": false`
+  // package is pulled in on its behalf. (Before import() results were tracked
+  // the dynamic target kept every export and printed "side effect".)
   itBundled("edgecase/EsmSideEffectsFalseWithSideEffectsExportFromCodeSplitting", {
     files: {
       "/file1.js": `
@@ -1789,11 +1841,11 @@ describe("bundler", () => {
     run: [
       {
         file: "/out/file1.js",
-        stdout: "file1\nside effect",
+        stdout: "file1",
       },
       {
         file: "/out/file1b.js",
-        stdout: "file2\nside effect",
+        stdout: "file2",
       },
     ],
   });
@@ -1819,7 +1871,7 @@ describe("bundler", () => {
       `,
     },
     run: {
-      stdout: "side effect",
+      stdout: "",
     },
   });
   itBundled("edgecase/SideEffectsFalseWithSideEffectsExportFrom", {
@@ -1845,7 +1897,7 @@ describe("bundler", () => {
       `,
     },
     run: {
-      stdout: "side effect",
+      stdout: "",
     },
   });
   itBundled("edgecase/BuiltinWithTrailingSlash", {
@@ -2631,6 +2683,163 @@ describe("bundler", () => {
       stdout: "",
     },
   });
+  // https://github.com/oven-sh/bun/issues/14588
+  // A function parameter must not be collision-renamed into the name of a
+  // hoisted top-level function that is declared later in the same file.
+  itBundled("identifiers/NestedParamDoesNotShadowLaterHoistedFunction", {
+    files: {
+      "/dep.js": `
+        export var e = "outer_e";
+        export var e2 = "outer_e2";
+      `,
+      "/entry.js": `
+        import { e as _e, e2 as _e2 } from "./dep.js";
+
+        function ZI(t, e, n) {
+          return e3(t, e, n);
+        }
+
+        function e3(a, b, c) {
+          return "range:" + b;
+        }
+
+        console.log(ZI(1, 2, 3), _e, _e2);
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    minifyIdentifiers: false,
+    run: { stdout: "range:2 outer_e outer_e2" },
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).not.toContain("function ZI(t, e3, n)");
+    },
+  });
+  // https://github.com/oven-sh/bun/issues/14588
+  // Same bug for a module wrapped in `__esm` via dynamic `import()`: the
+  // module's own top-level declarations are hoisted outside the closure, so a
+  // parameter in that module must not be renamed into one of them.
+  itBundled("identifiers/NestedParamDoesNotShadowLaterHoistedFunctionInEsmWrap", {
+    files: {
+      "/names.js": `
+        export var e = "E";
+        export var e2 = "E2";
+      `,
+      "/lib.js": `
+        var sideEffect = Date.now();
+        export function ZI(t, e, n) {
+          return e3(t, e, n);
+        }
+        function e3(a, b, c) {
+          return "range:" + b;
+        }
+      `,
+      "/entry.js": `
+        import { e as _e, e2 as _e2 } from "./names.js";
+        const mod = await import("./lib.js");
+        console.log(mod.ZI(1, 2, 3), _e, _e2);
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    target: "bun",
+    minifyIdentifiers: false,
+    run: { stdout: "range:2 E E2" },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toContain("__esm");
+      expect(out).not.toMatch(/function ZI\(\w+, e3,/);
+    },
+  });
+  // https://github.com/oven-sh/bun/issues/30269
+  // Same bug for a nested `let` binding instead of a function parameter.
+  itBundled("identifiers/NestedLocalDoesNotShadowLaterHoistedFunction", {
+    files: {
+      "/conflict.js": `
+        export function r() { return "top-level r"; }
+      `,
+      "/module.js": `
+        class Expression {}
+
+        export function run() {
+          const result = typecheck({ left: new Expression(), op: {}, right: {} });
+          if (result !== true) throw new Error("expected true, got " + result);
+          return result;
+        }
+
+        function typecheck(node) {
+          let r, t, c;
+          block: {
+            r = node.left;
+            t = node.op;
+            c = node.right;
+            break block;
+          }
+          return r2().bo4(r, t, c).a();
+        }
+
+        function r2() {
+          return { bo4() { return { a() { return true; } }; } };
+        }
+      `,
+      "/entry.js": `
+        import * as conflict from "./conflict.js";
+        import { run } from "./module.js";
+        conflict.r();
+        console.log("ok:" + run());
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    minifyIdentifiers: false,
+    run: { stdout: "ok:true" },
+  });
+  // https://github.com/oven-sh/bun/issues/41054
+  // Same bug in a single file: the local `n` collides with the top-level `n`,
+  // so the renamer numbers it. The numbered name must not collide with `n2`,
+  // a top-level symbol declared in a later part and called from the same
+  // function. The broken output renamed the local to `n2`, which shadowed the
+  // `n2` function.
+  itBundled("identifiers/NestedLocalDoesNotShadowLaterTopLevelSymbol", {
+    files: {
+      "/entry.js": /* js */ `
+        const n = 1;
+        export function f() {
+          let n = 2;
+          return n2(n);
+        }
+        function n2(x) {
+          return x + n + 40;
+        }
+        console.log(f());
+      `,
+    },
+    target: "bun",
+    minifyIdentifiers: false,
+    run: { stdout: "43" },
+  });
+  // Same bug for a module scope deferred as one nested scope because the
+  // module is wrapped in a CommonJS closure: a local inside the closure must
+  // not be renamed into the name of another module's wrapper (`require_*`),
+  // which is registered as a top-level symbol only when its own file is
+  // reached. The circular require makes a.js's closure call entry.js's
+  // wrapper, which is registered later.
+  itBundled("identifiers/CjsClosureLocalDoesNotShadowLaterWrapper", {
+    files: {
+      "/entry.js": /* js */ `
+        module.exports.val = 2;
+        const a = require("./a.js");
+        console.log(a.f());
+      `,
+      "/a.js": /* js */ `
+        module.exports.f = function f() {
+          let require_entry = 40;
+          const e = require("./entry.js");
+          return e.val + require_entry + 1;
+        };
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    target: "bun",
+    minifyIdentifiers: false,
+    run: { stdout: "43" },
+  });
   itBundled("edgecase/MacroProtoKeyIsOwnProperty", {
     files: {
       "/entry.ts": /* js */ `
@@ -2827,7 +3036,9 @@ describe("bundler", () => {
   // would recurse at runtime; checking for the deepest wrapper is enough.
   itBundled("edgecase/DeepImportChainWrappedTLA", {
     files: {
-      "/entry.js": `await 0; const { v0 } = await import("./m0.js"); console.log(v0);`,
+      // The namespace escapes (`ns` is logged whole) so the import() is not
+      // hoisted to a static import and the chain really is wrapped.
+      "/entry.js": `await 0; const ns = await import("./m0.js"); console.log(ns.v0, ns);`,
       ...deepChainFiles,
     },
     backend: "cli",

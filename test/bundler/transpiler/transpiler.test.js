@@ -377,6 +377,13 @@ describe("Bun.Transpiler", () => {
         "x = a ? (b) => {\n  return a ? (b) => d : e;\n} : f;\n",
       );
 
+      // A legal comment scanned between "?" and "(" waits in the lexer for the
+      // next statement. The attempt's block body or import() takes it. The real
+      // parse must still get it.
+      exp("x = a ? /*! L */ (b) : T => { let y = 1 } : c", "x = a ? (b) => {\n  /*! L */\n  let y = 1;\n} : c;\n");
+      exp("x = a ? /*! L */ (b) : c => { return d }", "x = a ? b : (c) => {\n  /*! L */\n  return d;\n};\n");
+      exp('x = a ? /*! L */ (b) : T => import("m") : c', 'x = a ? (b) => import("m") : c;\n');
+
       // The attempt parses the body, so an attempt nested in the body must not
       // run again when the body is parsed for real: 2^40 parses would hang.
       let kept = "d";

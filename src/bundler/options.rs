@@ -946,12 +946,31 @@ pub(crate) fn defines_from_transform_options(
 
     let drop_debugger = drop.iter().any(|item| *item == b"debugger");
 
-    Ok(defines::Define::init(
+    let user_hash = defines::Define::hash_user_inputs(
+        user_defines
+            .keys()
+            .iter()
+            .zip(user_defines.values().iter())
+            .map(|(k, v)| (k.as_ref(), v.as_ref())),
+        environment_defines
+            .keys()
+            .iter()
+            .zip(environment_defines.values().iter())
+            .filter_map(|(k, v)| match &v.value {
+                defines::DefineValue::EString(s) if s.is_utf8() => Some((k.as_ref(), s.slice8())),
+                _ => None,
+            }),
+        drop.iter().copied(),
+    );
+
+    let mut define = defines::Define::init(
         Some(resolved_defines),
         Some(environment_defines),
         drop_debugger,
         omit_unused_global_calls,
-    )?)
+    )?;
+    define.user_hash = user_hash;
+    Ok(define)
 }
 
 const DEFAULT_LOADER_EXT_BUN: &[&[u8]] = &[b".node", b".html"];
@@ -1304,6 +1323,10 @@ pub struct BundleOptions<'a> {
 
     pub ignore_dce_annotations: bool,
     pub emit_dce_annotations: bool,
+    /// Namespace objects (`import *`, `export * as`) get a setter per export so
+    /// assigning to them is silently accepted instead of throwing. Deprecated;
+    /// off makes them getter-only like real module namespace objects.
+    pub deprecated_namespace_object_setters: bool,
     pub bytecode: bool,
     /// How many levels of nested functions get bytecode (`u32::MAX` = all; 0 = only each module's top level).
     pub bytecode_depth: u32,
@@ -1414,6 +1437,7 @@ impl<'a> BundleOptions<'a> {
                 identifiers: self.define.identifiers.clone(),
                 dots: self.define.dots.clone(),
                 drop_debugger: self.define.drop_debugger,
+                user_hash: self.define.user_hash,
             }),
             drop: self.drop.clone(),
             bundler_feature_flags: self
@@ -1500,6 +1524,7 @@ impl<'a> BundleOptions<'a> {
             min_chunk_size: self.min_chunk_size,
             ignore_dce_annotations: self.ignore_dce_annotations,
             emit_dce_annotations: self.emit_dce_annotations,
+            deprecated_namespace_object_setters: self.deprecated_namespace_object_setters,
             bytecode: self.bytecode,
             bytecode_depth: self.bytecode_depth,
             compile_target_builtins: self.compile_target_builtins.clone(),
@@ -1663,11 +1688,7 @@ impl<'a> BundleOptions<'a> {
             log,
             // `define` is filled by `load_defines` later;
             // initialize empty so the struct is well-formed before `load_defines` runs.
-            define: Box::new(defines::Define {
-                identifiers: Default::default(),
-                dots: Default::default(),
-                drop_debugger: false,
-            }),
+            define: Box::new(defines::Define::default()),
             loaders,
             output_dir: Box::from(transform.output_dir.as_deref().unwrap_or(b"out")),
             target,
@@ -1748,6 +1769,7 @@ impl<'a> BundleOptions<'a> {
             repl_mode: false,
             ignore_dce_annotations: false,
             emit_dce_annotations: false,
+            deprecated_namespace_object_setters: true,
             bytecode: false,
             bytecode_depth: u32::MAX,
             compile_target_builtins: CompileTargetBuiltins::Host,

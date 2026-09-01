@@ -2620,158 +2620,18 @@ impl<'a> Resolver<'a> {
                                 _ => self.opts.extension_order.kind(kind, true),
                             };
 
-                            if let Some(package_json) = pkg_dir_info.package_json() {
-                                if let Some(exports_map) = package_json.exports.as_ref() {
-                                    // The condition set is determined by the kind of import
-                                    let mut module_type = package_json.module_type;
-                                    // NOTE: keeping a single
-                                    // `ESModule` (which holds `&mut self.debug_logs`) alive across a
-                                    // `&mut self` call is aliased-&mut UB. Build a fresh short-lived
-                                    // `ESModule` per `resolve` call so its borrow ends before
-                                    // `self.handle_esm_resolution` re-borrows `self`.
-                                    // Resolve against the path "/", then join it with the absolute
-                                    // directory path. This is done because ESM package resolution uses
-                                    // URLs while our path resolution uses file system paths. We don't
-                                    // want problems due to Windows paths, which are very unlike URL
-                                    // paths. We also want to avoid any "%" characters in the absolute
-                                    // directory path accidentally being interpreted as URL escapes.
-                                    {
-                                        let esm_resolution = ESModule {
-                                            conditions: match kind {
-                                                ast::ImportKind::Require
-                                                | ast::ImportKind::RequireResolve => {
-                                                    &self.opts.conditions.require
-                                                }
-                                                ast::ImportKind::At
-                                                | ast::ImportKind::AtConditional => {
-                                                    &self.opts.conditions.style
-                                                }
-                                                _ => &self.opts.conditions.import,
-                                            },
-                                            debug_logs: self.debug_logs.as_mut(),
-                                            module_type: &mut module_type,
-                                        }
-                                        .resolve(b"/", esm.subpath, &exports_map.root);
-                                        // ESModule temporary dropped here; `self` is unborrowed.
-
-                                        if self
-                                            .handle_esm_resolution(
-                                                esm_resolution,
-                                                abs_package_path,
-                                                kind,
-                                                package_json,
-                                                esm.subpath,
-                                                out,
-                                            )
-                                            .is_success()
-                                        {
-                                            out.is_node_module = true;
-                                            out.module_type = module_type;
-                                            self.extension_order = prev_extension_order;
-                                            if let Some(d) = self.debug_logs.as_mut() {
-                                                d.decrease_indent();
-                                            }
-                                            return MatchStatus::Success;
-                                        }
-                                    }
-
-                                    // Some popular packages forget to include the extension in their
-                                    // exports map, so we try again without the extension.
-                                    //
-                                    // This is useful for browser-like environments
-                                    // where you want a file extension in the URL
-                                    // pathname by convention. Vite does this.
-                                    //
-                                    // React is an example of a package that doesn't include file extensions.
-                                    // {
-                                    //     "exports": {
-                                    //         ".": "./index.js",
-                                    //         "./jsx-runtime": "./jsx-runtime.js",
-                                    //     }
-                                    // }
-                                    //
-                                    // We limit this behavior just to ".js" files.
-                                    let extname = bun_paths::extension(esm.subpath);
-                                    if extname == b".js" && esm.subpath.len() > 3 {
-                                        let esm_resolution = ESModule {
-                                            conditions: match kind {
-                                                ast::ImportKind::Require
-                                                | ast::ImportKind::RequireResolve => {
-                                                    &self.opts.conditions.require
-                                                }
-                                                ast::ImportKind::At
-                                                | ast::ImportKind::AtConditional => {
-                                                    &self.opts.conditions.style
-                                                }
-                                                _ => &self.opts.conditions.import,
-                                            },
-                                            debug_logs: self.debug_logs.as_mut(),
-                                            module_type: &mut module_type,
-                                        }
-                                        .resolve(
-                                            b"/",
-                                            &esm.subpath[0..esm.subpath.len() - 3],
-                                            &exports_map.root,
-                                        );
-                                        if self
-                                            .handle_esm_resolution(
-                                                esm_resolution,
-                                                abs_package_path,
-                                                kind,
-                                                package_json,
-                                                esm.subpath,
-                                                out,
-                                            )
-                                            .is_success()
-                                        {
-                                            out.is_node_module = true;
-                                            out.module_type = module_type;
-                                            self.extension_order = prev_extension_order;
-                                            if let Some(d) = self.debug_logs.as_mut() {
-                                                d.decrease_indent();
-                                            }
-                                            return MatchStatus::Success;
-                                        }
-                                    }
-
-                                    // if they hid "package.json" from "exports", still allow importing it.
-                                    if esm.subpath == b"./package.json" {
-                                        self.extension_order = prev_extension_order;
-                                        if let Some(d) = self.debug_logs.as_mut() {
-                                            d.decrease_indent();
-                                        }
-                                        *out = MatchResult {
-                                            // NOTE: PackageJSON.source.path is bun_paths::fs::Path<'static>; convert
-                                            // to the resolver's interned crate::fs::Path<'static> via its text.
-                                            path_pair: PathPair {
-                                                primary: Path::init(package_json.source.path.text),
-                                                secondary: None,
-                                            },
-                                            dirname_fd: pkg_dir_info.get_file_descriptor(),
-                                            file_fd: FD::INVALID,
-                                            // `Path.isNodeModule()` checks
-                                            // `lastIndexOf(name.dir, SEP++"node_modules"++SEP)`, i.e. a
-                                            // separator-bounded directory component on `name.dir` (not a
-                                            // bare substring of the full text). `bun_paths::fs::Path<'static>`
-                                            // doesn't carry that method, so re-derive via the resolver's
-                                            // `Path` (already done one line up for `path_pair.primary`).
-                                            is_node_module: Path::init(
-                                                package_json.source.path.text,
-                                            )
-                                            .is_node_module(),
-                                            package_json: Some(std::ptr::from_ref(package_json)),
-                                            dir_info: Some(dir_info),
-                                            ..Default::default()
-                                        };
-                                        return MatchStatus::Success;
-                                    }
-
-                                    self.extension_order = prev_extension_order;
-                                    if let Some(d) = self.debug_logs.as_mut() {
-                                        d.decrease_indent();
-                                    }
-                                    return MatchStatus::NotFound;
+                            if let Some(status) = self.resolve_from_package_exports(
+                                esm,
+                                abs_package_path,
+                                pkg_dir_info,
+                                kind,
+                                out,
+                            ) {
+                                self.extension_order = prev_extension_order;
+                                if let Some(d) = self.debug_logs.as_mut() {
+                                    d.decrease_indent();
                                 }
+                                return status;
                             }
                         }
                     }
@@ -2805,6 +2665,35 @@ impl<'a> Resolver<'a> {
         if !node_path.is_empty() {
             let delim = if cfg!(windows) { b';' } else { b':' };
             for path in node_path.split(|&b| b == delim).filter(|s| !s.is_empty()) {
+                if let Some(ref esm) = esm_
+                    && let Some(abs_package_path) = self
+                        .fs_ref()
+                        .abs_buf_checked(&[path, esm.name], bufs!(esm_absolute_package_path))
+                    && let Ok(Some(pkg_dir_info)) = self.dir_info_cached(abs_package_path)
+                {
+                    let prev_extension_order = self.extension_order;
+                    self.extension_order = match kind {
+                        ast::ImportKind::Url
+                        | ast::ImportKind::AtConditional
+                        | ast::ImportKind::At => options::ExtOrder::Css,
+                        _ => self.opts.extension_order.kind(kind, true),
+                    };
+                    if let Some(status) = self.resolve_from_package_exports(
+                        esm,
+                        abs_package_path,
+                        pkg_dir_info,
+                        kind,
+                        out,
+                    ) {
+                        self.extension_order = prev_extension_order;
+                        if let Some(d) = self.debug_logs.as_mut() {
+                            d.decrease_indent();
+                        }
+                        return status;
+                    }
+                    self.extension_order = prev_extension_order;
+                }
+
                 let Some(abs_path) = self
                     .fs_ref()
                     .abs_buf_checked(&[path, import_path], bufs!(node_modules_check))
@@ -3589,6 +3478,111 @@ impl<'a> Resolver<'a> {
 
         // NOTE: the non-root path is genuinely unimplemented; this is not a stub.
         unreachable!("TODO: implement enqueueDependencyToResolve for non-root packages")
+    }
+
+    /// `None` = no `"exports"` field (caller falls through to the legacy lookup); `Some(NotFound)` = subpath not exported.
+    fn resolve_from_package_exports(
+        &mut self,
+        esm: &crate::package_json::Package<'_>,
+        abs_package_path: &[u8],
+        pkg_dir_info: DirInfoRef,
+        kind: ast::ImportKind,
+        out: &mut MatchResult,
+    ) -> Option<MatchStatus> {
+        let package_json = pkg_dir_info.package_json()?;
+        let exports_map = package_json.exports.as_ref()?;
+
+        let mut module_type = package_json.module_type;
+
+        {
+            let esm_resolution = ESModule {
+                conditions: match kind {
+                    ast::ImportKind::Require | ast::ImportKind::RequireResolve => {
+                        &self.opts.conditions.require
+                    }
+                    ast::ImportKind::At | ast::ImportKind::AtConditional => {
+                        &self.opts.conditions.style
+                    }
+                    _ => &self.opts.conditions.import,
+                },
+                debug_logs: self.debug_logs.as_mut(),
+                module_type: &mut module_type,
+            }
+            .resolve(b"/", esm.subpath, &exports_map.root);
+
+            if self
+                .handle_esm_resolution(
+                    esm_resolution,
+                    abs_package_path,
+                    kind,
+                    package_json,
+                    esm.subpath,
+                    out,
+                )
+                .is_success()
+            {
+                out.is_node_module = true;
+                out.module_type = module_type;
+                return Some(MatchStatus::Success);
+            }
+        }
+
+        // Retry without a trailing ".js": e.g. React maps "./jsx-runtime", not "./jsx-runtime.js".
+        let extname = bun_paths::extension(esm.subpath);
+        if extname == b".js" && esm.subpath.len() > 3 {
+            let esm_resolution = ESModule {
+                conditions: match kind {
+                    ast::ImportKind::Require | ast::ImportKind::RequireResolve => {
+                        &self.opts.conditions.require
+                    }
+                    ast::ImportKind::At | ast::ImportKind::AtConditional => {
+                        &self.opts.conditions.style
+                    }
+                    _ => &self.opts.conditions.import,
+                },
+                debug_logs: self.debug_logs.as_mut(),
+                module_type: &mut module_type,
+            }
+            .resolve(
+                b"/",
+                &esm.subpath[0..esm.subpath.len() - 3],
+                &exports_map.root,
+            );
+            if self
+                .handle_esm_resolution(
+                    esm_resolution,
+                    abs_package_path,
+                    kind,
+                    package_json,
+                    esm.subpath,
+                    out,
+                )
+                .is_success()
+            {
+                out.is_node_module = true;
+                out.module_type = module_type;
+                return Some(MatchStatus::Success);
+            }
+        }
+
+        // if they hid "package.json" from "exports", still allow importing it.
+        if esm.subpath == b"./package.json" {
+            *out = MatchResult {
+                path_pair: PathPair {
+                    primary: Path::init(package_json.source.path.text),
+                    secondary: None,
+                },
+                dirname_fd: pkg_dir_info.get_file_descriptor(),
+                file_fd: FD::INVALID,
+                is_node_module: Path::init(package_json.source.path.text).is_node_module(),
+                package_json: Some(std::ptr::from_ref(package_json)),
+                dir_info: Some(pkg_dir_info),
+                ..Default::default()
+            };
+            return Some(MatchStatus::Success);
+        }
+
+        Some(MatchStatus::NotFound)
     }
 
     fn handle_esm_resolution(

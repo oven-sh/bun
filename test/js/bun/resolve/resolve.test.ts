@@ -407,6 +407,102 @@ describe("NODE_PATH test", () => {
     expect(exitCode).toBe(0);
     expect(stdout.toString().trim()).toBe("NODE_PATH from lib works");
   });
+
+  it("honors package.json exports for packages found via NODE_PATH", async () => {
+    // A package with an "exports" field is fully encapsulated regardless of how
+    // it was located. Node applies the same PACKAGE_EXPORTS_RESOLVE algorithm to
+    // a package found via NODE_PATH as to one found in node_modules: the "."
+    // target wins over "main", mapped subpaths resolve, and unexported files are
+    // unreachable. Before this fix Bun joined each NODE_PATH entry with the raw
+    // specifier and ran the legacy main/index lookup, so "exports" was ignored.
+    using dir = tempDir("node-path-exports", {
+      // Unscoped package with an exports map and a legacy "main" that should be
+      // overridden by exports["."].
+      "gp/npkg/package.json": JSON.stringify({
+        name: "npkg",
+        main: "./legacy.js",
+        exports: { ".": "./m.js", "./mapped": "./real-target.js", "./priv/*": null },
+      }),
+      "gp/npkg/m.js": `module.exports = "EXPORTS-DOT-MAIN";`,
+      "gp/npkg/legacy.js": `module.exports = "LEGACY-MAIN";`,
+      "gp/npkg/real-target.js": `module.exports = "REAL-TARGET";`,
+      "gp/npkg/hidden.js": `module.exports = "HIDDEN-UNEXPORTED";`,
+      "gp/npkg/priv/secret.js": `module.exports = "PRIV-NULLBLOCKED-SECRET";`,
+      // Scoped package with an exports map and no "main".
+      "gp/@scope/pkg/package.json": JSON.stringify({
+        name: "@scope/pkg",
+        exports: { ".": "./idx.js" },
+      }),
+      "gp/@scope/pkg/idx.js": `module.exports = "SCOPED-ROOT";`,
+      "gp/@scope/pkg/hidden.js": `module.exports = "SCOPED-HIDDEN";`,
+      // Package with no exports map: legacy "main" + subpath must still work.
+      "gp/legacy-only/package.json": JSON.stringify({ name: "legacy-only", main: "./lib.js" }),
+      "gp/legacy-only/lib.js": `module.exports = "LEGACY-ONLY-MAIN";`,
+      "gp/legacy-only/sub.js": `module.exports = "LEGACY-ONLY-SUB";`,
+
+      "app/package.json": JSON.stringify({ name: "app", private: true }),
+      "app/probe.cjs": `
+        const probe = (s) => { try { return require(s); } catch (e) { return "ERR"; } };
+        console.log(JSON.stringify({
+          root:         probe("npkg"),
+          mapped:       probe("npkg/mapped"),
+          hidden:       probe("npkg/hidden.js"),
+          priv:         probe("npkg/priv/secret.js"),
+          scopedRoot:   probe("@scope/pkg"),
+          scopedHidden: probe("@scope/pkg/hidden.js"),
+          legacyRoot:   probe("legacy-only"),
+          legacySub:    probe("legacy-only/sub.js"),
+        }));
+      `,
+      // Bun consults NODE_PATH for ESM imports too (Node does not). That
+      // channel shares the same resolver path as require, so the exports map
+      // must apply to `import` as well.
+      "app/probe.mjs": `
+        const probe = async (s) => { try { return String((await import(s)).default); } catch (e) { return "ERR"; } };
+        console.log(JSON.stringify({
+          root:   await probe("npkg"),
+          mapped: await probe("npkg/mapped"),
+          hidden: await probe("npkg/hidden.js"),
+          priv:   await probe("npkg/priv/secret.js"),
+        }));
+      `,
+    });
+
+    const run = async (script: string) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "--no-install", script],
+        env: { ...bunEnv, NODE_PATH: joinP(String(dir), "gp") },
+        cwd: joinP(String(dir), "app"),
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    };
+
+    const cjs = await run("probe.cjs");
+    expect(cjs.stderr).toBe("");
+    expect(JSON.parse(cjs.stdout)).toEqual({
+      root: "EXPORTS-DOT-MAIN",
+      mapped: "REAL-TARGET",
+      hidden: "ERR",
+      priv: "ERR",
+      scopedRoot: "SCOPED-ROOT",
+      scopedHidden: "ERR",
+      legacyRoot: "LEGACY-ONLY-MAIN",
+      legacySub: "LEGACY-ONLY-SUB",
+    });
+    expect(cjs.exitCode).toBe(0);
+
+    const esm = await run("probe.mjs");
+    expect(esm.stderr).toBe("");
+    expect(JSON.parse(esm.stdout)).toEqual({
+      root: "EXPORTS-DOT-MAIN",
+      mapped: "REAL-TARGET",
+      hidden: "ERR",
+      priv: "ERR",
+    });
+    expect(esm.exitCode).toBe(0);
+  });
 });
 
 it("can resolve with source directories that do not exist", () => {

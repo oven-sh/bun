@@ -1579,6 +1579,9 @@ pub struct Jest {
     /// `P::keep_matcher_call_frame` rewrote a returned matcher call, so the output is specific
     /// to `bun test` and must not enter the runtime transpiler cache.
     pub(crate) rewrote_matcher_tail_call: bool,
+    /// `P::returns_matcher_call` found a returned matcher call with the rewrite off, so a
+    /// `bun test` transpile of this file would produce different output.
+    pub(crate) returned_matcher_call: bool,
 }
 
 impl Jest {
@@ -1622,6 +1625,7 @@ impl Default for Jest {
             xtest: Ref::NONE,
             xdescribe: Ref::NONE,
             rewrote_matcher_tail_call: false,
+            returned_matcher_call: false,
         }
     }
 }

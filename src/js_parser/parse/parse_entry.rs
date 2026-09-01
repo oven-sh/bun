@@ -2057,20 +2057,16 @@ impl<'a> Parser<'a> {
         }
 
         // The entry records whether this file can transpile differently under `bun test`
-        // (`keep_matcher_call_frame`), so the cache read can reject a `bun run` entry for
-        // such a file instead of serving output with the rewrite missing.
+        // (`keep_matcher_call_frame`, the import rewrites above), so the cache read can
+        // reject a `bun run` entry for such a file instead of serving output with the
+        // rewrite missing.
         if let Some(cache) = p.options.features.runtime_transpiler_cache_mut() {
-            cache.uses_test_framework = p.import_records.items().iter().any(|item| {
-                item.path.text == b"bun:test"
-                    || item.path.text == b"@jest/globals"
-                    || item.path.text == b"vitest"
-            }) || p
-                .module_scope()
-                .members
-                .get(b"expect".as_slice())
-                .is_some_and(|member| {
-                    p.symbols[member.ref_.inner_index() as usize].kind
-                        == js_ast::symbol::Kind::Unbound
+            cache.uses_test_framework = p.jest.rewrote_matcher_tail_call
+                || p.jest.returned_matcher_call
+                || p.import_records.items().iter().any(|item| {
+                    item.path.text == b"bun:test"
+                        || item.path.text == b"@jest/globals"
+                        || item.path.text == b"vitest"
                 });
         }
 

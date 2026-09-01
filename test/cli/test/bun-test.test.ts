@@ -1489,6 +1489,50 @@ describe("bun test", () => {
       expect(readdirSync(cacheDir).sort()).toEqual(warmEntries);
     });
 
+    // The helper gets `expect` through a re-export, so no import specifier in the helper names
+    // the test framework. The cache entry must still record that `bun test` would rewrite it.
+    test("a helper that gets expect through a re-export reports its line after bun run cached it", async () => {
+      using dir = tempDir("tail-reexport-cache", {
+        "reexport.ts": `export { expect } from "bun:test";`,
+        "util.ts": [
+          `import { expect } from "./reexport.ts";`,
+          `export function check(value: number) { return expect(value).toBe(2); }`,
+          `// ${Buffer.alloc(5000, "x").toString()}`,
+        ].join("\n"),
+        "entry.ts": `import "./util.ts";`,
+        "helper.test.ts": [
+          `import { test } from "bun:test";`,
+          `import { check } from "./util.ts";`,
+          `test("helper", () => { check(1); });`,
+        ].join("\n"),
+      });
+      const cacheDir = join(String(dir), "cache");
+      mkdirSync(cacheDir);
+      const env = {
+        ...bunEnv,
+        BUN_RUNTIME_TRANSPILER_CACHE_PATH: cacheDir,
+        BUN_DEBUG_ENABLE_RESTORE_FROM_TRANSPILER_CACHE: "1",
+      };
+      await using warm = Bun.spawn({
+        cmd: [bunExe(), "run", "entry.ts"],
+        env,
+        cwd: String(dir),
+        stdout: "ignore",
+        stderr: "ignore",
+      });
+      await warm.exited;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "helper.test.ts"],
+        env,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).toMatch(/at check \(.*util\.ts:2:\d+\)/);
+      expect(stderr).toContain("1 fail");
+      expect(exitCode).toBe(1);
+    });
+
     // This arrow is rewritten in this very file, and its toString() text lands in a different
     // module, so the rewrite must not reference anything from the module it was made in.
     test("the rewrite survives a Function.toString round-trip into another module", async () => {

@@ -1578,8 +1578,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if let Some(val) = data.value.as_mut() {
             p.visit_expr(val);
 
-            if p.options.features.inject_jest_globals && !p.is_control_flow_dead {
-                p.keep_matcher_call_frame(val);
+            if !p.is_control_flow_dead {
+                if p.options.features.inject_jest_globals {
+                    p.keep_matcher_call_frame(val);
+                } else if !p.jest.returned_matcher_call
+                    && p.options.features.runtime_transpiler_cache_mut().is_some()
+                    && p.returns_matcher_call(val)
+                {
+                    p.jest.returned_matcher_call = true;
+                }
             }
 
             // "return undefined;" can safely just always be "return;"
@@ -1624,6 +1631,30 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 self.keep_matcher_call_frame(&mut e.right);
             }
             _ => {}
+        }
+    }
+
+    /// Detection-only mirror of `keep_matcher_call_frame` for when the rewrite is off. The
+    /// transpiler cache entry records the result, so a `bun test` read can reject this file's
+    /// `bun run` output (`Metadata::FLAG_USES_TEST_FRAMEWORK`).
+    fn returns_matcher_call(&self, value: &Expr) -> bool {
+        match value.data {
+            js_ast::ExprData::ECall(call) => self.is_matcher_call(call.target),
+            js_ast::ExprData::EIf(e) => {
+                self.returns_matcher_call(&e.yes) || self.returns_matcher_call(&e.no)
+            }
+            js_ast::ExprData::EBinary(e)
+                if matches!(
+                    e.op,
+                    js_ast::OpCode::BinComma
+                        | js_ast::OpCode::BinLogicalAnd
+                        | js_ast::OpCode::BinLogicalOr
+                        | js_ast::OpCode::BinNullishCoalescing
+                ) =>
+            {
+                self.returns_matcher_call(&e.right)
+            }
+            _ => false,
         }
     }
 

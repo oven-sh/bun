@@ -154,8 +154,9 @@ impl Default for Metadata {
 impl Metadata {
     /// The entry was written with `inject_jest_globals` on (a `bun test` transpile).
     pub(crate) const FLAG_JEST_MODE: u8 = 1;
-    /// The file imports `bun:test` (or `@jest/globals` / `vitest`), or references an
-    /// unbound `expect`, so its `bun test` output can differ from its `bun run` output.
+    /// The file contains a returned matcher call, or imports `bun:test` (or
+    /// `@jest/globals` / `vitest`), so its `bun test` output can differ from its
+    /// `bun run` output.
     pub(crate) const FLAG_USES_TEST_FRAMEWORK: u8 = 2;
 
     // 1×u32 + 3×u8 (enum reprs + flags) + 12×u64 = 4 + 3 + 96 = 103

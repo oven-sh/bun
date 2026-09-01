@@ -158,7 +158,7 @@ nativeTests.test_threadsafe_function_abort_with_outstanding_ref = async () => {
   // the other thread releases once it has seen the finalizer run (or gives up
   // after 2s and says so); that is the one step here that depends on OS
   // scheduling, so wait for it by deadline, under the test runner's 5s
-  const deadline = Date.now() + 4_000;
+  const deadline = Date.now() + 3_000;
   while (
     nativeTests.test_napi_threadsafe_function_abort_with_outstanding_ref_release_status() === -1 &&
     Date.now() < deadline

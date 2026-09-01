@@ -165,7 +165,7 @@ impl Lazy {
                         }
                     }
 
-                    fd.make_lib_uv_owned_for_syscall(sys::Tag::dup, sys::ErrorCase::CloseOnFail)?
+                    fd.make_lib_uv_owned_for_syscall(sys::Tag::dup)?
                 }
             }
             PathOrFileDescriptor::Path(path) => {

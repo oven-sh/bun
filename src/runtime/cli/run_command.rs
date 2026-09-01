@@ -2775,8 +2775,7 @@ impl RunCommand {
         };
         // `.makeLibUVOwnedForSyscall(.open, .close_on_fail)` — hands the
         // HANDLE off to libuv ownership on Windows; pass-through on POSIX.
-        let Ok(fd) = fd.make_lib_uv_owned_for_syscall(sys::Tag::open, sys::ErrorCase::CloseOnFail)
-        else {
+        let Ok(fd) = fd.make_lib_uv_owned_for_syscall(sys::Tag::open) else {
             return false;
         };
 

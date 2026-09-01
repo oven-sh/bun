@@ -2,7 +2,13 @@
 // Also hosts the option validation and SystemError construction shared with
 // internal/fs/cp (async) and the fs.cpSync/fs.cp/fs.promises.cp dispatchers,
 // ported from node lib/internal/fs/utils.js and lib/internal/errors.js.
-const { validateObject, validateBoolean, validateFunction, validateInteger } = require("internal/validators");
+const {
+  validateObject,
+  validateBoolean,
+  validateFunction,
+  validateInteger,
+  getValidatedFsPath,
+} = require("internal/validators");
 const {
   chmodSync,
   copyFileSync,
@@ -22,6 +28,7 @@ const { EEXIST, EISDIR, EINVAL, ENOTDIR } = $processBindingConstants.os.errno;
 
 const ArrayPrototypeEvery = Array.prototype.every;
 const ArrayPrototypeFilter = Array.prototype.filter;
+const BufferPrototypeToString = Buffer.prototype.toString;
 const StringPrototypeSplit = String.prototype.split;
 
 // COPYFILE_EXCL | COPYFILE_FICLONE | COPYFILE_FICLONE_FORCE
@@ -140,6 +147,15 @@ function validateCpOptions(options) {
   }
   options[kValidatedCpOptions] = true;
   return options;
+}
+
+// node's getValidatedPath passes a Buffer or Uint8Array through unchanged, and
+// node's cpSync hands it to C++ bindings that take raw bytes. The checks and
+// the walker here run on node:path, which takes only strings, so the bytes are
+// decoded as UTF-8 once, up front.
+function getValidatedCpPath(p, propName) {
+  p = getValidatedFsPath(p, propName);
+  return typeof p === "string" ? p : BufferPrototypeToString.$call(p);
 }
 
 function areIdentical(srcStat, destStat) {
@@ -510,6 +526,7 @@ function copyLink(resolvedSrc, dest) {
 export default {
   cpSyncFn,
   validateCpOptions,
+  getValidatedCpPath,
   tryNativeFastPathSync,
   errno: { EEXIST, EISDIR, EINVAL, ENOTDIR },
   fsCpDirToNonDirError,

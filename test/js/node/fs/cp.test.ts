@@ -37,6 +37,51 @@ for (const [name, copy] of impls) {
       expect(fs.readFileSync(basename + "/to.txt", "utf8")).toBe("a");
     });
 
+    test("Buffer and Uint8Array paths", async () => {
+      await using basename = tempDir("cp", {
+        "from/a.txt": "a",
+        "from/dir/b.txt": "b",
+      });
+      const from = basename + "/from";
+
+      await copy(Buffer.from(from + "/a.txt"), basename + "/buf-src.txt");
+      await copy(from + "/a.txt", Buffer.from(basename + "/buf-dest.txt"));
+      await copy(new Uint8Array(Buffer.from(from + "/a.txt")), basename + "/u8-src.txt");
+      await copy(Buffer.from(from), Buffer.from(basename + "/buf-dir"), { recursive: true });
+
+      expect({
+        bufSrc: fs.readFileSync(basename + "/buf-src.txt", "utf8"),
+        bufDest: fs.readFileSync(basename + "/buf-dest.txt", "utf8"),
+        u8Src: fs.readFileSync(basename + "/u8-src.txt", "utf8"),
+        bufDir: fs.readFileSync(basename + "/buf-dir/dir/b.txt", "utf8"),
+      }).toEqual({ bufSrc: "a", bufDest: "a", u8Src: "a", bufDir: "b" });
+    });
+
+    test("Buffer paths with a filter - the filter receives string paths", async () => {
+      await using basename = tempDir("cp", {
+        "from/a.txt": "a",
+        "from/b.txt": "b",
+      });
+      const from = join(basename, "from");
+      const result = join(basename, "result");
+      const seen: [string, string][] = [];
+
+      await copy(Buffer.from(from), Buffer.from(result), {
+        recursive: true,
+        filter: (src: string, dest: string) => {
+          seen.push([src, dest]);
+          return !src.endsWith("b.txt");
+        },
+      });
+
+      expect(seen.sort((a, b) => a[0].localeCompare(b[0]))).toEqual([
+        [from, result],
+        [join(from, "a.txt"), join(result, "a.txt")],
+        [join(from, "b.txt"), join(result, "b.txt")],
+      ]);
+      expect(fs.readdirSync(result)).toEqual(["a.txt"]);
+    });
+
     test("refuse to copy directory with 'recursive: false'", async () => {
       await using basename = tempDir("cp", {
         "from/a.txt": "a",
@@ -428,6 +473,18 @@ test("cp with missing callback throws", () => {
     // @ts-expect-error
     fs.cp("a", "b" as any);
   }).toThrow(/"cb"/);
+});
+
+test("cp callback form accepts Buffer paths", async () => {
+  await using basename = tempDir("cp", {
+    "a.txt": "a",
+  });
+
+  const { promise, resolve, reject } = Promise.withResolvers<void>();
+  fs.cp(Buffer.from(basename + "/a.txt"), Buffer.from(basename + "/b.txt"), err => (err ? reject(err) : resolve()));
+  await promise;
+
+  expect(fs.readFileSync(basename + "/b.txt", "utf8")).toBe("a");
 });
 
 // On Windows, _copySingleFileSync's reparse-point branch opens a handle to the

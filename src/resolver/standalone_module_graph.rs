@@ -100,4 +100,7 @@ pub trait StandaloneModuleGraph: Send + Sync {
     fn module_graph_load_bytes(&self) -> usize {
         0
     }
+    /// Ask the kernel to reclaim the resident pages of the embedded graph (clean file-backed pages are dropped and
+    /// re-read from the executable when touched). May block on the syscall; call off the JS thread.
+    fn page_out(&self) {}
 }

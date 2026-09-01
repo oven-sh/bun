@@ -216,7 +216,8 @@ impl LoadFileError {
 }
 
 struct LoadedFile {
-    bytes: bun_core::ZBox,
+    /// The file, NUL-terminated.
+    bytes: Vec<u8>,
     /// What `key` / `cert` / `ca` points at.
     array: Box<[*const c_char; 1]>,
 }
@@ -227,22 +228,33 @@ impl LoadedFile {
         let len = unsafe { bun_core::ffi::cstr(path) }.to_bytes().len();
         // SAFETY: `path[len] == 0` (CStr invariant) and `path[..len]` is readable.
         let path = unsafe { bun_core::ZStr::from_raw(path.cast::<u8>(), len) };
-        let mut contents = Vec::new();
-        bun_sys::File::open(path, bun_sys::O::RDONLY | bun_sys::O::CLOEXEC, 0)
-            .and_then(|f| f.read_to_end_into(&mut contents))
-            .map_err(|err| LoadFileError {
-                file,
-                err: err.with_path(path.as_bytes()),
-            })?;
-        let bytes = bun_core::ZBox::from_vec(contents);
-        let array = Box::new([bytes.as_ptr()]);
+        let bytes = Self::read_z(path).map_err(|err| LoadFileError {
+            file,
+            err: err.with_path(path.as_bytes()),
+        })?;
+        let array = Box::new([bytes.as_ptr().cast::<c_char>()]);
         Ok(Self { bytes, array })
+    }
+
+    /// One allocation: the `fstat` size plus the NUL; a pipe reports 0 and grows in the read loop.
+    fn read_z(path: &bun_core::ZStr) -> bun_sys::Maybe<Vec<u8>> {
+        let file = bun_sys::File::open(path, bun_sys::O::RDONLY | bun_sys::O::CLOEXEC, 0)?;
+        let mut bytes = Vec::new();
+        let size = file.get_end_pos()?;
+        if bytes.try_reserve_exact(size.saturating_add(1)).is_err() {
+            return Err(bun_sys::Error::oom());
+        }
+        file.read_to_end_into(&mut bytes)?;
+        // The read that hit EOF left spare capacity, so this does not grow.
+        bytes.push(0);
+        Ok(bytes)
     }
 }
 
 impl Drop for LoadedFile {
     fn drop(&mut self) {
-        bun_alloc::free_sensitive(core::mem::take(&mut self.bytes).into_boxed_slice_with_nul());
+        // SAFETY: `bytes` is exclusively owned; zeroing its `len` bytes is sound.
+        unsafe { bun_alloc::secure_zero(self.bytes.as_mut_ptr(), self.bytes.len()) };
     }
 }
 
@@ -343,7 +355,7 @@ impl BunSocketContextOptions {
         }
         if !self.dh_params_file_name.is_null() {
             let file = LoadedFile::read(TlsFile::DhParams, self.dh_params_file_name)?;
-            raw.dh_params = file.bytes.as_ptr();
+            raw.dh_params = file.bytes.as_ptr().cast::<c_char>();
             files.push(file);
         }
         Ok(LoadedOptions { raw, _files: files })

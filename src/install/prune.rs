@@ -385,8 +385,7 @@ fn extracted(tag: ResolutionTag) -> bool {
 
 /// Which linkers the entries of the importer folders (root and workspace `node_modules`) come from.
 struct LayoutEvidence<'a> {
-    /// Every dependency name (alias) that resolves to an extracted package: the names the hoisted
-    /// linker installs real directories under.
+    /// Sorted dependency names that resolve to an extracted package.
     extracted_aliases: Vec<&'a [u8]>,
     hoisted: bool,
     isolated: bool,

@@ -25,6 +25,8 @@ Bun looks small from the outside — one binary, one `bun` command — but insid
 └─────────────────────────────────────────────────────┘
 ```
 
+Text alternative: From top to bottom, Bun flows from the JavaScript and CLI layer (bundler, package manager, test runner, and transpiler in `src/js` and `src/bun.js`) through the native bindings layer (JSC glue, `*.bind.ts`, FFI, and Web APIs) into JavaScriptCore with Zig/C++ bindings (garbage collector, JIT, and JS execution) down to the systems layer (libarchive, BoringSSL, mimalloc, uSockets, zlib, SQLite, and TinyCC).
+
 - **Top layer** is TypeScript/JavaScript. Most user-facing APIs (`Bun.file`, `Bun.serve`, `node:fs`, `bun:sqlite`) live in `src/js/{bun,node,thirdparty}` and are bundled at build time via `src/codegen/bundle-modules.ts`. You can often fix a bug there without touching C++.
 - **Middle layer** is the bridge. `.bind.ts` files (see [Bindgen](/project/bindgen)) declare typed function signatures; the generator emits C++ thunks and Rust shims that validate/coerce JS values and call the native implementation. Older `.classes.ts` and `JS2Native` systems are being phased out in favor of this.
 - **Engine layer** is JavaScriptCore (JSC). Bun forks [oven-sh/WebKit](https://github.com/oven-sh/WebKit) pinned at `WEBKIT_VERSION` in `scripts/build/deps/webkit.ts`. JSC owns the heap, parser, and JIT. Bun embeds it and extends it with custom bindings.

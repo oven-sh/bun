@@ -1421,8 +1421,7 @@ impl JSValue {
         const I52_MAX: i64 = (1i64 << 51) - 1;
         Ok(len.clamp(0.0, I52_MAX as f64) as u64)
     }
-    /// Set a property whose name is known at compile time. A name that comes
-    /// from data goes through [`put_may_be_index`](Self::put_may_be_index).
+    /// Set a property with a compile-time name. A data-derived name uses [`put_may_be_index`](Self::put_may_be_index).
     pub fn put<K: PutKey>(self, global: &JSGlobalObject, key: K, value: JSValue) {
         key.put(self, global, value)
     }
@@ -1474,8 +1473,7 @@ impl JSValue {
         let key = bun_core::EncodedSlice::latin1(key.as_ref());
         crate::call_check_slow(global, || JSC__JSValue__deleteProperty(self, global, &key))
     }
-    /// `JSValue.putMayBeIndex` — [`put`](Self::put) for a name that comes from
-    /// data: an array-index name such as `"0"` becomes an indexed property.
+    /// `JSValue.putMayBeIndex` — [`put`](Self::put) for a data-derived name, which can be an array index like `"0"`.
     pub fn put_may_be_index(
         self,
         global: &JSGlobalObject,
@@ -1836,8 +1834,7 @@ impl<T: FromAny> FromAny for Option<T> {
     }
 }
 
-/// Dispatch trait for [`JSValue::put`]'s key parameter. Only `'static` keys
-/// implement it: the C++ side is plain `putDirect`, which asserts on an index name.
+/// Key dispatch for [`JSValue::put`]: only `'static` keys, because the C++ side is plain `putDirect`.
 pub trait PutKey {
     fn put(self, target: JSValue, global: &JSGlobalObject, value: JSValue);
 }

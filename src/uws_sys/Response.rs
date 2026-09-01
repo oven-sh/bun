@@ -567,27 +567,6 @@ impl<const SSL: bool> Response<SSL> {
         );
     }
 
-    pub(crate) fn run_corked_with_type<U>(&mut self, handler: fn(*mut U), optional_data: *mut U) {
-        // cork is synchronous, so we can stack-allocate the (handler, data) pair
-        // and recover it inside the trampoline.
-        type Ctx<U> = (fn(*mut U), *mut U);
-        // Safe fn item: nested local thunk, only coerced to the C-ABI
-        // fn-pointer type passed to C; body wraps its raw-ptr op explicitly.
-        extern "C" fn handle<U>(user_data: *mut c_void) {
-            // SAFETY: user_data points at a stack Ctx<U> valid for this synchronous call.
-            let ctx = unsafe { &*user_data.cast::<Ctx<U>>() };
-            (ctx.0)(ctx.1);
-        }
-        let mut ctx: Ctx<U> = (handler, optional_data);
-        // cork is synchronous so the stack-allocated ctx outlives the FFI call.
-        c::uws_res_cork(
-            Self::ssl_flag(),
-            self.as_raw(),
-            (&raw mut ctx).cast::<c_void>(),
-            handle::<U>,
-        );
-    }
-
     pub fn upgrade<D>(
         &mut self,
         data: *mut D,
@@ -984,6 +963,21 @@ impl AnyResponse {
         )
     }
 
+    /// [`on_data`](Self::on_data) counterpart of
+    /// [`on_writable_this`](Self::on_writable_this).
+    pub fn on_data_this<U: 'static, H>(self, _handler: H, this: ThisPtr<U>)
+    where
+        H: Fn(ThisPtr<U>, &[u8], bool) + Copy + 'static,
+    {
+        self.on_data(
+            |u: *mut U, chunk: &[u8], last: bool| {
+                // SAFETY: `u` is the `ThisPtr` registered below; the registrant holds a ref on it until the handler is cleared.
+                thunk::zst::<H>()(unsafe { ThisPtr::new(u) }, chunk, last)
+            },
+            this.as_ptr(),
+        )
+    }
+
     pub fn clear_aborted(self) {
         any_dispatch!(self, |r| r.clear_aborted())
     }
@@ -1018,10 +1012,6 @@ impl AnyResponse {
 
     pub fn corked<F: FnOnce()>(self, f: F) {
         any_dispatch!(self, |r| r.corked(f))
-    }
-
-    pub fn run_corked_with_type<U>(self, handler: fn(*mut U), optional_data: *mut U) {
-        any_dispatch!(self, |r| r.run_corked_with_type(handler, optional_data))
     }
 
     pub fn upgrade<D>(

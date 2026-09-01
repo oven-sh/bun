@@ -405,6 +405,16 @@ impl<T, const CAPACITY: usize> Drop for HiveArray<T, CAPACITY> {
 // HiveSlot
 // ──────────────────────────────────────────────────────────────────────────
 
+/// A refcounted type whose last-ref destructor (`#[ref_count(destroy = …)]`)
+/// returns its storage to the [`Fallback`] pool it was claimed from via
+/// [`Fallback::put`], never through `Box` deallocation.
+///
+/// # Safety
+/// Implement only if that is true for every value handed to
+/// [`HiveSlot::write_ref`]; a `Box`-freeing destructor on an inline pool slot
+/// is an invalid free.
+pub unsafe trait PoolReclaimed {}
+
 /// Linear reservation token for a claimed-but-uninitialized hive slot.
 ///
 /// `HiveArray` slots are `[MaybeUninit<T>; CAP]`. A two-phase claim-then-
@@ -452,6 +462,26 @@ impl<'h, T, const CAPACITY: usize> HiveSlot<'h, T, CAPACITY> {
         // the `UnsafeCell` tag alive for callers holding sibling slot pointers.
         unsafe { p.as_ptr().write(value) };
         p
+    }
+
+    /// [`write`](Self::write) an intrusively refcounted `value` (constructed with
+    /// its count at 1) and return that first ref. [`PoolReclaimed`] is the
+    /// proof that dropping the last ref hands the slot back to this pool.
+    #[inline]
+    pub fn write_ref(self, value: T) -> bun_ptr::RefPtr<T>
+    where
+        T: bun_ptr::AnyRefCounted + PoolReclaimed,
+    {
+        let p = self.write(value);
+        // SAFETY: `p` is the just-initialized slot; its only ref is the one
+        // adopted here (checked), so the `RefPtr`'s release returns the slot.
+        unsafe {
+            assert!(
+                T::rc_has_one_ref(p.as_ptr()),
+                "write_ref: value must start with one ref"
+            );
+            bun_ptr::RefPtr::from_raw(p.as_ptr())
+        }
     }
 
     /// Caller has fully initialized the slot by writing through

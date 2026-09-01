@@ -120,14 +120,10 @@ pub(crate) enum StreamOwner {
     FileRoute(RefPtr<FileRoute>),
     /// Likewise for `DirectoryRoute::on`.
     DirectoryRoute(RefPtr<DirectoryRoute>),
-    Ctx {
-        ctx: *mut c_void,
-        on_complete: fn(*mut c_void, AnyResponse),
-        /// Fires instead of `on_complete` when the client disconnects
-        /// mid-stream. If `None`, abort is reported via `on_complete`.
-        on_abort: Option<fn(*mut c_void, AnyResponse)>,
-        on_error: fn(*mut c_void, AnyResponse, sys::Error),
-    },
+    /// A `Bun.serve` request whose response body is a file. The context's
+    /// in-flight ref (`RequestContext::in_flight`) is what the delivered
+    /// completion releases; an abort is routed through its `on_abort`.
+    RequestContext(crate::server::AnyRequestContext),
 }
 
 enum StreamEnd {
@@ -141,15 +137,10 @@ impl StreamOwner {
         match self {
             StreamOwner::FileRoute(route) => route.on_response_complete(resp),
             StreamOwner::DirectoryRoute(route) => route.on_response_complete(resp),
-            StreamOwner::Ctx {
-                ctx,
-                on_complete,
-                on_abort,
-                on_error,
-            } => match end {
-                StreamEnd::Complete => on_complete(ctx, resp),
-                StreamEnd::Abort => on_abort.unwrap_or(on_complete)(ctx, resp),
-                StreamEnd::Error(err) => on_error(ctx, resp, err),
+            StreamOwner::RequestContext(ctx) => match end {
+                StreamEnd::Complete => ctx.on_file_stream_complete(resp, None),
+                StreamEnd::Abort => ctx.on_file_stream_abort(resp),
+                StreamEnd::Error(err) => ctx.on_file_stream_complete(resp, Some(err)),
             },
         }
     }

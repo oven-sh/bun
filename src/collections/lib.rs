@@ -34,6 +34,7 @@ pub use static_hash_map::StaticHashMap;
 pub use bounded_array::BoundedArray;
 pub use hive_array::{
     Fallback as HiveArrayFallback, HiveArray, HiveBox, HiveRef, HiveRefHandle, HiveSlot,
+    PoolReclaimed,
 };
 pub use linear_fifo::LinearFifo;
 pub use multi_array_list::MultiArrayList;

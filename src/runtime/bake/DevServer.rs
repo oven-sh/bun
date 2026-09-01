@@ -6510,7 +6510,7 @@ fn bundle_new_route_js_function_impl(
 
     // SAFETY: request_ptr is a *bun.webcore.Request from C++
     let request: &mut WebRequest = unsafe { &mut *request_ptr.cast::<WebRequest>() };
-    let Some(dev) = request.request_context.dev_server() else {
+    let Some(dev) = request.request_context.get().dev_server() else {
         return Err(global.throw(format_args!(
             "Request context does not belong to dev server"
         )));
@@ -6536,7 +6536,7 @@ fn bundle_new_route_js_function_impl(
     let _exit = dev.vm().enter_event_loop_scope();
 
     let _ = dev;
-    let Some(dev_ptr) = request.request_context.dev_server_mut() else {
+    let Some(dev_ptr) = request.request_context.get().dev_server_mut() else {
         return Err(global.throw(format_args!(
             "Request context does not belong to dev server"
         )));
@@ -6650,7 +6650,7 @@ fn new_route_params_for_bundle_promise_for_js(
     };
     // SAFETY: `from_js` returned a live native pointer; JS holds the GC ref.
     let request: &mut WebRequest = unsafe { &mut *request_ptr };
-    let Some(dev_ptr) = request.request_context.dev_server_mut() else {
+    let Some(dev_ptr) = request.request_context.get().dev_server_mut() else {
         return Err(global.throw(format_args!(
             "Request context does not belong to dev server"
         )));

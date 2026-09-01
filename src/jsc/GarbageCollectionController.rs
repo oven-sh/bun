@@ -114,6 +114,7 @@ impl GarbageCollectionController {
         self.idle_quiet_ms.set(quiet);
         let second = first.saturating_add(SECOND_GC_AFTER_MS);
         let crossed = |due: u32| before < due && quiet >= due;
+        #[cfg(target_os = "linux")]
         if crossed(first) {
             if let Some(graph) = vm.standalone_module_graph {
                 let _ = std::thread::Builder::new()
@@ -174,7 +175,7 @@ impl GarbageCollectionController {
         self.gc_last_heap_size.set(vm.block_bytes_allocated());
     }
 
-    /// `Tag::GcRepeating` fire body: 1 s in fast mode, 30 s in slow mode; drops to slow after 30 fires with no heap growth, back to fast when it grows.
+    /// `Tag::GcRepeating` fire body: `BUN_GC_TIMER_INTERVAL` (default 1 s) in fast mode, 30 s in slow mode; drops to slow after 30 fires with no heap growth, back to fast when it grows.
     ///
     /// # Safety
     /// `this` is the live per-VM controller; `vm` is the per-thread VM.

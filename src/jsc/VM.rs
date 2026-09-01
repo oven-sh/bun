@@ -26,10 +26,9 @@ unsafe extern "C" {
     safe fn JSC__VM__releaseAPILock(vm: &VM);
     safe fn JSC__VM__reportExtraMemory(vm: &VM, size: usize);
     safe fn JSC__VM__shrinkFootprint(vm: &VM);
-    safe fn JSC__VM__collectAsyncFull(vm: &VM);
     safe fn JSC__VM__runGC(vm: &VM, sync: bool) -> usize;
     safe fn JSC__VM__heapSize(vm: &VM) -> usize;
-    safe fn JSC__VM__collectAsync(vm: &VM);
+    safe fn JSC__VM__collectAsync(vm: &VM, full: bool);
     safe fn JSC__VM__executionForbidden(vm: &VM) -> bool;
     safe fn JSC__VM__notifyNeedTermination(vm: &VM);
     safe fn JSC__VM__isEntered(vm: &VM) -> bool;
@@ -87,11 +86,6 @@ impl VM {
         JSC__VM__shrinkFootprint(self)
     }
 
-    /// Request a concurrent full collection.
-    pub fn collect_async_full(&self) {
-        JSC__VM__collectAsyncFull(self)
-    }
-
     pub fn run_gc(&self, sync: bool) -> usize {
         JSC__VM__runGC(self, sync)
     }
@@ -100,8 +94,9 @@ impl VM {
         JSC__VM__heapSize(self)
     }
 
-    pub(crate) fn collect_async(&self) {
-        JSC__VM__collectAsync(self)
+    /// Request a concurrent collection; JSC picks the scope unless `full`.
+    pub(crate) fn collect_async(&self, full: bool) {
+        JSC__VM__collectAsync(self, full)
     }
 
     pub fn execution_forbidden(&self) -> bool {

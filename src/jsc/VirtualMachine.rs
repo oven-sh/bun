@@ -1398,7 +1398,7 @@ impl VirtualMachine {
         if sync {
             return vm.run_gc(true);
         }
-        vm.collect_async();
+        vm.collect_async(false);
         vm.heap_size()
     }
 

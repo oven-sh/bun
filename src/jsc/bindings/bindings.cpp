@@ -3156,10 +3156,13 @@ void JSC__JSGlobalObject__deleteModuleRegistryEntry(JSC::JSGlobalObject* global,
     moduleLoader->removeEntry(identifier);
 }
 
-void JSC__VM__collectAsync(JSC::VM* vm)
+void JSC__VM__collectAsync(JSC::VM* vm, bool full)
 {
     JSC::JSLockHolder lock(*vm);
-    vm->heap.collectAsync();
+    if (full)
+        vm->heap.collectAsync(JSC::CollectionScope::Full);
+    else
+        vm->heap.collectAsync();
 }
 
 size_t JSC__VM__heapSize(JSC::VM* arg0)
@@ -4996,12 +4999,6 @@ bool JSC__JSValue__isTerminationException(JSC::EncodedJSValue JSValue0)
 void JSC__VM__shrinkFootprint(JSC::VM* arg0)
 {
     arg0->shrinkFootprintWhenIdle();
-}
-
-void JSC__VM__collectAsyncFull(JSC::VM* vm)
-{
-    JSC::JSLockHolder lock(*vm);
-    vm->heap.collectAsync(JSC::CollectionScope::Full);
 }
 
 void JSC__VM__holdAPILock(JSC::VM* arg0, void* ctx, void (*callback)(void* arg0))

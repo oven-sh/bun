@@ -14,19 +14,14 @@ const SLOW_REPEAT_INTERVAL_MS: i32 = 30_000;
 
 pub struct GarbageCollectionController {
     pub gc_repeating_timer: JsCell<EventLoopTimer>,
-    /// Written by every `perform_gc()` caller, so the fast/slow comparison sees the last such call, not strictly the last fire; external callers are one-shot so worst case is one extra 30 s slow interval.
+    /// Written by every `perform_gc` caller, so the fast/slow comparison sees the last such call, not strictly the last fire; external callers are one-shot so worst case is one extra 30 s slow interval.
     pub(crate) gc_last_heap_size: Cell<usize>,
     pub(crate) heap_size_didnt_change_for_repeating_timer_ticks_count: Cell<u8>,
     pub(crate) gc_timer_interval: Cell<i32>,
     pub(crate) gc_repeating_timer_fast: Cell<bool>,
     pub(crate) disabled: Cell<bool>,
-    /// Idle release: how long the heap must stay unchanged before the first idle full collection (0 = off), nominal
-    /// quiet time accumulated from tick intervals, full collections requested this quiet streak, and whether the
-    /// last tick requested one (its own effect on the heap is not activity).
-    idle_release_after_ms: Cell<u32>,
+    /// Nominal time (from tick intervals) since the JS heap last grew; drives the idle full collections.
     idle_quiet_ms: Cell<u32>,
-    idle_full_gcs: Cell<u8>,
-    idle_requested_gc: Cell<bool>,
 }
 
 bun_event_loop::impl_timer_owner!(
@@ -43,10 +38,7 @@ impl Default for GarbageCollectionController {
             gc_timer_interval: Cell::new(0),
             gc_repeating_timer_fast: Cell::new(true),
             disabled: Cell::new(false),
-            idle_release_after_ms: Cell::new(0),
             idle_quiet_ms: Cell::new(0),
-            idle_full_gcs: Cell::new(0),
-            idle_requested_gc: Cell::new(false),
         }
     }
 }
@@ -97,63 +89,46 @@ impl GarbageCollectionController {
 
         self.disabled
             .set(env_var::BUN_GC_TIMER_DISABLE::get().unwrap_or(false));
-
-        if vm.is_main_thread() {
-            self.idle_release_after_ms.set(
-                (env_var::BUN_IDLE_RELEASE_SECONDS::get()
-                    .unwrap_or(30)
-                    .min(3600)
-                    * 1000) as u32,
-            );
-        }
     }
 
-    /// Called from the repeating timer with whether this tick saw the heap grow and the tick's nominal interval.
-    /// After `BUN_IDLE_RELEASE_SECONDS` of ticks without growth, request a full collection (collects what the last
-    /// burst left, lets JSC snapshot which code is still running, pages out a standalone executable's embedded module
-    /// graph), and `SECOND_GC_AFTER_MS` of further quiet later a second one, which is when JSC can drop code that has
-    /// not run since. Returns how long until the next one is due so the caller can tick by then.
-    fn note_tick_for_idle_release(
-        &self,
-        vm: &VirtualMachine,
-        grew: bool,
-        interval_ms: i32,
-    ) -> Option<u32> {
+    /// Decides whether this tick's collection should be a full one. After `BUN_IDLE_RELEASE_SECONDS` (main thread only;
+    /// 0 = off) of ticks in which the heap did not grow, the tick's collection is made Full (it collects what the last
+    /// burst left and lets JSC snapshot which code is still running; a standalone executable's embedded module graph
+    /// is paged out too), and once more `SECOND_GC_AFTER_MS` of quiet later, which is when JSC can drop code that has
+    /// not run since. Returns (full, ms until the next such tick is due).
+    fn idle_tick(&self, vm: &VirtualMachine, grew: bool, interval_ms: i32) -> (bool, Option<u32>) {
         const SECOND_GC_AFTER_MS: u32 = 65_000;
-        let after = self.idle_release_after_ms.get();
-        if after == 0 {
-            return None;
+        let first = env_var::BUN_IDLE_RELEASE_SECONDS::get()
+            .unwrap_or(30)
+            .min(3600) as u32
+            * 1000;
+        if first == 0 || !vm.is_main_thread() || vm.is_inspector_enabled() {
+            return (false, None);
         }
-        if grew && !self.idle_requested_gc.get() {
+        if grew {
             self.idle_quiet_ms.set(0);
-            self.idle_full_gcs.set(0);
-            return None;
+            return (false, None);
         }
-        self.idle_requested_gc.set(false);
-        let quiet = self
-            .idle_quiet_ms
-            .get()
-            .saturating_add(interval_ms.max(0) as u32);
+        let before = self.idle_quiet_ms.get();
+        let quiet = before.saturating_add(interval_ms.max(0) as u32);
         self.idle_quiet_ms.set(quiet);
-        let due_at = match self.idle_full_gcs.get() {
-            0 => after,
-            1 => after.saturating_add(SECOND_GC_AFTER_MS),
-            _ => return None,
-        };
-        if quiet < due_at || vm.is_inspector_enabled() {
-            return Some(due_at.saturating_sub(quiet));
-        }
-        if self.idle_full_gcs.get() == 0 {
+        let second = first.saturating_add(SECOND_GC_AFTER_MS);
+        let crossed = |due: u32| before < due && quiet >= due;
+        if crossed(first) {
             if let Some(graph) = vm.standalone_module_graph {
                 let _ = std::thread::Builder::new()
                     .name("idle page-out".into())
                     .spawn(move || graph.page_out());
             }
         }
-        self.idle_full_gcs.set(self.idle_full_gcs.get() + 1);
-        self.idle_requested_gc.set(true);
-        vm.jsc_vm().collect_async_full();
-        None
+        let full = crossed(first) || crossed(second);
+        (
+            full,
+            [first, second]
+                .into_iter()
+                .find(|&due| quiet < due)
+                .map(|due| due - quiet),
+        )
     }
 
     /// Idempotent. Must run before JSC teardown: `~RunLoop::Timer` frees the
@@ -190,12 +165,12 @@ impl GarbageCollectionController {
         );
     }
 
-    pub(crate) fn perform_gc(&self) {
+    pub(crate) fn perform_gc(&self, full: bool) {
         if self.disabled.get() {
             return;
         }
         let vm = VirtualMachine::get().jsc_vm();
-        vm.collect_async();
+        vm.collect_async(full);
         self.gc_last_heap_size.set(vm.block_bytes_allocated());
     }
 
@@ -211,14 +186,14 @@ impl GarbageCollectionController {
         if this.disabled.get() {
             return;
         }
-        let interval = this.repeat_interval();
-        let prev_heap_size = this.gc_last_heap_size.get();
-        this.perform_gc();
         // Timer chatter in a parked app churns a few blocks per tick; real work grows the heap by far more.
         const IDLE_GROWTH_SLACK: usize = 2 * 1024 * 1024;
-        let grew = this.gc_last_heap_size.get() > prev_heap_size + IDLE_GROWTH_SLACK;
+        let prev_heap_size = this.gc_last_heap_size.get();
         // SAFETY: per fn contract.
-        let idle_gc_due_in = this.note_tick_for_idle_release(unsafe { &*vm }, grew, interval);
+        let vm_ref = unsafe { &*vm };
+        let grew = vm_ref.jsc_vm().block_bytes_allocated() > prev_heap_size + IDLE_GROWTH_SLACK;
+        let (full, idle_gc_due_in) = this.idle_tick(vm_ref, grew, this.repeat_interval());
+        this.perform_gc(full);
         if prev_heap_size == this.gc_last_heap_size.get() {
             let ticks = this
                 .heap_size_didnt_change_for_repeating_timer_ticks_count

@@ -6,9 +6,7 @@ import type { AddressInfo } from "node:net";
 import { finished } from "node:stream";
 
 // https://github.com/oven-sh/bun/issues/27428
-// The callback of stream.finished() must run in the AsyncLocalStorage context
-// that was active when finished() was called, not in the one active when the
-// stream emits 'finish' or 'close'.
+// The stream.finished() callback must run in the AsyncLocalStorage context that was active when finished() was called.
 test("stream.finished callback preserves AsyncLocalStorage context", async () => {
   const asyncLocalStorage = new AsyncLocalStorage<{ foo: string }>();
   const store = { foo: "bar" };

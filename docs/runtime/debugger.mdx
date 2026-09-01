@@ -63,41 +63,40 @@ Bun hosts a web-based debugger at [debug.bun.sh](https://debug.bun.sh). It is a 
 
 Open the provided `debug.bun.sh` URL in your browser to start a debugging session. From this interface, you can view the source code of the running file, view and set breakpoints, and execute code with the built-in console.
 
-<Frame>
-  ![Screenshot of Bun debugger, Console
-  tab](https://github.com/oven-sh/bun/assets/3084745/e6a976a8-80cc-4394-8925-539025cc025d)
+<Frame caption="Bun's web debugger at debug.bun.sh — Console tab showing program output and interactive prompt">
+  ![Bun web debugger Console tab with interactive prompt and log output](https://github.com/oven-sh/bun/assets/3084745/e6a976a8-80cc-4394-8925-539025cc025d)
 </Frame>
 
 Open the Sources tab; you should see the code from earlier. Click line number `3` to set a breakpoint on the `console.log(req.url)` statement.
 
-<Frame>
-  ![screenshot of Bun debugger](https://github.com/oven-sh/bun/assets/3084745/3b69c7e9-25ff-4f9d-acc4-caa736862935)
+<Frame caption="Sources tab with server.ts open — click line 3 to set a breakpoint">
+  ![Sources tab showing server.ts with a breakpoint set on line 3 at console.log(req.url)](https://github.com/oven-sh/bun/assets/3084745/3b69c7e9-25ff-4f9d-acc4-caa736862935)
 </Frame>
 
 Then visit [`http://localhost:3000`](http://localhost:3000) in your web browser. The page never finishes loading because the program has paused at the breakpoint.
 
 Note how the UI has changed.
 
-<Frame>
-  ![screenshot of Bun debugger](https://github.com/oven-sh/bun/assets/3084745/8b565e58-5445-4061-9bc4-f41090dfe769)
+<Frame caption="Debugger paused at breakpoint — call stack and scope highlighted">
+  ![Debugger paused at breakpoint with highlighted call stack and scope panel](https://github.com/oven-sh/bun/assets/3084745/8b565e58-5445-4061-9bc4-f41090dfe769)
 </Frame>
 
 While paused, use the console at the bottom to run arbitrary code in the context of the program, with full access to the variables in scope at the breakpoint.
 
-<Frame>
-  ![Bun debugger console](https://github.com/oven-sh/bun/assets/3084745/f4312b76-48ba-4a7d-b3b6-6205968ac681)
+<Frame caption="Bottom console evaluated in paused context">
+  ![Debugger bottom console evaluating an expression while paused at breakpoint](https://github.com/oven-sh/bun/assets/3084745/f4312b76-48ba-4a7d-b3b6-6205968ac681)
 </Frame>
 
 The right side of the Sources pane lists all local variables currently in scope. Drill into one, like `req` here, to see its properties and methods.
 
-<Frame>
-  ![Bun debugger variables](https://github.com/oven-sh/bun/assets/3084745/63d7f843-5180-489c-aa94-87c486e68646)
+<Frame caption="Scope panel listing local variables — expand req to inspect properties">
+  ![Scope panel showing local variables with req expanded to reveal its properties](https://github.com/oven-sh/bun/assets/3084745/63d7f843-5180-489c-aa94-87c486e68646)
 </Frame>
 
 The controls in the upper left of the Sources pane drive the program's execution.
 
-<Frame>
-  ![Bun debugger controls](https://github.com/oven-sh/bun/assets/3084745/41b76deb-7371-4461-9d5d-81b5a6d2f7a4)
+<Frame caption="Execution controls in the Sources pane header">
+  ![Execution controls — Continue, Step over, Step into, Step out buttons](https://github.com/oven-sh/bun/assets/3084745/41b76deb-7371-4461-9d5d-81b5a6d2f7a4)
 </Frame>
 
 What each button does:
@@ -107,9 +106,8 @@ What each button does:
 - _Step into_ — if the current statement contains a function call, enter the called function.
 - _Step out_ — if the current statement is a function call, finish executing it, then return to the location where it was called.
 
-<Frame>
-  ![Bun debugger execution
-  controls](https://github-production-user-asset-6210df.s3.amazonaws.com/3084745/261510346-6a94441c-75d3-413a-99a7-efa62365f83d.png)
+<Frame caption="Full execution toolbar with labels">
+  ![Full execution toolbar showing Continue, Step over, Step into and Step out controls](https://github-production-user-asset-6210df.s3.amazonaws.com/3084745/261510346-6a94441c-75d3-413a-99a7-efa62365f83d.png)
 </Frame>
 
 ### Visual Studio Code Debugger

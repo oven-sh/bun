@@ -104,8 +104,51 @@ pub use bun_core::FileKind as EntryKind;
 // The high-tier `bun_runtime::node::dir_iterator` shares this surface; the
 // readdir loop lives here so `walker_skippable` / `bun_glob` / resolver can
 // iterate without pulling `bun_runtime` up-tier.
+
+/// `__getdirentries64` (private libsystem symbol): fills `buf` with
+/// variable-length dirent records and advances `*basep`. Returns the byte
+/// count written (0 means EOF). Retries EINTR (#41085). There is no
+/// `$NOCANCEL` variant to call: getdirentries64 is not a pthread
+/// cancellation point (xnu syscalls.master has no `_nocancel` entry for it).
+///
+/// On a buffer of at least 1024 bytes the kernel reports EOF in the last 4
+/// bytes; this wrapper zeroes them before each attempt so the caller can
+/// trust the flag even after a retry.
+///
+/// SAFETY precondition: `buf` must be writable for `len` bytes and `basep`
+/// must point to a valid `i64`.
+#[cfg(target_os = "macos")]
+pub unsafe fn getdirentries64(fd: Fd, buf: *mut u8, len: usize, basep: *mut i64) -> Maybe<usize> {
+    unsafe extern "C" {
+        fn __getdirentries64(
+            fd: libc::c_int,
+            buf: *mut u8,
+            nbytes: usize,
+            basep: *mut i64,
+        ) -> isize;
+    }
+    loop {
+        if len >= 4 {
+            // SAFETY: caller contract — `buf` is writable for `len` bytes.
+            unsafe { buf.add(len - 4).cast::<[u8; 4]>().write([0, 0, 0, 0]) };
+        }
+        // SAFETY: caller contract.
+        let rc = unsafe { __getdirentries64(fd.native(), buf, len, basep) };
+        if rc < 0 {
+            let e = last_errno();
+            if e == libc::EINTR {
+                continue;
+            }
+            return Err(Error::from_code_int(e, Tag::getdirentries64));
+        }
+        return Ok(rc as usize);
+    }
+}
+
 pub mod dir_iterator {
-    use super::{EntryKind, Error, Fd, Result, Tag};
+    #[cfg(not(target_os = "macos"))]
+    use super::{Error, Tag};
+    use super::{EntryKind, Fd, Result};
     use bun_paths::OSPathChar;
 
     const BUF_SIZE: usize = 8192;
@@ -364,15 +407,6 @@ pub mod dir_iterator {
             }
         }
         fn next(&mut self, dir: Fd) -> Result<Option<IteratorResult>> {
-            unsafe extern "C" {
-                // Private libsystem symbol.
-                fn __getdirentries64(
-                    fd: libc::c_int,
-                    buf: *mut u8,
-                    nbytes: usize,
-                    basep: *mut i64,
-                ) -> isize;
-            }
             loop {
                 if self.index >= self.end_index {
                     if self.received_eof {
@@ -382,44 +416,28 @@ pub mod dir_iterator {
                     // getdirentries64() writes to the last 4 bytes of the
                     // buffer to indicate EOF. If that value is not zero, we
                     // have reached the end of the directory and can skip the
-                    // extra syscall.
+                    // extra syscall. The wrapper zeroes those bytes before
+                    // each attempt.
                     // https://github.com/apple-oss-distributions/xnu/blob/94d3b452840153a99b38a3a9659680b2a006908e/bsd/vfs/vfs_syscalls.c#L10444-L10470
                     const GETDIRENTRIES64_EXTENDED_BUFSIZE: usize = 1024;
                     const _: () = assert!(BUF_SIZE >= GETDIRENTRIES64_EXTENDED_BUFSIZE);
                     self.received_eof = false;
-                    // Always zero the bytes where the flag will be written so
-                    // we don't confuse garbage with EOF.
-                    // SAFETY: writing into our own MaybeUninit buffer.
-                    unsafe {
-                        self.buf
-                            .as_mut_ptr()
-                            .add(BUF_SIZE - 4)
-                            .cast::<[u8; 4]>()
-                            .write([0, 0, 0, 0]);
-                    }
 
                     // SAFETY: buf is valid for BUF_SIZE bytes; seek is a valid *mut i64.
-                    let rc = unsafe {
-                        __getdirentries64(
-                            dir.native(),
+                    let n = unsafe {
+                        super::getdirentries64(
+                            dir,
                             self.buf.as_mut_ptr(),
                             BUF_SIZE,
                             &raw mut self.seek,
                         )
-                    };
-                    if rc < 1 {
-                        if rc == 0 {
-                            self.received_eof = true;
-                            return Ok(None);
-                        }
-                        let e = super::last_errno();
-                        if e == libc::EINTR {
-                            continue;
-                        }
-                        return Err(Error::from_code_int(e, Tag::getdirentries64));
+                    }?;
+                    if n == 0 {
+                        self.received_eof = true;
+                        return Ok(None);
                     }
                     self.index = 0;
-                    self.end_index = rc as usize;
+                    self.end_index = n;
                     // SAFETY: we explicitly zeroed `[BUF_SIZE-4..BUF_SIZE)` above
                     // and the kernel may have overwritten it with the EOF flag —
                     // either way the 4 bytes are initialized.
@@ -1820,11 +1838,9 @@ mod posix_impl {
             unsafe { libc::send(fd, buf, n, flags) }
         }
     }
-    // EINTR-retry: every wrapper loops on EINTR, matching libuv, so callers
-    // never see a raw EINTR (#41085). The macOS `$NOCANCEL` arms retry too:
-    // `$NOCANCEL` only opts out of pthread cancellation points, which is
-    // orthogonal to EINTR. The one exception is `close`, which must never be
-    // retried (see `close`).
+    // EINTR-retry: every wrapper loops on EINTR (matching libuv) except
+    // `close` (see `close`). `$NOCANCEL` only opts out of pthread
+    // cancellation points; it does not affect EINTR.
     macro_rules! check {
         ($rc:expr, $tag:expr) => {{
             loop {

@@ -299,7 +299,8 @@ template<> __attribute__((minsize)) JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES
         }
 
         // Node reads both options by index. argv uses String(value), which describes a Symbol. execArgv uses ToString, which throws on one.
-        enum class SymbolToString { Describe, Throw };
+        enum class SymbolToString { Describe,
+            Throw };
         auto appendStrings = [&](JSObject* arrayLike, Vector<String>& out, SymbolToString symbolToString) {
             auto scope = DECLARE_THROW_SCOPE(vm);
             uint64_t length = toLength(lexicalGlobalObject, arrayLike);

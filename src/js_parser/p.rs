@@ -9339,9 +9339,7 @@ pub(crate) struct LowerUsingDeclarationsContext {
 }
 
 impl LowerUsingDeclarationsContext {
-    pub(crate) fn init<'a, const T: bool>(
-        p: &mut P<'a, T>,
-    ) -> Result<Self, crate::Error> {
+    pub(crate) fn init<'a, const T: bool>(p: &mut P<'a, T>) -> Result<Self, crate::Error> {
         Ok(Self {
             first_using_loc: bun_ast::Loc::EMPTY,
             stack_ref: p.generate_temp_ref(Some(b"__stack")),
@@ -9349,11 +9347,7 @@ impl LowerUsingDeclarationsContext {
         })
     }
 
-    pub(crate) fn scan_stmts<'a, const T: bool>(
-        &mut self,
-        p: &mut P<'a, T>,
-        stmts: &mut [Stmt],
-    ) {
+    pub(crate) fn scan_stmts<'a, const T: bool>(&mut self, p: &mut P<'a, T>, stmts: &mut [Stmt]) {
         for stmt in stmts.iter_mut() {
             // Match the `StoreRef` by value (Copy ptr)
             // so DerefMut writes through to the arena slot.

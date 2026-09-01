@@ -21,9 +21,7 @@ impl<'p, 'a, const TS: bool> ReactCompilerHost<'p, 'a, TS> {
     }
 }
 
-impl<'a, const TS: bool> bun_react_compiler::Host
-    for ReactCompilerHost<'_, 'a, TS>
-{
+impl<'a, const TS: bool> bun_react_compiler::Host for ReactCompilerHost<'_, 'a, TS> {
     fn symbols(&self) -> &[js_ast::Symbol] {
         self.p.symbols.as_slice()
     }

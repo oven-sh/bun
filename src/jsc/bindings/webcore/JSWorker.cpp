@@ -298,25 +298,21 @@ template<> __attribute__((minsize)) JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES
             }
         }
 
-        // needed to match the coercion behavior of `String(value)`, which returns a descriptive
-        // string for Symbols instead of throwing like JSValue::toString does.
-        // may throw an exception!
-        auto coerceToIsolatedString = [lexicalGlobalObject](JSValue v) -> String {
-            String original = v.isSymbol() ? asSymbol(v)->tryGetDescriptiveString().value_or(String()) : v.toWTFString(lexicalGlobalObject);
-            return original.isolatedCopy();
-        };
-
-        // Node reads argv and execArgv by index, not through Symbol.iterator.
-        auto appendStrings = [&](JSObject* arrayLike, Vector<String>& out) {
+        // Node reads argv and execArgv by index, not through Symbol.iterator. argv goes through
+        // `String(value)`, which describes a Symbol. execArgv goes through ToString, which throws on one.
+        enum class SymbolToString { Describe, Throw };
+        auto appendStrings = [&](JSObject* arrayLike, Vector<String>& out, SymbolToString symbolToString) {
             auto scope = DECLARE_THROW_SCOPE(vm);
             uint64_t length = toLength(lexicalGlobalObject, arrayLike);
             RETURN_IF_EXCEPTION(scope, );
             for (uint64_t i = 0; i < length; i++) {
                 JSValue item = arrayLike->getIndex(lexicalGlobalObject, i);
                 RETURN_IF_EXCEPTION(scope, );
-                String str = coerceToIsolatedString(item);
+                String str = item.isSymbol() && symbolToString == SymbolToString::Describe
+                    ? asSymbol(item)->tryGetDescriptiveString().value_or(String())
+                    : item.toWTFString(lexicalGlobalObject);
                 RETURN_IF_EXCEPTION(scope, );
-                out.append(str);
+                out.append(str.isolatedCopy());
             }
         };
 
@@ -325,7 +321,7 @@ template<> __attribute__((minsize)) JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES
         if (argvValue && argvValue.pureToBoolean() != TriState::False) {
             Bun::V::validateArray(throwScope, globalObject, argvValue, "options.argv"_s, jsNumber(0));
             RETURN_IF_EXCEPTION(throwScope, {});
-            appendStrings(asObject(argvValue), options.argv);
+            appendStrings(asObject(argvValue), options.argv, SymbolToString::Describe);
             RETURN_IF_EXCEPTION(throwScope, {});
         }
 
@@ -337,7 +333,7 @@ template<> __attribute__((minsize)) JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES
             // validateArray accepts a Proxy of an Array (JSC::isArray). Node's native IsArray() does not: the worker inherits the parent's execArgv.
             if (auto* execArgvArray = dynamicDowncast<JSC::JSArray>(execArgvValue)) {
                 Vector<String> execArgv;
-                appendStrings(execArgvArray, execArgv);
+                appendStrings(execArgvArray, execArgv, SymbolToString::Throw);
                 RETURN_IF_EXCEPTION(throwScope, {});
                 options.execArgv.emplace(WTF::move(execArgv));
             }

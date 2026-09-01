@@ -4011,7 +4011,7 @@ pub mod bindings {
 
         struct EntryInfo {
             pathname: BunString,
-            kind: BunString,
+            kind: bun_sys::FileKind,
             perm: bun_sys::Mode,
             contents: Option<BunString>,
         }
@@ -4105,7 +4105,7 @@ pub mod bindings {
 
                     let mut entry_info = EntryInfo {
                         pathname: pathname_string,
-                        kind: BunString::static_(file_kind_tag(kind)),
+                        kind,
                         perm,
                         contents: None,
                     };
@@ -4159,7 +4159,11 @@ pub mod bindings {
         for (i, entry) in entries_info.into_iter().enumerate() {
             let obj = JSValue::create_empty_object(global, 0);
             obj.put(global, b"pathname", entry.pathname.into_js(global)?);
-            obj.put(global, b"kind", entry.kind.into_js(global)?);
+            let kind = match entry.kind {
+                bun_sys::FileKind::Unknown => global.common_strings().unknown(),
+                kind => BunString::static_(file_kind_tag(kind)).to_js(global)?,
+            };
+            obj.put(global, b"kind", kind);
             obj.put(global, b"perm", JSValue::js_number(f64::from(entry.perm)));
             if let Some(contents) = entry.contents {
                 obj.put(global, b"contents", contents.into_js(global)?);

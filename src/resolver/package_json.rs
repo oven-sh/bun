@@ -2052,7 +2052,7 @@ impl<'a> ESModule<'a> {
                         };
                     }
 
-                    // Wildcard expansion: tag for `probe_wildcard_extensions` (oven-sh/bun#29679, #10001).
+                    // Wildcard expansion: tag for `probe_target_extensions` (oven-sh/bun#29679, #10001).
                     dedent!();
                     return Resolution {
                         path: Box::<[u8]>::from(result),

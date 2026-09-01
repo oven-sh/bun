@@ -191,6 +191,16 @@ impl Listener {
         let _cell_root = socket_config.handlers.root_cell(global);
 
         let port = socket_config.port;
+        if port.is_some() {
+            let hostname = socket_config.hostname_or_unix.slice();
+            if !bun_dns::is_valid_hostname(hostname) {
+                return Err(
+                    global.throw_value(crate::dns_jsc::cares_jsc::not_a_hostname_error(
+                        global, hostname,
+                    )),
+                );
+            }
+        }
         let ssl_enabled = socket_config.ssl.is_some();
         let socket_flags = socket_config.socket_flags();
         let pause_on_connect = socket_config.pause_on_connect;

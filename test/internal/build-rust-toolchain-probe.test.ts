@@ -6,9 +6,12 @@
  * measured 36s per CI job, silently, because the proxy's output is piped).
  * The probe must therefore pin the proxy to the channel with RUSTUP_TOOLCHAIN.
  *
- * The rustc here is a shell script that reports the RUSTUP_TOOLCHAIN it was
- * given as its sysroot and as its host triple, so both probes are covered;
- * PATH is emptied so no real rustup runs a pre-flight.
+ * The rustc here is a shell script that folds the RUSTUP_TOOLCHAIN it was
+ * given into its sysroot path and into its host triple, so both probes are
+ * covered. The fake sysroot has a `gcc-ld/ld.lld` only under the pinned
+ * names: an unpinned probe resolves to a path that does not exist and
+ * `rustLld` comes back undefined. PATH holds only the fixture's `bin`
+ * directory, so no real rustup runs a pre-flight.
  */
 import { afterEach, expect, test } from "bun:test";
 import { isWindows, tempDir } from "harness";
@@ -29,26 +32,25 @@ afterEach(() => {
 });
 
 test.skipIf(isWindows)("the configure-time rustc probe pins the rustup proxy to the pinned channel", () => {
+  const ldLld = join(`sysroot-for-${channel}`, "lib", "rustlib", `host-for-${channel}`, "bin", "gcc-ld", "ld.lld");
   using dir = tempDir("build-rustc-probe", {
-    "bin/rustc": [
-      "#!/bin/sh",
-      'case "$1" in',
-      '  --print) printf "%s\\n" "sysroot-for:${RUSTUP_TOOLCHAIN:-unset}" ;;',
-      '  -vV) printf "host: host-for:%s\\nLLVM version: 22.1.4\\n" "${RUSTUP_TOOLCHAIN:-unset}" ;;',
-      "esac",
-      "",
-    ].join("\n"),
+    "bin/rustc": ({ root }) =>
+      [
+        "#!/bin/sh",
+        'case "$1" in',
+        `  --print) printf "%s\\n" "${root}/sysroot-for-\${RUSTUP_TOOLCHAIN:-unset}" ;;`,
+        '  -vV) printf "host: host-for-%s\\nLLVM version: 22.1.4\\n" "${RUSTUP_TOOLCHAIN:-unset}" ;;',
+        "esac",
+        "",
+      ].join("\n"),
+    [ldLld]: "",
   });
-  chmodSync(join(String(dir), "bin", "rustc"), 0o755);
+  for (const executable of ["bin/rustc", ldLld]) chmodSync(join(String(dir), executable), 0o755);
   process.env.CARGO_HOME = String(dir);
   process.env.PATH = join(String(dir), "bin");
 
   expect(findRustLld("linux")).toEqual({
-    rustSysroot: `sysroot-for:${channel}`,
-    // Both probes (sysroot and -vV) must carry the pin.
-    rustHostTriple: `host-for:${channel}`,
+    rustLld: join(String(dir), ldLld),
     rustLlvmVersion: "22.1.4",
-    // The fake sysroot has no lib/rustlib/<host>/bin/gcc-ld/ld.lld.
-    rustLld: undefined,
   });
 });

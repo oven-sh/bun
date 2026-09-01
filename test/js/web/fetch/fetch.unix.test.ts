@@ -327,6 +327,49 @@ it.skipIf(isWindows)("keep-alive pool is keyed by socket path", async () => {
   }
 });
 
+it.skipIf(isWindows)("a relative socket path is resolved against the cwd at fetch() time", async () => {
+  // Two servers listen on `x.sock` in different directories. The child starts
+  // in `a`. The first fetch is still in flight when the cwd moves to `b`, so
+  // its answer shows which cwd the connect used. The later fetches show the
+  // pool key: keyed on the bare string, `x.sock` in `b` would reuse the
+  // connection to `a`.
+  using dir = tempDir("fetch-unix-relative", { a: {}, b: {} });
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const base = process.env.FETCH_UNIX_BASE;
+      const servers = ["a", "b"].map(name =>
+        Bun.serve({ unix: base + "/" + name + "/x.sock", fetch: () => new Response(name) }),
+      );
+      const get = unix => fetch("http://localhost/x", { unix }).then(res => res.text());
+      const bodies = [];
+      const inflight = get("x.sock");
+      process.chdir(base + "/b");
+      bodies.push(await inflight);
+      bodies.push(await get("x.sock"));
+      bodies.push(await get("./x.sock"));
+      bodies.push(await get("../a/x.sock"));
+      for (const name of ["a", "b"]) {
+        process.chdir(base + "/" + name);
+        bodies.push(await get("x.sock"));
+      }
+      console.log(JSON.stringify(bodies));
+      for (const server of servers) server.stop(true);
+      `,
+    ],
+    env: { ...bunEnv, FETCH_UNIX_BASE: String(dir) },
+    cwd: join(String(dir), "a"),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual(["a", "b", "b", "a", "a", "b"]);
+  expect(exitCode).toBe(0);
+});
+
 it.skipIf(isWindows)("TLS over a unix socket is only reused for the hostname the handshake verified", async () => {
   using dir = tempDir("fetch-unix-tls", { "ca.pem": tls.cert });
   // The harness cert is valid for "localhost". A pooled connection verified

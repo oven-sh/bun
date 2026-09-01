@@ -17,8 +17,7 @@ const ArrayPrototypeForEach = Array.prototype.forEach;
 const NumberIsNaN = Number.isNaN;
 const MathMax = Math.max;
 
-const isArrayBufferView = ArrayBuffer.isView;
-const isAnyArrayBuffer = b => b instanceof ArrayBuffer || b instanceof SharedArrayBuffer;
+const { isArrayBufferView, isAnyArrayBuffer } = require("node:util/types");
 const kMaxLength = $requireMap.$get("buffer")?.exports.kMaxLength ?? BufferModule.kMaxLength;
 
 const { Transform, finished } = require("node:stream");

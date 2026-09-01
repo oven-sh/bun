@@ -37,7 +37,7 @@ fn list_to_stmts<'a>(list: StmtList<'a>) -> StmtNodeList {
 // a direct `impl P` block. The 30+ per-variant `s_*` helpers are private; only
 // `visit_and_append_stmt` is surfaced. Full draft body preserved under  mod _draft below.
 
-impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
+impl<'a> P<'a> {
     // Thin alias of `current_scope_mut()` kept for local readability.
     #[inline(always)]
     fn cur_scope(&mut self) -> &mut js_ast::Scope {
@@ -198,7 +198,7 @@ impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
                     // Silently strip exports of non-local symbols in TypeScript, since
                     // those likely correspond to type-only exports. But report exports of
                     // non-local symbols as errors in JavaScript.
-                    if !TYPESCRIPT {
+                    if !p.ts {
                         let r = js_lexer::range_of_identifier(p.source, items[i].name.loc);
                         p.log().add_range_error_fmt(
                             Some(p.source),
@@ -228,7 +228,7 @@ impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
                     // Silently strip exports of non-local symbols in TypeScript, since
                     // those likely correspond to type-only exports. But report exports of
                     // non-local symbols as errors in JavaScript.
-                    if !TYPESCRIPT {
+                    if !p.ts {
                         let r = js_lexer::range_of_identifier(p.source, items[i].name.loc);
                         p.log().add_range_error_fmt(
                             Some(p.source),
@@ -438,7 +438,7 @@ impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
                 );
 
                 // Discard type-only export default statements
-                if TYPESCRIPT {
+                if p.ts {
                     if let js_ast::ExprData::EIdentifier(ident) = expr.data {
                         if !ident.ref_.is_source_contents_slice() {
                             let symbol = &p.symbols[ident.ref_.inner_index() as usize];

@@ -22,9 +22,9 @@ use bun_ast as js_ast;
 use bun_ast::DeclaredSymbol;
 use bun_ast::{B, E, Expr, G, S, Stmt};
 
-// Named instantiations of `P<'_, TS>`.
-pub type JavaScriptParser<'a> = P<'a, false>;
-pub type TSXParser<'a> = P<'a, true>;
+// Named instantiations of `P<'_>`.
+pub type JavaScriptParser<'a> = P<'a>;
+pub type TSXParser<'a> = P<'a>;
 
 // In AST crates, ListManaged(T) backed by the arena → bumpalo Vec.
 type BumpVec<'bump, T> = bun_alloc::ArenaVec<'bump, T>;
@@ -359,7 +359,7 @@ impl<'a> Parser<'a> {
         {
             self.options.ts = true;
             self.options.jsx.parse = true;
-            return self._parse::<true>();
+            return self._parse();
         }
 
         // JSX is no longer part of the parser's monomorphization (it only
@@ -369,9 +369,9 @@ impl<'a> Parser<'a> {
         #[cfg(not(target_arch = "wasm32"))]
         {
             if self.options.ts {
-                self._parse::<true>()
+                self._parse()
             } else {
-                self._parse::<false>()
+                self._parse()
             }
         }
     }
@@ -382,18 +382,15 @@ impl<'a> Parser<'a> {
     #[cold]
     pub fn scan_imports(&mut self, scan_pass: &'a mut ScanPassResult) -> Result<(), Error> {
         if self.options.ts {
-            self._scan_imports::<true>(scan_pass)
+            self._scan_imports(scan_pass)
         } else {
-            self._scan_imports::<false>(scan_pass)
+            self._scan_imports(scan_pass)
         }
     }
 
     #[cold]
-    fn _scan_imports<const TS: bool>(
-        &mut self,
-        scan_pass: &'a mut ScanPassResult,
-    ) -> Result<(), Error> {
-        type Pi<'a, const TS: bool> = P<'a, TS>;
+    fn _scan_imports(&mut self, scan_pass: &'a mut ScanPassResult) -> Result<(), Error> {
+        type Pi<'a> = P<'a>;
         // `Lexer` owns `Vec`s and `Options` owns
         // `jsx: Pragma` boxes, so a bitwise `ptr::read` would double-free
         // when `self` later drops. Move them out, leaving inert placeholders.
@@ -415,17 +412,17 @@ impl<'a> Parser<'a> {
         // `P.log` and `Lexer.log` are both `NonNull<Log>` (see P.rs / lexer.rs
         // field docs), so handing the same raw pointer to both is defined —
         // no `&mut` is materialized.
-        let mut __p = init_p!(Pi<'_, TS>;
+        let mut __p = init_p!(Pi<'_>;
             self.bump, self.log, self.source, self.define, lexer, options, true);
         // SAFETY: `init_p!` only yields after `init` succeeded.
-        let p: &mut Pi<'_, TS> = unsafe { __p.assume_init_mut() };
+        let p: &mut Pi<'_> = unsafe { __p.assume_init_mut() };
         p.import_records = crate::p::ImportRecordList::Borrowed(&mut scan_pass.import_records);
         p.named_imports = crate::p::NamedImportsType::Borrowed(&mut scan_pass.named_imports);
 
         // The problem with our scan pass approach is type-only imports.
         // We don't have accurate symbol counts.
         // So we don't have a good way to distinguish between a type-only import and not.
-        if TS {
+        if p.ts {
             // Pre-size the name-keyed usage map so the scan pass doesn't
             // re-hash it one identifier reference at a time (≈ one tracked
             // symbol per 16 source bytes). `ensure_total_capacity` is a no-op
@@ -463,7 +460,7 @@ impl<'a> Parser<'a> {
         }
 
         //
-        if TS {
+        if p.ts {
             for import_record in p.import_records.items_mut() {
                 // Mark everything as unused
                 // Except:
@@ -735,7 +732,7 @@ fn lower_one_date_time_literal<'a>(
 }
 
 impl<'a> Parser<'a> {
-    fn _parse<const TS: bool>(self) -> Result<crate::Result<'a>, Error> {
+    fn _parse(self) -> Result<crate::Result<'a>, Error> {
         // `Source.path` is `Path<'static>`, so
         // `path.text` satisfies `Action::Parse(&'static [u8])` directly.
         let _action_guard = bun_crash_handler::scoped_action(bun_crash_handler::Action::Parse(
@@ -759,10 +756,10 @@ impl<'a> Parser<'a> {
         // `P.log` and `Lexer.log` are both `NonNull<Log>` (see P.rs / lexer.rs
         // field docs), so handing the same raw pointer to both is defined —
         // no `&mut` is materialized.
-        let mut __p = init_p!(P<'_, TS>;
+        let mut __p = init_p!(P<'_>;
             bump, log, source, define, lexer, options, false);
         // SAFETY: `init_p!` only yields after `init` succeeded.
-        let p: &mut P<'_, TS> = unsafe { __p.assume_init_mut() };
+        let p: &mut P<'_> = unsafe { __p.assume_init_mut() };
 
         if p.options.features.hot_module_reloading {
             debug_assert!(!p.options.tree_shaking);

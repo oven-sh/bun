@@ -28,12 +28,8 @@ fn raw_str(s: &'static [u8]) -> js_ast::StoreStr {
 impl<'a> ImportScanner<'a> {
     // Only the parser P is handled here — the bundler scans imports via its own
     // path and does not go through this function.
-    pub(crate) fn scan<
-        'p,
-        const TYPESCRIPT: bool,
-        const HOT_MODULE_RELOADING_TRANSFORMATIONS: bool,
-    >(
-        p: &mut P<'p, TYPESCRIPT>,
+    pub(crate) fn scan<'p, const HOT_MODULE_RELOADING_TRANSFORMATIONS: bool>(
+        p: &mut P<'p>,
         stmts: &'a mut [Stmt],
         will_transform_to_common_js: bool,
         // Const generics can't gate a param type on a const, so use Option and
@@ -49,7 +45,7 @@ impl<'a> ImportScanner<'a> {
         let mut stmts_end: usize = 0;
         // `arena` (p.arena) dropped — see §Allocators (AST crate).
         // Arena allocs below go through `p.arena` (a &Bump) where they persist.
-        let is_typescript_enabled: bool = TYPESCRIPT;
+        let is_typescript_enabled: bool = p.ts;
 
         for i in 0..stmts.len() {
             // Index directly to allow in-place mutation + reassignment.

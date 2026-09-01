@@ -4,7 +4,7 @@ use crate::parser::FindSymbolResult;
 use bun_ast as js_ast;
 use bun_ast::{Ref, Scope};
 
-impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
+impl<'a> P<'a> {
     pub(crate) fn find_symbol(
         &mut self,
         loc: bun_ast::Loc,
@@ -61,7 +61,7 @@ impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
                 // `scope.ts_namespace` is only assigned behind `IS_TYPESCRIPT_ENABLED`
                 // guards, so the probe is dead for JS inputs — gate it so the
                 // load+branch fold away in the `TYPESCRIPT == false` monomorphization.
-                if Self::IS_TYPESCRIPT_ENABLED {
+                if self.ts {
                     if let Some(mut ts_namespace) = scope.ts_namespace {
                         let ts = &*ts_namespace;
                         let exported: &js_ast::TSNamespaceMemberMap = &ts.exported_members;

@@ -10,18 +10,18 @@ use bun_collections::VecExt;
 use crate::JSXImport;
 use crate::p::P;
 
-pub struct ReactCompilerHost<'p, 'a, const TS: bool> {
-    p: &'p mut P<'a, TS>,
+pub struct ReactCompilerHost<'p, 'a> {
+    p: &'p mut P<'a>,
 }
 
-impl<'p, 'a, const TS: bool> ReactCompilerHost<'p, 'a, TS> {
+impl<'p, 'a> ReactCompilerHost<'p, 'a> {
     #[inline]
-    pub(crate) fn new(p: &'p mut P<'a, TS>) -> Self {
+    pub(crate) fn new(p: &'p mut P<'a>) -> Self {
         Self { p }
     }
 }
 
-impl<'a, const TS: bool> bun_react_compiler::Host for ReactCompilerHost<'_, 'a, TS> {
+impl<'a> bun_react_compiler::Host for ReactCompilerHost<'_, 'a> {
     fn symbols(&self) -> &[js_ast::Symbol] {
         self.p.symbols.as_slice()
     }
@@ -127,7 +127,7 @@ impl<'a, const TS: bool> bun_react_compiler::Host for ReactCompilerHost<'_, 'a, 
     }
 }
 
-impl<'a, const TS: bool> P<'a, TS> {
+impl<'a> P<'a> {
     /// Port of upstream `findFunctionDeclarationOrExpression` for the
     /// expression positions (decl init / `export default` / expression
     /// statement). Returns `Some(in_react_hoc)` only for the shapes the

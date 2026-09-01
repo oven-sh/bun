@@ -13,9 +13,9 @@ use bun_ast::{
 
 /// Try to optimize "typeof x === 'undefined'" to "typeof x > 'u'" or similar
 /// Returns the optimized expression if successful, None otherwise
-fn try_optimize_typeof_undefined<'a, const TYPESCRIPT: bool>(
+fn try_optimize_typeof_undefined<'a>(
     e_: &mut E::Binary,
-    p: &mut P<'a, TYPESCRIPT>,
+    p: &mut P<'a>,
     replacement_op: js_ast::op::Code,
 ) -> Option<Expr> {
     // Check if this is a typeof comparison with "undefined"
@@ -77,11 +77,7 @@ fn try_optimize_typeof_undefined<'a, const TYPESCRIPT: bool>(
 // canonical `ExprData::eql<P, K: EqlKindT>` (Expr.rs). Kept as a free fn so
 // the call sites don't each repeat the `LooseEql`/`StrictEql` type-select.
 #[inline]
-fn data_eql<'a, const STRICT: bool, const TYPESCRIPT: bool>(
-    left: &ExprData,
-    right: &ExprData,
-    p: &mut P<'a, TYPESCRIPT>,
-) -> Equality {
+fn data_eql<'a, const STRICT: bool>(left: &ExprData, right: &ExprData, p: &mut P<'a>) -> Equality {
     if STRICT {
         ExprData::eql::<_, StrictEql>(left, right, p)
     } else {
@@ -102,10 +98,7 @@ pub struct BinaryExpressionVisitor {
 }
 
 impl BinaryExpressionVisitor {
-    pub(crate) fn visit_right_and_finish<'a, const TYPESCRIPT: bool>(
-        v: &mut Self,
-        p: &mut P<'a, TYPESCRIPT>,
-    ) -> Expr {
+    pub(crate) fn visit_right_and_finish<'a>(v: &mut Self, p: &mut P<'a>) -> Expr {
         // `v.e: StoreRef<E::Binary>` is the safe arena back-reference (Copy).
         // Snapshot the handle for the identity check / tail re-wrap, then take
         // the working `&mut` via `StoreRef::DerefMut` — the arena-backref
@@ -252,7 +245,7 @@ impl BinaryExpressionVisitor {
                 }
             }
             Op::Code::BinLooseEq => {
-                match data_eql::<false, TYPESCRIPT>(&e_.left.data, &e_.right.data, p) {
+                match data_eql::<false>(&e_.left.data, &e_.right.data, p) {
                     Equality::RequireMainAndModule => {
                         p.ignore_usage_of_runtime_require();
                         p.ignore_usage(p.module_ref);
@@ -282,7 +275,7 @@ impl BinaryExpressionVisitor {
                 // TODO: warn about typeof string
             }
             Op::Code::BinStrictEq => {
-                match data_eql::<true, TYPESCRIPT>(&e_.left.data, &e_.right.data, p) {
+                match data_eql::<true>(&e_.left.data, &e_.right.data, p) {
                     Equality::RequireMainAndModule => {
                         p.ignore_usage(p.module_ref);
                         p.ignore_usage_of_runtime_require();
@@ -305,7 +298,7 @@ impl BinaryExpressionVisitor {
                 // TODO: warn about typeof string
             }
             Op::Code::BinLooseNe => {
-                match data_eql::<false, TYPESCRIPT>(&e_.left.data, &e_.right.data, p) {
+                match data_eql::<false>(&e_.left.data, &e_.right.data, p) {
                     Equality::RequireMainAndModule => {
                         p.ignore_usage(p.module_ref);
                         p.ignore_usage_of_runtime_require();
@@ -332,7 +325,7 @@ impl BinaryExpressionVisitor {
                 }
             }
             Op::Code::BinStrictNe => {
-                match data_eql::<true, TYPESCRIPT>(&e_.left.data, &e_.right.data, p) {
+                match data_eql::<true>(&e_.left.data, &e_.right.data, p) {
                     Equality::RequireMainAndModule => {
                         p.ignore_usage(p.module_ref);
                         p.ignore_usage_of_runtime_require();
@@ -716,10 +709,7 @@ impl BinaryExpressionVisitor {
         }
     }
 
-    pub(crate) fn check_and_prepare<'a, const TYPESCRIPT: bool>(
-        v: &mut Self,
-        p: &mut P<'a, TYPESCRIPT>,
-    ) -> Option<Expr> {
+    pub(crate) fn check_and_prepare<'a>(v: &mut Self, p: &mut P<'a>) -> Option<Expr> {
         // Snapshot the `Copy` arena handle before taking the working `&mut`
         // via `StoreRef::DerefMut`, so the early-return re-wrap below does not
         // overlap `e_`'s borrow of `v.e`.

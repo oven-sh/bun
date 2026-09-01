@@ -19,7 +19,7 @@ type PResult<T> = crate::CrateResult<T>;
 // The 30+ per-token `t_*` helpers are private; only `parse_prefix` is surfaced. Helper
 // names pfx_-prefixed to avoid colliding with parseStmt.rs / parseSuffix.rs mixins on the same `P`.
 
-impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
+impl<'a> P<'a> {
     fn pfx_t_super(p: &mut Self, level: Level) -> PResult<Expr> {
         let loc = p.lexer.loc();
         let super_range = p.lexer.range();
@@ -553,7 +553,7 @@ impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
         // Parse an optional class name
         if p.lexer.token == T::TIdentifier {
             let name_text = p.lexer.identifier;
-            if !Self::IS_TYPESCRIPT_ENABLED || name_text != b"implements" {
+            if !p.ts || name_text != b"implements" {
                 if p.fn_or_arrow_data_parse.allow_await != AwaitOrYield::AllowIdent
                     && name_text == b"await"
                 {
@@ -573,7 +573,7 @@ impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
         }
 
         // Even anonymous classes can have TypeScript type parameters
-        if Self::IS_TYPESCRIPT_ENABLED {
+        if p.ts {
             let _ = p.skip_type_script_type_parameters(
                 TypeParameterFlag::ALLOW_IN_OUT_VARIANCE_ANNOTATIONS
                     | TypeParameterFlag::ALLOW_CONST_MODIFIER,
@@ -584,8 +584,7 @@ impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
             class_keyword,
             name,
             &ParseClassOptions {
-                allow_ts_decorators: Self::IS_TYPESCRIPT_ENABLED
-                    || p.options.features.standard_decorators,
+                allow_ts_decorators: p.ts || p.options.features.standard_decorators,
                 ..Default::default()
             },
         )?;
@@ -616,7 +615,7 @@ impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
         // Parse an optional class name
         if p.lexer.token == T::TIdentifier {
             let name_text = p.lexer.identifier;
-            if !Self::IS_TYPESCRIPT_ENABLED || name_text != b"implements" {
+            if !p.ts || name_text != b"implements" {
                 if p.fn_or_arrow_data_parse.allow_await != AwaitOrYield::AllowIdent
                     && name_text == b"await"
                 {
@@ -636,7 +635,7 @@ impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
         }
 
         // Even anonymous classes can have TypeScript type parameters
-        if Self::IS_TYPESCRIPT_ENABLED {
+        if p.ts {
             let _ = p.skip_type_script_type_parameters(
                 TypeParameterFlag::ALLOW_IN_OUT_VARIANCE_ANNOTATIONS
                     | TypeParameterFlag::ALLOW_CONST_MODIFIER,
@@ -691,7 +690,7 @@ impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
         let mut target = Expr::EMPTY;
         p.parse_expr_with_flags(Level::Member, flags, &mut target)?;
 
-        if Self::IS_TYPESCRIPT_ENABLED {
+        if p.ts {
             // Skip over TypeScript type arguments here if there are any
             if p.lexer.token == T::TLessThan {
                 let _ = p.try_skip_type_script_type_arguments_with_backtracking();
@@ -929,7 +928,7 @@ impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
         //     <A[]>(x)
         //     <A>(x) => {}
         //     <A = B>(x) => {}
-        if Self::IS_TYPESCRIPT_ENABLED && p.is_jsx_enabled() {
+        if p.ts && p.is_jsx_enabled() {
             if p.is_ts_arrow_fn_jsx()? {
                 let _ =
                     p.skip_type_script_type_parameters(TypeParameterFlag::ALLOW_CONST_MODIFIER)?;
@@ -958,7 +957,7 @@ impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
             return Ok(element);
         }
 
-        if Self::IS_TYPESCRIPT_ENABLED {
+        if p.ts {
             // This is either an old-style type cast or a generic lambda function
 
             // "<T>(x)"

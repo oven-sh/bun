@@ -31,10 +31,10 @@ fn clone_ts_member_data(d: &TSNamespaceMemberData) -> TSNamespaceMemberData {
     }
 }
 
-impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
+impl<'a> P<'a> {
     pub(crate) fn parse_type_script_decorators(&mut self) -> Result<ExprNodeList, Error> {
         let p = self;
-        if !Self::IS_TYPESCRIPT_ENABLED && !p.options.features.standard_decorators {
+        if !p.ts && !p.options.features.standard_decorators {
             return Ok(bun_alloc::AstAlloc::vec());
         }
 
@@ -110,7 +110,7 @@ impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
                     if p.lexer.has_newline_before {
                         break;
                     }
-                    if !Self::IS_TYPESCRIPT_ENABLED {
+                    if !p.ts {
                         p.lexer.unexpected()?;
                         return Err(crate::Error::SyntaxError);
                     }
@@ -189,9 +189,7 @@ impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
 
                 _ => {
                     // "@x<y>" / "@x.y<z>"
-                    if Self::IS_TYPESCRIPT_ENABLED
-                        && p.skip_type_script_type_arguments::<false, false>()?
-                    {
+                    if p.ts && p.skip_type_script_type_arguments::<false, false>()? {
                         continue;
                     }
                     break;

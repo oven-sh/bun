@@ -22,7 +22,7 @@ use js_ast::{
 };
 use js_lexer::T;
 
-impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
+impl<'a> P<'a> {
     fn parse_method_expression(
         &mut self,
         kind: PropertyKind,
@@ -109,7 +109,7 @@ impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
                     || (opts.has_class_decorators && is_constructor),
 
                 // Only allow omitting the body if we're parsing TypeScript class
-                allow_missing_body_for_type_script: Self::IS_TYPESCRIPT_ENABLED && opts.is_class,
+                allow_missing_body_for_type_script: p.ts && opts.is_class,
                 ..Default::default()
             },
         )?;
@@ -296,7 +296,7 @@ impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
                     let was_identifier = p.lexer.token == T::TIdentifier;
                     let expr = p.parse_expr(Level::Comma)?;
 
-                    if Self::IS_TYPESCRIPT_ENABLED {
+                    if p.ts {
                         // Handle index signatures
                         if p.lexer.token == T::TColon && was_identifier && opts.is_class {
                             match expr.data {
@@ -415,7 +415,7 @@ impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
                                         // skip declare keyword entirely
                                         // https://github.com/oven-sh/bun/issues/1907
                                         if opts.is_class
-                                            && Self::IS_TYPESCRIPT_ENABLED
+                                            && p.ts
                                             && !p.lexer.has_newline_before
                                             && raw == b"declare"
                                         {
@@ -439,7 +439,7 @@ impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
                                     }
                                     PropertyModifierKeyword::PAbstract => {
                                         if opts.is_class
-                                            && Self::IS_TYPESCRIPT_ENABLED
+                                            && p.ts
                                             && !p.lexer.has_newline_before
                                             && !opts.is_ts_abstract
                                             && raw == b"abstract"
@@ -482,7 +482,7 @@ impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
                                     | PropertyModifierKeyword::POverride => {
                                         // Skip over TypeScript keywords
                                         if opts.is_class
-                                            && Self::IS_TYPESCRIPT_ENABLED
+                                            && p.ts
                                             && PropertyModifierKeyword::find(raw) == Some(keyword)
                                         {
                                             errors = None;
@@ -603,7 +603,7 @@ impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
             let mut has_type_parameters = false;
             let mut has_definite_assignment_assertion_operator = false;
 
-            if Self::IS_TYPESCRIPT_ENABLED {
+            if p.ts {
                 if opts.is_class {
                     if p.lexer.token == T::TQuestion {
                         // "class X { foo?: number }"
@@ -661,7 +661,7 @@ impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
                     }
                 }
 
-                if Self::IS_TYPESCRIPT_ENABLED {
+                if p.ts {
                     // Skip over types
                     if p.lexer.token == T::TColon {
                         p.lexer.next()?;
@@ -677,7 +677,7 @@ impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
                 }
 
                 if p.lexer.token == T::TEquals {
-                    if Self::IS_TYPESCRIPT_ENABLED {
+                    if p.ts {
                         if !opts.declare_range.is_empty() {
                             p.log().add_range_error(
                                 Some(p.source),

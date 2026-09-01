@@ -42,7 +42,7 @@ type BumpVec<'a, T> = bun_alloc::ArenaVec<'a, T>;
 type List<'a, T> = BumpVec<'a, T>;
 type ListManaged<'a, T> = BumpVec<'a, T>;
 
-/// Erases `P<'a, TS>`'s const-generic so helpers like `JSXTag::parse`
+/// Erases `P<'a>`'s const-generic so helpers like `JSXTag::parse`
 /// can take any instantiation. Only the surface those helpers actually
 /// touch is exposed.
 pub(crate) trait ParserLike<'a> {
@@ -55,7 +55,7 @@ pub(crate) trait ParserLike<'a> {
 }
 // Trait + impl defined so Expr methods can bound on it. Method bodies
 // forward to the inherent impls.
-impl<'a, const TS: bool> ParserLike<'a> for P<'a, TS> {
+impl<'a> ParserLike<'a> for P<'a> {
     #[inline]
     fn lexer(&mut self) -> &mut js_lexer::Lexer<'a> {
         &mut self.lexer
@@ -230,7 +230,7 @@ pub enum ReactRefreshExportKind {
 // P — the parser struct.
 // `'a` covers borrowed init() params (log/define/source) AND the arena (`bump`).
 // ─────────────────────────────────────────────────────────────────────────────
-pub struct P<'a, const TYPESCRIPT: bool> {
+pub struct P<'a> {
     /// Runtime JSX transform mode. Was the `<J: JsxT>` const-generic type
     /// parameter; demoted to a field because JSX only affects a handful of
     /// expression arms (see the `bun .` startup note in `parser.rs`) and the
@@ -239,6 +239,9 @@ pub struct P<'a, const TYPESCRIPT: bool> {
     pub(crate) jsx_transform: JSXTransformType,
     /// Runtime replacement for the former `SCAN_ONLY` const-generic parameter.
     pub(crate) scan_only: bool,
+    /// Runtime replacement for the former `TYPESCRIPT` const-generic parameter.
+    /// Set from `options.ts` in `init` and never changed after that.
+    pub(crate) ts: bool,
     pub(crate) macro_: MacroState<'a>,
     pub(crate) arena: &'a Bump,
     pub(crate) options: ParserOptions<'a>,
@@ -677,7 +680,7 @@ pub(crate) type Binding2ExprWrapperNamespace = bun_ast::binding::ToExprWrapper;
 pub(crate) type Binding2ExprWrapperHoisted = bun_ast::binding::ToExprWrapper;
 
 // ═══════════════════════════════════════════════════════════════════════════
-impl<'a, const TYPESCRIPT: bool> Drop for P<'a, TYPESCRIPT> {
+impl<'a> Drop for P<'a> {
     fn drop(&mut self) {
         // Arena-allocated structs never run Drop; free their global-heap maps here.
         for mut scope in self.ts_namespace_scopes.drain(..) {
@@ -689,12 +692,10 @@ impl<'a, const TYPESCRIPT: bool> Drop for P<'a, TYPESCRIPT> {
     }
 }
 
-impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
-    pub(crate) const IS_TYPESCRIPT_ENABLED: bool = TYPESCRIPT;
-
+impl<'a> P<'a> {
     #[inline]
     pub(crate) fn track_symbol_usage_during_parse_pass(&self) -> bool {
-        self.scan_only && TYPESCRIPT
+        self.scan_only && self.ts
     }
 
     /// Runtime replacement for the former `IS_JSX_ENABLED` associated const
@@ -875,7 +876,7 @@ impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
     }
 }
 
-impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
+impl<'a> P<'a> {
     pub(crate) const ALLOW_MACROS: bool = !cfg!(target_family = "wasm");
 
     /// use this instead of checking p.source.index
@@ -1866,7 +1867,7 @@ impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
         // The correctness of TypeScript-to-JavaScript conversion relies on accurate
         // symbol use counts for the whole file, including dead code regions. This is
         // tracked separately in a parser-only data structure.
-        if TYPESCRIPT {
+        if self.ts {
             self.ts_use_counts[ref_.inner_index() as usize] += 1;
         }
     }
@@ -2023,7 +2024,7 @@ impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
             );
         }
 
-        if TYPESCRIPT {
+        if self.ts {
             if let Some(member_data) = self.ref_to_ts_namespace_member.get(&ref_) {
                 match member_data {
                     js_ast::ts::Data::EnumNumber(num) => {
@@ -3040,13 +3041,13 @@ impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
                     // SAFETY: `ctx` was derived from the caller's live `&mut P`
                     // immediately before `Binding::to_expr`; no other `&mut P`
                     // borrow is active for the duration of this call.
-                    let p = unsafe { &mut *ctx.cast::<P<'a, TYPESCRIPT>>() };
+                    let p = unsafe { &mut *ctx.cast::<P<'a>>() };
                     p.wrap_identifier_namespace(loc, ref_)
                 });
             self.to_expr_wrapper_hoisted =
                 bun_ast::binding::ToExprWrapper::new(self.arena, |ctx, loc, ref_| {
                     // SAFETY: same as above.
-                    let p = unsafe { &mut *ctx.cast::<P<'a, TYPESCRIPT>>() };
+                    let p = unsafe { &mut *ctx.cast::<P<'a>>() };
                     p.wrap_identifier_hoisting(loc, ref_)
                 });
         }
@@ -3878,7 +3879,7 @@ impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
     pub(crate) fn mark_type_script_only(&self) {
         // Const-generic specialization can't express a compile error in stable
         // Rust, so this is a runtime assertion instead.
-        if !TYPESCRIPT {
+        if !self.ts {
             unreachable!();
         }
     }
@@ -4366,7 +4367,7 @@ impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
             ..Default::default()
         });
 
-        if TYPESCRIPT {
+        if self.ts {
             self.ts_use_counts.push(0);
         }
 
@@ -4901,11 +4902,19 @@ impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
             let symbol_idx = existing.ref_.inner_index() as usize;
 
             use js_ast::scope::SymbolMergeResult as MR;
-            let merge = js_ast::Scope::can_merge_symbol_kinds::<TYPESCRIPT>(
-                scope_kind,
-                self.symbols[symbol_idx].kind,
-                kind,
-            );
+            let merge = if self.ts {
+                js_ast::Scope::can_merge_symbol_kinds::<true>(
+                    scope_kind,
+                    self.symbols[symbol_idx].kind,
+                    kind,
+                )
+            } else {
+                js_ast::Scope::can_merge_symbol_kinds::<false>(
+                    scope_kind,
+                    self.symbols[symbol_idx].kind,
+                    kind,
+                )
+            };
             match merge {
                 MR::Forbidden => {
                     // Entry already holds `existing`; leave it untouched.
@@ -6813,7 +6822,7 @@ fn path_package_name<'a>(path: &fs::Path<'a>) -> Option<&'a [u8]> {
     Some(pkgname)
 }
 
-impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
+impl<'a> P<'a> {
     pub(crate) fn lower_class(&mut self, stmtorexpr: js_ast::StmtOrExpr) -> &'a mut [Stmt] {
         use js_ast::g::PropertyKind;
         match stmtorexpr {
@@ -6833,7 +6842,7 @@ impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
                     return out.into_bump_slice_mut();
                 }
 
-                if !TYPESCRIPT {
+                if !self.ts {
                     if !s_class.class.has_decorators {
                         return self.arena.alloc_slice_copy(&[stmt]);
                     }
@@ -7857,7 +7866,7 @@ impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
         // that later reuses the index must not inherit their namespace data.
         if self.symbols.len() > snapshot.symbols_len {
             self.symbols.truncate(snapshot.symbols_len);
-            if TYPESCRIPT {
+            if self.ts {
                 self.ts_use_counts.truncate(snapshot.symbols_len);
             }
             let stale: Vec<Ref> = self
@@ -8356,7 +8365,7 @@ impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
 // ═══════════════════════════════════════════════════════════════════════════
 // P::to_ast — final assembly P→Ast.
 // ═══════════════════════════════════════════════════════════════════════════
-impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
+impl<'a> P<'a> {
     pub(crate) fn to_ast(
         &mut self,
         parts: &mut ListManaged<'a, js_ast::Part>,
@@ -8411,7 +8420,7 @@ impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
 
             for part in head_parts.iter() {
                 // Bake does not care about 'import =', as it handles it on it's own
-                let _ = ImportScanner::scan::<TYPESCRIPT, true>(
+                let _ = ImportScanner::scan::<true>(
                     self,
                     part.stmts.slice_mut(),
                     wrap_mode != WrapMode::None,
@@ -8421,7 +8430,7 @@ impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
             // Re-run for the last part.
             {
                 let last_stmts = hmr_transform_ctx.last_part.stmts;
-                let _ = ImportScanner::scan::<TYPESCRIPT, true>(
+                let _ = ImportScanner::scan::<true>(
                     self,
                     last_stmts.slice_mut(),
                     wrap_mode != WrapMode::None,
@@ -8457,7 +8466,7 @@ impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
                     self.import_records_for_current_part.clear();
                     self.declared_symbols.clear_retaining_capacity();
 
-                    let result = match ImportScanner::scan::<TYPESCRIPT, false>(
+                    let result = match ImportScanner::scan::<false>(
                         self,
                         part.stmts.slice_mut(),
                         wrap_mode != WrapMode::None,
@@ -9072,7 +9081,7 @@ impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
 // The Binding2ExprWrapper self-referential helpers are
 // seeded with arena-unit placeholders inside the struct literal; the real `*P`
 // back-pointer is wired lazily by the call sites.
-impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
+impl<'a> P<'a> {
     /// Construct a `P` in place at `out`.
     ///
     /// PERF: an earlier shape returned `Result<Self, _>` by value. `P`
@@ -9138,7 +9147,7 @@ impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
         lexer.track_comments = opts.features.minify_identifiers;
         lexer.track_react_suppressions = opts.features.react_compiler.is_enabled();
 
-        if !TYPESCRIPT {
+        if !opts.ts {
             // This is so it doesn't impact runtime transpiler caching when not in use
             opts.features.emit_decorator_metadata = false;
         }
@@ -9331,6 +9340,7 @@ impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
 
             jsx_transform,
             scan_only,
+            ts: opts.ts,
 
             // Moved-in last so the field expressions above can still read `opts.*`.
             options: opts,
@@ -9359,7 +9369,7 @@ pub(crate) struct LowerUsingDeclarationsContext {
 }
 
 impl LowerUsingDeclarationsContext {
-    pub(crate) fn init<'a, const T: bool>(p: &mut P<'a, T>) -> Result<Self, crate::Error> {
+    pub(crate) fn init<'a>(p: &mut P<'a>) -> Result<Self, crate::Error> {
         Ok(Self {
             first_using_loc: bun_ast::Loc::EMPTY,
             stack_ref: p.generate_temp_ref(Some(b"__stack")),
@@ -9367,7 +9377,7 @@ impl LowerUsingDeclarationsContext {
         })
     }
 
-    pub(crate) fn scan_stmts<'a, const T: bool>(&mut self, p: &mut P<'a, T>, stmts: &mut [Stmt]) {
+    pub(crate) fn scan_stmts<'a>(&mut self, p: &mut P<'a>, stmts: &mut [Stmt]) {
         for stmt in stmts.iter_mut() {
             // Match the `StoreRef` by value (Copy ptr)
             // so DerefMut writes through to the arena slot.
@@ -9428,9 +9438,9 @@ impl LowerUsingDeclarationsContext {
         }
     }
 
-    pub(crate) fn finalize<'a, const T: bool>(
+    pub(crate) fn finalize<'a>(
         &mut self,
-        p: &mut P<'a, T>,
+        p: &mut P<'a>,
         stmts: &'a mut [Stmt],
         should_hoist_fns: bool,
     ) -> ListManaged<'a, Stmt> {

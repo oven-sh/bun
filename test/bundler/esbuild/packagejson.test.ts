@@ -323,7 +323,6 @@ describe("bundler", () => {
     },
   });
   itBundled("packagejson/BrowserMapModuleDisabled", {
-    todo: true,
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import fn from 'demo-pkg'
@@ -564,7 +563,6 @@ describe("bundler", () => {
     },
   });
   itBundled("packagejson/BrowserNodeModulesNoExt", {
-    todo: true,
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {value as a} from 'demo-pkg/no-ext'
@@ -599,7 +597,6 @@ describe("bundler", () => {
     },
   });
   itBundled("packagejson/BrowserNodeModulesIndexNoExt", {
-    todo: true,
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {value as a} from 'demo-pkg/no-ext'
@@ -631,6 +628,92 @@ describe("bundler", () => {
         browser
         browser
       `,
+    },
+  });
+  itBundled("packagejson/BrowserNodeModulesSubpathDisabled", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        const ns = require('demo-pkg/disabled')
+        console.log(JSON.stringify([ns.value]))
+      `,
+      "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
+        {
+          "browser": {
+            "./disabled": false
+          }
+        }
+      `,
+      "/Users/user/project/node_modules/demo-pkg/disabled.js": `module.exports = {value: 'node'}`,
+    },
+    run: {
+      stdout: "[null]",
+    },
+  });
+  itBundled("packagejson/BrowserNodeModulesSubpathToPackage", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import {value as a} from 'demo-pkg/to-pkg'
+        import {value as b} from 'demo-pkg/to-missing'
+        console.log(a)
+        console.log(b)
+      `,
+      "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
+        {
+          "browser": {
+            "./to-pkg": "other-pkg",
+            "./to-missing": "missing-pkg"
+          }
+        }
+      `,
+      "/Users/user/project/node_modules/demo-pkg/to-pkg.js": `export let value = 'node'`,
+      "/Users/user/project/node_modules/demo-pkg/to-missing.js": `export let value = 'node'`,
+      "/Users/user/project/node_modules/other-pkg/package.json": `{"main": "./index.js"}`,
+      "/Users/user/project/node_modules/other-pkg/index.js": `export let value = 'other-pkg'`,
+    },
+    run: {
+      stdout: `
+        other-pkg
+        node
+      `,
+    },
+  });
+  itBundled("packagejson/BrowserNodeModulesSubpathToPackageCycle", {
+    files: {
+      "/Users/user/project/src/entry.js": `import 'pkg-a/x'`,
+      "/Users/user/project/node_modules/pkg-a/package.json": /* json */ `
+        {
+          "name": "pkg-a",
+          "browser": {
+            "./x": "pkg-a/x"
+          }
+        }
+      `,
+    },
+    bundleErrors: {
+      "/Users/user/project/src/entry.js": [`Could not resolve: "pkg-a/x". Maybe you need to "bun install"?`],
+    },
+  });
+  itBundled("packagejson/ExportsShadowsBrowserSubpath", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import {value} from 'demo-pkg/sub'
+        console.log(value)
+      `,
+      "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
+        {
+          "exports": {
+            "./sub": "./from-exports.js"
+          },
+          "browser": {
+            "./sub": "./from-browser.js"
+          }
+        }
+      `,
+      "/Users/user/project/node_modules/demo-pkg/from-exports.js": `export let value = 'exports'`,
+      "/Users/user/project/node_modules/demo-pkg/from-browser.js": `export let value = 'browser'`,
+    },
+    run: {
+      stdout: "exports",
     },
   });
   itBundled("packagejson/BrowserNoExt", {
@@ -702,7 +785,6 @@ describe("bundler", () => {
     },
   });
   itBundled("packagejson/BrowserESBuildIssue2002A", {
-    todo: true,
     files: {
       "/Users/user/project/src/entry.js": `require('pkg/sub')`,
       "/Users/user/project/src/node_modules/pkg/package.json": /* json */ `
@@ -721,7 +803,6 @@ describe("bundler", () => {
     },
   });
   itBundled("packagejson/BrowserESBuildIssue2002B", {
-    todo: true,
     files: {
       "/Users/user/project/src/entry.js": `require('pkg/sub')`,
       "/Users/user/project/src/node_modules/pkg/package.json": /* json */ `
@@ -740,7 +821,6 @@ describe("bundler", () => {
     },
   });
   itBundled("packagejson/BrowserESBuildIssue2002C", {
-    todo: true,
     files: {
       "/Users/user/project/src/entry.js": `require('pkg/sub')`,
       "/Users/user/project/src/node_modules/pkg/package.json": /* json */ `
@@ -2288,10 +2368,8 @@ describe("bundler", () => {
       stdout: "exact with-ext as-index as-index-ext",
     },
   });
-  // Browser-map keys are normalized at parse time ("./name" -> "name"), so a
-  // "./name" entry also remaps the *package path* "name" imported from within
-  // the same package (Browserify compatibility quirk); the normalized key
-  // matches the package specifier on the checker's first probe.
+  // A "./name" entry also remaps the *package path* "name" imported from within
+  // the same package (Browserify compatibility quirk).
   itBundled("packagejson/BrowserMapDotSlashOverridesPackagePath", {
     files: {
       "/Users/user/project/src/entry.js": /* js */ `

@@ -6410,9 +6410,10 @@ pub(crate) mod __gated_printer {
             }
         }
 
+        /// A disabled module evaluates to an empty object, as in other bundlers.
         #[inline]
         fn print_disabled_import(&mut self) {
-            self.print_whitespacer(ws!(b"(() => ({}))"));
+            self.print_whitespacer(ws!(b"({})"));
         }
 
         pub(crate) fn print_for_loop_init(&mut self, init_st: Stmt, extra_flags: ExprFlagSet) {

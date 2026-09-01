@@ -3686,8 +3686,18 @@ impl<'a> LinkerContext<'a> {
                     }
 
                     // Warn about importing from a file that is known to not have any exports
-                    if status == ImportTrackerStatus::CjsWithoutExports {
+                    // (for a disabled module, its default import is the `{}` exports object).
+                    let is_always_undefined = match status {
+                        ImportTrackerStatus::CjsWithoutExports => true,
+                        ImportTrackerStatus::Disabled => {
+                            !named_import.alias_is_star
+                                && named_import.alias.is_some_and(|a| a.slice() != b"default")
+                        }
+                        _ => false,
+                    };
+                    if is_always_undefined {
                         let source = self.get_source(tracker.source_index.get());
+                        let imported = self.get_source(next_tracker.source_index.get());
                         // SAFETY: `alias` is an arena `*const [u8]` valid for the link pass.
                         let alias = named_import
                             .alias
@@ -3701,7 +3711,7 @@ impl<'a> LinkerContext<'a> {
                             format_args!(
                                 "Import \"{}\" will always be undefined because the file \"{}\" has no exports",
                                 bstr::BStr::new(alias),
-                                bstr::BStr::new(&source.path.pretty),
+                                bstr::BStr::new(&imported.path.pretty),
                             ),
                         );
                     }

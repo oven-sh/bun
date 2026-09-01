@@ -264,6 +264,13 @@ pub(crate) fn scan_imports_and_exports(
 
                 match record.kind {
                     ImportKind::Stmt => {
+                        // A disabled module is an empty CommonJS module for every import syntax.
+                        if col_ref!(input_files)[other_file].path.is_disabled {
+                            col!(exports_kind)[other_file] = ExportsKind::Cjs;
+                            col!(flags)[other_file].wrap = WrapKind::Cjs;
+                            continue;
+                        }
+
                         // Importing using ES6 syntax from a file without any ES6 syntax
                         // causes that module to be considered CommonJS-style, even if it
                         // doesn't have any CommonJS exports.

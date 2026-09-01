@@ -117,16 +117,6 @@ mod bun_paths {
     pub(super) fn join(parts: &[&[u8]], platform: Platform) -> &'static [u8] {
         dispatch_platform!(platform, |P| ::bun_paths::resolve_path::join::<P>(parts))
     }
-    pub(super) fn join_string_buf<'b>(
-        buf: &'b mut [u8],
-        parts: &[&[u8]],
-        platform: Platform,
-    ) -> &'b [u8] {
-        dispatch_platform!(
-            platform,
-            |P| ::bun_paths::resolve_path::join_string_buf::<P>(buf, parts)
-        )
-    }
     /// Compile-time platform-separator literal (`/` → `\` on Windows). A
     /// const fn can't transform a borrowed `&'static [u8]`, so this is a
     /// macro that emits a fresh const array with the swap applied. Result is
@@ -341,7 +331,6 @@ pub struct Bufs {
     pub(crate) tsconfig_match_full_buf: PathBuffer,
     pub(crate) tsconfig_match_full_buf3: PathBuffer,
 
-    pub(crate) esm_subpath: [u8; 512],
     pub(crate) esm_absolute_package_path: PathBuffer,
     pub(crate) esm_absolute_package_path_joined: PathBuffer,
 
@@ -363,6 +352,7 @@ pub struct Bufs {
     pub(crate) field_abs_path: PathBuffer,
     pub(crate) tsconfig_path_abs: PathBuffer,
     pub(crate) check_browser_map: PathBuffer,
+    pub(crate) browser_map_index: PathBuffer,
     pub(crate) remap_path: PathBuffer,
     pub(crate) load_as_file: PathBuffer,
     pub(crate) remap_path_trailing_slash: PathBuffer,
@@ -484,6 +474,9 @@ pub struct Resolver<'a> {
     /// Read the "browser" field in package.json files?
     /// For Bun's runtime, we don't.
     pub(crate) care_about_browser_field: bool,
+    /// Nested "browser" map targets being resolved on the current call stack;
+    /// a map can send a subpath back to itself (`"./x": "pkg/x"`).
+    browser_remap_depth: u8,
 
     pub debug_logs: Option<DebugLogs>,
     pub elapsed: u64, // tracing
@@ -622,6 +615,7 @@ impl<'a> Resolver<'a> {
             care_about_bin_folder: from.care_about_bin_folder,
             care_about_scripts: from.care_about_scripts,
             care_about_browser_field: from.care_about_browser_field,
+            browser_remap_depth: 0,
             // `DebugLogs` owns Vecs — per-worker fresh.
             debug_logs: None,
             elapsed: 0,
@@ -921,6 +915,7 @@ impl<'a> Resolver<'a> {
             log,
             extension_order: options::ExtOrder::DefaultDefault,
             care_about_browser_field,
+            browser_remap_depth: 0,
             care_about_bin_folder: false,
             care_about_scripts: false,
             debug_logs: None,
@@ -1857,6 +1852,39 @@ impl<'a> Resolver<'a> {
         }
 
         if check_package {
+            // Check for external packages first, before the browser polyfills below.
+            if self.opts.external.node_modules.count() > 0
+            // Imports like "process/" need to resolve to the filesystem, not a builtin
+            && !import_path.ends_with(b"/")
+            {
+                let mut query = import_path;
+                loop {
+                    if self.opts.external.node_modules.contains(query) {
+                        if let Some(debug) = self.debug_logs.as_mut() {
+                            debug.add_note_fmt(format_args!(
+                                "The path \"{}\" was marked as external by the user",
+                                bstr::BStr::new(query)
+                            ));
+                        }
+                        return ResultUnion::Success(Result {
+                            path_pair: PathPair {
+                                primary: Path::init(query),
+                                secondary: None,
+                            },
+                            flags: ResultFlags::IS_EXTERNAL,
+                            ..Default::default()
+                        });
+                    }
+
+                    // If the module "foo" has been marked as external, we also want to treat
+                    // paths into that module such as "foo/bar" as external too.
+                    let Some(slash) = strings::last_index_of_char(query, b'/') else {
+                        break;
+                    };
+                    query = &query[0..slash];
+                }
+            }
+
             if self.opts.polyfill_node_globals {
                 let had_node_prefix = import_path.starts_with(b"node:");
                 let import_path_without_node_prefix: &'static [u8] = if had_node_prefix {
@@ -1870,15 +1898,12 @@ impl<'a> Resolver<'a> {
                 // spellings the polyfill table below does.
                 let browser_map_overrides_builtin = self.care_about_browser_field
                     && matches!(self.dir_info_cached(source_dir), Ok(Some(info))
-                    if info
-                        .get_enclosing_browser_scope()
-                        .is_some_and(|scope| {
-                            self.check_browser_map::<{ BrowserMapPathKind::PackagePath }>(
-                                &scope,
-                                import_path_without_node_prefix,
-                            )
-                            .is_some()
-                        }));
+                    if self
+                        .check_browser_map::<{ BrowserMapPathKind::PackagePath }>(
+                            info,
+                            import_path_without_node_prefix,
+                        )
+                        .is_some());
 
                 if browser_map_overrides_builtin {
                     // check_package_path re-runs this lookup; give it the bare name.
@@ -1932,39 +1957,6 @@ impl<'a> Resolver<'a> {
                         result.primary_side_effects_data = SideEffects::NoSideEffectsPureData;
                         return ResultUnion::Success(result);
                     }
-                }
-            }
-
-            // Check for external packages first
-            if self.opts.external.node_modules.count() > 0
-            // Imports like "process/" need to resolve to the filesystem, not a builtin
-            && !import_path.ends_with(b"/")
-            {
-                let mut query = import_path;
-                loop {
-                    if self.opts.external.node_modules.contains(query) {
-                        if let Some(debug) = self.debug_logs.as_mut() {
-                            debug.add_note_fmt(format_args!(
-                                "The path \"{}\" was marked as external by the user",
-                                bstr::BStr::new(query)
-                            ));
-                        }
-                        return ResultUnion::Success(Result {
-                            path_pair: PathPair {
-                                primary: Path::init(query),
-                                secondary: None,
-                            },
-                            flags: ResultFlags::IS_EXTERNAL,
-                            ..Default::default()
-                        });
-                    }
-
-                    // If the module "foo" has been marked as external, we also want to treat
-                    // paths into that module such as "foo/bar" as external too.
-                    let Some(slash) = strings::last_index_of_char(query, b'/') else {
-                        break;
-                    };
-                    query = &query[0..slash];
                 }
             }
 
@@ -2067,7 +2059,7 @@ impl<'a> Resolver<'a> {
                     let pkg = import_dir_info.package_json().unwrap();
                     if let Some(remap) = self
                         .check_browser_map::<{ BrowserMapPathKind::AbsolutePath }>(
-                            &import_dir_info,
+                            import_dir_info_outer,
                             abs_path,
                         )
                     {
@@ -2220,7 +2212,7 @@ impl<'a> Resolver<'a> {
                 if let Some(package_json) = browser_scope.package_json() {
                     if let Some(remapped) = self
                         .check_browser_map::<{ BrowserMapPathKind::PackagePath }>(
-                            &browser_scope,
+                            source_dir_info,
                             import_path,
                         )
                     {
@@ -2307,66 +2299,6 @@ impl<'a> Resolver<'a> {
                 } else {
                     ExternalKind::NotExternal
                 });
-
-                if result.path_pair.primary.is_disabled && result.path_pair.secondary.is_none() {
-                    return ResultUnion::Success(result);
-                }
-
-                if res.package_json.is_some() && self.care_about_browser_field {
-                    let base_dir_info = match res.dir_info {
-                        Some(d) => d,
-                        None => match self.read_dir_info(result.path_pair.primary.name().dir) {
-                            Ok(Some(d)) => d,
-                            _ => return ResultUnion::Success(result),
-                        },
-                    };
-                    if let Some(browser_scope) = base_dir_info.get_enclosing_browser_scope() {
-                        if let Some(remap) = self
-                            .check_browser_map::<{ BrowserMapPathKind::AbsolutePath }>(
-                                &browser_scope,
-                                result.path_pair.primary.text(),
-                            )
-                        {
-                            if remap.is_empty() {
-                                result.path_pair.primary.is_disabled = true;
-                                result.path_pair.primary =
-                                    Fs::Path::init_with_namespace(remap, b"file");
-                            } else {
-                                let mut remapped = MatchResult::default();
-                                if self
-                                    .resolve_without_remapping(
-                                        browser_scope,
-                                        remap,
-                                        kind,
-                                        global_cache,
-                                        &mut remapped,
-                                    )
-                                    .is_success()
-                                {
-                                    result.path_pair = remapped.path_pair;
-                                    result.dirname_fd = remapped.dirname_fd;
-                                    result.file_fd = remapped.file_fd;
-                                    result.package_json = remapped.package_json;
-                                    result.module_type = remapped.module_type;
-
-                                    // Potentially rewrite the import path if it's external that
-                                    // was remapped to a different path
-                                    result.flags.set_external_kind(if remapped.is_external {
-                                        ExternalKind::ExternalRewritePath
-                                    } else {
-                                        ExternalKind::NotExternal
-                                    });
-
-                                    result.flags.set_is_from_node_modules(
-                                        result.flags.is_from_node_modules()
-                                            || remapped.is_node_module,
-                                    );
-                                    return ResultUnion::Success(result);
-                                }
-                            }
-                        }
-                    }
-                }
 
                 ResultUnion::Success(result)
             }
@@ -2565,7 +2497,9 @@ impl<'a> Resolver<'a> {
             }
         }
 
-        let esm_ = crate::package_json::Package::parse(import_path, bufs!(esm_subpath));
+        // Pooled, not `bufs!`: a "browser" remap can re-enter this function while `esm` is in use.
+        let mut esm_subpath_buf = bun_paths::path_buffer_pool::get();
+        let esm_ = crate::package_json::Package::parse(import_path, &mut **esm_subpath_buf);
 
         let source_dir_info = dir_info;
         let mut any_node_modules_folder = false;
@@ -2760,7 +2694,6 @@ impl<'a> Resolver<'a> {
                                             )
                                             .is_node_module(),
                                             package_json: Some(std::ptr::from_ref(package_json)),
-                                            dir_info: Some(dir_info),
                                             ..Default::default()
                                         };
                                         return MatchStatus::Success;
@@ -2771,6 +2704,31 @@ impl<'a> Resolver<'a> {
                                         d.decrease_indent();
                                     }
                                     return MatchStatus::NotFound;
+                                }
+                            }
+
+                            // Check the "browser" map
+                            if self.care_about_browser_field {
+                                match self.load_package_subpath_from_browser_map(
+                                    pkg_dir_info,
+                                    abs_path,
+                                    kind,
+                                    global_cache,
+                                    out,
+                                ) {
+                                    BrowserMapSubpath::NoEntry => {}
+                                    BrowserMapSubpath::Found => {
+                                        self.extension_order = prev_extension_order;
+                                        if let Some(d) = self.debug_logs.as_mut() {
+                                            d.decrease_indent();
+                                        }
+                                        return MatchStatus::Success;
+                                    }
+                                    BrowserMapSubpath::NotFound => {
+                                        // `abs_path` is stale now; move on to the parent directory.
+                                        self.extension_order = prev_extension_order;
+                                        break 'node_modules;
+                                    }
                                 }
                             }
                         }
@@ -3228,7 +3186,6 @@ impl<'a> Resolver<'a> {
                                                 .path
                                                 .is_node_module(),
                                             package_json: Some(std::ptr::from_ref(package_json)),
-                                            dir_info: Some(dir_info),
                                             ..Default::default()
                                         };
                                         return MatchStatus::Success;
@@ -3257,9 +3214,24 @@ impl<'a> Resolver<'a> {
                                 ));
                             }
 
-                            if self
-                                .load_as_file_or_directory(abs_path, kind, out)
-                                .is_success()
+                            // Check the "browser" map
+                            let browser_map_subpath = if self.care_about_browser_field {
+                                self.load_package_subpath_from_browser_map(
+                                    pkg_dir_info,
+                                    abs_path,
+                                    kind,
+                                    global_cache,
+                                    out,
+                                )
+                            } else {
+                                BrowserMapSubpath::NoEntry
+                            };
+
+                            if browser_map_subpath == BrowserMapSubpath::Found
+                                || (browser_map_subpath == BrowserMapSubpath::NoEntry
+                                    && self
+                                        .load_as_file_or_directory(abs_path, kind, out)
+                                        .is_success())
                             {
                                 out.is_node_module = true;
                                 if let Some(d) = self.debug_logs.as_mut() {
@@ -3775,7 +3747,6 @@ impl<'a> Resolver<'a> {
                     },
                     dirname_fd,
                     file_fd: entry_query.entry().cache().fd,
-                    dir_info: Some(resolved_dir_info),
                     is_node_module: true,
                     package_json: Some(
                         resolved_dir_info
@@ -3944,7 +3915,6 @@ impl<'a> Resolver<'a> {
             },
             dirname_fd,
             file_fd: query.entry().cache().fd,
-            dir_info: Some(resolved_dir_info),
             is_node_module: true,
             package_json: Some(
                 resolved_dir_info
@@ -5053,92 +5023,165 @@ impl<'a> Resolver<'a> {
         )
     }
 
+    /// Checks a package subpath (`require("pkg/foo/bar")`) against the package's
+    /// "browser" map before node's file lookup. `abs_path` has no implicit extension.
+    ///
+    /// Resolving a remap target can re-enter `load_node_modules`, which reuses the
+    /// scratch buffer `abs_path` may live in, so the fallback lookup runs in here.
+    fn load_package_subpath_from_browser_map(
+        &mut self,
+        pkg_dir_info: DirInfoRef,
+        abs_path: &[u8],
+        kind: ast::ImportKind,
+        global_cache: GlobalCache,
+        out: &mut MatchResult,
+    ) -> BrowserMapSubpath {
+        let Some(remap) =
+            self.check_browser_map::<{ BrowserMapPathKind::AbsolutePath }>(pkg_dir_info, abs_path)
+        else {
+            return BrowserMapSubpath::NoEntry;
+        };
+        let browser_scope = pkg_dir_info
+            .get_enclosing_browser_scope()
+            .expect("check_browser_map matched, so a browser scope exists");
+
+        if remap.is_empty() {
+            let mut path = Path::init(
+                self.fs_ref()
+                    .dirname_store
+                    .append_slice(abs_path)
+                    .expect("oom"),
+            );
+            path.is_disabled = true;
+            *out = MatchResult {
+                path_pair: PathPair {
+                    primary: path,
+                    secondary: None,
+                },
+                package_json: browser_scope.package_json().map(std::ptr::from_ref),
+                ..Default::default()
+            };
+            return BrowserMapSubpath::Found;
+        }
+
+        let mut abs_path_buf = bun_paths::path_buffer_pool::get();
+        let Some(abs_path) = concat_into(&mut **abs_path_buf, &[abs_path]) else {
+            return BrowserMapSubpath::NotFound;
+        };
+
+        if self.browser_remap_depth < MAX_BROWSER_REMAP_DEPTH {
+            self.browser_remap_depth += 1;
+            let resolved = self
+                .resolve_without_remapping(browser_scope, remap, kind, global_cache, out)
+                .is_success();
+            self.browser_remap_depth -= 1;
+            if resolved {
+                return BrowserMapSubpath::Found;
+            }
+        }
+
+        // Like esbuild, an unresolved target falls back to the file itself.
+        if self
+            .load_as_file_or_directory(abs_path, kind, out)
+            .is_success()
+        {
+            return BrowserMapSubpath::Found;
+        }
+
+        BrowserMapSubpath::NotFound
+    }
+
+    /// Looks `input_path` up in the "browser" map enclosing `resolve_dir_info`
+    /// (the importer's directory for `PackagePath`). Returns the remap target
+    /// relative to the browser scope, or an empty slice for a disabled entry.
     pub(crate) fn check_browser_map<const KIND: BrowserMapPathKind>(
         &mut self,
-        dir_info: &DirInfo::DirInfo,
+        resolve_dir_info: DirInfoRef,
         input_path_: &[u8],
     ) -> Option<&'static [u8]> {
-        let package_json = dir_info.package_json()?;
-        let browser_map = &package_json.browser_map;
+        let browser_scope = resolve_dir_info.get_enclosing_browser_scope()?;
+        let package_json = browser_scope.package_json()?;
 
-        if browser_map.count() == 0 {
+        if package_json.browser_map.count() == 0 {
             return None;
         }
 
-        let mut input_path = input_path_;
-
-        if KIND == BrowserMapPathKind::AbsolutePath {
-            let abs_path = dir_info.abs_path;
+        let input_path: &[u8] = match KIND {
             // Turn absolute paths into paths relative to the "browser" map location
-            if !input_path.starts_with(abs_path) {
-                return None;
-            }
+            BrowserMapPathKind::AbsolutePath => browser_map_relative_path(
+                browser_scope.abs_path,
+                input_path_,
+                bufs!(check_browser_map),
+            )?,
+            BrowserMapPathKind::PackagePath => input_path_,
+        };
 
-            input_path = &input_path[abs_path.len()..];
-        }
-
-        if input_path.is_empty()
-            || (input_path.len() == 1 && (input_path[0] == b'.' || input_path[0] == SEP))
-        {
-            // No bundler supports remapping ".", so we don't either
-            return None;
-        }
-
-        // Normalize the path so we can compare against it without getting confused by "./"
-        let cleaned = self
-            .fs_ref()
-            .normalize_buf(bufs!(check_browser_map), input_path);
-
-        if cleaned.len() == 1 && cleaned[0] == b'.' {
+        if input_path.is_empty() || input_path == b"." {
             // No bundler supports remapping ".", so we don't either
             return None;
         }
 
         let mut checker = BrowserMapPath {
             remapped: b"",
-            cleaned,
-            input_path,
             extension_order: self.opts.ext_order_slice(self.extension_order),
             map: &package_json.browser_map,
         };
 
-        if checker.check_path(input_path) {
+        // First try the import path as a package path
+        if checker.check_path(input_path, ImplicitExtensions::Include) {
             return Some(checker.remapped);
         }
 
-        // First try the import path as a package path
-        if is_package_path(checker.input_path) {
-            let abs_to_rel = bufs!(abs_to_rel);
-            match KIND {
-                BrowserMapPathKind::AbsolutePath => {
-                    abs_to_rel[0..2].copy_from_slice(b"./");
-                    abs_to_rel[2..2 + checker.input_path.len()].copy_from_slice(checker.input_path);
-                    if checker.check_path(&abs_to_rel[0..checker.input_path.len() + 2]) {
-                        return Some(checker.remapped);
-                    }
+        if !is_package_path(input_path) {
+            return None;
+        }
+
+        // If a package path didn't work, try the import path as a relative path
+        let buf = bufs!(abs_to_rel);
+        match KIND {
+            BrowserMapPathKind::AbsolutePath => {
+                let candidate = concat_into(buf, &[b"./", input_path])?;
+                if checker.check_path(candidate, ImplicitExtensions::Include) {
+                    return Some(checker.remapped);
                 }
-                BrowserMapPathKind::PackagePath => {
-                    // Browserify allows a browser map entry of "./pkg" to override a package
-                    // path of "require('pkg')". This is weird, and arguably a bug. But we
-                    // replicate this bug for compatibility. However, Browserify only allows
-                    // this within the same package. It does not allow such an entry in a
-                    // parent package to override this in a child package. So this behavior
-                    // is disallowed if there is a "node_modules" folder in between the child
-                    // package and the parent package.
-                    let is_in_same_package = match dir_info.get_parent() {
-                        Some(parent) => !parent.is_node_modules(),
-                        None => true,
-                    };
-
-                    if is_in_same_package {
-                        abs_to_rel[0..2].copy_from_slice(b"./");
-                        abs_to_rel[2..2 + checker.input_path.len()]
-                            .copy_from_slice(checker.input_path);
-
-                        if checker.check_path(&abs_to_rel[0..checker.input_path.len() + 2]) {
-                            return Some(checker.remapped);
-                        }
+            }
+            BrowserMapPathKind::PackagePath => {
+                // Browserify allows a browser map entry of "./pkg" to override a package
+                // path of "require('pkg')". This is weird, and arguably a bug. But we
+                // replicate this bug for compatibility. However, Browserify only allows
+                // this within the same package. It does not allow such an entry in a
+                // parent package to override this in a child package. So this behavior
+                // is disallowed if there is a "node_modules" folder in between the child
+                // package and the parent package.
+                let mut info = Some(resolve_dir_info);
+                while let Some(dir) = info {
+                    if dir == browser_scope {
+                        break;
                     }
+                    if dir.is_node_modules() {
+                        return None;
+                    }
+                    info = dir.get_parent();
+                }
+
+                // Use the relative path from the file containing the import path to the
+                // enclosing package.json file. This includes any subdirectories within the
+                // package if there are any.
+                let mut rel_buf = bun_paths::path_buffer_pool::get();
+                let rel_dir = browser_map_relative_path(
+                    browser_scope.abs_path,
+                    resolve_dir_info.abs_path,
+                    &mut **rel_buf,
+                )?;
+                let candidate = if rel_dir.is_empty() {
+                    concat_into(buf, &[b"./", input_path])?
+                } else {
+                    concat_into(buf, &[b"./", rel_dir, b"/", input_path])?
+                };
+
+                // Browserify lets "require('pkg')" match "./pkg" but not "./pkg.js".
+                if checker.check_path(candidate, ImplicitExtensions::Skip) {
+                    return Some(checker.remapped);
                 }
             }
         }
@@ -5188,7 +5231,7 @@ impl<'a> Resolver<'a> {
                 if let Some(browser_json) = browser_scope.package_json() {
                     if let Some(remap) = self
                         .check_browser_map::<{ BrowserMapPathKind::AbsolutePath }>(
-                            &browser_scope,
+                            dir_info,
                             field_abs_path,
                         )
                     {
@@ -5439,7 +5482,7 @@ impl<'a> Resolver<'a> {
                     let index_abs_path = self.fs_ref().abs_buf(&index_paths, bufs!(remap_path));
                     if let Some(remap) = self
                         .check_browser_map::<{ BrowserMapPathKind::AbsolutePath }>(
-                            &browser_scope,
+                            dir_info,
                             index_abs_path,
                         )
                     {
@@ -6611,99 +6654,150 @@ pub enum BrowserMapPathKind {
     AbsolutePath,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ImplicitExtensions {
+    Include,
+    Skip,
+}
+
+/// Longest chain of "browser" map targets that are themselves package subpaths.
+/// A real chain has one or two hops; a longer one is a cycle, and the remap stops applying.
+const MAX_BROWSER_REMAP_DEPTH: u8 = 16;
+
+/// Result of `Resolver::load_package_subpath_from_browser_map`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum BrowserMapSubpath {
+    /// No entry for the subpath; the caller runs node's file lookup.
+    NoEntry,
+    /// `out` holds the remap target or the disabled path.
+    Found,
+    /// An entry exists, but neither its target nor the subpath itself resolves.
+    NotFound,
+}
+
 pub(crate) struct BrowserMapPath<'b> {
     pub(crate) remapped: &'static [u8],
-    pub(crate) cleaned: &'b [u8],
-    pub(crate) input_path: &'b [u8],
     pub(crate) extension_order: &'b [Box<[u8]>],
     pub(crate) map: &'b BrowserMap,
 }
 
 impl<'b> BrowserMapPath<'b> {
-    /// On a match only `self.remapped` is updated; the matched candidate may
-    /// borrow threadlocal scratch buffers and must never be stored back into
-    /// the checker.
-    pub(crate) fn check_path(&mut self, path_to_check: &[u8]) -> bool {
-        let map = self.map;
+    /// On a match only `self.remapped` is stored; `key` may be scratch storage.
+    fn lookup(&mut self, key: &[u8]) -> bool {
+        let Some(result) = self.map.get(key) else {
+            return false;
+        };
+        // SAFETY: ARENA — `BrowserMap` values are `Box<[u8]>` owned by a `'static`
+        // PackageJSON (allocated in `parse_package_json`, never freed — DirInfo
+        // cache is process-global); the `'b` borrow on `map` artificially shortens
+        // what is process-lifetime storage. `Interned` is the canonical proof type.
+        self.remapped = unsafe { bun_ptr::Interned::assume(result) }.as_bytes();
+        true
+    }
 
-        let cleaned = self.cleaned;
+    /// `path` followed by each implicit extension, in order.
+    fn lookup_with_extensions(&mut self, path: &[u8], buf: &mut [u8]) -> bool {
+        if path.len() >= buf.len() {
+            return false;
+        }
+        buf[..path.len()].copy_from_slice(path);
+        let extension_order = self.extension_order;
+        for ext in extension_order {
+            let ext: &[u8] = ext;
+            let len = path.len() + ext.len();
+            if len > buf.len() {
+                continue;
+            }
+            buf[path.len()..len].copy_from_slice(ext);
+            if self.lookup(&buf[..len]) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Probes the path as written, with an implicit extension, as a directory
+    /// with an "index" file, and that index with an implicit extension.
+    pub(crate) fn check_path(
+        &mut self,
+        path_to_check: &[u8],
+        implicit_extensions: ImplicitExtensions,
+    ) -> bool {
         // Check for equality
-        if let Some(result) = map.get(path_to_check) {
-            // SAFETY: ARENA — `BrowserMap` values are `Box<[u8]>` owned by a `'static`
-            // PackageJSON (allocated in `parse_package_json`, never freed — DirInfo
-            // cache is process-global); the `'b` borrow on `map` artificially shortens
-            // what is process-lifetime storage. `Interned` is the canonical proof type.
-            self.remapped = unsafe { bun_ptr::Interned::assume(result) }.as_bytes();
+        if self.lookup(path_to_check) {
             return true;
         }
 
         let ext_buf = bufs!(extension_path);
 
-        if cleaned.len() <= ext_buf.len() {
-            ext_buf[..cleaned.len()].copy_from_slice(cleaned);
-
-            // If that failed, try adding implicit extensions
-            for ext in self.extension_order.iter() {
-                let ext: &[u8] = ext;
-                if cleaned.len() + ext.len() > ext_buf.len() {
-                    continue;
-                }
-                ext_buf[cleaned.len()..cleaned.len() + ext.len()].copy_from_slice(ext);
-                let new_path = &ext_buf[0..cleaned.len() + ext.len()];
-                // if let Some(debug) = r.debug_logs.as_mut() {
-                //     debug.add_note_fmt(format_args!("Checking for \"{}\" ", bstr::BStr::new(new_path)));
-                // }
-                if let Some(_remapped) = map.get(new_path) {
-                    // SAFETY: ARENA — see `result` note above.
-                    self.remapped = unsafe { bun_ptr::Interned::assume(_remapped) }.as_bytes();
-                    return true;
-                }
-            }
-        }
-
-        // If that failed, try assuming this is a directory and looking for an "index" file
-
-        let index_path: &[u8] = {
-            let trimmed = strings::trim_right(path_to_check, &[SEP]);
-            let parts = [
-                trimmed,
-                const_format::concatcp!(SEP_STR, "index").as_bytes(),
-            ];
-            ResolvePath::join_string_buf(
-                bufs!(tsconfig_base_url),
-                &parts,
-                bun_paths::Platform::AUTO,
-            )
-        };
-
-        if let Some(_remapped) = map.get(index_path) {
-            // SAFETY: ARENA — see `result` note above.
-            self.remapped = unsafe { bun_ptr::Interned::assume(_remapped) }.as_bytes();
+        // If that failed, try adding implicit extensions
+        if implicit_extensions == ImplicitExtensions::Include
+            && self.lookup_with_extensions(path_to_check, ext_buf)
+        {
             return true;
         }
 
-        if index_path.len() <= ext_buf.len() {
-            ext_buf[..index_path.len()].copy_from_slice(index_path);
+        // If that failed, try assuming this is a directory and looking for an "index" file
+        let index_buf = bufs!(browser_map_index);
+        let trimmed = strings::trim_right(path_to_check, b"/");
+        let Some(index_path) = (if trimmed.is_empty() || trimmed == b"." {
+            concat_into(index_buf, &[b"./index"])
+        } else {
+            concat_into(index_buf, &[trimmed, b"/index"])
+        }) else {
+            return false;
+        };
 
-            for ext in self.extension_order.iter() {
-                let ext: &[u8] = ext;
-                if index_path.len() + ext.len() > ext_buf.len() {
-                    continue;
-                }
-                ext_buf[index_path.len()..index_path.len() + ext.len()].copy_from_slice(ext);
-                let new_path = &ext_buf[0..index_path.len() + ext.len()];
-                // if let Some(debug) = r.debug_logs.as_mut() {
-                //     debug.add_note_fmt(format_args!("Checking for \"{}\" ", bstr::BStr::new(new_path)));
-                // }
-                if let Some(_remapped) = map.get(new_path) {
-                    // SAFETY: ARENA — see `result` note above.
-                    self.remapped = unsafe { bun_ptr::Interned::assume(_remapped) }.as_bytes();
-                    return true;
-                }
-            }
+        if self.lookup(index_path) {
+            return true;
         }
 
-        false
+        // If that failed, try adding implicit extensions
+        implicit_extensions == ImplicitExtensions::Include
+            && self.lookup_with_extensions(index_path, ext_buf)
+    }
+}
+
+/// Writes `parts` back to back into `buf`. `None` when they do not fit.
+fn concat_into<'a>(buf: &'a mut [u8], parts: &[&[u8]]) -> Option<&'a [u8]> {
+    let mut len = 0usize;
+    for part in parts {
+        let end = len.checked_add(part.len())?;
+        if end > buf.len() {
+            return None;
+        }
+        buf[len..end].copy_from_slice(part);
+        len = end;
+    }
+    Some(&buf[..len])
+}
+
+/// `path` relative to the directory `base`, with forward slashes and no trailing
+/// slash. Empty when `path` is `base` itself, `None` when it is not inside `base`.
+fn browser_map_relative_path<'a>(base: &[u8], path: &[u8], buf: &'a mut [u8]) -> Option<&'a [u8]> {
+    if !path.starts_with(base) {
+        return None;
+    }
+    let rest = &path[base.len()..];
+    // `base` may or may not carry its trailing separator.
+    if !rest.is_empty()
+        && !strings::char_is_any_slash(rest[0])
+        && !base.last().is_some_and(|&c| strings::char_is_any_slash(c))
+    {
+        return None;
+    }
+    let separators: &[u8] = if cfg!(windows) { b"/\\" } else { b"/" };
+    let rest = strings::trim_right(strings::trim_left(rest, separators), separators);
+    if rest.len() > buf.len() {
+        return None;
+    }
+    if cfg!(windows) {
+        Some(&*ResolvePath::resolve_path::path_to_posix_buf::<u8>(
+            rest, buf,
+        ))
+    } else {
+        buf[..rest.len()].copy_from_slice(rest);
+        Some(&buf[..rest.len()])
     }
 }
 

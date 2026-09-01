@@ -865,3 +865,27 @@ devTest("barrel optimization: namespace re-export cycle through a star-exported 
     await c.expectMessage("result: object Y KEEP DEEP OTHER");
   },
 });
+devTest('"browser" field: a disabled "module" entry falls back to "main"', {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import value from 'pkg';
+      console.log('value: ' + JSON.stringify(value));
+    `,
+    "node_modules/pkg/package.json": JSON.stringify({
+      name: "pkg",
+      main: "./main.js",
+      module: "./module.js",
+      browser: { "./module.js": false },
+    }),
+    "node_modules/pkg/main.js": `module.exports = 'main';`,
+    "node_modules/pkg/module.js": `throw new Error('fail');`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage('value: "main"');
+  },
+});

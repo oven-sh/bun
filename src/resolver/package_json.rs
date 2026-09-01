@@ -598,22 +598,10 @@ impl PackageJSON {
                 if let js_ast::ExprData::EObjectJSON(obj) = &browser_prop.expr.data {
                     // The value is an object
 
-                    // Remap all files in the browser field
-                    let mut key_spill: Vec<u8> = Vec::new();
+                    // Remap all files in the browser field. Keys are stored as written;
+                    // `check_browser_map` decides which spellings an import may match.
                     for prop in obj.get().properties() {
-                        // Normalize the path so we can compare against it without getting
-                        // confused by "./". There is no distinction between package paths and
-                        // relative paths for these values because some tools (i.e. Browserify)
-                        // don't make such a distinction.
-                        //
-                        // This leads to weird things like a mapping for "./foo" matching an
-                        // import of "foo", but that's actually not a bug. Or arguably it's a
-                        // bug in Browserify but we have to replicate this bug because packages
-                        // do this in the wild.
-                        let key: &[u8] = resolve_path::resolve_path::normalize_string_spill::<
-                            true,
-                            resolve_path::platform::Auto,
-                        >(&mut key_spill, prop.key.slice());
+                        let key: &[u8] = prop.key.slice();
 
                         match &prop.value {
                             js_ast::E::JsonValue::String(str) => {

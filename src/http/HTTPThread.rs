@@ -926,7 +926,8 @@ impl HttpThread {
     }
 
     fn drain_socks5_dns_results(&mut self) {
-        for result in core::mem::take(&mut *SOCKS5_DNS_RESULTS.lock()) {
+        let results = core::mem::take(&mut *SOCKS5_DNS_RESULTS.lock());
+        for result in results {
             let rid = result.resolution_id;
             let addr = result.address;
             self.with_in_flight_socks(

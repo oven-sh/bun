@@ -2199,7 +2199,11 @@ impl<'a> HTTPClient<'a> {
         }
         let socks = match &mut self.socks {
             SocksOperation::Handshaking(s) => s.as_mut(),
-            _ => unreachable!("socks handshake state exists between start_ and CONNECT success"),
+            _ => {
+                debug_assert!(false, "unexpected SOCKS state in on_socks_writable");
+                self.close_and_fail::<IS_SSL>(crate::Error::ConnectionClosed, socket);
+                return;
+            }
         };
         let pending = socks.pending_write();
         if pending.is_empty() {
@@ -2849,27 +2853,6 @@ impl<'a> HTTPClient<'a> {
     #[inline]
     pub(crate) fn current_hop_forces_close(&self) -> bool {
         self.is_socks_proxy()
-    }
-
-    #[allow(dead_code)]
-    #[inline]
-    pub(crate) fn may_pool_socket(&self) -> bool {
-        if self.current_hop_forces_close() {
-            return false;
-        }
-        if !FeatureFlags::ENABLE_KEEPALIVE {
-            return false;
-        }
-        if self.flags.disable_keepalive {
-            return false;
-        }
-        if !self.state.flags.allow_keepalive {
-            return false;
-        }
-        if !self.unix_socket_path.is_empty() {
-            return false;
-        }
-        true
     }
 
     /// Whether the socket connecting to `connected_url` uses TLS. HTTP(S)
@@ -4155,7 +4138,14 @@ impl<'a> HTTPClient<'a> {
         {
             let socks = match &mut self.socks {
                 SocksOperation::Handshaking(s) => s.as_mut(),
-                _ => unreachable!("socks handshake state exists between start_ and CONNECT success"),
+                _ => {
+                    debug_assert!(
+                        false,
+                        "unexpected SOCKS state in ProxyHandshake on_data"
+                    );
+                    self.close_and_fail::<IS_SSL>(crate::Error::ConnectionClosed, socket);
+                    return;
+                }
             };
             let established = match socks.receive(incoming_data) {
                 Ok(established) => established,

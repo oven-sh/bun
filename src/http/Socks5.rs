@@ -162,6 +162,11 @@ impl Socks5 {
                 return Err(Socks5Error::DomainTooLong);
             }
         }
+        if let Authentication::UsernamePassword { username, password } = &authentication {
+            if username.len() > 255 || password.len() > 255 {
+                return Err(Socks5Error::CredentialsTooLong);
+            }
+        }
         let mut this = Self {
             state: State::Greeting,
             target,

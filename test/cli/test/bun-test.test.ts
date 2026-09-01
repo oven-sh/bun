@@ -1,7 +1,7 @@
 import { spawnSync } from "bun";
 import { beforeAll, describe, expect, it, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isWindows, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve, sep } from "node:path";
 
 describe("bun test", () => {
@@ -1473,6 +1473,8 @@ describe("bun test", () => {
         stderr: "ignore",
       });
       await warm.exited;
+      const warmEntries = readdirSync(cacheDir).sort();
+      expect(warmEntries.length).toBe(1);
       await using proc = Bun.spawn({
         cmd: [bunExe(), "test", "cached.test.ts"],
         env,
@@ -1483,6 +1485,8 @@ describe("bun test", () => {
       expect(stderr).toMatch(/at <anonymous> \(.*cached\.test\.ts:2:\d+\)/);
       expect(stderr).toContain("1 fail");
       expect(exitCode).toBe(1);
+      // The modes use separate cache files, so the bun test run must not evict the bun run entry.
+      expect(readdirSync(cacheDir).sort()).toEqual(warmEntries);
     });
 
     // This arrow is rewritten in this very file, and its toString() text lands in a different

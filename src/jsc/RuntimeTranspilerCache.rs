@@ -532,6 +532,7 @@ pub struct RuntimeTranspilerCache {
     pub(crate) input_byte_length: Option<u64>,
     pub(crate) features_hash: Option<u64>,
     pub(crate) exports_kind: ExportsKind,
+    pub(crate) inject_jest_globals: bool,
     pub(crate) entry: Option<Entry>,
     // `sourcemap` / `esm_record` are owned `Box<[u8]>` (global mimalloc).
     // The per-call arena that once backed the output code is gone: the UTF-8
@@ -570,13 +571,18 @@ impl RuntimeTranspilerCache {
     pub(crate) fn write_cache_filename(
         buf: &mut [u8],
         input_hash: u64,
+        inject_jest_globals: bool,
     ) -> crate::CrateResult<usize> {
         // Hex-encode the 8 native-endian bytes of `input_hash`.
         let bytes = input_hash.to_ne_bytes();
-        let suffix: &[u8] = if bun_core::env::IS_DEBUG {
-            b".debug.pile"
-        } else {
-            b".pile"
+        // `bun test` transpiles the same file to different output (the matcher tail-call
+        // rewrite), so the two modes use separate files. A shared filename would make each
+        // mode evict the other's entry through the features-hash check on every switch.
+        let suffix: &[u8] = match (inject_jest_globals, bun_core::env::IS_DEBUG) {
+            (false, false) => b".pile",
+            (false, true) => b".debug.pile",
+            (true, false) => b".jest.pile",
+            (true, true) => b".jest.debug.pile",
         };
         let needed = bytes.len() * 2 + suffix.len();
         if buf.len() < needed {
@@ -590,11 +596,15 @@ impl RuntimeTranspilerCache {
     pub(crate) fn get_cache_file_path(
         buf: &mut PathBuffer,
         input_hash: u64,
+        inject_jest_globals: bool,
     ) -> crate::CrateResult<&ZStr> {
         let cache_dir_len = Self::get_cache_dir(buf)?;
         buf[cache_dir_len] = SEP;
-        let cache_filename_len =
-            Self::write_cache_filename(&mut buf[cache_dir_len + 1..], input_hash)?;
+        let cache_filename_len = Self::write_cache_filename(
+            &mut buf[cache_dir_len + 1..],
+            input_hash,
+            inject_jest_globals,
+        )?;
         let total = cache_dir_len + 1 + cache_filename_len;
         buf[total] = 0;
 
@@ -711,11 +721,13 @@ impl RuntimeTranspilerCache {
         input_hash: u64,
         feature_hash: u64,
         input_stat_size: u64,
+        inject_jest_globals: bool,
     ) -> crate::CrateResult<Entry> {
         let _tracer = bun_core::perf::trace("RuntimeTranspilerCache.fromFile");
 
         let mut cache_file_path_buf = PathBuffer::uninit();
-        let cache_file_path = Self::get_cache_file_path(&mut cache_file_path_buf, input_hash)?;
+        let cache_file_path =
+            Self::get_cache_file_path(&mut cache_file_path_buf, input_hash, inject_jest_globals)?;
         debug_assert!(!cache_file_path.is_empty());
         Self::from_file_with_cache_file_path(
             cache_file_path,
@@ -785,11 +797,13 @@ impl RuntimeTranspilerCache {
         esm_record: &[u8],
         source_code: &BunString,
         exports_kind: ExportsKind,
+        inject_jest_globals: bool,
     ) -> crate::CrateResult<()> {
         let _tracer = bun_core::perf::trace("RuntimeTranspilerCache.toFile");
 
         let mut cache_file_path_buf = PathBuffer::uninit();
-        let cache_file_path = Self::get_cache_file_path(&mut cache_file_path_buf, input_hash)?;
+        let cache_file_path =
+            Self::get_cache_file_path(&mut cache_file_path_buf, input_hash, inject_jest_globals)?;
         bun_core::scoped_log!(
             cache,
             "filename to put into: '{}'",
@@ -876,11 +890,13 @@ impl RuntimeTranspilerCache {
         let mut features_hasher = Wyhash::init(SEED);
         parser_options.hash_for_runtime_transpiler(&mut features_hasher, used_jsx);
         self.features_hash = Some(features_hasher.final_());
+        self.inject_jest_globals = parser_options.features.inject_jest_globals;
 
         self.entry = match Self::from_file(
             input_hash,
             self.features_hash.unwrap(),
             source.contents.len() as u64,
+            self.inject_jest_globals,
         ) {
             Ok(e) => Some(e),
             Err(err) => {
@@ -949,6 +965,7 @@ bun_ast::link_impl_TranspilerCacheImpl! {
                 input_byte_length: this.input_byte_length,
                 features_hash: this.features_hash,
                 exports_kind: this.exports_kind,
+                inject_jest_globals: this.inject_jest_globals,
                 entry: None,
             };
             let hit = jsc.get(source, parser_options, used_jsx);
@@ -956,6 +973,7 @@ bun_ast::link_impl_TranspilerCacheImpl! {
             this.input_byte_length = jsc.input_byte_length;
             this.features_hash = jsc.features_hash;
             this.exports_kind = jsc.exports_kind;
+            this.inject_jest_globals = jsc.inject_jest_globals;
             if let Some(entry) = jsc.entry {
                 this.entry = Some(bun_core::heap::into_raw(Box::new(entry)).cast::<()>());
             }
@@ -980,6 +998,7 @@ bun_ast::link_impl_TranspilerCacheImpl! {
                 esm_record,
                 &output_code,
                 this.exports_kind,
+                this.inject_jest_globals,
             );
             if let Err(err) = result {
                 bun_core::scoped_log!(cache, "put() = {}", err.name());

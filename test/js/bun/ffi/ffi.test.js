@@ -1403,13 +1403,16 @@ describe("symbols named like an array index", () => {
     const callback = new JSCallback(() => void calls++, { args: [], returns: "void" });
     try {
       const lib = linkSymbols({ "0": { ptr: callback.ptr, args: [], returns: "void" } });
-      expect(Object.keys(lib.symbols)).toEqual(["0"]);
-      expect(typeof lib.symbols[0]).toBe("function");
-      expect(lib.symbols["0"]).toBe(lib.symbols[0]);
-      expect(0 in lib.symbols).toBe(true);
-      lib.symbols[0]();
-      expect(calls).toBe(1);
-      lib.close();
+      try {
+        expect(Object.keys(lib.symbols)).toEqual(["0"]);
+        expect(typeof lib.symbols[0]).toBe("function");
+        expect(lib.symbols["0"]).toBe(lib.symbols[0]);
+        expect(0 in lib.symbols).toBe(true);
+        lib.symbols[0]();
+        expect(calls).toBe(1);
+      } finally {
+        lib.close();
+      }
     } finally {
       callback.close();
     }

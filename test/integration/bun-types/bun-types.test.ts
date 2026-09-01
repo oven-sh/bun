@@ -333,27 +333,53 @@ describe("@types/bun integration test", () => {
     });
   });
 
-  // TypeScript 7's native (Go-based) compiler does not expose a JS compiler API yet,
-  // so unlike the tests above we have to write a real tsconfig and spawn the CLI.
+  // The fixture depends on typescript@latest, so this is the current stable release:
+  // since 7.0 that is the native (Go-based) compiler, which does not expose a JS
+  // compiler API, so unlike the tests above we write a real tsconfig and spawn the CLI.
   // https://devblogs.microsoft.com/typescript/announcing-typescript-7-0-beta/
-  describe("tsgo (TypeScript 7 native preview)", () => {
-    // OHOS: the native (Go) tsgo binary cannot execute on the musl sandbox.
-    test.skipIf(isDebug || Bun.env.BUN_OHOS === "1")("checks without lib.dom.d.ts", async () => {
-      const fixtureDir = await createIsolatedFixture(["@typescript/native-preview"]);
+  describe("TypeScript latest", () => {
+    test.skipIf(isDebug)("checks without lib.dom.d.ts", async () => {
+      const fixtureDir = await createIsolatedFixture();
 
       const tsconfig = structuredClone(sourceTsconfig);
       tsconfig.compilerOptions.skipLibCheck = false;
       tsconfig.include = ["*.ts", "*.tsx"];
       await Bun.write(join(fixtureDir, "tsconfig.json"), JSON.stringify(tsconfig, null, 2));
 
-      // Resolve the entrypoint from the package's own bin field; the nightly
-      // has renamed it before (bin/tsgo.js -> bin/tsgo).
-      const tsgoPkgDir = join(fixtureDir, "node_modules", "@typescript", "native-preview");
-      const tsgoPkg = await Bun.file(join(tsgoPkgDir, "package.json")).json();
-      const tsgo = join(tsgoPkgDir, typeof tsgoPkg.bin === "string" ? tsgoPkg.bin : tsgoPkg.bin.tsgo);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), join(fixtureDir, "node_modules", "typescript", "bin", "tsc"), "-p", "."],
+        env: bunEnv,
+        cwd: fixtureDir,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr.trim()).toBe("");
+      expect(stdout.trim()).toBe("");
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  // TypeScript 7.1 resolves `import x from "./f" with { type: "text" }` against
+  // `declare module "*" with { type: "text" }` (microsoft/TypeScript#63931).
+  // bun-types ships those declarations in ts7.1/, reached through
+  // package.json#typesVersions, so they are invisible to the compilers above.
+  // This run checks the whole fixture through that entry point, plus the
+  // fixture/ts7.1 files that only that compiler can type.
+  // `>=7.1.0-0` takes the nightly until a 7.1 release exists, then the release.
+  describe("TypeScript 7.1", () => {
+    test.skipIf(isDebug)("checks the fixture and import attributes through ts7.1/index.d.ts", async () => {
+      const fixtureDir = await createIsolatedFixture(["typescript@>=7.1.0-0"]);
+
+      const tsconfig = structuredClone(sourceTsconfig);
+      tsconfig.compilerOptions.skipLibCheck = false;
+      tsconfig.include = ["*.ts", "*.tsx", "ts7.1/*.ts"];
+      await Bun.write(join(fixtureDir, "tsconfig.json"), JSON.stringify(tsconfig, null, 2));
 
       await using proc = Bun.spawn({
-        cmd: [bunExe(), tsgo, "-p", "."],
+        cmd: [bunExe(), join(fixtureDir, "node_modules", "typescript", "bin", "tsc"), "-p", "."],
         env: bunEnv,
         cwd: fixtureDir,
         stdout: "pipe",

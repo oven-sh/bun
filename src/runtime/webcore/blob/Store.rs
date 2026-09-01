@@ -30,7 +30,9 @@ use super::SizeType;
 // Re-export the canonical data types from `bun_jsc`.
 // ──────────────────────────────────────────────────────────────────────────
 
-pub use bun_jsc::webcore_types::store::{Bytes, Data, DataTag, File, S3, SerializeTag, Store};
+pub use bun_jsc::webcore_types::store::{
+    Bytes, Data, DataTag, File, IsAllAscii, S3, SerializeTag, Store,
+};
 
 // ──────────────────────────────────────────────────────────────────────────
 // Extension traits — `bun_runtime`-tier behaviour layered on the `bun_jsc`
@@ -124,9 +126,7 @@ impl StoreExt for Store {
         mime_type: Option<MimeType>,
         credentials: S3Credentials,
     ) -> Result<RefPtr<Store>, crate::Error> {
-        let mut path = pathlike;
-        // this actually protects/refs the pathlike
-        path.to_thread_safe();
+        let path = pathlike.thread_isolated_copy();
 
         // Compute the extension-derived fallback before moving `path` into the
         // Store so we don't need to clone the owned PathLike.
@@ -136,7 +136,7 @@ impl StoreExt for Store {
             data: Data::S3(S3::init(path, mime_type, credentials)),
             mime_type: bun_http_types::MimeType::NONE,
             ref_count: bun_ptr::ThreadSafeRefCount::init(),
-            is_all_ascii: None,
+            is_all_ascii: IsAllAscii::default(),
         }))
     }
 
@@ -155,7 +155,7 @@ impl StoreExt for Store {
             data: Data::File(File::init(pathlike, mime_type)),
             mime_type: bun_http_types::MimeType::NONE,
             ref_count: bun_ptr::ThreadSafeRefCount::init(),
-            is_all_ascii: None,
+            is_all_ascii: IsAllAscii::default(),
         }))
     }
 
@@ -167,7 +167,7 @@ impl StoreExt for Store {
             data: Data::Bytes(Bytes::init_mmap(slice)),
             mime_type: bun_http_types::MimeType::NONE,
             ref_count: bun_ptr::ThreadSafeRefCount::init(),
-            is_all_ascii: None,
+            is_all_ascii: IsAllAscii::default(),
         })
     }
 
@@ -229,9 +229,7 @@ impl FileExt for File {
                 Ok(node_fs::async_::Unlink::create(
                     global_this,
                     &binding,
-                    node_fs::args::Unlink {
-                        path: PathLike::owned(path_like.slice().to_vec()),
-                    },
+                    node_fs::args::Unlink::owned(path_like.slice().to_vec()),
                     global_this.bun_vm().as_mut(),
                 ))
             }

@@ -77,7 +77,7 @@ match File::openat(Fd::cwd(), path, O::RDONLY, 0) {
 
 ## Strings (`bun_core::String` and `bun_core::strings`)
 
-`bun_core::String` is the FFI-compatible 5-variant tagged union shared with C++
+`bun_core::String` is the FFI-compatible 6-variant tagged union shared with C++
 (`BunString` in `BunString.cpp`). It bridges Rust and JSC and can hold a
 `WTFStringImpl` (Latin-1 or UTF-16). **Latin-1 is NOT UTF-8** — bytes 128–255
 are single chars in Latin-1 but invalid UTF-8 — so converting either direction
@@ -115,16 +115,19 @@ source is a bare `&[u8]`/`EncodedSlice` view.
 `Utf8Bytes<'a>` is `Borrowed(&'a [u8]) | Owned(Vec<u8>) | Shared(String)`
 (`Shared` holds an 8-bit all-ASCII WTF-backed `String` and reads its buffer);
 it derefs to `[u8]`; `is_owned()` ⇔ the bytes were transcoded/copied.
-`Utf8WithString` (`String::into_utf8_with_string[_thread_safe]()`) keeps the
+`Utf8WithString` (`String::into_utf8_with_string[_thread_isolated]()`) keeps the
 UTF-8 bytes _and_ the source `String` so the value can go back to JS without
 re-encoding; `Utf8WithString::js_only(string)` wraps an output-only string.
-`PathLike<'a>` / `StringOrBuffer<'a>` arms: `String`/`ThreadsafeString`
+`PathLike<'a>` / `StringOrBuffer<'a>` arms: `String`/`ThreadIsolatedString`
 (`Utf8WithString` from a JS string), `Utf8(Utf8Bytes<'a>)` (transcoded JS
 string, or Rust-side bytes: `PathLike::borrowed(bytes)` lends `&'a [u8]` to a
 synchronous call, `PathLike::owned(vec)` when the value must own them),
-`Buffer`. Anything
-parsed from JS, stored, or sent to another thread (`to_thread_safe`,
-`ThreadSafe<T>`, the fs `args::*<'static>` async path) is `'static`.
+`Buffer` (`PathLike`: a `PinnedArrayBuffer`, GC-rooted too when parsed for an
+async call; `StringOrBuffer`: borrowed for a sync call) and
+`StringOrBuffer::PinnedBuffer` (pinned and GC-rooted, parsed for an async
+call). Values parsed from JS for an async call, stored, or sent to another thread (the
+`from_js_async` parsers, which return `ThreadIsolated<T>`;
+`PathLike::thread_isolated_copy` for a `Blob` store) is `'static`.
 
 `EncodedSlice<'a>` is the `{ptr, len}` + encoding-bits (Latin-1/UTF-8/UTF-16)
 borrowed view handed to C++. Constructors name the encoding of the bytes:
@@ -255,7 +258,6 @@ let mime = mime_type::by_extension(b"html");            // MimeType
 let mime = mime_type::by_extension_no_default(b"xyz");  // Option<MimeType>
 
 mime.category   // Category::Javascript | Css | Html | Json | Image | Text | Wasm | ...
-mime.category.is_text_like()
 ```
 
 Common constants: `JAVASCRIPT`, `JSON`, `HTML`, `CSS`, `TEXT`, `WASM`, `ICO`, `OTHER`.
@@ -384,13 +386,24 @@ non-transferring path UAFs at GC.
 
 ### Cross-thread string hazards
 
-`AtomString`s live in a per-thread table. Never deref one from another thread —
-it trips `wasRemoved` in `AtomStringImpl::remove()`. If a `bun_core::String`
-may be dropped from a non-JS thread (HTTP worker, threadpool, dying VM), build
-it via `String::clone_utf8` (a plain `WTFStringImpl` with an atomic refcount),
-not from an interned/atomized JS string. See the comment in
-`src/runtime/webcore/fetch/FetchTasklet.rs` near `Response::init` for the
-canonical example of this bug class and its fix.
+`StringImpl` refcounts are atomic; two things are per-thread: using a string as
+a property key (`Identifier::fromString`) atomizes a non-atom impl _in place_
+into the current thread's atom table, and the last `deref()` of an atom removes
+it from the _current_ thread's table (`RELEASE_ASSERT(wasRemoved)`). The lazily
+computed hash/flags word is also unsynchronized. Rules:
+
+- Handing a value to one other thread (work pool, HTTP thread):
+  `String::thread_isolated_copy()`, `ThreadIsolated<T>`, or own bytes
+  (`Box<[u8]>`, `clone_utf8` on arrival).
+- Letting several VMs reach one impl (process-global registry, one
+  `SerializedScriptValue` with many receivers): `String::make_thread_shareable()`
+  (C++ `Bun::makeThreadShareable` / `threadShareableCopy` /
+  `toCrossThreadShareable`) once — pre-hashed, never atomized in place, so each
+  receiver's atom table takes its own copy — then hand out plain `clone()`s.
+  Static strings already qualify.
+
+Worked examples: `ObjectURLRegistry`, `StandaloneModuleGraph::File`, the
+structured-clone object fast paths.
 
 ## Common Patterns
 

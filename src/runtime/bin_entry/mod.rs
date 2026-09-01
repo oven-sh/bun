@@ -187,6 +187,9 @@ pub(crate) unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) ->
     //    wires stdout/stderr `Source`s.
     output::stdio::init();
     let _flush = output::flush_guard();
+    // After stdio::init (fd 0 is open even if we were exec'd with it closed), before any thread.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    pregrow_fd_table();
 
     // 5. Per-thread stack-limit cache for the JS recursion guard.
     StackCheck::configure_thread();
@@ -196,6 +199,17 @@ pub(crate) unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) ->
     crate::cli::Cli::start();
     // `Global::exit` is `-> !`; it coerces to the `c_int` return type.
     Global::exit(0)
+}
+
+/// Linux's `expand_fdtable()` waits for an RCU grace period (tens of ms on a
+/// many-core machine) each time the fd table doubles past 64 once a second
+/// thread exists. Single-threaded it is a memcpy and the table never shrinks,
+/// so grow it to 1024 now. Fails with EINVAL (and does nothing) past RLIMIT_NOFILE.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn pregrow_fd_table() {
+    if let Ok(fd) = bun_sys::dup_at_least(bun_sys::Fd::stdin(), 1023) {
+        let _ = bun_sys::close(fd);
+    }
 }
 
 /// Point the bundled C/C++ dependencies that have an allocator hook at

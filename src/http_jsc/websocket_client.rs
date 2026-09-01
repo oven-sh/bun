@@ -344,29 +344,31 @@ impl<const SSL: bool> WebSocket<SSL> {
     }
 
     fn dispatch_compressed_data(&self, data: &[u8], kind: Opcode) {
-        let mut deflate_slot = self.deflate.borrow_mut();
-        let Some(deflate) = deflate_slot.as_mut() else {
-            drop(deflate_slot);
-            self.terminate(ErrorCode::CompressionUnsupported);
-            return;
+        let rare = self.global_this.bun_vm().as_mut().rare_data();
+        let mut decompressed = rare.take_websocket_inflate_scratch();
+        let result = match self.deflate.borrow_mut().as_mut() {
+            None => Err(ErrorCode::CompressionUnsupported),
+            Some(deflate) => deflate
+                .decompress(rare.libdeflate_decompressor(), data, &mut decompressed)
+                .map_err(|err| match err {
+                    websocket_deflate::Error::InflateFailed => ErrorCode::InvalidCompressedData,
+                    websocket_deflate::Error::TooLarge => ErrorCode::MessageTooBig,
+                    websocket_deflate::Error::OutOfMemory => ErrorCode::FailedToAllocateMemory,
+                }),
         };
 
-        let mut decompressed = deflate.rare_data.array_list();
-        if let Err(err) = deflate.decompress(data, &mut decompressed) {
-            let error_code = match err {
-                websocket_deflate::Error::InflateFailed => ErrorCode::InvalidCompressedData,
-                websocket_deflate::Error::TooLarge => ErrorCode::MessageTooBig,
-                websocket_deflate::Error::OutOfMemory => ErrorCode::FailedToAllocateMemory,
-            };
-            drop(deflate_slot);
-            self.terminate(error_code);
-            return;
+        // The deflate borrow is released: both arms can re-enter `clear_data`.
+        match result {
+            Ok(()) => self.dispatch_data(&decompressed, kind),
+            Err(code) => self.terminate(code),
         }
 
-        // Drop the deflate borrow: `dispatch_data` can re-enter `clear_data`.
-        drop(deflate_slot);
-        let items = decompressed.as_slice();
-        self.dispatch_data(items, kind);
+        // Both arms run JS, so reach for `RareData` again instead of holding `rare` across them.
+        self.global_this
+            .bun_vm()
+            .as_mut()
+            .rare_data()
+            .put_back_websocket_inflate_scratch(decompressed);
     }
 
     /// Data will be cloned in C++.
@@ -1232,6 +1234,25 @@ impl<const SSL: bool> WebSocket<SSL> {
         self.tunnel().is_some_and(|t| t.has_backpressure())
     }
 
+    pub(crate) fn buffered_amount(&self) -> usize {
+        self.send_buffer.borrow().readable_length()
+            + self.tunnel().map_or(0, |t| t.buffered_amount())
+    }
+
+    pub(crate) fn pause(&self) -> bool {
+        if let Some(tunnel) = self.tunnel() {
+            return tunnel.pause_stream();
+        }
+        self.tcp.get().pause_stream()
+    }
+
+    pub(crate) fn resume(&self) -> bool {
+        if let Some(tunnel) = self.tunnel() {
+            return tunnel.resume_stream();
+        }
+        self.tcp.get().resume_stream()
+    }
+
     /// Frame small unbackpressured sends on the stack; else fall back to [`Self::send_data`].
     fn send_frame(&self, bytes: Copy<'_>, payload_byte_len: usize, opcode: Opcode) {
         let frame_size = WebsocketHeader::frame_size_including_mask(payload_byte_len);
@@ -1625,6 +1646,20 @@ pub type WebSocketClientTLS = WebSocket<true>;
 pub fn bun__websocketclient__cancel(this: ThisPtr<crate::websocket_client::WebSocketClient>) {
     WebSocketClient::cancel(this)
 }
+// HOST_EXPORT(Bun__WebSocketClient__bufferedAmount, c)
+pub fn bun__websocketclient__buffered_amount(
+    this: &crate::websocket_client::WebSocketClient,
+) -> usize {
+    this.buffered_amount()
+}
+// HOST_EXPORT(Bun__WebSocketClient__pause, c)
+pub fn bun__websocketclient__pause(this: &crate::websocket_client::WebSocketClient) -> bool {
+    this.pause()
+}
+// HOST_EXPORT(Bun__WebSocketClient__resume, c)
+pub fn bun__websocketclient__resume(this: &crate::websocket_client::WebSocketClient) -> bool {
+    this.resume()
+}
 // HOST_EXPORT(Bun__WebSocketClient__close, c)
 pub fn bun__websocketclient__close(
     this: ThisPtr<crate::websocket_client::WebSocketClient>,
@@ -1695,6 +1730,20 @@ pub fn bun__websocketclient__write_string(
 // HOST_EXPORT(Bun__WebSocketClientTLS__cancel, c)
 pub fn bun__websocketclienttls__cancel(this: ThisPtr<crate::websocket_client::WebSocketClientTLS>) {
     WebSocketClientTLS::cancel(this)
+}
+// HOST_EXPORT(Bun__WebSocketClientTLS__bufferedAmount, c)
+pub fn bun__websocketclienttls__buffered_amount(
+    this: &crate::websocket_client::WebSocketClientTLS,
+) -> usize {
+    this.buffered_amount()
+}
+// HOST_EXPORT(Bun__WebSocketClientTLS__pause, c)
+pub fn bun__websocketclienttls__pause(this: &crate::websocket_client::WebSocketClientTLS) -> bool {
+    this.pause()
+}
+// HOST_EXPORT(Bun__WebSocketClientTLS__resume, c)
+pub fn bun__websocketclienttls__resume(this: &crate::websocket_client::WebSocketClientTLS) -> bool {
+    this.resume()
 }
 // HOST_EXPORT(Bun__WebSocketClientTLS__close, c)
 pub fn bun__websocketclienttls__close(

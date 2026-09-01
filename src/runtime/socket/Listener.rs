@@ -85,10 +85,10 @@ pub struct Listener {
     /// listener. `group.ext` = `*Listener`, so the dispatch handler recovers us
     /// from the socket without a context-ext lookup.
     pub(crate) group: JsCell<uws::SocketGroup>,
-    /// `SSL_CTX*` for accepted sockets. One owned ref; `SSL_CTX_free` on close.
-    /// `SSL_new()` per-accept takes its own ref, so accepted sockets outlive a
-    /// stopped listener safely.
-    pub(crate) secure_ctx: Cell<Option<NonNull<boring_sys::SSL_CTX>>>,
+    /// `SSL_CTX` for accepted sockets; dropped on close. `SSL_new()`
+    /// per-accept takes its own ref, so accepted sockets outlive a stopped
+    /// listener safely.
+    pub(crate) secure_ctx: JsCell<Option<boring_sys::OwnedSslCtx>>,
     pub(crate) ssl: bool,
     pub(crate) protos: Option<Box<[u8]>>,
     pub(crate) reject_unauthorized: bool,
@@ -191,6 +191,16 @@ impl Listener {
         let _cell_root = socket_config.handlers.root_cell(global);
 
         let port = socket_config.port;
+        if port.is_some() {
+            let hostname = socket_config.hostname_or_unix.slice();
+            if !bun_dns::is_valid_hostname(hostname) {
+                return Err(
+                    global.throw_value(crate::dns_jsc::cares_jsc::not_a_hostname_error(
+                        global, hostname,
+                    )),
+                );
+            }
+        }
         let ssl_enabled = socket_config.ssl.is_some();
         let socket_flags = socket_config.socket_flags();
         let pause_on_connect = socket_config.pause_on_connect;
@@ -238,7 +248,7 @@ impl Listener {
                     pause_on_connect,
                     poll_ref: JsCell::new(KeepAlive::init()),
                     group: JsCell::new(uws::SocketGroup::default()),
-                    secure_ctx: Cell::new(None),
+                    secure_ctx: JsCell::new(None),
                     strong_data: JsCell::new(Strong::empty()),
                     this_value: JsCell::new(JsRef::empty()),
                 }));
@@ -367,7 +377,7 @@ impl Listener {
             listener: Cell::new(ListenerType::None),
             poll_ref: JsCell::new(KeepAlive::init()),
             group: JsCell::new(uws::SocketGroup::default()),
-            secure_ctx: Cell::new(None),
+            secure_ctx: JsCell::new(None),
             strong_data: JsCell::new(Strong::empty()),
             this_value: JsCell::new(JsRef::empty()),
         }));
@@ -393,10 +403,7 @@ impl Listener {
             // SAFETY: this is still the sole owner on the error path; the
             // fields below are `Cell`/`JsCell`, so a shared borrow suffices.
             let this_ref = unsafe { &*this };
-            if let Some(c) = this_ref.secure_ctx.take() {
-                // SAFETY: FFI — secure_ctx holds one owned SSL_CTX ref from create_ssl_context
-                unsafe { boring_sys::SSL_CTX_free(c.as_ptr()) };
-            }
+            this_ref.secure_ctx.set(None);
             // protos: Box drops automatically when Listener is dropped below
             bun_core::asan::unregister_root_region(
                 this_ref.group.as_ptr().cast::<c_void>(),
@@ -411,9 +418,7 @@ impl Listener {
         if let Some(ssl_cfg) = ssl_cfg_taken.as_ref() {
             let mut create_err = uws::create_bun_socket_error_t::none;
             match ssl_cfg.as_usockets().create_ssl_context(&mut create_err) {
-                Some(ctx) => this_ref
-                    .secure_ctx
-                    .set(NonNull::new(ctx.cast::<boring_sys::SSL_CTX>())),
+                Some(ctx) => this_ref.secure_ctx.set(Some(ctx)),
                 None => {
                     return Err(global.throw_value(
                         crate::socket::uws_jsc::create_bun_socket_error_to_js(create_err, global),
@@ -440,10 +445,8 @@ impl Listener {
             UnixOrHost::Unix(hostname_owned)
         };
 
-        let secure_ctx_ptr: Option<*mut uws::SslCtx> = this_ref
-            .secure_ctx
-            .get()
-            .map(|p| p.as_ptr().cast::<uws::SslCtx>());
+        let secure_ctx_ptr: Option<*mut uws::SslCtx> =
+            this_ref.secure_ctx.get().as_ref().map(|p| p.as_ptr());
 
         let mut errno: c_int = 0;
         let listen_socket: *mut uws_sys::ListenSocket = match &mut connection {
@@ -558,7 +561,12 @@ impl Listener {
 
         if let Some(ssl_config) = ssl_cfg_taken.as_ref() {
             // `ssl_enabled` ⇒ `createSSLContext` succeeded above ⇒ `secure_ctx` set.
-            let secure = this_ref.secure_ctx.get().expect("unreachable");
+            let secure = this_ref
+                .secure_ctx
+                .get()
+                .as_ref()
+                .expect("unreachable")
+                .as_ptr();
             if let Some(server_name) = ssl_config.server_name_cstr() {
                 if !server_name.to_bytes().is_empty() {
                     // Registering the default cert under its own server_name is a
@@ -567,7 +575,7 @@ impl Listener {
                     // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
                     let _ = bun_opaque::opaque_deref_mut(listen_socket).add_server_name(
                         server_name,
-                        secure.as_ptr().cast(),
+                        secure,
                         core::ptr::null_mut(),
                     );
                 }
@@ -630,7 +638,7 @@ impl Listener {
             protos: JsCell::new(listener.protos.clone()),
             // `protos` is `Option<Box<[u8]>>` so we clone the listener's slice.
             flags: Cell::new(listener.accepted_socket_flags()),
-            owned_ssl_ctx: Cell::new(None),
+            owned_ssl_ctx: JsCell::new(None),
             this_value: JsCell::new(jsc::JsRef::empty()),
             poll_ref: JsCell::new(KeepAlive::init()),
             ref_pollref_on_connect: Cell::new(true),
@@ -676,7 +684,7 @@ impl Listener {
             // `protos` is `Option<Box<[u8]>>` so each accepted socket clones
             // the listener's slice; one small allocation per accept.
             flags: Cell::new(listener.accepted_socket_flags()),
-            owned_ssl_ctx: Cell::new(None),
+            owned_ssl_ctx: JsCell::new(None),
             this_value: JsCell::new(jsc::JsRef::empty()),
             poll_ref: JsCell::new(KeepAlive::init()),
             ref_pollref_on_connect: Cell::new(true),
@@ -756,43 +764,41 @@ impl Listener {
         // Both real callers (node:tls addContext, node:net) pass a native
         // SecureContext; enforcement policy stays server-level, like Node's.
         // The dict branch is defensive for the internal binding's raw form.
-        let sni_ctx: *mut boring_sys::SSL_CTX =
-            if let Some(sc) = tls.as_class_ref::<SecureContext>() {
-                sc.borrow()
-            } else if let Some(ssl_config) = {
-                // SAFETY: per-thread VM; valid for program lifetime.
-                let vm = VirtualMachine::get().as_mut();
-                SSLConfig::from_js(vm, global, tls)?
-            } {
-                // Note: `cfg` cleanup handled by Drop on SSLConfig
-                let mut create_err = uws::create_bun_socket_error_t::none;
-                match with_ssl_ctx_cache(|cache| cache.get_or_create(&ssl_config, &mut create_err))
-                {
-                    Some(ctx) => ctx,
-                    None => {
-                        if create_err != uws::create_bun_socket_error_t::none {
-                            return Err(global.throw_value(
-                                crate::socket::uws_jsc::create_bun_socket_error_to_js(
-                                    create_err, global,
-                                ),
-                            ));
-                        }
-                        let code = boring_sys::ERR_get_error();
-                        return Err(global
-                            .throw_value(crate::crypto::boringssl_jsc::err_to_js(global, code)));
+        let sni_ctx: boring_sys::OwnedSslCtx = if let Some(sc) = tls.as_class_ref::<SecureContext>()
+        {
+            sc.ctx.clone()
+        } else if let Some(ssl_config) = {
+            // SAFETY: per-thread VM; valid for program lifetime.
+            let vm = VirtualMachine::get().as_mut();
+            SSLConfig::from_js(vm, global, tls)?
+        } {
+            // Note: `cfg` cleanup handled by Drop on SSLConfig
+            let mut create_err = uws::create_bun_socket_error_t::none;
+            match with_ssl_ctx_cache(|cache| cache.get_or_create(&ssl_config, &mut create_err)) {
+                Some(ctx) => ctx,
+                None => {
+                    if create_err != uws::create_bun_socket_error_t::none {
+                        return Err(global.throw_value(
+                            crate::socket::uws_jsc::create_bun_socket_error_to_js(
+                                create_err, global,
+                            ),
+                        ));
                     }
+                    let code = boring_sys::ERR_get_error();
+                    return Err(
+                        global.throw_value(crate::crypto::boringssl_jsc::err_to_js(global, code))
+                    );
                 }
-            } else {
-                return Ok(JSValue::UNDEFINED);
-            };
+            }
+        } else {
+            return Ok(JSValue::UNDEFINED);
+        };
 
-        // The C SNI tree SSL_CTX_up_ref()s; drop our build/borrow ref once added.
+        // The C SNI tree SSL_CTX_up_ref()s; ours drops here.
         // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
         let ls_ref = bun_opaque::opaque_deref_mut(ls);
         ls_ref.remove_server_name(server_name);
-        let ok = ls_ref.add_server_name(server_name, sni_ctx.cast(), core::ptr::null_mut());
-        // SAFETY: FFI — drop the +1 ref we took via borrow()/get_or_create(); SNI tree up_ref'd its own
-        unsafe { boring_sys::SSL_CTX_free(sni_ctx) };
+        let ok = ls_ref.add_server_name(server_name, sni_ctx.as_ptr(), core::ptr::null_mut());
         if !ok {
             // Old entry was already removed; failing silently would leave the
             // hostname with no SNI mapping at all. Surface it.
@@ -894,10 +900,7 @@ impl Listener {
             ListenerType::None => {}
         }
 
-        if let Some(ctx) = this.secure_ctx.take() {
-            // SAFETY: FFI — releases the one ref `listen()` took from the cache.
-            unsafe { boring_sys::SSL_CTX_free(ctx.as_ptr()) };
-        }
+        this.secure_ctx.set(None);
     }
 
     pub fn finalize(self: Box<Self>) {
@@ -972,11 +975,7 @@ impl Listener {
         );
         // SAFETY: group was init'd in listen(); not concurrently walked.
         unsafe { uws::SocketGroup::destroy(this_ref.group.as_ptr()) };
-        if let Some(ctx) = this_ref.secure_ctx.take() {
-            // SAFETY: FFI — a Listener torn down without do_stop() still owns
-            // its ref; do_stop() already took it when it ran.
-            unsafe { boring_sys::SSL_CTX_free(ctx.as_ptr()) };
-        }
+        this_ref.secure_ctx.set(None);
 
         // connection / protos / the handlers `Rc`: dropped by heap::take below
         // SAFETY: reclaim the Box allocated in listen()
@@ -1147,7 +1146,7 @@ impl Listener {
         // Resolve the prebuilt SSL_CTX before the platform branches so the Windows
         // named-pipe path can adopt it. node:tls passes the native SecureContext as
         // `tls.secureContext` so we share its already-built SSL_CTX.
-        let mut owned_ssl_ctx: Option<NonNull<boring_sys::SSL_CTX>> = None;
+        let mut owned_ssl_ctx: Option<boring_sys::OwnedSslCtx> = None;
         if ssl_enabled {
             let native_sc: Option<&SecureContext> = 'blk: {
                 let Some(tls_js) = opts.get_truthy(global, "tls")? else {
@@ -1162,15 +1161,9 @@ impl Listener {
                 sc_js.as_class_ref::<SecureContext>()
             };
             if let Some(sc) = native_sc {
-                owned_ssl_ctx = NonNull::new(sc.borrow());
+                owned_ssl_ctx = Some(sc.ctx.clone());
             }
         }
-        let mut ssl_ctx_guard = scopeguard::guard(owned_ssl_ctx, |c| {
-            if let Some(c) = c {
-                // SAFETY: FFI — c is a live SSL_CTX* with one owned ref from borrow()/get_or_create()
-                unsafe { boring_sys::SSL_CTX_free(c.as_ptr()) };
-            }
-        });
 
         #[cfg(windows)]
         let mut connection = connection;
@@ -1259,7 +1252,7 @@ impl Listener {
                             server_name: JsCell::new(
                                 ssl_taken.as_mut().and_then(|s| s.take_server_name()),
                             ),
-                            owned_ssl_ctx: Cell::new(None),
+                            owned_ssl_ctx: JsCell::new(None),
                             flags: Cell::new(SocketFlags::default()),
                             this_value: JsCell::new(jsc::JsRef::empty()),
                             poll_ref: JsCell::new(KeepAlive::init()),
@@ -1291,12 +1284,7 @@ impl Listener {
                     tls_ref.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
                     tls_ref.ref_();
 
-                    // Transfer the borrowed CTX into the pipe's SSLWrapper. From
-                    // here it owns the ref on every path (initWithCTX adopts on
-                    // success, initTLSWrapper frees on failure), so null our local
-                    // before the call so the cleanup guard above can't double-free.
-                    let ctx_for_pipe =
-                        core::mem::replace(&mut *ssl_ctx_guard, None).map(|p| p.as_ptr());
+                    let ctx_for_pipe = owned_ssl_ctx.take();
                     // Note: re-borrow connection from the socket field — `connection`
                     // was moved into `tls` above.
                     let named_pipe_result = match tls_ref.connection.get().as_ref().unwrap() {
@@ -1351,7 +1339,7 @@ impl Listener {
                             local_binding: JsCell::new(local_binding.clone()),
                             protos: JsCell::new(None),
                             server_name: JsCell::new(None),
-                            owned_ssl_ctx: Cell::new(None),
+                            owned_ssl_ctx: JsCell::new(None),
                             flags: Cell::new(SocketFlags::default()),
                             this_value: JsCell::new(jsc::JsRef::empty()),
                             poll_ref: JsCell::new(KeepAlive::init()),
@@ -1407,10 +1395,10 @@ impl Listener {
             }
         }
 
-        // SecureContext was already borrowed above; build the SSL_CTX from
+        // A SecureContext's ctx was already cloned above; build the SSL_CTX from
         // SSLConfig only if no SecureContext was passed. doConnect hands
         // `socket.owned_ssl_ctx` to the per-VM connect group.
-        if ssl_enabled && ssl_ctx_guard.is_none() {
+        if ssl_enabled && owned_ssl_ctx.is_none() {
             if let Some(ssl_cfg) = socket_config.ssl.as_ref() {
                 // Per-VM weak `SSLContextCache`: identical configs (including the
                 // common `tls:true` / `{servername}`-only / `{ALPNProtocols}`-only
@@ -1419,23 +1407,15 @@ impl Listener {
                 // `requires_custom_request_ctx` gate is gone; the cache makes the
                 // default-vs-custom distinction by content.
                 let mut create_err = uws::create_bun_socket_error_t::none;
-                match with_ssl_ctx_cache(|cache| cache.get_or_create(ssl_cfg, &mut create_err)) {
-                    Some(ctx) => {
-                        *ssl_ctx_guard = NonNull::new(ctx.cast::<boring_sys::SSL_CTX>());
-                    }
-                    None => {
-                        return Err(global.throw_value(
-                            crate::socket::uws_jsc::create_bun_socket_error_to_js(
-                                create_err, global,
-                            ),
-                        ));
-                    }
+                owned_ssl_ctx =
+                    with_ssl_ctx_cache(|cache| cache.get_or_create(ssl_cfg, &mut create_err));
+                if owned_ssl_ctx.is_none() {
+                    return Err(global.throw_value(
+                        crate::socket::uws_jsc::create_bun_socket_error_to_js(create_err, global),
+                    ));
                 }
             }
         }
-        // (cleanup guard for owned_ssl_ctx already armed at the earlier lookup site;
-        // duplicating it here would double-free on error.)
-
         default_data.ensure_still_alive();
 
         let allow_half_open = socket_config.allow_half_open;
@@ -1445,9 +1425,6 @@ impl Listener {
         let promise = jsc::JSPromise::create(global);
         let promise_value = promise.to_js();
         handlers.set_promise(global, promise_value);
-
-        // Ownership of the SSL_CTX is about to move into the socket; disarm the guard.
-        let owned_ssl_ctx = scopeguard::ScopeGuard::into_inner(ssl_ctx_guard);
 
         // Note: `switch (ssl_enabled) { inline else => |is_ssl_enabled| {...} }` —
         // dispatched to a const-generic helper for monomorphization.
@@ -1556,7 +1533,7 @@ fn connect_finish<const IS_SSL: bool>(
     connection: UnixOrHost,
     local_binding: Option<(Box<[u8]>, u16)>,
     mut ssl: Option<&mut SSLConfig>,
-    owned_ssl_ctx: Option<NonNull<boring_sys::SSL_CTX>>,
+    owned_ssl_ctx: Option<boring_sys::OwnedSslCtx>,
     default_data: JSValue,
     allow_half_open: bool,
     pause_on_connect: bool,
@@ -1588,11 +1565,7 @@ fn connect_finish<const IS_SSL: bool>(
         prev.protos.set(ssl.as_mut().and_then(|s| s.take_protos()));
         prev.server_name
             .set(ssl.as_mut().and_then(|s| s.take_server_name()));
-        if let Some(old) = prev.owned_ssl_ctx.get() {
-            // SAFETY: FFI — old is the previous owned SSL_CTX ref on this reused socket
-            unsafe { boring_sys::SSL_CTX_free(old) };
-        }
-        prev.owned_ssl_ctx.set(owned_ssl_ctx.map(|p| p.as_ptr()));
+        prev.owned_ssl_ctx.set(owned_ssl_ctx);
         prev
     } else {
         NewSocket::<IS_SSL>::new(NewSocket::<IS_SSL> {
@@ -1603,7 +1576,7 @@ fn connect_finish<const IS_SSL: bool>(
             local_binding: JsCell::new(local_binding),
             protos: JsCell::new(ssl.as_mut().and_then(|s| s.take_protos())),
             server_name: JsCell::new(ssl.as_mut().and_then(|s| s.take_server_name())),
-            owned_ssl_ctx: Cell::new(owned_ssl_ctx.map(|p| p.as_ptr())),
+            owned_ssl_ctx: JsCell::new(owned_ssl_ctx),
             flags: Cell::new(SocketFlags::default()),
             this_value: JsCell::new(jsc::JsRef::empty()),
             poll_ref: JsCell::new(KeepAlive::init()),
@@ -1653,14 +1626,14 @@ fn connect_finish<const IS_SSL: bool>(
         Ok(()) => None,
         Err(crate::Error::Js(err)) => Some(err),
         Err(_) => {
-            // Winsock sets WSAGetLastError, not the CRT `_errno()` that
+            // Winsock sets the Win32 last-error, not the CRT `_errno()` that
             // `last_errno()` reads.
             #[cfg(windows)]
             let os_errno = {
-                let mut e = bun_sys::windows::WSAGetLastError().map_or(0, |err| err as c_int);
-                // Winsock AF_UNIX returns WSAECONNREFUSED whether the path exists
-                // or not; Node distinguishes ENOENT via `CreateFile`.
-                if port.is_none() && e == bun_sys::SystemErrno::ECONNREFUSED as c_int {
+                let mut e = bun_sys::last_error() as c_int;
+                // Node reports ENOENT for a missing pipe path; Winsock's AF_UNIX
+                // connect error does not, so probe.
+                if port.is_none() {
                     if let Some(UnixOrHost::Unix(path)) = socket_ref.connection.get() {
                         if !bun_sys::exists(path) {
                             e = bun_sys::SystemErrno::ENOENT as c_int;
@@ -1779,7 +1752,7 @@ pub struct WindowsNamedPipeListeningContext {
     /// JSC_BORROW: process-lifetime singleton; `&'static` so call sites read
     /// `self.vm.is_shutting_down()` without a raw-pointer deref.
     pub(crate) vm: &'static VirtualMachine,
-    pub ctx: Option<NonNull<boring_sys::SSL_CTX>>, // server reuses the same ctx
+    pub ctx: Option<boring_sys::OwnedSslCtx>, // server reuses the same ctx
 }
 
 #[cfg(not(windows))]
@@ -1824,7 +1797,7 @@ impl WindowsNamedPipeListeningContext {
         let result = unsafe {
             (*client)
                 .named_pipe
-                .get_accepted_by(&mut (*this).uv_pipe, this_ref.ctx.map(|p| p.as_ptr()))
+                .get_accepted_by(&mut (*this).uv_pipe, this_ref.ctx.as_ref())
         };
         if result.is_err() {
             // connection dropped
@@ -1909,7 +1882,7 @@ impl WindowsNamedPipeListeningContext {
             match ctx_opts.create_ssl_context(&mut err) {
                 // SAFETY: `this` was just allocated above; scoped field write.
                 Some(ctx) => unsafe {
-                    (*this).ctx = NonNull::new(ctx.cast::<boring_sys::SSL_CTX>());
+                    (*this).ctx = Some(ctx);
                 },
                 None => return Err(ListenPipeError::Other(crate::Error::InvalidOptions)),
             }
@@ -1985,9 +1958,6 @@ impl WindowsNamedPipeListeningContext {
         // SAFETY: `this` is a live `heap::alloc` allocation; this is the last owner.
         unsafe {
             (*this).listener = None;
-            if let Some(ctx) = (*this).ctx.take() {
-                boring_sys::SSL_CTX_free(ctx.as_ptr());
-            }
             drop(bun_core::heap::take(this));
         }
     }
@@ -2065,8 +2035,8 @@ fn decode_sni_result(result: JSValue, abort_handshake: *mut core::ffi::c_int) ->
         return core::ptr::null_mut();
     }
     if let Some(sc) = result.as_class_ref::<SecureContext>() {
-        // `SSL_set_SSL_CTX` takes its own reference to the returned SSL_CTX.
-        return sc.borrow().cast();
+        // The C dispatcher frees this +1 after `SSL_set_SSL_CTX` takes its own.
+        return sc.ctx.clone().into_raw().cast();
     }
     // Anything else is not a SecureContext: Node treats this as an invalid SNI
     // context and drops the connection.

@@ -90,6 +90,11 @@ bun build <entry points>
   Enable code splitting for shared modules
 </ParamField>
 
+<ParamField path="--min-chunk-size" type="number">
+  With `--splitting`, also fold side-effect-free chunks smaller than this many source bytes into a chunk loaded by a
+  superset of their importers
+</ParamField>
+
 <ParamField path="--public-path" type="string">
   Prefix the bundler adds to import paths in bundled code
 </ParamField>
@@ -123,6 +128,11 @@ bun build <entry points>
 
 <ParamField path="--emit-dce-annotations" type="boolean" default="true">
   Re-emit Dead Code Elimination annotations. Disabled when <code>--minify-whitespace</code> is used
+</ParamField>
+
+<ParamField path="--no-deprecated-namespace-object-setters" type="boolean">
+  Emit getter-only module namespace objects (assigning to a property throws, like a real namespace). This becomes the
+  default in a future release
 </ParamField>
 
 <ParamField path="--minify" type="boolean">

@@ -1303,10 +1303,14 @@ pub struct JavaScriptChunk {
     pub parts_in_chunk_in_order: Box<[PartRange]>,
 
     // for code splitting
-    // The map hashes via `Ref`'s `Hash` impl. Values
-    // are `&'static`-erased slices into bundler-owned storage (see the
-    // lifetime note on `Chunk`).
-    pub(crate) exports_to_other_chunks: ArrayHashMap<Ref, &'static [u8]>,
+    /// The other chunks with top-level side effects that the walk ordering
+    /// this chunk reaches, in the order it finishes their first file with
+    /// side effects: the order the unbundled modules would run them in.
+    /// `compute_cross_chunk_dependencies` sorts this chunk's `import`
+    /// statements by it.
+    pub(crate) reached_chunks_in_order: Box<[u32]>,
+    /// Bindings declared in this chunk that another chunk imports; named by `cross_chunk_names`.
+    pub(crate) exports_to_other_chunks: ArrayHashMap<Ref, ()>,
     pub(crate) imports_from_other_chunks: ImportsFromOtherChunks,
     pub(crate) cross_chunk_prefix_stmts: Vec<Stmt>,
     pub(crate) cross_chunk_suffix_stmts: Vec<Stmt>,
@@ -1533,7 +1537,6 @@ pub(crate) type ImportsFromOtherChunks = ArrayHashMap<IndexInt, cross_chunk_impo
 
 #[derive(Default, Clone)]
 pub struct CrossChunkImportItem {
-    pub(crate) export_alias: Box<[u8]>,
     pub(crate) r#ref: Ref,
 }
 pub type CrossChunkImportItemList = Vec<CrossChunkImportItem>;
@@ -1548,26 +1551,44 @@ pub mod cross_chunk_import {
 }
 
 impl CrossChunkImport {
+    /// `evaluation_rank[other]` is the position of `other` in the importing
+    /// chunk's `reached_chunks_in_order` (`u32::MAX` when the walk did not
+    /// reach it). ESM hoists every `import` above the chunk's own code, so
+    /// this order is the only part of the source evaluation order the
+    /// statements can keep.
     pub(crate) fn sorted_cross_chunk_imports(
         list: &mut Vec<CrossChunkImport>,
-        chunks: &mut [Chunk],
+        chunks: &[Chunk],
         imports_from_other_chunks: &mut ImportsFromOtherChunks,
-    ) -> Result<(), crate::Error> {
+        stable_source_indices: &[u32],
+        evaluation_rank: &[u32],
+    ) {
         list.clear();
         list.reserve(imports_from_other_chunks.count());
 
         for i in 0..imports_from_other_chunks.count() {
             let chunk_index = imports_from_other_chunks.keys()[i];
-            let chunk = &mut chunks[chunk_index as usize];
 
-            let exports_to_other_chunks = &chunk.content.javascript().exports_to_other_chunks;
+            debug_assert!({
+                let exports_to_other_chunks = &chunks[chunk_index as usize]
+                    .content
+                    .javascript()
+                    .exports_to_other_chunks;
+                imports_from_other_chunks.values()[i]
+                    .iter()
+                    .all(|item| exports_to_other_chunks.contains(&item.r#ref))
+            });
             let import_items = &mut imports_from_other_chunks.values_mut()[i];
-            for item in import_items.slice_mut() {
-                item.export_alias = (*exports_to_other_chunks.get(&item.r#ref).unwrap()).into();
-                debug_assert!(!item.export_alias.is_empty());
-            }
+            // Deterministic order; the names are only known after renaming.
             index_sort::sort_slice_by(import_items.slice_mut(), |a, b| {
-                strings::order(&a.export_alias, &b.export_alias)
+                (
+                    stable_source_indices[a.r#ref.source_index() as usize],
+                    a.r#ref.inner_index(),
+                )
+                    .cmp(&(
+                        stable_source_indices[b.r#ref.source_index() as usize],
+                        b.r#ref.inner_index(),
+                    ))
             });
 
             list.push(CrossChunkImport {
@@ -1576,8 +1597,10 @@ impl CrossChunkImport {
             });
         }
 
-        index_sort::sort_slice_by(list, |a, b| a.chunk_index.cmp(&b.chunk_index));
-        Ok(())
+        index_sort::sort_slice_by(list, |a, b| {
+            (evaluation_rank[a.chunk_index as usize], a.chunk_index)
+                .cmp(&(evaluation_rank[b.chunk_index as usize], b.chunk_index))
+        });
     }
 }
 

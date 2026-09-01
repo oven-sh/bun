@@ -769,6 +769,7 @@ function emitJsModules({ n, cfg, sources, o, dirStamp }: Ctx): void {
     resolve(cfg.codegenDir, "InternalModuleRegistry+numberOfModules.h"),
     resolve(cfg.codegenDir, "NativeModuleImpl.h"),
     resolve(cfg.codegenDir, "SyntheticModuleType.h"),
+    resolve(cfg.codegenDir, "BuiltinModuleKeys.h"),
     resolve(cfg.codegenDir, "GeneratedJS2Native.h"),
     // Rust sibling: include!()'d by src/runtime/generated_js2native.rs. Must be
     // a declared output so the cargo edge re-invokes when bundle-modules.ts /
@@ -778,6 +779,8 @@ function emitJsModules({ n, cfg, sources, o, dirStamp }: Ctx): void {
     // `resolved_source_tag` module in src/jsc/lib.rs. Declared for the same
     // reason as generated_js2native.rs.
     resolve(cfg.codegenDir, "generated_resolved_source_tag.rs"),
+    // Canonical builtin key -> BuiltinModuleKeys.h index: include!()'d by `builtin_module_key_index` in src/jsc/lib.rs.
+    resolve(cfg.codegenDir, "generated_builtin_module_key_index.rs"),
     o.internalModulesAsm,
     o.internalModulesBin,
   ];

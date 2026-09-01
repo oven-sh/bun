@@ -3175,6 +3175,33 @@ declare module "bun" {
     splitting?: boolean;
 
     /**
+     * With `splitting` and `target: "bun"`, every `require()` of a bundled ES
+     * module is a chunk boundary too. The call stays synchronous: it is
+     * emitted as `import.meta.require("./chunk-…js")` and the chunk is
+     * evaluated when the call runs, so a `require()` inside a function that
+     * never runs costs nothing at startup. Set to `false` to keep such
+     * modules inlined in the calling chunk. No effect for other targets.
+     *
+     * @default true
+     */
+    splitRequire?: boolean;
+
+    /**
+     * With `splitting`, chunks that are always loaded together are folded
+     * into one (for example, code shared by an entry point and a module it
+     * `import()`s lives in the entry point's chunk). This option additionally
+     * folds chunks whose combined source size is below this many bytes and
+     * whose modules have no top-level side effects into a chunk loaded by a
+     * superset of their importers, so fewer modules are loaded at runtime.
+     * Nothing lazy becomes eager and no side effect runs earlier; the chunk
+     * that absorbs a folded chunk exports the symbols other chunks import
+     * from it. Requires `splitting: true`. CLI: `--min-chunk-size`.
+     *
+     * @default 0 (disabled)
+     */
+    minChunkSize?: number;
+
+    /**
      * List of entrypoints, usually file paths
      */
     entrypoints: string[];
@@ -3316,6 +3343,19 @@ declare module "bun" {
      * Force emitting @__PURE__ annotations even if minify.whitespace is true.
      */
     emitDCEAnnotations?: boolean;
+
+    /**
+     * Give bundled module namespace objects (`import * as ns`, `export * as ns`)
+     * a setter per export, so assigning `ns.foo = value` is silently accepted
+     * (reads still return the module's binding) instead of throwing like a
+     * real module namespace object. When `false`, namespace objects are
+     * getter-only.
+     *
+     * @deprecated This exists for backwards compatibility and will be removed
+     * (behaving as `false`) in a future release.
+     * @default true
+     */
+    deprecatedNamespaceObjectSetters?: boolean;
 
     /**
      * Whether to enable tree-shaking (removal of unreferenced top-level
@@ -5022,6 +5062,26 @@ declare module "bun" {
      * Immediately terminates the connection
      */
     terminate(): void;
+
+    /**
+     * Stops reading from the underlying socket, so the peer sees TCP
+     * backpressure instead of the client buffering in memory. Messages
+     * already received may still be dispatched. A pause before the
+     * connection opens takes effect once it does.
+     * @returns `true` if the socket was paused (or will be on open), `false` if there is no socket to pause
+     */
+    pause(): boolean;
+
+    /**
+     * Resumes reading from the underlying socket after `pause()`.
+     * @returns `true` if the socket was resumed (or will be on open), `false` if there is no socket to resume
+     */
+    resume(): boolean;
+
+    /**
+     * Whether the connection is currently paused via `pause()`.
+     */
+    readonly isPaused: boolean;
 
     /**
      * Registers an event handler of a specific event type on the WebSocket.
@@ -9308,8 +9368,9 @@ declare module "bun" {
        * constructor returns; `await view.navigate(otherUrl)` or any other
        * operation waits for it to complete first.
        *
-       * Equivalent to calling `view.navigate(url)` immediately after
-       * construction.
+       * Starts the same navigation `view.navigate(url)` would, but its
+       * promise stays internal: a failure never surfaces as a rejection.
+       * Set {@link WebView.onNavigationFailed} to observe it.
        */
       url?: string;
       /** Capture page-side `console.*` calls. See {@link ConsoleCapture}. */
@@ -9630,6 +9691,11 @@ declare module "bun" {
     /**
      * Close the view and release its WebContent process. After close,
      * all methods throw. Idempotent.
+     *
+     * Pending operations reject with `Error("WebView closed")`. The
+     * rejections are marked as handled: a promise you hold still rejects
+     * catchably, but a pending operation nothing holds never triggers
+     * `unhandledRejection`.
      */
     close(): void;
 

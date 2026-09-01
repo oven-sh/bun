@@ -7,6 +7,7 @@ import {
   bunRun,
   isASAN,
   isDebug,
+  isMacOS,
   isWindows,
   tempDir,
   tempDirWithFiles,
@@ -175,6 +176,88 @@ describe("Bun.build", () => {
     expect(stderr).toContain('Invalid value for --bytecode-depth: "nope"');
     expect(stdout).toBe("");
     expect(exitCode).toBe(1);
+  });
+
+  // A function's record stores its own offset as a varint, so its size depends on where it lands. Sweep the payload
+  // size across the encoder's first page boundary (64 KB) with a few tail shapes so a record lands exactly on it.
+  test("bytecode: function record on an encoder page boundary", async () => {
+    using dir = tempDir("bun-build-api-bytecode-page-boundary", {
+      "sweep-fixture.ts": /* ts */ `
+        import { writeFileSync } from "fs";
+        const variant = Number(process.argv[2]);
+        const params = variant & 1 ? Array.from({ length: 130 }, (_, i) => "a" + i).join(",") : "";
+        const consts = variant & 2 ? "var c = " + Array.from({ length: 130 }, (_, i) => i + ".5").join("+") + ";" : "";
+        async function bytecodeSize(n: number) {
+          const file = "in" + variant + ".js";
+          writeFileSync(file, 'function p(){ return "' + Buffer.alloc(n, "p").toString() + '"; }\\n'
+            + "function t(" + params + "){ " + consts + ' return "' + Buffer.alloc(200, "t").toString() + '"; }\\n'
+            + "module.exports = [p, t];\\n");
+          const build = await Bun.build({ entrypoints: ["./" + file], outdir: "./out" + variant, target: "bun", format: "cjs", bytecode: true });
+          if (!build.success) throw new AggregateError(build.logs);
+          return build.outputs.find(o => o.kind === "bytecode")!.size;
+        }
+        const pageEnd = 64 * 1024;
+        const n0 = 60000;
+        const target = n0 + (pageEnd - (await bytecodeSize(n0)));
+        for (let n = target - 24; n < target + 104; n++) await bytecodeSize(n);
+        console.log("ok");
+      `,
+    });
+    await Promise.all(
+      [0, 1, 2, 3].map(async variant => {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "sweep-fixture.ts", String(variant)],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "inherit",
+        });
+        const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+        expect(stdout).toBe("ok\n");
+        expect(exitCode).toBe(0);
+      }),
+    );
+  });
+
+  test("bytecode: repeated builds don't retain the generated code", async () => {
+    using dir = tempDir("bun-build-api-bytecode-retained", {
+      "retained-fixture.ts": /* ts */ `
+        import { writeFileSync } from "fs";
+        const [functions, limit] = process.argv.slice(2).map(Number);
+        let source = "";
+        for (let i = 0; i < functions; i++)
+          source += "export function f" + i + "(a, b) { if (a > " + i + ") { return a * b + " + i + "; } for (let j = 0; j < b; j++) a += j ^ " + i + '; return { a, b, name: "f' + i + '" }; }\\n';
+        writeFileSync("in.js", source);
+        const build = (bytecode: boolean) => Bun.build({ entrypoints: ["./in.js"], outdir: "./out", target: "bun", format: "cjs", bytecode });
+        const rss = () => Math.round(process.memoryUsage.rss() / 1024 / 1024);
+        if (!(await build(false)).success) throw new Error("build failed");
+        Bun.gc(true);
+        const base = rss();
+        for (let i = 0; i < 3; i++) if (!(await build(true)).success) throw new Error("build failed");
+        // The bundle thread frees its bytecode VM once it goes idle.
+        const deadline = Date.now() + 5000;
+        let after = rss();
+        while ((Bun.gc(true), (after = rss())) - base > limit && Date.now() < deadline) await Bun.sleep(20);
+        console.log(JSON.stringify({ base, after }));
+      `,
+    });
+    // Linux/Windows release, 20k functions: ~+65 MB without freeing the VM, about level with the baseline with it.
+    // Debug/ASAN parse far slower and hold freed pages in quarantine, so they get a smaller module and only guard against
+    // gross retention. macOS reports +230-280 MB here even with the VM freed (the pages leave RSS lazily), so same there.
+    const slow = isASAN || isDebug;
+    const [functions, limit] = slow ? [3000, 400] : [20000, isMacOS ? 400 : 40];
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "retained-fixture.ts", String(functions), String(limit)],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toStartWith("{");
+    expect(exitCode).toBe(0);
+    const { base, after } = JSON.parse(stdout);
+    expect(after - base).toBeLessThanOrEqual(limit);
   });
 
   test("passing undefined doesnt segfault", () => {
@@ -1824,6 +1907,57 @@ test("Bun.build does not corrupt folded string ropes shared across chunks", asyn
   expect(stdout.trim()).toBe("DONE 0");
   expect(exitCode).toBe(0);
 }, 180_000);
+
+// A plugin module's namespace lives in the bundle's arena. The `BuildMessage`
+// objects in `result.logs` outlive the arena, so they must own a copy.
+// MIMALLOC_PURGE_DELAY=0 makes mimalloc return the arena's pages to the OS as
+// soon as the bundle ends, so a stale pointer crashes instead of reading the
+// old bytes.
+test.concurrent("a BuildMessage keeps the namespace of a plugin module after the build", async () => {
+  using dir = tempDir("build-message-namespace", {
+    "entry.ts": `import "virtual:broken";`,
+    "run.ts": `
+      const result = await Bun.build({
+        entrypoints: ["./entry.ts"],
+        throw: false,
+        plugins: [{
+          name: "virtual",
+          setup(builder) {
+            builder.onResolve({ filter: /^virtual:/ }, args => ({
+              path: args.path.slice("virtual:".length),
+              namespace: "virtual",
+            }));
+            builder.onLoad({ filter: /.*/, namespace: "virtual" }, () => ({
+              contents: "let = ;",
+              loader: "js",
+            }));
+          },
+        }],
+      });
+      console.log(JSON.stringify({
+        success: result.success,
+        positions: result.logs.map(log => {
+          const { file, namespace } = log.position!;
+          return { file, namespace };
+        }),
+      }));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run.ts"],
+    cwd: String(dir),
+    env: { ...bunEnv, MIMALLOC_PURGE_DELAY: "0", MIMALLOC_ABANDONED_PAGE_PURGE: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({
+    success: false,
+    positions: [{ file: "broken", namespace: "virtual" }],
+  });
+  expect(exitCode).toBe(0);
+});
 
 test("sourcemap sourcesContent is valid JSON when source contains C0 control chars", async () => {
   // RFC 8259 only allows \" \\ \/ \b \f \n \r \t and six-char \u escapes; \v

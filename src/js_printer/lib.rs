@@ -71,7 +71,6 @@ pub type MangledProps = bun_collections::ArrayHashMap<Ref, Box<[u8]>>;
 /// only consume the serialized form.
 pub mod analyze_transpiled_module {
     use bun_collections::HashMap;
-    use bun_core::slice_as_bytes;
 
     /// Every record kind carries one trailing bitcast-`FetchParameters` slot
     /// after its `StringID` payload.
@@ -143,7 +142,7 @@ pub mod analyze_transpiled_module {
     // SAFETY: `#[repr(transparent)]` over `u32` (Pod).
     unsafe impl bytemuck::Pod for StringID {}
     impl StringID {
-        pub(crate) const STAR_DEFAULT: Self = Self(u32::MAX);
+        pub const STAR_DEFAULT: Self = Self(u32::MAX);
         pub const STAR_NAMESPACE: Self = Self(u32::MAX - 1);
     }
 
@@ -207,42 +206,222 @@ pub mod analyze_transpiled_module {
         pub record_kinds: &'a [RecordKind],
         pub flags: Flags,
     }
+    /// Width in bytes of a run of integers: the smallest of 1, 2, 4 that holds
+    /// the largest value.
+    #[inline]
+    pub fn int_width(max_value: u32) -> u8 {
+        if max_value <= u8::MAX as u32 {
+            1
+        } else if max_value <= u16::MAX as u32 {
+            2
+        } else {
+            4
+        }
+    }
+    #[inline]
+    fn put<W: std::io::Write>(w: &mut W, width: u8, v: u32) -> std::io::Result<()> {
+        match width {
+            1 => w.write_all(&[v as u8]),
+            2 => w.write_all(&(v as u16).to_le_bytes()),
+            _ => w.write_all(&v.to_le_bytes()),
+        }
+    }
+
+    /// A self-contained record's strings, as `WTF::StringImpl` bodies:
+    ///
+    /// ```text
+    /// u8   offset width W ∈ {1,2,4}; u8 0, 0, 0
+    /// u32  count
+    /// uW   × (count + 1): byte offset of each string's record within the blob, then the blob length
+    /// u8   0 if needed to start the blob at an even offset
+    /// blob: per string, u8 is8Bit then the characters: Latin-1 bytes, or UTF-16LE units starting at
+    ///       the next even blob offset
+    /// ```
+    fn serialize_string_table<'a, W: std::io::Write>(
+        w: &mut W,
+        strings: impl ExactSizeIterator<Item = &'a [u8]>,
+    ) -> std::io::Result<()> {
+        let count = strings.len();
+        let mut offsets: Vec<u32> = Vec::with_capacity(count + 1);
+        let mut blob: Vec<u8> = Vec::new();
+        for wtf8 in strings {
+            offsets.push(blob.len() as u32);
+            match bun_core::strings::first_non_ascii(wtf8) {
+                None => {
+                    blob.push(1);
+                    blob.extend_from_slice(wtf8);
+                }
+                Some(first_non_ascii) => {
+                    blob.push(0);
+                    if !blob.len().is_multiple_of(2) {
+                        blob.push(0);
+                    }
+                    blob.reserve(2 * wtf8.len());
+                    // SAFETY: `2 * wtf8.len()` spare bytes reserved, the bound `write_wtf8_as_utf16le` requires.
+                    unsafe {
+                        let n = bun_core::strings::write_wtf8_as_utf16le(
+                            wtf8,
+                            first_non_ascii as usize,
+                            blob.as_mut_ptr().add(blob.len()),
+                        );
+                        blob.set_len(blob.len() + n);
+                    }
+                }
+            }
+        }
+        offsets.push(blob.len() as u32);
+        let width = int_width(blob.len() as u32);
+        w.write_all(&[width, 0, 0, 0])?;
+        w.write_all(&(count as u32).to_le_bytes())?;
+        for offset in offsets {
+            put(w, width, offset)?;
+        }
+        if !((count + 1) * width as usize).is_multiple_of(2) {
+            w.write_all(&[0])?;
+        }
+        w.write_all(&blob)
+    }
+
     impl<'a> ModuleInfoDeserialized<'a> {
+        /// Self-contained form: this module's own string table, then its body.
         pub(crate) fn serialize<W: std::io::Write>(&self, w: &mut W) -> std::io::Result<()> {
-            w.write_all(
-                &u32::try_from(self.record_kinds.len())
-                    .unwrap()
-                    .to_le_bytes(),
-            )?;
-            // `RecordKind: NoUninit` (#[repr(u8)]) → safe byte view.
-            w.write_all(slice_as_bytes(self.record_kinds))?;
-            let pad = (4 - (self.record_kinds.len() % 4)) % 4;
-            w.write_all(&[0u8; 4][..pad])?; // alignment padding
+            let mut offset = 0usize;
+            let strings: Vec<&[u8]> = self
+                .strings_lens
+                .iter()
+                .map(|&len| {
+                    let s = &self.strings_buf[offset..offset + len as usize];
+                    offset += len as usize;
+                    s
+                })
+                .collect();
+            serialize_string_table(w, strings.into_iter())?;
+            self.serialize_body(w, self.strings_lens.len() as u32, |id| id)
+        }
 
-            w.write_all(&u32::try_from(self.buffer.len()).unwrap().to_le_bytes())?;
-            w.write_all(slice_as_bytes(self.buffer))?;
+        /// Body wire format (little-endian), ids index a string table
+        /// of `table_count` strings through `table_id`:
+        ///
+        /// ```text
+        /// u8   flags
+        /// u8   id width W ∈ {1,2,4}, sized for table_count + 2 sentinels
+        /// u8   0, 0
+        /// u32  requested-module count, u32 record count
+        /// u8   × records:    kind | fetch-kind << 3 | same-name << 6
+        /// u8   × requested:  phase | fetch-kind << 1
+        /// uW…  per requested module: specifier [, host-defined type]
+        /// uW…  per record: its string ids [, host-defined type]
+        /// ```
+        ///
+        /// fetch-kind 0..=3 is None / JavaScript / WebAssembly / JSON and 4 means
+        /// a host-defined type id follows. `STAR_NAMESPACE` / `STAR_DEFAULT` are
+        /// written as `table_count` / `table_count + 1`. Slots the kind implies
+        /// (`*` for a namespace import, `ExportInfoLocal`'s padding, the fetch
+        /// parameter itself) are not written; `same-name` elides an import's
+        /// local name when it equals the import name.
+        /// `bun_bundler::analyze_transpiled_module` (`Body` / `IdCursor`) reads
+        /// this in place when building the `JSModuleRecord`.
+        pub fn serialize_body<W: std::io::Write>(
+            &self,
+            w: &mut W,
+            table_count: u32,
+            table_id: impl Fn(u32) -> u32,
+        ) -> std::io::Result<()> {
+            let id_width = int_width(table_count + 1);
+            let id = |w: &mut W, s: StringID| {
+                put(
+                    w,
+                    id_width,
+                    match s {
+                        StringID::STAR_NAMESPACE => table_count,
+                        StringID::STAR_DEFAULT => table_count + 1,
+                        s => table_id(s.0),
+                    },
+                )
+            };
+            let fetch_kind = |fp: FetchParameters| match fp {
+                FetchParameters::None => 0u8,
+                FetchParameters::Javascript => 1,
+                FetchParameters::Webassembly => 2,
+                FetchParameters::Json => 3,
+                _ => 4,
+            };
+            // (ids written, fetch parameters, elide slot 1, elide slot 2)
+            let shape = |kind: RecordKind, data: &'a [StringID]| match kind {
+                RecordKind::ImportInfoSingle | RecordKind::ImportInfoSingleTypeScript => (
+                    &data[..3],
+                    FetchParameters(data[3].0),
+                    false,
+                    data[1] == data[2],
+                ),
+                RecordKind::ImportInfoNamespace | RecordKind::ImportInfoNamespaceDefer => {
+                    debug_assert!(data[1] == StringID::STAR_NAMESPACE);
+                    (&data[..3], FetchParameters(data[3].0), true, false)
+                }
+                RecordKind::ExportInfoIndirect => {
+                    (&data[..3], FetchParameters(data[3].0), false, false)
+                }
+                RecordKind::ExportInfoLocal => (&data[..2], FetchParameters::None, false, false),
+                RecordKind::ExportInfoNamespace => {
+                    (&data[..2], FetchParameters(data[2].0), false, false)
+                }
+                RecordKind::ExportInfoStar => {
+                    (&data[..1], FetchParameters(data[1].0), false, false)
+                }
+            };
+            let records = || {
+                let mut i = 0usize;
+                self.record_kinds.iter().map(move |&kind| {
+                    let data = &self.buffer[i..i + kind.len()];
+                    i += kind.len();
+                    (kind, data)
+                })
+            };
 
+            w.write_all(&[self.flags.to_byte(), id_width, 0, 0])?;
             w.write_all(
                 &u32::try_from(self.requested_modules_keys.len())
                     .unwrap()
                     .to_le_bytes(),
             )?;
-            w.write_all(slice_as_bytes(self.requested_modules_keys))?;
-            w.write_all(slice_as_bytes(self.requested_modules_values))?;
-            w.write_all(slice_as_bytes(self.requested_modules_phases))?;
-            let pad = (4 - (self.requested_modules_phases.len() % 4)) % 4;
-            w.write_all(&[0u8; 4][..pad])?; // alignment padding
-
-            w.write_all(&[self.flags.to_byte()])?;
-            w.write_all(&[0u8; 3])?; // alignment padding
-
             w.write_all(
-                &u32::try_from(self.strings_lens.len())
+                &u32::try_from(self.record_kinds.len())
                     .unwrap()
                     .to_le_bytes(),
             )?;
-            w.write_all(slice_as_bytes(self.strings_lens))?;
-            w.write_all(self.strings_buf)?;
+            for (kind, data) in records() {
+                let (_, fetch, _, same_name) = shape(kind, data);
+                w.write_all(&[(kind as u8) | (fetch_kind(fetch) << 3) | ((same_name as u8) << 6)])?;
+            }
+            for (&value, &phase) in self
+                .requested_modules_values
+                .iter()
+                .zip(self.requested_modules_phases)
+            {
+                w.write_all(&[(phase as u8) | (fetch_kind(value) << 1)])?;
+            }
+            for (&key, &value) in self
+                .requested_modules_keys
+                .iter()
+                .zip(self.requested_modules_values)
+            {
+                id(w, key)?;
+                if fetch_kind(value) == 4 {
+                    id(w, StringID(value.0))?;
+                }
+            }
+            for (kind, data) in records() {
+                let (ids, fetch, skip1, skip2) = shape(kind, data);
+                for (slot, &s) in ids.iter().enumerate() {
+                    if (skip1 && slot == 1) || (skip2 && slot == 2) {
+                        continue;
+                    }
+                    id(w, s)?;
+                }
+                if fetch_kind(fetch) == 4 {
+                    id(w, StringID(fetch.0))?;
+                }
+            }
             Ok(())
         }
     }
@@ -1183,6 +1362,9 @@ pub struct Options<'a> {
     /// Borrowed from `LinkerGraph.ts_enums` (one shared map for the whole
     /// bundle); the printer only reads from it.
     pub ts_enums: Option<&'a TsEnumsMap>,
+    /// Borrowed from `LinkerGraph.import_member_bindings`: `X.name` property
+    /// reads the linker bound straight to an export (see `E::Dot::is_import_property_use`).
+    pub import_member_bindings: Option<&'a js_ast::ast_result::ImportMemberBindings>,
 
     // If we're writing out a source map, this table of line start indices lets
     // us do binary search on to figure out what line a given AST node came from
@@ -1243,6 +1425,7 @@ impl<'a> Default for Options<'a> {
             input_module_type: bundle_opts::ModuleType::Unknown,
             module_type: bundle_opts::Format::Esm,
             ts_enums: None,
+            import_member_bindings: None,
             line_offset_tables: None,
             mangled_props: None,
         }
@@ -2005,11 +2188,18 @@ pub(crate) mod __gated_printer {
 
         pub(crate) fn print_decls(
             &mut self,
-            keyword: &'static [u8],
+            kind: S::Kind,
             decls_: &[G::Decl],
             flags: ExprFlagSet,
             tlm: TopLevelAndIsExport,
         ) {
+            let keyword: &'static [u8] = match kind {
+                S::Kind::KVar => b"var",
+                S::Kind::KLet => b"let",
+                S::Kind::KConst => b"const",
+                S::Kind::KUsing => b"using",
+                S::Kind::KAwaitUsing => b"await using",
+            };
             self.print(keyword);
             self.print_space();
             let mut decls = decls_;
@@ -2020,167 +2210,217 @@ pub(crate) mod __gated_printer {
                 unreachable!();
             }
 
-            if bun_core::FeatureFlags::SAME_TARGET_BECOMES_DESTRUCTURING {
-                // Minify
-                //
-                //    var a = obj.foo, b = obj.bar, c = obj.baz;
-                //
-                // to
-                //
-                //    var {a, b, c} = obj;
-                //
-                // Caveats:
-                //   - Same consecutive target
-                //   - No optional chaining
-                //   - No computed property access
-                //   - Identifier bindings only
-                'brk: {
-                    if decls.len() <= 1 {
-                        break 'brk;
-                    }
-                    let first_decl = &decls[0];
-                    let second_decl = &decls[1];
+            // A `using` or `await using` declaration admits only identifier
+            // bindings, never a binding pattern.
+            let allow_destructuring =
+                bun_core::FeatureFlags::SAME_TARGET_BECOMES_DESTRUCTURING && !kind.is_using();
 
-                    if !matches!(first_decl.binding.data, BindingData::BIdentifier(_))
-                        || !matches!(second_decl.binding.data, BindingData::BIdentifier(_))
-                    {
-                        break 'brk;
-                    }
-
-                    let Some(target_value) = &first_decl.value else {
-                        break 'brk;
-                    };
-                    let ExprData::EDot(target_e_dot) = &target_value.data else {
-                        break 'brk;
-                    };
-                    let ExprData::EIdentifier(target_id) = &target_e_dot.target.data else {
-                        break 'brk;
-                    };
-                    if target_e_dot.optional_chain.is_some() {
-                        break 'brk;
-                    }
-                    let target_ref = target_id.ref_;
-
-                    let Some(second_value) = &second_decl.value else {
-                        break 'brk;
-                    };
-                    let ExprData::EDot(second_e_dot) = &second_value.data else {
-                        break 'brk;
-                    };
-                    let ExprData::EIdentifier(second_id) = &second_e_dot.target.data else {
-                        break 'brk;
-                    };
-                    if second_e_dot.optional_chain.is_some() || !second_id.ref_.eql(target_ref) {
-                        break 'brk;
-                    }
-
-                    {
-                        // Reset the temporary bindings array early on
-                        let mut temp_bindings = core::mem::take(&mut self.temporary_bindings);
-                        temp_bindings.reserve(2);
-                        temp_bindings.push(B::Property {
-                            flags: Default::default(),
-                            key: Expr::init(
-                                E::String::init(&target_e_dot.name),
-                                target_e_dot.name_loc,
-                            ),
-                            value: decls[0].binding,
-                            default_value: None,
-                        });
-                        temp_bindings.push(B::Property {
-                            flags: Default::default(),
-                            key: Expr::init(
-                                E::String::init(&second_e_dot.name),
-                                second_e_dot.name_loc,
-                            ),
-                            value: decls[1].binding,
-                            default_value: None,
-                        });
-
-                        decls = &decls[2..];
-                        while !decls.is_empty() {
-                            let decl = &decls[0];
-
-                            if !matches!(decl.binding.data, BindingData::BIdentifier(_)) {
-                                break;
-                            }
-                            let Some(value) = &decl.value else {
-                                break;
-                            };
-                            let ExprData::EDot(e_dot) = &value.data else {
-                                break;
-                            };
-                            let ExprData::EIdentifier(id) = &e_dot.target.data else {
-                                break;
-                            };
-                            if e_dot.optional_chain.is_some() || !id.ref_.eql(target_ref) {
-                                break;
-                            }
-
-                            temp_bindings.push(B::Property {
-                                flags: Default::default(),
-                                key: Expr::init(E::String::init(&e_dot.name), e_dot.name_loc),
-                                value: decl.binding,
-                                default_value: None,
-                            });
-                            decls = &decls[1..];
-                        }
-                        let mut b_object = B::Object {
-                            // SAFETY: `temp_bindings`' heap buffer is stable until the
-                            // matching clear()/drop below; `print_binding` only reads it.
-                            properties: js_ast::StoreSlice::new_mut(temp_bindings.as_mut_slice()),
-                            is_single_line: true,
-                        };
-                        // `from_bump` wraps a `&mut T` as a non-null arena ref; here the
-                        // pointee is a stack local but `print_binding` only reads it and
-                        // returns before `b_object` is dropped (same as the prior `&raw mut`).
-                        let binding = Binding {
-                            loc: target_e_dot.target.loc,
-                            data: BindingData::BObject(js_ast::StoreRef::from_bump(&mut b_object)),
-                        };
-                        self.print_binding(binding, tlm);
-                        // If recursion replaced
-                        // `self.temporary_bindings`, drop our local; else clear+restore.
-                        if self.temporary_bindings.capacity() > 0 {
-                            drop(temp_bindings);
-                        } else {
-                            temp_bindings.clear();
-                            self.temporary_bindings = temp_bindings;
-                        }
-                    }
-
-                    self.print_whitespacer(ws!(b" = "));
-                    self.print_expr(second_e_dot.target, Level::Comma, flags);
-
-                    if decls.is_empty() {
-                        return;
-                    }
-
+            let mut needs_comma = false;
+            'decls: while !decls.is_empty() {
+                if needs_comma {
                     self.print(b",");
                     self.print_space();
                 }
-            }
+                needs_comma = true;
 
-            {
+                if allow_destructuring {
+                    // Minify each run of
+                    //
+                    //    a = obj.foo, b = obj.bar, c = obj.baz
+                    //
+                    // to
+                    //
+                    //    {foo: a, bar: b, baz: c} = obj
+                    //
+                    // Caveats:
+                    //   - Same consecutive target
+                    //   - A stable target (`is_stable_destructuring_target`)
+                    //   - No optional chaining
+                    //   - No computed property access
+                    //   - Identifier bindings only
+                    'brk: {
+                        if decls.len() <= 1 {
+                            break 'brk;
+                        }
+                        let first_decl = &decls[0];
+                        let second_decl = &decls[1];
+
+                        let BindingData::BIdentifier(first_binding) = &first_decl.binding.data
+                        else {
+                            break 'brk;
+                        };
+                        let BindingData::BIdentifier(second_binding) = &second_decl.binding.data
+                        else {
+                            break 'brk;
+                        };
+
+                        let Some(target_value) = &first_decl.value else {
+                            break 'brk;
+                        };
+                        let ExprData::EDot(target_e_dot) = &target_value.data else {
+                            break 'brk;
+                        };
+                        let ExprData::EIdentifier(target_id) = &target_e_dot.target.data else {
+                            break 'brk;
+                        };
+                        if target_e_dot.optional_chain.is_some() {
+                            break 'brk;
+                        }
+                        // Compare symbols, not raw refs. A `var` that re-declares
+                        // a parameter or an earlier `var` gets its own ref, linked
+                        // to the existing symbol, so `n` in `var n = n.next` and
+                        // the `n` it reads are two refs for one variable.
+                        let symbols = self.renamer.symbols();
+                        let target_ref = symbols.follow(target_id.ref_);
+
+                        if !self.is_stable_destructuring_target(*target_id, target_ref) {
+                            break 'brk;
+                        }
+
+                        // A group evaluates its target once, before any
+                        // assignment, but the original declarators execute in
+                        // order. A declarator that binds the target itself can
+                        // only be the last member of a group: a later member
+                        // would read the rebound target.
+                        if symbols.follow(first_binding.get().r#ref).eql(target_ref) {
+                            break 'brk;
+                        }
+
+                        let Some(second_value) = &second_decl.value else {
+                            break 'brk;
+                        };
+                        let ExprData::EDot(second_e_dot) = &second_value.data else {
+                            break 'brk;
+                        };
+                        let ExprData::EIdentifier(second_id) = &second_e_dot.target.data else {
+                            break 'brk;
+                        };
+                        if second_e_dot.optional_chain.is_some()
+                            || !symbols.follow(second_id.ref_).eql(target_ref)
+                        {
+                            break 'brk;
+                        }
+                        let mut target_rebound =
+                            symbols.follow(second_binding.get().r#ref).eql(target_ref);
+
+                        {
+                            // Reset the temporary bindings array early on
+                            let mut temp_bindings = core::mem::take(&mut self.temporary_bindings);
+                            temp_bindings.reserve(2);
+                            temp_bindings.push(B::Property {
+                                flags: Default::default(),
+                                key: Expr::init(
+                                    E::String::init(&target_e_dot.name),
+                                    target_e_dot.name_loc,
+                                ),
+                                value: decls[0].binding,
+                                default_value: None,
+                            });
+                            temp_bindings.push(B::Property {
+                                flags: Default::default(),
+                                key: Expr::init(
+                                    E::String::init(&second_e_dot.name),
+                                    second_e_dot.name_loc,
+                                ),
+                                value: decls[1].binding,
+                                default_value: None,
+                            });
+
+                            decls = &decls[2..];
+                            while !decls.is_empty() && !target_rebound {
+                                let decl = &decls[0];
+
+                                let BindingData::BIdentifier(binding) = &decl.binding.data else {
+                                    break;
+                                };
+                                let Some(value) = &decl.value else {
+                                    break;
+                                };
+                                let ExprData::EDot(e_dot) = &value.data else {
+                                    break;
+                                };
+                                let ExprData::EIdentifier(id) = &e_dot.target.data else {
+                                    break;
+                                };
+                                if e_dot.optional_chain.is_some()
+                                    || !symbols.follow(id.ref_).eql(target_ref)
+                                {
+                                    break;
+                                }
+                                target_rebound =
+                                    symbols.follow(binding.get().r#ref).eql(target_ref);
+
+                                temp_bindings.push(B::Property {
+                                    flags: Default::default(),
+                                    key: Expr::init(E::String::init(&e_dot.name), e_dot.name_loc),
+                                    value: decl.binding,
+                                    default_value: None,
+                                });
+                                decls = &decls[1..];
+                            }
+                            let mut b_object = B::Object {
+                                // SAFETY: `temp_bindings`' heap buffer is stable until the
+                                // matching clear()/drop below; `print_binding` only reads it.
+                                properties: js_ast::StoreSlice::new_mut(
+                                    temp_bindings.as_mut_slice(),
+                                ),
+                                is_single_line: true,
+                            };
+                            // `from_bump` wraps a `&mut T` as a non-null arena ref; here the
+                            // pointee is a stack local but `print_binding` only reads it and
+                            // returns before `b_object` is dropped (same as the prior `&raw mut`).
+                            let binding = Binding {
+                                loc: target_e_dot.target.loc,
+                                data: BindingData::BObject(js_ast::StoreRef::from_bump(
+                                    &mut b_object,
+                                )),
+                            };
+                            self.print_binding(binding, tlm);
+                            // If recursion replaced
+                            // `self.temporary_bindings`, drop our local; else clear+restore.
+                            if self.temporary_bindings.capacity() > 0 {
+                                drop(temp_bindings);
+                            } else {
+                                temp_bindings.clear();
+                                self.temporary_bindings = temp_bindings;
+                            }
+                        }
+
+                        self.print_whitespacer(ws!(b" = "));
+                        self.print_expr(second_e_dot.target, Level::Comma, flags);
+
+                        continue 'decls;
+                    }
+                }
+
                 self.print_binding(decls[0].binding, tlm);
 
                 if let Some(value) = &decls[0].value {
                     self.print_whitespacer(ws!(b" = "));
                     self.print_expr(*value, Level::Comma, flags);
                 }
+                decls = &decls[1..];
             }
+        }
 
-            for decl in &decls[1..] {
-                self.print(b",");
-                self.print_space();
-
-                self.print_binding(decl.binding, tlm);
-
-                if let Some(value) = &decl.value {
-                    self.print_whitespacer(ws!(b" = "));
-                    self.print_expr(*value, Level::Comma, flags);
-                }
+        /// The group reads its target once where the declarators read it once
+        /// each, and a getter on the first property runs in between. The
+        /// target must be a declared symbol that nothing assigns, outside
+        /// `with` and direct `eval`, or a known pure global such as `Math`.
+        fn is_stable_destructuring_target(&self, id: E::Identifier, target_ref: Ref) -> bool {
+            if id.must_keep_due_to_with_stmt() {
+                return false;
             }
+            let Some(symbol) = self.symbols().get_const(target_ref) else {
+                return false;
+            };
+            if symbol.has_been_assigned_to() || symbol.namespace_alias.is_some() {
+                return false;
+            }
+            if symbol.kind == js_ast::symbol::Kind::Unbound {
+                return id.can_be_removed_if_unused();
+            }
+            !symbol.must_not_be_renamed()
         }
 
         #[inline]
@@ -2672,7 +2912,19 @@ pub(crate) mod __gated_printer {
                     self.print(b"(");
                 }
 
-                if let Some(ref_) = self.options.require_ref {
+                if record
+                    .flags
+                    .contains(ImportRecordFlags::CROSS_CHUNK_REQUIRE)
+                {
+                    // A split `require()`: the path is a sibling chunk, resolved
+                    // relative to this chunk — not through the runtime's
+                    // `__require`, which would resolve it relative to the
+                    // runtime's chunk.
+                    if let Some(mi) = self.module_info() {
+                        mi.flags.contains_import_meta = true;
+                    }
+                    self.print(b"import.meta.require");
+                } else if let Some(ref_) = self.options.require_ref {
                     self.print_symbol(ref_);
                 } else {
                     self.print(b"require");
@@ -2710,7 +2962,11 @@ pub(crate) mod __gated_printer {
                 self.print_string_literal_utf8(path.pretty, false);
             }
 
-            if !import_options.is_missing() {
+            // A bundled target is now a JavaScript chunk: attributes such as
+            // `with { type: "json" }` described the source file, not the chunk.
+            if !import_options.is_missing()
+                && !record.flags.contains(ImportRecordFlags::IMPORTS_CHUNK)
+            {
                 self.print_whitespacer(ws!(b", "));
                 self.print_expr(import_options, Level::Comma, ExprFlagSet::empty());
             }
@@ -3404,6 +3660,12 @@ pub(crate) mod __gated_printer {
                             self.print_inlined_enum(inlined, &e.name, level);
                             return;
                         }
+                        if e.is_import_property_use
+                            && let Some(binding) = self.import_member_binding(e.target, &e.name)
+                        {
+                            self.print_expr(binding, level, flags);
+                            return;
+                        }
                     } else {
                         if flags.contains(ExprFlag::HasNonOptionalChainParent) {
                             wrap = true;
@@ -3457,6 +3719,16 @@ pub(crate) mod __gated_printer {
                                     return;
                                 }
                             }
+                        }
+                        if e.is_import_property_use
+                            && let Some(str) = e.index.unwrap_inlined().data.as_e_string()
+                            && let str = str.flattened(self.bump)
+                            && str.is_utf8()
+                            && let Some(binding) =
+                                self.import_member_binding(e.target, str.slice8())
+                        {
+                            self.print_expr(binding, level, flags);
+                            return;
                         }
                     } else {
                         if flags.contains(ExprFlag::HasNonOptionalChainParent) {
@@ -5456,19 +5728,7 @@ pub(crate) mod __gated_printer {
                     self.print_indent();
                     self.print_space_before_identifier();
                     self.add_source_mapping(stmt.loc);
-                    match s.kind {
-                        S::Kind::KConst => {
-                            self.print_decl_stmt(s.is_export, b"const", s.decls.slice())
-                        }
-                        S::Kind::KLet => self.print_decl_stmt(s.is_export, b"let", s.decls.slice()),
-                        S::Kind::KVar => self.print_decl_stmt(s.is_export, b"var", s.decls.slice()),
-                        S::Kind::KUsing => {
-                            self.print_decl_stmt(s.is_export, b"using", s.decls.slice())
-                        }
-                        S::Kind::KAwaitUsing => {
-                            self.print_decl_stmt(s.is_export, b"await using", s.decls.slice())
-                        }
-                    }
+                    self.print_decl_stmt(s.is_export, s.kind, s.decls.slice());
                 }
                 StmtData::SIf(s) => {
                     self.print_indent();
@@ -6166,38 +6426,12 @@ pub(crate) mod __gated_printer {
                 }
                 StmtData::SLocal(s) => {
                     let flags = ExprFlag::ForbidIn.into();
-                    match s.kind {
-                        S::Kind::KVar => self.print_decls(
-                            b"var",
-                            s.decls.slice(),
-                            flags,
-                            TopLevelAndIsExport::default(),
-                        ),
-                        S::Kind::KLet => self.print_decls(
-                            b"let",
-                            s.decls.slice(),
-                            flags,
-                            TopLevelAndIsExport::default(),
-                        ),
-                        S::Kind::KConst => self.print_decls(
-                            b"const",
-                            s.decls.slice(),
-                            flags,
-                            TopLevelAndIsExport::default(),
-                        ),
-                        S::Kind::KUsing => self.print_decls(
-                            b"using",
-                            s.decls.slice(),
-                            flags,
-                            TopLevelAndIsExport::default(),
-                        ),
-                        S::Kind::KAwaitUsing => self.print_decls(
-                            b"await using",
-                            s.decls.slice(),
-                            flags,
-                            TopLevelAndIsExport::default(),
-                        ),
-                    }
+                    self.print_decls(
+                        s.kind,
+                        s.decls.slice(),
+                        flags,
+                        TopLevelAndIsExport::default(),
+                    );
                 }
                 // for(;)
                 StmtData::SEmpty(_) => {}
@@ -6314,6 +6548,24 @@ pub(crate) mod __gated_printer {
             }
         }
 
+        /// `X.name` where the linker bound the access straight to an export
+        /// (`LinkerGraph::import_member_bindings`): the import identifier to
+        /// print in its place.
+        fn import_member_binding(&self, target: Expr, name: &[u8]) -> Option<Expr> {
+            let ExprData::EImportIdentifier(id) = &target.data else {
+                return None;
+            };
+            let binding = *self
+                .options
+                .import_member_bindings?
+                .get(&id.ref_)?
+                .get(name)?;
+            Some(Expr::init(
+                E::ImportIdentifier::new(binding, false),
+                target.loc,
+            ))
+        }
+
         pub(crate) fn try_to_get_imported_enum_value(
             &self,
             target: Expr,
@@ -6370,7 +6622,7 @@ pub(crate) mod __gated_printer {
         pub(crate) fn print_decl_stmt(
             &mut self,
             is_export: bool,
-            keyword: &'static [u8],
+            kind: S::Kind,
             decls: &[G::Decl],
         ) {
             if is_export {
@@ -6381,7 +6633,7 @@ pub(crate) mod __gated_printer {
             } else {
                 TopLevelAndIsExport::default()
             };
-            self.print_decls(keyword, decls, ExprFlag::none(), tlm);
+            self.print_decls(kind, decls, ExprFlag::none(), tlm);
             self.print_semicolon_after_statement();
         }
 
@@ -7795,8 +8047,8 @@ pub(crate) fn print_with_writer_and_platform<
     })
 }
 
-/// Serializes ModuleInfo to an owned byte slice. Returns null on failure.
-/// The caller is responsible for freeing the returned slice.
+/// Serializes ModuleInfo (its own string table, then its body) to an owned
+/// byte slice. Returns `None` on failure.
 pub fn serialize_module_info(
     module_info: Option<&mut analyze_transpiled_module::ModuleInfo>,
 ) -> Option<Box<[u8]>> {
@@ -7812,4 +8064,20 @@ pub fn serialize_module_info(
         return None;
     }
     Some(buf.into_boxed_slice())
+}
+
+/// Serializes only ModuleInfo's body, with its strings referenced through
+/// `table_ids` (from `ModuleInfoSlotTableBuilder::intern_all`) into a table of
+/// `table_count` strings that is stored once for many modules.
+pub fn serialize_module_info_body(
+    mi: &analyze_transpiled_module::ModuleInfo,
+    table_count: u32,
+    table_ids: &[u32],
+) -> Box<[u8]> {
+    debug_assert!(mi.finalized);
+    let mut buf: Vec<u8> = Vec::new();
+    mi.as_deserialized()
+        .serialize_body(&mut buf, table_count, |id| table_ids[id as usize])
+        .expect("Vec<u8> write");
+    buf.into_boxed_slice()
 }

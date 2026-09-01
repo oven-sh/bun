@@ -16,6 +16,9 @@
   "src/jsc/Debugger.rs": {
     "thread spawn": 1
   },
+  "src/jsc/GarbageCollectionController.rs": {
+    "thread spawn": 1
+  },
   "src/jsc/JSSecrets.rs": {
     "unsafe impl Send": [
       "SecretsOptions"
@@ -46,11 +49,6 @@
     ],
     "unsafe impl Sync": [
       "WatchChangedPaths"
-    ]
-  },
-  "src/jsc/node_path.rs": {
-    "unsafe impl Send": [
-      "ThreadSafe<T>"
     ]
   },
   "src/jsc/web_worker.rs": {
@@ -178,6 +176,11 @@
     ],
     "unsafe impl Sync": [
       "PathWatcherManager"
+    ]
+  },
+  "src/runtime/node/types.rs": {
+    "unsafe impl Send": [
+      "ThreadIsolated<T>"
     ]
   },
   "src/runtime/shell/IOReader.rs": {

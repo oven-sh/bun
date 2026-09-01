@@ -1504,7 +1504,7 @@ fn run_tasks_erased(
                             resolved,
                             None,
                         );
-                        manager.task_batch.push(ThreadPoolBatch::from(queued));
+                        manager.enqueue_git_task(queued);
                     }
                 } else {
                     // Resolving!
@@ -1532,6 +1532,49 @@ fn run_tasks_erased(
                         has_updated_this_run.set(true);
                     }
                 }
+            }
+            Task::Tag::GitCommit => {
+                let commit = task.request_git_commit();
+                let name = commit.name.slice();
+                let url = commit.url.slice();
+                // Pending while it ran, but not one of the N downloads the summary prints.
+                manager.total_tasks -= 1;
+
+                if task.status == Task::Status::Fail {
+                    let err = task.err.unwrap_or(crate::Error::Failed);
+                    let _ = manager.task_queue.remove(&task.id);
+                    if cb.has_on_package_manifest_error {
+                        (cb.on_package_manifest_error)(extract_ctx, name, err, url);
+                    } else {
+                        let _ = manager.log_mut().add_error_fmt(
+                            None,
+                            bun_ast::Loc::EMPTY,
+                            format_args!(
+                                "no commit matching \"{}\" found for \"{}\" (but repository exists)",
+                                bstr::BStr::new(commit.committish.slice()),
+                                bstr::BStr::new(name),
+                            ),
+                        );
+                    }
+                    continue;
+                }
+
+                manager
+                    .git_commits
+                    .insert(task.id, task.data_git_commit().clone());
+
+                // Each waiter re-enters the enqueue path and now finds the commit.
+                let dependency_list = manager
+                    .task_queue
+                    .remove(&task.id)
+                    .expect("infallible: task queued");
+                process_dependency_list_for_ctx(
+                    cb,
+                    manager,
+                    dependency_list,
+                    extract_ctx,
+                    install_peer,
+                )?;
             }
             Task::Tag::GitCheckout => {
                 // SAFETY: `task.tag == GitCheckout` — active union arm.
@@ -1784,6 +1827,8 @@ pub fn schedule_tasks(manager: &mut PackageManager) -> usize {
         .network_resolve_batch
         .push(core::mem::take(&mut manager.network_tarball_batch));
     http::HTTPThread::schedule(core::mem::take(&mut manager.network_resolve_batch));
+    // Git tasks were counted as pending when they were queued.
+    manager.start_git_tasks();
     count
 }
 

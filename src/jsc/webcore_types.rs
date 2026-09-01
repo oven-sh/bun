@@ -17,7 +17,6 @@
 
 use core::cell::Cell;
 use core::ptr::NonNull;
-use std::rc::Rc;
 
 use bun_core::strings::AsciiStatus;
 use bun_http_types::MimeType::MimeType;
@@ -139,13 +138,16 @@ pub struct Blob {
     pub name: bun_ptr::JsCell<bun_core::String>,
 }
 
-// SAFETY: `Blob` holds a raw `global_this` pointer which defaults to
-// `!Send`/`!Sync`. `Blob` moves across threads under `ObjectURLRegistry`'s
-// mutex and via the work-pool read/write tasks; `global_this` is an opaque
-// JSC handle only ever dereferenced on its owning JS thread.
+// SAFETY: `global_this` is dereferenced only on its owning JS thread; blobs
+// that cross threads (object-URL registry entries, the standalone-graph
+// template) carry a null global and a `make_thread_shareable()`d `name`;
+// `store` (`RefPtr<Store>`) / `content_type` are atomically refcounted and
+// `Store::is_all_ascii` is atomic.
 unsafe impl Send for Blob {}
 // SAFETY: concurrent `&Blob` access only occurs under `ObjectURLRegistry`'s
-// mutex or on the single owning JS thread; the `Cell` fields are never raced.
+// mutex, on the standalone-graph template (never written after its `OnceLock`
+// init; dupes only bump atomic refcounts), or on the single owning JS thread;
+// the `Cell` fields are never raced with a writer.
 unsafe impl Sync for Blob {}
 
 impl Default for Blob {
@@ -419,9 +421,21 @@ impl Blob {
         matches!(self.store.get().as_deref(), Some(s) if matches!(s.data, store::Data::File(_)))
     }
 
-    /// `Blob.getFileName()` — the user-visible name: `Bytes.stored_name`,
-    /// the file path, or the S3 key. `None` for fd-backed or unnamed blobs.
-    pub fn get_file_name(&self) -> Option<&[u8]> {
+    /// A usable filename: a non-empty `name`, else [`store_path`]. (`file.name`
+    /// itself may be `""`; that is not a filename.)
+    ///
+    /// [`store_path`]: Self::store_path
+    pub fn get_file_name(&self) -> Option<bun_core::Utf8Bytes<'_>> {
+        let name = self.name.get();
+        if !name.is_empty() {
+            return Some(name.to_utf8());
+        }
+        self.store_path().map(bun_core::Utf8Bytes::Borrowed)
+    }
+
+    /// `Bytes.stored_name`, the file path, or the S3 key, ignoring `name`.
+    /// `None` for fd-backed or unnamed stores.
+    pub fn store_path(&self) -> Option<&[u8]> {
         match &self.store.get().as_deref()?.data {
             store::Data::Bytes(bytes) => {
                 let n = &bytes.stored_name[..];
@@ -527,7 +541,29 @@ pub mod store {
         pub data: Data,
         pub mime_type: MimeType,
         pub ref_count: bun_ptr::ThreadSafeRefCount<Store>,
-        pub is_all_ascii: Option<bool>,
+        pub is_all_ascii: IsAllAscii,
+    }
+
+    /// Tri-state "are the bytes all ASCII", learned lazily by whichever
+    /// thread's dupe reads or writes the full store first.
+    #[derive(Default)]
+    pub struct IsAllAscii(core::sync::atomic::AtomicU8);
+
+    impl IsAllAscii {
+        #[inline]
+        pub fn get(&self) -> Option<bool> {
+            match self.0.load(core::sync::atomic::Ordering::Relaxed) {
+                0 => None,
+                v => Some(v == 2),
+            }
+        }
+        #[inline]
+        pub fn set(&self, is_all_ascii: bool) {
+            self.0.store(
+                1 + u8::from(is_all_ascii),
+                core::sync::atomic::Ordering::Relaxed,
+            );
+        }
     }
 
     /// Backing data for a `Store`.
@@ -688,14 +724,6 @@ pub mod store {
         }
 
         #[inline]
-        pub fn init_empty_with_name(name: Box<[u8]>) -> Bytes {
-            Bytes {
-                stored_name: name,
-                ..Default::default()
-            }
-        }
-
-        #[inline]
         pub fn allocator(&self) -> bun_alloc::StdAllocator {
             self.allocator
         }
@@ -804,7 +832,7 @@ pub mod store {
     pub struct S3 {
         pub pathlike: PathLike<'static>,
         pub(crate) mime_type: MimeType,
-        pub(crate) credentials: Option<Rc<bun_s3_signing::S3Credentials>>,
+        pub(crate) credentials: Option<RefPtr<bun_s3_signing::S3Credentials>>,
         pub options: bun_s3_signing::MultiPartUploadOptions,
         pub acl: Option<bun_s3_signing::ACL>,
         pub storage_class: Option<bun_s3_signing::StorageClass>,
@@ -812,7 +840,7 @@ pub mod store {
     }
 
     impl S3 {
-        pub fn get_credentials(&self) -> &Rc<bun_s3_signing::S3Credentials> {
+        pub fn get_credentials(&self) -> &RefPtr<bun_s3_signing::S3Credentials> {
             debug_assert!(self.credentials.is_some());
             self.credentials.as_ref().unwrap()
         }
@@ -848,8 +876,7 @@ pub mod store {
             credentials: bun_s3_signing::S3Credentials,
         ) -> S3 {
             S3 {
-                // Heap-allocate a fresh refcounted copy.
-                credentials: Some(Rc::new(credentials)),
+                credentials: Some(RefPtr::new(credentials)),
                 pathlike,
                 mime_type: mime_type.unwrap_or(bun_http_types::MimeType::OTHER),
                 options: bun_s3_signing::MultiPartUploadOptions::default(),
@@ -875,7 +902,7 @@ pub mod store {
                 data: Data::Bytes(Bytes::init(bytes)),
                 mime_type: bun_http_types::MimeType::NONE,
                 ref_count: bun_ptr::ThreadSafeRefCount::init(),
-                is_all_ascii: None,
+                is_all_ascii: IsAllAscii::default(),
             })
         }
 

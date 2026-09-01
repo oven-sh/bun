@@ -26,6 +26,7 @@ pub mod jsc {
 // ─── runtime submodules ──────────────────────────────────────────────────
 pub mod allocators; // moved from bun_alloc (tier-0 → bun_core/sys/runtime back-edge)
 pub mod crypto;
+mod cuid2;
 pub mod ffi;
 #[path = "node.rs"]
 pub mod node;

@@ -906,8 +906,6 @@ impl CompletionStruct for JSBundleCompletionTask {
 
         transpiler.options.env.behavior = config.env_behavior;
         transpiler.options.env.prefix = Box::from(config.env_prefix.list.as_slice());
-        // `bundler_feature_flags` is set by `BundleOptions::from_api` from
-        // `TransformOptions.feature_flags` (see `create_and_configure_transpiler`).
         if config.force_node_env != options::ForceNodeEnv::Unspecified {
             transpiler.options.force_node_env = config.force_node_env;
         }

@@ -39,6 +39,11 @@ function withoutMacroDebugLines(stdout: string) {
     .join("\n");
 }
 
+// Kill switch for the child processes: a deadlock hangs the child forever. Kill it so the
+// assertions fail with a clear message instead of the whole file hanging.
+const killSwitch = { timeout: 60_000, killSignal: "SIGKILL" } as const;
+const hungMessage = "the child hung and was killed after 60s";
+
 // The outer Bun.build runs in a child process: before the fix it deadlocked the bundler
 // thread, and an in-process deadlock would take the test runner down with it.
 test.concurrent("Bun.build from macro during bundling throws instead of hanging", async () => {
@@ -66,14 +71,11 @@ if (!result.success) {
     env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",
-    // Kill switch: a regression hangs the child forever. Kill it so the assertions below
-    // fail instead of the whole file hanging.
-    timeout: 60_000,
-    killSignal: "SIGKILL",
+    ...killSwitch,
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(proc.signalCode, "the child hung and was killed after 60s").toBeNull();
+  expect(proc.signalCode, hungMessage).toBeNull();
   expect(normalizeBunSnapshot(withoutMacroDebugLines(stdout), String(dir))).toMatchInlineSnapshot(`
     "BUILD_SUCCESS
     // index.ts
@@ -98,9 +100,11 @@ test.concurrent("CLI bun build with macro that calls Bun.build also throws", asy
     env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",
+    ...killSwitch,
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+  expect(proc.signalCode, hungMessage).toBeNull();
   // With no --outdir the CLI writes the bundle to stdout and prints no summary.
   expect(normalizeBunSnapshot(withoutMacroDebugLines(stdout), String(dir))).toMatchInlineSnapshot(`
     "// index.ts

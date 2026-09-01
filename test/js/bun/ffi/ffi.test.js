@@ -1,6 +1,16 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync } from "fs";
-import { bunEnv, bunExe, compileFixture, isDebug, isGlibcVersionAtLeast, isWindows, tempDir } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  compileFixture,
+  isDebug,
+  isGlibcVersionAtLeast,
+  isMacOS,
+  isMusl,
+  isWindows,
+  tempDir,
+} from "harness";
 import { platform } from "os";
 
 import {
@@ -1398,46 +1408,44 @@ describe.if(!!libPath)("can open more than 63 symbols via", () => {
 // indexed storage of `symbols`. A named property of the same spelling shows up
 // in Object.keys() but `symbols[0]` cannot find it.
 describe("symbols named like an array index", () => {
-  it("linkSymbols() stores the function under the index", () => {
+  // A `ptr` field skips the dlsym lookup, so any loadable library works for dlopen.
+  const systemLib = isWindows
+    ? "kernel32.dll"
+    : isMacOS
+      ? "libSystem.B.dylib"
+      : isMusl
+        ? process.arch === "arm64"
+          ? "libc.musl-aarch64.so.1"
+          : "libc.musl-x86_64.so.1"
+        : "libc.so.6";
+
+  it.each([
+    ["linkSymbols()", map => linkSymbols(map)],
+    ["dlopen()", map => dlopen(systemLib, map)],
+  ])("%s stores the function under the index", (_, open) => {
     let calls = 0;
-    const callback = new JSCallback(() => void calls++, { args: [], returns: "void" });
+    const callback = new JSCallback(() => ++calls, { args: [], returns: "int32_t" });
     try {
-      const lib = linkSymbols({ "0": { ptr: callback.ptr, args: [], returns: "void" } });
+      const fn = { ptr: callback.ptr, args: [], returns: "int32_t" };
+      // 4294967294 is the last array index. 4294967295 (2^32 - 1) is the first name that is not one.
+      const lib = open({ "0": fn, named: fn, "4294967294": fn, "4294967295": fn });
       try {
-        expect(Object.keys(lib.symbols)).toEqual(["0"]);
-        expect(typeof lib.symbols[0]).toBe("function");
-        expect(lib.symbols["0"]).toBe(lib.symbols[0]);
-        expect(0 in lib.symbols).toBe(true);
-        lib.symbols[0]();
-        expect(calls).toBe(1);
+        const { symbols } = lib;
+        // Index keys come first, in ascending order. The rest keep insertion order.
+        expect(Object.keys(symbols)).toEqual(["0", "4294967294", "named", "4294967295"]);
+        expect([typeof symbols[0], typeof symbols[4294967294], typeof symbols[4294967295]]).toEqual([
+          "function",
+          "function",
+          "function",
+        ]);
+        expect(symbols["0"]).toBe(symbols[0]);
+        expect([0 in symbols, 4294967294 in symbols, Object.hasOwn(symbols, "0")]).toEqual([true, true, true]);
+        expect([symbols[0](), symbols[4294967294](), symbols.named(), symbols[4294967295]()]).toEqual([1, 2, 3, 4]);
       } finally {
         lib.close();
       }
     } finally {
       callback.close();
-    }
-  });
-
-  it.if(!!libPath)("dlopen() stores a ptr-backed symbol under the index", () => {
-    const source = dlopen(libPath, { strlen: libSymbols.strlen });
-    try {
-      const { strlen } = source.symbols;
-      const lib = dlopen(libPath, {
-        "0": { ptr: strlen.ptr, args: ["ptr"], returns: "usize" },
-        "4294967294": { ptr: strlen.ptr, args: ["ptr"], returns: "usize" },
-        strlen: libSymbols.strlen,
-      });
-      try {
-        expect(Object.keys(lib.symbols).sort()).toEqual(["0", "4294967294", "strlen"]);
-        expect(typeof lib.symbols[0]).toBe("function");
-        expect(typeof lib.symbols[4294967294]).toBe("function");
-        expect(lib.symbols[0](Buffer.from("bunbun\0", "ascii"))).toBe(6n);
-        expect(lib.symbols["4294967294"](Buffer.from("bun\0", "ascii"))).toBe(3n);
-      } finally {
-        lib.close();
-      }
-    } finally {
-      source.close();
     }
   });
 });

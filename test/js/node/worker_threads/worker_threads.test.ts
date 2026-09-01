@@ -368,7 +368,11 @@ test("argv option is read by index, like Node", async () => {
   const src = `require("node:worker_threads").parentPort.postMessage(process.argv.slice(2))`;
   const argvs = [
     new Proxy(["a", "b"], {}),
-    Object.assign(["a", "b"], { [Symbol.iterator]: function* () { yield "from-iterator"; } }),
+    Object.assign(["a", "b"], {
+      [Symbol.iterator]: function* () {
+        yield "from-iterator";
+      },
+    }),
     Object.setPrototypeOf(["a", "b"], null),
   ];
   const workers = argvs.map(argv => new Worker(src, { eval: true, argv }));

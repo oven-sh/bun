@@ -259,8 +259,8 @@ pub fn prune(manager: &mut PackageManager, original_cwd: &[u8]) -> crate::Result
     manager.options.enable.set(Enable::FROZEN_LOCKFILE, true);
     manager.summary = exit_unless_lockfile_matches_package_json(manager, "prune")?;
 
-    let store_present = match Dir::open(ROOT_DIR) {
-        Ok(node_modules) => lstat_kind(&node_modules, b".bun") == EntryKind::Directory,
+    let node_modules = match Dir::open(ROOT_DIR) {
+        Ok(node_modules) => node_modules,
         Err(err) if err.get_errno() == E::ENOENT => {
             if !quiet {
                 Output::flush();
@@ -279,13 +279,12 @@ pub fn prune(manager: &mut PackageManager, original_cwd: &[u8]) -> crate::Result
         }
     };
 
-    let layout = match linker {
+    let configured = match linker {
         NodeLinker::Isolated => Layout::Isolated,
         _ => Layout::Hoisted,
     };
-    if layout == Layout::Hoisted && store_present && store_has_entries() {
-        refuse_layout_mismatch(layout, quiet);
-    }
+    let layout = detect_layout(manager, &node_modules, configured);
+    drop(node_modules);
 
     let workspace_names = collect_workspace_names(manager);
     let selection = select_importers(manager, original_cwd);
@@ -296,10 +295,6 @@ pub fn prune(manager: &mut PackageManager, original_cwd: &[u8]) -> crate::Result
         Layout::Isolated => plan_isolated(manager, &workspace_names, selection.as_ref(), &mut plan),
     }
     Output::flush();
-
-    if layout_mismatch(&plan, layout, store_present) {
-        refuse_layout_mismatch(layout, quiet);
-    }
 
     let n = plan.removals.len();
     let checked = plan.checked;
@@ -368,32 +363,122 @@ pub fn prune(manager: &mut PackageManager, original_cwd: &[u8]) -> crate::Result
     Ok(())
 }
 
+// Store entries are symlinks into the global store when `globalStore` is on.
 fn store_has_entries() -> bool {
     let Ok(store) = Dir::open(STORE_DIR) else {
         return false;
     };
     read_entries(&store)
         .iter()
-        .any(|(name, kind)| *kind == EntryKind::Directory && split_store_key(name).1.is_some())
+        .any(|(name, _)| split_store_key(name).1.is_some())
 }
 
-fn refuse_layout_mismatch(layout: Layout, quiet: bool) -> ! {
-    if !quiet {
-        let (configured, actual) = match layout {
-            Layout::Hoisted => ("hoisted", "isolated"),
-            Layout::Isolated => ("isolated", "hoisted"),
-        };
-        Output::err_generic(
-            "node_modules was installed with the {s} linker, but bun prune would use the {s} linker",
-            (actual, configured),
-        );
-        bun_core::note!(
-            "run 'bun prune --linker {}' to prune it as-is, or 'bun install' to reinstall with the {} linker",
-            actual,
-            configured
-        );
+fn extracted(tag: ResolutionTag) -> bool {
+    matches!(
+        tag,
+        ResolutionTag::Npm
+            | ResolutionTag::LocalTarball
+            | ResolutionTag::RemoteTarball
+            | ResolutionTag::Git
+            | ResolutionTag::Github
+    )
+}
+
+fn lockfile_extracts(lockfile: &Lockfile, name: &[u8]) -> bool {
+    let name_hash = bun_semver::string::Builder::string_hash(name);
+    let Some(entry) = lockfile.package_index.get(&name_hash) else {
+        return false;
+    };
+    let ids: &[PackageID] = match entry {
+        PackageIndexEntry::Id(id) => core::slice::from_ref(id),
+        PackageIndexEntry::Ids(ids) => ids,
+    };
+    let pkg_res = lockfile.packages.items_resolution();
+    ids.iter().any(|&id| {
+        pkg_res
+            .get(id as usize)
+            .is_some_and(|res| extracted(res.tag))
+    })
+}
+
+/// What the importer folders (the root and workspace `node_modules`) say about how they were
+/// installed: the hoisted linker extracts packages into real directories there, the isolated
+/// linker links them into `node_modules/.bun`.
+#[derive(Default)]
+struct LayoutEvidence {
+    hoisted: bool,
+    isolated: bool,
+}
+
+impl LayoutEvidence {
+    fn mixed(&self) -> bool {
+        self.hoisted && self.isolated
     }
-    Global::exit(1);
+
+    fn scan(&mut self, lockfile: &Lockfile, dir: &Dir) {
+        let mut alias = Vec::new();
+        for (name, kind) in read_entries(dir) {
+            if self.mixed() {
+                return;
+            }
+            if name.first() == Some(&b'@') && kind == EntryKind::Directory {
+                let Ok(scope_dir) = dir.open_at(&name) else {
+                    continue;
+                };
+                for (inner, inner_kind) in read_entries(&scope_dir) {
+                    alias.clear();
+                    alias.extend_from_slice(&name);
+                    alias.push(b'/');
+                    alias.extend_from_slice(&inner);
+                    self.vote(lockfile, &scope_dir, &alias, &inner, inner_kind);
+                }
+                continue;
+            }
+            self.vote(lockfile, dir, &name, &name, kind);
+        }
+    }
+
+    // A link into a store that is gone is junk either linker's prune removes, not evidence.
+    fn vote(&mut self, lockfile: &Lockfile, dir: &Dir, alias: &[u8], name: &[u8], kind: EntryKind) {
+        match kind {
+            EntryKind::Directory if lockfile_extracts(lockfile, alias) => self.hoisted = true,
+            EntryKind::SymLink
+                if store_link_target(dir, name).is_some() && !is_dangling(dir, name) =>
+            {
+                self.isolated = true;
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Picks the planner from the layout on disk. `configured` (the linker `bun install` would use,
+/// or `--linker`) only decides when the folders hold both layouts.
+fn detect_layout(manager: &PackageManager, node_modules: &Dir, configured: Layout) -> Layout {
+    let lockfile: &Lockfile = &manager.lockfile;
+    let mut evidence = LayoutEvidence::default();
+    evidence.scan(lockfile, node_modules);
+    for pkg_id in 0..lockfile.packages.len() {
+        if evidence.mixed() {
+            break;
+        }
+        if is_pruned_workspace(manager, pkg_id) {
+            continue;
+        }
+        let Some(folder) = workspace_node_modules(lockfile, pkg_id as PackageID) else {
+            continue;
+        };
+        if let Ok(dir) = Dir::open(&folder) {
+            evidence.scan(lockfile, &dir);
+        }
+    }
+    match (evidence.isolated, evidence.hoisted) {
+        (true, false) => Layout::Isolated,
+        (false, true) => Layout::Hoisted,
+        (true, true) => configured,
+        (false, false) if store_has_entries() => Layout::Isolated,
+        (false, false) => Layout::Hoisted,
+    }
 }
 
 fn print_apply_hint() {
@@ -860,7 +945,14 @@ impl<'a> HoistedTree<'a> {
             ResolutionTag::Folder if kind == EntryKind::SymLink => return Installed::Matches,
             _ => {}
         }
-        let Some(package) = descend(&folder, alias) else {
+        // A link (an isolated install's, or the user's) counts as whatever it points at, as it does
+        // for the installer's own check.
+        let package = match kind {
+            EntryKind::SymLink if is_dangling(&folder, alias) => return Installed::Missing,
+            EntryKind::SymLink => folder.open_at(alias).ok(),
+            _ => descend(&folder, alias),
+        };
+        let Some(package) = package else {
             return Installed::Mismatch;
         };
         let expected_name = self.lockfile.packages.items_name()[pkg_id as usize].slice(buf);
@@ -1023,15 +1115,7 @@ fn plan_hoisted(
             {
                 continue;
             }
-            let extracted = matches!(
-                pkg_res[pkg_id as usize].tag,
-                ResolutionTag::Npm
-                    | ResolutionTag::LocalTarball
-                    | ResolutionTag::RemoteTarball
-                    | ResolutionTag::Git
-                    | ResolutionTag::Github
-            );
-            if !extracted || has_bundled_deps(lockfile, pkg_id) {
+            if !extracted(pkg_res[pkg_id as usize].tag) || has_bundled_deps(lockfile, pkg_id) {
                 continue;
             }
             let Some(nested) = descend(&dir, alias)
@@ -1723,17 +1807,6 @@ fn plan_isolated(
             plan,
         );
         plan.folders[folder_idx].direct = Some(direct);
-    }
-}
-
-fn layout_mismatch(plan: &Plan, layout: Layout, store_present: bool) -> bool {
-    match layout {
-        Layout::Isolated => {
-            !store_present && plan.removals.iter().any(|r| r.kind == EntryKind::Directory)
-        }
-        Layout::Hoisted => plan.removals.iter().any(|r| {
-            r.kind == EntryKind::SymLink && store_link_target(plan.dir(r.folder), &r.name).is_some()
-        }),
     }
 }
 

@@ -14,7 +14,7 @@ use crate::isolated_install::store::{EntryColumns as _, NodeColumns as _, entry 
 use crate::isolated_install::{Store, Timings, build_store};
 use crate::lockfile::package::PackageColumns as _;
 use crate::lockfile::tree::is_filtered_dependency_or_workspace;
-use crate::lockfile::{LoadResult, Lockfile, PackageIndexEntry, reachable, tree};
+use crate::lockfile::{LoadResult, Lockfile, reachable, tree};
 use crate::lockfile_real::package::{Diff, DiffSummary, Package};
 use crate::package_manager::Options::{Enable, LogLevel};
 use crate::package_manager::ROOT_PACKAGE_JSON_PATH;
@@ -389,12 +389,8 @@ fn lockfile_extracts(lockfile: &Lockfile, name: &[u8]) -> bool {
     let Some(entry) = lockfile.package_index.get(&name_hash) else {
         return false;
     };
-    let ids: &[PackageID] = match entry {
-        PackageIndexEntry::Id(id) => core::slice::from_ref(id),
-        PackageIndexEntry::Ids(ids) => ids,
-    };
     let pkg_res = lockfile.packages.items_resolution();
-    ids.iter().any(|&id| {
+    entry.as_slice().iter().any(|&id| {
         pkg_res
             .get(id as usize)
             .is_some_and(|res| extracted(res.tag))
@@ -998,12 +994,8 @@ impl<'a> HoistedTree<'a> {
         let Some(entry) = lockfile.package_index.get(&name_hash) else {
             return false;
         };
-        let ids: &[PackageID] = match entry {
-            PackageIndexEntry::Id(id) => core::slice::from_ref(id),
-            PackageIndexEntry::Ids(ids) => ids,
-        };
         let pkg_res = lockfile.packages.items_resolution();
-        ids.iter().any(|&id| {
+        entry.as_slice().iter().any(|&id| {
             pkg_res.get(id as usize).is_some_and(|res| {
                 res.tag == ResolutionTag::Npm
                     && without_build(version)

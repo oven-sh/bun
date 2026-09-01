@@ -299,6 +299,14 @@ pub struct FilePoll {
     pub(crate) next_to_free: *mut FilePoll,
 
     pub(crate) allocator_type: AllocatorType,
+
+    /// The loop this poll is registered with and counted on (`activate`).
+    /// Null while unregistered. Teardown goes through this loop, not through
+    /// the ctx of the moment: `Bun.spawnSync` installs its private loop as
+    /// `vm.event_loop_handle` for the duration of the call, and a poll torn
+    /// down inside that window (a GC sweep finalizing its owner) must still
+    /// leave the loop it was registered with.
+    loop_: *mut Loop,
 }
 
 #[cfg(not(windows))]
@@ -445,11 +453,30 @@ impl FilePoll {
                 || self.flags.contains(Flags::PollProcess))
     }
 
+    /// The loop this poll is registered with, or `fallback` while it is not
+    /// registered. Every counter this poll moved lives on the returned loop.
+    ///
+    /// Returns a raw pointer: `fallback` may be that same loop, and the caller
+    /// forms the one `&mut Loop` it needs from the result.
+    #[inline]
+    fn counted_loop(&self, fallback: *mut Loop) -> *mut Loop {
+        if self.loop_.is_null() {
+            fallback
+        } else {
+            self.loop_
+        }
+    }
+
     /// This decrements the active counter if it was previously incremented
     /// "active" controls whether or not the event loop should potentially idle
     pub fn disable_keeping_process_alive(&mut self, event_loop_ctx: EventLoopCtx) {
-        event_loop_ctx
-            .loop_sub_active(self.flags.contains(Flags::HasIncrementedActiveCount) as u32);
+        // SAFETY: the registered loop (or the ctx's) is the live per-thread
+        // loop; leaf op, no other `&mut Loop` is held across it.
+        let loop_ = unsafe { &mut *self.counted_loop(event_loop_ctx.loop_()) };
+        loop_sub_active(
+            loop_,
+            self.flags.contains(Flags::HasIncrementedActiveCount) as u32,
+        );
 
         self.flags.remove(Flags::KeepsEventLoopAlive);
         self.flags.remove(Flags::HasIncrementedActiveCount);
@@ -460,8 +487,12 @@ impl FilePoll {
             return;
         }
 
-        event_loop_ctx
-            .loop_add_active((!self.flags.contains(Flags::HasIncrementedActiveCount)) as u32);
+        // SAFETY: as in `disable_keeping_process_alive`.
+        let loop_ = unsafe { &mut *self.counted_loop(event_loop_ctx.loop_()) };
+        loop_add_active(
+            loop_,
+            (!self.flags.contains(Flags::HasIncrementedActiveCount)) as u32,
+        );
 
         self.flags.insert(Flags::KeepsEventLoopAlive);
         self.flags.insert(Flags::HasIncrementedActiveCount);
@@ -469,6 +500,9 @@ impl FilePoll {
 
     /// Only intended to be used from EventLoop.Pollable
     fn deactivate(&mut self, loop_: &mut Loop) {
+        // SAFETY: the registered loop is the live per-thread loop this poll
+        // counted on in `activate`; `loop_` is not used again below.
+        let loop_ = unsafe { &mut *self.counted_loop(loop_) };
         if self.flags.contains(Flags::HasIncrementedPollCount) {
             loop_.dec();
         }
@@ -480,11 +514,13 @@ impl FilePoll {
         );
         self.flags.remove(Flags::KeepsEventLoopAlive);
         self.flags.remove(Flags::HasIncrementedActiveCount);
+        self.loop_ = ptr::null_mut();
     }
 
     /// Only intended to be used from EventLoop.Pollable
     fn activate(&mut self, loop_: &mut Loop) {
         self.flags.remove(Flags::Closed);
+        self.loop_ = loop_;
 
         if !self.flags.contains(Flags::HasIncrementedPollCount) {
             loop_.inc();
@@ -516,6 +552,7 @@ impl FilePoll {
             owner,
             next_to_free: ptr::null_mut(),
             allocator_type: if vm.is_js() { AllocatorType::Js } else { AllocatorType::Mini },
+            loop_: ptr::null_mut(),
             #[cfg(all(target_os = "macos", debug_assertions))]
             // Single-threaded event loop so `Relaxed` ordering is sufficient.
             generation_number: MAX_GENERATION_NUMBER
@@ -592,6 +629,10 @@ impl FilePoll {
         one_shot: OneShotFlag,
         fd: Fd,
     ) -> sys::Result<()> {
+        // A re-registration (CTL_MOD / rearm) must go to the loop the fd is
+        // already registered with.
+        // SAFETY: as in `deactivate`; `loop_` is not used again below.
+        let loop_ = unsafe { &mut *self.counted_loop(loop_) };
         let watcher_fd = loop_.fd;
 
         syslog!(
@@ -866,6 +907,10 @@ impl FilePoll {
         fd: Fd,
         force_unregister: bool,
     ) -> sys::Result<()> {
+        // Deregister from the loop the fd was registered with, which is not
+        // the caller's loop while spawnSync has its private loop installed.
+        // SAFETY: as in `deactivate`; `loop_` is not used again below.
+        let loop_ = unsafe { &mut *self.counted_loop(loop_) };
         // Note: compute the syscall result first, then unconditionally
         // deactivate. Avoids a raw-pointer scopeguard.
         #[cfg(any(

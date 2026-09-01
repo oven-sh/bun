@@ -1,8 +1,26 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isWindows } from "harness";
 import { join } from "node:path";
 
 describe.concurrent("spawnSync isolated event loop", () => {
+  // The fixture needs mkfifo.
+  test.skipIf(isWindows)(
+    "a poll torn down by a GC inside spawnSync leaves the loop it was registered with",
+    async () => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), join(import.meta.dir, "spawnSync-poll-teardown-fixture.js")],
+        env: { ...bunEnv, BUN_JSC_sweepSynchronously: "1", BUN_FEATURE_FLAG_DISABLE_SPAWNSYNC_FAST_PATH: "1" },
+        stderr: "inherit",
+        stdout: "pipe",
+      });
+
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+      expect(stdout).toBe("OK\n");
+      expect(exitCode).toBe(0);
+    },
+  );
+
   test("JavaScript timers should not fire during spawnSync", async () => {
     await using proc = Bun.spawn({
       cmd: [
@@ -119,6 +137,8 @@ describe.concurrent("spawnSync isolated event loop", () => {
     expect(exitCode).toBe(0);
   });
 
+  // collectContinuously keeps the collector busy for the whole fixture; a debug
+  // build needs more than the default 5s for these two.
   test("GC finishing inside spawnSync does not move the main loop's keep-alive count", async () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), join(import.meta.dir, "spawnSync-keepalive-gc-fixture.js")],
@@ -132,7 +152,7 @@ describe.concurrent("spawnSync isolated event loop", () => {
 
     expect(stdout).toBe("OK\n");
     expect(exitCode).toBe(0);
-  });
+  }, 30_000);
 
   test("spawnSync under GC pressure with a worker and a server keeps the main loop balanced and exits", async () => {
     await using proc = Bun.spawn({
@@ -146,7 +166,7 @@ describe.concurrent("spawnSync isolated event loop", () => {
 
     expect(stdout).toBe("OK\n");
     expect(exitCode).toBe(0);
-  });
+  }, 30_000);
 
   test("multiple spawnSync calls should each use isolated event loop", async () => {
     await using proc = Bun.spawn({

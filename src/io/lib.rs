@@ -392,20 +392,12 @@ impl EventLoopCtx {
         self.loop_mut().ref_();
     }
     #[inline]
-    #[cfg(not(windows))]
-    pub(crate) fn loop_unref(&self) {
-        self.loop_mut().unref();
-    }
-    #[inline]
     #[cfg(windows)]
-    pub(crate) fn loop_dec(&self) {
-        self.loop_mut().dec();
-    }
-    #[inline]
     pub(crate) fn loop_add_active(&self, n: u32) {
         self.loop_mut().add_active(n);
     }
     #[inline]
+    #[cfg(windows)]
     pub(crate) fn loop_sub_active(&self, n: u32) {
         self.loop_mut().sub_active(n);
     }

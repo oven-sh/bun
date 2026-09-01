@@ -189,8 +189,13 @@ impl TimerObjectInternals {
 
         let state = crate::jsc_hooks::runtime_state();
         debug_assert!(!state.is_null(), "RuntimeState not installed");
-        // SAFETY: `vm` is the live per-thread VM (hook contract); field read only.
-        let uws_loop = unsafe { (*vm).uws_loop() };
+        // Timers live on the VM's own loop. Resolve it through the regular
+        // event loop, not `vm.uws_loop()`: `Bun.spawnSync` points
+        // `vm.event_loop_handle` at its private loop for the duration of the
+        // call, and a timer can be dropped inside that window by a GC sweep.
+        // SAFETY: `vm` is the live per-thread VM (hook contract); its regular
+        // loop's uws loop is set in `VirtualMachine::init`.
+        let uws_loop = unsafe { (*vm).regular_event_loop.usockets_loop() };
         let delta = if enable { 1 } else { -1 };
         match self.flags.get().kind() {
             // SAFETY: `state` points at the boxed per-thread `RuntimeState`;

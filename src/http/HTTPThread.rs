@@ -1,12 +1,14 @@
 use core::ffi::c_void;
 use core::ptr::NonNull;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::net::IpAddr;
+use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 use std::time::Instant;
 
 use bun_collections::ArrayHashMap;
 use bun_core::{self, Output};
 use bun_ptr::RefPtr;
-use bun_threading::{Mutex, UnboundedQueue};
+use bun_threading::{Guarded, Mutex, UnboundedQueue};
+use bun_url::URL;
 use bun_uws as uws;
 
 use crate::async_http::{ACTIVE_REQUESTS_COUNT, MAX_SIMULTANEOUS_REQUESTS};
@@ -19,6 +21,20 @@ use crate::{AsyncHttp, HTTPContext, HttpClient, InitError, NewHttpContext, h2, h
 // .visible) are split into two scope names.
 bun_core::declare_scope!(HTTPThread, hidden); // threadlog
 bun_core::declare_scope!(HTTPThread_log, visible); // log
+
+// Published once after `on_start` finishes initializing the uSockets loop.
+// Keeping the cross-thread waker separate from `HttpThread` lets producers
+// wake the loop without creating a shared reference to the thread-confined
+// state while `process_events(&mut self)` is running.
+static HTTP_LOOP_WAKER: AtomicPtr<uws::Loop> = AtomicPtr::new(core::ptr::null_mut());
+
+#[inline]
+fn is_supported_proxy_protocol(proxy: &URL<'_>) -> bool {
+    proxy.href.is_empty()
+        || proxy.protocol.is_empty()
+        || proxy.has_http_like_protocol()
+        || proxy.is_socks()
+}
 
 /// SSL context cache keyed by interned SSLConfig pointer.
 /// Since configs are interned via `ssl_config::global_registry`, pointer
@@ -209,6 +225,19 @@ pub struct ShutdownMessage {
 pub struct CertCheckResumeMessage {
     pub(crate) async_http_id: u32,
 }
+
+/// One completed off-thread SOCKS hostname lookup, handed from the DNS worker
+/// to the HTTP thread.
+pub(crate) struct Socks5DnsResult {
+    pub(crate) resolution_id: u32,
+    pub(crate) address: Option<IpAddr>,
+}
+
+/// Completed lookups awaiting the HTTP thread. Process-lifetime static for the
+/// same reason as h3's `RESOLVED` (h3_client/PendingConnect.rs): workers can
+/// finish while the event loop owns its `&mut HttpThread`, and projecting into
+/// that struct from another thread would alias it. Plain data under a mutex.
+static SOCKS5_DNS_RESULTS: Guarded<Vec<Socks5DnsResult>> = Guarded::new(Vec::new());
 
 pub struct LibdeflateState {
     pub(crate) decompressor: Option<bun_libdeflate_sys::libdeflate::OwnedDecompressor>,
@@ -480,8 +509,8 @@ impl HttpThread {
         if let Some(url) = client.http_proxy.clone() {
             if !url.href.is_empty() {
                 // https://github.com/oven-sh/bun/issues/11343
-                if url.protocol.is_empty() || url.has_http_like_protocol() {
-                    return ctx.connect(client, url.hostname, url.get_port_auto());
+                if is_supported_proxy_protocol(&url) {
+                    return ctx.connect(client, url.hostname, url.get_proxy_port_auto());
                 }
                 return Err(crate::Error::UnsupportedProxyProtocol);
             }
@@ -760,6 +789,7 @@ impl HttpThread {
         // turn removes the abort-tracker entry first, so the resume becomes a
         // no-op and the request is never transmitted after a same-tick abort.
         self.drain_queued_cert_check_resumes();
+        self.drain_socks5_dns_results();
         h3::PendingConnect::drain_resolved();
 
         self.queued_threadlocal_proxy_derefs.clear();
@@ -848,6 +878,30 @@ impl HttpThread {
 
         if cfg!(debug_assertions) && count > 0 {
             bun_core::scoped_log!(HTTPThread_log, "Processed {} tasks\n", count);
+        }
+    }
+
+    fn drain_socks5_dns_results(&mut self) {
+        for result in core::mem::take(&mut *SOCKS5_DNS_RESULTS.lock()) {
+            // SAFETY: every pointer in `in_flight` is a live, HTTP-thread-owned
+            // allocation until its completion callback removes it below. The
+            // resolution ID is unique among active SOCKS lookups, unlike
+            // `async_http_id`, which is zero when abort tracking is disabled.
+            let client = self.in_flight.iter().copied().find(|ptr| unsafe {
+                ptr.as_ref().async_http.client.socks5_resolution_id == result.resolution_id
+            });
+            if let Some(ptr) = client {
+                // SAFETY: `ptr` is a live, HTTP-thread-owned in-flight
+                // allocation. The callback may complete and remove this entry
+                // from `in_flight` (and free it), so keep only the raw pointer
+                // across the call and do not touch `ptr` afterwards.
+                unsafe {
+                    (*ptr.as_ptr())
+                        .async_http
+                        .client
+                        .resume_socks5_resolution(result.resolution_id, result.address);
+                }
+            }
         }
     }
 
@@ -962,6 +1016,7 @@ impl HttpThread {
                 drop(core::mem::take(&mut client.prev_redirect));
                 drop(core::mem::take(&mut client.compressed_request_body));
                 drop(core::mem::take(&mut client.proxy_authorization));
+                client.socks5 = None;
                 client.close_proxy_tunnel(false);
                 drop(core::mem::take(&mut client.custom_ssl_ctx));
                 drop(core::mem::take(&mut client.state));
@@ -977,24 +1032,47 @@ impl HttpThread {
     }
 
     pub(crate) fn wakeup(&self) {
-        // Acquire (not Relaxed): pairs with the Release store in `on_start`
-        // so the read of `self.uws_loop` (a non-atomic field set there)
-        // observes the published value. This is the canonical "Relaxed gives
-        // no happens-before for the init it guards" case.
-        if self.has_awoken.load(Ordering::Acquire) {
-            // SAFETY: uws_loop is the live HTTP-thread loop set in on_start.
-            // Call the raw extern (not `Loop::wakeup(&mut self)`) — this runs
-            // cross-thread while the HTTP thread owns the loop, so forming
-            // `&mut Loop` here would alias.
-            unsafe { uws::us_wakeup_loop(self.uws_loop) };
+        Self::wakeup_thread();
+    }
+
+    #[inline]
+    fn wakeup_thread() {
+        // Acquire pairs with `on_start`'s Release publication. A null pointer
+        // means the event loop is not ready yet; it will drain work when it
+        // starts running.
+        let uws_loop = HTTP_LOOP_WAKER.load(Ordering::Acquire);
+        if uws_loop.is_null() {
+            return;
         }
+        // SAFETY: `uws_loop` is the process-lifetime uSockets loop published
+        // by `on_start`. `us_wakeup_loop` is the thread-safe raw wakeup entry
+        // point and does not create an aliased `&mut uws::Loop`.
+        unsafe { uws::us_wakeup_loop(uws_loop) };
+    }
+
+    /// Publish an off-thread SOCKS hostname lookup result back to the HTTP
+    /// event loop. Safe to call from any thread, including before `on_start`
+    /// has published the loop: the result lands behind `SOCKS5_DNS_RESULTS`'s
+    /// mutex and is drained by `drain_events` on the first tick even if the
+    /// wakeup is a no-op. The request may have completed while the lookup was
+    /// in flight; `drain_socks5_dns_results` ignores stale resolution IDs.
+    pub(crate) fn schedule_socks5_dns_result(resolution_id: u32, address: Option<IpAddr>) {
+        SOCKS5_DNS_RESULTS.lock().push(Socks5DnsResult {
+            resolution_id,
+            address,
+        });
+        // Unconditional: an extra wakeup on an already-awake (or not-yet-born)
+        // loop costs one pipe write, which is cheaper to reason about than a
+        // coalescing protocol. The Acquire-null check inside makes this a
+        // no-op before `on_start`.
+        Self::wakeup_thread();
     }
 
     /// Enqueue a batch of `AsyncHttp` tasks for the HTTP thread. Safe to
     /// call from any thread: only touches the lock-free `queued_tasks` MPSC
-    /// queue and `wakeup()` (atomic load + raw FFI call). This is the
-    /// **only** cross-thread entry point — every other `HttpThread` method
-    /// is HTTP-thread-only via [`http_thread()`](crate::http_thread).
+    /// queue and `wakeup()` (atomic load + raw FFI call). Other cross-thread
+    /// producers publish through their own synchronized queues; ordinary
+    /// `HttpThread` methods remain HTTP-thread-only.
     pub fn schedule(batch: bun_threading::thread_pool::Batch) {
         if batch.len == 0 {
             return;
@@ -1236,8 +1314,10 @@ mod _event_loop_draft {
             // none).
             thread.lazy_https_init = Some(opts);
         }
-        // Release: publishes `uws_loop`/`loop_` to cross-thread `wakeup()`
-        // readers (which Acquire-load `has_awoken`).
+        // Publish the dedicated cross-thread wakeup pointer only after every
+        // loop-dependent field is initialized. The uSockets loop outlives the
+        // HTTP thread and remains valid until process exit.
+        HTTP_LOOP_WAKER.store(thread.uws_loop, Ordering::Release);
         thread.has_awoken.store(true, Ordering::Release);
         thread.process_events();
     }

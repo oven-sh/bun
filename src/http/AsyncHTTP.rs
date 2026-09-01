@@ -184,6 +184,9 @@ fn make_client<'a>(
         proxy_headers,
         proxy_authorization: None,
         proxy_tunnel: None,
+        socks5: None,
+        socks5_resolution_pending: false,
+        socks5_resolution_id: 0,
         h2: None,
         h3: None,
         pending_h2: None,
@@ -476,6 +479,19 @@ impl<'a> AsyncHTTP<'a> {
         }
         if let Some(val) = options.disable_keepalive {
             this.client.flags.disable_keepalive = val;
+            this.client.flags.set_explicit_keepalive_disabled(val);
+        }
+        // SOCKS negotiation cannot safely reuse a pooled socket and must not
+        // advertise HTTP keepalive semantics on the initial attempt. Preserve
+        // an explicit disable_keepalive=true while forcing the transport off
+        // for every SOCKS request.
+        if this
+            .client
+            .http_proxy
+            .as_ref()
+            .is_some_and(bun_url::URL::is_socks)
+        {
+            this.client.flags.enter_socks_keepalive_scope();
         }
         if let Some(val) = options.reject_unauthorized {
             this.client.flags.reject_unauthorized = val;
@@ -740,6 +756,7 @@ impl<'a> AsyncHTTP<'a> {
                     drop(core::mem::take(&mut client.prev_redirect));
                     drop(core::mem::take(&mut client.compressed_request_body));
                     drop(core::mem::take(&mut client.proxy_authorization));
+                    client.socks5 = None;
                     client.close_proxy_tunnel(false);
                     debug_assert!(client.h2.is_none());
                     drop(core::mem::take(&mut client.custom_ssl_ctx));
@@ -824,7 +841,9 @@ impl<'a> AsyncHTTP<'a> {
         // `reevaluate_proxy_for_redirect` can freely drop/replace it. The
         // original's copy stays `None`.
         debug_assert!(self.client.proxy_authorization.is_none());
-        if let Some(proxy) = &self.client.http_proxy {
+        if let Some(proxy) = &self.client.http_proxy
+            && !proxy.is_socks()
+        {
             self.client.proxy_authorization = build_proxy_authorization(proxy);
         }
 

@@ -4,6 +4,7 @@ const { isUint8Array } = require("node:util/types");
 
 const RegExpPrototypeExec = RegExp.prototype.exec;
 const ArrayIsArray = Array.isArray;
+const Uint8ArrayPrototypeIncludes = Uint8Array.prototype.includes;
 
 const tokenRegExp = /^[\^_`a-zA-Z\-0-9!#$%&'*+.|~]+$/;
 /**
@@ -111,7 +112,7 @@ function getValidatedFsPath(p: any, propName: string = "path") {
     return p;
   }
   if (isUint8Array(p)) {
-    if (p.indexOf(0) !== -1) {
+    if (Uint8ArrayPrototypeIncludes.$call(p, 0)) {
       throw $ERR_INVALID_ARG_VALUE(propName, p, "must be a string, Uint8Array, or URL without null bytes");
     }
     return p;

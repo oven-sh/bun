@@ -712,13 +712,11 @@ impl NetworkTask {
         Ok(())
     }
 
-    /// Moves the fully written header block into `self.header_buf` and returns the
-    /// view of it that the HTTP thread reads.
-    fn store_header_buf(&mut self, header_builder: &mut HeaderBuilder) -> &'static [u8] {
+    /// Moves the fully written header block into `self.header_buf` and returns a view of it.
+    fn store_header_buf<'a>(&'a mut self, header_builder: &mut HeaderBuilder) -> &'a [u8] {
         debug_assert_eq!(header_builder.content.len, header_builder.content.cap);
         self.header_buf = header_builder.content.move_to_slice();
-        // SAFETY: `self.header_buf` outlives the request; it is freed when the slot returns to the pool.
-        unsafe { bun_ptr::detach_lifetime(&*self.header_buf) }
+        &self.header_buf
     }
 
     pub(crate) fn get_completion_callback(&mut self) -> HTTPClientResultCallback {
@@ -850,7 +848,7 @@ impl NetworkTask {
         let mut header_builder = HeaderBuilder::default();
 
         // Configured credentials win over the URL's userinfo, as in npm.
-        let header_buf: &'static [u8] = match (credentials, url_authorization) {
+        let header_buf: &[u8] = match (credentials, url_authorization) {
             (Some(credentials), _) => {
                 count_auth(&mut header_builder, credentials);
                 header_builder.allocate()?;
@@ -868,6 +866,12 @@ impl NetworkTask {
                 b""
             }
         };
+        // SAFETY: lifetime extension. `header_buf` is `b""` or a view of the heap
+        // allocation `self.header_buf` owns, which is freed only when the slot returns
+        // to the pool, after the request completes. `AsyncHTTP::init` demands a
+        // `'static` borrow because the HTTP thread reads it concurrently, as for
+        // `url_buf` below.
+        let header_buf: &'static [u8] = unsafe { bun_ptr::detach_lifetime(header_buf) };
 
         // SAFETY: lifetime extension — `url_buf` is a heap allocation owned by
         // `*self`, which outlives the HTTP request. `AsyncHTTP::init` demands a

@@ -578,6 +578,7 @@ impl Snapshots {
                         &vm.transpiler.options.define,
                         lexer,
                         opts,
+                        false,
                     )?;
                     // SAFETY: `init` returned `Ok`, so `*__parser_slot` is initialized;
                     // the guard's drop closure is the sole owner of the slot from here.

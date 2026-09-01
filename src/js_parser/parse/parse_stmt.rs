@@ -24,7 +24,7 @@ type Result<T> = crate::CrateResult<T>;
 
 // The 25+ per-token `t_*` helpers are private; only `parse_stmt` is surfaced.
 
-impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
+impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
     // Note on `#[inline]` / `#[inline(never)]` / `#[cold]` annotations across the `t_*` arms:
     // `parse_stmt` is invoked once per leading statement token; profiling showed its
     // stack-adjust prologue/epilogue dominating because LLVM was hoisting the larger
@@ -33,8 +33,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     // trivial forwarders in so the `parse_stmts_up_to → parse_stmt → t_* → parse_*` chain
     // loses a hop on the hot statements (`;`, `function`, `var`, `const`, `return`, …).
     //
-    // `P` is monomorphized over `(TYPESCRIPT, SCAN_ONLY)` (JSX is a runtime field, not a
-    // type parameter — see `parser.rs`), so every `#[inline(never)]`
+    // `P` is monomorphized over `TYPESCRIPT` (JSX/scan_only are runtime fields, not
+    // type parameters — see `parser.rs`), so every `#[inline(never)]`
     // `t_*` becomes 2-3 sibling symbols that the linker would otherwise interleave with the
     // hot ones. Anything that can't fire on a plain `bun run` of a `.js`/`.ts` script — the
     // TS-only keyword forms (`enum`, `@decorator`, `type`/`namespace`/`module`/`declare`),
@@ -1258,7 +1258,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     );
                 }
 
-                if Self::TRACK_SYMBOL_USAGE_DURING_PARSE_PASS {
+                if p.track_symbol_usage_during_parse_pass() {
                     // In the scan pass, we need _some_ way of knowing *not* to mark as unused
                     p.import_records.items_mut()[import_record_index as usize]
                         .flags
@@ -1328,7 +1328,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         p.store_name_in_ref(p.arena.alloc_slice_copy(&buf))
                     };
 
-                    if Self::TRACK_SYMBOL_USAGE_DURING_PARSE_PASS {
+                    if p.track_symbol_usage_during_parse_pass() {
                         // In the scan pass, we need _some_ way of knowing *not* to mark as unused
                         p.import_records.items_mut()[import_record_index as usize]
                             .flags

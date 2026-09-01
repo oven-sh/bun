@@ -1819,11 +1819,11 @@ mod posix_impl {
             unsafe { libc::send(fd, buf, n, flags) }
         }
     }
-    // EINTR-retry: most wrappers loop on EINTR. NOT all — the macOS
-    // `$NOCANCEL` arms for open/openat/read/write/recv/send issue exactly one
-    // call and surface EINTR to the caller without looping. `check!` keeps the
-    // retry for the common path; `check_once!` is the single-shot variant for
-    // the Darwin arms.
+    // EINTR-retry: every wrapper loops on EINTR, matching libuv, so callers
+    // never see a raw EINTR (#41085). The macOS `$NOCANCEL` arms retry too:
+    // `$NOCANCEL` only opts out of pthread cancellation points, which is
+    // orthogonal to EINTR. The one exception is `close`, which must never be
+    // retried (see `close`).
     macro_rules! check {
         ($rc:expr, $tag:expr) => {{
             loop {
@@ -1872,27 +1872,6 @@ mod posix_impl {
             }
         }};
     }
-    // Single-shot: no EINTR retry (Darwin `$NOCANCEL` arms).
-    #[cfg(target_os = "macos")]
-    macro_rules! check_once {
-        ($rc:expr, $tag:expr) => {{
-            let rc = $rc;
-            if rc < 0 {
-                return Err(Error::from_code_int(last_errno(), $tag));
-            }
-            rc
-        }};
-    }
-    #[cfg(target_os = "macos")]
-    macro_rules! check_once_p {
-        ($rc:expr, $tag:expr, $path:expr) => {{
-            let rc = $rc;
-            if rc < 0 {
-                return Err(Error::from_code_int(last_errno(), $tag).with_path($path.as_bytes()));
-            }
-            rc
-        }};
-    }
 
     #[inline]
     pub fn open(path: &ZStr, flags: i32, mode: Mode) -> Maybe<Fd> {
@@ -1903,10 +1882,10 @@ mod posix_impl {
     }
     pub fn openat(dir: impl AsFd, path: &ZStr, flags: i32, mode: Mode) -> Maybe<Fd> {
         let dir = dir.as_fd();
-        // macOS: single `openat$NOCANCEL`, no EINTR retry.
+        // macOS: `openat$NOCANCEL`, retried on EINTR.
         #[cfg(target_os = "macos")]
         {
-            let rc = check_once_p!(
+            let rc = check_p!(
                 // SAFETY: `dir` is a live fd (or AT_FDCWD); `ZStr::as_ptr()` is
                 // a valid NUL-terminated C string.
                 unsafe { sys_openat(dir.native(), path.as_ptr(), flags, mode as libc::c_uint) },
@@ -2003,10 +1982,10 @@ mod posix_impl {
     }
     pub fn read(fd: Fd, buf: &mut [u8]) -> Maybe<usize> {
         let len = buf.len().min(MAX_COUNT);
-        // macOS: single `read$NOCANCEL`, no EINTR retry.
+        // macOS: `read$NOCANCEL`, retried on EINTR.
         #[cfg(target_os = "macos")]
         {
-            let n = check_once!(
+            let n = check!(
                 // SAFETY: `fd` is a live descriptor; `buf` is valid for `len` writes.
                 unsafe { sys_read(fd.native(), buf.as_mut_ptr().cast(), len) },
                 Tag::read
@@ -2029,10 +2008,10 @@ mod posix_impl {
     }
     pub fn write(fd: Fd, buf: &[u8]) -> Maybe<usize> {
         let len = buf.len().min(MAX_COUNT);
-        // macOS: single `write$NOCANCEL`, no EINTR retry.
+        // macOS: `write$NOCANCEL`, retried on EINTR.
         #[cfg(target_os = "macos")]
         {
-            let n = check_once!(
+            let n = check!(
                 // SAFETY: `fd` is a live descriptor; `buf` is valid for `len` reads.
                 unsafe { sys_write(fd.native(), buf.as_ptr().cast(), len) },
                 Tag::write
@@ -3038,9 +3017,9 @@ mod posix_impl {
     // exposed for shell/pipe IPC.
     pub(crate) fn recv(fd: Fd, buf: &mut [u8], flags: i32) -> Maybe<usize> {
         let len = buf.len().min(MAX_COUNT);
-        // macOS: single `recvfrom$NOCANCEL`, no EINTR retry.
+        // macOS: `recvfrom$NOCANCEL`, retried on EINTR.
         #[cfg(target_os = "macos")]
-        let n = check_once!(
+        let n = check!(
             // SAFETY: `fd` is a live socket; `buf` is valid for `len` writes.
             unsafe { sys_recv(fd.native(), buf.as_mut_ptr().cast(), len, flags) },
             Tag::recv
@@ -3057,9 +3036,9 @@ mod posix_impl {
     pub(crate) fn send(fd: Fd, buf: &[u8], flags: i32) -> Maybe<usize> {
         // `buf.len` is passed un-clamped (only `recv` clamps);
         // forward the full length and let the kernel decide.
-        // macOS: single `sendto$NOCANCEL`, no EINTR retry.
+        // macOS: `sendto$NOCANCEL`, retried on EINTR.
         #[cfg(target_os = "macos")]
-        let n = check_once!(
+        let n = check!(
             // SAFETY: `fd` is a live socket; `buf` is valid for `buf.len()` reads.
             unsafe { sys_send(fd.native(), buf.as_ptr().cast(), buf.len(), flags) },
             Tag::send
@@ -4461,9 +4440,8 @@ pub fn pwritev(fd: Fd, vecs: &[PlatformIoVecConst], offset: i64) -> Maybe<usize>
         // (asserted above); `pwritev(2)` only reads through `iov_base`.
         // Darwin uses `pwritev$NOCANCEL` (avoid cancellation point).
         #[cfg(target_os = "macos")]
-        {
-            // macOS: single `pwritev$NOCANCEL`, no
-            // EINTR retry (surfaces EINTR to caller).
+        loop {
+            // macOS: `pwritev$NOCANCEL`, retried on EINTR.
             // SAFETY: `fd` is a live descriptor; `vecs` gives an exact
             // (ptr, len) pair of layout-compatible iovecs (asserted above).
             let rc = unsafe {
@@ -4475,7 +4453,11 @@ pub fn pwritev(fd: Fd, vecs: &[PlatformIoVecConst], offset: i64) -> Maybe<usize>
                 )
             };
             if rc < 0 {
-                return Err(Error::from_code_int(last_errno(), Tag::pwritev));
+                let e = last_errno();
+                if e == libc::EINTR {
+                    continue;
+                }
+                return Err(Error::from_code_int(e, Tag::pwritev));
             }
             return Ok(rc as usize);
         }
@@ -4589,20 +4571,24 @@ pub fn platform_iovec_const_create(buf: &[u8]) -> PlatformIoVecConst {
     }
 }
 
-/// `bun.sys.writev` — gather-write. macOS uses `writev$NOCANCEL` with no
-/// EINTR retry; other POSIX retries on EINTR.
+/// `bun.sys.writev` — gather-write. Retries on EINTR
+/// (macOS uses `writev$NOCANCEL`).
 pub fn writev(fd: Fd, vecs: &[PlatformIoVec]) -> Maybe<usize> {
     #[cfg(unix)]
     {
         #[cfg(target_os = "macos")]
-        {
+        loop {
             // SAFETY: `PlatformIoVec` is `libc::iovec`; writev(2) only reads
-            // the descriptor table. Single shot, surfaces EINTR.
+            // the descriptor table. `writev$NOCANCEL`, retried on EINTR.
             let rc = unsafe {
                 nocancel::writev(fd.native(), vecs.as_ptr(), vecs.len() as core::ffi::c_int)
             };
             if rc < 0 {
-                return Err(Error::from_code_int(last_errno(), Tag::writev).with_fd(fd));
+                let e = last_errno();
+                if e == libc::EINTR {
+                    continue;
+                }
+                return Err(Error::from_code_int(e, Tag::writev).with_fd(fd));
             }
             return Ok(rc as usize);
         }
@@ -4635,8 +4621,8 @@ pub fn writev(fd: Fd, vecs: &[PlatformIoVec]) -> Maybe<usize> {
     }
 }
 
-/// `bun.sys.readv` — scatter-read. macOS uses `readv$NOCANCEL` with no
-/// EINTR retry; other POSIX retries on EINTR.
+/// `bun.sys.readv` — scatter-read. Retries on EINTR
+/// (macOS uses `readv$NOCANCEL`).
 pub fn readv(fd: Fd, vecs: &[PlatformIoVec]) -> Maybe<usize> {
     #[cfg(debug_assertions)]
     if vecs.is_empty() {
@@ -4645,14 +4631,19 @@ pub fn readv(fd: Fd, vecs: &[PlatformIoVec]) -> Maybe<usize> {
     #[cfg(unix)]
     {
         #[cfg(target_os = "macos")]
-        {
+        loop {
             // SAFETY: vecs.ptr is `*const iovec`; the kernel writes through
-            // each `iov_base`, never the array itself. Single shot.
+            // each `iov_base`, never the array itself. `readv$NOCANCEL`,
+            // retried on EINTR.
             let rc = unsafe {
                 nocancel::readv(fd.native(), vecs.as_ptr(), vecs.len() as core::ffi::c_int)
             };
             if rc < 0 {
-                return Err(Error::from_code_int(last_errno(), Tag::readv).with_fd(fd));
+                let e = last_errno();
+                if e == libc::EINTR {
+                    continue;
+                }
+                return Err(Error::from_code_int(e, Tag::readv).with_fd(fd));
             }
             return Ok(rc as usize);
         }
@@ -4684,8 +4675,8 @@ pub fn readv(fd: Fd, vecs: &[PlatformIoVec]) -> Maybe<usize> {
     }
 }
 
-/// `bun.sys.preadv` — scatter-read at `position`. macOS uses
-/// `preadv$NOCANCEL` with no EINTR retry.
+/// `bun.sys.preadv` — scatter-read at `position`. Retries on EINTR
+/// (macOS uses `preadv$NOCANCEL`).
 pub fn preadv(fd: Fd, vecs: &[PlatformIoVec], position: i64) -> Maybe<usize> {
     #[cfg(debug_assertions)]
     if vecs.is_empty() {
@@ -4694,8 +4685,8 @@ pub fn preadv(fd: Fd, vecs: &[PlatformIoVec], position: i64) -> Maybe<usize> {
     #[cfg(unix)]
     {
         #[cfg(target_os = "macos")]
-        {
-            // SAFETY: see `readv`. Single shot.
+        loop {
+            // SAFETY: see `readv`. `preadv$NOCANCEL`, retried on EINTR.
             let rc = unsafe {
                 nocancel::preadv(
                     fd.native(),
@@ -4705,7 +4696,11 @@ pub fn preadv(fd: Fd, vecs: &[PlatformIoVec], position: i64) -> Maybe<usize> {
                 )
             };
             if rc < 0 {
-                return Err(Error::from_code_int(last_errno(), Tag::preadv).with_fd(fd));
+                let e = last_errno();
+                if e == libc::EINTR {
+                    continue;
+                }
+                return Err(Error::from_code_int(e, Tag::preadv).with_fd(fd));
             }
             return Ok(rc as usize);
         }

@@ -155,10 +155,11 @@ mod platform {
                             self.received_eof = true;
                             return Ok(None);
                         }
-                        return Err(sys::Error::from_code_int(
-                            sys::last_errno(),
-                            Tag::getdirentries64,
-                        ));
+                        let e = sys::last_errno();
+                        if e == libc::EINTR {
+                            continue 'start_over;
+                        }
+                        return Err(sys::Error::from_code_int(e, Tag::getdirentries64));
                     }
 
                     self.index = 0;

@@ -253,6 +253,8 @@ console.log(findPackageJSON(import.meta.resolve("pkg")));`,
         relativeFromDirectory: findPackageJSON("./lib/util.js", src),
         bareFromDirectory: findPackageJSON("dep", src),
         directoryItself: findPackageJSON(".", nested),
+        // A forward slash is a separator on Windows too.
+        directoryItselfForwardSlash: findPackageJSON(".", p("app", "nested") + "/"),
         directoryItselfFromFileURLString: findPackageJSON(".", pathToFileURL(nested).href),
         directoryItselfFromFileURLObject: findPackageJSON(".", pathToFileURL(nested)),
         parentOfDirectory: findPackageJSON("..", nested),
@@ -260,6 +262,7 @@ console.log(findPackageJSON(import.meta.resolve("pkg")));`,
         relativeFromDirectory: p("app", "package.json"),
         bareFromDirectory: p("app", "node_modules", "dep", "package.json"),
         directoryItself: p("app", "nested", "package.json"),
+        directoryItselfForwardSlash: p("app", "nested", "package.json"),
         directoryItselfFromFileURLString: p("app", "nested", "package.json"),
         directoryItselfFromFileURLObject: p("app", "nested", "package.json"),
         parentOfDirectory: p("app", "package.json"),
@@ -311,8 +314,9 @@ console.log(findPackageJSON(import.meta.resolve("pkg")));`,
       expect(() => findPackageJSON("./missing.js", base)).toThrow(
         notFound(`Cannot find module '${p("app", "src", "missing.js")}' imported from ${base}`),
       );
+      // The trailing separator survives the join on POSIX only.
       expect(() => findPackageJSON("../missing/", base)).toThrow(
-        notFound(`Cannot find module '${p("app", "missing") + path.sep}' imported from ${base}`),
+        notFound(expect.stringContaining(`Cannot find module '${p("app", "missing")}`)),
       );
       expect(() => findPackageJSON(p("missing", "index.js"))).toThrow(
         notFound(expect.stringContaining(`Cannot find module '${p("missing", "index.js")}'`)),

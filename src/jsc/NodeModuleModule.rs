@@ -167,6 +167,12 @@ fn find_package_json(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSV
                 error.put(global, "input", base_value);
                 return Err(global.throw_value(error));
             }
+            // A trailing separator (`dir/`, `file:///dir/`) names the directory itself.
+            // Checked before the join, which keeps only the platform's own separator.
+            let is_directory = base
+                .slice()
+                .last()
+                .is_some_and(|&last| bun_paths::Platform::AUTO.is_separator(last));
             let joined = resolve_path::join_abs_string_buf_checked::<bun_paths::platform::Auto>(
                 top_level_dir,
                 &mut base_buf,
@@ -176,10 +182,10 @@ fn find_package_json(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSV
             let Some(base) = joined else {
                 return Err(global.throw_invalid_argument_value(b"base", base_value));
             };
-            // A trailing separator (`dir/`, `file:///dir/`) names the directory itself.
-            let source_dir = match base.last() {
-                Some(&last) if bun_paths::Platform::AUTO.is_separator(last) => base,
-                _ => bun_paths::dirname(base).unwrap_or(base),
+            let source_dir = if is_directory {
+                base
+            } else {
+                bun_paths::dirname(base).unwrap_or(base)
             };
             (source_dir, base)
         }

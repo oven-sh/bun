@@ -2482,16 +2482,20 @@ function loadExpectedDurations(cwd) {
   try {
     const raw = JSON.parse(readFileSync(join(cwd, "expected-durations.json"), "utf8"));
     const step = options["step"] || "";
-    const lane = step.includes("asan")
-      ? "asan"
+    // Most specific column first, then the nearest lane, then anything.
+    const columns = step.includes("asan")
+      ? ["asan"]
       : step.includes("musl")
-        ? "musl"
-        : isWindows || step.includes("windows")
-          ? "windows"
-          : "default";
+        ? ["musl"]
+        : step.includes("windows-aarch64") || (isWindows && process.arch === "arm64")
+          ? ["windows-aarch64", "windows"]
+          : isWindows || step.includes("windows")
+            ? ["windows"]
+            : ["default"];
+    columns.push("default", "asan", "musl", "windows", "windows-aarch64");
     for (const [path, entry] of Object.entries(raw)) {
       if (path === "_meta") continue;
-      const ms = entry[lane] ?? entry.default ?? entry.asan ?? entry.musl ?? entry.windows;
+      const ms = columns.map(column => entry[column]).find(value => typeof value === "number");
       if (typeof ms === "number") durations[path] = ms;
     }
   } catch (e) {

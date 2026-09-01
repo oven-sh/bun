@@ -152,8 +152,7 @@ JSC::EncodedJSValue flattenArrayOfBuffersIntoArrayBufferOrUint8Array(JSGlobalObj
         return {};
     }
 
-    // Nothing between here and the memcpy loop calls back into JavaScript, so
-    // the lengths read now are the lengths copied below.
+    // Nothing between here and the memcpy loop calls back into JavaScript, so the lengths read now are the lengths copied below.
     size_t byteLength = 0;
     for (size_t i = 0; i < args.size(); i++) {
         JSValue element = args.at(i);

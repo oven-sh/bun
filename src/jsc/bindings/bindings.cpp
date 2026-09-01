@@ -6978,10 +6978,11 @@ extern "C" JSC::EncodedJSValue Bun__REPL__formatValue(
 }
 
 // Collects every ArrayBufferView in a JSArray and the (data, byteLength) span
-// of each. Bun::collectArrayLike reads the elements first and stops at the
-// first one that is not an ArrayBufferView, so no getter runs after a raw
-// pointer is taken. A backing store detached during that pass reads back as a
-// zero-length span.
+// of each. Two passes, mirroring Buffer.concat: the first reads every element
+// into a MarkedArgumentBuffer, so any user code an indexed read can run
+// (getters, proxy traps) finishes before the second pass takes raw pointers.
+// A backing store detached during the first pass reads back as a zero-length
+// span.
 //
 // When `pinBuffers` is true, each view's backing ArrayBuffer is materialized
 // and pinned before its data pointer is read, so the span stays valid after

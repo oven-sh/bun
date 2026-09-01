@@ -919,8 +919,7 @@ static JSC::EncodedJSValue jsBufferConstructorFunction_concatBody(JSC::JSGlobalO
 
     JSValue totalLengthValue = callFrame->argument(1);
 
-    // `JSC::isArray()` is true for Proxy->Array, so `length` and each index
-    // can come from traps.
+    // `JSC::isArray()` is true for Proxy->Array, so `length` and each index can come from traps.
     MarkedArgumentBuffer args;
     Bun::collectArrayLike(lexicalGlobalObject, asObject(listValue), args, [&](JSValue element) -> bool {
         if (dynamicDowncast<JSC::JSUint8Array>(element)) [[likely]]
@@ -939,8 +938,7 @@ static JSC::EncodedJSValue jsBufferConstructorFunction_concatBody(JSC::JSGlobalO
         RELEASE_AND_RETURN(throwScope, constructBufferEmpty(lexicalGlobalObject));
     }
 
-    // Nothing between here and the memcpy loop calls back into JavaScript, so
-    // the lengths read now are the lengths copied below.
+    // Nothing between here and the memcpy loop calls back into JavaScript, so the lengths read now are the lengths copied below.
     size_t availableLength = 0;
     for (unsigned i = 0; i < args.size(); i++) {
         auto* typedArray = uncheckedDowncast<JSC::JSUint8Array>(args.at(i));

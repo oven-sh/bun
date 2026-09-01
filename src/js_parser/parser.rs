@@ -377,10 +377,8 @@ pub mod Runtime {
                 self.standard_decorators,
                 self.lower_using,
                 self.repl_mode,
-                // `keep_matcher_call_frame` changes the output of a file with an explicit
-                // `bun:test` import, which stays cacheable. The `input_hash = None` bails in
-                // `_parse` only stop the write: the read has already served `Result::Cached`,
-                // so the hash has to separate the two modes.
+                // `bun test` output differs (`keep_matcher_call_frame`) and uses its own
+                // cache filename (`write_cache_filename`); the hash carries the mode too.
                 self.inject_jest_globals,
             ];
 

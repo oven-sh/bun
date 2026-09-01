@@ -1,3 +1,12 @@
+// Node's isURL (lib/internal/url.js): a duck-type check rather than
+// `instanceof`, so a URL instance still counts after globalThis.URL was
+// replaced (happy-dom's global registrator does that), and so do compatible
+// foreign implementations; `auth`/`path` must be absent to exclude legacy
+// `url.parse` objects, which carry both.
+function isURL(self) {
+  return Boolean(self?.href && self.protocol && self.auth === undefined && self.path === undefined);
+}
+
 function urlToHttpOptions(url) {
   const options = {
     ...url,
@@ -23,5 +32,6 @@ function urlToHttpOptions(url) {
 }
 
 export default {
+  isURL,
   urlToHttpOptions,
 };

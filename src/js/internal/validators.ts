@@ -1,4 +1,5 @@
 const { hideFromStack } = require("internal/shared");
+const { isURL } = require("internal/url");
 
 const RegExpPrototypeExec = RegExp.prototype.exec;
 const ArrayIsArray = Array.isArray;
@@ -85,9 +86,17 @@ function validateBoolean(value, name) {
   if (typeof value !== "boolean") throw $ERR_INVALID_ARG_TYPE(name, "boolean", value);
 }
 
-/** Validate a string-or-URL path and return it resolved to an absolute path string. */
+/**
+ * Validate a string-or-URL path and return it resolved to an absolute path string.
+ *
+ * URLs are detected with node's structural isURL, but converted by the native
+ * Bun.fileURLToPath, which takes URL instances only (by class, whatever
+ * globalThis.URL is). The native fs path parser has the same rule, so a
+ * URL-like object that is not a URL instance is rejected the same way as in
+ * fs.readFileSync.
+ */
 function getValidatedPath(p: any) {
-  if (p instanceof URL) return Bun.fileURLToPath(p as URL);
+  if (isURL(p)) return Bun.fileURLToPath(p);
   if (typeof p !== "string") throw $ERR_INVALID_ARG_TYPE("path", "string or URL", p);
   if (p.startsWith("file:")) return Bun.fileURLToPath(p);
   return require("node:path").resolve(p);
@@ -100,12 +109,13 @@ function throwIfNullBytesInFileName(filename: string) {
 }
 
 /**
- * node's fs getValidatedPath (lib/internal/fs/utils.js): converts URL
- * *instances* via fileURLToPath, accepts strings and Buffers as-is (no
- * path.resolve, no "file:"-prefix string sniffing), and rejects null bytes.
+ * node's fs getValidatedPath (lib/internal/fs/utils.js): converts URLs via
+ * fileURLToPath (see getValidatedPath above for which objects that takes),
+ * accepts strings and Buffers as-is (no path.resolve, no "file:"-prefix
+ * string sniffing), and rejects null bytes.
  */
 function getValidatedFsPath(p: any, propName: string = "path") {
-  if (p instanceof URL) p = Bun.fileURLToPath(p);
+  if (isURL(p)) p = Bun.fileURLToPath(p);
   if (typeof p === "string") {
     if (p.indexOf("\u0000") !== -1) {
       throw $ERR_INVALID_ARG_VALUE(propName, p, "must be a string, Uint8Array, or URL without null bytes");

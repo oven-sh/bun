@@ -34,6 +34,7 @@ type FSStream = import("node:fs").ReadStream &
 type FD = number;
 
 const { validateInteger, validateInt32, validateFunction } = require("internal/validators");
+const { isURL } = require("internal/url");
 
 const kIsPerformingIO = Symbol("kIsPerformingIO");
 const kIoDone = Symbol("kIoDone");
@@ -88,7 +89,7 @@ function streamFileHandleClose(this: FileHandle, fd: FD, cb: (err?: any) => void
 }
 
 function getValidatedPath(p: any) {
-  if (p instanceof URL) return Bun.fileURLToPath(p as URL);
+  if (isURL(p)) return Bun.fileURLToPath(p);
   if (typeof p !== "string") throw $ERR_INVALID_ARG_TYPE("path", "string or URL", p);
   return require("node:path").resolve(p);
 }

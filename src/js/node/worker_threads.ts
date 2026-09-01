@@ -23,14 +23,16 @@ function normalizeWorkerName(rawName) {
 }
 
 const { isAbsolute: pathIsAbsolute } = require("node:path");
+const { isURL } = require("internal/url");
 
 // node's filename validation for non-eval workers: absolute or "./"/"../"-relative
 // paths and file: URL objects; bare specifiers and string URLs are rejected.
 function validateWorkerFilename(filename) {
-  if (filename instanceof URL) {
+  if (isURL(filename)) {
     if (filename.protocol === "data:") return `${filename}`;
-    // throws ERR_INVALID_URL_SCHEME (TypeError) for non-file: URLs
-    return Bun.fileURLToPath(filename);
+    // throws ERR_INVALID_URL_SCHEME (TypeError) for non-file: URLs. The href,
+    // so a URL-like object that is not a URL instance works like in node.
+    return Bun.fileURLToPath(filename.href);
   }
   if (typeof filename !== "string") {
     // Not a string or URL: defer to the native Worker constructor, which

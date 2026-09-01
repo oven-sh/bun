@@ -1985,6 +1985,7 @@ describe("import attributes with an array-index key", () => {
     expect(attributes).toEqual({ 0: "a", 4294967294: "b", type: "json" });
     expect(attributes[0]).toBe("a");
     expect(attributes["4294967294"]).toBe("b");
+    expect(attributes[4294967294]).toBe("b");
   });
 
   test("importModuleDynamically receives the attributes argument", async () => {

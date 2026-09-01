@@ -1416,18 +1416,26 @@ describe("symbols named like an array index", () => {
   });
 
   it.if(!!libPath)("dlopen() stores a ptr-backed symbol under the index", () => {
-    const { strlen } = dlopen(libPath, { strlen: libSymbols.strlen }).symbols;
-    const lib = dlopen(libPath, {
-      "0": { ptr: strlen.ptr, args: ["ptr"], returns: "usize" },
-      "4294967294": { ptr: strlen.ptr, args: ["ptr"], returns: "usize" },
-      strlen: libSymbols.strlen,
-    });
-    expect(Object.keys(lib.symbols).sort()).toEqual(["0", "4294967294", "strlen"]);
-    expect(typeof lib.symbols[0]).toBe("function");
-    expect(typeof lib.symbols[4294967294]).toBe("function");
-    expect(lib.symbols[0](Buffer.from("bunbun\0", "ascii"))).toBe(6n);
-    expect(lib.symbols["4294967294"](Buffer.from("bun\0", "ascii"))).toBe(3n);
-    lib.close();
+    const source = dlopen(libPath, { strlen: libSymbols.strlen });
+    try {
+      const { strlen } = source.symbols;
+      const lib = dlopen(libPath, {
+        "0": { ptr: strlen.ptr, args: ["ptr"], returns: "usize" },
+        "4294967294": { ptr: strlen.ptr, args: ["ptr"], returns: "usize" },
+        strlen: libSymbols.strlen,
+      });
+      try {
+        expect(Object.keys(lib.symbols).sort()).toEqual(["0", "4294967294", "strlen"]);
+        expect(typeof lib.symbols[0]).toBe("function");
+        expect(typeof lib.symbols[4294967294]).toBe("function");
+        expect(lib.symbols[0](Buffer.from("bunbun\0", "ascii"))).toBe(6n);
+        expect(lib.symbols["4294967294"](Buffer.from("bun\0", "ascii"))).toBe(3n);
+      } finally {
+        lib.close();
+      }
+    } finally {
+      source.close();
+    }
   });
 });
 

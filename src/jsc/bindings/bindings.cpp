@@ -3031,8 +3031,13 @@ void JSC__JSObject__putRecord(JSC::JSObject* object, JSC::JSGlobalObject* global
         // Pre-convert all strings to JSValues before entering ObjectInitializationScope,
         // since jsString() allocates GC cells which is not allowed inside the scope.
         MarkedArgumentBuffer strings;
+        strings.ensureCapacity(valuesLen);
         for (size_t i = 0; i < valuesLen; ++i) {
             strings.append(JSC::jsString(vm, Zig::toStringCopy(values[i])));
+        }
+        if (strings.hasOverflowed()) [[unlikely]] {
+            JSC::throwOutOfMemoryError(global, scope);
+            return;
         }
 
         JSC::JSArray* array = nullptr;

@@ -79,7 +79,6 @@
 [bun_react_compiler]
 "generic_body_not_generic:src/react_compiler/inference/analyse_functions.rs" = 2
 "generic_body_not_generic:src/react_compiler/lowering/hir_builder.rs" = 1
-"reimplemented_helper:src/react_compiler/reactive_scopes/propagate_early_returns.rs" = 1
 
 [bun_resolver]
 "generic_body_not_generic:src/resolver/data_url.rs" = 1

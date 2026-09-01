@@ -4293,3 +4293,76 @@ test("https 'clientError' for a connection whose handshake completes after close
     raw.destroy();
   }
 });
+
+// Header values are byte strings: Node writes U+00E9 as the single byte 0xE9, never as
+// UTF-8 0xC3 0xA9, whatever the engine's internal representation of the string is. A
+// 16-bit string (TextDecoder, normalize(), JSON.parse output) must produce the same
+// bytes as the equal 8-bit literal. The body is a Buffer so that Node does not glue the
+// header block onto a utf8 string chunk.
+describe("response header values are written as latin-1 bytes", () => {
+  const eightBit = "caf\u00e9-\u0080\u00ff";
+  const sixteenBit = new TextDecoder("utf-16le").decode(new Uint16Array([0x63, 0x61, 0x66, 0xe9, 0x2d, 0x80, 0xff]));
+  const expectedHex = "63 61 66 e9 2d 80 ff";
+
+  async function headerHex(port: number, path: string, name: string): Promise<string[]> {
+    const socket = connect(port, "127.0.0.1");
+    try {
+      socket.on("error", () => {});
+      await once(socket, "connect");
+      socket.write(`GET ${path} HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n`);
+      let raw = "";
+      await new Promise<void>(resolve => {
+        socket.on("data", chunk => (raw += chunk.toString("latin1")));
+        socket.on("close", resolve);
+      });
+      return raw
+        .split("\r\n\r\n")[0]
+        .split("\r\n")
+        .filter(line => line.toLowerCase().startsWith(name + ":"))
+        .map(line =>
+          [...Buffer.from(line.slice(name.length + 2), "latin1")].map(c => c.toString(16).padStart(2, "0")).join(" "),
+        );
+    } finally {
+      socket.destroy();
+    }
+  }
+
+  async function check(
+    write: (res: ServerResponse, value: string) => void,
+    name: string,
+    expected: string[],
+  ): Promise<void> {
+    expect(sixteenBit).toBe(eightBit);
+    const server = createServer((req, res) => {
+      write(res, req.url === "/16" ? sixteenBit : eightBit);
+      res.end(Buffer.from("ok"));
+    });
+    try {
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      const { port } = server.address() as AddressInfo;
+      expect(await headerHex(port, "/8", name)).toEqual(expected);
+      expect(await headerHex(port, "/16", name)).toEqual(expected);
+    } finally {
+      server.close();
+    }
+  }
+
+  it("setHeader", async () => {
+    await check((res, value) => res.setHeader("x-t", value), "x-t", [expectedHex]);
+  });
+
+  it("writeHead with an object", async () => {
+    await check((res, value) => res.writeHead(200, { "x-t": value }), "x-t", [expectedHex]);
+  });
+
+  it("writeHead with a flat array", async () => {
+    await check((res, value) => res.writeHead(200, ["x-t", value]), "x-t", [expectedHex]);
+  });
+
+  it("setHeader with a Set-Cookie array", async () => {
+    await check((res, value) => res.setHeader("set-cookie", [`a=${value}`, `b=${value}`]), "set-cookie", [
+      "61 3d " + expectedHex,
+      "62 3d " + expectedHex,
+    ]);
+  });
+});

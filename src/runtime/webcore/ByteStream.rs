@@ -65,6 +65,137 @@ impl Default for ByteStream {
 /// ReadableStream source backed by a ByteStream.
 pub type Source = readable_stream::NewSource<ByteStream>;
 
+/// A network body producer's (fetch, S3) hold on the stream it feeds: a counted ref on the stream's
+/// `Source`, so delivery and unhooking go through memory the producer keeps alive rather than the
+/// JS wrapper (which the VM's last sweep destroys in no particular order), plus the parked bit of
+/// the receive backpressure. The ref roots the wrapper except while parked, so an unread stream
+/// can be collected (`SourceHandle::consumer_collected`).
+#[derive(Default)]
+pub struct ProducerHold {
+    source: Cell<Option<core::ptr::NonNull<Source>>>,
+    parked: Cell<bool>,
+}
+
+/// The JS-thread half of `BODY_HIGH_WATER_MARK`, decided from the stream's buffer after a
+/// delivery. The HTTP thread does the other half on its hop buffer.
+pub enum AfterDelivery {
+    /// Under the mark, or a whole-body consumer (`readableStreamTo*`) is collecting: keep going.
+    Resume,
+    /// At the mark with a back-pressured sink: it resumes the producer when it drains.
+    Pause,
+    /// At the mark and nothing reads: pause, release the loop, leave the stream collectable.
+    Park,
+}
+
+impl ProducerHold {
+    /// Take the producer ref on the stream's source (JS thread).
+    ///
+    /// # Safety
+    /// `bytes` is the live ByteStream of a stream the caller holds.
+    pub unsafe fn hold(&self, bytes: *mut ByteStream) {
+        self.release();
+        // SAFETY: fn contract; the ref keeps the Source alive past this call.
+        unsafe {
+            let source = Source::from_context_ptr(bytes);
+            (*source).increment_count();
+            self.source.set(core::ptr::NonNull::new(source));
+        }
+    }
+
+    pub fn is_held(&self) -> bool {
+        self.source.get().is_some()
+    }
+
+    /// The held stream, pinned for the guard's life: a consumer inside `on_data` can cancel the
+    /// producer (which drops the hold), and while parked the wrapper is not rooted.
+    pub fn bytes(&self) -> Option<PinnedBytes> {
+        let source = self.source.get()?;
+        // SAFETY: live through our ref; no borrow of the source exists yet.
+        unsafe { (*source.as_ptr()).increment_count() };
+        Some(PinnedBytes(source))
+    }
+
+    /// Stop being the producer. The source stays pinned by the returned guard, so the caller can
+    /// still deliver a terminal chunk. Touches no JS cell.
+    pub fn take(&self) -> Option<PinnedBytes> {
+        let source = self.source.take()?;
+        self.parked.set(false);
+        // SAFETY: still pinned by our ref, which the guard now owns.
+        unsafe {
+            (*source.as_ptr()).producer.set(streams::SourceHandle::None);
+            (*source.as_ptr()).wrapper_unrooted.set(false);
+        }
+        Some(PinnedBytes(source))
+    }
+
+    /// `take` and drop. Touches no JS cell (safe inside a GC sweep).
+    pub fn release(&self) {
+        drop(self.take());
+    }
+
+    pub fn after_delivery(bytes: &ByteStream) -> AfterDelivery {
+        if bytes.buffered_len() < bun_http::signals::BODY_HIGH_WATER_MARK
+            || bytes.buffer_action.get().is_some()
+        {
+            AfterDelivery::Resume
+        } else if bytes.sink.get().is_some() {
+            AfterDelivery::Pause
+        } else {
+            AfterDelivery::Park
+        }
+    }
+
+    /// Returns whether this call parked (the caller then releases its loop ref).
+    pub fn park(&self) -> bool {
+        if self.parked.replace(true) {
+            return false;
+        }
+        if let Some(source) = self.source.get() {
+            // SAFETY: live through our ref. The caller may hold the `&ByteStream` of this very
+            // source (the chunk it just delivered), which is why this is not a method call.
+            unsafe { Source::unroot_wrapper(source.as_ptr()) };
+        }
+        true
+    }
+
+    /// Returns whether this call unparked (the caller then re-takes its loop ref). Reached from a
+    /// consumer holding the stream.
+    pub fn unpark(&self) -> bool {
+        if !self.parked.replace(false) {
+            return false;
+        }
+        if let Some(source) = self.source.get() {
+            // SAFETY: as in `park`.
+            unsafe { Source::root_wrapper(source.as_ptr()) };
+        }
+        true
+    }
+}
+
+impl Drop for ProducerHold {
+    fn drop(&mut self) {
+        self.release();
+    }
+}
+
+/// A counted ref on a stream's `Source` for the guard's life; derefs to its ByteStream.
+pub struct PinnedBytes(core::ptr::NonNull<Source>);
+
+impl core::ops::Deref for PinnedBytes {
+    type Target = ByteStream;
+    fn deref(&self) -> &ByteStream {
+        // SAFETY: pinned by this guard's ref; ByteStream is `&self`-only.
+        unsafe { &(*self.0.as_ptr()).context }
+    }
+}
+
+impl Drop for PinnedBytes {
+    fn drop(&mut self) {
+        // SAFETY: balances the ref this guard owns. Can free the source.
+        unsafe { Source::decrement_count(self.0.as_ptr()) };
+    }
+}
+
 impl readable_stream::SourceContext for ByteStream {
     const NAME: &'static str = "Bytes";
     // setRefUnrefFn = null
@@ -663,6 +794,15 @@ impl ByteStream {
         }
         self.done.set(true);
         self.pending_value.with_mut(|pv| pv.deinit());
+        // A native sink wired to this stream must fail, not later see an EOF and commit what it
+        // has (an S3 upload would complete with a truncated object).
+        let sink = self.sink.replace(SinkHandle::None);
+        if sink.is_some() {
+            self.sink_paused.set(false);
+            sink.end(Some(streams::StreamError::AbortReason(
+                jsc::CommonAbortReason::UserAbort,
+            )));
+        }
 
         if !view.is_empty() {
             self.pending_buffer.set(Self::empty_pending_buffer());

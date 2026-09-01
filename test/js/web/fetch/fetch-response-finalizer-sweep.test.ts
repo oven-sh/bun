@@ -1,5 +1,5 @@
 // fetch(): the JSResponse Weak finalizer (WeakBlock::sweep) reaches
-// FetchTasklet::ignore_remaining_response_body. That path used to call
+// FetchTasklet::abandon_response_body. That path used to call
 // ResumableSink::detach_js(), which writes the wrapper's cached ondrain/
 // oncancel/stream slots via generated *SetCachedValue helpers. Those helpers
 // uncheckedDowncast<JSResumableFetchSink>(...) -> JSCell::classInfo(), and

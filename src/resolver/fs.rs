@@ -2,12 +2,10 @@ use core::sync::atomic::{AtomicBool, Ordering};
 use std::borrow::Cow;
 use std::io::Write as _;
 
-use bstr::BStr;
-
 use bun_alloc::{AllocError, allocators};
 use bun_collections::VecExt as _;
+use bun_core::Generation;
 use bun_core::MutableString;
-use bun_core::{FeatureFlags, Generation};
 use bun_paths::strings;
 use bun_paths::{MAX_PATH_BYTES, PathBuffer};
 use bun_ptr::Interned;
@@ -35,7 +33,9 @@ pub(crate) type FilenameStoreBacking =
 pub(crate) type EntryStoreBacking = allocators::BSSList<Entry, { preallocate::counts::FILES * 2 }>;
 
 // Per-monomorphization singleton storage, emitted at the declare site via
-// `bss_*!` macros (returns `*mut`).
+// `bss_*!` macros (returns `*mut`). Each declare site owns its own storage:
+// `crate::fs::FilenameStore` re-exports `filename_store_backing` from here so
+// it and `FilenameStoreAppender` share one store.
 bun_alloc::bss_string_list! { pub filename_store_backing : preallocate::counts::FILES * 2, 64 + 1 }
 bun_alloc::bss_list! { pub entry_store_backing : Entry, preallocate::counts::FILES * 2 }
 
@@ -389,9 +389,6 @@ pub struct DirEntry {
 
 impl DirEntry {
     pub(crate) fn init(dir: &'static [u8], generation: Generation) -> DirEntry {
-        if FeatureFlags::VERBOSE_FS {
-            bun_core::prettyln!("\n  {}", BStr::new(dir));
-        }
         DirEntry {
             dir,
             data: dir_entry::EntryMap::default(),
@@ -574,16 +571,6 @@ impl DirEntry {
 
         if !I::IS_VOID {
             iterator.next(stored_ref, self.fd);
-        }
-
-        if FeatureFlags::VERBOSE_FS {
-            // re-borrow `base()` after the `iterator.next` mutable borrow ends.
-            let stored_name = stored_ref.base();
-            if found_kind == Some(EntryKind::Dir) {
-                bun_core::prettyln!("   + {}/", BStr::new(stored_name));
-            } else {
-                bun_core::prettyln!("   + {}", BStr::new(stored_name));
-            }
         }
 
         Ok(())

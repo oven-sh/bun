@@ -239,7 +239,7 @@ pub(crate) mod js_bindings {
         obj.put(
             global,
             "version",
-            BunString::init(Global::package_json_version).to_js(global)?,
+            BunString::static_(Global::package_json_version).to_js(global)?,
         );
         obj.put(
             global,
@@ -252,7 +252,7 @@ pub(crate) mod js_bindings {
         obj.put(
             global,
             "revision",
-            BunString::init(Environment::GIT_SHA).to_js(global)?,
+            BunString::static_(Environment::GIT_SHA).to_js(global)?,
         );
 
         obj.put(

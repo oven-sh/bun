@@ -54,14 +54,12 @@ pub mod string;
 pub use ::bstr::{BStr, BString, ByteSlice};
 pub use string::string_joiner::StringJoiner;
 pub use string::{
-    HashedString, MutableString, NodeEncoding, SliceWithUnderlyingString, SmolStr, String,
-    StringBuilder, StringView, WTFStringImpl, WTFStringImplExt, WTFStringImplStruct, ZigString,
-    ZigStringSlice,
+    EncodedSlice, HashedString, MutableString, NodeEncoding, SmolStr, String, StringBuilder,
+    StringView, Utf8Bytes, Utf8WithString, WTFStringImpl, WTFStringImplExt, WTFStringImplStruct,
 };
 pub use string::{
-    STRING_ALLOCATION_LIMIT, ZigStringGithubActionFormatter, cheap_prefix_normalizer,
-    escape_reg_exp, identifier, lexer, lexer_tables, parse_double, printer, quote_for_json,
-    string_joiner, write, zig_string,
+    STRING_ALLOCATION_LIMIT, cheap_prefix_normalizer, escape_reg_exp, identifier, lexer,
+    lexer_tables, parse_double, printer, quote_for_json, string_joiner, write,
 };
 pub use string::{StringPointer, Tag, slice_to_nul};
 
@@ -588,7 +586,6 @@ bun_dispatch::link_interface! {
         fn create_file(cwd: Fd, path: &[u8]) -> core::result::Result<Fd, Error>;
         fn quiet_writer_from_fd(fd: Fd) -> output::QuietWriter;
         fn quiet_writer_adapt(qw: output::QuietWriter, buf: *mut u8, len: usize) -> output::QuietWriterAdapter;
-        fn quiet_writer_flush(qw: &mut output::QuietWriter);
         fn quiet_writer_write_all(qw: &mut output::QuietWriter, bytes: &[u8]) -> bool;
         fn quiet_writer_fd(qw: &output::QuietWriter) -> Fd;
         fn tty_winsize(fd: Fd) -> Option<Winsize>;

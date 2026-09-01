@@ -884,6 +884,26 @@ describe("Bun.file in serve routes", () => {
       expect(await res.text()).toBe(body);
     });
 
+    // RFC 9110 §14.1.2: first-pos, last-pos and suffix-length are 1*DIGIT.
+    // A sign or a `_` separator makes the header unparseable, so it is ignored.
+    it.each([
+      "bytes=+0-+3",
+      "bytes=+5-",
+      "bytes=0-+3",
+      "bytes=-+4",
+      "bytes=0--0",
+      "bytes=--0",
+      "bytes=1_0-1_2",
+      "bytes=-1_0",
+    ])("ignores malformed position in %j and serves full body", async range => {
+      const res = await fetch(new URL(path, server.url), { headers: { Range: range } });
+      expect({
+        status: res.status,
+        contentRange: res.headers.get("content-range"),
+        body: await res.text(),
+      }).toEqual({ status: 200, contentRange: null, body });
+    });
+
     it("ignores Range for non-GET/HEAD methods", async () => {
       // RFC 9110 §14.2: Range is only defined for GET.
       const res = await fetch(new URL(path, server.url), { method: "POST", headers: { Range: "bytes=0-3" } });

@@ -520,7 +520,7 @@ impl NetworkTask {
                 return Err(ForManifestError::InvalidURL);
             }
 
-            if !(tmp.has_prefix_comptime(b"https://") || tmp.has_prefix_comptime(b"http://")) {
+            if !(tmp.starts_with_ascii(b"https://") || tmp.starts_with_ascii(b"http://")) {
                 if !is_optional {
                     log.add_error_fmt(
                         None,

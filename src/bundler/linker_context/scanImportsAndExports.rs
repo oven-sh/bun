@@ -125,7 +125,10 @@ pub(crate) fn scan_imports_and_exports(
     let sorted_aliases: *mut [js_meta::SortedAndFilteredExportAliases] =
         meta.sorted_and_filtered_export_aliases;
     let cjs_export_copies: *mut [js_meta::CjsExportCopies] = meta.cjs_export_copies;
-    let entry_point_part_indices: *mut [Index] = meta.entry_point_part_index;
+    let dynamic_import_aliases: *mut [bun_ast::ast_result::DynamicImportAliases] =
+        ast.dynamic_import_aliases;
+    let dyn_ref_aliases: *mut [js_meta::DynamicImportReferencedAliases] =
+        meta.dynamic_import_referenced_aliases;
 
     {
         // Step 1: Figure out what modules must be CommonJS
@@ -164,7 +167,46 @@ pub(crate) fn scan_imports_and_exports(
                 continue;
             }
 
-            for record in col_ref!(import_records_list)[id].as_slice() {
+            // Named static imports contribute exactly their aliases to the
+            // importee's observable-export set (see below); `* as ns` and
+            // `export * from` make everything observable.
+            for ni in col_ref!(named_imports)[id].values() {
+                let Some(record) = col_ref!(import_records_list)[id]
+                    .as_slice()
+                    .get(ni.import_record_index as usize)
+                else {
+                    continue;
+                };
+                if record.kind != ImportKind::Stmt || !record.source_index.is_valid() {
+                    continue;
+                }
+                let other = record.source_index.get() as usize;
+                if other >= col_ref!(exports_kind).len()
+                    || col_ref!(exports_kind)[other] != ExportsKind::Esm
+                {
+                    continue;
+                }
+                if ni.alias_is_star {
+                    col!(dyn_ref_aliases)[other].merge_all();
+                } else if let Some(alias) = ni.alias {
+                    col!(dyn_ref_aliases)[other].insert(alias.slice());
+                }
+            }
+            for &star in col_ref!(export_star_import_records)[id].iter() {
+                if let Some(record) = col_ref!(import_records_list)[id]
+                    .as_slice()
+                    .get(star as usize)
+                    && record.source_index.is_valid()
+                {
+                    col!(dyn_ref_aliases)[record.source_index.get() as usize].merge_all();
+                }
+            }
+
+            for (import_record_index, record) in col_ref!(import_records_list)[id]
+                .as_slice()
+                .iter()
+                .enumerate()
+            {
                 if !record.source_index.is_valid() {
                     continue;
                 }
@@ -176,6 +218,49 @@ pub(crate) fn scan_imports_and_exports(
                     continue;
                 }
                 let other_kind = col_ref!(exports_kind)[other_file];
+
+                // Union, per importee, of the export names its importers can
+                // observe: named static imports contribute their aliases, a
+                // tracked `import()` / `require()` its recorded ones, anything
+                // else (`import *`, `export *`, an untracked namespace) all of
+                // them. Step 5 narrows a lazily loaded ES module's export object
+                // (or its chunk's exports when splitting) to this set. CJS
+                // importees synthesize `default` from the filtered list itself,
+                // so they always keep everything.
+                if other_kind != ExportsKind::Esm {
+                    col!(dyn_ref_aliases)[other_file].merge_all();
+                } else {
+                    match record.kind {
+                        // Named / bare static imports were accounted for above.
+                        ImportKind::Stmt
+                            if !record
+                                .flags
+                                .contains(ImportRecordFlags::CONTAINS_IMPORT_STAR) => {}
+                        ImportKind::Dynamic | ImportKind::Require => {
+                            match col_ref!(dynamic_import_aliases)[id]
+                                .get(&(import_record_index as u32))
+                            {
+                                None => col!(dyn_ref_aliases)[other_file].merge_all(),
+                                Some(aliases) => {
+                                    col!(dyn_ref_aliases)[other_file]
+                                        .merge_partial(aliases.slice());
+                                    // Observed without being named: `await import()`
+                                    // resolves through a `then` export, and `require()`
+                                    // of an ES module returns its `module.exports`
+                                    // export when it has one.
+                                    col!(dyn_ref_aliases)[other_file].insert(
+                                        if record.kind == ImportKind::Require {
+                                            b"module.exports"
+                                        } else {
+                                            b"then"
+                                        },
+                                    );
+                                }
+                            }
+                        }
+                        _ => col!(dyn_ref_aliases)[other_file].merge_all(),
+                    }
+                }
 
                 match record.kind {
                     ImportKind::Stmt => {
@@ -223,14 +308,18 @@ pub(crate) fn scan_imports_and_exports(
                         }
                     }
                     ImportKind::Require =>
-                    // Files that are imported with require() must be CommonJS modules
+                    // Files that are imported with require() must be CommonJS modules,
+                    // unless a split `require()` loads the file at runtime as its own
+                    // chunk (no wrapper, the same as a cross-chunk `import()` below).
                     {
-                        if other_kind == ExportsKind::Esm {
-                            col!(flags)[other_file].wrap = WrapKind::Esm;
-                        } else {
-                            // TODO: introduce a NamedRequire for require("./foo").Bar AST nodes to support tree-shaking those.
-                            col!(flags)[other_file].wrap = WrapKind::Cjs;
-                            col!(exports_kind)[other_file] = ExportsKind::Cjs;
+                        if !this.is_external_dynamic_import(record, id as u32) {
+                            if other_kind == ExportsKind::Esm {
+                                col!(flags)[other_file].wrap = WrapKind::Esm;
+                            } else {
+                                // TODO: introduce a NamedRequire for require("./foo").Bar AST nodes to support tree-shaking those.
+                                col!(flags)[other_file].wrap = WrapKind::Cjs;
+                                col!(exports_kind)[other_file] = ExportsKind::Cjs;
+                            }
                         }
                     }
                     ImportKind::Dynamic => {
@@ -385,6 +474,8 @@ pub(crate) fn scan_imports_and_exports(
         {
             this.cycle_detector.clear();
             let _trace = perf::trace("Bundler.MatchImportsWithExports");
+            let mut member_resolutions =
+                crate::linker_context_mod::ImportMemberResolutions::default();
             for source_index_ in &reachable {
                 let source_index = source_index_.get() as usize;
 
@@ -402,6 +493,7 @@ pub(crate) fn scan_imports_and_exports(
                         unsafe { core::ptr::addr_of!((*named_imports)[source_index]) },
                         &mut col!(imports_to_bind_list)[source_index],
                         source_index_.get(),
+                        &mut member_resolutions,
                     );
 
                     if this.log().errors > 0 {
@@ -672,7 +764,8 @@ pub(crate) fn scan_imports_and_exports(
             // parallel and can't safely mutate the "importsToBind" map of another file.
             if flag.needs_export_symbol_from_runtime {
                 if !runtime_export_symbol_ref.is_valid() {
-                    runtime_export_symbol_ref = this.runtime_function(b"__export");
+                    runtime_export_symbol_ref =
+                        this.runtime_function(this.export_runtime_function());
                 }
 
                 debug_assert!(runtime_export_symbol_ref.is_valid());
@@ -820,7 +913,6 @@ pub(crate) fn scan_imports_and_exports(
                         ..Default::default()
                     },
                 )?;
-                col!(entry_point_part_indices)[id] = Index::part(entry_point_part_index);
 
                 // Pull in the "__toCommonJS" symbol if we need it due to being an entry point
                 if force_include_exports && output_format != Format::InternalBakeDev {
@@ -903,7 +995,12 @@ pub(crate) fn scan_imports_and_exports(
                             } else {
                                 // We should use "__require" instead of "require" if we're not
                                 // generating a CommonJS output file, since it won't exist otherwise.
-                                if should_call_runtime_require(output_format) {
+                                // An `import()` is printed as-is and never becomes `__require()`,
+                                // nor does a split `require()` (`import.meta.require`).
+                                if kind != ImportKind::Dynamic
+                                    && !is_external_dyn
+                                    && should_call_runtime_require(output_format)
+                                {
                                     runtime_require_uses += 1;
                                 }
 
@@ -1516,11 +1613,11 @@ mod __css_validation {
                     data: bun_ast::range_data(
                         Some(&col_ref!(self.all_sources)[source_index as usize]),
                         range,
-                        bun_ast::alloc_print(format_args!(
-                            "The value of {} in the class {} is undefined.",
+                        bun_ast::alloc_print!(
+                            "<r>The value of <b>{}<r> in the class <b>{}<r> is undefined.",
                             bstr::BStr::new(property_name),
                             bstr::BStr::new(local_original_name),
-                        )),
+                        ),
                     )
                     .clone_line_text(self.log.clone_line_text),
                     notes: Box::<[bun_ast::Data]>::from(
@@ -1531,10 +1628,10 @@ mod __css_validation {
                                         [entry.value_ptr.source_index as usize],
                                 ),
                                 entry.value_ptr.range,
-                                bun_ast::alloc_print(format_args!(
+                                bun_ast::alloc_print!(
                                     "The first definition of {} is in this style rule:",
                                     bstr::BStr::new(property_name)
-                                )),
+                                ),
                             ),
                             bun_ast::Data {
                                 text: {

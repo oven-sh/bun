@@ -17,15 +17,15 @@ namespace WTF {
 class String;
 }
 
-typedef struct ZigString {
+typedef struct EncodedSlice {
     const unsigned char* ptr;
     size_t len;
-} ZigString;
+} EncodedSlice;
 
 #ifndef __cplusplus
 typedef uint8_t BunStringTag;
 typedef union BunStringImpl {
-    ZigString zig;
+    EncodedSlice encoded;
     void* wtf;
 } BunStringImpl;
 
@@ -36,23 +36,35 @@ class String;
 }
 
 typedef union BunStringImpl {
-    ZigString zig;
+    EncodedSlice encoded;
     WTF::StringImpl* wtf;
 } BunStringImpl;
 
 enum class BunStringTag : uint8_t {
     Dead = 0,
     WTFStringImpl = 1,
-    ZigString = 2,
-    StaticZigString = 3,
+    EncodedSlice = 2,
+    StaticEncodedSlice = 3,
     Empty = 4,
+    // A constructor could not allocate the string. Holds no string like Dead,
+    // but reaches JS as ERR_MEMORY_ALLOCATION_FAILED, not ERR_STRING_TOO_LONG.
+    OutOfMemory = 5,
+};
+
+/// Mirrors `ErrorKind` in src/jsc/bun_string_jsc.rs.
+enum class BunErrorKind : uint8_t {
+    Error = 0,
+    TypeError = 1,
+    SyntaxError = 2,
+    RangeError = 3,
 };
 
 /// Mirrors `ResponseKind` in src/uws/lib.rs.
 enum class UWSResponseKind : int32_t {
     TCP = 0,
     SSL = 1,
-    H3 = 2,
+    H2 = 2,
+    H3 = 3,
 };
 #endif
 
@@ -72,8 +84,8 @@ typedef struct BunString {
     // Zero copy is kind of a lie.
     // We clone it if it's non-ASCII UTF-8.
     // We don't clone it if it was marked as static
-    // if it was a ZigString, it still allocates a WTF::StringImpl.
-    // It's only truly zero-copy if it was already a WTFStringImpl (which it is if it came from JS and we didn't use ZigString)
+    // if it was an EncodedSlice, it still allocates a WTF::StringImpl.
+    // It's only truly zero-copy if it was already a WTFStringImpl (which it is if it came from JS and we didn't use EncodedSlice)
     WTF::String toWTFString(ZeroCopyTag) const;
 
     // If the string is empty, this will ensure m_impl is non-null by
@@ -90,6 +102,9 @@ typedef struct BunString {
     WTF::String toWTFString() const;
 
     bool isEmpty() const;
+
+    // Dead or OutOfMemory: no string at all. Empty is a string.
+    bool isDead() const { return tag == BunStringTag::Dead || tag == BunStringTag::OutOfMemory; }
 
     void appendToBuilder(WTF::StringBuilder& builder) const;
 
@@ -128,9 +143,9 @@ typedef struct ResolvedSource {
     bool bytecode_cache_persistent;
     // Owned; Zig::SourceProvider takes it (nulling the field).
     bun_ModuleInfoDeserialized* module_info;
-    // File path used as source origin for bytecode cache validation.
-    // Converted to file:// URL. If empty, origin is derived from source_url.
-    BunString bytecode_origin_path;
+    // File path whose file:// URL is the source origin (what import() resolves against, what a bytecode cache is
+    // validated against). If empty, origin is derived from source_url.
+    BunString origin_path;
 } ResolvedSource;
 static_assert(sizeof(ResolvedSource) == 136, "ResolvedSource layout is mirrored in src/jsc/ResolvedSource.rs");
 inline constexpr uint32_t ResolvedSourceTagPackageJSONTypeModule = 1;
@@ -154,7 +169,7 @@ public:
             return;
         result.value.source_code.deref();
         result.value.source_url.deref();
-        result.value.bytecode_origin_path.deref();
+        result.value.origin_path.deref();
         if (result.value.bytecode_cache_owned && result.value.bytecode_cache)
             ResolvedSource__freeBytecode(result.value.bytecode_cache);
         if (result.value.module_info)
@@ -321,8 +336,6 @@ typedef struct JSC::JSUint8Array JSC::JSUint8Array;
 
 #ifdef __cplusplus
 
-extern "C" void Bun__WTFStringImpl__deref(WTF::StringImpl* impl);
-extern "C" void Bun__WTFStringImpl__ref(WTF::StringImpl* impl);
 extern "C" void Bun__WTFStringImpl__destroy(WTF::StringImpl* impl);
 extern "C" bool BunString__fromJS(JSC::JSGlobalObject*, JSC::EncodedJSValue, BunString*);
 extern "C" JSC::EncodedJSValue BunString__toJS(JSC::JSGlobalObject*, const BunString*);
@@ -358,13 +371,11 @@ typedef struct {
 
 extern "C" const char* Bun__userAgent;
 
-extern "C" void ZigString__free(const unsigned char* ptr, size_t len, void* allocator);
-
 extern "C" bool Bun__transpileVirtualModule(
     JSC::JSGlobalObject* global,
     const BunString* specifier,
     const BunString* referrer,
-    const ZigString* sourceCode,
+    const EncodedSlice* sourceCode,
     BunLoaderType loader,
     ErrorableResolvedSource* result);
 
@@ -399,7 +410,7 @@ extern "C" const char* Bun__version_with_sha;
 
 extern "C" const char* Bun__version_sha;
 
-extern "C" void ZigString__freeGlobal(const unsigned char* ptr, size_t len);
+extern "C" void EncodedSlice__freeGlobal(const unsigned char* ptr, size_t len);
 
 extern "C" size_t Bun__encoding__writeLatin1(const unsigned char* ptr, size_t len, unsigned char* to, size_t other_len, Encoding encoding);
 extern "C" size_t Bun__encoding__writeUTF16(const char16_t* ptr, size_t len, unsigned char* to, size_t other_len, Encoding encoding);

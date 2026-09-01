@@ -7,7 +7,10 @@ use crate::ipc::{
     self as IPC, DecodedIPCMessage, Handle, IsInternal, SendQueue, SerializeAndSendResult,
 };
 use bun_core::String as BunString;
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass, JsResult};
+#[cfg(windows)]
+use bun_jsc::bun_string_jsc;
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass, JsResult, StringJsc as _};
+use bun_ptr::RefPtr;
 
 use crate::api::bun::subprocess::Subprocess;
 use crate::socket::Listener;
@@ -42,7 +45,7 @@ pub(crate) fn attach_windows_socket_payload(
         log!("attachWindowsSocketPayload: WSADuplicateSocketW failed");
         return Ok(None);
     };
-    let str_js = bun_jsc::bun_string_jsc::create_utf8_for_js(global, &hex)?;
+    let str_js = bun_string_jsc::create_utf8_for_js(global, &hex)?;
     message.put(global, IPC::WIN_SOCKET_INFO_KEY, str_js);
     Ok(Some(hex))
 }
@@ -286,7 +289,7 @@ pub(crate) fn do_send(
         ex.put(
             global_object,
             b"syscall",
-            bun_jsc::bun_string_jsc::to_js(&BunString::static_(b"write"), global_object)?,
+            BunString::static_("write").to_js(global_object)?,
         );
         return do_send_err(global_object, callback, ex, from);
     }
@@ -314,7 +317,7 @@ pub(crate) fn emit_handle_ipc_message(
             if let Some(cmd) = message.get(global_this, "cmd")? {
                 if cmd.is_string() {
                     let cmd_str = cmd.to_bun_string(global_this)?;
-                    if cmd_str.eql_comptime(b"NODE_CLUSTER") {
+                    if cmd_str.eq_ascii(b"NODE_CLUSTER") {
                         crate::node::node_cluster_binding::handle_internal_message_child(
                             global_this,
                             message,
@@ -386,7 +389,7 @@ unsafe extern "C" {
 
 /// Child-side IPC channel: the send queue for the inherited channel fd.
 pub struct IPCInstance {
-    pub data: core::ptr::NonNull<SendQueue>,
+    pub data: RefPtr<SendQueue>,
 }
 
 /// One channel per JS thread (a VM is thread-bound; workers re-detect their
@@ -402,8 +405,7 @@ impl IPCInstance {
 
     #[inline]
     pub fn data(&self) -> &SendQueue {
-        // SAFETY: `data` is an owned ref; live until `deinit`.
-        unsafe { self.data.as_ref() }
+        &self.data
     }
 
     /// Only reached from the `get_ipc_instance` error path.
@@ -413,11 +415,9 @@ impl IPCInstance {
     /// not yet freed or aliased.
     pub(crate) unsafe fn deinit(this: *mut IPCInstance) {
         // SAFETY: caller contract — `this` is a live heap::alloc'd box; the
-        // SendQueue ref is owned by it and released here after detaching.
+        // SendQueue ref is owned by it and released with it after detaching.
         unsafe {
-            let sq = (*this).data.as_ptr();
-            (*sq).detach();
-            <SendQueue as bun_ptr::CellRefCounted>::deref(sq);
+            (*this).data.detach();
             drop(bun_core::heap::take(this));
         }
     }
@@ -492,13 +492,12 @@ pub fn get_ipc_instance(
         let loop_ = vm.uws_loop();
         let group: *mut bun_uws::SocketGroup = vm.rare_data().spawn_ipc_group(loop_);
 
-        let send_queue = SendQueue::new(mode, None, IPC::SocketUnion::Uninitialized);
         let instance = IPCInstance::new(IPCInstance {
-            // SAFETY: `SendQueue::new` returns a non-null owned ref.
-            data: unsafe { core::ptr::NonNull::new_unchecked(send_queue) },
+            data: SendQueue::new(mode, None, IPC::SocketUnion::Uninitialized),
         });
-        // SAFETY: `send_queue` is the live SendQueue just allocated;
-        // `instance` was just boxed.
+        // SAFETY: `instance` was just boxed; `send_queue` is its live SendQueue.
+        let send_queue: *mut SendQueue = unsafe { (*instance).data.as_ptr() };
+        // SAFETY: as above.
         unsafe {
             (*send_queue).set_owner(IPC::SendQueueOwner::Instance(
                 core::ptr::NonNull::new_unchecked(instance),
@@ -537,13 +536,12 @@ pub fn get_ipc_instance(
 
     #[cfg(windows)]
     let instance: *mut IPCInstance = {
-        let send_queue = SendQueue::new(mode, None, IPC::SocketUnion::Uninitialized);
         let instance = IPCInstance::new(IPCInstance {
-            // SAFETY: `SendQueue::new` returns a non-null owned ref.
-            data: unsafe { core::ptr::NonNull::new_unchecked(send_queue) },
+            data: SendQueue::new(mode, None, IPC::SocketUnion::Uninitialized),
         });
-        // SAFETY: `send_queue` is the live SendQueue just allocated;
-        // `instance` was just boxed.
+        // SAFETY: `instance` was just boxed; `send_queue` is its live SendQueue.
+        let send_queue: *mut SendQueue = unsafe { (*instance).data.as_ptr() };
+        // SAFETY: as above.
         unsafe {
             (*send_queue).set_owner(IPC::SendQueueOwner::Instance(
                 core::ptr::NonNull::new_unchecked(instance),

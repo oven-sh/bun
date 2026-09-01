@@ -1,6 +1,6 @@
 import { file, spawn, write } from "bun";
 import { install_test_helpers, npm_manifest_test_helpers } from "bun:internal-for-testing";
-import { afterAll, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
+import { afterAll, beforeAll, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { copyFileSync, mkdirSync } from "fs";
 import { cp, exists, lstat, mkdir, readlink, rename, rm, writeFile } from "fs/promises";
 import {
@@ -9863,6 +9863,148 @@ test("npm manifest cache entries are only reused for the package name they were 
 
   expect(parseManifest(byName["no-deps"], registryUrl()).name).toBe("no-deps");
   expect(exitCode).toBe(0);
+});
+
+// A manifest cache entry is written to a temporary file in the temporary
+// directory and renamed into the cache directory. Every install on the machine
+// shares the temporary directory, so the temporary file name has to be unique
+// per writer. It used to be the package name hash and the current millisecond:
+// two installs that saved the same package in the same millisecond opened one
+// file, and the rename of one moved the other's bytes into its cache (an entry
+// for the wrong registry) or left it with no entry at all. Linux writes the
+// entry with O_TMPFILE and does not use the name.
+describe("manifest cache temporary files", () => {
+  const { parseManifest } = npm_manifest_test_helpers;
+  const name = "shared-temp-name";
+  const tarballPath = `/${name}-1.0.0.tgz`;
+  let tarball: Uint8Array;
+  beforeAll(async () => {
+    tarball = await new Bun.Archive(
+      { "package/package.json": JSON.stringify({ name, version: "1.0.0" }) },
+      { compress: "gzip" },
+    ).bytes();
+  });
+
+  function cacheDirOf(cwd: string) {
+    return join(cwd, ".bun-cache");
+  }
+
+  async function cacheEntries(cwd: string) {
+    return (await readdirSorted(cacheDirOf(cwd))).filter(entry => entry.endsWith(".npm"));
+  }
+
+  /**
+   * Serves `name` to the project at `cwd`. The manifest response waits for
+   * `hold`. The tarball response waits until the manifest's cache entry exists
+   * (bun install writes it from a thread pool task it does not wait for before
+   * exiting, so this keeps the install alive until the entry is on disk), or
+   * gives up after a few seconds so a lost write still ends as a failed assertion.
+   */
+  function serveRegistry(cwd: string, hold: () => Promise<void> = async () => {}) {
+    return Bun.serve({
+      port: 0,
+      async fetch(request) {
+        const { origin, pathname } = new URL(request.url);
+        if (pathname === tarballPath) {
+          const deadline = Date.now() + 5_000;
+          while ((await cacheEntries(cwd)).length === 0 && Date.now() < deadline) await Bun.sleep(10);
+          return new Response(tarball);
+        }
+        if (pathname !== `/${name}`) return new Response("not found", { status: 404 });
+        await hold();
+        return Response.json({
+          name,
+          "dist-tags": { latest: "1.0.0" },
+          versions: { "1.0.0": { name, version: "1.0.0", dist: { tarball: `${origin}${tarballPath}` } } },
+        });
+      },
+    });
+  }
+
+  /** Installs `name` into the project at `cwd`, with its own cache directory, and returns the cache entry it left, by package name. */
+  async function installAndReadCache(cwd: string, registryHref: string) {
+    const cacheDir = cacheDirOf(cwd);
+    mkdirSync(cacheDir, { recursive: true });
+    await Promise.all([
+      write(join(cwd, "package.json"), JSON.stringify({ name: "app", dependencies: { [name]: "1.0.0" } })),
+      write(join(cwd, "bunfig.toml"), `[install]\nregistry = "${registryHref}"\n`),
+    ]);
+    await using proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd,
+      stdout: "pipe",
+      stdin: "ignore",
+      stderr: "pipe",
+      env: { ...env, BUN_INSTALL_CACHE_DIR: cacheDir },
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(err).not.toContain("error:");
+    expect(out).toContain(`+ ${name}@1.0.0`);
+    expect(exitCode).toBe(0);
+
+    // parseManifest rejects an entry that was saved for another registry.
+    const entries = await cacheEntries(cwd);
+    try {
+      return {
+        entries,
+        cached: entries.length === 1 ? parseManifest(join(cacheDir, entries[0]), registryHref).name : undefined,
+      };
+    } catch (error) {
+      return { entries, cached: String(error) };
+    }
+  }
+
+  test("concurrent installs saving the same manifest keep their own cache entries", async () => {
+    const installs = 4;
+    for (let round = 0; round < 3; round++) {
+      // Every registry holds its manifest response until all of them have been
+      // asked, so the installs parse and save the manifest at the same time.
+      let asked = 0;
+      const { promise: allAsked, resolve: release } = Promise.withResolvers<void>();
+      const projects = Array.from({ length: installs }, (_, i) => join(packageDir, `round-${round}-${i}`));
+      const registries = projects.map(cwd =>
+        serveRegistry(cwd, () => {
+          if (++asked === installs) release();
+          return allAsked;
+        }),
+      );
+      try {
+        const results = await Promise.all(projects.map((cwd, i) => installAndReadCache(cwd, registries[i].url.href)));
+        expect({ round, cached: results.map(result => result.cached) }).toEqual({
+          round,
+          cached: Array(installs).fill(name),
+        });
+      } finally {
+        for (const server of registries) server.stop(true);
+      }
+    }
+  });
+
+  test("the temporary file is not named after the package and the current millisecond", async () => {
+    // A cold install caches the manifest as <hash of name>-<hash of registry url>.npm.
+    const first = join(packageDir, "first");
+    await using registry = serveRegistry(first);
+    const { entries, cached } = await installAndReadCache(first, registry.url.href);
+    expect(cached).toBe(name);
+    const nameHash = entries[0].slice(0, entries[0].indexOf("-"));
+    expect(nameHash).toMatch(/^[0-9a-f]{16}$/);
+
+    // Hold the manifest response until a directory sits at the old temporary
+    // file name of this package for every millisecond of the next seconds. An
+    // install that picks such a name cannot open it (EISDIR) and saves nothing.
+    const second = join(packageDir, "second");
+    const { promise: trapReady, resolve: trapIsReady } = Promise.withResolvers<void>();
+    await using trapped = serveRegistry(second, () => trapReady);
+    const installed = installAndReadCache(second, trapped.url.href);
+    const tmpDir = String(env.BUN_TMPDIR);
+    mkdirSync(tmpDir, { recursive: true });
+    const start = Date.now() - 100;
+    for (let ms = start; ms < Date.now() + 3_000 && ms < start + 10_000; ms++) {
+      mkdirSync(join(tmpDir, `${nameHash}.npm-${ms.toString(16).padStart(16, "0")}`));
+    }
+    trapIsReady();
+    expect((await installed).cached).toBe(name);
+  });
 });
 
 describe("manifest conditional requests", () => {

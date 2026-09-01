@@ -121,6 +121,7 @@ export var __name = (target, name) => {
 
 // ESM export -> CJS export
 // except, writable incase something re-exports
+// (`deprecatedNamespaceObjectSetters`; `__exportGetters` replaces this in 1.5)
 var __returnValue = v => v;
 function __exportSetter(name, newValue) {
   this[name] = __returnValue.bind(null, newValue);
@@ -133,6 +134,15 @@ export var __export = /* @__PURE__ */ (target, all) => {
       enumerable: true,
       configurable: true,
       set: __exportSetter.bind(all, name),
+    });
+};
+
+export var __exportGetters = /* @__PURE__ */ (target, all) => {
+  for (var name in all)
+    __defProp(target, name, {
+      get: all[name],
+      enumerable: true,
+      configurable: true,
     });
 };
 

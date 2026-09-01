@@ -282,7 +282,7 @@ trait FileSystemPackageJsonExt {
 }
 impl FileSystemPackageJsonExt for crate::fs::FileSystem {
     fn join(&self, parts: &[&[u8]]) -> &'static [u8] {
-        resolve_path::resolve_path::join::<resolve_path::resolve_path::platform::Loose>(parts)
+        resolve_path::resolve_path::join::<resolve_path::resolve_path::platform::Auto>(parts)
     }
 }
 
@@ -1341,7 +1341,7 @@ impl<'a> Package<'a> {
 
     pub(crate) fn clone(self, builder: &mut Semver::semver_string::Builder) -> PackageExternal {
         PackageExternal {
-            name: builder.append_utf8_without_pool::<Semver::String>(self.name, 0),
+            name: builder.append_without_pool::<Semver::String>(self.name, 0),
         }
     }
 
@@ -2052,7 +2052,7 @@ impl<'a> ESModule<'a> {
                         };
                     }
 
-                    // Wildcard expansion: tag for `probe_wildcard_extensions` (oven-sh/bun#29679, #10001).
+                    // Wildcard expansion: tag for `probe_target_extensions` (oven-sh/bun#29679, #10001).
                     dedent!();
                     return Resolution {
                         path: Box::<[u8]>::from(result),

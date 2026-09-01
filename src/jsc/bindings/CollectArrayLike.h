@@ -8,27 +8,20 @@
 
 namespace Bun {
 
-// Reads every element of an array-like object into `out`, in index order, so
-// that all user code an indexed read can run (getters, proxy traps) finishes
-// before the caller reads byte lengths or takes raw pointers. A getter at
-// index N can otherwise detach or resize the buffer at index M < N after
-// M's length was measured.
-//
-// `accept(element)` runs on each element before it is appended. It returns
-// false to stop the loop, which the caller uses to reject an element of the
-// wrong type right away: a later getter cannot change an element's type,
-// only detach or resize it. Without that early exit, a list whose reported
-// length is far larger than its contents (a Proxy with a lying `length` trap,
-// a sparse array) would cost O(length) [[Get]] calls before the caller could
-// reject it.
+// Reads every element of an array-like into `out` before the caller reads any
+// byte length or raw pointer, so a getter or proxy trap cannot detach or resize
+// an element after it was measured. `accept(element)` runs before each append
+// and returns false to stop. A type check belongs there, not after the loop: a
+// later getter cannot change an element's type, and a list that lies about its
+// length (a Proxy `length` trap, a sparse array) then fails at its first bad
+// element instead of after O(length) [[Get]] calls.
 //
 // The caller checks for an exception first, then for `out.hasOverflowed()`.
 template<typename Accept>
 void collectArrayLike(JSC::JSGlobalObject* globalObject, JSC::JSObject* arrayLike, JSC::MarkedArgumentBuffer& out, const Accept& accept)
 {
-    // Only a densely stored JSArray has a length that matches its element
-    // count. A sparse array can report a length of 2^32 - 1 with two elements
-    // in it, and pre-sizing to that fails before the loop can reject it.
+    // A sparse array's length says nothing about its element count, so only
+    // pre-size for dense storage.
     if (auto* array = dynamicDowncast<JSC::JSArray>(arrayLike); array && !JSC::hasAnyArrayStorage(array->indexingType())) [[likely]] {
         out.ensureCapacity(array->length());
         if (out.hasOverflowed()) [[unlikely]]

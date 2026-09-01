@@ -131,11 +131,6 @@ JSC::EncodedJSValue flattenArrayOfBuffersIntoArrayBufferOrUint8Array(JSGlobalObj
         RELEASE_AND_RETURN(throwScope, JSValue::encode(JSC::JSArrayBuffer::create(vm, lexicalGlobalObject->arrayBufferStructure(), JSC::ArrayBuffer::create(static_cast<size_t>(0), 1))));
     };
 
-    // Resolve every element of the input array into a MarkedArgumentBuffer
-    // first so that all user-observable side effects (index getters) run to
-    // completion before we read any byte lengths or allocate the output
-    // buffer. Reject the first element that is neither an ArrayBuffer nor an
-    // ArrayBufferView as soon as it is read.
     MarkedArgumentBuffer args;
     bool any_buffer = false;
     bool any_typed = false;
@@ -157,10 +152,8 @@ JSC::EncodedJSValue flattenArrayOfBuffersIntoArrayBufferOrUint8Array(JSGlobalObj
         return {};
     }
 
-    // All user code is done running. Check that no element was detached by
-    // a later getter and sum their byte lengths. Nothing between here and
-    // the final memcpy loop can call back into JavaScript, so the lengths we
-    // measure now are the lengths we copy below.
+    // Nothing between here and the memcpy loop calls back into JavaScript, so
+    // the lengths read now are the lengths copied below.
     size_t byteLength = 0;
     for (size_t i = 0; i < args.size(); i++) {
         JSValue element = args.at(i);

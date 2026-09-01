@@ -919,16 +919,8 @@ static JSC::EncodedJSValue jsBufferConstructorFunction_concatBody(JSC::JSGlobalO
 
     JSValue totalLengthValue = callFrame->argument(1);
 
-    // Resolve every element of `list` into a MarkedArgumentBuffer first so
-    // that all user-observable side effects (index getters, proxy traps)
-    // run to completion before we read any byte lengths or allocate the
-    // output buffer. Like Node, reject the first element that is not a
-    // Uint8Array as soon as it is read.
-    //
-    // Note: `validateArray` uses `JSC::isArray()` which returns true for
-    // Proxy->Array. `forEachInArrayLike` reads `.length` and each index via
-    // `JSObject::getIndex`, which fast-paths dense JSArrays and falls back
-    // to [[Get]] for proxies and sparse arrays.
+    // `JSC::isArray()` is true for Proxy->Array, so `length` and each index
+    // can come from traps.
     MarkedArgumentBuffer args;
     Bun::collectArrayLike(lexicalGlobalObject, asObject(listValue), args, [&](JSValue element) -> bool {
         if (dynamicDowncast<JSC::JSUint8Array>(element)) [[likely]]
@@ -947,10 +939,8 @@ static JSC::EncodedJSValue jsBufferConstructorFunction_concatBody(JSC::JSGlobalO
         RELEASE_AND_RETURN(throwScope, constructBufferEmpty(lexicalGlobalObject));
     }
 
-    // All user code is done running. Check that no element was detached by
-    // a later getter and sum their byte lengths. Nothing between here and
-    // the final memcpy loop can call back into JavaScript, so the lengths we
-    // measure now are the lengths we copy below.
+    // Nothing between here and the memcpy loop calls back into JavaScript, so
+    // the lengths read now are the lengths copied below.
     size_t availableLength = 0;
     for (unsigned i = 0; i < args.size(); i++) {
         auto* typedArray = uncheckedDowncast<JSC::JSUint8Array>(args.at(i));

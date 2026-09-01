@@ -1569,17 +1569,21 @@ mod draft {
 
     #[cfg(target_env = "ohos")]
     extern "C" fn handle_sigsys_posix(_sig: c_int, _info: *mut libc::siginfo_t, ctx: *mut c_void) {
-        // OHOS seccomp blocked a syscall. Skip the SVC instruction and
-        // return -ENOSYS so the caller sees a recoverable error instead of
-        // being killed with SIGSYS. This mirrors what Android's bionic libc
-        // does internally.
+        // OHOS seccomp blocked a syscall. Return -ENOSYS so the caller sees a
+        // recoverable error instead of being killed with SIGSYS. This mirrors
+        // what Android's bionic libc does internally.
+        //
+        // On-device verified (HongMeng Kernel 1.13.0, aarch64): only the
+        // return register must be modified; the PC must be left at the
+        // faulting SVC. Advancing the PC makes the kernel force the return
+        // value to 0 — worse than a crash for syscalls like close_range, which
+        // would "succeed" without doing anything. With an unchanged PC the
+        // syscall returns the value written to the return register; on
+        // standard Linux seccomp TRAP an unchanged PC makes the kernel return
+        // -ENOSYS itself, so this is portable across kernels.
         const ENOSYS: i64 = 38;
         let uc = ctx as *mut libc::ucontext_t;
         unsafe {
-            // Advance PC past the SVC #0 instruction (4 bytes on aarch64)
-            // so execution continues after the blocked syscall.
-            let pc = &raw mut (*uc).uc_mcontext.pc;
-            *pc = (*pc).wrapping_add(4);
             // Set x0 (return register) to -ENOSYS so callers see ENOSYS
             // and can fall back to alternative implementations.
             let regs = &raw mut (*uc).uc_mcontext.regs;

@@ -29,6 +29,11 @@ pub enum MachoError {
     MissingRequiredSegment,
     #[error("OutOfMemory")]
     OutOfMemory,
+    /// Embedding the bundle moved a `__LINKEDIT` load command offset past
+    /// `u32::MAX`. Mach-O stores those offsets as 32-bit, so the output cannot
+    /// be written whatever the segment layout.
+    #[error("executable would exceed 4 GiB (Mach-O load commands store 32-bit file offsets)")]
+    ExecutableTooLarge,
 }
 bun_core::oom_from_alloc!(MachoError);
 
@@ -535,7 +540,7 @@ struct Shifter {
 }
 
 impl Shifter {
-    fn do_(value: u64, amount: u64, range_min: u64, range_max: u64) -> Result<u64, MachoError> {
+    fn do_(value: u64, amount: u64, range_min: u64, range_max: u64) -> Result<u32, MachoError> {
         if value == 0 {
             return Ok(0);
         }
@@ -546,23 +551,21 @@ impl Shifter {
             return Err(MachoError::OffsetOutOfRange);
         }
 
-        // Check for overflow
-        if value > u64::MAX - amount {
-            return Err(MachoError::OffsetOverflow);
-        }
-
-        Ok(value + amount)
+        // The shifted offset goes back into a u32 load command field.
+        value
+            .checked_add(amount)
+            .and_then(|shifted| u32::try_from(shifted).ok())
+            .ok_or(MachoError::ExecutableTooLarge)
     }
 
     #[inline]
     fn shift_one(&self, field: &mut u32) -> Result<(), MachoError> {
-        *field = u32::try_from(Self::do_(
+        *field = Self::do_(
             *field as u64,
             self.amount,
             self.start,
-            self.linkedit_fileoff + self.linkedit_filesize,
-        )?)
-        .unwrap();
+            self.linkedit_fileoff.saturating_add(self.linkedit_filesize),
+        )?;
         Ok(())
     }
 }

@@ -272,15 +272,11 @@ extern "C" fn select_alpn_callback(
     }
 }
 
-/// Installs `select_alpn_callback` on `ctx`. BoringSSL resolves the server
-/// ALPN selection callback off the *current* `ssl->ctx`, and the SNI machinery
-/// replaces that with `SSL_set_SSL_CTX` before ALPN negotiation runs - so
-/// every context SNI can select (an `SNICallback`/`resumeSNI` result, an
-/// `addContext`/`addServerName` tree entry) must carry the same registration
-/// `on_open` puts on the listener's default context, or selecting it silently
-/// drops ALPN. The selector dispatches through the per-SSL ex_data slot set in
-/// `on_open` (NOACK when unset), so registering it on a shared or user-owned
-/// context is inert for connections that don't negotiate ALPN.
+/// BoringSSL looks up the server ALPN callback on the *current* `ssl->ctx`,
+/// which SNI replaces with `SSL_set_SSL_CTX` before ALPN negotiation, so every
+/// context SNI can install needs the registration `on_open` gives the default
+/// one. The selector is keyed on per-SSL ex_data (NOACK when unset), so the
+/// registration is inert for every other connection on a shared context.
 pub(in crate::socket) fn install_sni_alpn_selector(ctx: *mut boringssl_sys::SSL_CTX) {
     if ctx.is_null() {
         return;
@@ -911,9 +907,6 @@ impl<const SSL: bool> NewSocket<SSL> {
         } else {
             core::ptr::null_mut()
         };
-        // us_select_cert_cb installs the resolved context with SSL_set_SSL_CTX
-        // when the handshake resumes, before BoringSSL negotiates ALPN; carry
-        // the per-connection selector over.
         install_sni_alpn_selector(ctx_ptr);
         socket.sni_resolve(ctx_ptr, is_error);
         Ok(JSValue::UNDEFINED)

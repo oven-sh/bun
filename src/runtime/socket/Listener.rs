@@ -794,8 +794,6 @@ impl Listener {
             return Ok(JSValue::UNDEFINED);
         };
 
-        // SNI selects a tree entry with SSL_set_SSL_CTX before BoringSSL
-        // negotiates ALPN; carry the per-connection selector over.
         super::socket_body::install_sni_alpn_selector(sni_ctx.as_ptr());
 
         // The C SNI tree SSL_CTX_up_ref()s; ours drops here.
@@ -2041,8 +2039,6 @@ fn decode_sni_result(result: JSValue, abort_handshake: *mut core::ffi::c_int) ->
     if let Some(sc) = result.as_class_ref::<SecureContext>() {
         // The C dispatcher frees this +1 after `SSL_set_SSL_CTX` takes its own.
         let ctx = sc.ctx.clone().into_raw();
-        // The dispatcher installs `ctx` with SSL_set_SSL_CTX before BoringSSL
-        // negotiates ALPN; carry the per-connection selector over.
         super::socket_body::install_sni_alpn_selector(ctx);
         return ctx.cast();
     }

@@ -1507,6 +1507,29 @@ describe("bundler", () => {
     run: { file: "/out/main.js", stdout: "main 12000" },
   });
 
+  // Import attributes describe the source file; once the target is a chunk
+  // they are dropped (an external target keeps them).
+  itBundled("splitting/DynamicImportAttributesDroppedForChunk", {
+    files: {
+      "/entry.js": /* js */ `
+        const { default: d } = await import("./d.json", { with: { type: "json" } });
+        const ext = import("./ext.json", { with: { type: "json" } }).catch(() => {});
+        console.log(d.k);
+      `,
+      "/d.json": `{ "k": "v" }`,
+    },
+    external: ["./ext.json"],
+    splitting: true,
+    format: "esm",
+    outdir: "/out",
+    run: { file: "/out/entry.js", stdout: "v" },
+    onAfterBundle(api) {
+      const entry = api.readFile("/out/entry.js");
+      expect(entry).toMatch(/import\("\.\/d-[a-z0-9]+\.js"\)/);
+      expect(entry).toMatch(/import\("\.\/ext\.json", \{\s*with: \{\s*type: "json"/);
+    },
+  });
+
   // With target bun, a require() of a bundled ES module becomes a chunk of its
   // own, loaded synchronously with import.meta.require() when the call runs.
   const splitRequireFiles = {

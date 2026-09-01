@@ -244,7 +244,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsGetterProxyEnvironmentVariable, (JSGlobalObject * glo
 
     BunString name = Bun::toStringView(propertyName.publicName());
     BunString value = Bun__getEnvValueBunString(globalObject, &name);
-    if (value.tag == BunStringTag::Dead) {
+    if (value.isDead()) {
         return JSValue::encode(jsUndefined());
     }
     RELEASE_AND_RETURN(scope, JSValue::encode(jsString(vm, value.toWTFString())));
@@ -994,7 +994,7 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
     // method table, and its internal setup (Bun.inspect.custom symbol, toJSON) would hit
     // the exotic put's symbol-key TypeError. Keep a plain object; semantics live in traps.
     JSC::JSObject* object = nullptr;
-    if (count < 63) {
+    if (count > 0 && count < 63) {
         object = constructEmptyObject(globalObject, globalObject->objectPrototype(), count);
     } else {
         object = constructEmptyObject(globalObject, globalObject->objectPrototype());

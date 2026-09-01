@@ -3029,6 +3029,8 @@ pub mod bv2_impl {
             this.linker.options.minify_identifiers = this.transpiler.options.minify_identifiers;
             this.linker.options.minify_whitespace = this.transpiler.options.minify_whitespace;
             this.linker.options.emit_dce_annotations = this.transpiler.options.emit_dce_annotations;
+            this.linker.options.deprecated_namespace_object_setters =
+                this.transpiler.options.deprecated_namespace_object_setters;
             this.linker.options.ignore_dce_annotations =
                 this.transpiler.options.ignore_dce_annotations;
             // SAFETY: `transpiler.options.{banner,footer,public_path,metafile_*}` are
@@ -6691,9 +6693,11 @@ pub mod bv2_impl {
                                     interned_slice(
                                         self.arena()
                                             .alloc_str(&format!(
-                                                "{}/{:016x}{}",
+                                                "{}/{}{}",
                                                 bake_types::ASSET_PREFIX,
-                                                hash,
+                                                bun_core::fmt::bytes_to_hex_lower_string(
+                                                    &hash.to_ne_bytes()
+                                                ),
                                                 bstr::BStr::new(bun_paths::extension(path.text)),
                                             ))
                                             .as_bytes(),
@@ -7900,6 +7904,9 @@ pub mod bv2_impl {
         /// so the single read site in `match_import_with_export` is a safe `Deref`;
         /// the pointee slab is never reallocated while the iterator is live.
         pub(crate) import_data: bun_ptr::BackRef<[crate::ImportData]>,
+        /// `Found` an `export default X` where `X` is an import in that file
+        /// (`Ast::export_default_alias_of_import`).
+        pub(crate) default_alias_of: bun_ast::Ref,
     }
 
     impl Default for ImportTrackerIterator {
@@ -7908,6 +7915,7 @@ pub mod bv2_impl {
                 status: ImportTrackerStatus::default(),
                 value: crate::ImportTracker::default(),
                 import_data: bun_ptr::BackRef::new(&[] as &[crate::ImportData]),
+                default_alias_of: bun_ast::Ref::NONE,
             }
         }
     }

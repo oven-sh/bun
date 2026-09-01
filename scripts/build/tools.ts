@@ -656,12 +656,8 @@ export interface CargoToolchain {
 export function findRustLld(os: OS): {
   rustLld: string | undefined;
   rustLlvmVersion: string | undefined;
-  /** `rustc --print sysroot`. */
-  rustSysroot: string | undefined;
-  /** `host:` line from `rustc -vV` — the rustlib subdirectory name. */
-  rustHostTriple: string | undefined;
 } {
-  const none = { rustLld: undefined, rustLlvmVersion: undefined, rustSysroot: undefined, rustHostTriple: undefined };
+  const none = { rustLld: undefined, rustLlvmVersion: undefined };
   // Look up rustc the same way findCargo does cargo: $CARGO_HOME/bin first.
   const cargoHome = process.env.CARGO_HOME ?? join(homedir(), ".cargo");
   const rustc =
@@ -735,7 +731,7 @@ export function findRustLld(os: OS): {
 
   const rustHostTriple = vv.match(/^host:\s*(\S+)/m)?.[1];
   const rustLlvmVersion = vv.match(/^LLVM version:\s*(\d+\.\d+\.\d+)/m)?.[1];
-  if (rustHostTriple === undefined) return { ...none, rustSysroot: sysroot, rustLlvmVersion };
+  if (rustHostTriple === undefined) return { ...none, rustLlvmVersion };
 
   const bin = join(sysroot, "lib", "rustlib", rustHostTriple, "bin");
   const candidate =
@@ -745,7 +741,7 @@ export function findRustLld(os: OS): {
         ? join(bin, "gcc-ld", "ld64.lld")
         : join(bin, "gcc-ld", "ld.lld");
   const rustLld = isExecutable(candidate) ? candidate : undefined;
-  return { rustLld, rustLlvmVersion, rustSysroot: sysroot, rustHostTriple };
+  return { rustLld, rustLlvmVersion };
 }
 
 /**

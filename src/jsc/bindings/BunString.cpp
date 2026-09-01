@@ -130,6 +130,11 @@ JSC::JSValue BunString::transferToJS(JSC::JSGlobalObject* globalObject)
         return JSValue::decode(Bun::ERR::STRING_TOO_LONG(scope, globalObject));
     }
 
+    if (this->tag == BunStringTag::OutOfMemory) [[unlikely]] {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        return JSValue::decode(Bun::ERR::MEMORY_ALLOCATION_FAILED(scope, globalObject));
+    }
+
     if (this->tag == BunStringTag::WTFStringImpl) [[likely]] {
         ASSERT(this->impl.wtf->refCount() > 0 && !this->impl.wtf->isEmpty());
         auto str = WTF::String(adoptRef(*this->impl.wtf));
@@ -196,6 +201,12 @@ JSC::JSString* toJS(JSC::JSGlobalObject* globalObject, BunString bunString)
     if (bunString.tag == BunStringTag::Dead) [[unlikely]] {
         auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
         Bun::ERR::STRING_TOO_LONG(scope, globalObject);
+        return nullptr;
+    }
+
+    if (bunString.tag == BunStringTag::OutOfMemory) [[unlikely]] {
+        auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+        Bun::ERR::MEMORY_ALLOCATION_FAILED(scope, globalObject);
         return nullptr;
     }
 
@@ -366,13 +377,23 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue BunString__toJS(JSC
     return JSValue::encode(result);
 }
 
+// `tryCreateUninitialized` returns null both for a length it refuses and for a
+// failed allocation; the tag tells transferToJS/toJS which error to throw.
+template<typename CharacterType>
+static BunString uninitializedStringFailure(size_t length)
+{
+    if (!WTF::StringImpl::isValidLength<CharacterType>(length))
+        return { .tag = BunStringTag::Dead };
+    return { .tag = BunStringTag::OutOfMemory };
+}
+
 extern "C" [[ZIG_EXPORT(nothrow)]] BunString BunString__fromUTF16Unitialized(size_t length)
 {
     ASSERT(length > 0);
     std::span<char16_t> ptr;
     auto impl = WTF::StringImpl::tryCreateUninitialized(length, ptr);
     if (!impl) [[unlikely]] {
-        return { .tag = BunStringTag::Dead };
+        return uninitializedStringFailure<char16_t>(length);
     }
     return { BunStringTag::WTFStringImpl, { .wtf = impl.leakRef() } };
 }
@@ -383,7 +404,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] BunString BunString__fromLatin1Unitialized(si
     std::span<Latin1Character> ptr;
     auto impl = WTF::StringImpl::tryCreateUninitialized(length, ptr);
     if (!impl) [[unlikely]] {
-        return { .tag = BunStringTag::Dead };
+        return uninitializedStringFailure<Latin1Character>(length);
     }
     return { BunStringTag::WTFStringImpl, { .wtf = impl.leakRef() } };
 }
@@ -396,7 +417,7 @@ extern "C" BunString BunString__fromUTF8(const char* bytes, size_t length)
         std::span<char16_t> ptr;
         auto impl = WTF::StringImpl::tryCreateUninitialized(u16Length, ptr);
         if (!impl) [[unlikely]] {
-            return { .tag = BunStringTag::Dead };
+            return uninitializedStringFailure<char16_t>(u16Length);
         }
         RELEASE_ASSERT(simdutf::convert_utf8_to_utf16(bytes, length, ptr.data()) == u16Length);
         return { BunStringTag::WTFStringImpl, { .wtf = impl.leakRef() } };
@@ -416,7 +437,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] BunString BunString__fromLatin1(const char* b
     std::span<Latin1Character> ptr;
     auto impl = WTF::StringImpl::tryCreateUninitialized(length, ptr);
     if (!impl) [[unlikely]] {
-        return { .tag = BunStringTag::Dead };
+        return uninitializedStringFailure<Latin1Character>(length);
     }
     memcpy(ptr.data(), bytes, length);
 
@@ -431,7 +452,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] BunString BunString__fromUTF16ToLatin1(const 
     std::span<Latin1Character> ptr;
     auto impl = WTF::StringImpl::tryCreateUninitialized(outLength, ptr);
     if (!impl) [[unlikely]] {
-        return { BunStringTag::Dead };
+        return uninitializedStringFailure<Latin1Character>(outLength);
     }
 
     size_t latin1_length = simdutf::convert_valid_utf16le_to_latin1(bytes, length, reinterpret_cast<char*>(ptr.data()));
@@ -445,7 +466,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] BunString BunString__fromUTF16(const char16_t
     std::span<char16_t> ptr;
     auto impl = WTF::StringImpl::tryCreateUninitialized(length, ptr);
     if (!impl) [[unlikely]] {
-        return { .tag = BunStringTag::Dead };
+        return uninitializedStringFailure<char16_t>(length);
     }
     memcpy(ptr.data(), bytes, length * sizeof(char16_t));
     return { BunStringTag::WTFStringImpl, { .wtf = impl.leakRef() } };
@@ -743,7 +764,7 @@ void BunString::appendToBuilder(WTF::StringBuilder& builder) const
         return;
     }
 
-    // append nothing for BunStringTag::Dead and BunStringTag::Empty
+    // append nothing for BunStringTag::Dead, OutOfMemory and Empty
 }
 
 WTF::String BunString::toWTFString(ZeroCopyTag) const

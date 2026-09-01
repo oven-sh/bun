@@ -418,7 +418,10 @@ impl TextDecoder {
                         }
 
                         debug_assert!(matches!(err, strings::ToUTF16Error::OutOfMemory));
-                        return Err(global_this.throw_out_of_memory());
+                        return Err(bun_string_jsc::throw_utf16_transcode_failure(
+                            global_this,
+                            input,
+                        ));
                     }
                 };
 
@@ -541,7 +544,7 @@ impl TextDecoder {
                             .throw());
                     }
                     Err(strings::ToUTF16Error::OutOfMemory) => {
-                        return Err(global_this.throw_out_of_memory());
+                        return Err(global_this.throw_memory_allocation_failed());
                     }
                 };
 

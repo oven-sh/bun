@@ -1,7 +1,6 @@
-import { setMaxSingleAllocationSizeForTesting } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug } from "harness";
-import { StringDecoder } from "node:string_decoder";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
+import { join } from "node:path";
 
 const MiB = 1024 ** 2;
 
@@ -14,44 +13,66 @@ const allocationFailed = {
   message: "Failed to allocate memory",
 };
 
-// `setMaxSingleAllocationSizeForTesting` makes every WTF allocation above the
-// cap fail the way a real out-of-memory does (`tryCreateUninitialized` returns
-// null). It exists in debug WTF only. The cap is process-wide, so it is set
-// around the one call under test and lifted again before anything else runs.
-function thrownUnderAllocationCap(bytes: number, fn: () => unknown): unknown {
-  expect(setMaxSingleAllocationSizeForTesting(bytes)).toBe(true);
-  try {
-    fn();
-    return undefined;
-  } catch (error) {
-    return error;
-  } finally {
-    setMaxSingleAllocationSizeForTesting(Infinity);
-  }
+// Runs `script` in a child whose allocations fail above a cap (`env` sets the
+// cap up). The script calls `run(label, fn)` per case; the child prints the
+// collected results as JSON.
+async function resultsUnderCap(env: Record<string, string | undefined>, script: string) {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      import { StringDecoder } from "node:string_decoder";
+      const results = {};
+      const run = async (label, fn) => {
+        try { results[label] = "unexpected success: " + String(await fn()).length; }
+        catch (e) { results[label] = { name: e.name, code: e.code, message: e.message }; }
+      };
+      ${script}
+      console.log(JSON.stringify(results));
+      `,
+    ],
+    env,
+    stdout: "pipe",
+    // ASAN prints a benign "failed to allocate" WARNING line per recovered
+    // failure; drain it but do not assert on it.
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout.trim() || stderr).toStartWith("{");
+  expect(exitCode).toBe(0);
+  return JSON.parse(stdout);
 }
 
-// The input is 16 MiB of ASCII, so every output below is 8 MiB or more and the
-// 4 MiB cap fails exactly the output string's allocation. The encodings whose
-// output buffer comes from the Rust allocator (which the WTF cap does not
+// `BUN_JSC_maxSingleAllocationSize` makes every WTF `try*` allocation above the
+// cap return null, the way a failed allocation does. It exists in debug WTF
+// only. The input is 16 MiB of ASCII, so every output below is 8 MiB or more
+// and the 4 MiB cap fails exactly the output string's allocation. The encodings
+// whose output buffer comes from the Rust allocator (which the WTF cap does not
 // reach) are covered by the ASAN block further down.
 describe.skipIf(!isDebug)("a WTF string whose allocation fails is reported as a failed allocation", () => {
-  const input = Buffer.alloc(16 * MiB, 97);
-
-  describe.each(["utf8", "hex", "latin1", "ascii", "ucs2"] as const)("Buffer.prototype.toString(%s)", encoding => {
-    test("throws ERR_MEMORY_ALLOCATION_FAILED", () => {
-      const error = thrownUnderAllocationCap(4 * MiB, () => input.toString(encoding));
-      expect(error).toMatchObject(allocationFailed);
+  test("Buffer.prototype.toString and StringDecoder.prototype.write", async () => {
+    const results = await resultsUnderCap(
+      { ...bunEnv, BUN_JSC_maxSingleAllocationSize: String(4 * MiB) },
+      `
+      const input = Buffer.alloc(${16 * MiB}, 97);
+      for (const encoding of ["utf8", "hex", "latin1", "ascii", "ucs2"]) {
+        await run("toString(" + encoding + ")", () => input.toString(encoding));
+      }
+      await run("StringDecoder(utf8).write", () => new StringDecoder("utf8").write(input));
+      // Under the cap, so the string is created.
+      results["1 MiB toString(hex)"] = Buffer.alloc(${MiB}, 97).toString("hex").length;
+      `,
+    );
+    expect(results).toEqual({
+      "toString(utf8)": allocationFailed,
+      "toString(hex)": allocationFailed,
+      "toString(latin1)": allocationFailed,
+      "toString(ascii)": allocationFailed,
+      "toString(ucs2)": allocationFailed,
+      "StringDecoder(utf8).write": allocationFailed,
+      "1 MiB toString(hex)": 2 * MiB,
     });
-  });
-
-  test("StringDecoder.prototype.write", () => {
-    const error = thrownUnderAllocationCap(4 * MiB, () => new StringDecoder("utf8").write(input));
-    expect(error).toMatchObject(allocationFailed);
-  });
-
-  test("the same conversion succeeds without the cap", () => {
-    expect(input.toString("utf8").length).toBe(input.length);
-    expect(input.toString("hex").length).toBe(2 * input.length);
   });
 });
 
@@ -70,44 +91,58 @@ describe.skipIf(!isASAN)("a Rust-allocated string whose allocation fails is repo
       .filter(Boolean)
       .join(":"),
   };
+  const inputs = `
+    const ascii = Buffer.alloc(${SIZE}, "a");
+    const nonAscii = Buffer.alloc(${SIZE}, "a"); nonAscii[0] = 0xc3; nonAscii[1] = 0xa9;
+    // '"' + '\\u00e9' + 'a'.repeat(${SIZE} - 4) + '"': a valid JSON string literal.
+    const json = Buffer.alloc(${SIZE}, "a");
+    json[0] = 0x22; json[1] = 0xc3; json[2] = 0xa9; json[${SIZE} - 1] = 0x22;
+  `;
 
   test("Buffer.prototype.toString and StringDecoder.prototype.write", async () => {
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `
-        const { StringDecoder } = require("node:string_decoder");
-        const ascii = Buffer.alloc(${SIZE}, "a");
-        const nonAscii = Buffer.alloc(${SIZE}, "a"); nonAscii[0] = 0xc3; nonAscii[1] = 0xa9;
-        const results = {};
-        for (const [label, fn] of Object.entries({
-          "toString(utf8)": () => nonAscii.toString("utf8"),
-          "toString(base64)": () => ascii.toString("base64"),
-          "toString(base64url)": () => ascii.toString("base64url"),
-          "StringDecoder(utf8).write": () => new StringDecoder("utf8").write(nonAscii),
-          "StringDecoder(base64).write": () => new StringDecoder("base64").write(ascii),
-        })) {
-          try { results[label] = "unexpected success: " + fn().length; }
-          catch (e) { results[label] = { name: e.name, code: e.code, message: e.message }; }
-        }
-        console.log(JSON.stringify(results));
-        `,
-      ],
+    const results = await resultsUnderCap(
       env,
-      stdout: "pipe",
-      // ASAN prints a benign "failed to allocate" WARNING line per recovered
-      // failure; drain it but do not assert on it.
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(JSON.parse(stdout.trim() || JSON.stringify({ stdout, stderr, exitCode }))).toEqual({
+      `
+      ${inputs}
+      await run("toString(utf8)", () => nonAscii.toString("utf8"));
+      await run("toString(base64)", () => ascii.toString("base64"));
+      await run("toString(base64url)", () => ascii.toString("base64url"));
+      await run("StringDecoder(utf8).write", () => new StringDecoder("utf8").write(nonAscii));
+      await run("StringDecoder(base64).write", () => new StringDecoder("base64").write(ascii));
+      `,
+    );
+    expect(results).toEqual({
       "toString(utf8)": allocationFailed,
       "toString(base64)": allocationFailed,
       "toString(base64url)": allocationFailed,
       "StringDecoder(utf8).write": allocationFailed,
       "StringDecoder(base64).write": allocationFailed,
     });
-    expect(exitCode).toBe(0);
+  });
+
+  // Node 26 throws the same error from Blob.text() and Response.text(), and
+  // aborts in TextDecoder.decode().
+  test("TextDecoder.decode, Blob, Response and Bun.file", async () => {
+    using dir = tempDir("buffer-oom", {});
+    const file = join(String(dir), "non-ascii.txt");
+    const results = await resultsUnderCap(
+      env,
+      `
+      ${inputs}
+      await run("TextDecoder.decode", () => new TextDecoder().decode(nonAscii));
+      await run("Blob.text", () => new Blob([nonAscii]).text());
+      await run("Blob.json", () => new Blob([json]).json());
+      await run("Response.text", () => new Response(nonAscii).text());
+      await Bun.write(${JSON.stringify(file)}, nonAscii);
+      await run("Bun.file.text", () => Bun.file(${JSON.stringify(file)}).text());
+      `,
+    );
+    expect(results).toEqual({
+      "TextDecoder.decode": allocationFailed,
+      "Blob.text": allocationFailed,
+      "Blob.json": allocationFailed,
+      "Response.text": allocationFailed,
+      "Bun.file.text": allocationFailed,
+    });
   });
 });

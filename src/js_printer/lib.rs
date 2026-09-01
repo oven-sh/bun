@@ -1798,6 +1798,10 @@ pub(crate) mod __gated_printer {
                         ExprData::EAwait(_) | ExprData::EUndefined(_) | ExprData::ENumber(_) => {
                             v.left_level = Level::Call;
                         }
+                        // When kept and inverted, this prints a `!` prefix
+                        ExprData::EImportMetaMain(m) if m.inverted => {
+                            v.left_level = Level::Call;
+                        }
                         ExprData::EBoolean(_) | ExprData::EBranchBoolean(_) => {
                             // When minifying, booleans are printed as "!0 and "!1"
                             if self.options.minify_syntax {
@@ -3246,11 +3250,20 @@ pub(crate) mod __gated_printer {
                     }
                 }
                 ExprData::EImportMetaMain(data) => {
-                    if self.options.module_type == bundle_opts::Format::Esm
-                        && self.options.target != bun_ast::Target::Node
-                    {
+                    // Must agree with `lower_import_meta_main` in the bundler's ParseTask.
+                    let keep_import_meta_main = match self.options.module_type {
                         // Node.js doesn't support import.meta.main
-                        // Most of the time, leave it in there
+                        bundle_opts::Format::Esm => self.options.target != bun_ast::Target::Node,
+                        // Bun loads its `// @bun` iife as an ES module, so import.meta.main works.
+                        bundle_opts::Format::Iife => self.options.target.is_bun(),
+                        bundle_opts::Format::Cjs | bundle_opts::Format::InternalBakeDev => false,
+                    };
+                    if keep_import_meta_main {
+                        // When inverted this prints a `!` prefix, so parenthesize like one.
+                        let wrap = data.inverted && level.gte(Level::Prefix);
+                        if wrap {
+                            self.print(b"(");
+                        }
                         if data.inverted {
                             self.add_source_mapping(expr.loc);
                             self.print(b"!");
@@ -3262,10 +3275,19 @@ pub(crate) mod __gated_printer {
                             mi.flags.contains_import_meta = true;
                         }
                         self.print(b"import.meta.main");
+                        if wrap {
+                            self.print(b")");
+                        }
                     } else {
                         debug_assert!(
                             self.options.module_type != bundle_opts::Format::InternalBakeDev
                         );
+
+                        // Prints as an `==` / `!=` expression, so parenthesize like one.
+                        let wrap = level.gte(Level::Equals);
+                        if wrap {
+                            self.print(b"(");
+                        }
 
                         self.print_space_before_identifier();
                         self.add_source_mapping(expr.loc);
@@ -3282,18 +3304,29 @@ pub(crate) mod __gated_printer {
                             self.print_whitespacer(ws!(b".main == "));
                         }
 
-                        if self.options.target == bun_ast::Target::Node {
-                            // "__require.module"
-                            if let Some(require) = self.options.require_ref {
+                        match self.options.require_ref {
+                            // esm output has no `module` binding; compare against `__require.module`.
+                            Some(require)
+                                if self.options.module_type == bundle_opts::Format::Esm =>
+                            {
                                 self.print_symbol(require);
                                 self.print(b".module");
-                            } else {
+                            }
+                            // The host's `module`; the renamer reserves the name
+                            // (see `value_for_import_meta_main`).
+                            _ if self.options.module_type == bundle_opts::Format::Iife
+                                || self.options.target == bun_ast::Target::Node =>
+                            {
                                 self.print(b"module");
                             }
-                        } else if self.options.commonjs_module_ref.is_valid() {
-                            self.print_symbol(self.options.commonjs_module_ref);
-                        } else {
-                            self.print(b"module");
+                            _ if self.options.commonjs_module_ref.is_valid() => {
+                                self.print_symbol(self.options.commonjs_module_ref);
+                            }
+                            _ => self.print(b"module"),
+                        }
+
+                        if wrap {
+                            self.print(b")");
                         }
                     }
                 }

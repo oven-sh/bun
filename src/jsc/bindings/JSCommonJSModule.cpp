@@ -139,7 +139,7 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
             globalObject,
             globalObject->requireResolveFunctionUnbound(),
             moduleObject,
-            ArgList(), 1, globalObject->commonStrings().resolveString(globalObject), resolveSourceCode);
+            ArgList(), 1, Bun::commonStrings(vm).resolveString(), resolveSourceCode);
         RETURN_IF_EXCEPTION(scope, );
 
         SourceCode requireSourceCode = makeSource("require"_s, SourceOrigin(), SourceTaintedOrigin::Untainted);
@@ -147,7 +147,7 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
             globalObject,
             globalObject->requireFunctionUnbound(),
             moduleObject,
-            ArgList(), 1, globalObject->commonStrings().requireString(globalObject), requireSourceCode);
+            ArgList(), 1, Bun::commonStrings(vm).requireString(), requireSourceCode);
         RETURN_IF_EXCEPTION(scope, );
         requireFunction->putDirect(vm, vm.propertyNames->resolve, resolveFunction, 0);
         RETURN_IF_EXCEPTION(scope, );
@@ -226,6 +226,7 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
         if (jsFunction->jsExecutable()->parameterCount() > 5) {
             // it expects ImportMetaObject
             args.append(Zig::ImportMetaObject::create(globalObject, filename));
+            RETURN_IF_EXCEPTION(scope, false);
         }
     }
 
@@ -263,6 +264,7 @@ bool JSCommonJSModule::load(JSC::VM& vm, Zig::GlobalObject* globalObject)
         // On error, remove the module from the require map/
         // so that it can be re-evaluated on the next require.
         bool wasRemoved = globalObject->requireMap()->remove(globalObject, this->filename());
+        RETURN_IF_EXCEPTION(scope, false);
         ASSERT(wasRemoved);
 
         scope.throwException(globalObject, exception);
@@ -333,15 +335,15 @@ JSC_DEFINE_HOST_FUNCTION(requireResolvePathsFunction, (JSGlobalObject * globalOb
     JSValue thisValue = callframe->thisValue();
     auto* requireResolveBound = dynamicDowncast<JSC::JSBoundFunction>(thisValue);
     if (!requireResolveBound) [[unlikely]] {
-        return JSValue::encode(constructEmptyArray(globalObject, nullptr, 0));
+        RELEASE_AND_RETURN(scope, JSValue::encode(constructEmptyArray(globalObject, nullptr, 0)));
     }
     auto* boundModule = dynamicDowncast<Bun::JSCommonJSModule>(requireResolveBound->boundThis());
     if (!boundModule) [[unlikely]] {
-        return JSValue::encode(constructEmptyArray(globalObject, nullptr, 0));
+        RELEASE_AND_RETURN(scope, JSValue::encode(constructEmptyArray(globalObject, nullptr, 0)));
     }
     JSString* filename = dynamicDowncast<JSString>(boundModule->filename());
     if (!filename) [[unlikely]] {
-        return JSValue::encode(constructEmptyArray(globalObject, nullptr, 0));
+        RELEASE_AND_RETURN(scope, JSValue::encode(constructEmptyArray(globalObject, nullptr, 0)));
     }
     RETURN_IF_EXCEPTION(scope, {});
     Bun::PathResolveModule parent = { .paths = nullptr, .filename = filename, .pathsArrayLazy = true };
@@ -770,6 +772,7 @@ JSC_DEFINE_HOST_FUNCTION(functionJSCommonJSModule_compile, (JSGlobalObject * glo
     RETURN_IF_EXCEPTION(throwScope, {});
 
     String dirnameString = dirnameValue.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
 
     WTF::NakedPtr<JSC::Exception> exception;
     evaluateCommonJSModuleOnce(
@@ -1287,6 +1290,7 @@ ALWAYS_INLINE EncodedJSValue finishRequireWithError(Zig::GlobalObject* globalObj
     // On error, remove the module from the require map/
     // so that it can be re-evaluated on the next require.
     bool wasRemoved = globalObject->requireMap()->remove(globalObject, specifierValue);
+    RETURN_IF_EXCEPTION(throwScope, {});
     ASSERT(wasRemoved);
 
     throwScope.throwException(globalObject, exception);
@@ -1681,7 +1685,7 @@ JSObject* JSCommonJSModule::createBoundRequireFunction(VM& vm, JSGlobalObject* l
         globalObject,
         globalObject->requireFunctionUnbound(),
         moduleObject,
-        ArgList(), 1, globalObject->commonStrings().requireString(globalObject), requireSourceCode);
+        ArgList(), 1, Bun::commonStrings(vm).requireString(), requireSourceCode);
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     SourceCode resolveSourceCode = makeSource("resolve"_s, SourceOrigin(), SourceTaintedOrigin::Untainted);
@@ -1690,7 +1694,7 @@ JSObject* JSCommonJSModule::createBoundRequireFunction(VM& vm, JSGlobalObject* l
         globalObject,
         globalObject->requireResolveFunctionUnbound(),
         moduleObject,
-        ArgList(), 1, globalObject->commonStrings().resolveString(globalObject), resolveSourceCode);
+        ArgList(), 1, Bun::commonStrings(vm).resolveString(), resolveSourceCode);
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     requireFunction->putDirect(vm, vm.propertyNames->resolve, resolveFunction, 0);

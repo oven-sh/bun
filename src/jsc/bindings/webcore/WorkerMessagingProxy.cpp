@@ -343,7 +343,9 @@ static bool drainInbox(WorkerMessagingProxy::MessageInbox& inbox, Zig::GlobalObj
                 dispatch(MessageEvent::create(eventNames().messageerrorEvent, MessageEvent::Init { {}, jsNull() }, MessageEvent::IsTrusted::Yes));
             } else
                 dispatch(event->event);
-            if (globalObject.drainMicrotasks())
+            bool terminating = globalObject.drainMicrotasks();
+            RETURN_IF_EXCEPTION(scope, false);
+            if (terminating)
                 return false; // termination pending
             if (paused()) {
                 Locker locker { inbox.lock };

@@ -359,7 +359,11 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(constructWebView, __attribute__((minsiz
         }
         view->m_consoleIsGlobal = consoleIsGlobal;
         if (consoleCallback) view->m_onConsole.set(vm, view, consoleCallback);
-        if (!initialUrl.isEmpty()) view->navigate(globalObject, initialUrl);
+        // No user code ever holds this promise; handled, so a rejection
+        // (close mid-load, crash) cannot surface as unhandledRejection.
+        if (!initialUrl.isEmpty()) {
+            if (auto* p = view->navigate(globalObject, initialUrl)) p->markAsHandled();
+        }
         return JSValue::encode(view);
     }
 
@@ -378,12 +382,12 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(constructWebView, __attribute__((minsiz
     if (consoleCallback) view->m_onConsole.set(vm, view, consoleCallback);
     // Navigate promise lands in m_pendingNavigate; the user's first await
     // (including the next navigate()) serializes behind it. If it rejects
-    // (bad URL), the next op's checkSlot sees the slot cleared and proceeds;
-    // the rejection is unobserved unless the user explicitly awaits the
-    // first navigate via view.onNavigated or a second navigate that picks
-    // up the pending state. Same semantics as `view.navigate(url)` right
-    // after construction — just one line shorter.
-    if (!initialUrl.isEmpty()) view->navigate(globalObject, initialUrl);
+    // (bad URL), the next op's checkSlot sees the slot cleared and proceeds.
+    // No user code ever holds this promise; handled, so a rejection cannot
+    // surface as unhandledRejection.
+    if (!initialUrl.isEmpty()) {
+        if (auto* p = view->navigate(globalObject, initialUrl)) p->markAsHandled();
+    }
     return JSValue::encode(view);
 #endif
 }

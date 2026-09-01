@@ -1,29 +1,21 @@
 //! `globalThis.Bun` — top-level host functions and lazy-property getters.
 
-/// Build a public-path string for `to` relative to `dir`, prefixed by `origin`
-/// (and `asset_prefix` when `origin` is absolute). Called by both the bundler
-/// dev-server and `Bun.FileSystemRouter`'s `scriptSrc` getter.
-pub(crate) fn get_public_path_with_asset_prefix<W: core::fmt::Write>(
+/// Append the public path of `to` relative to `dir` to `out`, prefixed by
+/// `origin` (and `asset_prefix` when `origin` is absolute). Called by both the
+/// bundler dev-server and `Bun.FileSystemRouter`'s `scriptSrc` getter.
+///
+/// The output is raw path bytes. POSIX paths are arbitrary byte sequences;
+/// `bun_string_jsc::create_utf8_for_js` replaces invalid UTF-8 with U+FFFD.
+pub(crate) fn get_public_path_with_asset_prefix(
     to: &[u8],
     dir: &[u8],
     origin: &bun_url::URL,
     asset_prefix: &[u8],
-    writer: &mut W,
+    out: &mut Vec<u8>,
     platform: bun_paths::Platform,
 ) {
     use bun_core::strings;
     use bun_paths::{Platform, resolve_path};
-
-    // bun_url::URL::join_write wants a `bun_io::Write`; route all
-    // byte output through a Vec<u8> then forward to the caller's fmt::Write.
-    // POSIX paths are arbitrary byte sequences — so use
-    // a lossy conversion rather than silently dropping the whole component.
-    #[inline]
-    fn write_bytes<W: core::fmt::Write>(w: &mut W, bytes: &[u8]) -> core::fmt::Result {
-        // `bstr::BStr` Display lossily substitutes U+FFFD per invalid sequence
-        // (no allocation on the valid-UTF-8 fast path).
-        write!(w, "{}", bstr::BStr::new(bytes))
-    }
 
     let relative_path: &[u8] = if strings::has_prefix(to, dir) {
         strings::without_trailing_slash(&to[dir.len()..])
@@ -46,28 +38,28 @@ pub(crate) fn get_public_path_with_asset_prefix<W: core::fmt::Write>(
             }
         }
     };
-    if origin.is_absolute() {
-        if strings::has_prefix(relative_path, b"..") || strings::has_prefix(relative_path, b"./") {
-            if write_bytes(writer, origin.origin).is_err() {
-                return;
-            }
-            if write_bytes(writer, b"/abs:").is_err() {
-                return;
-            }
-            if bun_paths::is_absolute(to) {
-                let _ = write_bytes(writer, to);
-            } else {
-                let fs = VirtualMachine::get().fs();
-                let _ = write_bytes(writer, fs.abs(&[to]));
-            }
-        } else {
-            let mut buf: Vec<u8> = Vec::new();
-            let _ = origin.join_write(&mut buf, asset_prefix, b"", relative_path, b"");
-            let _ = write_bytes(writer, &buf);
-        }
-    } else {
-        let _ = write_bytes(writer, strings::trim_left(relative_path, b"/"));
+    if !origin.is_absolute() {
+        out.extend_from_slice(strings::trim_left(relative_path, b"/"));
+        return;
     }
+    if strings::has_prefix(relative_path, b"..") || strings::has_prefix(relative_path, b"./") {
+        let abs_path = if bun_paths::is_absolute(to) {
+            to
+        } else {
+            VirtualMachine::get().fs().abs(&[to])
+        };
+        out.reserve(origin.origin.len() + b"/abs:".len() + abs_path.len());
+        out.extend_from_slice(origin.origin);
+        out.extend_from_slice(b"/abs:");
+        out.extend_from_slice(abs_path);
+        return;
+    }
+    // Upper bound of what `join_write` emits: `origin`, "/", and a normalized
+    // path at most two separators longer than `asset_prefix` + `relative_path`.
+    out.reserve(origin.origin.len() + asset_prefix.len() + relative_path.len() + 3);
+    origin
+        .join_write(out, asset_prefix, b"", relative_path, b"")
+        .expect("infallible: in-memory write");
 }
 
 use bun_jsc::HostReturn as _;
@@ -81,7 +73,7 @@ use bun_jsc::{
 };
 // `bun_jsc::VirtualMachine` is the *module* re-export; the struct lives one level deeper.
 use crate::cli::open::Editor;
-use bun_core::{String as BunString, ZigString, strings};
+use bun_core::{EncodedSlice, String as BunString, strings};
 use bun_jsc::virtual_machine::{ResolveMode, VirtualMachine};
 use bun_paths::MAX_PATH_BYTES;
 #[cfg(not(windows))]
@@ -99,8 +91,8 @@ use crate::node;
 use crate::test_runner::jest::Jest;
 use crate::valkey_jsc::js_valkey::SubscriptionCtx;
 use bun_collections::index_sort;
-use bun_core::zig_string::Slice as ZigStringSlice;
-use bun_jsc::ZigStringJsc as _; // to_error_instance / to_type_error_instance
+use bun_core::Utf8Bytes;
+use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::call_frame::ArgumentsSlice;
 use bun_jsc::{StringJsc as _, bun_string_jsc};
 
@@ -162,30 +154,10 @@ mod static_adapters {
         crate::shell::interpreter::create_shell_interpreter(g, cf)
     }
 
-    /// `Bun.sha(input, output?)` — wrapStaticMethod(Crypto.SHA512_256, "hash_", true).
-    /// Hand-roll the (BlobOrStringOrBuffer, ?StringOrBuffer) decode that
-    /// `wrapStaticMethod` would emit, with auto-protect on each argument.
+    /// `Bun.sha(input, output?)` is `Bun.SHA512_256.hash` under another name,
+    /// so it shares that method's argument decode and errors.
     pub(super) fn sha(g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
-        use crate::node::types::{BlobOrStringOrBuffer, StringOrBuffer};
-        let [a0, a1] = cf.arguments_as_array::<2>();
-        // Protect each arg across the call (Blob materialization
-        // re-enters the VM).
-        let _a0_guard = a0.protected();
-        let _a1_guard = a1.protected();
-        let mut output = if a1.is_undefined_or_null() {
-            None
-        } else {
-            StringOrBuffer::from_js(g, a1)?
-        };
-        let Some(input) = BlobOrStringOrBuffer::from_js(g, a0)? else {
-            return Err(g.throw_invalid_arguments(format_args!(
-                "expected string, buffer, TypedArray, or Blob",
-            )));
-        };
-        if let Some(StringOrBuffer::Buffer(buffer)) = &mut output {
-            buffer.buffer = ArrayBuffer::from_typed_array(g, buffer.buffer.value);
-        }
-        Crypto::SHA512_256::hash_(g, &input, output)
+        Crypto::SHA512_256::hash(g, cf)
     }
 }
 
@@ -533,7 +505,7 @@ fn which(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValu
         return Ok(JSValue::NULL);
     }
 
-    let bin_str = path_arg.to_slice(global_this)?;
+    let bin_str = path_arg.to_utf8(global_this)?;
 
     if bin_str.slice().len() >= MAX_PATH_BYTES {
         return Err(global_this.throw(format_args!("bin path is too long")));
@@ -544,18 +516,17 @@ fn which(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValu
     }
 
     // SAFETY: `transpiler.env` / `.fs` are process-lifetime singletons set during VM init.
-    let mut path_str =
-        ZigStringSlice::from_utf8_never_free(vm.env_loader().get(b"PATH").unwrap_or(b""));
-    let mut cwd_str = ZigStringSlice::from_utf8_never_free(vm.top_level_dir());
+    let mut path_str = Utf8Bytes::Borrowed(vm.env_loader().get(b"PATH").unwrap_or(b""));
+    let mut cwd_str = Utf8Bytes::Borrowed(vm.top_level_dir());
 
     if let Some(arg) = arguments.next_eat() {
         if !arg.is_empty_or_undefined_or_null() && arg.is_object() {
             if let Some(str_) = arg.get(global_this, "PATH")? {
-                path_str = str_.to_slice(global_this)?;
+                path_str = str_.to_utf8(global_this)?;
             }
 
             if let Some(str_) = arg.get(global_this, "cwd")? {
-                cwd_str = str_.to_slice(global_this)?;
+                cwd_str = str_.to_utf8(global_this)?;
             }
         }
     }
@@ -566,7 +537,7 @@ fn which(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValu
         cwd_str.slice(),
         bin_str.slice(),
     ) {
-        return Ok(ZigString::init(bin_path).with_encoding().to_js(global_this));
+        return bun_string_jsc::create_utf8_for_js(global_this, bin_path);
     }
 
     Ok(JSValue::NULL)
@@ -577,7 +548,7 @@ fn inspect_table(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResul
     let mut args_buf = callframe.arguments_undef::<5>();
     let all_arguments = args_buf.mut_();
     if all_arguments[0].is_undefined_or_null() || !all_arguments[0].is_object() {
-        return BunString::empty().to_js(global_this);
+        return Ok(JSValue::js_empty_string(global_this));
     }
 
     // NOTE: protect/unprotect over a copied [JSValue; 5]; the borrow of
@@ -645,7 +616,7 @@ fn inspect_table(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResul
 fn inspect(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     let arguments = callframe.arguments();
     if arguments.is_empty() {
-        return BunString::empty().to_js(global_this);
+        return Ok(JSValue::js_empty_string(global_this));
     }
 
     for arg in arguments {
@@ -698,12 +669,7 @@ fn inspect(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVa
     }
     // writer.flush(): Vec<u8> is unbuffered.
 
-    // we are going to always clone to keep things simple for now
-    // the common case here will be stack-allocated, so it should be fine
-    let out = ZigString::init(&array).with_encoding();
-    let ret = out.to_js(global_this);
-
-    Ok(ret)
+    bun_string_jsc::create_utf8_for_js(global_this, &array)
 }
 
 // HOST_EXPORT(Bun__inspect_singleline, c)
@@ -727,10 +693,10 @@ pub fn bun_inspect_singleline(global_this: &JSGlobalObject, value: JSValue) -> B
     )
     .is_err()
     {
-        return BunString::empty();
+        return BunString::EMPTY;
     }
     if global_this.has_exception() {
-        return BunString::empty();
+        return BunString::EMPTY;
     }
     BunString::clone_utf8(&array)
 }
@@ -799,12 +765,11 @@ fn register_macro(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsRe
 }
 
 fn get_cwd(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    ZigString::init(bun_resolver::fs::FileSystem::get().top_level_dir).to_js(global_this)
+    EncodedSlice::from_bytes(bun_resolver::fs::FileSystem::get().top_level_dir).to_js(global_this)
 }
 
 fn get_origin(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    // SAFETY: VirtualMachine::get() returns the live per-thread singleton.
-    ZigString::init(VirtualMachine::get().origin.origin).to_js(global_this)
+    EncodedSlice::from_bytes(VirtualMachine::get().origin.origin).to_js(global_this)
 }
 
 fn enable_ansi_colors(_global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
@@ -885,7 +850,7 @@ pub fn get_main(global_this: &JSGlobalObject) -> JSValue {
             .or_pending_exception();
     }
 
-    ZigString::init(vm.main()).to_js(global_this)
+    EncodedSlice::from_bytes(vm.main()).to_js(global_this)
 }
 
 // HOST_EXPORT(BunObject_setter_main, jsc)
@@ -899,7 +864,7 @@ pub fn set_main(global_this: &JSGlobalObject, new_value: JSValue) -> bool {
     true
 }
 
-fn get_argv(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
+fn get_argv(global_this: &JSGlobalObject, _: &JSObject) -> JsResult<JSValue> {
     node::process::get_argv(global_this)
 }
 
@@ -934,13 +899,13 @@ fn open_in_editor(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResu
     // SAFETY: bun_vm() returns the live per-thread singleton.
     let vm = global_this.bun_vm();
     let mut arguments = ArgumentsSlice::init(vm, callframe.arguments());
-    let mut path = ZigStringSlice::EMPTY;
-    let mut editor_name: Option<ZigStringSlice> = None;
-    let mut line: Option<ZigStringSlice> = None;
-    let mut column: Option<ZigStringSlice> = None;
+    let mut path = Utf8Bytes::EMPTY;
+    let mut editor_name: Option<Utf8Bytes> = None;
+    let mut line: Option<Utf8Bytes> = None;
+    let mut column: Option<Utf8Bytes> = None;
 
     if let Some(file_path_) = arguments.next_eat() {
-        path = file_path_.to_slice(global_this)?;
+        path = file_path_.to_utf8(global_this)?;
     }
 
     // Option getters and `toString` run arbitrary user JS that may re-enter
@@ -949,15 +914,15 @@ fn open_in_editor(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResu
     if let Some(opts) = arguments.next_eat() {
         if !opts.is_undefined_or_null() {
             if let Some(editor_val) = opts.get_truthy(global_this, "editor")? {
-                editor_name = Some(editor_val.to_slice(global_this)?);
+                editor_name = Some(editor_val.to_utf8(global_this)?);
             }
 
             if let Some(line_) = opts.get_truthy(global_this, "line")? {
-                line = Some(line_.to_slice(global_this)?);
+                line = Some(line_.to_utf8(global_this)?);
             }
 
             if let Some(column_) = opts.get_truthy(global_this, "column")? {
-                column = Some(column_.to_slice(global_this)?);
+                column = Some(column_.to_utf8(global_this)?);
             }
         }
     }
@@ -1084,7 +1049,7 @@ fn do_resolve(global_this: &JSGlobalObject, arguments: &[JSValue]) -> JsResult<J
     // SAFETY: bun_vm() returns the live per-thread singleton.
     let vm = global_this.bun_vm();
     let mut args = ArgumentsSlice::init(vm, arguments);
-    let Some(specifier) = args.protect_eat_next() else {
+    let Some(specifier) = args.next_eat() else {
         return Err(global_this
             .throw_invalid_arguments(format_args!("Expected a specifier and a from path")));
     };
@@ -1093,7 +1058,7 @@ fn do_resolve(global_this: &JSGlobalObject, arguments: &[JSValue]) -> JsResult<J
         return Err(global_this.throw_invalid_arguments(format_args!("specifier must be a string")));
     }
 
-    let Some(from) = args.protect_eat_next() else {
+    let Some(from) = args.next_eat() else {
         return Err(global_this.throw_invalid_arguments(format_args!("Expected a from path")));
     };
 
@@ -1143,10 +1108,10 @@ fn resolve_with_args<const IS_FILE_PATH: bool>(
     from: &BunString,
     mode: ResolveMode,
 ) -> JsResult<Resolved> {
-    let mut query_string = BunString::empty();
+    let mut query_string = BunString::EMPTY;
 
     let decoded_specifier;
-    let specifier_for_resolve = if specifier.has_prefix_comptime(b"file://") {
+    let specifier_for_resolve = if specifier.starts_with_ascii(b"file://") {
         decoded_specifier = bun_url::path_from_file_url(specifier);
         &decoded_specifier
     } else {
@@ -1173,7 +1138,9 @@ fn resolve_with_args<const IS_FILE_PATH: bool>(
         // Vec<u8> writes are infallible.
         let _ = write!(&mut arraylist, "{}{}", result_value, query_string);
 
-        return Ok(Resolved::Found(ZigString::init_utf8(&arraylist).to_js(ctx)));
+        return Ok(Resolved::Found(bun_string_jsc::create_utf8_for_js(
+            ctx, &arraylist,
+        )?));
     }
 
     Ok(Resolved::Found(result_value.into_js(ctx)?))
@@ -1612,7 +1579,7 @@ fn mmap_file(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JS
         let path = 'brk: {
             if let Some(path) = args.next_eat() {
                 if path.is_string() {
-                    let path_str = path.to_slice(global_this)?;
+                    let path_str = path.to_utf8(global_this)?;
                     if path_str.slice().len() > MAX_PATH_BYTES {
                         return Err(
                             global_this.throw_invalid_arguments(format_args!("Path too long"))
@@ -1883,26 +1850,11 @@ fn get_is_standalone_executable(global_this: &JSGlobalObject, _: &JSObject) -> J
 fn get_embedded_files(global_this: &JSGlobalObject, _: &JSObject) -> JsResult<JSValue> {
     use crate::webcore::blob::{Blob, BlobExt as _};
     use bun_standalone_graph::{File as GraphFile, Graph as StandaloneModuleGraph};
-    // SAFETY: bun_vm() returns the live thread-local VM for a Bun-owned global.
-    let vm = global_this.bun_vm();
-    if vm.standalone_module_graph.is_none() {
+    let Some(graph) = StandaloneModuleGraph::get_ref() else {
         return JSValue::create_empty_array(global_this, 0);
-    }
-    // NOTE (layering): `VirtualMachine.standalone_module_graph` is
-    // type-erased to `&dyn bun_resolver::StandaloneModuleGraph` so `bun_jsc`
-    // doesn't depend on `bun_standalone_graph`. The concrete graph is the
-    // process singleton — `Graph::get()` returns the same instance the trait
-    // object was built from (`vm.standalone_module_graph.is_some()` ⇔
-    // `Graph::get().is_some()`).
-    // SAFETY: `Graph::get()` yields the process-lifetime singleton verified
-    // populated by the `is_some()` check above; this getter runs only on the
-    // JS thread, so the `&mut` borrow is exclusive for the call.
-    let graph: &mut StandaloneModuleGraph = unsafe {
-        &mut *StandaloneModuleGraph::get()
-            .expect("vm.standalone_module_graph set ⇔ Graph singleton populated")
     };
 
-    let unsorted_files = graph.files.values_mut();
+    let unsorted_files = graph.files.values();
     let mut sort_indices: Vec<u32> = Vec::with_capacity(unsorted_files.len());
     for (index, file) in unsorted_files.iter().enumerate() {
         // Some % of people using `bun build --compile` want to obscure the source code
@@ -1926,15 +1878,13 @@ fn get_embedded_files(global_this: &JSGlobalObject, _: &JSObject) -> JsResult<JS
         }
     });
     for (i, index) in sort_indices.iter().enumerate() {
-        use crate::api::standalone_graph_jsc::FileJsc as _;
-        let file: &mut GraphFile = &mut unsorted_files[*index as usize];
+        let file: &GraphFile = &unsorted_files[*index as usize];
         // `file_blob` keeps the embedded path (minus the `/$bunfs/root/` prefix)
         // as the blob name, preserving any subdirectory from the asset template.
-        let input_blob: &mut Blob = file.file_blob(global_this);
-        // We call .dupe() on this to ensure that we don't return a blob that might get freed later.
-        let blob = Blob::new(input_blob.dupe_with_content_type(true));
-        // SAFETY: `Blob::new` returned a fresh heap allocation.
-        unsafe { (*blob).name.set(input_blob.name.get().clone()) };
+        let blob = Blob::new(crate::api::standalone_graph_jsc::file_blob(
+            file,
+            global_this,
+        ));
         // SAFETY: `blob` is heap-allocated and lives until JS owns it via to_js.
         array.put_index(global_this, i as u32, unsafe { (*blob).to_js(global_this) })?;
     }
@@ -2050,10 +2000,10 @@ pub(crate) mod environment_variables {
     }
 
     #[unsafe(no_mangle)]
-    extern "C" fn Bun__getEnvValue(
-        global_object: &JSGlobalObject,
-        name: &ZigString,
-        value: &mut core::mem::MaybeUninit<ZigString>,
+    extern "C" fn Bun__getEnvValue<'a>(
+        global_object: &'a JSGlobalObject,
+        name: &EncodedSlice<'_>,
+        value: &mut core::mem::MaybeUninit<EncodedSlice<'a>>,
     ) -> bool {
         if let Some(val) = get_env_value(global_object, *name) {
             value.write(val);
@@ -2132,12 +2082,15 @@ pub(crate) mod environment_variables {
         bun_core::handle_oom(env_map.put(slot.key, &stored.bytes));
     }
 
-    fn get_env_value(global_object: &JSGlobalObject, name: ZigString) -> Option<ZigString> {
+    fn get_env_value<'a>(
+        global_object: &'a JSGlobalObject,
+        name: EncodedSlice<'_>,
+    ) -> Option<EncodedSlice<'a>> {
         // SAFETY: bun_vm() returns the live thread-local VM.
         let vm = global_object.bun_vm();
-        let sliced = name.to_slice();
-        let value = vm.env_loader().get(sliced.slice())?;
-        Some(ZigString::init_utf8(value))
+        let utf8 = name.to_utf8();
+        let value = vm.env_loader().get(utf8.slice())?;
+        Some(EncodedSlice::from_bytes(value))
     }
 }
 
@@ -2154,9 +2107,8 @@ extern "C" fn Bun__reportError(global_object: &JSGlobalObject, err: JSValue) {
 /// object nor `undefined`.
 ///
 /// Kept separate from [`parse_compress_buffer_and_options`] so async callers
-/// (e.g. `JSZstd::get_options_async`) can read `options` *before* GC-protecting
-/// the buffer — preserving error precedence and avoiding a protect leak on the
-/// early-throw path.
+/// (e.g. `JSZstd::get_options_async`) can read `options` *before* pinning and
+/// rooting the buffer, preserving error precedence.
 #[inline]
 pub(crate) fn parse_compress_args(
     global: &JSGlobalObject,
@@ -2187,7 +2139,7 @@ pub(crate) fn parse_compress_args(
 pub(crate) fn coerce_compress_buffer(
     global: &JSGlobalObject,
     buffer_value: JSValue,
-) -> JsResult<node::StringOrBuffer> {
+) -> JsResult<node::StringOrBuffer<'static>> {
     if let Some(buffer) = node::StringOrBuffer::from_js(global, buffer_value)? {
         return Ok(buffer);
     }
@@ -2200,7 +2152,7 @@ pub(crate) fn coerce_compress_buffer(
 pub(crate) fn parse_compress_buffer_and_options(
     global: &JSGlobalObject,
     callframe: &CallFrame,
-) -> JsResult<(node::StringOrBuffer, Option<JSValue>)> {
+) -> JsResult<(node::StringOrBuffer<'static>, Option<JSValue>)> {
     let (buffer_value, options_val) = parse_compress_args(global, callframe)?;
     Ok((coerce_compress_buffer(global, buffer_value)?, options_val))
 }
@@ -2429,8 +2381,7 @@ pub mod JSZlib {
                     }
                     Err(_) => {
                         let msg = reader.error_message().unwrap_or(b"Zlib returned an error");
-                        return Err(global_this
-                            .throw_value(ZigString::init(msg).to_error_instance(global_this)));
+                        return Err(global_this.throw(format_args!("{}", bstr::BStr::new(msg))));
                     }
                 }
                 // NOTE: the reader *borrows* `list_ptr`,
@@ -2571,8 +2522,7 @@ pub mod JSZlib {
                     }
                     Err(_) => {
                         let msg = reader.error_message().unwrap_or(b"Zlib returned an error");
-                        return Err(global_this
-                            .throw_value(ZigString::init(msg).to_error_instance(global_this)));
+                        return Err(global_this.throw(format_args!("{}", bstr::BStr::new(msg))));
                     }
                 }
                 // NOTE: see gunzip path — reader borrows `list`, so drop
@@ -2658,17 +2608,16 @@ pub mod JSZstd {
     fn get_options_async(
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
-    ) -> JsResult<(node::StringOrBuffer, Option<JSValue>, i32)> {
+    ) -> JsResult<(
+        node::ThreadIsolated<node::StringOrBuffer<'static>>,
+        Option<JSValue>,
+        i32,
+    )> {
         let (buffer_value, options_val) = parse_compress_args(global_this, callframe)?;
 
         let level = get_level(global_this, options_val)?;
 
-        if let Some(buffer) = node::StringOrBuffer::from_js_maybe_async(
-            global_this,
-            buffer_value,
-            node::Flavor::Async,
-            node::StringObjects::Allow,
-        )? {
+        if let Some(buffer) = node::StringOrBuffer::from_js_async(global_this, buffer_value)? {
             return Ok((buffer, options_val, level));
         }
 
@@ -2785,9 +2734,7 @@ pub mod JSZstd {
 
     /// `Bun.zstdCompress` / `Bun.zstdDecompress` off the JS thread.
     pub(crate) struct ZstdJob {
-        /// Created with `Flavor::Async` (JS-backed buffer protected); the
-        /// [`bun_jsc::ThreadSafe`] releases that with the job.
-        pub buffer: bun_jsc::ThreadSafe<node::StringOrBuffer>,
+        pub buffer: node::ThreadIsolated<node::StringOrBuffer<'static>>,
         pub is_compress: bool,
         pub level: i32,
         /// Filled in by `run`.
@@ -2834,7 +2781,7 @@ pub mod JSZstd {
 
     fn create_job(
         global_this: &JSGlobalObject,
-        buffer: node::StringOrBuffer,
+        buffer: node::ThreadIsolated<node::StringOrBuffer<'static>>,
         is_compress: bool,
         level: i32,
     ) -> JSValue {
@@ -2844,7 +2791,7 @@ pub mod JSZstd {
         jsc::Job::<ZstdJob>::schedule(
             &cx,
             ZstdJob {
-                buffer: bun_jsc::ThreadSafe::adopt(buffer),
+                buffer,
                 is_compress,
                 level,
                 result: Ok(Box::default()),
@@ -2885,28 +2832,27 @@ pub mod JSZstd {
 // crate and can't move down without dragging `node::PathLike`/S3/aio. The
 // stores exist purely for per-VM lazy init; that is per-thread
 // in practice (`VirtualMachine::get()` is thread-local), so cache the
-// `StoreRef`s here.
+// `RefPtr<Store>`s here.
 mod stdio_stores {
     use super::*;
     use crate::node::types::PathOrFileDescriptor;
-    use crate::webcore::blob::store::{Data, File as FileStore};
-    use crate::webcore::blob::{Blob, BlobExt as _, Store, StoreRef};
+    use crate::webcore::blob::store::{Data, File as FileStore, IsAllAscii};
+    use crate::webcore::blob::{Blob, BlobExt as _, Store};
+    use bun_ptr::RefPtr;
 
     thread_local! {
-        static STDIN: core::cell::RefCell<Option<StoreRef>> = const { core::cell::RefCell::new(None) };
-        static STDOUT: core::cell::RefCell<Option<StoreRef>> = const { core::cell::RefCell::new(None) };
-        static STDERR: core::cell::RefCell<Option<StoreRef>> = const { core::cell::RefCell::new(None) };
+        static STDIN: core::cell::RefCell<Option<RefPtr<Store>>> = const { core::cell::RefCell::new(None) };
+        static STDOUT: core::cell::RefCell<Option<RefPtr<Store>>> = const { core::cell::RefCell::new(None) };
+        static STDERR: core::cell::RefCell<Option<RefPtr<Store>>> = const { core::cell::RefCell::new(None) };
     }
 
-    fn build_store(uv_fd: i32, is_atty: bool) -> StoreRef {
+    fn build_store(uv_fd: i32, is_atty: bool) -> RefPtr<Store> {
         let fd = bun_sys::Fd::from_uv(uv_fd);
         let mode: bun_sys::Mode = match bun_sys::fstat(fd) {
             Ok(stat) => stat.st_mode as bun_sys::Mode,
             Err(_) => 0,
         };
-        // NOTE: with `StoreRef` (intrusive RAII) the slot is +1 and
-        // the Blob takes its own +1 via `clone()`.
-        let store = Store::new(Store {
+        RefPtr::new(Store {
             data: Data::File(FileStore {
                 pathlike: PathOrFileDescriptor::Fd(fd),
                 is_atty: Some(is_atty),
@@ -2915,14 +2861,13 @@ mod stdio_stores {
             }),
             mime_type: bun_http_types::MimeType::NONE,
             ref_count: bun_ptr::ThreadSafeRefCount::init(),
-            is_all_ascii: None,
-        });
-        StoreRef::from(store)
+            is_all_ascii: IsAllAscii::default(),
+        })
     }
 
     fn make_blob(
         global_this: &JSGlobalObject,
-        slot: &'static std::thread::LocalKey<core::cell::RefCell<Option<StoreRef>>>,
+        slot: &'static std::thread::LocalKey<core::cell::RefCell<Option<RefPtr<Store>>>>,
         uv_fd: i32,
         is_atty: bool,
         feature: &'static core::sync::atomic::AtomicUsize,

@@ -69,6 +69,7 @@ class DOMWrapperWorld;
 #include <wtf/WeakHashSet.h>
 #include "JSCTaskScheduler.h"
 #include "HTTPHeaderIdentifiers.h"
+#include "BunCommonStrings.h"
 #include "DOMURLBaseCache.h"
 #include <JavaScriptCore/HeapObserver.h>
 namespace Zig {
@@ -235,6 +236,9 @@ public:
     // so there is no startup cost worth deferring.
     WebCore::HTTPHeaderIdentifiers& httpHeaderIdentifiers() { return m_httpHeaderIdentifiers; }
 
+    // Public so Bun::commonStrings(vm) below is a static_cast and a member load.
+    Bun::CommonStrings commonStrings;
+
     WebCore::DOMURLBaseCache& urlBaseCache() { return m_urlBaseCache; }
 
     // Live size of the heap as measured by the most recent collection, eden or full.
@@ -252,6 +256,11 @@ public:
     // this thread and JSC forbids execution. Either way no script may be entered on this VM.
     ALWAYS_INLINE bool isStoppingOrStopped(const JSC::VM& vm) const { return !scriptAllowed() || vm.executionForbidden(); }
     Bun::JSCTaskScheduler deferredWorkTimer;
+
+    // One slot per string of the executable's module-info string table,
+    // filled on first use so each name is atomized once however many chunks
+    // import or export it (BunAnalyzeTranspiledModule.cpp).
+    Vector<JSC::Identifier> sharedModuleInfoIdentifiers;
 
     // Linked list of StrongRootBlock cells backing bun_jsc::Strong handles
     // (see StrongRootBlock.h). Raw pointers into the GC heap: they are rooted
@@ -393,6 +402,15 @@ static inline BunBuiltinNames& builtinNames(JSC::VM& vm)
 }
 
 } // namespace WebCore
+
+namespace Bun {
+
+ALWAYS_INLINE CommonStrings& commonStrings(JSC::VM& vm)
+{
+    return static_cast<WebCore::JSVMClientData*>(vm.clientData)->commonStrings;
+}
+
+} // namespace Bun
 
 inline void* bunVM(JSC::VM& vm)
 {

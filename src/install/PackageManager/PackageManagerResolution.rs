@@ -144,15 +144,9 @@ impl PackageManager {
             let mut version = parsed.version.min();
             let total = (version.tag.build.len() + version.tag.pre.len()) as usize;
             if total > 0 {
-                let len_before = tags_buf.len();
-                // `clone_into` writes exactly `total` bytes (build.len + pre.len)
-                // into `available` and advances it; zero-fill the tail first so
-                // we can hand it out as a safe `&mut [u8]` instead of slicing
-                // raw spare capacity.
-                tags_buf.resize(len_before + total, 0);
-                let mut available = &mut tags_buf[len_before..];
-                let new_version = version.clone_into(name, &mut available);
-                version = new_version;
+                let mut offset = tags_buf.len();
+                tags_buf.resize(offset + total, 0);
+                version = version.clone_into(name, tags_buf, &mut offset);
             }
 
             list.push(version);

@@ -63,7 +63,7 @@ bun prune --production --filter app
 
 - Always runs from the workspace root and covers every workspace's `node_modules`, even when invoked inside a workspace package.
 - Requires `bun.lock` to match `package.json`. If you edited dependencies since the last install, run `bun install` first.
-- Uses the same linker as `bun install` would. If `node_modules` was created with the other linker, `bun prune` refuses to run. Pass the matching `--linker`, or run `bun install`.
+- Detects whether `node_modules` was laid out by the hoisted or the isolated linker and prunes it as it is. If the folders hold both layouts (for example after a switch of linkers without a clean install), Bun uses the linker `bun install` would use. Pass `--linker` to choose.
 - Matches packages by name. If a package is at the wrong version, Bun leaves it for `bun install` to replace. Bun only removes a nested copy (`node_modules/a/node_modules/b`) once the correct version is installed above it; otherwise Bun keeps it and prints a warning.
 - Never removes workspace folders, `.bin` entries still in use, dot-directories like `.cache`, plain files, or anything outside `node_modules`.
 - Removes packages disabled for the current `os`/`cpu`. Pass `--os`/`--cpu` to prune for another platform.

@@ -77,7 +77,7 @@ pub trait PosixPipeWriter {
                 self.try_write_with_write_fn(buf, sys::write)
             }
             FileType::Pipe => self.try_write_with_write_fn(buf, write_to_blocking_pipe),
-            FileType::Socket => self.try_write_with_write_fn(buf, sys::send_non_block),
+            FileType::Socket => self.try_write_with_write_fn(buf, write_to_socket),
         }
     }
 
@@ -230,6 +230,15 @@ fn write_to_blocking_pipe(fd: Fd, buf: &[u8]) -> sys::Result<usize> {
         bun_core::Pollable::Ready | bun_core::Pollable::Hup => sys::write(fd, buf),
         bun_core::Pollable::NotReady => sys::Result::Err(sys::Error::retry()),
     }
+}
+
+/// `send(2)` stands in for `write(2)` on the socketpair behind a child's stdio,
+/// only to pass `MSG_NOSIGNAL`. The error names `write`, as Node does.
+fn write_to_socket(fd: Fd, buf: &[u8]) -> sys::Result<usize> {
+    sys::send_non_block(fd, buf).map_err(|err| sys::Error {
+        syscall: sys::Tag::write,
+        ..err
+    })
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -571,7 +580,6 @@ pub trait PosixStreamingWriterParent {
     /// # Safety
     /// `this` must point to a live `Self`.
     unsafe fn on_error(this: *mut Self, err: sys::Error);
-    const HAS_ON_READY: bool;
     /// # Safety
     /// `this` must point to a live `Self`.
     unsafe fn on_ready(_this: *mut Self) {}
@@ -2617,7 +2625,6 @@ macro_rules! impl_streaming_writer_parent {
         #[cfg(unix)]
         impl $($gen)* $crate::pipe_writer::PosixStreamingWriterParent for $Ty {
             const POLL_OWNER_TAG: $crate::PollTag = $poll_tag;
-            const HAS_ON_READY: bool = true;
             #[inline]
             unsafe fn on_write(this: *mut Self, amount: usize, status: $crate::WriteStatus) {
                 // SAFETY: `this` is the BACKREF set via `set_parent`; the

@@ -38,7 +38,7 @@ fn find_source_map(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVal
         return Ok(JSValue::UNDEFINED);
     }
 
-    let mut source_url_string = bun_string_jsc::from_js(source_url_value, global)?;
+    let mut source_url_string = bun_core::String::from_js(source_url_value, global)?;
     let mut source_url_slice = source_url_string.to_utf8();
 
     {

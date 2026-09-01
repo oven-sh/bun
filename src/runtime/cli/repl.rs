@@ -1540,7 +1540,7 @@ impl<'a> Repl<'a> {
                 if !item.is_string() {
                     continue;
                 }
-                let slice = match item.to_slice(global) {
+                let slice = match item.to_utf8(global) {
                     Ok(s) => s,
                     Err(_) => {
                         global.clear_exception();
@@ -2031,7 +2031,7 @@ impl<'a> Repl<'a> {
 
         // For strings, copy the raw string value (not quoted/JSON-ified)
         if value.is_string() {
-            let slice = value.to_slice(global)?;
+            let slice = value.to_utf8(global)?;
             return Ok(Some(Box::<[u8]>::from(slice.slice())));
         }
 
@@ -2775,7 +2775,7 @@ impl<'a> Repl<'a> {
                 }
             };
             if item.is_string() {
-                let slice = match item.to_slice(global) {
+                let slice = match item.to_utf8(global) {
                     Ok(s) => s,
                     Err(_) => {
                         global.clear_exception();
@@ -2804,7 +2804,7 @@ impl<'a> Repl<'a> {
                     }
                 };
                 if item.is_string() {
-                    match item.to_slice(global) {
+                    match item.to_utf8(global) {
                         Ok(slice) => {
                             self.print(format_args!(
                                 "  {}{}{}\n",

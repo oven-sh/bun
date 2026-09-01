@@ -768,7 +768,7 @@ fn string_needs_quotes(str: &BunString) -> bool {
     ];
 
     for keyword in KEYWORDS {
-        if str.eql_comptime(keyword) {
+        if str.eq_ascii(keyword) {
             return true;
         }
     }

@@ -12,7 +12,6 @@ use bun_threading::thread_pool as ThreadPoolLib;
 
 use crate::BundleV2;
 use crate::Chunk;
-use crate::ContentHasher;
 use crate::Index;
 use crate::analyze_transpiled_module;
 use crate::analyze_transpiled_module::StringIDExt as _;
@@ -60,6 +59,9 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
     {
         // TODO: instead of running a renamer per chunk, run it per file
         debug!(" START {} renamers", chunks.len());
+        if c.graph.code_splitting && !c.options.minify_identifiers {
+            crate::linker_context::cross_chunk_names::assign_unminified(c, chunks)?;
+        }
         let ctx = GenerateChunkCtx {
             chunk: bun_ptr::BackRef::new_mut(&mut chunks[0]),
             // SAFETY: `c` is the live `&mut LinkerContext` for the link step;
@@ -71,6 +73,16 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         // link step); `pool` is the arena-allocated bundler ThreadPool.
         c.worker_pool()
             .each_ptr(ctx, LinkerContext::generate_js_renamer, chunks);
+        if c.graph.code_splitting {
+            if c.options.minify_identifiers {
+                // Counts are in; name the cross-chunk bindings, pin them, then
+                // let every chunk name the rest.
+                crate::linker_context::cross_chunk_names::assign_minified(c, chunks)?;
+                c.worker_pool()
+                    .each_ptr(ctx, LinkerContext::finish_js_renamer, chunks);
+            }
+            crate::linker_context::cross_chunk_names::apply_to_clauses(c, chunks);
+        }
         debug!("  DONE {} renamers", chunks.len());
     }
 
@@ -363,59 +375,24 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         }
         let mut duplicates_map: StringArrayHashMap<DuplicateEntry> = StringArrayHashMap::default();
 
-        let mut chunk_visit_map = AutoBitSet::init_empty(chunks.len())?;
-        let mut compact_chunk_index: usize = 0;
-
         // Compute the final hashes of each chunk, then use those to create the final
-        // paths of each chunk. This can technically be done in parallel but it
-        // probably doesn't matter so much because we're not hashing that much data.
-        // Reshaped for borrowck — index loop so `chunks` can be passed
-        // whole to `append_isolated_hashes_for_imported_chunks` and then indexed.
+        // paths of each chunk.
+        let hashes = c.final_chunk_hashes(chunks)?;
         for index in 0..chunks.len() {
-            let mut hash = ContentHasher::default();
-            c.append_isolated_hashes_for_imported_chunks(
-                &mut hash,
-                chunks,
-                u32::try_from(index).expect("int cast"),
-                &mut chunk_visit_map,
-            );
-            chunk_visit_map.set_all(false);
             let chunk = &mut chunks[index];
-            chunk.template.placeholder.hash = Some(hash.digest());
+            chunk.template.placeholder.hash = Some(hashes[index]);
 
             let mut rel_path: Vec<u8> = Vec::new();
-            // Inside an executable nobody sees chunk file names, and every importer embeds them: number them instead of
-            // `chunk-<hash>` when the default naming is in effect.
-            if c.options.compile_mode.is_executable()
-                && !chunk.entry_point.is_entry_point()
-                && matches!(
-                    &*chunk.template.data,
-                    b"./chunk-[hash].[ext]"
-                        | b"./[name]-[hash].[ext]"
-                        | b"[name]-[hash].[ext]"
-                        | b"chunk-[hash].[ext]"
-                )
-            {
-                write!(
-                    &mut rel_path,
-                    "./_{}.{}",
-                    compact_chunk_index,
-                    bstr::BStr::new(&chunk.template.placeholder.ext)
-                )
+            // Use the byte-writer (`PathTemplate::print`) directly —
+            // routing through `Display`/`write!` goes via `from_utf8_lossy`,
+            // which would replace non-UTF-8 dir bytes with U+FFFD and corrupt
+            // the output path.
+            // Disk output sanitizes leading `..`; `--compile` keeps it so
+            // runtime bunfs references to out-of-root entrypoints resolve.
+            chunk
+                .template
+                .print(&mut rel_path, !c.options.compile_mode.is_executable())
                 .expect("write to Vec<u8>");
-                compact_chunk_index += 1;
-            } else {
-                // Use the byte-writer (`PathTemplate::print`) directly —
-                // routing through `Display`/`write!` goes via `from_utf8_lossy`,
-                // which would replace non-UTF-8 dir bytes with U+FFFD and corrupt
-                // the output path.
-                // Disk output sanitizes leading `..`; `--compile` keeps it so
-                // runtime bunfs references to out-of-root entrypoints resolve.
-                chunk
-                    .template
-                    .print(&mut rel_path, !c.options.compile_mode.is_executable())
-                    .expect("write to Vec<u8>");
-            }
             path::resolve_path::platform_to_posix_in_place::<u8>(&mut rel_path);
 
             if path_names_map.get_or_put(&rel_path)?.found_existing {
@@ -428,16 +405,10 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 continue;
             }
 
-            // resolve any /./ and /../ occurrences
-            // use resolvePosix since we asserted above all seps are '/'
-            #[cfg(windows)]
-            if strings::index_of(&rel_path, b"/./").is_some() {
-                let mut buf = bun_paths::PathBuffer::uninit();
-                let rel_path_fixed: Box<[u8]> = Box::from(&*path::resolve_path::normalize_buf::<
-                    path::platform::Posix,
-                >(&rel_path, &mut buf));
-                chunk.final_rel_path = rel_path_fixed;
-                continue;
+            // A `./[dir]/…` template with `[dir] == "."` yields `././x.js`,
+            // which importers of the chunk would copy verbatim.
+            while let Some(i) = strings::index_of(&rel_path, b"/./") {
+                rel_path.drain(i..i + 2);
             }
 
             chunk.final_rel_path = rel_path.into_boxed_slice();
@@ -519,7 +490,14 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
     // cross-chunk import specifiers. During printing, cross-chunk imports use
     // unique_key placeholders as paths. Now that final paths are known, replace
     // those placeholders with the resolved paths and serialize.
+    let external_string_table = (c.options.generate_bytecode_cache
+        && c.options.compile_mode.is_executable())
+    .then(crate::bundle_v2::dispatch::EncoderStringTableHandle::new);
+    let mut module_info_strings = analyze_transpiled_module::ModuleInfoSlotTableBuilder::default();
     if c.options.generates_module_info() {
+        let external_string_table = external_string_table
+            .as_ref()
+            .expect("module_info is only generated for --compile --bytecode");
         // Build map from unique_key -> final resolved path
         // SAFETY: c points to LinkerContext which is the `linker` field of BundleV2.
         let b: &mut BundleV2 =
@@ -548,7 +526,9 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             }
         }
 
-        // Fix up each chunk's module_info
+        // Fix up each chunk's module_info; every chunk's strings go into one
+        // table (`OutputKind::ModuleInfoStringTable`) their bodies index into.
+        let mut table_ids: Vec<Vec<u32>> = Vec::new();
         for chunk in chunks.iter_mut() {
             let crate::chunk::Content::Javascript(js) = &mut chunk.content else {
                 continue;
@@ -587,14 +567,25 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 mi.replace_string_id(rep.old_id, new_id);
             }
 
-            // Serialize the fixed-up module_info
-            js.module_info_bytes = bun_js_printer::serialize_module_info(Some(mi));
-
-            // Free the ModuleInfo now that it's been serialized to bytes.
-            // It was allocated with bun.default_allocator (not the arena),
-            // so it must be explicitly destroyed.
-            // In Rust, dropping the Option<Box<ModuleInfo>> frees it.
-            js.module_info = None;
+            if mi.finalize().is_err() {
+                js.module_info = None;
+                continue;
+            }
+            table_ids.push(module_info_strings.intern_all(mi, |s| external_string_table.slot(s)));
+        }
+        let mut table_ids = table_ids.iter();
+        for chunk in chunks.iter_mut() {
+            let crate::chunk::Content::Javascript(js) = &mut chunk.content else {
+                continue;
+            };
+            let Some(mi) = js.module_info.take() else {
+                continue;
+            };
+            js.module_info_bytes = Some(bun_js_printer::serialize_module_info_body(
+                &mi,
+                module_info_strings.count(),
+                table_ids.next().expect("one per chunk with module_info"),
+            ));
         }
     }
 
@@ -619,9 +610,6 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
     let resolver = c.resolver.expect("resolver set in load()");
     let root_path: &[u8] = &resolver.opts.output_dir;
     let is_standalone = c.options.compile_mode.is_standalone_html();
-    let external_string_table = (c.options.generate_bytecode_cache
-        && c.options.compile_mode.is_executable())
-    .then(crate::bundle_v2::dispatch::EncoderStringTableHandle::new);
     let more_than_one_output = !is_standalone
         && (c.parse_graph().additional_output_files.len() > 0
             || c.options.generate_bytecode_cache
@@ -1084,6 +1072,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                             c.options.output_format,
                             &code_result.buffer,
                             &source_provider_url,
+                            c.options.bytecode_depth,
                             external_string_table.as_ref().and_then(|table| table.get()),
                         ) {
                             let source_provider_url_str = source_provider_url.to_utf8();
@@ -1316,10 +1305,17 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         }
     }
 
-    // Only `StandaloneModuleGraph::to_bytes` reads `load_order`.
+    // Only `StandaloneModuleGraph::to_bytes` reads these.
     if is_compile {
-        for (chunk_index, &position) in chunk_load_order(c, chunks).iter().enumerate() {
-            output_files.output_files[chunk_index].load_order = position;
+        let (order, startup_count) = chunk_load_order(
+            chunks,
+            &output_files.output_files,
+            c.options.target.is_bun(),
+        );
+        for (chunk_index, &position) in order.iter().enumerate() {
+            let file = &mut output_files.output_files[chunk_index];
+            file.load_order = position;
+            file.loads_at_startup = position < startup_count;
         }
     }
 
@@ -1351,6 +1347,31 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             external_string_table.as_ref().and_then(|t| t.get()),
         );
     }
+    if c.options.generates_module_info() {
+        let bytes = module_info_strings.serialize();
+        debug!(
+            "module_info string table: {} strings, {} bytes",
+            module_info_strings.count(),
+            bytes.len()
+        );
+        result.push(options::OutputFile::init(options::OutputFileInit {
+            output_path: b".module-info-strings".to_vec().into_boxed_slice(),
+            input_path: Box::default(),
+            input_loader: Loader::File,
+            hash: None,
+            output_kind: options::OutputKind::ModuleInfoStringTable,
+            loader: Loader::File,
+            size: Some(bytes.len()),
+            display_size: bytes.len() as u32,
+            data: options::OutputFileData::Buffer {
+                data: bytes.into_boxed_slice(),
+            },
+            side: None,
+            entry_point_index: None,
+            is_executable: false,
+            ..Default::default()
+        }));
+    }
     if let Some(table) = external_string_table {
         let bytes = table.take();
         debug!("Bytecode external string table: {} bytes", bytes.len());
@@ -1374,15 +1395,33 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
 }
 
 /// `--compile --bytecode`: the executable also carries ahead-of-time bytecode for the internal modules (node:fs, …) the
-/// bundle imports, so their first `require` decodes instead of parsing. One `OutputKind::BuiltinBytecode` per module;
-/// StandaloneModuleGraph::to_bytes lays them out and InternalModuleRegistry picks them up by id.
+/// bundle imports and everything those can require (while loading or lazily later), so their first `require` decodes
+/// instead of parsing. One
+/// `OutputKind::BuiltinBytecode` per module; StandaloneModuleGraph::to_bytes lays them out and InternalModuleRegistry
+/// picks them up by id. The modules, their ids and (when compiling for another platform) their sources come from the
+/// builtins section of the executable the bundle is going into.
 fn append_internal_module_bytecode(
     c: &LinkerContext,
     output_files: &mut Vec<options::OutputFile>,
     external_strings: Option<core::ptr::NonNull<crate::bundle_v2::dispatch::EncoderStringTable>>,
 ) {
+    use crate::bundle_v2::dispatch;
+    let target_section = c.options.target_builtins.as_deref();
+    let builtins = match bun_exe_format::builtins::Builtins::parse(
+        target_section.unwrap_or_else(|| dispatch::host_builtins()),
+    ) {
+        Ok(b) => b,
+        Err(e) => {
+            debug!(
+                "Internal module bytecode: builtins section unreadable ({})",
+                <&'static str>::from(&e)
+            );
+            return;
+        }
+    };
+
     let import_records = c.graph.ast.items_import_records();
-    let mut specifiers: Vec<&[u8]> = Vec::new();
+    let mut wanted: Vec<u32> = Vec::new();
     for source_index in &c.graph.reachable_files {
         let Some(records) = import_records.get(source_index.get() as usize) else {
             continue;
@@ -1392,27 +1431,59 @@ fn append_internal_module_bytecode(
                 continue;
             }
             let text: &[u8] = record.path.text;
-            let is_builtin = record.tag == bun_ast::ImportRecordTag::Builtin
-                || text.starts_with(b"node:")
-                || text.starts_with(b"bun:")
-                || bun_resolve_builtins::HardcodedModule::Alias::has(
-                    text,
-                    crate::options::Target::Bun,
-                    Default::default(),
-                );
-            if is_builtin && !specifiers.contains(&text) {
-                specifiers.push(text);
+            let alias = bun_resolve_builtins::HardcodedModule::Alias::get(
+                text,
+                crate::options::Target::Bun,
+                Default::default(),
+            );
+            let canonical: &[u8] = match &alias {
+                // The one aliased npm specifier whose registry name is not the specifier (bundle-modules.ts).
+                Some(alias) if alias.path.as_bytes() == b"@vercel/fetch" => b"vercel_fetch",
+                Some(alias) => alias.path.as_bytes(),
+                None if record.tag == bun_ast::ImportRecordTag::Builtin
+                    || strings::has_prefix(text, b"node:")
+                    || strings::has_prefix(text, b"bun:") =>
+                {
+                    text
+                }
+                None => continue,
+            };
+            if let Some(id) = builtins.find(canonical) {
+                if !wanted.contains(&id) {
+                    wanted.push(id);
+                }
             }
         }
     }
-    if specifiers.is_empty() {
-        return;
+    let mut i = 0;
+    while i < wanted.len() {
+        for dep in builtins.dependencies(wanted[i]) {
+            if !wanted.contains(&dep) {
+                wanted.push(dep);
+            }
+        }
+        i += 1;
     }
-    for (id, bytecode) in crate::bundle_v2::dispatch::generate_internal_module_bytecode(
-        &specifiers,
-        u32::MAX,
-        external_strings,
-    ) {
+
+    for id in wanted {
+        let bytecode = match target_section {
+            Some(_) => builtins.module(id).and_then(|m| {
+                dispatch::generate_internal_module_bytecode_from_source(
+                    &m,
+                    builtins.source_stamp,
+                    c.options.bytecode_depth,
+                    external_strings,
+                )
+            }),
+            None => dispatch::generate_internal_module_bytecode(
+                id,
+                c.options.bytecode_depth,
+                external_strings,
+            ),
+        };
+        let Some(bytecode) = bytecode else {
+            continue;
+        };
         debug!("Internal module bytecode {}: {} bytes", id, bytecode.len());
         output_files.push(options::OutputFile::init(options::OutputFileInit {
             output_path: id.to_string().into_bytes().into_boxed_slice(),
@@ -1434,25 +1505,35 @@ fn append_internal_module_bytecode(
 
 /// Position of each chunk in the order a `--compile` executable is expected to
 /// load it: the entry point's static cross-chunk imports in evaluation order,
-/// then the closures of its dynamic imports, breadth-first. The standalone
+/// then the closures of its dynamic imports (`import()` and split `require()`
+/// chunks), breadth-first. The standalone
 /// module graph lays modules out by this so booting faults in one run of pages
-/// rather than one page per chunk scattered across the payload.
-fn chunk_load_order(c: &LinkerContext, chunks: &[Chunk]) -> Vec<u32> {
-    let entry_point_kinds = c.graph.files.items_entry_point_kind();
+/// rather than one page per chunk scattered across the payload. Also returns
+/// how many of the positions make up the static closure of the entry point
+/// the executable runs: the first server-side one, as `to_bytes` picks it.
+/// `output_files[i]` is chunk `i`'s output file.
+fn chunk_load_order(
+    chunks: &[Chunk],
+    output_files: &[options::OutputFile],
+    target_is_bun: bool,
+) -> (Vec<u32>, u32) {
     let mut visited = AutoBitSet::init_empty(chunks.len()).expect("oom");
     let mut order: Vec<u32> = Vec::with_capacity(chunks.len());
-    let mut dynamic_frontier: std::collections::VecDeque<u32> = chunks
-        .iter()
-        .enumerate()
-        .filter(|(_, chunk)| {
-            chunk.entry_point.is_entry_point()
-                && entry_point_kinds[chunk.entry_point.source_index() as usize].output_kind()
-                    == options::OutputKind::EntryPoint
-        })
-        .map(|(i, _)| i as u32)
-        .collect();
+    let entry_points = |side_is_client: bool| {
+        output_files[..chunks.len()]
+            .iter()
+            .enumerate()
+            .filter(move |(_, file)| {
+                file.output_kind == options::OutputKind::EntryPoint
+                    && (file.side == Some(options::Side::Client)) == side_is_client
+            })
+            .map(|(i, _)| i as u32)
+    };
+    let mut dynamic_frontier: std::collections::VecDeque<u32> =
+        entry_points(false).chain(entry_points(true)).collect();
 
     let mut stack: Vec<(u32, usize)> = Vec::new();
+    let mut startup_count: Option<u32> = None;
     while let Some(root) = dynamic_frontier.pop_front() {
         if visited.is_set(root as usize) {
             continue;
@@ -1468,7 +1549,11 @@ fn chunk_load_order(c: &LinkerContext, chunks: &[Chunk]) -> Vec<u32> {
                 Some(import) => {
                     stack.last_mut().unwrap().1 += 1;
                     let dep = import.chunk_index;
-                    if import.import_kind == bun_ast::ImportKind::Dynamic {
+                    // An HTML import puts browser-side chunks in a server build;
+                    // those never load anything through `import.meta.require`.
+                    let importer_is_bun = target_is_bun
+                        && output_files[chunk_index as usize].side != Some(options::Side::Client);
+                    if import.import_kind.can_be_lazy_chunk(importer_is_bun) {
                         dynamic_frontier.push_back(dep);
                     } else if !visited.is_set(dep as usize) {
                         visited.set(dep as usize);
@@ -1481,6 +1566,8 @@ fn chunk_load_order(c: &LinkerContext, chunks: &[Chunk]) -> Vec<u32> {
                 }
             }
         }
+        // The first root is the entry point; everything placed so far is its static closure.
+        startup_count.get_or_insert(order.len() as u32);
     }
     for chunk_index in 0..chunks.len() as u32 {
         if !visited.is_set(chunk_index as usize) {
@@ -1492,7 +1579,7 @@ fn chunk_load_order(c: &LinkerContext, chunks: &[Chunk]) -> Vec<u32> {
     for (i, &chunk_index) in order.iter().enumerate() {
         position[chunk_index as usize] = i as u32;
     }
-    position
+    (position, startup_count.unwrap_or(0))
 }
 
 use crate::EntryPoint;

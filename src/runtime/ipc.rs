@@ -3,6 +3,7 @@ use core::ffi::{c_int, c_void};
 use core::mem::size_of;
 
 use bun_jsc::JsCell;
+use bun_ptr::RefPtr;
 
 use crate::json_line_buffer::JSONLineBuffer;
 use bun_collections::{ByteVecExt, VecExt};
@@ -512,7 +513,7 @@ mod json {
         // The ASCII-path free callback (`json_ipc_data_string_free_cb`) only
         // fires when the WTFStringImpl refcount hits zero — i.e. *during* the
         // drop — so the freed-flag check must follow it.
-        let parsed = bun_jsc::bun_string_jsc::to_js_by_parse_json(&str, global_this);
+        let parsed = str.to_js_by_parse_json(global_this);
         drop(str);
         if is_ascii && !was_ascii_string_freed {
             panic!(
@@ -1017,9 +1018,13 @@ impl SendQueue {
         self.owner.set(None);
     }
 
-    pub fn new(mode: Mode, owner: Option<SendQueueOwner>, socket: SocketUnion) -> *mut SendQueue {
+    pub fn new(
+        mode: Mode,
+        owner: Option<SendQueueOwner>,
+        socket: SocketUnion,
+    ) -> RefPtr<SendQueue> {
         log!("SendQueue#init");
-        let this = bun_core::heap::into_raw(Box::new(Self {
+        let this = RefPtr::new(Self {
             ref_count: Cell::new(1),
             root: Cell::new(None),
             queue: JsCell::new(Vec::new()),
@@ -1041,9 +1046,8 @@ impl SendQueue {
             write_in_progress: Cell::new(false),
             close_event_sent: Cell::new(false),
             windows: JsCell::new(WindowsState::default()),
-        }));
-        // SAFETY: `this` is the fresh, non-null allocation root.
-        unsafe { (*this).root.set(core::ptr::NonNull::new(this)) };
+        });
+        this.root.set(Some(this.as_non_null()));
         this
     }
 
@@ -1398,8 +1402,8 @@ impl SendQueue {
             }
             // too many retries; give up - emit warning if possible
             let warning =
-                BunString::static_(b"Handle did not reach the receiving process correctly");
-            let warning_name = BunString::static_(b"SentHandleNotReceivedWarning");
+                BunString::static_("Handle did not reach the receiving process correctly");
+            let warning_name = BunString::static_("SentHandleNotReceivedWarning");
             if let Ok(warning_js) = warning.into_js(global) {
                 if let Ok(warning_name_js) = warning_name.into_js(global) {
                     let _ = global.emit_warning(
@@ -2021,8 +2025,14 @@ fn import_windows_socket_payload(
         log!("importWindowsSocketPayload: WSASocketW failed: {}", err);
         return Ok(None);
     }
-    msg_data.delete_property(global, WIN_SOCKET_INFO_KEY);
-    Ok(Some(Fd::from_system(sock as *mut c_void)))
+    let fd = Fd::from_system(sock as *mut c_void);
+    if let Err(err) = msg_data.delete_property(global, WIN_SOCKET_INFO_KEY) {
+        // The imported socket is not owned by anything yet; do not leak it
+        // with the exception.
+        fd.close();
+        return Err(err);
+    }
+    Ok(Some(fd))
 }
 
 fn received_fd_to_js(fd: Fd) -> JSValue {
@@ -2085,12 +2095,12 @@ fn handle_ipc_message(
                     if !cmd.is_cell() {
                         break 'handle_message;
                     }
-                    let cmd_str = bun_jsc::bun_string_jsc::from_js(cmd, global_this)?;
-                    if cmd_str.eql_comptime(b"NODE_HANDLE") {
+                    let cmd_str = bun_core::String::from_js(cmd, global_this)?;
+                    if cmd_str.eq_ascii(b"NODE_HANDLE") {
                         internal_command = Some(IPCCommand::Handle(msg_data));
-                    } else if cmd_str.eql_comptime(b"NODE_HANDLE_ACK") {
+                    } else if cmd_str.eq_ascii(b"NODE_HANDLE_ACK") {
                         internal_command = Some(IPCCommand::Ack);
-                    } else if cmd_str.eql_comptime(b"NODE_HANDLE_NACK") {
+                    } else if cmd_str.eq_ascii(b"NODE_HANDLE_NACK") {
                         internal_command = Some(IPCCommand::Nack);
                     }
                 }

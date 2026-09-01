@@ -75,7 +75,7 @@ public:
 
     /* Write an unsigned 64-bit integer */
     void writeUnsigned64(uint64_t value) {
-        char buf[20];
+        char buf[utils::U64_MAX_DIGITS];
         int length = utils::u64toa(value, buf);
 
         /* For now we do this copy */
@@ -110,12 +110,23 @@ public:
         return false;
     }
 
+    /* Ends the 101 of upgrade(): terminates the header section and marks the
+     * response done. Not internalEnd(), because the socket leaves HTTP right
+     * after: the connection close gate does not apply (Connection: close,
+     * HTTP/1.0 and close-when-idle describe the HTTP connection, not the
+     * WebSocket that takes over the socket), and the cork stays so the
+     * handshake batches with the first frames written from open(). */
+    void endUpgradeHandshake() {
+        HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
+        writeMark();
+        Super::write("\r\n", 2);
+        httpResponseData->state |= HttpResponseData<SSL>::HTTP_END_CALLED;
+        httpResponseData->markDone(this);
+    }
+
     /* Returns true on success, indicating that it might be feasible to write more data.
-     * Will start timeout if stream reaches totalSize or write failure.
-     * keepCorked: if true, skip the trailing uncork so the caller can batch
-     * more writes (used by upgrade() to batch the handshake with the first
-     * WebSocket frames). */
-    bool internalEnd(std::string_view data, uint64_t totalSize, bool optional, bool allowContentLength = true, bool closeConnection = false, bool keepCorked = false) {
+     * Will start timeout if stream reaches totalSize or write failure. */
+    bool internalEnd(std::string_view data, uint64_t totalSize, bool optional, bool allowContentLength = true, bool closeConnection = false) {
         /* Write status if not already done */
         writeStatus(HTTP_200_OK);
 
@@ -206,7 +217,7 @@ public:
                 if (closeIfDoneAndMarked(httpResponseData)) {
                     return true;
                 }
-            } else if (!keepCorked) {
+            } else {
                 this->uncork();
                 /* That uncork released our cork slot, so the cork() wrapper's
                  * post-uncork close gate will not run. When THIS socket is the
@@ -280,7 +291,7 @@ public:
                 /* We need to check if we should close this socket here now */
                 if (!Super::isCorked()) {
                     closeIfDoneAndMarked(httpResponseData);
-                }  else if (!keepCorked) {
+                } else {
                     this->uncork();
                     /* Same as the chunked arm above: the cork slot is gone, so
                      * run the close gate here unless THIS socket is the one
@@ -367,9 +378,7 @@ public:
             }
         }
 
-        /* keepCorked so the handshake stays buffered and can batch with the
-         * first WebSocket frames written in the open handler. */
-        internalEnd({nullptr, 0}, 0, false, false, false, true);
+        endUpgradeHandshake();
 
         /* Grab the httpContext from res */
         HttpContext<SSL> *httpContext = HttpContext<SSL>::fromSocket((struct us_socket_t *) this);

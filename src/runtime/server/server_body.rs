@@ -14,15 +14,14 @@ use crate::webcore::body::Value as BodyValue;
 use crate::webcore::fetch as Fetch;
 use crate::webcore::response::HeadersRef;
 use crate::webcore::{
-    self as WebCore, AbortSignal, AnyBlob, Blob, FetchHeaders, Request, Response,
+    self as WebCore, AbortSignal, AnyBlob, Blob, FetchHeaders, Request, Response, request,
 };
 use ::bstr::BStr;
 use bun_collections::HashMap;
+use bun_core::{EncodedSlice, String as BunString, strings};
 use bun_core::{Output, fmt as bun_fmt};
-use bun_core::{String as BunString, ZigString, strings};
 use bun_http::{self as http, Method, MimeType};
 use bun_jsc::Debugger::DebuggerId;
-use bun_jsc::ZigStringJsc as _;
 use bun_jsc::uuid::UUID;
 use bun_jsc::{
     self as jsc, ArrayBuffer, CallFrame, GlobalRef, JSGlobalObject, JSPromise, JSValue, JsError,
@@ -65,13 +64,15 @@ pub(super) use super::static_route::StaticRoute;
 
 // ─── RequestCtx trait ────────────────────────────────────────────────────────
 // NOTE: Stable Rust has no inherent
-// associated types, so the per-monomorphization handle types are surfaced via
-// this local trait. Only `IS_H3` is consumed for control flow; `Req`/`Resp`
-// are erased to `c_void` to match `super::request_context::{Req, Resp}`.
+// associated types, so the per-monomorphization request handle type is
+// surfaced via this local trait. Only `IS_MUX` is consumed for control flow;
+// `Req` is erased to `c_void` to match `super::request_context::Req`. The
+// response handle is a separate generic (`R: RespLike`) at each dispatch
+// entry point: the MUX instantiation serves both `h2::Response` and
+// `h3::Response`.
 trait RequestCtx: super::any_request_context::CtxKind {
     type Req: ReqLike;
-    type Resp: RespLike;
-    const IS_H3: bool;
+    const IS_MUX: bool;
 }
 impl<ThisServer, const SSL: bool, const DBG: bool> RequestCtx
     for NewRequestContext<ThisServer, SSL, DBG, false>
@@ -79,8 +80,7 @@ where
     NewRequestContext<ThisServer, SSL, DBG, false>: super::any_request_context::CtxKind,
 {
     type Req = uws_sys::Request;
-    type Resp = uws_sys::NewAppResponse<SSL>;
-    const IS_H3: bool = false;
+    const IS_MUX: bool = false;
 }
 impl<ThisServer, const SSL: bool, const DBG: bool> RequestCtx
     for NewRequestContext<ThisServer, SSL, DBG, true>
@@ -88,13 +88,12 @@ where
     NewRequestContext<ThisServer, SSL, DBG, true>: super::any_request_context::CtxKind,
 {
     type Req = uws_sys::h3::Request;
-    type Resp = uws_sys::h3::Response;
-    const IS_H3: bool = true;
+    const IS_MUX: bool = true;
 }
 
 /// Field/method surface needed on the generic `Ctx` so the bodies of
 /// `handle_request_for` / `prepare_js_request_context_for` / `on_saved_request`
-/// can be written without naming the concrete `RequestContext<_, SSL, DBG, H3>`
+/// can be written without naming the concrete `RequestContext<_, SSL, DBG, MUX>`
 /// type. Implemented via blanket impl below for every `NewRequestContext<..>`.
 #[allow(clippy::too_many_arguments)]
 trait RequestCtxOps: RequestCtx {
@@ -103,7 +102,7 @@ trait RequestCtxOps: RequestCtx {
         slot: *mut Self,
         server: *mut Self::Server,
         req: &mut Self::Req,
-        resp: &mut Self::Resp,
+        resp: uws::AnyResponse,
         should_deinit_context: Option<DeferDeinitFlag>,
         method: Option<http::Method>,
     );
@@ -127,7 +126,7 @@ trait RequestCtxOps: RequestCtx {
     fn set_request_body_content_len(&self, len: usize);
     fn set_is_transfer_encoding(&self, v: bool);
     fn set_is_waiting_for_request_body(&self, v: bool);
-    fn arm_on_data(&self, resp: &mut Self::Resp);
+    fn arm_on_data(&self, resp: uws::AnyResponse);
     // body-streaming callback hooks (type-erased, stored on `Body::PendingValue`).
     // `this` must be a live `*mut Self::RequestCtx` cast to `*mut c_void`.
     fn on_start_buffering_callback(this: NonNull<c_void>);
@@ -139,8 +138,8 @@ trait RequestCtxOps: RequestCtx {
     );
 }
 
-impl<ThisServer, const SSL: bool, const DBG: bool, const H3: bool> RequestCtxOps
-    for NewRequestContext<ThisServer, SSL, DBG, H3>
+impl<ThisServer, const SSL: bool, const DBG: bool, const MUX: bool> RequestCtxOps
+    for NewRequestContext<ThisServer, SSL, DBG, MUX>
 where
     Self: RequestCtx,
     ThisServer: super::ServerLike + 'static,
@@ -151,11 +150,10 @@ where
         slot: *mut Self,
         server: *mut ThisServer,
         req: &mut Self::Req,
-        resp: &mut Self::Resp,
+        any_resp: uws::AnyResponse,
         should_deinit_context: Option<DeferDeinitFlag>,
         method: Option<http::Method>,
     ) {
-        let any_resp = RespLike::to_any_response(resp);
         // SAFETY: `slot` points at a fresh HiveArray pool entry; treat as
         // MaybeUninit for in-place construction — `&mut` scoped to this call.
         Self::create(
@@ -244,20 +242,17 @@ where
         self.flags.set_is_waiting_for_request_body(v)
     }
     #[inline]
-    fn arm_on_data(&self, resp: &mut Self::Resp) {
-        // NOTE: route via the type-erased `AnyResponse::on_data` so the
-        // body stays generic over `Ctx::Resp` (H1 SSL/TCP/H3).
-        fn handler<S, const SSL_: bool, const DBG_: bool, const H3_: bool>(
-            ctx: *mut NewRequestContext<S, SSL_, DBG_, H3_>,
+    fn arm_on_data(&self, resp: uws::AnyResponse) {
+        fn handler<S, const SSL_: bool, const DBG_: bool, const MUX_: bool>(
+            ctx: *mut NewRequestContext<S, SSL_, DBG_, MUX_>,
             chunk: &[u8],
             last: bool,
         ) where
             S: super::ServerLike + 'static,
         {
-            NewRequestContext::<S, SSL_, DBG_, H3_>::on_buffered_body_chunk(ctx, chunk, last);
+            NewRequestContext::<S, SSL_, DBG_, MUX_>::on_buffered_body_chunk(ctx, chunk, last);
         }
-        RespLike::to_any_response(resp)
-            .on_data(handler::<ThisServer, SSL, DBG, H3>, self.as_ctx_ptr());
+        resp.on_data(handler::<ThisServer, SSL, DBG, MUX>, self.as_ctx_ptr());
     }
     #[inline]
     fn on_start_buffering_callback(this: NonNull<c_void>) {
@@ -277,12 +272,15 @@ where
     }
 }
 
-// NOTE: local request/response trait so generic `Ctx::Req` / `Ctx::Resp`
-// call sites can dispatch to either uWS HTTP/1 or HTTP/3 handle types without
+// NOTE: local request/response traits so generic `Ctx::Req` / `R: RespLike`
+// call sites can dispatch to any uWS HTTP/1, HTTP/2 or HTTP/3 handle type without
 // touching `bun_uws_sys`. Only the surface `prepare_js_request_context_for`
 // actually needs is exposed.
 trait ReqLike {
     fn header(&mut self, name: &[u8]) -> Option<&[u8]>;
+    /// Whether the transport frames the body with a Transfer-Encoding header.
+    /// This is the parser's verdict, not a lookup of the first header field.
+    fn has_transfer_encoding(&mut self) -> bool;
     fn method(&mut self) -> &[u8];
     fn url(&mut self) -> &[u8];
     fn set_yield(&mut self, y: bool);
@@ -291,6 +289,10 @@ impl ReqLike for uws_sys::Request {
     #[inline]
     fn header(&mut self, name: &[u8]) -> Option<&[u8]> {
         uws_sys::Request::header(self, name)
+    }
+    #[inline]
+    fn has_transfer_encoding(&mut self) -> bool {
+        uws_sys::Request::has_transfer_encoding(self)
     }
     #[inline]
     fn method(&mut self) -> &[u8] {
@@ -310,6 +312,13 @@ impl ReqLike for uws_sys::h3::Request {
     fn header(&mut self, name: &[u8]) -> Option<&[u8]> {
         uws_sys::h3::Request::header(self, name)
     }
+    /// HTTP/3 has no transfer codings (RFC 9114 4.2): the body ends at the
+    /// QUIC stream FIN, and a request that carries the header is rejected
+    /// before this is consulted.
+    #[inline]
+    fn has_transfer_encoding(&mut self) -> bool {
+        false
+    }
     #[inline]
     fn method(&mut self) -> &[u8] {
         uws_sys::h3::Request::method(self)
@@ -325,15 +334,21 @@ impl ReqLike for uws_sys::h3::Request {
 }
 
 pub(super) trait RespLike {
-    const IS_H3: bool;
+    const IS_MUX: bool;
     fn write_status(&mut self, status: &[u8]);
     fn end_without_body(&mut self, close_connection: bool);
     fn timeout(&mut self, seconds: u8);
     fn on_timeout_warn(&mut self, ud: *mut c_void);
     fn to_any_response(&mut self) -> uws::AnyResponse;
+    /// HTTP/2 only: END_STREAM on the HEADERS frame, or `content-length: 0`.
+    fn request_body_ended(&mut self) -> bool;
 }
 impl<const SSL: bool> RespLike for uws_sys::NewAppResponse<SSL> {
-    const IS_H3: bool = false;
+    const IS_MUX: bool = false;
+    #[inline]
+    fn request_body_ended(&mut self) -> bool {
+        false
+    }
     #[inline]
     fn write_status(&mut self, s: &[u8]) {
         uws_sys::NewAppResponse::<SSL>::write_status(self, s)
@@ -373,7 +388,12 @@ impl<const SSL: bool> RespLike for uws_sys::NewAppResponse<SSL> {
     }
 }
 impl RespLike for uws_sys::h3::Response {
-    const IS_H3: bool = true;
+    const IS_MUX: bool = true;
+    /// The QUIC FIN is only seen by a read after dispatch.
+    #[inline]
+    fn request_body_ended(&mut self) -> bool {
+        false
+    }
     #[inline]
     fn write_status(&mut self, s: &[u8]) {
         uws_sys::h3::Response::write_status(self, s)
@@ -399,20 +419,51 @@ impl RespLike for uws_sys::h3::Response {
         uws::AnyResponse::from(std::ptr::from_mut::<Self>(self))
     }
 }
+impl RespLike for uws_sys::h2::Response {
+    const IS_MUX: bool = true;
+    #[inline]
+    fn request_body_ended(&mut self) -> bool {
+        uws_sys::h2::Response::request_body_ended(self)
+    }
+    #[inline]
+    fn write_status(&mut self, s: &[u8]) {
+        uws_sys::h2::Response::write_status(self, s)
+    }
+    #[inline]
+    fn end_without_body(&mut self, c: bool) {
+        uws_sys::h2::Response::end_without_body(self, c)
+    }
+    #[inline]
+    fn timeout(&mut self, s: u8) {
+        uws_sys::h2::Response::timeout(self, s)
+    }
+    #[inline]
+    fn on_timeout_warn(&mut self, ud: *mut c_void) {
+        uws_sys::h2::Response::on_timeout(
+            self,
+            |_: &mut c_void, _: &mut uws_sys::h2::Response| on_timeout_for_idle_warn(),
+            ud,
+        );
+    }
+    #[inline]
+    fn to_any_response(&mut self) -> uws::AnyResponse {
+        uws::AnyResponse::from(std::ptr::from_mut::<Self>(self))
+    }
+}
 
 /// Answer a request that arrived after `finalize()` set the wrapper's
 /// `JsRef` to `Finalized` (idle keep-alive sockets aren't counted in
 /// `pending_requests`, so `self` can outlive the wrapper between the
 /// finalizer and the next-tick `schedule_deinit`). 503 instead of
 /// dispatching into a dead handler shadow. One helper so every dispatch
-/// trampoline gets the same guard. H1 closes the connection; H3 ends only
-/// this stream (`!R::IS_H3`) so sibling streams on the same QUIC connection
+/// trampoline gets the same guard. H1 closes the connection; H2/H3 end only
+/// this stream (`!R::IS_MUX`) so sibling streams on the same connection
 /// survive — same per-protocol close treatment as the other reject fast
 /// paths.
 #[inline]
 pub(super) fn respond_stopped_503<R: RespLike + ?Sized>(resp: &mut R) {
     resp.write_status(b"503 Service Unavailable");
-    resp.end_without_body(!R::IS_H3);
+    resp.end_without_body(!R::IS_MUX);
 }
 
 /// RFC 6455 §4.1: |Sec-WebSocket-Key| is the base64 encoding of a 16-byte
@@ -429,7 +480,7 @@ fn is_valid_sec_websocket_key(key: &[u8]) -> bool {
 
 type ServerRequestContext<const SSL: bool, const DEBUG: bool> =
     NewRequestContext<NewServer<SSL, DEBUG>, SSL, DEBUG, false>;
-type ServerH3RequestContext<const SSL: bool, const DEBUG: bool> =
+type ServerMuxRequestContext<const SSL: bool, const DEBUG: bool> =
     NewRequestContext<NewServer<SSL, DEBUG>, SSL, DEBUG, true>;
 
 // ─── BunInfo (moved from bun_core::Global) ───────────────────────────────────
@@ -622,7 +673,6 @@ impl AnyRoute {
         let Some(index) = argument.get_optional_slice(init_ctx.global, b"index")? else {
             return Ok(None);
         };
-        // `ZigStringSlice` impls `Drop` — freed at scope end.
 
         let Some(files) = argument.get_array(init_ctx.global, b"files")? else {
             return Ok(None);
@@ -643,7 +693,7 @@ impl AnyRoute {
     pub(crate) fn from_options(
         global: &JSGlobalObject,
         headers: Option<&FetchHeaders>,
-        path: &mut Node::PathOrFileDescriptor,
+        path: &mut Node::PathOrFileDescriptor<'static>,
     ) -> JsResult<AnyRoute> {
         // The file/static route doesn't ref it.
         let blob = <Blob as BlobExt>::find_or_create_file_from_path(path, global, false);
@@ -856,14 +906,13 @@ pub struct ServerInitContext<'a> {
 
 // ─── ServePlugins ────────────────────────────────────────────────────────────
 /// State machine to handle loading plugins asynchronously. This structure is not thread-safe.
+#[derive(bun_ptr::CellRefCounted)]
 pub struct ServePlugins {
     state: ServePluginsState,
     ref_count: core::cell::Cell<u32>,
 }
 
 // Reference count is incremented while there are other objects waiting on plugin loads.
-// Maps to bun_ptr::IntrusiveRc<ServePlugins> — *ServePlugins crosses FFI as promise context ptr.
-
 pub(crate) enum ServePluginsState {
     Unqueued(Box<[Box<[u8]>]>),
     Pending {
@@ -899,49 +948,11 @@ pub enum ServePluginsCallback<'a> {
 }
 
 impl ServePlugins {
-    pub(crate) fn init(plugins: Box<[Box<[u8]>]>) -> *mut ServePlugins {
-        bun_core::heap::into_raw(Box::new(ServePlugins {
+    pub(crate) fn init(plugins: Box<[Box<[u8]>]>) -> RefPtr<ServePlugins> {
+        RefPtr::new(ServePlugins {
             ref_count: core::cell::Cell::new(1),
             state: ServePluginsState::Unqueued(plugins),
-        }))
-    }
-
-    pub fn ref_(&self) {
-        self.ref_count.set(self.ref_count.get() + 1);
-    }
-
-    /// Bump the refcount and return an RAII guard that derefs on `Drop`.
-    ///
-    /// # Safety
-    /// `this` must originate from [`ServePlugins::init`] (carry `heap::alloc`
-    /// write provenance) so the eventual `deref_` can free it. Do **not** derive
-    /// `this` from a `&Self`/`&mut Self` reborrow — under Stacked Borrows that
-    /// pointer is invalidated by later writes through the reference and cannot
-    /// be used to deallocate.
-    #[inline]
-    unsafe fn guard_ref(this: *mut Self) -> ServePluginsRef {
-        // SAFETY: caller contract — `this` is live.
-        unsafe { (*this).ref_() };
-        ServePluginsRef(this)
-    }
-
-    /// Decrement the intrusive refcount, freeing the allocation when it hits zero.
-    ///
-    /// Takes the raw `*mut` (not `&self`) so the original `heap::alloc` provenance
-    /// from [`ServePlugins::init`] is preserved for the final `heap::take` — going
-    /// through `&self` would narrow provenance to read-only and make the drop UB.
-    ///
-    /// SAFETY: `this` must originate from [`ServePlugins::init`] and the caller must
-    /// hold a counted reference.
-    pub(crate) unsafe fn deref_(this: *mut Self) {
-        // SAFETY: caller contract — `this` is live while refcount > 0
-        let rc = unsafe { &(*this).ref_count };
-        let n = rc.get() - 1;
-        rc.set(n);
-        if n == 0 {
-            // SAFETY: refcount hit zero; `this` carries the heap::alloc provenance from init()
-            unsafe { drop(bun_core::heap::take(this)) };
-        }
+        })
     }
 
     pub(crate) fn get_or_start_load(
@@ -1011,10 +1022,10 @@ impl ServePlugins {
         let plugin: Box<JSBundler::Plugin> = unsafe { bun_core::heap::take(plugin) };
         let mut bunstring_array: Vec<BunString> = Vec::with_capacity(plugin_list.len());
         for raw_plugin in &plugin_list {
-            bunstring_array.push(BunString::init(&***raw_plugin));
+            bunstring_array.push(BunString::from_bytes(raw_plugin));
         }
         let plugin_js_array = bun_string_jsc::to_js_array(global, &bunstring_array)?;
-        let bunfig_folder_bunstr = jsc::bun_string_jsc::create_utf8_for_js(global, bunfig_folder)?;
+        let bunfig_folder_bunstr = bun_string_jsc::create_utf8_for_js(global, bunfig_folder)?;
 
         self.state = ServePluginsState::Pending {
             promise: jsc::JSPromiseStrong::init(global),
@@ -1045,6 +1056,7 @@ impl ServePlugins {
                 match promise.status() {
                     // promise not fulfilled yet
                     jsc::js_promise::Status::Pending => {
+                        // The reaction's ref, adopted by `on_resolve_impl`/`on_reject_impl`.
                         self.ref_();
                         let promise_value = promise.as_value();
                         if let ServePluginsState::Pending {
@@ -1107,7 +1119,6 @@ impl ServePlugins {
                 route.this_ptr(),
                 Some(NonNull::from(plugin_ref)),
             ));
-            route.deref();
         }
         if let Some(mut server) = dev_server {
             // SAFETY: dev_server outlives plugin load (stored as a back-reference
@@ -1135,7 +1146,6 @@ impl ServePlugins {
 
         for route in html_bundle_routes {
             bun_core::handle_oom(route.on_plugins_rejected());
-            route.deref();
         }
         if let Some(mut server) = dev_server {
             // SAFETY: dev_server outlives plugin load
@@ -1144,35 +1154,6 @@ impl ServePlugins {
 
         Output::err_generic("Failed to load plugins for Bun.serve:", ());
         global.bun_vm().as_mut().run_error_handler(err, None);
-    }
-}
-
-/// RAII owner of one counted reference to a [`ServePlugins`]. Drops the
-/// reference via [`ServePlugins::deref_`] on scope exit.
-///
-/// Holds the raw `*mut` from [`ServePlugins::init`] so the final `heap::take`
-/// has write/dealloc provenance over the whole allocation. Never construct this
-/// from a pointer derived through `&ServePlugins` — that yields a SharedReadOnly
-/// tag under Stacked Borrows and freeing through it is UB.
-struct ServePluginsRef(*mut ServePlugins);
-
-impl ServePluginsRef {
-    /// Adopt an existing +1 reference (no increment).
-    ///
-    /// # Safety
-    /// Caller must own one counted reference to `ptr`, and `ptr` must carry the
-    /// `heap::alloc` provenance from [`ServePlugins::init`].
-    #[inline]
-    unsafe fn adopt(ptr: *mut ServePlugins) -> Self {
-        Self(ptr)
-    }
-}
-
-impl Drop for ServePluginsRef {
-    #[inline]
-    fn drop(&mut self) {
-        // SAFETY: constructed via `adopt`/`guard_ref` with a live counted ref.
-        unsafe { ServePlugins::deref_(self.0) };
     }
 }
 
@@ -1193,8 +1174,8 @@ fn on_resolve_impl(_global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<
 
     let [plugins_result, plugins_js] = callframe.arguments_as_array::<2>();
     let plugins = plugins_js.as_promise_ptr::<ServePlugins>();
-    // SAFETY: `plugins` was heap-allocated and ref()'d before .then(); deref pairs with that ref
-    let _guard = unsafe { ServePluginsRef::adopt(plugins) };
+    // SAFETY: `plugins` was heap-allocated and ref()'d before .then(); this adopts that ref.
+    let _guard = unsafe { RefPtr::from_raw(plugins) };
     plugins_result.ensure_still_alive();
 
     // SAFETY: pointer was passed via .then() above
@@ -1209,8 +1190,8 @@ fn on_reject_impl(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JS
 
     let [error_js, plugin_js] = callframe.arguments_as_array::<2>();
     let plugins = plugin_js.as_promise_ptr::<ServePlugins>();
-    // SAFETY: `plugins` was heap-allocated and ref()'d before .then(); deref pairs with that ref
-    let _guard = unsafe { ServePluginsRef::adopt(plugins) };
+    // SAFETY: `plugins` was heap-allocated and ref()'d before .then(); this adopts that ref.
+    let _guard = unsafe { RefPtr::from_raw(plugins) };
     // SAFETY: pointer was passed via .then() above
     unsafe { &mut *plugins }.handle_on_reject(global, error_js);
 
@@ -1376,20 +1357,13 @@ where
         &mut self,
         callback: ServePluginsCallback<'_>,
     ) -> GetOrStartLoadResult<'_> {
-        if let Some(p) = self.plugins {
+        if let Some(p) = &self.plugins {
+            // Keep `*p` alive across re-entrant JS in `load_and_resolve_plugins`.
+            let p = p.clone();
             let global = self.global();
-            // Keep `*p` alive across re-entrant JS in `load_and_resolve_plugins`
-            // The guard is built from the
-            // heap-allocated `*mut` directly so its provenance survives the
-            // `&mut *p` reborrow below and remains valid for `heap::take` on drop.
-            //
-            // SAFETY: `p` was produced by `ServePlugins::init` (heap::alloc) and is
-            // live while held in `self.plugins`.
-            let _deref_guard = unsafe { ServePlugins::guard_ref(p.as_ptr()) };
-            // SAFETY: `plugins` holds a counted ref produced by
-            // `ServePlugins::init` (heap::alloc); intrusive refcount permits
-            // mutation through any owner. No other `&mut ServePlugins` is live
-            // on this (single-threaded) JS thread for the call's duration.
+            // SAFETY: intrusive refcount permits mutation through any owner. No
+            // other `&mut ServePlugins` is live on this (single-threaded) JS
+            // thread for the call's duration.
             return match unsafe { &mut *p.as_ptr() }.get_or_start_load(&global, callback) {
                 Ok(r) => r,
                 Err(JsError::Thrown | JsError::Terminated) => {
@@ -1435,7 +1409,7 @@ where
     //
     // NOTE: the `#[bun_jsc::host_fn(method)]` proc-macro that will eventually
     // replace these hand-expansions hasn't landed, so the per-type decode arms
-    // used by the server (`ZigString`, `JSValue`, `?JSValue`, `*WebCore.Request`)
+    // used by the server (`EncodedSlice`, `JSValue`, `Option<JSValue>`, `&Request`)
     // are open-coded here.
 
     /// `pub const doStop = host_fn.wrapInstanceMethod(ThisServer, "stopFromJS", false)`
@@ -1513,7 +1487,6 @@ where
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         let mut iter = jsc::ArgumentsSlice::init(global.bun_vm_ref(), callframe.arguments());
-        // *jsc.WebCore.Request
         let arg = iter.next_eat().ok_or_else(|| {
             global.throw_invalid_arguments(format_args!("Missing Request object"))
         })?;
@@ -1669,7 +1642,7 @@ where
         optional: Option<JSValue>,
     ) -> JsResult<JSValue> {
         use super::node_http_response::Flags as NodeHTTPResponseFlags;
-        use bun_core::ZigStringSlice;
+        use bun_core::Utf8Bytes;
         use bun_jsc::HTTPHeaderName;
 
         if self.config.websocket.is_none() {
@@ -1724,15 +1697,10 @@ where
                 }
             });
 
-            let mut sec_websocket_protocol = ZigString::EMPTY;
-            let mut sec_websocket_extensions = ZigString::EMPTY;
-
-            // Owned backing storage for the above when they come from options.headers.
-            // fastGet returns a ZigString that borrows from the header map entry's
-            // StringImpl, which fastRemove then frees — so we must copy the bytes
-            // before removing the entry.
-            let mut _sec_websocket_protocol_owned = ZigStringSlice::EMPTY;
-            let mut _sec_websocket_extensions_owned = ZigStringSlice::EMPTY;
+            // Copied out of `options.headers` because `fast_remove` frees the
+            // entry they would otherwise borrow.
+            let mut sec_websocket_protocol = Utf8Bytes::EMPTY;
+            let mut sec_websocket_extensions = Utf8Bytes::EMPTY;
 
             if let Some(opts) = optional {
                 'getter: {
@@ -1780,10 +1748,7 @@ where
                         if let Some(protocol) =
                             fetch_headers_to_use.fast_get(HTTPHeaderName::SecWebSocketProtocol)
                         {
-                            // Clone before fastRemove frees the backing StringImpl.
-                            _sec_websocket_protocol_owned = protocol.to_slice_clone();
-                            sec_websocket_protocol =
-                                ZigString::init(_sec_websocket_protocol_owned.slice());
+                            sec_websocket_protocol = protocol.to_utf8().into_owned();
                             // Remove from headers so it's not written twice (once here and once by upgrade())
                             fetch_headers_to_use.fast_remove(HTTPHeaderName::SecWebSocketProtocol);
                         }
@@ -1791,10 +1756,7 @@ where
                         if let Some(extensions) =
                             fetch_headers_to_use.fast_get(HTTPHeaderName::SecWebSocketExtensions)
                         {
-                            // Clone before fastRemove frees the backing StringImpl.
-                            _sec_websocket_extensions_owned = extensions.to_slice_clone();
-                            sec_websocket_extensions =
-                                ZigString::init(_sec_websocket_extensions_owned.slice());
+                            sec_websocket_extensions = extensions.to_utf8().into_owned();
                             // Remove from headers so it's not written twice (once here and once by upgrade())
                             fetch_headers_to_use
                                 .fast_remove(HTTPHeaderName::SecWebSocketExtensions);
@@ -1803,7 +1765,11 @@ where
                             // we must write the status first so that 200 OK isn't written
                             raw_response.write_status(b"101 Switching Protocols");
                             fetch_headers_to_use.to_uws_response(
-                                ResponseKind::from(SSL, false),
+                                if SSL {
+                                    ResponseKind::Ssl
+                                } else {
+                                    ResponseKind::Tcp
+                                },
                                 raw_response.socket().cast::<c_void>(),
                             );
                         }
@@ -1812,8 +1778,8 @@ where
             }
             return Ok(JSValue::from(node_http_response.upgrade(
                 data_value,
-                sec_websocket_protocol,
-                sec_websocket_extensions,
+                sec_websocket_protocol.slice(),
+                sec_websocket_extensions.slice(),
             )));
         }
 
@@ -1858,19 +1824,11 @@ where
             unsafe { (*p).deref() }
         });
 
-        let mut sec_websocket_key_str = ZigString::EMPTY;
-        let mut sec_websocket_protocol = ZigString::EMPTY;
-        let mut sec_websocket_extensions = ZigString::EMPTY;
-        let mut sec_websocket_version = ZigString::EMPTY;
-        let mut upgrade_header = ZigString::EMPTY;
-
-        // Owned backing storage for sec_websocket_*.
-        // `ZigStringSlice` impls `Drop`; reassignment drops the previous value.
-        let mut _sec_websocket_key_owned = bun_core::ZigStringSlice::empty();
-        let mut _sec_websocket_protocol_owned = bun_core::ZigStringSlice::empty();
-        let mut _sec_websocket_extensions_owned = bun_core::ZigStringSlice::empty();
-        let mut _sec_websocket_version_owned = bun_core::ZigStringSlice::empty();
-        let mut _upgrade_header_owned = bun_core::ZigStringSlice::empty();
+        let mut sec_websocket_key = Utf8Bytes::EMPTY;
+        let mut sec_websocket_protocol = Utf8Bytes::EMPTY;
+        let mut sec_websocket_extensions = Utf8Bytes::EMPTY;
+        let mut sec_websocket_version = Utf8Bytes::EMPTY;
+        let mut upgrade_header = Utf8Bytes::EMPTY;
 
         // NOTE: `FetchHeaders::fast_get` takes `&mut self` (FFI signature
         // is `*mut`), so go through the `BodyMixin` accessor which yields a
@@ -1882,24 +1840,19 @@ where
             // (S008) — safe `*mut → &mut` via `opaque_deref_mut`.
             let head = bun_opaque::opaque_deref_mut(head.as_ptr());
             if let Some(key) = head.fast_get(HTTPHeaderName::SecWebSocketKey) {
-                _sec_websocket_key_owned = key.to_slice_clone();
-                sec_websocket_key_str = ZigString::init(_sec_websocket_key_owned.slice());
+                sec_websocket_key = key.to_utf8().into_owned();
             }
             if let Some(proto) = head.fast_get(HTTPHeaderName::SecWebSocketProtocol) {
-                _sec_websocket_protocol_owned = proto.to_slice_clone();
-                sec_websocket_protocol = ZigString::init(_sec_websocket_protocol_owned.slice());
+                sec_websocket_protocol = proto.to_utf8().into_owned();
             }
             if let Some(ext) = head.fast_get(HTTPHeaderName::SecWebSocketExtensions) {
-                _sec_websocket_extensions_owned = ext.to_slice_clone();
-                sec_websocket_extensions = ZigString::init(_sec_websocket_extensions_owned.slice());
+                sec_websocket_extensions = ext.to_utf8().into_owned();
             }
             if let Some(ver) = head.fast_get(HTTPHeaderName::SecWebSocketVersion) {
-                _sec_websocket_version_owned = ver.to_slice_clone();
-                sec_websocket_version = ZigString::init(_sec_websocket_version_owned.slice());
+                sec_websocket_version = ver.to_utf8().into_owned();
             }
             if let Some(up) = head.fast_get(HTTPHeaderName::Upgrade) {
-                _upgrade_header_owned = up.to_slice_clone();
-                upgrade_header = ZigString::init(_upgrade_header_owned.slice());
+                upgrade_header = up.to_utf8().into_owned();
             }
         }
 
@@ -1913,25 +1866,17 @@ where
             // `uws_sys::Request` here.
             // S008: `uws::Request` is an `opaque_ffi!` ZST — safe deref
             // (BACKREF; live while RequestContext.req is Some).
-            let r = bun_opaque::opaque_deref_mut(req_ptr.cast::<uws_sys::Request>());
-            if sec_websocket_key_str.len == 0 {
-                sec_websocket_key_str =
-                    ZigString::init(r.header(b"sec-websocket-key").unwrap_or(b""));
-            }
-            if sec_websocket_protocol.len == 0 {
-                sec_websocket_protocol =
-                    ZigString::init(r.header(b"sec-websocket-protocol").unwrap_or(b""));
-            }
-            if sec_websocket_extensions.len == 0 {
-                sec_websocket_extensions =
-                    ZigString::init(r.header(b"sec-websocket-extensions").unwrap_or(b""));
-            }
-            if sec_websocket_version.len == 0 {
-                sec_websocket_version =
-                    ZigString::init(r.header(b"sec-websocket-version").unwrap_or(b""));
-            }
-            if upgrade_header.len == 0 {
-                upgrade_header = ZigString::init(r.header(b"upgrade").unwrap_or(b""));
+            let r = bun_opaque::opaque_deref(req_ptr.cast::<uws_sys::Request>().cast_const());
+            for (value, name) in [
+                (&mut sec_websocket_key, b"sec-websocket-key".as_slice()),
+                (&mut sec_websocket_protocol, b"sec-websocket-protocol"),
+                (&mut sec_websocket_extensions, b"sec-websocket-extensions"),
+                (&mut sec_websocket_version, b"sec-websocket-version"),
+                (&mut upgrade_header, b"upgrade"),
+            ] {
+                if value.is_empty() {
+                    *value = Utf8Bytes::Borrowed(r.header(name).unwrap_or(b""));
+                }
             }
         }
 
@@ -1944,7 +1889,7 @@ where
         {
             return Ok(JSValue::FALSE);
         }
-        if !is_valid_sec_websocket_key(sec_websocket_key_str.slice()) {
+        if !is_valid_sec_websocket_key(sec_websocket_key.slice()) {
             return Ok(JSValue::FALSE);
         }
         // RFC 6455 §4.4: an unsupported |Sec-WebSocket-Version| MUST be
@@ -1959,13 +1904,6 @@ where
             upgrader.end_without_body(true);
             return Ok(JSValue::FALSE);
         }
-        if sec_websocket_protocol.len > 0 {
-            sec_websocket_protocol.mark_utf8();
-        }
-        if sec_websocket_extensions.len > 0 {
-            sec_websocket_extensions.mark_utf8();
-        }
-
         let mut data_value = JSValue::ZERO;
         // Non-unit guard state: holds the temporarily-created FetchHeaders (if
         // any) and derefs it on scope exit. Populated below via DerefMut.
@@ -2016,16 +1954,13 @@ where
 
                     // S008: `FetchHeaders` is an `opaque_ffi!` ZST — safe deref.
                     let fh = bun_opaque::opaque_deref_mut(fh);
+                    // Copied out because `fast_remove` frees the entry.
                     if let Some(p) = fh.fast_get(HTTPHeaderName::SecWebSocketProtocol) {
-                        _sec_websocket_protocol_owned = p.to_slice_clone();
-                        sec_websocket_protocol =
-                            ZigString::init(_sec_websocket_protocol_owned.slice());
+                        sec_websocket_protocol = p.to_utf8().into_owned();
                         fh.fast_remove(HTTPHeaderName::SecWebSocketProtocol);
                     }
                     if let Some(e) = fh.fast_get(HTTPHeaderName::SecWebSocketExtensions) {
-                        _sec_websocket_extensions_owned = e.to_slice_clone();
-                        sec_websocket_extensions =
-                            ZigString::init(_sec_websocket_extensions_owned.slice());
+                        sec_websocket_extensions = e.to_utf8().into_owned();
                         fh.fast_remove(HTTPHeaderName::SecWebSocketExtensions);
                     }
                 }
@@ -2049,14 +1984,22 @@ where
             if let Some(h) = fetch_headers_to_use {
                 // S008: `FetchHeaders` is an `opaque_ffi!` ZST — safe deref.
                 bun_opaque::opaque_deref_mut(h).to_uws_response(
-                    ResponseKind::from(SSL, false),
+                    if SSL {
+                        ResponseKind::Ssl
+                    } else {
+                        ResponseKind::Tcp
+                    },
                     resp.socket().cast::<c_void>(),
                 );
             }
             if let Some(c) = cookies_to_write.as_mut() {
                 c.write(
                     global,
-                    ResponseKind::from(SSL, false),
+                    if SSL {
+                        ResponseKind::Ssl
+                    } else {
+                        ResponseKind::Tcp
+                    },
                     resp.socket().cast::<c_void>(),
                 )?;
             }
@@ -2073,7 +2016,7 @@ where
         // the live JsClass payload for `object`.
         let request = unsafe { &*request_ptr };
         if request.ensure_url().is_err() {
-            request.url.set(BunString::empty());
+            request.url.set(BunString::EMPTY);
         }
         if !request.has_fetch_headers() {
             if let Some(req_ptr) = upgrader.req.get() {
@@ -2084,7 +2027,7 @@ where
         // SAFETY: plain-field detach through the root pointer; the shared
         // borrow above is not used past this point.
         unsafe { (*request_ptr).request_context = AnyRequestContext::NULL };
-        upgrader.request_weakref.with_mut(|w| w.deref());
+        upgrader.request_weakref.set(request::WeakRef::EMPTY);
 
         data_value.ensure_still_alive();
         let ws = ServerWebSocket::init(
@@ -2093,10 +2036,6 @@ where
             signal,
         );
         data_value.ensure_still_alive();
-
-        // `ZigString::Slice` impls `Drop` — freed at scope exit.
-        let proto_str = sec_websocket_protocol.to_slice();
-        let ext_str = sec_websocket_extensions.to_slice();
 
         resp.clear_aborted();
         resp.clear_on_data();
@@ -2111,9 +2050,9 @@ where
 
         resp.upgrade(
             ws,
-            sec_websocket_key_str.slice(),
-            proto_str.slice(),
-            ext_str.slice(),
+            sec_websocket_key.slice(),
+            sec_websocket_protocol.slice(),
+            sec_websocket_extensions.slice(),
             // S008: `WebSocketUpgradeContext` is an `opaque_ffi!` ZST, safe
             // deref; `UpgradeState::Pending` documents who keeps it alive.
             Some(bun_opaque::opaque_deref_mut(upgrade_ctx.as_ptr())),
@@ -2139,11 +2078,9 @@ where
         // SAFETY: `on_reload` is only reachable while the server is running
         // (`self.app` set in `listen()`).
         self.app_mut().clear_routes();
-        if Self::HAS_H3 {
-            if let Some(h3a) = self.h3_app {
-                bun_opaque::opaque_deref_mut(h3a).clear_routes();
-            }
-        }
+        for_each_mux_app!(self, |mux| {
+            mux.clear_routes();
+        });
 
         // `on_request` / `on_error` keep their previous value when the reload
         // config omits them. The async-context re-wrap is unconditional:
@@ -2247,11 +2184,9 @@ where
         }
         self.config = self.config.clone_for_reloading_static_routes()?;
         self.app_mut().clear_routes();
-        if Self::HAS_H3 {
-            if let Some(h3a) = self.h3_app {
-                bun_opaque::opaque_deref_mut(h3a).clear_routes();
-            }
-        }
+        for_each_mux_app!(self, |mux| {
+            mux.clear_routes();
+        });
         let route_list_value = self.set_routes();
         if !route_list_value.is_empty() {
             if let Some(server_js_value) = self.js_value_for_dispatch() {
@@ -2308,19 +2243,21 @@ where
             return Ok(
                 JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                     ctx,
-                    ZigString::init(b"fetch() requires the server to have a fetch handler")
-                        .to_error_instance(ctx),
+                    ctx.create_error_instance(format_args!(
+                        "fetch() requires the server to have a fetch handler"
+                    )),
                 ),
             );
         }
 
         let arguments = callframe.arguments();
         if arguments.is_empty() {
-            let fetch_error = Fetch::FETCH_ERROR_NO_ARGS;
             return Ok(
                 JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                     ctx,
-                    ZigString::init(fetch_error.as_bytes()).to_error_instance(ctx),
+                    ctx.create_error_instance(format_args!(
+                        "fetch() expects a string but received no arguments."
+                    )),
                 ),
             );
         }
@@ -2336,15 +2273,16 @@ where
         // TODO: set User-Agent header
         // TODO: unify with fetch() implementation.
         let existing_request: Box<Request> = if first_arg.is_string() {
-            let url_zig_str = arguments[0].to_slice(ctx)?;
-            let temp_url_str = url_zig_str.slice();
+            let url_utf8 = arguments[0].to_utf8(ctx)?;
+            let temp_url_str = url_utf8.slice();
 
             if temp_url_str.is_empty() {
-                let fetch_error = Fetch::FETCH_ERROR_BLANK_URL;
                 return Ok(
                     JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                         ctx,
-                        ZigString::init(fetch_error.as_bytes()).to_error_instance(ctx),
+                        ctx.create_error_instance(format_args!(
+                            "fetch() URL must not be a blank string."
+                        )),
                     ),
                 );
             }
@@ -2353,7 +2291,7 @@ where
 
             // The UTF-8 clone of `url.href` below makes its own copy, so the
             // joined buffer only needs to live through this block. The else arm
-            // borrows `temp_url_str` (kept alive by `url_zig_str`) instead of
+            // borrows `temp_url_str` (kept alive by `url_utf8`) instead of
             // duping it.
             let owned_url_buf: std::borrow::Cow<'_, [u8]> = if url.hostname.is_empty() {
                 std::borrow::Cow::Owned(
@@ -2367,7 +2305,7 @@ where
             if arguments.len() >= 2 && arguments[1].is_object() {
                 let opts = arguments[1];
                 if let Some(method_) = opts.fast_get(ctx, jsc::BuiltinName::Method)? {
-                    let slice_ = method_.to_slice(ctx)?;
+                    let slice_ = method_.to_utf8(ctx)?;
                     method = Method::which(slice_.slice()).unwrap_or(method);
                 }
 
@@ -2398,7 +2336,7 @@ where
                         Err(_) => {
                             return Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                                 ctx,
-                                ZigString::init(b"fetch() received invalid body").to_error_instance(ctx),
+                                ctx.create_error_instance(format_args!("fetch() received invalid body")),
                             ));
                         }
                     }
@@ -2460,7 +2398,7 @@ where
             return Ok(
                 JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                     ctx,
-                    ZigString::init(b"fetch() returned an empty value").to_error_instance(ctx),
+                    ctx.create_error_instance(format_args!("fetch() returned an empty value")),
                 ),
             );
         }
@@ -2552,7 +2490,7 @@ where
 
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_id(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        jsc::bun_string_jsc::create_utf8_for_js(global, &self.config.id)
+        bun_string_jsc::create_utf8_for_js(global, &self.config.id)
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -2569,7 +2507,7 @@ where
     pub(crate) fn get_address(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
         match &self.config.address {
             server_config::Address::Unix(unix) => {
-                jsc::bun_string_jsc::create_utf8_for_js(global, unix.as_bytes())
+                bun_string_jsc::create_utf8_for_js(global, unix.as_bytes())
             }
             server_config::Address::Tcp { port: tcp_port, .. } => {
                 let mut port: u16 = *tcp_port;
@@ -2640,7 +2578,7 @@ where
                     .remote_address(&mut buf[..1024])
                 {
                     if !addr.is_empty() {
-                        return jsc::bun_string_jsc::create_utf8_for_js(global, addr);
+                        return bun_string_jsc::create_utf8_for_js(global, addr);
                     }
                 }
             }
@@ -2648,12 +2586,9 @@ where
                 match &self.config.address {
                     server_config::Address::Tcp { hostname, .. } => {
                         if let Some(hostname) = hostname {
-                            return jsc::bun_string_jsc::create_utf8_for_js(
-                                global,
-                                hostname.as_bytes(),
-                            );
+                            return bun_string_jsc::create_utf8_for_js(global, hostname.as_bytes());
                         } else {
-                            return BunString::static_(b"localhost").to_js(global);
+                            return BunString::static_("localhost").to_js(global);
                         }
                     }
                     server_config::Address::Unix(_) => unreachable!(),
@@ -2663,12 +2598,12 @@ where
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_protocol(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn get_protocol(&self, global: &JSGlobalObject) -> JSValue {
         let _ = self;
         if SSL {
-            BunString::static_(b"https").to_js(global)
+            global.common_strings().https()
         } else {
-            BunString::static_(b"http").to_js(global)
+            global.common_strings().http()
         }
     }
 
@@ -2714,43 +2649,32 @@ where
     // `notify_inspector_server_stopped` lives in the unbounded impl block
     // above so the unbounded `deinit()` (mod.rs) can call it.
 
-    pub(crate) fn on_h3_request(
-        &mut self,
-        req: &mut uws::H3::Request,
-        resp: &mut uws::H3::Response,
-    ) {
-        if !Self::HAS_H3 {
-            unreachable!();
-        }
+    /// Route handler for the HTTP/2 and HTTP/3 apps (`R` = `uws::H2::Response`
+    /// or `uws::H3::Response`); both hand us the same decoded-header request.
+    pub(super) fn on_mux_request<R: RespLike>(&mut self, req: &mut uws::H3::Request, resp: &mut R) {
         if self.config.on_request.is_empty() {
-            return Self::on_h3_404(self, req, resp);
+            return Self::on_mux_404(self, req, resp);
         }
-        self.on_request_for::<ServerH3RequestContext<SSL, DEBUG>>(req, resp);
+        self.on_request_for::<ServerMuxRequestContext<SSL, DEBUG>, _>(req, resp);
     }
 
-    pub(crate) fn on_h3_user_route_request(
+    pub(super) fn on_mux_user_route_request<R: RespLike>(
         user_route: &mut UserRoute<SSL, DEBUG>,
         req: &mut uws::H3::Request,
-        resp: &mut uws::H3::Response,
+        resp: &mut R,
     ) {
-        if !Self::HAS_H3 {
-            unreachable!();
-        }
-        Self::on_user_route_request_for::<ServerH3RequestContext<SSL, DEBUG>>(
+        Self::on_user_route_request_for::<ServerMuxRequestContext<SSL, DEBUG>, _>(
             user_route, req, resp,
         );
     }
 
-    pub(crate) fn on_h3_404(
+    pub(super) fn on_mux_404<R: RespLike>(
         _this: &mut Self,
         _req: &mut uws::H3::Request,
-        resp: &mut uws::H3::Response,
+        resp: &mut R,
     ) {
-        if !Self::HAS_H3 {
-            unreachable!();
-        }
         resp.write_status(b"404 Not Found");
-        resp.end(b"", false);
+        resp.end_without_body(false);
     }
 
     #[bun_jsc::host_fn(method)]
@@ -2820,10 +2744,10 @@ where
     // `on404`); a second copy here was a concurrent-port duplicate and has
     // been removed.
 
-    fn on_user_route_request_for<Ctx: RequestCtxOps<Server = Self>>(
+    fn on_user_route_request_for<Ctx: RequestCtxOps<Server = Self>, R: RespLike>(
         user_route: &UserRoute<SSL, DEBUG>,
         req: &mut Ctx::Req,
-        resp: &mut Ctx::Resp,
+        resp: &mut R,
     ) {
         debug_assert!(!user_route.server.is_null());
         // SAFETY: `UserRoute.server` is the owning `*mut NewServer` (write
@@ -2839,7 +2763,7 @@ where
         };
 
         let should_deinit_context = core::cell::Cell::new(false);
-        let Some(mut prepared) = Self::prepare_js_request_context_for::<Ctx>(
+        let Some(mut prepared) = Self::prepare_js_request_context_for::<Ctx, R>(
             server_ptr,
             req,
             resp,
@@ -2852,7 +2776,7 @@ where
 
         let _entered = server_ref.vm().enter_event_loop_scope_without_checkpoint();
         let server_request_list = Self::js_route_list_get_cached(server_js).unwrap();
-        let call_route = if Ctx::IS_H3 {
+        let call_route = if Ctx::IS_MUX {
             Bun__ServerRouteList__callRouteH3
         } else {
             Bun__ServerRouteList__callRoute
@@ -2924,10 +2848,10 @@ where
         RequestCtxOps::to_async(ctx, req, unsafe { &mut *request_object_ptr });
     }
 
-    fn on_request_for<Ctx: RequestCtxOps<Server = Self>>(
+    fn on_request_for<Ctx: RequestCtxOps<Server = Self>, R: RespLike>(
         &mut self,
         req: &mut Ctx::Req,
-        resp: &mut Ctx::Resp,
+        resp: &mut R,
     ) {
         let Some(js_value) = self.js_value_for_dispatch() else {
             respond_stopped_503(resp);
@@ -2935,7 +2859,7 @@ where
         };
         let self_ptr: *mut Self = self;
         let should_deinit_context = core::cell::Cell::new(false);
-        let Some(prepared) = Self::prepare_js_request_context_for::<Ctx>(
+        let Some(prepared) = Self::prepare_js_request_context_for::<Ctx, R>(
             self_ptr,
             req,
             resp,
@@ -2969,10 +2893,10 @@ where
         );
     }
 
-    fn prepare_js_request_context_for<Ctx: RequestCtxOps<Server = Self>>(
+    fn prepare_js_request_context_for<Ctx: RequestCtxOps<Server = Self>, R: RespLike>(
         this: *mut Self,
         req: &mut Ctx::Req,
-        resp: &mut Ctx::Resp,
+        resp: &mut R,
         should_deinit_context: Option<DeferDeinitFlag>,
         create_js_request: CreateJsRequest,
         method: Option<http::Method>,
@@ -2986,9 +2910,9 @@ where
         //
         // We first validate the self-reported request body length so that
         // we avoid needing to worry as much about what memory to free.
-        // RFC 9114 §4.2: an HTTP/3 message containing a transfer-encoding
-        // header field is malformed.
-        if Ctx::IS_H3 {
+        // RFC 9114 §4.2: an HTTP/3 message containing transfer-encoding is
+        // malformed (HTTP/2 rejects it with RST_STREAM before dispatch).
+        if Ctx::IS_MUX {
             if ReqLike::header(req, b"transfer-encoding").is_some() {
                 RespLike::write_status(resp, b"400 Bad Request");
                 RespLike::end_without_body(resp, false);
@@ -3009,12 +2933,12 @@ where
                     0
                 };
 
-                // Abort the request very early. For H3 a per-request error
-                // is a stream error (RFC 9114 §4.1.2); close_connection
-                // would CONNECTION_CLOSE every sibling stream on the conn.
+                // Abort the request very early. For H2/H3 a per-request error
+                // is a stream error; close_connection would take down every
+                // sibling stream on the connection.
                 if len > server.config.max_request_body_size {
                     RespLike::write_status(resp, b"413 Request Entity Too Large");
-                    RespLike::end_without_body(resp, !Ctx::IS_H3);
+                    RespLike::end_without_body(resp, !Ctx::IS_MUX);
                     return None;
                 }
 
@@ -3043,29 +2967,29 @@ where
             );
         }
 
+        let any_resp = RespLike::to_any_response(resp);
         // SAFETY: both allocators hand out `*mut RequestContext<_, SSL, DEBUG, _>`; the
-        // const-bool H3 parameter only affects associated consts/types, not layout, so
+        // const-bool MUX parameter only affects associated consts/types, not layout, so
         // reinterpreting the slot pointer as the caller's `Ctx` monomorphization is sound.
         //
         // `claim()` reserves the slot as a `HiveSlot`; `create_in` does
         // `MaybeUninit::write` placement-new through the slot's stable
         // address, after which `assume_init()` consumes the token.
         // `RequestContext` carries the heaviest drop glue in the codebase, so
-        // a panic inside `create_in` (or `to_any_response`) now releases the
-        // slot via `HiveSlot::drop` without running `RequestContext::drop` on
-        // garbage.
+        // a panic inside `create_in` now releases the slot via
+        // `HiveSlot::drop` without running `RequestContext::drop` on garbage.
         let ctx_slot: *mut Ctx = unsafe {
-            if Ctx::IS_H3 {
+            if Ctx::IS_MUX {
                 debug_assert!(
-                    !server.h3_request_pool.is_null(),
-                    "H3 request dispatched but h3_request_pool was never allocated (listen() H3 path not taken)"
+                    !server.mux_request_pool.is_null(),
+                    "HTTP/2 or HTTP/3 request dispatched but mux_request_pool was never allocated"
                 );
-                let slot = (*server.h3_request_pool).claim();
+                let slot = (*server.mux_request_pool).claim();
                 Ctx::create_in(
                     slot.addr().as_ptr().cast(),
                     this,
                     req,
-                    resp,
+                    any_resp,
                     should_deinit_context,
                     method,
                 );
@@ -3077,7 +3001,7 @@ where
                     slot.addr().as_ptr().cast(),
                     this,
                     req,
-                    resp,
+                    any_resp,
                     should_deinit_context,
                     method,
                 );
@@ -3104,10 +3028,8 @@ where
         // S008: `AbortSignal` is an `opaque_ffi!` ZST — safe deref.
         bun_opaque::opaque_deref_mut(signal).pending_activity_ref();
 
-        // Bump once for the Request's owned
-        // copy and adopt into RAII so it pairs with `Request::Drop`'s unref.
-        // SAFETY: `signal` is live; `ref_()` returns the same non-null ptr +1.
-        let signal_for_req = unsafe { jsc::AbortSignalRef::adopt((*signal).ref_()) };
+        // The Request's own ref.
+        let signal_for_req = bun_opaque::opaque_deref_mut(signal).ref_();
         let request_object_box = Request::new(Request::init(
             ctx.ctx_method(),
             AnyRequestContext::init(std::ptr::from_ref::<Ctx>(ctx)),
@@ -3126,10 +3048,10 @@ where
         let request_object: &Request = unsafe { &*request_object_ptr };
 
         // The lazy `getRequest()` path that backs Request.url / .headers
-        // is `*uws.Request`-typed; for HTTP/3 we populate both eagerly so
-        // the rest of the pipeline never needs to know which transport
-        // delivered the bytes.
-        if Ctx::IS_H3 {
+        // is `*uws.Request`-typed; for HTTP/2 and HTTP/3 we populate both
+        // eagerly so the rest of the pipeline never needs to know which
+        // transport delivered the bytes.
+        if Ctx::IS_MUX {
             // SAFETY: create_from_h3 returns a +1-ref FetchHeaders; adopt into RAII wrapper.
             request_object.set_fetch_headers(Some(unsafe {
                 crate::webcore::response::HeadersRef::adopt(FetchHeaders::create_from_h3(
@@ -3144,19 +3066,27 @@ where
                 .filter(|host| Request::is_valid_host_header(host))
                 .map(|host| {
                     let fmt = bun_fmt::HostFormatter {
-                        is_https: true,
+                        is_https: SSL,
                         host,
                         port: None,
                     };
                     let mut s = Vec::new();
-                    let _ = write!(&mut s, "https://{}", fmt);
+                    let _ = write!(&mut s, "{}://{}", if SSL { "https" } else { "http" }, fmt);
                     s
                 });
             let path = ReqLike::url(req);
             if !path.is_empty() && path[0] == b'/' {
                 if let Some(mut s) = prefix {
                     s.extend_from_slice(path);
-                    request_object.url.set(BunString::clone_utf8(&s));
+                    // Same WHATWG pass as `Request::ensure_url` for HTTP/1.
+                    let href = bun_url::href_from_string(&BunString::from_bytes(&s));
+                    request_object.url.set(if href.is_empty() {
+                        BunString::clone_utf8(&s)
+                    } else if core::ptr::eq(href.byte_slice().as_ptr(), s.as_ptr()) {
+                        BunString::clone_latin1(&s[..href.length()])
+                    } else {
+                        href
+                    });
                 } else {
                     request_object.url.set(BunString::clone_utf8(path));
                 }
@@ -3179,12 +3109,10 @@ where
 
         if let Some(req_len) = request_body_length {
             ctx.set_request_body_content_len(req_len);
-            let is_te = ReqLike::header(req, b"transfer-encoding").is_some();
+            let is_te = ReqLike::has_transfer_encoding(req);
             ctx.set_is_transfer_encoding(is_te);
-            // HTTP/3 (RFC 9114 §4.2.2): Content-Length is optional and
-            // Transfer-Encoding is forbidden; the body is terminated by
-            // the QUIC stream FIN, so always arm onData for body methods.
-            if req_len > 0 || is_te || Ctx::IS_H3 {
+            // HTTP/2 and HTTP/3 frame the body by END_STREAM or QUIC FIN, not Content-Length.
+            if req_len > 0 || is_te || (Ctx::IS_MUX && !RespLike::request_body_ended(resp)) {
                 // we defer pre-allocating the body until we receive the first chunk
                 // that way if the client is lying about how big the body is or the client aborts
                 // we don't waste memory
@@ -3204,7 +3132,7 @@ where
                     });
                 }
                 ctx.set_is_waiting_for_request_body(true);
-                ctx.arm_on_data(resp);
+                ctx.arm_on_data(any_resp);
             }
         }
 
@@ -3358,7 +3286,7 @@ where
             ctx_slot.addr().as_ptr(),
             self_ptr,
             req,
-            resp,
+            RespLike::to_any_response(resp),
             Some(bun_ptr::BackRef::new(&should_deinit_context)),
             None,
         );
@@ -3378,10 +3306,8 @@ where
         ctx.signal.set(NonNull::new(signal));
         // S008: `AbortSignal` is an `opaque_ffi!` ZST — safe deref.
         bun_opaque::opaque_deref_mut(signal).pending_activity_ref();
-        // Bump once for the Request's copy and
-        // adopt into RAII so it pairs with `Request::Drop`'s unref.
-        // SAFETY: `signal` is live; `ref_()` returns the same non-null ptr +1.
-        let signal_for_req = unsafe { jsc::AbortSignalRef::adopt((*signal).ref_()) };
+        // The Request's own ref.
+        let signal_for_req = bun_opaque::opaque_deref_mut(signal).ref_();
         let request_object_box = Request::new(Request::init(
             ctx.method,
             AnyRequestContext::init(std::ptr::from_ref(ctx)),
@@ -3964,7 +3890,7 @@ unsafe extern "C" {
     pub(super) safe fn Bun__ServerRouteList__create(
         global: *const JSGlobalObject,
         callbacks: *mut JSValue,
-        paths: *mut ZigString,
+        paths: *mut EncodedSlice,
         paths_length: usize,
     ) -> JSValue;
 }

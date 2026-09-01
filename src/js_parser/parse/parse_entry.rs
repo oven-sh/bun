@@ -62,6 +62,8 @@ pub struct Parser<'a> {
     pub(crate) source: &'a bun_ast::Source,
     pub(crate) define: &'a Define,
     pub(crate) bump: &'a Arena,
+    /// `log.errors` before the priming `lexer.next()` in `init`.
+    pub(crate) orig_error_count: u32,
 }
 
 pub struct Options<'a> {
@@ -107,6 +109,10 @@ pub struct Options<'a> {
 
     /// Lower `toml_datetime`-tagged strings in a lazy-export AST to `Temporal.*.from` calls.
     pub lower_toml_datetimes: bool,
+
+    /// A bundle entry point: its own output is needed, so a `module.exports = require(...)`-only file stays a real
+    /// module rather than becoming a redirect to what it re-exports.
+    pub is_entry_point: bool,
 }
 
 impl<'a> Default for Options<'a> {
@@ -139,6 +145,7 @@ impl<'a> Default for Options<'a> {
             framework: None,
             repl_mode: false,
             lower_toml_datetimes: false,
+            is_entry_point: false,
         }
     }
 }
@@ -205,6 +212,7 @@ impl<'a> Options<'a> {
                 runtime_transpiler_cache: None,
                 lower_using: f.lower_using,
                 bundler_feature_flags: None,
+                define_hash: f.define_hash,
                 repl_mode: f.repl_mode,
                 jsx_optimization_inline: f.jsx_optimization_inline,
             },
@@ -223,6 +231,7 @@ impl<'a> Options<'a> {
             framework: self.framework,
             repl_mode: self.repl_mode,
             lower_toml_datetimes: self.lower_toml_datetimes,
+            is_entry_point: self.is_entry_point,
         }
     }
 
@@ -295,6 +304,7 @@ impl<'a> Options<'a> {
             framework: None,
             repl_mode: false,
             lower_toml_datetimes: loader == options::Loader::Toml,
+            is_entry_point: false,
         };
         opts.jsx.parse = loader.is_jsx();
         opts
@@ -314,6 +324,7 @@ impl<'a> Parser<'a> {
         bump: &'a Arena,
     ) -> Result<Parser<'a>, Error> {
         source.check_parseable_len(log, "File")?;
+        let orig_error_count = log.errors;
         let mut lexer = js_lexer::Lexer::init_without_reading(log, source, bump);
         // Must be set before the priming `next()` so leading comments are seen.
         lexer.track_comments = options.features.minify_identifiers;
@@ -330,6 +341,7 @@ impl<'a> Parser<'a> {
             define,
             source,
             log: log_ptr,
+            orig_error_count,
         })
     }
 }
@@ -741,11 +753,9 @@ impl<'a> Parser<'a> {
             source,
             define,
             bump,
+            orig_error_count,
         } = self;
 
-        // `lexer.log` aliases `log`; route through the centralised
-        // `Lexer::log()` accessor so this site stays safe.
-        let orig_error_count = lexer.log().errors;
         // `P.log` and `Lexer.log` are both `NonNull<Log>` (see P.rs / lexer.rs
         // field docs), so handing the same raw pointer to both is defined —
         // no `&mut` is materialized.
@@ -773,6 +783,11 @@ impl<'a> Parser<'a> {
         if p.lexer.token == js_lexer::T::THashbang {
             hashbang = p.lexer.identifier;
             p.lexer.next()?;
+        }
+
+        // The first token may already have logged an error; halt before the early returns below.
+        if p.log().errors > orig_error_count {
+            return Err(crate::Error::SyntaxError);
         }
 
         // Detect a leading "// @bun" pragma
@@ -1205,6 +1220,109 @@ impl<'a> Parser<'a> {
             }
         }
 
+        // Finalize referenced-export tracking for `import("str")` /
+        // `require("str")`. Several namespace refs may exist for one import
+        // record (the synthetic ref from `transpose_import` plus a
+        // `const ns = …` / `.then(ns => …)` / `{...rest}` local). A record is
+        // fully tracked only when *every* such ref had all its uses accounted
+        // for (`use_count_estimate == 0`); the alias set is the union across
+        // them. Untracked records get no entry and keep every export.
+        if !p
+            .imports_to_convert_from_dynamic_import
+            .as_slice()
+            .is_empty()
+        {
+            #[derive(Default)]
+            struct PerRecord {
+                escaped: bool,
+                aliases: Vec<bun_ast::StoreStr>,
+            }
+            let mut by_record: bun_collections::ArrayHashMap<u32, PerRecord> = Default::default();
+            // A namespace ref is listed once per registration and once per
+            // destructure of it; its alias map only needs one walk.
+            let mut seen_namespace: bun_collections::HashMap<(bun_ast::Ref, u32), ()> =
+                Default::default();
+            let arena = p.arena;
+            for i in 0..p.imports_to_convert_from_dynamic_import.len() {
+                let (ns_ref, import_record_id, scope) = {
+                    let d = &p.imports_to_convert_from_dynamic_import[i];
+                    (d.namespace.ref_, d.import_record_id, d.scope)
+                };
+                let escaped = {
+                    let symbol = &p.symbols[ns_ref.inner_index() as usize];
+                    // `must_not_be_renamed` / `contains_direct_eval` cover
+                    // direct `eval()` (or `with`) in scope, which can read the
+                    // namespace by name without a tracked property access. A
+                    // linked symbol was merged with another declaration (a
+                    // hoisted `var`, a parameter), so its own use count says
+                    // nothing.
+                    let tracked = p.namespace_tracked_uses.get(&ns_ref).copied().unwrap_or(0);
+                    // A source-visible local escapes when it has uses nobody
+                    // accounted for; the synthetic per-`import()` ref (never
+                    // referenced in source) escapes when its one consumer did not.
+                    (if p.dynamic_import_namespace_locals.contains_key(&ns_ref) {
+                        symbol.use_count_estimate > tracked || tracked == u32::MAX
+                    } else {
+                        tracked == 0
+                    }) || symbol.must_not_be_renamed()
+                        || symbol.has_link()
+                        || scope.is_some_and(|s| s.contains_direct_eval)
+                        || p.dynamic_import_escaped_records
+                            .contains_key(&import_record_id)
+                };
+                let entry = bun_core::handle_oom(by_record.get_or_put(import_record_id));
+                if !entry.found_existing {
+                    *entry.value_ptr = PerRecord::default();
+                }
+                let rec = entry.value_ptr;
+                rec.escaped |= escaped;
+                if rec.escaped
+                    || seen_namespace
+                        .insert((ns_ref, import_record_id), ())
+                        .is_some()
+                {
+                    continue;
+                }
+                let Some(map) = p.import_items_for_namespace.get(&ns_ref) else {
+                    continue;
+                };
+                for (key, loc_ref) in map.keys().iter().zip(map.values().iter()) {
+                    let local = loc_ref.ref_;
+                    // A destructured local that is never read does not keep
+                    // its export alive — unless it was merged with another
+                    // declaration or a direct `eval` can read it by name.
+                    if local.is_valid() {
+                        let symbol = &p.symbols[local.inner_index() as usize];
+                        if symbol.use_count_estimate == 0
+                            && !symbol.has_link()
+                            && !symbol.must_not_be_renamed()
+                        {
+                            continue;
+                        }
+                    }
+                    rec.aliases
+                        .push(bun_ast::StoreStr::new(arena.alloc_slice_copy(key)));
+                }
+            }
+
+            for i in 0..by_record.len() {
+                let import_record_id = by_record.keys()[i];
+                let rec = &mut by_record.values_mut()[i];
+                if rec.escaped {
+                    continue;
+                }
+                rec.aliases.sort_by(|a, b| a.slice().cmp(b.slice()));
+                rec.aliases.dedup_by(|a, b| a.slice() == b.slice());
+                let aliases = &rec.aliases;
+                let alias_slice = arena
+                    .alloc_slice_fill_with::<bun_ast::StoreStr, _>(aliases.len(), |j| aliases[j]);
+                bun_core::handle_oom(
+                    p.dynamic_import_aliases
+                        .put(import_record_id, bun_ast::StoreSlice::new(alias_slice)),
+                );
+            }
+        }
+
         // This is a workaround for broken module environment checks in packages like lodash-es
         // https://github.com/lodash/lodash/issues/5660
         let mut force_esm = false;
@@ -1412,7 +1530,9 @@ impl<'a> Parser<'a> {
 
                                     None
                                 };
-                                if let Some(id) = redirect_import_record_index {
+                                if let Some(id) = redirect_import_record_index
+                                    && !p.options.is_entry_point
+                                {
                                     part.symbol_uses = Default::default();
                                     return Ok(crate::Result::Ast(Box::new(js_ast::Ast {
                                         import_records: p.import_records.move_to_baby_list(p.arena),
@@ -1555,6 +1675,8 @@ impl<'a> Parser<'a> {
             p.symbols.as_slice()[p.module_ref.inner_index() as usize].use_count_estimate > 0;
 
         let mut wrap_mode: WrapMode = WrapMode::None;
+        // Checked after `to_ast`, which marks TypeScript type-only imports unused.
+        let mut reject_import_statements = false;
 
         if p.is_deoptimized_commonjs() {
             exports_kind = js_ast::ExportsKind::Cjs;
@@ -1565,87 +1687,7 @@ impl<'a> Parser<'a> {
             exports_kind = js_ast::ExportsKind::Cjs;
             if p.options.features.commonjs_at_runtime {
                 wrap_mode = WrapMode::BunCommonjs;
-
-                let import_record: Option<&ImportRecord> = 'brk: {
-                    for import_record in p.import_records.items() {
-                        if import_record.flags.intersects(
-                            ImportRecordFlags::IS_INTERNAL | ImportRecordFlags::IS_UNUSED,
-                        ) {
-                            continue;
-                        }
-                        if import_record.kind == bun_ast::ImportKind::Stmt {
-                            break 'brk Some(import_record);
-                        }
-                    }
-
-                    None
-                };
-
-                // make it an error to use an import statement with a commonjs exports usage
-                if let Some(record) = import_record {
-                    // find the usage of the export symbol
-
-                    let mut notes = BumpVec::<bun_ast::Data>::new_in(p.arena);
-
-                    notes.push(bun_ast::Data {
-                        text: {
-                            use std::io::Write;
-                            let mut v = Vec::<u8>::new();
-                            let _ = write!(
-                                &mut v,
-                                "Try require({}) instead",
-                                bun_core::fmt::QuotedFormatter {
-                                    text: record.path.text
-                                }
-                            );
-                            std::borrow::Cow::Owned(v)
-                        },
-                        ..Default::default()
-                    });
-
-                    if uses_module_ref {
-                        notes.push(bun_ast::Data {
-                            text: std::borrow::Cow::Borrowed(
-                                b"This file is CommonJS because 'module' was used",
-                            ),
-                            ..Default::default()
-                        });
-                    }
-
-                    if uses_exports_ref {
-                        notes.push(bun_ast::Data {
-                            text: std::borrow::Cow::Borrowed(
-                                b"This file is CommonJS because 'exports' was used",
-                            ),
-                            ..Default::default()
-                        });
-                    }
-
-                    if p.has_top_level_return {
-                        notes.push(bun_ast::Data {
-                            text: std::borrow::Cow::Borrowed(
-                                b"This file is CommonJS because top-level return was used",
-                            ),
-                            ..Default::default()
-                        });
-                    }
-
-                    if p.has_with_scope {
-                        notes.push(bun_ast::Data {
-                            text: std::borrow::Cow::Borrowed(
-                                b"This file is CommonJS because a \"with\" statement is used",
-                            ),
-                            ..Default::default()
-                        });
-                    }
-
-                    p.log().add_range_error_with_notes(
-                        Some(p.source),
-                        record.range,
-                        b"Cannot use import statement with CommonJS-only features".as_slice(),
-                        notes.into_iter().collect::<Vec<_>>().into_boxed_slice(),
-                    );
-                }
+                reject_import_statements = true;
             }
         } else {
             match p.options.module_type {
@@ -2232,12 +2274,89 @@ impl<'a> Parser<'a> {
             }
         }
 
-        Ok(crate::Result::Ast(p.to_ast(
-            &mut parts,
-            exports_kind,
-            wrap_mode,
-            hashbang,
-        )?))
+        let ast = p.to_ast(&mut parts, exports_kind, wrap_mode, hashbang)?;
+
+        if reject_import_statements {
+            // An empty range marks a parser-generated record, like the JSX runtime import.
+            let import_record: Option<&ImportRecord> =
+                ast.import_records.as_slice().iter().find(|import_record| {
+                    !import_record
+                        .flags
+                        .intersects(ImportRecordFlags::IS_INTERNAL | ImportRecordFlags::IS_UNUSED)
+                        && import_record.kind == bun_ast::ImportKind::Stmt
+                        && !import_record.range.is_empty()
+                });
+
+            if let Some(record) = import_record {
+                let mut notes = BumpVec::<bun_ast::Data>::new_in(p.arena);
+
+                notes.push(bun_ast::Data {
+                    text: {
+                        use std::io::Write;
+                        let mut v = Vec::<u8>::new();
+                        let _ = write!(
+                            &mut v,
+                            "Try require({}) instead",
+                            bun_core::fmt::QuotedFormatter {
+                                text: record.path.text
+                            }
+                        );
+                        std::borrow::Cow::Owned(v)
+                    },
+                    ..Default::default()
+                });
+
+                if uses_module_ref {
+                    notes.push(bun_ast::Data {
+                        text: std::borrow::Cow::Borrowed(
+                            b"This file is CommonJS because 'module' was used",
+                        ),
+                        ..Default::default()
+                    });
+                }
+
+                if uses_exports_ref {
+                    notes.push(bun_ast::Data {
+                        text: std::borrow::Cow::Borrowed(
+                            b"This file is CommonJS because 'exports' was used",
+                        ),
+                        ..Default::default()
+                    });
+                }
+
+                if p.has_top_level_return {
+                    notes.push(bun_ast::Data {
+                        text: std::borrow::Cow::Borrowed(
+                            b"This file is CommonJS because top-level return was used",
+                        ),
+                        ..Default::default()
+                    });
+                }
+
+                if p.has_with_scope {
+                    notes.push(bun_ast::Data {
+                        text: std::borrow::Cow::Borrowed(
+                            b"This file is CommonJS because a \"with\" statement is used",
+                        ),
+                        ..Default::default()
+                    });
+                }
+
+                p.log().add_range_error_with_notes(
+                    Some(p.source),
+                    record.range,
+                    b"Cannot use import statement with CommonJS-only features".as_slice(),
+                    notes.into_iter().collect::<Vec<_>>().into_boxed_slice(),
+                );
+            }
+        }
+
+        // If there were errors during to_ast, also halt here
+        if p.log().errors > orig_error_count {
+            return Err(crate::Error::SyntaxError);
+        }
+
+        Ok(crate::Result::Ast(ast))
     }
 
     // associated fn (was `&self` reading `self.lexer.source.contents`)

@@ -683,7 +683,7 @@ impl ErrorDeferred {
             code: bstr::String::static_(code),
             message,
             syscall: bstr::String::clone_utf8(self.syscall),
-            hostname: self.hostname.take().unwrap_or(bstr::String::empty()),
+            hostname: self.hostname.take().unwrap_or(bstr::String::EMPTY),
             ..Default::default()
         };
 
@@ -692,7 +692,7 @@ impl ErrorDeferred {
         instance.put(
             global_this,
             b"name",
-            bstr::String::static_(b"DNSException").to_js(global_this)?,
+            bstr::String::static_("DNSException").to_js(global_this)?,
         );
 
         // `self` (and thus self.promise / self.hostname) drops at scope exit;
@@ -779,7 +779,7 @@ pub(crate) fn error_to_js_with_syscall(
     instance.put(
         global_this,
         b"name",
-        bstr::String::static_(b"DNSException").to_js(global_this)?,
+        bstr::String::static_("DNSException").to_js(global_this)?,
     );
     Ok(instance)
 }
@@ -821,9 +821,15 @@ pub(crate) fn error_to_js_with_syscall_and_hostname(
     instance.put(
         global_this,
         b"name",
-        bstr::String::static_(b"DNSException").to_js(global_this)?,
+        bstr::String::static_("DNSException").to_js(global_this)?,
     );
     Ok(instance)
+}
+
+/// Thrown before uSockets' synchronous `getaddrinfo` can block on a name that can never resolve.
+pub(crate) fn not_a_hostname_error(global_this: &JSGlobalObject, hostname: &[u8]) -> JSValue {
+    system_error_with_syscall_and_hostname(c_ares::Error::ENOTFOUND, b"getaddrinfo", hostname)
+        .to_error_instance(global_this)
 }
 
 // ── canonicalizeIP host fn ─────────────────────────────────────────────────
@@ -840,7 +846,7 @@ fn bun_canonicalize_ip(global_this: &JSGlobalObject, callframe: &CallFrame) -> J
         )));
     }
 
-    let addr_arg = arguments[0].to_slice(global_this)?;
+    let addr_arg = arguments[0].to_utf8(global_this)?;
     let addr_str = addr_arg.slice();
 
     // CIDR not allowed

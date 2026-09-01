@@ -133,7 +133,6 @@ impl<'a> fmt::Display for SourceURLFormatter<'a> {
 
         let source_slice_ = self.source_url.to_utf8();
         let mut source_slice: &[u8] = source_slice_.slice();
-        // `defer source_slice_.deinit()` — handled by Drop on Utf8Slice.
 
         if !self.remapped {
             if let Some(origin) = self.origin {

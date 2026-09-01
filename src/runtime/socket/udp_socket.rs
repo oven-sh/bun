@@ -3,7 +3,7 @@ use core::cell::Cell;
 use core::ffi::c_char;
 use core::ffi::{c_int, c_void};
 
-use bun_core::{String as BunString, ZigStringSlice};
+use bun_core::{String as BunString, Utf8Bytes};
 use bun_io::KeepAlive;
 use bun_jsc::JsCell;
 use bun_jsc::array_buffer::BinaryType;
@@ -254,7 +254,7 @@ extern "C" fn on_data(
                 BunString::create_format(format_args!("{}%{}", bstr::BStr::new(span), id))
             }
         } else {
-            BunString::init(span)
+            BunString::from_bytes(span)
         };
 
         let loop_ = VirtualMachine::get().event_loop_mut();
@@ -333,7 +333,7 @@ pub struct UDPSocketConfig {
 impl Default for UDPSocketConfig {
     fn default() -> Self {
         Self {
-            hostname: BunString::empty(),
+            hostname: BunString::EMPTY,
             connect: None,
             port: 0,
             flags: 0,
@@ -638,6 +638,22 @@ impl UDPSocket {
 
         let config = this.config.get();
         let hostname_z = config.hostname.to_owned_slice_z();
+        if config.fd.is_none() && !bun_dns::is_valid_hostname(hostname_z.as_bytes()) {
+            return Err(
+                global_this.throw_value(crate::dns_jsc::cares_jsc::not_a_hostname_error(
+                    global_this,
+                    hostname_z.as_bytes(),
+                )),
+            );
+        }
+        if let Some(connect) = &config.connect {
+            let address = connect.address.to_utf8();
+            if !bun_dns::is_valid_hostname(&address) {
+                return Err(global_this.throw_value(
+                    crate::dns_jsc::cares_jsc::not_a_hostname_error(global_this, &address),
+                ));
+            }
+        }
 
         // Reserve an adopted descriptor before creating the socket so a
         // concurrent adoption of the same number fails with EEXIST (like
@@ -1404,9 +1420,9 @@ impl UDPSocket {
         // pointers stay valid. An ArrayBuffer detached during phase 1 now
         // reports a zero-length slice rather than a dangling pointer.
         let empty: &'static [u8] = b"";
-        // Collect the slices into a Vec so the borrowed bytes live until
-        // `socket.send()`.
-        let mut string_slices: Vec<ZigStringSlice> = Vec::with_capacity(len);
+        // Collect the strings' UTF-8 bytes into a Vec so they live until
+        // `socket.send()` (a ref for 8-bit ASCII strings, a transcode otherwise).
+        let mut string_slices: Vec<Utf8Bytes<'static>> = Vec::with_capacity(len);
         for (slice_idx, val) in payload_vals.iter().enumerate() {
             // Hoisted so the returned `slice()` borrow lives past the `'brk` block
             // (the underlying buffer is GC-rooted via `payload_vals`; the
@@ -1423,9 +1439,8 @@ impl UDPSocket {
                     }
                     break 'brk array_buffer.slice();
                 }
-                // Phase 1 stored the primitive JSString; `as_string()` is a
-                // plain cast (no `toPrimitive`, no user JS).
-                string_slices.push(val.as_string().view(global_this)?.to_utf8());
+                // Phase 1 stored the primitive JSString, so this runs no user JS.
+                string_slices.push(val.to_utf8(global_this)?);
                 break 'brk string_slices.last().unwrap().slice();
             };
             payloads[slice_idx] = slice.as_ptr();
@@ -1505,8 +1520,8 @@ impl UDPSocket {
         };
 
         let payload_arg = arguments[0];
-        let mut payload_str = ZigStringSlice::empty();
         let payload_view;
+        let mut payload_str = Utf8Bytes::EMPTY;
         // Hoisted so the `slice()` borrow outlives the `'brk` block; the
         // backing store is kept alive by `payload_arg` on the JS stack.
         let array_buffer = payload_arg.as_array_buffer(global_this);
@@ -1897,6 +1912,14 @@ impl UDPSocket {
 
         let str = args[0].to_bun_string(global_this)?;
         let connect_host = str.to_owned_slice_z();
+        if !bun_dns::is_valid_hostname(connect_host.as_bytes()) {
+            return Err(
+                global_this.throw_value(crate::dns_jsc::cares_jsc::not_a_hostname_error(
+                    global_this,
+                    connect_host.as_bytes(),
+                )),
+            );
+        }
 
         let connect_port_js = args[1];
 
@@ -2539,16 +2562,10 @@ fn get_us_error<const USE_WSA: bool>(res: c_int, tag: bun_sys::Tag) -> Option<bu
         }
 
         if USE_WSA {
-            // The wrapper (src/sys/windows/mod.rs) already maps `SystemErrno`
-            // → `E` for us, so `e` is `bun_sys::E` here.
-            if let Some(e) = bun_sys::windows::WSAGetLastError() {
-                if e != bun_sys::E::SUCCESS {
-                    // `WSASetLastError` is declared `safe fn` in
-                    // `bun_windows_sys::ws2_32` (thread-local Winsock error
-                    // slot write — no preconditions).
-                    bun_sys::windows::ws2_32::WSASetLastError(0);
-                    return Some(bun_sys::Error::from_code(e, tag));
-                }
+            let err = bun_sys::windows::Win32Error::get();
+            if err != bun_sys::windows::Win32Error::SUCCESS {
+                bun_sys::windows::kernel32::SetLastError(0);
+                return Some(bun_sys::Error::from_win32(err, tag));
             }
         }
 

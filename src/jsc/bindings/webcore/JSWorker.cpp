@@ -306,8 +306,7 @@ template<> __attribute__((minsize)) JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES
             return original.isolatedCopy();
         };
 
-        // Node reads both options by index, not through Symbol.iterator: argv with
-        // Array.prototype.map, execArgv with a Get(i) loop in node_worker.cc.
+        // Node reads argv and execArgv by index, not through Symbol.iterator.
         auto appendStrings = [&](JSObject* arrayLike, Vector<String>& out) {
             forEachInArrayLike(lexicalGlobalObject, arrayLike, [&](JSValue item) -> bool {
                 auto scope = DECLARE_THROW_SCOPE(vm);
@@ -332,9 +331,7 @@ template<> __attribute__((minsize)) JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES
         if (execArgvValue && execArgvValue.pureToBoolean() != TriState::False) {
             Bun::V::validateArray(throwScope, globalObject, execArgvValue, "options.execArgv"_s, jsNumber(0));
             RETURN_IF_EXCEPTION(throwScope, {});
-            // validateArray uses JSC::isArray(), which accepts a Proxy of an Array. Node's native check
-            // (`args[2]->IsArray()` in node_worker.cc) does not, so a Proxy is skipped and the worker
-            // inherits the parent's execArgv.
+            // validateArray accepts a Proxy of an Array (JSC::isArray). Node's native IsArray() does not: the worker inherits the parent's execArgv.
             if (auto* execArgvArray = dynamicDowncast<JSC::JSArray>(execArgvValue)) {
                 Vector<String> execArgv;
                 appendStrings(execArgvArray, execArgv);

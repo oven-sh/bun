@@ -82,7 +82,7 @@ impl OutputFileJsc for OutputFile {
                 // the leak/from_raw pair lives once in the `#[js_class]` shim.
                 BuildArtifact::to_js_boxed(build_output, global_object)
             }
-            OutputFileValue::Saved(_) => {
+            OutputFileValue::Saved => {
                 let path_to_use: &[u8] = owned_pathname.unwrap_or(self.src_path.text);
 
                 let file_blob = match BlobStore::init_file(
@@ -160,7 +160,7 @@ impl OutputFileJsc for OutputFile {
                 )?;
                 Ok(Blob::init_with_store(file_blob, global_this))
             }
-            OutputFileValue::Saved(_) => {
+            OutputFileValue::Saved => {
                 let file_blob = BlobStore::init_file(
                     PathOrFileDescriptor::Path(PathLike::owned(self.src_path.text.to_vec())),
                     Some(mime),

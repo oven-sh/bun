@@ -107,7 +107,7 @@ pub enum Value {
     Copy(FileOperation),
     Noop,
     Buffer { bytes: Box<[u8]> },
-    Saved(SavedFile),
+    Saved,
 }
 
 impl Value {
@@ -142,15 +142,12 @@ impl Value {
                     noop,
                 )
             }
-            Value::Copy(_) | Value::Saved(_) => {
+            Value::Copy(_) | Value::Saved => {
                 bun_core::todo_panic!("to_bun_string_ref: Copy/Saved")
             }
         }
     }
 }
-
-#[derive(Default, Clone, Copy)]
-pub struct SavedFile {}
 
 pub enum OptionsData {
     Buffer {
@@ -208,7 +205,7 @@ impl OutputFile {
             is_executable: options.is_executable,
             value: match options.data {
                 OptionsData::Buffer { data } => Value::Buffer { bytes: data },
-                OptionsData::Saved => Value::Saved(SavedFile::default()),
+                OptionsData::Saved => Value::Saved,
             },
             side: options.side,
             entry_point_index: options.entry_point_index,
@@ -223,7 +220,7 @@ impl OutputFile {
     pub fn write_to_disk(&self, root_dir: Fd) -> Result<(), Error> {
         match &self.value {
             Value::Noop => {}
-            Value::Saved(_) => {
+            Value::Saved => {
                 // already written to disk
             }
             Value::Buffer { bytes } => {

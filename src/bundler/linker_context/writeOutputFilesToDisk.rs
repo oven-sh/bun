@@ -16,7 +16,7 @@ use crate::linker_context_mod::debug;
 use crate::options::{self, Loader, OutputFile, SourceMapOption};
 use crate::output_file::{
     BakeExtra, Index as OutputFileIndex, IndexOptional, Options as OutputFileInit,
-    OptionsData as OutputFileData, SavedFile, Value as OutputFileValue,
+    OptionsData as OutputFileData, Value as OutputFileValue,
 };
 use crate::{BundleV2, Chunk, cheap_prefix_normalizer};
 
@@ -673,7 +673,7 @@ pub(crate) fn write_output_files_to_disk(
             let bytes_len = bytes.len();
             drop(bytes);
             *dest = core::mem::replace(src, OutputFile::zero_value());
-            dest.value = OutputFileValue::Saved(SavedFile::default());
+            dest.value = OutputFileValue::Saved;
             dest.size = bytes_len;
         }
     }

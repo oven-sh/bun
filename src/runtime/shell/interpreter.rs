@@ -2254,11 +2254,8 @@ pub(crate) fn shell_dup(fd: Fd) -> bun_sys::Result<Fd> {
 /// Windows-only: rewrite shell paths so POSIX-absolute `/foo` resolves onto
 /// `dirfd`'s drive root, `/dev/null` maps to `NUL`, and relative paths are
 /// joined against `dirfd`'s real path. Returns a NUL-terminated slice that
-/// either borrows `buf` or is `to` itself.
-///
-/// `to` is a command operand and can be arbitrarily long. `buf` fits every
-/// path Windows can open, so a rewritten path that does not fit it gets the
-/// `ENAMETOOLONG` that `syscall` would have returned for it, naming `to`.
+/// either borrows `buf` or is `to` itself. A rewritten path that does not fit
+/// `buf` fails with `ENAMETOOLONG` tagged with `syscall` and naming `to`.
 #[cfg(windows)]
 fn shell_get_path<'a>(
     dirfd: Fd,
@@ -2276,9 +2273,8 @@ fn shell_get_path<'a>(
             let dirpath = bun_sys::get_fd_path(dirfd, buf).map_err(|e| e.with_fd(dirfd))?;
             bun_paths::resolve_path::windows_filesystem_root(dirpath).len()
         };
-        // `dirpath` already
-        // occupies `buf[0..]` and the root is its prefix, so no copy is
-        // needed. Splice `to[1..]` after the root.
+        // `dirpath` already occupies `buf[0..]` and the root is its prefix, so
+        // no copy is needed. Splice `to[1..]` after the root.
         let to_tail = &to.as_bytes()[1..];
         let end = source_root_len + to_tail.len();
         if end >= buf.len() {
@@ -2291,9 +2287,8 @@ fn shell_get_path<'a>(
     if bun_paths::Platform::Windows.is_absolute(to.as_bytes()) {
         return Ok(to);
     }
-    // Relative: resolve dirfd → path, then join. `join_z_buf` straight into
-    // `buf` has no bounds check, so join outside it and copy the result in once
-    // its normalized length (`..` segments may have shrunk it) is known to fit.
+    // Relative: join outside `buf` (`join_z_buf` does not bounds-check), then
+    // copy the normalized result in if it fits.
     let mut spill = Vec::new();
     let joined = {
         let dirpath = bun_sys::get_fd_path(dirfd, buf).map_err(|e| e.with_fd(dirfd))?;

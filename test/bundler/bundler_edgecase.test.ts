@@ -27,6 +27,134 @@ describe("bundler", () => {
       stdout: "object",
     },
   });
+  // A CommonJS module whose body parses to zero statements (or whose statements
+  // are all hoistable) must still get a valid `require_*` wrapper symbol. The
+  // parser previously skipped allocating one here, and the linker then printed
+  // `__INVALID__REF__` / `__toESM(, 1)` which is not valid JavaScript.
+  itBundled("edgecase/StatementlessCommonJSModuleNamedImport", {
+    files: {
+      "/entry.ts": /* js */ `
+        import { B } from './b';
+        console.log(typeof B);
+      `,
+      "/b.tsx": `;`,
+      "/package.json": `{"name":"proj","type":"commonjs"}`,
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("__INVALID__REF__");
+      api.expectFile("/out.js").toContain("require_b");
+    },
+    run: {
+      stdout: "undefined",
+    },
+  });
+  itBundled("edgecase/StatementlessCommonJSModuleStarImport", {
+    files: {
+      "/entry.ts": /* js */ `
+        import * as b from './b.cjs';
+        console.log(typeof b);
+      `,
+      "/b.cjs": `// comment only\n`,
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("__INVALID__REF__");
+      api.expectFile("/out.js").toContain("require_b");
+    },
+    run: {
+      stdout: "object",
+    },
+  });
+  itBundled("edgecase/StatementlessCommonJSModuleRequire", {
+    files: {
+      "/entry.ts": /* js */ `
+        const b = require('./b.cjs');
+        console.log(typeof b);
+      `,
+      "/b.cjs": `;`,
+    },
+    onAfterBundle(api) {
+      // Before the fix the printer emitted `var b = ;` here (no initializer)
+      // with exit 0 and no debug assertion.
+      api.expectFile("/out.js").not.toContain("__INVALID__REF__");
+      api.expectFile("/out.js").not.toMatch(/\bvar b = ;/);
+      api.expectFile("/out.js").toContain("require_b");
+    },
+    run: {
+      stdout: "object",
+    },
+  });
+  itBundled("edgecase/StatementlessCommonJSModuleDynamicImport", {
+    files: {
+      "/entry.ts": /* js */ `
+        const ns = await import('./b.cjs');
+        console.log(typeof ns, typeof ns.default);
+      `,
+      "/b.cjs": `// comment only\n`,
+    },
+    onAfterBundle(api) {
+      // Before the fix this emitted `Promise.resolve()__toESM(, 1)` which is a
+      // SyntaxError, with exit 0 and no debug assertion.
+      api.expectFile("/out.js").not.toContain("__INVALID__REF__");
+      api.expectFile("/out.js").not.toContain("__toESM(,");
+      api.expectFile("/out.js").toContain("require_b");
+    },
+    run: {
+      stdout: "object object",
+    },
+  });
+  itBundled("edgecase/DirectiveOnlyCommonJSModule", {
+    files: {
+      "/entry.ts": /* js */ `
+        import * as b from './b.cjs';
+        console.log(typeof b);
+      `,
+      "/b.cjs": `"use strict";\n`,
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("__INVALID__REF__");
+      api.expectFile("/out.js").toContain("require_b");
+    },
+    run: {
+      stdout: "object",
+    },
+  });
+  itBundled("edgecase/HoistableOnlyCommonJSModule", {
+    files: {
+      "/entry.ts": /* js */ `
+        import { B } from './b.cjs';
+        console.log(typeof B);
+      `,
+      "/b.cjs": `function foo() {}\n`,
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("__INVALID__REF__");
+      api.expectFile("/out.js").toContain("require_b");
+    },
+    run: {
+      stdout: "undefined",
+    },
+  });
+  // Packages in DEFAULT_UNWRAP_COMMONJS_PACKAGES set FORCE_CJS_TO_ESM at parse
+  // time with exports_kind = Esm; a default import then makes the linker
+  // CJS-wrap them. Same symptom as above if wrapper_ref was never allocated.
+  itBundled("edgecase/HoistableOnlyUnwrapCommonJSPackage", {
+    files: {
+      "/entry.js": /* js */ `
+        import Def from 'scheduler/empty.js';
+        console.log(typeof Def);
+      `,
+      "/node_modules/scheduler/empty.js": `function foo() {}\n`,
+      "/node_modules/scheduler/package.json": `{"name":"scheduler","version":"1.0.0"}`,
+    },
+    target: "browser",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("__INVALID__REF__");
+      api.expectFile("/out.js").toContain("require_empty");
+    },
+    run: {
+      stdout: "object",
+    },
+  });
   itBundled("edgecase/NestedRedirectToABuiltin", {
     files: {
       "/entry.js": /* js */ `

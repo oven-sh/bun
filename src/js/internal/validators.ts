@@ -1,7 +1,5 @@
 const { hideFromStack } = require("internal/shared");
 const { isURL } = require("internal/url");
-// Native and keyed on the cell type, so a Uint8Array from another realm (a
-// node:vm context) passes. `instanceof Uint8Array` would not.
 const { isUint8Array } = require("node:util/types");
 
 const RegExpPrototypeExec = RegExp.prototype.exec;
@@ -89,15 +87,7 @@ function validateBoolean(value, name) {
   if (typeof value !== "boolean") throw $ERR_INVALID_ARG_TYPE(name, "boolean", value);
 }
 
-/**
- * Validate a string-or-URL path and return it resolved to an absolute path string.
- *
- * URLs are detected with node's structural isURL, but converted by the native
- * Bun.fileURLToPath, which takes URL instances only (by class, whatever
- * globalThis.URL is). The native fs path parser has the same rule, so a
- * URL-like object that is not a URL instance is rejected the same way as in
- * fs.readFileSync.
- */
+/** Validate a string-or-URL path and return it resolved to an absolute path string. */
 function getValidatedPath(p: any) {
   if (isURL(p)) return Bun.fileURLToPath(p);
   if (typeof p !== "string") throw $ERR_INVALID_ARG_TYPE("path", "string or URL", p);
@@ -113,9 +103,8 @@ function throwIfNullBytesInFileName(filename: string) {
 
 /**
  * node's fs getValidatedPath (lib/internal/fs/utils.js): converts URLs via
- * fileURLToPath (see getValidatedPath above for which objects that takes),
- * accepts strings and Buffers as-is (no path.resolve, no "file:"-prefix
- * string sniffing), and rejects null bytes.
+ * fileURLToPath, accepts strings and Buffers as-is (no path.resolve, no
+ * "file:"-prefix string sniffing), and rejects null bytes.
  */
 function getValidatedFsPath(p: any, propName: string = "path") {
   if (isURL(p)) p = Bun.fileURLToPath(p);

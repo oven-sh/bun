@@ -24,6 +24,8 @@ export const mimalloc: Dependency = {
     commit: MIMALLOC_COMMIT,
   }),
 
+  patches: ["patches/mimalloc/free-heap-metadata-in-full-pages.patch"],
+
   build: cfg => {
     // ─── Override behavior (global malloc replacement) ───
     //   ASAN:    OFF — ASAN interceptors must see the real malloc.

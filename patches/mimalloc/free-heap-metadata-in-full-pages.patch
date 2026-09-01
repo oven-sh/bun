@@ -1,0 +1,45 @@
+Collect when a heap's meta data is freed into a full page.
+
+mimalloc v3 abandons a page once it is full. A later free into that page
+must claim the page and "collect" it: free it when it is empty, reclaim
+it into the current theap, or re-map it so an allocator can find it
+again. `_mi_free_subproc_safe` skipped that step (`allow_collect=false`)
+because collecting must not cross sub-processes. Within the same
+sub-process the skip is a leak: the freed block sits on the abandoned,
+unmapped page's thread-free list forever, and it pins the whole page.
+
+`mi_heap_free` frees `mi_heap_t` and `mi_arena_pages_t` through this
+path, and theaps reach it through `_mi_arenas_free`. So once enough
+heaps were alive at the same time to fill a page with their meta data
+(9 `mi_heap_t` per 64 KiB page), every `mi_heap_destroy` leaked about
+7 KiB, and about 150 KiB when the heap had allocated (its theap and its
+`mi_arena_pages_t` as well). Bun creates one heap per `bun_alloc::Arena`,
+for example one per `Bun.Transpiler`, and the GC destroys them in
+batches, so each instance leaked that much.
+
+This collects when the page belongs to the current sub-process.
+
+--- a/src/free.c
++++ b/src/free.c
+@@ -276,10 +276,18 @@
+   mi_free_ex(p, page, NULL, false);
+ }
+ 
+-// Free a pointer that is potentially allocated in a different sub-process
++// Free a pointer that is potentially allocated in a different sub-process.
++// Collecting (free, reclaim, or re-map an abandoned page) must not cross
++// sub-processes, but it must still happen inside our own: a full page is
++// abandoned and unmapped, so a block freed into it without collecting is never
++// found again and pins the page. Heap meta data (`mi_heap_t`,
++// `mi_arena_pages_t`, theaps) is freed through here, so every destroyed heap
++// leaked it once enough heaps were alive at the same time to fill a page.
+ void _mi_free_subproc_safe(void* p) mi_attr_noexcept {
+-  mi_page_t* const page = mi_validate_ptr_page(p,"_mi_free_subproc_safe");  
+-  mi_free_ex(p, page, NULL, false);
++  mi_page_t* const page = mi_validate_ptr_page(p,"_mi_free_subproc_safe");
++  if (page == NULL) return;
++  const bool allow_collect = (mi_page_subproc(page) == _mi_subproc());
++  mi_free_ex(p, page, NULL, allow_collect);
+ }
+ 
+ 

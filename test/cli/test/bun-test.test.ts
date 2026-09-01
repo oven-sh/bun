@@ -1520,7 +1520,9 @@ describe("bun test", () => {
         stdout: "ignore",
         stderr: "ignore",
       });
-      await warm.exited;
+      expect(await warm.exited).toBe(0);
+      // util.ts is the only file above the cache floor.
+      expect(readdirSync(cacheDir).length).toBe(1);
       await using proc = Bun.spawn({
         cmd: [bunExe(), "test", "helper.test.ts"],
         env,

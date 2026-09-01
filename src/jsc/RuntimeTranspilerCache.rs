@@ -58,10 +58,9 @@ bun_core::declare_scope!(cache, visible);
 /// Version 28: the define table and `--drop` entries participate in the features hash.
 /// Version 29: `new Array(x, ...spread)` is no longer folded into an array literal.
 /// Version 30: String enum members are stored flat, so folds no longer append onto an inlined member.
-/// Version 31: `inject_jest_globals` participates in the features hash. The
-/// matcher tail-call rewrite changes the output of a file with an explicit
-/// `bun:test` import, which stays cacheable, so `bun run` and `bun test` must
-/// not share entries for it.
+/// Version 31: `Metadata` grows a flags byte (written under `bun test`, uses the
+/// test framework), so the read path can reject the one cross-mode entry whose
+/// output depends on the mode (the matcher tail-call rewrite).
 const EXPECTED_VERSION: u32 = 31;
 
 /// Source files smaller than this are not written to / read from the on-disk
@@ -109,6 +108,9 @@ pub struct Metadata {
     pub(crate) cache_version: u32,
     pub(crate) output_encoding: Encoding,
     pub module_type: ModuleType,
+    /// `FLAG_*` bits. They let the read path reject the one entry whose output
+    /// depends on the mode: see `from_file_with_cache_file_path`.
+    pub(crate) flags: u8,
 
     pub(crate) features_hash: u64,
 
@@ -134,6 +136,7 @@ impl Default for Metadata {
             cache_version: EXPECTED_VERSION,
             output_encoding: Encoding::NONE,
             module_type: ModuleType::None,
+            flags: 0,
             features_hash: 0,
             input_byte_length: 0,
             input_hash: 0,
@@ -151,13 +154,20 @@ impl Default for Metadata {
 }
 
 impl Metadata {
-    // 1×u32 + 2×u8 (enum reprs) + 12×u64 = 4 + 2 + 96 = 102
-    pub(crate) const SIZE: usize = 4 + 1 + 1 + 12 * 8;
+    /// The entry was written with `inject_jest_globals` on (a `bun test` transpile).
+    pub(crate) const FLAG_JEST_MODE: u8 = 1;
+    /// The file imports `bun:test` (or `@jest/globals` / `vitest`), or references an
+    /// unbound `expect`, so its `bun test` output can differ from its `bun run` output.
+    pub(crate) const FLAG_USES_TEST_FRAMEWORK: u8 = 2;
+
+    // 1×u32 + 3×u8 (enum reprs + flags) + 12×u64 = 4 + 3 + 96 = 103
+    pub(crate) const SIZE: usize = 4 + 1 + 1 + 1 + 12 * 8;
 
     pub(crate) fn encode<W: bun_io::Write>(&self, writer: &mut W) -> crate::CrateResult<()> {
         writer.write_int_le::<u32>(self.cache_version)?;
         writer.write_int_le::<u8>(self.module_type as u8)?;
         writer.write_int_le::<u8>(self.output_encoding.0)?;
+        writer.write_int_le::<u8>(self.flags)?;
 
         writer.write_int_le::<u64>(self.features_hash)?;
 
@@ -194,6 +204,7 @@ impl Metadata {
         // holds an out-of-range value.
         let module_type_raw = reader.read_int_le::<u8>()?;
         let output_encoding_raw = reader.read_int_le::<u8>()?;
+        self.flags = reader.read_int_le::<u8>()?;
 
         self.features_hash = reader.read_int_le::<u64>()?;
 
@@ -249,6 +260,7 @@ impl Entry {
         esm_record: &[u8],
         output_code: &BunString,
         exports_kind: ExportsKind,
+        flags: u8,
     ) -> crate::CrateResult<()> {
         let _tracer = bun_core::perf::trace("RuntimeTranspilerCache.save");
 
@@ -279,6 +291,7 @@ impl Entry {
                     input_byte_length,
                     input_hash,
                     features_hash,
+                    flags,
                     module_type: match exports_kind {
                         ExportsKind::Cjs => ModuleType::Cjs,
                         _ => ModuleType::Esm,
@@ -580,18 +593,13 @@ impl RuntimeTranspilerCache {
     pub(crate) fn write_cache_filename(
         buf: &mut [u8],
         input_hash: u64,
-        inject_jest_globals: bool,
     ) -> crate::CrateResult<usize> {
         // Hex-encode the 8 native-endian bytes of `input_hash`.
         let bytes = input_hash.to_ne_bytes();
-        // `bun test` transpiles the same file to different output (the matcher tail-call
-        // rewrite), so the two modes use separate files. A shared filename would make each
-        // mode evict the other's entry through the features-hash check on every switch.
-        let suffix: &[u8] = match (inject_jest_globals, bun_core::env::IS_DEBUG) {
-            (false, false) => b".pile",
-            (false, true) => b".debug.pile",
-            (true, false) => b".jest.pile",
-            (true, true) => b".jest.debug.pile",
+        let suffix: &[u8] = if bun_core::env::IS_DEBUG {
+            b".debug.pile"
+        } else {
+            b".pile"
         };
         let needed = bytes.len() * 2 + suffix.len();
         if buf.len() < needed {
@@ -605,15 +613,11 @@ impl RuntimeTranspilerCache {
     pub(crate) fn get_cache_file_path(
         buf: &mut PathBuffer,
         input_hash: u64,
-        inject_jest_globals: bool,
     ) -> crate::CrateResult<&ZStr> {
         let cache_dir_len = Self::get_cache_dir(buf)?;
         buf[cache_dir_len] = SEP;
-        let cache_filename_len = Self::write_cache_filename(
-            &mut buf[cache_dir_len + 1..],
-            input_hash,
-            inject_jest_globals,
-        )?;
+        let cache_filename_len =
+            Self::write_cache_filename(&mut buf[cache_dir_len + 1..], input_hash)?;
         let total = cache_dir_len + 1 + cache_filename_len;
         buf[total] = 0;
 
@@ -735,14 +739,14 @@ impl RuntimeTranspilerCache {
         let _tracer = bun_core::perf::trace("RuntimeTranspilerCache.fromFile");
 
         let mut cache_file_path_buf = bun_paths::path_buffer_pool::get();
-        let cache_file_path =
-            Self::get_cache_file_path(&mut cache_file_path_buf, input_hash, inject_jest_globals)?;
+        let cache_file_path = Self::get_cache_file_path(&mut cache_file_path_buf, input_hash)?;
         debug_assert!(!cache_file_path.is_empty());
         Self::from_file_with_cache_file_path(
             cache_file_path,
             input_hash,
             feature_hash,
             input_stat_size,
+            inject_jest_globals,
         )
     }
 
@@ -751,6 +755,7 @@ impl RuntimeTranspilerCache {
         input_hash: u64,
         feature_hash: u64,
         input_stat_size: u64,
+        inject_jest_globals: bool,
     ) -> crate::CrateResult<Entry> {
         let mut metadata_bytes_buf = [0u8; Metadata::SIZE];
         // NONBLOCK: a FIFO must not block the open. On Windows it would make the handle overlapped.
@@ -792,6 +797,16 @@ impl RuntimeTranspilerCache {
             return Err(crate::CrateError::MismatchedFeatureHash);
         }
 
+        // A `bun run` entry for a file that uses the test framework misses the matcher
+        // tail-call rewrite `bun test` applies. Keep the file: it stays valid for `bun run`.
+        if inject_jest_globals
+            && entry.metadata.flags & Metadata::FLAG_JEST_MODE == 0
+            && entry.metadata.flags & Metadata::FLAG_USES_TEST_FRAMEWORK != 0
+        {
+            let _ = scopeguard::ScopeGuard::into_inner(unlink_guard);
+            return Err(crate::CrateError::WrongModeForTestFile);
+        }
+
         entry.load(&file, stat_size)?;
 
         let _ = scopeguard::ScopeGuard::into_inner(unlink_guard);
@@ -806,13 +821,12 @@ impl RuntimeTranspilerCache {
         esm_record: &[u8],
         source_code: &BunString,
         exports_kind: ExportsKind,
-        inject_jest_globals: bool,
+        flags: u8,
     ) -> crate::CrateResult<()> {
         let _tracer = bun_core::perf::trace("RuntimeTranspilerCache.toFile");
 
         let mut cache_file_path_buf = bun_paths::path_buffer_pool::get();
-        let cache_file_path =
-            Self::get_cache_file_path(&mut cache_file_path_buf, input_hash, inject_jest_globals)?;
+        let cache_file_path = Self::get_cache_file_path(&mut cache_file_path_buf, input_hash)?;
         bun_core::scoped_log!(
             cache,
             "filename to put into: '{}'",
@@ -856,6 +870,7 @@ impl RuntimeTranspilerCache {
             esm_record,
             source_code,
             exports_kind,
+            flags,
         )
     }
 
@@ -999,6 +1014,15 @@ bun_ast::link_impl_TranspilerCacheImpl! {
             // tag (unmarked 8-bit EncodedSlice -> Encoding::LATIN1, same as clone_latin1),
             // and `output_code_bytes` outlives the synchronous `to_file` call.
             let output_code = BunString::ascii(output_code_bytes);
+            let flags = if this.inject_jest_globals {
+                Metadata::FLAG_JEST_MODE
+            } else {
+                0
+            } | if this.uses_test_framework {
+                Metadata::FLAG_USES_TEST_FRAMEWORK
+            } else {
+                0
+            };
             let result = RuntimeTranspilerCache::to_file(
                 this.input_byte_length.unwrap(),
                 this.input_hash.unwrap(),
@@ -1007,7 +1031,7 @@ bun_ast::link_impl_TranspilerCacheImpl! {
                 esm_record,
                 &output_code,
                 this.exports_kind,
-                this.inject_jest_globals,
+                flags,
             );
             if let Err(err) = result {
                 bun_core::scoped_log!(cache, "put() = {}", err.name());

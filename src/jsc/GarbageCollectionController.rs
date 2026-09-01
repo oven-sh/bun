@@ -174,7 +174,7 @@ impl GarbageCollectionController {
         self.gc_last_heap_size.set(vm.block_bytes_allocated());
     }
 
-    /// `Tag::GcRepeating` fire body: 1 s in fast mode, 30 s in slow mode; drops to slow after 30 fires with no heap growth.
+    /// `Tag::GcRepeating` fire body: 1 s in fast mode, 30 s in slow mode; drops to slow after 30 fires with no heap growth, back to fast when it grows.
     ///
     /// # Safety
     /// `this` is the live per-VM controller; `vm` is the per-thread VM.
@@ -194,7 +194,8 @@ impl GarbageCollectionController {
         let grew = vm_ref.jsc_vm().block_bytes_allocated() > prev_heap_size + IDLE_GROWTH_SLACK;
         let (full, idle_gc_due_in) = this.idle_tick(vm_ref, grew, this.repeat_interval());
         this.perform_gc(full);
-        if prev_heap_size == this.gc_last_heap_size.get() {
+        // Only growth is activity; a shrinking heap is a collection (possibly the one requested above) doing its job.
+        if this.gc_last_heap_size.get() <= prev_heap_size {
             let ticks = this
                 .heap_size_didnt_change_for_repeating_timer_ticks_count
                 .get()

@@ -173,12 +173,12 @@ describe("idle release", () => {
         BUN_GC_TIMER_DISABLE: undefined,
         BUN_GC_TIMER_INTERVAL: undefined,
       },
-      stdout: "pipe",
+      stdout: "ignore",
       stderr: "pipe",
     });
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-    // Startup may do a collection of its own; only count what happens after the marker.
-    const fulls = (stderr.slice(stderr.indexOf("MARK")).match(/FullCollection/g) || []).length;
+    // Startup and (with BUN_DESTRUCT_VM_ON_EXIT) teardown do collections of their own; only count the idle window.
+    const fulls = (stderr.slice(stderr.indexOf("MARK"), stderr.indexOf("DONE")).match(/FullCollection/g) || []).length;
     return { fulls, exitCode };
   }
 

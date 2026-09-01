@@ -128,8 +128,7 @@ describe("bundler", () => {
         var exports_BaseElement = {};
         __export(exports_BaseElement, {
           BaseElement: () => BaseElement,
-          formValue: () => formValue,
-          listValue: () => listValue
+          formValue: () => formValue
         });
         function BaseElement() {
           console.log("BaseElement called", BaseElementImport());
@@ -164,7 +163,7 @@ describe("bundler", () => {
         var { AsyncEntryPoint: AsyncEntryPoint2 } = await Promise.resolve().then(() => exports_AsyncEntryPoint);
         AsyncEntryPoint2();
 
-        //# debugId=19FD1E5354FE6B6564756E2164756E21
+        //# debugId=58A499A633D13E2364756E2164756E21
         //# sourceMappingURL=out.js.map
         "
       `);
@@ -378,21 +377,17 @@ describe("bundler", () => {
         var exports_BaseElement = {};
         __export(exports_BaseElement, {
           BaseElement: () => BaseElement,
-          formValue: () => formValue,
-          listValue: () => listValue
+          formValue: () => formValue
         });
         function BaseElement() {
           console.log("BaseElement called", BaseElementImport());
           return BaseElementImport();
         }
-        var formValue, listValue;
+        var formValue;
         var init_BaseElement = __esm(() => {
           init_BaseElementImport();
           formValue = {
             key: "static value"
-          };
-          listValue = {
-            key: "static list value"
           };
         });
 
@@ -410,7 +405,7 @@ describe("bundler", () => {
         var { AsyncEntryPoint: AsyncEntryPoint2 } = await Promise.resolve().then(() => exports_AsyncEntryPoint);
         AsyncEntryPoint2();
 
-        //# debugId=EA1AA30E1BD7B08E64756E2164756E21
+        //# debugId=90661D76D5B7686664756E2164756E21
         //# sourceMappingURL=out.js.map
         "
       `);

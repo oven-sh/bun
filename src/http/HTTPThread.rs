@@ -546,6 +546,27 @@ impl HttpThread {
         false
     }
 
+    fn abort_pending_socks5_resolution(&mut self, async_http_id: u32) -> bool {
+        let target = self.in_flight.iter().copied().find(|ptr| unsafe {
+            ptr.as_ref().async_http.client.socks5_resolution_pending
+                && ptr.as_ref().async_http.client.async_http_id == async_http_id
+        });
+        if let Some(ptr) = target {
+            // SAFETY: ptr is a live, HTTP-thread-owned in-flight allocation.
+            // The abort dispatches the terminal result and may free the
+            // allocation (removing it from `in_flight`), so keep only the raw
+            // pointer across the call and do not touch `ptr` afterwards.
+            unsafe {
+                (*ptr.as_ptr())
+                    .async_http
+                    .client
+                    .abort_socks5_resolution(async_http_id);
+            }
+            return true;
+        }
+        false
+    }
+
     fn drain_queued_shutdowns(&mut self) {
         loop {
             // socket.close() can potentially be slow
@@ -600,6 +621,14 @@ impl HttpThread {
                     // Or it's on an HTTP/3 session, which has no TCP socket to
                     // register in the tracker.
                     if h3::ClientContext::abort_by_http_id(http.async_http_id) {
+                        continue;
+                    }
+                    // Or it's a locally-resolved `socks5://` request whose
+                    // `to_socket_addrs` is still in flight on the work pool.
+                    // It has no socket in the tracker while DNS is pending, so
+                    // settle it now and invalidate the resolution ID — the late
+                    // DNS result will be ignored as stale.
+                    if self.abort_pending_socks5_resolution(http.async_http_id) {
                         continue;
                     }
                     // Otherwise the request either hasn't started yet (still in

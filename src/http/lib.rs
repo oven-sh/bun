@@ -3110,6 +3110,23 @@ impl<'a> HTTPClient<'a> {
         self.start_::<false>();
     }
 
+    /// Abort a `socks5://` request whose local `to_socket_addrs` is still in
+    /// flight on the work pool. The request has no socket in the abort tracker
+    /// while DNS is pending, so `drain_queued_shutdowns` must settle it here:
+    /// invalidate the resolution ID (so the late `schedule_socks5_dns_result`
+    /// is ignored as stale) and dispatch the terminal result immediately
+    /// instead of waiting for DNS to return.
+    pub(crate) fn abort_socks5_resolution(&mut self, async_http_id: u32) -> bool {
+        if !self.socks5_resolution_pending || self.async_http_id != async_http_id {
+            return false;
+        }
+        self.socks5_resolution_pending = false;
+        self.socks5_resolution_id = 0;
+        self.fail(crate::Error::Aborted);
+        self.complete_connecting_process();
+        true
+    }
+
     /// Body length for `Content-Length` — the compressed length once
     /// [`compress_body_for_send`] has run, otherwise the original.
     #[inline]

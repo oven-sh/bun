@@ -25,7 +25,7 @@ type Signals = {
 // under backpressure; wait for the drain callback instead of re-sending.
 // The waiter is armed before send() because drain can fire synchronously
 // inside it on a plain TCP socket. Resolves to the number of sends that
-// backpressured.
+// backpressured; rejects if a send is dropped or the stream never backs up.
 async function sendAll(ws: Bun.ServerWebSocket<Signals>): Promise<number> {
   let backpressured = 0;
   for (let i = 0; i < TOTAL; i++) {
@@ -40,7 +40,7 @@ async function sendAll(ws: Bun.ServerWebSocket<Signals>): Promise<number> {
     }
   }
   if (backpressured === 0) {
-    ws.data.backpressured.reject(new Error(`sent ${TOTAL_BYTES} bytes to a paused peer without backpressure`));
+    throw new Error(`sent ${TOTAL_BYTES} bytes to a paused peer without backpressure`);
   }
   return backpressured;
 }
@@ -143,8 +143,9 @@ async function expectPauseHolds({
   const serverDone = sendAll(stream);
 
   // The peer's send() went to -1: our kernel receive buffer is full and the
-  // TCP window is closed. Nothing may arrive from here on.
-  await signals.backpressured.promise;
+  // TCP window is closed. Nothing may arrive from here on. The race fails
+  // the test at once if sendAll() rejects before that first -1.
+  await Promise.race([signals.backpressured.promise, serverDone]);
   const receivedAtBackpressure = getReceived();
   await ioRoundtrips(clock, 20);
   expect({

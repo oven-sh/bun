@@ -1,5 +1,8 @@
 const { hideFromStack } = require("internal/shared");
 const { isURL } = require("internal/url");
+// Native and keyed on the cell type, so a Uint8Array from another realm (a
+// node:vm context) passes. `instanceof Uint8Array` would not.
+const { isUint8Array } = require("node:util/types");
 
 const RegExpPrototypeExec = RegExp.prototype.exec;
 const ArrayIsArray = Array.isArray;
@@ -122,7 +125,7 @@ function getValidatedFsPath(p: any, propName: string = "path") {
     }
     return p;
   }
-  if (p instanceof Uint8Array) {
+  if (isUint8Array(p)) {
     if (p.indexOf(0) !== -1) {
       throw $ERR_INVALID_ARG_VALUE(propName, p, "must be a string, Uint8Array, or URL without null bytes");
     }
@@ -181,7 +184,7 @@ export default {
   validateBuffer: $newCppFunction("NodeValidator.cpp", "jsFunction_validateBuffer", 0),
   /** `(value, name, oneOf)` */
   validateOneOf: $newCppFunction("NodeValidator.cpp", "jsFunction_validateOneOf", 0),
-  isUint8Array: value => value instanceof Uint8Array,
+  isUint8Array,
   /** `(path)` — accepts a string or file URL, returns it resolved to an absolute path string */
   getValidatedPath,
   getValidatedFsPath,

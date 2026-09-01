@@ -17,6 +17,7 @@ import { ChildProcess, exec, execFile, execFileSync, execSync, fork, spawn, spaw
 import { getEventListeners, once, setMaxListeners } from "node:events";
 import os from "node:os";
 import { promisify } from "node:util";
+import vm from "node:vm";
 import path from "path";
 const debug = process.env.DEBUG ? console.log : () => {};
 
@@ -743,6 +744,25 @@ describe("spawnSync()", () => {
       status: 0,
       signal: null,
     });
+  });
+
+  it("validates a cwd Uint8Array from another realm like a same-realm one", () => {
+    // A typed array from a node:vm context has that realm's prototype, so
+    // `instanceof Uint8Array` is false for it. node checks the cell type
+    // (util.types.isUint8Array), so both inputs take the same route. A bare
+    // Uint8Array cwd does not spawn in either runtime (only a Buffer
+    // stringifies to a path), so compare the outcomes instead of asserting one.
+    const bytes = [...Buffer.from(tmpdirSync())];
+    const sameRealm = new Uint8Array(bytes);
+    const otherRealm = vm.runInNewContext(`new Uint8Array(${JSON.stringify(bytes)})`);
+    expect(otherRealm instanceof Uint8Array).toBe(false);
+
+    const run = (cwd: Uint8Array) => {
+      const { status, error } = spawnSync(bunExe(), ["-e", ""], { cwd: cwd as any, env: bunEnv });
+      return { status, code: (error as any)?.code };
+    };
+    // Before: ERR_INVALID_ARG_TYPE for options.cwd "Received an instance of Uint8Array".
+    expect(run(otherRealm)).toEqual(run(sameRealm));
   });
 });
 

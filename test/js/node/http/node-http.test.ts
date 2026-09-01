@@ -29,6 +29,7 @@ import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { Duplex, duplexPair, PassThrough, Writable } from "node:stream";
 import { connect as tlsConnect } from "node:tls";
+import vm from "node:vm";
 import tunnel from "tunnel";
 import { run as runHTTPProxyTest } from "./node-http-proxy.js";
 const { describe, expect, it, beforeAll, afterAll, createDoneDotAll, mock, test } = createTest(import.meta.path);
@@ -1190,6 +1191,40 @@ describe("node:http", () => {
         });
       } finally {
         req.destroy();
+      }
+    });
+
+    it("req.write() and req.end() accept a Uint8Array from another realm", async () => {
+      // A typed array created in a node:vm context has that realm's
+      // Uint8Array.prototype, so `instanceof Uint8Array` is false for it. The
+      // chunk check has to look at the cell type, like util.types.isUint8Array.
+      const chunk = vm.runInNewContext("new Uint8Array([104, 105])");
+      expect(chunk instanceof Uint8Array).toBe(false);
+
+      const server = createServer((req, res) => {
+        let body = "";
+        req.setEncoding("utf8");
+        req.on("data", part => (body += part));
+        req.on("end", () => res.end(body));
+      });
+      server.listen(0);
+      await once(server, "listening");
+      try {
+        const { port } = server.address() as AddressInfo;
+        const echoed = await new Promise<string>((resolve, reject) => {
+          const req = request({ port, method: "POST" }, res => {
+            let body = "";
+            res.setEncoding("utf8");
+            res.on("data", part => (body += part));
+            res.on("end", () => resolve(body));
+          });
+          req.on("error", reject);
+          req.write(chunk);
+          req.end(chunk);
+        });
+        expect(echoed).toBe("hihi");
+      } finally {
+        server.close();
       }
     });
   });

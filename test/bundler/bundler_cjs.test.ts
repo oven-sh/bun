@@ -1,4 +1,5 @@
-import { describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 import { itBundled } from "./expectBundled";
 
 // Tests for CommonJS <> ESM interop, specifically the __toESM helper behavior.
@@ -596,5 +597,129 @@ describe("bundler", () => {
     run: {
       stdout: "loaded ok",
     },
+  });
+
+  // Top-level await in a valid ES module bundled to cjs/iife must be rejected
+  // for the output-format reason, not the generic "await can only be used
+  // inside an async function" script-context error.
+  itBundled("cjs/TopLevelAwaitInESModuleFormatError", {
+    files: {
+      "/entry.mjs": /* js */ `
+        const v = await Promise.resolve("TLA-OK");
+        console.log(v);
+        export const out = v;
+      `,
+    },
+    entryPointsRaw: ["./entry.mjs"],
+    format: "cjs",
+    target: "node",
+    bundleErrors: {
+      "/entry.mjs": ['Top-level await is currently not supported with the "cjs" output format'],
+    },
+  });
+  itBundled("iife/TopLevelAwaitInESModuleFormatError", {
+    files: {
+      "/entry.mjs": /* js */ `
+        const v = await Promise.resolve("TLA-OK");
+        export const out = v;
+      `,
+    },
+    entryPointsRaw: ["./entry.mjs"],
+    format: "iife",
+    target: "browser",
+    bundleErrors: {
+      "/entry.mjs": ['Top-level await is currently not supported with the "iife" output format'],
+    },
+  });
+  itBundled("cjs/TopLevelAwaitImportFormatError", {
+    files: {
+      "/entry.js": /* js */ `
+        const mod = await import("./other.js");
+        console.log(mod);
+      `,
+      "/other.js": `export const x = 1;`,
+    },
+    format: "cjs",
+    target: "node",
+    bundleErrors: {
+      "/entry.js": ['Top-level await is currently not supported with the "cjs" output format'],
+    },
+  });
+  itBundled("cjs/TopLevelAwaitUsingFormatError", {
+    files: {
+      "/entry.js": /* js */ `
+        await using r = { async [Symbol.asyncDispose]() {} };
+        console.log(r);
+      `,
+    },
+    format: "cjs",
+    target: "node",
+    bundleErrors: {
+      "/entry.js": ['Top-level await is currently not supported with the "cjs" output format'],
+    },
+  });
+
+  // The note names the switch that fits the entry point: the CLI flag for
+  // `bun build`, the config key for `Bun.build()`.
+  describe.each(["cjs", "iife"])("top-level await format error note (%s)", format => {
+    const files = {
+      "entry.mjs": `export const v = await Promise.resolve("TLA-OK");`,
+      "build.mjs": /* js */ `
+        const result = await Bun.build({
+          entrypoints: ["./entry.mjs"],
+          format: process.argv[2],
+          throw: false,
+        });
+        console.log("success:", result.success);
+        for (const log of result.logs) {
+          console.log(log.message);
+          for (const note of log.notes) console.log("note:", note.message);
+        }
+      `,
+    };
+
+    test.concurrent("bun build suggests --format=esm", async () => {
+      using dir = tempDir("tla-format-note-cli", files);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "entry.mjs", `--format=${format}`],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(normalizeBunSnapshot(stderr, String(dir))).toBe(
+        `1 | export const v = await Promise.resolve("TLA-OK");
+                     ^
+error: Top-level await is currently not supported with the "${format}" output format
+    at <dir>/entry.mjs:1:18
+
+note: Use --format=esm to allow top-level await`,
+      );
+      expect(stdout).toBe("");
+      expect(exitCode).toBe(1);
+    });
+
+    test.concurrent('Bun.build() suggests format: "esm"', async () => {
+      using dir = tempDir("tla-format-note-api", files);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build.mjs", format],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stdout).toBe(
+        `success: false
+Top-level await is currently not supported with the "${format}" output format
+note: Use format: "esm" to allow top-level await
+`,
+      );
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
   });
 });

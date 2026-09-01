@@ -1,5 +1,4 @@
-// Node's isURL (lib/internal/url.js). Legacy url.parse() objects carry `auth`
-// and `path`, which is what rules them out.
+// Node's isURL (lib/internal/url.js). Legacy url.parse() objects have auth and path.
 function isURL(self) {
   return Boolean(self?.href && self.protocol && self.auth === undefined && self.path === undefined);
 }

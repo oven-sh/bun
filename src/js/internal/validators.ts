@@ -101,11 +101,7 @@ function throwIfNullBytesInFileName(filename: string) {
   }
 }
 
-/**
- * node's fs getValidatedPath (lib/internal/fs/utils.js): converts URLs via
- * fileURLToPath, accepts strings and Buffers as-is (no path.resolve, no
- * "file:"-prefix string sniffing), and rejects null bytes.
- */
+/** node's fs getValidatedPath (lib/internal/fs/utils.js): a URL becomes a path, strings and Buffers pass as-is. */
 function getValidatedFsPath(p: any, propName: string = "path") {
   if (isURL(p)) p = Bun.fileURLToPath(p);
   if (typeof p === "string") {

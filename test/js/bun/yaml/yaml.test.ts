@@ -2968,7 +2968,7 @@ config:
         expect(YAML.parse(unicodeYml)).toEqual(unicode);
       });
 
-      test("roundtrip sweep over edge-case strings", () => {
+      describe("roundtrip sweep over edge-case strings", () => {
         const cases = [
           "line1\nline2",
           "line1\nline2\n",
@@ -3001,13 +3001,13 @@ config:
           "x\n...\ny",
           "key:\nvalue",
         ];
-        for (const s of cases) {
+        test.each(cases)("roundtrips %j", s => {
           expect(YAML.parse(YAML.stringify({ v: s }, null, 2))).toEqual({ v: s });
           expect(YAML.parse(YAML.stringify([s], null, 2))).toEqual([s]);
           expect(YAML.parse(YAML.stringify(s, null, 2))).toBe(s);
           expect(YAML.parse(YAML.stringify({ v: s }, null, 1))).toEqual({ v: s });
           expect(YAML.parse(YAML.stringify({ nested: { v: [s] } }, null, 3))).toEqual({ nested: { v: [s] } });
-        }
+        });
       });
     });
 

@@ -2234,10 +2234,8 @@ pub(crate) fn closefd(fd: Fd) {
     let _ = fd.close_allowing_bad_file_descriptor(None);
 }
 
-/// Same as `bun_sys::dup` on POSIX; on Windows the duped handle is converted
-/// to a libuv-owned fd via `make_lib_uv_owned_for_syscall` so the
-/// IOWriter/IOReader uv-based async write/read paths receive a uv fd instead
-/// of a raw NT handle.
+/// `bun_sys::dup`, plus the libuv-owned conversion the IOWriter/IOReader uv
+/// paths need on Windows.
 pub(crate) fn shell_dup(fd: Fd) -> bun_sys::Result<Fd> {
     #[cfg(windows)]
     {

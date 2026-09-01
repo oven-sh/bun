@@ -547,24 +547,39 @@ impl HttpThread {
     }
 
     fn abort_pending_socks5_resolution(&mut self, async_http_id: u32) -> bool {
+        self.with_in_flight_socks(
+            |c| {
+                matches!(c.socks, crate::SocksOperation::Resolving { .. })
+                    && c.async_http_id == async_http_id
+            },
+            |c| {
+                c.abort_socks5_resolution(async_http_id);
+            },
+        )
+    }
+
+    /// Centralized unsafe boundary for SOCKS lookups. Every pointer in
+    /// `in_flight` is a live, HTTP-thread-owned allocation until its
+    /// completion callback removes it. The predicate is evaluated via a
+    /// transient `&` and the closure may dispatch (freeing the allocation),
+    /// so the raw pointer is not used after the call.
+    fn with_in_flight_socks<F, G>(&mut self, predicate: F, f: G) -> bool
+    where
+        F: Fn(&crate::HttpClient) -> bool,
+        G: FnOnce(&mut crate::HttpClient),
+    {
         let target = self.in_flight.iter().copied().find(|ptr| unsafe {
-            ptr.as_ref().async_http.client.socks5_resolution_pending
-                && ptr.as_ref().async_http.client.async_http_id == async_http_id
+            predicate(&ptr.as_ref().async_http.client)
         });
         if let Some(ptr) = target {
-            // SAFETY: ptr is a live, HTTP-thread-owned in-flight allocation.
-            // The abort dispatches the terminal result and may free the
-            // allocation (removing it from `in_flight`), so keep only the raw
-            // pointer across the call and do not touch `ptr` afterwards.
+            // SAFETY: ptr is live per above; f may complete and free it.
             unsafe {
-                (*ptr.as_ptr())
-                    .async_http
-                    .client
-                    .abort_socks5_resolution(async_http_id);
+                f(&mut (*ptr.as_ptr()).async_http.client);
             }
-            return true;
+            true
+        } else {
+            false
         }
-        false
     }
 
     fn drain_queued_shutdowns(&mut self) {
@@ -912,25 +927,15 @@ impl HttpThread {
 
     fn drain_socks5_dns_results(&mut self) {
         for result in core::mem::take(&mut *SOCKS5_DNS_RESULTS.lock()) {
-            // SAFETY: every pointer in `in_flight` is a live, HTTP-thread-owned
-            // allocation until its completion callback removes it below. The
-            // resolution ID is unique among active SOCKS lookups, unlike
-            // `async_http_id`, which is zero when abort tracking is disabled.
-            let client = self.in_flight.iter().copied().find(|ptr| unsafe {
-                ptr.as_ref().async_http.client.socks5_resolution_id == result.resolution_id
-            });
-            if let Some(ptr) = client {
-                // SAFETY: `ptr` is a live, HTTP-thread-owned in-flight
-                // allocation. The callback may complete and remove this entry
-                // from `in_flight` (and free it), so keep only the raw pointer
-                // across the call and do not touch `ptr` afterwards.
-                unsafe {
-                    (*ptr.as_ptr())
-                        .async_http
-                        .client
-                        .resume_socks5_resolution(result.resolution_id, result.address);
-                }
-            }
+            let rid = result.resolution_id;
+            let addr = result.address;
+            self.with_in_flight_socks(
+                move |c| match &c.socks {
+                    crate::SocksOperation::Resolving { id } => id.get() == rid,
+                    _ => false,
+                },
+                move |c| c.resume_socks5_resolution(rid, addr),
+            );
         }
     }
 
@@ -1045,7 +1050,7 @@ impl HttpThread {
                 drop(core::mem::take(&mut client.prev_redirect));
                 drop(core::mem::take(&mut client.compressed_request_body));
                 drop(core::mem::take(&mut client.proxy_authorization));
-                client.socks5 = None;
+                client.socks = crate::SocksOperation::None;
                 client.close_proxy_tunnel(false);
                 drop(core::mem::take(&mut client.custom_ssl_ctx));
                 drop(core::mem::take(&mut client.state));

@@ -430,7 +430,9 @@ impl From<crate::socks5::Socks5Error> for Error {
             | Socks5Error::InvalidReserved
             | Socks5Error::InvalidAddressType
             | Socks5Error::InvalidAuthenticationResponse
-            | Socks5Error::InvalidReply => Self::SocksProtocolError,
+            | Socks5Error::InvalidReply
+            | Socks5Error::InvalidWriteProgress
+            | Socks5Error::HandshakeTooLarge => Self::SocksProtocolError,
             Socks5Error::NoAcceptableMethods => Self::SocksNoAcceptableMethods,
             Socks5Error::AuthenticationFailed => Self::SocksAuthenticationFailed,
             Socks5Error::GeneralFailure => Self::SocksGeneralFailure,

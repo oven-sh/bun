@@ -56,20 +56,20 @@ void NapiRef::callFinalizerFromGC()
         return;
     }
     NAPI_LOG("queue finalizer of ref %p", this);
-    env->queueRefFinalizer(this);
-    napi_internal_enqueue_finalizer(env.ptr(), runQueuedFinalizer, this, nullptr);
+    env->enqueueRefFinalizer(this);
 }
 
-void NapiRef::runQueuedFinalizer(napi_env env, void* data, void*)
+}
+
+void NapiEnv::drainOneRefFinalizer(napi_env env, void*, void*)
 {
-    auto* ref = static_cast<NapiRef*>(data);
-    // Deleted in the meantime: `ref` dangles, and a deleted reference's finalizer never runs.
-    if (!env->dequeueRefFinalizer(ref)) {
-        NAPI_LOG("ref %p was deleted, dropping its queued finalizer", ref);
+    if (env->m_pendingRefFinalizers.isEmpty()) {
         return;
     }
-    // Not in GC any more, so this runs the finalizer at once. It may delete `ref`.
+    Zig::NapiRef* ref = env->m_pendingRefFinalizers.takeFirst();
+    if (!env->m_pendingRefFinalizers.isEmpty()) {
+        napi_internal_enqueue_finalizer(env, drainOneRefFinalizer, env, nullptr);
+    }
+    // May delete `ref` and enqueue or delete other refs.
     ref->callFinalizer();
-}
-
 }

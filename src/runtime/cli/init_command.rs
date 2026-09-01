@@ -167,7 +167,7 @@ impl InitCommand {
                     // ctrl+c, ctrl+d
                     reprint_menu = false;
                     finish!(reprint_menu, selected);
-                    return Err(crate::Error::EndOfStream);
+                    return Err(crate::Error::Core(bun_core::Error::EndOfStream));
                 }
                 b'1'..=b'9' => {
                     let choice = (byte - b'1') as usize;
@@ -201,13 +201,13 @@ impl InitCommand {
                         Err(_) => {
                             reprint_menu = false;
                             finish!(reprint_menu, selected);
-                            return Err(crate::Error::EndOfStream);
+                            return Err(crate::Error::Core(bun_core::Error::EndOfStream));
                         }
                     };
                     if next != b'[' {
                         reprint_menu = false;
                         finish!(reprint_menu, selected);
-                        return Err(crate::Error::EndOfStream);
+                        return Err(crate::Error::Core(bun_core::Error::EndOfStream));
                     }
 
                     // Read arrow key
@@ -216,7 +216,7 @@ impl InitCommand {
                         Err(_) => {
                             reprint_menu = false;
                             finish!(reprint_menu, selected);
-                            return Err(crate::Error::EndOfStream);
+                            return Err(crate::Error::Core(bun_core::Error::EndOfStream));
                         }
                     };
                     match arrow {
@@ -262,7 +262,7 @@ impl InitCommand {
 
         let selection = match Self::process_radio_button::<C>(label) {
             Ok(s) => s,
-            Err(crate::Error::EndOfStream) => {
+            Err(crate::Error::Core(bun_core::Error::EndOfStream)) => {
                 Output::flush();
                 // Add an "x" cancelled
                 bun_core::prettyln!("\n<r><red>x<r> Cancelled");
@@ -577,14 +577,16 @@ impl InitCommand {
                         fields.name = match Self::prompt("<r><cyan>package name<r> ", &fields.name)
                         {
                             Ok(v) => v,
-                            Err(crate::Error::EndOfStream) => return Ok(()),
+                            Err(crate::Error::Core(bun_core::Error::EndOfStream)) => return Ok(()),
                             Err(e) => return Err(e),
                         };
                         fields.name = Self::normalize_package_name(&fields.name)?;
                         fields.entry_point =
                             match Self::prompt("<r><cyan>entry point<r> ", &fields.entry_point) {
                                 Ok(v) => v,
-                                Err(crate::Error::EndOfStream) => return Ok(()),
+                                Err(crate::Error::Core(bun_core::Error::EndOfStream)) => {
+                                    return Ok(());
+                                }
                                 Err(e) => return Err(e),
                             };
                         fields.private = false;

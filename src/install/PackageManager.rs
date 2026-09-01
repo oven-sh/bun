@@ -1,6 +1,7 @@
 use core::ffi::c_void;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::collections::VecDeque;
 use std::io::Write as _;
 
 use crate::Error;
@@ -216,12 +217,12 @@ pub use directories::{
 
 pub use self::package_manager_enqueue as enqueue;
 pub use enqueue::{
-    create_extract_task_for_streaming, enqueue_dependency_list, enqueue_dependency_to_root,
-    enqueue_dependency_with_main, enqueue_dependency_with_main_and_success_fn,
-    enqueue_extract_npm_package, enqueue_git_checkout, enqueue_git_for_checkout,
-    enqueue_network_task, enqueue_package_for_download, enqueue_parse_npm_package,
-    enqueue_patch_task, enqueue_patch_task_pre, enqueue_tarball_for_download,
-    enqueue_tarball_for_reading,
+    GitEnqueueResult, create_extract_task_for_streaming, enqueue_dependency_list,
+    enqueue_dependency_to_root, enqueue_dependency_with_main,
+    enqueue_dependency_with_main_and_success_fn, enqueue_extract_npm_package, enqueue_git_checkout,
+    enqueue_git_for_checkout, enqueue_network_task, enqueue_package_for_download,
+    enqueue_parse_npm_package, enqueue_patch_task, enqueue_patch_task_pre,
+    enqueue_tarball_for_download, enqueue_tarball_for_reading,
 };
 
 use self::package_manager_lifecycle as lifecycle;
@@ -232,9 +233,7 @@ pub use resolution::{assign_root_resolution, resolve_from_disk_cache};
 
 pub use self::progress_strings::ProgressStrings;
 
-pub use self::patch_package::{PatchCommitResult, do_patch_commit, prepare_patch};
-
-pub use self::process_dependency_list::GitResolver;
+pub use self::patch_package::PatchCommitResult;
 
 pub use self::run_tasks::{
     alloc_github_url, decrement_pending_tasks, drain_dependency_list, flush_dependency_queue,
@@ -262,6 +261,8 @@ type PreallocatedNetworkTasks = HiveArrayFallback<NetworkTask, 128>;
 type ResolveTaskQueue = UnboundedQueue<Task::Task<'static> /* , .next */>;
 
 type RepositoryMap = HashMap<Task::Id, Fd /* , IdentityContext<Task::Id>, 80 */>;
+/// Git-commit task id -> the SHA it resolved, for the waiters that re-enter.
+type GitCommitMap = HashMap<Task::Id, Vec<u8> /* , IdentityContext<Task::Id>, 80 */>;
 /// Resolve-task id (git checkout / tarball extract) -> the package that task
 /// appended during the resolve phase. A task's callback queue is drained
 /// exactly once, so a dependency enqueued after that drain must resolve
@@ -352,6 +353,11 @@ pub struct PackageManager {
     pub manifests: PackageManifestMap,
     pub(crate) folders: FolderResolutionMap,
     pub(crate) git_repositories: RepositoryMap,
+    pub(crate) git_commits: GitCommitMap,
+    /// Git tasks queued by `enqueue_git_task` and not yet started.
+    pub(crate) git_tasks: VecDeque<NonNull<Task::Task<'static>>>,
+    /// Git tasks whose `git_runner::GitSubprocess` is alive.
+    pub(crate) running_git_tasks: AtomicU32,
     pub(crate) appended_task_packages: AppendedTaskPackageMap,
 
     pub(crate) network_dedupe_map: crate::network_task::DedupeMap,
@@ -1029,8 +1035,7 @@ impl PackageManager {
     /// Lifetime is decoupled from `&self` for the same reason as [`log_mut`] /
     /// [`downloads_node_mut`]: the loader is a singleton-leaked allocation
     /// outside the manager (set once in `init()`), and callers interleave env
-    /// mutation with disjoint `&mut self.X` field writes (e.g. `find_commit`
-    /// takes `env`, `log`, and reads `lockfile` in the same argument list).
+    /// mutation with disjoint `&mut self.X` field writes.
     #[inline]
     #[allow(clippy::mut_from_ref)]
     pub fn env_mut<'a>(&self) -> &'a mut dot_env::Loader {
@@ -1408,6 +1413,7 @@ fn overlay_bunfig_install(install: &mut Api::BunInstall, bunfig: Api::BunInstall
         public_hoist_pattern,
         hoist_pattern,
         hoist,
+        offline,
     } = bunfig;
 
     if let Some(registry) = default_registry {
@@ -1462,6 +1468,7 @@ fn overlay_bunfig_install(install: &mut Api::BunInstall, bunfig: Api::BunInstall
         public_hoist_pattern,
         hoist_pattern,
         hoist,
+        offline,
     );
 }
 
@@ -2096,6 +2103,9 @@ pub fn init(
         wr!(manifests, PackageManifestMap::default());
         wr!(folders, Default::default());
         wr!(git_repositories, RepositoryMap::default());
+        wr!(git_commits, GitCommitMap::default());
+        wr!(git_tasks, VecDeque::new());
+        wr!(running_git_tasks, AtomicU32::new(0));
         wr!(appended_task_packages, AppendedTaskPackageMap::default());
         wr!(network_dedupe_map, Default::default());
         wr!(async_network_task_queue, AsyncNetworkTaskQueue::default());
@@ -2239,6 +2249,21 @@ pub fn init(
             ctx.install.as_deref(),
             subcommand,
         )?;
+
+        // `install.prefer = "offline"` in bunfig (also what `bun --prefer-offline` sets
+        // for the runtime's auto-install) means prefer-offline for `bun install` too,
+        // unless a flag already asked for more.
+        if manager.options.offline == options::OfflineMode::Online
+            && ctx.debug.offline_mode_setting
+                == Some(bun_options_types::offline_mode::OfflineMode::Offline)
+        {
+            manager.options.offline = options::OfflineMode::PreferOffline;
+            // the manifest cache is the data source in this mode (see Options::load)
+            manager
+                .options
+                .enable
+                .set(options::Enable::MANIFEST_CACHE, true);
+        }
 
         if let Some(config) = ctx.install.as_deref_mut() {
             if let Some(p) = config.public_hoist_pattern.take() {
@@ -2539,6 +2564,9 @@ fn init_with_runtime_once(
         wr!(manifests, PackageManifestMap::default());
         wr!(folders, Default::default());
         wr!(git_repositories, RepositoryMap::default());
+        wr!(git_commits, GitCommitMap::default());
+        wr!(git_tasks, VecDeque::new());
+        wr!(running_git_tasks, AtomicU32::new(0));
         wr!(appended_task_packages, AppendedTaskPackageMap::default());
         wr!(network_dedupe_map, Default::default());
         wr!(async_network_task_queue, AsyncNetworkTaskQueue::default());

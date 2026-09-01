@@ -39,7 +39,7 @@ void JSKeyObjectConstructor::finishCreation(VM& vm, JSGlobalObject* globalObject
 {
     Base::finishCreation(vm, 2, "KeyObject"_s);
     putDirect(vm, vm.propertyNames->prototype, prototype, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
-    reifyStaticProperties(vm, JSKeyObjectConstructor::info(), JSKeyObjectConstructorTableValues, *this);
+    Bun::reifyStaticPropertyTable(vm, JSKeyObjectConstructor::info(), JSKeyObjectConstructorTableValues, *this);
 }
 
 JSC_DEFINE_HOST_FUNCTION(callKeyObject, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))

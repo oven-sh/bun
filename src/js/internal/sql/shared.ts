@@ -591,6 +591,8 @@ const enum PooledConnectionFlags {
   reserved = 1 << 1,
   /// preReserved is used to indicate that the connection will be reserved in the future when queryCount drops to 0
   preReserved = 1 << 2,
+  /// onConnectFired is used to indicate that handleConnected ran for this slot, so the user's onconnect callback already fired (with null or an error)
+  onConnectFired = 1 << 3,
 }
 export type { PooledConnectionState };
 
@@ -657,6 +659,7 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
     if (err) {
       err = this.wrapError(err);
     }
+    this.flags |= PooledConnectionFlags.onConnectFired;
     const connectionInfo = this.connectionInfo;
     try {
       // user code; a throw must not abort the pool bookkeeping below
@@ -759,9 +762,11 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
 
   #finishClose(err: any) {
     const connectionInfo = this.connectionInfo;
+    const poolClosedSlotBeforeOnconnect =
+      this.onFinish !== null && !(this.flags & PooledConnectionFlags.onConnectFired);
     try {
       // user code; a throw must not abort the pool bookkeeping below
-      if (connectionInfo?.onclose) {
+      if (!poolClosedSlotBeforeOnconnect && connectionInfo?.onclose) {
         AsyncContextFrame.run(this.adapter.callbackAsyncContext, connectionInfo.onclose, connectionInfo, err);
       }
     } finally {
@@ -800,10 +805,11 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
     if (this.adapter.closed) {
       return;
     }
-    // reset error and state
+    // reset error and state; the new cycle has not fired onconnect yet
     this.storedError = null;
     this.connectStartedAt = 0;
     this.state = PooledConnectionState.pending;
+    this.flags &= ~PooledConnectionFlags.onConnectFired;
     // retry connection
     this.#beginConnecting();
   }
@@ -2238,7 +2244,4 @@ export default {
   BasePooledConnection,
   BaseSQLAdapter,
   createPooledConnectionHandle,
-  // @ts-expect-error we're exporting a const enum which works in our builtins
-  // generator but not in typescript officially
-  SSLMode,
 };

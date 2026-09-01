@@ -417,6 +417,9 @@ public:
     void onWritable();
     void onClose();
 
+    // `bun test --isolate` retires `global`: its views close, their promises reject, a spawned Chrome dies.
+    void retireGlobal(Zig::GlobalObject* global);
+
     Zig::GlobalObject* m_global = nullptr;
     TransportMode m_mode = TransportMode::None;
     // POSIX pipe mode: the usockets-adopted socketpair fd. Null on Windows.

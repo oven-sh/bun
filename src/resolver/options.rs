@@ -111,28 +111,6 @@ pub struct ExtensionOrderGroup {
     pub default: Box<[Box<[u8]>]>,
     pub esm: Box<[Box<[u8]>]>,
 }
-impl Default for ExtensionOrderGroup {
-    fn default() -> Self {
-        ExtensionOrderGroup {
-            default: owned_string_list(bundle_options::defaults::EXTENSION_ORDER),
-            esm: owned_string_list(bundle_options::defaults::MODULE_EXTENSION_ORDER),
-        }
-    }
-}
-impl Default for ExtensionOrder {
-    fn default() -> Self {
-        ExtensionOrder {
-            default: ExtensionOrderGroup::default(),
-            node_modules: ExtensionOrderGroup {
-                default: owned_string_list(bundle_options::defaults::node_modules::EXTENSION_ORDER),
-                esm: owned_string_list(
-                    bundle_options::defaults::node_modules::MODULE_EXTENSION_ORDER,
-                ),
-            },
-            css: owned_string_list(bundle_options::defaults::CSS_EXTENSION_ORDER),
-        }
-    }
-}
 impl ExtensionOrder {
     /// Returns the
     /// [`ExtOrder`] tag; resolve to a slice via
@@ -180,24 +158,6 @@ impl BundleOptions {
 pub mod bundle_options {
     pub mod defaults {
         pub const CSS_EXTENSION_ORDER: &[&[u8]] = &[b".css"];
-        // Mirrors `bun_bundler::options::bundle_options_defaults::EXTENSION_ORDER`
-        // / `MODULE_EXTENSION_ORDER` — duplicated so `Default for BundleOptions`
-        // below is self-contained (resolver sits below bundler in the dep graph).
-        pub(crate) const EXTENSION_ORDER: &[&[u8]] = &[
-            b".tsx", b".ts", b".jsx", b".cts", b".cjs", b".js", b".mjs", b".mts", b".json",
-        ];
-        pub(crate) const MODULE_EXTENSION_ORDER: &[&[u8]] = &[
-            b".tsx", b".jsx", b".mts", b".ts", b".mjs", b".js", b".cts", b".cjs", b".json",
-        ];
-        /// Mirrors `bun_bundler::options::bundle_options_defaults::node_modules`.
-        pub(crate) mod node_modules {
-            pub(crate) const EXTENSION_ORDER: &[&[u8]] = &[
-                b".jsx", b".cjs", b".js", b".mjs", b".mts", b".tsx", b".ts", b".cts", b".json",
-            ];
-            pub(crate) const MODULE_EXTENSION_ORDER: &[&[u8]] = &[
-                b".mjs", b".jsx", b".js", b".mts", b".tsx", b".ts", b".cjs", b".cts", b".json",
-            ];
-        }
     }
 }
 
@@ -262,49 +222,6 @@ pub struct BundleOptions {
     pub allow_runtime: bool,
 }
 
-impl Default for BundleOptions {
-    /// Only the fields the resolver
-    /// reads — `bun_bundler::Transpiler::init` overlays the per-field
-    /// projections it can map (target/packages/jsx/bools/global_cache/…)
-    /// before handing this to `Resolver::init1`.
-    fn default() -> Self {
-        BundleOptions {
-            target: Target::default(),
-            packages: Packages::default(),
-            jsx: jsx::Pragma::default(),
-            extension_order: ExtensionOrder::default(),
-            conditions: Conditions::default(),
-            external: ExternalModules::default(),
-            extra_cjs_extensions: Box::default(),
-            framework: None,
-            global_cache: Default::default(),
-            install: None,
-            load_package_json: true,
-            load_tsconfig_json: true,
-            main_field_extension_order: owned_string_list(
-                bundle_options::defaults::EXTENSION_ORDER,
-            ),
-            main_fields: owned_string_list(DEFAULT_MAIN_FIELDS.get(Target::default())),
-            main_fields_is_default: true,
-            mark_builtins_as_external: false,
-            polyfill_node_globals: false,
-            install_preference: Default::default(),
-            preserve_symlinks: false,
-            rewrite_jest_for_tests: false,
-            tsconfig_override: None,
-            output_dir: Box::default(),
-            root_dir: Box::default(),
-            public_path: Box::default(),
-            compile: false,
-            supports_multiple_outputs: true,
-            tree_shaking: false,
-            allow_runtime: true,
-            production: false,
-            force_node_env: ForceNodeEnv::default(),
-        }
-    }
-}
-
 impl BundleOptions {
     pub fn set_production(&mut self, value: bool) {
         if self.force_node_env == ForceNodeEnv::Unspecified {
@@ -313,47 +230,3 @@ impl BundleOptions {
         }
     }
 }
-
-// These are the per-target default `--main-fields` orderings. `BundleOptions.main_fields`
-// is initialised to alias one of these slices, and the
-// resolver's `auto_main` heuristic at `load_as_main_field` compares the *pointer* of
-// `opts.main_fields` against `DEFAULT_MAIN_FIELDS.get(opts.target)` to detect whether the
-// user explicitly set a main-fields list. The previous `&[]` stub made that check always
-// false, silently disabling the module-vs-main dual-resolution path.
-struct TargetMainFields;
-
-// Note that this means if a package specifies "module" and "main", the ES6
-// module will not be selected. This means tree shaking will not work when
-// targeting node environments.
-//
-// Some packages incorrectly treat the "module" field as "code for the browser". It
-// actually means "code for ES6 environments" which includes both node and the browser.
-//
-// For example, the package "@firebase/app" prints a warning on startup about
-// the bundler incorrectly using code meant for the browser if the bundler
-// selects the "module" field instead of the "main" field.
-//
-// This is unfortunate but it's a problem on the side of those packages.
-// They won't work correctly with other popular bundlers (with node as a target) anyway.
-static DEFAULT_MAIN_FIELDS_NODE: &[&[u8]] = &[b"main", b"module"];
-
-// Note that this means if a package specifies "main", "module", and
-// "browser" then "browser" will win out over "module". This is the
-// same behavior as webpack: https://github.com/webpack/webpack/issues/4674.
-//
-// This is deliberate because the presence of the "browser" field is a
-// good signal that this should be preferred. Some older packages might only use CJS in their "browser"
-// but in such a case they probably don't have any ESM files anyway.
-static DEFAULT_MAIN_FIELDS_BROWSER: &[&[u8]] = &[b"browser", b"module", b"jsnext:main", b"main"];
-static DEFAULT_MAIN_FIELDS_BUN: &[&[u8]] = &[b"module", b"main", b"jsnext:main"];
-
-impl TargetMainFields {
-    fn get(&self, t: Target) -> &'static [&'static [u8]] {
-        match t {
-            Target::Node => DEFAULT_MAIN_FIELDS_NODE,
-            Target::Browser => DEFAULT_MAIN_FIELDS_BROWSER,
-            Target::Bun | Target::BunMacro | Target::ServerComponentsSsr => DEFAULT_MAIN_FIELDS_BUN,
-        }
-    }
-}
-const DEFAULT_MAIN_FIELDS: TargetMainFields = TargetMainFields;

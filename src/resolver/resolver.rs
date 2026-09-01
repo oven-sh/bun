@@ -339,7 +339,6 @@ type Path = crate::fs::Path<'static>;
 pub struct Bufs {
     pub(crate) extension_path: PathBuffer,
     pub(crate) tsconfig_match_full_buf: PathBuffer,
-    pub(crate) tsconfig_match_full_buf2: PathBuffer,
     pub(crate) tsconfig_match_full_buf3: PathBuffer,
 
     pub(crate) esm_subpath: [u8; 512],
@@ -369,7 +368,6 @@ pub struct Bufs {
     pub(crate) remap_path_trailing_slash: PathBuffer,
     pub(crate) path_in_global_disk_cache: PathBuffer,
     pub(crate) abs_to_rel: PathBuffer,
-    pub(crate) import_path_for_standalone_module_graph: PathBuffer,
 
     #[cfg(windows)]
     pub(crate) win32_normalized_dir_info_cache: [u8; MAX_PATH_BYTES * 2],
@@ -1346,13 +1344,17 @@ impl<'a> Resolver<'a> {
         let mut source_dir_resolver = bun_paths::PosixToWinNormalizer::default();
         let source_dir_normalized: &[u8] = 'brk: {
             if let Some(graph) = self.standalone_module_graph {
-                if ::bun_options_types::standalone_path::is_bun_standalone_file_path(import_path) {
-                    if graph.find_assume_standalone_path(import_path).is_some() {
+                let specifier_is_embedded_path =
+                    ::bun_options_types::standalone_path::is_bun_standalone_file_path(import_path);
+                if specifier_is_embedded_path
+                    || ::bun_options_types::standalone_path::is_bun_standalone_file_path(source_dir)
+                {
+                    if let Some(file_name) = graph.resolve(source_dir, import_path) {
                         self.extension_order = original_order;
                         return ResultUnion::Success(Result {
                             import_kind: kind,
                             path_pair: PathPair {
-                                primary: Path::init(import_path),
+                                primary: Path::init(file_name),
                                 secondary: None,
                             },
                             module_type: options::ModuleType::Esm,
@@ -1360,40 +1362,9 @@ impl<'a> Resolver<'a> {
                             ..Default::default()
                         });
                     }
-
-                    self.extension_order = original_order;
-                    return ResultUnion::NotFound;
-                } else if ::bun_options_types::standalone_path::is_bun_standalone_file_path(
-                    source_dir,
-                ) {
-                    if import_path.len() > 2 && is_dot_slash(&import_path[0..2]) {
-                        let buf = bufs!(import_path_for_standalone_module_graph);
-                        let joined = bun_paths::join_abs_string_buf(
-                            source_dir,
-                            buf,
-                            &[import_path],
-                            bun_paths::Platform::Loose,
-                        );
-
-                        // Support relative paths in the graph
-                        if let Some(file_name) = graph.find_assume_standalone_path(joined) {
-                            // Intern: trait borrows into the graph; `Path::init`
-                            // needs `'static` (DirnameStore-backed).
-                            let file_name = Fs::file_system::DirnameStore::instance()
-                                .append_slice(file_name)
-                                .expect("unreachable");
-                            self.extension_order = original_order;
-                            return ResultUnion::Success(Result {
-                                import_kind: kind,
-                                path_pair: PathPair {
-                                    primary: Path::init(file_name),
-                                    secondary: None,
-                                },
-                                module_type: options::ModuleType::Esm,
-                                flags: ResultFlags::IS_STANDALONE_MODULE,
-                                ..Default::default()
-                            });
-                        }
+                    if specifier_is_embedded_path {
+                        self.extension_order = original_order;
+                        return ResultUnion::NotFound;
                     }
                     break 'brk Fs::FileSystem::instance().top_level_dir;
                 }
@@ -1431,10 +1402,6 @@ impl<'a> Resolver<'a> {
                 .resolve_cwd(source_dir)
                 .unwrap_or_else(|_| panic!("Failed to query CWD"));
         };
-
-        // r.mutex.lock();
-        // defer r.mutex.unlock();
-        // errdefer (r.flushDebugLogs(.fail) catch {}) — handled at each error return below
 
         // A path with a null byte cannot exist on the filesystem. Continuing
         // anyways would cause assertion failures.
@@ -1915,7 +1882,7 @@ impl<'a> Resolver<'a> {
                 // @branchHint(.unlikely)
                 bun_core::hint::cold();
                 for custom_path in custom_paths {
-                    let custom_utf8 = custom_path.to_utf8_without_ref();
+                    let custom_utf8 = custom_path.to_utf8();
                     match self.check_relative_path(
                         custom_utf8.slice(),
                         import_path,
@@ -2058,7 +2025,7 @@ impl<'a> Resolver<'a> {
             if let Some(custom_paths) = self.custom_dir_paths {
                 bun_core::hint::cold();
                 for custom_path in custom_paths {
-                    let custom_utf8 = custom_path.to_utf8_without_ref();
+                    let custom_utf8 = custom_path.to_utf8();
                     match self.check_package_path(
                         custom_utf8.slice(),
                         import_path,
@@ -3757,16 +3724,15 @@ impl<'a> Resolver<'a> {
                         let ends_with_star = esm_resolution.status == Status::ExactEndsWithStar;
                         esm_resolution.status = Status::ModuleNotFound;
 
-                        if ends_with_star
-                            && self.probe_wildcard_extensions(
-                                resolved_dir_info,
-                                dirname_fd,
-                                package_json,
-                                base,
-                                extension_order,
-                                out,
-                            )
-                        {
+                        if self.probe_target_extensions(
+                            resolved_dir_info,
+                            dirname_fd,
+                            package_json,
+                            base,
+                            extension_order,
+                            ends_with_star,
+                            out,
+                        ) {
                             return MatchStatus::Success;
                         }
                         return MatchStatus::NotFound;
@@ -3780,12 +3746,13 @@ impl<'a> Resolver<'a> {
                 {
                     let ends_with_star = esm_resolution.status == Status::ExactEndsWithStar;
                     if ends_with_star
-                        && self.probe_wildcard_extensions(
+                        && self.probe_target_extensions(
                             resolved_dir_info,
                             dirname_fd,
                             package_json,
                             base,
                             extension_order,
+                            true,
                             out,
                         )
                     {
@@ -3897,24 +3864,26 @@ impl<'a> Resolver<'a> {
         }
     }
 
-    /// Wildcard `exports`/`imports` target isn't a file: probe extensions like `load_as_file` does.
+    /// `exports`/`imports` target isn't a file: probe extensions like `load_as_file` does.
+    /// `is_wildcard` enables the extensionless probe (oven-sh/bun#29679). The
+    /// TypeScript rewrite (oven-sh/bun#10001) runs for every target, as in esbuild.
     ///
     /// Each probe goes through [`DirInfo::get_entry`] so the map walk happens
     /// under `entries_mutex`; `dirname_fd` was captured under the caller's
     /// critical section.
-    fn probe_wildcard_extensions(
+    fn probe_target_extensions(
         &mut self,
         resolved_dir_info: DirInfoRef,
         dirname_fd: FD,
         package_json: &PackageJSON,
         base: &[u8],
         extension_order: options::ExtOrder,
+        is_wildcard: bool,
         out: &mut MatchResult,
     ) -> bool {
         let rfs = self.rfs_ptr();
 
-        // Extensionless target (`"./*": "./dist/*"`): append extension_order (oven-sh/bun#29679).
-        if bun_paths::extension(base).is_empty() {
+        if is_wildcard && bun_paths::extension(base).is_empty() {
             let buf = bufs!(load_as_file);
             buf[..base.len()].copy_from_slice(base);
             for ext in self.opts.ext_order_slice(extension_order).iter() {
@@ -3949,20 +3918,11 @@ impl<'a> Resolver<'a> {
             }
         }
 
-        // `.js`/`.jsx`/`.mjs` → `.ts`/`.tsx`/`.mts`: same rewrite as `load_as_file` (oven-sh/bun#10001).
         if let Some(last_dot) = strings::last_index_of_char(base, b'.') {
             let ext = &base[last_dot..];
-            let ts_exts: &[&[u8]] = if ext == b".js" || ext == b".jsx" {
-                &[b".ts", b".tsx", b".mts"]
-            } else if ext == b".mjs"
-                && (!FeatureFlags::DISABLE_AUTO_JS_TO_TS_IN_NODE_MODULES
-                    || !(resolved_dir_info.is_node_modules()
-                        || resolved_dir_info.is_inside_node_modules()))
-            {
-                &[b".mts"]
-            } else {
-                &[]
-            };
+            let ts_exts = rewritten_file_extensions(ext, || {
+                resolved_dir_info.is_node_modules() || resolved_dir_info.is_inside_node_modules()
+            });
 
             if !ts_exts.is_empty() {
                 let segment = &base[..last_dot];
@@ -4509,7 +4469,6 @@ impl<'a> Resolver<'a> {
             let (qt_unsafe_path, qt_safe_path) = (queue_top.unsafe_path, queue_top.safe_path);
             let queue_top_unsafe_path: &[u8] = qt_unsafe_path.slice();
             let queue_top_safe_path: &[u8] = qt_safe_path.slice();
-            // defer top_parent = queue_top.result — done at end of loop body
             queue_slice_len -= 1;
 
             let open_dir: FD = if queue_top.fd.is_valid() {
@@ -4876,6 +4835,10 @@ impl<'a> Resolver<'a> {
             {
                 if strings::eql_long(key, path, true) {
                     for original_path in value.iter() {
+                        if self.is_type_only_tsconfig_path(original_path) {
+                            continue;
+                        }
+
                         let mut absolute_original_path: &[u8] = original_path;
 
                         if !bun_paths::is_absolute(absolute_original_path) {
@@ -4957,51 +4920,46 @@ impl<'a> Resolver<'a> {
             }
 
             for original_path in longest_match.original_paths.iter() {
+                if self.is_type_only_tsconfig_path(original_path) {
+                    continue;
+                }
+
                 // Swap out the "*" in the original path for whatever the "*" matched
                 let matched_text =
                     &path[longest_match.prefix.len()..path.len() - longest_match.suffix.len()];
 
-                let total_length: Option<u32> = strings::index_of_char(original_path, b'*');
-                let prefix_end = total_length
-                    .map(|v| v as usize)
-                    .unwrap_or(original_path.len());
-                let prefix_parts: [&[u8]; 2] = [abs_base_url, &original_path[0..prefix_end]];
-
-                // Concatenate the matched text with the suffix from the wildcard path
-                let matched_text_with_suffix = bufs!(tsconfig_match_full_buf3);
-                let mut matched_text_with_suffix_len: usize = 0;
-                if total_length.is_some() {
-                    let suffix = strings::trim_left(&original_path[prefix_end..], b"*");
-                    matched_text_with_suffix_len = matched_text.len() + suffix.len();
-                    if matched_text_with_suffix_len > matched_text_with_suffix.len() {
-                        continue;
-                    }
-                    ::bun_core::concat_into(matched_text_with_suffix, &[matched_text, suffix]);
-                }
-
-                // 1. Normalize the base path
-                // so that "/Users/foo/project/", "../components/*" => "/Users/foo/components/""
-                let Some(prefix) = self
-                    .fs_ref()
-                    .abs_buf_checked(&prefix_parts, bufs!(tsconfig_match_full_buf2))
-                else {
-                    continue;
-                };
-
-                // 2. Join the new base path with the matched result
-                // so that "/Users/foo/components/", "/foo/bar" => /Users/foo/components/foo/bar
-                let parts: [&[u8]; 3] = [
-                    prefix,
-                    if matched_text_with_suffix_len > 0 {
-                        strings::trim_left(
-                            &matched_text_with_suffix[0..matched_text_with_suffix_len],
-                            b"/",
-                        )
+                // Build the substituted target path as a contiguous string. The
+                // previous implementation split the target at '*' and rejoined
+                // the pieces via the path joiner, which inserts a separator
+                // between parts and so only worked when '*' sat on a segment
+                // boundary. Substitute textually instead, then resolve once.
+                let substituted_buf = bufs!(tsconfig_match_full_buf3);
+                let substituted: &[u8] =
+                    if let Some(star) = strings::index_of_char(original_path, b'*') {
+                        let star = star as usize;
+                        let before = &original_path[..star];
+                        let after = &original_path[star + 1..];
+                        let total = before.len() + matched_text.len() + after.len();
+                        if total > substituted_buf.len() {
+                            continue;
+                        }
+                        ::bun_core::concat_into(substituted_buf, &[before, matched_text, after]);
+                        &substituted_buf[..total]
                     } else {
-                        b""
-                    },
-                    strings::trim_left(longest_match.suffix, b"/"),
-                ];
+                        original_path
+                    };
+
+                // An absolute template (e.g. an expanded `${configDir}/src/*`)
+                // is normalized on its own; a relative one joins `baseUrl` —
+                // even when the substituted text happens to start with a
+                // separator (key "~*" → target "*", import "~/util" →
+                // matched_text "/util"), so strip leading separators first
+                // since the joiner resets on a rooted part.
+                let parts: [&[u8]; 2] = if bun_paths::is_absolute(original_path) {
+                    [substituted, b""]
+                } else {
+                    [abs_base_url, strings::trim_left(substituted, b"/\\")]
+                };
                 let Some(absolute_original_path) = self
                     .fs_ref()
                     .abs_buf_checked(&parts, bufs!(tsconfig_match_full_buf))
@@ -5019,6 +4977,30 @@ impl<'a> Resolver<'a> {
         }
 
         MatchStatus::NotFound
+    }
+
+    /// A `paths` substitution written as a declaration file exists for type checking
+    /// only. Skip it, like esbuild's `matchTSConfigPaths` (which checks `.d.ts` only).
+    /// This looks at the tsconfig text, not the `*` expansion: `"@/*": ["./src/*"]`
+    /// must still resolve `import "@/env.d.ts"`.
+    fn is_type_only_tsconfig_path(&mut self, substitution: &[u8]) -> bool {
+        const DECLARATION_EXTS: [&[u8]; 3] = [b".d.ts", b".d.mts", b".d.cts"];
+        let Some(ext) = DECLARATION_EXTS.iter().find(|ext| {
+            substitution
+                .len()
+                .checked_sub(ext.len())
+                .is_some_and(|start| substitution[start..].eq_ignore_ascii_case(ext))
+        }) else {
+            return false;
+        };
+        if let Some(debug) = self.debug_logs.as_mut() {
+            debug.add_note_fmt(format_args!(
+                "Ignoring substitution \"{}\" because it ends in \"{}\"",
+                bstr::BStr::new(substitution),
+                bstr::BStr::new(ext)
+            ));
+        }
+        true
     }
 
     pub(crate) fn load_package_imports(
@@ -5242,7 +5224,6 @@ impl<'a> Resolver<'a> {
             debug.increase_indent();
         }
 
-        // defer { debug.decreaseIndent() } — handled at returns
         macro_rules! dec_ret {
             ($e:expr) => {{
                 if let Some(d) = self.debug_logs.as_mut() {
@@ -5631,7 +5612,6 @@ impl<'a> Resolver<'a> {
             ));
             debug.increase_indent();
         }
-        // defer if (r.debug_logs) |*debug| debug.decreaseIndent();
         macro_rules! dec_ret {
             ($e:expr) => {{
                 if let Some(d) = self.debug_logs.as_mut() {
@@ -5968,39 +5948,15 @@ impl<'a> Resolver<'a> {
             }
         }
 
-        // TypeScript-specific behavior: if the extension is ".js" or ".jsx", try
-        // replacing it with ".ts" or ".tsx". At the time of writing this specific
-        // behavior comes from the function "loadModuleFromFile()" in the file
-        // "moduleNameThisResolver.ts" in the TypeScript compiler source code. It
-        // contains this comment:
-        //
-        //   If that didn't work, try stripping a ".js" or ".jsx" extension and
-        //   replacing it with a TypeScript one; e.g. "./foo.js" can be matched
-        //   by "./foo.ts" or "./foo.d.ts"
-        //
-        // We don't care about ".d.ts" files because we can't do anything with
-        // those, so we ignore that part of the behavior.
-        //
-        // See the discussion here for more historical context:
-        // https://github.com/microsoft/TypeScript/issues/4595
+        // TypeScript-specific behavior: try rewriting ".js" to ".ts".
         if let Some(last_dot) = strings::last_index_of_char(base, b'.') {
             let ext = &base[last_dot..base.len()];
-            // NOTE: the node_modules gate only applies to the `.mjs` arm.
-            if ext == b".js"
-                || ext == b".jsx"
-                || (ext == b".mjs"
-                    && (!FeatureFlags::DISABLE_AUTO_JS_TO_TS_IN_NODE_MODULES
-                        || !strings::path_contains_node_modules_folder(path)))
-            {
+            let exts =
+                rewritten_file_extensions(ext, || strings::path_contains_node_modules_folder(path));
+            if !exts.is_empty() {
                 let segment = &base[0..last_dot];
                 let tail = &mut bufs!(load_as_file)[path.len() - base.len()..];
                 tail[..segment.len()].copy_from_slice(segment);
-
-                let exts: &[&[u8]] = if ext == b".mjs" {
-                    &[b".mts"]
-                } else {
-                    &[b".ts", b".tsx", b".mts"]
-                };
 
                 for ext_to_replace in exts {
                     let buffer = &mut tail[0..segment.len() + ext_to_replace.len()];
@@ -6812,8 +6768,10 @@ fn primary_side_effects(
 ) -> SideEffects {
     if side_effects.has_side_effects(path) {
         SideEffects::HasSideEffects
-    } else {
+    } else if matches!(side_effects, crate::package_json::SideEffects::False) {
         SideEffects::NoSideEffectsPackageJson
+    } else {
+        SideEffects::NoSideEffectsPackageJsonArray
     }
 }
 
@@ -6841,6 +6799,28 @@ bun_core::comptime_string_map! {
 #[inline]
 fn module_type_from_ext(ext: &[u8]) -> Option<options::ModuleType> {
     MODULE_TYPE_FROM_EXT.get(ext).copied()
+}
+
+/// TypeScript matches `./foo.js` with `./foo.ts` (microsoft/TypeScript#4595). This
+/// is esbuild's `rewrittenFileExtensions` table plus Bun's `.js` → `.mts`
+/// (oven-sh/bun#12580). `inside_node_modules` gates only `.mjs` and `.cjs`:
+/// `DISABLE_AUTO_JS_TO_TS_IN_NODE_MODULES` never applied to `.js`/`.jsx`.
+fn rewritten_file_extensions(
+    ext: &[u8],
+    inside_node_modules: impl Fn() -> bool,
+) -> &'static [&'static [u8]] {
+    match ext {
+        // tsc tries `.ts` before `.tsx` even for a `.jsx` import.
+        b".js" | b".jsx" => &[b".ts", b".tsx", b".mts"],
+        b".mjs" | b".cjs"
+            if FeatureFlags::DISABLE_AUTO_JS_TO_TS_IN_NODE_MODULES && inside_node_modules() =>
+        {
+            &[]
+        }
+        b".mjs" => &[b".mts"],
+        b".cjs" => &[b".cts"],
+        _ => &[],
+    }
 }
 
 pub struct Dirname;

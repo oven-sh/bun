@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { tempDir } from "harness";
+import { join } from "path";
 import * as WithTypeModuleExportEsModuleAnnotationMissingDefault from "./with-type-module/export-esModule-annotation-empty.cjs";
 import * as WithTypeModuleExportEsModuleAnnotationNoDefault from "./with-type-module/export-esModule-annotation-no-default.cjs";
 import * as WithTypeModuleExportEsModuleAnnotation from "./with-type-module/export-esModule-annotation.cjs";
@@ -64,5 +66,18 @@ describe('with type: "module"', () => {
       default: true,
     });
     expect(WithTypeModuleExportEsModuleAnnotation.__esModule).toBeTrue();
+  });
+});
+
+describe("CJS exports the ESM wrapper cannot enumerate", () => {
+  // Building the synthetic ESM namespace enumerates module.exports; if that throws, the import
+  // fails with the real error instead of yielding an empty namespace.
+  test.each([false, true])("ownKeys trap throws (__esModule: %p)", async esModule => {
+    using dir = tempDir("cjs-ownkeys-throws", {
+      "mod.cjs": `module.exports = new Proxy({ __esModule: ${esModule}, a: 1 }, {
+        ownKeys() { throw new Error("ownKeys trap"); },
+      });`,
+    });
+    await expect(import(join(String(dir), "mod.cjs"))).rejects.toThrow("ownKeys trap");
   });
 });

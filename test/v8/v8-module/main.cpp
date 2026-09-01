@@ -1967,6 +1967,95 @@ void test_v8_cpu_profiler_overlapping_sessions(
   return ok(info);
 }
 
+// google's pprof (and older addons such as v8-profiler-next) drive the
+// profiler through the title-keyed StartProfiling()/StopProfiling() overloads
+// and read the title back with CpuProfile::GetTitle(). Bun used to export only
+// the id-keyed Start()/Stop(), so loading pprof failed on these symbols
+// (oven-sh/bun#19678).
+void test_v8_cpu_profiler_title_api(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+
+  CpuProfiler *profiler = CpuProfiler::New(isolate);
+  if (profiler == nullptr) {
+    return fail(info, "CpuProfiler::New returned null");
+  }
+  profiler->SetSamplingInterval(100);
+
+  auto busy = [] {
+    volatile double sink = 0;
+    for (int i = 0; i < 100000; i++) sink += i * 0.5;
+    (void)sink;
+  };
+
+  Local<String> title_a =
+      String::NewFromUtf8(isolate, "pprof-a").ToLocalChecked();
+  Local<String> title_b =
+      String::NewFromUtf8(isolate, "pprof-b").ToLocalChecked();
+  Local<String> empty_title = String::NewFromUtf8(isolate, "").ToLocalChecked();
+  Local<String> unknown_title =
+      String::NewFromUtf8(isolate, "never-started").ToLocalChecked();
+
+  // pprof uses the two-argument overload, or the mode overload when line
+  // numbers were requested.
+  LOG_EXPR((int)profiler->StartProfiling(title_a, false));
+  LOG_EXPR((int)profiler->StartProfiling(title_b, kCallerLineNumbers, false));
+  // A title that is already running is not started a second time.
+  LOG_EXPR((int)profiler->StartProfiling(title_a, false));
+  busy();
+
+  LOG_EXPR(profiler->StopProfiling(unknown_title) == nullptr);
+
+  CpuProfile *profile_a = profiler->StopProfiling(title_a);
+  if (profile_a == nullptr) {
+    return fail(info, "StopProfiling(a) returned null");
+  }
+  LOG_EXPR(describe(isolate, profile_a->GetTitle()));
+  LOG_EXPR(profile_a->GetTopDownRoot() != nullptr);
+  LOG_EXPR(profile_a->GetStartTime() <= profile_a->GetEndTime());
+  // a is no longer running, so its title can neither be stopped again nor
+  // collide with a new session.
+  LOG_EXPR(profiler->StopProfiling(title_a) == nullptr);
+  LOG_EXPR((int)profiler->StartProfiling(title_a, false));
+  busy();
+
+  // An empty title stops the most recently started session: the restarted a,
+  // then b.
+  CpuProfile *profile_a2 = profiler->StopProfiling(empty_title);
+  if (profile_a2 == nullptr) {
+    return fail(info, "StopProfiling(\"\") returned null with two sessions");
+  }
+  LOG_EXPR(describe(isolate, profile_a2->GetTitle()));
+  CpuProfile *profile_b = profiler->StopProfiling(empty_title);
+  if (profile_b == nullptr) {
+    return fail(info, "StopProfiling(\"\") returned null with one session");
+  }
+  LOG_EXPR(describe(isolate, profile_b->GetTitle()));
+  LOG_EXPR(profiler->StopProfiling(empty_title) == nullptr);
+
+  // Both APIs share one set of sessions: a session started by id carries its
+  // title, blocks a title-keyed start, and can be stopped by title.
+  CpuProfilingResult by_id = profiler->Start(
+      title_b, kLeafNodeLineNumbers, true, CpuProfilingOptions::kNoSampleLimit);
+  LOG_EXPR((int)by_id.status);
+  LOG_EXPR((int)profiler->StartProfiling(title_b, false));
+  busy();
+  CpuProfile *profile_by_id = profiler->StopProfiling(title_b);
+  if (profile_by_id == nullptr) {
+    return fail(info, "StopProfiling(b) returned null for a session started "
+                      "with Start()");
+  }
+  LOG_EXPR(describe(isolate, profile_by_id->GetTitle()));
+  LOG_EXPR(profiler->Stop(by_id.id) == nullptr);
+
+  profile_a->Delete();
+  profile_a2->Delete();
+  profile_b->Delete();
+  profile_by_id->Delete();
+  profiler->Dispose();
+
+  return ok(info);
+}
+
 void initialize(Local<Object> exports, Local<Value> module,
                 Local<Context> context) {
   NODE_SET_METHOD(exports, "test_v8_native_call", test_v8_native_call);
@@ -2060,6 +2149,8 @@ void initialize(Local<Object> exports, Local<Value> module,
   NODE_SET_METHOD(exports, "test_v8_cpu_profiler", test_v8_cpu_profiler);
   NODE_SET_METHOD(exports, "test_v8_cpu_profiler_overlapping_sessions",
                   test_v8_cpu_profiler_overlapping_sessions);
+  NODE_SET_METHOD(exports, "test_v8_cpu_profiler_title_api",
+                  test_v8_cpu_profiler_title_api);
 
   // without this, node hits a UAF deleting the Global
   // (Context::GetIsolate was removed in V8 14.6; the module initializer runs

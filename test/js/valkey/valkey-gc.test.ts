@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, bunRun, isASAN, isMusl, isWindows } from "harness";
+import { bunEnv, bunExe, bunRun, expectRssDeltaBelow, isASAN, isMusl, isWindows } from "harness";
 import net from "node:net";
 import { join } from "node:path";
 
@@ -904,4 +904,54 @@ test.concurrent("a client closed and collected from within its own reply does no
   expect(reached).not.toBeNull();
   // Keep the per-lane count in the CI log so a slide toward zero is visible.
   console.log(`close-from-reply fixture: ${reached![1]} of 10 rounds reached the window`);
+});
+
+test.concurrent("new RedisClient(url) does not leak the URL and its components", async () => {
+  const code = /* js */ `
+    const base = Buffer.alloc(200 * 1024, "a").toString();
+    function once(i) { try { new Bun.RedisClient("redis://user:" + base + i + "@127.0.0.1:1/0"); } catch {} }
+    for (let i = 0; i < 20; i++) once(i);
+    Bun.gc(true);
+    const before = process.memoryUsage.rss();
+    for (let i = 0; i < 300; i++) once(i);
+    Bun.gc(true);
+    console.log(JSON.stringify({ deltaMiB: (process.memoryUsage.rss() - before) / 1024 / 1024 }));
+  `;
+
+  // Unfixed: ~148 MiB. Fixed: allocator slack only.
+  await expectRssDeltaBelow(["--smol", "-e", code], { release: 70, debug: 90 });
+});
+
+test.concurrent("RESP map keys are not leaked", async () => {
+  const code = /* js */ `
+    const net = require("net");
+    const big = Buffer.alloc(400 * 1024, "k").toString();
+    let n = 0;
+    const server = net.createServer(sock => {
+      sock.on("data", d => {
+        const s = d.toString();
+        for (const _ of s.split("\\r\\n").filter(x => x.startsWith("*"))) {
+          if (s.includes("HELLO")) sock.write("%1\\r\\n+server\\r\\n+mock\\r\\n");
+          else {
+            const k1 = big + n++, k2 = big + n++;
+            sock.write("%2\\r\\n$" + k1.length + "\\r\\n" + k1 + "\\r\\n:1\\r\\n$" + k2.length + "\\r\\n" + k2 + "\\r\\n:2\\r\\n");
+          }
+        }
+      });
+    });
+    await new Promise(r => server.listen(0, "127.0.0.1", r));
+    const client = new Bun.RedisClient("redis://127.0.0.1:" + server.address().port);
+    await client.connect();
+    for (let i = 0; i < 10; i++) await client.send("HGETALL", ["x"]);
+    Bun.gc(true);
+    const before = process.memoryUsage.rss();
+    for (let i = 0; i < 300; i++) await client.send("HGETALL", ["x"]);
+    Bun.gc(true);
+    console.log(JSON.stringify({ deltaMiB: (process.memoryUsage.rss() - before) / 1024 / 1024 }));
+    client.close();
+    server.close();
+  `;
+
+  // Unfixed: ~270 MiB (two 400 KiB keys per reply). Fixed: ~30 MiB of JS string churn.
+  await expectRssDeltaBelow(["--smol", "-e", code], { release: 130, debug: 160 });
 });

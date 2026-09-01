@@ -117,7 +117,7 @@ static EncodedJSValue getOwnProxyObject(JSPropertyIterator* iter, JSObject* obje
     PropertySlot slot(object, PropertySlot::InternalMethodType::GetOwnProperty, nullptr);
     auto* globalObject = object->globalObject();
     if (!object->methodTable()->getOwnPropertySlot(object, globalObject, prop, slot)) {
-        return {};
+        RELEASE_AND_RETURN(scope, {});
     }
     RETURN_IF_EXCEPTION(scope, {});
 

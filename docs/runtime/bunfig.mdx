@@ -508,11 +508,20 @@ prefer = "online"
 
 Valid values are:
 
-| Value       | Description                                                                                        |
-| ----------- | -------------------------------------------------------------------------------------------------- |
-| `"online"`  | Default. Check the registry for stale packages as needed.                                          |
-| `"offline"` | Skip staleness checks and resolve packages from the local cache. Equivalent to `--prefer-offline`. |
-| `"latest"`  | Always check npm for the latest matching versions. Equivalent to `--prefer-latest`.                |
+| Value       | Description                                                                                                                         |
+| ----------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `"online"`  | Default. Check the registry for stale packages as needed.                                                                           |
+| `"offline"` | Skip staleness checks and resolve packages from the local cache. Equivalent to `--prefer-offline` (also honoured by `bun install`). |
+| `"latest"`  | Always check npm for the latest matching versions. Equivalent to `--prefer-latest`.                                                 |
+
+### `install.offline`
+
+When `true`, `bun install` never touches the network: package metadata and tarballs must already be in the cache, and anything missing is an error. Default `false`. Equivalent to `bun install --offline`. For the softer "use the cache when possible" behaviour see `install.prefer = "offline"` / `--prefer-offline`.
+
+```toml title="bunfig.toml" icon="settings"
+[install]
+offline = true
+```
 
 ### `install.frozenLockfile`
 

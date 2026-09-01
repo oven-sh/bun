@@ -1,5 +1,14 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isASAN, isWindows, normalizeBunSnapshot, tempDir, tmpdirSync } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  isASAN,
+  isWindows,
+  normalizeBunSnapshot,
+  tempDir,
+  tmpdirSync,
+  withoutAggressiveGC,
+} from "harness";
 import { join } from "path";
 import util from "util";
 it("prototype", () => {
@@ -623,7 +632,8 @@ describe.concurrent("Bun.inspect when a property lookup throws", () => {
     expect(result).toEqual({ stdout: "{\n  a: 1,\n  c: 3,\n}\n", stderr: "", exitCode: 0 });
   });
 
-  it("stops walking the prototype chain at a Proxy whose getPrototypeOf trap throws", async () => {
+  it("propagates a Proxy getPrototypeOf trap that throws while walking the prototype chain", async () => {
+    // Matches util.inspect: a throwing getPrototypeOf trap is an error, not a display nicety.
     const result = await inspectInChild(`
       const proto = new Proxy({ a: 1 }, {
         getPrototypeOf() {
@@ -632,9 +642,30 @@ describe.concurrent("Bun.inspect when a property lookup throws", () => {
       });
       const obj = Object.create(proto);
       obj.own = 0;
-      console.log(Bun.inspect(obj));
+      try {
+        Bun.inspect(obj);
+        console.log("no throw");
+      } catch (e) {
+        console.log("threw: " + e.message);
+      }
     `);
-    expect(result).toEqual({ stdout: "{\n  own: 0,\n  a: 1,\n}\n", stderr: "", exitCode: 0 });
+    expect(result).toEqual({ stdout: "threw: getPrototypeOf trap\n", stderr: "", exitCode: 0 });
+  });
+
+  it("propagates an error thrown by toJSON while formatting", () => {
+    const toJSON = () => {
+      throw new Error("from toJSON");
+    };
+    const params = new URLSearchParams("a=1");
+    params.toJSON = toJSON;
+    expect(() => Bun.inspect(params)).toThrow("from toJSON");
+    const headers = new Headers({ a: "1" });
+    headers.toJSON = toJSON;
+    expect(() => Bun.inspect(headers)).toThrow("from toJSON");
+    const form = new FormData();
+    form.append("a", "1");
+    Object.defineProperty(form, "toJSON", { value: toJSON });
+    expect(() => Bun.inspect(form)).toThrow("from toJSON");
   });
 
   it("skips a lazily initialized Bun property whose initializer throws and keeps the rest", async () => {
@@ -1018,5 +1049,36 @@ describe.skipIf(!isASAN)("object mutated while being formatted", () => {
     );
     expect(stderr).not.toContain("AddressSanitizer");
     expect(exitCode).toBe(0);
+  });
+});
+
+// https://github.com/oven-sh/bun/issues/25309
+it("object property enumeration scales linearly with property count", () => {
+  function makeWide(n) {
+    const o = {};
+    for (let i = 0; i < n; i++) o["p" + i] = i;
+    return o;
+  }
+  function timeInspect(o) {
+    const t0 = performance.now();
+    const out = Bun.inspect(o);
+    return { ms: performance.now() - t0, out };
+  }
+
+  const small = makeWide(3000);
+  const large = makeWide(30000);
+
+  withoutAggressiveGC(() => {
+    Bun.inspect(small); // warm up
+    const s = timeInspect(small);
+    const l = timeInspect(large);
+
+    // Output still lists every property (no behavior change).
+    expect(s.out.includes("p2999")).toBe(true);
+    expect(l.out.includes("p29999")).toBe(true);
+
+    // Per-property cost must stay roughly constant as n grows 10x. The previous
+    // Vector-based visited-property dedup was O(n^2), giving a ~9x ratio here.
+    expect(l.ms / 30000 / (s.ms / 3000)).toBeLessThan(3);
   });
 });

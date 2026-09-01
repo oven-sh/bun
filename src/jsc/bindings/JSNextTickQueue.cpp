@@ -23,12 +23,7 @@ const JSC::ClassInfo JSNextTickQueue::s_info = { "NextTickQueue"_s, &Base::s_inf
 template<typename, JSC::SubspaceAccess mode>
 JSC::GCClient::IsoSubspace* JSNextTickQueue::subspaceFor(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSNextTickQueue, WebCore::UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForJSNextTickQueue.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSNextTickQueue = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForJSNextTickQueue.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForJSNextTickQueue = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSNextTickQueue, WebCore::UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForJSNextTickQueue, m_subspaceForJSNextTickQueue));
 }
 
 JSNextTickQueue* JSNextTickQueue::create(VM& vm, Structure* structure)
@@ -39,7 +34,7 @@ JSNextTickQueue* JSNextTickQueue::create(VM& vm, Structure* structure)
 }
 Structure* JSNextTickQueue::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
 {
-    return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
+    return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(ObjectType, StructureFlags), info());
 }
 
 JSNextTickQueue::JSNextTickQueue(VM& vm, Structure* structure)

@@ -1578,9 +1578,7 @@ impl<'a> Parser<'a> {
         let remap = |e: FromExprError| -> crate::Error {
             match e {
                 FromExprError::OutOfMemory => crate::Error::Alloc(bun_alloc::AllocError),
-                FromExprError::UnexpectedExpr | FromExprError::InvalidRegExp => {
-                    crate::Error::InvalidBunfig
-                }
+                FromExprError::UnexpectedExpr => crate::Error::InvalidBunfig,
             }
         };
         if let Some(public_hoist_pattern_expr) = install_obj.get(b"publicHoistPattern") {
@@ -1597,6 +1595,10 @@ impl<'a> Parser<'a> {
         }
         if let Some(v) = install_obj.get(b"hoist").and_then(|e| e.as_bool()) {
             install.hoist = Some(v);
+        }
+
+        if let Some(v) = install_obj.get(b"offline").and_then(|e| e.as_bool()) {
+            install.offline = Some(v);
         }
 
         Ok(())

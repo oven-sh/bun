@@ -804,24 +804,48 @@ impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
         // The import-record side-effect is order-independent of `Expr.init`'s
         // Store allocation.
         let expr = Expr::init(t, loc);
-        if self.scan_only {
-            if let js_ast::ExprData::ECall(call) = expr.data {
-                if let js_ast::ExprData::EIdentifier(ident) = call.target.data {
-                    // is this a require("something")
-                    if self.load_name_from_ref(ident.ref_) == b"require" && call.args.len_u32() == 1
-                    {
-                        if let js_ast::ExprData::EString(s) = call.args.at(0).data {
-                            let _ = self.add_import_record(
-                                ImportKind::Require,
-                                loc,
-                                s.string(self.arena).expect("unreachable"),
-                            );
-                        }
-                    }
-                }
+        if let js_ast::ExprData::ECall(call) = expr.data {
+            if self.scan_only {
+                self.scan_only_record_require_call(call, loc);
             }
         }
         expr
+    }
+
+    /// Scan-only pass: a name that is looked up by the parse pass marks the
+    /// matching `parse_pass_symbol_uses` entry as used. Kept out of line so
+    /// `store_name_in_ref` stays small.
+    #[cold]
+    #[inline(never)]
+    fn scan_only_mark_symbol_used(&mut self, name: &[u8]) {
+        if let Some(uses) = &mut self.parse_pass_symbol_uses {
+            if let Some(res) = uses.get_mut(name) {
+                res.used = true;
+            }
+        }
+    }
+
+    /// Scan-only pass: record `require("x")` as an import record. Kept out of
+    /// line so `new_expr::<E::Call>` stays small enough to inline.
+    #[cold]
+    #[inline(never)]
+    fn scan_only_record_require_call(
+        &mut self,
+        call: js_ast::StoreRef<E::Call>,
+        loc: bun_ast::Loc,
+    ) {
+        if let js_ast::ExprData::EIdentifier(ident) = call.target.data {
+            // is this a require("something")
+            if self.load_name_from_ref(ident.ref_) == b"require" && call.args.len_u32() == 1 {
+                if let js_ast::ExprData::EString(s) = call.args.at(0).data {
+                    let _ = self.add_import_record(
+                        ImportKind::Require,
+                        loc,
+                        s.string(self.arena).expect("unreachable"),
+                    );
+                }
+            }
+        }
     }
 
     #[inline]
@@ -4980,11 +5004,7 @@ impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
 
     pub(crate) fn store_name_in_ref(&mut self, name: &'a [u8]) -> Ref {
         if self.track_symbol_usage_during_parse_pass() {
-            if let Some(uses) = &mut self.parse_pass_symbol_uses {
-                if let Some(res) = uses.get_mut(name) {
-                    res.used = true;
-                }
-            }
+            self.scan_only_mark_symbol_used(name);
         }
 
         let contents_ptr = self.source.contents.as_ptr() as usize;

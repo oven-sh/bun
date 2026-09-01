@@ -3,6 +3,7 @@
 # fails only when it adds one. Regenerate after fixing some or bumping mordant:
 #   bun run rust:mordant:baseline
 baseline = "mordant-baseline.toml"
+generic-body-not-generic-enabled = true
 validator-resource-errors = ["bun_alloc::AllocError", "bun_sys::Error", "bun_errno::SystemErrno"]
 # Lints this repo has decided not to act on. Everything else in the pack is
 # on; add a lint here only with a reason.

@@ -27,7 +27,7 @@ void collectArrayLike(JSC::JSGlobalObject* globalObject, JSC::JSObject* arrayLik
         if (!accept(element))
             return false;
         out.append(element);
-        return true;
+        return !out.hasOverflowed();
     });
 }
 

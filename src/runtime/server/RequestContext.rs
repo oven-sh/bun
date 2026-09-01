@@ -1568,6 +1568,21 @@ where
             self.flags.set_has_finalized(true);
         }
 
+        // A stream pump that settles after this point finds no context
+        // (`reclaim_promise_cell`), so its `handle_*_stream` cleanup never
+        // runs: release the body's hold on the stream here.
+        if let Some(resp) = self.response_mut() {
+            if let Some(stream) = resp.get_body_readable_stream() {
+                stream.value.ensure_still_alive();
+                resp.detach_readable_stream(global_this);
+                stream.done();
+            }
+            let body_value = resp.get_body_value();
+            if matches!(body_value, Body::Value::Locked(_)) {
+                *body_value = Body::Value::Used;
+            }
+        }
+
         let response_jsvalue = self.response_jsvalue.get();
         if !response_jsvalue.is_empty() {
             ctx_log!("finalizeWithoutDeinit: response_jsvalue != .zero");

@@ -434,6 +434,71 @@ test("pendingRequests drops when the client aborts a parked direct-stream pull()
   expect(server.pendingRequests).toBe(0);
 });
 
+// The abort tears the context down before the stream pump settles, so the
+// pump's cleanup of the Response body never runs. The body kept a strong ref
+// on the stream. When the stream can reach the Response (hono's streamSSE
+// keeps a WeakMap from the body stream to its Context), that ref closed a
+// cycle through a GC root and every disconnect leaked the Response, the
+// stream, and everything the handler closed over.
+test.each(["sync", "async"])(
+  "client abort of a streaming Response releases the body stream it held (%s handler)",
+  async kind => {
+    const stash = new WeakMap<ReadableStream, Response>();
+    const streams: WeakRef<ReadableStream>[] = [];
+    const respond = () => {
+      const stream = new ReadableStream({
+        pull(controller) {
+          controller.enqueue("data: x\n\n");
+          return new Promise<void>(() => {});
+        },
+      });
+      streams.push(new WeakRef(stream));
+      const response = new Response(stream, { headers: { "Content-Type": "text/event-stream" } });
+      stash.set(stream, response);
+      return response;
+    };
+
+    using server = Bun.serve({
+      port: 0,
+      idleTimeout: 0,
+      fetch:
+        kind === "async"
+          ? async () => {
+              await Promise.resolve();
+              return respond();
+            }
+          : () => respond(),
+    });
+
+    async function abortAfterFirstChunk() {
+      const ac = new AbortController();
+      const res = await fetch(server.url, { signal: ac.signal });
+      const reader = res.body!.getReader();
+      await reader.read();
+      ac.abort();
+      await reader.closed.catch(() => {});
+    }
+
+    const iterations = 8;
+    for (let i = 0; i < iterations; i++) {
+      await abortAfterFirstChunk();
+    }
+    expect(streams).toHaveLength(iterations);
+
+    // stop() resolves once every abort tore its context down, which is when
+    // the body's ref must be gone.
+    await stopAndAssertDrained(server);
+
+    let alive = iterations;
+    for (let i = 0; i < 20 && alive > 0; i++) {
+      Bun.gc(true);
+      await Bun.sleep(1);
+      alive = streams.filter(ref => ref.deref() !== undefined).length;
+    }
+    expect(alive).toBe(0);
+  },
+);
+
 // Between the abort and the late settle, the server itself goes away: stop()
 // (issued before or after the abort) plus pendingRequests reaching 0 lets the
 // server release its JS wrapper, and dropping the last reference lets GC free

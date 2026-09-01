@@ -2914,11 +2914,36 @@ config:
       });
 
       test("indent width follows the space argument", () => {
-        expect(YAML.stringify({ a: "x\ny" }, null, 1)).toBe("a: |-\n x\n y");
         expect(YAML.stringify({ a: "x\ny" }, null, 4)).toBe("a: |-\n    x\n    y");
         expect(YAML.stringify({ a: "x\ny" }, null, "  ")).toBe("a: |-\n  x\n  y");
-        expect(YAML.stringify(["x\ny"], null, 1)).toBe("- |-\n x\n y");
-        expect(YAML.parse(YAML.stringify(["x\ny"], null, 1))).toEqual(["x\ny"]);
+        expect(YAML.stringify({ a: "x\ny" }, null, 3)).toBe("a: |-\n   x\n   y");
+      });
+
+      test("a one-column indent unit keeps quoted output", () => {
+        // a compact nested sequence advances two columns per level, so with a
+        // one-column indent the block content would not be more indented than
+        // its parent
+        expect(YAML.stringify({ a: "x\ny" }, null, 1)).toBe('a: "x\\ny"');
+        expect(YAML.stringify(["x\ny"], null, 1)).toBe('- "x\\ny"');
+        expect(YAML.stringify({ a: "x\ny" }, null, " ")).toBe('a: "x\\ny"');
+        expect(YAML.parse(YAML.stringify([["x\ny"]], null, 1))).toEqual([["x\ny"]]);
+        expect(YAML.parse(YAML.stringify([{ a: "x\ny" }], null, 1))).toEqual([{ a: "x\ny" }]);
+      });
+
+      test("compact nesting stays more indented than its parent", () => {
+        const cases = [[["x\ny"]], [{ a: "x\ny" }], [[["x\ny"]]], [[{ a: "x\ny" }]]];
+        for (const v of cases) {
+          for (const indent of [2, 3, 4]) {
+            expect(YAML.parse(YAML.stringify(v, null, indent))).toEqual(v);
+          }
+        }
+        // A compact nested sequence with more than one item only roundtrips at
+        // indent 2 on the current emitter: the between-item newline indent
+        // does not line up with the compact first item at other widths, for
+        // scalars of every kind. So the multi-item case stays at indent 2.
+        expect(YAML.parse(YAML.stringify([["a", "x\ny"]], null, 2))).toEqual([["a", "x\ny"]]);
+        expect(YAML.stringify([["x\ny"]], null, 2)).toBe("- - |-\n    x\n    y");
+        expect(YAML.stringify([{ a: "x\ny" }], null, 2)).toBe("- a: |-\n    x\n    y");
       });
 
       test("a tab space argument keeps quoted output", () => {

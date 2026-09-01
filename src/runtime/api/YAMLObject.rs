@@ -670,15 +670,22 @@ impl Stringifier {
         self.append_string(str);
     }
 
-    /// Block scalar content must be indented with spaces. A string `space`
-    /// argument that is not all spaces (a tab, for example) keeps the quoted
-    /// output.
+    /// Block scalar content must be indented with spaces, and each indent
+    /// level must be at least two columns wide. A compact nested sequence
+    /// (`- - `) advances two columns per level while the indent advances one
+    /// level, so with a one-column unit the content would not be more
+    /// indented than its parent and the parser would read an empty scalar.
+    /// A string `space` argument that is not all spaces (a tab, for example)
+    /// keeps the quoted output.
     fn indent_allows_block_scalar(&self) -> bool {
         match &self.space {
             Space::Minified => false,
-            Space::Number(_) => true,
+            Space::Number(n) => *n >= 2,
             Space::Str(space_str) => {
                 let clamped = space_str.trunc(10);
+                if clamped.length() < 2 {
+                    return false;
+                }
                 for i in 0..clamped.length() {
                     if clamped.char_at(i) != 0x20 {
                         return false;

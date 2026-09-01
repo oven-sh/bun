@@ -1,5 +1,4 @@
 import { describe, expect } from "bun:test";
-import { isWindows } from "harness";
 import { dedent, itBundled } from "../expectBundled";
 
 // Tests ported from:
@@ -341,7 +340,6 @@ describe("bundler", () => {
     },
   });
   itBundled("dce/PackageJsonSideEffectsArrayKeep", {
-    todo: isWindows,
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {foo} from "demo-pkg"
@@ -478,7 +476,6 @@ describe("bundler", () => {
     },
   });
   itBundled("dce/PackageJsonSideEffectsArrayKeepModuleUseModule", {
-    todo: isWindows,
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {foo} from "demo-pkg"
@@ -506,7 +503,6 @@ describe("bundler", () => {
     },
   });
   itBundled("dce/PackageJsonSideEffectsArrayKeepModuleUseMain", {
-    todo: isWindows,
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {foo} from "demo-pkg"
@@ -534,7 +530,6 @@ describe("bundler", () => {
     },
   });
   itBundled("dce/PackageJsonSideEffectsArrayKeepModuleImplicitModule", {
-    todo: isWindows,
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {foo} from "demo-pkg"
@@ -1632,6 +1627,43 @@ describe("bundler", () => {
     run: {
       stdout: `{"0":"FOO","1":"BAR","FOO":0,"BAR":1}`,
     },
+  });
+  // https://github.com/oven-sh/bun/issues/40114
+  // A computed class member key that is a side-effect-free reference (a local
+  // const, an import item) must not block tree-shaking of the class.
+  itBundled("dce/TreeShakingClassComputedKeyReference", {
+    files: {
+      "/entry.js": /* js */ `
+        import { used } from './lib';
+        console.log(used);
+      `,
+      "/lib.js": /* js */ `
+        import * as Other from './other';
+        export const used = 1;
+        const TypeId = '~lib/TypeId';
+        class REMOVE1 { [TypeId]; }
+        class REMOVE2 { [TypeId] = 'x' }
+        class REMOVE3 { [TypeId]() {} }
+        class REMOVE4 { static [TypeId] = 'x' }
+        class REMOVE5 {
+          [TypeId];
+          [Other.TypeId];
+          constructor() {
+            this[TypeId] = TypeId;
+            this[Other.TypeId] = Other.TypeId;
+          }
+        }
+        export const makeREMOVE5 = () => new REMOVE5();
+        let keep1 = class { [unboundKEEP] = 'x' };
+      `,
+      "/other.js": /* js */ `
+        export const TypeId = '~other/TypeId';
+        export const REMOVE6 = 'only the tree-shaken class references this module';
+      `,
+    },
+    treeShaking: true,
+    dce: true,
+    dceKeepMarkerCount: 2,
   });
   itBundled("dce/TreeShakingUnaryOperators", {
     files: {
@@ -3282,7 +3314,7 @@ describe("bundler", () => {
   itBundled("dce/IgnoreAnnotationsDoesNotApplyToRuntime", {
     files: {
       "/entry.js": /* js */ `
-        import("./other.js");
+        import("./other.js").then(m => m.foo());
       `,
       "/other.js": /* js */ `
         export function foo() { }

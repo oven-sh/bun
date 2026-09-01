@@ -154,6 +154,7 @@ test/js/node/test/parallel/test-http-server-keepalive-req-gc.js
 # Timeouts
 test/js/node/test/parallel/test-cluster-primary-kill.js
 test/cli/test/parallel.test.ts
+test/cli/test/parallel-startup-failure.test.ts
 
 # bun.assert(!this.hasPendingActivity() or jsc.VirtualMachine.get().isShuttingDown());
 # @call(bun.callmod_inline, Subprocess.finalize, .{thisValue});
@@ -363,7 +364,6 @@ test/bake/dev/server-sourcemap.test.ts
 # Watcher Thread
 test/bake/dev-and-prod.test.ts
 test/bake/dev/bundle.test.ts
-test/bake/dev/css.test.ts
 test/bake/dev/esm.test.ts
 test/bake/dev/hot.test.ts
 test/bake/dev/react-spa.test.ts

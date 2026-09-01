@@ -20,6 +20,30 @@ describe("net.createServer(connectionListener)", () => {
     expect(server).toBeInstanceOf(net.Server);
   });
 
+  // https://github.com/oven-sh/bun/issues/40917
+  it("registers the callback as a regular 'connection' listener", () => {
+    expect(server.listenerCount("connection")).toBe(1);
+    expect(server.listeners("connection")).toContain(onListen);
+
+    const socket = new net.Socket();
+    server.emit("connection", socket);
+    expect(onListen).toHaveBeenCalledTimes(1);
+    expect(onListen).toHaveBeenCalledWith(socket);
+  });
+
+  it("stays a single 'connection' listener across accepted connections", async () => {
+    await new Promise<void>(resolve => server.listen(0, () => resolve()));
+    const address = server.address() as net.AddressInfo;
+    for (let i = 0; i < 2; i++) {
+      const { promise, resolve } = Promise.withResolvers<net.Socket>();
+      server.once("connection", resolve);
+      await using client = net.createConnection(address);
+      await promise;
+    }
+    expect(onListen).toHaveBeenCalledTimes(2);
+    expect(server.listenerCount("connection")).toBe(1);
+  });
+
   it("calls the connection listener when a socket connects", async () => {
     await new Promise<void>(resolve => server.listen(() => resolve()));
 

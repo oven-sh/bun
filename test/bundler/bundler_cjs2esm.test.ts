@@ -141,6 +141,87 @@ describe("bundler", () => {
       stdout: "bar",
     },
   });
+  // The same file as an entry point is a module in its own right, not only a redirect for its importers.
+  itBundled("cjs2esm/ModuleExportsEqualsRequireEntryPoint", {
+    files: {
+      "/entry.cjs": /* js */ `
+        /*! banner */
+        "use strict";
+        module.exports = require('./library.js')
+      `,
+      "/library.js": /* js */ `
+        module.exports = { foo: 'bar' };
+      `,
+      "/user.mjs": /* js */ `
+        import lib from './out.js';
+        console.log(lib.foo, require('./out.js').default.foo);
+      `,
+    },
+    outfile: "/out.js",
+    run: { file: "/user.mjs", stdout: "bar bar" },
+  });
+  // An entry point that another entry point imports: still a module of its own (parsed once, as an entry point),
+  // and the importer links to it rather than past it.
+  itBundled("cjs2esm/ModuleExportsEqualsRequireEntryPointImportedByEntryPoint", {
+    files: {
+      "/a.js": /* js */ `
+        import lib from './b.js';
+        console.log('a', lib.foo);
+      `,
+      "/b.js": /* js */ `
+        module.exports = require('./library.js')
+      `,
+      "/library.js": /* js */ `
+        module.exports = { foo: 'bar' };
+      `,
+      "/user.mjs": /* js */ `
+        await import('./out/a.js');
+        const b = await import('./out/b.js');
+        console.log('b', b.default.foo);
+      `,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    outdir: "/out",
+    run: { file: "/user.mjs", stdout: "a bar\nb bar" },
+  });
+  itBundled("cjs2esm/ModuleExportsEqualsRequireEntryPointImportedByEntryPointSplitting", {
+    files: {
+      "/a.js": /* js */ `
+        import lib from './b.js';
+        console.log('a', lib.foo);
+      `,
+      "/b.js": /* js */ `
+        module.exports = require('./library.js')
+      `,
+      "/library.js": /* js */ `
+        module.exports = { foo: 'bar' };
+      `,
+      "/user.mjs": /* js */ `
+        await import('./out/a.js');
+        const b = await import('./out/b.js');
+        console.log('b', b.default.foo);
+      `,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    outdir: "/out",
+    splitting: true,
+    run: { file: "/user.mjs", stdout: "a bar\nb bar" },
+  });
+  // Two re-export-only entry points over the same target: two modules, one shared target.
+  itBundled("cjs2esm/ModuleExportsEqualsRequireTwoEntryPoints", {
+    files: {
+      "/a.js": `module.exports = require('./library.js')`,
+      "/b.js": `module.exports = require('./library.js')`,
+      "/library.js": `module.exports = { foo: 'bar' };`,
+      "/user.mjs": /* js */ `
+        const [a, b] = await Promise.all([import('./out/a.js'), import('./out/b.js')]);
+        console.log(a.default.foo, b.default.foo);
+      `,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    outdir: "/out",
+    run: { file: "/user.mjs", stdout: "bar bar" },
+  });
   itBundled("cjs2esm/ModuleExportsBasedOnNodeEnvProduction", {
     files: {
       "/entry.js": /* js */ `
@@ -282,6 +363,42 @@ describe("bundler", () => {
     },
     run: {
       stdout: "react\nreact\nreact\nreact\nundefined\nreact\nreact\nreact\nreact\nreact\nreact\n1 react\nreact\nreact",
+    },
+  });
+  // A require() of an unwrapped package that initializes a destructuring
+  // declaration is kept as a require expression that remembers it was
+  // unwrapped, and prints as the namespace object. One inside try/catch is
+  // never unwrapped and prints as an ordinary require.
+  itBundled("cjs2esm/UnwrappedModuleRequireDestructuredAndInTry", {
+    files: {
+      "/entry.js": /* js */ `
+        const { react: named } = require("react");
+        console.log(named);
+
+        let inTry = "missing";
+        try {
+          inTry = require("react").react;
+        } catch {}
+        console.log(inTry);
+      `,
+      "/node_modules/react/index.js": /* js */ `
+        exports.react = "react";
+      `,
+      "/node_modules/react/package.json": /* json */ `
+        {
+          "name": "react",
+          "version": "2.0.0",
+          "main": "index.js"
+        }
+      `,
+    },
+    onAfterBundle: api => {
+      const code = api.readFile("out.js");
+      expect(code).toMatch(/\{ react: named \} = \(?exports_react\)?;/);
+      expect(code).toContain("__toCommonJS(exports_react)).react");
+    },
+    run: {
+      stdout: "react\nreact",
     },
   });
   itBundled("cjs2esm/ReactSpecificUnwrapping", {
@@ -549,5 +666,135 @@ describe("bundler", () => {
     },
     cjs2esm: true,
     run: { stdout: "[1,2]" },
+  });
+
+  // When an ESM entry point re-exports a name from a CommonJS module that is
+  // not converted to ESM, the linker declares a copy binding named
+  // `export_<alias>` in the entry point tail and exports that. The copy must be
+  // renamed around every other binding of that name in the chunk.
+  const printNamespace = {
+    "/test.js": /* js */ `
+      import * as ns from './out.js';
+      console.log(JSON.stringify(ns));
+    `,
+  };
+  itBundled("cjs2esm/ReExportCJSCopyKeepsUserBinding", {
+    files: {
+      "/entry.js": /* js */ `
+        export { foo } from './cjs.cjs';
+        export { bar } from './esm.js';
+        export const export_foo = "user-foo";
+        export const export_bar = "user-bar";
+      `,
+      "/cjs.cjs": /* js */ `
+        Object.defineProperty(exports, "foo", { enumerable: true, get: () => 42 });
+      `,
+      "/esm.js": /* js */ `
+        export const bar = 1;
+      `,
+    },
+    format: "esm",
+    runtimeFiles: printNamespace,
+    onAfterBundle(api) {
+      // The user bindings keep their names. The copy is the numbered one.
+      api.expectFile("/out.js").toContain('var export_foo = "user-foo"');
+      api.expectFile("/out.js").toContain('var export_bar = "user-bar"');
+      api.expectFile("/out.js").toContain("var export_foo2 = ");
+    },
+    run: {
+      file: "/test.js",
+      stdout: '{"bar":1,"export_bar":"user-bar","export_foo":"user-foo","foo":42}',
+    },
+  });
+  itBundled("cjs2esm/ReExportCJSCopyKeepsClassBinding", {
+    // `module.exports = {...}` is not converted either, so it takes the same
+    // path. A `class` with the copy's name used to make the output a
+    // SyntaxError at load: `var` cannot redeclare a class binding.
+    files: {
+      "/entry.js": /* js */ `
+        export { foo } from './cjs.cjs';
+        export class export_foo {}
+      `,
+      "/cjs.cjs": /* js */ `
+        module.exports = { foo: 42 };
+      `,
+    },
+    format: "esm",
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        import * as ns from './out.js';
+        console.log(typeof ns.export_foo, ns.foo);
+      `,
+    },
+    run: {
+      file: "/test.js",
+      stdout: "function 42",
+    },
+  });
+  itBundled("cjs2esm/ReExportCJSCopiesWithSameMangledName", {
+    // The copy's name is built from the alias with every run of non-identifier
+    // characters folded into "_", so distinct aliases can collide with each
+    // other even when the entry point declares nothing else.
+    files: {
+      "/entry.js": /* js */ `
+        export { "x-y", "x.y" } from './cjs.cjs';
+      `,
+      "/cjs.cjs": /* js */ `
+        Object.defineProperty(exports, "x-y", { enumerable: true, get: () => "dash" });
+        Object.defineProperty(exports, "x.y", { enumerable: true, get: () => "dot" });
+      `,
+    },
+    format: "esm",
+    runtimeFiles: printNamespace,
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain('var export_x_y = import_cjs["x-y"]');
+      api.expectFile("/out.js").toContain('var export_x_y2 = import_cjs["x.y"]');
+    },
+    run: {
+      file: "/test.js",
+      stdout: '{"x-y":"dash","x.y":"dot"}',
+    },
+  });
+  // An unbound global is a reserved name for the chunk. The copy must be
+  // numbered around it in both renamers: with minified identifiers the user
+  // bindings are short, so this is the collision that remains.
+  const unboundGlobalFiles = {
+    "/entry.js": /* js */ `
+      import './side.js';
+      export { foo } from './cjs.cjs';
+    `,
+    "/side.js": /* js */ `
+      globalThis.export_foo = "global";
+      console.log("side sees", export_foo);
+    `,
+    "/cjs.cjs": /* js */ `
+      Object.defineProperty(exports, "foo", { enumerable: true, get: () => 42 });
+    `,
+  };
+  itBundled("cjs2esm/ReExportCJSCopyKeepsUnboundGlobal", {
+    files: unboundGlobalFiles,
+    format: "esm",
+    runtimeFiles: printNamespace,
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("var export_foo2 = import_cjs.foo");
+    },
+    run: {
+      file: "/test.js",
+      stdout: 'side sees global\n{"foo":42}',
+    },
+  });
+  itBundled("cjs2esm/ReExportCJSCopyKeepsUnboundGlobalMinified", {
+    files: unboundGlobalFiles,
+    format: "esm",
+    minifyIdentifiers: true,
+    runtimeFiles: printNamespace,
+    onAfterBundle(api) {
+      // The copy gets a short name like every other top-level symbol.
+      api.expectFile("/out.js").not.toContain("var export_foo");
+    },
+    run: {
+      file: "/test.js",
+      stdout: 'side sees global\n{"foo":42}',
+    },
   });
 });

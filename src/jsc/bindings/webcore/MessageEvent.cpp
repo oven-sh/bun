@@ -80,28 +80,23 @@ Ref<MessageEvent> MessageEvent::create(const AtomString& type, Init&& initialize
 
 MessageEvent::~MessageEvent() = default;
 
-auto MessageEvent::create(JSC::JSGlobalObject& globalObject, Ref<SerializedScriptValue>&& data, RefPtr<MessagePort>&& source, Vector<RefPtr<MessagePort>>&& ports) -> MessageEventWithStrongData
+auto MessageEvent::create(JSC::JSGlobalObject& globalObject, Ref<SerializedScriptValue>&& data, RefPtr<MessagePort>&& source, Vector<RefPtr<MessagePort>>&& ports) -> std::optional<MessageEventWithStrongData>
 {
     return create(globalObject, WTF::move(data), {}, {}, WTF::move(source), WTF::move(ports));
 }
 
-auto MessageEvent::create(JSC::JSGlobalObject& globalObject, Ref<SerializedScriptValue>&& data, const String& origin, const String& lastEventId, RefPtr<MessagePort>&& source, Vector<RefPtr<MessagePort>>&& ports) -> MessageEventWithStrongData
+auto MessageEvent::create(JSC::JSGlobalObject& globalObject, Ref<SerializedScriptValue>&& data, const String& origin, const String& lastEventId, RefPtr<MessagePort>&& source, Vector<RefPtr<MessagePort>>&& ports) -> std::optional<MessageEventWithStrongData>
 {
     auto& vm = globalObject.vm();
-    // Locker<JSC::JSLock> locker(vm.apiLock());
-    auto topExceptionScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    auto scope = DECLARE_THROW_SCOPE(vm);
 
-    bool didFail = false;
-
-    auto deserialized = data->deserialize(globalObject, &globalObject, ports, SerializationErrorMode::NonThrowing, &didFail);
-    if (topExceptionScope.exception()) [[unlikely]]
-        deserialized = jsUndefined();
-
+    JSValue deserialized = data->deserialize(globalObject, &globalObject, ports, SerializationErrorMode::Throwing);
+    RETURN_IF_EXCEPTION(scope, std::nullopt);
     JSC::Strong<JSC::Unknown> strongData(vm, deserialized);
 
-    auto& eventType = didFail ? eventNames().messageerrorEvent : eventNames().messageEvent;
-    auto event = adoptRef(*new MessageEvent(eventType, WTF::move(data), origin, lastEventId, WTF::move(source), WTF::move(ports)));
+    auto event = adoptRef(*new MessageEvent(eventNames().messageEvent, WTF::move(data), origin, lastEventId, WTF::move(source), WTF::move(ports)));
     JSC::Strong<JSC::JSObject> strongWrapper(vm, uncheckedDowncast<JSC::JSObject>(toJS(&globalObject, uncheckedDowncast<JSDOMGlobalObject>(&globalObject), event.get())));
+    RETURN_IF_EXCEPTION(scope, std::nullopt);
     // Since we've already deserialized the SerializedScriptValue, cache the result so we don't have to deserialize
     // again the next time JSMessageEvent::data() gets called by the main world.
     event->cachedData().set(vm, strongWrapper.get(), deserialized);

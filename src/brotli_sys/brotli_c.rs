@@ -46,10 +46,8 @@ unsafe extern "C" {
     ) -> BrotliDecoderResult;
     // Query fns: opaque handle by reference + scalars only — `BrotliDecoder` is
     // `!Freeze` (UnsafeCell) so internal C mutation through `&` is sound.
-    safe fn BrotliDecoderIsFinished(state: &BrotliDecoder) -> c_int;
     pub safe fn BrotliDecoderGetErrorCode(state: &BrotliDecoder) -> BrotliDecoderErrorCode2;
     pub safe fn BrotliDecoderErrorString(c: BrotliDecoderErrorCode) -> *const c_char;
-    safe fn BrotliDecoderVersion() -> u32;
 }
 
 bun_opaque::opaque_ffi! {
@@ -108,18 +106,6 @@ impl BrotliDecoder {
         }
     }
 
-    pub fn is_finished(state: &BrotliDecoder) -> bool {
-        BrotliDecoderIsFinished(state) != 0
-    }
-
-    pub fn get_error_code(state: &BrotliDecoder) -> BrotliDecoderErrorCode {
-        BrotliDecoderGetErrorCode(state)
-    }
-
-    pub fn version() -> u32 {
-        BrotliDecoderVersion()
-    }
-
     pub fn initialize_brotli() -> bool {
         true
     }
@@ -172,6 +158,21 @@ pub enum BrotliDecoderErrorCode2 {
     ERROR_ALLOC_RING_BUFFER_2 = -27,
     ERROR_ALLOC_BLOCK_TYPE_TREES = -30,
     ERROR_UNREACHABLE = -31,
+}
+
+impl BrotliDecoderErrorCode2 {
+    /// The decoder's allocator (its `alloc_func`) returned null.
+    pub fn is_alloc_failure(self) -> bool {
+        matches!(
+            self,
+            Self::ERROR_ALLOC_CONTEXT_MODES
+                | Self::ERROR_ALLOC_TREE_GROUPS
+                | Self::ERROR_ALLOC_CONTEXT_MAP
+                | Self::ERROR_ALLOC_RING_BUFFER_1
+                | Self::ERROR_ALLOC_RING_BUFFER_2
+                | Self::ERROR_ALLOC_BLOCK_TYPE_TREES
+        )
+    }
 }
 
 #[repr(u32)]

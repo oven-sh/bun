@@ -218,6 +218,25 @@ describe("bundler files option", () => {
     expect(output).toContain("hello from blob");
   });
 
+  test("in-memory file with a file-backed Blob is rejected", () => {
+    // Only in-memory blobs are accepted as content; a Bun.file() blob would
+    // have to be read from disk and is rejected like every other
+    // string-or-blob argument, instead of being treated as empty content.
+    // Like the other invalid options, this throws from Bun.build() itself.
+    using dir = tempDir("bundler-files-bun-file", {
+      "entry.js": `console.log("from disk");`,
+    });
+
+    expect(() =>
+      Bun.build({
+        entrypoints: ["/entry.js"],
+        files: {
+          "/entry.js": Bun.file(`${dir}/entry.js`),
+        },
+      }),
+    ).toThrow("File blob cannot be used here");
+  });
+
   test("in-memory file with Uint8Array content", async () => {
     const encoder = new TextEncoder();
     const result = await Bun.build({

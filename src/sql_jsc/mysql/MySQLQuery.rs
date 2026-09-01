@@ -20,15 +20,14 @@ use crate::shared::query_binding_iterator::QueryBindingIterator;
 
 use super::js_mysql_connection::MySQLConnection;
 use super::my_sql_statement::{self as my_sql_statement, ExecutionFlags, MySQLStatement};
+use bun_ptr::RefPtr;
 
 bun_core::define_scoped_log!(debug, MySQLQuery, visible);
 
 pub struct MySQLQuery {
-    // Intrusive refcount (`MySQLStatement::ref_` / `::deref`). Null = none.
-    // The connection's `PreparedStatementsMap` also stores `*mut MySQLStatement`,
-    // so this pointer participates in the same intrusive ownership graph (each holder
-    // owns one ref).
-    statement: *mut MySQLStatement,
+    /// Shared with the connection's `PreparedStatementsMap` (each holder owns
+    /// one ref).
+    statement: Option<RefPtr<MySQLStatement>>,
     query: BunString,
 
     status: Status,
@@ -255,13 +254,11 @@ impl MySQLQuery {
         }
         let query_str = self.query.to_utf8();
         let writer = connection.get_writer();
-        if self.statement.is_null() {
-            // `MySQLStatement::new` sets the intrusive ref_count to 1.
-            let stmt = Box::new(MySQLStatement::new(
+        if self.statement.is_none() {
+            self.statement = Some(RefPtr::new(MySQLStatement::new(
                 Signature::empty(),
                 my_sql_statement::Status::Parsing,
-            ));
-            self.statement = bun_core::heap::into_raw(stmt);
+            )));
         }
         mysql_request::execute_query(query_str.slice(), writer)?;
 
@@ -276,12 +273,11 @@ impl MySQLQuery {
         columns_value: JSValue,
         binding_value: JSValue,
     ) -> crate::Result<()> {
-        let mut query_str: Option<bun_core::zig_string::Slice> = None;
-        // `defer if (query_str) |str| str.deinit()` — deleted: `Utf8Slice` impls `Drop`.
+        let mut query_str: Option<bun_core::Utf8Bytes<'_>> = None;
 
-        if self.statement.is_null() {
+        if self.statement.is_none() {
             let query = self.query.to_utf8();
-            let mut signature = match Signature::generate(
+            let signature = match Signature::generate(
                 global_object,
                 query.slice(),
                 binding_value,
@@ -309,50 +305,32 @@ impl MySQLQuery {
                 }
             };
 
-            if entry.found_existing {
-                let stmt: *mut MySQLStatement = *entry.value_ptr;
-                // `found_existing` ⇒ the map already holds a live, ref-counted
-                // `*mut MySQLStatement` (separate heap allocation, never aliases
-                // `*self`); this thread is the only mutator. Every access in this
-                // branch is a shared read (`status`, `error_response.to_js`,
-                // `ref_()` are `&self`), so a single `ParentRef` deref covers all
-                // three former per-site raw `(*stmt).…` derefs.
-                let stmt_ref = bun_ptr::ParentRef::from(
-                    core::ptr::NonNull::new(stmt).expect("found_existing ⇒ non-null map entry"),
-                );
-                if stmt_ref.status == my_sql_statement::Status::Failed {
-                    let error_response = stmt_ref.error_response.to_js(global_object);
-                    // If the statement failed, we need to throw the error
-                    let _ = global_object.throw_value(error_response);
-                    return Err(crate::Error::JSError);
+            match entry.value_ptr {
+                Some(stmt) => {
+                    if stmt.status == my_sql_statement::Status::Failed {
+                        let error_response = stmt.error_response.to_js(global_object);
+                        // If the statement failed, we need to throw the error
+                        let _ = global_object.throw_value(error_response);
+                        return Err(crate::Error::JSError);
+                    }
+                    self.statement = Some(stmt.clone());
                 }
-                self.statement = stmt;
-                stmt_ref.ref_();
-                drop(signature);
-                signature = Signature::default();
-                let _ = signature; // silences unused.
-            } else {
-                // One ref for `self.statement`, one for the map entry.
-                let mut stmt = Box::new(MySQLStatement::new(
-                    signature,
-                    my_sql_statement::Status::Pending,
-                ));
-                stmt.init_exact_refs(2);
-                let stmt = bun_core::heap::into_raw(stmt);
-                self.statement = stmt;
-                *entry.value_ptr = stmt;
+                slot @ None => {
+                    let stmt = RefPtr::new(MySQLStatement::new(
+                        signature,
+                        my_sql_statement::Status::Pending,
+                    ));
+                    self.statement = Some(stmt.clone());
+                    *slot = Some(stmt);
+                }
             }
         }
-        let stmt: *mut MySQLStatement = self.statement;
-        // `stmt` is non-null (set in both branches above) and kept alive by the
-        // intrusive ref in `self.statement`; separate heap allocation (never
-        // aliases `*self`). `ParentRef` collapses the read-only `(*stmt).status`
-        // / `(*stmt).error_response` derefs below into one safe `Deref`; the
-        // `.Pending` arm's status write goes through `get_statement()` (the
-        // single audited intrusive-pointer accessor).
-        let stmt_ref = bun_ptr::ParentRef::from(
-            core::ptr::NonNull::new(stmt).expect("self.statement set above"),
-        );
+        // `stmt` is kept alive by the ref in `self.statement`; separate heap
+        // allocation (never aliases `*self`). `ParentRef` collapses the
+        // read-only derefs below into one safe `Deref`; the `.Pending` arm's
+        // status write goes through `get_statement()`.
+        let stmt = self.statement.as_ref().expect("set above").as_non_null();
+        let (stmt, stmt_ref) = (stmt.as_ptr(), bun_ptr::ParentRef::from(stmt));
         match stmt_ref.status {
             my_sql_statement::Status::Failed => {
                 debug!("failed");
@@ -414,11 +392,10 @@ impl MySQLQuery {
         Ok(())
     }
 
-    /// Takes ownership of `query` (caller must have already ref'd it, e.g. via
-    /// `JSValue.toBunString`). `cleanup()` will deref it exactly once.
+    /// Takes ownership of `query`; `cleanup()` releases it.
     pub(crate) fn init(query: BunString, bigint: bool, simple: bool) -> Self {
         Self {
-            statement: core::ptr::null_mut(),
+            statement: None,
             query,
             status: Status::Pending,
             flags: Flags::new(bigint, simple),
@@ -479,19 +456,6 @@ impl MySQLQuery {
         self.status = Status::Fail;
 
         true
-    }
-
-    pub(crate) fn cleanup(&mut self) {
-        if !self.statement.is_null() {
-            let s = self.statement;
-            self.statement = core::ptr::null_mut();
-            // SAFETY: `s` is a live boxed `MySQLStatement` we held one intrusive ref on.
-            unsafe { MySQLStatement::deref(s) };
-        }
-        // `BunString` is `Copy` (no `Drop`); assigning `empty()` would NOT deref
-        // the old value, so release the +1 from `to_bun_string` explicitly.
-        let q = core::mem::replace(&mut self.query, BunString::empty());
-        q.deref();
     }
 
     #[inline]
@@ -557,10 +521,11 @@ impl MySQLQuery {
     #[inline]
     #[allow(clippy::mut_from_ref)] // goes through a raw intrusive pointer; see SAFETY note below
     pub(crate) fn get_statement(&self) -> Option<&mut MySQLStatement> {
-        // SAFETY: when non-null, `self.statement` is a live boxed `MySQLStatement`
-        // kept alive by the intrusive ref we hold. Returning `&mut` permits
-        // shared mutation through the intrusive pointer; the
-        // lifetime is bounded by `&self`, which owns one ref.
-        unsafe { self.statement.as_mut() }
+        // SAFETY: kept alive by the ref we hold. Returning `&mut` permits
+        // shared mutation through the intrusive pointer; the lifetime is
+        // bounded by `&self`, which owns one ref.
+        self.statement
+            .as_ref()
+            .map(|stmt| unsafe { &mut *stmt.as_ptr() })
     }
 }

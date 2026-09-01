@@ -31,8 +31,9 @@
  *     shapes (non-validating processors accept invalid-but-well-formed
  *     documents). When the catalogue gives a canonical OUTPUT file, the node
  *     tree ({ compact: false }) must serialize to it exactly (Second Canonical
- *     Form minus the DOCTYPE/notation block and processing instructions,
- *     which Bun.XML does not represent), the compact object must equal the
+ *     Form minus the DOCTYPE/notation block and processing instructions
+ *     outside the root element, which Bun.XML does not represent), the
+ *     compact object must equal the
  *     projection of that output, and stringify() of either shape must parse
  *     back to the same result.
  *   - ENTITIES != "none", TYPE="error", and the Namespaces-1.0 collection
@@ -185,7 +186,9 @@ for (const { describe, catalog, base } of COLLECTIONS) {
 // &amp; &lt; &gt; &quot; &#9; &#10; &#13; as the only references, empty
 // elements as start/end pairs, no comments, PIs kept — optionally preceded by
 // a DOCTYPE listing notations. That grammar is small enough to read exactly.
-type XNode = { name: string; attributes: Record<string, string>; children: (XNode | string)[] };
+type XPI = { target: string; data: string };
+type XComment = { comment: string };
+type XNode = { name: string; attributes: Record<string, string>; children: (XNode | XPI | XComment | string)[] };
 
 function readCanonical(src: string, id: string): XNode {
   let i = 0;
@@ -199,6 +202,15 @@ function readCanonical(src: string, id: string): XNode {
     if (end < 0) throw fail("unterminated PI");
     i = end + 2;
   };
+  // Canonical form writes `<?target data?>` with exactly one space.
+  const readPI = (): XPI => {
+    const end = src.indexOf("?>", i);
+    if (end < 0) throw fail("unterminated PI");
+    const body = src.slice(i + 2, end);
+    i = end + 2;
+    const sp = body.indexOf(" ");
+    return sp < 0 ? { target: body, data: "" } : { target: body.slice(0, sp), data: body.slice(sp + 1) };
+  };
   const readElement = (): XNode => {
     const m = /^<([^\s>/]+)((?: [^\s=]+="[^"]*")*)>/.exec(src.slice(i));
     if (!m) throw fail("bad start tag");
@@ -207,11 +219,8 @@ function readCanonical(src: string, id: string): XNode {
     for (const a of m[2].matchAll(/ ([^\s=]+)="([^"]*)"/g)) node.attributes[a[1]] = unescape(a[2]);
     let text = "";
     const flush = () => {
-      // Text split only by a (dropped) PI is one text node in Bun's tree.
       if (!text) return;
-      const last = node.children.length - 1;
-      if (last >= 0 && typeof node.children[last] === "string") node.children[last] += unescape(text);
-      else node.children.push(unescape(text));
+      node.children.push(unescape(text));
       text = "";
     };
     while (i < src.length) {
@@ -223,7 +232,7 @@ function readCanonical(src: string, id: string): XNode {
         return node;
       } else if (src.startsWith("<?", i)) {
         flush();
-        skipPI();
+        node.children.push(readPI());
       } else if (src[i] === "<") {
         flush();
         node.children.push(readElement());
@@ -265,8 +274,10 @@ function codePointCompare(a: string, b: string): number {
   }
   return x.length - y.length;
 }
-function writeCanonical(node: XNode | string): string {
+function writeCanonical(node: XNode | XPI | XComment | string): string {
   if (typeof node === "string") return node.replace(/[&<>"\t\n\r]/g, c => CANON_ESCAPES[c]);
+  if ("comment" in node) return "";
+  if ("target" in node) return `<?${node.target} ${node.data}?>`;
   const attrs = Object.keys(node.attributes)
     .sort(codePointCompare)
     .map(k => ` ${k}="${node.attributes[k].replace(/[&<>"\t\n\r]/g, c => CANON_ESCAPES[c])}"`)
@@ -275,10 +286,13 @@ function writeCanonical(node: XNode | string): string {
 }
 
 // Reference implementation of Bun.XML's compact projection (must match
-// CompactSink in src/parsers/xml.rs): attributes as "@name", repeated
-// same-name children as arrays in document order, all text concatenated and
-// trimmed of XML whitespace, a leaf with no attributes collapsing to its text.
-const XML_WS = /^[ \t\r\n]+|[ \t\r\n]+$/g;
+// CompactSink in src/parsers/xml.rs): attributes as "@name"; a leaf with no
+// attributes is its exact text; otherwise children keyed by name in order of
+// first appearance (repeats as arrays) with "#text" — the concatenation of the
+// text runs, minus whitespace-only runs between child elements (layout) —
+// placed where the first kept run fell. Comments and PIs vanish (text runs on
+// either side of one are a single run).
+const XML_WS_ONLY = /^[ \t\r\n]*$/;
 function toCompact(node: XNode): unknown {
   const obj: Record<string, unknown> = {};
   let hasAttributes = false;
@@ -286,24 +300,45 @@ function toCompact(node: XNode): unknown {
     defineOwn(obj, "@" + k, v);
     hasAttributes = true;
   }
-  let text = "";
-  let hasElements = false;
-  const groups = new Map<string, unknown[]>();
+  // Text runs as the compact builder sees them: split only by elements.
+  const runs: (string | XNode)[] = [];
   for (const child of node.children) {
-    if (typeof child === "string") {
-      text += child;
+    if (typeof child === "object" && !("name" in child)) continue;
+    if (typeof child === "string" && typeof runs[runs.length - 1] === "string") runs[runs.length - 1] += child;
+    else runs.push(child);
+  }
+  const hasElements = runs.some(r => typeof r !== "string");
+  if (!hasAttributes && !hasElements) return runs.join("");
+  if (!hasElements) {
+    const text = runs.join("");
+    if (text) defineOwn(obj, "#text", text);
+    return obj;
+  }
+  const order: string[] = [];
+  const groups = new Map<string, unknown[]>();
+  let text = "";
+  for (const run of runs) {
+    if (typeof run === "string") {
+      if (XML_WS_ONLY.test(run)) continue;
+      if (!text) order.push("#text");
+      text += run;
       continue;
     }
-    hasElements = true;
-    const value = toCompact(child);
-    const group = groups.get(child.name);
+    const value = toCompact(run);
+    const group = groups.get(run.name);
     if (group) group.push(value);
-    else groups.set(child.name, [value]);
+    else {
+      groups.set(run.name, [value]);
+      order.push(run.name);
+    }
   }
-  const trimmed = text.replace(XML_WS, "");
-  if (!hasAttributes && !hasElements) return trimmed;
-  for (const [name, values] of groups) defineOwn(obj, name, values.length === 1 ? values[0] : values);
-  if (trimmed !== "") defineOwn(obj, "#text", trimmed);
+  for (const name of order) {
+    if (name === "#text") defineOwn(obj, "#text", text);
+    else {
+      const values = groups.get(name)!;
+      defineOwn(obj, name, values.length === 1 ? values[0] : values);
+    }
+  }
   return obj;
 }
 function defineOwn(obj: Record<string, unknown>, key: string, value: unknown) {
@@ -553,7 +588,7 @@ let output = `// Tests generated from the W3C XML Conformance Test Suite, 201309
 import { XML } from "bun";
 import { describe, expect, test } from "bun:test";
 
-type XMLNode = { name: string; attributes: Record<string, string>; children: (XMLNode | string)[] };
+type XMLNode = XML.Node;
 
 const CANON_ESCAPES: Record<string, string> = {
   "&": "&amp;",
@@ -574,8 +609,10 @@ function codePointCompare(a: string, b: string): number {
   return x.length - y.length;
 }
 /** James Clark's Canonical XML for an element tree. */
-function canonicalize(node: XMLNode | string): string {
+function canonicalize(node: XMLNode | XML.Comment | XML.ProcessingInstruction | string): string {
   if (typeof node === "string") return node.replace(/[&<>"\\t\\n\\r]/g, c => CANON_ESCAPES[c]);
+  if ("comment" in node) return "";
+  if ("target" in node) return \`<?\${node.target} \${node.data}?>\`;
   const attrs = Object.keys(node.attributes)
     .sort(codePointCompare)
     .map(k => \` \${k}="\${node.attributes[k].replace(/[&<>"\\t\\n\\r]/g, c => CANON_ESCAPES[c])}"\`)

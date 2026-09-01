@@ -39,10 +39,10 @@ bun link <packages>
 </ParamField>
 
 <ParamField path="--no-save" type="boolean">
-  Don't update <code>package.json</code> or save a lockfile
+  Has no effect. <code>bun link</code> updates <code>package.json</code> and the lockfile only with <code>--save</code>
 </ParamField>
 
-<ParamField path="--save" type="boolean" default="true">
+<ParamField path="--save" type="boolean">
   Save to <code>package.json</code>
 </ParamField>
 
@@ -60,7 +60,7 @@ bun link <packages>
   Skip verifying integrity of newly downloaded packages
 </ParamField>
 
-<ParamField path="--backend" type="string" default="clonefile">
+<ParamField path="--backend" type="string">
   Platform-specific optimizations for installing dependencies. One of <code>clonefile</code>, <code>hardlink</code>,{" "}
   <code>symlink</code>, or <code>copyfile</code>
 </ParamField>
@@ -70,11 +70,12 @@ bun link <packages>
 </ParamField>
 
 <ParamField path="--dry-run" type="boolean">
-  Don't install anything
+  With <code>bun link &lt;package&gt;</code>, resolve but don't install packages, update <code>package.json</code>, or
+  save a lockfile. Has no effect on bare <code>bun link</code>, which still registers the current package
 </ParamField>
 
 <ParamField path="--ignore-scripts" type="boolean">
-  Skip lifecycle scripts in the project's <code>package.json</code> (dependency scripts are never run)
+  Skip lifecycle scripts for all packages, including the project's <code>package.json</code> and trusted dependencies
 </ParamField>
 
 ### Network &amp; Registry
@@ -119,7 +120,7 @@ bun link <packages>
 </ParamField>
 
 <ParamField path="--quiet" type="boolean">
-  Only show tarball name when packing
+  Disable the progress bar
 </ParamField>
 
 <ParamField path="--verbose" type="boolean">

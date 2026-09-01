@@ -15,7 +15,6 @@ pub use self::unicode::{
     decode_wtf8_rune_t_multibyte, wtf8_byte_sequence_length,
     wtf8_byte_sequence_length_with_invalid,
 };
-pub use unicode_draft::CodePointZero;
 
 // Sub-modules (peer files under `src/string/immutable/`).
 #[path = "immutable/escapeHTML.rs"]
@@ -280,8 +279,7 @@ pub fn memmem(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 
 /// How the width-generic (`_t`) scanners below hand a `&[T]` to highway: as
 /// the 8- or 16-bit lanes the kernels take, or `Wide` for element types they
-/// don't (e.g. diff-match-patch's `usize` line hashes), which keep a scalar
-/// arm. Safe via [`crate::cast_slice`]: `NoUninit` proves every byte of `T` is
+/// don't, which keep a scalar arm. Safe via [`crate::cast_slice`]: `NoUninit` proves every byte of `T` is
 /// initialized; the `u16` view additionally requires `T`'s own alignment.
 enum Lanes<'a> {
     U8(&'a [u8]),
@@ -354,8 +352,6 @@ pub fn contains_char_t<T: crate::NoUninit + Eq + Into<u32>>(self_: &[T], char: u
 
 #[inline]
 pub fn contains(self_: &[u8], str: &[u8]) -> bool {
-    // The generic index_of_t below returns Some(0) for an empty needle, so
-    // dispatch to the u8-specific index_of (which returns None for empty).
     index_of(self_, str).is_some()
 }
 
@@ -580,21 +576,6 @@ pub fn index_of(self_: &[u8], str: &[u8]) -> Option<usize> {
     Some(i)
 }
 
-/// Width-generic substring search. Unlike [`index_of`], an empty needle
-/// matches at `Some(0)`.
-pub fn index_of_t<T: crate::NoUninit + Eq>(haystack: &[T], needle: &[T]) -> Option<usize> {
-    match (lanes(haystack), lanes(needle)) {
-        (Lanes::U8(h), Lanes::U8(n)) => memmem(h, n),
-        (Lanes::U16(h), Lanes::U16(n)) => highway::memmem16(h, n),
-        _ => {
-            if needle.len() > haystack.len() {
-                return None;
-            }
-            (0..=haystack.len() - needle.len()).find(|&i| haystack[i..i + needle.len()] == *needle)
-        }
-    }
-}
-
 pub fn split<'a>(self_: &'a [u8], delimiter: &'a [u8]) -> SplitIterator<'a> {
     SplitIterator {
         buffer: self_,
@@ -656,13 +637,6 @@ impl<'a> SplitIterator<'a> {
         };
 
         Some(&self.buffer[start..end])
-    }
-
-    /// Returns a slice of the remaining bytes. Does not affect iterator state.
-    pub fn rest(&self) -> &'a [u8] {
-        let end = self.buffer.len();
-        let start = self.index.unwrap_or(end);
-        &self.buffer[start..end]
     }
 }
 
@@ -1553,7 +1527,15 @@ pub enum DecodeHexError {
 /// `u16` (UTF-16). The associated function routes full pairs through the
 /// matching Highway kernel while `_decode_hex_to_bytes` keeps the generic
 /// scalar path for short inputs.
-pub trait HexChar: Copy + Into<u32> {
+///
+/// A UTF-16 code unit is classified by its low byte, which is what Node's
+/// `Buffer` hex decoder does (`Buffer.from("\uff41", "hex")` sees `'A'`):
+/// a unit above 0xFF decodes when its low byte is a hex digit and stops the
+/// decode when it is not. The Highway kernels apply the same narrowing.
+pub trait HexChar: Copy {
+    /// The byte the decoder classifies and looks up in `HEX_TABLE`.
+    fn hex_byte(self) -> u8;
+
     /// Decode up to `min(src.len() / 2, dst.len())` hex pairs with SIMD,
     /// stopping at the first pair containing a non-hex character.
     /// Returns the number of bytes written.
@@ -1562,12 +1544,22 @@ pub trait HexChar: Copy + Into<u32> {
 
 impl HexChar for u8 {
     #[inline(always)]
+    fn hex_byte(self) -> u8 {
+        self
+    }
+
+    #[inline(always)]
     fn decode_hex_highway(src: &[Self], dst: &mut [u8]) -> usize {
         highway::decode_hex(src, dst)
     }
 }
 
 impl HexChar for u16 {
+    #[inline(always)]
+    fn hex_byte(self) -> u8 {
+        self as u8
+    }
+
     #[inline(always)]
     fn decode_hex_highway(src: &[Self], dst: &mut [u8]) -> usize {
         highway::decode_hex_u16(src, dst)
@@ -1621,18 +1613,8 @@ fn _decode_hex_to_bytes<Char: HexChar, const TRUNCATE: bool>(
     let mut input = source;
 
     while !remain.is_empty() && input.len() > 1 {
-        let int0: u32 = input[0].into();
-        let int1: u32 = input[1].into();
-        if core::mem::size_of::<Char>() > 1 {
-            if int0 > u8::MAX as u32 || int1 > u8::MAX as u32 {
-                if TRUNCATE {
-                    break;
-                }
-                return Err(DecodeHexError::InvalidByteSequence);
-            }
-        }
-        let a = HEX_TABLE[(int0 as u8) as usize];
-        let b = HEX_TABLE[(int1 as u8) as usize];
+        let a = HEX_TABLE[input[0].hex_byte() as usize];
+        let b = HEX_TABLE[input[1].hex_byte() as usize];
         if a == INVALID_CHAR || b == INVALID_CHAR {
             if TRUNCATE {
                 break;
@@ -2074,7 +2056,6 @@ pub fn must_escape_yaml_string(contents: &[u8]) -> bool {
 #[derive(Copy, Clone)]
 pub struct QuoteEscapeFormatFlags {
     pub quote_char: u8,
-    pub ascii_only: bool,
     pub json: bool,
     pub str_encoding: Encoding,
 }
@@ -2083,7 +2064,6 @@ impl Default for QuoteEscapeFormatFlags {
     fn default() -> Self {
         Self {
             quote_char: b'"',
-            ascii_only: false,
             json: false,
             str_encoding: Encoding::Utf8,
         }
@@ -2111,9 +2091,7 @@ impl core::fmt::Display for QuoteEscapeFormat<'_> {
             self.data,
             &mut buf,
             self.flags.quote_char,
-            // Hardcoded `false` regardless of
-            // `flags.ascii_only`; the field is dead in QuoteEscapeFormat.
-            false,
+            false, // ascii_only
             self.flags.json,
             self.flags.str_encoding,
         )
@@ -2599,7 +2577,7 @@ pub fn to_utf16_alloc(
         .map_err(|_| ToUTF16Error::OutOfMemory)?;
     // SAFETY: `out` has ≥ `out_length` u16 of capacity (just reserved). simdutf
     // never reads from the output buffer and writes at most `out_length` code
-    // units (the upper bound returned by `utf16_length_from_utf8`), so passing
+    // units (the upper bound returned by `simdutf__utf16_length_from_utf8`), so passing
     // uninitialised storage is sound. We only commit the length after success.
     let res = unsafe {
         simdutf::simdutf__convert_utf8_to_utf16le_with_errors(
@@ -2646,36 +2624,71 @@ pub fn to_utf16_alloc(
 
 /// WTF-8 → UTF-16LE iff `bytes` contains any non-ASCII byte; pure-ASCII inputs return `None`.
 pub fn wtf8_to_utf16_alloc(bytes: &[u8]) -> Option<Vec<u16>> {
-    first_non_ascii(bytes)?;
+    let first_non_ascii = first_non_ascii_usize(bytes)?;
+    let mut out: Vec<u16> = Vec::with_capacity(bytes.len());
+    // SAFETY: `bytes.len()` u16 of capacity is the bound `write_wtf8_as_utf16le` requires.
+    unsafe {
+        let n = write_wtf8_as_utf16le(bytes, first_non_ascii, out.as_mut_ptr().cast::<u8>());
+        out.set_len(n / 2);
+    }
+    Some(out)
+}
 
-    let out_length = simdutf::length::utf16::from::utf8(bytes);
-    let mut out: Vec<u16> = Vec::with_capacity(out_length.max(1));
-    // SAFETY: `out` has ≥ `out_length` u16 of capacity; simdutf writes at most that many.
+/// Writes `bytes` (WTF-8) as little-endian UTF-16 code units starting at `dst` and returns the
+/// number of bytes written. `first_non_ascii` is the caller's `strings::first_non_ascii(bytes)`:
+/// that prefix is widened directly and only the rest goes through simdutf; a lone surrogate or an
+/// invalid byte there falls to a scalar loop (invalid byte → U+FFFD, lone surrogate kept).
+///
+/// # Safety
+/// `dst` must be 2-byte aligned and valid for `2 * bytes.len()` bytes of writes (every input byte yields at
+/// most one unit); `first_non_ascii <= bytes.len()` and `bytes[..first_non_ascii]` is ASCII.
+pub unsafe fn write_wtf8_as_utf16le(bytes: &[u8], first_non_ascii: usize, dst: *mut u8) -> usize {
+    debug_assert!(dst.addr().is_multiple_of(2) && is_all_ascii(&bytes[..first_non_ascii]));
+    for (i, &b) in bytes[..first_non_ascii].iter().enumerate() {
+        // SAFETY: `2 * i + 1 < 2 * bytes.len()`.
+        unsafe {
+            dst.add(2 * i)
+                .cast::<[u8; 2]>()
+                .write_unaligned(u16::from(b).to_le_bytes())
+        };
+    }
+    let mut written = 2 * first_non_ascii;
+    let bytes = &bytes[first_non_ascii..];
+    #[expect(
+        clippy::cast_ptr_alignment,
+        reason = "caller contract: dst is 2-byte aligned"
+    )]
+    // SAFETY: caller contract; simdutf writes at most `utf16_length_from_utf8(bytes) <= bytes.len()` units.
     let res = unsafe {
         simdutf::simdutf__convert_utf8_to_utf16le_with_errors(
             bytes.as_ptr(),
             bytes.len(),
-            out.as_mut_ptr(),
+            dst.add(written).cast::<u16>(),
         )
     };
-    if res.is_successful() && out_length > 0 {
-        // SAFETY: on success simdutf initialised exactly `out_length` u16s.
-        unsafe { out.set_len(out_length) };
-        return Some(out);
+    if res.is_successful() {
+        return written + res.count * 2;
     }
-
-    out.reserve(bytes.len());
+    let mut put = |unit: u16| {
+        // SAFETY: at most one unit per input byte consumed, within the caller's `2 * bytes.len()`.
+        unsafe {
+            dst.add(written)
+                .cast::<[u8; 2]>()
+                .write_unaligned(unit.to_le_bytes())
+        };
+        written += 2;
+    };
     let mut i = 0usize;
     while i < bytes.len() {
         let b = bytes[i];
         if b < 0x80 {
-            out.push(u16::from(b));
+            put(u16::from(b));
             i += 1;
             continue;
         }
         let width = wtf8_byte_sequence_length_with_invalid(b);
         if width == 1 {
-            out.push(UNICODE_REPLACEMENT as u16);
+            put(UNICODE_REPLACEMENT as u16);
             i += 1;
             continue;
         }
@@ -2684,14 +2697,21 @@ pub fn wtf8_to_utf16_alloc(bytes: &[u8]) -> Option<Vec<u16>> {
         buf[..take].copy_from_slice(&bytes[i..i + take]);
         let cp = decode_wtf8_rune_t::<i32>(buf, width, -1);
         if cp < 0 {
-            out.push(UNICODE_REPLACEMENT as u16);
+            put(UNICODE_REPLACEMENT as u16);
             i += 1;
             continue;
         }
-        push_codepoint_utf16(&mut out, cp as u32);
+        let cp = cp as u32;
+        if cp < 0x10000 {
+            put(cp as u16);
+        } else {
+            let c = cp - 0x10000;
+            put(0xD800 + (c >> 10) as u16);
+            put(0xDC00 + (c & 0x3FF) as u16);
+        }
         i += take;
     }
-    Some(out)
+    written
 }
 
 /// `PATTERN_KEY_COMPARE` from the Node.js ESM resolution spec — the comparator

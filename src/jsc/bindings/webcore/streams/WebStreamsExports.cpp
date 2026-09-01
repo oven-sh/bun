@@ -45,11 +45,40 @@ using namespace JSC;
 using namespace WebCore;
 using namespace Bun::WebStreams;
 
+// A JSReadableStream's tag and native source. Pure: no scope, no traps, no script.
+static int32_t tagOfStream(JSReadableStream* stream, void** ptr)
+{
+    // The RAW handle slot, not nativePtrForJS(): a transferred stream still tags.
+    JSValue handle = stream->m_nativePtr.get();
+    if (handle.isEmpty() || !handle.isCell())
+        return 0;
+    JSCell* handleCell = handle.asCell();
+    if (auto* blobSource = dynamicDowncast<JSBlobInternalReadableStreamSource>(handleCell)) {
+        *ptr = blobSource->wrapped();
+        return 1;
+    }
+    if (auto* fileSource = dynamicDowncast<JSFileInternalReadableStreamSource>(handleCell)) {
+        *ptr = fileSource->wrapped();
+        return 2;
+    }
+    if (auto* bytesSource = dynamicDowncast<JSBytesInternalReadableStreamSource>(handleCell)) {
+        *ptr = bytesSource->wrapped();
+        return 4;
+    }
+    return 0;
+}
+
+// Re-tag a value known to be a stream (one a Strong/Weak handle holds). -1, `*ptr` untouched, if it is not one after all.
+extern "C" int32_t ReadableStreamTag__taggedStream(JSC::EncodedJSValue value, void** ptr)
+{
+    auto* stream = dynamicDowncast<JSReadableStream>(JSValue::decode(value));
+    return stream ? tagOfStream(stream, ptr) : -1;
+}
+
 extern "C" int32_t ReadableStreamTag__tagged(Zig::GlobalObject* globalObject, JSC::EncodedJSValue* possibleReadableStream, void** ptr)
 {
-    *ptr = nullptr;
     JSValue value = JSValue::decode(*possibleReadableStream);
-    if (value.isEmpty() || !value.isCell())
+    if (!value.isCell())
         return -1;
     JSObject* object = value.getObject();
     if (!object)
@@ -57,26 +86,8 @@ extern "C" int32_t ReadableStreamTag__tagged(Zig::GlobalObject* globalObject, JS
 
     auto& vm = JSC::getVM(globalObject);
 
-    if (auto* stream = dynamicDowncast<JSReadableStream>(object)) {
-        // The RAW handle slot, not nativePtrForJS(): a transferred stream still tags.
-        JSValue handle = stream->m_nativePtr.get();
-        if (handle.isEmpty() || !handle.isCell())
-            return 0;
-        JSCell* handleCell = handle.asCell();
-        if (auto* blobSource = dynamicDowncast<JSBlobInternalReadableStreamSource>(handleCell)) {
-            *ptr = blobSource->wrapped();
-            return 1;
-        }
-        if (auto* fileSource = dynamicDowncast<JSFileInternalReadableStreamSource>(handleCell)) {
-            *ptr = fileSource->wrapped();
-            return 2;
-        }
-        if (auto* bytesSource = dynamicDowncast<JSBytesInternalReadableStreamSource>(handleCell)) {
-            *ptr = bytesSource->wrapped();
-            return 4;
-        }
-        return 0;
-    }
+    if (auto* stream = dynamicDowncast<JSReadableStream>(object))
+        return tagOfStream(stream, ptr);
 
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (!isNonHostAsyncGeneratorFunction(object)) {
@@ -128,7 +139,9 @@ extern "C" bool ReadableStream__isLocked(JSC::EncodedJSValue possibleReadableStr
     return stream && isReadableStreamLocked(stream);
 }
 
-extern "C" void ReadableStream__cancel(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject* globalObject)
+// cancel / cancelWithReason / error: the source's own cancel failure is the cancel promise's rejection
+// (marked handled); anything thrown synchronously is left pending for the Rust wrapper (check_slow).
+extern "C" [[ZIG_EXPORT(check_slow)]] void ReadableStream__cancel(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject* globalObject)
 {
     auto* stream = dynamicDowncast<JSReadableStream>(JSValue::decode(possibleReadableStream));
     if (!stream) [[unlikely]]
@@ -139,51 +152,34 @@ extern "C" void ReadableStream__cancel(JSC::EncodedJSValue possibleReadableStrea
         return;
 
     auto& vm = JSC::getVM(globalObject);
-    // The native caller cannot observe VM exception state, so nothing may stay pending
-    // here (a termination does, by design).
-    auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue reason = WebCore::createDOMException(globalObject, WebCore::ExceptionCode::AbortError);
-    if (catchScope.exception()) [[unlikely]] {
-        catchScope.clearExceptionExceptTermination();
-        return;
-    }
+    RETURN_IF_EXCEPTION(scope, );
     auto* result = readableStreamCancel(globalObject, stream, reason);
-    if (catchScope.exception()) [[unlikely]] {
-        catchScope.clearExceptionExceptTermination();
-        return;
-    }
+    RETURN_IF_EXCEPTION(scope, );
     markPromiseAsHandled(vm, result);
 }
 
-extern "C" void ReadableStream__cancelWithReason(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject* globalObject, JSC::EncodedJSValue reason)
+extern "C" [[ZIG_EXPORT(check_slow)]] void ReadableStream__cancelWithReason(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject* globalObject, JSC::EncodedJSValue reason)
 {
     auto* stream = dynamicDowncast<JSReadableStream>(JSValue::decode(possibleReadableStream));
     if (!stream) [[unlikely]]
         return;
 
     auto& vm = JSC::getVM(globalObject);
-    // See ReadableStream__cancel: never return to the native caller with a pending exception.
-    auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     auto* result = readableStreamCancel(globalObject, stream, JSValue::decode(reason));
-    if (catchScope.exception()) [[unlikely]] {
-        catchScope.clearExceptionExceptTermination();
-        return;
-    }
+    RETURN_IF_EXCEPTION(scope, );
     markPromiseAsHandled(vm, result);
 }
 
-extern "C" void ReadableStream__error(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject* globalObject, JSC::EncodedJSValue reason)
+extern "C" [[ZIG_EXPORT(check_slow)]] void ReadableStream__error(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject* globalObject, JSC::EncodedJSValue reason)
 {
     auto* stream = dynamicDowncast<JSReadableStream>(JSValue::decode(possibleReadableStream));
     if (!stream) [[unlikely]]
         return;
 
-    auto& vm = JSC::getVM(globalObject);
-    // See ReadableStream__cancel: never return to the native caller with a pending exception.
-    auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     Bun::WebStreams::webStreamControllerError(globalObject, stream, JSValue::decode(reason));
-    if (catchScope.exception()) [[unlikely]]
-        catchScope.clearExceptionExceptTermination();
 }
 
 extern "C" void ReadableStream__detach(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject* globalObject)
@@ -192,7 +188,6 @@ extern "C" void ReadableStream__detach(JSC::EncodedJSValue possibleReadableStrea
     if (!stream) [[unlikely]]
         return;
     stream->m_nativePtr.set(globalObject->vm(), stream, jsNumber(-1));
-    stream->m_nativeType = 0;
     stream->m_disturbed = true;
 }
 

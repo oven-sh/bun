@@ -9,8 +9,6 @@
 //! resume the parent state via NodeId).
 
 use crate::shell::interpreter::{Interpreter, NodeId, ShellTask};
-use bun_jsc::ConcurrentTask::ConcurrentTask;
-
 /// Task payload for [`ShellAsync`](crate::shell::states::r#async::Async)'s
 /// bounce back to the main thread. The state lives in `interp.nodes`, so
 /// the enqueued payload is `(interp, node)`.
@@ -18,7 +16,6 @@ use bun_jsc::ConcurrentTask::ConcurrentTask;
 pub(crate) struct ShellAsyncTask {
     pub interp: *mut Interpreter,
     pub node: NodeId,
-    pub concurrent_task: ConcurrentTask,
 }
 
 /// Stat task backing shell conditional expressions (`[ -f x ]` etc.). Wraps an

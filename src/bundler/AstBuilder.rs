@@ -387,7 +387,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
                         self.record_export(st.default_name.loc, b"default", default_ref)?;
                         // convertStmt: AstBuilder only emits the `.expr` arm
                         // (`registerClientReference(...)`), which is not
-                        // `canBeMoved()` — generate a temp const binding and
+                        // `can_be_moved()` — generate a temp const binding and
                         // reference it from `export_props`.
                         // SAFETY: `StmtOrExpr` lives in the arena and has no
                         // Drop fields, so a bitwise read is a plain value copy.
@@ -547,17 +547,15 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
             exports_kind: ExportsKind::Esm,
             named_imports: core::mem::take(&mut self.named_imports),
             named_exports: core::mem::take(&mut self.named_exports),
+            dynamic_import_aliases: Default::default(),
             top_level_symbols_to_parts,
             char_freq: bun_ast::CharFreq { freqs: [0; 64] },
             flags: Default::default(),
             target,
             top_level_await_keyword: Range::NONE,
-            // .nested_scope_slot_counts = if (p.options.features.minify_identifiers)
-            //     renamer.assignNestedScopeSlots(p.arena, p.scopes.items[0], p.symbols.items)
-            // else
-            //     js_ast.SlotCounts{},
             nested_scope_slot_counts: Default::default(),
             hashbang: b"".into(),
+            export_default_alias_of_import: Ref::NONE,
             css: None,
             url_for_css: b"",
             require_ref: Ref::NONE,

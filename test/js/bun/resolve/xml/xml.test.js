@@ -14,7 +14,7 @@ const expectedFixture = {
         { "@name": "lodash", "@enabled": "false" },
       ],
     },
-    dev: { "@port": "3000", b: "on", "#text": "watch" },
+    dev: { "@port": "3000", "#text": "watch ", b: "on" },
     empty: "",
   },
 };

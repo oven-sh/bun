@@ -1,0 +1,7 @@
+{
+  "name": "v9-patched-git-hosted",
+  "version": "1.0.0",
+  "dependencies": {
+    "is-positive": "github:kevva/is-positive"
+  }
+}

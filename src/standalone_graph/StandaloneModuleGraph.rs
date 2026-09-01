@@ -2,7 +2,7 @@
 //! But this incurred a fixed 350ms overhead on every build, which is unacceptable
 //! so we give up on codesigning support on macOS for now until we can find a better solution
 
-use core::mem::size_of;
+use core::mem::{align_of, size_of};
 use core::ptr::NonNull;
 use std::io::Write as _;
 use std::sync::Arc;
@@ -21,7 +21,7 @@ use bun_paths::{self as path, PathBuffer, strings};
 #[cfg(windows)]
 use bun_paths::{OSPathBuffer, WPathBuffer};
 use bun_sourcemap as SourceMap;
-use bun_sys::{self as Syscall, Fd, FdExt as _, Stat};
+use bun_sys::{self as Syscall, E, Fd, FdExt as _, Stat};
 
 bun_core::declare_scope!(StandaloneModuleGraph, hidden);
 
@@ -45,6 +45,15 @@ pub struct StandaloneModuleGraph {
     pub entry_point_id: u32,
     pub compile_exec_argv: &'static [u8],
     pub flags: Flags,
+    /// InternalModuleRegistry id → its bytecode inside `bytes` (JSC reads it in place; see `File::bytecode`).
+    pub builtin_bytecode: Vec<(u32, *mut [u8])>,
+    /// The one shared bytecode string table (`JSC::EncoderStringTable::serialize`) every chunk's payload references by ordinal; installed on the VM's `DecoderStringTable` at startup.
+    pub bytecode_string_table: &'static [u8],
+    /// The slot table every module's `module_info` body indexes (`ModuleInfoSlotTable`); empty when there is none.
+    pub module_info_string_table: &'static [u8],
+    /// The first `startup_module_count` of `files` (table order = load order) are the entry
+    /// point's static import closure, i.e. what loads before the first `import()`.
+    pub startup_module_count: u32,
 }
 
 // We never want to hit the filesystem for these files
@@ -75,15 +84,13 @@ pub const BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX: &str = const_format::concatcp!("
 pub const BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX: &str = const_format::concatcp!("/$bunfs/", "root/");
 
 // A process-lifetime `OnceLock` (PORTING.md §Concurrency: never `static mut`).
-// `get()` returns a raw `*mut`; callers
-// mutate `wtf_string` / `cached_blob` / `sourcemap` lazily. A future reshape
-// could push interior mutability down to those per-`File` fields (`UnsafeCell<…>`)
-// so read-only paths (`find`, `entry_point`, `stat`) can take `&self`.
+// `get()` returns a raw `*mut`; the only post-init mutation is
+// `File::sourcemap` (`LazySourceMap::load`, serialized by `INIT_LOCK`).
 struct Instance(core::cell::UnsafeCell<StandaloneModuleGraph>);
 // SAFETY: the graph is populated once at startup before any worker threads;
-// post-init mutation is limited to per-`File` lazy fields. NOTE: `INIT_LOCK`
-// only guards `LazySourceMap::load`; `File::to_wtf_string` and `cached_blob`
-// mutate without any lock and rely on idempotence + JSC's own synchronization.
+// after that `File::sourcemap` is mutated only under `INIT_LOCK` and
+// `File::cached_blob` / `File::wtf_string` are `OnceLock`s. Everything else
+// is read-only.
 // (`Send` is auto-derived: `UnsafeCell<T: Send>` is `Send`.)
 unsafe impl Sync for Instance {}
 
@@ -99,7 +106,7 @@ impl StandaloneModuleGraph {
         INSTANCE.get().map(|cell| cell.0.get())
     }
 
-    /// Read-only lookups. Use `get()` when mutating per-`File` lazy caches.
+    /// Read-only lookups. Use `get()` only for `LazySourceMap::load`.
     pub fn get_ref() -> Option<&'static StandaloneModuleGraph> {
         // SAFETY: `Instance` is `Sync`; the `&self` methods touch only the immutable tables.
         INSTANCE.get().map(|cell| unsafe { &*cell.0.get() })
@@ -151,9 +158,8 @@ pub fn is_bun_standalone_file_path(str_: &[u8]) -> bool {
 }
 
 impl StandaloneModuleGraph {
-    // Callers mutate `wtf_string` / `cached_blob`, so these accessors take
-    // `&mut self`. Switching to `UnsafeCell` per-`File`
-    // fields would let read-only paths take `&self`; see the `Instance` note above.
+    // `&mut` only for `File::sourcemap` (`LazySourceMap::load`); every other
+    // per-`File` access goes through `get_ref()` / `find_ref()`.
     pub fn entry_point(&mut self) -> &mut File {
         &mut self.files.values_mut()[self.entry_point_id as usize]
     }
@@ -221,6 +227,24 @@ impl StandaloneModuleGraph {
         self.dirs.contains_key(name)
     }
 
+    /// Directory `name`'s stored key (posix-separated, no trailing `/`), or
+    /// the errno an `open(O_DIRECTORY)` of it would produce.
+    pub fn dir_key(&self, name: &[u8]) -> Result<&[u8], E> {
+        if !is_bun_standalone_file_path(name) {
+            return Err(E::ENOENT);
+        }
+        let mut buf = PathBuffer::uninit();
+        let name = Self::normalize_dir_path(name, &mut buf);
+        if let Some(index) = self.dirs.get_index(name) {
+            return Ok(&self.dirs.keys()[index]);
+        }
+        Err(if self.lookup_file(name).is_some() {
+            E::ENOTDIR
+        } else {
+            E::ENOENT
+        })
+    }
+
     /// `(entry, is_dir)`; `entry` is the basename, or the `name`-relative path when `recursive`.
     pub fn readdir(&self, name: &[u8], recursive: bool) -> Option<Vec<(Box<[u8]>, bool)>> {
         if !is_bun_standalone_file_path(name) {
@@ -281,15 +305,13 @@ fn normalize_file_key<'a>(name: &'a [u8], buf: &'a mut PathBuffer) -> &'a [u8] {
 }
 
 // SAFETY: the graph is the process-global INSTANCE singleton (set once at
-// startup, never freed). The raw-pointer / `Cell` fields it carries are
-// `bun_runtime`-owned caches (`cached_blob`, `wtf_string`, source-map state)
-// that are only ever touched from the JS main thread under the API lock; the
-// resolver-facing read path below touches none of them. The graph pointer is
-// shared across worker threads through the resolver, which is why the
-// `Send + Sync` supertrait on `bun_resolver::StandaloneModuleGraph` must be
-// satisfied.
+// startup, never freed) shared by the main VM, Workers and resolver threads.
+// The raw pointers in `File` point into the immortal section; `cached_blob`
+// and `wtf_string` are `OnceLock`s holding VM-independent state only (null
+// `global_this`, shared string impls); `sourcemap` is mutated only under
+// `INIT_LOCK`.
 unsafe impl Send for StandaloneModuleGraph {}
-// SAFETY: see `Send` impl — post-init mutation is confined to per-`File` lazy caches on the JS thread.
+// SAFETY: see `Send` impl.
 unsafe impl Sync for StandaloneModuleGraph {}
 
 /// Resolver-facing trait object impl. The resolver and VM hold the graph as
@@ -301,12 +323,12 @@ unsafe impl Sync for StandaloneModuleGraph {}
 /// slice; the `&mut`-returning inherent methods above stay for the runtime's
 /// blob/sourcemap caching path.
 impl bun_resolver::StandaloneModuleGraph for StandaloneModuleGraph {
-    fn find_assume_standalone_path(&self, name: &[u8]) -> Option<&[u8]> {
-        self.lookup_file(name).map(|f| f.name)
+    fn has_module_info(&self, name: &[u8]) -> bool {
+        self.find_ref(name)
+            .is_some_and(|file| !file.module_info.is_empty())
     }
-
-    fn find(&self, name: &[u8]) -> Option<&[u8]> {
-        self.find_ref(name).map(|f| f.name)
+    fn find_assume_standalone_path(&self, name: &[u8]) -> Option<&'static [u8]> {
+        self.lookup_file(name).map(|f| f.name)
     }
 
     fn base_public_path_with_default_suffix(&self) -> &'static [u8] {
@@ -315,6 +337,47 @@ impl bun_resolver::StandaloneModuleGraph for StandaloneModuleGraph {
 
     fn compile_exec_argv(&self) -> &[u8] {
         self.compile_exec_argv
+    }
+    fn builtin_module_bytecode(&self, id: u32) -> Option<*mut [u8]> {
+        StandaloneModuleGraph::builtin_module_bytecode(self, id)
+    }
+    fn bytecode_string_table(&self) -> &'static [u8] {
+        self.bytecode_string_table
+    }
+    fn module_graph_load_bytes(&self) -> usize {
+        let modules: usize = self
+            .files
+            .values()
+            .iter()
+            .filter(|f| f.loader.is_javascript_like() || !f.bytecode.is_empty())
+            .map(|f| if f.bytecode.is_empty() { f.contents.len() } else { f.bytecode.len() } + f.module_info.len())
+            .sum();
+        let builtins: usize = self
+            .builtin_bytecode
+            .iter()
+            .map(|&(_, bytes)| bytes.len())
+            .sum();
+        modules + builtins + self.bytecode_string_table.len()
+    }
+    fn page_out(&self) {
+        #[cfg(target_os = "linux")]
+        {
+            if bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_STANDALONE_MADVISE::get()
+                .unwrap_or(false)
+            {
+                return;
+            }
+            let bytes = self.bytes;
+            let page = bun_alloc::page_size();
+            let lo = (bytes.cast::<u8>() as usize + page - 1) & !(page - 1);
+            let hi = (bytes.cast::<u8>() as usize + bytes.len()) & !(page - 1);
+            if hi > lo {
+                // SAFETY: `[lo, hi)` is inside the mapped executable image. MADV_PAGEOUT reclaims the pages without
+                // losing data: clean file-backed pages are dropped and re-read from the file on the next access, the
+                // few dirtied (COW) ones go to swap if there is any and otherwise stay.
+                unsafe { libc::madvise(lo as *mut core::ffi::c_void, hi - lo, libc::MADV_PAGEOUT) };
+            }
+        }
     }
 }
 
@@ -349,8 +412,10 @@ pub enum Encoding {
     Binary = 0,
     #[default]
     Latin1 = 1,
-    // Not used yet.
-    Utf8 = 2,
+    /// Little-endian UTF-16 code units at an even section offset. Reuses the
+    /// value of the never-written `Utf8` variant so an older runtime reads it
+    /// through its plain-copy arm, not as an invalid discriminant.
+    Utf16 = 2,
 }
 
 #[repr(u8)]
@@ -390,6 +455,57 @@ mod macho {
         let slice_ptr = length_ptr.cast::<u8>();
         // SAFETY: section data is `length` bytes immediately following the u64 header.
         Some((unsafe { slice_ptr.add(data_offset) }, length as usize))
+    }
+
+    unsafe extern "C" {
+        /// `<mach-o/getsect.h>`: the named segment's load command in the main executable.
+        fn getsegbyname(
+            segname: *const core::ffi::c_char,
+        ) -> *const bun_sys::macho::segment_command_64;
+        /// `<mach-o/dyld.h>`: the path dyld loaded image `image_index` from.
+        fn _dyld_get_image_name(image_index: u32) -> *const core::ffi::c_char;
+    }
+
+    /// `F_RDADVISE` on the executable for the file bytes backing `[lo, hi)`: an
+    /// asynchronous read into the page cache that returns at once.
+    /// (`MADV_WILLNEED` blocks on Darwin until the pages are in, so it is no use
+    /// for overlapping I/O with startup.)
+    pub(super) fn read_ahead(lo: usize, hi: usize) {
+        // SAFETY: NUL-terminated segment name; returns null or a pointer into the
+        // main image's load commands, which live as long as the process.
+        let segment = unsafe { getsegbyname(c"__BUN".as_ptr()) };
+        if segment.is_null() {
+            return;
+        }
+        // SAFETY: non-null per the check above.
+        let segment = unsafe { &*segment };
+        let slide = bun_sys::c::_dyld_get_image_vmaddr_slide(0) as usize;
+        let segment_start = (segment.vmaddr as usize).wrapping_add(slide);
+        let segment_end = segment_start.saturating_add(segment.filesize as usize);
+        if lo < segment_start || hi > segment_end {
+            return;
+        }
+        // SAFETY: image 0 is the main executable; dyld keeps its NUL-terminated
+        // path alive for the life of the process.
+        let exe_path = unsafe { bun_core::ZStr::from_c_ptr(_dyld_get_image_name(0)) };
+        let Ok(file) = bun_sys::File::open(exe_path, bun_sys::O::RDONLY | bun_sys::O::CLOEXEC, 0)
+        else {
+            return;
+        };
+        let advisory = libc::radvisory {
+            ra_offset: (lo - segment_start + segment.fileoff as usize) as libc::off_t,
+            ra_count: (hi - lo).min(i32::MAX as usize) as core::ffi::c_int,
+        };
+        // SAFETY: `advisory` is a valid `struct radvisory` for the duration of
+        // the call; the fd stays open until `file` drops below.
+        let rc = unsafe { libc::fcntl(file.fd().native(), libc::F_RDADVISE, &advisory) };
+        bun_core::scoped_log!(
+            super::StandaloneModuleGraph,
+            "prefetch: F_RDADVISE offset={} count={} rc={}",
+            advisory.ra_offset,
+            advisory.ra_count,
+            rc
+        );
     }
 }
 
@@ -442,12 +558,17 @@ mod elf {
         if vaddr == 0 {
             return None;
         }
-        // BUN_COMPILED.size holds the virtual address of the appended data.
-        // The kernel mapped it via PT_LOAD, so we can dereference directly.
+        // BUN_COMPILED.size holds the link-time virtual address of the
+        // appended data. For a PIE executable (mandatory on Android) the
+        // kernel maps every PT_LOAD at that vaddr plus a load bias, which is
+        // `dlpi_addr` of the object containing BUN_COMPILED itself; for
+        // non-PIE it is 0.
         // Format at target: [u64 payload_len][payload bytes]
         // Synthesize a `*mut u8` directly so the provenance carries write
         // permission for the in-place bytecode mutation done by JSC.
-        let target = vaddr as *mut u8;
+        let load_bias =
+            bun_sys::elf::find_loaded_module(vaddr_ptr as usize).map_or(0, |m| m.base_address);
+        let target = (vaddr as usize).wrapping_add(load_bias) as *mut u8;
         // SAFETY: target points to 8-byte little-endian length prefix.
         let payload_len =
             u64::from_le_bytes(unsafe { core::ptr::read_unaligned(target.cast::<[u8; 8]>()) });
@@ -457,6 +578,36 @@ mod elf {
         // SAFETY: payload_len bytes follow the 8-byte header at `target`.
         Some((unsafe { target.add(8) }, payload_len as usize))
     }
+
+    /// `MADV_WILLNEED` over `[lo, hi)`: queues page-cache readahead for the
+    /// file bytes backing the mapping and returns once the I/O is submitted.
+    /// Issued in 128 KiB pieces because one call reads at most
+    /// `max(bdi->io_pages, ra_pages)` (device dependent, 128 KiB on some).
+    pub(super) fn read_ahead(lo: usize, hi: usize) {
+        const PIECE: usize = 128 * 1024;
+        let mut at = lo & !(bun_alloc::page_size() - 1);
+        while at < hi {
+            let len = PIECE.min(hi - at);
+            // SAFETY: `[at, at + len)` lies inside the mapped executable
+            // image; `MADV_WILLNEED` neither reads nor writes through it.
+            let rc =
+                unsafe { libc::madvise(at as *mut core::ffi::c_void, len, libc::MADV_WILLNEED) };
+            if rc != 0 {
+                bun_core::scoped_log!(
+                    super::StandaloneModuleGraph,
+                    "prefetch: madvise failed errno={}",
+                    bun_sys::last_errno()
+                );
+                return;
+            }
+            at += len;
+        }
+        bun_core::scoped_log!(
+            super::StandaloneModuleGraph,
+            "prefetch: MADV_WILLNEED {} bytes",
+            hi - lo
+        );
+    }
 }
 
 pub struct File {
@@ -464,27 +615,64 @@ pub struct File {
     pub loader: Loader,
     pub contents: &'static ZStr,
     pub sourcemap: LazySourceMap,
-    pub cached_blob: Option<NonNull<Blob>>,
+    /// VM-independent `webcore::Blob` template (store, content type, shared name); see
+    /// `standalone_graph_jsc::file_blob`.
+    pub cached_blob: std::sync::OnceLock<NonNull<Blob>>,
     pub encoding: Encoding,
-    pub wtf_string: BunString,
+    wtf_string: std::sync::OnceLock<BunString>,
+    utf8: std::sync::OnceLock<Box<[u8]>>,
     // BACKREF into the embedded section; JSC mutates the bytecode buffer in place.
     pub bytecode: *mut [u8],
     pub module_info: *mut [u8],
     /// The file path used when generating bytecode (e.g., "B:/~BUN/root/app.js").
     /// Must match exactly at runtime for bytecode cache hits.
     pub bytecode_origin_path: &'static [u8],
+    /// `WTF::StringImpl::hash()` of `contents`, computed at build time (0 = not recorded).
+    pub source_hash: u32,
     pub module_format: ModuleFormat,
     pub side: FileSide,
 }
 
 impl File {
+    /// A text import stored as a string body by `encode_text_module`.
+    pub fn is_text_module(&self) -> bool {
+        self.loader == Loader::Text
+    }
+
     pub fn appears_in_embedded_files_array(&self) -> bool {
-        self.side == FileSide::Client || !self.loader.is_javascript_like()
+        // A text module's bytes are not the file's UTF-8.
+        !self.is_text_module()
+            && (self.side == FileSide::Client || !self.loader.is_javascript_like())
+    }
+
+    /// An `Encoding::Utf16` body as code units.
+    fn utf16_units(&self) -> &'static [u16] {
+        debug_assert!(self.encoding == Encoding::Utf16);
+        let bytes = self.contents.as_bytes();
+        debug_assert!(bytes.as_ptr().addr().is_multiple_of(align_of::<u16>()));
+        #[expect(
+            clippy::cast_ptr_alignment,
+            reason = "`to_bytes` writes UTF-16 at an even offset and the section base is page-aligned (the 128-byte bytecode alignment relies on the same property)"
+        )]
+        // SAFETY: even byte count at a 2-byte-aligned offset of a section that is never freed.
+        unsafe {
+            core::slice::from_raw_parts(bytes.as_ptr().cast::<u16>(), bytes.len() / 2)
+        }
+    }
+
+    /// `contents` as the file's bytes: the section itself, or a UTF-8 transcode of a UTF-16 body made once.
+    pub fn utf8_contents(&self) -> &[u8] {
+        if self.encoding != Encoding::Utf16 {
+            return self.contents.as_bytes();
+        }
+        self.utf8.get_or_init(|| {
+            bun_core::strings::to_utf8_alloc_with_type(self.utf16_units()).into_boxed_slice()
+        })
     }
 
     pub fn stat(&self) -> Stat {
         let mut result: Stat = bun_core::ffi::zeroed();
-        result.st_size = self.contents.len() as _;
+        result.st_size = self.utf8_contents().len() as _;
         // `Stat` is `libc::stat` (POSIX) / `uv_stat_t` (Windows, `st_mode: u64`).
         result.st_mode = (libc::S_IFREG | 0o644) as _;
         result
@@ -496,20 +684,49 @@ impl File {
         strings::cmp_strings_asc((), lhs.name, rhs.name)
     }
 
-    pub fn to_wtf_string(&mut self) -> BunString {
-        if self.wtf_string.is_empty() {
-            match self.encoding {
-                Encoding::Binary | Encoding::Utf8 => {
-                    self.wtf_string = BunString::clone_utf8(self.contents.as_bytes());
-                }
-                Encoding::Latin1 => {
-                    self.wtf_string =
-                        BunString::create_static_external(self.contents.as_bytes(), true);
-                }
-            }
+    /// `name` without the `/$bunfs/root/` prefix, as shown to JS (`Blob.name`,
+    /// `Bun.embeddedFiles`).
+    pub fn display_name(&self) -> &[u8] {
+        self.name
+            .strip_prefix(BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX.as_bytes())
+            .unwrap_or(self.name)
+    }
+
+    /// One shared impl per process (see `BunString::make_thread_shareable`); Latin-1/UTF-16
+    /// are zero-copy externals over the immortal section.
+    pub fn to_wtf_string(&self) -> BunString {
+        if self.contents.is_empty() {
+            return BunString::EMPTY;
         }
-        // We don't want this to free.
-        self.wtf_string.dupe_ref()
+        self.wtf_string
+            .get_or_init(|| {
+                let mut s = match self.encoding {
+                    Encoding::Binary => BunString::clone_utf8(self.contents.as_bytes()),
+                    Encoding::Latin1 if self.source_hash != 0 => {
+                        // Already thread-shareable: hash known, never atomized.
+                        return BunString::create_static_external_latin1_with_hash(
+                            self.contents.as_bytes(),
+                            self.source_hash,
+                        );
+                    }
+                    Encoding::Latin1 => {
+                        BunString::create_static_external(self.contents.as_bytes(), true)
+                    }
+                    Encoding::Utf16 => {
+                        let units = self.utf16_units();
+                        if self.source_hash != 0 {
+                            return BunString::create_static_external_utf16_with_hash(
+                                units,
+                                self.source_hash,
+                            );
+                        }
+                        BunString::create_static_external_utf16(units)
+                    }
+                };
+                s.make_thread_shareable();
+                s
+            })
+            .clone()
     }
 }
 
@@ -618,11 +835,42 @@ bitflags::bitflags! {
         const DISABLE_AUTOLOAD_BUNFIG       = 1 << 1;
         const DISABLE_AUTOLOAD_TSCONFIG     = 1 << 2;
         const DISABLE_AUTOLOAD_PACKAGE_JSON = 1 << 3;
-        // _padding: u28
+        /// Every file's `contents` lies in one run that no bytecode, module
+        /// info, name, or source map region overlaps (see `to_bytes`).
+        const SOURCE_TEXT_CONTIGUOUS        = 1 << 4;
+        /// A `[u32; modules]` of each file's WTF string hash (0 = none) follows
+        /// the module table, so loading a module from bytecode never has to
+        /// hash — i.e. page in — its source text.
+        const HAS_SOURCE_HASHES             = 1 << 5;
+        /// After the source hashes: `u32 count`, then `count` × `{ u32 id, StringPointer bytes }` — ahead-of-time
+        /// bytecode for internal modules (InternalModuleRegistry ids), read by InternalModuleRegistry::generateModule.
+        const HAS_BUILTIN_BYTECODE          = 1 << 6;
+        /// After the builtin-bytecode table: one `StringPointer` to the shared bytecode string table (`JSC::EncoderStringTable::serialize`), which every chunk's payload references by ordinal.
+        const HAS_BYTECODE_STRING_TABLE     = 1 << 7;
+        /// After the string-table pointer: `u32` count of leading modules (in table order) that make up the
+        /// entry point's static import closure, i.e. load before the first `import()`; `prefetch_startup_pages` reads ahead what they need.
+        const HAS_STARTUP_MODULE_COUNT      = 1 << 8;
+        /// After the startup module count: one `StringPointer` to the string table every module's `module_info`
+        /// body indexes.
+        const HAS_MODULE_INFO_STRING_TABLE  = 1 << 9;
+        /// Built with `--compile --bytecode --target=<a different os/arch/libc than the bun that built it>`: the embedded
+        /// bytecode was written by another platform's JavaScriptCore. Reported with crash reports.
+        const CROSS_COMPILED_BYTECODE       = 1 << 10;
+        // _padding: u21
     }
 }
 
 const TRAILER: &[u8] = b"\n---- Bun! ----\n";
+
+unsafe extern "C" {
+    fn Bun__WTFStringHashLatin1(ptr: *const u8, len: usize) -> u32;
+    fn Bun__WTFStringHashUTF16(ptr: *const u16, len: usize) -> u32;
+}
+/// `WTF::StringImpl::hash()` for an 8-bit string with these bytes.
+fn wtf_latin1_string_hash(bytes: &[u8]) -> u32 {
+    // SAFETY: reads `len` bytes from `ptr`; pure function.
+    unsafe { Bun__WTFStringHashLatin1(bytes.as_ptr(), bytes.len()) }
+}
 
 impl StandaloneModuleGraph {
     fn from_bytes(
@@ -638,6 +886,10 @@ impl StandaloneModuleGraph {
                 entry_point_id: 0,
                 compile_exec_argv: b"",
                 flags: Flags::default(),
+                builtin_bytecode: Vec::new(),
+                bytecode_string_table: &[],
+                module_info_string_table: &[],
+                startup_module_count: 0,
             });
         }
 
@@ -664,6 +916,94 @@ impl StandaloneModuleGraph {
         if offsets.entry_point_id as usize > modules_list_count {
             return Err(crate::Error::CorruptedModuleGraphEntryPointIDIsGreaterThanModuleListCount);
         }
+
+        let read_u32 = |at: usize| -> u32 {
+            debug_assert!(at + 4 <= raw_len);
+            // SAFETY: callers pass offsets of records `to_bytes` wrote inside `[0, raw_len)`; unaligned-safe read.
+            unsafe { core::ptr::read_unaligned(raw_const.add(at).cast::<u32>()) }
+        };
+
+        // The optional records `to_bytes` chains directly after the module table, in `Flags` bit order.
+        let mut record_at =
+            offsets.modules_ptr.offset as usize + offsets.modules_ptr.length as usize;
+
+        let source_hashes: Option<&[u8]> = if offsets.flags.contains(Flags::HAS_SOURCE_HASHES) {
+            let length = modules_list_count * size_of::<u32>();
+            // SAFETY: written by `to_bytes` directly after the module table; read-only subrange.
+            let hashes = unsafe {
+                slice_to(
+                    raw_const,
+                    raw_len,
+                    StringPointer {
+                        offset: record_at as u32,
+                        length: length as u32,
+                    },
+                )
+            };
+            record_at += length;
+            Some(hashes)
+        } else {
+            None
+        };
+
+        let mut builtin_bytecode: Vec<(u32, *mut [u8])> = Vec::new();
+        if offsets.flags.contains(Flags::HAS_BUILTIN_BYTECODE) {
+            let count = read_u32(record_at) as usize;
+            record_at += size_of::<u32>();
+            builtin_bytecode.reserve(count);
+            for _ in 0..count {
+                let id = read_u32(record_at);
+                let pointer = StringPointer {
+                    offset: read_u32(record_at + 4),
+                    length: read_u32(record_at + 8),
+                };
+                record_at += 3 * size_of::<u32>();
+                // SAFETY: same provenance rules as `File::bytecode`: a writable subrange JSC may patch in place.
+                let bytes = unsafe { slice_to_mut(raw_ptr, raw_len, pointer) };
+                builtin_bytecode.push((id, bytes));
+            }
+        }
+
+        let bytecode_string_table: &'static [u8] =
+            if offsets.flags.contains(Flags::HAS_BYTECODE_STRING_TABLE) {
+                let ptr = StringPointer {
+                    offset: read_u32(record_at),
+                    length: read_u32(record_at + 4),
+                };
+                record_at += 2 * size_of::<u32>();
+                // SAFETY: `to_bytes` placed the serialized table via `append_bytecode_aligned` into a read-only, disjoint subrange.
+                unsafe { slice_to(raw_const, raw_len, ptr) }
+            } else {
+                &[]
+            };
+
+        let startup_module_count = if offsets.flags.contains(Flags::HAS_STARTUP_MODULE_COUNT)
+            && record_at + size_of::<u32>() <= raw_len
+        {
+            let count = read_u32(record_at);
+            record_at += size_of::<u32>();
+            count
+        } else {
+            0
+        };
+        let module_info_string_table: &'static [u8] =
+            if offsets.flags.contains(Flags::HAS_MODULE_INFO_STRING_TABLE)
+                && record_at + 2 * size_of::<u32>() <= raw_len
+            {
+                let ptr = StringPointer {
+                    offset: read_u32(record_at),
+                    length: read_u32(record_at + 4),
+                };
+                if (ptr.offset as usize).saturating_add(ptr.length as usize) > raw_len {
+                    &[]
+                } else {
+                    // SAFETY: bounds checked above; read-only subrange placed by `to_bytes`, disjoint from
+                    // the writable regions.
+                    unsafe { slice_to(raw_const, raw_len, ptr) }
+                }
+            } else {
+                &[]
+            };
 
         let mut modules = StringArrayHashMap::<File>::new();
         modules.reserve(modules_list_count);
@@ -724,15 +1064,20 @@ impl StandaloneModuleGraph {
                     } else {
                         b""
                     },
+                    source_hash: source_hashes.map_or(0, |h| {
+                        u32::from_le_bytes(h[i * 4..i * 4 + 4].try_into().expect("4 bytes"))
+                    }),
                     module_format: module.module_format,
                     side: module.side,
-                    cached_blob: None,
+                    cached_blob: std::sync::OnceLock::new(),
                     encoding: module.encoding,
-                    wtf_string: BunString::empty(),
+                    wtf_string: std::sync::OnceLock::new(),
+                    utf8: std::sync::OnceLock::new(),
                 },
             );
         }
 
+        let module_count = modules.count();
         modules.lock_pointers(); // make the pointers stable forever
 
         // Keys are posix-separated already (see `to_bytes`), so byte-scan for `/`.
@@ -762,7 +1107,19 @@ impl StandaloneModuleGraph {
             }
             .as_bytes(),
             flags: offsets.flags,
+            builtin_bytecode,
+            bytecode_string_table,
+            module_info_string_table,
+            startup_module_count: startup_module_count.min(module_count as u32),
         })
+    }
+
+    /// Ahead-of-time bytecode for internal module `id`, if the executable carries it.
+    pub fn builtin_module_bytecode(&self, id: u32) -> Option<*mut [u8]> {
+        self.builtin_bytecode
+            .iter()
+            .find(|(candidate, _)| *candidate == id)
+            .map(|(_, bytes)| *bytes)
     }
 }
 
@@ -814,7 +1171,69 @@ unsafe fn slice_to_z(base: *const u8, len: usize, ptr: StringPointer) -> &'stati
     unsafe { ZStr::from_raw(base.add(off), n) }
 }
 
+/// A text import the bundler emitted as an asset (`Loader::Text` arm of
+/// `ParseTask` in compile mode). The runtime aliases its bytes as a string.
+fn is_text_module_output(output_file: &OutputFile) -> bool {
+    output_file.loader == Loader::Text && output_file.output_kind == options::OutputKind::Asset
+}
+
+/// Stored as a `WTF::StringImpl` body the runtime aliases: a text import or a JS chunk this executable runs.
+fn is_stored_as_string(output_file: &OutputFile) -> bool {
+    is_text_module_output(output_file)
+        || (output_file.loader.is_javascript_like()
+            && output_file.side != Some(options::Side::Client))
+}
+
+/// Writes `utf8` as a `WTF::StringImpl` body (8-bit if ASCII, else UTF-16 at an even offset) with its hash.
+fn encode_text_module(
+    string_builder: &mut bun_core::StringBuilder,
+    utf8: &[u8],
+) -> (StringPointer, Encoding, u32) {
+    let Some(first_non_ascii) = strings::first_non_ascii(utf8) else {
+        let hash = if utf8.is_empty() {
+            0
+        } else {
+            wtf_latin1_string_hash(utf8)
+        };
+        return (string_builder.append_count_z(utf8), Encoding::Latin1, hash);
+    };
+    if !string_builder.len.is_multiple_of(align_of::<u16>()) {
+        string_builder.writable()[0] = 0;
+        string_builder.len += 1;
+    }
+    let start = string_builder.len;
+    let dst = string_builder.writable();
+    assert!(dst.len() >= 2 * utf8.len() + 2);
+    // SAFETY: `to_bytes` reserved `2 * utf8.len() + 4` bytes for this file; asserted above.
+    let byte_len = unsafe {
+        bun_core::strings::write_wtf8_as_utf16le(utf8, first_non_ascii as usize, dst.as_mut_ptr())
+    };
+    dst[byte_len] = 0;
+    dst[byte_len + 1] = 0;
+    #[expect(
+        clippy::cast_ptr_alignment,
+        reason = "written at an even offset just above"
+    )]
+    // SAFETY: `byte_len` initialized bytes at an even offset of the (page-aligned) section buffer.
+    let hash = unsafe { Bun__WTFStringHashUTF16(dst.as_ptr().cast::<u16>(), byte_len / 2) };
+    string_builder.len += byte_len + 2;
+    (
+        StringPointer {
+            offset: start as u32,
+            length: byte_len as u32,
+        },
+        Encoding::Utf16,
+        hash,
+    )
+}
+
+/// The embedded bunfs key for an output file, relative to the prefix.
+fn module_dest_path(output_file: &OutputFile) -> &[u8] {
+    bun_core::strings::remove_leading_dot_slash(&output_file.dest_path)
+}
+
 pub(crate) fn to_bytes(
+    target: &CompileTarget,
     prefix: &[u8],
     output_files: &[OutputFile],
     output_format: Format,
@@ -824,7 +1243,12 @@ pub(crate) fn to_bytes(
     // RAII trace handle ends on drop.
     let _serialize_trace = bun_perf::trace(bun_perf::PerfEvent::StandaloneModuleGraphSerialize);
 
-    let mut entry_point_id: Option<usize> = None;
+    let is_entry_point = |output_file: &OutputFile| {
+        output_file.output_kind == options::OutputKind::EntryPoint
+            && (output_file.side.is_none() || output_file.side == Some(options::Side::Server))
+    };
+
+    let mut has_entry_point = false;
     let mut string_builder = bun_core::StringBuilder::default();
     let mut module_count: usize = 0;
     for output_file in output_files {
@@ -837,64 +1261,95 @@ pub(crate) fn to_bytes(
                 // the exact amount is not possible without allocating as it
                 // involves a JSON parser.
                 string_builder.cap += bytes.len() * 2;
-            } else if output_file.output_kind == options::OutputKind::Bytecode {
-                // Allocate up to 256 byte alignment for bytecode
-                string_builder.cap += bytes.len().div_ceil(256) * 256 + 256;
+            } else if output_file.output_kind == options::OutputKind::Bytecode
+                || output_file.output_kind == options::OutputKind::BuiltinBytecode
+                || output_file.output_kind == options::OutputKind::BytecodeStringTable
+            {
+                // Allocate up to 256 byte alignment for bytecode (+ a table record for builtin bytecode)
+                string_builder.cap += bytes.len().div_ceil(256) * 256 + 256 + 16;
             } else if output_file.output_kind == options::OutputKind::ModuleInfo {
                 string_builder.cap += bytes.len();
+            } else if output_file.output_kind == options::OutputKind::ModuleInfoStringTable {
+                string_builder.cap += bytes.len() + 2 * size_of::<u32>();
             } else {
-                if entry_point_id.is_none() {
-                    if output_file.side.is_none() || output_file.side == Some(options::Side::Server)
-                    {
-                        if output_file.output_kind == options::OutputKind::EntryPoint {
-                            entry_point_id = Some(module_count);
-                        }
-                    }
-                }
+                has_entry_point |= is_entry_point(output_file);
 
                 string_builder.count_z(bytes);
+                if is_stored_as_string(output_file) {
+                    // UTF-16 worst case: 2 bytes per byte, padding, 2-byte NUL.
+                    string_builder.cap += bytes.len() + 3;
+                }
                 module_count += 1;
             }
         }
     }
 
-    if module_count == 0 || entry_point_id.is_none() {
+    if module_count == 0 || !has_entry_point {
         return Ok(Vec::new());
     }
 
-    string_builder.cap += size_of::<CompiledModuleGraphFile>() * output_files.len();
+    string_builder.cap +=
+        (size_of::<CompiledModuleGraphFile>() + size_of::<u32>()) * output_files.len();
     string_builder.cap += TRAILER.len();
-    string_builder.cap += 16;
+    string_builder.cap += 16 + 2 * size_of::<u32>();
     string_builder.cap += size_of::<Offsets>();
     string_builder.count_z(compile_exec_argv);
 
     string_builder.allocate()?;
 
-    let mut modules: Vec<CompiledModuleGraphFile> = Vec::with_capacity(module_count);
-
-    let mut source_map_header_list: Vec<u8> = Vec::new();
-    let mut source_map_string_list: Vec<u8> = Vec::new();
+    let mut module_files: Vec<&OutputFile> = Vec::with_capacity(module_count);
+    let mut entry_point_file: Option<&OutputFile> = None;
+    // `Graph::from_bytes` keys files by path; a repeat would shift `entry_point_id`.
+    let mut seen_paths: StringArrayHashMap<()> = StringArrayHashMap::new();
 
     for output_file in output_files {
         if !output_file.output_kind.is_file_in_standalone_mode() {
             continue;
         }
 
-        let options::OutputFileValue::Buffer { bytes: buf_bytes } = &output_file.value else {
+        if !matches!(output_file.value, options::OutputFileValue::Buffer { .. }) {
             continue;
-        };
+        }
 
-        let dest_path = bun_core::strings::remove_leading_dot_slash(&output_file.dest_path);
+        // Same `[name]` and `[hash]` means the same bytes: keep the first copy.
+        if seen_paths
+            .get_or_put(module_dest_path(output_file))?
+            .found_existing
+        {
+            continue;
+        }
+        if entry_point_file.is_none() && is_entry_point(output_file) {
+            entry_point_file = Some(output_file);
+        }
+        module_files.push(output_file);
+    }
+    let Some(entry_point_file) = entry_point_file else {
+        return Ok(Vec::new());
+    };
+    // Every per-module region below is written in load order (entry point's
+    // static imports first, then dynamic imports breadth-first) so the modules
+    // a process actually loads share pages instead of each dragging in its own.
+    module_files.sort_by_key(|f| f.load_order);
+    let entry_point_id = module_files
+        .iter()
+        .position(|f| core::ptr::eq(*f, entry_point_file))
+        .unwrap();
 
-        // Windows: store the key with `/`. The template printer emits native
-        // `\` into `dest_path`, but `find_assume_standalone_path` normalizes
-        // lookups to `/`, so a `\` key would miss (ENOENT). `src/bundler/Chunk.rs`
-        // only normalizes a scratch copy, so we re-normalize here.
-        #[cfg(windows)]
-        let mut dest_path_buf = PathBuffer::uninit();
-        #[cfg(windows)]
-        let dest_path: &[u8] =
-            path::resolve_path::platform_to_posix_buf::<u8>(dest_path, &mut dest_path_buf);
+    // The internal-module bytecode and the string table go right after the
+    // last startup module's bytecode, so everything a cold start decodes
+    // before the first `import()` is one run of pages (`prefetch_startup_pages`).
+    let startup_module_count = module_files
+        .iter()
+        .take_while(|f| f.loads_at_startup)
+        .count();
+    let mut shared_bytecode: Option<(Vec<u8>, StringPointer, StringPointer)> = None;
+
+    let mut modules: Vec<CompiledModuleGraphFile> = Vec::with_capacity(module_files.len());
+    for (i, &output_file) in module_files.iter().enumerate() {
+        if i == startup_module_count {
+            shared_bytecode = Some(append_shared_bytecode(&mut string_builder, output_files));
+        }
+        let buf_bytes = output_file.value.as_slice();
 
         let bytecode: StringPointer = 'brk: {
             if output_file.bytecode_index != u32::MAX {
@@ -910,44 +1365,14 @@ pub(crate) fn to_bytes(
                 //     (section_va + 8 + O) % 128 == 0
                 //     => O % 128 == 120
                 //
-                // - ELF (Linux): The module graph data is appended to the executable and
-                //   read into a heap-allocated buffer at runtime. The allocator provides
-                //   natural alignment, and there's no 8-byte section header offset.
-                //   However, using target_mod=120 is still safe because:
-                //   - If the buffer is 128-aligned: bytecode at offset 120 is at (128n + 120),
-                //     which when loaded at a 128-aligned address gives proper alignment.
-                //   - The extra 120 bytes of padding is acceptable overhead.
-                //
-                // This alignment strategy (target_mod=120) works for all platforms because
-                // it's the worst-case offset needed for the 8-byte header scenario.
+                // - ELF (Linux): the payload is mapped by the kernel as part of the
+                //   RW PT_LOAD (see exe_format/elf.rs) at a page-aligned address, also
+                //   preceded by the same 8-byte length header, so the same arithmetic
+                //   applies.
                 let bytecode = output_files[output_file.bytecode_index as usize]
                     .value
                     .as_slice();
-                let current_offset = string_builder.len;
-                // Calculate padding so that (current_offset + padding) % 128 == 120
-                // This accounts for the 8-byte section header on PE/Mach-O platforms.
-                let target_mod: usize = 128 - size_of::<u64>(); // 120 = accounts for 8-byte header
-                let current_mod = current_offset % 128;
-                let padding = if current_mod <= target_mod {
-                    target_mod - current_mod
-                } else {
-                    128 - current_mod + target_mod
-                };
-                // Zero the padding bytes to ensure deterministic output
-                let writable = string_builder.writable();
-                writable[0..padding].fill(0);
-                string_builder.len += padding;
-                let aligned_offset = string_builder.len;
-                let writable_after_padding = string_builder.writable();
-                writable_after_padding[0..bytecode.len()]
-                    .copy_from_slice(&bytecode[0..bytecode.len()]);
-                let unaligned_space = &writable_after_padding[bytecode.len()..];
-                let len = bytecode.len() + unaligned_space.len().min(128);
-                string_builder.len += len;
-                break 'brk StringPointer {
-                    offset: aligned_offset as u32,
-                    length: len as u32,
-                };
+                break 'brk append_bytecode_aligned(&mut string_builder, bytecode);
             } else {
                 break 'brk StringPointer::default();
             }
@@ -959,6 +1384,14 @@ pub(crate) fn to_bytes(
                 let mi_bytes = output_files[output_file.module_info_index as usize]
                     .value
                     .as_slice();
+                bun_core::scoped_log!(
+                    StandaloneModuleGraph,
+                    "module_info {}: {} bytes (js {} bytes, bytecode {} bytes)",
+                    bstr::BStr::new(&output_file.dest_path),
+                    mi_bytes.len(),
+                    output_file.value.as_slice().len(),
+                    bytecode.length
+                );
                 let offset = string_builder.len;
                 let writable = string_builder.writable();
                 writable[0..mi_bytes.len()].copy_from_slice(&mi_bytes[0..mi_bytes.len()]);
@@ -973,6 +1406,7 @@ pub(crate) fn to_bytes(
 
         if Environment::IS_CANARY || Environment::IS_DEBUG {
             if let Some(dump_code_dir) = bun_core::env_var::BUN_FEATURE_FLAG_DUMP_CODE.get() {
+                let dest_path = module_dest_path(output_file);
                 // `dest_path` keeps `..` for the embedded bunfs key below; neutralize
                 // every `..` segment here so the on-disk dump can't escape
                 // `dump_code_dir` (the join would otherwise normalize `..` above it).
@@ -1012,36 +1446,11 @@ pub(crate) fn to_bytes(
             }
         }
 
-        // When there's bytecode, store the bytecode output file's path as bytecode_origin_path.
-        // This path was used to generate the bytecode cache and must match at runtime.
-        let bytecode_origin_path: StringPointer = if output_file.bytecode_index != u32::MAX {
-            string_builder
-                .append_count_z(&output_files[output_file.bytecode_index as usize].dest_path)
-        } else {
-            StringPointer::default()
-        };
-
-        let mut module = CompiledModuleGraphFile {
-            name: string_builder.fmt_append_count_z(format_args!(
-                "{}{}",
-                bstr::BStr::new(prefix),
-                bstr::BStr::new(dest_path)
-            )),
+        modules.push(CompiledModuleGraphFile {
+            name: StringPointer::default(),
             loader: output_file.loader,
-            contents: string_builder.append_count_z(buf_bytes),
-            // Latin1 lets the runtime wrap the mmapped section bytes in a
-            // zero-copy ExternalStringImpl. The printer escapes non-ASCII for
-            // server-side JS, but `--banner`/`--footer`/hashbang and
-            // client-side (target=browser) chunks are concatenated verbatim
-            // as UTF-8, so verify the final bytes before committing to Latin1.
-            encoding: match output_file.loader {
-                Loader::Js | Loader::Jsx | Loader::Ts | Loader::Tsx
-                    if strings::first_non_ascii(buf_bytes).is_none() =>
-                {
-                    Encoding::Latin1
-                }
-                _ => Encoding::Binary,
-            },
+            contents: StringPointer::default(),
+            encoding: Encoding::Binary,
             module_format: if output_file.loader.is_javascript_like() {
                 match output_format {
                     Format::Cjs => ModuleFormat::Cjs,
@@ -1053,14 +1462,28 @@ pub(crate) fn to_bytes(
             },
             bytecode,
             module_info,
-            bytecode_origin_path,
+            bytecode_origin_path: StringPointer::default(),
             side: match output_file.side.unwrap_or(options::Side::Server) {
                 options::Side::Server => FileSide::Server,
                 options::Side::Client => FileSide::Client,
             },
             sourcemap: StringPointer::default(),
-        };
+        });
+    }
 
+    let (builtin_bytecode_table, bytecode_string_table_ptr, module_info_string_table_ptr) =
+        shared_bytecode
+            .unwrap_or_else(|| append_shared_bytecode(&mut string_builder, output_files));
+
+    // Region layout after the bytecode/module_info run above: source maps
+    // (unread until an error prints), then every file's source text as one run
+    // (`Flags::SOURCE_TEXT_CONTIGUOUS`, so `hint_source_pages_dont_need` can
+    // drop exactly it), then everything booting touches — names, origin paths,
+    // the module table — packed at the tail so startup faults in a few pages
+    // instead of one per embedded file.
+    let mut source_map_header_list: Vec<u8> = Vec::new();
+    let mut source_map_string_list: Vec<u8> = Vec::new();
+    for (module, output_file) in modules.iter_mut().zip(&module_files) {
         if output_file.source_map_index != u32::MAX {
             serialize_json_source_map_for_standalone(
                 &mut source_map_header_list,
@@ -1074,7 +1497,36 @@ pub(crate) fn to_bytes(
             source_map_header_list.clear();
             source_map_string_list.clear();
         }
-        modules.push(module);
+    }
+
+    let mut source_hashes: Vec<u8> = Vec::with_capacity(modules.len() * size_of::<u32>());
+    for (module, output_file) in modules.iter_mut().zip(&module_files) {
+        let mut hash = 0u32;
+        if is_stored_as_string(output_file) {
+            (module.contents, module.encoding, hash) =
+                encode_text_module(&mut string_builder, output_file.value.as_slice());
+        } else {
+            module.contents = string_builder.append_count_z(output_file.value.as_slice());
+        }
+        // `Flags::HAS_SOURCE_HASHES`: JSC's SourceCodeKey hash, so a launch from bytecode never reads the source text.
+        if !output_file.loader.is_javascript_like() {
+            hash = 0;
+        }
+        source_hashes.extend_from_slice(&hash.to_le_bytes());
+    }
+
+    for (module, output_file) in modules.iter_mut().zip(&module_files) {
+        module.name = string_builder.fmt_append_count_z(format_args!(
+            "{}{}",
+            bstr::BStr::new(prefix),
+            bstr::BStr::new(module_dest_path(output_file))
+        ));
+        // The bytecode cache was generated under the bytecode output file's
+        // path; the runtime must present exactly the same path to hit it.
+        if output_file.bytecode_index != u32::MAX {
+            module.bytecode_origin_path = string_builder
+                .append_count_z(&output_files[output_file.bytecode_index as usize].dest_path);
+        }
     }
 
     // SAFETY: `CompiledModuleGraphFile` is `#[repr(C)]` POD with no padding-dependent
@@ -1085,15 +1537,52 @@ pub(crate) fn to_bytes(
             modules.len() * size_of::<CompiledModuleGraphFile>(),
         )
     };
+    let modules_ptr = string_builder.append_count(modules_as_bytes);
+    let hashes_ptr = string_builder.append_count(&source_hashes);
+    debug_assert_eq!(hashes_ptr.offset, modules_ptr.offset + modules_ptr.length);
+    let builtin_table_ptr = string_builder.append_count(&builtin_bytecode_table);
+    debug_assert_eq!(
+        builtin_table_ptr.offset,
+        hashes_ptr.offset + hashes_ptr.length
+    );
+    let mut flags = flags
+        | Flags::SOURCE_TEXT_CONTIGUOUS
+        | Flags::HAS_SOURCE_HASHES
+        | Flags::HAS_BUILTIN_BYTECODE;
+    if bytecode_string_table_ptr.length != 0 {
+        let mut record = [0u8; 8];
+        record[0..4].copy_from_slice(&bytecode_string_table_ptr.offset.to_le_bytes());
+        record[4..8].copy_from_slice(&bytecode_string_table_ptr.length.to_le_bytes());
+        let _ = string_builder.append_count(&record);
+        flags |= Flags::HAS_BYTECODE_STRING_TABLE;
+    }
+    let _ = string_builder.append_count(&(startup_module_count as u32).to_le_bytes());
+    flags |= Flags::HAS_STARTUP_MODULE_COUNT;
+    if module_info_string_table_ptr.length != 0 {
+        let mut record = [0u8; 8];
+        record[0..4].copy_from_slice(&module_info_string_table_ptr.offset.to_le_bytes());
+        record[4..8].copy_from_slice(&module_info_string_table_ptr.length.to_le_bytes());
+        let _ = string_builder.append_count(&record);
+        flags |= Flags::HAS_MODULE_INFO_STRING_TABLE;
+    }
+    if !target.is_host_platform()
+        && output_files
+            .iter()
+            .any(|file| file.output_kind == options::OutputKind::Bytecode)
+    {
+        flags |= Flags::CROSS_COMPILED_BYTECODE;
+    }
+    let compile_exec_argv_ptr = string_builder.append_count_z(compile_exec_argv);
+
     let offsets = Offsets {
-        entry_point_id: entry_point_id.unwrap() as u32,
-        modules_ptr: string_builder.append_count(modules_as_bytes),
-        compile_exec_argv_ptr: string_builder.append_count_z(compile_exec_argv),
+        entry_point_id: entry_point_id as u32,
+        modules_ptr,
+        compile_exec_argv_ptr,
         byte_count: string_builder.len,
         flags,
     };
 
-    // SAFETY: `Offsets` is `#[repr(C)]` POD; same `sliceAsBytes` rationale as above.
+    // SAFETY: `Offsets` is `#[repr(C)]` POD; same `modules_as_bytes` rationale as above.
     let offsets_as_bytes: &[u8] = unsafe {
         core::slice::from_raw_parts((&raw const offsets).cast::<u8>(), size_of::<Offsets>())
     };
@@ -1114,6 +1603,25 @@ pub(crate) fn to_bytes(
         debug_assert_eq!(graph.files.count(), modules.len());
         graph.files.unlock_pointers();
         graph.dirs.unlock_pointers();
+
+        // `Flags::SOURCE_TEXT_CONTIGUOUS`: no other region may fall inside the
+        // source-text run, or the runtime's MADV_DONTNEED would drop it.
+        let range = |p: StringPointer| p.offset..p.offset + p.length;
+        let lo = modules.iter().map(|m| m.contents.offset).min().unwrap();
+        let hi = modules.iter().map(|m| range(m.contents).end).max().unwrap();
+        let others = modules.iter().flat_map(|m| {
+            [
+                m.bytecode,
+                m.module_info,
+                m.sourcemap,
+                m.name,
+                m.bytecode_origin_path,
+            ]
+        });
+        for p in others.chain([offsets.modules_ptr, offsets.compile_exec_argv_ptr]) {
+            let r = range(p);
+            debug_assert!(p.length == 0 || r.end <= lo || r.start >= hi);
+        }
     }
 
     // StringBuilder owns the buffer; hand it back without copying. `cap` may
@@ -1154,6 +1662,12 @@ impl CompileErrorReason {
 }
 
 impl CompileError {
+    pub fn fmt(args: core::fmt::Arguments<'_>) -> CompileError {
+        let mut v = Vec::new();
+        let _ = write!(&mut v, "{}", args);
+        CompileError::Message(v)
+    }
+
     pub fn slice(&self) -> &[u8] {
         match self {
             CompileError::Message(m) => m,
@@ -1168,18 +1682,54 @@ impl CompileResult {
     }
 
     pub fn fail_fmt(args: core::fmt::Arguments<'_>) -> CompileResult {
-        let mut v = Vec::new();
-        let _ = write!(&mut v, "{}", args);
-        CompileResult::Err(CompileError::Message(v))
+        CompileResult::Err(CompileError::fmt(args))
     }
 }
 
-pub(crate) fn inject(
+/// The temp copy of the executable that `inject` wrote the module graph into:
+/// its open fd plus the absolute path it was created at, which the caller
+/// renames into place (an fd cannot be mapped back to a path on every
+/// filesystem).
+pub(crate) struct Injected<'a> {
+    pub fd: Fd,
+    pub temp_path: &'a ZStr,
+}
+
+impl<'a> Injected<'a> {
+    /// `zname` was opened relative to `cwd` (or is already absolute); pin it in
+    /// `temp_path_buf` so a later `chdir` cannot retarget the rename/unlink.
+    fn new(fd: Fd, cwd: &[u8], zname: &ZStr, temp_path_buf: &'a mut PathBuffer) -> Injected<'a> {
+        let len = path::resolve_path::join_abs_string_buf_z::<path::platform::Auto>(
+            cwd,
+            &mut temp_path_buf[..],
+            &[zname.as_bytes()],
+        )
+        .len();
+        Injected {
+            fd,
+            temp_path: ZStr::from_buf(&temp_path_buf[..], len),
+        }
+    }
+}
+
+pub(crate) fn inject<'a>(
     bytes: &[u8],
     self_exe: &ZStr,
     inject_options: &InjectOptions,
     target: &CompileTarget,
-) -> Fd {
+    temp_path_buf: &'a mut PathBuffer,
+) -> Option<Injected<'a>> {
+    let mut cwd_buf = bun_paths::path_buffer_pool::get();
+    let cwd: &[u8] = match bun_sys::getcwd(&mut cwd_buf) {
+        Ok(len) => &cwd_buf[..len],
+        Err(err) => {
+            bun_core::pretty_errorln!(
+                "<r><red>error<r><d>:<r> failed to get the current directory\n{}",
+                err
+            );
+            return None;
+        }
+    };
     let mut buf = PathBuffer::uninit();
     // Note: `tmpname` borrows `buf` mutably for the &ZStr it returns. The
     // tmpdir-fallback retry below may need to repoint `zname` at a heap-owned
@@ -1201,7 +1751,7 @@ pub(crate) fn inject(
                 "<r><red>error<r><d>:<r> failed to get temporary file name: {}",
                 bstr::BStr::new(e.name())
             );
-            return Fd::INVALID;
+            return None;
         }
     };
 
@@ -1229,19 +1779,14 @@ pub(crate) fn inject(
             out_buf[zname.len()] = 0;
 
             use bun_sys::windows as w;
-            use bun_sys::windows::Win32ErrorExt as _;
             // SAFETY: both buffers NUL-terminated above; `CopyFileW` does not
             // retain the pointers past return.
             if unsafe { w::CopyFileW(in_buf.as_ptr(), out_buf.as_ptr(), w::FALSE) } == w::FALSE {
-                let e = w::Win32Error::get();
-                // Map the Win32 code through the errno table so users see a
-                // name, not a raw integer.
                 bun_core::pretty_errorln!(
-                    "<r><red>error<r><d>:<r> failed to copy bun executable into temporary file: {:?}",
-                    e.to_system_errno()
-                        .unwrap_or(bun_sys::SystemErrno::EUNKNOWN)
+                    "<r><red>error<r><d>:<r> failed to copy bun executable into temporary file: {}",
+                    w::last_system_errno()
                 );
-                return Fd::invalid();
+                return None;
             }
             let out = &out_buf[..zname.len()];
             let file = match Syscall::open_file_at_windows(
@@ -1260,7 +1805,7 @@ pub(crate) fn inject(
                         "<r><red>error<r><d>:<r> failed to open temporary file to copy bun into\n{}",
                         e
                     );
-                    return Fd::invalid();
+                    return None;
                 }
             };
 
@@ -1289,7 +1834,8 @@ pub(crate) fn inject(
                 match Syscall::open(
                     zname,
                     bun_sys::O::CLOEXEC | bun_sys::O::RDWR | bun_sys::O::CREAT | bun_sys::O::EXCL,
-                    0,
+                    // Not 0: WSL2 DrvFS re-checks the mode on ftruncate() (#40111).
+                    0o600,
                 ) {
                     Ok(res) => break 'brk2 res,
                     Err(err) => {
@@ -1334,9 +1880,14 @@ pub(crate) fn inject(
                                 bun_sys::E::EPERM | bun_sys::E::EAGAIN | bun_sys::E::EBUSY => {
                                     continue;
                                 }
-                                _ => break,
+                                _ => {}
                             }
                         }
+                        bun_core::pretty_errorln!(
+                            "<r><red>error<r><d>:<r> failed to open temporary file to copy bun into\n{}",
+                            err
+                        );
+                        return None;
                     }
                 }
             }
@@ -1363,7 +1914,7 @@ pub(crate) fn inject(
                             err
                         );
                         cleanup(zname, fd);
-                        return Fd::INVALID;
+                        return None;
                     }
                 }
             }
@@ -1372,7 +1923,6 @@ pub(crate) fn inject(
 
         #[cfg(not(windows))]
         {
-            // defer self_fd.close()
             let _self_fd_guard = Syscall::CloseOnDrop::new(self_fd);
 
             if let Err(e) = bun_sys::copy_file(self_fd, fd) {
@@ -1381,7 +1931,7 @@ pub(crate) fn inject(
                     e
                 );
                 cleanup(zname, fd);
-                return Fd::INVALID;
+                return None;
             }
 
             break 'brk fd;
@@ -1396,7 +1946,7 @@ pub(crate) fn inject(
                 Err(err) => {
                     bun_core::pretty_errorln!("Error reading standalone module graph: {}", err);
                     cleanup(zname, cloned_executable_fd);
-                    return Fd::INVALID;
+                    return None;
                 }
             };
             let mut macho_file = match bun_macho::MachoFile::init(&input_bytes, bytes.len()) {
@@ -1404,45 +1954,62 @@ pub(crate) fn inject(
                 Err(e) => {
                     bun_core::pretty_errorln!("Error initializing standalone module graph: {}", e);
                     cleanup(zname, cloned_executable_fd);
-                    return Fd::INVALID;
+                    return None;
                 }
             };
             if let Err(e) = macho_file.write_section(bytes) {
                 bun_core::pretty_errorln!("Error writing standalone module graph: {}", e);
                 cleanup(zname, cloned_executable_fd);
-                return Fd::INVALID;
+                return None;
             }
             drop(input_bytes);
 
             if let Err(err) = Syscall::set_file_offset(cloned_executable_fd, 0) {
                 bun_core::pretty_errorln!("Error seeking to start of temporary file: {}", err);
                 cleanup(zname, cloned_executable_fd);
-                return Fd::INVALID;
+                return None;
             }
 
             let mut buffered_writer = std::io::BufWriter::with_capacity(
                 512 * 1024,
                 bun_sys::FileWriter(cloned_executable_fd),
             );
-            if let Err(e) = macho_file.build_and_sign(&mut buffered_writer) {
-                bun_core::pretty_errorln!(
-                    "Error writing standalone module graph: {}",
-                    bstr::BStr::new(e.name())
-                );
-                cleanup(zname, cloned_executable_fd);
-                return Fd::INVALID;
-            }
+            let written = match macho_file.build_and_sign(&mut buffered_writer) {
+                Ok(n) => n,
+                Err(e) => {
+                    bun_core::pretty_errorln!(
+                        "Error writing standalone module graph: {}",
+                        bstr::BStr::new(e.name())
+                    );
+                    cleanup(zname, cloned_executable_fd);
+                    return None;
+                }
+            };
             if let Err(e) = std::io::Write::flush(&mut buffered_writer) {
                 bun_core::pretty_errorln!("Error flushing standalone module graph: {}", e);
                 cleanup(zname, cloned_executable_fd);
-                return Fd::INVALID;
+                return None;
+            }
+            // The template copy may be longer than the signed output; codesign rejects bytes past the signature.
+            if let Err(err) = Syscall::ftruncate(
+                cloned_executable_fd,
+                i64::try_from(written).expect("int cast"),
+            ) {
+                bun_core::pretty_errorln!("Error truncating temporary file: {}", err);
+                cleanup(zname, cloned_executable_fd);
+                return None;
             }
             #[cfg(not(windows))]
             {
                 // SAFETY: libc fchmod on a valid native fd.
                 unsafe { bun_sys::c::fchmod(cloned_executable_fd.native(), 0o755) };
             }
-            return cloned_executable_fd;
+            return Some(Injected::new(
+                cloned_executable_fd,
+                cwd,
+                zname,
+                temp_path_buf,
+            ));
         }
         CompileTargetOs::Windows => {
             let input_bytes = match bun_sys::File::borrow(&cloned_executable_fd).read_to_end() {
@@ -1450,7 +2017,7 @@ pub(crate) fn inject(
                 Err(err) => {
                     bun_core::pretty_errorln!("Error reading standalone module graph: {}", err);
                     cleanup(zname, cloned_executable_fd);
-                    return Fd::INVALID;
+                    return None;
                 }
             };
             let mut pe_file = match bun_pe::PEFile::init(&input_bytes) {
@@ -1458,35 +2025,35 @@ pub(crate) fn inject(
                 Err(e) => {
                     bun_core::pretty_errorln!("Error initializing PE file: {}", e);
                     cleanup(zname, cloned_executable_fd);
-                    return Fd::INVALID;
+                    return None;
                 }
             };
             if inject_options.hide_console {
                 if let Err(e) = pe_file.set_subsystem(bun_pe::IMAGE_SUBSYSTEM_WINDOWS_GUI) {
                     bun_core::pretty_errorln!("Error setting PE subsystem: {}", e);
                     cleanup(zname, cloned_executable_fd);
-                    return Fd::INVALID;
+                    return None;
                 }
             }
             // Always strip authenticode when adding .bun section for --compile
             if let Err(e) = pe_file.add_bun_section(bytes) {
                 bun_core::pretty_errorln!("Error adding Bun section to PE file: {}", e);
                 cleanup(zname, cloned_executable_fd);
-                return Fd::INVALID;
+                return None;
             }
             drop(input_bytes);
 
             if let Err(err) = Syscall::set_file_offset(cloned_executable_fd, 0) {
                 bun_core::pretty_errorln!("Error seeking to start of temporary file: {}", err);
                 cleanup(zname, cloned_executable_fd);
-                return Fd::INVALID;
+                return None;
             }
 
             let mut writer = bun_sys::FileWriter(cloned_executable_fd);
             if let Err(e) = pe_file.write(&mut writer) {
                 bun_core::pretty_errorln!("Error writing PE file: {}", bstr::BStr::new(e.name()));
                 cleanup(zname, cloned_executable_fd);
-                return Fd::INVALID;
+                return None;
             }
             // Truncate to the in-memory PE size; Authenticode strip can make it shorter than the base.
             if let Err(err) = Syscall::ftruncate(
@@ -1495,7 +2062,7 @@ pub(crate) fn inject(
             ) {
                 bun_core::pretty_errorln!("Error truncating PE file: {}", err);
                 cleanup(zname, cloned_executable_fd);
-                return Fd::INVALID;
+                return None;
             }
             // Set executable permissions when running on POSIX hosts, even for Windows targets
             #[cfg(not(windows))]
@@ -1503,7 +2070,12 @@ pub(crate) fn inject(
                 // SAFETY: libc fchmod on a valid native fd.
                 unsafe { bun_sys::c::fchmod(cloned_executable_fd.native(), 0o755) };
             }
-            return cloned_executable_fd;
+            return Some(Injected::new(
+                cloned_executable_fd,
+                cwd,
+                zname,
+                temp_path_buf,
+            ));
         }
         CompileTargetOs::Linux | CompileTargetOs::Freebsd => {
             // ELF section approach: find .bun section and expand it
@@ -1512,7 +2084,7 @@ pub(crate) fn inject(
                 Err(err) => {
                     bun_core::pretty_errorln!("Error reading executable: {}", err);
                     cleanup(zname, cloned_executable_fd);
-                    return Fd::INVALID;
+                    return None;
                 }
             };
 
@@ -1521,7 +2093,7 @@ pub(crate) fn inject(
                 Err(e) => {
                     bun_core::pretty_errorln!("Error initializing ELF file: {}", e);
                     cleanup(zname, cloned_executable_fd);
-                    return Fd::INVALID;
+                    return None;
                 }
             };
 
@@ -1530,13 +2102,13 @@ pub(crate) fn inject(
             if let Err(e) = elf_file.write_bun_section(bytes) {
                 bun_core::pretty_errorln!("Error writing .bun section to ELF: {}", e);
                 cleanup(zname, cloned_executable_fd);
-                return Fd::INVALID;
+                return None;
             }
 
             if let Err(err) = Syscall::set_file_offset(cloned_executable_fd, 0) {
                 bun_core::pretty_errorln!("Error seeking to start of temporary file: {}", err);
                 cleanup(zname, cloned_executable_fd);
-                return Fd::INVALID;
+                return None;
             }
 
             // Write the modified ELF data back to the file
@@ -1544,7 +2116,7 @@ pub(crate) fn inject(
             if let Err(err) = write_file.write_all(&elf_file.data) {
                 bun_core::pretty_errorln!("Error writing ELF file: {}", err);
                 cleanup(zname, cloned_executable_fd);
-                return Fd::INVALID;
+                return None;
             }
             // Truncate the file to the exact size of the modified ELF
             if let Err(err) = Syscall::ftruncate(
@@ -1553,7 +2125,7 @@ pub(crate) fn inject(
             ) {
                 bun_core::pretty_errorln!("Error truncating ELF file: {}", err);
                 cleanup(zname, cloned_executable_fd);
-                return Fd::INVALID;
+                return None;
             }
 
             #[cfg(not(windows))]
@@ -1561,7 +2133,12 @@ pub(crate) fn inject(
                 // SAFETY: libc fchmod on a valid native fd.
                 unsafe { bun_sys::c::fchmod(cloned_executable_fd.native(), 0o755) };
             }
-            return cloned_executable_fd;
+            return Some(Injected::new(
+                cloned_executable_fd,
+                cwd,
+                zname,
+                temp_path_buf,
+            ));
         }
         _ => {
             let total_byte_count: usize;
@@ -1577,7 +2154,7 @@ pub(crate) fn inject(
                                 e
                             );
                             cleanup(zname, cloned_executable_fd);
-                            return Fd::invalid();
+                            return None;
                         }
                     };
             }
@@ -1589,7 +2166,7 @@ pub(crate) fn inject(
                         Err(err) => {
                             bun_core::pretty_errorln!("{}", err);
                             cleanup(zname, cloned_executable_fd);
-                            return Fd::INVALID;
+                            return None;
                         }
                     };
                     break 'brk fstat.st_size.max(0);
@@ -1613,7 +2190,7 @@ pub(crate) fn inject(
                         seek_position
                     );
                     cleanup(zname, cloned_executable_fd);
-                    return Fd::INVALID;
+                    return None;
                 }
             }
 
@@ -1627,7 +2204,7 @@ pub(crate) fn inject(
                             err
                         );
                         cleanup(zname, cloned_executable_fd);
-                        return Fd::INVALID;
+                        return None;
                     }
                 }
             }
@@ -1640,7 +2217,12 @@ pub(crate) fn inject(
                 unsafe { bun_sys::c::fchmod(cloned_executable_fd.native(), 0o755) };
             }
 
-            return cloned_executable_fd;
+            return Some(Injected::new(
+                cloned_executable_fd,
+                cwd,
+                zname,
+                temp_path_buf,
+            ));
         }
     }
 }
@@ -1694,7 +2276,6 @@ pub(crate) fn download_to_path(
                 b"",
                 b"",
                 http_proxy,
-                None,
                 bun_http::FetchRedirect::Follow,
             ));
             async_http.client.progress_node =
@@ -1722,7 +2303,6 @@ pub(crate) fn download_to_path(
         let mut tarball_bytes: Vec<u8> = Vec::new();
         {
             refresher.refresh();
-            // defer compressed_archive_bytes.list.deinit(allocator) — handled by Drop
 
             if compressed_archive_bytes.list.is_empty() {
                 // Return error without printing - let caller handle the messaging
@@ -1751,7 +2331,6 @@ pub(crate) fn download_to_path(
 
             {
                 refresher.start(b"Extracting", 0);
-                // defer node.end() — see explicit calls below
 
                 let mut tmpname_buf = [0u8; 1024];
                 let tempdir_name: &ZStr =
@@ -1812,6 +2391,103 @@ pub(crate) fn download_to_path(
     Ok(())
 }
 
+/// The bun executable a `--compile` build for `target` injects into: `self_exe_path` if given, this process for the
+/// host target, otherwise the cached download of that platform's bun at this version (fetched now if missing).
+pub fn target_executable(
+    target: &CompileTarget,
+    env: &mut bun_dotenv::Loader,
+    self_exe_path: Option<&[u8]>,
+) -> Result<bun_core::ZBox, CompileError> {
+    Ok(if let Some(path) = self_exe_path {
+        bun_core::ZBox::from_vec_with_nul(path.to_vec())
+    } else if target.is_default() {
+        match bun_core::self_exe_path() {
+            Ok(p) => bun_core::ZBox::from_vec_with_nul(p.as_bytes().to_vec()),
+            Err(e) => {
+                return Err(CompileError::fmt(format_args!(
+                    "failed to get self executable path: {}",
+                    bstr::BStr::new(e.name())
+                )));
+            }
+        }
+    } else {
+        let mut exe_path_buf = PathBuffer::uninit();
+        let mut version_str: Vec<u8> = Vec::new();
+        let _ = write!(&mut version_str, "{}", target);
+        version_str.push(0);
+        // SAFETY: trailing 0 byte appended above.
+        let version_zstr = ZStr::from_slice_with_nul(&version_str[..]);
+
+        let mut needs_download: bool = true;
+        let dest_z = target.exe_path(&mut exe_path_buf, version_zstr, env, &mut needs_download);
+
+        if needs_download {
+            if let Err(e) = download_to_path(target, env, dest_z) {
+                return Err(match e {
+                    crate::Error::TargetNotFound => CompileError::fmt(format_args!(
+                        "Target platform '{}' is not available for download. Check if this version of Bun supports this target.",
+                        target
+                    )),
+                    crate::Error::NetworkError => CompileError::fmt(format_args!(
+                        "Network error downloading executable for '{}'. Check your internet connection and proxy settings.",
+                        target
+                    )),
+                    crate::Error::InvalidResponse => CompileError::fmt(format_args!(
+                        "Downloaded file for '{}' appears to be corrupted. Please try again.",
+                        target
+                    )),
+                    crate::Error::ExtractionFailed => CompileError::fmt(format_args!(
+                        "Failed to extract executable for '{}'. The download may be incomplete.",
+                        target
+                    )),
+                    _ => CompileError::fmt(format_args!(
+                        "Failed to download '{}': {}",
+                        target,
+                        bstr::BStr::new(e.name())
+                    )),
+                });
+            }
+        }
+
+        bun_core::ZBox::from_vec_with_nul(dest_z.as_bytes().to_vec())
+    })
+}
+
+/// `--compile --bytecode` for another platform: that executable's builtins section (`bun_exe_format::builtins`), so
+/// the bundler can generate bytecode for *its* internal modules. `Ok(None)` when the executable has no section this bun
+/// can read; builtin bytecode is skipped then.
+pub fn target_builtins(
+    target: &CompileTarget,
+    env: &mut bun_dotenv::Loader,
+    self_exe_path: Option<&[u8]>,
+) -> Result<Option<std::sync::Arc<[u8]>>, CompileError> {
+    use bun_exe_format::builtins::{Builtins, BuiltinsError, find_section};
+    let exe = target_executable(target, env, self_exe_path)?;
+    let file = match bun_sys::File::read_from(Fd::cwd(), exe.as_bytes()) {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            return Err(CompileError::fmt(format_args!(
+                "failed to read executable for '{}': {}",
+                target, e
+            )));
+        }
+    };
+    match find_section(&file).and_then(|section| Builtins::parse(section).map(|_| section)) {
+        Ok(section) => Ok(Some(std::sync::Arc::from(section))),
+        // No section (a bun from before there was one), a newer layout than this bun reads, or a container this reader
+        // doesn't handle: its internal modules load from source. A section that is there but malformed is an error.
+        Err(
+            BuiltinsError::MissingSection
+            | BuiltinsError::UnsupportedVersion
+            | BuiltinsError::UnrecognizedExecutable,
+        ) => Ok(None),
+        Err(e) => Err(CompileError::fmt(format_args!(
+            "failed to read the builtin modules of the executable for '{}': {}",
+            target, e
+        ))),
+    }
+}
+
 pub fn to_executable(
     target: &CompileTarget,
     output_files: &[OutputFile],
@@ -1828,6 +2504,7 @@ pub fn to_executable(
     #[cfg(windows)]
     let _ = root_dir;
     let bytes = match to_bytes(
+        target,
         module_prefix,
         output_files,
         output_format,
@@ -1847,67 +2524,28 @@ pub fn to_executable(
     }
     // bytes drops at end of scope
 
-    // `ZBox` always owns its bytes and drops on scope exit, so no
-    // ownership flag is needed.
-    let self_exe: bun_core::ZBox = if let Some(path) = self_exe_path {
-        bun_core::ZBox::from_vec_with_nul(path.to_vec())
-    } else if target.is_default() {
-        match bun_core::self_exe_path() {
-            Ok(p) => bun_core::ZBox::from_vec_with_nul(p.as_bytes().to_vec()),
-            Err(e) => {
-                return Ok(CompileResult::fail_fmt(format_args!(
-                    "failed to get self executable path: {}",
-                    bstr::BStr::new(e.name())
-                )));
-            }
-        }
-    } else {
-        let mut exe_path_buf = PathBuffer::uninit();
-        let mut version_str: Vec<u8> = Vec::new();
-        let _ = write!(&mut version_str, "{}", target);
-        version_str.push(0);
-        // SAFETY: trailing 0 byte appended above.
-        let version_zstr = ZStr::from_slice_with_nul(&version_str[..]);
-
-        let mut needs_download: bool = true;
-        let dest_z = target.exe_path(&mut exe_path_buf, version_zstr, env, &mut needs_download);
-
-        if needs_download {
-            if let Err(e) = download_to_path(target, env, dest_z) {
-                return Ok(match e {
-                    crate::Error::TargetNotFound => CompileResult::fail_fmt(format_args!(
-                        "Target platform '{}' is not available for download. Check if this version of Bun supports this target.",
-                        target
-                    )),
-                    crate::Error::NetworkError => CompileResult::fail_fmt(format_args!(
-                        "Network error downloading executable for '{}'. Check your internet connection and proxy settings.",
-                        target
-                    )),
-                    crate::Error::InvalidResponse => CompileResult::fail_fmt(format_args!(
-                        "Downloaded file for '{}' appears to be corrupted. Please try again.",
-                        target
-                    )),
-                    crate::Error::ExtractionFailed => CompileResult::fail_fmt(format_args!(
-                        "Failed to extract executable for '{}'. The download may be incomplete.",
-                        target
-                    )),
-                    _ => CompileResult::fail_fmt(format_args!(
-                        "Failed to download '{}': {}",
-                        target,
-                        bstr::BStr::new(e.name())
-                    )),
-                });
-            }
-        }
-
-        bun_core::ZBox::from_vec_with_nul(dest_z.as_bytes().to_vec())
+    let self_exe = match target_executable(target, env, self_exe_path) {
+        Ok(p) => p,
+        Err(e) => return Ok(CompileResult::Err(e)),
     };
 
-    let fd = inject(&bytes, &self_exe, windows_options, target);
-    // Note: a scopeguard closure capturing `fd` by value would not observe
-    // later reassignments; capturing by `&mut` conflicts with later uses. Explicit
-    // `if fd != Fd::INVALID { fd.close(); }` calls are inserted at every return below
-    // (both error and success paths).
+    let mut temp_path_buf = bun_paths::path_buffer_pool::get();
+    let Some(injected) = inject(
+        &bytes,
+        &self_exe,
+        windows_options,
+        target,
+        &mut temp_path_buf,
+    ) else {
+        // inject() has already printed the specific error.
+        return Ok(CompileResult::fail_fmt(format_args!(
+            "failed to write compiled executable {}",
+            bstr::BStr::new(outfile)
+        )));
+    };
+    let fd = injected.fd;
+    // Closed explicitly at every return below rather than by a guard: on Windows
+    // the handle has to be closed mid-function, before `MoveFileExW`.
     debug_assert!(fd.kind() == bun_sys::FdKind::System);
 
     #[cfg(unix)]
@@ -1918,20 +2556,7 @@ pub fn to_executable(
 
     #[cfg(windows)]
     {
-        // Get the current path of the temp file
-        let mut temp_buf = PathBuffer::uninit();
-        let temp_path = match bun_sys::get_fd_path(fd, &mut temp_buf) {
-            Ok(p) => p,
-            Err(e) => {
-                if fd != Fd::INVALID {
-                    fd.close();
-                }
-                return Ok(CompileResult::fail_fmt(format_args!(
-                    "Failed to get temp file path: {}",
-                    bstr::BStr::new(e.name())
-                )));
-            }
-        };
+        let temp_path: &[u8] = injected.temp_path.as_bytes();
 
         // Build the absolute destination path
         // On Windows, we need an absolute path for MoveFileExW
@@ -1940,9 +2565,7 @@ pub fn to_executable(
         let cwd_path: &[u8] = match bun_sys::getcwd(&mut cwd_buf) {
             Ok(len) => &cwd_buf[..len],
             Err(e) => {
-                if fd != Fd::INVALID {
-                    fd.close();
-                }
+                fd.close();
                 return Ok(CompileResult::fail_fmt(format_args!(
                     "Failed to get current directory: {}",
                     bstr::BStr::new(e.name())
@@ -1971,7 +2594,7 @@ pub fn to_executable(
         // Close the file handle before moving (Windows requires this)
         fd.close();
 
-        use bun_sys::windows::{self, Win32ErrorExt as _};
+        use bun_sys::windows;
         // Move the file using MoveFileExW
         // SAFETY: NUL-terminated wide strings constructed above. Pass the
         // full-buffer pointer (not a `[..len]` sub-slice) so the pointer's
@@ -1987,26 +2610,19 @@ pub fn to_executable(
             )
         } == windows::FALSE
         {
-            let werr = windows::Win32Error::get();
-            if let Some(sys_err) = werr.to_system_errno() {
-                if sys_err == bun_sys::SystemErrno::EISDIR {
-                    return Ok(CompileResult::fail_fmt(format_args!(
-                        "{} is a directory. Please choose a different --outfile or delete the directory",
-                        bstr::BStr::new(outfile)
-                    )));
-                } else {
-                    return Ok(CompileResult::fail_fmt(format_args!(
-                        "failed to move executable to {}: {}",
-                        bstr::BStr::new(dest_path),
-                        <&'static str>::from(sys_err)
-                    )));
-                }
-            } else {
+            let err = windows::last_system_errno();
+            let _ = Syscall::unlink(injected.temp_path);
+            if err == bun_sys::SystemErrno::EISDIR {
                 return Ok(CompileResult::fail_fmt(format_args!(
-                    "failed to move executable to {}",
-                    bstr::BStr::new(dest_path)
+                    "{} is a directory. Please choose a different --outfile or delete the directory",
+                    bstr::BStr::new(outfile)
                 )));
             }
+            return Ok(CompileResult::fail_fmt(format_args!(
+                "failed to move executable to {}: {}",
+                bstr::BStr::new(dest_path),
+                err
+            )));
         }
 
         // Set Windows icon and/or metadata using unified function
@@ -2040,24 +2656,7 @@ pub fn to_executable(
 
     #[cfg(not(windows))]
     {
-        let mut buf2 = PathBuffer::uninit();
-        // Note: borrowck — `get_fd_path` returns `&mut [u8]` borrowing `buf2`;
-        // copy it into an owned buffer so `temp_posix_buf` can also borrow `buf2`'s
-        // sibling without overlap.
-        let temp_location: Vec<u8> = match bun_sys::get_fd_path(fd, &mut buf2) {
-            Ok(p) => p.to_vec(),
-            Err(e) => {
-                if fd != Fd::INVALID {
-                    fd.close();
-                }
-                return Ok(CompileResult::fail_fmt(format_args!(
-                    "failed to get path for fd: {}",
-                    e
-                )));
-            }
-        };
-        let mut temp_posix_buf = PathBuffer::uninit();
-        let temp_posix = path::resolve_path::z(&temp_location, &mut temp_posix_buf);
+        let temp_posix = injected.temp_path;
         let outfile_basename = bun_paths::basename(outfile);
         let mut outfile_posix_buf = PathBuffer::uninit();
         let outfile_posix = path::resolve_path::z(outfile_basename, &mut outfile_posix_buf);
@@ -2077,16 +2676,14 @@ pub fn to_executable(
             } else {
                 return Ok(CompileResult::fail_fmt(format_args!(
                     "failed to rename {} to {}: {}",
-                    bstr::BStr::new(&temp_location),
+                    bstr::BStr::new(temp_posix.as_bytes()),
                     bstr::BStr::new(outfile),
                     bstr::BStr::new(e.name())
                 )));
             }
         }
 
-        if fd != Fd::INVALID {
-            fd.close();
-        }
+        fd.close();
         Ok(CompileResult::Success)
     }
 }
@@ -2096,86 +2693,11 @@ impl StandaloneModuleGraph {
     /// sets it globally, and returns the pointer.
     pub fn from_executable() -> crate::Result<Option<*mut StandaloneModuleGraph>> {
         #[cfg(target_os = "macos")]
-        {
-            let Some((base, len)) = macho::get_data() else {
-                return Ok(None);
-            };
-            if len < size_of::<Offsets>() + TRAILER.len() {
-                bun_core::debug_warn!("bun standalone module graph is too small to be valid");
-                return Ok(None);
-            }
-            // SAFETY: `[len - Offsets - TRAILER, len)` is in-bounds (checked above) and
-            // read-only; build short-lived views via raw `read_unaligned` so no `&[u8]`
-            // ever spans the writable bytecode region carried in `base`'s provenance.
-            let offsets_ptr = unsafe { base.add(len - size_of::<Offsets>() - TRAILER.len()) };
-            // SAFETY: `[len - TRAILER.len(), len)` is in-bounds (length checked above) and read-only.
-            let trailer_bytes = unsafe {
-                core::slice::from_raw_parts(base.add(len - TRAILER.len()), TRAILER.len())
-            };
-            if trailer_bytes != TRAILER {
-                bun_core::debug_warn!("bun standalone module graph has invalid trailer");
-                return Ok(None);
-            }
-            // SAFETY: offsets_ptr has at least size_of::<Offsets>() bytes.
-            let offsets: Offsets =
-                unsafe { core::ptr::read_unaligned(offsets_ptr.cast::<Offsets>()) };
-            return from_bytes_alloc(base, len, offsets).map(Some);
-        }
-
+        let data = macho::get_data();
         #[cfg(windows)]
-        {
-            let Some((base, len)) = pe::get_data() else {
-                return Ok(None);
-            };
-            if len < size_of::<Offsets>() + TRAILER.len() {
-                bun_core::debug_warn!("bun standalone module graph is too small to be valid");
-                return Ok(None);
-            }
-            // SAFETY: `[len - Offsets - TRAILER, len)` is in-bounds (checked above) and
-            // read-only; build short-lived views via raw `read_unaligned` so no `&[u8]`
-            // ever spans the writable bytecode region carried in `base`'s provenance.
-            let offsets_ptr = unsafe { base.add(len - size_of::<Offsets>() - TRAILER.len()) };
-            // SAFETY: `[len - TRAILER.len(), len)` is in-bounds (length checked above) and read-only.
-            let trailer_bytes = unsafe {
-                core::slice::from_raw_parts(base.add(len - TRAILER.len()), TRAILER.len())
-            };
-            if trailer_bytes != TRAILER {
-                bun_core::debug_warn!("bun standalone module graph has invalid trailer");
-                return Ok(None);
-            }
-            // SAFETY: offsets_ptr has at least size_of::<Offsets>() bytes.
-            let offsets: Offsets =
-                unsafe { core::ptr::read_unaligned(offsets_ptr.cast::<Offsets>()) };
-            return from_bytes_alloc(base, len, offsets).map(Some);
-        }
-
+        let data = pe::get_data();
         #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
-        {
-            let Some((base, len)) = elf::get_data() else {
-                return Ok(None);
-            };
-            if len < size_of::<Offsets>() + TRAILER.len() {
-                bun_core::debug_warn!("bun standalone module graph is too small to be valid");
-                return Ok(None);
-            }
-            // SAFETY: `[len - Offsets - TRAILER, len)` is in-bounds (checked above) and
-            // read-only; build short-lived views via raw `read_unaligned` so no `&[u8]`
-            // ever spans the writable bytecode region carried in `base`'s provenance.
-            let offsets_ptr = unsafe { base.add(len - size_of::<Offsets>() - TRAILER.len()) };
-            // SAFETY: `[len - TRAILER.len(), len)` is in-bounds (length checked above) and read-only.
-            let trailer_bytes = unsafe {
-                core::slice::from_raw_parts(base.add(len - TRAILER.len()), TRAILER.len())
-            };
-            if trailer_bytes != TRAILER {
-                bun_core::debug_warn!("bun standalone module graph has invalid trailer");
-                return Ok(None);
-            }
-            // SAFETY: offsets_ptr has at least size_of::<Offsets>() bytes.
-            let offsets: Offsets =
-                unsafe { core::ptr::read_unaligned(offsets_ptr.cast::<Offsets>()) };
-            return from_bytes_alloc(base, len, offsets).map(Some);
-        }
-
+        let data = elf::get_data();
         #[cfg(not(any(
             target_os = "macos",
             windows,
@@ -2183,87 +2705,245 @@ impl StandaloneModuleGraph {
             target_os = "android",
             target_os = "freebsd"
         )))]
-        {
-            unreachable!()
+        let data: Option<(*mut u8, usize)> = None;
+        let Some((base, len)) = data else {
+            return Ok(None);
+        };
+        if len < size_of::<Offsets>() + TRAILER.len() {
+            bun_core::debug_warn!("bun standalone module graph is too small to be valid");
+            return Ok(None);
         }
+        // SAFETY: `[len - Offsets - TRAILER, len)` is in-bounds (checked above) and
+        // read-only; build short-lived views via raw `read_unaligned` so no `&[u8]`
+        // ever spans the writable bytecode region carried in `base`'s provenance.
+        let offsets_ptr = unsafe { base.add(len - size_of::<Offsets>() - TRAILER.len()) };
+        // SAFETY: `[len - TRAILER.len(), len)` is in-bounds (length checked above) and read-only.
+        let trailer_bytes =
+            unsafe { core::slice::from_raw_parts(base.add(len - TRAILER.len()), TRAILER.len()) };
+        if trailer_bytes != TRAILER {
+            bun_core::debug_warn!("bun standalone module graph has invalid trailer");
+            return Ok(None);
+        }
+        // SAFETY: offsets_ptr has at least size_of::<Offsets>() bytes.
+        let offsets: Offsets = unsafe { core::ptr::read_unaligned(offsets_ptr.cast::<Offsets>()) };
+        let graph = from_bytes_alloc(base, len, offsets)?;
+        // SAFETY: `from_bytes_alloc` just allocated `graph` for the life of the process.
+        unsafe { &*graph }.prefetch_startup_pages();
+        Ok(Some(graph))
     }
 
-    /// Hint to the kernel that the embedded `__BUN`/`.bun` source pages are
-    /// unlikely to be accessed again after the entrypoint has been parsed.
-    /// The pages are clean file-backed COW, so any later read (lazy require,
-    /// stack-trace source lookup) faults back in transparently from the
-    /// executable on disk. Only applies when running as a compiled
-    /// standalone binary; `BUN_FEATURE_FLAG_DISABLE_STANDALONE_MADVISE=1`
-    /// skips the hint.
-    pub fn hint_source_pages_dont_need() {
-        #[cfg(windows)]
+    /// Starts reading the payload pages the entry point's static import closure
+    /// needs — its modules' bytecode (or source text when there is none), the
+    /// internal-module bytecode and the string table, one run by construction
+    /// (`to_bytes`) — so on a cold start the disk reads overlap JSC
+    /// initialization instead of arriving one page fault at a time while the
+    /// bytecode decodes. Pages already cached cost nothing; errors are ignored.
+    /// `BUN_FEATURE_FLAG_DISABLE_STANDALONE_MADVISE=1` skips it.
+    fn prefetch_startup_pages(&self) {
+        if self.startup_module_count == 0
+            || bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_STANDALONE_MADVISE::get()
+                .unwrap_or(false)
         {
             return;
         }
+        let startup = &self.files.values()[..self.startup_module_count as usize];
+        let span = if startup.iter().any(|f| !f.bytecode.is_empty()) {
+            address_span(
+                startup
+                    .iter()
+                    .flat_map(|f| [f.bytecode, f.module_info])
+                    .chain(self.builtin_bytecode.iter().map(|&(_, bytes)| bytes))
+                    .map(|bytes| (bytes.cast::<u8>().cast_const(), bytes.len()))
+                    .chain([(
+                        self.bytecode_string_table.as_ptr(),
+                        self.bytecode_string_table.len(),
+                    )]),
+            )
+        } else {
+            address_span(
+                startup
+                    .iter()
+                    .map(|f| (f.contents.as_bytes().as_ptr(), f.contents.len())),
+            )
+        };
+        let Some((lo, hi)) = span else {
+            return;
+        };
+        #[cfg(target_os = "macos")]
+        macho::read_ahead(lo, hi);
+        #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
+        elf::read_ahead(lo, hi);
+        #[cfg(windows)]
+        let _ = (lo, hi);
+    }
 
-        #[cfg(not(windows))]
+    /// Hint to the kernel that the embedded source text is unlikely to be
+    /// accessed again after the entrypoint has been evaluated. The pages are
+    /// clean file-backed COW, so any later read (lazy require, stack-trace
+    /// source lookup, `Bun.embeddedFiles`) faults back in transparently from
+    /// the executable on disk. Only the contiguous source-text run written by
+    /// `to_bytes` is dropped: JSC keeps decoding function bodies out of the
+    /// bytecode regions for the life of the process, and dropping those turns
+    /// every first call into a page fault. Only applies when running as a
+    /// compiled standalone binary; `BUN_FEATURE_FLAG_DISABLE_STANDALONE_MADVISE=1`
+    /// skips the hint.
+    #[cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))]
+    pub fn hint_source_pages_dont_need() {
+        let Some(graph) = Self::get_ref() else {
+            return;
+        };
+        if bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_STANDALONE_MADVISE::get()
+            .unwrap_or(false)
         {
-            let (base, len): (*mut u8, usize) = {
-                #[cfg(target_os = "macos")]
-                {
-                    match macho::get_data() {
-                        Some(b) => b,
-                        None => return,
-                    }
-                }
-                #[cfg(any(target_os = "linux", target_os = "android"))]
-                {
-                    match elf::get_data() {
-                        Some(b) => b,
-                        None => return,
-                    }
-                }
-                #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "android")))]
-                {
-                    return;
-                }
-            };
-
-            #[cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))]
-            {
-                if len == 0
-                    || bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_STANDALONE_MADVISE
-                        .get()
-                        .unwrap_or(false)
-                {
-                    return;
-                }
-
-                let page: usize = bun_alloc::page_size();
-                let start = (base as usize) & !(page - 1);
-                let end_unaligned = base as usize + len;
-                let end = (end_unaligned + page - 1) & !(page - 1);
-
-                // This is a best-effort hint, so call libc madvise directly and
-                // just log on failure rather than treating errors as fatal.
-                // SAFETY: start..end covers a mapped range of the executable image.
-                let rc = unsafe {
-                    libc::madvise(
-                        start as *mut core::ffi::c_void,
-                        end - start,
-                        libc::MADV_DONTNEED,
-                    )
-                };
-                if rc != 0 {
-                    bun_core::scoped_log!(
-                        StandaloneModuleGraph,
-                        "hintSourcePagesDontNeed: madvise failed errno={}",
-                        bun_sys::last_errno()
-                    );
-                    return;
-                }
-                bun_core::scoped_log!(
-                    StandaloneModuleGraph,
-                    "hintSourcePagesDontNeed: MADV_DONTNEED {} bytes",
-                    end - start
-                );
-            }
+            return;
         }
+        let Some((start, end)) = graph.source_text_pages() else {
+            bun_core::scoped_log!(
+                StandaloneModuleGraph,
+                "hintSourcePagesDontNeed: no whole source-text page to drop"
+            );
+            return;
+        };
+
+        // This is a best-effort hint, so call libc madvise directly and
+        // just log on failure rather than treating errors as fatal.
+        // SAFETY: start..end lies inside the mapped executable image, and
+        // MADV_DONTNEED neither reads nor writes through it.
+        let rc = unsafe {
+            libc::madvise(
+                start as *mut core::ffi::c_void,
+                end - start,
+                libc::MADV_DONTNEED,
+            )
+        };
+        if rc != 0 {
+            bun_core::scoped_log!(
+                StandaloneModuleGraph,
+                "hintSourcePagesDontNeed: madvise failed errno={}",
+                bun_sys::last_errno()
+            );
+        } else {
+            bun_core::scoped_log!(
+                StandaloneModuleGraph,
+                "hintSourcePagesDontNeed: MADV_DONTNEED {} bytes",
+                end - start
+            );
+        }
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "android")))]
+    pub fn hint_source_pages_dont_need() {}
+
+    /// The whole pages covered by the files' `contents` regions: `(start, end)`
+    /// rounded inward, or `None` when the run does not cover a full page or the
+    /// payload was not written with `Flags::SOURCE_TEXT_CONTIGUOUS` (an older
+    /// `bun build` interleaves bytecode with the source text).
+    #[cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))]
+    fn source_text_pages(&self) -> Option<(usize, usize)> {
+        if !self.flags.contains(Flags::SOURCE_TEXT_CONTIGUOUS) {
+            return None;
+        }
+        let (lo, hi) = address_span(
+            self.files
+                .values()
+                .iter()
+                .map(|f| (f.contents.as_bytes().as_ptr(), f.contents.len())),
+        )?;
+        let page = bun_alloc::page_size();
+        let start = (lo + page - 1) & !(page - 1);
+        let end = hi & !(page - 1);
+        (end > start).then_some((start, end))
+    }
+}
+
+/// `[lo, hi)` covering every non-empty `(ptr, len)` region, or `None` if there is none.
+fn address_span(regions: impl Iterator<Item = (*const u8, usize)>) -> Option<(usize, usize)> {
+    let (lo, hi) = regions
+        .filter(|&(_, len)| len != 0)
+        .fold((usize::MAX, 0usize), |(lo, hi), (ptr, len)| {
+            (lo.min(ptr as usize), hi.max(ptr as usize + len))
+        });
+    (lo < hi).then_some((lo, hi))
+}
+
+/// Writes the ahead-of-time bytecode of the internal modules, the shared
+/// bytecode string table and the module-info string table. Returns the builtin
+/// table (`u32 count`, then `count` × `{ u32 id, StringPointer bytes }`) and
+/// the two string tables' pointers.
+fn append_shared_bytecode(
+    string_builder: &mut bun_core::StringBuilder,
+    output_files: &[OutputFile],
+) -> (Vec<u8>, StringPointer, StringPointer) {
+    let mut builtin_bytecode_table: Vec<u8> = Vec::new();
+    let mut count: u32 = 0;
+    builtin_bytecode_table.extend_from_slice(&0u32.to_le_bytes());
+    for output_file in output_files {
+        if output_file.output_kind != options::OutputKind::BuiltinBytecode {
+            continue;
+        }
+        let options::OutputFileValue::Buffer { bytes } = &output_file.value else {
+            continue;
+        };
+        let Some(id) = core::str::from_utf8(&output_file.dest_path)
+            .ok()
+            .and_then(|s| s.parse::<u32>().ok())
+        else {
+            continue;
+        };
+        let pointer = append_bytecode_aligned(string_builder, bytes);
+        builtin_bytecode_table.extend_from_slice(&id.to_le_bytes());
+        builtin_bytecode_table.extend_from_slice(&pointer.offset.to_le_bytes());
+        builtin_bytecode_table.extend_from_slice(&pointer.length.to_le_bytes());
+        count += 1;
+    }
+    builtin_bytecode_table[0..4].copy_from_slice(&count.to_le_bytes());
+
+    let mut bytecode_string_table_ptr = StringPointer::default();
+    for output_file in output_files {
+        if output_file.output_kind != options::OutputKind::BytecodeStringTable {
+            continue;
+        }
+        let options::OutputFileValue::Buffer { bytes } = &output_file.value else {
+            continue;
+        };
+        bytecode_string_table_ptr = append_bytecode_aligned(string_builder, bytes);
+    }
+    let mut module_info_string_table_ptr = StringPointer::default();
+    if let Some(table) = output_files
+        .iter()
+        .find(|f| f.output_kind == options::OutputKind::ModuleInfoStringTable)
+    {
+        module_info_string_table_ptr = string_builder.append_count(table.value.as_slice());
+    }
+    (
+        builtin_bytecode_table,
+        bytecode_string_table_ptr,
+        module_info_string_table_ptr,
+    )
+}
+
+/// JSC reads cached bytecode in place and expects its start 128-byte aligned once mapped. The section data begins
+/// 8 bytes after a page-aligned address (the length header), so the offset must be 120 mod 128.
+fn append_bytecode_aligned(
+    string_builder: &mut bun_core::StringBuilder,
+    bytecode: &[u8],
+) -> StringPointer {
+    let target_mod: usize = 128 - size_of::<u64>();
+    let current_mod = string_builder.len % 128;
+    let padding = if current_mod <= target_mod {
+        target_mod - current_mod
+    } else {
+        128 - current_mod + target_mod
+    };
+    let writable = string_builder.writable();
+    writable[0..padding].fill(0);
+    string_builder.len += padding;
+    let aligned_offset = string_builder.len;
+    string_builder.writable()[0..bytecode.len()].copy_from_slice(bytecode);
+    string_builder.len += bytecode.len();
+    StringPointer {
+        offset: aligned_offset as u32,
+        length: bytecode.len() as u32,
     }
 }
 

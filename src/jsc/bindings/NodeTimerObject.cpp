@@ -7,12 +7,14 @@
 #include "JavaScriptCore/JSObject.h"
 #include "JavaScriptCore/Heap.h"
 #include "ZigGlobalObject.h"
+#include "BunClientData.h"
 
 #include "ZigGeneratedClasses.h"
 #include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include "JavaScriptCore/JSCJSValue.h"
 #include "AsyncContextFrame.h"
+
 namespace Bun {
 using namespace JSC;
 
@@ -62,7 +64,10 @@ static bool call(JSGlobalObject* globalObject, JSValue timerObject, JSValue call
     if (scope.exception()) [[unlikely]] {
         auto* exception = scope.exception();
         (void)scope.tryClearException();
-        Bun__reportUnhandledError(globalObject, JSValue::encode(exception));
+        if (vm.isTerminationException(exception))
+            Bun__VM__takeTerminationOutsideScript(globalObject);
+        else
+            Bun__reportUnhandledError(globalObject, JSValue::encode(exception));
         hadException = true;
     }
 
@@ -77,7 +82,7 @@ static bool call(JSGlobalObject* globalObject, JSValue timerObject, JSValue call
 extern "C" bool Bun__JSTimeout__call(JSGlobalObject* globalObject, EncodedJSValue timerObject, EncodedJSValue callbackValue, EncodedJSValue argumentsValue)
 {
     auto& vm = globalObject->vm();
-    if (vm.hasPendingTerminationException()) [[unlikely]] {
+    if (vm.hasPendingTerminationException() || WebCore::clientData(vm)->isStoppingOrStopped(vm)) [[unlikely]] {
         return true;
     }
 

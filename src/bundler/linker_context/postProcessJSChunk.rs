@@ -107,6 +107,28 @@ pub(crate) fn post_process_js_chunk(
     // SAFETY: worker.arena is set in Worker::init() before any task runs.
     let worker_arena: &Arena = worker.arena();
 
+    // An ESM entry point already ends in an `export { }` clause
+    // (`generate_entry_point_tail_js`); its cross-chunk exports join that
+    // clause instead of adding a second one.
+    let joined_cross_chunk_exports: Option<bun_ast::StoreSlice<bun_ast::ClauseItem>> = if chunk
+        .is_entry_point()
+        && c.options.output_format == options::OutputFormat::Esm
+        && c.graph.meta.items_flags()[chunk.entry_point.source_index() as usize].wrap
+            != crate::WrapKind::Cjs
+    {
+        match chunk.content.javascript().cross_chunk_suffix_stmts.slice() {
+            [] => Some(bun_ast::StoreSlice::EMPTY),
+            [stmt] => match &stmt.data {
+                bun_ast::StmtData::SExportClause(clause) => Some(clause.items),
+                _ => None,
+            },
+            _ => None,
+        }
+    } else {
+        None
+    };
+    let exports_join_entry_tail = joined_cross_chunk_exports.is_some();
+
     {
         // `Options` is not `Copy` (holds `&mut ModuleInfo`), and a closure
         // taking `&mut ModuleInfo` can't express "output lifetime = input
@@ -172,13 +194,15 @@ pub(crate) fn post_process_js_chunk(
                 .cross_chunk_prefix_stmts
                 .slice_mut(),
         );
-        let suffix_stmts = bun_ast::StoreSlice::new_mut(
+        let suffix_stmts = bun_ast::StoreSlice::new_mut(if exports_join_entry_tail {
+            &mut []
+        } else {
             chunk
                 .content
                 .javascript_mut()
                 .cross_chunk_suffix_stmts
-                .slice_mut(),
-        );
+                .slice_mut()
+        });
 
         cross_chunk_prefix = js_printer::print::<false>(
             worker_arena,
@@ -256,6 +280,10 @@ pub(crate) fn post_process_js_chunk(
     // can populate export entries in module_info.
     let entry_point_tail = 'brk: {
         if chunk.is_entry_point() {
+            let cross_chunk_exports: &[bun_ast::ClauseItem] = match &joined_cross_chunk_exports {
+                Some(items) => items.slice(),
+                None => &[],
+            };
             break 'brk generate_entry_point_tail_js(
                 c,
                 to_common_js_ref,
@@ -265,6 +293,7 @@ pub(crate) fn post_process_js_chunk(
                 &arena,
                 chunk.renamer.as_renamer(),
                 module_info.as_deref_mut(),
+                cross_chunk_exports,
             );
         }
 
@@ -632,11 +661,6 @@ pub(crate) fn post_process_js_chunk(
                 line_offset.advance(&quoted);
                 j.push_owned(quoted.into_boxed_slice());
             }
-            // {
-            //     let str = b"\n  react_refresh: ";
-            //     j.push_static(str);
-            //     line_offset.advance(str);
-            // }
             {
                 let str = b"\n});";
                 j.push_static(str);
@@ -724,6 +748,7 @@ pub(crate) fn generate_entry_point_tail_js<'a>(
     temp_arena: &Arena,
     r: js_printer::renamer::Renamer<'a, 'a>,
     module_info: Option<&'a mut ModuleInfo>,
+    cross_chunk_exports: &[bun_ast::ClauseItem],
 ) -> CompileResult {
     let flags: crate::js_meta::Flags = c.graph.meta.items_flags()[source_index as usize];
     let mut stmts: Vec<Stmt> = Vec::new();
@@ -807,7 +832,9 @@ pub(crate) fn generate_entry_point_tail_js<'a>(
                         &c.graph.meta.items_sorted_and_filtered_export_aliases()
                             [source_index as usize];
 
-                    if !sorted_and_filtered_export_aliases.is_empty() {
+                    if !sorted_and_filtered_export_aliases.is_empty()
+                        || !cross_chunk_exports.is_empty()
+                    {
                         let resolved_exports: &ResolvedExports =
                             &c.graph.meta.items_resolved_exports()[source_index as usize];
                         let imports_to_bind: &RefImportData =
@@ -958,6 +985,13 @@ pub(crate) fn generate_entry_point_tail_js<'a>(
                             }
                         }
 
+                        let own_len = items.len();
+                        items.extend(cross_chunk_exports.iter().map(|item| bun_ast::ClauseItem {
+                            alias: item.alias,
+                            alias_loc: item.alias_loc,
+                            name: item.name,
+                            original_name: item.original_name,
+                        }));
                         // arena-owned `*mut [ClauseItem]` — move the
                         // collected Vec into the linker arena. The arena slice is also iterated
                         // below for the synthetic-default-export path.
@@ -969,8 +1003,12 @@ pub(crate) fn generate_entry_point_tail_js<'a>(
                             },
                             bun_ast::Loc::EMPTY,
                         ));
+                        let items = &items[..own_len];
 
-                        if flags.needs_synthetic_default_export && !had_default_export {
+                        if flags.needs_synthetic_default_export
+                            && !had_default_export
+                            && !items.is_empty()
+                        {
                             let mut properties = G::PropertyList::init_capacity(items.len());
                             let getter_fn_body: &mut [Stmt] =
                                 arena.alloc_slice_fill_default(items.len());

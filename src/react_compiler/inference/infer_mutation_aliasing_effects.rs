@@ -106,10 +106,7 @@ pub(crate) fn infer_mutation_aliasing_effects(
             );
         }
         if params_len > 1 {
-            let ref_place = match &func.params[1] {
-                ParamPattern::Place(p) => p,
-                ParamPattern::Spread(s) => &s.place,
-            };
+            let ref_place = func.params[1].place();
             let value_id = ValueId(next_value_id);
             next_value_id += 1;
             initial_state.initialize(
@@ -1359,10 +1356,7 @@ fn infer_param(
     param_kind: AbstractValue,
     next_value_id: &mut u32,
 ) {
-    let place = match param {
-        ParamPattern::Place(p) => p,
-        ParamPattern::Spread(s) => &s.place,
-    };
+    let place = param.place();
     let value_id = ValueId(*next_value_id);
     *next_value_id += 1;
     state.initialize(value_id, param_kind);
@@ -3241,10 +3235,7 @@ fn are_arguments_immutable_and_non_mutating(
                     if let Some(&func_id) = function_values.get(vid) {
                         let inner_func = &env.functions[func_id.0 as usize];
                         let mutates_params = inner_func.params.iter().any(|param| {
-                            let param_id = match param {
-                                ParamPattern::Place(p) => p.identifier,
-                                ParamPattern::Spread(s) => s.place.identifier,
-                            };
+                            let param_id = param.place().identifier;
                             let ident = &env.identifiers[param_id.0 as usize];
                             ident.mutable_range.end.0 > ident.mutable_range.start.0 + 1
                         });

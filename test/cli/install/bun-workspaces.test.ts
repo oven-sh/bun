@@ -734,6 +734,47 @@ describe("relative tarballs", async () => {
       },
     });
   });
+  // The tarball path is written in the root package.json, so it is relative to
+  // the root even though the dependency it ends up satisfying is declared by
+  // the workspace (#25835 for overrides, #25752 for catalogs). The workspace
+  // gets a different tarball at the same relative path, so reading it relative
+  // to the workspace installs `baz` instead of failing.
+  for (const [source, root, specifier] of [
+    ["override", { overrides: { bar: "file:./bar.tgz" } }, "^0.0.2"],
+    ["catalog entry", { catalogs: { vendored: { bar: "file:./bar.tgz" } } }, "catalog:vendored"],
+  ] as const) {
+    test.concurrent(`from a root ${source} applied to a workspace dependency`, async () => {
+      using ctx = await setupTest();
+      const { packageDir, env } = ctx;
+      await Promise.all([
+        write(join(packageDir, "package.json"), JSON.stringify({ name: "foo", workspaces: ["pkgs/*"], ...root })),
+        write(
+          join(packageDir, "pkgs", "pkg1", "package.json"),
+          JSON.stringify({ name: "pkg1", dependencies: { bar: specifier } }),
+        ),
+        cp(join(import.meta.dir, "bar-0.0.2.tgz"), join(packageDir, "bar.tgz")),
+      ]);
+      await cp(join(import.meta.dir, "baz-0.0.3.tgz"), join(packageDir, "pkgs", "pkg1", "bar.tgz"));
+
+      // The second install starts from the lockfile and an empty cache, so it
+      // reads the tarball again from the path recorded there.
+      for (const frozenLockfile of [false, true]) {
+        await Promise.all([
+          rm(join(packageDir, "node_modules"), { recursive: true, force: true }),
+          rm(env.BUN_INSTALL_CACHE_DIR, { recursive: true, force: true }),
+        ]);
+
+        await runBunInstall(env, packageDir, { frozenLockfile });
+
+        expect(await file(join(packageDir, "node_modules", "bar", "package.json")).json()).toEqual({
+          name: "bar",
+          version: "0.0.2",
+        });
+      }
+
+      expect(await file(join(packageDir, "bun.lock")).text()).toContain('"bar": ["bar@./bar.tgz", {}, "sha512-');
+    });
+  }
 
   // Regression test for a data race where the `.local_tarball` task callback
   // (running on a ThreadPool worker) read `lockfile.packages` and
@@ -1853,6 +1894,265 @@ describe("install --filter", () => {
     expect(await exited).toBe(0);
     await checkWorkspace();
   });
+
+  test.concurrent("relation selectors walk the workspace graph", async () => {
+    using ctx = await setupTest();
+    const { packageDir, packageJson, env } = ctx;
+    const pkg = (name: string, deps: Record<string, unknown>) =>
+      write(join(packageDir, "packages", name, "package.json"), JSON.stringify({ name, version: "1.0.0", ...deps }));
+    await Promise.all([
+      write(
+        packageJson,
+        JSON.stringify({
+          name: "root",
+          workspaces: ["packages/*"],
+          dependencies: { app: "workspace:*", "left-pad": "1.0.0" },
+        }),
+      ),
+      pkg("app", { dependencies: { lib: "workspace:*", "is-number": "1.0.0" } }),
+      pkg("lib", { dependencies: { util: "workspace:*", "no-deps": "1.0.0" } }),
+      pkg("util", { dependencies: { "a-dep": "1.0.1" } }),
+      pkg("tool", { devDependencies: { lib: "1.0.0" }, dependencies: { "no-deps-bins": "1.0.0" } }),
+      pkg("lone", { dependencies: { "peer-no-deps": "1.0.0" } }),
+    ]);
+
+    const externals = ["a-dep", "no-deps", "is-number", "no-deps-bins", "left-pad", "peer-no-deps"];
+    const installed = () => Promise.all(externals.map(name => exists(join(packageDir, "node_modules", name))));
+
+    async function installWithFilter(filter: string) {
+      await using proc = spawn({
+        cmd: [bunExe(), "install", "--filter", filter],
+        cwd: packageDir,
+        stdout: "ignore",
+        stderr: "pipe",
+        env,
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("error:");
+      return exitCode;
+    }
+
+    // util and its dependents: lib, app, root (via app), tool (via its devDependency on lib); not lone
+    const dependentsExit = await installWithFilter("...util");
+    expect(await installed()).toStrictEqual([true, true, true, true, true, false]);
+    expect(await file(join(packageDir, "bun.lock")).text()).toContain('"peer-no-deps": "1.0.0"');
+    expect(dependentsExit).toBe(0);
+
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+
+    // only app's dependencies: lib and util
+    const dependenciesExit = await installWithFilter("app^...");
+    expect(await installed()).toStrictEqual([true, true, false, false, false, false]);
+    expect(dependenciesExit).toBe(0);
+  });
+
+  test.concurrent("-F is the short form of --filter", async () => {
+    using ctx = await setupTest();
+    const { packageDir, packageJson, env } = ctx;
+    await Promise.all([
+      write(
+        packageJson,
+        JSON.stringify({
+          name: "root",
+          workspaces: ["packages/*"],
+          dependencies: { "a-dep": "1.0.1" },
+        }),
+      ),
+      write(
+        join(packageDir, "packages", "pkg1", "package.json"),
+        JSON.stringify({
+          name: "pkg1",
+          version: "1.0.0",
+          dependencies: { "no-deps": "2.0.0" },
+        }),
+      ),
+    ]);
+
+    await using proc = spawn({
+      cmd: [bunExe(), "install", "-F", "pkg1"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(err).not.toContain("error:");
+    expect(out).not.toContain("a-dep");
+    expect(
+      await Promise.all([
+        exists(join(packageDir, "node_modules", "a-dep")),
+        file(join(packageDir, "node_modules", "no-deps", "package.json")).json(),
+        exists(join(packageDir, "node_modules", "pkg1")),
+      ]),
+    ).toStrictEqual([false, { name: "no-deps", version: "2.0.0" }, true]);
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("{dir} selects every workspace under a directory", async () => {
+    using ctx = await setupTest();
+    const { packageDir, packageJson, env } = ctx;
+    await Promise.all([
+      write(
+        packageJson,
+        JSON.stringify({
+          name: "root",
+          workspaces: ["packages/*", "apps/*"],
+          dependencies: { "a-dep": "1.0.1" },
+        }),
+      ),
+      write(
+        join(packageDir, "packages", "pkg1", "package.json"),
+        JSON.stringify({ name: "pkg1", version: "1.0.0", dependencies: { "no-deps": "2.0.0" } }),
+      ),
+      write(
+        join(packageDir, "packages", "pkg2", "package.json"),
+        JSON.stringify({ name: "pkg2", version: "1.0.0", dependencies: { "left-pad": "1.0.0" } }),
+      ),
+      write(
+        join(packageDir, "apps", "app1", "package.json"),
+        JSON.stringify({ name: "app1", version: "1.0.0", dependencies: { "is-number": "1.0.0" } }),
+      ),
+    ]);
+
+    const externals = ["a-dep", "no-deps", "left-pad", "is-number"];
+    const installed = () => Promise.all(externals.map(name => exists(join(packageDir, "node_modules", name))));
+
+    async function installWithFilter(filter: string, cwd = packageDir) {
+      await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+      await using proc = spawn({
+        cmd: [bunExe(), "install", "--filter", filter],
+        cwd,
+        stdout: "ignore",
+        stderr: "pipe",
+        env,
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("error:");
+      expect(stderr).not.toContain("No workspace packages matched");
+      return exitCode;
+    }
+
+    expect(await installWithFilter("{./packages}")).toBe(0);
+    expect(await installed()).toStrictEqual([false, true, true, false]);
+
+    expect(await installWithFilter("{packages}")).toBe(0);
+    expect(await installed()).toStrictEqual([false, true, true, false]);
+
+    expect(await installWithFilter("{./packages/pkg1}")).toBe(0);
+    expect(await installed()).toStrictEqual([false, true, false, false]);
+
+    // resolved from cwd: `{.}` inside apps/ selects app1 only
+    expect(await installWithFilter("{.}", join(packageDir, "apps"))).toBe(0);
+    expect(await installed()).toStrictEqual([false, false, false, true]);
+
+    // `{.}` from the root selects the root and everything below it
+    expect(await installWithFilter("{.}")).toBe(0);
+    expect(await installed()).toStrictEqual([true, true, true, true]);
+
+    expect(await installWithFilter("!{./packages}")).toBe(0);
+    expect(await installed()).toStrictEqual([true, false, false, true]);
+  });
+
+  test.concurrent("isolated linker honors the same selectors", async () => {
+    using ctx = await setupTest();
+    const { packageDir, packageJson, env } = ctx;
+    const pkg = (name: string, deps: Record<string, unknown>) =>
+      write(join(packageDir, "packages", name, "package.json"), JSON.stringify({ name, version: "1.0.0", ...deps }));
+    await Promise.all([
+      write(
+        packageJson,
+        JSON.stringify({
+          name: "root",
+          workspaces: ["packages/*"],
+          dependencies: { "left-pad": "1.0.0" },
+        }),
+      ),
+      pkg("app", { dependencies: { lib: "workspace:*", "is-number": "1.0.0" } }),
+      pkg("lib", { dependencies: { "no-deps": "1.0.0" } }),
+      pkg("tool", { devDependencies: { lib: "workspace:*" }, dependencies: { "a-dep": "1.0.1" } }),
+      pkg("lone", { dependencies: { "peer-no-deps": "1.0.0" } }),
+    ]);
+
+    const links = {
+      "left-pad": join(packageDir, "node_modules", "left-pad"),
+      "is-number": join(packageDir, "packages", "app", "node_modules", "is-number"),
+      "no-deps": join(packageDir, "packages", "lib", "node_modules", "no-deps"),
+      "a-dep": join(packageDir, "packages", "tool", "node_modules", "a-dep"),
+      "peer-no-deps": join(packageDir, "packages", "lone", "node_modules", "peer-no-deps"),
+    };
+    const stores = {
+      "left-pad": "left-pad@1.0.0",
+      "is-number": "is-number@1.0.0",
+      "no-deps": "no-deps@1.0.0",
+      "a-dep": "a-dep@1.0.1",
+      "peer-no-deps": "peer-no-deps@1.0.0",
+    };
+    const names = Object.keys(links) as (keyof typeof links)[];
+
+    async function state() {
+      const [linked, stored, workspaceLinks] = await Promise.all([
+        Promise.all(names.map(name => exists(join(links[name], "package.json")))),
+        Promise.all(names.map(name => exists(join(packageDir, "node_modules", ".bun", stores[name])))),
+        Promise.all(["app", "tool"].map(name => exists(join(packageDir, "packages", name, "node_modules", "lib")))),
+      ]);
+      return {
+        linked: Object.fromEntries(names.map((name, i) => [name, linked[i]])),
+        stored: Object.fromEntries(names.map((name, i) => [name, stored[i]])),
+        workspaceLinks: { app: workspaceLinks[0], tool: workspaceLinks[1] },
+      };
+    }
+
+    async function installWithFilter(filter: string) {
+      await Promise.all([
+        rm(join(packageDir, "node_modules"), { recursive: true, force: true }),
+        ...["app", "lib", "tool", "lone"].map(name =>
+          rm(join(packageDir, "packages", name, "node_modules"), { recursive: true, force: true }),
+        ),
+      ]);
+      await using proc = spawn({
+        cmd: [bunExe(), "install", "--linker", "isolated", "--filter", filter],
+        cwd: packageDir,
+        stdout: "ignore",
+        stderr: "pipe",
+        env,
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("error:");
+      return exitCode;
+    }
+
+    // lib and everything that depends on it (app, tool); not the root or lone
+    expect(await installWithFilter("...lib")).toBe(0);
+    expect(await state()).toStrictEqual({
+      linked: { "left-pad": false, "is-number": true, "no-deps": true, "a-dep": true, "peer-no-deps": false },
+      stored: { "left-pad": false, "is-number": true, "no-deps": true, "a-dep": true, "peer-no-deps": false },
+      workspaceLinks: { app: true, tool: true },
+    });
+
+    // every workspace except the root
+    expect(await installWithFilter("!root")).toBe(0);
+    expect(await state()).toStrictEqual({
+      linked: { "left-pad": false, "is-number": true, "no-deps": true, "a-dep": true, "peer-no-deps": true },
+      stored: { "left-pad": false, "is-number": true, "no-deps": true, "a-dep": true, "peer-no-deps": true },
+      workspaceLinks: { app: true, tool: true },
+    });
+
+    // the root by name: only its own dependencies
+    expect(await installWithFilter("root")).toBe(0);
+    expect(await state()).toStrictEqual({
+      linked: { "left-pad": true, "is-number": false, "no-deps": false, "a-dep": false, "peer-no-deps": false },
+      stored: { "left-pad": true, "is-number": false, "no-deps": false, "a-dep": false, "peer-no-deps": false },
+      workspaceLinks: { app: false, tool: false },
+    });
+
+    // a selected workspace still gets the workspaces it depends on
+    expect(await installWithFilter("app")).toBe(0);
+    expect(await state()).toStrictEqual({
+      linked: { "left-pad": false, "is-number": true, "no-deps": true, "a-dep": false, "peer-no-deps": false },
+      stored: { "left-pad": false, "is-number": true, "no-deps": true, "a-dep": false, "peer-no-deps": false },
+      workspaceLinks: { app: true, tool: false },
+    });
+  });
 });
 
 test.concurrent("can override npm package with workspace package under a different name", async () => {
@@ -1910,6 +2210,52 @@ test.concurrent("can override npm package with workspace package under a differe
     name: "pkg1",
     version: "2.2.2",
   });
+});
+
+test.concurrent("overrides in workspace packages and root pnpm.overrides are ignored", async () => {
+  using ctx = await setupTest();
+  const { packageDir, packageJson, env } = ctx;
+  await Promise.all([
+    write(
+      packageJson,
+      JSON.stringify({
+        name: "root",
+        workspaces: ["packages/*"],
+        dependencies: { "one-range-dep": "1.0.0" },
+        pnpm: { overrides: { "no-deps": "1.0.0" } },
+      }),
+    ),
+    write(
+      join(packageDir, "packages", "pkg1", "package.json"),
+      JSON.stringify({
+        name: "pkg1",
+        version: "1.0.0",
+        dependencies: { "one-range-dep": "1.0.0" },
+        overrides: { "no-deps": "1.0.0" },
+        resolutions: { "no-deps": "1.0.0" },
+      }),
+    ),
+  ]);
+
+  await using proc = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(err).not.toContain("error:");
+  expect(err).not.toContain("warn:");
+  expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toStrictEqual({
+    name: "no-deps",
+    version: "1.1.0",
+  });
+  const lock = Bun.JSONC.parse(await file(join(packageDir, "bun.lock")).text()) as any;
+  expect(Object.keys(lock).sort()).toStrictEqual(["configVersion", "lockfileVersion", "packages", "workspaces"]);
+  expect(Object.keys(lock.packages).sort()).toStrictEqual(["no-deps", "one-range-dep", "pkg1"]);
+  expect(lock.packages["no-deps"][0]).toBe("no-deps@1.1.0");
+  expect(exitCode).toBe(0);
 });
 
 test.concurrent(

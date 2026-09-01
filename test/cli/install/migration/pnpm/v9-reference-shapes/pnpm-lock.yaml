@@ -1,0 +1,69 @@
+lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+importers:
+
+  .:
+    dependencies:
+      '@types/no-deps':
+        specifier: ^1.0.0
+        version: 1.0.0(@types/is-number@1.0.0)
+      nd:
+        specifier: npm:no-deps@1.0.1
+        version: no-deps@1.0.1
+      one-dep:
+        specifier: ^1.0.0
+        version: 1.0.0
+      tb:
+        specifier: file:tb-1.0.0.tgz
+        version: file:tb-1.0.0.tgz
+      tnd:
+        specifier: npm:@types/no-deps@2.0.0
+        version: '@types/no-deps@2.0.0'
+
+packages:
+
+  '@types/is-number@1.0.0':
+    resolution: {integrity: sha512-v7Teha9FjTcou+/dtF3KLYGcrEl3j5gbY7kIEF1LrwP4fjiiWUOh5qJbPc4tK2nB5pJ0O9cexMAZZ1ushh3GGQ==}
+
+  '@types/no-deps@1.0.0':
+    resolution: {integrity: sha512-quthzD2O04AlTaZLJGf4a6/6aD7lf4Qa4HS7ViRWnTFdSbRbof20GFoq9YRCD3YQxd/HKI83YBAAiZ4ewoy+0Q==}
+    peerDependencies:
+      '@types/is-number': '*'
+
+  '@types/no-deps@2.0.0':
+    resolution: {integrity: sha512-Zue3tPSS7wGh0k4QA1JyRHZSW9RJWTJxWllThag+zGm+3Ny3UNiOG6xt0OcX8yKaaRymhf9G1qGGOFLQdyEOpA==}
+
+  no-deps@1.0.1:
+    resolution: {integrity: sha512-3X6cn4+UJdXJuLPu11v8i/fGLe2PdI6v1yKTELam04lY5esCAFdG/qQts6N6rLrL6g1YRq+MKBAwxbmUQk355A==}
+
+  one-dep@1.0.0:
+    resolution: {integrity: sha512-qG6lZjwM1vFmRCHwP+XpOKu6FkrBmwr20+54+qaHGdjZlw/wz8aJrhFqX4dZksqmBLZtj2mzL77Yf04WKs1+Kg==}
+
+  tb@file:tb-1.0.0.tgz:
+    resolution: {tarball: file:tb-1.0.0.tgz}
+    version: 1.0.0
+
+snapshots:
+
+  '@types/is-number@1.0.0': {}
+
+  '@types/no-deps@1.0.0(@types/is-number@1.0.0)':
+    dependencies:
+      '@types/is-number': 1.0.0
+
+  '@types/no-deps@2.0.0': {}
+
+  no-deps@1.0.1: {}
+
+  one-dep@1.0.0:
+    dependencies:
+      '@types/no-deps': 1.0.0(@types/is-number@1.0.0)
+      nd: no-deps@1.0.1
+      tb: file:tb-1.0.0.tgz
+      tnd: '@types/no-deps@2.0.0'
+
+  tb@file:tb-1.0.0.tgz: {}

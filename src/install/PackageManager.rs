@@ -1,6 +1,7 @@
 use core::ffi::c_void;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::collections::VecDeque;
 use std::io::Write as _;
 
 use crate::Error;
@@ -8,9 +9,10 @@ use crate::bun_fs as fs;
 use crate::bun_fs::FileSystem;
 use crate::bun_progress::{Node as ProgressNode, Progress};
 use crate::bun_schema::api as Api;
-use bun_alloc::AllocError;
 use bun_collections::linear_fifo::{DynamicBuffer, StaticBuffer};
-use bun_collections::{ArrayHashMap, HashMap, HiveArrayFallback, LinearFifo, StringArrayHashMap};
+use bun_collections::{
+    ArrayHashMap, HashMap, HiveArrayFallback, LinearFifo, StringArrayHashMap, index_sort,
+};
 use bun_core::ZBox;
 use bun_core::{Global, Output};
 use bun_core::{ZStr, strings};
@@ -49,12 +51,18 @@ pub mod Command {
 // Sub-module declarations — explicit #[path] attrs for PascalCase /
 // camelCase file names.
 // ──────────────────────────────────────────────────────────────────────────
+#[path = "PackageManager/add_catalog.rs"]
+pub mod add_catalog;
+#[path = "PackageManager/add_remove_with_filter.rs"]
+pub mod add_remove_with_filter;
 #[path = "PackageManager/CommandLineArguments.rs"]
 pub mod command_line_arguments;
 #[path = "PackageManager/install_with_manager.rs"]
 pub mod install_with_manager;
 #[path = "PackageManager/PackageJSONEditor.rs"]
 pub mod package_json_editor;
+#[path = "PackageManager/package_json_write_back.rs"]
+pub mod package_json_write_back;
 #[path = "PackageManager/PackageManagerDirectories.rs"]
 pub mod package_manager_directories;
 #[path = "PackageManager/PackageManagerEnqueue.rs"]
@@ -81,8 +89,12 @@ pub mod security_scanner;
 pub mod update_package_json_and_install;
 #[path = "PackageManager/UpdateRequest.rs"]
 pub mod update_request;
+#[path = "PackageManager/workspace_manifests.rs"]
+pub mod workspace_manifests;
 #[path = "PackageManager/WorkspacePackageJSONCache.rs"]
 pub mod workspace_package_json_cache;
+#[path = "PackageManager/workspace_selection.rs"]
+pub mod workspace_selection;
 
 /// Lower-case path alias so `package_manager::options::Options` (used by the
 /// retired stub surface) keeps resolving.
@@ -123,10 +135,16 @@ impl PackageManagerCommand {
   <d>└<r> <cyan>--quiet<r>                   only output the tarball filename
   <b><green>bun pm<r> <blue>bin<r>                  print the path to bin folder
   <d>└<r> <cyan>-g<r>                        print the <b>global<r> path to bin folder
-  <b><green>bun<r> <blue>list<r>                  list the dependency tree according to the current lockfile
+  <b><green>bun pm<r> <blue>ls<r>                   list the dependency tree according to the current lockfile
   <d>├<r> <cyan>--all<r>                     list the entire dependency tree according to the current lockfile
   <d>└<r> <cyan>--trusted<r>                 list only trusted dependencies
   <b><green>bun pm<r> <blue>why<r> <d>\<pkg\><r>            show dependency tree explaining why a package is installed
+  <b><green>bun pm<r> <blue>licenses<r>             list installed packages grouped by license
+  <d>├<r> <cyan>--json<r>                    output as JSON
+  <d>├<r> <cyan>--prod<r>                    omit devDependencies
+  <d>├<r> <cyan>--dev<r>                     list only what devDependencies pull in
+  <d>├<r> <cyan>--long<r>                    also print author, description and homepage
+  <d>└<r> <cyan>--filter<r> <d>\<pattern\><r>        list only the matching workspaces' dependencies
   <b><green>bun pm<r> <blue>whoami<r>               print the current npm username
   <b><green>bun pm<r> <blue>view<r> <d>name[@version]<r>  view package metadata from the registry <d>(use `bun info` instead)<r>
   <b><green>bun pm<r> <blue>version<r> <d>[increment]<r>  bump the version in package.json and create a git tag
@@ -199,12 +217,12 @@ pub use directories::{
 
 pub use self::package_manager_enqueue as enqueue;
 pub use enqueue::{
-    create_extract_task_for_streaming, enqueue_dependency_list, enqueue_dependency_to_root,
-    enqueue_dependency_with_main, enqueue_dependency_with_main_and_success_fn,
-    enqueue_extract_npm_package, enqueue_git_checkout, enqueue_git_for_checkout,
-    enqueue_network_task, enqueue_package_for_download, enqueue_parse_npm_package,
-    enqueue_patch_task, enqueue_patch_task_pre, enqueue_tarball_for_download,
-    enqueue_tarball_for_reading,
+    GitEnqueueResult, create_extract_task_for_streaming, enqueue_dependency_list,
+    enqueue_dependency_to_root, enqueue_dependency_with_main,
+    enqueue_dependency_with_main_and_success_fn, enqueue_extract_npm_package, enqueue_git_checkout,
+    enqueue_git_for_checkout, enqueue_network_task, enqueue_package_for_download,
+    enqueue_parse_npm_package, enqueue_patch_task, enqueue_patch_task_pre,
+    enqueue_tarball_for_download, enqueue_tarball_for_reading,
 };
 
 use self::package_manager_lifecycle as lifecycle;
@@ -215,9 +233,7 @@ pub use resolution::{assign_root_resolution, resolve_from_disk_cache};
 
 pub use self::progress_strings::ProgressStrings;
 
-pub use self::patch_package::{PatchCommitResult, do_patch_commit, prepare_patch};
-
-pub use self::process_dependency_list::GitResolver;
+pub use self::patch_package::PatchCommitResult;
 
 pub use self::run_tasks::{
     alloc_github_url, decrement_pending_tasks, drain_dependency_list, flush_dependency_queue,
@@ -245,6 +261,8 @@ type PreallocatedNetworkTasks = HiveArrayFallback<NetworkTask, 128>;
 type ResolveTaskQueue = UnboundedQueue<Task::Task<'static> /* , .next */>;
 
 type RepositoryMap = HashMap<Task::Id, Fd /* , IdentityContext<Task::Id>, 80 */>;
+/// Git-commit task id -> the SHA it resolved, for the waiters that re-enter.
+type GitCommitMap = HashMap<Task::Id, Vec<u8> /* , IdentityContext<Task::Id>, 80 */>;
 /// Resolve-task id (git checkout / tarball extract) -> the package that task
 /// appended during the resolve phase. A task's callback queue is drained
 /// exactly once, so a dependency enqueued after that drain must resolve
@@ -316,6 +334,8 @@ pub struct PackageManager {
 
     pub subcommand: Subcommand,
     pub(crate) update_requests: Box<[UpdateRequest]>,
+    pub(crate) update_request_index: update_request::UpdateRequestIndex,
+    pub audit_fix_pins: Box<[crate::audit_fix::PlannedFix]>,
 
     /// Only set in `bun pm`
     pub root_package_json_name_at_time_of_init: Box<[u8]>,
@@ -333,6 +353,11 @@ pub struct PackageManager {
     pub manifests: PackageManifestMap,
     pub(crate) folders: FolderResolutionMap,
     pub(crate) git_repositories: RepositoryMap,
+    pub(crate) git_commits: GitCommitMap,
+    /// Git tasks queued by `enqueue_git_task` and not yet started.
+    pub(crate) git_tasks: VecDeque<NonNull<Task::Task<'static>>>,
+    /// Git tasks whose `git_runner::GitSubprocess` is alive.
+    pub(crate) running_git_tasks: AtomicU32,
     pub(crate) appended_task_packages: AppendedTaskPackageMap,
 
     pub(crate) network_dedupe_map: crate::network_task::DedupeMap,
@@ -409,7 +434,29 @@ pub struct PackageManager {
     pub updating_catalogs: Vec<CatalogUpdateInfo>,
 
     // `bun update -r`/`--filter`: workspaces whose deps update. None = cwd only.
-    pub(crate) update_target_workspaces: Option<Box<[UpdateTargetWorkspace]>>,
+    pub update_target_workspaces: Option<Box<[UpdateTargetWorkspace]>>,
+
+    // `bun update <name>`: packages reachable from the workspaces in scope, see update_scope::plan_named.
+    pub(crate) named_update_reachable: Option<bun_collections::DynamicBitSet>,
+
+    // bun update: patched packages a move was held back for; drained by update_transitive::print_kept_patched.
+    pub(crate) kept_patched: Vec<PackageID>,
+    pub kept_patched_text: Vec<u8>,
+
+    // bun dedupe: printed by dedupe::print_dedupe_summary in place of the install summary.
+    pub(crate) dedupe_report: Option<crate::dedupe::Report>,
+
+    // add/remove/update --filter: only these importers are linked; None = every importer.
+    pub(crate) filtered_link_targets: Option<workspace_selection::LinkTargets>,
+
+    // bun add --filter: which target received which request; consumed by bind_update_requests and package_json_write_back.
+    pub(crate) pending_filtered_write: Option<Box<add_remove_with_filter::PendingWrite>>,
+
+    // package.json cache entries that differ from disk; written by package_json_write_back::flush.
+    pub(crate) edited_package_jsons: Vec<package_json_write_back::EditedPackageJson>,
+
+    // bun add: catalog references decided per target and the root entries they need; see add_catalog.rs
+    pub(crate) catalog_add: add_catalog::State,
 
     pub(crate) patched_dependencies_to_remove:
         ArrayHashMap<PackageNameAndVersionHash, () /* , ArrayIdentityContext::U64, false */>,
@@ -460,6 +507,8 @@ pub enum Subcommand {
     Audit,
     Info,
     Why,
+    Dedupe,
+    Prune,
     // bin,
     // hash,
     // @"hash-print",
@@ -478,9 +527,16 @@ impl Subcommand {
     }
 
     pub(crate) fn supports_workspace_filtering(self) -> bool {
-        matches!(self, Self::Outdated | Self::Install | Self::Update)
-        // .pack => true,
-        // .add => true,
+        matches!(
+            self,
+            Self::Outdated
+                | Self::Install
+                | Self::Update
+                | Self::Add
+                | Self::Remove
+                | Self::Prune
+                | Self::Pm
+        )
     }
 
     pub(crate) fn supports_json_output(self) -> bool {
@@ -493,161 +549,49 @@ impl Subcommand {
     }
 }
 
-pub enum WorkspaceFilter {
-    All,
-    Name(Box<[u8]>),
-    Path(Box<[u8]>),
+/// The resolved outcome of `--filter` for one install: the importer ids whose dependencies get installed.
+pub struct WorkspaceFilter {
+    pub(crate) workspace_ids: Box<[PackageID]>,
 }
 
 impl WorkspaceFilter {
-    pub fn init(
-        input: &[u8],
-        cwd: &[u8],
-        path_buf: &mut [u8],
-    ) -> Result<WorkspaceFilter, AllocError> {
-        if (input.len() == 1 && input[0] == b'*') || input == b"**" {
-            return Ok(WorkspaceFilter::All);
+    pub(crate) fn from_ids(mut ids: Vec<PackageID>) -> WorkspaceFilter {
+        index_sort::sort_indices_unstable(&mut ids, &mut |a, b| a.cmp(&b));
+        ids.dedup();
+        WorkspaceFilter {
+            workspace_ids: ids.into_boxed_slice(),
         }
-
-        let mut remain = input;
-
-        let mut prepend_negate = false;
-        while !remain.is_empty() && remain[0] == b'!' {
-            prepend_negate = !prepend_negate;
-            remain = &remain[1..];
-        }
-
-        let is_path = !remain.is_empty() && remain[0] == b'.';
-
-        let filter: &[u8] =
-            if is_path {
-                strings::without_trailing_slash(
-                    resolve_path::join_abs_string_buf::<platform::Posix>(cwd, path_buf, &[remain]),
-                )
-            } else {
-                remain
-            };
-
-        if filter.is_empty() {
-            // won't match anything
-            return Ok(WorkspaceFilter::Path(Box::default()));
-        }
-        let copy_start = prepend_negate as usize;
-        let copy_end = copy_start + filter.len();
-
-        let mut buf = vec![0u8; copy_end].into_boxed_slice();
-        buf[copy_start..copy_end].copy_from_slice(filter);
-
-        if prepend_negate {
-            buf[0] = b'!';
-        }
-
-        // pattern = buf[0..copy_end] == buf (since buf.len() == copy_end)
-        Ok(if is_path {
-            WorkspaceFilter::Path(buf)
-        } else {
-            WorkspaceFilter::Name(buf)
-        })
     }
 
-    /// Every workspace (root included), filtered by `filter_patterns` (empty = all).
+    #[inline]
+    pub(crate) fn is_selected(filters: &[WorkspaceFilter], pkg_id: PackageID) -> bool {
+        filters
+            .iter()
+            .all(|f| f.workspace_ids.binary_search(&pkg_id).is_ok())
+    }
+
+    /// Every workspace (root included) selected by `filter_patterns` (empty = all); warns about positive patterns that matched nothing.
     pub fn select_workspaces(
         lockfile: &crate::Lockfile,
         filter_patterns: &[&[u8]],
         original_cwd: &[u8],
     ) -> Vec<PackageID> {
-        use crate::lockfile::package::PackageColumns as _;
-
-        let packages = lockfile.packages.slice();
-        let pkg_names = packages.items_name();
-        let pkg_resolutions = packages.items_resolution();
-        let string_buf = lockfile.buffers.string_bytes.as_slice();
-
-        let mut ids: Vec<PackageID> = Vec::new();
-        for (pkg_id, res) in pkg_resolutions.iter().enumerate() {
-            if res.tag == crate::resolution::Tag::Workspace
-                || res.tag == crate::resolution::Tag::Root
-            {
-                ids.push(pkg_id as PackageID);
-            }
-        }
-
-        if filter_patterns.is_empty() {
-            return ids;
-        }
-
-        let mut path_buf = PathBuffer::uninit();
-        let converted_filters: Vec<WorkspaceFilter> = filter_patterns
-            .iter()
-            .map(|filter| {
-                bun_core::handle_oom(WorkspaceFilter::init(filter, original_cwd, &mut path_buf.0))
-            })
-            .collect();
-
-        let top_level_dir = FileSystem::instance().top_level_dir();
-
-        let has_positive = converted_filters.iter().any(|f| match f {
-            WorkspaceFilter::All => true,
-            WorkspaceFilter::Path(p) | WorkspaceFilter::Name(p) => p.first() != Some(&b'!'),
-        });
-
-        let mut i = 0;
-        while i < ids.len() {
-            let pkg_id = ids[i];
-            let mut matched = !has_positive;
-            for filter in &converted_filters {
-                let (pattern, subject): (&[u8], &[u8]) = match filter {
-                    WorkspaceFilter::All => {
-                        matched = true;
-                        continue;
-                    }
-                    WorkspaceFilter::Path(pattern) => {
-                        if pattern.is_empty() {
-                            continue;
-                        }
-                        let res = &pkg_resolutions[pkg_id as usize];
-                        let res_path: &[u8] = match res.tag {
-                            crate::resolution::Tag::Workspace => res.workspace().slice(string_buf),
-                            crate::resolution::Tag::Root => top_level_dir,
-                            _ => unreachable!(),
-                        };
-                        let abs = resolve_path::join_abs_string_buf::<platform::Posix>(
-                            top_level_dir,
-                            &mut path_buf.0,
-                            &[res_path],
-                        );
-                        (pattern, strings::without_trailing_slash(abs))
-                    }
-                    WorkspaceFilter::Name(pattern) => {
-                        (pattern, pkg_names[pkg_id as usize].slice(string_buf))
-                    }
-                };
-                if pattern.first() == Some(&b'!') {
-                    if bun_glob::r#match(&pattern[1..], subject).matches() {
-                        matched = false;
-                        break;
-                    }
-                } else if bun_glob::r#match(pattern, subject).matches() {
-                    matched = true;
-                }
-            }
-            if matched {
-                i += 1;
-            } else {
-                ids.swap_remove(i);
-            }
-        }
-
-        ids
+        let selection = workspace_selection::select_lockfile_workspaces(
+            lockfile,
+            filter_patterns,
+            original_cwd,
+            workspace_selection::RootSelection::Implicit,
+        );
+        workspace_selection::warn_unmatched(filter_patterns, &selection.unmatched_patterns);
+        selection.ids
     }
 }
-
-// deinit → Drop is automatic for Box<[u8]> variants; no explicit impl needed.
 
 #[derive(Default)]
 pub struct PackageUpdateInfo {
     pub(crate) original_version_literal: Box<[u8]>,
-    pub(crate) is_alias: bool,
+    // set by the post-install write-back; the install summary still needs the entry
+    pub(crate) written_back: bool,
     pub(crate) original_version_string_buf: Box<[u8]>,
     pub(crate) original_version: Option<Semver::Version>,
 }
@@ -657,7 +601,8 @@ pub struct CatalogUpdateInfo {
     pub catalog_name: Box<[u8]>,
     pub dep_name: Box<[u8]>,
     pub original_version_literal: Box<[u8]>,
-    pub is_alias: bool,
+    /// Set by package_json_editor::resolve_catalog_literals; None leaves the entry as written.
+    pub new_version_literal: Option<Box<[u8]>>,
 }
 
 pub struct UpdateTargetWorkspace {
@@ -1090,8 +1035,7 @@ impl PackageManager {
     /// Lifetime is decoupled from `&self` for the same reason as [`log_mut`] /
     /// [`downloads_node_mut`]: the loader is a singleton-leaked allocation
     /// outside the manager (set once in `init()`), and callers interleave env
-    /// mutation with disjoint `&mut self.X` field writes (e.g. `find_commit`
-    /// takes `env`, `log`, and reads `lockfile` in the same argument list).
+    /// mutation with disjoint `&mut self.X` field writes.
     #[inline]
     #[allow(clippy::mut_from_ref)]
     pub fn env_mut<'a>(&self) -> &'a mut dot_env::Loader {
@@ -1434,6 +1378,100 @@ pub(crate) fn get() -> *mut PackageManager {
 // init
 // ──────────────────────────────────────────────────────────────────────────
 
+fn overlay_bunfig_install(install: &mut Api::BunInstall, bunfig: Api::BunInstall) {
+    let Api::BunInstall {
+        default_registry,
+        scoped,
+        lockfile_path,
+        save_lockfile_path,
+        cache_directory,
+        dry_run,
+        force,
+        save_dev,
+        save_optional,
+        save_peer,
+        save_lockfile,
+        production,
+        save_yarn_lockfile,
+        disable_cache,
+        disable_manifest_cache,
+        global_dir,
+        global_bin_dir,
+        frozen_lockfile,
+        exact,
+        concurrent_scripts,
+        cafile,
+        save_text_lockfile,
+        ca,
+        ignore_scripts,
+        link_workspace_packages,
+        node_linker,
+        global_store,
+        security_scanner,
+        minimum_release_age_ms,
+        minimum_release_age_excludes,
+        public_hoist_pattern,
+        hoist_pattern,
+        hoist,
+        offline,
+    } = bunfig;
+
+    if let Some(registry) = default_registry {
+        install.default_registry = Some(registry);
+    }
+
+    if let Some(bunfig_scopes) = scoped {
+        match install.scoped.as_mut().filter(|m| !m.scopes.is_empty()) {
+            None => install.scoped = Some(bunfig_scopes),
+            Some(existing) => {
+                for (name, registry) in bunfig_scopes.scopes.iter() {
+                    existing.scopes.insert(name, registry.clone());
+                }
+            }
+        }
+    }
+
+    macro_rules! overlay {
+        ($($field:ident),* $(,)?) => {
+            $( if $field.is_some() { install.$field = $field; } )*
+        };
+    }
+    overlay!(
+        lockfile_path,
+        save_lockfile_path,
+        cache_directory,
+        dry_run,
+        force,
+        save_dev,
+        save_optional,
+        save_peer,
+        save_lockfile,
+        production,
+        save_yarn_lockfile,
+        disable_cache,
+        disable_manifest_cache,
+        global_dir,
+        global_bin_dir,
+        frozen_lockfile,
+        exact,
+        concurrent_scripts,
+        cafile,
+        save_text_lockfile,
+        ca,
+        ignore_scripts,
+        link_workspace_packages,
+        node_linker,
+        global_store,
+        security_scanner,
+        minimum_release_age_ms,
+        minimum_release_age_excludes,
+        public_hoist_pattern,
+        hoist_pattern,
+        hoist,
+        offline,
+    );
+}
+
 /// Returns `&'static mut PackageManager` — the process-singleton (held in
 /// `holder::RAW_PTR`) is leaked for the process lifetime and `init()` is called
 /// exactly once on the single CLI dispatch thread. Every
@@ -1530,6 +1568,7 @@ pub fn init(
     // Step 1. Find the nearest package.json directory
     //
     // We will walk up from the cwd, trying to find the nearest package.json file.
+    let mut no_project = false;
     let root_package_json_file = 'root_package_json_file: {
         let mut this_cwd: &[u8] = original_cwd;
         let mut created_package_json = false;
@@ -1602,7 +1641,7 @@ pub fn init(
             }
 
             if subcommand == Subcommand::Install {
-                if cli.positionals.len() > 1 {
+                if cli.positionals.len() > 1 && cli.filters.is_empty() {
                     // this is `bun add <package>`.
                     //
                     // create the package.json instead of returning an error so that
@@ -1611,6 +1650,12 @@ pub fn init(
                     created_package_json = true;
                     break 'child attempt_to_create_package_json_and_open()?;
                 }
+            }
+            if cli.no_project_ok {
+                // Registry-only commands (`bun pm diff a b`) run fine from any folder: no root file, no workspaces.
+                this_cwd = original_cwd;
+                no_project = true;
+                break 'child bun_sys::File::from_fd(bun_sys::Fd::INVALID);
             }
             return Err(crate::Error::MissingPackageJSON);
         };
@@ -1633,7 +1678,7 @@ pub fn init(
 
         // Check if this is a workspace; if so, use root package
         if subcommand.should_chdir_to_root() {
-            if !created_package_json {
+            if !created_package_json && !no_project {
                 while let Some(parent) = bun_core::dirname(this_cwd) {
                     let parent_without_trailing_slash = strings::without_trailing_slash(parent);
                     let mut parent_path_buf = PathBuffer::uninit();
@@ -1732,6 +1777,7 @@ pub fn init(
                             &json_source,
                             prop.loc,
                             None,
+                            Package::WorkspaceMap::MissingWorkspace::Skip,
                         ) {
                             Ok(v) => v,
                             Err(_) => break,
@@ -1819,8 +1865,14 @@ pub fn init(
         // bun_sys exposes the non-Z `get_fd_path`;
         // append the NUL ourselves so the static `&ZStr` invariant holds.
         let root_buf = &mut *ROOT_PACKAGE_JSON_PATH_BUF.get();
-        let p = bun_sys::get_fd_path(root_package_json_file.handle, root_buf)?;
-        let plen = p.len();
+        let plen = if no_project {
+            // Where the file would be; nothing reads it in this mode.
+            let p = original_package_json_path.as_bytes();
+            root_buf[..p.len()].copy_from_slice(p);
+            p.len()
+        } else {
+            bun_sys::get_fd_path(root_package_json_file.handle, root_buf)?.len()
+        };
         root_buf[plen] = 0;
         ROOT_PACKAGE_JSON_PATH.write(ZStr::from_raw(root_buf.as_ptr(), plen));
     }
@@ -1869,11 +1921,12 @@ pub fn init(
     initialize_store();
 
     {
-        let install_ref = ctx.install.get_or_insert_with(|| {
-            // `Api::BunInstall` derives `Default` (all fields `None`/empty).
-            // Own via `Box` — never `Box::leak`.
-            Box::new(Api::BunInstall::default())
-        });
+        // npmrc < bunfig < CLI
+        let mut bunfig_install = ctx
+            .install
+            .take()
+            .map_or_else(Api::BunInstall::default, |b| *b);
+        let mut install = Api::BunInstall::default();
         let npmrc_local = ZBox::from_bytes(b".npmrc");
 
         let mut buf = PathBuffer::uninit();
@@ -1898,16 +1951,20 @@ pub fn init(
             }
         }
 
-        if global_len > 0 {
+        let registry_auth = if global_len > 0 {
             ini::load_npmrc_config(
-                &mut **install_ref,
+                &mut install,
                 env,
                 true,
                 &[ZStr::from_buf(&buf[..], global_len), &*npmrc_local],
-            );
+            )
         } else {
-            ini::load_npmrc_config(&mut **install_ref, env, true, &[&*npmrc_local]);
-        }
+            ini::load_npmrc_config(&mut install, env, true, &[&*npmrc_local])
+        };
+
+        ini::apply_registry_auth(&mut bunfig_install, &registry_auth);
+        overlay_bunfig_install(&mut install, bunfig_install);
+        ctx.install = Some(Box::new(install));
     }
     let cpu_count: u32 = u32::from(bun_core::get_thread_count());
     // Captured before `cli` is moved into `options.load(Some(cli), ...)` below.
@@ -2038,12 +2095,17 @@ pub fn init(
         wr!(root_progress_node, core::ptr::null_mut());
         wr!(to_update, false);
         wr!(update_requests, Box::default());
+        wr!(update_request_index, Default::default());
+        wr!(audit_fix_pins, Box::default());
         wr!(root_package_id, RootPackageId::default());
         wr!(task_batch, thread_pool::Batch::default());
         wr!(task_queue, TaskDependencyQueue::default());
         wr!(manifests, PackageManifestMap::default());
         wr!(folders, Default::default());
         wr!(git_repositories, RepositoryMap::default());
+        wr!(git_commits, GitCommitMap::default());
+        wr!(git_tasks, VecDeque::new());
+        wr!(running_git_tasks, AtomicU32::new(0));
         wr!(appended_task_packages, AppendedTaskPackageMap::default());
         wr!(network_dedupe_map, Default::default());
         wr!(async_network_task_queue, AsyncNetworkTaskQueue::default());
@@ -2076,6 +2138,14 @@ pub fn init(
         wr!(updating_packages, StringArrayHashMap::default());
         wr!(updating_catalogs, Vec::new());
         wr!(update_target_workspaces, None);
+        wr!(named_update_reachable, None);
+        wr!(kept_patched, Vec::new());
+        wr!(kept_patched_text, Vec::new());
+        wr!(dedupe_report, None);
+        wr!(filtered_link_targets, None);
+        wr!(pending_filtered_write, None);
+        wr!(edited_package_jsons, Vec::new());
+        wr!(catalog_add, add_catalog::State::default());
         wr!(patched_dependencies_to_remove, ArrayHashMap::default());
         wr!(last_reported_slow_lifecycle_script_at, 0);
         wr!(cached_tick_for_slow_lifecycle_script_logging, 0);
@@ -2108,7 +2178,7 @@ pub fn init(
         // make sure folder packages can find the root package without creating a new one
         // Posix-normalize the
         // separators before hashing; `FolderResolution.hash` is always fed `/`-separated
-        // bytes by every resolver-side caller. On Windows `getFdPath` yields `\`, so
+        // bytes by every resolver-side caller. On Windows `get_fd_path` yields `\`, so
         // hashing the raw bytes would seed a key the resolver never looks up — copy into
         // a stack buffer and convert separators in place.
         // SAFETY: ROOT_PACKAGE_JSON_PATH set above on the main thread.
@@ -2179,6 +2249,21 @@ pub fn init(
             ctx.install.as_deref(),
             subcommand,
         )?;
+
+        // `install.prefer = "offline"` in bunfig (also what `bun --prefer-offline` sets
+        // for the runtime's auto-install) means prefer-offline for `bun install` too,
+        // unless a flag already asked for more.
+        if manager.options.offline == options::OfflineMode::Online
+            && ctx.debug.offline_mode_setting
+                == Some(bun_options_types::offline_mode::OfflineMode::Offline)
+        {
+            manager.options.offline = options::OfflineMode::PreferOffline;
+            // the manifest cache is the data source in this mode (see Options::load)
+            manager
+                .options
+                .enable
+                .set(options::Enable::MANIFEST_CACHE, true);
+        }
 
         if let Some(config) = ctx.install.as_deref_mut() {
             if let Some(p) = config.public_hoist_pattern.take() {
@@ -2470,6 +2555,8 @@ fn init_with_runtime_once(
         wr!(root_progress_node, core::ptr::null_mut());
         wr!(to_update, false);
         wr!(update_requests, Box::default());
+        wr!(update_request_index, Default::default());
+        wr!(audit_fix_pins, Box::default());
         wr!(root_package_json_name_at_time_of_init, Box::default());
         wr!(root_package_id, RootPackageId::default());
         wr!(task_batch, thread_pool::Batch::default());
@@ -2477,6 +2564,9 @@ fn init_with_runtime_once(
         wr!(manifests, PackageManifestMap::default());
         wr!(folders, Default::default());
         wr!(git_repositories, RepositoryMap::default());
+        wr!(git_commits, GitCommitMap::default());
+        wr!(git_tasks, VecDeque::new());
+        wr!(running_git_tasks, AtomicU32::new(0));
         wr!(appended_task_packages, AppendedTaskPackageMap::default());
         wr!(network_dedupe_map, Default::default());
         wr!(async_network_task_queue, AsyncNetworkTaskQueue::default());
@@ -2515,6 +2605,14 @@ fn init_with_runtime_once(
         wr!(updating_packages, StringArrayHashMap::default());
         wr!(updating_catalogs, Vec::new());
         wr!(update_target_workspaces, None);
+        wr!(named_update_reachable, None);
+        wr!(kept_patched, Vec::new());
+        wr!(kept_patched_text, Vec::new());
+        wr!(dedupe_report, None);
+        wr!(filtered_link_targets, None);
+        wr!(pending_filtered_write, None);
+        wr!(edited_package_jsons, Vec::new());
+        wr!(catalog_add, add_catalog::State::default());
         wr!(patched_dependencies_to_remove, ArrayHashMap::default());
         wr!(last_reported_slow_lifecycle_script_at, 0);
         wr!(cached_tick_for_slow_lifecycle_script_logging, 0);

@@ -369,14 +369,12 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
                                     self.symbols[ref_.inner_index() as usize].original_name;
                                 // ImportScanner.recordExportedBinding → recordExport
                                 self.record_export(binding.loc, original_name.slice(), ref_)?;
-                                export_props.push(G::Property {
-                                    key: Some(Expr::init(
-                                        E::String::init(original_name.slice()),
-                                        binding.loc,
-                                    )),
-                                    value: Some(Expr::init_identifier(ref_, binding.loc)),
-                                    ..Default::default()
-                                });
+                                export_props.push(getter_prop(
+                                    self.bump,
+                                    Expr::init(E::String::init(original_name.slice()), binding.loc),
+                                    Expr::init_identifier(ref_, binding.loc),
+                                    binding.loc,
+                                ));
                             }
                         }
                         hmr_stmts.push(*stmt);
@@ -401,11 +399,12 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
                             .symbol_uses
                             .put(temp_id, symbol::Use { count_estimate: 1 })?;
                         VecExt::append(&mut self.current_scope_mut().generated, temp_id);
-                        export_props.push(G::Property {
-                            key: Some(Expr::init(E::String::init(b"default"), stmt.loc)),
-                            value: Some(Expr::init_identifier(temp_id, stmt.loc)),
-                            ..Default::default()
-                        });
+                        export_props.push(getter_prop(
+                            self.bump,
+                            Expr::init(E::String::init(b"default"), stmt.loc),
+                            Expr::init_identifier(temp_id, stmt.loc),
+                            stmt.loc,
+                        ));
                         hmr_stmts.push(Stmt::alloc(
                             S::Local {
                                 kind: S::Kind::KConst,
@@ -613,6 +612,30 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
                 }
             }
         }
+    }
+}
+
+/// `get key() { return value }`
+///
+/// Mirrors `getter_prop` in `js_parser/lower/lower_esm_exports_hmr.rs`.
+fn getter_prop(bump: &Bump, key: Expr, value: Expr, loc: Loc) -> G::Property {
+    let body_stmts = bump.alloc_slice_copy(&[Stmt::alloc(S::Return { value: Some(value) }, loc)]);
+    G::Property {
+        kind: G::PropertyKind::Get,
+        key: Some(key),
+        value: Some(Expr::init(
+            E::Function {
+                func: G::Fn {
+                    body: G::FnBody {
+                        stmts: bun_ast::StoreSlice::new_mut(body_stmts),
+                        loc,
+                    },
+                    ..Default::default()
+                },
+            },
+            loc,
+        )),
+        ..Default::default()
     }
 }
 

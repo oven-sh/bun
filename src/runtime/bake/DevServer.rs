@@ -2857,7 +2857,8 @@ impl DevServer {
         if any {
             w.extend_from_slice(b"  ");
         }
-        w.extend_from_slice(b"], [], [], () => {}, false],\n");
+        // The runtime expects every ESM load function to be a generator.
+        w.extend_from_slice(b"], [], [], function* () {}, false],\n");
 
         // Avoid-recloning if it is was moved to the heap
         Ok(array.into_boxed_slice())

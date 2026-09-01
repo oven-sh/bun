@@ -77,7 +77,8 @@ export class HMRModule {
   /** ES Modules have different semantics for `.exports` and `.cjs` */
   esm: boolean;
   state: State = State.Pending;
-  /** The ESM namespace object. `null` if not yet initialized. */
+  /** The ESM namespace object. `null` until the module is instantiated; from
+   * then on it is a live object, even while the module still evaluates. */
   exports: any = null;
   /** For ESM, this is the converted CJS exports.
    *  For CJS, this is the `module` object. */
@@ -89,9 +90,13 @@ export class HMRModule {
    * 1. HMRModule[] - List of parsed imports. indexOf is used to go from HMRModule -> updater function
    * 2. any[] - List of module namespace objects. Read by the ESM module's load function.
    * Unused for CJS
+   *
+   * Stays `null` until the module evaluates, which is after its dependencies
+   * load.
    */
   imports: HMRModule[] | any[] | null = null;
-  /** Assignned by an ESM module's load function immediately.
+  /** Assigned by an ESM module's load function. A two-phase module assigns it
+   * while it instantiates, which is before `imports` is filled in.
    * HTML files do not emit a store to this field */
   updateImport: ((exports: any) => void)[] | null = null;
   /** When calling `import.meta.hot.dispose` */
@@ -272,18 +277,24 @@ HMRModule.prototype.indirectHot = new Proxy({}, {
 });
 
 // TODO: This function is currently recursive.
-export function loadModuleSync(id: Id, isUserDynamic: boolean, importer: HMRModule | null): HMRModule {
+export function loadModuleSync(
+  id: Id,
+  isUserDynamic: boolean,
+  importer: HMRModule | null,
+  importIndex?: number,
+): HMRModule {
   // First, try and re-use an existing module.
   let mod = registry.get(id);
   if (mod) {
     if (mod.state === State.Error) throw mod.failure;
     if (mod.state === State.Stale) {
-      mod.state = State.Pending;
+      beginEvaluation(mod);
       isUserDynamic = false;
     } else {
       if (importer) {
         mod.importers.add(importer);
       }
+      bindImportOfImporterOnStack(importer, importIndex, mod);
       return mod;
     }
   }
@@ -316,6 +327,7 @@ export function loadModuleSync(id: Id, isUserDynamic: boolean, importer: HMRModu
       throw e;
     }
     mod.state = State.Loaded;
+    bindImportOfImporterOnStack(importer, importIndex, mod);
   } else {
     // ESM
     if (IS_BUN_DEVELOPMENT) {
@@ -330,7 +342,12 @@ export function loadModuleSync(id: Id, isUserDynamic: boolean, importer: HMRModu
         throw e;
       }
     }
-    const { [ESMProps.imports]: deps, [ESMProps.load]: load, [ESMProps.isAsync]: isAsync } = loadOrEsmModule;
+    const {
+      [ESMProps.imports]: deps,
+      [ESMProps.stars]: stars,
+      [ESMProps.load]: load,
+      [ESMProps.isAsync]: isAsync,
+    } = loadOrEsmModule;
     if (isAsync) {
       throw new AsyncImportError(id);
     }
@@ -346,14 +363,20 @@ export function loadModuleSync(id: Id, isUserDynamic: boolean, importer: HMRModu
       mod.importers.add(importer);
     }
 
-    const { list: depsList } = parseEsmDependencies(mod, deps, loadModuleSync);
-    const exportsBefore = mod.exports;
-    mod.imports = depsList.map(getEsmExports);
-    load(mod);
-    mod.imports = depsList;
-    if (mod.exports === exportsBefore) mod.exports = {};
-    mod.cjs = null;
-    mod.state = State.Loaded;
+    const link = instantiateEsm(mod, load, stars, importer, importIndex);
+    let depsList: HMRModule[];
+    try {
+      ({ list: depsList } = parseEsmDependencies(mod, deps, loadModuleSync));
+    } catch (e) {
+      if (e instanceof AsyncImportError) {
+        // A dependency needs top-level await, so this module cannot be
+        // required. Its body did not run; a dynamic import can retry it.
+        mod.state = State.Stale;
+        throw e;
+      }
+      throwLoadFailure(mod, e);
+    }
+    evaluateEsm(mod, link, depsList);
   }
 
   return mod;
@@ -368,6 +391,7 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
   id: Id,
   isUserDynamic: IsUserDynamic,
   importer: HMRModule | null,
+  importIndex?: number,
 ): (IsUserDynamic extends true ? null : never) | Promise<HMRModule> | HMRModule {
   // First, try and re-use an existing module.
   let mod = registry.get(id)!;
@@ -375,12 +399,13 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
     const { state } = mod;
     if (state === State.Error) throw mod.failure;
     if (state === State.Stale) {
-      mod.state = State.Pending;
+      beginEvaluation(mod);
       isUserDynamic = false as IsUserDynamic;
     } else {
       if (importer) {
         mod.importers.add(importer);
       }
+      bindImportOfImporterOnStack(importer, importIndex, mod);
       return mod;
     }
   }
@@ -416,6 +441,7 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
       throw e;
     }
     mod.state = State.Loaded;
+    bindImportOfImporterOnStack(importer, importIndex, mod);
     return mod;
   } else {
     // ESM
@@ -431,7 +457,12 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
         throw e;
       }
     }
-    const [deps /* exports */ /* stars */, , , load /* isAsync */] = loadOrEsmModule;
+    const {
+      [ESMProps.imports]: deps,
+      [ESMProps.stars]: stars,
+      [ESMProps.load]: load,
+      [ESMProps.isAsync]: selfIsAsync,
+    } = loadOrEsmModule;
 
     if (!mod) {
       mod = new HMRModule(id, false);
@@ -445,61 +476,322 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
       mod.importers.add(importer);
     }
 
-    const { list, isAsync } = parseEsmDependencies(mod, deps, loadModuleAsync<false>);
+    const link = instantiateEsm(mod, load, stars, importer, importIndex);
+    let list: (HMRModule | Promise<HMRModule>)[];
+    let isAsync: boolean;
+    try {
+      ({ list, isAsync } = parseEsmDependencies(mod, deps, loadModuleAsync<false>));
+    } catch (e) {
+      throwLoadFailure(mod, e);
+    }
     DEBUG.ASSERT(
       isAsync //
         ? list.some(x => x instanceof Promise)
         : list.every(x => x instanceof HMRModule),
     );
 
-    // Running finishLoadModuleAsync synchronously when there are no promises is
-    // not a performance optimization but a behavioral correctness issue.
+    // Evaluating synchronously when there are no promises is not a
+    // performance optimization but a behavioral correctness issue.
     return isAsync
       ? Promise.all(list).then(
-          list => finishLoadModuleAsync(mod, load, list),
-          e => {
-            mod.state = State.Error;
-            mod.failure = e;
-            throw e;
-          },
+          list => evaluateEsm(mod, link, list, selfIsAsync),
+          e => throwLoadFailure(mod, e),
         )
-      : finishLoadModuleAsync(
+      : evaluateEsm(
           mod,
-          load,
+          link,
           list as HMRModule[], // no promises as by assert above
+          selfIsAsync,
         );
   }
 }
 
-function finishLoadModuleAsync(mod: HMRModule, load: UnloadedESM[3], modules: HMRModule[]) {
+/** Stale -> Pending: the bindings of the previous evaluation take no part in
+ * this one. */
+function beginEvaluation(mod: HMRModule) {
+  mod.imports = null;
+  mod.updateImport = null;
+  mod.state = State.Pending;
+}
+
+/** Records the failure, so that the next import of this id throws it again
+ * instead of handing out a module that never finished. */
+function throwLoadFailure(mod: HMRModule, e: unknown): never {
+  mod.state = State.Error;
+  mod.failure = e;
+  throw e;
+}
+
+/** The state of an ESM module between its two link phases. */
+interface EsmLink {
+  gen: ModuleLoadGenerator;
+  /** The promise of the first resume of an async generator (a module with
+   * top-level await). It settles after the instantiate statements ran, and
+   * the body may only be resumed after it. `null` for a sync generator. */
+  instantiated: Promise<unknown> | null;
+  /** Star re-exports whose names are only known after the dependencies load. */
+  lateStars: Id[] | null;
+}
+
+/** Phase one of the ESM link. The load function is a generator: the first
+ * resume instantiates the module (hoisted function declarations, the import
+ * variables, `hmr.updateImport` and the `hmr.exports` object exist after it),
+ * and no statement of the body runs. Instantiation happens before the
+ * dependencies load, so a module in an import cycle reads this module's
+ * namespace object, not `null`.
+ *
+ * A module with top-level await is an async generator. Its first resume still
+ * runs the instantiate statements synchronously; only the promise settles
+ * later. */
+function instantiateEsm(
+  mod: HMRModule,
+  load: UnloadedESM[ESMProps.load],
+  stars: Id[],
+  importer: HMRModule | null,
+  importIndex: number | undefined,
+): EsmLink {
   try {
+    const gen = load(mod);
     const exportsBefore = mod.exports;
-    mod.imports = modules.map(getEsmExports);
-    const shouldPatchImporters = !mod.selfAccept || mod.selfAccept === implicitAcceptFunction;
-    const p = load(mod);
-    mod.imports = modules;
-    if (p) {
-      return p.then(() => {
-        mod.state = State.Loaded;
-        if (mod.exports === exportsBefore) mod.exports = {};
-        mod.cjs = null;
-        if (shouldPatchImporters) patchImporters(mod);
-        return mod;
-      });
+    const first = gen.next();
+    let instantiated: Promise<unknown> | null = null;
+    if (first instanceof Promise) {
+      // A module with top-level await. A rejection surfaces through
+      // `evaluateEsm`; this handler only keeps it from being reported as
+      // unhandled before then.
+      first.catch(noop);
+      instantiated = first;
     }
     if (mod.exports === exportsBefore) mod.exports = {};
-    mod.cjs = null;
-    if (shouldPatchImporters) patchImporters(mod);
-    mod.state = State.Loaded;
-    return mod;
+    const lateStars = mergeStarExports(mod, stars);
+    bindImportOfImporterOnStack(importer, importIndex, mod);
+    return { gen, instantiated, lateStars };
   } catch (e) {
-    mod.state = State.Error;
-    mod.failure = e;
-    throw e;
+    throwLoadFailure(mod, e);
   }
 }
 
-type GenericModuleLoader<R> = (id: Id, isUserDynamic: false, importer: HMRModule) => R;
+/** The importer is on the stack while its dependency loads: the body of the
+ * importer has not bound its imports yet. A function of the importer that
+ * the body of a later dependency calls, as happens in an import cycle, must
+ * already see the namespace object. So the binding is made here, as soon as
+ * the dependency instantiates or, for a dependency that is already in the
+ * registry, as soon as the importer requests it. An import later in the list
+ * of the importer binds when its own module instantiates, after this
+ * dependency evaluated; webpack and the Vite module runner behave the same
+ * way. A CommonJS importer has no `updateImport` and binds its imports
+ * itself. */
+function bindImportOfImporterOnStack(
+  importer: HMRModule | null,
+  importIndex: number | undefined,
+  dependency: HMRModule,
+) {
+  if (importer === null || importIndex === undefined) return;
+  // A CommonJS module that is still evaluating in a require cycle is
+  // skipped: converting its namespace now would cache a partial snapshot.
+  // The importer binds it when the importer evaluates, like Node.
+  if (!dependency.esm && dependency.state !== State.Loaded) return;
+  const exports = getEsmExports(dependency);
+  if (exports) importer.updateImport?.[importIndex](exports);
+}
+
+/** Phase two of the ESM link, after the dependencies loaded: the second
+ * resume runs the body. A module with top-level await settles later, so this
+ * returns a promise for it. */
+function evaluateEsm(mod: HMRModule, link: EsmLink, modules: HMRModule[], isAsync: true): Promise<HMRModule>;
+function evaluateEsm(mod: HMRModule, link: EsmLink, modules: HMRModule[], isAsync?: false): HMRModule;
+function evaluateEsm(
+  mod: HMRModule,
+  link: EsmLink,
+  modules: HMRModule[],
+  isAsync?: boolean,
+): HMRModule | Promise<HMRModule>;
+function evaluateEsm(
+  mod: HMRModule,
+  link: EsmLink,
+  modules: HMRModule[],
+  isAsync?: boolean,
+): HMRModule | Promise<HMRModule> {
+  const { gen, instantiated, lateStars } = link;
+  const shouldPatchImporters = !mod.selfAccept || mod.selfAccept === implicitAcceptFunction;
+  // The body reads `hmr.imports` as its first statement, synchronously within
+  // the resume, so the list of modules can replace the namespaces right after.
+  const resume = () => {
+    mod.imports = modules.map(getEsmExports);
+    const step = gen.next();
+    mod.imports = modules;
+    return step;
+  };
+  const finish = () => {
+    mod.cjs = null;
+    mod.state = State.Loaded;
+    if (shouldPatchImporters) patchImporters(mod);
+    return mod;
+  };
+  try {
+    if (lateStars) mergeLateStarExports(mod, lateStars);
+    if (isAsync) {
+      DEBUG.ASSERT(instantiated !== null);
+      return instantiated!.then(resume).then(finish, e => throwLoadFailure(mod, e));
+    }
+    resume();
+    return finish();
+  } catch (e) {
+    throwLoadFailure(mod, e);
+  }
+}
+
+function noop() {}
+
+/** Implements `export * from`, from the star-import list of the module
+ * tuple. Runs in the instantiate phase, before the dependencies load, so a
+ * module in an import cycle sees the star re-exported names. The names of an
+ * ESM dependency come from the static export list in the unloaded module
+ * registry. Every name except "default" that the module does not declare
+ * itself is re-exported through a getter, which keeps the binding live.
+ *
+ * Returns the ids whose export names are not statically known (CommonJS
+ * modules, and chains through them). The loader merges those after the
+ * dependencies load, in `mergeLateStarExports`. */
+function mergeStarExports(mod: HMRModule, stars: Id[]): Id[] | null {
+  if (stars.length === 0) return null;
+  const exp = mod.exports;
+  // The module's own exports always win. Snapshot them so a later star
+  // dependency can overwrite a key added by an earlier one (matching the
+  // last-wins order of the object spread this replaces).
+  const ownKeys = new Set(Object.keys(exp));
+  let lateIds: Id[] | null = null;
+
+  // The getter reads the module that declares the name, not the star
+  // dependency that forwards it. A name declared by a module is an own
+  // property of its namespace object, so the read ends there. A getter that
+  // read the star dependency instead would loop when two barrels star each
+  // other and a third module provides the name.
+  const defineForward = (ownerId: Id, key: string) => {
+    if (key === "default" || ownKeys.has(key)) return;
+    Object.defineProperty(exp, key, {
+      // HMRModule instances are mutated across hot updates, never replaced,
+      // so resolving through the registry reads the latest exports.
+      get: () => {
+        const m = registry.get(ownerId);
+        return m && getEsmExports(m)[key];
+      },
+      enumerable: true,
+      configurable: true,
+    });
+  };
+
+  const starNamesMemo = new Map<Id, StarNames>();
+  for (const starId of stars) {
+    const unloaded = unloadedModuleRegistry[starId];
+    if (Array.isArray(unloaded)) {
+      // ESM: resolve every name the dependency provides to the module that
+      // declares it. The walk starts with this module on the stack, so a
+      // star chain that comes back here contributes nothing.
+      const { names, sawDynamic } = resolveStarNames(starId, [mod.id], starNamesMemo);
+      for (const [key, ownerId] of names) {
+        defineForward(ownerId, key);
+      }
+      // A nested star through a CommonJS module: its names are only known
+      // after it runs, so re-merge this dependency late.
+      if (sawDynamic) (lateIds ??= []).push(starId);
+    } else if (typeof unloaded === "function") {
+      // CommonJS: the export names are only known after the module runs.
+      (lateIds ??= []).push(starId);
+    } else if (registry.get(starId)) {
+      // A synthetic module (`registerSynthetic`), already loaded.
+      (lateIds ??= []).push(starId);
+    } else if (side === "server") {
+      // A builtin, for example `export * from "node:path"` on the server.
+      const ns = mod.builtin(starId);
+      for (const key of Object.keys(ns)) {
+        if (key === "default" || ownKeys.has(key)) continue;
+        Object.defineProperty(exp, key, {
+          get: () => ns[key],
+          enumerable: true,
+          configurable: true,
+        });
+      }
+    }
+  }
+  return lateIds;
+}
+
+/** The names an ESM module provides: every key maps to the module that
+ * declares it. */
+interface StarNames {
+  names: Map<string, Id>;
+  /** A CommonJS module was met; its names are only known after it runs. */
+  sawDynamic: boolean;
+  /** The walk was cut by a cycle through an ancestor other than the root,
+   * so this map depends on the path and must not be cached. */
+  cut: boolean;
+}
+
+/** Maps every name that the ESM module `id` provides to the module that
+ * declares it, with the precedence of a namespace object: an own name wins
+ * over a star, and a later star wins over an earlier one. `stack` holds the
+ * modules whose stars are being resolved, so a circular star re-export is cut
+ * where it closes. `memo` caches the finished map of a module and replays it
+ * for every star edge, so a shared subtree of a diamond-shaped barrel graph
+ * is walked once without a loss of the edge order. */
+function resolveStarNames(id: Id, stack: Id[], memo: Map<Id, StarNames>): StarNames {
+  const cached = memo.get(id);
+  if (cached) return cached;
+  const result: StarNames = { names: new Map(), sawDynamic: false, cut: false };
+  const unloaded = unloadedModuleRegistry[id];
+  if (!Array.isArray(unloaded)) {
+    result.sawDynamic = true;
+    memo.set(id, result);
+    return result;
+  }
+  stack.push(id);
+  for (const nested of unloaded[ESMProps.stars]) {
+    if (stack.includes(nested)) {
+      // The root is on every stack of this walk, so only a cycle through
+      // another ancestor makes the result path-dependent.
+      if (nested !== stack[0]) result.cut = true;
+      continue;
+    }
+    const sub = resolveStarNames(nested, stack, memo);
+    if (sub.sawDynamic) result.sawDynamic = true;
+    if (sub.cut) result.cut = true;
+    for (const [key, ownerId] of sub.names) {
+      result.names.set(key, ownerId);
+    }
+  }
+  stack.pop();
+  for (const key of unloaded[ESMProps.exports]) {
+    result.names.set(key, id);
+  }
+  if (!result.cut) memo.set(id, result);
+  return result;
+}
+
+/** Second half of `mergeStarExports`, after the dependencies load. Only adds
+ * names the static merge could not define. */
+function mergeLateStarExports(mod: HMRModule, lateIds: Id[]) {
+  const exp = mod.exports;
+  // Snapshot the keys the static merge defined (own exports and ESM star
+  // names) so they win, while a later late star can still overwrite a key
+  // an earlier one added (last-wins, like the static merge).
+  const preKeys = new Set(Object.keys(exp));
+  for (const starId of lateIds) {
+    const starMod = registry.get(starId);
+    if (!starMod) continue;
+    const ns = getEsmExports(starMod);
+    for (const key of Object.keys(ns)) {
+      if (key === "default" || preKeys.has(key)) continue;
+      Object.defineProperty(exp, key, {
+        get: () => getEsmExports(starMod)[key],
+        enumerable: true,
+        configurable: true,
+      });
+    }
+  }
+}
+
+type GenericModuleLoader<R> = (id: Id, isUserDynamic: false, importer: HMRModule, importIndex: number) => R;
 // TODO: This function is currently recursive.
 function parseEsmDependencies<T extends GenericModuleLoader<any>>(
   parent: HMRModule,
@@ -515,7 +807,7 @@ function parseEsmDependencies<T extends GenericModuleLoader<any>>(
     DEBUG.ASSERT(typeof dep === "string");
     let expectedExportKeyEnd = i + 2 + (deps[i + 1] as number);
     DEBUG.ASSERT(typeof deps[i + 1] === "number");
-    const promiseOrModule = enqueueModuleLoad(dep, false, parent);
+    const promiseOrModule = enqueueModuleLoad(dep, false, parent, list.length);
     list.push(promiseOrModule);
 
     const unloadedModule = unloadedModuleRegistry[dep];
@@ -801,10 +1093,13 @@ function patchImporters(mod: HMRModule) {
   const { importers } = mod;
   const exports = getEsmExports(mod);
   for (const importer of importers) {
-    if (!importer.esm || !importer.updateImport) continue;
-    const index = importer.imports!.indexOf(mod);
+    // `updateImport` is assigned during instantiation, `imports` only just
+    // before evaluation, so an importer can be instantiated but not linked
+    // yet. It reads the namespace object when it evaluates.
+    if (!importer.esm || !importer.updateImport || !importer.imports) continue;
+    const index = importer.imports.indexOf(mod);
     if (index === -1) continue; // require or dynamic import
-    importer.updateImport![index](exports);
+    importer.updateImport[index](exports);
   }
 }
 
@@ -923,12 +1218,15 @@ function isReactRefreshBoundary(esmExports): boolean {
   let areAllExportsComponents = true;
   for (const key in esmExports) {
     hasExports = true;
-    const desc = Object.getOwnPropertyDescriptor(esmExports, key);
-    if (desc && desc.get) {
-      // Don't invoke getters as they may have side effects.
+    // Every getter on this object is a side-effect-free binding read that
+    // the HMR runtime generated itself, so read through it. A read that
+    // throws (temporal dead zone in an import cycle) is not a boundary.
+    let exportValue;
+    try {
+      exportValue = esmExports[key];
+    } catch {
       return false;
     }
-    const exportValue = esmExports[key];
     if (!isLikelyComponentType(exportValue)) {
       areAllExportsComponents = false;
     }

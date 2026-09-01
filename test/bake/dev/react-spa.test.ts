@@ -93,6 +93,52 @@ const reactAndRefreshStub = {
     });
   `,
 };
+// `isReactRefreshBoundary` reads the value of every export. A re-export reads
+// the binding of another module, and inside an import cycle that module can be
+// between its declarations, so the read throws. A module that cannot answer is
+// not a boundary; it must not fail to load.
+devTest("a re-export inside an import cycle does not break the refresh boundary check", {
+  framework: minimalFramework,
+  files: {
+    ...reactAndRefreshStub,
+    // The shared stub answers `true` for every value, which returns from
+    // `isReactRefreshBoundary` before it reads a single export. This runtime
+    // answers the way `react-refresh` does, so the check reads the values.
+    "node_modules/react-refresh/runtime.js": /* js */ `
+      exports.performReactRefresh = () => {};
+      exports.injectIntoGlobalHook = () => {};
+      exports.isLikelyComponentType = (value) => typeof value === "function";
+      exports.register = require("bun-devserver-react-mock").register;
+      exports.createSignatureFunctionForTransform = require("bun-devserver-react-mock").createSignatureFunctionForTransform;
+    `,
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.tsx"],
+    }),
+    "index.tsx": `
+      import { Thing } from './a';
+      import { Widget } from './b';
+      console.log('loaded ' + typeof Thing + ' ' + typeof Widget);
+    `,
+    // `b.tsx` evaluates while this module is still between its `yield` and the
+    // declaration of `Thing`.
+    "a.tsx": `
+      import './b';
+      export class Thing {}
+    `,
+    // `Widget` makes this module register a component, so it calls
+    // `hmr.reactRefreshAccept()`, which reads the value of every export of
+    // this module, including the re-export of `Thing`.
+    "b.tsx": `
+      export { Thing } from './a';
+      export function Widget() { return null; }
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client();
+    await c.expectMessage("loaded function function");
+  },
+});
 devTest("react in html", {
   fixture: "react-spa-simple",
   async test(dev) {

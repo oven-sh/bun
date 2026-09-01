@@ -6989,17 +6989,23 @@ pub(crate) mod __gated_printer {
                 }
                 self.print(b"], ");
 
-                // Print the code
-                if !ast.top_level_await_keyword.is_empty() {
-                    self.print(b"async");
+                // Print the code. The module is a generator for the two-phase
+                // link (see the doc comment on
+                // `convert_stmts_for_chunk_for_dev_server`). A module with
+                // top-level await is an async generator, so its body can
+                // suspend on `await` after the `yield`.
+                let is_async = !ast.top_level_await_keyword.is_empty();
+                if is_async {
+                    self.print(b"async ");
                 }
+                self.print(b"function*");
                 self.print_fn_args(
                     Some(func.open_parens_loc),
                     slice_of(func.args),
                     func.flags.contains(G::FnFlags::HasRestArg),
                     false,
                 );
-                self.print(b" => {\n");
+                self.print(b" {\n");
                 self.indent();
                 self.print_block_body(slice_of(func.body.stmts));
                 self.unindent();
@@ -7007,7 +7013,7 @@ pub(crate) mod __gated_printer {
                 self.print(b"}, ");
 
                 // Print isAsync
-                self.print(if !ast.top_level_await_keyword.is_empty() {
+                self.print(if is_async {
                     b"true".as_slice()
                 } else {
                     b"false".as_slice()

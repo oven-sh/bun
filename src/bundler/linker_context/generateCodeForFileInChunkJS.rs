@@ -19,7 +19,9 @@ use bun_ast::{B, Binding, E, Expr, G, Ref, S, Stmt};
 use bun_js_parser::lexer as js_lexer;
 
 use super::convert_stmts_for_chunk::convert_stmts_for_chunk;
-use super::convert_stmts_for_chunk_for_dev_server::convert_stmts_for_chunk_for_dev_server;
+use super::convert_stmts_for_chunk_for_dev_server::{
+    convert_stmts_for_chunk_for_dev_server, is_two_phase_esm,
+};
 
 #[allow(clippy::too_many_arguments)]
 pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
@@ -78,21 +80,45 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
 
             let hmr_api_ref = ast.wrapper_ref;
 
+            let mut instantiate_stmts: Vec<Stmt> = Vec::new();
             // SAFETY: see `parts` raw-pointer note above.
             for part in unsafe { (*parts).iter() } {
                 let part_stmts: &[Stmt] = part.stmts.slice();
-                if let Err(err) =
-                    convert_stmts_for_chunk_for_dev_server(c, stmts, part_stmts, arena, &mut ast)
-                {
+                if let Err(err) = convert_stmts_for_chunk_for_dev_server(
+                    c,
+                    stmts,
+                    part_stmts,
+                    arena,
+                    &mut ast,
+                    &mut instantiate_stmts,
+                ) {
                     return PrintResult::Err(err.into());
                 }
             }
 
-            let main_stmts_len =
-                stmts.inside_wrapper_prefix.stmts.len() + stmts.inside_wrapper_suffix.len();
+            // Two-phase ESM: the instantiation statements and a `yield` go
+            // first. See the doc comment on
+            // `convert_stmts_for_chunk_for_dev_server`.
+            let two_phase = is_two_phase_esm(&ast);
+            let phase_stmts_len = if two_phase {
+                instantiate_stmts.len() + 1
+            } else {
+                debug_assert!(instantiate_stmts.is_empty());
+                0
+            };
+            let main_stmts_len = phase_stmts_len
+                + stmts.inside_wrapper_prefix.stmts.len()
+                + stmts.inside_wrapper_suffix.len();
             let all_stmts_len = main_stmts_len + stmts.outside_wrapper_prefix.len() + 1;
 
             stmts.all_stmts.reserve(all_stmts_len);
+            if two_phase {
+                stmts.all_stmts.extend_from_slice(&instantiate_stmts);
+                stmts.all_stmts.push(Stmt::allocate_expr(
+                    temp_arena,
+                    Expr::init(E::Yield::default(), bun_ast::Loc::EMPTY),
+                ));
+            }
             stmts
                 .all_stmts
                 .extend_from_slice(stmts.inside_wrapper_prefix.stmts.as_slice());
@@ -165,6 +191,15 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                             body: G::FnBody {
                                 stmts: inner,
                                 loc: bun_ast::Loc::EMPTY,
+                            },
+                            flags: if two_phase {
+                                if ast.top_level_await_keyword.is_empty() {
+                                    G::FnFlags::IsGenerator.into()
+                                } else {
+                                    G::FnFlags::IsGenerator | G::FnFlags::IsAsync
+                                }
+                            } else {
+                                Default::default()
                             },
                             ..Default::default()
                         },

@@ -670,13 +670,10 @@ impl Stringifier {
         self.append_string(str);
     }
 
-    /// Block scalar content must be indented with spaces, and each indent
-    /// level must be at least two columns wide. A compact nested sequence
-    /// (`- - `) advances two columns per level while the indent advances one
-    /// level, so with a one-column unit the content would not be more
-    /// indented than its parent and the parser would read an empty scalar.
-    /// A string `space` argument that is not all spaces (a tab, for example)
-    /// keeps the quoted output.
+    /// Block scalar content must be indented with spaces, at least two
+    /// columns per level: a compact nested sequence (`- - `) advances two
+    /// columns per level, so a one-column unit would leave the content level
+    /// with its parent and the parser would read an empty scalar.
     fn indent_allows_block_scalar(&self) -> bool {
         match &self.space {
             Space::Minified => false,

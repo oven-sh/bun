@@ -480,14 +480,19 @@ describe("dynamic import through a helper whose target imports the TLA awaiter b
 
   // The entry does not await the helper's import(): nothing is deadlocked, so
   // the chunk must wait for the entry (12.b.v) and see its post-await exports.
-  // The timer only keeps the entry suspended while the chunk is being loaded.
+  // The timer keeps the entry suspended while the chunk loads. A fixed delay
+  // is the only option: in the correct outcome the chunk's body does not run
+  // until the entry finishes, so nothing on the chunk side can signal the
+  // entry, and any promise from the import() back to the entry's await would
+  // make the entry wait on the chunk for real. A slow machine can only make
+  // this check pass vacuously, never fail.
   test.concurrent("a helper's import() that the awaiter does not wait for still waits for the awaiter", async () => {
     const result = await run({
       "entry.ts": `
         export const early = "early";
         import { preload } from "./loader.ts";
         preload();
-        await new Promise(resolve => setTimeout(resolve, 200));
+        await new Promise(resolve => setTimeout(resolve, 500));
         export const late = "late";
         console.log("entry done");
       `,

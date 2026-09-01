@@ -367,6 +367,36 @@ describe("@types/bun integration test", () => {
     });
   });
 
+  // TypeScript 7.1 resolves `import x from "./f" with { type: "text" }` against
+  // `declare module "*" with { type: "text" }` (microsoft/TypeScript#63931).
+  // bun-types ships those declarations in ts7.1/, reached through
+  // package.json#typesVersions, so they are invisible to the compilers above.
+  // `>=7.1.0-0` takes the nightly until a 7.1 release exists, then the release.
+  describe("TypeScript 7.1", () => {
+    test.skipIf(isDebug)("import attributes pick the loader's module type", async () => {
+      const fixtureDir = await createIsolatedFixture(["typescript@>=7.1.0-0"]);
+
+      const tsconfig = structuredClone(sourceTsconfig);
+      tsconfig.compilerOptions.skipLibCheck = false;
+      tsconfig.include = ["ts7.1/*.ts"];
+      await Bun.write(join(fixtureDir, "tsconfig.json"), JSON.stringify(tsconfig, null, 2));
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), join(fixtureDir, "node_modules", "typescript", "bin", "tsc"), "-p", "."],
+        env: bunEnv,
+        cwd: fixtureDir,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr.trim()).toBe("");
+      expect(stdout.trim()).toBe("");
+      expect(exitCode).toBe(0);
+    });
+  });
+
   // Runs on debug builds too: spawning tsc over a single file is cheap,
   // unlike the in-process LanguageService runs above.
   describe("Bun.mmap", () => {

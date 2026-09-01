@@ -968,10 +968,11 @@ realpathSync.native = fs.realpathNativeSync.bind(fs);
 // and on MacOS, simple cases of recursive directory trees can be done in a single `clonefile()`
 // using filter and other options uses a lazily loaded js fallback ported from node.js
 function cpSync(src, dest, options) {
-  const { cpSyncFn, validateCpOptions, getValidatedCpPath, tryNativeFastPathSync } = require("internal/fs/cp-sync");
+  const { cpSyncFn, validateCpOptions, tryNativeFastPathSync } = require("internal/fs/cp-sync");
+  const { getValidatedFsPath } = require("internal/validators");
   options = validateCpOptions(options);
-  src = getValidatedCpPath(src, "src");
-  dest = getValidatedCpPath(dest, "dest");
+  src = getValidatedFsPath(src, "src");
+  dest = getValidatedFsPath(dest, "dest");
   const { filter, dereference, preserveTimestamps, verbatimSymlinks, mode, errorOnExist, force, recursive } = options;
   if (!filter && !dereference && !preserveTimestamps && !verbatimSymlinks && !mode && !errorOnExist && force) {
     const { ok, checked } = tryNativeFastPathSync(src, dest, options);
@@ -994,10 +995,11 @@ function cp(src, dest, options, callback) {
   }
 
   // node's callback form throws synchronously on invalid options/paths
-  const { validateCpOptions, getValidatedCpPath } = require("internal/fs/cp-sync");
+  const { validateCpOptions } = require("internal/fs/cp-sync");
+  const { getValidatedFsPath } = require("internal/validators");
   options = validateCpOptions(options);
-  src = getValidatedCpPath(src, "src");
-  dest = getValidatedCpPath(dest, "dest");
+  src = getValidatedFsPath(src, "src");
+  dest = getValidatedFsPath(dest, "dest");
   callback = guardCallback(callback);
 
   require("node:fs/promises").cp(src, dest, options).then(callOnceWithNull.bind(null, callback), callback);

@@ -57,29 +57,63 @@ for (const [name, copy] of impls) {
       }).toEqual({ bufSrc: "a", bufDest: "a", u8Src: "a", bufDir: "b" });
     });
 
-    test("Buffer paths with a filter - the filter receives string paths", async () => {
+    test("Buffer paths with a filter - the filter receives Buffer paths", async () => {
       await using basename = tempDir("cp", {
         "from/a.txt": "a",
         "from/b.txt": "b",
       });
       const from = join(basename, "from");
       const result = join(basename, "result");
-      const seen: [string, string][] = [];
+      const seen: [Buffer, Buffer][] = [];
 
       await copy(Buffer.from(from), Buffer.from(result), {
         recursive: true,
-        filter: (src: string, dest: string) => {
+        filter: (src: any, dest: any) => {
           seen.push([src, dest]);
-          return !src.endsWith("b.txt");
+          return !src.toString().endsWith("b.txt");
         },
       });
 
-      expect(seen.sort((a, b) => a[0].localeCompare(b[0]))).toEqual([
-        [from, result],
-        [join(from, "a.txt"), join(result, "a.txt")],
-        [join(from, "b.txt"), join(result, "b.txt")],
+      expect(seen.sort((a, b) => Buffer.compare(a[0], b[0]))).toEqual([
+        [Buffer.from(from), Buffer.from(result)],
+        [Buffer.from(join(from, "a.txt")), Buffer.from(join(result, "a.txt"))],
+        [Buffer.from(join(from, "b.txt")), Buffer.from(join(result, "b.txt"))],
       ]);
       expect(fs.readdirSync(result)).toEqual(["a.txt"]);
+    });
+
+    // macOS rejects file names that are not valid UTF-8 (EILSEQ), and Windows
+    // names are UTF-16, so only Linux can hold the bytes this test needs.
+    test.skipIf(!isLinux)("Buffer paths are passed to the syscalls byte for byte", async () => {
+      await using basename = tempDir("cp", {});
+      const bytes = (...parts: (string | Buffer)[]) => Buffer.concat(parts.map(p => Buffer.from(p)));
+      // "from\xff" and "caf\xe9" are not valid UTF-8; a UTF-8 decode turns them into U+FFFD.
+      const from = bytes(basename + "/from", Buffer.from([0xff]));
+      const entry = bytes("caf", Buffer.from([0xe9]), ".txt");
+      const result = bytes(basename + "/result", Buffer.from([0xfe]));
+      fs.mkdirSync(from);
+      fs.mkdirSync(bytes(from, "/sub"));
+      fs.writeFileSync(bytes(from, "/", entry), "cafe");
+      fs.writeFileSync(bytes(from, "/a.txt"), "a");
+      fs.symlinkSync("../a.txt", bytes(from, "/sub/link"));
+
+      // Single file: the native copy.
+      await copy(bytes(from, "/", entry), bytes(basename, "/", entry));
+      // Directory: the walker, which reads the entry names as bytes and
+      // resolves the relative link target against the Buffer source tree.
+      await copy(from, result, { recursive: true });
+
+      expect({
+        file: fs.readFileSync(bytes(basename, "/", entry), "utf8"),
+        entries: fs.readdirSync(result, { encoding: "buffer" }).sort(Buffer.compare),
+        content: fs.readFileSync(bytes(result, "/", entry), "utf8"),
+        link: fs.readlinkSync(bytes(result, "/sub/link"), { encoding: "buffer" }),
+      }).toEqual({
+        file: "cafe",
+        entries: [Buffer.from("a.txt"), entry, Buffer.from("sub")].sort(Buffer.compare),
+        content: "cafe",
+        link: bytes(from, "/a.txt"),
+      });
     });
 
     test("refuse to copy directory with 'recursive: false'", async () => {

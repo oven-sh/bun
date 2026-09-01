@@ -257,7 +257,7 @@ use bun_threading::Mutex;
 use crate::fs as Fs;
 use crate::fs::FilenameStoreAppender;
 use crate::node_fallbacks as NodeFallbackModules;
-use crate::package_json::{BrowserMap, ESModule, PackageJSON};
+use crate::package_json::{BrowserMap, ESModule, EntryData, PackageJSON};
 use crate::tsconfig_json::TSConfigJSON;
 
 pub use crate::data_url::DataURL;
@@ -4166,6 +4166,12 @@ impl<'a> Resolver<'a> {
         source_dir: &[u8],
         specifier: &[u8],
     ) -> crate::CrateResult<Option<DirInfoRef>> {
+        // A path with a NUL byte cannot exist, and the C strings below would
+        // be cut at it.
+        if strings::contains_char(source_dir, 0) || strings::contains_char(specifier, 0) {
+            return Err(crate::Error::ModuleNotFound);
+        }
+
         let mut buf = bun_paths::path_buffer_pool::get();
 
         if !is_package_path(specifier) {
@@ -4202,6 +4208,14 @@ impl<'a> Resolver<'a> {
         else {
             return Err(crate::Error::ModuleNotFound);
         };
+        // Node's invalid package name rule (`parsePackageName`). Without it a
+        // `\` would be joined as a separator below and name a nested directory.
+        if package_name.starts_with(b".")
+            || strings::contains_char(package_name, b'%')
+            || strings::contains_char(package_name, b'\\')
+        {
+            return Err(crate::Error::ModuleNotFound);
+        }
         let Some(source_dir_info) = self.closest_existing_dir_info(source_dir)? else {
             return Err(crate::Error::ModuleNotFound);
         };
@@ -4209,7 +4223,11 @@ impl<'a> Resolver<'a> {
         // https://nodejs.org/api/packages.html#self-referencing-a-package-using-its-name
         if let Some(scope) = Self::closest_package_dir(source_dir_info) {
             if let Some(package_json) = scope.package_json() {
-                if package_json.name.as_ref() == package_name && package_json.exports.is_some() {
+                let has_exports = package_json
+                    .exports
+                    .as_ref()
+                    .is_some_and(|exports| !matches!(exports.root.data, EntryData::Invalid));
+                if package_json.name.as_ref() == package_name && has_exports {
                     return Ok(Some(scope));
                 }
             }
@@ -4238,7 +4256,7 @@ impl<'a> Resolver<'a> {
 
     /// `dir_info` or its nearest ancestor with a `package.json` file, not
     /// crossing a `node_modules` directory.
-    fn closest_package_dir(dir_info: DirInfoRef) -> Option<DirInfoRef> {
+    pub(crate) fn closest_package_dir(dir_info: DirInfoRef) -> Option<DirInfoRef> {
         let mut current = Some(dir_info);
         while let Some(dir_info) = current {
             if dir_info.is_node_modules() {

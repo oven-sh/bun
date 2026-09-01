@@ -87,6 +87,12 @@ console.log(findPackageJSON(import.meta.resolve("pkg")));`,
         "app/node_modules/broken/package.json": '{"name":',
         "app/node_modules/broken/lib/index.js": "",
         "app/node_modules/loose.js": "",
+        // Directories that exist but are not valid package names.
+        "app/node_modules/.hidden/package.json": JSON.stringify({ name: ".hidden" }),
+        "app/node_modules/%41/package.json": JSON.stringify({ name: "%41" }),
+        // A scope whose "exports" has the wrong type cannot self-reference.
+        "app/exports-invalid/package.json": JSON.stringify({ name: "exports-invalid", exports: true }),
+        "app/exports-invalid/index.js": "",
       });
       const p = (...segments) => path.join(String(dir), ...segments);
       return { p, base: p("app", "src", "index.js"), [Symbol.dispose]: () => dir[Symbol.dispose]() };
@@ -105,6 +111,8 @@ console.log(findPackageJSON(import.meta.resolve("pkg")));`,
         hoisted: findPackageJSON("hoisted", base),
         selfReference: findPackageJSON("app", base),
         packageWithoutManifest: findPackageJSON("no-manifest", base),
+        // Like import(), a query string is not part of the name.
+        withQuery: findPackageJSON("dep?v=1", base),
       }).toEqual({
         nearest: dep,
         subpath: dep,
@@ -114,7 +122,31 @@ console.log(findPackageJSON(import.meta.resolve("pkg")));`,
         hoisted: p("node_modules", "hoisted", "package.json"),
         selfReference: p("app", "package.json"),
         packageWithoutManifest: undefined,
+        withQuery: dep,
       });
+    });
+
+    test("a self-reference needs the nearest scope to have the name and a usable exports field", () => {
+      using fx = fixture();
+      const { p } = fx;
+      const notFound = expect.objectContaining({ code: "ERR_MODULE_NOT_FOUND" });
+      // The nearest scope of app/nested/mod.js is the nameless app/nested/package.json.
+      expect(() => findPackageJSON("app", p("app", "nested", "mod.js"))).toThrow(notFound);
+      // root/package.json has no "exports".
+      expect(() => findPackageJSON("root", p("index.js"))).toThrow(notFound);
+      // "exports": true is not an exports map.
+      expect(() => findPackageJSON("exports-invalid", p("app", "exports-invalid", "index.js"))).toThrow(notFound);
+    });
+
+    test("invalid package names throw even when a directory of that name exists", () => {
+      using fx = fixture();
+      const { base } = fx;
+      const notFound = expect.objectContaining({ code: "ERR_MODULE_NOT_FOUND" });
+      expect(() => findPackageJSON(".hidden", base)).toThrow(notFound);
+      expect(() => findPackageJSON("%41", base)).toThrow(notFound);
+      // Not a subpath separator: it would otherwise name dep/lib/package.json.
+      expect(() => findPackageJSON("dep\\lib", base)).toThrow(notFound);
+      expect(() => findPackageJSON("dep\0", base)).toThrow(notFound);
     });
 
     test("a path or file URL returns the closest package.json", () => {
@@ -127,6 +159,7 @@ console.log(findPackageJSON(import.meta.resolve("pkg")));`,
       const scopeOfEntry = p("app", "node_modules", "dep", "lib", "package.json");
       expect({
         relativeFile: findPackageJSON("./lib/util.js", base),
+        relativeFileWithQuery: findPackageJSON("./lib/util.js?v=1", base),
         relativeFileInNestedScope: findPackageJSON("../nested/mod.js", base),
         absolutePath: findPackageJSON(entry),
         absolutePathIgnoresBase: findPackageJSON(entry, base),
@@ -135,6 +168,7 @@ console.log(findPackageJSON(import.meta.resolve("pkg")));`,
         packageJSONItself: findPackageJSON(p("app", "package.json")),
       }).toEqual({
         relativeFile: p("app", "package.json"),
+        relativeFileWithQuery: p("app", "package.json"),
         relativeFileInNestedScope: p("app", "nested", "package.json"),
         absolutePath: scopeOfEntry,
         absolutePathIgnoresBase: scopeOfEntry,
@@ -151,12 +185,14 @@ console.log(findPackageJSON(import.meta.resolve("pkg")));`,
         parent: findPackageJSON("..", base),
         parentWithSlash: findPackageJSON("../", base),
         currentDirectoryWithoutPackageJSON: findPackageJSON(".", base),
+        currentDirectoryWithPackageJSON: findPackageJSON(".", p("app", "nested", "mod.js")),
         absoluteDirectory: findPackageJSON(p("app")),
         absoluteDirectoryWithSlash: findPackageJSON(p("app", "nested") + path.sep),
       }).toEqual({
         parent: p("app", "package.json"),
         parentWithSlash: p("app", "package.json"),
         currentDirectoryWithoutPackageJSON: p("app", "package.json"),
+        currentDirectoryWithPackageJSON: p("app", "nested", "package.json"),
         absoluteDirectory: p("app", "package.json"),
         absoluteDirectoryWithSlash: p("app", "nested", "package.json"),
       });
@@ -208,6 +244,35 @@ console.log(findPackageJSON(import.meta.resolve("pkg")));`,
       });
     });
 
+    test("a base with a trailing separator is the directory itself", () => {
+      using fx = fixture();
+      const { p } = fx;
+      const src = p("app", "src") + path.sep;
+      const nested = p("app", "nested") + path.sep;
+      expect({
+        relativeFromDirectory: findPackageJSON("./lib/util.js", src),
+        bareFromDirectory: findPackageJSON("dep", src),
+        directoryItself: findPackageJSON(".", nested),
+        directoryItselfFromFileURLString: findPackageJSON(".", pathToFileURL(nested).href),
+        directoryItselfFromFileURLObject: findPackageJSON(".", pathToFileURL(nested)),
+        parentOfDirectory: findPackageJSON("..", nested),
+      }).toEqual({
+        relativeFromDirectory: p("app", "package.json"),
+        bareFromDirectory: p("app", "node_modules", "dep", "package.json"),
+        directoryItself: p("app", "nested", "package.json"),
+        directoryItselfFromFileURLString: p("app", "nested", "package.json"),
+        directoryItselfFromFileURLObject: p("app", "nested", "package.json"),
+        parentOfDirectory: p("app", "package.json"),
+      });
+    });
+
+    test("a base must be an absolute path or a file URL, like Node.js", () => {
+      const invalidURL = input => expect.objectContaining({ code: "ERR_INVALID_URL", message: "Invalid URL", input });
+      for (const base of ["", ".", "./", "..", "src/index.js", "./src/index.js", "index.js"]) {
+        expect(() => findPackageJSON("dep", base)).toThrow(invalidURL(base));
+      }
+    });
+
     test("without a base, specifiers are resolved from the current working directory", async () => {
       using fx = fixture();
       const { p } = fx;
@@ -242,16 +307,22 @@ console.log(findPackageJSON(import.meta.resolve("pkg")));`,
       expect(() => findPackageJSON("@scope/missing/sub.js", base)).toThrow(
         notFound(`Cannot find package '@scope/missing' imported from ${base}`),
       );
+      // Like Node, the message names the path that was looked for.
       expect(() => findPackageJSON("./missing.js", base)).toThrow(
-        notFound(`Cannot find module './missing.js' imported from ${base}`),
+        notFound(`Cannot find module '${p("app", "src", "missing.js")}' imported from ${base}`),
       );
       expect(() => findPackageJSON("../missing/", base)).toThrow(
-        notFound(expect.stringContaining("Cannot find module")),
+        notFound(`Cannot find module '${p("app", "missing") + path.sep}' imported from ${base}`),
       );
       expect(() => findPackageJSON(p("missing", "index.js"))).toThrow(
+        notFound(expect.stringContaining(`Cannot find module '${p("missing", "index.js")}'`)),
+      );
+      expect(() => findPackageJSON("./index\0.js", base)).toThrow(
         notFound(expect.stringContaining("Cannot find module")),
       );
-      // Self-referencing requires an "exports" field, like it does for import.
+      expect(() => findPackageJSON("dep", p("x\0y", "index.js"))).toThrow(
+        notFound(expect.stringContaining("Cannot find package 'dep'")),
+      );
       expect(() => findPackageJSON("root", base)).toThrow(notFound(`Cannot find package 'root' imported from ${base}`));
     });
 
@@ -260,7 +331,7 @@ console.log(findPackageJSON(import.meta.resolve("pkg")));`,
       expect({ cjs: nestedCjsPackageJSON, esm: nestedEsmPackageJSON }).toEqual({ cjs: nested, esm: nested });
     });
 
-    test("validates its arguments like Node.js", () => {
+    test("validates its arguments", () => {
       expect(findPackageJSON).toHaveLength(1);
       expect(() => findPackageJSON()).toThrow(expect.objectContaining({ code: "ERR_MISSING_ARGS" }));
       for (const invalid of [null, {}, [], Symbol(), () => {}, true, false, 1, 0]) {
@@ -277,8 +348,17 @@ console.log(findPackageJSON(import.meta.resolve("pkg")));`,
           message: 'The "specifier" argument must be of type string. Received type symbol (Symbol(pkg))',
         }),
       );
+      const unstringifiable = {
+        toString() {
+          throw new Error("not this one");
+        },
+      };
+      expect(() => findPackageJSON(unstringifiable, import.meta.path)).toThrow(
+        expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+      );
       // URLs go through the same checks as fileURLToPath(), in either position,
-      // instead of being treated as a path or a package name.
+      // instead of being treated as a path or a package name. Node's codes
+      // differ for some of these malformed inputs.
       const invalidURL = expect.objectContaining({
         code: "ERR_INVALID_URL",
         message: "Invalid URL",
@@ -313,7 +393,7 @@ console.log(findPackageJSON(import.meta.resolve("pkg")));`,
         );
         expect(() => findPackageJSON(withHost)).toThrow(expect.objectContaining({ code: "ERR_INVALID_FILE_URL_HOST" }));
         const withLocalhost = pathToFileURL(import.meta.path).href.replace("file://", "file://localhost");
-        expect(findPackageJSON(withLocalhost)).toBe(findPackageJSON(import.meta.path));
+        expect(findPackageJSON(withLocalhost)).toBe(path.resolve(import.meta.dir, "..", "..", "..", "package.json"));
       }
       // Longer than any path the OS accepts (including Windows' ~96 KiB limit).
       const tooLong = path.join(import.meta.dir, Buffer.alloc(100_000, "a").toString());

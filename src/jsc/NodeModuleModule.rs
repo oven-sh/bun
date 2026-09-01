@@ -119,7 +119,18 @@ fn find_package_json(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSV
             specifier_value,
         ));
     }
-    let specifier = Location::from_js(global, specifier_value)?;
+    let specifier = match Location::from_js(global, specifier_value) {
+        Ok(specifier) => specifier,
+        // Like Node, a value whose `toString()` throws is reported as the wrong type.
+        Err(jsc::JsError::Thrown) if global.clear_exception_except_termination() => {
+            return Err(global.throw_invalid_argument_type_value(
+                "specifier",
+                "string",
+                specifier_value,
+            ));
+        }
+        Err(err) => return Err(err),
+    };
     let base_value = frame.argument(1);
     let base = if base_value.is_undefined() {
         None
@@ -129,9 +140,16 @@ fn find_package_json(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSV
         return Err(global.throw_invalid_argument_type_value("base", "string", base_value));
     };
 
+    let is_url = matches!(specifier, Location::Url(_));
     let specifier = specifier.into_path(global)?;
     let specifier_utf8 = specifier.to_utf8();
-    let specifier = specifier_utf8.slice();
+    let mut specifier = specifier_utf8.slice();
+    // `import()` ignores a query string (`./a.js?v=1`); a file URL already lost its own.
+    if !is_url {
+        if let Some(query) = strings::index_of_char_usize(specifier, b'?') {
+            specifier = &specifier[..query];
+        }
+    }
     let base = base.map(|base| base.into_path(global)).transpose()?;
     let base_utf8 = base.as_ref().map(BunString::to_utf8);
 
@@ -141,6 +159,14 @@ fn find_package_json(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSV
     // resolution starts in its directory; without one it starts in the cwd.
     let (source_dir, referrer): (&[u8], &[u8]) = match &base_utf8 {
         Some(base) => {
+            // Like Node's `new URL(base)`: a path must be absolute.
+            if !bun_paths::is_absolute(base.slice()) {
+                let error = global
+                    .err(jsc::ErrorCode::ERR_INVALID_URL, format_args!("Invalid URL"))
+                    .to_js();
+                error.put(global, "input", base_value);
+                return Err(global.throw_value(error));
+            }
             let joined = resolve_path::join_abs_string_buf_checked::<bun_paths::platform::Auto>(
                 top_level_dir,
                 &mut base_buf,
@@ -150,7 +176,12 @@ fn find_package_json(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSV
             let Some(base) = joined else {
                 return Err(global.throw_invalid_argument_value(b"base", base_value));
             };
-            (bun_paths::dirname(base).unwrap_or(base), base)
+            // A trailing separator (`dir/`, `file:///dir/`) names the directory itself.
+            let source_dir = match base.last() {
+                Some(&last) if bun_paths::Platform::AUTO.is_separator(last) => base,
+                _ => bun_paths::dirname(base).unwrap_or(base),
+            };
+            (source_dir, base)
         }
         None => (top_level_dir, top_level_dir),
     };
@@ -179,11 +210,17 @@ fn find_package_json(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSV
         }
         Ok(None) => Ok(JSValue::UNDEFINED),
         Err(bun_resolver::Error::ModuleNotFound) => {
-            let (kind, name) = if bun_paths::is_package_path(specifier) {
-                ("package", esm_package_name(specifier))
-            } else {
-                ("module", specifier)
-            };
+            // Node names the package, or the path it looked for.
+            let mut path_buf = bun_paths::path_buffer_pool::get();
+            let (kind, name) =
+                if bun_paths::is_package_path(specifier) {
+                    ("package", esm_package_name(specifier))
+                } else {
+                    let joined = resolve_path::join_abs_string_buf_checked::<
+                        bun_paths::platform::Auto,
+                    >(source_dir, &mut path_buf, &[specifier]);
+                    ("module", joined.unwrap_or(specifier))
+                };
             Err(global
                 .err(
                     jsc::ErrorCode::ERR_MODULE_NOT_FOUND,

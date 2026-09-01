@@ -319,6 +319,7 @@ describe("execArgv option", async () => {
   // this needs to be a subprocess to ensure that the parent's execArgv is not empty
   // otherwise we could not distinguish between the worker inheriting the parent's execArgv
   // vs. the worker getting a fresh empty execArgv
+  // `execArgv` is a JS expression the fixture evaluates for the option.
   async function run(execArgv: string, expected: string) {
     const proc = Bun.spawn({
       // pass --smol so that the parent thread has some known, non-empty execArgv
@@ -342,7 +343,42 @@ describe("execArgv option", async () => {
   it("can specify an array of strings", async () => {
     await run('["--no-warnings"]', '["--no-warnings"]\n');
   });
+  it("inherits the parent's execArgv when passed a Proxy, like Node", async () => {
+    // Array.isArray() accepts a Proxy of an array. Node's native check does not,
+    // so Node never reads the Proxy and the worker inherits the parent's flags.
+    await run('new Proxy(["--no-warnings"], {})', '["--smol"]\n');
+  });
+  it("reads an Array by index, like Node", async () => {
+    await Promise.all([
+      // a custom Symbol.iterator is not consulted
+      run(
+        'Object.assign(["--no-warnings"], { [Symbol.iterator]: function* () { yield "--from-iterator"; } })',
+        '["--no-warnings"]\n',
+      ),
+      run('Object.setPrototypeOf(["--no-warnings"], null)', '["--no-warnings"]\n'),
+      run('new (class extends Array {})("--no-warnings")', '["--no-warnings"]\n'),
+    ]);
+  });
   // TODO(@190n) get our handling of non-string array elements in line with Node's
+});
+
+// Node maps options.argv with Array.prototype.map: an index walk over `length`
+// that follows a Proxy and does not consult Symbol.iterator or the prototype.
+test("argv option is read by index, like Node", async () => {
+  const src = `require("node:worker_threads").parentPort.postMessage(process.argv.slice(2))`;
+  const argvs = [
+    new Proxy(["a", "b"], {}),
+    Object.assign(["a", "b"], { [Symbol.iterator]: function* () { yield "from-iterator"; } }),
+    Object.setPrototypeOf(["a", "b"], null),
+  ];
+  const workers = argvs.map(argv => new Worker(src, { eval: true, argv }));
+  const got = await Promise.all(workers.map(w => new Promise(res => w.once("message", res))));
+  expect(got).toEqual([
+    ["a", "b"],
+    ["a", "b"],
+    ["a", "b"],
+  ]);
+  await Promise.all(workers.map(w => w.terminate()));
 });
 
 test("eval does not leak source code", async () => {

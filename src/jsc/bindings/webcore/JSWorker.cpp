@@ -58,7 +58,6 @@
 #include "ScriptExecutionContext.h"
 #include "WebCoreJSClientData.h"
 #include <JavaScriptCore/HeapAnalyzer.h>
-#include <JavaScriptCore/IteratorOperations.h>
 #include <JavaScriptCore/JSArray.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSDestructibleObjectHeapCellType.h>
@@ -307,34 +306,41 @@ template<> __attribute__((minsize)) JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES
             return original.isolatedCopy();
         };
 
+        // Node reads both options by index, not through Symbol.iterator: argv with
+        // Array.prototype.map, execArgv with a Get(i) loop in node_worker.cc.
+        auto appendStrings = [&](JSObject* arrayLike, Vector<String>& out) {
+            forEachInArrayLike(lexicalGlobalObject, arrayLike, [&](JSValue item) -> bool {
+                auto scope = DECLARE_THROW_SCOPE(vm);
+                String str = coerceToIsolatedString(item);
+                RETURN_IF_EXCEPTION(scope, false);
+                out.append(str);
+                return true;
+            });
+        };
+
         JSValue argvValue = optionsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "argv"_s));
         RETURN_IF_EXCEPTION(throwScope, {});
         if (argvValue && argvValue.pureToBoolean() != TriState::False) {
             Bun::V::validateArray(throwScope, globalObject, argvValue, "options.argv"_s, jsNumber(0));
             RETURN_IF_EXCEPTION(throwScope, {});
-            forEachInIterable(lexicalGlobalObject, argvValue, [&options, &coerceToIsolatedString](JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue nextValue) {
-                auto scope = DECLARE_THROW_SCOPE(vm);
-                String str = coerceToIsolatedString(nextValue);
-                RETURN_IF_EXCEPTION(scope, );
-                options.argv.append(str);
-            });
+            appendStrings(asObject(argvValue), options.argv);
             RETURN_IF_EXCEPTION(throwScope, {});
         }
 
         JSValue execArgvValue = optionsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "execArgv"_s));
         RETURN_IF_EXCEPTION(throwScope, {});
         if (execArgvValue && execArgvValue.pureToBoolean() != TriState::False) {
-            Vector<String> execArgv;
             Bun::V::validateArray(throwScope, globalObject, execArgvValue, "options.execArgv"_s, jsNumber(0));
             RETURN_IF_EXCEPTION(throwScope, {});
-            forEachInIterable(lexicalGlobalObject, execArgvValue, [&execArgv, &coerceToIsolatedString](JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue nextValue) {
-                auto scope = DECLARE_THROW_SCOPE(vm);
-                String str = coerceToIsolatedString(nextValue);
-                RETURN_IF_EXCEPTION(scope, );
-                execArgv.append(str);
-            });
-            RETURN_IF_EXCEPTION(throwScope, {});
-            options.execArgv.emplace(WTF::move(execArgv));
+            // validateArray uses JSC::isArray(), which accepts a Proxy of an Array. Node's native check
+            // (`args[2]->IsArray()` in node_worker.cc) does not, so a Proxy is skipped and the worker
+            // inherits the parent's execArgv.
+            if (auto* execArgvArray = dynamicDowncast<JSC::JSArray>(execArgvValue)) {
+                Vector<String> execArgv;
+                appendStrings(execArgvArray, execArgv);
+                RETURN_IF_EXCEPTION(throwScope, {});
+                options.execArgv.emplace(WTF::move(execArgv));
+            }
         }
     }
 

@@ -347,16 +347,11 @@ enum class PendingSlot : uint8_t {
 // (one Weak per view) instead of holding its own Weak — a burst of
 // operations creates N ids but only one weak slot allocation. Response
 // handlers do m_views.find(entry.viewId)->value.get() to reach the view.
-//
-// navGen: the view's m_navGeneration at enqueue (0 = ungated). A timeout
-// leaves its entries in m_pending; handleResponse drops the late response
-// on a mismatch instead of settling a retry's promise. Chained responses
-// carry it forward.
 struct Pending {
     Method method;
     PendingSlot slot;
     uint32_t viewId;
-    uint32_t navGen = 0;
+    uint32_t navGen = 0; // JSWebView::m_navGeneration when sent; 0 for slots other than Navigate
 };
 
 // Transport mode. Pipe = we spawned Chrome with --remote-debugging-pipe,

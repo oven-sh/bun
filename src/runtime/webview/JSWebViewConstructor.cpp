@@ -361,8 +361,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(constructWebView, __attribute__((minsiz
         if (consoleCallback) view->m_onConsole.set(vm, view, consoleCallback);
         // No user code ever holds this promise; handled, so a rejection
         // (close mid-load, crash) cannot surface as unhandledRejection.
-        // timeoutMs=0: a default timeout would abandon the tracked
-        // initial load of a slow page.
+        // No timeout: nothing could observe it, and it would stop `loading`/`title` tracking on a slow page.
         if (!initialUrl.isEmpty()) {
             if (auto* p = view->navigate(globalObject, initialUrl, NavWaitUntil::Load, 0)) p->markAsHandled();
         }
@@ -386,9 +385,9 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(constructWebView, __attribute__((minsiz
     // (including the next navigate()) serializes behind it. If it rejects
     // (bad URL), the next op's checkSlot sees the slot cleared and proceeds.
     // No user code ever holds this promise; handled, so a rejection cannot
-    // surface as unhandledRejection. timeoutMs=0 as in the Chrome path.
+    // surface as unhandledRejection.
     if (!initialUrl.isEmpty()) {
-        if (auto* p = view->navigate(globalObject, initialUrl, NavWaitUntil::Load, 0)) p->markAsHandled();
+        if (auto* p = view->navigate(globalObject, initialUrl, NavWaitUntil::Load, 0)) p->markAsHandled(); // no timeout, as above
     }
     return JSValue::encode(view);
 #endif

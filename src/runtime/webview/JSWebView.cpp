@@ -55,14 +55,12 @@ WeakHandleOwner& webViewWeakOwner()
     return owner.get();
 }
 
-// A Navigate settle bumps m_navGeneration. That is the timeout cancel:
-// a late timer fire sees the mismatch and no-ops.
 static JSPromise* takeSlot(JSWebView* v, WriteBarrier<JSPromise>& slot)
 {
     JSPromise* p = slot.get();
     if (!p) return nullptr;
     slot.clear();
-    if (&slot == &v->m_pendingNavigate) ++v->m_navGeneration;
+    if (&slot == &v->m_pendingNavigate) ++v->m_navGeneration; // disarms the timer from armNavTimeout
     v->m_pendingActivityCount.fetch_sub(1, std::memory_order_release);
     return p;
 }
@@ -203,8 +201,7 @@ const ClassInfo JSWebView::s_info = { "WebView"_s, &Base::s_info, nullptr, nullp
 #define WK_DISPATCH(call) return call
 #endif
 
-// viewId → JSWebView via the backend routing table. The timeout timer
-// captures PODs only; null if the view was collected or closed.
+// Null once the view is closed or collected.
 static JSWebView* viewByIdForBackend(WebViewBackend backend, uint32_t viewId)
 {
     if (backend == WebViewBackend::Chrome) return CDP::transport().viewFor(viewId);
@@ -219,31 +216,25 @@ static JSWebView* viewByIdForBackend(WebViewBackend backend, uint32_t viewId)
 
 void JSWebView::armNavTimeout(JSGlobalObject* g, uint32_t timeoutMs)
 {
-    // A sync-rejected op never set the slot, so there is nothing to time out.
-    if (!m_pendingNavigate || timeoutMs == 0) return;
+    if (!m_pendingNavigate || timeoutMs == 0) return; // a synchronously rejected op leaves the slot empty
 
     uint32_t gen = m_navGeneration;
     uint32_t vid = m_viewId;
     auto backend = m_backend;
     auto* global = defaultGlobalObject(g);
-    // The DispatchTimer self-owns; there is no cancel handle. settleSlot
-    // bumps m_navGeneration so a late fire no-ops. The navigate promise,
-    // not the timer, keeps the event loop alive (m_pendingActivityCount).
+    // The timer owns itself. There is no cancel: takeSlot bumps m_navGeneration and a late fire no-ops.
     (void)WTF::RunLoop::currentSingleton().dispatchAfter(
         WTF::Seconds::fromMilliseconds(timeoutMs),
         [global, vid, gen, backend, timeoutMs]() {
             JSWebView* v = viewByIdForBackend(backend, vid);
             if (!v || v->m_navGeneration != gen || !v->m_pendingNavigate) return;
-            // m_loading stays true: the timeout abandons the wait, it
-            // does not finish the load.
+            // m_loading stays as is: the page is still loading, the caller stopped waiting.
             settleSlot(global, v, v->m_pendingNavigate, false,
                 createError(global, makeString("Navigation timeout of "_s, timeoutMs, "ms exceeded"_s)));
         });
 }
 
-// Per-navigation Chrome setup. Clearing m_loaderId marks the prior
-// document's trailing lifecycle/loadEventFired events as stale until
-// frameNavigated for this navigation repopulates it.
+// An empty m_loaderId marks the previous document's trailing lifecycle events as stale until Page.frameNavigated commits this one.
 static inline void beginChromeNavigation(JSWebView* v, NavWaitUntil waitUntil)
 {
     v->m_navWaitUntil = waitUntil;
@@ -262,7 +253,7 @@ JSPromise* JSWebView::navigate(JSGlobalObject* g, const WTF::String& url, NavWai
         return p;
     }
 #if OS(DARWIN)
-    // WebKit exposes no DCL signal; only the generation and timeout apply.
+    // WKNavigationDelegate has no DOMContentLoaded hook; waitUntil is accepted and behaves like Load.
     m_navWaitUntil = waitUntil;
     ++m_navGeneration;
     auto* p = WK::Ops::navigate(g, this, url);
@@ -342,9 +333,7 @@ JSPromise* JSWebView::resize(JSGlobalObject* g, uint32_t width, uint32_t height)
     WK_DISPATCH(WK::Ops::resize(g, this, width, height));
 }
 
-// WebKit's GoBack/GoForward/Reload ack on the Misc slot and can run while
-// a navigate() is pending, so the WebKit branches must not touch the
-// Navigate-slot state (m_navWaitUntil, m_navGeneration, m_loaderId).
+// WebKit's GoBack/GoForward/Reload use the Misc slot and can overlap a pending navigate(), so they must not touch the Navigate-slot state.
 JSPromise* JSWebView::goBack(JSGlobalObject* g, NavWaitUntil waitUntil, uint32_t timeoutMs)
 {
     if (m_backend == WebViewBackend::Chrome) {
@@ -372,9 +361,7 @@ JSPromise* JSWebView::reload(JSGlobalObject* g, NavWaitUntil waitUntil, uint32_t
     if (m_backend == WebViewBackend::Chrome) {
         beginChromeNavigation(this, waitUntil);
         auto* p = CDP::Ops::reload(g, this);
-        // goBack/goForward skip this: at a history boundary they
-        // resolve undefined without navigating.
-        if (m_pendingNavigate) m_loading = true;
+        if (m_pendingNavigate) m_loading = true; // unlike goBack/goForward, reload always navigates
         armNavTimeout(g, timeoutMs);
         return p;
     }

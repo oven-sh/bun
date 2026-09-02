@@ -207,8 +207,7 @@ static VirtualKey virtualKeyFromName(const WTF::String& s)
     return VirtualKey::Character;
 }
 
-// { waitUntil?: 'load'|'domcontentloaded', timeout?: number }. Playwright
-// defaults: 'load', 30000ms; timeout 0 disables. False = exception thrown.
+// { waitUntil?: "load" | "domcontentloaded", timeout?: number }. False means the scope holds an exception.
 static bool parseNavOptions(JSGlobalObject* g, ThrowScope& scope, JSValue opts,
     NavWaitUntil& waitUntil, uint32_t& timeout)
 {
@@ -248,8 +247,7 @@ static bool parseNavOptions(JSGlobalObject* g, ThrowScope& scope, JSValue opts,
                 "must be a non-negative finite number"_s);
             return false;
         }
-        // ceil keeps a positive sub-ms value from truncating to the
-        // 0 = "disable" sentinel; larger values clamp to uint32 ms.
+        // ceil: a positive sub-millisecond value must not truncate to 0, which means "no timeout".
         timeout = static_cast<uint32_t>(std::min(std::ceil(tn), static_cast<double>(std::numeric_limits<uint32_t>::max())));
     }
     return true;

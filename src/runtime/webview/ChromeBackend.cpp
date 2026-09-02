@@ -760,11 +760,9 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
     JSWebView* view = viewFor(entry.viewId);
     if (!view) return; // user dropped both view and the awaited promise
 
-    // Stale Navigate-slot response: the timeout rejected this navigation
-    // (bumping the generation) without pruning m_pending. Settling here
-    // would hit a retry's promise.
+    // A reply for a navigation that timed out must not settle the retry's promise.
     if (entry.navGen && entry.navGen != view->m_navGeneration) {
-        // The tab was already created; close it so it does not leak.
+        // The tab exists by now; close it rather than leak it.
         if (entry.method == Method::TargetCreateTarget && error.empty()) {
             auto tid = jsonString(jsonField(result, { "targetId", 8 }));
             if (!tid.empty())
@@ -828,10 +826,7 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         uint32_t rid = nextId();
         send(0, Command(rid, "Runtime.enable"_s, sidSpan));
 
-        // Page.setLifecycleEventsEnabled, fire-and-forget. Chrome then
-        // emits Page.lifecycleEvent; waitUntil:'domcontentloaded' settles
-        // on it. The enable-time replay of about:blank never matches
-        // m_frameId/m_loaderId, which are unset until the user url commits.
+        // Fire-and-forget; Page.lifecycleEvent is what settles waitUntil:'domcontentloaded'.
         uint32_t lid = nextId();
         send(0, Command(lid, "Page.setLifecycleEventsEnabled"_s, sidSpan).boolean("enabled"_s, true));
 
@@ -1158,11 +1153,7 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
         return;
     }
 
-    // Fetch document.title so view.title is set when navigate() resolves
-    // (parity with WKWebView's NavDone). PageTitle's response handler is
-    // the settle point. m_navTitleChained dedupes the DCL/load/
-    // loadEventFired triggers; a duplicate PageTitle response could
-    // settle a later navigate()'s promise.
+    // The PageTitle reply settles the navigate with view.title populated; one fetch per document.
     auto chainTitle = [&]() {
         view->m_navTitleChained = true;
         uint32_t tid = nextId();
@@ -1175,16 +1166,11 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
     // now the new document, resources may still be loading.
     if (method.size() == 19 && memcmp(method.data(), "Page.frameNavigated", 19) == 0) {
         auto frame = jsonField(params, { "frame", 5 });
-        // Subframe commits have frame.parentId set; only the main frame
-        // updates m_url and the lifecycle loaderId. (frameNavigated for
-        // subframes is rare without Page.setFrameTree, but an <iframe>
-        // doc.write can trigger one.)
-        if (!jsonField(frame, { "parentId", 8 }).empty()) return;
+        if (!jsonField(frame, { "parentId", 8 }).empty()) return; // subframe
         auto url = jsonString(jsonField(frame, { "url", 3 }));
         auto urlStr = WTF::String::fromUTF8(url);
         view->m_url = urlStr;
-        // Stash for lifecycleEvent matching. loaderId changes every
-        // navigation; frame.id is stable for the target's main frame.
+        // Page.lifecycleEvent below matches on these.
         view->m_frameId = WTF::String::fromUTF8(jsonString(jsonField(frame, { "id", 2 })));
         view->m_loaderId = WTF::String::fromUTF8(jsonString(jsonField(frame, { "loaderId", 8 })));
         // m_loading stays true — loadEventFired flips it.
@@ -1196,21 +1182,16 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
         return;
     }
 
-    // Page.lifecycleEvent settles waitUntil:'domcontentloaded'. The
-    // frameId/loaderId match filters subframe events and the enable-time
-    // replay. waitUntil:'load' stays on Page.loadEventFired below.
+    // Settles waitUntil:'domcontentloaded'. Chrome replays the prior document's lifecycle on enable and subframes emit their own, so only this navigation's frameId+loaderId count.
     if (method.size() == 19 && memcmp(method.data(), "Page.lifecycleEvent", 19) == 0) {
         if (!view->m_pendingNavigate || view->m_navWaitUntil != NavWaitUntil::DOMContentLoaded)
             return;
         auto name = jsonString(jsonField(params, { "name", 4 }));
-        // `load` also satisfies `domcontentloaded`: some same-document
-        // navigations skip DCL. Playwright treats it the same way.
+        // `load` implies DOMContentLoaded; Chrome skips DCL on some same-document navigations.
         if (!(name.size() == 16 && memcmp(name.data(), "DOMContentLoaded", 16) == 0)
             && !(name.size() == 4 && memcmp(name.data(), "load", 4) == 0))
             return;
-        // Empty m_loaderId = this navigation has not committed; the
-        // event is the prior document's (or the enable-time replay).
-        if (view->m_loaderId.isEmpty()) return;
+        if (view->m_loaderId.isEmpty()) return; // this navigation has not committed yet
         auto frameId = jsonString(jsonField(params, { "frameId", 7 }));
         auto loaderId = jsonString(jsonField(params, { "loaderId", 8 }));
         auto fUtf = view->m_frameId.utf8();
@@ -1221,12 +1202,9 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
         return;
     }
 
-    // Page.loadEventFired — the settle path for waitUntil:'load' (the
-    // default). Empty m_loaderId = a new navigation started and has not
-    // committed, so this event is the prior document's: leave m_loading
-    // set and skip chainTitle().
+    // Page.loadEventFired settles waitUntil:'load'.
     if (method.size() == 19 && memcmp(method.data(), "Page.loadEventFired", 19) == 0) {
-        if (view->m_loaderId.isEmpty()) return; // stale — prior document
+        if (view->m_loaderId.isEmpty()) return; // the previous document's load; a new navigation is in flight
         view->m_loading = false;
         if (view->m_pendingNavigate && !view->m_navTitleChained) chainTitle();
         return;
@@ -1482,7 +1460,6 @@ static JSPromise* sendChromeOp(JSGlobalObject* g, JSWebView* v,
     }
     v->m_pendingActivityCount.fetch_add(1, std::memory_order_release);
     slot.set(vm, v, promise);
-    // navGen lets handleResponse drop a response for a timed-out navigation.
     uint32_t gen = ps == PendingSlot::Navigate ? v->m_navGeneration : 0;
     t.m_pending.add(id, Pending { m, ps, v->m_viewId, gen });
     t.send(id, WTF::move(cmd));

@@ -20,13 +20,10 @@ enum class WebViewBackend : uint8_t {
     Chrome, // Chrome DevTools Protocol via --remote-debugging-pipe
 };
 
-// navigate()/reload()/goBack()/goForward() `waitUntil` option. WebKit only
-// exposes didFinishNavigation (= load), so DOMContentLoaded degrades to
-// Load there.
+// The `waitUntil` option of navigate()/reload()/goBack()/goForward(). WebKit has no DCL hook and treats both as Load.
 enum class NavWaitUntil : uint8_t {
-    Load = 0, // window `load` fired. Default.
-    DOMContentLoaded = 1, // document parsed; settles even when a
-                          // subresource never finishes (SSE, long-poll).
+    Load = 0,
+    DOMContentLoaded = 1,
 };
 
 enum class ScreenshotFormat : uint8_t {
@@ -107,14 +104,10 @@ public:
     WTF::String m_sessionId;
     WTF::String m_targetId;
     WTF::String m_pendingChromeNavigateUrl;
-    // Committed main-frame id + current navigation's loaderId, set by
-    // frameNavigated. Page.lifecycleEvent settles only on a match. Empty
-    // m_loaderId = not committed yet; prior-document events are stale.
+    // Main frame id and the current navigation's loaderId from Page.frameNavigated; Page.lifecycleEvent must match both.
     WTF::String m_frameId;
-    WTF::String m_loaderId;
-    // True once this navigation's PageTitle fetch is enqueued; dedupes the
-    // DCL/load/loadEventFired triggers. Reset by beginChromeNavigation().
-    bool m_navTitleChained = false;
+    WTF::String m_loaderId; // empty between a navigation's start and its commit
+    bool m_navTitleChained = false; // the document.title fetch that settles this navigation was sent
     // clickSelector stash — the actionability eval chains into a
     // dispatchMouseEvent that needs these. WebViewHost has the same fields
     // on its side (m_selButton etc.) for the same chain.
@@ -131,10 +124,8 @@ public:
     // encoding → how the bytes are wrapped (Blob/Buffer/base64/shmem).
     ScreenshotFormat m_screenshotFormat = ScreenshotFormat::Png;
     ScreenshotEncoding m_screenshotEncoding = ScreenshotEncoding::Blob;
-    // waitUntil stash for the Chrome lifecycle handler. The generation
-    // bumps on every navigation start and settle; a stale timeout timer
-    // sees the mismatch and no-ops.
     NavWaitUntil m_navWaitUntil = NavWaitUntil::Load;
+    // Bumped when a navigation starts and when the Navigate slot settles. The timeout timer and Navigate-slot CDP replies carry the value they were created under and no-op on mismatch.
     uint32_t m_navGeneration = 0;
 
     JSC::WriteBarrier<JSC::JSObject> m_onNavigated;
@@ -198,9 +189,7 @@ public:
     JSC::JSPromise* reload(JSC::JSGlobalObject*, NavWaitUntil, uint32_t timeoutMs);
     void doClose();
 
-    // Arm the parent-side navigation timeout (0 = none). Call it after the
-    // backend op stored the promise; an empty slot skips the timer. The
-    // timer captures PODs only and no-ops on a generation mismatch.
+    // Rejects m_pendingNavigate after timeoutMs (0 = never). Call after the backend op stored the promise.
     void armNavTimeout(JSC::JSGlobalObject*, uint32_t timeoutMs);
 
 #if OS(DARWIN)

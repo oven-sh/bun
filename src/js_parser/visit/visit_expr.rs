@@ -921,10 +921,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
+        // A write to a literal key other than `__proto__` still only reads the
+        // object. A computed key could be `__proto__`, which changes the
+        // prototype and so what a later write can run.
+        let is_plain_write = in_.assign_target == js_ast::AssignTarget::None
+            || match e_.index.unwrap_inlined().data {
+                Data::EString(s) => !s.eql_comptime(b"__proto__"),
+                Data::ENumber(_) => true,
+                _ => false,
+            };
         p.visit_expr_in_out(
             &mut e_.target,
             ExprIn {
-                is_property_read_object: !is_call_target
+                is_property_read_object: is_plain_write
+                    && !is_call_target
                     && !is_delete_target
                     && !in_.is_constructor_or_tag_target,
                 ..Default::default()
@@ -1430,13 +1440,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
+        // A write to the property (`x.key = v`) still only reads `x`, unless it
+        // is `x.__proto__ = v`, which changes what a later write can run.
+        let is_plain_write =
+            in_.assign_target == js_ast::AssignTarget::None || e_.name != b"__proto__";
         p.visit_expr_in_out(
             &mut e_.target,
             ExprIn {
                 property_access_for_method_call_maybe_should_replace_with_undefined: in_
                     .property_access_for_method_call_maybe_should_replace_with_undefined,
-                // A write to the property (`x.key = v`) still only reads `x`.
-                is_property_read_object: !is_call_target
+                is_property_read_object: is_plain_write
+                    && !is_call_target
                     && !is_delete_target
                     && !in_.is_constructor_or_tag_target,
                 ..Default::default()

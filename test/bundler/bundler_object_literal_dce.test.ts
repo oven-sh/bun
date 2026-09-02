@@ -353,6 +353,35 @@ describe("bundler", () => {
     run: { stdout: "enum getter\n7" },
   });
 
+  // A write to `__proto__`, or to a computed key that may be `__proto__`,
+  // changes the prototype: a later write to a key the object does not own can
+  // then run an inherited setter with the object as `this`.
+  itBundled("object_literal_dce/ProtoWriteIsNotAPlainWrite", {
+    files: {
+      "/entry.js": /* js */ `
+        const evil = {
+          set y(v) {
+            Object.defineProperty(this, "x", { get() { console.log("inherited setter installed a getter"); return 1; } });
+          },
+        };
+
+        const KEEP_obj = { x: 1 };
+        KEEP_obj.__proto__ = evil;
+        KEEP_obj.y = 5;
+        const KEEP_read = KEEP_obj.x;
+
+        const key = globalThis.missing ?? "__proto__";
+        const KEEP_computed = { x: 1 };
+        KEEP_computed[key] = evil;
+        KEEP_computed.y = 5;
+        const KEEP_readComputed = KEEP_computed.x;
+        export {};
+      `,
+    },
+    dce: true,
+    run: { stdout: "inherited setter installed a getter\ninherited setter installed a getter" },
+  });
+
   // A direct eval can reach any binding by name without a visible reference.
   itBundled("object_literal_dce/DirectEvalKeepsReads", {
     files: {

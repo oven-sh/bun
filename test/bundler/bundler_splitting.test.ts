@@ -506,10 +506,15 @@ describe("bundler", () => {
   const jsOutput = (api: BundlerTestBundleAPI, name: string) =>
     api.readFile("/out/" + jsFilesIn(api).find(f => f === `${name}.js` || f.startsWith(`${name}-`))!);
 
-  // The files each JS output file statically imports (`... from "./x"`).
+  // The files each JS output file statically imports (`... from "./x"` and
+  // the bare `import "./x"` an entry chunk uses to load a chunk it binds
+  // nothing from).
   const staticImports = (api: BundlerTestBundleAPI) =>
     new Map(
-      jsFilesIn(api).map(f => [f, [...api.readFile("/out/" + f).matchAll(/\bfrom\s*"\.\/([^"]+)"/g)].map(m => m[1])]),
+      jsFilesIn(api).map(f => [
+        f,
+        [...api.readFile("/out/" + f).matchAll(/\b(?:import|from)\s*"\.\/([^"]+)"/g)].map(m => m[1]),
+      ]),
     );
 
   // Cross-chunk bindings are `var`s, so a chunk that runs before a chunk it

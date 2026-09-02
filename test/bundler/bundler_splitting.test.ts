@@ -2056,12 +2056,14 @@ describe("bundler", () => {
     ],
   });
 
-  // Browser builds fold small side-effect-free chunks by default (every chunk
-  // is a request there); `minChunkSize: 0` opts out, other targets opt in.
+  // Off unless asked for, on every target; `minChunkSize: 0` is the same as
+  // leaving it out.
   for (const [name, options, outputs] of [
-    ["Browser", {}, 3],
+    ["Browser", {}, 4],
     ["BrowserZero", { minChunkSize: 0 }, 4],
+    ["BrowserOn", { minChunkSize: 16 * 1024 }, 3],
     ["Bun", { target: "bun" }, 4],
+    ["BunOn", { target: "bun", minChunkSize: 16 * 1024 }, 3],
   ] as const) {
     itBundled("splitting/MinChunkSizeDefault" + name, {
       files: {

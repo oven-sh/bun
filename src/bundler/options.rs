@@ -2505,12 +2505,11 @@ impl From<PathTemplateConst> for PathTemplate {
     }
 }
 
-/// `--min-chunk-size` when none was given. In a browser every chunk is a
-/// request, so small side-effect-free chunks fold by default there; what an
-/// entry point can gain from that is bounded (see `merge_small_chunks`).
+/// `--min-chunk-size` when none was given: off for now. In a browser every
+/// chunk is a request and what an entry point can gain is bounded (see
+/// `merge_small_chunks`), so `Target::Browser` is meant to default to 16 KiB
+/// once the pass has shipped opt-in for a release or two.
 pub fn default_min_chunk_size(target: Target) -> u64 {
-    match target {
-        Target::Browser => 16 * 1024,
-        _ => 0,
-    }
+    let _ = target;
+    0
 }

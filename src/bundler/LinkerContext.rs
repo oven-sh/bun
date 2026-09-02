@@ -2895,6 +2895,7 @@ impl<'a> LinkerContext<'a> {
             let parts = ctx.parts[source_index as usize].as_slice();
             for (part_index, part) in parts.iter().enumerate().skip(2) {
                 if !part.can_be_removed_if_unused
+                    && !part.dependencies.is_empty()
                     && !ctx.parts_live[source_index as usize].is_set(part_index)
                 {
                     ctx.worklist.push(TreeShakeWork::Part {

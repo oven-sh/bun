@@ -1,4 +1,5 @@
 import { AsyncLocalStorage, AsyncResource } from "async_hooks";
+import { heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import http2 from "http2";
@@ -1381,12 +1382,14 @@ describe("enterWith() does not leak past the callback that called it", () => {
           server.stop(true);
           for (let i = 0; i < 20 && collected < 19; i++) { Bun.gc(true); await new Promise(r => setTimeout(r, 10)); }
           // every store but (at most) the last one must be gone
+          const inherited = seen.filter(body => body !== "undefined");
           seen.length = 0;
+          seen.push("inherited:" + inherited.length);
           seen.push("collected>=19:" + (collected >= 19));
         })();
       `,
       );
-      expect(stdout).toEqual(["collected>=19:true", "exit:undefined"]);
+      expect(stdout).toEqual(["inherited:0", "collected>=19:true", "exit:undefined"]);
       expect(exitCode).toBe(0);
     },
   );
@@ -1395,7 +1398,6 @@ describe("enterWith() does not leak past the callback that called it", () => {
 // With a store active, awaiting and .then() must not allocate side objects to
 // carry the frame (it rides in the reaction / microtask itself).
 test("an active store adds no per-await / per-then helper allocations", () => {
-  const { heapStats } = require("bun:jsc");
   const als = new AsyncLocalStorage();
   const N = 5000;
   const count = () => {

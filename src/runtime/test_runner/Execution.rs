@@ -1042,7 +1042,11 @@ fn step_sequence_one(
             // SAFETY: re-deref after run_test_callback; sequence_ptr still valid (sequences is a
             // Box<[ExecutionSequence]>, never reallocated during execution).
             let sequence = unsafe { &mut *sequence_ptr.as_ptr() };
-            let _ = next_item.evaluate_timeout(sequence, now);
+            if next_item.evaluate_timeout(sequence, now) {
+                // It never yielded, so the timer path that reaps its spawned processes did not run.
+                // `this` is stale across run_test_callback (see `BunTestCell::get`): re-derive.
+                buntest_strong.get().execution.kill_dangling_processes_on_timeout(global_this);
+            }
 
             // the result is available immediately; advance the sequence and run again.
             Execution::advance_sequence(buntest_ptr, sequence_ptr, group);

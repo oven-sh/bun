@@ -1136,14 +1136,31 @@ impl BunTest {
 
         // SAFETY: `UnsafeCell`-derived; sole `&mut` at this point (before JS re-entry).
         unsafe { (*this).update_min_timeout(global_this, timeout) };
+
+        // The timer above cannot fire while the callback runs without yielding, so the call itself gets a
+        // deadline. The grace puts a callback it cuts short past its timespec for `evaluate_timeout`.
+        const DEADLINE_GRACE_SECONDS: f64 = 1.0;
+        let deadline_seconds = if timeout.eql(&Timespec::EPOCH) {
+            None
+        } else {
+            let now = Timespec::now_force_real_time();
+            let remaining_ns = if timeout.order(&now).is_gt() { timeout.duration(&now).ns() } else { 0 };
+            Some(remaining_ns as f64 / bun_core::time::NS_PER_S as f64 + DEADLINE_GRACE_SECONDS)
+        };
+
         let args_slice: &[JSValue] = if !done_arg.is_empty() { core::slice::from_ref(&done_arg) } else { &[] };
         let result: JSValue = match vm.event_loop_mut().run_callback_with_result_and_forcefully_drain_microtasks(
             cfg_callback,
             global_this,
             JSValue::UNDEFINED,
             args_slice,
+            deadline_seconds,
         ) {
-            Ok(v) => v,
+            Ok(Some(v)) => v,
+            Ok(None) => {
+                bun_core::scoped_log!(bun_test_group, "callTestCallback -> cut short by the deadline");
+                JSValue::ZERO
+            }
             Err(_) => {
                 global_this.clear_termination_exception();
                 // SAFETY: re-derive after JS callback returned; no outer `&mut` was held across it.

@@ -28,7 +28,8 @@ test("deep nesting", () => {
   }
 
   expect(nested).toEqual({ shouldNotMatch: true });
-});
+  // The diff takes seconds to format in debug builds, and the timeout interrupts synchronous work.
+}, 30_000);
 `,
     });
 

@@ -921,9 +921,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        // A write to a literal key other than `__proto__` still only reads the
-        // object. A computed key could be `__proto__`, which changes the
-        // prototype and so what a later write can run.
+        // A computed key may be `__proto__`, which changes what a later write can run.
         let is_plain_write = in_.assign_target == js_ast::AssignTarget::None
             || match e_.index.unwrap_inlined().data {
                 Data::EString(s) => !s.eql_comptime(b"__proto__"),
@@ -1440,8 +1438,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        // A write to the property (`x.key = v`) still only reads `x`, unless it
-        // is `x.__proto__ = v`, which changes what a later write can run.
+        // `x.__proto__ = v` changes what a later write to `x` can run.
         let is_plain_write =
             in_.assign_target == js_ast::AssignTarget::None || e_.name != b"__proto__";
         p.visit_expr_in_out(

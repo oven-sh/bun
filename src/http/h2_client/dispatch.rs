@@ -745,30 +745,8 @@ fn strip_padding(payload: &[u8]) -> Option<&[u8]> {
 /// hop-by-hop fields. Names from lshpack are already lowercase for table
 /// hits but a literal can carry anything.
 pub(crate) fn is_malformed_response_field(name: &[u8]) -> bool {
-    if name.is_empty() {
+    if name.is_empty() || !name.iter().all(|&c| wire::is_lower_tchar(c)) {
         return true;
-    }
-    for &c in name {
-        match c {
-            b'a'..=b'z'
-            | b'0'..=b'9'
-            | b'!'
-            | b'#'
-            | b'$'
-            | b'%'
-            | b'&'
-            | b'\''
-            | b'*'
-            | b'+'
-            | b'-'
-            | b'.'
-            | b'^'
-            | b'_'
-            | b'`'
-            | b'|'
-            | b'~' => {}
-            _ => return true,
-        }
     }
     matches!(
         name,
@@ -781,13 +759,7 @@ pub(crate) fn is_malformed_response_field(name: &[u8]) -> bool {
     )
 }
 
-/// RFC 9113 §8.2.1: a field value MUST NOT contain NUL (0x00), LF (0x0a), or
-/// CR (0x0d). HPACK is length-prefixed so these would otherwise pass through
-/// verbatim, breaking the no-CR/LF invariant the HTTP/1.1 parser provides and
-/// enabling header injection when values are forwarded downstream.
-pub(crate) fn is_malformed_response_value(value: &[u8]) -> bool {
-    bun_core::strings::contains_any(value, b"\0\r\n")
-}
+pub(crate) use wire::is_malformed_field_value as is_malformed_response_value;
 
 pub(crate) fn error_code_for(err: crate::Error) -> wire::ErrorCode {
     match err {

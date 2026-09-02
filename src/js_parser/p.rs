@@ -309,6 +309,8 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) assigned_identifier_names: HashMap<u64, ()>,
     /// The parse pass saw a direct `eval` call somewhere in the file; it can assign any binding by name.
     pub(crate) parse_pass_saw_direct_eval: bool,
+    /// The statement list being minified is a switch case body, whose sibling cases are not visited yet.
+    pub(crate) mangling_switch_case: bool,
 
     pub(crate) is_file_considered_to_have_esm_exports: bool,
 
@@ -3009,16 +3011,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // A side-effecting replacement can still move past a read that cannot throw, run code, or change.
         match expr.data {
-            js_ast::ExprData::EThis(_) | js_ast::ExprData::ESuper(_) => true,
-            js_ast::ExprData::EIdentifier(id) => self.is_stable_identifier_read(id, replacement),
+            js_ast::ExprData::ESuper(_) => true,
+            js_ast::ExprData::EIdentifier(id) => self.is_stable_identifier_read(id, expr.loc),
             // A known global property access such as `console.log` or `Math.floor`.
             js_ast::ExprData::EDot(dot) => dot.can_be_removed_if_unused,
             _ => false,
         }
     }
 
-    /// A read of `id` that cannot throw or run code, and yields the same value whether it happens before or after `replacement`.
-    fn is_stable_identifier_read(&self, id: E::Identifier, replacement: &Expr) -> bool {
+    /// A read of `id` at `use_loc` that cannot throw or run code, and yields the same value whatever code runs before it.
+    fn is_stable_identifier_read(&self, id: E::Identifier, use_loc: bun_ast::Loc) -> bool {
         if id.must_keep_due_to_with_stmt() {
             return false;
         }
@@ -3043,9 +3045,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if !is_const && self.name_is_assigned_somewhere(name) {
                     return false;
                 }
-                // A `let`, `const` or `class` of an enclosing function can still be in its TDZ here and leave it while `replacement` suspends; a function declaration has no TDZ.
+                // A `let`, `const` or `class` read in its TDZ throws. It is past it only when it is declared earlier in the same function, and not in another case of the switch being visited.
                 let has_tdz = symbol.kind != js_ast::symbol::Kind::HoistedFunction
                     && symbol.kind != js_ast::symbol::Kind::GeneratorOrAsyncFunction;
+                if has_tdz && self.mangling_switch_case {
+                    return false;
+                }
                 // The name must resolve to this symbol from here; a generated temp is in no `members` map, and generated code may assign to it.
                 let hash = Scope::get_member_hash(name);
                 let mut crossed_function = false;
@@ -3055,9 +3060,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         if !member.ref_.eql(id.ref_) {
                             return false;
                         }
-                        return !(has_tdz
-                            && crossed_function
-                            && Self::expr_may_suspend(replacement));
+                        return !has_tdz || (!crossed_function && member.loc.start < use_loc.start);
                     }
                     crossed_function |= s.kind_stops_hoisting();
                     scope = s.parent;
@@ -3065,74 +3068,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 false
             }
             _ => false,
-        }
-    }
-
-    /// Whether evaluating `expr` can suspend the current function (`await` or `yield` outside a nested function). Unknown shapes count as suspending.
-    fn expr_may_suspend(expr: &Expr) -> bool {
-        match expr.data {
-            js_ast::ExprData::EAwait(_) | js_ast::ExprData::EYield(_) => true,
-            js_ast::ExprData::EFunction(_)
-            | js_ast::ExprData::EArrow(_)
-            | js_ast::ExprData::EClass(_)
-            | js_ast::ExprData::EIdentifier(_)
-            | js_ast::ExprData::EImportIdentifier(_)
-            | js_ast::ExprData::ECommonjsExportIdentifier(_)
-            | js_ast::ExprData::EThis(_)
-            | js_ast::ExprData::ESuper(_)
-            | js_ast::ExprData::ENull(_)
-            | js_ast::ExprData::EUndefined(_)
-            | js_ast::ExprData::EBoolean(_)
-            | js_ast::ExprData::EBranchBoolean(_)
-            | js_ast::ExprData::ENumber(_)
-            | js_ast::ExprData::EBigInt(_)
-            | js_ast::ExprData::EString(_)
-            | js_ast::ExprData::ERegExp(_)
-            | js_ast::ExprData::EImportMeta(_)
-            | js_ast::ExprData::ERequireString(_)
-            | js_ast::ExprData::EMissing(_) => false,
-            js_ast::ExprData::EDot(dot) => Self::expr_may_suspend(&dot.target),
-            js_ast::ExprData::EIndex(index) => {
-                Self::expr_may_suspend(&index.target) || Self::expr_may_suspend(&index.index)
-            }
-            js_ast::ExprData::EUnary(un) => Self::expr_may_suspend(&un.value),
-            js_ast::ExprData::EBinary(bin) => {
-                Self::expr_may_suspend(&bin.left) || Self::expr_may_suspend(&bin.right)
-            }
-            js_ast::ExprData::EIf(ternary) => {
-                Self::expr_may_suspend(&ternary.test)
-                    || Self::expr_may_suspend(&ternary.yes)
-                    || Self::expr_may_suspend(&ternary.no)
-            }
-            js_ast::ExprData::ECall(call) => {
-                Self::expr_may_suspend(&call.target)
-                    || call.args.slice().iter().any(Self::expr_may_suspend)
-            }
-            js_ast::ExprData::ENew(new) => {
-                Self::expr_may_suspend(&new.target)
-                    || new.args.slice().iter().any(Self::expr_may_suspend)
-            }
-            js_ast::ExprData::EArray(array) => {
-                array.items.slice().iter().any(Self::expr_may_suspend)
-            }
-            js_ast::ExprData::EObject(object) => object.properties.slice().iter().any(|property| {
-                property.key.as_ref().is_some_and(Self::expr_may_suspend)
-                    || property.value.as_ref().is_some_and(Self::expr_may_suspend)
-                    || property
-                        .initializer
-                        .as_ref()
-                        .is_some_and(Self::expr_may_suspend)
-            }),
-            js_ast::ExprData::ETemplate(template) => {
-                template.tag.as_ref().is_some_and(Self::expr_may_suspend)
-                    || template
-                        .parts()
-                        .iter()
-                        .any(|part| Self::expr_may_suspend(&part.value))
-            }
-            js_ast::ExprData::ESpread(spread) => Self::expr_may_suspend(&spread.value),
-            js_ast::ExprData::EInlinedEnum(inlined) => Self::expr_may_suspend(&inlined.value),
-            _ => true,
         }
     }
 
@@ -9535,6 +9470,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             has_with_scope: false,
             assigned_identifier_names: Default::default(),
             parse_pass_saw_direct_eval: false,
+            mangling_switch_case: false,
             is_file_considered_to_have_esm_exports: false,
             has_called_runtime: false,
             symbol_uses,

@@ -1745,9 +1745,11 @@ describe("bundler", () => {
     },
   });
 
-  // An initializer with side effects can still be moved past a read that no
-  // side effect can change: a `const`, a function or `let` the file never
-  // assigns to, `this`, and a known global like `console.log`.
+  // An initializer with side effects can still be moved past a read that
+  // cannot throw or change: a function declaration the file never assigns
+  // to, a known global like `console.log`, and a `const`, `let` or `class`
+  // declared earlier in the same function. A binding of an enclosing function
+  // can be in its TDZ, so reading it is not moved before the initializer.
   itBundled("minify/InlineSingleUsePastStableReads", {
     files: {
       "/entry.js": /* js */ `
@@ -1760,14 +1762,17 @@ describe("bundler", () => {
         assigned = (x) => x + 1;
 
         export function intoFunction(n) { const t = n + 1; return g(t); }
-        export function intoConst() { const t = f(); return h(t); }
-        export function intoLet() { const t = f(); return never(t); }
         export function intoGlobal() { const t = f(); return console.log(t); }
-        export function intoThis() { const t = f(); return g(this, t); }
         export function intoLocalFunction() { const t = f(); return later(t); function later(x) { return x; } }
+        export function intoLocalConst() { const local = (x) => x; const t = f(); return local(t) + local(1); }
         export function intoAndBranchLiteral() { const t = 1; return flag && t; }
 
         export function keepAssigned() { const keep = f(); return assigned(keep); }
+        export function keepOuterConst() { const keep = f(); return h(keep); }
+        export function keepOuterLet() { const keep = f(); return never(keep); }
+        export function keepThis() { const keep = f(); return g(this, keep); }
+        export function keepLaterConst(c) { const keep = f(); if (c) return later(keep); const later = (x) => x; return later(1); }
+        export function keepSiblingCase(x) { switch (x) { case 1: const later = (y) => y; case 2: const keep = f(); return later(keep); } }
         export function keepAndBranch() { const keep = f(); return flag && keep; }
         export function keepOrBranch() { const keep = f(); return flag || keep; }
         export function keepNullishBranch() { const keep = f(); return flag ?? keep; }
@@ -1786,13 +1791,11 @@ describe("bundler", () => {
     onAfterBundle(api) {
       const code = api.readFile("/out.js");
       expect(code).toContain("return g(n + 1);");
-      expect(code).toContain("return h(f());");
-      expect(code).toContain("return never(f());");
       expect(code).toContain("return console.log(f());");
-      expect(code).toContain("return g(this, f());");
       expect(code).toContain("return later(f());");
+      expect(code).toContain("return local(f()) + local(1);");
       expect(code).toContain("return flag && 1;");
-      expect(code.match(/let keep = f\(\);/g)).toHaveLength(9);
+      expect(code.match(/let keep = f\(\);/g)).toHaveLength(14);
     },
   });
 
@@ -1835,7 +1838,7 @@ describe("bundler", () => {
     onAfterBundle(api) {
       const code = api.readFile("/out.js");
       expect(code).toContain("let t = await gate;");
-      expect(code).toContain("return [v, await gate.then((x) => x)];");
+      expect(code).toContain("let t = gate.then((x) => x);");
     },
   });
 

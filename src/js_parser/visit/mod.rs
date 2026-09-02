@@ -1813,9 +1813,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let mut output: ListManaged<'a, Stmt> = ListManaged::with_capacity_in(stmts.len(), p.arena);
         let mut mangler = p.stmt_list_mangler(kind);
+        let was_mangling_switch_case = p.mangling_switch_case;
+        p.mangling_switch_case = kind == StmtsKind::SwitchStmt;
         for stmt in stmts.iter().copied() {
             p.mangle_stmt_into_list(&mut mangler, &mut output, stmt);
         }
+        p.mangling_switch_case = was_mangling_switch_case;
 
         *stmts = output;
         Ok(())

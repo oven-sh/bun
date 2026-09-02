@@ -1614,8 +1614,11 @@ describe("bundler", () => {
   // bun targets but never bundles. It must not restructure statements, so that
   // `Function.prototype.toString()` and line numbers stay close to the source.
   test("runtime transpiler keeps statement structure", async () => {
-    using dir = tempDir("minify-runtime-structure", {
-      "entry.js": /* js */ `
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        /* js */ `
         const foo = (a) => { return a + 1; };
         function bar(a, b) {
           if (a) return b();
@@ -1627,10 +1630,7 @@ describe("bundler", () => {
         console.log(foo.toString());
         console.log(bar.toString());
       `,
-    });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "entry.js"],
-      cwd: String(dir),
+      ],
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",

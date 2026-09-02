@@ -4,9 +4,10 @@
 //!
 //! `mangle_stmts` is the tail of `visit_stmts`: it runs once every statement in
 //! a list has been visited, so every branch and loop body it looks at has
-//! already been mangled. The passes that merge or restructure statements check
-//! `P::full_minify_syntax()`; the ones that only fold constants run whenever
-//! `minify_syntax` is on.
+//! already been mangled. The passes ported here check
+//! `P::full_minify_syntax()`. The merges that predate the port (adjacent
+//! declarations, `var f; f = 1`, single-use `let` inlining) and the constant
+//! folding keep running whenever `minify_syntax` is on, as they did before.
 
 use crate::p::P;
 use crate::parser::{StmtsKind, statement_cares_about_scope};
@@ -1513,14 +1514,7 @@ pub(crate) fn mangle_for(s: &mut S::For, bump: &Bump) {
             _ => if_s.test.not(bump),
         };
         s.test = Some(match s.test {
-            Some(test) => Expr::init(
-                E::Binary {
-                    op: OpCode::BinLogicalAnd,
-                    left: test,
-                    right: not,
-                },
-                test.loc,
-            ),
+            Some(test) => Expr::join_with_left_associative_op(OpCode::BinLogicalAnd, test, not),
             None => not,
         });
         s.body = drop_first_statement(s.body, if_s.no);
@@ -1534,14 +1528,9 @@ pub(crate) fn mangle_for(s: &mut S::For, bump: &Bump) {
         && break_s.label.is_none()
     {
         s.test = Some(match s.test {
-            Some(test) => Expr::init(
-                E::Binary {
-                    op: OpCode::BinLogicalAnd,
-                    left: test,
-                    right: if_s.test,
-                },
-                test.loc,
-            ),
+            Some(test) => {
+                Expr::join_with_left_associative_op(OpCode::BinLogicalAnd, test, if_s.test)
+            }
             None => if_s.test,
         });
         s.body = drop_first_statement(s.body, Some(if_s.yes));

@@ -297,9 +297,6 @@ pub struct VirtualMachine {
     pub rare_data: Option<Box<RareData>>,
     pub proxy_env_storage: crate::rare_data::ProxyEnvStorage,
     pub(crate) resolved_path_dups: Vec<Box<[u8]>>,
-    /// The entry-point promise the watcher loops poll. Always GC-protected
-    /// while stored: write it through `set_pending_internal_promise`.
-    pending_internal_promise: Option<*mut JSInternalPromise>,
     pub pending_internal_promise_reported_at: u32,
     pub(crate) hot_reload_deferred: bool,
     pub entry_point_result: EntryPointResult,
@@ -410,6 +407,16 @@ unsafe extern "C" {
     safe fn Bun__closeAllNodeSqliteDatabasesForTermination(global: &JSGlobalObject);
     safe fn Bun__WebView__closeAllForTermination();
     safe fn Zig__GlobalObject__prepareForDestruction(global: &JSGlobalObject);
+    // safe: the global stores `promise` in a `WriteBarrier` slot that its
+    // `visitChildren` marks; null clears the slot. The returned cell is alive
+    // for as long as the slot holds it.
+    safe fn Bun__GlobalObject__pendingInternalPromise(
+        global: &JSGlobalObject,
+    ) -> *mut JSInternalPromise;
+    safe fn Bun__GlobalObject__setPendingInternalPromise(
+        global: &JSGlobalObject,
+        promise: *mut JSInternalPromise,
+    );
     safe fn Zig__GlobalObject__forbidExecution(global: &JSGlobalObject);
     safe fn Zig__GlobalObject__stopActiveDOMObjectsForTestIsolation(global: &JSGlobalObject);
     safe fn Zig__GlobalObject__destructOnExit(global: &JSGlobalObject);
@@ -2924,7 +2931,7 @@ impl VirtualMachine {
                     .map_err(|_| crate::CrateError::JSError)?;
                     // If the override stored a promise itself, use that; otherwise
                     // wrap its return value.
-                    if let Some(stored) = self.pending_internal_promise {
+                    if let Some(stored) = self.pending_internal_promise() {
                         return Ok(stored);
                     }
                     // `Promise.resolve(ret)` reads `ret.constructor` / `ret.then`,
@@ -2975,23 +2982,22 @@ impl VirtualMachine {
         }
     }
 
-    /// The entry-point promise that the watcher loops poll, if one is stored.
+    /// The promise for the current entry-point load, if one is stored. The
+    /// watcher loops poll it.
     #[inline]
     pub fn pending_internal_promise(&self) -> Option<*mut JSInternalPromise> {
-        self.pending_internal_promise
+        NonNull::new(Bun__GlobalObject__pendingInternalPromise(self.global())).map(NonNull::as_ptr)
     }
 
-    /// Stores the entry-point promise and keeps it alive for as long as it is
-    /// stored. The module loader returns a plain GC cell that nothing refers to
-    /// once its reaction chain has settled, and the hot-reload loop reads the
-    /// slot on every tick.
+    /// Stores the entry-point promise in a GC slot on the global object, so it
+    /// lives as long as the global that is loading it. The module loader
+    /// returns a plain cell that nothing refers to once its reaction chain has
+    /// settled, and the hot-reload loop reads the slot on every tick.
     pub fn set_pending_internal_promise(&mut self, promise: Option<*mut JSInternalPromise>) {
-        if let Some(p) = promise {
-            JSValue::from_cell(p).protect();
-        }
-        if let Some(old) = core::mem::replace(&mut self.pending_internal_promise, promise) {
-            JSValue::from_cell(old).unprotect();
-        }
+        Bun__GlobalObject__setPendingInternalPromise(
+            self.global(),
+            promise.unwrap_or(core::ptr::null_mut()),
+        );
     }
 
     /// `loadEntryPoint(entry_path)` — `reload_entry_point` + spin until the
@@ -3005,7 +3011,7 @@ impl VirtualMachine {
         // pending_internal_promise can change if hot module reloading is enabled
         if self.is_watcher_enabled() {
             loop {
-                let Some(p) = self.pending_internal_promise else {
+                let Some(p) = self.pending_internal_promise() else {
                     break;
                 };
                 // SAFETY: `p` is a live JSC heap cell tracked by the VM.
@@ -3013,7 +3019,7 @@ impl VirtualMachine {
                     break;
                 }
                 self.event_loop_mut().tick();
-                let Some(p) = self.pending_internal_promise else {
+                let Some(p) = self.pending_internal_promise() else {
                     break;
                 };
                 // SAFETY: see above.
@@ -3029,7 +3035,7 @@ impl VirtualMachine {
             let _ = self.wait_for_promise(jsc::AnyPromise::Internal(promise));
         }
 
-        Ok(self.pending_internal_promise.unwrap_or(promise))
+        Ok(self.pending_internal_promise().unwrap_or(promise))
     }
 }
 
@@ -3875,7 +3881,7 @@ impl VirtualMachine {
 
     /// After a hot reload, surfaces the entry-point promise's rejection (if any) and re-arms the watcher.
     pub fn report_exception_in_hot_reloaded_module_if_needed(&mut self) {
-        let promise = match self.pending_internal_promise {
+        let promise = match self.pending_internal_promise() {
             Some(p) => p,
             None => {
                 self.add_main_to_watcher_if_needed();
@@ -3986,7 +3992,7 @@ impl VirtualMachine {
             bun_core::reload_process(should_clear_terminal, false);
         }
 
-        if let Some(p) = self.pending_internal_promise {
+        if let Some(p) = self.pending_internal_promise() {
             // SAFETY: `p` is a live JSC heap cell tracked by the VM.
             match crate::JSPromise::status_ptr(p) {
                 crate::js_promise::Status::Pending => {
@@ -5012,7 +5018,7 @@ impl VirtualMachine {
         // pending_internal_promise can change if hot module reloading is enabled
         if self.is_watcher_enabled() {
             loop {
-                let Some(p) = self.pending_internal_promise else {
+                let Some(p) = self.pending_internal_promise() else {
                     break;
                 };
                 // SAFETY: `p` is a live JSC heap cell tracked by the VM.
@@ -5020,7 +5026,7 @@ impl VirtualMachine {
                     break;
                 }
                 self.event_loop_mut().tick();
-                let Some(p) = self.pending_internal_promise else {
+                let Some(p) = self.pending_internal_promise() else {
                     break;
                 };
                 // SAFETY: see above.
@@ -5039,7 +5045,7 @@ impl VirtualMachine {
         // Pre-arm the waker so this settled-promise tick cannot park (#36450).
         self.wakeup();
         self.auto_tick();
-        Ok(self.pending_internal_promise.unwrap())
+        Ok(self.pending_internal_promise().unwrap())
     }
 
     /// Tracks a listening socket so watch-mode reloads can close it.
@@ -5198,7 +5204,8 @@ impl VirtualMachine {
         self.entry_point_result.value.deinit();
         self.entry_point_result.cjs_set_value = false;
         self.entry_point_result.evaluated_as_cjs = false;
-        self.set_pending_internal_promise(None);
+        // The entry-point promise slot lives on the global, so the swap below
+        // leaves it behind with the old global.
         self.has_patched_run_main = false;
         self.set_main(b"");
         self.main_hash = 0;

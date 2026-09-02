@@ -524,6 +524,9 @@ public:
     /* node:worker_threads worker: { stdin?, stdout, stderr } MessagePorts from the parent Worker; */        \
     /* process.stdin/stdout/stderr are built over these lazily (BunProcess.cpp constructStd*). */            \
     V(private, WriteBarrier<JSObject>, m_nodeWorkerStdioPorts)                                               \
+    /* The module loader's promise for the current entry-point load. The --hot loop polls it on every */     \
+    /* tick, and once it settles nothing else refers to it (VirtualMachine::pending_internal_promise). */    \
+    V(private, WriteBarrier<JSC::JSPromise>, m_pendingInternalPromise)                                       \
                                                                                                              \
     /* The original, unmodified Error.prepareStackTrace. */                                                  \
     /* */                                                                                                    \
@@ -764,6 +767,8 @@ public:
     void nodeWorkerEntryDidSettle();
     JSObject* nodeWorkerEntryEvaluatedHook() { return m_nodeWorkerEntryEvaluatedHook.get(); }
     void setNodeWorkerEntryEvaluatedHook(JSObject* hook);
+    JSC::JSPromise* pendingInternalPromise() { return m_pendingInternalPromise.get(); }
+    void setPendingInternalPromise(JSC::JSPromise* promise);
 
     Bun::MarkdownTagStrings& markdownTagStrings() { return m_markdownTagStrings; }
 #include "ZigGeneratedClasses+lazyStructureHeader.h"

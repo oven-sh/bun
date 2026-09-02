@@ -241,6 +241,10 @@ it(
     async function waitForOutput(what: string, done: () => boolean) {
       const deadline = Date.now() + stepTimeout;
       while (!done()) {
+        const exit = runner.exitCode ?? runner.signalCode;
+        if (exit !== null) {
+          throw new Error(`child exited (${exit}) while waiting for ${what}\nstdout:\n${stdout}\nstderr:\n${stderr}`);
+        }
         if (Date.now() > deadline) {
           throw new Error(`timed out waiting for ${what}\nstdout:\n${stdout}\nstderr:\n${stderr}`);
         }

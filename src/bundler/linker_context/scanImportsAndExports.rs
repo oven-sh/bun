@@ -106,6 +106,7 @@ pub(crate) fn scan_imports_and_exports(
     let named_exports: *mut [NamedExports] = ast.named_exports;
     let flags: *mut [js_meta::Flags] = meta.flags;
     let ast_flags_list: *mut [AstFlags] = ast.flags;
+    let module_types: *mut [crate::options::ModuleType] = ast.module_type;
     let export_star_import_records: *mut [bun_alloc::AstVec<u32>] = ast.export_star_import_records;
     let exports_refs: *mut [Ref] = ast.exports_ref;
     let module_refs: *mut [Ref] = ast.module_ref;
@@ -186,7 +187,11 @@ pub(crate) fn scan_imports_and_exports(
                 {
                     continue;
                 }
-                if ni.alias_is_star {
+                // The default import of a lifted CommonJS module is its namespace.
+                if ni.alias_is_star
+                    || (col_ref!(ast_flags_list)[other].contains(AstFlags::COMMONJS_LIFTED_TO_ESM)
+                        && ni.alias.is_some_and(|alias| alias.slice() == b"default"))
+                {
                     col!(dyn_ref_aliases)[other].merge_all();
                 } else if let Some(alias) = ni.alias {
                     col!(dyn_ref_aliases)[other].insert(alias.slice());
@@ -241,6 +246,18 @@ pub(crate) fn scan_imports_and_exports(
                                 .get(&(import_record_index as u32))
                             {
                                 None => col!(dyn_ref_aliases)[other_file].merge_all(),
+                                // `default` of a lifted CommonJS module is its namespace.
+                                Some(aliases)
+                                    if record.kind == ImportKind::Dynamic
+                                        && other_flags
+                                            .contains(AstFlags::COMMONJS_LIFTED_TO_ESM)
+                                        && aliases
+                                            .slice()
+                                            .iter()
+                                            .any(|alias| alias.slice() == b"default") =>
+                                {
+                                    col!(dyn_ref_aliases)[other_file].merge_all()
+                                }
                                 Some(aliases) => {
                                     col!(dyn_ref_aliases)[other_file]
                                         .merge_partial(aliases.slice());
@@ -298,10 +315,18 @@ pub(crate) fn scan_imports_and_exports(
                             col!(flags)[other_file].wrap = WrapKind::Cjs;
                         }
 
+                        // A default import of a lifted CommonJS module binds to its
+                        // namespace (`advance_import_tracker`) unless `__esModule`
+                        // has to be checked at run time.
                         if record
                             .flags
                             .contains(ImportRecordFlags::CONTAINS_DEFAULT_ALIAS)
                             && other_flags.contains(AstFlags::FORCE_CJS_TO_ESM)
+                            && (!other_flags.contains(AstFlags::COMMONJS_LIFTED_TO_ESM)
+                                || LinkerContext::lifted_default_import_needs_wrapper(
+                                    col_ref!(module_types)[id],
+                                    &col_ref!(named_exports)[other_file],
+                                ))
                         {
                             col!(exports_kind)[other_file] = ExportsKind::Cjs;
                             col!(flags)[other_file].wrap = WrapKind::Cjs;
@@ -603,6 +628,8 @@ pub(crate) fn scan_imports_and_exports(
 
         let mut runtime_export_symbol_ref: Ref = Ref::NONE;
         let mut ident_scratch: Vec<u8> = Vec::new();
+        let module_preload = this.module_preload();
+        this.entry_point_part_indices = vec![u32::MAX; col_ref!(import_records_list).len()];
 
         for source_index_ in &reachable {
             let source_index = source_index_.get();
@@ -923,6 +950,8 @@ pub(crate) fn scan_imports_and_exports(
                         1,
                     )?;
                 }
+
+                this.entry_point_part_indices[id] = entry_point_part_index;
             }
 
             // Encode import-specific constraints in the dependency graph
@@ -939,6 +968,7 @@ pub(crate) fn scan_imports_and_exports(
                 let mut to_esm_uses: u32 = 0;
                 let mut to_common_js_uses: u32 = 0;
                 let mut runtime_require_uses: u32 = 0;
+                let mut preload_uses: u32 = 0;
 
                 // Imports of wrapped files must depend on the wrapper
                 // Iterate by index so each iteration re-borrows
@@ -968,6 +998,9 @@ pub(crate) fn scan_imports_and_exports(
                     if !rec_source_index.is_valid() || is_external_dyn {
                         if output_format == Format::InternalBakeDev {
                             continue;
+                        }
+                        if module_preload && is_external_dyn && kind == ImportKind::Dynamic {
+                            preload_uses += 1;
                         }
 
                         // This is an external import. Check if it will be a "require()" call.
@@ -1073,9 +1106,15 @@ pub(crate) fn scan_imports_and_exports(
                         }
 
                         // This is an ES6 import of a CommonJS module, so it needs the
-                        // "__toESM" wrapper as long as it's not a bare "require()"
+                        // "__toESM" wrapper as long as it's not a bare "require()".
+                        // A same-chunk `import()` of a lifted CommonJS module needs it
+                        // too, so that `default` is `module.exports` (the namespace).
                         if kind != ImportKind::Require
-                            && other_export_kind == ExportsKind::Cjs
+                            && (other_export_kind == ExportsKind::Cjs
+                                || (kind == ImportKind::Dynamic
+                                    && other_flags.wrap == WrapKind::Esm
+                                    && col_ref!(ast_flags_list)[other_id]
+                                        .contains(AstFlags::COMMONJS_LIFTED_TO_ESM)))
                             && output_format != Format::InternalBakeDev
                         {
                             col!(import_records_list)[id].as_mut_slice()
@@ -1221,6 +1260,13 @@ pub(crate) fn scan_imports_and_exports(
                         Index::part(part_index as u32),
                         b"__reExport",
                         re_export_uses,
+                    )?;
+
+                    this.graph.generate_runtime_symbol_import_and_use(
+                        source_index,
+                        Index::part(part_index as u32),
+                        b"__preload",
+                        preload_uses,
                     )?;
                 }
             }

@@ -79,14 +79,11 @@ function warmBrowserInstall(executable: string | undefined, libc: string | undef
 
 type Proc = { pid: number; ppid: number; state: string };
 
-// Every process on the system, from /proc. Empty where there is no /proc.
+// Every process on the system, from /proc. Linux only, the same condition the
+// test uses for its process counts; empty elsewhere.
 function processTable(): Proc[] {
-  let names: string[];
-  try {
-    names = readdirSync("/proc");
-  } catch {
-    return [];
-  }
+  if (process.platform !== "linux") return [];
+  const names = readdirSync("/proc");
   const table: Proc[] = [];
   for (const name of names) {
     if (!/^\d+$/.test(name)) continue;

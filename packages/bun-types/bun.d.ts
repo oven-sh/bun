@@ -3195,9 +3195,9 @@ declare module "bun" {
      * superset of their importers, so fewer modules are loaded at runtime.
      * Nothing lazy becomes eager and no side effect runs earlier; the chunk
      * that absorbs a folded chunk exports the symbols other chunks import
-     * from it. Requires `splitting: true`. CLI: `--min-chunk-size`.
+     * from it. Requires `splitting: true`; `0` disables it. CLI: `--min-chunk-size`.
      *
-     * @default 0 (disabled)
+     * @default 16384 with `target: "browser"`, otherwise 0
      */
     minChunkSize?: number;
 

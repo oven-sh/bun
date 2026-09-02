@@ -473,7 +473,7 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
             "--no-module-preload              With --splitting and --target browser: don't emit <link rel=modulepreload> for the chunks an entry or import() loads"
         ),
         parse_param!(
-            "--min-chunk-size <INT>           With --splitting, also fold side-effect-free chunks smaller than this many source bytes into a chunk more entry points load"
+            "--min-chunk-size <INT>           With --splitting, also fold side-effect-free chunks smaller than this many source bytes into a chunk more entry points load. Default: 16384 for --target=browser, else 0"
         ),
         parse_param!(
             "--public-path <STR>              A prefix to be appended to any import paths in bundled code"
@@ -2572,7 +2572,7 @@ fn parse_build_command_options(
             Output::err_generic("--min-chunk-size requires --splitting", ());
             Global::crash();
         }
-        ctx.bundler_options.min_chunk_size = min_chunk_size;
+        ctx.bundler_options.min_chunk_size = Some(min_chunk_size);
     }
 
     for (flag, slot) in [

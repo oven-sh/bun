@@ -3041,7 +3041,10 @@ pub mod bv2_impl {
             // SAFETY: same `'a`-owned `Transpiler` field as `banner` above.
             this.linker.options.footer = unsafe { interned_slice(&this.transpiler.options.footer) };
             this.linker.options.css_chunking = this.transpiler.options.css_chunking;
-            this.linker.options.min_chunk_size = this.transpiler.options.min_chunk_size;
+            this.linker.options.min_chunk_size =
+                this.transpiler.options.min_chunk_size.unwrap_or_else(|| {
+                    crate::options::default_min_chunk_size(this.transpiler.options.target)
+                });
             this.linker.options.module_preload = this.transpiler.options.module_preload;
             this.linker.options.source_maps = this.transpiler.options.source_map;
             this.linker.options.tree_shaking = this.transpiler.options.tree_shaking;

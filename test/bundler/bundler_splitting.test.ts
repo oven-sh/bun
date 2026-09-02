@@ -1892,8 +1892,268 @@ describe("bundler", () => {
     run: { file: "/out/c.js", stdout: "c 20000" },
   });
 
-  // A static import of a CommonJS module is a top-level require_x() call in
-  // the importer, so the importer is not side-effect free.
+  // A static import of a CommonJS module is a top-level require_lib() call
+  // in the importer. f.js may still move into g.js's chunk: that chunk
+  // imports main.js, which has already made the call by then, so repeating it
+  // does nothing.
+  itBundled("splitting/MinChunkSizeFoldsImporterOfInitializedWrappedModule", {
+    files: {
+      "/main.js": /* js */ `
+        import lib from './lib.cjs'
+        import { shared } from './shared.js'
+        console.log('main', shared.length + lib.v)
+        const routes = { a: () => import('./a.js'), b: () => import('./b.js'), c: () => import('./c.js') }
+        if (process.argv[2]) routes[process.argv[2]]().then(m => console.log(m.default()))
+      `,
+      "/a.js": /* js */ `
+        import { f } from './f.js'
+        import { g } from './g.js'
+        export default () => 'a ' + (f() + g())
+      `,
+      "/b.js": /* js */ `
+        import { f } from './f.js'
+        import { g } from './g.js'
+        export default () => 'b ' + (f() + g())
+      `,
+      "/c.js": /* js */ `
+        import { g } from './g.js'
+        export default () => 'c ' + g()
+      `,
+      "/f.js": /* js */ `
+        import lib from './lib.cjs'
+        export const f = () => lib.v
+      `,
+      "/g.js": /* js */ `
+        import { shared } from './shared.js'
+        console.log('g evaluated')
+        export const g = () => shared.length
+      `,
+      "/lib.cjs": /* js */ `
+        console.log('lib evaluated')
+        module.exports = { v: 1 }
+      `,
+      "/shared.js": /* js */ `
+        export const shared = "${Buffer.alloc(20000, "x").toString()}"
+      `,
+    },
+    entryPoints: ["/main.js"],
+    splitting: true,
+    minChunkSize: 1024,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      // main, a, b, c and g.js's chunk, now holding f.js.
+      expect(jsFilesIn(api)).toHaveLength(5);
+      api.expectFile("/out/" + chunkContaining(api, "g evaluated")).toContain("var f = ");
+    },
+    run: [
+      { file: "/out/main.js", stdout: "lib evaluated\nmain 20001" },
+      { file: "/out/main.js", args: ["a"], stdout: "lib evaluated\nmain 20001\ng evaluated\na 20001" },
+    ],
+  });
+
+  // c.js moves into t.js's chunk as above. r1 imports c.js, then x.js, then
+  // t.js: c.js's require_lib() call (a no-op there) must not pull the whole
+  // t.js chunk, and its side effect, ahead of x.js's chunk.
+  itBundled("splitting/MinChunkSizeHoistedRequireKeepsChunkOrder", {
+    files: {
+      "/main.js": /* js */ `
+        import lib from './lib.cjs'
+        import { shared } from './shared.js'
+        console.log('main', shared.length + lib.v)
+        const routes = { r1: () => import('./r1.js'), r2: () => import('./r2.js'), r3: () => import('./r3.js') }
+        if (process.argv[2]) routes[process.argv[2]]()
+      `,
+      "/r1.js": /* js */ `
+        import { c } from './c.js'
+        import './x.js'
+        import { t } from './t.js'
+        console.log('r1', c() + t)
+      `,
+      "/r2.js": /* js */ `
+        import { c } from './c.js'
+        import { t } from './t.js'
+        console.log('r2', c() + t)
+      `,
+      "/r3.js": /* js */ `
+        import './x.js'
+        import { t } from './t.js'
+        console.log('r3', t)
+      `,
+      "/c.js": /* js */ `
+        import lib from './lib.cjs'
+        export const c = () => lib.v
+      `,
+      "/x.js": `console.log('x')`,
+      "/t.js": /* js */ `
+        import { shared } from './shared.js'
+        console.log('t evaluated')
+        export const t = shared.length
+      `,
+      "/lib.cjs": /* js */ `
+        console.log('lib evaluated')
+        module.exports = { v: 1 }
+      `,
+      "/shared.js": /* js */ `
+        export const shared = "${Buffer.alloc(20000, "x").toString()}"
+      `,
+    },
+    entryPoints: ["/main.js"],
+    splitting: true,
+    minChunkSize: 1024,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      // main, r1, r2, r3, x.js's chunk and t.js's chunk, now holding c.js.
+      expect(jsFilesIn(api)).toHaveLength(6);
+      api.expectFile("/out/" + chunkContaining(api, "t evaluated")).toContain("var c = ");
+    },
+    run: { file: "/out/main.js", args: ["r1"], stdout: "lib evaluated\nmain 20001\nx\nt evaluated\nr1 20001" },
+  });
+
+  // Here nothing main.js loads initializes lib.cjs, so moving f.js (and its
+  // require_lib() call) into main.js would run lib.cjs at startup.
+  itBundled("splitting/MinChunkSizeKeepsFirstInitializerOfWrappedModule", {
+    files: {
+      "/main.js": /* js */ `
+        import { shared } from './shared.js'
+        console.log('main', shared.length)
+        const routes = { a: () => import('./a.js'), b: () => import('./b.js') }
+        if (process.argv[2]) routes[process.argv[2]]().then(m => console.log(m.default()))
+      `,
+      "/a.js": /* js */ `
+        import { f } from './f.js'
+        export default () => 'a ' + f()
+      `,
+      "/b.js": /* js */ `
+        import { f } from './f.js'
+        export default () => 'b ' + f()
+      `,
+      "/f.js": /* js */ `
+        import lib from './lib.cjs'
+        export const f = () => lib.v
+      `,
+      "/lib.cjs": /* js */ `
+        console.log('lib evaluated')
+        module.exports = { v: 1 }
+      `,
+      "/shared.js": /* js */ `
+        export const shared = "${Buffer.alloc(20000, "x").toString()}"
+      `,
+    },
+    entryPoints: ["/main.js"],
+    splitting: true,
+    minChunkSize: 1024 * 1024,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      expect(jsFilesIn(api)).toHaveLength(4);
+      api.expectFile("/out/main.js").not.toContain("lib evaluated");
+    },
+    run: [
+      { file: "/out/main.js", stdout: "main 20000" },
+      { file: "/out/main.js", args: ["b"], stdout: "main 20000\nlib evaluated\nb 1" },
+    ],
+  });
+
+  // Browser builds fold small side-effect-free chunks by default (every chunk
+  // is a request there); `minChunkSize: 0` opts out, other targets opt in.
+  for (const [name, options, outputs] of [
+    ["Browser", {}, 3],
+    ["BrowserZero", { minChunkSize: 0 }, 4],
+    ["Bun", { target: "bun" }, 4],
+  ] as const) {
+    itBundled("splitting/MinChunkSizeDefault" + name, {
+      files: {
+        "/main.js": /* js */ `
+          import { shared } from './shared.js'
+          console.log('main', shared.length)
+          const routes = { a: () => import('./a.js'), b: () => import('./b.js') }
+          if (process.argv[2]) routes[process.argv[2]]().then(m => console.log(m.default()))
+        `,
+        "/a.js": /* js */ `
+          import { f } from './f.js'
+          export default () => 'a ' + f()
+        `,
+        "/b.js": /* js */ `
+          import { f } from './f.js'
+          export default () => 'b ' + f()
+        `,
+        "/f.js": /* js */ `
+          export const f = () => 1
+        `,
+        "/shared.js": /* js */ `
+          export const shared = "${Buffer.alloc(20000, "x").toString()}"
+        `,
+      },
+      entryPoints: ["/main.js"],
+      splitting: true,
+      outdir: "/out",
+      format: "esm",
+      ...options,
+      onAfterBundle(api) {
+        expect(jsFilesIn(api)).toHaveLength(outputs);
+      },
+      run: { file: "/out/main.js", args: ["a"], stdout: "main 20000\na 1" },
+    });
+  }
+
+  // pkg's barrel stays live (`export *`) inside entry.js and has import
+  // records for b.js and b2.js, which only lazy routes use. Those records print
+  // nothing and must not count as entry.js importing the b.js chunks: if they
+  // did, c.js (which does import them) could move into entry.js, entry.js
+  // would import the b.js chunk, and that chunk imports require_lib from
+  // entry.js — a static cycle that reads require_lib before it is assigned.
+  itBundled("splitting/MinChunkSizeBarrelRecordIsNotAnImport", {
+    files: {
+      "/entry.js": /* js */ `
+        import lib from "lib"
+        import { A } from "pkg"
+        import { big } from "./big.js"
+        console.log("entry", A, lib.v, big.length)
+        if (process.argv[2] === "r1") import("./r1.js")
+        if (process.argv[2] === "all") [import("./r2.js"), import("./r3.js"), import("./r4.js")]
+      `,
+      "/big.js": `export const big = "${Buffer.alloc(40000, "x").toString()}"`,
+      "/c.js": /* js */ `
+        import { B, B2 } from "pkg"
+        export const c = () => B + B2
+      `,
+      "/r1.js": `import { c } from "./c.js"; console.log("r1", c())`,
+      "/r2.js": `import { c } from "./c.js"; console.log("r2", c())`,
+      "/r3.js": `import { B } from "pkg"; console.log("r3", B)`,
+      "/r4.js": `import { B2 } from "pkg"; console.log("r4", B2)`,
+      "/node_modules/pkg/package.json": JSON.stringify({ name: "pkg", main: "index.js", sideEffects: false }),
+      "/node_modules/pkg/index.js": /* js */ `
+        export * from "./star.js"
+        export { A } from "./a.js"
+        export { B } from "./b.js"
+        export { B2 } from "./b2.js"
+      `,
+      "/node_modules/pkg/star.js": `export const S = 1`,
+      "/node_modules/pkg/a.js": `export const A = "A"`,
+      // A top-level require() runs lib, so these chunks have a side effect and
+      // may only be imported where they already were.
+      "/node_modules/pkg/b.js": `const lib = require("lib"); export const B = lib.v`,
+      "/node_modules/pkg/b2.js": `const lib = require("lib"); export const B2 = lib.w`,
+      "/node_modules/lib/package.json": JSON.stringify({ name: "lib", main: "index.js" }),
+      "/node_modules/lib/index.js": `module.exports = { v: 1, w: 2 }`,
+    },
+    entryPoints: ["/entry.js"],
+    splitting: true,
+    minChunkSize: 1024,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      // entry, r1..r4, and the c.js, b.js and b2.js chunks.
+      expect(jsFilesIn(api)).toHaveLength(8);
+      expect(api.readFile("/out/entry.js")).not.toMatch(/^import /m);
+    },
+    run: { file: "/out/entry.js", args: ["r1"], stdout: "entry A 1 40000\nr1 3" },
+  });
+
+  // An entry point runs its own code when loaded, so its chunk never moves,
+  // whatever it imports.
   itBundled("splitting/MinChunkSizeKeepsImporterOfWrappedModule", {
     files: {
       "/main.js": /* js */ `
@@ -1922,9 +2182,10 @@ describe("bundler", () => {
     run: { file: "/out/main.js", stdout: "main 20000\nlib evaluated\nlazy 20001" },
   });
 
-  // Once the {x, y} chunk folds into the {main, x, y} chunk, that chunk
-  // imports d.js, so d.js is loaded whenever main is; d.js may then no longer
-  // fold into q's chunk, whose side effect would run at startup.
+  // The {x, y} chunk (c0.js, c.js) folds into q.js's {x, y, z, w} chunk and
+  // takes d.js's {x, y, z} chunk along as a new import of it, so d.js is then
+  // loaded wherever q.js is and folds there too; nothing may land in main.js,
+  // which must not run q.js's side effect at startup.
   itBundled("splitting/MinChunkSizeTracksLoadConditionsAcrossFolds", {
     files: {
       "/main.js": /* js */ `
@@ -1987,10 +2248,11 @@ describe("bundler", () => {
     outdir: "/out",
     format: "esm",
     onAfterBundle(api) {
-      // main, x, y, z, w, the q.js chunk and the d.js chunk; mxy.js (with
-      // c.js and c0.js) lives in main.js rather than an 8th {main, x, y} chunk.
-      expect(jsFilesIn(api)).toHaveLength(7);
-      expect(api.readFile("/out/main.js").length).toBeGreaterThan(12000);
+      // main (with mxy.js), x, y, z, w and the q.js chunk holding c0, c and d.
+      expect(jsFilesIn(api)).toHaveLength(6);
+      const q = chunkContaining(api, "q evaluated");
+      for (const f of ["c0", "c", "d"]) api.expectFile("/out/" + q).toContain(`function ${f}()`);
+      api.expectFile("/out/main.js").not.toContain("q evaluated");
     },
     run: { file: "/out/main.js", stdout: "main 12000" },
   });

@@ -1319,7 +1319,8 @@ pub struct BundleOptions<'a> {
     /// Code splitting: also fold side-effect-free chunks whose source is
     /// smaller than this many bytes into a chunk more entry points load.
     /// 0 disables that; chunks with identical load conditions always fold.
-    pub min_chunk_size: u64,
+    /// `None` picks `default_min_chunk_size(target)`.
+    pub min_chunk_size: Option<u64>,
     /// `<link rel=modulepreload>` for split browser chunks (HTML + `import()`).
     pub module_preload: bool,
 
@@ -1702,7 +1703,7 @@ impl<'a> BundleOptions<'a> {
             env: Env::default(),
             transform_options: std::sync::Arc::clone(&transform),
             css_chunking: false,
-            min_chunk_size: 0,
+            min_chunk_size: None,
             module_preload: true,
             drop: transform.drop.clone().into_boxed_slice(),
             bundler_feature_flags,
@@ -2501,5 +2502,15 @@ impl From<PathTemplateConst> for PathTemplate {
                 target: Box::from(c.placeholder.target),
             },
         }
+    }
+}
+
+/// `--min-chunk-size` when none was given. In a browser every chunk is a
+/// request, so small side-effect-free chunks fold by default there; what an
+/// entry point can gain from that is bounded (see `merge_small_chunks`).
+pub fn default_min_chunk_size(target: Target) -> u64 {
+    match target {
+        Target::Browser => 16 * 1024,
+        _ => 0,
     }
 }

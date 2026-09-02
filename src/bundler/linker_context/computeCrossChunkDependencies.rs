@@ -384,11 +384,9 @@ fn inert_chunks(c: &LinkerContext, chunks: &[Chunk]) -> Result<AutoBitSet, bun_a
                     continue;
                 }
                 for &i in part.import_record_indices.iter() {
-                    let record = &records[i as usize];
-                    if record.source_index.is_valid()
-                        && !c.is_external_dynamic_import(record, source_index)
+                    if let Some(other) = c.file_loaded_by_import(&records[i as usize], source_index)
                     {
-                        add(record.source_index.get());
+                        add(other);
                     }
                 }
                 for dep in part.dependencies.iter() {

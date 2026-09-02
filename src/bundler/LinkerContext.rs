@@ -133,6 +133,10 @@ pub struct LinkerContext<'a> {
 
     /// User entry points (by source index) that reach a split browser `import()`: their chunk registers the chunk graph.
     pub(crate) preload_entries: AutoBitSet,
+    /// Files whose only top-level effect, `init_x()` / `require_x()` calls,
+    /// `merge_small_chunks` proved to be no-ops where it moved them: a chunk
+    /// their chunk imports makes the same calls first.
+    pub(crate) inits_already_done: Option<AutoBitSet>,
     /// The part `scan_imports_and_exports` adds to each entry point file (`u32::MAX` elsewhere).
     pub(crate) entry_point_part_indices: Vec<u32>,
 }
@@ -172,6 +176,7 @@ impl<'a> Default for LinkerContext<'a> {
             mangled_props: Default::default(),
             cross_chunk_names: Default::default(),
             preload_entries: AutoBitSet::init_empty(0).expect("static AutoBitSet"),
+            inits_already_done: None,
             entry_point_part_indices: Vec::new(),
         }
     }
@@ -374,6 +379,28 @@ impl<'a> LinkerContext<'a> {
                 .is_entry_point()
     }
 
+    /// The bundled file a live part's import record makes the importer's
+    /// chunk load, if any: not a split `import()` / `require()`, which loads
+    /// on demand, and not an `import` or `export ... from` of a side-effect-free
+    /// file, which prints nothing (the bindings used from it are part
+    /// dependencies). Chunk assignment follows these edges, so everything that
+    /// reasons about which chunks load together must too.
+    pub(crate) fn file_loaded_by_import(
+        &self,
+        record: &ImportRecord,
+        source_index: u32,
+    ) -> Option<u32> {
+        if !record.source_index.is_valid() || self.is_external_dynamic_import(record, source_index)
+        {
+            return None;
+        }
+        let other = record.source_index.get();
+        if record.kind == ImportKind::Stmt && self.file_has_no_side_effects(other) {
+            return None;
+        }
+        Some(other)
+    }
+
     /// `"sideEffects": false` (or the resolver's equivalent), unless
     /// `--ignore-dce-annotations` says not to trust it.
     pub(crate) fn file_has_no_side_effects(&self, source_index: u32) -> bool {
@@ -495,6 +522,7 @@ impl<'a> LinkerContext<'a> {
             bun_ptr::ParentRef::from_raw(core::ptr::from_ref(&transpiler.resolver).cast())
         });
         self.cycle_detector = Vec::new();
+        self.inits_already_done = None;
 
         // Note: `reachable_files` is `Vec<Index>`; clone the
         // caller-owned slice into the linker arena.
@@ -2791,19 +2819,11 @@ impl<'a> LinkerContext<'a> {
                 }
 
                 for &import_index in part.import_record_indices.iter() {
-                    let record = &records[import_index as usize];
-                    if !record.source_index.is_valid()
-                        || self.is_external_dynamic_import(record, source_index)
-                    {
+                    let Some(other) =
+                        self.file_loaded_by_import(&records[import_index as usize], source_index)
+                    else {
                         continue;
-                    }
-                    let other = record.source_index.get();
-
-                    // Prints nothing; its bindings are the part dependencies below.
-                    if record.kind == ImportKind::Stmt && self.file_has_no_side_effects(other) {
-                        continue;
-                    }
-
+                    };
                     if !ctx.file_entry_bits[other as usize].is_set(entry_points_count) {
                         ctx.queue.push_back((other, out_dist));
                     }

@@ -389,6 +389,111 @@ describe("bundler", async () => {
     run: { stdout: "[true,true,true]" },
   });
 
+  // The namespace object of a CSS file is built with the runtime's `__export`
+  // helper. No other module in this bundle uses the runtime, so the CSS file's
+  // JS side is the only thing pulling it into the output.
+  for (const target of ["bun", "browser"] as const) {
+    itBundled(`bun/loader-css-namespace-import-${target}`, {
+      target,
+      outdir: "/out",
+      files: {
+        "/entry.ts": /* js */ `
+          import * as plain from "./plain.css";
+          import * as styles from "./styles.module.css";
+          console.log(
+            JSON.stringify([
+              Object.keys(plain),
+              plain.default,
+              Object.keys(styles).sort(),
+              styles.foo === styles.default.foo && typeof styles.foo === "string",
+            ]),
+          );
+        `,
+        "/plain.css": `.plain { color: red; }`,
+        "/styles.module.css": `.foo { color: blue; }`,
+      },
+      run: { stdout: '[["default"],{},["default","foo"],true]' },
+    });
+  }
+
+  // Every CSS file has a namespace export part that uses `__export`, but it is
+  // only printed when something namespace-imports the file. A stylesheet that
+  // is merely imported must not pull the (here live, because of util.js)
+  // runtime into its entry point.
+  itBundled("bun/loader-css-plain-import-does-not-pull-in-runtime", {
+    outdir: "/out",
+    entryPoints: ["/a.js", "/b.js"],
+    files: {
+      "/a.js": /* js */ `
+        import * as util from "./util.js";
+        console.log(JSON.stringify(Object.keys(util)));
+      `,
+      "/util.js": `export const util = 1;`,
+      "/b.js": /* js */ `
+        import "./side-effect.css";
+        import styles from "./styles.module.css";
+        console.log(JSON.stringify(Object.keys(styles)));
+      `,
+      "/side-effect.css": `.side { color: red; }`,
+      "/styles.module.css": `.foo { color: blue; }`,
+    },
+    onAfterBundle(api) {
+      expect(api.readFile("/out/a.js")).toContain("__export(");
+      api.expectFile("/out/b.js").toMatchInlineSnapshot(`
+        "// styles.module.css
+        var styles_module_default = {
+          foo: "foo_-MSaAA"
+        };
+
+        // b.js
+        console.log(JSON.stringify(Object.keys(styles_module_default)));
+        "
+      `);
+    },
+    run: [
+      { file: "/out/a.js", stdout: '["util"]' },
+      { file: "/out/b.js", stdout: '["foo"]' },
+    ],
+  });
+
+  // Which entry points print a stylesheet's namespace object is decided by the
+  // entry bits of the stylesheet, however it was reached: here b.js reaches
+  // x.css through its own stylesheet's @import, and the import record of a
+  // tree-shaken package is what makes the printer visit x.css, so b.js prints
+  // the namespace object that a.js made live and needs the runtime as well.
+  itBundled("bun/loader-css-namespace-object-printed-for-another-entry", {
+    outdir: "/out",
+    entryPoints: ["/a.js", "/b.js"],
+    files: {
+      "/a.js": /* js */ `
+        import * as ns from "./x.css";
+        console.log("a", JSON.stringify(Object.keys(ns)));
+      `,
+      "/b.js": /* js */ `
+        import { unused } from "pkg";
+        import "./b.css";
+        console.log("b");
+      `,
+      "/x.css": `.x { color: red; }`,
+      "/b.css": /* css */ `
+        @import "./x.css";
+        .b { color: blue; }
+      `,
+      "/node_modules/pkg/package.json": `{ "name": "pkg", "main": "index.js", "sideEffects": false }`,
+      "/node_modules/pkg/index.js": /* js */ `
+        import "../../x.css";
+        export const unused = 1;
+      `,
+    },
+    onAfterBundle(api) {
+      expect(api.readFile("/out/b.js")).toContain("__export(exports_x,");
+    },
+    run: [
+      { file: "/out/a.js", stdout: 'a ["default"]' },
+      { file: "/out/b.js", stdout: "b" },
+    ],
+  });
+
   itBundled("bun/wasm-is-copied-to-outdir", {
     target: "bun",
     outdir: "/out",

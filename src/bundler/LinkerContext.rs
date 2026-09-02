@@ -2726,12 +2726,14 @@ impl<'a> LinkerContext<'a> {
                 }
             }
 
-            // CSS files only follow their import records.
-            if ctx.css_reprs[source_index as usize].is_some() {
-                continue;
-            }
-
-            for part in ctx.parts[source_index as usize].as_slice() {
+            // Of the JS parts a stylesheet also carries, only the live ones get printed.
+            let live_parts_only = ctx.css_reprs[source_index as usize].is_some();
+            let parts_live = &self.graph.parts_live[source_index as usize];
+            let parts = ctx.parts[source_index as usize].as_slice();
+            for (part_index, part) in parts.iter().enumerate() {
+                if live_parts_only && !parts_live.is_set(part_index) {
+                    continue;
+                }
                 for dependency in part.dependencies.iter() {
                     let dep = dependency.source_index.get();
                     if dep != source_index

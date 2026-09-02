@@ -62,6 +62,7 @@ pub(crate) fn compute_cross_chunk_dependencies(
             chunks: bun_ptr::BackRef::new(&*chunks),
             chunk_meta: &mut chunk_metas,
             parts: ast.parts,
+            css_asts: ast.css,
             import_records: ast.import_records,
             flags: meta.flags,
             entry_point_chunk_indices: files.entry_point_chunk_index,
@@ -90,6 +91,7 @@ struct CrossChunkDependencies<'a, 'bump> {
     // (caller stack frame).
     chunks: bun_ptr::BackRef<[Chunk]>,
     parts: &'a [bun_ast::PartList<'bump>],
+    css_asts: &'a [crate::bundled_ast::CssCol],
     import_records: &'a mut [bun_ast::import_record::List<'bump>],
     flags: &'a [js_meta::Flags],
     entry_point_chunk_indices: &'a [IndexInt],
@@ -138,15 +140,27 @@ impl<'a, 'bump> CrossChunkDependencies<'a, 'bump> {
         // Go through `chunk_meta.imports` / `chunk_meta.dynamic_imports`.
         let entry_point_chunk_indices = deps.entry_point_chunk_indices;
 
+        let chunk::Content::Javascript(js) = &chunk.content else {
+            return;
+        };
+
+        // CSS files get no chunk; their live JS parts are copied into each chunk that imports them.
+        let css_asts = deps.css_asts;
+        let copied_css_files = js
+            .files_in_chunk_order
+            .iter()
+            .copied()
+            .filter(|&source_index| css_asts[source_index as usize].is_some());
+
         // Go over each file in this chunk
-        for &source_index in chunk.files_with_parts_in_chunk.keys() {
-            // TODO: make this switch
-            if matches!(chunk.content, chunk::Content::Css(_)) {
-                continue;
-            }
-            if !matches!(chunk.content, chunk::Content::Javascript(_)) {
-                continue;
-            }
+        for source_index in chunk
+            .files_with_parts_in_chunk
+            .keys()
+            .iter()
+            .copied()
+            .chain(copied_css_files)
+        {
+            let is_css_copy = css_asts[source_index as usize].is_some();
 
             // Go over each part in this file that's marked for inclusion in this chunk
             let parts = deps.parts[source_index as usize].as_slice();
@@ -198,7 +212,9 @@ impl<'a, 'bump> CrossChunkDependencies<'a, 'bump> {
                 // the same name should already be marked as all being in a single
                 // chunk. In that case this will overwrite the same value below which
                 // is fine.
-                symbols.assign_chunk_index(&part.declared_symbols, chunk_index as u32);
+                if !is_css_copy {
+                    symbols.assign_chunk_index(&part.declared_symbols, chunk_index as u32);
+                }
 
                 let used_refs = part.symbol_uses.keys();
 
@@ -262,66 +278,63 @@ impl<'a, 'bump> CrossChunkDependencies<'a, 'bump> {
         }
 
         // Include the exports if this is an entry point chunk
-        if matches!(chunk.content, chunk::Content::Javascript(_)) {
-            if chunk.entry_point.is_entry_point() {
-                let flags = deps.flags[chunk.entry_point.source_index() as usize];
-                if flags.wrap != WrapKind::Cjs {
-                    let resolved_exports =
-                        &deps.resolved_exports[chunk.entry_point.source_index() as usize];
-                    let sorted_and_filtered_export_aliases = &deps
-                        .sorted_and_filtered_export_aliases
-                        [chunk.entry_point.source_index() as usize];
-                    for alias in sorted_and_filtered_export_aliases.iter() {
-                        let export_ = resolved_exports.get(alias).unwrap();
-                        let mut target_ref = export_.data.import_ref;
+        if chunk.entry_point.is_entry_point() {
+            let flags = deps.flags[chunk.entry_point.source_index() as usize];
+            if flags.wrap != WrapKind::Cjs {
+                let resolved_exports =
+                    &deps.resolved_exports[chunk.entry_point.source_index() as usize];
+                let sorted_and_filtered_export_aliases = &deps.sorted_and_filtered_export_aliases
+                    [chunk.entry_point.source_index() as usize];
+                for alias in sorted_and_filtered_export_aliases.iter() {
+                    let export_ = resolved_exports.get(alias).unwrap();
+                    let mut target_ref = export_.data.import_ref;
 
-                        // If this is an import, then target what the import points to
-                        if let Some(import_data) = deps.imports_to_bind
-                            [export_.data.source_index.get() as usize]
-                            .get(&target_ref)
-                        {
-                            target_ref = import_data.data.import_ref;
-                        }
-
-                        // If this is an ES6 import from a CommonJS file, it will become a
-                        // property access off the namespace symbol instead of a bare
-                        // identifier. In that case we want to pull in the namespace symbol
-                        // instead. The namespace symbol stores the result of "require()".
-                        if let Some(namespace_alias) =
-                            &symbols.get_const(target_ref).unwrap().namespace_alias
-                        {
-                            target_ref = namespace_alias.namespace_ref;
-                        }
-
-                        if cfg!(debug_assertions) {
-                            // SAFETY: arena slice valid for the link pass.
-                            let name = symbols.get_const(target_ref).unwrap().original_name.slice();
-                            debug!("Cross-chunk export: {}", bstr::BStr::new(name),);
-                        }
-
-                        let _ = chunk_meta.imports.put(target_ref, ()); // OOM-only Result
+                    // If this is an import, then target what the import points to
+                    if let Some(import_data) = deps.imports_to_bind
+                        [export_.data.source_index.get() as usize]
+                        .get(&target_ref)
+                    {
+                        target_ref = import_data.data.import_ref;
                     }
-                }
 
-                // Ensure "exports" is included if the current output format needs it
-                // https://github.com/evanw/esbuild/blob/v0.27.2/internal/linker/linker.go#L1049-L1051
-                if flags.force_include_exports_for_entry_point {
-                    // result intentionally discarded
-                    let _ = chunk_meta.imports.put(
-                        deps.exports_refs[chunk.entry_point.source_index() as usize],
-                        (),
-                    );
-                }
+                    // If this is an ES6 import from a CommonJS file, it will become a
+                    // property access off the namespace symbol instead of a bare
+                    // identifier. In that case we want to pull in the namespace symbol
+                    // instead. The namespace symbol stores the result of "require()".
+                    if let Some(namespace_alias) =
+                        &symbols.get_const(target_ref).unwrap().namespace_alias
+                    {
+                        target_ref = namespace_alias.namespace_ref;
+                    }
 
-                // Include the wrapper if present
-                // https://github.com/evanw/esbuild/blob/v0.27.2/internal/linker/linker.go#L1053-L1056
-                if flags.wrap != WrapKind::None {
-                    // result intentionally discarded
-                    let _ = chunk_meta.imports.put(
-                        deps.wrapper_refs[chunk.entry_point.source_index() as usize],
-                        (),
-                    );
+                    if cfg!(debug_assertions) {
+                        // SAFETY: arena slice valid for the link pass.
+                        let name = symbols.get_const(target_ref).unwrap().original_name.slice();
+                        debug!("Cross-chunk export: {}", bstr::BStr::new(name),);
+                    }
+
+                    let _ = chunk_meta.imports.put(target_ref, ()); // OOM-only Result
                 }
+            }
+
+            // Ensure "exports" is included if the current output format needs it
+            // https://github.com/evanw/esbuild/blob/v0.27.2/internal/linker/linker.go#L1049-L1051
+            if flags.force_include_exports_for_entry_point {
+                // result intentionally discarded
+                let _ = chunk_meta.imports.put(
+                    deps.exports_refs[chunk.entry_point.source_index() as usize],
+                    (),
+                );
+            }
+
+            // Include the wrapper if present
+            // https://github.com/evanw/esbuild/blob/v0.27.2/internal/linker/linker.go#L1053-L1056
+            if flags.wrap != WrapKind::None {
+                // result intentionally discarded
+                let _ = chunk_meta.imports.put(
+                    deps.wrapper_refs[chunk.entry_point.source_index() as usize],
+                    (),
+                );
             }
         }
     }

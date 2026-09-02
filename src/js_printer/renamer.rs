@@ -1218,8 +1218,7 @@ pub fn compute_reserved_names_for_scope(
         }
     }
 
-    // If there's a direct "eval" or a "with" somewhere inside the current scope,
-    // continue traversing down the scope tree until we find it to get all reserved names
+    // Keep traversing down the scope tree toward a direct "eval" or a "with" to get all reserved names
     if scope.contains_direct_eval || scope.contains_with {
         for child in scope.children.slice() {
             // `StoreRef<Scope>: Deref<Target = Scope>` — safe arena-backed deref.

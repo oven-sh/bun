@@ -244,6 +244,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // Assigning to `exports` in a CommonJS module must be tracked to undo the
                 // `module.exports` -> `exports` optimization.
                 p.commonjs_module_exports_assigned_deoptimized = true;
+            } else if in_.assign_target == js_ast::AssignTarget::Replace
+                && p.should_hoist_implicit_global(result.r#ref, name)
+                && !result.is_inside_with_scope
+            {
+                // `X = ...` with no declaration creates a global in sloppy mode but
+                // throws ReferenceError in strict-mode ESM output; hoist a `var` so the
+                // bundle runs. Known globals are skipped so `var X` does not shadow them.
+                p.symbols[result.r#ref.inner_index() as usize].kind = js_ast::symbol::Kind::Hoisted;
+                p.relocated_top_level_vars.push(js_ast::LocRef {
+                    loc: expr.loc,
+                    ref_: result.r#ref,
+                });
             }
 
             p.record_assignment(result.r#ref);

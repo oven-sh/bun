@@ -610,8 +610,6 @@ impl PackageJSON {
                         // import of "foo", but that's actually not a bug. Or arguably it's a
                         // bug in Browserify but we have to replicate this bug because packages
                         // do this in the wild.
-                        //
-                        // Keys keep forward slashes on every platform, like the lookup path.
                         let key: &[u8] = resolve_path::resolve_path::normalize_string_spill::<
                             true,
                             resolve_path::platform::Posix,

@@ -5070,8 +5070,7 @@ impl<'a> Resolver<'a> {
             return None;
         }
 
-        // Normalize the path (forward slashes, like the map keys) so we can compare
-        // against it without getting confused by "./"
+        // Normalize the path so we can compare against it without getting confused by "./"
         let cleaned: &[u8] = bun_paths::resolve_path::normalize_string_buf::<
             false,
             bun_paths::platform::Posix,

@@ -877,6 +877,7 @@ impl<'a> LinkerContext<'a> {
         let entry_points: *const [crate::IndexInt] = self.graph.entry_points.items_source_index();
         let distances: *mut [u32] = self.graph.files.items_distance_from_entry_point_mut();
         let file_entry_bits: *mut [AutoBitSet] = self.graph.files.items_entry_bits_mut();
+        let loaders: *const [Loader] = self.parse_graph().input_files.items_loader();
 
         // SAFETY: see block comment above — disjoint SoA columns, stable slabs
         // (no reallocation during tree-shaking). All column derefs share that
@@ -892,6 +893,7 @@ impl<'a> LinkerContext<'a> {
             parts_live,
             distances,
             file_entry_bits,
+            loaders,
         ) = unsafe {
             (
                 &*entry_points,
@@ -902,6 +904,7 @@ impl<'a> LinkerContext<'a> {
                 &mut *parts_live,
                 &mut *distances,
                 &mut *file_entry_bits,
+                &*loaders,
             )
         };
         let entry_points_len = entry_points.len();
@@ -952,6 +955,7 @@ impl<'a> LinkerContext<'a> {
                 import_records,
                 file_entry_bits,
                 css_reprs,
+                loaders,
                 queue: std::collections::VecDeque::new(),
             };
 
@@ -2674,6 +2678,7 @@ pub(crate) struct CodeSplitCtx<'a, 'r> {
     pub(crate) import_records: &'r [bun_ast::import_record::List<'a>],
     pub(crate) file_entry_bits: &'r mut [AutoBitSet],
     pub(crate) css_reprs: &'r [crate::bundled_ast::CssCol],
+    pub(crate) loaders: &'r [Loader],
     pub(crate) queue: std::collections::VecDeque<(crate::IndexInt, u32)>,
 }
 
@@ -2716,22 +2721,62 @@ impl<'a> LinkerContext<'a> {
             }
             let out_dist = distance + 1;
 
-            for record in ctx.import_records[source_index as usize].iter() {
-                if record.source_index.is_valid()
-                    && !self.is_external_dynamic_import(record, source_index)
-                    && !ctx.file_entry_bits[record.source_index.get() as usize]
-                        .is_set(entry_points_count)
-                {
-                    ctx.queue.push_back((record.source_index.get(), out_dist));
-                }
-            }
+            let records = &ctx.import_records[source_index as usize];
 
-            // CSS files only follow their import records.
-            if ctx.css_reprs[source_index as usize].is_some() {
+            // CSS and HTML files have no parts of their own: follow every
+            // import record, as tree shaking does.
+            if ctx.css_reprs[source_index as usize].is_some()
+                || ctx.loaders[source_index as usize] == Loader::Html
+            {
+                for record in records.iter() {
+                    if record.source_index.is_valid()
+                        && !ctx.file_entry_bits[record.source_index.get() as usize]
+                            .is_set(entry_points_count)
+                    {
+                        ctx.queue.push_back((record.source_index.get(), out_dist));
+                    }
+                }
                 continue;
             }
 
-            for part in ctx.parts[source_index as usize].as_slice() {
+            // Every live part of this file prints wherever the file lands, so
+            // the entry point needs what each of them imports or depends on.
+            // A dead part prints nothing and needs nothing.
+            let parts_live = &self.graph.parts_live[source_index as usize];
+            for (part_index, part) in ctx.parts[source_index as usize]
+                .as_slice()
+                .iter()
+                .enumerate()
+            {
+                if !parts_live.is_set(part_index) {
+                    continue;
+                }
+
+                for &import_index in part.import_record_indices.iter() {
+                    let record = &records[import_index as usize];
+                    if !record.source_index.is_valid()
+                        || self.is_external_dynamic_import(record, source_index)
+                    {
+                        continue;
+                    }
+                    let other = record.source_index.get();
+
+                    // An `import` or `export ... from` of a file that declares no
+                    // side effects prints nothing: the bindings it brings in are
+                    // part dependencies, resolved below. Tree shaking keeps the
+                    // target only through those dependencies, so this entry
+                    // point reaches it only through them too. Without this, a
+                    // `"sideEffects": false` barrel would hand every module it
+                    // re-exports to each entry point that uses one of them.
+                    if record.kind == ImportKind::Stmt && self.file_has_no_side_effects(other) {
+                        continue;
+                    }
+
+                    if !ctx.file_entry_bits[other as usize].is_set(entry_points_count) {
+                        ctx.queue.push_back((other, out_dist));
+                    }
+                }
+
                 for dependency in part.dependencies.iter() {
                     let dep = dependency.source_index.get();
                     if dep != source_index

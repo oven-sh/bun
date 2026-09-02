@@ -957,6 +957,143 @@ describe("bundler", () => {
     ],
   });
 
+  // A re-export from a `"sideEffects": false` barrel prints nothing: the
+  // importer binds straight to the module that declares the name. So an entry
+  // point reaches, through the barrel, only the modules it uses, and a module
+  // only an import() uses lives in that import()'s chunk.
+  const sideEffectFreeBarrel = {
+    "/node_modules/pkg/package.json": JSON.stringify({ name: "pkg", main: "index.js", sideEffects: false }),
+    "/node_modules/pkg/index.js": /* js */ `
+      export { A } from './a.js'
+      export { B } from './b.js'
+    `,
+    "/node_modules/pkg/a.js": /* js */ `
+      export const A = 'AAAA'
+    `,
+    "/node_modules/pkg/b.js": /* js */ `
+      export const B = 'BBBB_MARK'
+    `,
+  };
+
+  itBundled("splitting/SideEffectFreeBarrelLeavesLazyModulesToTheirChunk", {
+    files: {
+      ...sideEffectFreeBarrel,
+      "/entry.js": /* js */ `
+        import { A } from 'pkg'
+        console.log(A)
+        import('./lazy.js').then(m => m.run())
+      `,
+      "/lazy.js": /* js */ `
+        import { B } from 'pkg'
+        export function run() { console.log(B) }
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      expect(jsOutputs(api)).toEqual(["entry.js", "lazy.js"]);
+      api.expectFile("/out/entry.js").toContain("AAAA");
+      api.expectFile("/out/entry.js").not.toContain("BBBB_MARK");
+      expect(jsOutput(api, "lazy")).toContain("BBBB_MARK");
+      expect(jsOutput(api, "lazy")).not.toContain("import ");
+    },
+    run: { file: "/out/entry.js", stdout: "AAAA\nBBBB_MARK" },
+  });
+
+  // The same through a namespace whose properties bind directly.
+  itBundled("splitting/SideEffectFreeBarrelNamespacePropertyAccess", {
+    files: {
+      ...sideEffectFreeBarrel,
+      "/entry.js": /* js */ `
+        import * as pkg from 'pkg'
+        console.log(pkg.A)
+        import('./lazy.js').then(m => m.run())
+      `,
+      "/lazy.js": /* js */ `
+        import * as pkg from 'pkg'
+        export function run() { console.log(pkg.B) }
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      expect(jsOutputs(api)).toEqual(["entry.js", "lazy.js"]);
+      api.expectFile("/out/entry.js").not.toContain("BBBB_MARK");
+      expect(jsOutput(api, "lazy")).toContain("BBBB_MARK");
+    },
+    run: { file: "/out/entry.js", stdout: "AAAA\nBBBB_MARK" },
+  });
+
+  // Without splitting, each entry point's bundle holds only what that entry
+  // uses from the barrel.
+  itBundled("splitting/SideEffectFreeBarrelPerEntryWithoutSplitting", {
+    files: {
+      ...sideEffectFreeBarrel,
+      "/e1.js": /* js */ `
+        import { A } from 'pkg'
+        console.log(A)
+      `,
+      "/e2.js": /* js */ `
+        import { B } from 'pkg'
+        console.log(B)
+      `,
+    },
+    entryPoints: ["/e1.js", "/e2.js"],
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      api.expectFile("/out/e1.js").toContain("AAAA");
+      api.expectFile("/out/e1.js").not.toContain("BBBB_MARK");
+      api.expectFile("/out/e2.js").toContain("BBBB_MARK");
+      api.expectFile("/out/e2.js").not.toContain("AAAA");
+    },
+    run: [
+      { file: "/out/e1.js", stdout: "AAAA" },
+      { file: "/out/e2.js", stdout: "BBBB_MARK" },
+    ],
+  });
+
+  // A barrel that does not declare itself side-effect free still loads every
+  // module it re-exports wherever it is imported: b.js may have side effects,
+  // and they run before the entry's own code.
+  itBundled("splitting/BarrelWithSideEffectsLoadsEveryReExport", {
+    files: {
+      "/entry.js": /* js */ `
+        import { A } from './lib/index.js'
+        console.log(A)
+        import('./lazy.js').then(m => m.run())
+      `,
+      "/lazy.js": /* js */ `
+        import { B } from './lib/index.js'
+        export function run() { console.log(B) }
+      `,
+      "/lib/index.js": /* js */ `
+        export { A } from './a.js'
+        export { B } from './b.js'
+      `,
+      "/lib/a.js": /* js */ `
+        export const A = 'AAAA'
+      `,
+      "/lib/b.js": /* js */ `
+        console.log('b runs')
+        export const B = 'BBBB_MARK'
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      expect(jsOutputs(api)).toEqual(["entry.js", "lazy.js"]);
+      api.expectFile("/out/entry.js").toContain("BBBB_MARK");
+    },
+    run: { file: "/out/entry.js", stdout: "b runs\nAAAA\nBBBB_MARK" },
+  });
+
   // The chunks an output file imports, in statement order.
   const chunkImportsIn = (api: BundlerTestBundleAPI, name: string) =>
     [...api.readFile("/out/" + name).matchAll(/^import\b[^;]*?"\.\/([^"]+)";$/gms)].map(m => m[1]);

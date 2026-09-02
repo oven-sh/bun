@@ -2406,6 +2406,16 @@ describe("bundler", () => {
 
         class Inited { static z = Object.defineProperty(this, 'y', { set(v) { hit('static-initializer') } }) }
         Inited.y = 1;
+
+        class Reached {}
+        class Sibling extends Reached { static { Object.defineProperty(Object.getPrototypeOf(this.prototype), 'x', { set(v) { hit('sibling-static-block') } }) } }
+        class ReachedChild extends Reached {}
+        ReachedChild.prototype.x = 1;
+
+        class Armed { static set install(v) { Object.defineProperty(this.prototype, 'x', { set(w) { hit('parent-setter-write') } }) } }
+        Armed.install = 1;
+        class ArmedChild extends Armed {}
+        ArmedChild.prototype.x = 1;
       `,
     },
     run: {
@@ -2423,6 +2433,8 @@ describe("bundler", () => {
         "parent-method",
         "static-block",
         "static-initializer",
+        "sibling-static-block",
+        "parent-setter-write",
       ].join(","),
     },
   });

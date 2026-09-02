@@ -466,7 +466,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             else {
                 return false;
             };
-            if !self.class_is_only_extended(parent, parts, candidates, parents) {
+            if !self.class_is_only_extended(
+                parent,
+                parent_source,
+                parts,
+                top_level_symbols_to_parts,
+                candidates,
+                shapes,
+                parents,
+            ) {
                 return false;
             }
             current = parent_source;
@@ -475,27 +483,48 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     /// Any other use (a call argument, its own methods) may install an accessor a subclass inherits.
+    #[allow(clippy::too_many_arguments)]
     fn class_is_only_extended(
         &self,
         class_ref: Ref,
+        source: ClassSource,
         parts: &[js_ast::Part],
+        top_level_symbols_to_parts: &TopLevelSymbolToParts,
         candidates: &[Candidate<'a>],
+        shapes: &mut ShapeCache,
         parents: &mut ParentCache,
     ) -> bool {
         if let Some(&known) = parents.get(&class_ref) {
             return known;
         }
+        // A cyclic `extends` chain re-enters here and reads this placeholder.
+        parents.insert(class_ref, false);
         let only_extended = parts.iter().enumerate().all(|(part_index, part)| {
             let Some(use_) = part.symbol_uses.get(&class_ref) else {
                 return true;
             };
-            if candidates
+            if let Some(candidate) = candidates
                 .iter()
-                .any(|c| c.part_index as usize == part_index && c.owner == class_ref)
+                .find(|c| c.part_index as usize == part_index && c.owner == class_ref)
             {
-                return true;
+                // A write that runs a setter is live code that can mutate the class.
+                return class_member_name(candidate.keys).is_some_and(|name| {
+                    self.class_chain_declares_no_accessor(
+                        source,
+                        name,
+                        parts,
+                        top_level_symbols_to_parts,
+                        candidates,
+                        shapes,
+                        parents,
+                    )
+                });
             }
-            if use_.count_estimate == 1 && self.class_declaration_parent(part) == Some(class_ref) {
+            // A subclass with a static block or initializer can reach this class through `this`.
+            if part.can_be_removed_if_unused
+                && use_.count_estimate == 1
+                && self.class_declaration_parent(part) == Some(class_ref)
+            {
                 return true;
             }
             part.stmts

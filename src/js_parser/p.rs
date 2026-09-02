@@ -9017,8 +9017,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         {
                             for decl in local.decls.slice() {
                                 if let Some(value) = &decl.value {
+                                    // The linker only moves a declaration out of the
+                                    // wrapper when the value can be moved and the binding
+                                    // is an identifier. A destructuring pattern runs code
+                                    // on the value, so it stays inside.
                                     if !matches!(value.data, js_ast::ExprData::EMissing(_))
-                                        && !value.can_be_moved()
+                                        && (!value.can_be_moved()
+                                            || !matches!(
+                                                decl.binding.data,
+                                                js_ast::b::B::BIdentifier(_)
+                                            ))
                                     {
                                         return true;
                                     }

@@ -1113,88 +1113,78 @@ pub(crate) fn scan_imports_and_exports(
                             || !output_format.keep_es6_import_export_syntax()
                             || kind == ImportKind::Dynamic
                         {
-                            if rec_source_index.is_valid()
-                                && kind == ImportKind::Dynamic
-                                && col_ref!(ast_flags_list)[other_id]
-                                    .contains(AstFlags::FORCE_CJS_TO_ESM)
+                            // We should use "__require" instead of "require" if we're not
+                            // generating a CommonJS output file, since it won't exist otherwise.
+                            // An `import()` is printed as-is and never becomes `__require()`,
+                            // nor does a split `require()` (`import.meta.require`).
+                            if kind != ImportKind::Dynamic
+                                && !is_external_dyn
+                                && should_call_runtime_require(output_format)
                             {
-                                // The chunk of a module converted to ESM provides `default` itself.
-                                continue;
-                            } else {
-                                // We should use "__require" instead of "require" if we're not
-                                // generating a CommonJS output file, since it won't exist otherwise.
-                                // An `import()` is printed as-is and never becomes `__require()`,
-                                // nor does a split `require()` (`import.meta.require`).
-                                if kind != ImportKind::Dynamic
-                                    && !is_external_dyn
-                                    && should_call_runtime_require(output_format)
-                                {
-                                    runtime_require_uses += 1;
-                                }
+                                runtime_require_uses += 1;
+                            }
 
-                                // A split `require()` whose target is CommonJS at link
-                                // time (for example a lifted `module.exports = require()`
-                                // file the linker wrapped again): the chunk exports only
-                                // `default: module.exports`, so the printed call reads
-                                // `.default` to return `module.exports`, the same value
-                                // an unsplit `require()` returns.
-                                if kind == ImportKind::Require
+                            // A split `require()` whose target is CommonJS at link
+                            // time (for example a lifted `module.exports = require()`
+                            // file the linker wrapped again): the chunk exports only
+                            // `default: module.exports`, so the printed call reads
+                            // `.default` to return `module.exports`, the same value
+                            // an unsplit `require()` returns.
+                            if kind == ImportKind::Require
+                                && is_external_dyn
+                                && rec_source_index.is_valid()
+                                && col_ref!(exports_kind)[rec_source_index.get() as usize]
+                                    == ExportsKind::Cjs
+                            {
+                                col!(import_records_list)[id].as_mut_slice()
+                                    [import_record_index as usize]
+                                    .flags
+                                    .insert(ImportRecordFlags::CROSS_CHUNK_REQUIRE_DEFAULT);
+                            }
+
+                            // If this wasn't originally a "require()" call, then we may need
+                            // to wrap this in a call to the "__toESM" wrapper to convert from
+                            // CommonJS semantics to ESM semantics.
+                            //
+                            // Unfortunately this adds some additional code since the conversion
+                            // is somewhat complex. As an optimization, we can avoid this if the
+                            // following things are true:
+                            //
+                            // - The import is an ES module statement (e.g. not an "import()" expression)
+                            // - The ES module namespace object must not be captured
+                            // - The "default" and "__esModule" exports must not be accessed
+                            //
+                            if kind != ImportKind::Require
+                                && (kind != ImportKind::Stmt
+                                    || rec_flags.contains(ImportRecordFlags::CONTAINS_IMPORT_STAR)
+                                    || rec_flags
+                                        .contains(ImportRecordFlags::CONTAINS_DEFAULT_ALIAS)
+                                    || rec_flags
+                                        .contains(ImportRecordFlags::CONTAINS_ES_MODULE_ALIAS))
+                            {
+                                // For dynamic imports to cross-chunk CJS modules, we need extra
+                                // unwrapping in js_printer (.then((m)=>__toESM(m.default))).
+                                // For other cases (static imports, truly external), use standard wrapping.
+                                if rec_source_index.is_valid()
                                     && is_external_dyn
-                                    && rec_source_index.is_valid()
                                     && col_ref!(exports_kind)[rec_source_index.get() as usize]
                                         == ExportsKind::Cjs
                                 {
+                                    // Cross-chunk dynamic import to CJS - needs special handling in printer
                                     col!(import_records_list)[id].as_mut_slice()
                                         [import_record_index as usize]
                                         .flags
-                                        .insert(ImportRecordFlags::CROSS_CHUNK_REQUIRE_DEFAULT);
+                                        .insert(ImportRecordFlags::WRAP_WITH_TO_ESM);
+                                    to_esm_uses += 1;
+                                } else if kind != ImportKind::Dynamic {
+                                    // Static imports to external CJS modules need __toESM wrapping
+                                    col!(import_records_list)[id].as_mut_slice()
+                                        [import_record_index as usize]
+                                        .flags
+                                        .insert(ImportRecordFlags::WRAP_WITH_TO_ESM);
+                                    to_esm_uses += 1;
                                 }
-
-                                // If this wasn't originally a "require()" call, then we may need
-                                // to wrap this in a call to the "__toESM" wrapper to convert from
-                                // CommonJS semantics to ESM semantics.
-                                //
-                                // Unfortunately this adds some additional code since the conversion
-                                // is somewhat complex. As an optimization, we can avoid this if the
-                                // following things are true:
-                                //
-                                // - The import is an ES module statement (e.g. not an "import()" expression)
-                                // - The ES module namespace object must not be captured
-                                // - The "default" and "__esModule" exports must not be accessed
-                                //
-                                if kind != ImportKind::Require
-                                    && (kind != ImportKind::Stmt
-                                        || rec_flags
-                                            .contains(ImportRecordFlags::CONTAINS_IMPORT_STAR)
-                                        || rec_flags
-                                            .contains(ImportRecordFlags::CONTAINS_DEFAULT_ALIAS)
-                                        || rec_flags
-                                            .contains(ImportRecordFlags::CONTAINS_ES_MODULE_ALIAS))
-                                {
-                                    // For dynamic imports to cross-chunk CJS modules, we need extra
-                                    // unwrapping in js_printer (.then((m)=>__toESM(m.default))).
-                                    // For other cases (static imports, truly external), use standard wrapping.
-                                    if rec_source_index.is_valid()
-                                        && is_external_dyn
-                                        && col_ref!(exports_kind)[rec_source_index.get() as usize]
-                                            == ExportsKind::Cjs
-                                    {
-                                        // Cross-chunk dynamic import to CJS - needs special handling in printer
-                                        col!(import_records_list)[id].as_mut_slice()
-                                            [import_record_index as usize]
-                                            .flags
-                                            .insert(ImportRecordFlags::WRAP_WITH_TO_ESM);
-                                        to_esm_uses += 1;
-                                    } else if kind != ImportKind::Dynamic {
-                                        // Static imports to external CJS modules need __toESM wrapping
-                                        col!(import_records_list)[id].as_mut_slice()
-                                            [import_record_index as usize]
-                                            .flags
-                                            .insert(ImportRecordFlags::WRAP_WITH_TO_ESM);
-                                        to_esm_uses += 1;
-                                    }
-                                    // Dynamic imports to truly external modules: no wrapping (preserve native format)
-                                }
+                                // Dynamic imports of an ES module chunk or a truly external module: no wrapping
                             }
                         }
                         continue;

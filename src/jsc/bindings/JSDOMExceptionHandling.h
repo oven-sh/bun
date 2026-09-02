@@ -27,10 +27,6 @@
 #include "wtf/text/ASCIILiteral.h"
 #include <JavaScriptCore/ThrowScope.h>
 
-namespace JSC {
-class TopExceptionScope;
-}
-
 namespace WebCore {
 
 class DeferredPromise;
@@ -55,7 +51,6 @@ WEBCORE_EXPORT JSC::EncodedJSValue rejectPromiseWithGetterTypeError(JSC::JSGloba
 WEBCORE_EXPORT JSC::EncodedJSValue rejectPromiseWithThisTypeError(DeferredPromise&, ASCIILiteral interfaceName, ASCIILiteral operationName);
 WEBCORE_EXPORT JSC::EncodedJSValue rejectPromiseWithThisTypeError(JSC::JSGlobalObject&, ASCIILiteral interfaceName, ASCIILiteral operationName);
 
-String retrieveErrorMessage(JSC::JSGlobalObject&, JSC::VM&, JSC::JSValue exception, JSC::TopExceptionScope&);
 WEBCORE_EXPORT void reportException(JSC::JSGlobalObject*, JSC::JSValue exception);
 WEBCORE_EXPORT void reportException(JSC::JSGlobalObject*, JSC::Exception*);
 

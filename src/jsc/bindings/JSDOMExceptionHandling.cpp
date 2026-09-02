@@ -80,23 +80,6 @@ void reportException(JSGlobalObject* lexicalGlobalObject, JSValue exceptionValue
     reportException(lexicalGlobalObject, exception);
 }
 
-String retrieveErrorMessage(JSGlobalObject& lexicalGlobalObject, VM& vm, JSValue exception, TopExceptionScope& topExceptionScope)
-{
-    // FIXME: <http://webkit.org/b/115087> Web Inspector: WebCore::reportException should not evaluate JavaScript handling exceptions
-    // If this is a custom exception object, call toString on it to try and get a nice string representation for the exception.
-    String errorMessage;
-    if (auto* error = dynamicDowncast<ErrorInstance>(exception))
-        errorMessage = error->sanitizedToString(&lexicalGlobalObject);
-    else
-        errorMessage = exception.toWTFString(&lexicalGlobalObject);
-
-    // We need to clear any new exception that may be thrown in the toString() call above.
-    // reportException() is not supposed to be making new exceptions.
-    (void)topExceptionScope.tryClearException();
-    vm.clearLastException();
-    return errorMessage;
-}
-
 JSValue createDOMException(JSGlobalObject* lexicalGlobalObject, ExceptionCode ec, const String& message, const String& extra)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);

@@ -30,6 +30,7 @@ pub(crate) type CssCol = Option<CssAstRef>;
 use bun_ast::import_record;
 use bun_core::strings;
 
+use crate::options::ModuleType;
 use bun_ast::ast_result::Ast;
 use bun_ast::{CharFreq, ExportsKind, Ref, Scope, SlotCounts, StoreStr, TlaCheck};
 use bun_ast::{part, symbol};
@@ -43,13 +44,16 @@ pub type TopLevelSymbolToParts = bun_ast::ast_result::TopLevelSymbolToParts;
 // `BundledAstColumns` (`items_named_imports()`,
 // `items_named_exports()`, …) at `crate::bundled_ast::*`.
 //
-// 26 fields ≤ `multi_array_list::MAX_FIELDS` (32).
+// 29 fields ≤ `multi_array_list::MAX_FIELDS` (32).
 
 pub struct BundledAst<'arena> {
     pub(crate) approximate_newline_count: u32,
     pub(crate) nested_scope_slot_counts: SlotCounts,
 
     pub(crate) exports_kind: ExportsKind,
+
+    /// Extension or package.json `"type"`, not syntax. `Esm` prints `__toESM(.., 1)`.
+    pub(crate) module_type: ModuleType,
 
     /// These are stored at the AST level instead of on individual AST nodes so
     /// they can be manipulated efficiently without a full AST traversal
@@ -106,6 +110,7 @@ bun_collections::multi_array_columns! {
         approximate_newline_count: u32,
         nested_scope_slot_counts: SlotCounts,
         exports_kind: ExportsKind,
+        module_type: ModuleType,
         import_records: import_record::List<'arena>,
         hashbang: StoreStr,
         export_default_alias_of_import: Ref,
@@ -163,6 +168,7 @@ impl<'arena> BundledAst<'arena> {
             approximate_newline_count: 0,
             nested_scope_slot_counts: SlotCounts::default(),
             exports_kind: ExportsKind::None,
+            module_type: ModuleType::Unknown,
             import_records: import_record::List::new_in(arena),
             hashbang: StoreStr::EMPTY,
             export_default_alias_of_import: Ref::NONE,
@@ -296,6 +302,8 @@ impl<'arena> BundledAst<'arena> {
             nested_scope_slot_counts: ast.nested_scope_slot_counts,
 
             exports_kind: ast.exports_kind,
+            // `ParseTask::run` sets it from the resolver result, like `target`.
+            module_type: ModuleType::Unknown,
 
             import_records: ast.import_records,
 

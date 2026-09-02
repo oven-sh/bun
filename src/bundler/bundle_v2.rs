@@ -3769,6 +3769,7 @@ pub mod bv2_impl {
             source: &mut bun_ast::Source,
             loader: Loader,
             known_target: options::Target,
+            module_type: options::ModuleType,
         ) -> Result<IndexInt, AllocError> {
             let source_index = Index::init(u32::try_from(self.graph.ast.len()).expect("int cast"));
             let _ = self.graph.ast.append(JSAst::empty_in(self.graph.heap)); // OOM/capacity: fire-and-forget
@@ -3822,7 +3823,7 @@ pub mod bv2_impl {
                 side_effects: bun_ast::SideEffects::HasSideEffects,
                 jsx,
                 source_index: bun_ast::Index::init(source_index.get()),
-                module_type: options::ModuleType::Unknown,
+                module_type,
                 emit_decorator_metadata: false, // TODO
                 package_version: bun_ast::StoreStr::EMPTY,
                 loader: Some(loader),
@@ -7437,6 +7438,8 @@ pub mod bv2_impl {
                         // and `.clone()` where an owned copy is needed.
                         let source_loader: Loader =
                             this.graph.input_files.items_loader()[result_source_index];
+                        let source_module_type: options::ModuleType =
+                            this.graph.ast.items_module_type()[result_source_index];
 
                         let (reference_source_index, ssr_index) = if separate_ssr_graph {
                             // Enqueue two files, one in server graph, one in ssr graph.
@@ -7476,6 +7479,7 @@ pub mod bv2_impl {
                                     &mut ssr_source,
                                     source_loader,
                                     Target::ServerComponentsSsr,
+                                    source_module_type,
                                 )
                                 .expect("oom");
 
@@ -7499,6 +7503,7 @@ pub mod bv2_impl {
                                     &mut server_source,
                                     source_loader,
                                     Target::Browser,
+                                    source_module_type,
                                 )
                                 .expect("oom");
 

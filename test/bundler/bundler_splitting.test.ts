@@ -957,6 +957,493 @@ describe("bundler", () => {
     ],
   });
 
+  // A re-export from a `"sideEffects": false` barrel prints nothing: the
+  // importer binds straight to the module that declares the name. So an entry
+  // point reaches, through the barrel, only the modules it uses, and a module
+  // only an import() uses lives in that import()'s chunk.
+  const sideEffectFreeBarrel = {
+    "/node_modules/pkg/package.json": JSON.stringify({ name: "pkg", main: "index.js", sideEffects: false }),
+    "/node_modules/pkg/index.js": /* js */ `
+      export { A } from './a.js'
+      export { B } from './b.js'
+    `,
+    "/node_modules/pkg/a.js": /* js */ `
+      export const A = 'AAAA'
+    `,
+    "/node_modules/pkg/b.js": /* js */ `
+      export const B = 'BBBB_MARK'
+    `,
+  };
+
+  itBundled("splitting/SideEffectFreeBarrelLeavesLazyModulesToTheirChunk", {
+    files: {
+      ...sideEffectFreeBarrel,
+      "/entry.js": /* js */ `
+        import { A } from 'pkg'
+        console.log(A)
+        import('./lazy.js').then(m => m.run())
+      `,
+      "/lazy.js": /* js */ `
+        import { B } from 'pkg'
+        export function run() { console.log(B) }
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      expect(jsOutputs(api)).toEqual(["entry.js", "lazy.js"]);
+      api.expectFile("/out/entry.js").toContain("AAAA");
+      api.expectFile("/out/entry.js").not.toContain("BBBB_MARK");
+      expect(jsOutput(api, "lazy")).toContain("BBBB_MARK");
+      expect(jsOutput(api, "lazy")).not.toContain("import ");
+    },
+    run: { file: "/out/entry.js", stdout: "AAAA\nBBBB_MARK" },
+  });
+
+  // The same through a namespace whose properties bind directly.
+  itBundled("splitting/SideEffectFreeBarrelNamespacePropertyAccess", {
+    files: {
+      ...sideEffectFreeBarrel,
+      "/entry.js": /* js */ `
+        import * as pkg from 'pkg'
+        console.log(pkg.A)
+        import('./lazy.js').then(m => m.run())
+      `,
+      "/lazy.js": /* js */ `
+        import * as pkg from 'pkg'
+        export function run() { console.log(pkg.B) }
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      expect(jsOutputs(api)).toEqual(["entry.js", "lazy.js"]);
+      api.expectFile("/out/entry.js").not.toContain("BBBB_MARK");
+      expect(jsOutput(api, "lazy")).toContain("BBBB_MARK");
+    },
+    run: { file: "/out/entry.js", stdout: "AAAA\nBBBB_MARK" },
+  });
+
+  // Without splitting, each entry point's bundle holds only what that entry
+  // uses from the barrel.
+  itBundled("splitting/SideEffectFreeBarrelPerEntryWithoutSplitting", {
+    files: {
+      ...sideEffectFreeBarrel,
+      "/e1.js": /* js */ `
+        import { A } from 'pkg'
+        console.log(A)
+      `,
+      "/e2.js": /* js */ `
+        import { B } from 'pkg'
+        console.log(B)
+      `,
+    },
+    entryPoints: ["/e1.js", "/e2.js"],
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      api.expectFile("/out/e1.js").toContain("AAAA");
+      api.expectFile("/out/e1.js").not.toContain("BBBB_MARK");
+      api.expectFile("/out/e2.js").toContain("BBBB_MARK");
+      api.expectFile("/out/e2.js").not.toContain("AAAA");
+    },
+    run: [
+      { file: "/out/e1.js", stdout: "AAAA" },
+      { file: "/out/e2.js", stdout: "BBBB_MARK" },
+    ],
+  });
+
+  // A barrel that does not declare itself side-effect free still loads every
+  // module it re-exports wherever it is imported: b.js may have side effects,
+  // and they run before the entry's own code.
+  itBundled("splitting/BarrelWithSideEffectsLoadsEveryReExport", {
+    files: {
+      "/entry.js": /* js */ `
+        import { A } from './lib/index.js'
+        console.log(A)
+        import('./lazy.js').then(m => m.run())
+      `,
+      "/lazy.js": /* js */ `
+        import { B } from './lib/index.js'
+        export function run() { console.log(B) }
+      `,
+      "/lib/index.js": /* js */ `
+        export { A } from './a.js'
+        export { B } from './b.js'
+      `,
+      "/lib/a.js": /* js */ `
+        export const A = 'AAAA'
+      `,
+      "/lib/b.js": /* js */ `
+        console.log('b runs')
+        export const B = 'BBBB_MARK'
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      expect(jsOutputs(api)).toEqual(["entry.js", "lazy.js"]);
+      api.expectFile("/out/entry.js").toContain("BBBB_MARK");
+    },
+    run: { file: "/out/entry.js", stdout: "b runs\nAAAA\nBBBB_MARK" },
+  });
+
+  // Ported from Rollup's chunking-form/samples/chunk-assigment-in-dynamic.
+  itBundled("splitting/SideEffectFreeCommonJSSharedByTwoLazyChunks", {
+    files: {
+      "/node_modules/icons/package.json": JSON.stringify({ name: "icons", main: "c.js", sideEffects: false }),
+      "/node_modules/icons/c.js": /* js */ `
+        exports.preFaPrint = { foo: 1 };
+        exports.faPrint = exports.preFaPrint;
+      `,
+      "/entry.js": /* js */ `
+        const a = await import('./a.js')
+        const b = await import('./b.js')
+        console.log(a.A().icon.foo, b.B().icon.foo)
+      `,
+      "/a.js": /* js */ `
+        import { faPrint } from 'icons'
+        export function A() { return { icon: faPrint } }
+      `,
+      "/b.js": /* js */ `
+        import { faPrint } from 'icons'
+        export function B() { return { icon: faPrint } }
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: { file: "/out/entry.js", stdout: "1 1" },
+  });
+
+  // Ported from Rollup's chunking-form/samples/deoptimized-module-with-dynamic-import.
+  itBundled("splitting/SideEffectFreeModuleWithTopLevelDynamicImport", {
+    files: {
+      "/node_modules/loader/package.json": JSON.stringify({ name: "loader", main: "index.js", sideEffects: false }),
+      "/node_modules/loader/index.js": /* js */ `
+        export function fn() { return 'fn' }
+        import('./cjs.js')
+      `,
+      "/node_modules/loader/cjs.js": /* js */ `
+        export const cjs = 'cjs-value'
+      `,
+      "/entry.js": /* js */ `
+        import { value, loadCjs } from './a.js'
+        console.log(value)
+        loadCjs().then(m => console.log(m.cjs))
+      `,
+      "/a.js": /* js */ `
+        import { fn } from 'loader'
+        export const value = fn()
+        export function loadCjs() { return import('loader/cjs.js') }
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: { file: "/out/entry.js", stdout: "fn\ncjs-value" },
+  });
+
+  // Ported from Rollup's chunking-form/samples/namespace-reexport-side-effect-cache.
+  itBundled("splitting/SideEffectFreeStarBarrelKeepsEffectForEveryEntry", {
+    files: {
+      "/node_modules/lib/package.json": JSON.stringify({
+        name: "lib",
+        main: "index.js",
+        sideEffects: ["./foo.js", "./effect.js"],
+      }),
+      "/node_modules/lib/index.js": `export * from './foo.js'`,
+      "/node_modules/lib/foo.js": /* js */ `
+        export { foo } from './fooImpl.js'
+        import './effect.js'
+      `,
+      "/node_modules/lib/effect.js": `console.log('side effect')`,
+      "/node_modules/lib/fooImpl.js": `export const foo = 'foo'`,
+      "/entry1.js": /* js */ `
+        import { foo } from 'lib'
+        console.log('entry1', foo)
+      `,
+      "/entry2.js": /* js */ `
+        import { foo } from 'lib'
+        console.log('entry2', foo)
+      `,
+    },
+    entryPoints: ["/entry1.js", "/entry2.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: [
+      { file: "/out/entry1.js", stdout: "side effect\nentry1 foo" },
+      { file: "/out/entry2.js", stdout: "side effect\nentry2 foo" },
+    ],
+  });
+
+  // Ported from Rollup's chunking-form/samples/side-effect-free-dependencies/module-side-effects-reexports-{1,2,3}.
+  for (const [name, main] of [
+    ["ExportFrom", `export { value } from 'dep1'`],
+    ["ImportThenExport", `import { value } from 'dep1'\nexport { value }`],
+    ["ExportStar", `export * from 'dep1'`],
+  ]) {
+    itBundled(`splitting/EntryReExportsThroughSideEffectFreeStarChain${name}`, {
+      files: {
+        "/node_modules/dep1/package.json": JSON.stringify({ name: "dep1", main: "index.js", sideEffects: false }),
+        "/node_modules/dep1/index.js": `export * from './dep2.js'`,
+        "/node_modules/dep1/dep2.js": `export const value = 42`,
+        "/main.js": main,
+        "/use.js": /* js */ `
+          import { value } from './main.js'
+          console.log(value)
+        `,
+      },
+      entryPoints: ["/main.js", "/use.js"],
+      splitting: true,
+      outdir: "/out",
+      format: "esm",
+      run: { file: "/out/use.js", stdout: "42" },
+    });
+  }
+
+  // Ported from Rollup's chunking-form/samples/side-effect-free-dependencies/module-side-effects-empty-imports.
+  itBundled("splitting/SideEffectFreeImportUnusedByOneEntry", {
+    files: {
+      "/node_modules/dep/package.json": JSON.stringify({ name: "dep", main: "index.js", sideEffects: false }),
+      "/node_modules/dep/index.js": /* js */ `
+        export default 'DEP_VALUE'
+        console.log('dep body')
+      `,
+      "/main1.js": /* js */ `
+        import value from 'dep'
+        console.log('main1', value)
+      `,
+      "/main2.js": /* js */ `
+        import value from 'dep'
+        console.log('main2')
+      `,
+    },
+    entryPoints: ["/main1.js", "/main2.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      expect(jsOutputs(api)).toEqual(["main1.js", "main2.js"]);
+      api.expectFile("/out/main1.js").toContain("DEP_VALUE");
+      api.expectFile("/out/main2.js").not.toContain("DEP_VALUE");
+      api.expectFile("/out/main2.js").not.toContain("import ");
+    },
+    run: [
+      { file: "/out/main1.js", stdout: "dep body\nmain1 DEP_VALUE" },
+      { file: "/out/main2.js", stdout: "main2" },
+    ],
+  });
+
+  // Ported from Rollup's function/samples/module-side-effects/reexports; lib.js still runs, as in esbuild.
+  for (const splitting of [false, true]) {
+    itBundled(`splitting/SideEffectFreeReExportRunsOnlyUsedModule${splitting ? "" : "NoSplitting"}`, {
+      files: {
+        "/node_modules/lib/package.json": JSON.stringify({ name: "lib", main: "lib.js", sideEffects: false }),
+        "/node_modules/lib/lib.js": /* js */ `
+          globalThis.effects.push('lib')
+          export { value as value1 } from './dep1.js'
+          export { value as value2 } from './dep2.js'
+        `,
+        "/node_modules/lib/dep1.js": /* js */ `
+          globalThis.effects.push('dep1')
+          export const value = 'dep1'
+        `,
+        "/node_modules/lib/dep2.js": /* js */ `
+          globalThis.effects.push('dep2')
+          export const value = 'dep2'
+        `,
+        "/setup.js": `globalThis.effects = []`,
+        "/entry.js": /* js */ `
+          import './setup.js'
+          import { value1 } from 'lib'
+          console.log(value1, JSON.stringify(globalThis.effects))
+        `,
+      },
+      entryPoints: ["/entry.js"],
+      splitting,
+      outdir: "/out",
+      format: "esm",
+      run: { file: "/out/entry.js", stdout: `dep1 ["dep1","lib"]` },
+    });
+  }
+
+  // Ported from Rollup's function/samples/tree-shake-module-side-effects-dependencies.
+  itBundled("splitting/SideEffectFreeModuleKeepsImpureDependencyInLazyChunk", {
+    files: {
+      "/node_modules/lib/package.json": JSON.stringify({ name: "lib", main: "dep.js", sideEffects: ["./effect.js"] }),
+      "/node_modules/lib/dep.js": /* js */ `
+        import './effect.js'
+        export const value = true
+      `,
+      "/node_modules/lib/effect.js": /* js */ `
+        import { updateSharedValue } from './shared.js'
+        updateSharedValue()
+      `,
+      "/node_modules/lib/shared.js": /* js */ `
+        export let sharedValue = 'original'
+        export function updateSharedValue() { sharedValue = 'updated' }
+      `,
+      "/entry.js": /* js */ `
+        import('./lazy.js').then(m => m.run())
+      `,
+      "/lazy.js": /* js */ `
+        import { value } from 'lib'
+        import { sharedValue } from 'lib/shared.js'
+        export function run() { console.log(value, sharedValue) }
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: { file: "/out/entry.js", stdout: "true updated" },
+  });
+
+  // Ported from Rolldown's tree_shaking/advanced_barrel_exports_bailout_dynamic_key.
+  itBundled("splitting/SideEffectFreeBarrelNamespaceComputedKey", {
+    files: {
+      ...sideEffectFreeBarrel,
+      "/entry.js": /* js */ `
+        import * as pkg from 'pkg'
+        console.log(pkg.A)
+        import('./lazy.js').then(m => m.run('B'))
+      `,
+      "/lazy.js": /* js */ `
+        import * as pkg from 'pkg'
+        export function run(key) { console.log(pkg[key]) }
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: { file: "/out/entry.js", stdout: "AAAA\nBBBB_MARK" },
+  });
+
+  // Ported from Rolldown's tree_shaking/advanced_barrel_exports2.
+  itBundled("splitting/SideEffectFreeRenamedNamespaceReExport", {
+    files: {
+      "/node_modules/pkg/package.json": JSON.stringify({ name: "pkg", main: "shared.js", sideEffects: false }),
+      "/node_modules/pkg/a.js": /* js */ `
+        export const c = 1000
+        export const b = 500
+        export const a = 100
+      `,
+      "/node_modules/pkg/c.js": `export * as c from './a.js'`,
+      "/node_modules/pkg/shared.js": /* js */ `
+        import { c } from './c.js'
+        export { c as a }
+      `,
+      "/entry.js": /* js */ `
+        import * as ns from 'pkg'
+        console.log(ns.a.b)
+        import('./lazy.js').then(m => m.run())
+      `,
+      "/lazy.js": /* js */ `
+        import * as ns from 'pkg'
+        export function run() { console.log(ns.a['a'], Object.keys(ns.a).sort().join()) }
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: { file: "/out/entry.js", stdout: "500\n100 a,b,c" },
+  });
+
+  // Ported from Rolldown's code_splitting/issue_8184.
+  itBundled("splitting/StaticAndDynamicCycleAcrossTwoEntries", {
+    files: {
+      "/dbp-1.js": `import './a.js'`,
+      "/dbp-activity-showcase.js": `import('./dbp-2.js').then(() => console.log('done'))`,
+      "/dbp-2.js": `import './b.js'`,
+      "/a.js": /* js */ `
+        import './c.js'
+        console.log('a')
+      `,
+      "/b.js": /* js */ `
+        import './a.js'
+        import './x.js'
+        console.log('b')
+      `,
+      "/c.js": /* js */ `
+        import('./a.js')
+        console.log('c')
+      `,
+      "/x.js": /* js */ `
+        console.log('x')
+        module.exports = 42
+      `,
+    },
+    entryPoints: ["/dbp-1.js", "/dbp-activity-showcase.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: [
+      { file: "/out/dbp-1.js", stdout: "c\na" },
+      { file: "/out/dbp-activity-showcase.js", stdout: "c\na\nx\nb\ndone" },
+    ],
+  });
+
+  // Ported from Rolldown's code_splitting/issue_5276_2.
+  itBundled("splitting/NamespaceImportAndDynamicImportOfSameModule", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as ns from './imp.js'
+        console.log(ns.imp2, ns.imp22)
+        import('./imp.js').then(m => console.log(m.imp22))
+      `,
+      "/imp.js": /* js */ `
+        export const imp2 = 2
+        export const imp22 = 22
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: { file: "/out/entry.js", stdout: "2 22\n22" },
+  });
+
+  // Ported from Rolldown's tree_shaking/unused_dynamic_imported_chunk.
+  itBundled("splitting/SideEffectFreeModuleDynamicImportInLiveFunction", {
+    files: {
+      "/node_modules/dep/package.json": JSON.stringify({ name: "dep", main: "index.js", sideEffects: false }),
+      "/node_modules/dep/index.js": /* js */ `
+        export async function loadTS() { return import('./dynamic.js') }
+      `,
+      "/node_modules/dep/dynamic.js": /* js */ `
+        console.log('dynamic')
+        export const ok = 'OK'
+      `,
+      "/entry.js": /* js */ `
+        import { loadTS } from 'dep'
+        console.log('entry')
+        loadTS().then(m => console.log(m.ok))
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      expect(jsOutputs(api)).toEqual(["dynamic.js", "entry.js"]);
+      api.expectFile("/out/entry.js").not.toContain('"OK"');
+      expect(jsOutput(api, "dynamic")).toContain('"OK"');
+    },
+    run: { file: "/out/entry.js", stdout: "entry\ndynamic\nOK" },
+  });
+
   // The chunks an output file imports, in statement order.
   const chunkImportsIn = (api: BundlerTestBundleAPI, name: string) =>
     [...api.readFile("/out/" + name).matchAll(/^import\b[^;]*?"\.\/([^"]+)";$/gms)].map(m => m[1]);

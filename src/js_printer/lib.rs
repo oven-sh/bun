@@ -1352,8 +1352,7 @@ pub struct Options<'a> {
 
     pub require_or_import_meta_for_source_callback: RequireOrImportMetaCallback,
 
-    /// The module type of the importing file (after linking), used to determine interop helper behavior.
-    /// Controls whether __toESM uses Node ESM semantics (isNodeMode=1 for .esm) or respects __esModule markers.
+    /// Module type of the file being printed. `Esm` prints `__toESM(.., 1)`, which ignores `__esModule`.
     pub input_module_type: bundle_opts::ModuleType,
     pub module_type: bundle_opts::Format,
 
@@ -2935,6 +2934,11 @@ pub(crate) mod __gated_printer {
                 self.print(b")");
 
                 if wrap_with_to_esm {
+                    if self.options.input_module_type == bundle_opts::ModuleType::Esm {
+                        self.print(b",");
+                        self.print_space();
+                        self.print(b"1");
+                    }
                     self.print(b")");
                 }
                 if wrap {

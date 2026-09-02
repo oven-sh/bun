@@ -107,11 +107,11 @@ console.log(favicon);
             "files": [
               {
                 "input": "client.html",
-                "path": "./client-2gf83hha.js",
+                "path": "./client-qjznw47b.js",
                 "loader": "js",
                 "isEntry": true,
                 "headers": {
-                  "etag": "whAPiONREUo",
+                  "etag": "l5IfNVyE54s",
                   "content-type": "text/javascript;charset=utf-8"
                 }
               },
@@ -121,7 +121,7 @@ console.log(favicon);
                 "loader": "html",
                 "isEntry": true,
                 "headers": {
-                  "etag": "0QzlnAGasio",
+                  "etag": "xh1kdn7wbmI",
                   "content-type": "text/html;charset=utf-8"
                 }
               },

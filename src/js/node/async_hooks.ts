@@ -38,15 +38,11 @@ function assertValidAsyncContextArray(array: unknown): array is ReadonlyArray<an
   // undefined is OK
   if (array === undefined) return true;
   // Otherwise, it must be an array
-  $assert(
-    Array.isArray(array),
-    "AsyncContextData must be an array or undefined, got",
-    Bun.inspect(array, { depth: 1 }),
-  );
+  $assert(Array.isArray(array), "AsyncContextData must be an array or undefined, got", array);
   // the array has to be even
-  $assert(array.length % 2 === 0, "AsyncContextData should be even-length, got", Bun.inspect(array, { depth: 1 }));
+  $assert(array.length % 2 === 0, "AsyncContextData should be even-length, got", array);
   // if it is zero-length, use undefined instead
-  $assert(array.length > 0, "AsyncContextData should be undefined if empty, got", Bun.inspect(array, { depth: 1 }));
+  $assert(array.length > 0, "AsyncContextData should be undefined if empty, got", array);
   for (var i = 0; i < array.length; i += 2) {
     $assert(
       array[i] instanceof AsyncLocalStorage,
@@ -285,7 +281,7 @@ class AsyncLocalStorage {
         $assert(
           sameValue(this.getStore(), expectedStore),
           "run: previous_value",
-          Bun.inspect(expectedStore),
+          expectedStore,
           "was not restored, i see",
           this.getStore(),
         );

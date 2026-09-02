@@ -29,16 +29,19 @@ describe("bundler", () => {
   // whichever name the (most used) parameter slot gets, one `with` body breaks
   // without the fix. `hoisted` and `merged` declare the pinned `var` twice, so
   // the reference that the `with` pins is a link to the function-level symbol,
-  // which has to keep its name too.
+  // which has to keep its name too. `braceless` declares the `var` in the
+  // `with` scope itself, which the hoisting walk starts above.
   const singleCharNames = [..."abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_$"];
   const withPinnedNamesSource = [
     ...singleCharNames.map(n => `function f_${n}(obj) { var ${n} = 1; obj.p; obj.p; with (obj) { return ${n}; } }`),
     "function hoisted(obj) { var t = 1; obj.p; obj.p; with (obj) { var t = 2; } return [t, obj.t]; }",
     "function merged(obj) { var t = 1; obj.p; obj.p; { var t = 2; with (obj) { return t; } } }",
+    "function braceless(obj) { obj.p; obj.p; with (obj) var t = 2; return [t, obj.t]; }",
     "const bad = [];",
     ...singleCharNames.map(n => `if (f_${n}({}) !== 1 || f_${n}({ ${n}: 9 }) !== 9) bad.push("${n}");`),
     `if (JSON.stringify([hoisted({}), hoisted({ t: 9 })]) !== "[[2,null],[1,2]]") bad.push("hoisted");`,
     `if (merged({}) !== 2 || merged({ t: 9 }) !== 9) bad.push("merged");`,
+    `if (JSON.stringify([braceless({}), braceless({ t: 9 })]) !== "[[2,null],[null,2]]") bad.push("braceless");`,
     "console.log(JSON.stringify(bad));",
   ].join("\n");
   itBundled("minify/WithStatementPinnedNameNotReusedByEnclosingScope", {

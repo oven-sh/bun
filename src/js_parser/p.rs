@@ -3275,6 +3275,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // Check for collisions that would prevent to hoisting "var" symbols up to the enclosing function scope
             if let Some(scope_parent) = scope_ref.parent {
                 let scope_strict_mode = scope_ref.strict_mode;
+                let scope_is_with = scope_ref.kind == js_ast::scope::Kind::With;
                 // The loop below never inserts into `scope.members` itself (only ancestors), so
                 // snapshotting `(name_ptr, Member)` pairs up front preserves iteration semantics
                 // and lets us re-borrow `*scope` mutably inside the body.
@@ -3317,6 +3318,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                     if !self.symbols[symbol_idx].is_hoisted() {
                         continue;
+                    }
+
+                    // `with (obj) var t = 2` declares `t` in the "with" scope
+                    // itself. The walk below starts at the parent, so it does
+                    // not see that scope.
+                    if scope_is_with {
+                        self.set_must_not_be_renamed_through_links(value.ref_);
                     }
 
                     let mut __scope: Option<js_ast::StoreRef<Scope>> = Some(scope_parent);

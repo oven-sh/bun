@@ -1021,6 +1021,10 @@ async function runTests() {
       }
       if (isAsan) env.BUN_FEATURE_FLAG_NO_ORPHANS = "1";
 
+      // A report left behind by an earlier run on a persistent agent must not
+      // stand in for one this batch failed to write.
+      rmSync(junitPath, { force: true });
+
       const byPath = new Map(bucketFiles.map(t => [join("test", t).replaceAll("\\", "/"), t]));
       const norm = p =>
         byPath.get(

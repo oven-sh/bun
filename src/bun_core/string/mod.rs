@@ -586,9 +586,10 @@ impl String {
         debug_assert!(self.is_thread_shareable());
     }
     /// WebIDL `USVString` conversion: every unpaired surrogate becomes
-    /// U+FFFD. Returns `self` as is when it is well-formed (an 8-bit string
-    /// holds no surrogate) and `OUT_OF_MEMORY` when WTF could not allocate
-    /// the replacement.
+    /// U+FFFD. Returns `self` as is when it has none, and `OUT_OF_MEMORY`
+    /// when WTF could not allocate the replacement. Only UTF-16 is checked:
+    /// Latin-1 cannot hold a surrogate, and JSC decodes an encoded surrogate
+    /// in UTF-8 to U+FFFD.
     pub fn into_well_formed(self) -> Self {
         if !self.is_utf16() {
             return self;

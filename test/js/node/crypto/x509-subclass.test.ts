@@ -194,4 +194,43 @@ IQCMSgMdAzb2vAAqjc0c5ZSIbx+H6OyzIa47vJJAoL0aXAIgCLUr3IR6L/NJO5Vm
     expect(v3CaFalse.ca).toBe(false);
     expect(v3CaFalse.toLegacyObject().ca).toBe(false);
   });
+
+  // Self-signed X.509 v3 certificate with basicConstraints CA:TRUE and no
+  // keyUsage extension. Absent keyUsage allows all usages, so this is a CA.
+  const v3CaTrueNoKeyUsage = new X509Certificate(`-----BEGIN CERTIFICATE-----
+MIIBeDCCAR+gAwIBAgIUHT2JuI0NIIyi6TVSMFnmvrkWn4gwCgYIKoZIzj0EAwIw
+EjEQMA4GA1UEAwwHTm9LVS1DQTAeFw0yNjA5MDIwOTUzNTZaFw0zNjA4MzAwOTUz
+NTZaMBIxEDAOBgNVBAMMB05vS1UtQ0EwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNC
+AAR7xWmKAtFVZyRs9FzWASJh7oJyVXMkl95YtB6O8l1fMUFAWdtmnMs5Zfnyce5H
+69BGppFAfRacFynbTkIYr1soo1MwUTAdBgNVHQ4EFgQUjwEK42UtlVwNOTHr2Uxu
+z6WhDQMwHwYDVR0jBBgwFoAUjwEK42UtlVwNOTHr2Uxuz6WhDQMwDwYDVR0TAQH/
+BAUwAwEB/zAKBggqhkjOPQQDAgNHADBEAiAFadic93/x4K/rc/F3d8NKIHzXfKJv
+rDfzgtk7kZ3sSAIgebdk3gZ/tzu0HcYN84YDIgmUNH3dFN/DL8sG1pWD94g=
+-----END CERTIFICATE-----
+`);
+
+  // Self-signed X.509 v3 certificate with basicConstraints CA:TRUE but a
+  // keyUsage extension that omits keyCertSign. Not a CA, matching Node.
+  const v3CaTrueNoCertSign = new X509Certificate(`-----BEGIN CERTIFICATE-----
+MIIBizCCATGgAwIBAgIUDbrkpWKP+EuGiDj88iIx2jmiWWAwCgYIKoZIzj0EAwIw
+EzERMA8GA1UEAwwIQmFkS1UtQ0EwHhcNMjYwOTAyMDk1MzU2WhcNMzYwODMwMDk1
+MzU2WjATMREwDwYDVQQDDAhCYWRLVS1DQTBZMBMGByqGSM49AgEGCCqGSM49AwEH
+A0IABHvFaYoC0VVnJGz0XNYBImHugnJVcySX3li0Ho7yXV8xQUBZ22acyzll+fJx
+7kfr0EamkUB9FpwXKdtOQhivWyijYzBhMB0GA1UdDgQWBBSPAQrjZS2VXA05MevZ
+TG7PpaENAzAfBgNVHSMEGDAWgBSPAQrjZS2VXA05MevZTG7PpaENAzAPBgNVHRMB
+Af8EBTADAQH/MA4GA1UdDwEB/wQEAwIHgDAKBggqhkjOPQQDAgNIADBFAiEA3Ol0
+RcxWXw7xfL0LpSYylWfqVrkTE2JUWaiLMwKhiN8CIEK0D0bR3jd5uFG7QUYudOI9
+FnsAZB/i9iiFjmi19obo
+-----END CERTIFICATE-----
+`);
+
+  test("is true for a v3 CA:TRUE certificate with no keyUsage extension", () => {
+    expect(v3CaTrueNoKeyUsage.ca).toBe(true);
+    expect(v3CaTrueNoKeyUsage.toLegacyObject().ca).toBe(true);
+  });
+
+  test("is false for a v3 CA:TRUE certificate whose keyUsage omits keyCertSign", () => {
+    expect(v3CaTrueNoCertSign.ca).toBe(false);
+    expect(v3CaTrueNoCertSign.toLegacyObject().ca).toBe(false);
+  });
 });

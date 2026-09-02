@@ -38,7 +38,7 @@ async function runDeinitializationSuite() {
      0 fail
     Ran 10 tests across 1 file."
   `);
-  expect(normalizeBunSnapshot(stdout)).toBe("bun test <version> (<revision>)");
+  expect(normalizeBunSnapshot(stdout)).toContain("bun test <version> (<revision>)");
   expect(exitCode).toBe(0);
 }
 

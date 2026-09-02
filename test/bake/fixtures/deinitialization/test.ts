@@ -17,7 +17,7 @@ async function fetchErrorCode(request: Promise<Response>): Promise<string> {
     await request;
     return "fulfilled";
   } catch (e: any) {
-    return e.code;
+    return e.code ?? String(e);
   }
 }
 
@@ -45,27 +45,27 @@ async function run({
   });
   const origin = server.url.origin;
 
-  // Serve plugins load on the first bundle, not when the server starts.
-  expect(globalThis.pluginLoaded).toBe(pluginLoadedBefore);
-
-  const opens: Promise<void>[] = [];
   const closes: Promise<CloseEvent>[] = [];
-  for (let i = 0; i < websocket; i++) {
-    const ws = new WebSocket(origin + "/_bun/hmr");
-    const open = Promise.withResolvers<void>();
-    const close = Promise.withResolvers<CloseEvent>();
-    ws.onopen = () => open.resolve();
-    ws.onclose = event => {
-      open.reject(new Error(`websocket ${i} closed before it opened (code ${event.code})`));
-      close.resolve(event);
-    };
-    opens.push(open.promise);
-    closes.push(close.promise);
-  }
-  await Promise.all(opens);
-
   let stopped: Promise<void> | undefined;
   try {
+    // Serve plugins load on the first bundle, not when the server starts.
+    expect(globalThis.pluginLoaded).toBe(pluginLoadedBefore);
+
+    const opens: Promise<void>[] = [];
+    for (let i = 0; i < websocket; i++) {
+      const ws = new WebSocket(origin + "/_bun/hmr");
+      const open = Promise.withResolvers<void>();
+      const close = Promise.withResolvers<CloseEvent>();
+      ws.onopen = () => open.resolve();
+      ws.onclose = event => {
+        open.reject(new Error(`websocket ${i} closed before it opened (code ${event.code})`));
+        close.resolve(event);
+      };
+      opens.push(open.promise);
+      closes.push(close.promise);
+    }
+    await Promise.all(opens);
+
     if (sendAnyRequests) {
       const request = fetch(origin, { keepalive: false });
       const requestErrorCode = closeActiveConnections ? fetchErrorCode(request) : undefined;
@@ -98,6 +98,8 @@ async function run({
     // The closure captures `server`. Left in place it would root the JS Server
     // wrapper through every GC below.
     globalThis.callback = undefined;
+    // A case that failed before its own stop() must not leave a server behind.
+    stopped ??= server.stop(true);
   }
   expect(callbackCalls).toBe(sendAnyRequests ? 1 : 0);
 

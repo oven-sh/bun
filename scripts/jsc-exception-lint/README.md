@@ -153,10 +153,21 @@ Kinds of finding:
    sources) is classified from the recorded summary.
 5. Otherwise the JSC convention applies: a parameter of type
    `JSGlobalObject*` (or a subclass) or `ThrowScope&` means it can throw.
-   Calls through function pointers use the signature the same way. An
-   `extern "C"` function with no C++ body is implemented in Rust; it runs
-   under its own scope and signals a throw through its return value, so it
-   is a conditional thrower.
+   Calls through function pointers use the signature the same way. Two
+   refinements: the cell boilerplate (`create`, `createStructure`,
+   `finishCreation`, `createPrototype`, `getConstructor`, `prototype`,
+   `getDOMStructure` and friends) with a `VM&` first parameter cannot
+   throw, and an `extern "C"` function with no C++ body is implemented in
+   Rust; it runs under its own scope and signals a throw through its
+   return value, so it is a conditional thrower.
+
+The committed summaries hold only the functions for which the convention
+(rule 5) is wrong: a function that takes a global object but cannot throw,
+a function with no scope of its own that passes the state through, or the
+reverse. That is why they are long: the convention is wrong for most
+helpers that take a global object only to reach the VM or a structure.
+On the current tree the build reports about 90 findings with them and
+about 950 without.
 
 Path sensitivity is limited to the exception state. A `toNumber()` guarded
 by `isNumber()` is still reported because the slow path exists. Use

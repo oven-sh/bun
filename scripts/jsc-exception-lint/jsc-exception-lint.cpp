@@ -574,14 +574,17 @@ public:
       if (file.empty() || !matchesAny(file, under) ||
           file.find("vendor/WebKit") != std::string::npos)
         continue;
-      // The last column says whether the fallback classification (the
-      // rules after the import lookup in computeSummary) already gives this
-      // summary; the driver drops those rows from the committed files.
-      bool carrier = hasThrowCarrierParam(FD);
-      bool conventional =
-          !FD->isExternC() && !s.consumesException &&
-          ((carrier && s.kind == Summary::MayThrow && s.verifiesAtEntry) ||
-           (!carrier && s.kind == Summary::Nothrow && !s.verifiesAtEntry));
+      // The last column says whether the fallback classification already
+      // gives this summary; the driver drops those rows from the committed
+      // files. extern "C" functions never count: without a body they are
+      // modeled as Rust-implemented conditional throwers, which is not what
+      // a C++ body of theirs does.
+      Summary fallback = fallbackSummary(FD);
+      bool conventional = !FD->isExternC() && !s.consumesException &&
+                          s.kind == fallback.kind &&
+                          s.verifiesAtEntry == fallback.verifiesAtEntry &&
+                          (s.kind != Summary::Transparent ||
+                           s.exitStates == fallback.exitStates);
       os << mangledKey(FD) << "\t" << summaryKey(FD) << "\t"
          << Summary::kindName(s.kind) << "\t" << s.exitStates << "\t"
          << (s.verifiesAtEntry ? "1" : "0") << "\t" << s.why << "\t"
@@ -728,6 +731,27 @@ private:
       }
     }
 
+    return fallbackSummary(FD);
+  }
+
+  // The classification of a function nothing else knows about: no explicit
+  // entry, no visible body, no imported summary. The export marks the rows
+  // these rules already produce so the committed files can leave them out.
+  static Summary fallbackSummary(const FunctionDecl *FD) {
+    Summary s;
+
+    // The JSC cell boilerplate: create(VM&, ...), createStructure(VM&, ...),
+    // finishCreation(VM&, ...), createPrototype(VM&, ...) and the rest of
+    // the family take a global object to install properties and structures,
+    // and do not run JavaScript. The idiom is the VM& first parameter; the
+    // functions of the same name that can throw take the global object
+    // first (SerializedScriptValue::create(JSGlobalObject&, ...)).
+    if (isCellBoilerplate(FD)) {
+      s.kind = Summary::Nothrow;
+      s.why = "no visible body; JSC cell boilerplate taking VM& first";
+      return s;
+    }
+
     // An extern "C" function with no body in any C++ translation unit is
     // implemented in Rust. The Rust side runs under its own exception
     // scope and reports a throw with a sentinel return value (empty
@@ -751,6 +775,30 @@ private:
     s.kind = Summary::Nothrow;
     s.why = "no visible body; no throw carrier parameter";
     return s;
+  }
+
+  static bool isCellBoilerplate(const FunctionDecl *FD) {
+    static const char *const names[] = {
+        "create",          "createStructure",       "finishCreation",
+        "createPrototype", "createConstructor",     "getConstructor",
+        "prototype",       "prototypeForStructure", "getDOMStructure",
+        "getDOMPrototype", "getDOMConstructor",     "initializeProperties",
+        "subspaceFor",     "subspaceForImpl",
+    };
+    if (!FD->getIdentifier() || FD->getNumParams() == 0)
+      return false;
+    StringRef n = FD->getName();
+    bool named = false;
+    for (const char *name : names)
+      if (n == name)
+        named = true;
+    if (!named)
+      return false;
+    QualType first = FD->getParamDecl(0)->getType();
+    if (!first->isReferenceType())
+      return false;
+    const CXXRecordDecl *RD = first.getNonReferenceType()->getAsCXXRecordDecl();
+    return RD && qualifiedName(RD) == "JSC::VM";
   }
 
   // The callee of a call expression, or null for indirect calls.

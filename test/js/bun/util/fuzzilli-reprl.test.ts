@@ -29,9 +29,10 @@ const isFuzzilliBuild = typeof fuzzilli === "function";
 
 // symbolize=0: ASAN would otherwise run llvm-symbolizer over every frame of
 // the fuzz binary, which takes seconds. The report header is enough here.
+// Nothing else is set, so the signal handling comes from __asan_default_options.
 const crashEnv = {
   ...bunEnv,
-  ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "symbolize=0", "abort_on_error=1"].filter(Boolean).join(":"),
+  ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "symbolize=0"].filter(Boolean).join(":"),
 };
 
 // A crash in the REPRL child must leave an ASAN report on stderr. The REPRL

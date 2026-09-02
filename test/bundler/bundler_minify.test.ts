@@ -1754,6 +1754,7 @@ describe("bundler", () => {
         import { imported } from "./other.js";
         function g(...a) { return a.join(","); }
         const h = (...a) => a.join(",");
+        const flag = g();
         let never = (x) => x;
         let assigned = (x) => x;
         assigned = (x) => x + 1;
@@ -1764,8 +1765,12 @@ describe("bundler", () => {
         export function intoGlobal() { const t = f(); return console.log(t); }
         export function intoThis() { const t = f(); return g(this, t); }
         export function intoLocalFunction() { const t = f(); return later(t); function later(x) { return x; } }
+        export function intoAndBranchLiteral() { const t = 1; return flag && t; }
 
         export function keepAssigned() { const keep = f(); return assigned(keep); }
+        export function keepAndBranch() { const keep = f(); return flag && keep; }
+        export function keepOrBranch() { const keep = f(); return flag || keep; }
+        export function keepNullishBranch() { const keep = f(); return flag ?? keep; }
         export function keepUnbound() { const keep = f(); return unbound(keep); }
         export function keepGetter(o) { const keep = f(); return o.m(keep); }
         export function keepThisProperty() { const keep = f(); return this.m(keep); }
@@ -1786,7 +1791,46 @@ describe("bundler", () => {
       expect(code).toContain("return console.log(f());");
       expect(code).toContain("return g(this, f());");
       expect(code).toContain("return later(f());");
-      expect(code.match(/let keep = f\(\);/g)).toHaveLength(6);
+      expect(code).toContain("return flag && 1;");
+      expect(code.match(/let keep = f\(\);/g)).toHaveLength(9);
+    },
+  });
+
+  // The cases of a switch share one scope but are visited one at a time, so a
+  // declaration in one case can have no visited use yet when its case is done.
+  itBundled("minify/UnusedLocalsKeptAcrossSwitchCases", {
+    files: {
+      "/entry.js": /* js */ `
+        function f(x) { switch (x) { case 1: let y = 42; case 2: return y; } }
+        console.log(f(1));
+      `,
+    },
+    minifySyntax: true,
+    minifyIdentifiers: false,
+    run: { stdout: "42" },
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toContain("let y = 42;");
+    },
+  });
+
+  // A `super(...)` call is never merged with its neighbors, but a single-use
+  // declaration before it is still inlined into its arguments.
+  itBundled("minify/InlineIntoSuperCall", {
+    files: {
+      "/entry.js": /* js */ `
+        function compute() { return 2; }
+        class B { constructor(x) { this.x = x; } }
+        export class Literal extends B { constructor() { const t = 1; super(t); } }
+        export class Call extends B { constructor() { const t = compute(); super(t); } }
+      `,
+    },
+    minifySyntax: true,
+    minifyIdentifiers: false,
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      expect(code).toContain("super(1);");
+      expect(code).toContain("super(compute());");
+      expect(code).not.toContain("let t");
     },
   });
 

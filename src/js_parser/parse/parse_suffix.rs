@@ -1634,7 +1634,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
                 T::TOpenParen => {
-                    if let ExprData::ECall(call) = left.data
+                    if p.options.bundle
+                        && let ExprData::ECall(call) = left.data
                         && let ExprData::EIdentifier(id) = call.target.data
                         && p.load_name_from_ref(id.ref_) == b"eval"
                     {

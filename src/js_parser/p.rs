@@ -2754,6 +2754,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         return Substitution::Failure(expr);
                     }
 
+                    // The right side of "&&", "||" and "??" does not always run, so a value with side effects must not move into it.
+                    let right_is_conditional = matches!(
+                        e.op,
+                        js_ast::op::Code::BinLogicalAnd
+                            | js_ast::op::Code::BinLogicalOr
+                            | js_ast::op::Code::BinNullishCoalescing
+                    );
+                    if right_is_conditional && !replacement_can_be_removed {
+                        return Substitution::Failure(expr);
+                    }
+
                     // If we get here then it should be safe to attempt to substitute the
                     // replacement past the left operand into the right operand.
                     if let Some(done) = self.substitute_single_use_symbol_in_child(
@@ -2998,7 +3009,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // A side-effecting replacement can still move past a read that cannot throw, run code, or change.
         match expr.data {
-            js_ast::ExprData::EThis(_) => true,
+            js_ast::ExprData::EThis(_) | js_ast::ExprData::ESuper(_) => true,
             js_ast::ExprData::EIdentifier(id) => self.is_stable_identifier_read(id),
             // A known global property access such as `console.log` or `Math.floor`.
             js_ast::ExprData::EDot(dot) => dot.can_be_removed_if_unused,
@@ -5653,7 +5664,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     /// Parse pass: `target` is assigned to; records the name of every identifier in it.
     pub(crate) fn record_parse_time_assignment_target(&mut self, target: &Expr) {
-        if !self.stack_check.is_safe_to_recurse() {
+        if !self.options.bundle || !self.stack_check.is_safe_to_recurse() {
             return;
         }
         match target.data {

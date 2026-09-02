@@ -42,10 +42,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // The runtime transpiler keeps the old one-statement-at-a-time behavior so its output stays close to the source.
         let bundle = self.options.bundle;
+        // A `let` declared in one `case` can be used by a later case, which is not visited yet.
+        let can_drop_unused_locals = can_inline_locals && bundle && kind != StmtsKind::SwitchStmt;
         StmtListMangler {
             is_control_flow_dead: false,
             can_inline_locals,
-            can_drop_unused_locals: can_inline_locals && bundle,
+            can_drop_unused_locals,
             can_touch_vars: can_inline_locals
                 && bundle
                 && kind == StmtsKind::FnBody
@@ -96,12 +98,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             _ => {}
         }
 
-        // don't merge super calls to ensure they are called before "this" is accessed
-        if stmt.is_super_call() {
-            output.push(stmt);
-            return;
-        }
-
         let mut try_inline = m.can_inline_locals;
         let mut merge_count: u32 = 0;
         loop {
@@ -112,7 +108,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     return;
                 }
             }
-            if !self.merge_stmt_with_tail(output, &mut stmt) {
+            // don't merge super calls to ensure they are called before "this" is accessed
+            if stmt.is_super_call() || !self.merge_stmt_with_tail(output, &mut stmt) {
                 break;
             }
             merge_count = if merge_count == 0 {

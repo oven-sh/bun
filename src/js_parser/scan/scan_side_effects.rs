@@ -508,9 +508,6 @@ impl SideEffects {
         Some(expr)
     }
 
-    /// Inline equivalent of `Expr::join_all_with_comma_callback(slice, p, simplify_unused_expr, _)`.
-    /// Hand-rolled because that helper takes `fn(&C, _)` and we need `&mut P` for the
-    /// recursive `simplify_unused_expr` call.
     /// Every argument is a side-effect free non-BigInt primitive, so a `GLOBAL_NO_SIDE_EFFECT_FUNCTION_CALLS_WITH_PRIMITIVE_ARGS` call can go.
     pub(crate) fn args_are_removable_primitives<'a, const TS: bool, const SCAN: bool>(
         p: &mut P<'a, TS, SCAN>,
@@ -522,6 +519,9 @@ impl SideEffects {
         })
     }
 
+    /// Inline equivalent of `Expr::join_all_with_comma_callback(slice, p, simplify_unused_expr, _)`.
+    /// Hand-rolled because that helper takes `fn(&C, _)` and we need `&mut P` for the
+    /// recursive `simplify_unused_expr` call.
     fn join_all_simplified<'a, const TS: bool, const SCAN: bool>(
         p: &mut P<'a, TS, SCAN>,
         items: &[Expr],

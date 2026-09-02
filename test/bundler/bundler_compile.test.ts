@@ -1545,71 +1545,98 @@ const server = serve({
   }, 30_000);
 });
 
+const MH_MAGIC_64 = 0xfeedfacf;
+const CPU_TYPE_X86_64 = 0x01000007;
+const MH_EXECUTE = 2;
+const LC_SEGMENT_64 = 0x19;
+const LC_SYMTAB = 0x2;
+
+// Minimal Mach-O "base executable" for --compile-executable-path: a __BUN segment with one
+// __bun section followed by a 0x100-byte __LINKEDIT segment, plus an optional LC_SYMTAB whose
+// symbol table starts at __LINKEDIT and whose string table sits 0x80 bytes in.
+// `bunFileOff`/`bunFileSize` are where the load commands claim the __BUN data lives;
+// `fileSize` is how many bytes the template actually contains.
+function machoTemplate({
+  bunFileOff = 0x4000,
+  bunFileSize = 0x4000,
+  fileSize = 0x8100,
+  linkeditFileOff = bunFileOff + bunFileSize,
+  symtab = false,
+}: {
+  bunFileOff?: number;
+  bunFileSize?: number;
+  fileSize?: number;
+  linkeditFileOff?: number;
+  symtab?: boolean;
+} = {}): Buffer {
+  const segCmdSize = 72; // sizeof(segment_command_64)
+  const sectSize = 80; // sizeof(section_64)
+  const symtabCmdSize = 24; // sizeof(symtab_command)
+  const sizeofcmds = segCmdSize + sectSize + segCmdSize + (symtab ? symtabCmdSize : 0);
+  const buf = Buffer.alloc(fileSize);
+  const writeName = (off: number, name: string) => buf.write(name, off, 16, "latin1");
+
+  // mach_header_64
+  buf.writeUInt32LE(MH_MAGIC_64, 0);
+  buf.writeInt32LE(CPU_TYPE_X86_64, 4);
+  buf.writeInt32LE(3, 8); // cpusubtype
+  buf.writeUInt32LE(MH_EXECUTE, 12);
+  buf.writeUInt32LE(symtab ? 3 : 2, 16); // ncmds
+  buf.writeUInt32LE(sizeofcmds, 20);
+
+  // LC_SEGMENT_64 __BUN with one section
+  let o = 32;
+  buf.writeUInt32LE(LC_SEGMENT_64, o);
+  buf.writeUInt32LE(segCmdSize + sectSize, o + 4); // cmdsize
+  writeName(o + 8, "__BUN");
+  buf.writeBigUInt64LE(0x1_0000_4000n, o + 24); // vmaddr
+  buf.writeBigUInt64LE(BigInt(bunFileSize), o + 32); // vmsize
+  buf.writeBigUInt64LE(BigInt(bunFileOff), o + 40); // fileoff
+  buf.writeBigUInt64LE(BigInt(bunFileSize), o + 48); // filesize
+  buf.writeInt32LE(7, o + 56); // maxprot
+  buf.writeInt32LE(3, o + 60); // initprot
+  buf.writeUInt32LE(1, o + 64); // nsects
+
+  // section_64 __bun
+  o += segCmdSize;
+  writeName(o, "__bun");
+  writeName(o + 16, "__BUN");
+  buf.writeBigUInt64LE(0x1_0000_4000n, o + 32); // addr
+  buf.writeBigUInt64LE(BigInt(bunFileSize), o + 40); // size
+  buf.writeUInt32LE(bunFileOff, o + 48); // offset
+  buf.writeUInt32LE(14, o + 52); // align = 2^14
+
+  // LC_SEGMENT_64 __LINKEDIT
+  o += sectSize;
+  buf.writeUInt32LE(LC_SEGMENT_64, o);
+  buf.writeUInt32LE(segCmdSize, o + 4);
+  writeName(o + 8, "__LINKEDIT");
+  buf.writeBigUInt64LE(0x1_0001_0000n, o + 24); // vmaddr
+  buf.writeBigUInt64LE(0x1000n, o + 32); // vmsize
+  buf.writeBigUInt64LE(BigInt(linkeditFileOff), o + 40); // fileoff
+  buf.writeBigUInt64LE(0x100n, o + 48); // filesize
+  buf.writeInt32LE(1, o + 56); // maxprot
+  buf.writeInt32LE(1, o + 60); // initprot
+
+  if (symtab) {
+    // LC_SYMTAB
+    o += segCmdSize;
+    buf.writeUInt32LE(LC_SYMTAB, o);
+    buf.writeUInt32LE(symtabCmdSize, o + 4);
+    buf.writeUInt32LE(linkeditFileOff, o + 8); // symoff
+    buf.writeUInt32LE(0, o + 12); // nsyms
+    buf.writeUInt32LE(linkeditFileOff + 0x80, o + 16); // stroff
+    buf.writeUInt32LE(0x80, o + 20); // strsize
+  }
+
+  return buf;
+}
+
 test("compile --compile-executable-path rejects a Mach-O template whose __BUN segment offsets exceed the file bounds", async () => {
   // `bun build --compile --target=bun-darwin-*` patches the application bundle into the
   // __BUN,__bun section of the base executable named by --compile-executable-path. The
   // segment/section offsets in that file's load commands must be validated against the
   // actual file size before they are used as memmove destinations.
-  const MH_MAGIC_64 = 0xfeedfacf;
-  const CPU_TYPE_X86_64 = 0x01000007;
-  const MH_EXECUTE = 2;
-  const LC_SEGMENT_64 = 0x19;
-
-  // Minimal Mach-O "base executable": a __BUN segment with one __bun section followed by a
-  // __LINKEDIT segment. `bunFileOff`/`bunFileSize` are where the load commands claim the
-  // __BUN data lives; `fileSize` is how many bytes the template actually contains.
-  function machoTemplate(bunFileOff: number, bunFileSize = 0x4000, fileSize = 0x8100): Buffer {
-    const segCmdSize = 72; // sizeof(segment_command_64)
-    const sectSize = 80; // sizeof(section_64)
-    const sizeofcmds = segCmdSize + sectSize + segCmdSize;
-    const buf = Buffer.alloc(fileSize);
-    const writeName = (off: number, name: string) => buf.write(name, off, 16, "latin1");
-
-    // mach_header_64
-    buf.writeUInt32LE(MH_MAGIC_64, 0);
-    buf.writeInt32LE(CPU_TYPE_X86_64, 4);
-    buf.writeInt32LE(3, 8); // cpusubtype
-    buf.writeUInt32LE(MH_EXECUTE, 12);
-    buf.writeUInt32LE(2, 16); // ncmds
-    buf.writeUInt32LE(sizeofcmds, 20);
-
-    // LC_SEGMENT_64 __BUN with one section
-    let o = 32;
-    buf.writeUInt32LE(LC_SEGMENT_64, o);
-    buf.writeUInt32LE(segCmdSize + sectSize, o + 4); // cmdsize
-    writeName(o + 8, "__BUN");
-    buf.writeBigUInt64LE(0x1_0000_4000n, o + 24); // vmaddr
-    buf.writeBigUInt64LE(BigInt(bunFileSize), o + 32); // vmsize
-    buf.writeBigUInt64LE(BigInt(bunFileOff), o + 40); // fileoff
-    buf.writeBigUInt64LE(BigInt(bunFileSize), o + 48); // filesize
-    buf.writeInt32LE(7, o + 56); // maxprot
-    buf.writeInt32LE(3, o + 60); // initprot
-    buf.writeUInt32LE(1, o + 64); // nsects
-
-    // section_64 __bun
-    o += segCmdSize;
-    writeName(o, "__bun");
-    writeName(o + 16, "__BUN");
-    buf.writeBigUInt64LE(0x1_0000_4000n, o + 32); // addr
-    buf.writeBigUInt64LE(BigInt(bunFileSize), o + 40); // size
-    buf.writeUInt32LE(bunFileOff, o + 48); // offset
-    buf.writeUInt32LE(14, o + 52); // align = 2^14
-
-    // LC_SEGMENT_64 __LINKEDIT
-    o += sectSize;
-    buf.writeUInt32LE(LC_SEGMENT_64, o);
-    buf.writeUInt32LE(segCmdSize, o + 4);
-    writeName(o + 8, "__LINKEDIT");
-    buf.writeBigUInt64LE(0x1_0001_0000n, o + 24); // vmaddr
-    buf.writeBigUInt64LE(0x1000n, o + 32); // vmsize
-    buf.writeBigUInt64LE(BigInt(bunFileOff + bunFileSize), o + 40); // fileoff (right after __BUN)
-    buf.writeBigUInt64LE(0x100n, o + 48); // filesize
-    buf.writeInt32LE(1, o + 56); // maxprot
-    buf.writeInt32LE(1, o + 60); // initprot
-
-    return buf;
-  }
-
   using dir = tempDir("compile-macho-template-bounds", {
     "entry.js": `console.log("compiled-from-template");`,
   });
@@ -1617,13 +1644,13 @@ test("compile --compile-executable-path rejects a Mach-O template whose __BUN se
 
   for (const [name, bytes, wantErr] of [
     // __BUN fileoff points 1 GiB past the end of the 33 KB file.
-    ["fileoff-past-eof", machoTemplate(0x40000000), "OffsetOutOfRange"],
+    ["fileoff-past-eof", machoTemplate({ bunFileOff: 0x40000000 }), "OffsetOutOfRange"],
     // __BUN filesize (32 KB) exceeds the 256-byte file: the bounds check must reject this
     // before the growth `reserve()` (which would otherwise see a negative size_diff).
-    ["filesize-past-eof", machoTemplate(0, 0x8000, 256), "OffsetOutOfRange"],
+    ["filesize-past-eof", machoTemplate({ bunFileOff: 0, bunFileSize: 0x8000, fileSize: 256 }), "OffsetOutOfRange"],
     // __BUN filesize (32 KB) is in-bounds but larger than the 16 KB aligned bundle slot;
     // write_section only grows, so a template that would require shrinking is rejected.
-    ["filesize-needs-shrink", machoTemplate(0x4000, 0x8000, 0xc100), "InvalidObject"],
+    ["filesize-needs-shrink", machoTemplate({ bunFileSize: 0x8000, fileSize: 0xc100 }), "InvalidObject"],
   ] as const) {
     const badTemplate = join(cwd, `template-${name}`);
     await Bun.write(badTemplate, bytes);
@@ -1656,7 +1683,7 @@ test("compile --compile-executable-path rejects a Mach-O template whose __BUN se
 
   // The same template with in-bounds offsets is still accepted.
   const goodTemplate = join(cwd, "template-good");
-  await Bun.write(goodTemplate, machoTemplate(0x4000));
+  await Bun.write(goodTemplate, machoTemplate());
   const outGood = join(cwd, "out-good");
   {
     await using proc = Bun.spawn({
@@ -1691,75 +1718,6 @@ test("compile --compile-executable-path rejects a Mach-O template whose __LINKED
   // amount, so a bundle of about 4 GiB pushes them past u32::MAX. Building such a bundle
   // is too slow for a test, so this template places __LINKEDIT and the LC_SYMTAB offsets
   // just below 4 GiB: a 32 KB bundle is then enough to move them over the edge.
-  const MH_MAGIC_64 = 0xfeedfacf;
-  const CPU_TYPE_X86_64 = 0x01000007;
-  const MH_EXECUTE = 2;
-  const LC_SEGMENT_64 = 0x19;
-  const LC_SYMTAB = 0x2;
-  const segCmdSize = 72; // sizeof(segment_command_64)
-  const sectSize = 80; // sizeof(section_64)
-  const symtabCmdSize = 24; // sizeof(symtab_command)
-
-  // __BUN [0x4000, 0x8000) with one __bun section, then a 0x1000-byte __LINKEDIT at
-  // `linkeditFileOff` holding a symbol table at its start and a string table 0x800 bytes in.
-  function machoTemplate(linkeditFileOff: number): Buffer {
-    const sizeofcmds = segCmdSize + sectSize + segCmdSize + symtabCmdSize;
-    const buf = Buffer.alloc(0x9000);
-    const writeName = (off: number, name: string) => buf.write(name, off, 16, "latin1");
-
-    // mach_header_64
-    buf.writeUInt32LE(MH_MAGIC_64, 0);
-    buf.writeInt32LE(CPU_TYPE_X86_64, 4);
-    buf.writeInt32LE(3, 8); // cpusubtype
-    buf.writeUInt32LE(MH_EXECUTE, 12);
-    buf.writeUInt32LE(3, 16); // ncmds
-    buf.writeUInt32LE(sizeofcmds, 20);
-
-    // LC_SEGMENT_64 __BUN with one section
-    let o = 32;
-    buf.writeUInt32LE(LC_SEGMENT_64, o);
-    buf.writeUInt32LE(segCmdSize + sectSize, o + 4); // cmdsize
-    writeName(o + 8, "__BUN");
-    buf.writeBigUInt64LE(0x1_0000_4000n, o + 24); // vmaddr
-    buf.writeBigUInt64LE(0x4000n, o + 32); // vmsize
-    buf.writeBigUInt64LE(0x4000n, o + 40); // fileoff
-    buf.writeBigUInt64LE(0x4000n, o + 48); // filesize
-    buf.writeInt32LE(7, o + 56); // maxprot
-    buf.writeInt32LE(3, o + 60); // initprot
-    buf.writeUInt32LE(1, o + 64); // nsects
-
-    // section_64 __bun
-    o += segCmdSize;
-    writeName(o, "__bun");
-    writeName(o + 16, "__BUN");
-    buf.writeBigUInt64LE(0x1_0000_4000n, o + 32); // addr
-    buf.writeBigUInt64LE(0x4000n, o + 40); // size
-    buf.writeUInt32LE(0x4000, o + 48); // offset
-    buf.writeUInt32LE(14, o + 52); // align = 2^14
-
-    // LC_SEGMENT_64 __LINKEDIT
-    o += sectSize;
-    buf.writeUInt32LE(LC_SEGMENT_64, o);
-    buf.writeUInt32LE(segCmdSize, o + 4);
-    writeName(o + 8, "__LINKEDIT");
-    buf.writeBigUInt64LE(0x1_0001_0000n, o + 24); // vmaddr
-    buf.writeBigUInt64LE(0x1000n, o + 32); // vmsize
-    buf.writeBigUInt64LE(BigInt(linkeditFileOff), o + 40); // fileoff
-    buf.writeBigUInt64LE(0x1000n, o + 48); // filesize
-    buf.writeInt32LE(1, o + 56); // maxprot
-    buf.writeInt32LE(1, o + 60); // initprot
-
-    // LC_SYMTAB
-    o += segCmdSize;
-    buf.writeUInt32LE(LC_SYMTAB, o);
-    buf.writeUInt32LE(symtabCmdSize, o + 4);
-    buf.writeUInt32LE(linkeditFileOff, o + 8); // symoff
-    buf.writeUInt32LE(0, o + 12); // nsyms
-    buf.writeUInt32LE(linkeditFileOff + 0x800, o + 16); // stroff
-    buf.writeUInt32LE(0x800, o + 20); // strsize
-
-    return buf;
-  }
 
   // Returns the __LINKEDIT fileoff and the LC_SYMTAB offsets of a Mach-O file.
   function readLinkeditOffsets(buf: Buffer) {
@@ -1813,9 +1771,12 @@ test("compile --compile-executable-path rejects a Mach-O template whose __LINKED
     return { stderr, exitCode, outfile };
   };
 
-  // __LINKEDIT claims to end exactly at 4 GiB, so any growth of __BUN overflows its offsets.
+  // __LINKEDIT starts 4 KiB below 4 GiB, so any growth of __BUN (16 KiB steps) overflows its offsets.
   {
-    const { stderr, exitCode, outfile } = await build("too-large", machoTemplate(0xffff_f000));
+    const { stderr, exitCode, outfile } = await build(
+      "too-large",
+      machoTemplate({ linkeditFileOff: 0xffff_f000, symtab: true }),
+    );
     expect(stderr).toContain("executable would exceed 4 GiB");
     expect(stderr).toContain("failed to write compiled executable");
     expect(await Bun.file(outfile).exists()).toBe(false);
@@ -1824,16 +1785,16 @@ test("compile --compile-executable-path rejects a Mach-O template whose __LINKED
 
   // The same template with __LINKEDIT right after __BUN builds, and its offsets move together.
   {
-    const { stderr, exitCode, outfile } = await build("in-range", machoTemplate(0x8000));
+    const { stderr, exitCode, outfile } = await build("in-range", machoTemplate({ symtab: true }));
     expect(stderr).not.toContain("error:");
     expect(exitCode).toBe(0);
 
     const out = Buffer.from(await Bun.file(outfile).arrayBuffer());
     const { linkeditFileOff, symoff, stroff } = readLinkeditOffsets(out);
     expect(linkeditFileOff).toBeGreaterThan(0x8000);
-    expect({ symoff, stroff }).toEqual({ symoff: linkeditFileOff, stroff: linkeditFileOff + 0x800 });
+    expect({ symoff, stroff }).toEqual({ symoff: linkeditFileOff, stroff: linkeditFileOff + 0x80 });
   }
-}, 60_000);
+});
 
 test("compile --compile-executable-path rejects a template shorter than the executable-format header", async () => {
   // `--compile-executable-path` accepts an arbitrary file. A file shorter than the target

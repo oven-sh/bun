@@ -52,9 +52,9 @@ pub use tsconfig_json::TSConfigJSON;
 pub use ::bun_install_types::resolver_hooks as install_types;
 pub use resolver::{AnyResolveWatcher, BrowserMapPathKind, Bufs, Dirname, Resolver};
 pub use result::{
-    DebugLogs, DirEntryResolveQueueItem, ExternalKind, FlushMode, LoadResult, MatchResult,
-    MatchStatus, PathPair, PendingResolution, PendingResolutionTag, Result, ResultFlags,
-    ResultUnion,
+    DebugLogs, DirEntryResolveQueueItem, DisabledReason, ExternalKind, FlushMode, LoadResult,
+    MatchResult, MatchStatus, PathPair, PendingResolution, PendingResolutionTag, Result,
+    ResultFlags, ResultUnion,
 };
 pub use standalone_module_graph::StandaloneModuleGraph;
 

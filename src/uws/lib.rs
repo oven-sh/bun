@@ -1431,12 +1431,6 @@ impl MaybeAnySocket {
 /// the previous local enum — both crates name `bun_uws_sys::{Request, h3::Request}`).
 pub use bun_uws_sys::AnyRequest;
 
-/// `uws::Response<SSL>` — re-exported from `bun_uws_sys` so callers get the full
-/// method surface (`write`/`end`/`try_end`/`on_aborted`/`on_writable`/...) without
-/// a separate local opaque. Both are `#[repr(C)]` zero-sized handles, so this is
-/// a pure namespace reconciliation.
-pub type Response<const SSL: bool> = bun_uws_sys::response::Response<SSL>;
-
 /// Transport-agnostic response handle. Re-exported from `bun_uws_sys` — the
 /// sys-crate version already carries the full dispatch impl (`write`, `end`,
 /// `try_end`, `on_aborted`, `on_writable`, `corked`, `write_status`,

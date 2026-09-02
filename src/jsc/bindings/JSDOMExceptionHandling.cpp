@@ -35,12 +35,10 @@
 #include <JavaScriptCore/ScriptCallStackFactory.h>
 #include "headers.h"
 
-#include "CachedScript.h"
-
 namespace WebCore {
 using namespace JSC;
 
-void reportException(JSGlobalObject* lexicalGlobalObject, JSC::Exception* exception, CachedScript* cachedScript, bool fromModule, ExceptionDetails* exceptionDetails)
+void reportException(JSGlobalObject* lexicalGlobalObject, JSC::Exception* exception)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     RELEASE_ASSERT(vm.currentThreadIsHoldingAPILock());
@@ -64,23 +62,11 @@ void reportException(JSGlobalObject* lexicalGlobalObject, JSC::Exception* except
     //         return;
     // }
 
-    int lineNumber = 0;
-    int columnNumber = 0;
-    String exceptionSourceURL;
-
     Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
     RETURN_IF_EXCEPTION(scope, );
-
-    if (exceptionDetails) {
-        auto errorMessage = retrieveErrorMessage(*lexicalGlobalObject, vm, exception->value(), scope);
-        exceptionDetails->message = errorMessage;
-        exceptionDetails->lineNumber = lineNumber;
-        exceptionDetails->columnNumber = columnNumber;
-        exceptionDetails->sourceURL = exceptionSourceURL;
-    }
 }
 
-void reportException(JSGlobalObject* lexicalGlobalObject, JSValue exceptionValue, CachedScript* cachedScript, bool fromModule)
+void reportException(JSGlobalObject* lexicalGlobalObject, JSValue exceptionValue)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     RELEASE_ASSERT(vm.currentThreadIsHoldingAPILock());
@@ -91,7 +77,7 @@ void reportException(JSGlobalObject* lexicalGlobalObject, JSValue exceptionValue
             exception = JSC::Exception::create(lexicalGlobalObject->vm(), exceptionValue, JSC::Exception::StackCaptureAction::DoNotCaptureStack);
     }
 
-    reportException(lexicalGlobalObject, exception, cachedScript, fromModule);
+    reportException(lexicalGlobalObject, exception);
 }
 
 String retrieveErrorMessage(JSGlobalObject& lexicalGlobalObject, VM& vm, JSValue exception, TopExceptionScope& topExceptionScope)

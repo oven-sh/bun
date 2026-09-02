@@ -39,14 +39,6 @@ class EventListener : public RefCounted<EventListener>, public CanMakeWeakPtr<Ev
 public:
     enum Type {
         JSEventListenerType,
-        ImageEventListenerType,
-        ObjCEventListenerType,
-        CPPEventListenerType,
-        ConditionEventListenerType,
-        GObjectEventListenerType,
-        NativeEventListenerType,
-        SVGTRefTargetEventListenerType,
-        PDFDocumentEventListenerType,
     };
 
     virtual ~EventListener() = default;

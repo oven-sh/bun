@@ -43,7 +43,6 @@ uws_h2_app_t* uws_h2_create_app(int ssl, uws_app_t* parent, bool allow_http1, un
 void uws_h2_app_destroy(uws_h2_app_t* app) { delete (H2App*)app; }
 void uws_h2_app_on_schedule_drain(uws_h2_app_t* app, void (*cb)(void*, void*), void* user) { ((H2App*)app)->onScheduleDrain((void (*)(void*, uWS::Http2Context*))cb, user); }
 bool uws_h2_app_drain(uws_h2_app_t* app) { return ((H2App*)app)->drain(); }
-void uws_h2_app_close(uws_h2_app_t* app) { ((H2App*)app)->close(); }
 void uws_h2_app_clear_routes(uws_h2_app_t* app) { ((H2App*)app)->clearRoutes(); }
 
 #define H2_ROUTE(name, method)                                                                         \

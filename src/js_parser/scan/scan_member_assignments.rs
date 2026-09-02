@@ -18,8 +18,6 @@ pub(crate) struct Candidate<'a> {
     owner: Ref,
     /// Outermost first: `[a, b]`.
     keys: &'a [&'a [u8]],
-    /// `v` is a literal, function, or class, so it aliases nothing outside `X`.
-    value_is_fresh: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -50,6 +48,9 @@ enum OwnerShape {
 /// `None` caches "does not qualify".
 type ShapeCache = HashMap<Ref, Option<OwnerShape>>;
 
+/// Per parent class, whether no part can mutate it at run time.
+type ParentCache = HashMap<Ref, bool>;
+
 const MAX_EXTENDS_DEPTH: usize = 32;
 
 fn key_bytes<'b>(s: &E::EString, arena: &'b Bump) -> &'b [u8] {
@@ -58,19 +59,6 @@ fn key_bytes<'b>(s: &E::EString, arena: &'b Bump) -> &'b [u8] {
 
 fn is_proper_prefix(short: &[&[u8]], long: &[&[u8]]) -> bool {
     short.len() < long.len() && short.iter().zip(long).all(|(a, b)| a == b)
-}
-
-fn value_is_fresh(value: &Expr) -> bool {
-    value.is_primitive_literal()
-        || matches!(
-            value.data,
-            ExprData::EObject(_)
-                | ExprData::EArray(_)
-                | ExprData::EFunction(_)
-                | ExprData::EArrow(_)
-                | ExprData::EClass(_)
-                | ExprData::ERegExp(_)
-        )
 }
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
@@ -113,6 +101,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return;
         }
         let mut shapes = ShapeCache::new();
+        let mut parents = ParentCache::new();
         let mut claimed: BumpVec<'a, Candidate<'a>> = BumpVec::new_in(self.arena);
         for candidate in candidates {
             let Some(shape) = self.owner_shape(
@@ -124,18 +113,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 continue;
             };
             let keys = candidate.keys;
-            if keys.len() >= 2 {
-                // `X.a = other; X.a.b = v` writes through to `other`.
-                let aliased = candidates.iter().any(|other| {
-                    other.owner == candidate.owner
-                        && !other.value_is_fresh
-                        && is_proper_prefix(other.keys, keys)
-                });
-                if aliased {
-                    continue;
-                }
+            // `X.a = other; X.a.b = v` writes through to `other`.
+            let prefix_rewritten = candidates
+                .iter()
+                .any(|other| other.owner == candidate.owner && is_proper_prefix(other.keys, keys));
+            if prefix_rewritten {
+                continue;
             }
-            if !self.chain_is_owned(shape, keys, parts, top_level_symbols_to_parts, &mut shapes) {
+            if !self.chain_is_owned(
+                shape,
+                keys,
+                parts,
+                top_level_symbols_to_parts,
+                candidates,
+                &mut shapes,
+                &mut parents,
+            ) {
                 continue;
             }
             claimed.push(*candidate);
@@ -181,22 +174,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             part_index,
             owner: self.follow_symbol_link(root.ref_),
             keys,
-            value_is_fresh: value_is_fresh(&bin.right),
         })
     }
 
-    /// `X.a['b'].c` to `X` and `[a, b, c]`.
+    /// `X.a['b'].c` to `X` and `[a, b, c]`. A `__proto__` key changes the
+    /// prototype chain, so it is never owned.
     fn member_chain(target: Expr, arena: &'a Bump) -> Option<(E::Identifier, &'a [&'a [u8]])> {
         let mut keys: BumpVec<'a, &'a [u8]> = BumpVec::new_in(arena);
         let mut cur = target;
         loop {
-            match cur.data {
+            let key: &'a [u8] = match cur.data {
                 ExprData::EDot(dot) => {
                     if dot.optional_chain.is_some() {
                         return None;
                     }
-                    keys.push(dot.name.slice());
                     cur = dot.target;
+                    dot.name.slice()
                 }
                 ExprData::EIndex(index) => {
                     if index.optional_chain.is_some() {
@@ -205,8 +198,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     let ExprData::EString(s) = index.index.data else {
                         return None;
                     };
-                    keys.push(key_bytes(&s, arena));
                     cur = index.target;
+                    key_bytes(&s, arena)
                 }
                 ExprData::EIdentifier(id) => {
                     if keys.is_empty() {
@@ -216,7 +209,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     return Some((id, keys.into_bump_slice()));
                 }
                 _ => return None,
+            };
+            if key == b"__proto__" {
+                return None;
             }
+            keys.push(key);
         }
     }
 
@@ -259,8 +256,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let [declaring_part] = declaring_parts.as_slice() else {
             return None;
         };
+        let declaring_part = &parts[*declaring_part as usize];
+        // A static block or initializer with side effects can install accessors.
+        if !declaring_part.can_be_removed_if_unused {
+            return None;
+        }
         let mut shape: Option<OwnerShape> = None;
-        for stmt in parts[*declaring_part as usize].stmts.slice() {
+        for stmt in declaring_part.stmts.slice() {
             let Some(found) = self.declaration_shape(stmt, owner) else {
                 continue;
             };
@@ -315,13 +317,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     /// The write reaches only objects the owner created and runs no accessor.
+    #[allow(clippy::too_many_arguments)]
     fn chain_is_owned(
         &self,
         shape: OwnerShape,
         keys: &[&[u8]],
         parts: &[js_ast::Part],
         top_level_symbols_to_parts: &TopLevelSymbolToParts,
+        candidates: &[Candidate<'a>],
         shapes: &mut ShapeCache,
+        parents: &mut ParentCache,
     ) -> bool {
         match shape {
             OwnerShape::Function { is_arrow } => match keys {
@@ -340,7 +345,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     name,
                     parts,
                     top_level_symbols_to_parts,
+                    candidates,
                     shapes,
+                    parents,
                 )
             }
             OwnerShape::Object(object) => Self::object_literal_owns_path(object, keys, self.arena),
@@ -348,13 +355,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     /// Static or not, on the class or any local class it extends.
+    #[allow(clippy::too_many_arguments)]
     fn class_chain_declares_no_accessor(
         &self,
         source: ClassSource,
         name: &[u8],
         parts: &[js_ast::Part],
         top_level_symbols_to_parts: &TopLevelSymbolToParts,
+        candidates: &[Candidate<'a>],
         shapes: &mut ShapeCache,
+        parents: &mut ParentCache,
     ) -> bool {
         let arena = self.arena;
         let mut current = source;
@@ -387,14 +397,94 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let ExprData::EIdentifier(parent) = extends.data else {
                 return false;
             };
+            let parent = self.follow_symbol_link(parent.ref_);
             let Some(OwnerShape::Class(parent_source)) =
-                self.owner_shape(parent.ref_, parts, top_level_symbols_to_parts, shapes)
+                self.owner_shape(parent, parts, top_level_symbols_to_parts, shapes)
             else {
                 return false;
             };
+            if !self.class_is_only_extended(parent, parts, candidates, parents) {
+                return false;
+            }
             current = parent_source;
         }
         false
+    }
+
+    /// Every use of `class_ref` is an `extends` clause, an owned member
+    /// assignment, or an export. Any other use (a call argument, its own
+    /// methods) may install an accessor that a subclass inherits.
+    fn class_is_only_extended(
+        &self,
+        class_ref: Ref,
+        parts: &[js_ast::Part],
+        candidates: &[Candidate<'a>],
+        parents: &mut ParentCache,
+    ) -> bool {
+        if let Some(&known) = parents.get(&class_ref) {
+            return known;
+        }
+        let only_extended = parts.iter().enumerate().all(|(part_index, part)| {
+            let Some(use_) = part.symbol_uses.get(&class_ref) else {
+                return true;
+            };
+            if candidates
+                .iter()
+                .any(|c| c.part_index as usize == part_index && c.owner == class_ref)
+            {
+                return true;
+            }
+            if use_.count_estimate == 1 && self.class_declaration_parent(part) == Some(class_ref) {
+                return true;
+            }
+            part.stmts
+                .slice()
+                .iter()
+                .all(|stmt| matches!(stmt.data, StmtData::SExportClause(_)))
+        });
+        parents.insert(class_ref, only_extended);
+        only_extended
+    }
+
+    /// The local class a class declaration in `part` extends, if any.
+    fn class_declaration_parent(&self, part: &js_ast::Part) -> Option<Ref> {
+        let mut parent: Option<Ref> = None;
+        for stmt in part.stmts.slice() {
+            let extends: Option<Expr> = match &stmt.data {
+                StmtData::SClass(class) => class.class.extends,
+                StmtData::SLocal(local) => {
+                    let [decl] = local.decls.slice() else {
+                        continue;
+                    };
+                    let Some(value) = decl.value else {
+                        continue;
+                    };
+                    let ExprData::EClass(class) = value.data else {
+                        continue;
+                    };
+                    class.extends
+                }
+                StmtData::SExportDefault(export_default) => match &export_default.value {
+                    StmtOrExpr::Stmt(inner) => match &inner.data {
+                        StmtData::SClass(class) => class.class.extends,
+                        _ => continue,
+                    },
+                    StmtOrExpr::Expr(_) => continue,
+                },
+                _ => continue,
+            };
+            let Some(extends) = extends else {
+                continue;
+            };
+            let ExprData::EIdentifier(id) = extends.data else {
+                continue;
+            };
+            if parent.is_some() {
+                return None;
+            }
+            parent = Some(self.follow_symbol_link(id.ref_));
+        }
+        parent
     }
 
     /// Each key but the last names a nested literal; the last is no accessor.

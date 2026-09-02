@@ -2378,10 +2378,74 @@ describe("bundler", () => {
         globalThis.Base = class { static set y(v) { hit('unknown-parent') } };
         class Unknown extends globalThis.Base {}
         Unknown.y = 1;
+
+        const holder = { a: {} };
+        holder.a = { set b(v) { hit('rewritten-prefix') } };
+        holder.a.b = 1;
+
+        function Proto() {}
+        Proto.prototype = { set x(v) { hit('rewritten-prototype') } };
+        Proto.prototype.x = 1;
+
+        function Dunder() {}
+        Dunder.__proto__ = { set x(v) { hit('dunder-proto') } };
+        Dunder.x = 1;
+
+        class Defined {}
+        Object.defineProperty(Defined.prototype, 'x', { set(v) { hit('parent-defineProperty') } });
+        class DefinedChild extends Defined {}
+        DefinedChild.prototype.x = 1;
+
+        class Installer { static install() { Object.defineProperty(Installer.prototype, 'x', { set(v) { hit('parent-method') } }) } }
+        Installer.install();
+        class InstallerChild extends Installer {}
+        InstallerChild.prototype.x = 1;
+
+        class Blocky { static { Object.defineProperty(this, 'y', { set(v) { hit('static-block') } }) } }
+        Blocky.y = 1;
+
+        class Inited { static z = Object.defineProperty(this, 'y', { set(v) { hit('static-initializer') } }) }
+        Inited.y = 1;
       `,
     },
     run: {
-      stdout: "static,proto,parent,computed,literal,unknown-parent",
+      stdout: [
+        "static",
+        "proto",
+        "parent",
+        "computed",
+        "literal",
+        "unknown-parent",
+        "rewritten-prefix",
+        "rewritten-prototype",
+        "dunder-proto",
+        "parent-defineProperty",
+        "parent-method",
+        "static-block",
+        "static-initializer",
+      ].join(","),
+    },
+  });
+  // Decorators run arbitrary code against the class, and lowering reassigns
+  // the binding, so the write stays.
+  itBundled("edgecase/MemberAssignmentDecoratedClassKept", {
+    files: {
+      "/entry.ts": `
+        import './lib';
+        console.log(globalThis.hit);
+      `,
+      "/lib.ts": `
+        function installSetter(target: any) {
+          Object.defineProperty(target, 'y', { set(v: number) { globalThis.hit = 'decorator:' + v } });
+          return target;
+        }
+        @installSetter
+        class Decorated {}
+        Decorated.y = 1;
+      `,
+    },
+    run: {
+      stdout: "decorator:1",
     },
   });
   // A write that can reach an object the binding does not own is not owned by

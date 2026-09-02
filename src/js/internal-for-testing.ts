@@ -564,10 +564,6 @@ export const linearFifoOrderedRemoveProbe = $newRustFunction(
   "TestingAPIs.orderedRemoveProbe",
   1,
 ) as (scenario: number) => number[];
-export const signalRingProbe = $newRustFunction("signal_ring_testing.rs", "probe", 2) as (
-  producers: number,
-  perProducer: number,
-) => { accepted: number[]; dequeued: number[]; zeros: number; unknown: number };
 export const hasNonReifiedStatic = $newCppFunction("InternalForTesting.cpp", "jsFunction_hasReifiedStatic", 1);
 
 interface setSocketOptionsFn {

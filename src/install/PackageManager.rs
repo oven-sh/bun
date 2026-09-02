@@ -1706,13 +1706,20 @@ pub fn init(
                     let json_stat_size = json_file.get_end_pos()?;
                     let mut json_buf = vec![0u8; (json_stat_size + 64) as usize];
                     let json_len = json_file.pread_all(&mut json_buf, 0)?;
+                    // Use the cwd-space path the file was opened at, not the fd's
+                    // realpath: the realpath can sit on another drive letter
+                    // (subst / junction) or outside the project (symlink), and
+                    // relative paths cannot cross drives (#39357). Copied because
+                    // `parent_path_buf` is reused while `json_source` is live.
+                    let json_path_len =
+                        parent_without_trailing_slash.len() + b"/package.json".len();
                     // SAFETY: ROOT_PACKAGE_JSON_PATH_BUF is a process-global only touched on main
                     // thread; `&raw mut` + explicit reborrow avoids the 2024 `static_mut_refs` deny.
-                    let json_path = unsafe {
-                        bun_sys::get_fd_path(
-                            json_file.handle,
-                            &mut *ROOT_PACKAGE_JSON_PATH_BUF.get(),
-                        )?
+                    let json_path: &[u8] = unsafe {
+                        let root_buf = &mut *ROOT_PACKAGE_JSON_PATH_BUF.get();
+                        root_buf[..json_path_len]
+                            .copy_from_slice(&parent_path_buf[..json_path_len]);
+                        &root_buf[..json_path_len]
                     };
                     let json_source =
                         bun_ast::Source::init_path_string(&*json_path, &json_buf[..json_len]);
@@ -1862,17 +1869,15 @@ pub fn init(
         // until now). The slice excludes the NUL — `top_level_dir` is `[]u8`.
         // PathBuffer is repr(transparent) over [u8; N], so the raw cast is sound.
         fs.set_top_level_dir(bun_core::ffi::slice(CWD_BUF.get().cast::<u8>(), tld.len()));
-        // bun_sys exposes the non-Z `get_fd_path`;
-        // append the NUL ourselves so the static `&ZStr` invariant holds.
+        // Build the root package.json path from `top_level_dir` instead of
+        // realpath'ing the fd, so later relative-path computations against
+        // `top_level_dir` never cross onto a different drive letter (#39357).
         let root_buf = &mut *ROOT_PACKAGE_JSON_PATH_BUF.get();
-        let plen = if no_project {
-            // Where the file would be; nothing reads it in this mode.
-            let p = original_package_json_path.as_bytes();
-            root_buf[..p.len()].copy_from_slice(p);
-            p.len()
-        } else {
-            bun_sys::get_fd_path(root_package_json_file.handle, root_buf)?.len()
-        };
+        // In `no_project` mode this is where the file would be; nothing reads it.
+        let tld_no_slash = strings::without_trailing_slash(tld);
+        let plen = tld_no_slash.len() + SEP_PACKAGE_JSON.len();
+        root_buf[..tld_no_slash.len()].copy_from_slice(tld_no_slash);
+        root_buf[tld_no_slash.len()..plen].copy_from_slice(SEP_PACKAGE_JSON);
         root_buf[plen] = 0;
         ROOT_PACKAGE_JSON_PATH.write(ZStr::from_raw(root_buf.as_ptr(), plen));
     }
@@ -2178,7 +2183,7 @@ pub fn init(
         // make sure folder packages can find the root package without creating a new one
         // Posix-normalize the
         // separators before hashing; `FolderResolution.hash` is always fed `/`-separated
-        // bytes by every resolver-side caller. On Windows `get_fd_path` yields `\`, so
+        // bytes by every resolver-side caller. On Windows this path contains `\`, so
         // hashing the raw bytes would seed a key the resolver never looks up — copy into
         // a stack buffer and convert separators in place.
         // SAFETY: ROOT_PACKAGE_JSON_PATH set above on the main thread.

@@ -302,7 +302,10 @@ it.skipIf(isWindows)("advanced serialization advertises wire format version 2", 
 // completion compared the socket's i32 write count against that length as an i32
 // and panicked with "int cast: TryFromIntError(PosOverflow)". The child peaks at
 // 4 to 6 GB of RSS (the 2.2 GB buffer, its last capacity doubling, freed payloads).
-describe.skipIf(isWindows || totalmem() < 16 * 1024 ** 3)("send queue past 2 GiB", () => {
+// Inside a container os.totalmem() reports the host's RAM;
+// process.constrainedMemory() reports the cgroup limit there.
+const memory = Math.min(totalmem(), process.constrainedMemory() || Infinity);
+describe.skipIf(isWindows || memory < 16 * 1024 ** 3)("send queue past 2 GiB", () => {
   // Debug and ASAN builds copy the 2.2 GB about four times before the first message.
   const timeout = 60_000;
   it(

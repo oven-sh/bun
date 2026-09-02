@@ -356,6 +356,7 @@ export var __preload = (id, seenOnly) => {
         if (!seenOnly && j !== id && typeof document !== "undefined") {
           link = document.createElement("link");
           link.rel = "modulepreload";
+          link.crossOrigin = "";
           link.href = new URL(node[0], base);
           document.head.appendChild(link);
         }

@@ -133,6 +133,8 @@ pub struct LinkerContext<'a> {
 
     /// User entry points (by source index) that reach a split browser `import()`: their chunk registers the chunk graph.
     pub(crate) preload_entries: AutoBitSet,
+    /// The part `scan_imports_and_exports` adds to each entry point file (`u32::MAX` elsewhere).
+    pub(crate) entry_point_part_indices: Vec<u32>,
 }
 
 // SAFETY: `LinkerContext` is shared across the worker pool via `each_ptr` /
@@ -170,6 +172,7 @@ impl<'a> Default for LinkerContext<'a> {
             mangled_props: Default::default(),
             cross_chunk_names: Default::default(),
             preload_entries: AutoBitSet::init_empty(0).expect("static AutoBitSet"),
+            entry_point_part_indices: Vec::new(),
         }
     }
 }
@@ -958,6 +961,10 @@ impl<'a> LinkerContext<'a> {
                     continue;
                 }
                 self.mark_file_live_for_tree_shaking(&mut ctx, entry_point);
+            }
+
+            if self.module_preload() {
+                self.mark_preload_entries(&mut ctx, entry_points)?;
             }
         }
 
@@ -2814,6 +2821,86 @@ impl<'a> LinkerContext<'a> {
         }
     }
 
+    /// Once liveness is known: each user entry point whose live code reaches a split
+    /// `import()` uses `__chunks` from its entry point part (see `module_preload_registration`).
+    fn mark_preload_entries(
+        &mut self,
+        ctx: &mut TreeShakeCtx<'a, '_>,
+        entry_points: &[crate::IndexInt],
+    ) -> Result<(), AllocError> {
+        let files_len = ctx.parts.len();
+        let mut reaches = AutoBitSet::init_empty(files_len)?;
+        loop {
+            let mut changed = false;
+            for source_index in 0..files_len {
+                if reaches.is_set(source_index) || !self.graph.files_live.is_set(source_index) {
+                    continue;
+                }
+                let records = ctx.import_records[source_index].as_slice();
+                'parts: for (part_index, part) in
+                    ctx.parts[source_index].as_slice().iter().enumerate()
+                {
+                    if !ctx.parts_live[source_index].is_set(part_index) {
+                        continue;
+                    }
+                    for &record_index in part.import_record_indices.iter() {
+                        let record = &records[record_index as usize];
+                        if !record.source_index.is_valid() {
+                            continue;
+                        }
+                        if reaches.is_set(record.source_index.get() as usize)
+                            || (record.kind == ImportKind::Dynamic
+                                && self.is_external_dynamic_import(record, source_index as u32))
+                        {
+                            reaches.set(source_index);
+                            changed = true;
+                            break 'parts;
+                        }
+                    }
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+
+        let mut preload_entries = AutoBitSet::init_empty(files_len)?;
+        for &entry in entry_points {
+            let id = entry as usize;
+            if ctx.entry_point_kinds[id] != EntryPoint::Kind::UserSpecified || !reaches.is_set(id) {
+                continue;
+            }
+            preload_entries.set(id);
+            let part_index = self.entry_point_part_indices[id];
+            self.graph.generate_symbol_import_and_use(
+                entry,
+                part_index,
+                self.chunks_runtime_ref,
+                1,
+                Index::RUNTIME,
+            )?;
+            if ctx.parts_live[id].is_set(part_index as usize) {
+                for dependency in ctx.parts[id].as_slice()[part_index as usize]
+                    .dependencies
+                    .iter()
+                {
+                    ctx.worklist.push(TreeShakeWork::Part {
+                        part_index: dependency.part_index,
+                        source_index: dependency.source_index.get(),
+                    });
+                }
+            } else {
+                ctx.worklist.push(TreeShakeWork::Part {
+                    part_index,
+                    source_index: entry,
+                });
+            }
+            self.drain_tree_shake_worklist(ctx);
+        }
+        self.preload_entries = preload_entries;
+        Ok(())
+    }
+
     pub(crate) fn mark_file_live_for_tree_shaking(
         &mut self,
         ctx: &mut TreeShakeCtx<'a, '_>,
@@ -2821,6 +2908,10 @@ impl<'a> LinkerContext<'a> {
     ) {
         debug_assert!(ctx.worklist.is_empty());
         ctx.worklist.push(TreeShakeWork::File(source_index));
+        self.drain_tree_shake_worklist(ctx);
+    }
+
+    fn drain_tree_shake_worklist(&mut self, ctx: &mut TreeShakeCtx<'a, '_>) {
         while let Some(work) = ctx.worklist.pop() {
             match work {
                 TreeShakeWork::File(src) => self.mark_file_live_step(ctx, src),
@@ -2895,19 +2986,6 @@ impl<'a> LinkerContext<'a> {
                     if !self.graph.files_live.is_set(other as usize) {
                         ctx.worklist.push(TreeShakeWork::File(other));
                     }
-                }
-            }
-            // The entry point part `scan_imports_and_exports` adds: its dependencies are the entry chunk's runtime imports.
-            let parts = ctx.parts[source_index as usize].as_slice();
-            for (part_index, part) in parts.iter().enumerate().skip(2) {
-                if !part.can_be_removed_if_unused
-                    && !part.dependencies.is_empty()
-                    && !ctx.parts_live[source_index as usize].is_set(part_index)
-                {
-                    ctx.worklist.push(TreeShakeWork::Part {
-                        part_index: part_index as u32,
-                        source_index,
-                    });
                 }
             }
             return;

@@ -24,7 +24,6 @@ use crate::{
 };
 use bun_ast::symbol::{self, Kind as SymbolKind};
 use bun_ast::{Dependency, ExportsKind, PartList, Ref};
-use bun_collections::AutoBitSet;
 
 use crate::linker_context_mod::LinkerCtx;
 
@@ -605,46 +604,7 @@ pub(crate) fn scan_imports_and_exports(
         let mut runtime_export_symbol_ref: Ref = Ref::NONE;
         let mut ident_scratch: Vec<u8> = Vec::new();
         let module_preload = this.module_preload();
-        if module_preload {
-            // Which files reach a split `import()` through any chain of imports: fixpoint over the import records.
-            let files_len = col_ref!(import_records_list).len();
-            let mut reaches = AutoBitSet::init_empty(files_len)?;
-            loop {
-                let mut changed = false;
-                for source_index in &reachable {
-                    let id = source_index.get() as usize;
-                    if reaches.is_set(id) {
-                        continue;
-                    }
-                    for record in col_ref!(import_records_list)[id].as_slice() {
-                        if !record.source_index.is_valid() {
-                            continue;
-                        }
-                        if reaches.is_set(record.source_index.get() as usize)
-                            || (record.kind == ImportKind::Dynamic
-                                && this.is_external_dynamic_import(record, id as u32))
-                        {
-                            reaches.set(id);
-                            changed = true;
-                            break;
-                        }
-                    }
-                }
-                if !changed {
-                    break;
-                }
-            }
-            let mut preload_entries = AutoBitSet::init_empty(files_len)?;
-            for source_index in &reachable {
-                let id = source_index.get() as usize;
-                if reaches.is_set(id)
-                    && col_ref!(entry_point_kinds)[id] == EntryPoint::Kind::UserSpecified
-                {
-                    preload_entries.set(id);
-                }
-            }
-            this.preload_entries = preload_entries;
-        }
+        this.entry_point_part_indices = vec![u32::MAX; col_ref!(import_records_list).len()];
 
         for source_index_ in &reachable {
             let source_index = source_index_.get();
@@ -966,14 +926,7 @@ pub(crate) fn scan_imports_and_exports(
                     )?;
                 }
 
-                if module_preload && this.preload_entries.is_set(id) {
-                    this.graph.generate_runtime_symbol_import_and_use(
-                        source_index,
-                        Index::part(entry_point_part_index),
-                        b"__chunks",
-                        1,
-                    )?;
-                }
+                this.entry_point_part_indices[id] = entry_point_part_index;
             }
 
             // Encode import-specific constraints in the dependency graph

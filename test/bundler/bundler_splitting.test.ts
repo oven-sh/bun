@@ -2273,7 +2273,12 @@ describe("bundler", () => {
     globalThis.links = [];
     globalThis.document = {
       createElement: tag => ({ tag }),
-      head: { appendChild: link => links.push(link.rel + " " + String(link.href).split("/").pop()) },
+      head: {
+        appendChild: link => {
+          if (link.crossOrigin !== "") throw new Error("crossOrigin " + link.crossOrigin);
+          links.push(link.rel + " " + String(link.href).split("/").pop());
+        },
+      },
     };
   `;
   // r0 -> a1 -> a2 -> ... -> aN; each aK also reached by route rK, so every aK is its own chunk.
@@ -2438,7 +2443,7 @@ describe("bundler", () => {
     onAfterBundle(api) {
       const entry = api.readFile("/out/entry.js");
       expect(entry).toMatch(/__preload\("(\w+)"\), import\("https:\/\/cdn\.example\.com\/v1\/r0-\1\.js"\)/);
-      const [ids, nodes] = eval("[" + entry.match(/__chunks\(import\.meta\.url,(\[.*\]),0\);/)![1] + "]") as [
+      const [ids, nodes] = JSON.parse("[" + entry.match(/__chunks\(import\.meta\.url,(\[.*\]),0\);/)![1] + "]") as [
         string[],
         [string, ...number[]][],
       ];
@@ -2653,11 +2658,11 @@ describe("bundler", () => {
     },
     run: { file: "/test.js", stdout: "b1 1" },
   });
-  // An entry that reaches no split import() is left exactly as it was.
+  // An entry that reaches no split import() (after tree shaking) is left exactly as it was.
   itBundled("splitting/ModulePreloadLeavesStaticEntryAlone", {
     files: {
       "/lazy-page.js": `export const nav = () => import("./r0.js");`,
-      "/static-page.js": `import { a2 } from "./a2.js"; console.log(a2());`,
+      "/static-page.js": `import { a2 } from "./a2.js"; console.log(a2()); function dead() { return import("./r0.js") }`,
       ...preloadChainFiles(2),
     },
     entryPoints: ["/lazy-page.js", "/static-page.js"],

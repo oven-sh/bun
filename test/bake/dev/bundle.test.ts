@@ -99,6 +99,47 @@ devTest("importing a file before it is created", {
     await c.expectMessage("value: 456");
   },
 });
+devTest("a file with a failed import is imported again in the same bundle", {
+  // The first bundle inserts "lib.ts" into the incremental graph as stale when
+  // its import fails. A file resolved after that asks the graph whether
+  // "lib.ts" is cached. The stale bitset must cover "lib.ts" by then.
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import './lib';
+      import './a';
+    `,
+    "lib.ts": `
+      import './missing';
+      console.log('lib');
+    `,
+    // Three levels deep so that "lib.ts" fails to resolve before "c.ts" is resolved.
+    "a.ts": `
+      import './b';
+    `,
+    "b.ts": `
+      import './c';
+    `,
+    "c.ts": `
+      import './lib';
+      console.log('c');
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/", {
+      errors: [`lib.ts:1:8: error: Could not resolve: "./missing"`],
+    });
+
+    await c.expectReload(async () => {
+      await dev.write("missing.ts", `export {};`);
+    });
+
+    await c.expectMessage("lib", "c");
+  },
+});
 devTest("default export same-scope handling", {
   files: {
     "index.html": emptyHtmlFile({

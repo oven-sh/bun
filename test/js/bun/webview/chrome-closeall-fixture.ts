@@ -5,7 +5,7 @@
 // line: what became of the promises that were waiting, of the view, and of
 // Chrome's process tree.
 import { dlopen } from "bun:ffi";
-import { closeSync, openSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { closeSync, openSync, readdirSync, readFileSync, readSync, realpathSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 const shape = (e: any) => ({ name: e.name, code: e.code ?? null, message: e.message });
@@ -31,6 +31,16 @@ function thrown(fn: () => unknown) {
     return { returned: fn() ?? null };
   } catch (e) {
     return { threw: shape(e) };
+  }
+}
+
+function isElf(path: string): boolean {
+  const magic = Buffer.alloc(4);
+  const fd = openSync(path, "r");
+  try {
+    return readSync(fd, magic, 0, 4, 0) === 4 && magic.equals(Buffer.from("\x7fELF", "latin1"));
+  } finally {
+    closeSync(fd);
   }
 }
 
@@ -71,10 +81,12 @@ function warmBrowserInstall(executable: string | undefined, libc: string | undef
         return { path, size: statSync(path).size };
       })
       .sort((a, b) => b.size - a.size);
-    // BUN_CHROME_PATH can name a wrapper script that lives anywhere. Only a
-    // directory that holds a browser-sized binary is an install directory,
-    // and that binary is the browser.
-    if (!files.length || files[0].size < 64 * 1024 * 1024) return done;
+    // The executable itself is usually a launcher script (google-chrome,
+    // chromium-launcher.sh) next to the browser, and BUN_CHROME_PATH can name
+    // a wrapper that lives anywhere. Only a directory whose largest file is a
+    // browser-sized ELF executable is an install directory, and that file is
+    // the browser.
+    if (!files.length || files[0].size < 64 * 1024 * 1024 || !isElf(files[0].path)) return done;
     for (const path of sharedLibraries(files[0].path)) {
       files.push({ path, size: statSync(path).size });
     }

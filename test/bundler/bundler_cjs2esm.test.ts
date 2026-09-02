@@ -401,6 +401,9 @@ describe("bundler", () => {
       stdout: "react\nreact",
     },
   });
+  // `sideEffect(); module.exports = require("./main")` in an unwrapped package
+  // becomes `sideEffect(); export * from "./main"`, so the file needs no
+  // `__commonJS` wrapper and the named import binds to the export directly.
   itBundled("cjs2esm/ReactSpecificUnwrapping", {
     files: {
       "/entry.js": /* js */ `
@@ -419,10 +422,219 @@ describe("bundler", () => {
         }
       `,
     },
+    cjs2esm: true,
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("__toESM(");
+    },
     run: {
       stdout: "side effect\nSymbol(pass)",
     },
     minifySyntax: true,
+  });
+  // The real react-dom/index.js and react-dom/client.js shape: a DCE check
+  // runs before `module.exports = require()`, both inside an `if` on
+  // NODE_ENV that minification folds into `checkDCE(), module.exports = ns`.
+  itBundled("cjs2esm/ReactSpecificUnwrappingDCECheck", {
+    files: {
+      "/entry.js": /* js */ `
+        import { createRoot } from "react-dom/client";
+        console.log(createRoot());
+      `,
+      "/node_modules/react-dom/package.json": /* json */ `
+        { "name": "react-dom", "version": "19.0.0", "main": "index.js" }
+      `,
+      "/node_modules/react-dom/client.js": /* js */ `
+        'use strict';
+
+        function checkDCE() {
+          if (typeof __REACT_DEVTOOLS_GLOBAL_HOOK__ === 'undefined') {
+            console.log('checkDCE');
+            return;
+          }
+          if (process.env.NODE_ENV !== 'production') {
+            throw new Error('^_^');
+          }
+        }
+
+        if (process.env.NODE_ENV === 'production') {
+          checkDCE();
+          module.exports = require('./cjs/react-dom-client.production.js');
+        } else {
+          module.exports = require('./cjs/react-dom-client.development.js');
+        }
+      `,
+      "/node_modules/react-dom/cjs/react-dom-client.production.js": /* js */ `
+        exports.createRoot = function createRoot() { return "production root"; };
+        exports.version = "19.0.0";
+      `,
+      "/node_modules/react-dom/cjs/react-dom-client.development.js": /* js */ `
+        exports.createRoot = function createRoot() { return "FAILED"; };
+        exports.version = "19.0.0";
+      `,
+    },
+    cjs2esm: true,
+    minifySyntax: true,
+    env: {
+      NODE_ENV: "production",
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("__toESM(");
+    },
+    run: {
+      stdout: "checkDCE\nproduction root",
+    },
+  });
+  // A default import of the converted file binds to its namespace, which
+  // holds the re-exported names (the export star resolves at link time).
+  itBundled("cjs2esm/ReactSpecificUnwrappingSideEffectDefaultImport", {
+    files: {
+      "/entry.js": /* js */ `
+        import ReactDOM, { render } from "react-dom";
+        console.log(render(), ReactDOM.render(), ReactDOM.version, typeof ReactDOM.default);
+      `,
+      "/node_modules/react-dom/index.js": /* js */ `
+        console.log('side effect');
+        module.exports = require('./impl');
+      `,
+      "/node_modules/react-dom/impl.js": /* js */ `
+        exports.render = function render() { return "rendered"; };
+        exports.version = "19.0.0";
+      `,
+    },
+    cjs2esm: true,
+    minifySyntax: true,
+    run: {
+      stdout: "side effect\nrendered rendered 19.0.0 object",
+    },
+  });
+  itBundled("cjs2esm/ReactSpecificUnwrappingSideEffectNamespaceImport", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as ReactDOM from "react-dom";
+        console.log(ReactDOM.render(), Object.keys(ReactDOM).sort().join(","), typeof ReactDOM.default);
+      `,
+      "/node_modules/react-dom/index.js": /* js */ `
+        console.log('side effect');
+        module.exports = require('./impl');
+      `,
+      "/node_modules/react-dom/impl.js": /* js */ `
+        exports.render = function render() { return "rendered"; };
+        exports.version = "19.0.0";
+      `,
+    },
+    cjs2esm: true,
+    minifySyntax: true,
+    run: {
+      stdout: "side effect\nrendered render,version object",
+    },
+  });
+  // The namespace the require() became stays imported when the file also
+  // reads from it before the `module.exports =` assignment.
+  itBundled("cjs2esm/ReactSpecificUnwrappingNamespaceStillUsed", {
+    files: {
+      "/entry.js": /* js */ `
+        import { render } from "react-dom";
+        console.log(render());
+      `,
+      "/node_modules/react-dom/index.js": /* js */ `
+        var impl = require('./impl');
+        console.log('impl version', impl.version);
+        module.exports = impl;
+      `,
+      "/node_modules/react-dom/impl.js": /* js */ `
+        exports.render = function render() { return "rendered"; };
+        exports.version = "19.0.0";
+      `,
+    },
+    cjs2esm: true,
+    minifySyntax: true,
+    run: {
+      stdout: "impl version 19.0.0\nrendered",
+    },
+  });
+  // The re-exported file turns out to be CommonJS (its exports are not
+  // statically known), so the linker keeps the converted file a CommonJS
+  // wrapper around `module.exports = require()`.
+  itBundled("cjs2esm/ReactSpecificUnwrappingTargetIsCommonJS", {
+    files: {
+      "/entry.js": /* js */ `
+        import ReactDOM, { version } from "react-dom";
+        import * as ns from "react-dom";
+        console.log(version, typeof ReactDOM, ReactDOM.version, typeof ReactDOM.default, ns.version, typeof ns.default);
+      `,
+      "/node_modules/react-dom/index.js": /* js */ `
+        console.log('side effect');
+        module.exports = require('./impl');
+      `,
+      "/node_modules/react-dom/impl.js": /* js */ `
+        module.exports = function render() { return "rendered"; };
+        module.exports.version = "19.0.0";
+      `,
+    },
+    cjs2esm: {
+      unhandled: ["/node_modules/react-dom/index.js", "/node_modules/react-dom/impl.js"],
+    },
+    minifySyntax: true,
+    run: {
+      stdout: "side effect\n19.0.0 object 19.0.0 function 19.0.0 object",
+    },
+  });
+  // Same when the re-exported file is external: the wrapper assigns the
+  // `import * as ns` of the external module.
+  itBundled("cjs2esm/ReactSpecificUnwrappingTargetIsExternal", {
+    files: {
+      "/entry.js": /* js */ `
+        import ReactDOM, { unstable_now } from "react-dom";
+        console.log(unstable_now(), ReactDOM.unstable_now(), typeof ReactDOM.default);
+      `,
+      "/node_modules/react-dom/index.js": /* js */ `
+        console.log('side effect');
+        module.exports = require('scheduler');
+      `,
+    },
+    external: ["scheduler"],
+    target: "bun",
+    runtimeFiles: {
+      "/node_modules/scheduler/index.js": /* js */ `
+        exports.unstable_now = function unstable_now() { return 42; };
+      `,
+    },
+    minifySyntax: true,
+    onAfterBundle(api) {
+      // The hoisted import sits between the file comment and the wrapper,
+      // which the `cjs2esm` check does not expect.
+      const code = api.readFile("/out.js");
+      expect(code).toContain('import * as scheduler from "scheduler"');
+      expect(code).toContain("var require_react_dom = __commonJS(");
+      expect(code).toContain("module.exports = scheduler");
+    },
+    run: {
+      stdout: "side effect\n42 42 object",
+    },
+  });
+  // Other `exports` uses next to `module.exports = require()` keep the file
+  // CommonJS: the export star would hide the `exports.foo` assignment.
+  itBundled("cjs2esm/ReactSpecificUnwrappingMixedExportsStaysCJS", {
+    files: {
+      "/entry.js": /* js */ `
+        import ReactDOM from "react-dom";
+        console.log(ReactDOM.render(), ReactDOM.foo);
+      `,
+      "/node_modules/react-dom/index.js": /* js */ `
+        exports.foo = 'foo';
+        module.exports = require('./impl');
+      `,
+      "/node_modules/react-dom/impl.js": /* js */ `
+        exports.render = function render() { return "rendered"; };
+      `,
+    },
+    cjs2esm: {
+      unhandled: ["/node_modules/react-dom/index.js"],
+    },
+    minifySyntax: true,
+    run: {
+      stdout: "rendered undefined",
+    },
   });
   itBundled("cjs2esm/ReactSpecificUnwrapping2", {
     files: {

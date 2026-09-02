@@ -418,7 +418,19 @@ pub(crate) fn scan_imports_and_exports(
 
                 if dependency_wrapper.export_star_records[id].len() > 0 {
                     dependency_wrapper.export_star_map.clear();
-                    let _ = dependency_wrapper.has_dynamic_exports_due_to_export_star(source_index);
+                    let has_dynamic_exports =
+                        dependency_wrapper.has_dynamic_exports_due_to_export_star(source_index);
+
+                    // A lifted file's export star was `module.exports = require("./b")`. With no
+                    // static exports in "./b", keep the wrapper (see `convert_stmts_for_chunk`).
+                    if has_dynamic_exports
+                        && dependency_wrapper.exports_kind[id] != ExportsKind::Cjs
+                        && col_ref!(ast_flags_list)[id].contains(AstFlags::COMMONJS_LIFTED_TO_ESM)
+                    {
+                        dependency_wrapper.exports_kind[id] = ExportsKind::Cjs;
+                        dependency_wrapper.flags[id].wrap = WrapKind::Cjs;
+                        dependency_wrapper.wrap(source_index);
+                    }
                 }
 
                 // Even if the output file is CommonJS-like, we may still need to wrap
@@ -1209,6 +1221,39 @@ pub(crate) fn scan_imports_and_exports(
                             [*import_record_index as usize];
                         (record.source_index,)
                     };
+
+                    // `convert_stmts_for_chunk` prints a wrapped lifted file's export star as
+                    // `module.exports = <value>`: the part needs `module` and that value.
+                    if wrap == WrapKind::Cjs
+                        && col_ref!(ast_flags_list)[id].contains(AstFlags::COMMONJS_LIFTED_TO_ESM)
+                        && !(rec_source_index.is_valid() && rec_source_index.get() == source_index)
+                    {
+                        if rec_source_index.is_valid() {
+                            let other_id = rec_source_index.get() as usize;
+                            if col_ref!(exports_kind)[other_id] != ExportsKind::Cjs {
+                                this.graph.generate_symbol_import_and_use(
+                                    source_index,
+                                    part_index as u32,
+                                    col_ref!(exports_refs)[other_id],
+                                    1,
+                                    Index::source(rec_source_index.get()),
+                                )?;
+                            }
+                        } else if output_format.keep_es6_import_export_syntax() {
+                            col!(import_records_list)[id].as_mut_slice()
+                                [*import_record_index as usize]
+                                .flags
+                                .insert(ImportRecordFlags::CONTAINS_IMPORT_STAR);
+                        }
+                        this.graph.generate_symbol_import_and_use(
+                            source_index,
+                            part_index as u32,
+                            col_ref!(module_refs)[id],
+                            1,
+                            Index::source(source_index),
+                        )?;
+                        continue;
+                    }
 
                     let mut happens_at_runtime = rec_source_index.is_invalid()
                         && (!is_entry_point || !output_format.keep_es6_import_export_syntax());

@@ -2132,6 +2132,52 @@ describe("bundler", () => {
     },
     dce: true,
   });
+  itBundled("dce/DCEOfDestructuring", {
+    files: {
+      "/entry.js": /* js */ `
+        // Identifier bindings
+        var remove1
+        var remove2 = null
+        var KEEP1 = x
+
+        // Array patterns over an array literal use the built-in array iterator
+        // and are side-effect free
+        var [remove3] = []
+        var [remove4 = 0] = [null]
+        var [remove5, , remove6] = [null, undefined, 0]
+        var [...remove7] = []
+        var [KEEP2] = x
+        var [KEEP3 = x] = [null]
+        var [[KEEP4]] = [[]]
+        var [{ KEEP5 }] = [{}]
+
+        // Object patterns invoke getters, so they always stay
+        var { KEEP6 } = {}
+        var { KEEP7 = 0 } = {}
+        var { KEEP8 } = x
+        var { KEEP9: { KEEP10 } } = {}
+        var { ...KEEP11 } = {}
+      `,
+    },
+    dce: true,
+  });
+  itBundled("dce/DCEOfDestructuringSideEffects", {
+    files: {
+      "/entry.js": /* js */ `
+        const obj = { get x() { console.log("EFFECT1"); return 1 } }
+        const { x } = obj
+        const { y } = { get y() { console.log("EFFECT2"); return 2 } }
+        const iter = { [Symbol.iterator]() { console.log("EFFECT3"); return [][Symbol.iterator]() } }
+        const [a] = iter
+        const [[b]] = [iter]
+        const [{ x: c }] = [obj]
+        export function used() {}
+      `,
+    },
+    run: {
+      stdout: "EFFECT1\nEFFECT2\nEFFECT3\nEFFECT3\nEFFECT1",
+    },
+  });
   itBundled("dce/TreeShakingLoweredClassStaticField", {
     files: {
       "/entry.js": /* js */ `

@@ -5362,11 +5362,31 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(())
     }
 
-    fn binding_can_be_removed_if_unused_without_dce_check(&mut self, binding: Binding) -> bool {
-        match binding.data {
+    /// Destructuring runs code on the value: an object pattern invokes getters
+    /// and an array pattern invokes the value's iterator. Like esbuild, the only
+    /// pattern treated as side-effect free is an array pattern of identifiers
+    /// and holes over an array literal, which uses the built-in array iterator.
+    fn decl_binding_can_be_removed_if_unused_without_dce_check(
+        &mut self,
+        decl: &js_ast::g::Decl,
+    ) -> bool {
+        match decl.binding.data {
+            js_ast::b::B::BIdentifier(_) => true,
             js_ast::b::B::BArray(bi) => {
+                if !matches!(
+                    decl.value,
+                    Some(Expr {
+                        data: js_ast::ExprData::EArray(_),
+                        ..
+                    })
+                ) {
+                    return false;
+                }
                 for item in bi.items.slice() {
-                    if !self.binding_can_be_removed_if_unused_without_dce_check(item.binding) {
+                    if !matches!(
+                        item.binding.data,
+                        js_ast::b::B::BIdentifier(_) | js_ast::b::B::BMissing(_)
+                    ) {
                         return false;
                     }
                     if let Some(default) = &item.default_value {
@@ -5375,27 +5395,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
                     }
                 }
+                true
             }
-            js_ast::b::B::BObject(bi) => {
-                for property in bi.properties.slice() {
-                    if !property.flags.contains(Flags::Property::IsSpread)
-                        && !self.expr_can_be_removed_if_unused_without_dce_check(&property.key)
-                    {
-                        return false;
-                    }
-                    if !self.binding_can_be_removed_if_unused_without_dce_check(property.value) {
-                        return false;
-                    }
-                    if let Some(default) = &property.default_value {
-                        if !self.expr_can_be_removed_if_unused_without_dce_check(default) {
-                            return false;
-                        }
-                    }
-                }
-            }
-            _ => {}
+            js_ast::b::B::BObject(_) | js_ast::b::B::BMissing(_) => false,
         }
-        true
     }
 
     fn stmts_can_be_removed_if_unused(&mut self, stmts: &[Stmt]) -> bool {
@@ -5441,7 +5444,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
 
                     for decl in st.decls.slice() {
-                        if !self.binding_can_be_removed_if_unused_without_dce_check(decl.binding) {
+                        if !self.decl_binding_can_be_removed_if_unused_without_dce_check(decl) {
                             return false;
                         }
                         if let Some(decl_value) = &decl.value {

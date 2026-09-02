@@ -196,6 +196,37 @@ plugin({
 });
 ```
 
+#### Resolving inside `onResolve`
+
+At runtime, module resolution re-enters the plugin pipeline. When an `onResolve()` callback calls `Bun.resolveSync()`, `require.resolve()`, or `import.meta.resolve()`, every matching `onResolve()` callback runs again, including the one that is currently running. Node.js `module.registerHooks()` resolve hooks behave the same way.
+
+A callback that resolves its own matched specifier therefore recurses until it throws `RangeError: Maximum call stack size exceeded`:
+
+```ts
+// Do not do this: Bun.resolveSync() re-enters this callback.
+build.onResolve({ filter: /^my-pkg\// }, args => {
+  return { path: Bun.resolveSync(args.path, process.cwd()) };
+});
+```
+
+To fall back to Bun's default resolver, guard against re-entry with a `Set` keyed on the specifier. Return `undefined` on re-entry, which passes the specifier through to default resolution:
+
+```ts
+const resolving = new Set<string>();
+
+build.onResolve({ filter: /^my-pkg\// }, args => {
+  if (resolving.has(args.path)) return; // re-entry: use the default resolver
+  resolving.add(args.path);
+  try {
+    return { path: Bun.resolveSync(args.path, process.cwd()) };
+  } finally {
+    resolving.delete(args.path);
+  }
+});
+```
+
+Key the guard on `args.path`, not on a boolean flag. A boolean guard also suppresses re-entry for a different specifier that the filter matches, which silently skips legitimate redirects.
+
 ### `onLoad`
 
 ```ts

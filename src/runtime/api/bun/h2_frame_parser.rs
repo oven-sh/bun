@@ -545,6 +545,26 @@ fn is_valid_header_value(value: &[u8]) -> bool {
     !strings::contains_any(value, b"\0\n\r")
 }
 
+/// The wire bytes of an outbound header value. A value whose code units all fit
+/// in one byte is written one byte per code unit. Node does the same
+/// (`StringBytes::Write(..., LATIN1)` in `NgHeaders`), and the inbound side
+/// reads the bytes back as latin-1. A value with a wider code unit is written as
+/// UTF-8. Bun has no single rule above 0xFF: Node truncates such a code unit to
+/// its low byte, and object-form `respond()` drops the value in JS
+/// (`headerValueIsUnsendable`).
+fn header_value_bytes<'a>(value: &'a bun_jsc::JSStringView<'_>) -> Cow<'a, [u8]> {
+    if !value.is_utf16() {
+        return Cow::Borrowed(value.latin1());
+    }
+    let units = value.utf16();
+    if units.iter().any(|&unit| unit > 0xFF) {
+        return Cow::Owned(value.to_owned_slice());
+    }
+    let mut bytes = vec![0u8; units.len()];
+    strings::copy_u16_into_u8(&mut bytes, units);
+    Cow::Owned(bytes)
+}
+
 #[inline]
 pub(crate) fn is_malformed_field_name(name: &[u8]) -> bool {
     let rest = match name.split_first() {
@@ -5817,8 +5837,8 @@ impl H2FrameParser {
                         }
                     };
 
-                    let value_slice = value_view.to_utf8();
-                    let value = value_slice.slice();
+                    let value_bytes = header_value_bytes(&value_view);
+                    let value = value_bytes.as_ref();
 
                     if let Some(ret) = handle_encode(this, value, never_index)? {
                         return Ok(ret);
@@ -5851,8 +5871,8 @@ impl H2FrameParser {
                     }
                 };
 
-                let value_slice = value_view.to_utf8();
-                let value = value_slice.slice();
+                let value_bytes = header_value_bytes(&value_view);
+                let value = value_bytes.as_ref();
                 bun_output::scoped_log!(
                     H2FrameParser,
                     "encode header {} {}",
@@ -6216,8 +6236,8 @@ impl H2FrameParser {
                 };
                 let mut encode_value = |item: JSValue| -> JsResult<Option<JSValue>> {
                     let value_view = item.to_js_string_view(global_object)?;
-                    let value_slice = value_view.to_utf8();
-                    let value = value_slice.slice();
+                    let value_bytes = header_value_bytes(&value_view);
+                    let value = value_bytes.as_ref();
                     if !is_valid_header_value(value) {
                         return Err(global_object
                             .err(
@@ -6691,8 +6711,8 @@ impl H2FrameParser {
                         }
                     };
 
-                    let value_slice = value_view.to_utf8();
-                    let value = value_slice.slice();
+                    let value_bytes = header_value_bytes(&value_view);
+                    let value = value_bytes.as_ref();
                     if !is_valid_header_value(value) {
                         return Err(global_object
                             .err(
@@ -6861,8 +6881,8 @@ impl H2FrameParser {
                             }
                         };
 
-                        let value_slice = value_view.to_utf8();
-                        let value = value_slice.slice();
+                        let value_bytes = header_value_bytes(&value_view);
+                        let value = value_bytes.as_ref();
                         if !is_valid_header_value(value) {
                             return Err(global_object
                                 .err(
@@ -6931,8 +6951,8 @@ impl H2FrameParser {
                         }
                     };
 
-                    let value_slice = value_view.to_utf8();
-                    let value = value_slice.slice();
+                    let value_bytes = header_value_bytes(&value_view);
+                    let value = value_bytes.as_ref();
                     if !is_valid_header_value(value) {
                         return Err(global_object
                             .err(

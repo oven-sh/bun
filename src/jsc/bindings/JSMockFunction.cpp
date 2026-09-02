@@ -1532,9 +1532,8 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSpyOn, (JSC::JSGlobalObject * lexicalGlobalOb
     bool hasValue = object->getPropertySlot(globalObject, propertyKey, slot);
     RETURN_IF_EXCEPTION(scope, {});
 
-    // A CustomValue (process.env keys, lazy module exports such as util.inspect) is a data
-    // property to JS: the native getter runs once and stores the value. Treat it like a value.
-    // The attribute bit must not survive into a putDirect of a non-CustomGetterSetter cell.
+    // A CustomValue (process.env keys, util.inspect) is a data property to JS. Its attribute bit
+    // must not reach a putDirect of a plain value.
     bool isCustomValue = hasValue && slot.isCustom() && (slot.attributes() & PropertyAttribute::CustomValue);
     unsigned slotAttributes = hasValue ? (slot.attributes() & ~static_cast<unsigned>(PropertyAttribute::CustomValue)) : 0;
 

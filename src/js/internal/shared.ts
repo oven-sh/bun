@@ -155,9 +155,7 @@ ObjectFreeze(kInternalSendOptions);
 // https://github.com/nodejs/node/blob/main/src/api/callback.cc
 const reportUncaughtException = $newCppFunction("BunProcess.cpp", "jsFunctionReportUncaughtException", 1);
 
-// defineLazyProperties(target, keys, loader): each key becomes a data property whose value is
-// loader(key), computed on first read. Unlike a get/set pair, Object.getOwnPropertyDescriptor
-// reports `value` from the start, as it does for node's lazy exports (SetLazyDataProperty).
+// Data properties (not get/set pairs) whose first read stores loader(key), like node's lazy exports.
 const defineLazyProperties: (target: object, keys: string[], loader: (key: string) => unknown) => void =
   $newCppFunction("DefineLazyProperties.cpp", "jsFunctionDefineLazyProperties", 3);
 

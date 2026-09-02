@@ -690,8 +690,7 @@ function setTraceSigInt(enable) {
 }
 
 cjs_exports = {
-  // This is in order of `node --print 'Object.keys(util)'`, except for the
-  // lazy inspect exports defined below.
+  // This is in order of `node --print 'Object.keys(util)'`
   _errnoException,
   // _exceptionWithHostPort,
   _extend,

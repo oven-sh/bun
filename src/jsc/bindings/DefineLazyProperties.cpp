@@ -14,9 +14,7 @@ namespace Bun {
 
 using namespace JSC;
 
-// The loaders live on the target under a private name (invisible to user
-// code), keyed by property name. A CustomGetterSetter carries no payload, so
-// this is how one native getter serves every lazy property.
+// key -> loader, stored on the target under a private name (CustomGetterSetter has no payload).
 static JSObject* lazyPropertyLoaders(VM& vm, JSObject* target)
 {
     JSValue loaders = target->getDirect(vm, WebCore::builtinNames(vm).lazyPropertyLoadersPrivateName());
@@ -46,10 +44,7 @@ JSC_DEFINE_CUSTOM_GETTER(lazyPropertyGetter, (JSGlobalObject * globalObject, Enc
     JSValue value = call(globalObject, loader, getCallData(loader), jsUndefined(), args);
     RETURN_IF_EXCEPTION(scope, {});
 
-    // Replace the getter with the value, as a data property with the same
-    // attributes (a frozen target keeps ReadOnly | DontDelete, as V8's
-    // ReconfigureDataProperty does). Skip if the loader redefined the
-    // property itself.
+    // Same attributes minus CustomValue: a frozen target stays ReadOnly, like V8's ReconfigureDataProperty.
     unsigned attributes = 0;
     PropertyOffset offset = thisObject->getDirectOffset(vm, propertyName, attributes);
     if (isValidOffset(offset) && (attributes & PropertyAttribute::CustomValue)) {

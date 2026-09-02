@@ -497,6 +497,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if let Some(&known) = parents.get(&class_ref) {
             return known;
         }
+        // A long `extends` chain with a write at each level recurses once per class.
+        if !self.stack_check.is_safe_to_recurse() {
+            return false;
+        }
         // A cyclic `extends` chain re-enters here and reads this placeholder.
         parents.insert(class_ref, false);
         let only_extended = parts.iter().enumerate().all(|(part_index, part)| {

@@ -26,8 +26,7 @@ extern "C" BunString BakeSourceProvider__getSourceSlice(SourceProvider* provider
     return Bun::toStringView(provider->source());
 }
 
-// The EncodedJSValue-returning entry points below return empty if and only if
-// an exception is pending (Rust calls them through `jsc::from_js_host_call`).
+// Rust calls the EncodedJSValue entry points below through `from_js_host_call`: empty return <=> exception pending.
 
 extern "C" JSC::EncodedJSValue BakeLoadInitialServerCode(JSC::JSGlobalObject* global, BunString source, bool separateSSRGraph) {
   auto& vm = JSC::getVM(global);
@@ -126,8 +125,7 @@ extern "C" JSC::EncodedJSValue BakeLoadServerHmrPatchWithSourceMap(GlobalObject*
   return JSC::JSValue::encode(result);
 }
 
-// `keyValue` must name a module whose evaluation promise has already settled.
-// Returns nullptr if and only if an exception is pending.
+// nullptr <=> exception pending.
 static JSC::JSModuleNamespaceObject* getModuleNamespace(JSC::JSGlobalObject* global, JSC::JSValue keyValue) {
   auto& vm = JSC::getVM(global);
   auto scope = DECLARE_THROW_SCOPE(vm);
@@ -139,7 +137,6 @@ static JSC::JSModuleNamespaceObject* getModuleNamespace(JSC::JSGlobalObject* glo
   auto keyIdent = JSC::Identifier::fromString(vm, keyString);
   auto* entry = global->moduleLoader()->registryEntry(keyIdent);
   auto* module = entry ? entry->record() : nullptr;
-  // The caller waited for BakeLoadModuleByKey's promise, so both exist unless the loader registered the module under another key.
   if (!module) [[unlikely]] {
     throwTypeError(global, scope, makeString("Module \""_s, keyString, "\" is not in the module registry"_s));
     return nullptr;

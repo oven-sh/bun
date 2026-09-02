@@ -1221,8 +1221,7 @@ fn load_module(
     }
 }
 
-/// BakeSourceProvider.cpp entry points. Each returns empty if and only if it
-/// threw, so every call goes through `from_js_host_call`.
+/// BakeSourceProvider.cpp entry points: each returns empty iff it threw (`from_js_host_call`).
 mod c {
     use super::*;
 
@@ -1230,7 +1229,6 @@ mod c {
         safe fn BakeLoadModuleByKey(global: &JSGlobalObject, key: JSValue) -> JSValue;
         safe fn BakeGetModuleNamespace(global: &JSGlobalObject, key: JSValue) -> JSValue;
         safe fn BakeGetDefaultExportFromModule(global: &JSGlobalObject, key: JSValue) -> JSValue;
-        // `key` is borrowed for the call (C++ builds an `Identifier` from it).
         safe fn BakeGetOnModuleNamespace(
             global: &JSGlobalObject,
             module_namespace: JSValue,
@@ -1238,8 +1236,7 @@ mod c {
         ) -> JSValue;
     }
 
-    /// Starts loading and evaluating the module that `key` (a JSString) names
-    /// and returns its `JSInternalPromise`.
+    /// Returns the `JSInternalPromise` that evaluates the module `key` (a JSString) names.
     pub(super) fn bake_load_module_by_key(
         global: &JSGlobalObject,
         key: JSValue,
@@ -1263,8 +1260,7 @@ mod c {
         jsc::from_js_host_call(global, || BakeGetDefaultExportFromModule(global, key))
     }
 
-    /// Reads `property` off a module namespace object returned by
-    /// [`bake_get_module_namespace`].
+    /// Reads `property` off a namespace object from [`bake_get_module_namespace`].
     pub(super) fn bake_get_on_module_namespace(
         global: &JSGlobalObject,
         module_namespace: JSValue,

@@ -25,8 +25,6 @@ bakeModuleLoaderImportModule(JSC::JSGlobalObject* global,
     auto& vm = JSC::getVM(global);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    // Returning nullptr with an exception pending is what JSModuleLoader::importModule
-    // itself does. globalFuncImportModule rejects the import() promise with it.
     WTF::String keyString = moduleNameValue->getString(global);
     RETURN_IF_EXCEPTION(scope, nullptr);
     if (keyString.startsWith("bake:/"_s)) {

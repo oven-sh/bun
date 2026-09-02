@@ -64,6 +64,9 @@ pub(crate) struct UpgradedDuplex {
     /// Replayed by [`Self::drain_pending`] after the staged bytes, preserving
     /// the original data-then-EOF order.
     pub pending_end: Cell<bool>,
+    /// The transport delivered EOF (its 'end' event fired). Teardown payloads
+    /// (close_notify) are dropped after this; see [`Self::call_write_or_end`].
+    pub transport_eof: Cell<bool>,
 }
 
 bun_event_loop::impl_timer_owner!(UpgradedDuplex; from_timer_ptr => event_loop_timer);
@@ -230,6 +233,15 @@ impl UpgradedDuplex {
         // probe so write-after-end still errors like node.
         let teardown = data.is_none() || self.wrapper_ref().is_some_and(|w| w.is_shutdown());
         if teardown {
+            // A teardown payload (close_notify) after the transport's readable
+            // side ended has no reader behind it: node writes nothing there,
+            // and a transport that forwards into an auto-ended net.Socket
+            // throws writeAfterFIN (EPIPE). The trailing end() is not a write
+            // and still goes through the writableEnded probe below, so a
+            // half-open transport sees our FIN.
+            if data.is_some() && self.transport_eof.get() {
+                return;
+            }
             match duplex.get(&global, "writableEnded") {
                 Ok(Some(ended)) if ended.to_boolean() => return,
                 Ok(_) => {}
@@ -396,6 +408,7 @@ impl UpgradedDuplex {
             current_timeout: Cell::new(0),
             pending_data: JsCell::new(Vec::new()),
             pending_end: Cell::new(false),
+            transport_eof: Cell::new(false),
         }
     }
 
@@ -666,6 +679,7 @@ impl UpgradedDuplex {
         self.ssl_error.set(CertError::default());
         self.pending_data.set(Vec::new());
         self.pending_end.set(false);
+        self.transport_eof.set(false);
     }
 }
 
@@ -724,6 +738,7 @@ fn on_end(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         // SAFETY: see host-fn note above.
         let this = unsafe { &*self_ptr.cast::<UpgradedDuplex>() };
 
+        this.transport_eof.set(true);
         if this.wrapper_ref().is_some() {
             (this.handlers.on_end)(this.handlers.ctx);
         } else {

@@ -198,6 +198,8 @@ console.log("How...dashing?");
     }
     const sourceMap = await (await fetch(new URL(sourceMapURL, "http://" + hostname + ":" + port))).json();
     sourceMap.sourcesContent = sourceMap.sourcesContent.map(a => a.trim());
+    expect(sourceMap.debugId).toMatch(/^[0-9A-F]{32}$/);
+    sourceMap.debugId = "<debug-id>";
     expect(JSON.stringify(sourceMap, null, 2)).toMatchInlineSnapshot(`
       "{
         "version": 3,
@@ -210,7 +212,7 @@ console.log("How...dashing?");
           "import './script.js';\\n      // Additional dashboard-specific code could go here\\n      console.log(\\"How...dashing?\\")"
         ],
         "mappings": ";AACM,IAAI,QAAQ;AACZ,IAAM,SAAS,SAAS,eAAe,SAAS;AAChD,OAAO,iBAAiB,SAAS,MAAM;AAAA,EACrC;AAAA,EACA,OAAO,cAAc,aAAa;AAAA,CACnC;;;ACHD,QAAQ,IAAI,gBAAgB;",
-        "debugId": "DEEF3F05D4E944CA64756E2164756E21",
+        "debugId": "<debug-id>",
         "names": []
       }"
     `);

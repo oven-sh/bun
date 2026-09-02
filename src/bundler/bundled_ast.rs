@@ -30,6 +30,7 @@ pub(crate) type CssCol = Option<CssAstRef>;
 use bun_ast::import_record;
 use bun_core::strings;
 
+use crate::options::ModuleType;
 use bun_ast::ast_result::Ast;
 use bun_ast::{CharFreq, ExportsKind, Ref, Scope, SlotCounts, StoreStr, TlaCheck};
 use bun_ast::{part, symbol};
@@ -43,13 +44,16 @@ pub type TopLevelSymbolToParts = bun_ast::ast_result::TopLevelSymbolToParts;
 // `BundledAstColumns` (`items_named_imports()`,
 // `items_named_exports()`, …) at `crate::bundled_ast::*`.
 //
-// 26 fields ≤ `multi_array_list::MAX_FIELDS` (32).
+// 29 fields ≤ `multi_array_list::MAX_FIELDS` (32).
 
 pub struct BundledAst<'arena> {
     pub(crate) approximate_newline_count: u32,
     pub(crate) nested_scope_slot_counts: SlotCounts,
 
     pub(crate) exports_kind: ExportsKind,
+
+    /// Extension or package.json `"type"`, not syntax. `Esm` prints `__toESM(.., 1)`.
+    pub(crate) module_type: ModuleType,
 
     /// These are stored at the AST level instead of on individual AST nodes so
     /// they can be manipulated efficiently without a full AST traversal
@@ -106,6 +110,7 @@ bun_collections::multi_array_columns! {
         approximate_newline_count: u32,
         nested_scope_slot_counts: SlotCounts,
         exports_kind: ExportsKind,
+        module_type: ModuleType,
         import_records: import_record::List<'arena>,
         hashbang: StoreStr,
         export_default_alias_of_import: Ref,
@@ -150,7 +155,9 @@ bitflags::bitflags! {
         const COMMONJS_MODULE_EXPORTS_ASSIGNED_DEOPTIMIZED = 1 << 6;
         const HAS_EXPLICIT_USE_STRICT_DIRECTIVE = 1 << 7;
         const HAS_IMPORT_META = 1 << 8;
-        // _padding: u7 fills the rest
+        /// See `Ast::commonjs_lifted_to_esm`.
+        const COMMONJS_LIFTED_TO_ESM = 1 << 9;
+        // _padding: u6 fills the rest
     }
 }
 
@@ -163,6 +170,7 @@ impl<'arena> BundledAst<'arena> {
             approximate_newline_count: 0,
             nested_scope_slot_counts: SlotCounts::default(),
             exports_kind: ExportsKind::None,
+            module_type: ModuleType::Unknown,
             import_records: import_record::List::new_in(arena),
             hashbang: StoreStr::EMPTY,
             export_default_alias_of_import: Ref::NONE,
@@ -255,6 +263,7 @@ impl<'arena> BundledAst<'arena> {
                 loc: bun_ast::Loc::default(),
             },
             force_cjs_to_esm: self.flags.contains(Flags::FORCE_CJS_TO_ESM),
+            commonjs_lifted_to_esm: self.flags.contains(Flags::COMMONJS_LIFTED_TO_ESM),
             has_lazy_export: self.flags.contains(Flags::HAS_LAZY_EXPORT),
             commonjs_module_exports_assigned_deoptimized: self
                 .flags
@@ -280,6 +289,7 @@ impl<'arena> BundledAst<'arena> {
         flags.set(Flags::USES_EXPORT_KEYWORD, ast.export_keyword.len > 0);
         flags.set(Flags::HAS_CHAR_FREQ, ast.char_freq.is_some());
         flags.set(Flags::FORCE_CJS_TO_ESM, ast.force_cjs_to_esm);
+        flags.set(Flags::COMMONJS_LIFTED_TO_ESM, ast.commonjs_lifted_to_esm);
         flags.set(Flags::HAS_LAZY_EXPORT, ast.has_lazy_export);
         flags.set(
             Flags::COMMONJS_MODULE_EXPORTS_ASSIGNED_DEOPTIMIZED,
@@ -296,6 +306,8 @@ impl<'arena> BundledAst<'arena> {
             nested_scope_slot_counts: ast.nested_scope_slot_counts,
 
             exports_kind: ast.exports_kind,
+            // `ParseTask::run` sets it from the resolver result, like `target`.
+            module_type: ModuleType::Unknown,
 
             import_records: ast.import_records,
 

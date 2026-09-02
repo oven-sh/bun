@@ -1319,7 +1319,10 @@ pub struct BundleOptions<'a> {
     /// Code splitting: also fold side-effect-free chunks whose source is
     /// smaller than this many bytes into a chunk more entry points load.
     /// 0 disables that; chunks with identical load conditions always fold.
-    pub min_chunk_size: u64,
+    /// `None` picks `default_min_chunk_size(target)`.
+    pub min_chunk_size: Option<u64>,
+    /// `<link rel=modulepreload>` for split browser chunks (HTML + `import()`).
+    pub module_preload: bool,
 
     pub ignore_dce_annotations: bool,
     pub emit_dce_annotations: bool,
@@ -1522,6 +1525,7 @@ impl<'a> BundleOptions<'a> {
             repl_mode: self.repl_mode,
             css_chunking: self.css_chunking,
             min_chunk_size: self.min_chunk_size,
+            module_preload: self.module_preload,
             ignore_dce_annotations: self.ignore_dce_annotations,
             emit_dce_annotations: self.emit_dce_annotations,
             deprecated_namespace_object_setters: self.deprecated_namespace_object_setters,
@@ -1699,7 +1703,8 @@ impl<'a> BundleOptions<'a> {
             env: Env::default(),
             transform_options: std::sync::Arc::clone(&transform),
             css_chunking: false,
-            min_chunk_size: 0,
+            min_chunk_size: None,
+            module_preload: true,
             drop: transform.drop.clone().into_boxed_slice(),
             bundler_feature_flags,
 
@@ -2498,4 +2503,13 @@ impl From<PathTemplateConst> for PathTemplate {
             },
         }
     }
+}
+
+/// `--min-chunk-size` when none was given: off for now. In a browser every
+/// chunk is a request and what an entry point can gain is bounded (see
+/// `merge_small_chunks`), so `Target::Browser` is meant to default to 16 KiB
+/// once the pass has shipped opt-in for a release or two.
+pub fn default_min_chunk_size(target: Target) -> u64 {
+    let _ = target;
+    0
 }

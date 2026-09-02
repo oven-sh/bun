@@ -174,6 +174,7 @@ impl<'a, 'bump> CrossChunkDependencies<'a, 'bump> {
                         // `unique_key` backing buffer (`LinkerContext.unique_key_buf`),
                         // which outlives the link pass.
                         import_record.path.text = _chunks[other_chunk_index as usize].unique_key;
+                        import_record.path.pretty = _chunks[other_chunk_index as usize].id_key;
                         import_record.source_index = Index::INVALID;
                         import_record
                             .flags
@@ -303,6 +304,15 @@ impl<'a, 'bump> CrossChunkDependencies<'a, 'bump> {
                     }
                 }
 
+                if ctx.module_preload()
+                    && ctx
+                        .preload_entries
+                        .is_set(chunk.entry_point.source_index() as usize)
+                {
+                    let chunks_ref = symbols.follow(ctx.chunks_runtime_ref);
+                    let _ = chunk_meta.imports.put(chunks_ref, ()); // OOM-only Result
+                }
+
                 // Ensure "exports" is included if the current output format needs it
                 // https://github.com/evanw/esbuild/blob/v0.27.2/internal/linker/linker.go#L1049-L1051
                 if flags.force_include_exports_for_entry_point {
@@ -374,11 +384,9 @@ fn inert_chunks(c: &LinkerContext, chunks: &[Chunk]) -> Result<AutoBitSet, bun_a
                     continue;
                 }
                 for &i in part.import_record_indices.iter() {
-                    let record = &records[i as usize];
-                    if record.source_index.is_valid()
-                        && !c.is_external_dynamic_import(record, source_index)
+                    if let Some(other) = c.file_loaded_by_import(&records[i as usize], source_index)
                     {
-                        add(record.source_index.get());
+                        add(other);
                     }
                 }
                 for dep in part.dependencies.iter() {

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync } from "fs";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, tempDir } from "harness";
 import path from "path";
 import { tempDirWithBakeDeps } from "../bake-harness";
 
@@ -667,7 +667,8 @@ export default function IndexPage() {
       await using proc = Bun.spawn({
         cmd: [bunExe(), "build", "--app", ...args],
         cwd,
-        env: { ...bunEnv, BUN_JSC_validateExceptionChecks: "1" },
+        // BUN_DEV_SERVER_TEST_RUNNER silences the "highly experimental" banner, so stderr is only the build's progress and errors.
+        env: { ...bunEnv, BUN_JSC_validateExceptionChecks: "1", BUN_DEV_SERVER_TEST_RUNNER: "1" },
         stdout: "pipe",
         stderr: "pipe",
       });
@@ -677,8 +678,22 @@ export default function IndexPage() {
         .split("\n")
         .map(line => line.trim())
         .filter(line => line.startsWith("This scope can throw") || line.startsWith("But the exception was unchecked"));
-      return { stdout, stderr, exitCode, signalCode: proc.signalCode, uncheckedScopes };
+      return {
+        stdout: normalizeBunSnapshot(stdout, cwd),
+        stderr: normalizeBunSnapshot(stderr, cwd),
+        exitCode,
+        signalCode: proc.signalCode,
+        uncheckedScopes,
+      };
     }
+
+    const rendered = {
+      stdout: "done",
+      stderr: "Loading configuration\nBundling routes\nRendering routes",
+      exitCode: 0,
+      signalCode: null,
+      uncheckedScopes: [],
+    };
 
     test("a config import that fails to resolve", async () => {
       // The bake resolve hook hands a specifier it does not own to the regular resolver, which throws.
@@ -687,13 +702,13 @@ export default function IndexPage() {
           export default { app: { framework: "react" } };`,
       });
 
-      const { stderr, exitCode, signalCode, uncheckedScopes } = await buildApp(String(dir));
-      expect({ exitCode, signalCode, uncheckedScopes }).toStrictEqual({
+      expect(await buildApp(String(dir))).toStrictEqual({
+        stdout: "",
+        stderr: "Loading configuration\nerror: Cannot find module './does-not-exist' from '<dir>/bun.app.ts'",
         exitCode: 1,
         signalCode: null,
         uncheckedScopes: [],
       });
-      expect(stderr).toContain("Cannot find module './does-not-exist'");
     });
 
     test("loading the server entry point and prerendering routes", async () => {
@@ -725,22 +740,17 @@ export function getStaticPaths() {
 }`,
       });
 
-      const { exitCode, signalCode, uncheckedScopes } = await buildApp(dir, "./src/index.tsx");
-      expect({ exitCode, signalCode, uncheckedScopes }).toStrictEqual({
-        exitCode: 0,
-        signalCode: null,
-        uncheckedScopes: [],
-      });
+      expect(await buildApp(dir, "./src/index.tsx")).toStrictEqual(rendered);
 
-      const rendered = await Promise.all(
+      const pages = await Promise.all(
         ["index.html", "posts/first/index.html", "posts/second/index.html"].map(file =>
           Bun.file(path.join(dir, "dist", file)).text(),
         ),
       );
-      expect(rendered[0]).toContain("<h1>Static Home</h1>");
-      expect(rendered[0]).toContain("<p>Hello from the client</p>");
-      expect(rendered[1]).toContain("<h1>Post first</h1>");
-      expect(rendered[2]).toContain("<h1>Post second</h1>");
+      expect(pages[0]).toContain("<h1>Static Home</h1>");
+      expect(pages[0]).toContain("<p>Hello from the client</p>");
+      expect(pages[1]).toContain("<h1>Post first</h1>");
+      expect(pages[2]).toContain("<h1>Post second</h1>");
     });
 
     // todo on Windows: BakeProdResolve joins the absolute drive path as if it were relative,
@@ -759,12 +769,7 @@ export default async function IndexPage() {
 }`,
       });
 
-      const { exitCode, signalCode, uncheckedScopes } = await buildApp(dir, "./src/index.tsx");
-      expect({ exitCode, signalCode, uncheckedScopes }).toStrictEqual({
-        exitCode: 0,
-        signalCode: null,
-        uncheckedScopes: [],
-      });
+      expect(await buildApp(dir, "./src/index.tsx")).toStrictEqual(rendered);
       expect(await Bun.file(path.join(dir, "dist", "index.html")).text()).toContain(
         "<p>read from disk while rendering</p>",
       );

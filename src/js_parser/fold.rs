@@ -420,18 +420,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             && name == b"filename"
                             && identifier_opts.assign_target() == js_ast::AssignTarget::None
                         {
-                            // inline module.filename
+                            // inline module.filename (== __filename)
                             p.ignore_usage(p.module_ref);
-                            return Some(
-                                p.new_expr(e_string_init(p.source.path.name().filename), name_loc),
-                            );
+                            return Some(p.new_expr(e_string_init(p.source.path.text), name_loc));
                         } else if p.options.bundle
                             && name == b"path"
                             && identifier_opts.assign_target() == js_ast::AssignTarget::None
                         {
-                            // inline module.path
+                            // inline module.path (== __dirname)
                             p.ignore_usage(p.module_ref);
-                            return Some(p.new_expr(e_string_init(p.source.path.pretty), name_loc));
+                            return Some(
+                                p.new_expr(e_string_init(p.source.path.name().dir), name_loc),
+                            );
                         }
                     }
 

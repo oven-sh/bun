@@ -4401,6 +4401,10 @@ impl<'a> LinkerContext<'a> {
                         } else if &**name == b"default"
                             && self.graph.ast.items_flags()[target_source as usize]
                                 .contains(AstFlags::COMMONJS_LIFTED_TO_ESM)
+                            && !Self::lifted_default_import_needs_wrapper(
+                                self.graph.ast.items_module_type()[id],
+                                &self.graph.ast.items_named_exports()[target_source as usize],
+                            )
                         {
                             // `default` of a lifted CommonJS module is `module.exports`, the
                             // namespace itself, the same as `ns.default` on `import * as ns`.

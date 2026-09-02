@@ -3557,6 +3557,7 @@ impl<'a> LinkerContext<'a> {
         let id = tracker.source_index.get();
         let exports_kind: &[ExportsKind] = self.graph.ast.items_exports_kind();
         let ast_flags = self.graph.ast.items_flags();
+        let is_import_stmt = first_hop.is_none();
 
         let (other_source_index, alias, alias_is_star, is_exported) = match first_hop {
             Some((source, alias)) => (source, Some(alias), false, false),
@@ -3657,6 +3658,35 @@ impl<'a> LinkerContext<'a> {
                     ..Default::default()
                 },
                 status: ImportTrackerStatus::Cjs,
+                ..Default::default()
+            };
+        }
+
+        // `import X from "./cjs"` where `./cjs` had its `exports.foo = ...`
+        // assignments lifted to ES module exports: `X` is `module.exports`,
+        // which is now this module's namespace. Bind it like `import * as X`,
+        // so `X.foo` resolves to the lifted binding and the namespace object
+        // is only created when `X` itself escapes. This also covers `ns.default`
+        // on `import * as ns`. A `.default` member read on a namespace reached
+        // through `first_hop` keeps the normal export lookup below.
+        if is_import_stmt
+            && !alias_is_star
+            && flags.contains(AstFlags::COMMONJS_LIFTED_TO_ESM)
+            && alias.is_some_and(|a| a.slice() == b"default")
+            && !Self::lifted_default_import_needs_wrapper(
+                self.graph.ast.items_module_type()[id as usize],
+                &self.graph.ast.items_named_exports()[other_id as usize],
+            )
+        {
+            let matching_export = &self.graph.meta.items_resolved_export_star()[other_id as usize];
+            return ImportTrackerIterator {
+                value: matching_export.data,
+                status: ImportTrackerStatus::Found,
+                import_data: bun_ptr::BackRef::new(
+                    matching_export
+                        .potentially_ambiguous_export_star_refs
+                        .slice(),
+                ),
                 ..Default::default()
             };
         }
@@ -4155,16 +4185,34 @@ impl<'a> LinkerContext<'a> {
     }
 
     /// Is `ref_` the `exports` object of ES module `source_index` (i.e. an
-    /// import that resolved here is that module's namespace)?
+    /// import that resolved here is that module's namespace)? A CommonJS
+    /// module whose `exports.foo = ...` assignments were lifted to ES module
+    /// exports counts: every name it can export is a static export.
     fn is_esm_namespace_ref(&self, source_index: crate::IndexInt, ref_: Ref) -> bool {
         let id = source_index as usize;
         id < self.graph.ast.len()
             && ref_ == self.graph.ast.items_exports_ref()[id]
             && matches!(
                 self.graph.ast.items_exports_kind()[id],
-                ExportsKind::Esm | ExportsKind::EsmWithDynamicFallback
+                ExportsKind::Esm
+                    | ExportsKind::EsmWithDynamicFallback
+                    | ExportsKind::EsmWithDynamicFallbackFromCjs
             )
             && self.graph.meta.items_flags()[id].wrap != WrapKind::Cjs
+    }
+
+    /// `import X from "./cjs"` where `./cjs` had its exports lifted to ES
+    /// module exports (`FORCE_CJS_TO_ESM`): does `X` still need the
+    /// `__commonJS` wrapper and `__toESM`? It does when the module sets
+    /// `__esModule` and the importer is not an ES module by type, because
+    /// then `X` is `exports.default` or `module.exports` depending on the
+    /// value of `__esModule` at run time. Otherwise `X` is `module.exports`,
+    /// which is the lifted module's namespace.
+    pub(crate) fn lifted_default_import_needs_wrapper(
+        importer_module_type: crate::options::ModuleType,
+        exports: &crate::bundled_ast::NamedExports,
+    ) -> bool {
+        importer_module_type != crate::options::ModuleType::Esm && exports.contains(b"__esModule")
     }
 
     /// Resolves every named import in one file to its matching export,

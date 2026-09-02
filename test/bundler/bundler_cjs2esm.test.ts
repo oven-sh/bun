@@ -797,4 +797,304 @@ describe("bundler", () => {
       stdout: 'side sees global\n{"foo":42}',
     },
   });
+
+  // `import React from "react"` of a CommonJS module whose `exports.x = ...`
+  // assignments were lifted to ES module exports. `React` is `module.exports`,
+  // which is the lifted module's namespace: `React.x` binds straight to the
+  // lifted `x`, and the namespace object only exists when `React` escapes.
+  const liftedReact = {
+    "/node_modules/react/package.json": /* json */ `
+      { "name": "react", "version": "19.0.0", "main": "index.js" }
+    `,
+    "/node_modules/react/index.js": /* js */ `
+      'use strict';
+      var REACT_ELEMENT_TYPE = Symbol.for("react.element");
+      function createElement(type, props, children) {
+        props = Object.assign({}, props);
+        if (children !== undefined) props.children = children;
+        return { $$typeof: REACT_ELEMENT_TYPE, type: type, props: props };
+      }
+      function useState(initial) {
+        return [initial, function setState() {}];
+      }
+      function useId() {
+        return "id";
+      }
+      exports.createElement = createElement;
+      exports.useState = useState;
+      exports.useId = useId;
+      exports.version = "19.0.0";
+    `,
+  };
+  itBundled("cjs2esm/DefaultImportMemberBindsDirectly", {
+    files: {
+      "/entry.js": /* js */ `
+        import React from "react";
+        const el = React.createElement("div");
+        console.log(el.type, React.useState(1)[0], React.useId());
+      `,
+      ...liftedReact,
+    },
+    cjs2esm: true,
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).not.toContain("__toESM");
+      expect(out).not.toContain("__export");
+      expect(out).not.toContain("exports_react");
+      // the unused `version` export is tree-shaken
+      expect(out).not.toContain("19.0.0");
+    },
+    run: {
+      stdout: "div 1 id",
+    },
+  });
+  itBundled("cjs2esm/DefaultImportAndStarImportShareBindings", {
+    files: {
+      "/entry.js": /* js */ `
+        import React from "react";
+        import * as R from "react";
+        import { useState } from "react";
+        console.log(
+          React.useState === R.useState,
+          React.useState === useState,
+          React.createElement === R.createElement,
+          React === R.default,
+          React === R,
+        );
+      `,
+      ...liftedReact,
+    },
+    cjs2esm: true,
+    run: {
+      stdout: "true true true true true",
+    },
+  });
+  itBundled("cjs2esm/DefaultImportComputedMemberKeepsNamespace", {
+    files: {
+      "/entry.js": /* js */ `
+        import React from "react";
+        const key = " useId ".trim();
+        console.log(React[key](), Object.keys(React).join(","), React.useState(5)[0]);
+      `,
+      ...liftedReact,
+    },
+    cjs2esm: true,
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toContain("__export(exports_react, {");
+      expect(out).not.toContain("__toESM");
+    },
+    run: {
+      // the namespace keeps the `exports.x = ...` assignment order
+      stdout: "id createElement,useState,useId,version 5",
+    },
+  });
+  itBundled("cjs2esm/DefaultImportEscapingKeepsAssignmentOrder", {
+    files: {
+      "/entry.js": /* js */ `
+        import lib from "./lib.js";
+        console.log(JSON.stringify(lib), typeof lib, lib.zeta);
+      `,
+      "/lib.js": /* js */ `
+        exports.zeta = 1;
+        exports.alpha = 2;
+      `,
+    },
+    cjs2esm: true,
+    run: {
+      stdout: '{"zeta":1,"alpha":2} object 1',
+    },
+  });
+  itBundled("cjs2esm/DefaultImportDotDefaultIsUndefined", {
+    files: {
+      "/entry.js": /* js */ `
+        import React from "react";
+        console.log(typeof React.default, React.default, "default" in React);
+      `,
+      ...liftedReact,
+    },
+    cjs2esm: true,
+    run: {
+      stdout: "undefined undefined false",
+    },
+  });
+  itBundled("cjs2esm/DefaultImportDotDefaultOfExportsDefault", {
+    files: {
+      "/entry.js": /* js */ `
+        import lib from "./lib.js";
+        console.log(lib.default(), lib.foo, Object.keys(lib).join(","));
+      `,
+      "/lib.js": /* js */ `
+        exports.default = function def() { return "def"; };
+        exports.foo = 1;
+      `,
+    },
+    cjs2esm: true,
+    onAfterBundle(api) {
+      // `lib.default` binds to the lifted export; no namespace object is needed
+      // for it, but `Object.keys(lib)` materializes one
+      api.expectFile("/out.js").toContain("$default()");
+    },
+    run: {
+      // without `__esModule`, the default import is the whole `module.exports`
+      stdout: "def 1 default,foo",
+    },
+  });
+  itBundled("cjs2esm/DefaultImportWithEsModuleKeepsWrapper", {
+    files: {
+      "/entry.js": /* js */ `
+        import lib, { foo } from "./lib.js";
+        console.log(lib, foo);
+      `,
+      "/lib.js": /* js */ `
+        exports.__esModule = true;
+        exports.default = "d";
+        exports.foo = 1;
+      `,
+    },
+    // `__esModule` makes `lib` depend on its run-time value for a `.js`
+    // importer, so the module keeps its CommonJS wrapper and `__toESM`
+    cjs2esm: { unhandled: ["/lib.js"] },
+    run: {
+      stdout: "d 1",
+    },
+  });
+  itBundled("cjs2esm/DefaultImportWithEsModuleFromEsmImporter", {
+    files: {
+      "/entry.mjs": /* js */ `
+        import lib, { foo } from "./lib.js";
+        console.log(lib.default, lib.foo, lib.__esModule, foo);
+      `,
+      "/lib.js": /* js */ `
+        exports.__esModule = true;
+        exports.default = "d";
+        exports.foo = 1;
+      `,
+    },
+    // an ES module importer ignores `__esModule`, as in Node: the default
+    // import is `module.exports`, so the module stays lifted
+    cjs2esm: true,
+    run: {
+      stdout: "d 1 true 1",
+    },
+  });
+  itBundled("cjs2esm/ReExportDefaultAsNameFromLiftedCommonJS", {
+    files: {
+      "/entry.js": /* js */ `
+        import { React } from "./barrel.js";
+        console.log(React.createElement("span").type, React.useState(2)[0]);
+      `,
+      "/barrel.js": /* js */ `
+        export { default as React } from "react";
+      `,
+      ...liftedReact,
+    },
+    cjs2esm: true,
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).not.toContain("__toESM");
+      expect(out).not.toContain("__export");
+    },
+    run: {
+      stdout: "span 2",
+    },
+  });
+  itBundled("cjs2esm/ExportDefaultOfLiftedCommonJSDefaultImport", {
+    files: {
+      "/entry.js": /* js */ `
+        import R from "./barrel.js";
+        console.log(R.createElement("p").type, R.useId());
+      `,
+      "/barrel.js": /* js */ `
+        import React from "react";
+        export default React;
+      `,
+      ...liftedReact,
+    },
+    cjs2esm: true,
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).not.toContain("__toESM");
+      expect(out).not.toContain("__export");
+    },
+    run: {
+      stdout: "p id",
+    },
+  });
+  itBundled("cjs2esm/DefaultImportJsxClassicRuntime", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        import React from "react";
+        const el = <div className="x">hi</div>;
+        console.log(el.type, el.props.className, el.props.children);
+      `,
+      ...liftedReact,
+    },
+    jsx: {
+      runtime: "classic",
+    },
+    cjs2esm: true,
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).not.toContain("__toESM");
+      expect(out).not.toContain("__export");
+    },
+    run: {
+      stdout: "div x hi",
+    },
+  });
+  itBundled("cjs2esm/DefaultImportSplitting", {
+    files: {
+      "/a.js": /* js */ `
+        import React from "react";
+        console.log("a", React.createElement("a").type, React.useId());
+      `,
+      "/b.js": /* js */ `
+        import React from "react";
+        import * as R from "react";
+        console.log("b", React.useState(2)[0], React === R, Object.keys(R).length);
+      `,
+      ...liftedReact,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    outdir: "/out",
+    splitting: true,
+    run: [
+      { file: "/out/a.js", stdout: "a a id" },
+      { file: "/out/b.js", stdout: "b 2 true 4" },
+    ],
+  });
+  // `import()` of a lifted CommonJS module resolves to a view of its namespace
+  // whose `default` is the namespace itself (`module.exports`), as in Node.
+  // https://github.com/oven-sh/bun/issues/14061
+  itBundled("cjs2esm/DynamicImportOfLiftedCommonJSHasDefault#14061", {
+    files: {
+      "/entry.js": /* js */ `
+        const m = await import("react");
+        console.log(typeof m.default, m.default.useState === m.useState, m.default.createElement("i").type);
+      `,
+      ...liftedReact,
+    },
+    cjs2esm: true,
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("__toESM((init_react(), exports_react))");
+    },
+    run: {
+      stdout: "object true i",
+    },
+  });
+  itBundled("cjs2esm/DefaultImportWithDynamicImport", {
+    files: {
+      "/entry.js": /* js */ `
+        import React from "react";
+        const m = await import("react");
+        console.log(m.default === React, m.useState === React.useState, m.default.useId());
+      `,
+      ...liftedReact,
+    },
+    cjs2esm: true,
+    run: {
+      stdout: "true true id",
+    },
+  });
 });

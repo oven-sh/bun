@@ -390,6 +390,14 @@ pub(crate) struct RuntimeSource {
 // context.
 const RUNTIME_REQUIRE_BUN: &str = "export var __require = import.meta.require;";
 
+// The getter `__toESM`, `__toCommonJS` and `__reExport` define per property
+// of a CommonJS exports object. `runtime.js` binds a shared function, which
+// JavaScriptCore creates cheaply. V8 calls a bound function through its slow
+// path (about 4x a closure), so browser bundles get a closure per key.
+const RUNTIME_PROP_GETTER_BIND: &str =
+    "var __propGetter = (mod, key) => __accessProp.bind(mod, key);";
+const RUNTIME_PROP_GETTER_BROWSER: &str = "var __propGetter = (mod, key) => () => mod[key];";
+
 const RUNTIME_REQUIRE_NODE: &str = "\
 import { createRequire } from \"node:module\";
 export var __require = /* @__PURE__ */ createRequire(import.meta.url);
@@ -571,7 +579,17 @@ pub mod parse_worker {
                     RUNTIME_PRELOAD_BROWSER,
                 ),
             };
-            [include_str!("../runtime.js"), require, using, preload]
+            let body: &str = include_str!("../runtime.js");
+            debug_assert!(body.contains(RUNTIME_PROP_GETTER_BIND));
+            let body: std::borrow::Cow<str> = match variant {
+                Variant::Other => std::borrow::Cow::Owned(body.replacen(
+                    RUNTIME_PROP_GETTER_BIND,
+                    RUNTIME_PROP_GETTER_BROWSER,
+                    1,
+                )),
+                _ => std::borrow::Cow::Borrowed(body),
+            };
+            [&body, require, using, preload]
                 .concat()
                 .into_bytes()
                 .into_boxed_slice()

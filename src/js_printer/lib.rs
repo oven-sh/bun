@@ -2755,6 +2755,9 @@ pub(crate) mod __gated_printer {
                     meta.exports_ref = Ref::NONE;
                 }
 
+                // Wrap this with a call to "__toESM()" if this is a CommonJS file
+                let wrap_with_to_esm = record.flags.contains(ImportRecordFlags::WRAP_WITH_TO_ESM);
+
                 // Internal "import()" of async ESM
                 if record.kind == ImportKind::Dynamic && meta.is_wrapper_async {
                     self.print_space_before_identifier();
@@ -2763,7 +2766,14 @@ pub(crate) mod __gated_printer {
                     if meta.exports_ref.is_valid() {
                         let _ = self.print_dot_then_prefix();
                         self.print_space_before_identifier();
+                        if wrap_with_to_esm {
+                            self.print_symbol(self.options.to_esm_ref);
+                            self.print(b"(");
+                        }
                         self.print_symbol(meta.exports_ref);
+                        if wrap_with_to_esm {
+                            self.print_to_esm_suffix();
+                        }
                         self.print_dot_then_suffix();
                     }
                     if wrap {
@@ -2785,19 +2795,19 @@ pub(crate) mod __gated_printer {
                     }
                 }
 
-                // Make sure the comma operator is properly wrapped
-                let wrap_comma_operator = meta.exports_ref.is_valid()
-                    && meta.wrapper_ref.is_valid()
-                    && level.gte(Level::Comma);
-                if wrap_comma_operator {
-                    self.print(b"(");
-                }
-
-                // Wrap this with a call to "__toESM()" if this is a CommonJS file
-                let wrap_with_to_esm = record.flags.contains(ImportRecordFlags::WRAP_WITH_TO_ESM);
                 if wrap_with_to_esm {
                     self.print_space_before_identifier();
                     self.print_symbol(self.options.to_esm_ref);
+                    self.print(b"(");
+                }
+
+                // Make sure the comma operator is properly wrapped. As the first
+                // argument of `__toESM(...)` it always needs the parentheses:
+                // `__toESM((init_foo(), exports_foo), 1)`.
+                let wrap_comma_operator = meta.exports_ref.is_valid()
+                    && meta.wrapper_ref.is_valid()
+                    && (level.gte(Level::Comma) || wrap_with_to_esm);
+                if wrap_comma_operator {
                     self.print(b"(");
                 }
 
@@ -2843,17 +2853,11 @@ pub(crate) mod __gated_printer {
                     }
                 }
 
-                if wrap_with_to_esm {
-                    if self.options.input_module_type == bundle_opts::ModuleType::Esm {
-                        self.print(b",");
-                        self.print_space();
-                        self.print(b"1");
-                    }
-                    self.print(b")");
-                }
-
                 if wrap_comma_operator {
                     self.print(b")");
+                }
+                if wrap_with_to_esm {
+                    self.print_to_esm_suffix();
                 }
                 if record.kind == ImportKind::Dynamic && has_side_effects {
                     self.print_dot_then_suffix();
@@ -2937,12 +2941,7 @@ pub(crate) mod __gated_printer {
                 self.print(b")");
 
                 if wrap_with_to_esm {
-                    if self.options.input_module_type == bundle_opts::ModuleType::Esm {
-                        self.print(b",");
-                        self.print_space();
-                        self.print(b"1");
-                    }
-                    self.print(b")");
+                    self.print_to_esm_suffix();
                 }
                 if wrap {
                     self.print(b")");
@@ -3008,6 +3007,18 @@ pub(crate) mod __gated_printer {
             if wrap || wrap_preload {
                 self.print(b")");
             }
+        }
+
+        /// Closes a `__toESM(` call opened around a module object: the
+        /// `isNodeMode` argument when the file being printed is an ES module by
+        /// type (`__esModule` is then ignored, as in Node), then `)`.
+        fn print_to_esm_suffix(&mut self) {
+            if self.options.input_module_type == bundle_opts::ModuleType::Esm {
+                self.print(b",");
+                self.print_space();
+                self.print(b"1");
+            }
+            self.print(b")");
         }
 
         #[inline]

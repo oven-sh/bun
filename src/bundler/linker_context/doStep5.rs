@@ -197,7 +197,18 @@ impl LinkerContext<'_> {
         // TODO: can this be u32 instead of a string?
         // if yes, we could just move all the hidden exports to the end of the array
         // and only store a count instead of an array
-        strings::sort_asc(aliases.as_mut_slice());
+        //
+        // A module namespace object lists its exports in code unit order. The
+        // namespace of a CommonJS module whose `exports.foo = ...` assignments
+        // were lifted to ES module exports stands in for `module.exports`, so
+        // it keeps the assignment order (the order of `resolved_exports`).
+        // SAFETY: read of this task's own row; only `create_exports_for_file`
+        // below writes it, after this read.
+        let is_lifted_commonjs = unsafe { *ast.flags.cast::<AstFlags>().add(id as usize) }
+            .contains(AstFlags::COMMONJS_LIFTED_TO_ESM);
+        if !is_lifted_commonjs {
+            strings::sort_asc(aliases.as_mut_slice());
+        }
         let export_aliases = aliases.into_bump_slice();
         *row_mut!(
             meta.sorted_and_filtered_export_aliases,

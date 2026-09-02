@@ -36,6 +36,11 @@ pub struct Ast<'a> {
     pub commonjs_module_exports_assigned_deoptimized: bool,
 
     pub force_cjs_to_esm: bool,
+    /// `force_cjs_to_esm` for a file with no ES module syntax: its ES module
+    /// exports, if any, were lifted from `exports.foo = ...`, and its
+    /// `module.exports` is the module namespace. The linker binds a default
+    /// import of such a file to that namespace.
+    pub commonjs_lifted_to_esm: bool,
     pub exports_kind: ExportsKind,
 
     // This is a list of ES6 features. They are ranges instead of booleans so
@@ -114,6 +119,7 @@ impl<'a> Ast<'a> {
             uses_require_ref: false,
             commonjs_module_exports_assigned_deoptimized: false,
             force_cjs_to_esm: false,
+            commonjs_lifted_to_esm: false,
             exports_kind: ExportsKind::None,
             export_keyword: Range::NONE,
             top_level_await_keyword: Range::NONE,

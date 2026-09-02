@@ -95,9 +95,7 @@ var __getProtoOf = Object.getPrototypeOf;
 var __defProp = Object.defineProperty;
 var __getOwnPropNames = Object.getOwnPropertyNames;
 var __hasOwnProp = Object.prototype.hasOwnProperty;
-function __accessProp(key) {
-  return this[key];
-}
+var __propGetter = (mod, key) => () => mod[key];
 var __toESMCache_node;
 var __toESMCache_esm;
 var __toESM = (mod, isNodeMode, target) => {
@@ -114,7 +112,7 @@ var __toESM = (mod, isNodeMode, target) => {
     for (let key of __getOwnPropNames(mod))
       if (!__hasOwnProp.call(to, key))
         __defProp(to, key, {
-          get: __accessProp.bind(mod, key),
+          get: __propGetter(mod, key),
           enumerable: true
         });
   }

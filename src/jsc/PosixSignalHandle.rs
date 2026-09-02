@@ -9,8 +9,7 @@ use bun_threading::SignalRing;
 
 const BUFFER_SIZE: usize = 8192;
 
-/// Signal numbers queued by signal handlers (on any thread) for the main
-/// thread's event loop.
+/// Signal numbers queued by signal handlers on any thread for the main loop.
 #[derive(Default)]
 pub struct PosixSignalHandle {
     #[allow(dead_code)]

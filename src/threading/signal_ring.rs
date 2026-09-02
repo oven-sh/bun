@@ -2,12 +2,9 @@
 
 use core::sync::atomic::{AtomicU8, AtomicU32, Ordering};
 
-/// Multi-producer, single-consumer ring of nonzero `u8` values, safe to
-/// fill from signal handlers: `enqueue` is atomics only, and handlers may
-/// run it at once on several threads or nested on one.
-///
-/// `CAPACITY` is a power of two, at most 32768, so the `u16` indices wrap
-/// in step with the slot index and `tail - head` fits in a `u16`.
+/// Multi-producer, single-consumer ring of nonzero `u8` values. `enqueue` is
+/// atomics only, so signal handlers on any thread may run it at once or nested.
+/// `CAPACITY` is a power of two up to 32768: `u16` indices, `tail - head` fits.
 pub struct SignalRing<const CAPACITY: usize> {
     /// 0 while free or claimed but not yet written (signal numbers start at 1).
     slots: [AtomicU8; CAPACITY],
@@ -51,8 +48,7 @@ impl<const CAPACITY: usize> SignalRing<CAPACITY> {
         &self.slots[index as usize % CAPACITY]
     }
 
-    /// Producer side, any thread. Returns `false` if the ring is full.
-    /// `signal` must not be 0, the empty-slot sentinel.
+    /// Producer side, any thread. Returns `false` when full. `signal` is never 0.
     pub fn enqueue(&self, signal: u8) -> bool {
         debug_assert_ne!(signal, 0, "0 is the empty-slot sentinel");
         let mut state = self.state.load(Ordering::Acquire);
@@ -139,9 +135,7 @@ mod tests {
         unknown: usize,
     }
 
-    /// `PRODUCERS` threads each enqueue their own number `PER_PRODUCER` times
-    /// while this thread dequeues. Producers wait while `outstanding_limit`
-    /// accepted entries are still in the ring.
+    /// Producers wait while `outstanding_limit` accepted entries are in the ring.
     fn stress<const CAPACITY: usize>(
         ring: &SignalRing<CAPACITY>,
         outstanding_limit: usize,
@@ -224,8 +218,7 @@ mod tests {
         assert_eq!(result.dequeued, result.accepted);
     }
 
-    /// Fullness is judged on one consistent `(head, tail)` pair, never on a
-    /// stale index.
+    /// Fullness is judged on one consistent `(head, tail)` pair, never a stale one.
     #[test]
     fn never_rejects_below_capacity() {
         let ring = SignalRing::<64>::new();

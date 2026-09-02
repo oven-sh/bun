@@ -1856,9 +1856,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// Pins `ref_` and every symbol on its link chain. The renamer follows
-    /// the chain before it reads the flag, so a pin on a linked ref alone is
-    /// lost.
+    /// The renamer follows links before it reads the flag, so pin the whole chain.
     pub(crate) fn set_must_not_be_renamed_through_links(&mut self, ref_: Ref) {
         let mut ref_ = ref_;
         loop {
@@ -3320,9 +3318,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         continue;
                     }
 
-                    // `with (obj) var t = 2` declares `t` in the "with" scope
-                    // itself. The walk below starts at the parent, so it does
-                    // not see that scope.
+                    // `with (obj) var t = 2` declares `t` in the "with" scope, which the walk below starts above.
                     if scope_is_with {
                         self.set_must_not_be_renamed_through_links(value.ref_);
                     }
@@ -3610,10 +3606,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 self.has_with_scope = true;
             }
 
-            // The renamer reserves the names of the symbols this body can read
-            // (`compute_reserved_names_for_scope`). Those symbols live in the
-            // enclosing scopes, so mark the whole chain. An ancestor that is
-            // already marked has its own ancestors marked too.
+            // Marked up the chain like contains_direct_eval, for compute_reserved_names_for_scope.
             let mut scope_iter: Option<js_ast::StoreRef<Scope>> = Some(scope);
             while let Some(mut s) = scope_iter {
                 if s.contains_with {

@@ -7633,8 +7633,7 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
     let module_scope = &tree.module_scope;
     let stable_source_indices = [source.index.0];
     let renamer: rename::Renamer<'_, '_> = if opts.minify_identifiers {
-        // Pinned before the reserved names are computed, so no slot is given
-        // one of these names.
+        // Pinned before the reserved names are computed so no slot takes one of these names.
         let dont_break_the_code = [tree.module_ref, tree.exports_ref, tree.require_ref];
         for ref_ in dont_break_the_code {
             if let Some(symbol) = symbols.get_mut(ref_) {

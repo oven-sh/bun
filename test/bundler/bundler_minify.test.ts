@@ -1939,6 +1939,55 @@ describe("bundler", () => {
       stdout: '["object","s1!",5,2]',
     },
   });
+
+  // A long run of `if (x) return;` nests into one `&&` chain and a long run
+  // of `if (x) return y;` into one `?:` chain. Both stop at 128 levels so the
+  // recursive walkers and the printer stay within the stack. The rest of the
+  // list stays as written (in `early` it joins the flat `||` chain that the
+  // same-jump merge builds), the build succeeds, and the output runs.
+  const longIfs = (n: number, body: (i: number) => string) =>
+    Array.from({ length: n }, (_, i) => `if (a[${i}]) ${body(i)};`).join("\n");
+  itBundled("minify/LongJumpChainsStayBounded", {
+    files: {
+      "/entry.js": /* js */ `
+        function early(a) { ${longIfs(600, () => "return")} return "end"; }
+        function lookup(a) { ${longIfs(600, i => `return ${i}`)} return -1; }
+        function raise(a) { ${longIfs(600, i => `throw ${i}`)} throw -1; }
+        const hit = i => { const a = []; a[i] = 1; return a; };
+        let thrown;
+        try { raise(hit(599)); } catch (e) { thrown = e; }
+        console.log(JSON.stringify([early(hit(599)), early([]), lookup(hit(0)), lookup(hit(599)), lookup([]), thrown]));
+      `,
+    },
+    minifySyntax: true,
+    minifyWhitespace: true,
+    minifyIdentifiers: false,
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      const fn = (name: string) => code.match(new RegExp(`function ${name}\\(a\\)\\{(.*?)\\}(?:function |var )`))![1];
+      const count = (s: string, re: RegExp) => (s.match(re) ?? []).length;
+      expect({
+        earlyAnd: count(fn("early"), /&&/g),
+        earlyOr: count(fn("early"), /\|\|/g),
+        earlyTernary: count(fn("early"), /\?/g),
+        lookupIfs: count(fn("lookup"), /if\(a\[\d+\]\)/g),
+        lookupTernary: count(fn("lookup"), /\?/g),
+        raiseIfs: count(fn("raise"), /if\(a\[\d+\]\)/g),
+        raiseTernary: count(fn("raise"), /\?/g),
+      }).toEqual({
+        earlyAnd: 127,
+        earlyOr: 471,
+        earlyTernary: 1,
+        lookupIfs: 472,
+        lookupTernary: 128,
+        raiseIfs: 472,
+        raiseTernary: 128,
+      });
+    },
+    run: {
+      stdout: '[null,"end",0,599,-1,599]',
+    },
+  });
 });
 
 // The runtime transpiler runs the same single-use inliner. A `const` declared

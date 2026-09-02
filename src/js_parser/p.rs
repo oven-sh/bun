@@ -445,6 +445,9 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// True while visiting the body of a function the React Compiler may
     /// compile. See `full_minify_syntax`.
     pub(crate) in_react_compiler_candidate: bool,
+    /// Nesting of the `if (x) return; rest` to `if (!x) { rest }` rewrite in
+    /// `mangle_stmts`, bounded by `MAX_MANGLE_NESTING`.
+    pub(crate) mangle_jump_depth: u32,
     /// Compiled args/flags written by the `visit_stmts` hook for `visit_func` /
     /// arrow-visit to apply to the original `G::Fn` / `E::Arrow`.
     pub(crate) react_compiler_result: Option<bun_react_compiler::CompileResult>,
@@ -9254,6 +9257,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             react_compiler_in_react_hoc: false,
             react_compiler_pending: None,
             in_react_compiler_candidate: false,
+            mangle_jump_depth: 0,
             react_compiler_result: None,
             server_components_wrap_ref: Ref::NONE,
             jest: Jest::default(),

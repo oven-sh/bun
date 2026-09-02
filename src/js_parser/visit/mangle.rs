@@ -24,6 +24,14 @@ use bun_collections::VecExt;
 
 type ListManaged<'bump, T> = BumpVec<'bump, T>;
 
+/// How many `if (x) return;` statements in one list become one nested `&&`
+/// chain, and how many `if (a) return b;` statements become one `?:` chain.
+/// Past this the rest of the list stays as it is. esbuild has no bound and
+/// goes quadratic on such lists (11 s and 11 GB for 16,000 statements), and
+/// the chains it builds are as deep as the list, which the recursive walkers
+/// and the printer here cannot take.
+const MAX_MANGLE_NESTING: u32 = 128;
+
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     /// Merge and simplify a list of visited statements. Port of esbuild's
     /// `mangleStmts`. The caller checks `minify_syntax` and
@@ -356,7 +364,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             _ => false,
                         };
 
-                        if optimize_implicit_jump && p.stack_check.is_safe_to_recurse() {
+                        if optimize_implicit_jump
+                            && p.mangle_jump_depth < MAX_MANGLE_NESTING
+                            && p.stack_check.is_safe_to_recurse()
+                        {
                             let mut body: ListManaged<'a, Stmt> =
                                 ListManaged::with_capacity_in(1 + stmts.len() - i, p.arena);
                             if let Some(no) = s_if.no {
@@ -378,7 +389,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             //   if (a(() => b)) { let b; }
                             //
                             if !stmts_care_about_scope(&body) {
+                                p.mangle_jump_depth += 1;
                                 let body = p.mangle_stmts(body, kind);
+                                p.mangle_jump_depth -= 1;
                                 let body_loc = body.first().map_or(s_if.yes.loc, |s| s.loc);
                                 let test = SideEffects::simplify_boolean(p, s_if.test.not(p.arena));
                                 let yes =
@@ -627,6 +640,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // "if (a) return b; if (c) return d; return e;" => "return a ? b : c ? d : e;"
                 let mut last_loc = last_stmt.loc;
                 let mut last_value = last_return.value;
+                let mut nesting = 0;
                 while output.len() >= 2 {
                     let prev_index = output.len() - 2;
                     let prev_stmt = output[prev_index];
@@ -642,9 +656,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
                         StmtData::SIf(mut prev_if) => {
                             // The previous statement must be an if statement with no else clause
-                            if prev_if.no.is_some() {
+                            if prev_if.no.is_some() || nesting >= MAX_MANGLE_NESTING {
                                 break;
                             }
+                            nesting += 1;
                             // The then clause must be a return
                             let StmtData::SReturn(prev_return) = prev_if.yes.data else {
                                 break;
@@ -681,6 +696,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             } else if let StmtData::SThrow(last_throw) = last_stmt.data {
                 // "if (a) throw b; if (c) throw d; throw e;" => "throw a ? b : c ? d : e;"
                 let mut last_value = last_throw.value;
+                let mut nesting = 0;
                 while output.len() >= 2 {
                     let prev_index = output.len() - 2;
                     let prev_stmt = output[prev_index];
@@ -694,9 +710,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
                         StmtData::SIf(mut prev_if) => {
                             // The previous statement must be an if statement with no else clause
-                            if prev_if.no.is_some() {
+                            if prev_if.no.is_some() || nesting >= MAX_MANGLE_NESTING {
                                 break;
                             }
+                            nesting += 1;
                             // The then clause must be a throw
                             let StmtData::SThrow(prev_throw) = prev_if.yes.data else {
                                 break;

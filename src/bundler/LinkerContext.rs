@@ -2758,8 +2758,7 @@ impl<'a> LinkerContext<'a> {
                     }
                     let other = record.source_index.get();
 
-                    // An `import`/`export from` of a side-effect-free file prints
-                    // nothing; its bindings are the part dependencies below.
+                    // Prints nothing; its bindings are the part dependencies below.
                     if record.kind == ImportKind::Stmt && self.file_has_no_side_effects(other) {
                         continue;
                     }

@@ -1234,6 +1234,7 @@ describe("bundler", () => {
     format: "esm",
     onAfterBundle(api) {
       expect(jsOutputs(api)).toEqual(["main1.js", "main2.js"]);
+      api.expectFile("/out/main1.js").toContain("DEP_VALUE");
       api.expectFile("/out/main2.js").not.toContain("DEP_VALUE");
       api.expectFile("/out/main2.js").not.toContain("import ");
     },
@@ -1436,7 +1437,9 @@ describe("bundler", () => {
     outdir: "/out",
     format: "esm",
     onAfterBundle(api) {
+      expect(jsOutputs(api)).toEqual(["dynamic.js", "entry.js"]);
       api.expectFile("/out/entry.js").not.toContain('"OK"');
+      expect(jsOutput(api, "dynamic")).toContain('"OK"');
     },
     run: { file: "/out/entry.js", stdout: "entry\ndynamic\nOK" },
   });

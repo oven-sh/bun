@@ -524,8 +524,7 @@ public:
     /* node:worker_threads worker: { stdin?, stdout, stderr } MessagePorts from the parent Worker; */        \
     /* process.stdin/stdout/stderr are built over these lazily (BunProcess.cpp constructStd*). */            \
     V(private, WriteBarrier<JSObject>, m_nodeWorkerStdioPorts)                                               \
-    /* The module loader's promise for the current entry-point load. The --hot loop polls it on every */     \
-    /* tick, and once it settles nothing else refers to it (VirtualMachine::pending_internal_promise). */    \
+    /* The current entry-point load's promise (VirtualMachine::pending_internal_promise). */                 \
     V(private, WriteBarrier<JSC::JSPromise>, m_pendingInternalPromise)                                       \
                                                                                                              \
     /* The original, unmodified Error.prepareStackTrace. */                                                  \

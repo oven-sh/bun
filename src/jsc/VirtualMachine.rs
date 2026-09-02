@@ -407,9 +407,7 @@ unsafe extern "C" {
     safe fn Bun__closeAllNodeSqliteDatabasesForTermination(global: &JSGlobalObject);
     safe fn Bun__WebView__closeAllForTermination();
     safe fn Zig__GlobalObject__prepareForDestruction(global: &JSGlobalObject);
-    // safe: the global stores `promise` in a `WriteBarrier` slot that its
-    // `visitChildren` marks; null clears the slot. The returned cell is alive
-    // for as long as the slot holds it.
+    // safe: a `WriteBarrier` slot on the global; null clears it.
     safe fn Bun__GlobalObject__pendingInternalPromise(
         global: &JSGlobalObject,
     ) -> *mut JSInternalPromise;
@@ -2982,17 +2980,14 @@ impl VirtualMachine {
         }
     }
 
-    /// The promise for the current entry-point load, if one is stored. The
-    /// watcher loops poll it.
+    /// The promise for the current entry-point load. The watcher loops poll it.
     #[inline]
     pub fn pending_internal_promise(&self) -> Option<*mut JSInternalPromise> {
         NonNull::new(Bun__GlobalObject__pendingInternalPromise(self.global())).map(NonNull::as_ptr)
     }
 
-    /// Stores the entry-point promise in a GC slot on the global object, so it
-    /// lives as long as the global that is loading it. The module loader
-    /// returns a plain cell that nothing refers to once its reaction chain has
-    /// settled, and the hot-reload loop reads the slot on every tick.
+    /// Stores the entry-point promise in a GC slot on the global, which keeps
+    /// it alive: once it settles nothing else refers to it.
     pub fn set_pending_internal_promise(&mut self, promise: Option<*mut JSInternalPromise>) {
         Bun__GlobalObject__setPendingInternalPromise(
             self.global(),
@@ -5204,8 +5199,7 @@ impl VirtualMachine {
         self.entry_point_result.value.deinit();
         self.entry_point_result.cjs_set_value = false;
         self.entry_point_result.evaluated_as_cjs = false;
-        // The entry-point promise slot lives on the global, so the swap below
-        // leaves it behind with the old global.
+        // The entry-point promise slot is on the global and goes with it.
         self.has_patched_run_main = false;
         self.set_main(b"");
         self.main_hash = 0;

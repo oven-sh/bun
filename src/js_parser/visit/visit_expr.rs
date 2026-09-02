@@ -686,8 +686,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let expr = *e;
         let _ = in_;
         let mut e_ = expr.data.e_template().expect("infallible: variant checked");
-        if e_.tag.is_some() {
-            p.visit_expr(e_.tag.as_mut().unwrap());
+        if let Some(tag) = e_.tag.as_mut() {
+            p.template_tag = tag.data;
+            p.visit_expr(tag);
         }
 
         // Visit the interpolation values before the macro dispatch below: its
@@ -1496,6 +1497,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let is_call_target =
             matches!(p.call_target, Data::EIf(ct) if core::ptr::eq(&raw const *e_, &raw const *ct));
         let is_delete_target = matches!(p.delete_target, Data::EIf(dt) if core::ptr::eq(&raw const *e_, &raw const *dt));
+        let is_template_tag = matches!(p.template_tag, Data::EIf(tt) if core::ptr::eq(&raw const *e_, &raw const *tt));
 
         let prev_in_branch = p.in_branch_condition;
         p.in_branch_condition = true;
@@ -1511,8 +1513,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // "delete (a ? b.c : b.c)" deletes nothing, "delete b.c" would.
             if p.full_minify_syntax() && !is_delete_target {
                 let result = p.mangle_if_expr(e.loc, e_);
-                // "(a ? b.c : b.c)()" => "(0, b.c)()", not "b.c()"
-                *e = if is_call_target && result.has_value_for_this_in_call() {
+                // "(a ? b.c : b.c)()" => "(0, b.c)()", not "b.c()". A tagged
+                // template binds `this` the same way.
+                *e = if (is_call_target || is_template_tag) && result.has_value_for_this_in_call() {
                     p.new_expr(E::Number::new(0.0), result.loc)
                         .join_with_comma(result)
                 } else {
@@ -2725,10 +2728,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // Restore now so the stack-local pointer never escapes this frame.
         p.react_refresh.hook_ctx_storage = prev_hook_ctx;
 
-        // Remove unused function names when minifying (only when bundling is enabled)
-        // unless --keep-names is specified
-        if p.options.features.minify_syntax
-            && p.options.bundle
+        // Remove unused function names when minifying unless --keep-names is specified
+        if p.full_minify_syntax()
             && !p.options.features.minify_keep_names
             // SAFETY: current_scope is a live arena ptr while the parser exists.
             && !p.current_scope().contains_direct_eval
@@ -2794,10 +2795,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return;
         }
 
-        // Remove unused class names when minifying (only when bundling is enabled)
-        // unless --keep-names is specified
-        if p.options.features.minify_syntax
-            && p.options.bundle
+        // Remove unused class names when minifying unless --keep-names is specified
+        if p.full_minify_syntax()
             && !p.options.features.minify_keep_names
             // SAFETY: current_scope is a live arena ptr while the parser exists.
             && !p.current_scope().contains_direct_eval

@@ -39,8 +39,8 @@ impl SideEffects {
     /// test of an `if`. Port of esbuild's `SimplifyBooleanExpr`.
     ///
     /// Some callers run this without `minify_syntax`, so the rules that
-    /// rewrite operands or comparisons only run when minifying. The rest is
-    /// the behavior those callers had before.
+    /// rewrite operands or comparisons only run for a minified build. The
+    /// rest is the behavior those callers had before.
     pub(crate) fn simplify_boolean<'a, const TS: bool, const SCAN: bool>(
         p: &mut P<'a, TS, SCAN>,
         expr: Expr,
@@ -48,7 +48,7 @@ impl SideEffects {
         if !p.options.features.dead_code_elimination || !p.stack_check.is_safe_to_recurse() {
             return expr;
         }
-        let minify = p.options.features.minify_syntax;
+        let minify = p.full_minify_syntax();
 
         match expr.data {
             ExprData::EUnary(mut e) if e.op == Op::Code::UnNot => {
@@ -408,9 +408,7 @@ impl SideEffects {
                         // If this is a boolean logical operation and the result is unused, then
                         // we know the left operand will only be used for its boolean value and
                         // can be simplified under that assumption
-                        if bin.op != Op::Code::BinNullishCoalescing
-                            && p.options.features.minify_syntax
-                        {
+                        if bin.op != Op::Code::BinNullishCoalescing && p.full_minify_syntax() {
                             bin.left = Self::simplify_boolean(p, bin.left);
                         }
 
@@ -426,7 +424,7 @@ impl SideEffects {
                         }
 
                         // Try to take advantage of the optional chain operator to shorten code
-                        if p.options.features.minify_syntax
+                        if p.full_minify_syntax()
                             && let ExprData::EBinary(binary) = bin.left.data
                             // "a != null && a.b()" => "a?.b()"
                             // "a == null || a.b()" => "a?.b()"

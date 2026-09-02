@@ -4355,10 +4355,9 @@ console.log(foo, array);
       expectPrinted("typeof {x: sideEffect()}", "typeof { x: sideEffect() }");
       expectPrinted("typeof class { static x = sideEffect(); }", "typeof class {\n  static x = sideEffect();\n}");
 
-      // Both sides are known strings, so strict equality becomes loose equality.
-      expectPrinted('typeof [] === "object"', 'typeof [] == "object"');
-      expectPrinted("typeof {foo: 123} === typeof {bar: 123}", "typeof { foo: 123 } == typeof { bar: 123 }");
-      expectPrinted("typeof {foo: 123} !== typeof 123", 'typeof { foo: 123 } != "number"');
+      expectPrinted('typeof [] === "object"', 'typeof [] === "object"');
+      expectPrinted("typeof {foo: 123} === typeof {bar: 123}", "typeof { foo: 123 } === typeof { bar: 123 }");
+      expectPrinted("typeof {foo: 123} !== typeof 123", 'typeof { foo: 123 } !== "number"');
 
       // `!` folds to a boolean only when the operand has no side effects or
       // can be proven removable. Side-effecting operands are left intact.

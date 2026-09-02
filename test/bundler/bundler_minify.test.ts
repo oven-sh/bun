@@ -1611,8 +1611,9 @@ describe("bundler", () => {
   });
 
   // The runtime transpiler (`bun run`/`bun test`) forces minify-syntax on for
-  // bun targets but never bundles. It must not restructure statements, so that
-  // `Function.prototype.toString()` and line numbers stay close to the source.
+  // bun targets but never bundles. It must not restructure statements or
+  // rewrite comparisons, so that `Function.prototype.toString()` and line
+  // numbers stay close to the source.
   test("runtime transpiler keeps statement structure", async () => {
     await using proc = Bun.spawn({
       cmd: [
@@ -1625,6 +1626,9 @@ describe("bundler", () => {
           if (!a) b(); else b();
           while (a) if (b()) break;
           try { b() } catch (e) { b() }
+          if (typeof a === "string" || a === null || a === void 0) b();
+          if ((a >>> 0) !== 0) b();
+          a != null && a.b();
           return 0;
         }
         console.log(foo.toString());
@@ -1656,6 +1660,11 @@ describe("bundler", () => {
         } catch (e) {
           b();
         }
+        if (typeof a === "string" || a === null || a === void 0)
+          b();
+        if (a >>> 0 !== 0)
+          b();
+        a != null && a.b();
         return 0;
       }"
     `);
@@ -1682,6 +1691,7 @@ describe("bundler", () => {
         export function optChain(a) { return a != null ? a.b : undefined }
         export function nullish(a, b) { return a != null ? a : b }
         export function callTarget(o, a) { return (a ? o.m : o.m)() }
+        export function tagTarget(o, a) { return (a ? o.m : o.m)\`x\` }
         export function implicitReturn(y, z) { if (y) return; z() }
         export function loopContinue(xs, f) { for (const x of xs) { if (x > 2) continue; f(x) } }
         export function typeofEq(t) { return typeof t === "string" }
@@ -1740,8 +1750,11 @@ describe("bundler", () => {
         negZero: "return b?-0:0",
         optChain: "return a?.b",
         nullish: "return a??b",
-        // The comma keeps `this` unbound, as it was for the conditional.
+        // The comma keeps `this` unbound, as it was for the conditional. The
+        // bundle is right for the tag too, but the runtime transpiler drops
+        // that comma today (#40829), so only the shape is checked for it.
         callTarget: "return(0,o.m)()",
+        tagTarget: "return(0,o.m)`x`",
         implicitReturn: "y||z()",
         loopContinue: "for(let x of xs)x>2||f(x)",
         typeofEq: 'return typeof t=="string"',
@@ -1882,6 +1895,88 @@ describe("bundler", () => {
       expect(code.match(/let keep = /g)).toHaveLength(10);
     },
   });
+
+  // A `let`/`const` declared in one case clause is scoped to the whole switch
+  // block, so a later clause can still read or assign it. The single-use
+  // inliner used to run per clause and deleted `tag`, `s` and `n` after it
+  // had only seen the uses in the declaring clause. `only` has its single use
+  // in the same clause and must still be inlined.
+  itBundled("minify/SwitchCaseDeclUsedInLaterCase", {
+    files: {
+      "/entry.js": /* js */ `
+        function capture(v) { return v; }
+        function fallthrough(k) {
+          switch (k) {
+            case 1: const tag = { id: 1 }; capture(tag);
+            case 2: return typeof tag;
+          }
+        }
+        function defaultClause() {
+          switch (1) {
+            case 1: let s = "s1"; capture(s.length);
+            default: { return s + "!"; }
+          }
+        }
+        function reassigned(k) {
+          switch (k) {
+            case 1: let n = k; capture(n);
+            case 2: n = 5; return n;
+          }
+        }
+        function sameClause(v) {
+          switch (v) {
+            case 1: const only = v; return capture(only + 1);
+          }
+        }
+        console.log(JSON.stringify([fallthrough(1), defaultClause(), reassigned(1), sameClause(1)]));
+      `,
+    },
+    capture: ["v", "tag", "s.length", "n", "v + 1"],
+    minifySyntax: true,
+    minifyIdentifiers: false,
+    target: "bun",
+    run: {
+      stdout: '["object","s1!",5,2]',
+    },
+  });
+});
+
+// The runtime transpiler runs the same single-use inliner. A `const` declared
+// in one case clause and read after a fall-through into the next clause must
+// keep its declaration.
+test("runtime transpiler keeps a switch case declaration that a later case reads", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      /* js */ `
+        function f(k) {
+          switch (k) {
+            case 1: const tag = { id: 1 }; use(tag);
+            case 2: return typeof tag;
+          }
+        }
+        function g() {
+          switch (1) {
+            case 1: let s = "s1"; use(s.length);
+            default: { return s + "!"; }
+          }
+        }
+        function use(v) { return v; }
+        let r;
+        try { r = g(); } catch (e) { r = e.constructor.name; }
+        console.log(JSON.stringify([f(1), r]));
+      `,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout).toBe('["object","s1!"]\n');
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
 });
 
 // The runtime transpiler (`bun run`/`bun test`) implicitly enables

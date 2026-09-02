@@ -511,6 +511,10 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) stmt_expr_value: js_ast::ExprData,
     pub(crate) call_target: js_ast::ExprData,
     pub(crate) delete_target: js_ast::ExprData,
+    /// The tag of the tagged template being visited. A tag call binds `this`
+    /// like a method call, so a rewrite that turns a tag into a property access
+    /// must keep `this` undefined, as `call_target` does for a call.
+    pub(crate) template_tag: js_ast::ExprData,
     pub(crate) loop_body: js_ast::StmtData,
     pub(crate) module_scope: js_ast::StoreRef<js_ast::Scope>,
     pub(crate) module_scope_directive_loc: bun_ast::Loc,
@@ -5730,24 +5734,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         true
     }
 
-    /// `minify_syntax` for a build: `bun build`, bundled or with `--no-bundle`.
-    /// Every pass that merges or restructures statements (comma joins, `if` to
-    /// `&&`/`?:`, return and throw chains, `while` to `for`, arrow bodies to
-    /// expressions) checks this instead of `minify_syntax`.
+    /// `minify_syntax_statements` (see `RuntimeFeatures`): every pass that
+    /// merges or restructures statements (comma joins, `if` to `&&`/`?:`,
+    /// return and throw chains, `while` to `for`, arrow bodies to expressions)
+    /// and every expression rewrite that changes how a function prints checks
+    /// this instead of `minify_syntax`.
     ///
-    /// The runtime transpiler (`bun run`) also turns `minify_syntax` on, for
-    /// constant inlining, but it keeps one output statement per source statement
-    /// so that line numbers and `Function.prototype.toString()` stay close to
-    /// the source.
-    ///
-    /// It is also off inside a function body the React Compiler may compile:
-    /// the compiler sees the body after its statements were visited, and it
-    /// does not lower some shapes the statement mangler produces (a `for (;;)`
-    /// loop made from a `while`, `ref.current == null && (ref.current = x)`
-    /// made from an `if`).
+    /// It is off inside a function body the React Compiler may compile: the
+    /// compiler sees the body after its statements were visited, and it does
+    /// not lower some shapes the statement mangler produces (a `for (;;)` loop
+    /// made from a `while`, `ref.current == null && (ref.current = x)` made
+    /// from an `if`).
     pub(crate) fn full_minify_syntax(&self) -> bool {
         self.options.features.minify_syntax
-            && (self.options.bundle || self.options.transform_only)
+            && self.options.features.minify_syntax_statements
             && !self.in_react_compiler_candidate
     }
 
@@ -9161,6 +9161,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             call_target: null_expr_data(),
             delete_target: null_expr_data(),
+            template_tag: null_expr_data(),
             stmt_expr_value: null_expr_data(),
             loop_body: null_stmt_data(),
             define,

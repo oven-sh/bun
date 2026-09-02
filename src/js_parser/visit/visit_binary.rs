@@ -344,7 +344,9 @@ impl BinaryExpressionVisitor {
                     }
 
                     // "typeof x === 'string'" => "typeof x == 'string'"
-                    if SideEffects::can_change_strict_to_loose(&e_.left.data, &e_.right.data) {
+                    if p.full_minify_syntax()
+                        && SideEffects::can_change_strict_to_loose(&e_.left.data, &e_.right.data)
+                    {
                         e_.op = Op::Code::BinLooseEq;
                     }
                 }
@@ -399,7 +401,9 @@ impl BinaryExpressionVisitor {
                     }
 
                     // "typeof x !== 'string'" => "typeof x != 'string'"
-                    if SideEffects::can_change_strict_to_loose(&e_.left.data, &e_.right.data) {
+                    if p.full_minify_syntax()
+                        && SideEffects::can_change_strict_to_loose(&e_.left.data, &e_.right.data)
+                    {
                         e_.op = Op::Code::BinLooseNe;
                     }
                 }
@@ -427,7 +431,7 @@ impl BinaryExpressionVisitor {
                     }
                 }
 
-                if p.options.features.minify_syntax {
+                if p.full_minify_syntax() {
                     // "a ?? (b ?? c)" => "a ?? b ?? c"
                     if let ExprData::EBinary(right) = e_.right.data
                         && right.op == Op::Code::BinNullishCoalescing
@@ -463,7 +467,7 @@ impl BinaryExpressionVisitor {
                     }
                 }
 
-                if p.options.features.minify_syntax {
+                if p.full_minify_syntax() {
                     // "a || (b || c)" => "a || b || c"
                     if let ExprData::EBinary(right) = e_.right.data
                         && right.op == Op::Code::BinLogicalOr
@@ -508,7 +512,7 @@ impl BinaryExpressionVisitor {
                     }
                 }
 
-                if p.options.features.minify_syntax {
+                if p.full_minify_syntax() {
                     // "a && (b && c)" => "a && b && c"
                     if let ExprData::EBinary(right) = e_.right.data
                         && right.op == Op::Code::BinLogicalAnd

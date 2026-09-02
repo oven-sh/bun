@@ -1748,6 +1748,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
         p.in_react_compiler_candidate = old_in_react_compiler_candidate;
 
+        // A case body is one slice of the switch block scope, so a `let` or
+        // `const` declared here can still be used by a later case that has not
+        // been visited yet. `s_switch` mangles every case body once all of them
+        // have been visited and the use counts are final.
+        if kind == StmtsKind::SwitchStmt {
+            return Ok(());
+        }
+
         if !p.options.features.minify_syntax || !p.options.features.dead_code_elimination {
             return Ok(());
         }

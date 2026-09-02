@@ -64,6 +64,7 @@ pub(crate) fn compute_cross_chunk_dependencies(
             parts: ast.parts,
             import_records: ast.import_records,
             flags: meta.flags,
+            ast_flags: ast.flags,
             entry_point_chunk_indices: files.entry_point_chunk_index,
             imports_to_bind: meta.imports_to_bind,
             wrapper_refs: ast.wrapper_ref,
@@ -92,6 +93,7 @@ struct CrossChunkDependencies<'a, 'bump> {
     parts: &'a [bun_ast::PartList<'bump>],
     import_records: &'a mut [bun_ast::import_record::List<'bump>],
     flags: &'a [js_meta::Flags],
+    ast_flags: &'a [crate::bundled_ast::Flags],
     entry_point_chunk_indices: &'a [IndexInt],
     imports_to_bind: &'a [RefImportData],
     wrapper_refs: &'a [Ref],
@@ -266,6 +268,10 @@ impl<'a, 'bump> CrossChunkDependencies<'a, 'bump> {
         if matches!(chunk.content, chunk::Content::Javascript(_)) {
             if chunk.entry_point.is_entry_point() {
                 let flags = deps.flags[chunk.entry_point.source_index() as usize];
+                let default_is_namespace = LinkerContext::chunk_default_export_is_namespace(
+                    flags,
+                    deps.ast_flags[chunk.entry_point.source_index() as usize],
+                );
                 if flags.wrap != WrapKind::Cjs {
                     let resolved_exports =
                         &deps.resolved_exports[chunk.entry_point.source_index() as usize];
@@ -273,6 +279,10 @@ impl<'a, 'bump> CrossChunkDependencies<'a, 'bump> {
                         .sorted_and_filtered_export_aliases
                         [chunk.entry_point.source_index() as usize];
                     for alias in sorted_and_filtered_export_aliases.iter() {
+                        // The chunk exports the namespace object as `default`.
+                        if default_is_namespace && **alias == *b"default" {
+                            continue;
+                        }
                         let export_ = resolved_exports.get(alias).unwrap();
                         let mut target_ref = export_.data.import_ref;
 
@@ -313,9 +323,10 @@ impl<'a, 'bump> CrossChunkDependencies<'a, 'bump> {
                     let _ = chunk_meta.imports.put(chunks_ref, ()); // OOM-only Result
                 }
 
-                // Ensure "exports" is included if the current output format needs it
+                // Ensure "exports" is included if the current output format needs it,
+                // or if the chunk exports the namespace object as `default`
                 // https://github.com/evanw/esbuild/blob/v0.27.2/internal/linker/linker.go#L1049-L1051
-                if flags.force_include_exports_for_entry_point {
+                if flags.force_include_exports_for_entry_point || default_is_namespace {
                     // result intentionally discarded
                     let _ = chunk_meta.imports.put(
                         deps.exports_refs[chunk.entry_point.source_index() as usize],

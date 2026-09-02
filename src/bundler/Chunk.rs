@@ -47,6 +47,8 @@ pub struct Chunk {
     /// chunk before the final output path has been computed. See OutputPiece
     /// for more info on this technique.
     pub(crate) unique_key: &'static [u8],
+    /// Like `unique_key`, but replaced with `id()` rather than the chunk's path.
+    pub(crate) id_key: &'static [u8],
 
     /// Maps source index to bytes contributed to this chunk's output (for metafile).
     /// The value is updated during parallel chunk generation to track bytesInOutput.
@@ -199,6 +201,7 @@ impl Default for Chunk {
     fn default() -> Self {
         Chunk {
             unique_key: b"",
+            id_key: b"",
             files_with_parts_in_chunk: ArrayHashMap::new(),
             entry_bits: AutoBitSet::init_empty(0).expect("static AutoBitSet"),
             final_rel_path: Box::default(),
@@ -270,6 +273,13 @@ impl Chunk {
     #[inline]
     pub(crate) fn is_entry_point(&self) -> bool {
         self.entry_point.is_entry_point()
+    }
+
+    /// Stable short name for this chunk in generated code: its final content hash, as `[hash]` prints it.
+    pub(crate) fn id(&self) -> [u8; CHUNK_ID_LEN] {
+        bun_core::fmt::truncated_hash32_bytes(
+            self.template.placeholder.hash.unwrap_or(self.isolated_hash),
+        )
     }
 
     /// The chunks reachable from chunk `start` through cross-chunk imports of the given kinds, `start` first.
@@ -757,6 +767,7 @@ impl IntermediateOutput {
                     count += piece.data.len();
 
                     match piece.query.kind() {
+                        QueryKind::ChunkId => count += CHUNK_ID_LEN,
                         QueryKind::Chunk
                         | QueryKind::Asset
                         | QueryKind::Scb
@@ -823,7 +834,7 @@ impl IntermediateOutput {
                                     ));
                                     continue;
                                 }
-                                QueryKind::None => unreachable!(),
+                                QueryKind::None | QueryKind::ChunkId => unreachable!(),
                             };
 
                             let cheap_normalizer = cheap_prefix_normalizer(
@@ -885,6 +896,16 @@ impl IntermediateOutput {
                     remain = &mut remain[data.len()..];
 
                     match piece.query.kind() {
+                        QueryKind::ChunkId => {
+                            let id = chunks[piece.query.index() as usize].id();
+                            remain[..CHUNK_ID_LEN].copy_from_slice(&id);
+                            if ENABLE_SOURCE_MAP_SHIFTS {
+                                shift.before.advance(chunk.unique_key);
+                                shift.after.advance(&id);
+                                shifts.push(shift);
+                            }
+                            remain = &mut remain[CHUNK_ID_LEN..];
+                        }
                         QueryKind::Asset
                         | QueryKind::Chunk
                         | QueryKind::Scb
@@ -1195,6 +1216,7 @@ impl Query {
             2 => QueryKind::Chunk,
             3 => QueryKind::Scb,
             4 => QueryKind::HtmlImport,
+            5 => QueryKind::ChunkId,
             _ => unreachable!("Query: invalid kind tag"),
         }
     }
@@ -1213,18 +1235,21 @@ pub enum QueryKind {
     Scb = 3,
     /// Given an HTML import index, print the manifest
     HtmlImport = 4,
+    /// Given a chunk index, print the chunk's 8-character content hash
+    ChunkId = 5,
 }
 
 impl QueryKind {
     /// Single-ASCII-letter tag used in the [`UniqueKey`] wire format.
     /// `None` has no on-the-wire encoding.
     #[inline]
-    const fn letter(self) -> u8 {
+    pub(crate) const fn letter(self) -> u8 {
         match self {
             QueryKind::Asset => b'A',
             QueryKind::Chunk => b'C',
             QueryKind::Scb => b'S',
             QueryKind::HtmlImport => b'H',
+            QueryKind::ChunkId => b'I',
             QueryKind::None => unreachable!(),
         }
     }
@@ -1237,10 +1262,13 @@ impl QueryKind {
             b'C' => Some(QueryKind::Chunk),
             b'S' => Some(QueryKind::Scb),
             b'H' => Some(QueryKind::HtmlImport),
+            b'I' => Some(QueryKind::ChunkId),
             _ => None,
         }
     }
 }
+
+pub(crate) const CHUNK_ID_LEN: usize = 8;
 
 /// Length of the lowercase-hex `unique_key` prefix (16 nibbles of a `u64`).
 pub(crate) const UNIQUE_KEY_PREFIX_LEN: usize = 16;

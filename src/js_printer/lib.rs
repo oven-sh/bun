@@ -1322,7 +1322,7 @@ pub struct Options<'a> {
     pub bundling: bool,
     pub to_commonjs_ref: Ref,
     pub to_esm_ref: Ref,
-    /// `__preload`: when set, an `import()` of a chunk is printed as `(__preload(chunkIndex), import(path))`.
+    /// `__preload`: when set, an `import()` of a chunk is printed as `(__preload(chunkId), import(path))`.
     pub module_preload_ref: Ref,
     pub require_ref: Option<Ref>,
     pub import_meta_ref: Ref,
@@ -2964,10 +2964,7 @@ pub(crate) mod __gated_printer {
                 }
                 self.print_symbol(self.options.module_preload_ref);
                 self.print(b"(");
-                // The last 8 bytes of a chunk's unique key are its index.
-                let digits = &record.path.text[record.path.text.len() - 8..];
-                let start = digits.iter().position(|&b| b != b'0').unwrap_or(7);
-                self.print(&digits[start..]);
+                self.print_string_literal_utf8(record.path.pretty, false);
                 self.print(b"),");
                 self.print_space();
             }

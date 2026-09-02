@@ -342,29 +342,32 @@ export var __MEMO_CACHE_SENTINEL = /* @__PURE__ */ Symbol.for("react.memo_cache_
 export var __EARLY_RETURN_SENTINEL = /* @__PURE__ */ Symbol.for("react.early_return_sentinel");
 
 /*__PURE__*/
-var __chunkGraphs;
+var __chunkGraphs, __chunkSeen;
 
 // Code splitting, browser: `<link rel=modulepreload>` every chunk that chunk
-// `i` statically imports before `import()`ing it, so its whole import graph
+// `id` statically imports before `import()`ing it, so its whole import graph
 // downloads in parallel instead of one module depth per round trip.
-export var __preload = (i, seenOnly) => {
-  if (__chunkGraphs)
-    for (var [base, graph, seen] of __chunkGraphs)
-      for (var stack = [i], j, node, k, link; stack.length; )
-        if (!seen[(j = stack.pop())] && (node = seen[j] = graph[j])) {
-          for (k = 1; k < node.length; k++) stack.push(node[k]);
-          if (!seenOnly && j !== i && typeof document !== "undefined") {
-            link = document.createElement("link");
-            link.rel = "modulepreload";
-            link.href = new URL(node[0], base);
-            document.head.appendChild(link);
-          }
+export var __preload = (id, seenOnly) => {
+  for (var [base, graph, ids] of __chunkGraphs || [])
+    for (var stack = [id], j, node, k, link; (j = stack.pop()); )
+      if (!__chunkSeen[j] && (node = graph[j])) {
+        __chunkSeen[j] = 1;
+        for (k = 1; k < node.length; k++) stack.push(ids[node[k]]);
+        if (!seenOnly && j !== id && typeof document !== "undefined") {
+          link = document.createElement("link");
+          link.rel = "modulepreload";
+          link.href = new URL(node[0], base);
+          document.head.appendChild(link);
         }
+      }
 };
 
-// An entry chunk registers the chunks it can reach: `graph[i]` is chunk i's
-// path relative to `base`, then the indices of the chunks it imports.
-export var __chunks = (base, graph, entry) => {
-  (__chunkGraphs ||= []).push([base, graph, []]);
-  __preload(entry, 1);
+// An entry chunk registers the chunks it can reach: `nodes[i]` is chunk
+// `ids[i]`'s path relative to `base`, then indices into `ids` of the chunks
+// it imports. `ids[entry]` is the entry chunk itself.
+export var __chunks = (base, ids, nodes, entry) => {
+  for (var graph = {}, i = 0; i < ids.length; i++) graph[ids[i]] = nodes[i];
+  (__chunkGraphs ||= []).push([base, graph, ids]);
+  __chunkSeen ||= {};
+  __preload(ids[entry], 1);
 };

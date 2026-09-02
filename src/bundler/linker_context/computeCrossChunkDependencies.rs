@@ -174,6 +174,7 @@ impl<'a, 'bump> CrossChunkDependencies<'a, 'bump> {
                         // `unique_key` backing buffer (`LinkerContext.unique_key_buf`),
                         // which outlives the link pass.
                         import_record.path.text = _chunks[other_chunk_index as usize].unique_key;
+                        import_record.path.pretty = _chunks[other_chunk_index as usize].id_key;
                         import_record.source_index = Index::INVALID;
                         import_record
                             .flags
@@ -301,6 +302,14 @@ impl<'a, 'bump> CrossChunkDependencies<'a, 'bump> {
 
                         let _ = chunk_meta.imports.put(target_ref, ()); // OOM-only Result
                     }
+                }
+
+                if ctx
+                    .preload_entries
+                    .is_set(chunk.entry_point.source_index() as usize)
+                {
+                    let chunks_ref = symbols.follow(ctx.chunks_runtime_ref);
+                    let _ = chunk_meta.imports.put(chunks_ref, ()); // OOM-only Result
                 }
 
                 // Ensure "exports" is included if the current output format needs it

@@ -130,6 +130,9 @@ pub struct LinkerContext<'a> {
     /// chunk that exports it and every chunk that imports it
     /// (`assign_cross_chunk_names`). Values live in the linker arena.
     pub(crate) cross_chunk_names: bun_collections::HashMap<bun_ast::Ref, &'static [u8]>,
+
+    /// User entry points (by source index) that reach a split browser `import()`: their chunk registers the chunk graph.
+    pub(crate) preload_entries: AutoBitSet,
 }
 
 // SAFETY: `LinkerContext` is shared across the worker pool via `each_ptr` /
@@ -166,6 +169,7 @@ impl<'a> Default for LinkerContext<'a> {
             framework: None,
             mangled_props: Default::default(),
             cross_chunk_names: Default::default(),
+            preload_entries: AutoBitSet::init_empty(0).expect("static AutoBitSet"),
         }
     }
 }
@@ -2558,7 +2562,9 @@ impl<'a> LinkerContext<'a> {
                                 >(from_chunk_dir, path));
                             }
                         }
-                        crate::chunk::QueryKind::Chunk => out.push(piece.query.index()),
+                        crate::chunk::QueryKind::Chunk | crate::chunk::QueryKind::ChunkId => {
+                            out.push(piece.query.index())
+                        }
                         crate::chunk::QueryKind::Scb => {
                             let chunk_index = self.graph.files.items_entry_point_chunk_index()
                                 [piece.query.index() as usize];
@@ -4527,7 +4533,7 @@ impl<'a> LinkerContext<'a> {
                         break;
                     }
                 }
-                crate::chunk::QueryKind::Chunk => {
+                crate::chunk::QueryKind::Chunk | crate::chunk::QueryKind::ChunkId => {
                     if index >= count as usize {
                         if cfg!(debug_assertions) {
                             bun_core::debug_warn!("Invalid output piece boundary");

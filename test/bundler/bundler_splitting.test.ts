@@ -2328,7 +2328,7 @@ describe("bundler", () => {
     onAfterBundle(api) {
       const entry = api.readFile("/out/entry.js");
       expect(entry).toMatch(/^__chunks\(import\.meta\.url,\s*\[/m);
-      expect(entry.match(/__preload\(\d+\), import\("\.\/[^"]+\.js"\)/g)).toHaveLength(8);
+      expect(entry.match(/__preload\("(\w+)"\), import\("\.\/[^"]+-\1\.js"\)/g)).toHaveLength(8);
       // one chunk per aK: the chain really is 6 deep
       for (let i = 1; i < 6; i++) {
         expect(api.readFile("/out/" + chunkContaining(api, `"a${i}"`))).not.toContain(`"a${i + 1}"`);
@@ -2359,7 +2359,7 @@ describe("bundler", () => {
     target: "browser",
     minifySyntax: true,
     onAfterBundle(api) {
-      expect(api.readFile("/out/entry.js").match(/__preload\(\d+\), ?import\(/g)).toHaveLength(8);
+      expect(api.readFile("/out/entry.js").match(/__preload\("\w+"\), ?import\(/g)).toHaveLength(8);
     },
     run: { file: "/out/entry.js", stdout: "a b c d e f [object Promise]" },
   });
@@ -2392,8 +2392,8 @@ describe("bundler", () => {
         expect(api.readFile(`/out/${entry}.js`)).toMatch(/[$\w]+\(import\.meta\.url,\[/);
       }
     },
-    // the {a2, a3} chunk: once through two's graph, once through one's
-    run: { file: "/test.js", stdout: "1 r2:a2a3\n2 r0:a1a2a3" },
+    // the {a2, a3} chunk is linked once, through two(); one() finds it already seen
+    run: { file: "/test.js", stdout: "1 r2:a2a3\n1 r0:a1a2a3" },
   });
   itBundled("splitting/ModulePreloadPublicPathAndNestedEntry", {
     files: {
@@ -2437,10 +2437,14 @@ describe("bundler", () => {
     publicPath: "https://cdn.example.com/v1/",
     onAfterBundle(api) {
       const entry = api.readFile("/out/entry.js");
-      expect(entry).toMatch(/__preload\(\d+\), import\("https:\/\/cdn\.example\.com\/v1\/r0-\w+\.js"\)/);
-      const graph = entry.match(/__chunks\(import\.meta\.url,(\[.*\]),0\);/)![1];
-      const paths = (eval(graph) as [string, ...number[]][]).filter(Boolean).map(node => node[0]);
-      expect(paths.length).toBeGreaterThan(3);
+      expect(entry).toMatch(/__preload\("(\w+)"\), import\("https:\/\/cdn\.example\.com\/v1\/r0-\1\.js"\)/);
+      const [ids, nodes] = eval("[" + entry.match(/__chunks\(import\.meta\.url,(\[.*\]),0\);/)![1] + "]") as [
+        string[],
+        [string, ...number[]][],
+      ];
+      expect(ids.length).toBeGreaterThan(3);
+      expect(nodes).toHaveLength(ids.length);
+      const paths = nodes.map(node => node[0]);
       for (const path of paths) expect(path).toStartWith("https://cdn.example.com/v1/");
     },
   });
@@ -2474,7 +2478,7 @@ describe("bundler", () => {
       `,
     },
     onAfterBundle(api) {
-      const indices = [...api.readFile("/out/entry.js").matchAll(/__preload\((\d+)\), import\(/g)].map(m => m[1]);
+      const indices = [...api.readFile("/out/entry.js").matchAll(/__preload\("(\w+)"\), import\(/g)].map(m => m[1]);
       expect(indices).toHaveLength(4);
       expect(new Set(indices).size).toBe(4);
     },
@@ -2545,12 +2549,11 @@ describe("bundler", () => {
     onAfterBundle(api) {
       for (const entry of ["a", "b"]) {
         expect(api.readFile(`/out/${entry}.js`)).toMatch(/__chunks\(import\.meta\.url,\[/);
-        expect(api.readFile(`/out/${entry}.js`)).toMatch(/__preload\(\d+\), import\(/);
+        expect(api.readFile(`/out/${entry}.js`)).toMatch(/__preload\("\w+"\), import\(/);
       }
     },
-    // Going to b links sb's chunk. b.js is itself an entry and registers its own
-    // graph on load, through which coming back to a links sa's chunk once more.
-    run: { file: "/test.js", stdout: "1 b2\n2 a1\n2" },
+    // Going to b links sb's chunk; sa's chunk loaded with a, so coming back links nothing.
+    run: { file: "/test.js", stdout: "1 b2\n1 a1\n1" },
   });
   // vite dynamic-import playground "should not preload for non-analyzable urls"
   itBundled("splitting/ModulePreloadSkipsNonAnalyzableImport", {
@@ -2570,8 +2573,8 @@ describe("bundler", () => {
     target: "browser",
     onAfterBundle(api) {
       const entry = api.readFile("/out/entry.js");
-      expect(entry.match(/__preload\(/g)).toHaveLength(1);
-      expect(entry).toMatch(/__preload\(\d+\), import\("\.\/page-\w+\.js"\)/);
+      expect(entry.match(/__preload\("\w+"\), import\(/g)).toHaveLength(1);
+      expect(entry).toMatch(/__preload\("(\w+)"\), import\("\.\/page-\1\.js"\)/);
       expect(entry).toContain("import(globalThis.somewhere)");
     },
   });
@@ -2592,6 +2595,82 @@ describe("bundler", () => {
         expect(api.readFile("/out/" + file)).not.toMatch(/__preload|__chunks|modulepreload/);
       }
     },
+  });
+  // An entry another entry imports keeps its code in a shared chunk; its own
+  // (re-exporting) entry chunk still registers the graph.
+  itBundled("splitting/ModulePreloadEntryImportedByEntry", {
+    files: {
+      "/index.js": `import { go } from "./lib.js"; export const run = go;`,
+      "/lib.js": `export const go = () => import("./r0.js");`,
+      "/other.js": `export const nav = () => import("./r2.js")`,
+      ...preloadChainFiles(2),
+    },
+    entryPoints: ["/index.js", "/lib.js", "/other.js"],
+    splitting: true,
+    outdir: "/out",
+    target: "browser",
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        ${preloadShim}
+        const { go } = await import("./out/lib.js");
+        console.log((await go()).default(), links.length);
+      `,
+    },
+    onAfterBundle(api) {
+      for (const entry of ["index", "lib"]) {
+        expect(api.readFile(`/out/${entry}.js`)).toMatch(/__chunks\(import\.meta\.url,\[/);
+      }
+      for (const file of jsFilesIn(api)) {
+        if (!["index.js", "lib.js", "other.js"].includes(file))
+          expect(api.readFile("/out/" + file)).not.toContain("(import.meta.url,");
+      }
+    },
+    run: { file: "/test.js", stdout: "r0:a1a2 1" },
+  });
+  // import() of another user-specified entry point is a split import() too.
+  itBundled("splitting/ModulePreloadImportOfUserEntry", {
+    files: {
+      "/a.js": `export const go = () => import("./b.js");`,
+      "/b.js": `import { s } from "./s.js"; export const b = () => "b" + s;`,
+      "/c.js": `export { s } from "./s.js";`,
+      "/s.js": `export const s = 1;`,
+    },
+    entryPoints: ["/a.js", "/b.js", "/c.js"],
+    splitting: true,
+    outdir: "/out",
+    target: "browser",
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        ${preloadShim}
+        const { go } = await import("./out/a.js");
+        const m = await go();
+        console.log(m.b(), links.length);
+      `,
+    },
+    onAfterBundle(api) {
+      expect(api.readFile("/out/a.js")).toMatch(/__chunks\(import\.meta\.url,\[/);
+      expect(api.readFile("/out/a.js")).toMatch(/__preload\("\w+"\), import\("\.\/b\.js"\)/);
+    },
+    run: { file: "/test.js", stdout: "b1 1" },
+  });
+  // An entry that reaches no split import() is left exactly as it was.
+  itBundled("splitting/ModulePreloadLeavesStaticEntryAlone", {
+    files: {
+      "/lazy-page.js": `export const nav = () => import("./r0.js");`,
+      "/static-page.js": `import { a2 } from "./a2.js"; console.log(a2());`,
+      ...preloadChainFiles(2),
+    },
+    entryPoints: ["/lazy-page.js", "/static-page.js"],
+    splitting: true,
+    outdir: "/out",
+    target: "browser",
+    onAfterBundle(api) {
+      expect(api.readFile("/out/lazy-page.js")).toMatch(/__chunks\(import\.meta\.url,\[/);
+      expect(api.readFile("/out/static-page.js")).not.toMatch(/__chunks|__preload/);
+      // lazy-page, static-page, r0, and the a2 chunk both pages share: no separate runtime chunk
+      expect(jsFilesIn(api)).toHaveLength(4);
+    },
+    run: { file: "/out/static-page.js", stdout: "a2" },
   });
   for (const target of ["bun", "node"] as const) {
     itBundled(`splitting/ModulePreloadIsBrowserOnly_${target}`, {

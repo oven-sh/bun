@@ -40,6 +40,17 @@ const cases = [];
   weakSet.size = Symbol("size");
   cases.push({ value: weakSet, includes: ["WeakSet {}"] });
 }
+{
+  // A numeric \`size\` must not make the formatter iterate a weak collection.
+  const weakSet = new WeakSet();
+  weakSet.size = 5;
+  cases.push({ value: weakSet, includes: ["WeakSet {}"] });
+}
+{
+  const weakMap = new WeakMap();
+  weakMap.size = 5;
+  cases.push({ value: weakMap, includes: ["WeakMap {}"] });
+}
 for (const { value, includes, excludes = [] } of cases) {
   try {
     Bun.jest().expect(BigUint64Array).toEqual(value);
@@ -61,7 +72,7 @@ for (const { value, includes, excludes = [] } of cases) {
 
     const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stdout.trim().split("\n")).toEqual(["DIFF OK", "DIFF OK", "DIFF OK", "DIFF OK", "DIFF OK"]);
+    expect(stdout.trim().split("\n")).toEqual(Array(7).fill("DIFF OK"));
     expect(exitCode).toBe(0);
   });
 });

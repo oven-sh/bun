@@ -1718,10 +1718,11 @@ impl<'a> Formatter<'a> {
                     let length_value = value
                         .get(self.global_this, "size")?
                         .unwrap_or_else(|| JSValue::js_number_from_int32(0));
-                    let length = if length_value.is_number() {
-                        length_value.coerce_to_i32(self.global_this)?
-                    } else if js_type == JSType::WeakMap {
+                    // A WeakMap is not iterable: `for_each` below must not run on it.
+                    let length = if js_type == JSType::WeakMap {
                         0
+                    } else if length_value.is_number() {
+                        length_value.coerce_to_i32(self.global_this)?
                     } else {
                         // non-zero so `for_each` below prints the real entries
                         1
@@ -1769,10 +1770,11 @@ impl<'a> Formatter<'a> {
                     let length_value = value
                         .get(self.global_this, "size")?
                         .unwrap_or_else(|| JSValue::js_number_from_int32(0));
-                    let length = if length_value.is_number() {
-                        length_value.coerce_to_i32(self.global_this)?
-                    } else if js_type == JSType::WeakSet {
+                    // A WeakSet is not iterable: `for_each` below must not run on it.
+                    let length = if js_type == JSType::WeakSet {
                         0
+                    } else if length_value.is_number() {
+                        length_value.coerce_to_i32(self.global_this)?
                     } else {
                         // non-zero so `for_each` below prints the real entries
                         1

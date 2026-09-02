@@ -1963,14 +1963,27 @@ impl Package<u64> {
                         } else {
                             'brk: {
                                 let mut buf2 = PathBuffer::uninit();
+                                let Some(joined) = resolve_path::join_abs_string_buf_checked::<
+                                    path::platform::Auto,
+                                >(
+                                    FileSystem::instance().top_level_dir(),
+                                    &mut buf2.0,
+                                    &[source.path.name().dir, workspace],
+                                ) else {
+                                    log.add_error_fmt(
+                                        source,
+                                        value_loc_of(source, key_loc),
+                                        format_args!(
+                                            "Dependency \"{}\" has an unsafe workspace path",
+                                            bstr::BStr::new(external_alias.slice(buf)),
+                                        ),
+                                    );
+                                    return Err(crate::Error::InstallFailed);
+                                };
                                 let rel =
                                     resolve_path::relative_platform::<path::platform::Auto, false>(
                                         FileSystem::instance().top_level_dir(),
-                                        resolve_path::join_abs_string_buf::<path::platform::Auto>(
-                                            FileSystem::instance().top_level_dir(),
-                                            &mut buf2.0,
-                                            &[source.path.name().dir, workspace],
-                                        ),
+                                        joined,
                                     );
                                 #[cfg(windows)]
                                 {

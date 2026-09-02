@@ -422,23 +422,12 @@ impl<'a> Task<'a> {
                     unreachable!("a commit lookup completes on the install thread (git_runner.rs)")
                 }
                 Tag::LocalTarball => {
-                    // `tarball_path` and `normalize` are computed on the main thread when the
-                    // task is enqueued. This callback runs on a ThreadPool worker and must not
-                    // read `manager.lockfile.packages` / `manager.lockfile.buffers.string_bytes`:
-                    // the main thread may reallocate those buffers concurrently while processing
-                    // other dependencies.
+                    // Worker thread: the request holds everything needed from the lockfile.
 
                     // SAFETY: tag == LocalTarball discriminates the union
-                    let req = unsafe { &mut *this.request.local_tarball };
-                    let tarball_path = req.tarball_path.slice();
-                    let normalize = req.normalize;
+                    let req = unsafe { &*this.request.local_tarball };
 
-                    let result = match read_and_extract(
-                        &req.tarball,
-                        tarball_path,
-                        normalize,
-                        &mut this.log,
-                    ) {
+                    let result = match read_and_extract(req, &mut this.log) {
                         Ok(v) => v,
                         Err(err) => {
                             this.err = Some(err);
@@ -489,29 +478,26 @@ impl<'a> Task<'a> {
     }
 }
 
-fn read_and_extract(
-    tarball: &ExtractTarball,
-    tarball_path: &[u8],
-    normalize: bool,
-    log: &mut Log,
-) -> crate::Result<ExtractData> {
-    let bytes = if normalize {
+fn read_and_extract(req: &LocalTarballRequest, log: &mut Log) -> crate::Result<ExtractData> {
+    let bytes = match &req.tarball_path {
         // Resolves
         // a user-provided relative path against `bun.fs.FileSystem.instance.top_level_dir`
         // (the absolute project root cached at startup — NOT the live process cwd).
         // `bun_sys::File::read_from_user_input` takes that base
         // explicitly (T1 `bun_sys` cannot depend on T5 `bun_resolver::fs`), so thread it
         // through here from the install crate's `FileSystem` shim.
-        File::read_from_user_input(
+        TarballPath::Url => File::read_from_user_input(
             Fd::cwd(),
             crate::bun_fs::FileSystem::instance().top_level_dir(),
-            tarball_path,
-        )?
-    } else {
-        File::read_from(Fd::cwd(), tarball_path)?
+            req.tarball.url.slice(),
+        )?,
+        TarballPath::Absolute(path) => File::read_from(Fd::cwd(), path.slice())?,
+        TarballPath::TooLong => {
+            return Err(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
+        }
     };
     // `defer allocator.free(bytes)` → Vec<u8> drops at scope exit
-    tarball.run(log, &bytes)
+    req.tarball.run(log, &bytes)
 }
 
 #[repr(u8)]
@@ -594,9 +580,16 @@ pub struct GitCheckoutRequest {
 
 pub struct LocalTarballRequest {
     pub(crate) tarball: ExtractTarball,
-    /// Resolved by `enqueue_local_tarball` on the main thread; the worker must not read the lockfile.
-    pub(crate) tarball_path: StringOrTinyString,
-    /// When true, `tarball_path` is a user-provided path resolved relative to
-    /// cwd. When false, it is already an absolute path.
-    pub(crate) normalize: bool,
+    /// Built on the main thread by `enqueue_local_tarball`; the worker must not read the lockfile.
+    pub(crate) tarball_path: TarballPath,
+}
+
+/// Where a `LocalTarballRequest` reads its tarball from.
+pub(crate) enum TarballPath {
+    /// `tarball.url` as written in the dependency, resolved against the project root.
+    Url,
+    /// A tarball declared by a workspace or `file:` folder package, already joined with that package's directory.
+    Absolute(StringOrTinyString),
+    /// The joined path does not fit a `PathBuffer`; the task fails with `ENAMETOOLONG`.
+    TooLong,
 }

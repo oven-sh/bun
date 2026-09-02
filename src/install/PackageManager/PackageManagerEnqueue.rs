@@ -2128,18 +2128,25 @@ fn enqueue_local_tarball(
     // other dependencies (e.g. `appendPackage` / `StringBuilder.allocate`
     // in `Package.fromNPM`).
     let mut abs_buf = PathBuffer::uninit();
-    let (tarball_path, normalize): (&[u8], bool) =
-        match local_tarball_base_dir(&this.lockfile, dependency_id, path) {
-            None => (path, true),
-            Some(base_dir) => (
-                Path::resolve_path::join_abs_string_buf::<Path::platform::Auto>(
-                    FileSystem::instance().top_level_dir(),
-                    &mut abs_buf,
-                    &[base_dir, path],
+    let tarball_path = match local_tarball_base_dir(&this.lockfile, dependency_id, path) {
+        None => Task::TarballPath::Url,
+        Some(base_dir) => {
+            match Path::resolve_path::join_abs_string_buf_checked::<Path::platform::Auto>(
+                FileSystem::instance().top_level_dir(),
+                &mut abs_buf,
+                &[base_dir, path],
+            ) {
+                None => Task::TarballPath::TooLong,
+                Some(joined) => Task::TarballPath::Absolute(
+                    StringOrTinyString::init_append_if_needed(
+                        joined,
+                        &mut crate::network_task::filename_store_appender(),
+                    )
+                    .expect("unreachable"),
                 ),
-                false,
-            ),
-        };
+            }
+        }
+    };
 
     // Build the `Task` value *before* claiming a hive slot — the `.expect()`s
     // below can unwind, and `Task` carries drop glue. See `enqueue_git_clone`.
@@ -2175,12 +2182,7 @@ fn enqueue_local_tarball(
                     in_trusted_dependencies: false,
                     github_resolved: StringOrTinyString::init(b""),
                 },
-                tarball_path: StringOrTinyString::init_append_if_needed(
-                    tarball_path,
-                    &mut crate::network_task::filename_store_appender(),
-                )
-                .expect("unreachable"),
-                normalize,
+                tarball_path,
             }),
         },
         id: task_id,

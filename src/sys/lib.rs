@@ -6096,7 +6096,7 @@ pub fn openat_a(dir: impl AsFd, path: &[u8], flags: i32, perm: Mode) -> Maybe<Fd
     let dir = dir.as_fd();
     let mut buf = bun_paths::PathBuffer::default();
     if path.len() >= buf.0.len() {
-        return Err(Error::from_code_int(libc::ENAMETOOLONG, Tag::open).with_path(path));
+        return Err(Error::from_code(E::ENAMETOOLONG, Tag::open).with_path(path));
     }
     buf.0[..path.len()].copy_from_slice(path);
     buf.0[path.len()] = 0;
@@ -9140,7 +9140,7 @@ pub fn write_file_with_path_buffer(
         PathOrFileDescriptor::Fd(fd) => fd,
         PathOrFileDescriptor::Path(bytes) => {
             if bytes.len() >= path_buf.0.len() {
-                return Err(Error::from_code_int(libc::ENAMETOOLONG, Tag::open).with_path(bytes));
+                return Err(Error::from_code(E::ENAMETOOLONG, Tag::open).with_path(bytes));
             }
             path_buf.0[..bytes.len()].copy_from_slice(bytes);
             path_buf.0[bytes.len()] = 0;

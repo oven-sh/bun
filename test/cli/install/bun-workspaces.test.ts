@@ -7,6 +7,8 @@ import {
   assertManifestsPopulated,
   bunEnv as baseEnv,
   bunExe,
+  isLinux,
+  isWindows,
   readdirSorted,
   runBunInstall,
   toMatchNodeModulesAt,
@@ -653,6 +655,39 @@ test.concurrent("cwd in workspace script is not the symlink path on windows", as
   expect(await file(join(packageDir, "node_modules", "pkg1", "cwd")).text()).toBe(join(packageDir, "pkg1"));
 });
 
+// Local dependency paths are joined into a PathBuffer of MAX_PATH_BYTES: 4096
+// bytes on Linux, 1024 on the other POSIX platforms, 32767 * 3 + 1 on Windows.
+const PATH_BUFFER_BYTES = isWindows ? 32767 * 3 + 1 : isLinux ? 4096 : 1024;
+// Longer than the buffer on every platform.
+const LONG_SPEC_BYTES = 100_000;
+const WORKSPACE_DIR = "pkgs/pkg1";
+
+// Writes a root package with one workspace at WORKSPACE_DIR, declaring `spec`
+// as a dependency of either the root package or the workspace package.
+async function writeDependency(packageDir: string, owner: "root" | "workspace", name: string, spec: string) {
+  await Promise.all([
+    write(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        workspaces: ["pkgs/*"],
+        dependencies: owner === "root" ? { [name]: spec } : {},
+      }),
+    ),
+    write(
+      join(packageDir, WORKSPACE_DIR, "package.json"),
+      JSON.stringify({
+        name: "pkg1",
+        dependencies: owner === "workspace" ? { [name]: spec } : {},
+      }),
+    ),
+  ]);
+}
+
+function runFailingInstall(env: Record<string, string>, packageDir: string) {
+  return runBunInstall(env, packageDir, { allowErrors: true, expectedExitCode: 1, savesLockfile: false });
+}
+
 describe("relative tarballs", async () => {
   test.concurrent("from package.json", async () => {
     using ctx = await setupTest();
@@ -856,7 +891,110 @@ describe("relative tarballs", async () => {
       }
     }
   });
+
+  test.concurrent.each(["root", "workspace"] as const)(
+    "%s dependency on a tarball path longer than the path buffer fails with ENAMETOOLONG",
+    async owner => {
+      using ctx = await setupTest();
+      const { packageDir, env } = ctx;
+      const spec = "file:./" + Buffer.alloc(LONG_SPEC_BYTES, "a").toString() + ".tgz";
+      await writeDependency(packageDir, owner, "too-long", spec);
+
+      const { err } = await runFailingInstall(env, packageDir);
+
+      expect(err).toContain("error: ENAMETOOLONG extracting tarball from too-long");
+      expect(err).toContain("failed to resolve");
+    },
+  );
+
+  // A relative tarball path of exactly `bytes` bytes made of one letter
+  // directories, so that a path which fits the buffer is looked up by the OS
+  // (ENOENT) instead of tripping its own limit on the length of a single name.
+  function tarballPathOfLength(bytes: number) {
+    const tail = bytes % 2 === 0 ? "dd.tgz" : "d.tgz";
+    return Buffer.alloc(bytes - tail.length, "d/").toString() + tail;
+  }
+
+  // packageDir is a real path and the cwd of the install, so the joined path
+  // is `${packageDir}/${rel}` for the root package and
+  // `${packageDir}/${WORKSPACE_DIR}/${rel}` for the workspace. One byte below
+  // the buffer size the path still reaches the OS; at the buffer size there is
+  // no room for the NUL terminator; above it the join itself overflows. The
+  // workspace rows also tell the workspace join apart from resolving the same
+  // path against the root, which fits the buffer and reports ENOENT instead.
+  test.concurrent.each([
+    ["root", "one byte below", -1],
+    ["root", "exactly", 0],
+    ["root", "one byte above", 1],
+    ["workspace", "one byte below", -1],
+    ["workspace", "exactly", 0],
+    ["workspace", "one byte above", 1],
+  ] as const)("%s dependency whose joined tarball path is %s the path buffer size", async (owner, _, offset) => {
+    using ctx = await setupTest();
+    const { packageDir, env } = ctx;
+    const joinedPrefixBytes =
+      Buffer.byteLength(packageDir) + 1 + (owner === "workspace" ? Buffer.byteLength(WORKSPACE_DIR) + 1 : 0);
+    const spec = "file:" + tarballPathOfLength(PATH_BUFFER_BYTES + offset - joinedPrefixBytes);
+    await writeDependency(packageDir, owner, "edge", spec);
+
+    const { err } = await runFailingInstall(env, packageDir);
+
+    // Windows never looks the fitting path up: it is longer than the 32767
+    // UTF-16 units a Windows path may have.
+    const expected = offset < 0 && !isWindows ? "ENOENT" : "ENAMETOOLONG";
+    expect(err).toContain(`error: ${expected} extracting tarball from edge`);
+    expect(err).toContain("failed to resolve");
+  });
+
+  test.concurrent.each(["root", "workspace"] as const)(
+    "%s dependency on a tarball path that only fits the path buffer once normalized resolves",
+    async owner => {
+      using ctx = await setupTest();
+      const { packageDir, env } = ctx;
+      // "x/../" repeated: longer than the path buffer as written, but it
+      // normalizes to the tarball next to the root package.json.
+      const detour = Buffer.alloc(LONG_SPEC_BYTES, "x/../").toString();
+      const spec = "./" + detour + (owner === "root" ? "" : "../../") + "qux-0.0.2.tgz";
+      await Promise.all([
+        writeDependency(packageDir, owner, "qux", spec),
+        cp(join(import.meta.dir, "qux-0.0.2.tgz"), join(packageDir, "qux-0.0.2.tgz")),
+      ]);
+
+      // Reading the tarball happens while resolving. Linking it into
+      // node_modules is skipped: the linker formats the resolution into a
+      // 512 byte buffer and cannot install a spec this long yet.
+      await using proc = spawn({
+        cmd: [bunExe(), "install", "--lockfile-only"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stderr: "pipe",
+        env,
+      });
+      const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(err).not.toContain("error:");
+      expect(err).toContain("Saved lockfile");
+      expect(out).toContain("Saved bun.lock (3 packages)");
+      expect(exitCode).toBe(0);
+      const qux = parseLockfile(packageDir).packages.find((pkg: { name: string }) => pkg.name === "qux");
+      expect(qux.resolution).toMatchObject({ tag: "local_tarball", value: spec });
+    },
+  );
 });
+
+test.concurrent.each(["root", "workspace"] as const)(
+  "%s dependency on a workspace: path longer than the path buffer fails to install",
+  async owner => {
+    using ctx = await setupTest();
+    const { packageDir, env } = ctx;
+    const spec = "workspace:./" + Buffer.alloc(LONG_SPEC_BYTES, "a").toString();
+    await writeDependency(packageDir, owner, "too-long", spec);
+
+    const { err } = await runFailingInstall(env, packageDir);
+
+    expect(err).toContain('Dependency "too-long" has an unsafe workspace path');
+  },
+);
 
 test.concurrent("$npm_package_config_ works in root", async () => {
   using ctx = await setupTest();

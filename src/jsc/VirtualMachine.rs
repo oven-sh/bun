@@ -596,19 +596,32 @@ impl VMHolder {
     }
 
     /// Node parity: `process.kill(self, sig)` with no JS handler for `sig`
-    /// flushes the CPU and heap profiles before sending the (likely fatal)
-    /// signal, mirroring node's `Kill` binding. Idempotent via `Option::take`.
+    /// flushes the profiles before sending the (likely fatal) signal,
+    /// mirroring node's `Kill` binding.
     #[unsafe(no_mangle)]
     pub(crate) extern "C" fn Bun__writeProfilesBeforeSelfKill() {
         let Some(vm_ptr) = VM.get() else { return };
         // SAFETY: called on the JS thread that owns this VM (process._kill).
         let vm = unsafe { &mut *vm_ptr };
-        // Sampling report before the CPU profile: they share the per-VM
-        // SamplingProfiler and stopCPUProfiler clears its traces.
-        if let Some(directory) = vm.sampling_profiler_directory.take() {
-            if let Err(e) =
-                crate::bun_cpu_profiler::write_sampling_profiler_report(vm.jsc_vm_mut(), &directory)
-            {
+        vm.write_profiles();
+        // Node runs RunAtExit (incl. compile cache) on self-directed fatal signals. Non-latching:
+        // the signal may prove non-fatal, and latching here would no-op the real exit's persist.
+        // https://github.com/nodejs/node/blob/main/src/env.cc (AtExit(FlushCompileCache))
+        crate::node_compile_cache::persist_now();
+    }
+}
+
+impl VirtualMachine {
+    /// Writes each configured profile at most once (each config is `take`n).
+    /// Call on the JS thread under the API lock. The sampling profiler report
+    /// goes first: it shares the per-VM `SamplingProfiler` with the CPU
+    /// profile, and `stopCPUProfiler` clears the traces the report reads.
+    pub fn write_profiles(&mut self) {
+        if let Some(directory) = self.sampling_profiler_directory.take() {
+            if let Err(e) = crate::bun_cpu_profiler::write_sampling_profiler_report(
+                self.jsc_vm_mut(),
+                &directory,
+            ) {
                 bun_core::Output::err(
                     <&'static str>::from(e),
                     "Failed to write sampling profiler report",
@@ -616,24 +629,20 @@ impl VMHolder {
                 );
             }
         }
-        if let Some(config) = vm.cpu_profiler_config.take() {
+        if let Some(config) = self.cpu_profiler_config.take() {
             if let Err(e) =
-                crate::bun_cpu_profiler::stop_and_write_profile(vm.jsc_vm_mut(), &config)
+                crate::bun_cpu_profiler::stop_and_write_profile(self.jsc_vm_mut(), &config)
             {
                 bun_core::Output::err(<&'static str>::from(e), "Failed to write CPU profile", ());
             }
         }
-        if let Some(config) = vm.heap_profiler_config.take() {
+        if let Some(config) = self.heap_profiler_config.take() {
             if let Err(e) =
-                crate::bun_heap_profiler::generate_and_write_profile(vm.jsc_vm_mut(), &config)
+                crate::bun_heap_profiler::generate_and_write_profile(self.jsc_vm_mut(), &config)
             {
                 bun_core::Output::err(e, "Failed to write heap profile", ());
             }
         }
-        // Node runs RunAtExit (incl. compile cache) on self-directed fatal signals. Non-latching:
-        // the signal may prove non-fatal, and latching here would no-op the real exit's persist.
-        // https://github.com/nodejs/node/blob/main/src/env.cc (AtExit(FlushCompileCache))
-        crate::node_compile_cache::persist_now();
     }
 }
 
@@ -1814,42 +1823,8 @@ impl VirtualMachine {
             }
         }
 
-        // Write the JSC sampling profiler report if a directory was set
-        // (BUN_JSC_samplingProfilerPath or bun:jsc's startSamplingProfiler()).
-        // Runs before the CPU profile flush: both share the per-VM
-        // SamplingProfiler and stopCPUProfiler clears its traces, while the
-        // report only reads them.
-        if let Some(directory) = self.sampling_profiler_directory.take() {
-            if let Err(e) = crate::bun_cpu_profiler::write_sampling_profiler_report(
-                self.jsc_vm_mut(),
-                &directory,
-            ) {
-                bun_core::Output::err(
-                    <&'static str>::from(e),
-                    "Failed to write sampling profiler report",
-                    (),
-                );
-            }
-        }
-        // Write CPU profile if profiling was enabled - do this FIRST before any
-        // shutdown begins. Grab the config and null it out to make this
-        // idempotent.
-        if let Some(config) = self.cpu_profiler_config.take() {
-            if let Err(e) =
-                crate::bun_cpu_profiler::stop_and_write_profile(self.jsc_vm_mut(), &config)
-            {
-                bun_core::Output::err(<&'static str>::from(e), "Failed to write CPU profile", ());
-            }
-        }
-        // Write heap profile if profiling was enabled - do this after CPU
-        // profile but before shutdown.
-        if let Some(config) = self.heap_profiler_config.take() {
-            if let Err(e) =
-                crate::bun_heap_profiler::generate_and_write_profile(self.jsc_vm_mut(), &config)
-            {
-                bun_core::Output::err(e, "Failed to write heap profile", ());
-            }
-        }
+        // Profiles go out first, before any shutdown begins.
+        self.write_profiles();
 
         ExitHandler::dispatch_on_exit(self);
 
@@ -4923,6 +4898,7 @@ impl VirtualMachine {
 
         drop(core::mem::take(&mut self.resolved_path_dups));
         drop(core::mem::take(&mut self.main_resolved_path));
+        drop(self.sampling_profiler_directory.take());
 
         self.overridden_main.deinit();
 

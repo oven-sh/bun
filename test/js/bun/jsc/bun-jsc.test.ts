@@ -625,18 +625,20 @@ describe.concurrent("sampling profiler report at exit", () => {
 
   it("startSamplingProfiler with a directory writes a report at exit", async () => {
     // https://github.com/oven-sh/bun/issues/32212
-    using dir = tempDir("sampling-profiler", {
-      "entry.mjs": `
+    using dir = tempDir("sampling-profiler", {});
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
         import { startSamplingProfiler } from "bun:jsc";
         import { join } from "node:path";
-        startSamplingProfiler(join(import.meta.dir, "profiles"));
+        startSamplingProfiler(join(process.cwd(), "profiles"));
         let x = 0;
         for (let i = 0; i < 2e6; i++) x += Math.sqrt(i);
         console.log("done", x > 0);
-      `,
-    });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "entry.mjs"],
+        `,
+      ],
       env: bunEnv,
       cwd: String(dir),
       stdout: "pipe",
@@ -698,8 +700,12 @@ describe.concurrent("sampling profiler report at exit", () => {
   });
 
   it("startSamplingProfiler resolves a relative directory against the working directory at call time", async () => {
-    using dir = tempDir("sampling-profiler-relative", {
-      "entry.mjs": `
+    using dir = tempDir("sampling-profiler-relative", {});
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
         import { startSamplingProfiler } from "bun:jsc";
         import { mkdirSync } from "node:fs";
         let nulThrew = false;
@@ -715,10 +721,8 @@ describe.concurrent("sampling profiler report at exit", () => {
         let x = 0;
         for (let i = 0; i < 2e6; i++) x += Math.sqrt(i);
         console.log("done", x > 0);
-      `,
-    });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "entry.mjs"],
+        `,
+      ],
       env: bunEnv,
       cwd: String(dir),
       stdout: "pipe",
@@ -768,8 +772,12 @@ describe.concurrent("sampling profiler report at exit", () => {
   });
 
   it("BUN_JSC_samplingProfilerPath resolves a relative directory against the startup working directory", async () => {
-    using dir = tempDir("sampling-profiler-env-relative", {
-      "entry.mjs": `
+    using dir = tempDir("sampling-profiler-env-relative", {});
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
         import { mkdirSync } from "node:fs";
         mkdirSync("elsewhere");
         process.chdir("elsewhere");
@@ -777,10 +785,8 @@ describe.concurrent("sampling profiler report at exit", () => {
         for (let i = 0; i < 2e6; i++) x += Math.sqrt(i);
         console.log("done", x > 0);
         process.exit(0);
-      `,
-    });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "entry.mjs"],
+        `,
+      ],
       env: { ...bunEnv, BUN_JSC_useSamplingProfiler: "1", BUN_JSC_samplingProfilerPath: "profiles" },
       cwd: String(dir),
       stdout: "pipe",

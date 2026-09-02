@@ -610,9 +610,13 @@ impl PackageJSON {
                         // import of "foo", but that's actually not a bug. Or arguably it's a
                         // bug in Browserify but we have to replicate this bug because packages
                         // do this in the wild.
+                        //
+                        // The keys keep forward slashes on every platform. A key like
+                        // "pkg/sub" is looked up with the import path as written, which
+                        // has forward slashes on Windows too.
                         let key: &[u8] = resolve_path::resolve_path::normalize_string_spill::<
                             true,
-                            resolve_path::platform::Auto,
+                            resolve_path::platform::Posix,
                         >(&mut key_spill, prop.key.slice());
 
                         match &prop.value {

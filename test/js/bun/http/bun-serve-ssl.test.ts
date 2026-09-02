@@ -161,7 +161,7 @@ describe("Bun.serve SSL validations", () => {
         cmd: [
           bunExe(),
           "-e",
-          `Bun.serve({ port: 0, fetch() { return new Response("ok"); }, ALPNProtocols: new ${viewType}(new SharedArrayBuffer(16)) });`,
+          `const server = Bun.serve({ port: 0, fetch() { return new Response("ok"); }, ALPNProtocols: new ${viewType}(new SharedArrayBuffer(16)) }); server.stop(true); process.exit(2);`,
         ],
         env: bunEnv,
         stderr: "pipe",

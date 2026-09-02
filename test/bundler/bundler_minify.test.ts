@@ -1692,6 +1692,7 @@ describe("bundler", () => {
         export function nullish(a, b) { return a != null ? a : b }
         export function callTarget(o, a) { return (a ? o.m : o.m)() }
         export function tagTarget(o, a) { return (a ? o.m : o.m)\`x\` }
+        export function tagTargetFolded(o) { return (1 ? o.m : 2)\`x\` }
         export function implicitReturn(y, z) { if (y) return; z() }
         export function loopContinue(xs, f) { for (const x of xs) { if (x > 2) continue; f(x) } }
         export function typeofEq(t) { return typeof t === "string" }
@@ -1755,6 +1756,7 @@ describe("bundler", () => {
         // that comma today (#40829), so only the shape is checked for it.
         callTarget: "return(0,o.m)()",
         tagTarget: "return(0,o.m)`x`",
+        tagTargetFolded: "return(0,o.m)`x`",
         implicitReturn: "y||z()",
         loopContinue: "for(let x of xs)x>2||f(x)",
         typeofEq: 'return typeof t=="string"',

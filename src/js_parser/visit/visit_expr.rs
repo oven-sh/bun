@@ -1544,7 +1544,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // "(1 ? fn : 2)()" => "fn()"
             // "(1 ? this.fn : 2)" => "this.fn"
             // "(1 ? this.fn : 2)()" => "(0, this.fn)()"
-            if is_call_target && e_.yes.has_value_for_this_in_call() {
+            if (is_call_target || is_template_tag) && e_.yes.has_value_for_this_in_call() {
                 *e = p
                     .new_expr(E::Number::new(0.0), e_.test.loc)
                     .join_with_comma(e_.yes);
@@ -1571,7 +1571,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // "(1 ? fn : 2)()" => "fn()"
             // "(1 ? this.fn : 2)" => "this.fn"
             // "(1 ? this.fn : 2)()" => "(0, this.fn)()"
-            if is_call_target && e_.no.has_value_for_this_in_call() {
+            if (is_call_target || is_template_tag) && e_.no.has_value_for_this_in_call() {
                 *e = p
                     .new_expr(E::Number::new(0.0), e_.test.loc)
                     .join_with_comma(e_.no);

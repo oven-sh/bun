@@ -72,7 +72,11 @@ extern "C" fn Bun__onPosixSignal(number: i32) {
             // `BackRef::deref` is the centralised set-once-NonNull proof; the
             // pointee is all-atomic (`Sync`), so a `&PosixSignalHandle` from
             // async-signal context is sound.
-            if handler.enqueue(u8::try_from(number).expect("int cast")) {
+            // No panic path in a signal handler: drop a number outside 1..=255.
+            let Some(signal) = u8::try_from(number).ok().filter(|&s| s != 0) else {
+                return;
+            };
+            if handler.enqueue(signal) {
                 // SAFETY: same process-lifetime event loop as above; `wakeup`
                 // is one async-signal-safe write to the loop's wakeup fd.
                 unsafe { (*(*vm).event_loop()).wakeup() };

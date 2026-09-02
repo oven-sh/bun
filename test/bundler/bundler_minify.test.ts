@@ -1759,6 +1759,56 @@ describe("bundler", () => {
     },
   });
 
+  // Every `if` rewrite runs with a truthy and a falsy test. The side effects
+  // of the test and of each branch must match the original `if`, and
+  // comma-joined branches stay grouped inside the conditional.
+  itBundled("minify/IfStatementMangling", {
+    files: {
+      "/entry.js": /* js */ `
+        const out = [];
+        function both(a){if(a)out.push("y"+a);else out.push("n"+a);}
+        function yes(a){if(a)out.push("Y"+a);}
+        function notYes(a){if(!a)out.push("N"+a);}
+        function notBoth(a){if(!a)out.push("b"+a);else out.push("c"+a);}
+        function blocks(a){if(a){out.push("x"+a);out.push("y"+a);}else{out.push("z"+a);out.push("w"+a);}}
+        function retBoth(a){if(a)return "r1";else return "r2";}
+        function retMixed(a){if(a)return;else return "m";}
+        function throwBoth(a){try{if(a)throw "t1";else throw "t2";}catch(e){return e;}}
+        function emptyYes(a){if(a){}else out.push("E"+a);}
+        function emptyBoth(a){let n=0;if((n++,a)){}else{};out.push("eb"+n);}
+
+        for (const v of [0, 1]) {
+          both(v); yes(v); notYes(v); notBoth(v); blocks(v);
+          out.push(retBoth(v), String(retMixed(v)), throwBoth(v));
+          emptyYes(v); emptyBoth(v);
+        }
+        console.log(out.join(","));
+      `,
+    },
+    minifySyntax: true,
+    minifyWhitespace: true,
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      const fns = [...code.matchAll(/function (\w+)\([^)]*\)\{(.*?)\}(?=function |for\()/g)].map(m => [m[1], m[2]]);
+      expect(Object.fromEntries(fns)).toEqual({
+        both: 'a?out.push("y"+a):out.push("n"+a)',
+        yes: 'a&&out.push("Y"+a)',
+        notYes: 'a||out.push("N"+a)',
+        notBoth: 'a?out.push("c"+a):out.push("b"+a)',
+        blocks: 'a?(out.push("x"+a),out.push("y"+a)):(out.push("z"+a),out.push("w"+a))',
+        retBoth: 'return a?"r1":"r2"',
+        // `return a?void 0:"m"` at the end of a function body becomes an `if`.
+        retMixed: 'if(!a)return"m"',
+        throwBoth: 'try{throw a?"t1":"t2"}catch(e){return e}',
+        emptyYes: 'a||out.push("E"+a)',
+        emptyBoth: 'let n=0;n++,out.push("eb"+n)',
+      });
+    },
+    run: {
+      stdout: "n0,N0,b0,z0,w0,r2,m,t2,E0,eb1,y1,Y1,c1,x1,y1,r1,undefined,t1,eb1",
+    },
+  });
+
   // A single-use `let` is substituted into whichever child of the next
   // expression reads it. `a` is used where the substitution must happen;
   // `keep` where a side effect in between must block it.

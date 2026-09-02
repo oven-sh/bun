@@ -1218,12 +1218,16 @@ pub fn compute_reserved_names_for_scope(
         }
     }
 
-    // If there's a direct "eval" somewhere inside the current scope, continue
-    // traversing down the scope tree until we find it to get all reserved names
-    if scope.contains_direct_eval {
+    // If there's a direct "eval" or a "with" statement somewhere inside the
+    // current scope, continue traversing down the scope tree until we find it
+    // to get all reserved names. Symbols pinned by either have no slot, so
+    // reserving their names is what keeps the minifier from giving one to a
+    // symbol in an enclosing scope, like a parameter of the function that
+    // declares a `var` read through the "with" body.
+    if scope.contains_direct_eval || scope.contains_with {
         for child in scope.children.slice() {
             // `StoreRef<Scope>: Deref<Target = Scope>` — safe arena-backed deref.
-            if child.contains_direct_eval {
+            if child.contains_direct_eval || child.contains_with {
                 compute_reserved_names_for_scope(child, symbols, names);
             }
         }

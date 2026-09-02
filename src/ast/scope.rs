@@ -41,6 +41,11 @@ pub struct Scope {
     // evaluated code might reference anything that it has access to.
     pub contains_direct_eval: bool,
 
+    // Set on a "with" statement's scope and every scope that encloses it. A
+    // symbol read through the "with" body keeps its original name, so the
+    // renamer walks these scopes to keep those names away from other symbols.
+    pub contains_with: bool,
+
     // This is to help forbid "arguments" inside class body scopes
     pub forbid_arguments: bool,
 
@@ -73,6 +78,7 @@ impl Scope {
         label_ref: Ref::NONE,
         label_stmt_is_loop: false,
         contains_direct_eval: false,
+        contains_with: false,
         forbid_arguments: false,
         strict_mode: StrictModeKind::SloppyMode,
         is_after_const_local_prefix: false,

@@ -1856,6 +1856,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
+    /// Pins `ref_` and every symbol on its link chain. The renamer follows
+    /// the chain before it reads the flag, so a pin on a linked ref alone is
+    /// lost.
+    pub(crate) fn set_must_not_be_renamed_through_links(&mut self, ref_: Ref) {
+        let mut ref_ = ref_;
+        loop {
+            let symbol = &mut self.symbols[ref_.inner_index() as usize];
+            symbol.set_must_not_be_renamed(true);
+            if !symbol.has_link() {
+                return;
+            }
+            ref_ = symbol.link.get();
+        }
+    }
+
     pub(crate) fn log_arrow_arg_errors(&mut self, errors: &mut DeferredArrowArgErrors) {
         if errors.invalid_expr_await.len > 0 {
             let r = errors.invalid_expr_await;
@@ -3372,7 +3387,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         //   assert(obj.foo === 2)
                         //
                         if scope_kind == js_ast::scope::Kind::With {
-                            self.symbols[symbol_idx].set_must_not_be_renamed(true);
+                            self.set_must_not_be_renamed_through_links(value.ref_);
                         }
 
                         if let Some(member_in_scope) =
@@ -3397,6 +3412,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             {
                                 // Silently merge this symbol into the existing symbol
                                 self.symbols[symbol_idx].link.set(member_in_scope.ref_);
+                                if self.symbols[symbol_idx].must_not_be_renamed() {
+                                    self.set_must_not_be_renamed_through_links(
+                                        member_in_scope.ref_,
+                                    );
+                                }
                                 // `StringHashMap` get_or_put already stores the key on insert and
                                 // cannot hand out `&mut K` (see StringHashMapGetOrPut docs), so
                                 // no key write is needed here.
@@ -3580,6 +3600,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // "with" statements are not allowed in strict mode.
             if self.options.features.commonjs_at_runtime {
                 self.has_with_scope = true;
+            }
+
+            // The renamer reserves the names of the symbols this body can read
+            // (`compute_reserved_names_for_scope`). Those symbols live in the
+            // enclosing scopes, so mark the whole chain. An ancestor that is
+            // already marked has its own ancestors marked too.
+            let mut scope_iter: Option<js_ast::StoreRef<Scope>> = Some(scope);
+            while let Some(mut s) = scope_iter {
+                if s.contains_with {
+                    break;
+                }
+                s.contains_with = true;
+                scope_iter = s.parent;
             }
         }
 

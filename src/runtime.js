@@ -340,35 +340,3 @@ export var __promiseAll = args => Promise.all(args);
 // React Compiler memo-cache slot sentinels.
 export var __MEMO_CACHE_SENTINEL = /* @__PURE__ */ Symbol.for("react.memo_cache_sentinel");
 export var __EARLY_RETURN_SENTINEL = /* @__PURE__ */ Symbol.for("react.early_return_sentinel");
-
-/*__PURE__*/
-var __chunkGraphs, __chunkSeen;
-
-// Code splitting, browser: `<link rel=modulepreload>` every chunk that chunk
-// `id` statically imports before `import()`ing it, so its whole import graph
-// downloads in parallel instead of one module depth per round trip.
-export var __preload = (id, seenOnly) => {
-  for (var [base, graph, ids] of __chunkGraphs || [])
-    for (var stack = [id], j, node, k, link; (j = stack.pop()); )
-      if (!__chunkSeen[j] && (node = graph[j])) {
-        __chunkSeen[j] = 1;
-        for (k = 1; k < node.length; k++) stack.push(ids[node[k]]);
-        if (!seenOnly && j !== id && typeof document !== "undefined") {
-          link = document.createElement("link");
-          link.rel = "modulepreload";
-          link.crossOrigin = "";
-          link.href = new URL(node[0], base);
-          document.head.appendChild(link);
-        }
-      }
-};
-
-// An entry chunk registers the chunks it can reach: `nodes[i]` is chunk
-// `ids[i]`'s path relative to `base`, then indices into `ids` of the chunks
-// it imports. `ids[entry]` is the entry chunk itself.
-export var __chunks = (base, ids, nodes, entry) => {
-  for (var graph = {}, i = 0; i < ids.length; i++) graph[ids[i]] = nodes[i];
-  (__chunkGraphs ||= []).push([base, graph, ids]);
-  __chunkSeen ||= {};
-  __preload(ids[entry], 1);
-};

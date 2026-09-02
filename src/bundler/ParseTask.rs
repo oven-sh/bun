@@ -418,6 +418,38 @@ export var __require = /* @__PURE__ */ (x =>
 });
 ";
 
+// Code splitting, browser (`LinkerContext::module_preload`): an entry chunk
+// registers the chunks it can reach with `__chunks` — `nodes[i]` is chunk
+// `ids[i]`'s path relative to `base`, then indices into `ids` of the chunks it
+// imports — and each split `import()` of chunk `id` first `__preload`s it:
+// a `<link rel=modulepreload>` for every chunk it statically imports, so the
+// whole graph downloads in parallel instead of one module depth per round trip.
+// Globals go through `globalThis` so bundling does not reserve their names.
+const RUNTIME_PRELOAD_BROWSER: &str = "
+var __chunkGraphs, __chunkSeen;
+export var __preload = (id, seenOnly) => {
+  for (var [base, graph, ids] of __chunkGraphs || [])
+    for (var stack = [id], g = globalThis, j, node, k, link; (j = stack.pop()); )
+      if (!__chunkSeen[j] && (node = graph[j])) {
+        __chunkSeen[j] = 1;
+        for (k = 1; k < node.length; k++) stack.push(ids[node[k]]);
+        if (!seenOnly && j !== id && g.document) {
+          link = g.document.createElement('link');
+          link.rel = 'modulepreload';
+          link.crossOrigin = '';
+          link.href = new g.URL(node[0], base);
+          g.document.head.appendChild(link);
+        }
+      }
+};
+export var __chunks = (base, ids, nodes, entry) => {
+  for (var graph = {}, i = 0; i < ids.length; i++) graph[ids[i]] = nodes[i];
+  (__chunkGraphs ||= []).push([base, graph, ids]);
+  __chunkSeen ||= {};
+  __preload(ids[entry], 1);
+};
+";
+
 // JavaScriptCore supports `using` / `await using` natively (see
 // `lower_using = !target.isBun()` below), so these helpers are unused
 // when bundling for Bun and will be tree-shaken. They are still defined
@@ -526,13 +558,17 @@ pub mod parse_worker {
             bun_core::Once::new(),
         ];
         let runtime_code: &'static [u8] = SOURCES[variant as usize].get_or_init(|| {
-            let (require, using): (&str, &str) = match variant {
-                Variant::Bun => (RUNTIME_REQUIRE_BUN, RUNTIME_USING_BUN),
-                Variant::BunMacro => (RUNTIME_REQUIRE_BUN, RUNTIME_USING_OTHER),
-                Variant::Node => (RUNTIME_REQUIRE_NODE, RUNTIME_USING_OTHER),
-                Variant::Other => (RUNTIME_REQUIRE_OTHER, RUNTIME_USING_OTHER),
+            let (require, using, preload): (&str, &str, &str) = match variant {
+                Variant::Bun => (RUNTIME_REQUIRE_BUN, RUNTIME_USING_BUN, ""),
+                Variant::BunMacro => (RUNTIME_REQUIRE_BUN, RUNTIME_USING_OTHER, ""),
+                Variant::Node => (RUNTIME_REQUIRE_NODE, RUNTIME_USING_OTHER, ""),
+                Variant::Other => (
+                    RUNTIME_REQUIRE_OTHER,
+                    RUNTIME_USING_OTHER,
+                    RUNTIME_PRELOAD_BROWSER,
+                ),
             };
-            [include_str!("../runtime.js"), require, using]
+            [include_str!("../runtime.js"), require, using, preload]
                 .concat()
                 .into_bytes()
                 .into_boxed_slice()

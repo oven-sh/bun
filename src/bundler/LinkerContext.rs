@@ -347,6 +347,7 @@ impl<'a> LinkerContext<'a> {
             && self.graph.code_splitting
             && self.options.target == Target::Browser
             && self.options.output_format == Format::Esm
+            && self.chunks_runtime_ref.is_valid()
     }
 
     /// An `import()` — or a split `require()` — whose target is a
@@ -527,14 +528,13 @@ impl<'a> LinkerContext<'a> {
             .get(b"__promiseAll")
             .expect("infallible: runtime export")
             .ref_;
+        // Browser runtime only (`RUNTIME_PRELOAD_BROWSER`).
         self.preload_runtime_ref = runtime_named_exports
             .get(b"__preload")
-            .expect("infallible: runtime export")
-            .ref_;
+            .map_or(Ref::NONE, |export| export.ref_);
         self.chunks_runtime_ref = runtime_named_exports
             .get(b"__chunks")
-            .expect("infallible: runtime export")
-            .ref_;
+            .map_or(Ref::NONE, |export| export.ref_);
 
         if self.options.output_format == Format::Cjs {
             self.unbound_module_ref = self.graph.generate_new_symbol(

@@ -4393,6 +4393,8 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionFatalException, (JSC::JSGlobalObject * 
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionDrainMicrotaskQueue, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
+    // Only caller is processTicksAndRejections; suppress the onEachMicrotaskTick hook while it drains.
+    WTF::SetForScope drainingGuard(defaultGlobalObject(globalObject)->m_isDrainingNextTickQueue, true);
     JSC::getVM(globalObject).drainMicrotasks();
     return JSValue::encode(jsUndefined());
 }

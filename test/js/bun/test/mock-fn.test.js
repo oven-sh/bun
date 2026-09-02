@@ -1244,7 +1244,12 @@ describe("spyOn", () => {
     // Error.prepareStackTrace has a native setter that feeds stack formatting. Replacing the
     // property with a mock would detach that setter, so spyOn refuses it.
     test("spyOn on a native property with a setter throws and leaves it intact", () => {
-      expect(() => spyOn(Error, "prepareStackTrace")).toThrow("does not support accessor properties yet");
+      let spy;
+      try {
+        expect(() => (spy = spyOn(Error, "prepareStackTrace"))).toThrow("does not support accessor properties yet");
+      } finally {
+        spy?.mockRestore();
+      }
       const previous = Error.prepareStackTrace;
       Error.prepareStackTrace = (_err, frames) => "custom stack " + frames.length;
       try {

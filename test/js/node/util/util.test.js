@@ -671,7 +671,7 @@ describe("util.parseEnv", () => {
 describe("lazy inspect exports", () => {
   const lazyKeys = ["format", "formatWithOptions", "inspect", "stripVTControlCharacters"];
 
-  it("are data properties before the first read, and load inspect on that read", async () => {
+  it.concurrent("are data properties before the first read, and load inspect on that read", async () => {
     const fixture = `
       const { heapStats } = require("bun:jsc");
       const util = require("node:util");
@@ -712,7 +712,7 @@ describe("lazy inspect exports", () => {
     expect(exitCode).toBe(0);
   });
 
-  it("spyOn works before the first read", async () => {
+  it.concurrent("spyOn works before the first read", async () => {
     const fixture = `
       const { spyOn } = require("bun:test");
       const util = require("node:util");
@@ -772,7 +772,7 @@ describe("lazy inspect exports", () => {
     expect(util.stripVTControlCharacters("\u001b[31mx\u001b[0m")).toBe("x");
   });
 
-  it("can be replaced by assignment and deleted", async () => {
+  it.concurrent("can be replaced by assignment and deleted", async () => {
     const fixture = `
       const util = require("node:util");
       const stub = () => "stubbed";
@@ -793,7 +793,7 @@ describe("lazy inspect exports", () => {
     expect(exitCode).toBe(0);
   });
 
-  it("stay read-only on a frozen util, as in node", async () => {
+  it.concurrent("stay read-only on a frozen util, as in node", async () => {
     const fixture = `
       const util = require("node:util");
       Object.freeze(util);

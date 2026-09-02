@@ -79,9 +79,7 @@ pub(crate) extern "C" fn __asan_default_options() -> *const core::ffi::c_char {
     // suppressed allocations as leaks. If local debug crashes feel slow to
     // print, set `ASAN_OPTIONS=symbolize=0` in your shell instead.
     //
-    // Fuzzilli: a bare CRASH(), abort() or __builtin_trap() prints nothing, so
-    // ASAN reports those signals too. abort_on_error keeps the death a signal,
-    // which is what Fuzzilli counts as a crash (an _exit(1) is a failed run).
+    // Fuzzilli counts a signal death as a crash; a bare abort() prints nothing.
     if bun_core::Environment::ENABLE_FUZZILLI {
         return c"detect_stack_use_after_return=0:detect_leaks=0:abort_on_error=1:handle_abort=1:handle_sigill=1:handle_sigtrap=1".as_ptr();
     }

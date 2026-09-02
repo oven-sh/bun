@@ -256,8 +256,7 @@ void Bun__REPRL__registerFuzzilliFunctions(Zig::GlobalObject* globalObject)
     JSC::VM& vm = globalObject->vm();
 
 #if ASAN_ENABLED
-    // ASAN reports the fatal signals (see __asan_default_options). A signal()
-    // call here would replace its handler and lose that report.
+    // ASAN reports the fatal signals; a signal() here would replace its handler.
     __sanitizer_set_death_callback(fuzzilliFlushOutputBeforeDeath);
 #endif
 

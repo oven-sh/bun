@@ -317,11 +317,10 @@ pub mod defines {
         }
         #[inline]
         pub(crate) fn call_can_be_unwrapped_if_unused(self) -> E::CallUnwrap {
-            // 2-bit field; `E::CallUnwrap` only has discriminants 0/1/2, so
-            // an explicit match keeps bit-pattern 3 sound.
             match (self.0 & Self::CALL_UNWRAP_MASK) >> Self::CALL_UNWRAP_SHIFT {
                 1 => E::CallUnwrap::IfUnused,
                 2 => E::CallUnwrap::IfUnusedAndToStringSafe,
+                3 => E::CallUnwrap::IfUnusedAndPrimitiveArgs,
                 _ => E::CallUnwrap::Never,
             }
         }

@@ -619,6 +619,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // "in" expressions are allowed again
             p.allow_in = true;
 
+            // `for (x of y)` / `for (x in y)` assign to `x` on every iteration.
+            if (p.lexer.is_contextual_keyword(b"of") || is_for_await || p.lexer.token == T::TIn)
+                && let Some(init_stmt) = &init_
+                && let js_ast::StmtData::SExpr(s_expr) = init_stmt.data
+            {
+                p.record_parse_time_assignment_target(&s_expr.value);
+            }
+
             // Detect for-of loops
             if p.lexer.is_contextual_keyword(b"of") || is_for_await {
                 if let Some(r) = bad_let_range {

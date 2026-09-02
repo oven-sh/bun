@@ -1424,6 +1424,28 @@ impl PrimitiveType {
             PrimitiveType::Mixed
         }
     }
+
+    /// A known primitive whose arithmetic conversions never run code and
+    /// never throw: anything but a BigInt (which throws when mixed with a
+    /// number) or a type that is not known.
+    pub fn is_non_bigint_primitive(self) -> bool {
+        matches!(
+            self,
+            PrimitiveType::Null
+                | PrimitiveType::Undefined
+                | PrimitiveType::Boolean
+                | PrimitiveType::Number
+                | PrimitiveType::String
+        )
+    }
+}
+
+/// The numeric constants on the `Math` global.
+fn is_math_numeric_constant(name: &[u8]) -> bool {
+    matches!(
+        name,
+        b"E" | b"LN10" | b"LN2" | b"LOG10E" | b"LOG2E" | b"PI" | b"SQRT1_2" | b"SQRT2"
+    )
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -2427,6 +2449,19 @@ impl Data {
                 .yes
                 .data
                 .merge_known_primitive_with_check(&e_if.no.data, stack_check),
+            // `Math.PI` and the other numeric constants on `Math`. The define
+            // table only marks the access side-effect free when `Math` is the
+            // real global, so the value is known to be a number.
+            Data::EDot(dot) => {
+                if dot.can_be_removed_if_unused
+                    && matches!(dot.target.data, Data::EIdentifier(id) if id.can_be_removed_if_unused())
+                    && is_math_numeric_constant(dot.name.slice())
+                {
+                    PrimitiveType::Number
+                } else {
+                    PrimitiveType::Unknown
+                }
+            }
             Data::EBinary(binary) => 'brk: {
                 match binary.op {
                     crate::OpCode::BinStrictEq
@@ -2512,7 +2547,14 @@ impl Data {
                     | crate::OpCode::BinShr
                     | crate::OpCode::BinShrAssign
                     | crate::OpCode::BinUShr
-                    | crate::OpCode::BinUShrAssign => break 'brk PrimitiveType::Mixed, // Can be number or bigint (or an exception)
+                    | crate::OpCode::BinUShrAssign => {
+                        let left = binary.left.data.known_primitive_with_check(stack_check);
+                        let right = binary.right.data.known_primitive_with_check(stack_check);
+                        if left.is_non_bigint_primitive() && right.is_non_bigint_primitive() {
+                            break 'brk PrimitiveType::Number;
+                        }
+                        break 'brk PrimitiveType::Mixed; // Can be number or bigint (or an exception)
+                    }
 
                     crate::OpCode::BinAssign | crate::OpCode::BinComma => {
                         break 'brk binary.right.data.known_primitive_with_check(stack_check);

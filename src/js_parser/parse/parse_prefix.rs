@@ -509,6 +509,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let loc = p.lexer.loc();
         p.lexer.next()?;
         let value = p.parse_expr(Level::Prefix)?;
+        p.record_parse_time_assignment_target(&value);
         Ok(p.new_expr(
             E::Unary {
                 op: OpCode::UnPreDec,
@@ -523,6 +524,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let loc = p.lexer.loc();
         p.lexer.next()?;
         let value = p.parse_expr(Level::Prefix)?;
+        p.record_parse_time_assignment_target(&value);
         Ok(p.new_expr(
             E::Unary {
                 op: OpCode::UnPreInc,

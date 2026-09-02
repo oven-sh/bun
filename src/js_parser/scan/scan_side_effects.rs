@@ -216,11 +216,29 @@ impl SideEffects {
 
                         return Self::simplify_unused_expr(p, un.value);
                     }
+                    // Numeric conversion of a known primitive other than a BigInt
+                    // ("+1n" throws) never runs code and never throws.
+                    Op::Code::UnNeg | Op::Code::UnPos | Op::Code::UnCpl => {
+                        if p.options.features.minify_syntax
+                            && un.value.data.known_primitive().is_non_bigint_primitive()
+                        {
+                            return Self::simplify_unused_expr(p, un.value);
+                        }
+                    }
                     _ => {}
                 }
             }
 
             ExprData::ECall(call) => {
+                // The call itself is pure only while every argument is a known
+                // primitive, so it is all or nothing: either the whole call goes
+                // or the whole call stays.
+                if call.can_be_unwrapped_if_unused == CallUnwrap::IfUnusedAndPrimitiveArgs {
+                    if Self::args_are_removable_primitives(p, &call.args) {
+                        return None;
+                    }
+                    return Some(expr);
+                }
                 // A call that has been marked "__PURE__" can be removed if all arguments
                 // can be removed. The annotation causes us to ignore the target.
                 if call.can_be_unwrapped_if_unused != CallUnwrap::Never {
@@ -336,6 +354,38 @@ impl SideEffects {
 
                         if bin.right.is_empty() {
                             return Self::simplify_unused_expr(p, bin.left);
+                        }
+                    }
+
+                    // Arithmetic on known primitives other than BigInt (mixing one
+                    // with a number throws) never runs code and never throws.
+                    Op::Code::BinAdd
+                    | Op::Code::BinSub
+                    | Op::Code::BinMul
+                    | Op::Code::BinDiv
+                    | Op::Code::BinRem
+                    | Op::Code::BinPow
+                    | Op::Code::BinShl
+                    | Op::Code::BinShr
+                    | Op::Code::BinUShr
+                    | Op::Code::BinBitwiseAnd
+                    | Op::Code::BinBitwiseOr
+                    | Op::Code::BinBitwiseXor => {
+                        if p.options.features.minify_syntax
+                            && bin.left.data.known_primitive().is_non_bigint_primitive()
+                            && bin.right.data.known_primitive().is_non_bigint_primitive()
+                        {
+                            let left = bin.left;
+                            let right = bin.right;
+                            let left_simplified = Self::simplify_unused_expr(p, left);
+                            let right_simplified = Self::simplify_unused_expr(p, right);
+                            if left_simplified.is_none() && right_simplified.is_none() {
+                                return None;
+                            }
+                            return Some(Expr::join_with_comma(
+                                left_simplified.unwrap_or_else(|| left.to_empty()),
+                                right_simplified.unwrap_or_else(|| right.to_empty()),
+                            ));
                         }
                     }
 
@@ -465,6 +515,18 @@ impl SideEffects {
     /// Inline equivalent of `Expr::join_all_with_comma_callback(slice, p, simplify_unused_expr, _)`.
     /// Hand-rolled because that helper takes `fn(&C, _)` and we need `&mut P` for the
     /// recursive `simplify_unused_expr` call.
+    /// Every argument is a side-effect free primitive other than a BigInt, so a
+    /// call in `GLOBAL_NO_SIDE_EFFECT_FUNCTION_CALLS_WITH_PRIMITIVE_ARGS` can go.
+    pub(crate) fn args_are_removable_primitives<'a, const TS: bool, const SCAN: bool>(
+        p: &mut P<'a, TS, SCAN>,
+        args: &[Expr],
+    ) -> bool {
+        args.iter().all(|arg| {
+            arg.data.known_primitive().is_non_bigint_primitive()
+                && p.expr_can_be_removed_if_unused(arg)
+        })
+    }
+
     fn join_all_simplified<'a, const TS: bool, const SCAN: bool>(
         p: &mut P<'a, TS, SCAN>,
         items: &[Expr],

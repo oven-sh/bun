@@ -188,7 +188,58 @@ pub static GLOBAL_NO_SIDE_EFFECT_FUNCTION_CALLS_SAFE_FOR_TO_STRING: &[&[&[u8]]] 
     // Calling Symbol.for("foo") never throws (unless it's a rope string)
     // This improves React bundle sizes slightly.
     &[b"Symbol", b"for"],
-    // Haven't seen a bundle size improvement from adding more to this list yet.
+];
+
+/// Calls to these globals have no side effects and never throw when every
+/// argument is a primitive other than a BigInt (no `valueOf` / `toString` can
+/// run, and no BigInt conversion can throw). An unused call with such
+/// arguments is dropped. `Math.random` is left out because it advances the
+/// generator state.
+pub static GLOBAL_NO_SIDE_EFFECT_FUNCTION_CALLS_WITH_PRIMITIVE_ARGS: &[&[&[u8]]] = &[
+    &[b"Array", b"isArray"],
+    &[b"Array", b"of"],
+    &[b"Math", b"abs"],
+    &[b"Math", b"acos"],
+    &[b"Math", b"acosh"],
+    &[b"Math", b"asin"],
+    &[b"Math", b"asinh"],
+    &[b"Math", b"atan"],
+    &[b"Math", b"atan2"],
+    &[b"Math", b"atanh"],
+    &[b"Math", b"cbrt"],
+    &[b"Math", b"ceil"],
+    &[b"Math", b"clz32"],
+    &[b"Math", b"cos"],
+    &[b"Math", b"cosh"],
+    &[b"Math", b"exp"],
+    &[b"Math", b"expm1"],
+    &[b"Math", b"floor"],
+    &[b"Math", b"fround"],
+    &[b"Math", b"hypot"],
+    &[b"Math", b"imul"],
+    &[b"Math", b"log"],
+    &[b"Math", b"log10"],
+    &[b"Math", b"log1p"],
+    &[b"Math", b"log2"],
+    &[b"Math", b"max"],
+    &[b"Math", b"min"],
+    &[b"Math", b"pow"],
+    &[b"Math", b"round"],
+    &[b"Math", b"sign"],
+    &[b"Math", b"sin"],
+    &[b"Math", b"sinh"],
+    &[b"Math", b"sqrt"],
+    &[b"Math", b"tan"],
+    &[b"Math", b"tanh"],
+    &[b"Math", b"trunc"],
+    &[b"Number", b"isFinite"],
+    &[b"Number", b"isInteger"],
+    &[b"Number", b"isNaN"],
+    &[b"Number", b"isSafeInteger"],
+    &[b"Number", b"parseFloat"],
+    &[b"Number", b"parseInt"],
+    &[b"Object", b"is"],
+    &[b"String", b"fromCharCode"],
 ];
 
 // `OnceLock` for lazily-initialised statics (`DefineData` is not const-constructible).

@@ -294,6 +294,11 @@ pub enum CallUnwrap {
     Never,
     IfUnused,
     IfUnusedAndToStringSafe,
+    /// The call has no side effects and does not throw as long as every
+    /// argument is a primitive other than a BigInt (`Math.floor(1.5)`). With
+    /// an argument of unknown type the call stays: converting an object can
+    /// run its `valueOf`.
+    IfUnusedAndPrimitiveArgs,
 }
 
 pub struct Dot {

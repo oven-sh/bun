@@ -429,5 +429,8 @@ pub enum Unwrapped {
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum UnwrapMode {
     MarkHandled,
+    /// Does not leave every rejection unhandled. `result()` marks a rejected promise handled
+    /// when JSC settled it without its resolving functions, as a `then()` reaction does. To
+    /// leave a rejection unhandled, branch on `status()` and do not read the result.
     LeaveUnhandled,
 }

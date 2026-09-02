@@ -1431,6 +1431,9 @@ public:
     // compile fails on its own errors; findings on top would be noise.
     if (m_ci && m_ci->getDiagnostics().hasErrorOccurred())
       return;
+    // The standalone tool handles many translation units in one process;
+    // the timing line is per unit.
+    gCfgCount = 0;
     auto started = std::chrono::steady_clock::now();
     std::vector<Finding> findings;
     PathCache paths(Ctx.getSourceManager());

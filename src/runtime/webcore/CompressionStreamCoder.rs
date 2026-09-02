@@ -19,9 +19,9 @@
 use core::ffi::c_int;
 use core::ptr::{self, NonNull};
 
-use bun_jsc::ZigStringJsc as _;
-use bun_jsc::zig_string::ZigString as JscZigString;
-use bun_jsc::{ErrorCode, JSGlobalObject, JSUint8Array, JSValue, Strong};
+use bun_core::EncodedSlice;
+use bun_jsc::EncodedSliceJsc as _;
+use bun_jsc::{ErrorCode, JSGlobalObject, JSUint8Array, JSValue, PinnedArrayBuffer, Strong};
 
 use bun_brotli::c as brotli;
 use bun_zlib as zlib;
@@ -696,28 +696,14 @@ impl CompressionStreamCoder {
     }
 }
 
-/// A chunk's bytes for the pool thread: a pinned ArrayBuffer's backing
-/// store (its pin/protect is the paired [`PinnedChunk`] on the JS side) or an
-/// owned copy.
+/// A chunk's bytes for the pool thread: what the paired [`PinnedArrayBuffer`] on the JS side keeps valid, or an owned copy.
 pub(crate) enum AsyncInput {
     Pinned { ptr: *const u8, len: usize },
     Owned(Vec<u8>),
 }
-// SAFETY: `Pinned.ptr` is a backing store pinned + protected by the paired
-// `PinnedChunk` for as long as the job lives; read only under the pool borrow.
+// SAFETY: `Pinned.ptr` points at bytes the paired `PinnedArrayBuffer` keeps
+// valid for as long as the job lives; read only under the pool borrow.
 unsafe impl Send for AsyncInput {}
-
-/// The pin + GC protection on a chunk whose bytes went to the pool; released
-/// on drop (JS thread, with the job's Js side).
-pub(crate) struct PinnedChunk(bun_jsc::ArrayBuffer);
-// SAFETY: pin/protect on a heap cell; gone with the heap.
-unsafe impl bun_jsc::job::JsAffine for PinnedChunk {}
-impl Drop for PinnedChunk {
-    fn drop(&mut self) {
-        self.0.unpin();
-        self.0.value.unprotect();
-    }
-}
 
 impl AsyncInput {
     /// JS thread: pin `chunk` if it is a pinnable ArrayBuffer/view, else copy `fallback`.
@@ -725,21 +711,18 @@ impl AsyncInput {
         global: &JSGlobalObject,
         chunk: JSValue,
         fallback: &[u8],
-    ) -> (Self, Option<PinnedChunk>) {
-        if let Some(buf) = chunk.as_pinned_arraybuffer(global) {
-            // A resizable non-shared backing can `mprotect()` pages out on
-            // `resize()`; pinning does not block that, so spill to a copy.
-            if buf.resizable && !buf.shared {
-                buf.unpin();
-                return (Self::Owned(fallback.to_vec()), None);
-            }
-            chunk.protect();
+    ) -> (Self, Option<PinnedArrayBuffer>) {
+        // Continuation steps pass no chunk.
+        if !chunk.is_cell() {
+            return (Self::Owned(fallback.to_vec()), None);
+        }
+        if let Some(buf) = PinnedArrayBuffer::root_read_only(global, chunk) {
             return (
                 Self::Pinned {
                     ptr: buf.ptr,
                     len: buf.byte_len,
                 },
-                Some(PinnedChunk(buf)),
+                Some(buf),
             );
         }
         (Self::Owned(fallback.to_vec()), None)
@@ -816,11 +799,12 @@ pub extern "C" fn CompressionStreamCoder__transform(
     let result = match unsafe { (*this).step(slice, finish, &mut out) } {
         Ok(has_more) => {
             *more = has_more;
-            if out.is_empty() {
+            let chunk = if out.is_empty() {
                 JSUint8Array::create_empty(global)
             } else {
                 JSUint8Array::from_bytes_copy(global, &out)
-            }
+            };
+            bun_jsc::to_js_host_fn_result(global, chunk)
         }
         Err(e) => {
             *more = false;
@@ -845,7 +829,7 @@ fn codec_error_to_js(global: &JSGlobalObject, e: &CodecError) -> JSValue {
         CodecError::Brotli(detail) => {
             let code = format!("ERR_{detail}");
             let err = global.create_type_error_instance(format_args!("brotli decode failed"));
-            let code_js = JscZigString::init(code.as_bytes()).to_js(global);
+            let code_js = EncodedSlice::latin1(code.as_bytes()).to_js(global);
             err.put(global, b"code", code_js);
             let cause = global.create_error_instance(format_args!("{detail}"));
             cause.put(global, b"code", code_js);
@@ -932,25 +916,15 @@ unsafe extern "C" {
 /// One step of a large `CompressionStream`/`DecompressionStream` chunk, run
 /// off the JS thread.
 pub struct CompressionAsyncCtx {
-    /// Holds one coder reference (taken in `CompressionStreamCoder__transformAsync`,
-    /// released by `Drop`); see [`CompressionStreamCoder::ref_count`]. TransformStream
-    /// serializes writes, so nothing else touches it while the pool has it.
-    coder: *mut CompressionStreamCoder,
+    /// See [`CompressionStreamCoder::ref_count`]. TransformStream serializes
+    /// writes, so nothing else touches the coder while the pool has it.
+    coder: bun_ptr::RefPtr<CompressionStreamCoder>,
     /// Empty on a continuation step: the coder holds the chunk's tail.
     input: AsyncInput,
     finish: bool,
     out: Vec<u8>,
     more: bool,
     error: Option<CodecError>,
-}
-
-impl Drop for CompressionAsyncCtx {
-    fn drop(&mut self) {
-        // SAFETY: `coder` was ref'd in `CompressionStreamCoder__transformAsync`; this ctx owns that
-        // reference and drops it exactly once (in `then`, or when the job is
-        // released unrun).
-        unsafe { bun_ptr::ThreadSafeRefCount::<CompressionStreamCoder>::deref(self.coder) };
-    }
 }
 
 // SAFETY: the coder is `ThreadSafeRefCounted` and only touched by whoever holds
@@ -964,7 +938,7 @@ pub struct CompressionAsyncJs {
     /// and its `m_codecPromise` WriteBarrier keeps the pending
     /// transform-algorithm promise alive.
     stream: Strong,
-    _pin: Option<PinnedChunk>,
+    _pin: Option<PinnedArrayBuffer>,
 }
 
 impl bun_jsc::JobContext for CompressionAsyncCtx {
@@ -974,7 +948,8 @@ impl bun_jsc::JobContext for CompressionAsyncCtx {
     fn run(this: &mut Self, done: bun_jsc::Completion<Self>) -> Option<bun_jsc::Completion<Self>> {
         // SAFETY: `coder` is kept alive by the reference this ctx holds (the
         // cell's finalizer only releases its own); see the field doc.
-        match unsafe { (*this.coder).step(this.input.slice(), this.finish, &mut this.out) } {
+        match unsafe { (*this.coder.as_ptr()).step(this.input.slice(), this.finish, &mut this.out) }
+        {
             Ok(more) => this.more = more,
             Err(e) => this.error = Some(e),
         }
@@ -1027,14 +1002,12 @@ pub extern "C" fn CompressionStreamCoder__transformAsync(
         unsafe { core::slice::from_raw_parts(input, input_len) }
     };
     let (input, pin) = AsyncInput::new(global, chunk, fallback);
-    // SAFETY: `this` is the live coder owned by the calling JS cell; the ctx
-    // takes its own reference (see `CompressionStreamCoder::ref_count`).
-    unsafe { bun_ptr::ThreadSafeRefCount::<CompressionStreamCoder>::ref_(this) };
     let cx = global.js_thread();
     bun_jsc::Job::<CompressionAsyncCtx>::schedule(
         &cx,
         CompressionAsyncCtx {
-            coder: this,
+            // SAFETY: `this` is the live coder owned by the calling JS cell.
+            coder: unsafe { bun_ptr::RefPtr::init_ref(this) },
             input,
             finish,
             out: Vec::new(),

@@ -14,6 +14,10 @@ bun build <entry points>
   Use a bytecode cache when compiling
 </ParamField>
 
+<ParamField path="--bytecode-depth" type="number">
+  How many levels of nested functions to compile to bytecode ahead of time (a non-negative integer). Defaults to all
+</ParamField>
+
 <ParamField path="--target" type="string" default="browser">
   Intended execution environment for the bundle. One of <code>browser</code>, <code>bun</code>, or <code>node</code>
 </ParamField>
@@ -86,6 +90,16 @@ bun build <entry points>
   Enable code splitting for shared modules
 </ParamField>
 
+<ParamField path="--min-chunk-size" type="number">
+  With `--splitting`, also fold side-effect-free chunks smaller than this many source bytes into a chunk loaded by a
+  superset of their importers
+</ParamField>
+
+<ParamField path="--no-module-preload" type="boolean">
+  With `--splitting` and `--target browser`, don't emit `<link rel="modulepreload">` for the chunks an entrypoint or
+  `import()` depends on
+</ParamField>
+
 <ParamField path="--public-path" type="string">
   Prefix the bundler adds to import paths in bundled code
 </ParamField>
@@ -119,6 +133,11 @@ bun build <entry points>
 
 <ParamField path="--emit-dce-annotations" type="boolean" default="true">
   Re-emit Dead Code Elimination annotations. Disabled when <code>--minify-whitespace</code> is used
+</ParamField>
+
+<ParamField path="--no-deprecated-namespace-object-setters" type="boolean">
+  Emit getter-only module namespace objects (assigning to a property throws, like a real namespace). This becomes the
+  default in a future release
 </ParamField>
 
 <ParamField path="--minify" type="boolean">

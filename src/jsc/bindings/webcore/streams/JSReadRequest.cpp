@@ -152,7 +152,7 @@ void JSReadRequest::closeSteps(JSGlobalObject* globalObject)
             RETURN_IF_EXCEPTION(scope, void());
         }
         if (!teeState->m_canceled1 || !teeState->m_canceled2)
-            resolvePromise(globalObject, teeState->m_cancelPromise.get(), jsUndefined());
+            RELEASE_AND_RETURN(scope, resolvePromise(globalObject, teeState->m_cancelPromise.get(), jsUndefined()));
         return;
     }
     case ReadRequestKind::ByteTee: {
@@ -177,7 +177,7 @@ void JSReadRequest::closeSteps(JSGlobalObject* globalObject)
             RETURN_IF_EXCEPTION(scope, void());
         }
         if (!teeState->m_canceled1 || !teeState->m_canceled2)
-            resolvePromise(globalObject, teeState->m_cancelPromise.get(), jsUndefined());
+            RELEASE_AND_RETURN(scope, resolvePromise(globalObject, teeState->m_cancelPromise.get(), jsUndefined()));
         return;
     }
     case ReadRequestKind::ReadStreamIntoSink:
@@ -350,7 +350,7 @@ void JSReadIntoRequest::closeSteps(JSGlobalObject* globalObject, JSArrayBufferVi
             }
         }
         if (!byobCanceled || !otherCanceled)
-            resolvePromise(globalObject, teeState->m_cancelPromise.get(), jsUndefined());
+            RELEASE_AND_RETURN(scope, resolvePromise(globalObject, teeState->m_cancelPromise.get(), jsUndefined()));
         return;
     }
     }

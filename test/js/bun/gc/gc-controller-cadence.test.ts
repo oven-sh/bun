@@ -150,3 +150,47 @@ describe.skipIf(isDebug)("GarbageCollectionController eden cadence", () => {
     expect(eden).toBeLessThan(5);
   });
 });
+
+// After BUN_IDLE_GC_SECONDS of timer ticks in which the JS heap did not grow,
+// the controller requests a full collection (so JSC can age out code that no
+// longer runs and return memory). An app parked at a prompt still fires the odd
+// timer and still counts as idle.
+describe("idle release", () => {
+  // Count FullCollection lines from BUN_JSC_logGC=1 while the script sits idle for a few seconds. Nothing allocates in
+  // that window, so a full collection there is the idle one.
+  const script = `
+    setTimeout(() => console.error("MARK"), 1200);
+    setTimeout(() => console.error("DONE"), 4200);
+  `;
+
+  async function run(seconds: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: {
+        ...bunEnv,
+        BUN_IDLE_GC_SECONDS: seconds,
+        BUN_JSC_logGC: "1",
+        BUN_GC_TIMER_DISABLE: undefined,
+        BUN_GC_TIMER_INTERVAL: undefined,
+      },
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    // Startup and (with BUN_DESTRUCT_VM_ON_EXIT) teardown do collections of their own; only count the idle window.
+    const fulls = (stderr.slice(stderr.indexOf("MARK"), stderr.indexOf("DONE")).match(/FullCollection/g) || []).length;
+    return { fulls, exitCode };
+  }
+
+  test.concurrent("requests a full collection once the heap has been quiet long enough", async () => {
+    const { fulls, exitCode } = await run("2");
+    expect(fulls).toBeGreaterThanOrEqual(1);
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("BUN_IDLE_GC_SECONDS=0 disables it", async () => {
+    const { fulls, exitCode } = await run("0");
+    expect(fulls).toBe(0);
+    expect(exitCode).toBe(0);
+  });
+});

@@ -25,7 +25,11 @@ export const lshpack: Dependency = {
   // hencs[65536]/hdecs[65536] (768 KB of .rodata) are pure functions of the
   // 257-entry encode_table. Declare them in .bss and fill on first init
   // (~250 us once); the hot-path lookup is unchanged.
-  patches: ["patches/lshpack/bss-huff-tables.patch"],
+  //
+  // no-name-trim: upstream strips trailing whitespace from a decoded literal
+  // field name, so "x-a " reached the request validators as "x-a" instead of
+  // being rejected, and the shortened name went into the dynamic table.
+  patches: ["patches/lshpack/bss-huff-tables.patch", "patches/lshpack/no-name-trim.patch"],
 
   build: cfg => {
     // <sys/queue.h> ships with glibc and BSD libc but not musl or win32.

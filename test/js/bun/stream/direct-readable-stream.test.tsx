@@ -338,7 +338,7 @@ describe("ReactDOM", () => {
       }
       it("(teardown)", async () => {
         void server?.stop(true);
-        await expectMaxObjectTypeCount(expect, "ReadableH3ResponseSinkController", 3);
+        await expectMaxObjectTypeCount(expect, "ReadableHTTPSResponseSinkController", 3);
       });
     });
   }

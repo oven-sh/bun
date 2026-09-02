@@ -1157,9 +1157,10 @@ describe("handleUpgrade on a node:http upgrade socket", () => {
     key = "dGhlIHNhbXBsZSBub25jZQ==",
     version = "13",
     body = "",
-  }: { path?: string; key?: string; version?: string; body?: string } = {}) {
+    httpVersion = "1.1",
+  }: { path?: string; key?: string; version?: string; body?: string; httpVersion?: string } = {}) {
     return [
-      `GET ${path} HTTP/1.1`,
+      `GET ${path} HTTP/${httpVersion}`,
       "Host: localhost",
       "Connection: Upgrade",
       "Upgrade: websocket",
@@ -1239,6 +1240,36 @@ describe("handleUpgrade on a node:http upgrade socket", () => {
     expect(connections).toHaveLength(1);
     expect(wss.clients.size).toBe(1);
     expect(await upgrade.received("\r\n\r\n")).toStartWith("HTTP/1.1 101 Switching Protocols\r\n");
+  });
+
+  // An HTTP/1.0 request has no keep-alive, but the 101 switches protocols: the
+  // close after the response ends with the HTTP exchange, not with the
+  // WebSocket that takes over the socket. From a later task the socket is
+  // outside the parser's corked write, and the HTTP layer used to shut it down
+  // right after the 101, under the new WebSocket (a use-after-free of the
+  // socket once the 'close' reached JS).
+  it("upgrades a live HTTP/1.0 socket from a later task", async () => {
+    await using upgrade = await receiveUpgrade(upgradeRequest({ httpVersion: "1.0" }));
+    const { req, socket, head, client } = upgrade;
+    const wss = new WebSocketServer({ noServer: true });
+    const closed = Promise.withResolvers<number>();
+    const clientClosed = new Promise<string>(resolve => client.once("close", () => resolve("client closed")));
+
+    await new Promise(resolve => setImmediate(resolve));
+    wss.handleUpgrade(req, socket, head, ws => {
+      ws.on("close", code => closed.resolve(code));
+      ws.send("from handleUpgrade");
+    });
+    expect(wss.clients.size).toBe(1);
+
+    // The 101, then the text frame sent from the callback (FIN + text, 18 bytes).
+    const received = await upgrade.received("from handleUpgrade");
+    expect(received).toStartWith("HTTP/1.1 101 Switching Protocols\r\n");
+    expect(received).toEndWith("\r\n\r\n\x81\x12from handleUpgrade");
+
+    // A masked Close(1000) from the client reaches the server's close handler.
+    client.write(Buffer.from([0x88, 0x82, 0x00, 0x00, 0x00, 0x00, 0x03, 0xe8]));
+    expect(await Promise.race([closed.promise, clientClosed])).toBe(1000);
   });
 
   it("returns without calling back when the socket was destroyed before handleUpgrade()", async () => {

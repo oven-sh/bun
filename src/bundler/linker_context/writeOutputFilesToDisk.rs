@@ -405,6 +405,7 @@ pub(crate) fn write_output_files_to_disk(
                         c.options.output_format,
                         &code_result.buffer,
                         &source_provider_url,
+                        c.options.bytecode_depth,
                         None,
                     ) {
                         let source_provider_url_str = source_provider_url.to_utf8();

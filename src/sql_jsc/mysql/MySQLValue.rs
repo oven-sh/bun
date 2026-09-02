@@ -4,10 +4,9 @@
 
 use crate::jsc::{
     IntegerRange, JSGlobalObject, JSGlobalObjectSqlExt as _, JSType, JSValue, JsResult,
-    MarkedArgumentBuffer, StringJsc as _, js_error_to_mysql,
+    MarkedArgumentBuffer, js_error_to_mysql,
 };
-use bun_core::String as BunString;
-use bun_core::zig_string::Slice as ZigStringSlice;
+use bun_core::Utf8Bytes;
 
 use bun_sql::mysql::mysql_types::FieldType;
 use bun_sql::mysql::protocol::any_mysql_error;
@@ -128,7 +127,7 @@ pub(crate) enum Value {
     Float(f32),
     Double(f64),
 
-    String(ZigStringSlice),
+    String(Utf8Bytes<'static>),
     Bytes(Bytes),
     Date(DateTime),
     Time(Time),
@@ -146,7 +145,7 @@ pub(crate) enum Value {
 /// alive — `params` is on the malloc heap and isn't scanned. `Drop`
 /// unpins.
 pub struct Bytes {
-    pub(crate) slice: ZigStringSlice,
+    pub(crate) slice: Utf8Bytes<'static>,
     /// JS ArrayBuffer/view to `unpinArrayBuffer` in `Drop`. `JSValue::ZERO`
     /// when the slice is owned (FastTypedArray dupe), borrowed from a
     /// Blob store (nothing to unpin), or empty. GC rooting of this value
@@ -158,7 +157,7 @@ pub struct Bytes {
 impl Default for Bytes {
     fn default() -> Self {
         Self {
-            slice: ZigStringSlice::empty(),
+            slice: Utf8Bytes::EMPTY,
             pinned: JSValue::ZERO,
         }
     }
@@ -171,11 +170,8 @@ impl Drop for Bytes {
             // lifetime of this Value (see struct doc); the FFI itself is `safe fn`.
             JSC__JSValue__unpinArrayBuffer(self.pinned);
         }
-        // self.slice dropped automatically
     }
 }
-
-// No explicit Drop for Value: the enum payloads (ZigStringSlice, Bytes, Data) all impl Drop.
 
 /// The integer branches of `Value::from_js` validate against the full range of
 /// the target type, so the bounds are derived from `T` rather than repeated at
@@ -345,11 +341,10 @@ impl Value {
                         // FastTypedArray — tiny, GC-movable vector; dupe.
                         1 => Ok(Value::Bytes(Bytes {
                             // SAFETY: ptr/len returned from helper are valid for the
-                            // duration of this call; init_dupe copies immediately.
-                            slice: ZigStringSlice::init_dupe(unsafe {
-                                core::slice::from_raw_parts(ptr, len)
-                            })
-                            .map_err(|_| any_mysql_error::Error::OutOfMemory)?,
+                            // duration of this call; copied immediately.
+                            slice: Utf8Bytes::Owned(
+                                unsafe { core::slice::from_raw_parts(ptr, len) }.to_vec(),
+                            ),
                             pinned: JSValue::ZERO,
                         })),
                         // Oversize/Wasteful/DataView/JSArrayBuffer — pinned
@@ -362,7 +357,7 @@ impl Value {
                             Ok(Value::Bytes(Bytes {
                                 // SAFETY: backing storage is pinned or held (bufferless view) and
                                 // rooted via `roots`; slice stays valid until Bytes::drop unpins.
-                                slice: ZigStringSlice::from_utf8_never_free(unsafe {
+                                slice: Utf8Bytes::Borrowed(unsafe {
                                     core::slice::from_raw_parts(ptr, len)
                                 }),
                                 pinned: if kind == 2 { value } else { JSValue::ZERO },
@@ -384,15 +379,15 @@ impl Value {
                     // the store survives until execute.write() has read it.
                     roots.append(value);
                     return Ok(Value::Bytes(Bytes {
-                        slice: ZigStringSlice::from_utf8_never_free(blob.shared_view()),
+                        slice: Utf8Bytes::Borrowed(blob.shared_view()),
                         pinned: JSValue::ZERO,
                     }));
                 }
 
                 if value.is_string() {
-                    let str =
-                        BunString::from_js(value, global_object).map_err(js_error_to_mysql)?;
-                    return Ok(Value::String(str.to_utf8()));
+                    return Ok(Value::String(
+                        value.to_utf8(global_object).map_err(js_error_to_mysql)?,
+                    ));
                 }
 
                 Err(js_error_to_mysql(global_object.throw_invalid_arguments(
@@ -405,14 +400,13 @@ impl Value {
                 let str = value
                     .json_stringify_fast(global_object)
                     .map_err(js_error_to_mysql)?;
-                Ok(Value::String(str.to_utf8()))
+                Ok(Value::String(str.into_utf8()))
             }
 
             //   FieldType::MYSQL_TYPE_VARCHAR | FieldType::MYSQL_TYPE_VAR_STRING | FieldType::MYSQL_TYPE_STRING => {
-            _ => {
-                let str = BunString::from_js(value, global_object).map_err(js_error_to_mysql)?;
-                Ok(Value::String(str.to_utf8()))
-            }
+            _ => Ok(Value::String(
+                value.to_utf8(global_object).map_err(js_error_to_mysql)?,
+            )),
         }
     }
 }

@@ -1220,13 +1220,13 @@ JSC_DECLARE_HOST_FUNCTION(jsDatabaseSyncDeserialize);
 JSC_DECLARE_HOST_FUNCTION(jsDatabaseSyncCreateTagStore);
 JSC_DECLARE_HOST_FUNCTION(jsDatabaseSyncDispose);
 
-#define THIS_DATABASE()                                                                                                     \
-    auto& vm = JSC::getVM(globalObject);                                                                                    \
-    auto scope = DECLARE_THROW_SCOPE(vm);                                                                                   \
-    JSDatabaseSync* self = dynamicDowncast<JSDatabaseSync>(callFrame->thisValue());                                         \
-    if (!self) [[unlikely]] {                                                                                               \
-        scope.throwException(globalObject, createInvalidThisError(globalObject, callFrame->thisValue(), "DatabaseSync"_s)); \
-        return {};                                                                                                          \
+#define THIS_DATABASE()                                                                       \
+    auto& vm = JSC::getVM(globalObject);                                                      \
+    auto scope = DECLARE_THROW_SCOPE(vm);                                                     \
+    JSDatabaseSync* self = dynamicDowncast<JSDatabaseSync>(callFrame->thisValue());           \
+    if (!self) [[unlikely]] {                                                                 \
+        throwInvalidThisError(globalObject, scope, callFrame->thisValue(), "DatabaseSync"_s); \
+        return {};                                                                            \
     }
 
 JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncOpen, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -2737,13 +2737,13 @@ JSC_DECLARE_HOST_FUNCTION(jsStatementSyncSetReturnArrays);
 JSC_DECLARE_HOST_FUNCTION(jsStatementSyncSetAllowBareNamedParameters);
 JSC_DECLARE_HOST_FUNCTION(jsStatementSyncSetAllowUnknownNamedParameters);
 
-#define THIS_STATEMENT()                                                                                                     \
-    auto& vm = JSC::getVM(globalObject);                                                                                     \
-    auto scope = DECLARE_THROW_SCOPE(vm);                                                                                    \
-    JSStatementSync* self = dynamicDowncast<JSStatementSync>(callFrame->thisValue());                                        \
-    if (!self) [[unlikely]] {                                                                                                \
-        scope.throwException(globalObject, createInvalidThisError(globalObject, callFrame->thisValue(), "StatementSync"_s)); \
-        return {};                                                                                                           \
+#define THIS_STATEMENT()                                                                       \
+    auto& vm = JSC::getVM(globalObject);                                                       \
+    auto scope = DECLARE_THROW_SCOPE(vm);                                                      \
+    JSStatementSync* self = dynamicDowncast<JSStatementSync>(callFrame->thisValue());          \
+    if (!self) [[unlikely]] {                                                                  \
+        throwInvalidThisError(globalObject, scope, callFrame->thisValue(), "StatementSync"_s); \
+        return {};                                                                             \
     }
 
 struct StatementResetter {
@@ -3076,7 +3076,7 @@ JSC_DEFINE_HOST_FUNCTION(jsStatementSyncIteratorNext, (JSGlobalObject * globalOb
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* self = dynamicDowncast<JSStatementSyncIterator>(callFrame->thisValue());
     if (!self) [[unlikely]] {
-        scope.throwException(globalObject, createInvalidThisError(globalObject, callFrame->thisValue(), "StatementSyncIterator"_s));
+        throwInvalidThisError(globalObject, scope, callFrame->thisValue(), "StatementSyncIterator"_s);
         return {};
     }
     // Once exhausted, next() doesn't touch the statement — so keep
@@ -3131,7 +3131,7 @@ JSC_DEFINE_HOST_FUNCTION(jsStatementSyncIteratorReturn, (JSGlobalObject * global
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* self = dynamicDowncast<JSStatementSyncIterator>(callFrame->thisValue());
     if (!self) [[unlikely]] {
-        scope.throwException(globalObject, createInvalidThisError(globalObject, callFrame->thisValue(), "StatementSyncIterator"_s));
+        throwInvalidThisError(globalObject, scope, callFrame->thisValue(), "StatementSyncIterator"_s);
         return {};
     }
     // return() is the iterator-protocol cleanup hook (called implicitly by
@@ -3245,13 +3245,13 @@ GCClient::IsoSubspace* JSNodeSqliteSession::subspaceForImpl(VM& vm)
     return WebCore::subspaceForImpl<JSNodeSqliteSession, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForNodeSqliteSession, m_subspaceForNodeSqliteSession));
 }
 
-#define THIS_SESSION()                                                                                                 \
-    auto& vm = JSC::getVM(globalObject);                                                                               \
-    auto scope = DECLARE_THROW_SCOPE(vm);                                                                              \
-    JSNodeSqliteSession* self = dynamicDowncast<JSNodeSqliteSession>(callFrame->thisValue());                          \
-    if (!self) [[unlikely]] {                                                                                          \
-        scope.throwException(globalObject, createInvalidThisError(globalObject, callFrame->thisValue(), "Session"_s)); \
-        return {};                                                                                                     \
+#define THIS_SESSION()                                                                        \
+    auto& vm = JSC::getVM(globalObject);                                                      \
+    auto scope = DECLARE_THROW_SCOPE(vm);                                                     \
+    JSNodeSqliteSession* self = dynamicDowncast<JSNodeSqliteSession>(callFrame->thisValue()); \
+    if (!self) [[unlikely]] {                                                                 \
+        throwInvalidThisError(globalObject, scope, callFrame->thisValue(), "Session"_s);      \
+        return {};                                                                            \
     }
 
 static EncodedJSValue sessionChangesetCommon(JSGlobalObject* globalObject, CallFrame* callFrame,
@@ -3712,13 +3712,13 @@ JSStatementSync* JSNodeSqliteTagStore::prepare(JSGlobalObject* globalObject, Thr
     return stmtObj;
 }
 
-#define THIS_TAGSTORE()                                                                                                    \
-    auto& vm = JSC::getVM(globalObject);                                                                                   \
-    auto scope = DECLARE_THROW_SCOPE(vm);                                                                                  \
-    JSNodeSqliteTagStore* self = dynamicDowncast<JSNodeSqliteTagStore>(callFrame->thisValue());                            \
-    if (!self) [[unlikely]] {                                                                                              \
-        scope.throwException(globalObject, createInvalidThisError(globalObject, callFrame->thisValue(), "SQLTagStore"_s)); \
-        return {};                                                                                                         \
+#define THIS_TAGSTORE()                                                                         \
+    auto& vm = JSC::getVM(globalObject);                                                        \
+    auto scope = DECLARE_THROW_SCOPE(vm);                                                       \
+    JSNodeSqliteTagStore* self = dynamicDowncast<JSNodeSqliteTagStore>(callFrame->thisValue()); \
+    if (!self) [[unlikely]] {                                                                   \
+        throwInvalidThisError(globalObject, scope, callFrame->thisValue(), "SQLTagStore"_s);    \
+        return {};                                                                              \
     }
 
 // Shared tag execution: prepare/reset/bind then delegate to the same

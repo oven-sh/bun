@@ -1,6 +1,6 @@
 import { file, spawn, version, type Socket } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, exampleSite } from "harness";
+import { bunEnv, bunExe, exampleSite, tempDir } from "harness";
 import net from "net";
 
 const exampleServer = exampleSite("http");
@@ -286,6 +286,59 @@ for (const { body, fn } of bodyTypes) {
         expect(subject.body).toBeInstanceOf(ReadableStream);
         expect(await subject.text()).toBe("bye");
         expect(subject.bodyUsed).toBe(true);
+      });
+
+      // The readers move an unread Bun.file() stream back into a Blob the same
+      // way. That Blob has to cover the slice the stream was made from, not
+      // the whole file. (text() is not in here: it pumps the stream instead.)
+      describe("made from a sliced Bun.file()", () => {
+        const alphabet = "abcdefghijklmnopqrstuvwxyz";
+
+        test("bytes() returns the window of the slice the stream was made from", async () => {
+          using dir = tempDir("body-file-slice-stream", { "data.txt": alphabet });
+          const file = () => Bun.file(`${dir}/data.txt`);
+          const bytesOf = async (blob: Blob) => Buffer.from(await fn(blob.stream()).bytes()).toString();
+          expect({
+            "slice(3, 8)": await bytesOf(file().slice(3, 8)),
+            "slice(21)": await bytesOf(file().slice(21)),
+            "slice(3, 1000)": await bytesOf(file().slice(3, 1000)),
+            "slice(4, 4)": await bytesOf(file().slice(4, 4)),
+            "slice(3, 20).slice(2, 6)": await bytesOf(file().slice(3, 20).slice(2, 6)),
+            "whole file": await bytesOf(file()),
+          }).toEqual({
+            "slice(3, 8)": "defgh",
+            "slice(21)": "vwxyz",
+            "slice(3, 1000)": "defghijklmnopqrstuvwxyz",
+            "slice(4, 4)": "",
+            "slice(3, 20).slice(2, 6)": "fghi",
+            "whole file": alphabet,
+          });
+        });
+
+        test("arrayBuffer() and blob() return the slice too", async () => {
+          using dir = tempDir("body-file-slice-stream-readers", { "data.txt": alphabet });
+          const slice = () => Bun.file(`${dir}/data.txt`).slice(3, 8);
+          const blob = await fn(slice().stream()).blob();
+          expect({
+            arrayBuffer: Buffer.from(await fn(slice().stream()).arrayBuffer()).toString(),
+            blob: [blob.size, await blob.text()],
+          }).toEqual({
+            arrayBuffer: "defgh",
+            blob: [5, "defgh"],
+          });
+        });
+
+        test("json() parses only the slice", async () => {
+          using dir = tempDir("body-file-slice-stream-json", { "data.json": `--{"ok":true}--` });
+          expect(await fn(Bun.file(`${dir}/data.json`).slice(2, 13).stream()).json()).toEqual({ ok: true });
+        });
+
+        test("bytes() after the body getter turned a sliced Bun.file() body into a stream", async () => {
+          using dir = tempDir("body-file-slice-body-getter", { "data.txt": alphabet });
+          const subject = fn(Bun.file(`${dir}/data.txt`).slice(3, 8));
+          expect(subject.body).toBeInstanceOf(ReadableStream);
+          expect([Buffer.from(await subject.bytes()).toString(), subject.bodyUsed]).toEqual(["defgh", true]);
+        });
       });
     });
     for (const { string, buffer } of utf8) {
@@ -696,17 +749,29 @@ for (const { body, fn } of bodyTypes) {
           },
         );
         test("rejects a fetch textStream() when the connection drops after an empty decode", async () => {
+          // The client must consume "A" before the drop reaches the HTTP
+          // thread: a failure that arrives in the same progress update as
+          // unread body bytes errors the body and discards those bytes.
+          const consumedFirstChunk = Promise.withResolvers<void>();
           await using server = await rawChunkedServer(async sock => {
-            for (const p of [[0x41], [0xf0], [0x9f]]) await writeChunk(sock, p);
+            await writeChunk(sock, [0x41]);
+            await consumedFirstChunk.promise;
+            for (const p of [[0xf0], [0x9f]]) await writeChunk(sock, p);
             sock.destroy();
           });
           const res = await fetch(`http://127.0.0.1:${server.port}/`);
           let received = "";
           let error: any;
           try {
-            for await (const ch of res.textStream()) received += ch;
+            for await (const ch of res.textStream()) {
+              received += ch;
+              consumedFirstChunk.resolve();
+            }
           } catch (e) {
             error = e;
+          } finally {
+            // Let the server finish (and close the socket) if the stream ended early.
+            consumedFirstChunk.resolve();
           }
           expect({ code: error?.code, received }).toEqual({ code: "ECONNRESET", received: "A" });
         });
@@ -1415,11 +1480,11 @@ describe.concurrent("a fetch() Response that cannot have a body", () => {
     expect(await response.text()).toBe("");
   });
 
-  test("content that arrives after a 205 resolved is drained, so the process can exit", async () => {
+  test("content still arriving after a 205 resolved does not hold the process", async () => {
     // The server sends 3 of the 5 declared bytes with the head and the other 2
     // only once fetch() has resolved. Nothing but the fetch refs the event loop,
-    // so the process only exits if the fetch takes those 2 bytes off the socket
-    // instead of keeping them for a body reader that cannot exist.
+    // so the process only exits if the fetch stops waiting for a body no reader
+    // can exist for: it closes the connection instead (the server sees the reset).
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -1430,6 +1495,7 @@ describe.concurrent("a fetch() Response that cannot have a body", () => {
           const server = net.createServer(socket => {
             upstream = socket;
             socket.unref();
+            socket.on("error", () => {});
             socket.once("data", () => {
               socket.write("HTTP/1.1 205 Reset Content\\r\\nContent-Length: 5\\r\\n\\r\\nhel");
             });

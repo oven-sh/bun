@@ -1450,6 +1450,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             None
         };
 
+        // Every list nested in a case body shares the switch scope, whose other cases are not visited yet.
+        let was_in_switch_case = p.in_switch_case;
+        p.in_switch_case = match kind {
+            StmtsKind::SwitchStmt => true,
+            StmtsKind::FnBody => false,
+            _ => was_in_switch_case,
+        };
+
         #[cfg(debug_assertions)]
         let initial_scope: js_ast::StoreRef<js_ast::Scope> = p.current_scope;
 
@@ -1744,6 +1752,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         if !p.options.features.minify_syntax || !p.options.features.dead_code_elimination {
+            p.in_switch_case = was_in_switch_case;
             return Ok(());
         }
 
@@ -1813,12 +1822,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let mut output: ListManaged<'a, Stmt> = ListManaged::with_capacity_in(stmts.len(), p.arena);
         let mut mangler = p.stmt_list_mangler(kind);
-        let was_mangling_switch_case = p.mangling_switch_case;
-        p.mangling_switch_case = kind == StmtsKind::SwitchStmt;
         for stmt in stmts.iter().copied() {
             p.mangle_stmt_into_list(&mut mangler, &mut output, stmt);
         }
-        p.mangling_switch_case = was_mangling_switch_case;
+        p.in_switch_case = was_in_switch_case;
 
         *stmts = output;
         Ok(())

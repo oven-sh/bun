@@ -309,8 +309,10 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) assigned_identifier_names: HashMap<u64, ()>,
     /// The parse pass saw a direct `eval` call somewhere in the file; it can assign any binding by name.
     pub(crate) parse_pass_saw_direct_eval: bool,
-    /// The statement list being minified is a switch case body, whose sibling cases are not visited yet.
-    pub(crate) mangling_switch_case: bool,
+    /// Visiting a switch case body or a list nested in one; the sibling cases are not visited yet.
+    pub(crate) in_switch_case: bool,
+    /// Start of the statement a single-use initializer is being substituted into.
+    pub(crate) substitution_target_loc: bun_ast::Loc,
 
     pub(crate) is_file_considered_to_have_esm_exports: bool,
 
@@ -2543,6 +2545,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         //   return (x == x) + replacement;
         //
         let replacement_can_be_removed = self.expr_can_be_removed_if_unused(&replacement);
+        self.substitution_target_loc = stmt.loc;
         match self.substitute_single_use_symbol_in_expr(
             *expr,
             r#ref,
@@ -3012,15 +3015,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // A side-effecting replacement can still move past a read that cannot throw, run code, or change.
         match expr.data {
             js_ast::ExprData::ESuper(_) => true,
-            js_ast::ExprData::EIdentifier(id) => self.is_stable_identifier_read(id, expr.loc),
+            js_ast::ExprData::EIdentifier(id) => self.is_stable_identifier_read(id),
             // A known global property access such as `console.log` or `Math.floor`.
             js_ast::ExprData::EDot(dot) => dot.can_be_removed_if_unused,
             _ => false,
         }
     }
 
-    /// A read of `id` at `use_loc` that cannot throw or run code, and yields the same value whatever code runs before it.
-    fn is_stable_identifier_read(&self, id: E::Identifier, use_loc: bun_ast::Loc) -> bool {
+    /// A read of `id` that cannot throw or run code, and yields the same value whatever code runs before it.
+    fn is_stable_identifier_read(&self, id: E::Identifier) -> bool {
         if id.must_keep_due_to_with_stmt() {
             return false;
         }
@@ -3045,10 +3048,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if !is_const && self.name_is_assigned_somewhere(name) {
                     return false;
                 }
-                // A `let`, `const` or `class` read in its TDZ throws. It is past it only when it is declared earlier in the same function, and not in another case of the switch being visited.
+                // A `let`, `const` or `class` read in its TDZ throws. It is past it only when declared by an earlier statement of the same function, and not in another case of the switch being visited.
                 let has_tdz = symbol.kind != js_ast::symbol::Kind::HoistedFunction
                     && symbol.kind != js_ast::symbol::Kind::GeneratorOrAsyncFunction;
-                if has_tdz && self.mangling_switch_case {
+                if has_tdz && self.in_switch_case {
                     return false;
                 }
                 // The name must resolve to this symbol from here; a generated temp is in no `members` map, and generated code may assign to it.
@@ -3060,7 +3063,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         if !member.ref_.eql(id.ref_) {
                             return false;
                         }
-                        return !has_tdz || (!crossed_function && member.loc.start < use_loc.start);
+                        return !has_tdz
+                            || (!crossed_function
+                                && member.loc.start < self.substitution_target_loc.start);
                     }
                     crossed_function |= s.kind_stops_hoisting();
                     scope = s.parent;
@@ -9470,7 +9475,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             has_with_scope: false,
             assigned_identifier_names: Default::default(),
             parse_pass_saw_direct_eval: false,
-            mangling_switch_case: false,
+            in_switch_case: false,
+            substitution_target_loc: bun_ast::Loc::EMPTY,
             is_file_considered_to_have_esm_exports: false,
             has_called_runtime: false,
             symbol_uses,

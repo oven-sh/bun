@@ -1771,8 +1771,10 @@ describe("bundler", () => {
         export function keepOuterConst() { const keep = f(); return h(keep); }
         export function keepOuterLet() { const keep = f(); return never(keep); }
         export function keepThis() { const keep = f(); return g(this, keep); }
-        export function keepLaterConst(c) { const keep = f(); if (c) return later(keep); const later = (x) => x; return later(1); }
+        export function keepLaterConst() { const keep = f(); const r = later(keep); const later = (x) => x; return r; }
+        export function keepSelfReference() { const keep = f(); const self = [self, keep]; return self; }
         export function keepSiblingCase(x) { switch (x) { case 1: const later = (y) => y; case 2: const keep = f(); return later(keep); } }
+        export function keepSiblingCaseNested(x) { switch (x) { case 1: const later = (y) => y; case 2: { const keep = f(); return later(keep); } } }
         export function keepAndBranch() { const keep = f(); return flag && keep; }
         export function keepOrBranch() { const keep = f(); return flag || keep; }
         export function keepNullishBranch() { const keep = f(); return flag ?? keep; }
@@ -1795,7 +1797,7 @@ describe("bundler", () => {
       expect(code).toContain("return later(f());");
       expect(code).toContain("return local(f()) + local(1);");
       expect(code).toContain("return flag && 1;");
-      expect(code.match(/let keep = f\(\);/g)).toHaveLength(14);
+      expect(code.match(/let keep = f\(\)[,;]/g)).toHaveLength(16);
     },
   });
 

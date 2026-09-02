@@ -5,10 +5,8 @@ const { hideFromStack, throwNotImplemented } = require("internal/shared");
 const { validateString, validateOneOf } = require("internal/validators");
 const { isDataView, isAnyArrayBuffer } = require("node:util/types");
 const jsc: typeof import("bun:jsc") = require("bun:jsc");
-const { isStringOneByteRepresentation, startGCProfiler, stopGCProfiler, discardGCProfiler } = $cpp(
-  "NodeV8.cpp",
-  "Bun::createNodeV8Binding",
-);
+const { isStringOneByteRepresentation, startGCProfiler, stopGCProfiler, discardGCProfiler, maxOldSpaceSizeBytes } =
+  $cpp("NodeV8.cpp", "Bun::createNodeV8Binding");
 
 const DateNow = Date.now;
 const FunctionPrototypeCall = Function.prototype.call;
@@ -184,7 +182,9 @@ function getHeapStatistics() {
     total_available_size: totalmem() - stats.heapSize,
     used_heap_size: stats.heapSize,
     total_allocated_bytes: stats.heapCapacity,
-    heap_size_limit: Math.min(memory.peak * 10, totalmem()),
+    // --max-old-space-size is enforced (the process aborts when a full GC
+    // cannot keep the heap under it), so report it like V8 does.
+    heap_size_limit: maxOldSpaceSizeBytes || Math.min(memory.peak * 10, totalmem()),
     malloced_memory: stats.heapSize,
     peak_malloced_memory: memory.peak,
 

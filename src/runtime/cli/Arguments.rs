@@ -235,6 +235,9 @@ const RUNTIME_PARAMS_: &[ParamType] = &[
         "--insecure-http-parser            Use an insecure HTTP parser that accepts invalid HTTP headers"
     ),
     parse_param!(
+        "--max-old-space-size/--max_old_space_size <INT>     Set the maximum JavaScript heap size in megabytes, for Node.js compatibility"
+    ),
+    parse_param!(
         "--dns-result-order <STR>          Set the default order of DNS lookup results. Valid orders: verbatim (default), ipv4first, ipv6first"
     ),
     parse_param!(
@@ -747,6 +750,12 @@ fn replace_pid_placeholder(name: &[u8]) -> Box<[u8]> {
     out.into_boxed_slice()
 }
 
+/// `--max-old-space-size`, converted to bytes. 0 = no limit. Read from C++ as
+/// a plain `size_t` before VM creation (JSCInitialize / JSVMClientData).
+#[unsafe(no_mangle)]
+pub(crate) static Bun__Node__MaxOldSpaceSizeBytes: core::sync::atomic::AtomicUsize =
+    core::sync::atomic::AtomicUsize::new(0);
+
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub(crate) enum BunCAStore {
@@ -1160,6 +1169,23 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
 
         if args.flag(b"--insecure-http-parser") {
             bun_http::set_insecure_http_parser(true);
+        }
+
+        if let Some(size_str) = args.option(b"--max-old-space-size") {
+            let megabytes = match strings::parse_int::<usize>(size_str, 10) {
+                Ok(v) => v,
+                Err(_) => {
+                    Output::err_generic(
+                        "Invalid value for --max-old-space-size: \"{}\". Must be a non-negative integer (0 disables the limit)\n",
+                        format_args!("{}", BStr::new(size_str)),
+                    );
+                    Global::exit(1);
+                }
+            };
+            Bun__Node__MaxOldSpaceSizeBytes.store(
+                megabytes.saturating_mul(1024 * 1024),
+                core::sync::atomic::Ordering::Relaxed,
+            );
         }
 
         if let Some(user_agent) = args.option(b"--user-agent") {

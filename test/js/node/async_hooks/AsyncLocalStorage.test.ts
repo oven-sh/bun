@@ -224,6 +224,74 @@ test("consecutive disable() calls exit continuations that captured the frame", a
   b.disable();
 });
 
+// Verified against Node v26: run()'s finally is enterWith(prior), so a binding
+// the callback installed for the same storage is replaced, not stacked.
+test("run() restores its own binding after enterWith()/withScope()/exit() inside the callback", () => {
+  const a = new AsyncLocalStorage();
+  a.run("outer", () => {
+    a.run("inner", () => {
+      using _ = a.withScope("scoped");
+      expect(a.getStore()).toBe("scoped");
+    });
+    expect(a.getStore()).toBe("outer");
+  });
+  expect(a.getStore()).toBe(undefined);
+  a.run(1, () => {
+    a.run(2, () => {
+      a.enterWith(3);
+    });
+    expect(a.getStore()).toBe(1);
+    a.exit(() => {
+      a.enterWith(4);
+    });
+    expect(a.getStore()).toBe(1);
+  });
+  expect(a.getStore()).toBe(undefined);
+});
+
+test("re-entering a storage inside run() does not grow the context", () => {
+  const als = new AsyncLocalStorage();
+  const other = new AsyncLocalStorage();
+  const objects = () => {
+    Bun.gc(true);
+    return heapStats().objectCount;
+  };
+  als.run(0, () => {
+    const before = objects();
+    for (let i = 0; i < 100_000; i++) {
+      als.run(1, () => {
+        using _ = als.withScope(2);
+      });
+      als.run(1, () => {
+        als.enterWith(3);
+      });
+      other.run(1, () => {
+        other.disable();
+      });
+    }
+    expect(objects() - before).toBeLessThan(1000);
+    expect(als.getStore()).toBe(0);
+  });
+});
+
+// Node's run() enters a fresh frame, so a disable() inside it only reaches
+// continuations captured since; ones captured before keep their binding.
+test("disable() inside another storage's run() does not reach earlier continuations", async () => {
+  const a = new AsyncLocalStorage();
+  const b = new AsyncLocalStorage();
+  const seen = await a.run(1, () => {
+    const earlier = new Promise(resolve => setTimeout(() => resolve(a.getStore()), 1));
+    let during;
+    b.run(2, () => {
+      during = new Promise(resolve => setTimeout(() => resolve(a.getStore()), 1));
+      a.disable();
+    });
+    a.run(5, () => {}); // re-enable
+    return Promise.all([earlier, during]);
+  });
+  expect(seen).toEqual([1, undefined]);
+});
+
 test("AsyncResource", () => {
   const resource = new AsyncResource("prisma-client-request");
   var called = false;

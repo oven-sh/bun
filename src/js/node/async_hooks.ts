@@ -83,6 +83,13 @@ function set(frame: Frame | undefined) {
   return $putInternalField($asyncContext, 0, frame);
 }
 
+// `frame` without the exited bindings on top of it. Continuations that captured
+// an exited frame keep holding it; the slot need not.
+function live(frame: Frame | undefined): Frame | undefined {
+  while (frame !== undefined && frame.storage === undefined) frame = frame.prev;
+  return frame;
+}
+
 // The innermost frame binding `storage`, or undefined.
 function find(frame: Frame | undefined, storage: AsyncLocalStorage): Frame | undefined {
   for (var f = frame; f !== undefined; f = f.prev) {
@@ -92,16 +99,26 @@ function find(frame: Frame | undefined, storage: AsyncLocalStorage): Frame | und
 }
 
 // `frame` with the innermost binding of `storage` removed. Frames above it are
-// copied (they are immutable and may be shared); the tail below it is shared.
+// copied (they may be shared with other captures); the tail below it is shared.
 function without(frame: Frame | undefined, storage: AsyncLocalStorage): Frame | undefined {
   var found = find(frame, storage);
   if (found === undefined) return frame;
   return copyUntil(frame!, found, found.prev);
 }
 
+// `frame` with every binding of `storage` removed (nested run() of one storage
+// stacks shadowed bindings).
+function withoutAll(frame: Frame | undefined, storage: AsyncLocalStorage): Frame | undefined {
+  var found = find(frame, storage);
+  if (found === undefined) return frame;
+  return copyUntil(frame!, found, withoutAll(found.prev, storage));
+}
+
+// Copies [from, stop) onto tail, dropping bindings that disable() exited.
 function copyUntil(from: Frame, stop: Frame, tail: Frame | undefined): Frame | undefined {
   if (from === stop) return tail;
-  return new Frame(from.storage!, from.value, copyUntil(from.prev!, stop, tail));
+  var rest = copyUntil(from.prev!, stop, tail);
+  return from.storage === undefined ? rest : new Frame(from.storage, from.value, rest);
 }
 
 // Node parity: dispose() is enterWith(previousStore), which on a fresh ALS
@@ -181,7 +198,7 @@ class AsyncLocalStorage {
     this.#disabled = false;
     // Replace rather than shadow an existing binding so repeated enterWith() calls
     // keep the chain bounded by the number of storages.
-    set(new Frame(this, store, without(get(), this)));
+    set(new Frame(this, store, without(live(get()), this)));
     $assert(sameValue(this.getStore(), store));
   }
 
@@ -220,8 +237,12 @@ class AsyncLocalStorage {
         // restore only this storage's binding, re-enabling the storage.
         this.#disabled = false;
         var before = find(prior, this);
-        var current = without(get(), this);
-        set(before !== undefined ? new Frame(this, before.value, current) : current);
+        var current = live(get());
+        // Drop the binding the callback left for this storage (ours, or the one an
+        // enterWith() replaced it with) unless it already is the prior one.
+        if (find(current, this) !== before) current = without(current, this);
+        if (before !== undefined && find(current, this) !== before) current = new Frame(this, before.value, current);
+        set(current);
       }
       $assert(
         sameValue(this.getStore(), find(prior, this) !== undefined ? find(prior, this)!.value : this.#defaultValue),
@@ -234,13 +255,18 @@ class AsyncLocalStorage {
     $debug("disable " + (this as any).__id__);
     if (this.#disabled) return;
     this.#disabled = true;
-    // Exit the binding in place, so continuations that captured this frame lose
-    // it too (Node deletes from the shared frame object).
-    var found = find(get(), this);
-    if (found !== undefined) {
-      found.storage = undefined;
-      frameMutations++;
-    }
+    // Node deletes the key from the current frame object, so continuations that
+    // captured the current frame lose the binding while older captures keep it.
+    // The innermost Frame is what those continuations hold: exit its own
+    // binding in place and unlink any deeper ones from it, leaving the shared
+    // tail untouched for everyone else.
+    var top = get();
+    if (top === undefined) return;
+    var below = withoutAll(top.prev, this);
+    if (top.storage !== this && below === top.prev) return;
+    if (top.storage === this) top.storage = undefined;
+    top.prev = below;
+    frameMutations++;
   }
 
   get name() {

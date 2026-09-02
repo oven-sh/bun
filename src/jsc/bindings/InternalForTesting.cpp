@@ -16,6 +16,10 @@
 #include <sched.h>
 #include <unistd.h>
 #endif
+#if ASAN_ENABLED && __has_include(<sanitizer/allocator_interface.h>)
+#include <sanitizer/allocator_interface.h>
+#define BUN_HAS_SANITIZER_ALLOCATOR_INTERFACE 1
+#endif
 
 extern "C" BunString BunString__threadIsolatedCopy(const BunString* str);
 extern "C" void BunString__makeThreadShareable(BunString* str);
@@ -65,6 +69,16 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_isASANEnabled, (JSC::JSGlobalObject * global
     return JSValue::encode(jsBoolean(true));
 #else
     return JSValue::encode(jsBoolean(false));
+#endif
+}
+
+// Live bytes in the sanitizer allocator, quarantine excluded. undefined without ASAN.
+JSC_DEFINE_HOST_FUNCTION(jsFunction_asanAllocatedBytes, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+#if BUN_HAS_SANITIZER_ALLOCATOR_INTERFACE
+    return JSValue::encode(jsNumber(static_cast<double>(__sanitizer_get_current_allocated_bytes())));
+#else
+    return JSValue::encode(jsUndefined());
 #endif
 }
 

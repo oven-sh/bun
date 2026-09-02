@@ -174,6 +174,10 @@ const { values: options, positionals: filters } = parseArgs({
       type: "string",
       default: undefined,
     },
+    ["retries"]: {
+      type: "string",
+      default: isCI ? "3" : "0", // N retries = N+1 attempts, only for files in test/flaky-tests.txt
+    },
     ["junit"]: {
       type: "boolean",
       default: false, // Disabled for now, because it's too much $
@@ -379,6 +383,27 @@ const skipsForLeaksan = (() => {
     .map(line => line.trim())
     .filter(line => !line.startsWith("#") && line.length > 0);
 })();
+
+// Test files that the runner may run again when they fail (see --retries).
+// Every other file runs once and a failure is final.
+const flakyTests = (() => {
+  const path = join(cwd, "test/flaky-tests.txt");
+  if (!existsSync(path)) {
+    return new Set();
+  }
+  return new Set(
+    readFileSync(path, "utf-8")
+      .split("\n")
+      .map(line => line.split("#")[0].trim())
+      .filter(line => line.length > 0),
+  );
+})();
+
+/**
+ * @param {string} title repo-relative path, as reported in the test output
+ * @returns {boolean}
+ */
+const isFlakyTest = title => flakyTests.has(title.replaceAll("\\", "/"));
 
 const parallelAllowlist = (() => {
   try {
@@ -618,8 +643,11 @@ async function runTests() {
   let total = vendorTotal + tests.length + 2;
 
   const okResults = [];
+  const flakyResults = [];
+  const flakyResultsTitles = [];
   const failedResults = [];
   const failedResultsTitles = [];
+  const retries = parseInt(options["retries"]) || 0;
 
   const parallelism = options["parallel"] ? availableParallelism() : 1;
   console.log("parallelism", parallelism);
@@ -655,42 +683,6 @@ async function runTests() {
   const validationApplies = basename(execPath).includes("asan") || !isCI;
 
   /**
-   * Records a failed result and reports it to CI. Every test file runs once;
-   * a failure is final and is never retried.
-   * @param {string} title
-   * @param {TestResult} failure
-   */
-  const reportFailure = (title, failure) => {
-    failedResults.push(failure);
-    failedResultsTitles.push(title);
-
-    if (isBuildkite) {
-      const content = formatTestToMarkdown(
-        title.startsWith("vendor") ? { ...failure, testPath: title } : failure,
-        false,
-      );
-      if (content) {
-        reportAnnotationToBuildKite({ context: title, label: title, content, style: "error" });
-      }
-    }
-
-    if (isGithubAction) {
-      const summaryPath = process.env["GITHUB_STEP_SUMMARY"];
-      if (summaryPath) {
-        const longMarkdown = formatTestToMarkdown(failure, false);
-        appendFileSync(summaryPath, longMarkdown);
-      }
-      const shortMarkdown = formatTestToMarkdown(failure, true);
-      appendFileSync("comment.md", shortMarkdown);
-    }
-
-    if (options["bail"]) {
-      markBuildkiteStepReported();
-      process.exit(getExitCode("fail"));
-    }
-  };
-
-  /**
    * @param {string} title
    * @param {function} fn
    * @param {boolean} [concurrent] this call may overlap with other runTest calls
@@ -698,37 +690,114 @@ async function runTests() {
    */
   const runTest = async (title, fn, concurrent = parallelism > 1) => {
     const index = ++i;
-    const grouptitle = `${getAnsi("gray")}[${index}/${total}]${getAnsi("reset")} ${title}`;
+    // A test file runs once unless test/flaky-tests.txt lists it. The runner's
+    // own dependency installs (the package.json titles) are setup, not tests,
+    // and keep their retries.
+    const maxAttempts = title.endsWith("package.json") || isFlakyTest(title) ? 1 + retries : 1;
 
-    let result;
-    if (concurrent) {
-      console.log(grouptitle);
-      result = await fn(index);
-    } else {
-      result = await startGroup(grouptitle, () => fn(index));
+    let result, failure, flaky;
+    let attempt = 1;
+    for (; attempt <= maxAttempts; attempt++) {
+      if (attempt > 1) {
+        await new Promise(resolve => setTimeout(resolve, 5000 + Math.random() * 10_000));
+      }
+
+      let grouptitle = `${getAnsi("gray")}[${index}/${total}]${getAnsi("reset")} ${title}`;
+      if (attempt > 1) grouptitle += ` ${getAnsi("gray")}[attempt #${attempt}]${getAnsi("reset")}`;
+
+      if (concurrent) {
+        console.log(grouptitle);
+        result = await fn(index);
+      } else {
+        result = await startGroup(grouptitle, () => fn(index));
+      }
+
+      const { ok, stdoutPreview, error } = result;
+      if (ok) {
+        if (failure) {
+          flakyResults.push(failure);
+          flakyResultsTitles.push(title);
+        } else {
+          okResults.push(result);
+        }
+        break;
+      }
+
+      const color = attempt >= maxAttempts ? "red" : "yellow";
+      const label = `${getAnsi(color)}[${index}/${total}] ${title} - ${error}${getAnsi("reset")}`;
+      if (concurrent) {
+        // Don't open a group mid-phase: it would re-anchor the log viewer's
+        // folding for every concurrent title printed after it.
+        console.log(label);
+      } else {
+        startGroup(label, () => {
+          if (!isCI) return;
+          process.stderr.write(stdoutPreview);
+        });
+      }
+
+      failure ||= result;
+      flaky ||= true;
+
+      if (attempt >= maxAttempts || isAlwaysFailure(error)) {
+        flaky = false;
+        failedResults.push(failure);
+        failedResultsTitles.push(title);
+        break;
+      }
     }
 
-    const { ok, stdoutPreview, error } = result;
-    if (ok) {
-      okResults.push(result);
+    if (!failure) {
       return result;
     }
 
-    const label = `${getAnsi("red")}[${index}/${total}] ${title} - ${error}${getAnsi("reset")}`;
-    if (concurrent) {
-      // Don't open a group mid-phase: it would re-anchor the log viewer's
-      // folding for every concurrent title printed after it.
-      console.log(label);
-    } else {
-      startGroup(label, () => {
-        if (!isCI) return;
-        process.stderr.write(stdoutPreview);
-      });
-    }
-
-    reportFailure(title, result);
+    reportFailure(title, failure, flaky, attempt);
     return result;
   };
+
+  /**
+   * Reports a failed attempt to CI: a warning when the file later passed
+   * (flaky), an error when the failure is final.
+   * @param {string} title
+   * @param {TestResult} failure
+   * @param {boolean} flaky
+   * @param {number} attempt the attempt that passed, when flaky
+   */
+  function reportFailure(title, failure, flaky, attempt) {
+    if (isBuildkite) {
+      // Group flaky tests together, regardless of the title
+      const context = flaky ? "flaky" : title;
+      const style = flaky ? "warning" : "error";
+      if (!flaky) attempt = 1; // no need to show the retries count on failures, we know it maxed out
+
+      if (title.startsWith("vendor")) {
+        const content = formatTestToMarkdown({ ...failure, testPath: title }, false, attempt - 1);
+        if (content) {
+          reportAnnotationToBuildKite({ context, label: title, content, style });
+        }
+      } else {
+        const content = formatTestToMarkdown(failure, false, attempt - 1);
+        if (content) {
+          reportAnnotationToBuildKite({ context, label: title, content, style });
+        }
+      }
+    }
+
+    if (isGithubAction) {
+      const summaryPath = process.env["GITHUB_STEP_SUMMARY"];
+      if (summaryPath) {
+        const longMarkdown = formatTestToMarkdown(failure, false, attempt - 1);
+        appendFileSync(summaryPath, longMarkdown);
+      }
+      const shortMarkdown = formatTestToMarkdown(failure, true, attempt - 1);
+      appendFileSync("comment.md", shortMarkdown);
+    }
+
+    if (options["bail"]) {
+      markBuildkiteStepReported();
+      process.exit(getExitCode("fail"));
+    }
+  }
 
   if (!isQuiet) {
     for (const path of [cwd, testsPath]) {
@@ -994,10 +1063,10 @@ async function runTests() {
       if (suites.size && isBuildkite) uploadArtifactsToBuildKite(junitPath);
       else rmSync(junitPath, { force: true });
 
-      // A file that ran in the batch has its verdict: if it failed, hung, or
-      // crashed there, it failed, and it is not run again alone. A file the
+      // A file that failed, hung, or crashed in the batch has its verdict. It
+      // runs again alone only when test/flaky-tests.txt lists it. A file the
       // batch never started (a sibling hung, or a worker crashed before its
-      // turn) gets its one run below, alone.
+      // turn) gets its one run alone.
       const failed = new Map(); // test path -> why it failed in the batch
       const incomplete = new Set();
       let evidence = suites.size > 0;
@@ -1034,6 +1103,8 @@ async function runTests() {
         }
         evidence = failed.size + incomplete.size > 0;
       }
+      const retried = [...failed.keys()].filter(t => isFlakyTest(join("test", t).replaceAll("\\", "/")));
+      const rerun = [...retried, ...incomplete];
 
       for (const t of bucketFiles) {
         if (!ok && (!evidence || failed.has(t) || incomplete.has(t))) continue;
@@ -1056,14 +1127,19 @@ async function runTests() {
         if (reason === undefined) continue;
         const title = join("test", t).replaceAll("\\", "/");
         const cases = suites.get(title)?.cases ?? [];
-        startGroup(`${getAnsi("red")}[${++i}/${total}] ${title} - ${reason}${getAnsi("reset")}`, () => {
+        const printCases = () => {
           for (const { name, message } of cases) {
             console.log(`${getAnsi("red")}✗${getAnsi("reset")} ${name}`);
             if (message) console.log(message.replace(/^/gm, "    "));
           }
-        });
+        };
+        if (isFlakyTest(title)) {
+          startGroup(`${title} - ${reason}`, printCases);
+          continue;
+        }
+        startGroup(`${getAnsi("red")}[${++i}/${total}] ${title} - ${reason}${getAnsi("reset")}`, printCases);
         const preview = cases.map(({ name, message }) => `✗ ${name}\n${message}`).join("\n\n") || reason;
-        reportFailure(title, {
+        const result = {
           testPath: title,
           ok: false,
           status: "fail",
@@ -1072,14 +1148,17 @@ async function runTests() {
           tests: [],
           stdout: preview,
           stdoutPreview: preview,
-        });
+        };
+        failedResults.push(result);
+        failedResultsTitles.push(title);
+        reportFailure(title, result, false, 1);
       }
       if (!ok && failed.size === 0) {
         // No file to blame: bun test itself died before it reported, or a
         // crash surfaced outside any test case. The batch is the failure.
         const preview = `${stripAnsi(stdout).split(/\r?\n/).slice(-50).join("\n")}\n${crashes ?? ""}`.trim();
         console.log(`${getAnsi("red")}${label} - ${error}${getAnsi("reset")}`);
-        reportFailure(label, {
+        const result = {
           testPath: label,
           ok: false,
           status: "fail",
@@ -1088,13 +1167,36 @@ async function runTests() {
           tests: [],
           stdout,
           stdoutPreview: preview,
-        });
+        };
+        failedResults.push(result);
+        failedResultsTitles.push(label);
+        reportFailure(label, result, false, 1);
       }
-      if (incomplete.size) {
+      if (rerun.length) {
         console.log(
-          `${getAnsi("yellow")}parallel bucket: running ${incomplete.size} file(s) the batch never started, one at a time${getAnsi("reset")}`,
+          `${getAnsi("yellow")}parallel bucket: running ${retried.length} listed flaky file(s) that failed and ${incomplete.size} file(s) the batch never started, one at a time${getAnsi("reset")}`,
         );
-        for (const testPath of incomplete) await runOneTest(testPath, false);
+        for (const testPath of rerun) {
+          const result = await runOneTest(testPath, false);
+          if (result?.ok && failed.has(testPath) && isBuildkite) {
+            const title = join("test", testPath).replaceAll("\\", "/");
+            const cases = suites.get(title)?.cases ?? [];
+            const first = cases[0];
+            const firstError = first ? `${first.name} — ${first.message.split("\n")[0]}` : "";
+            const reason = firstError
+              ? escapeHtml(firstError.length > 100 ? `${firstError.slice(0, 97)}…` : firstError)
+              : "failed in the parallel batch";
+            const detail = cases.length
+              ? `\n\n\`\`\`terminal\n${cases.map(({ name, message }) => `✗ ${name}\n${message}`).join("\n\n")}\n\`\`\`\n\n`
+              : "";
+            reportAnnotationToBuildKite({
+              context: "flaky",
+              label: title,
+              style: "warning",
+              content: `<details><summary><a href="${getFileUrl(title)}"><code>${title}</code></a> - ${reason} <i>(in the parallel batch on ${getBuildLabel()}; passed alone)</i></summary>${detail}</details>`,
+            });
+          }
+        }
       }
     };
 
@@ -1184,7 +1286,7 @@ async function runTests() {
 
   if (isGithubAction) {
     reportOutputToGitHubAction("failing_tests_count", failedResults.length);
-    const markdown = formatTestToMarkdown(failedResults, false);
+    const markdown = formatTestToMarkdown(failedResults, false, 0);
     reportOutputToGitHubAction("failing_tests", markdown);
   }
 
@@ -1194,7 +1296,7 @@ async function runTests() {
     mkdirSync(junitTempDir, { recursive: true });
 
     // Generate JUnit reports for tests that don't use bun test
-    const nonBunTestResults = [...okResults, ...failedResults].filter(result => {
+    const nonBunTestResults = [...okResults, ...flakyResults, ...failedResults].filter(result => {
       // Check if this is a test that wasn't run with bun test
       const isNodeTest =
         isJavaScript(result.testPath) && !isTestStrict(result.testPath) && !result.testPath.includes("vendor");
@@ -1338,9 +1440,10 @@ async function runTests() {
 
   if (!isCI && !isQuiet) {
     console.table({
-      "Total Tests": okResults.length + failedResults.length,
+      "Total Tests": okResults.length + failedResults.length + flakyResults.length,
       "Passed Tests": okResults.length,
       "Failing Tests": failedResults.length,
+      "Flaky Tests": flakyResults.length,
     });
 
     if (failedResults.length) {
@@ -1349,12 +1452,19 @@ async function runTests() {
         console.log(`${getAnsi("red")}- ${testPath}${getAnsi("reset")}`);
       }
     }
+
+    if (flakyResults.length) {
+      console.log(`${getAnsi("yellow")}Flaky Tests:${getAnsi("reset")}`);
+      for (const testPath of flakyResultsTitles) {
+        console.log(`${getAnsi("yellow")}- ${testPath}${getAnsi("reset")}`);
+      }
+    }
   }
 
   // Dump per-file results as JSON for post-processing (test-fix workflows
   // shard from this). Opt-in via --results-json so CI output is unchanged.
   if (cliOptions["results-json"]) {
-    const all = [...okResults, ...failedResults].map(r => ({
+    const all = [...okResults, ...flakyResults, ...failedResults].map(r => ({
       testPath: r.testPath,
       ok: r.ok,
       status: r.status,
@@ -1368,6 +1478,7 @@ async function runTests() {
     !isQuiet && console.log(`Wrote ${all.length} results to ${cliOptions["results-json"]}`);
   }
 
+  // Exclude flaky tests from the final results
   return [...okResults, ...failedResults];
 }
 
@@ -1791,7 +1902,7 @@ async function spawnBun(execPath, { args, cwd, timeout, gracefulTimeout, idleTim
 
       if (newCores.length > 0) {
         result.ok = false;
-        if (!isCrashError(result.error)) result.error = "core dumped";
+        if (!isAlwaysFailure(result.error)) result.error = "core dumped";
       }
 
       for (const coreName of newCores) {
@@ -1840,7 +1951,7 @@ async function spawnBun(execPath, { args, cwd, timeout, gracefulTimeout, idleTim
         const traces = await response.json();
         if (traces.length > 0) {
           result.ok = false;
-          if (!isCrashError(result.error)) result.error = "crash reported";
+          if (!isAlwaysFailure(result.error)) result.error = "crash reported";
 
           crashes += `${traces.length} crashes reported during this test\n`;
           for (const t of traces) {
@@ -2809,9 +2920,10 @@ function getTestLabel() {
 /**
  * @param  {TestResult | TestResult[]} result
  * @param  {boolean} concise
+ * @param  {number} retries
  * @returns {string}
  */
-function formatTestToMarkdown(result, concise) {
+function formatTestToMarkdown(result, concise, retries) {
   const results = Array.isArray(result) ? result : [result];
   const buildLabel = getTestLabel();
   const buildUrl = getBuildUrl();
@@ -2855,6 +2967,9 @@ function formatTestToMarkdown(result, concise) {
     }
     if (platform) {
       markdown += ` on ${platform}`;
+    }
+    if (retries > 0) {
+      markdown += ` (${retries} ${retries === 1 ? "retry" : "retries"})`;
     }
     if (newFiles.includes(testTitle)) {
       markdown += ` (new)`;
@@ -3014,12 +3129,10 @@ function getExitCode(outcome) {
   return 1;
 }
 
-/**
- * True when `error` already names a crash, so that a generic "core dumped" or
- * "crash reported" does not replace the more specific description.
- * @param {string | undefined} error
- */
-function isCrashError(error) {
+// A flaky segfault, sigtrap, or sigkill must never be ignored.
+// If it happens in CI, it will happen to our users.
+// Flaky AddressSanitizer errors cannot be ignored since they still represent real bugs.
+function isAlwaysFailure(error) {
   error = ((error || "") + "").toLowerCase().trim();
   return (
     error.includes("segmentation fault") ||

@@ -4207,7 +4207,7 @@ pub(crate) mod __gated_printer {
                         self.add_source_mapping(expr.loc);
                         // Optional chains are forbidden in template tags
                         // `Expr::is_optional_chain` is gated upstream; inline its body.
-                        let is_optional_chain = match &expr.data {
+                        let is_optional_chain = match &tag.data {
                             ExprData::EDot(d) => d.optional_chain.is_some(),
                             ExprData::EIndex(i) => i.optional_chain.is_some(),
                             ExprData::ECall(c) => c.optional_chain.is_some(),

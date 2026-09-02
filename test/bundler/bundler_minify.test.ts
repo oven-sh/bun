@@ -1699,6 +1699,9 @@ describe("bundler", () => {
         export function callTarget(o, a) { return (a ? o.m : o.m)() }
         export function tagTarget(o, a) { return (a ? o.m : o.m)\`x\` }
         export function tagTargetFolded(o) { return (1 ? o.m : 2)\`x\` }
+        export function tagTargetTypeof(o) { return (typeof o ? o.m : 2)\`x\` }
+        export function callTargetTypeof(o) { return (typeof o ? o.m : 2)() }
+        export function tagOptionalChain(a) { return (a != null ? a.b() : void 0)\`x\` }
         export function implicitReturn(y, z) { if (y) return; z() }
         export function loopContinue(xs, f) { for (const x of xs) { if (x > 2) continue; f(x) } }
         export function typeofEq(t) { return typeof t === "string" }
@@ -1724,6 +1727,8 @@ describe("bundler", () => {
         log(optChain(null), optChain({ b: 5 }));
         log(nullish(null, 2), nullish(0, 2));
         log(callTarget({ m() { return this === undefined } }, true));
+        log(callTargetTypeof({ m() { return this === undefined } }));
+        log(tagOptionalChain({ b() { return s => s[0] } }));
         { let n = 0; implicitReturn(true, () => n++); implicitReturn(false, () => n++); log(n); }
         { const seen = []; loopContinue([1, 2, 3, 4], x => seen.push(x)); log(seen.join()); }
         log(typeofEq("s"), typeofEq(1));
@@ -1763,6 +1768,10 @@ describe("bundler", () => {
         callTarget: "return(0,o.m)()",
         tagTarget: "return(0,o.m)`x`",
         tagTargetFolded: "return(0,o.m)`x`",
+        tagTargetTypeof: "return(0,o.m)`x`",
+        callTargetTypeof: "return(0,o.m)()",
+        // An optional chain cannot be a template tag, so the tag is parenthesized.
+        tagOptionalChain: "return(a?.b())`x`",
         implicitReturn: "y||z()",
         loopContinue: "for(let x of xs)x>2||f(x)",
         typeofEq: 'return typeof t=="string"',
@@ -1776,7 +1785,7 @@ describe("bundler", () => {
     },
     run: {
       stdout:
-        '[1,2,1,2,3,1,1,"b",1,3,1,null,2,1,7,true,true,null,5,2,0,true,1,"1,2",true,false,true,true,false,true,false,2,4,1,"a,b",true,true]',
+        '[1,2,1,2,3,1,1,"b",1,3,1,null,2,1,7,true,true,null,5,2,0,true,true,"x",1,"1,2",true,false,true,true,false,true,false,2,4,1,"a,b",true,true]',
     },
   });
 

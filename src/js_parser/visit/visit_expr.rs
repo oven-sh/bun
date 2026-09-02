@@ -1534,24 +1534,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.visit_expr(&mut e_.no);
             p.is_control_flow_dead = old;
 
-            if side_effects.side_effects == SideEffects::CouldHaveSideEffects {
-                *e = SideEffects::simplify_unused_expr(p, e_.test)
-                    .unwrap_or_else(|| p.new_expr(E::Missing {}, e_.test.loc))
-                    .join_with_comma(e_.yes);
-                return;
-            }
-
-            // "(1 ? fn : 2)()" => "fn()"
-            // "(1 ? this.fn : 2)" => "this.fn"
-            // "(1 ? this.fn : 2)()" => "(0, this.fn)()"
-            if (is_call_target || is_template_tag) && e_.yes.has_value_for_this_in_call() {
-                *e = p
-                    .new_expr(E::Number::new(0.0), e_.test.loc)
-                    .join_with_comma(e_.yes);
-                return;
-            }
-
-            *e = e_.yes;
+            // "(a, true) ? b : c" => "a, b"
+            *e = Self::fold_if_branch(
+                p,
+                side_effects.side_effects,
+                e_.test,
+                e_.yes,
+                is_call_target || is_template_tag,
+            );
         } else {
             // "false ? dead : live"
             let old = p.is_control_flow_dead;
@@ -1561,24 +1551,45 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.visit_expr(&mut e_.no);
 
             // "(a, false) ? b : c" => "a, c"
-            if side_effects.side_effects == SideEffects::CouldHaveSideEffects {
-                *e = SideEffects::simplify_unused_expr(p, e_.test)
-                    .unwrap_or_else(|| p.new_expr(E::Missing {}, e_.test.loc))
-                    .join_with_comma(e_.no);
-                return;
-            }
-
-            // "(1 ? fn : 2)()" => "fn()"
-            // "(1 ? this.fn : 2)" => "this.fn"
-            // "(1 ? this.fn : 2)()" => "(0, this.fn)()"
-            if (is_call_target || is_template_tag) && e_.no.has_value_for_this_in_call() {
-                *e = p
-                    .new_expr(E::Number::new(0.0), e_.test.loc)
-                    .join_with_comma(e_.no);
-                return;
-            }
-            *e = e_.no;
+            *e = Self::fold_if_branch(
+                p,
+                side_effects.side_effects,
+                e_.test,
+                e_.no,
+                is_call_target || is_template_tag,
+            );
         }
+    }
+
+    /// The branch a constant-test conditional folds to. The test is kept in
+    /// front of it when it may have side effects. A call or template tag
+    /// target that turns into a property access gets `(0, …)` in front so it
+    /// still binds `this` to `undefined`:
+    ///
+    /// "(a, true) ? b : c" => "a, b"
+    /// "(1 ? fn : 2)()" => "fn()"
+    /// "(1 ? this.fn : 2)" => "this.fn"
+    /// "(1 ? this.fn : 2)()" => "(0, this.fn)()"
+    /// "(typeof x ? this.fn : 2)()" => "(0, this.fn)()"
+    fn fold_if_branch(
+        p: &mut Self,
+        test_side_effects: SideEffects,
+        test: Expr,
+        branch: Expr,
+        binds_this: bool,
+    ) -> Expr {
+        if test_side_effects == SideEffects::CouldHaveSideEffects
+            && let Some(test) = SideEffects::simplify_unused_expr(p, test)
+            && !test.is_missing()
+        {
+            return test.join_with_comma(branch);
+        }
+        if binds_this && branch.has_value_for_this_in_call() {
+            return p
+                .new_expr(E::Number::new(0.0), test.loc)
+                .join_with_comma(branch);
+        }
+        branch
     }
 
     #[inline(never)] // PERF(port:frame): see e_jsx_element.

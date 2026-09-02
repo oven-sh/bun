@@ -130,6 +130,7 @@ pub(crate) fn scan_imports_and_exports(
         ast.dynamic_import_aliases;
     let dyn_ref_aliases: *mut [js_meta::DynamicImportReferencedAliases] =
         meta.dynamic_import_referenced_aliases;
+    let lifted_setter_params: *mut [Ref] = meta.lifted_setter_param;
 
     {
         // Step 1: Figure out what modules must be CommonJS
@@ -556,6 +557,22 @@ pub(crate) fn scan_imports_and_exports(
                     col!(flags)[source_index] = flag;
                 }
 
+                // The namespace object of a lifted CommonJS module stands in for
+                // `module.exports`, so its properties get setters that assign the
+                // lifted bindings. Step 5 runs in parallel and cannot create the
+                // setters' parameter symbol, so create it here.
+                if export_kind != ExportsKind::Cjs
+                    && flag.wrap != WrapKind::Cjs
+                    && col_ref!(ast_flags_list)[source_index]
+                        .contains(AstFlags::COMMONJS_LIFTED_TO_ESM)
+                {
+                    col!(lifted_setter_params)[source_index] = this.graph.generate_new_symbol(
+                        source_index_.get(),
+                        SymbolKind::Other,
+                        b"value",
+                    );
+                }
+
                 let wrapped_ref = col_ref!(wrapper_refs)[source_index];
 
                 // Create the wrapper part for wrapped files. This is needed by a later step.
@@ -627,6 +644,7 @@ pub(crate) fn scan_imports_and_exports(
         // const needs_export_symbol_from_runtime: []const bool = this.graph.meta.items().needs_export_symbol_from_runtime;
 
         let mut runtime_export_symbol_ref: Ref = Ref::NONE;
+        let mut runtime_export_cjs_symbol_ref: Ref = Ref::NONE;
         let mut ident_scratch: Vec<u8> = Vec::new();
         let module_preload = this.module_preload();
         this.entry_point_part_indices = vec![u32::MAX; col_ref!(import_records_list).len()];
@@ -790,17 +808,25 @@ pub(crate) fn scan_imports_and_exports(
             // previous step. The previous step can't do this because it's running in
             // parallel and can't safely mutate the "importsToBind" map of another file.
             if flag.needs_export_symbol_from_runtime {
-                if !runtime_export_symbol_ref.is_valid() {
-                    runtime_export_symbol_ref =
-                        this.runtime_function(this.export_runtime_function());
-                }
+                let export_symbol_ref = if col_ref!(lifted_setter_params)[id].is_valid() {
+                    if !runtime_export_cjs_symbol_ref.is_valid() {
+                        runtime_export_cjs_symbol_ref = this.runtime_function(b"__exportCjs");
+                    }
+                    runtime_export_cjs_symbol_ref
+                } else {
+                    if !runtime_export_symbol_ref.is_valid() {
+                        runtime_export_symbol_ref =
+                            this.runtime_function(this.export_runtime_function());
+                    }
+                    runtime_export_symbol_ref
+                };
 
-                debug_assert!(runtime_export_symbol_ref.is_valid());
+                debug_assert!(export_symbol_ref.is_valid());
 
                 this.graph.generate_symbol_import_and_use(
                     source_index,
                     bun_ast::NAMESPACE_EXPORT_PART_INDEX,
-                    runtime_export_symbol_ref,
+                    export_symbol_ref,
                     1,
                     Index::RUNTIME,
                 )?;

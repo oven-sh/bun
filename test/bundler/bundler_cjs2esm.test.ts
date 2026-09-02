@@ -881,7 +881,7 @@ describe("bundler", () => {
     cjs2esm: true,
     onAfterBundle(api) {
       const out = api.readFile("/out.js");
-      expect(out).toContain("__export(exports_react, {");
+      expect(out).toContain("__exportCjs(exports_react, {");
       expect(out).not.toContain("__toESM");
     },
     run: {
@@ -1226,5 +1226,114 @@ describe("bundler", () => {
     run: {
       stdout: "object 7 true n",
     },
+  });
+
+  // A write through the namespace of a lifted CommonJS module assigns the
+  // lifted binding, as a write to `module.exports` does, so every reader sees
+  // it: the default import, the named import and the `import *` namespace.
+  const writableConfig = {
+    "/config.js": /* js */ `
+      exports.debug = false;
+      exports.name = "cfg";
+    `,
+  };
+  const writeThroughDefaultImport = /* js */ `
+    import config from "./config.js";
+    import { debug } from "./config.js";
+    import * as ns from "./config.js";
+    config.debug = true;
+    config.extra = 1;
+    console.log(config.debug, debug, ns.debug, config.extra, config.name);
+  `;
+  itBundled("cjs2esm/WriteThroughDefaultImportAssignsBinding", {
+    files: {
+      "/entry.js": writeThroughDefaultImport,
+      ...writableConfig,
+    },
+    cjs2esm: true,
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toContain("__exportCjs(exports_config, {");
+      expect(out).toContain("debug: (value) => $debug = value");
+      expect(out).not.toContain("__toESM");
+    },
+    run: {
+      stdout: "true true true 1 cfg",
+    },
+  });
+  itBundled("cjs2esm/WriteThroughDefaultImportAssignsBindingMinified", {
+    files: {
+      "/entry.js": writeThroughDefaultImport,
+      ...writableConfig,
+    },
+    minifySyntax: true,
+    minifyIdentifiers: true,
+    run: {
+      stdout: "true true true 1 cfg",
+    },
+  });
+  itBundled("cjs2esm/WriteThroughDefaultImportWithoutNamespaceSetters", {
+    files: {
+      "/entry.js": writeThroughDefaultImport,
+      ...writableConfig,
+    },
+    // a lifted CommonJS module's namespace is writable either way: it stands
+    // in for `module.exports`, not for an ES module namespace
+    deprecatedNamespaceObjectSetters: false,
+    cjs2esm: true,
+    run: {
+      stdout: "true true true 1 cfg",
+    },
+  });
+  // The server-side rendering idiom that silences the useLayoutEffect warning.
+  itBundled("cjs2esm/PatchReactExportThroughDefaultImport", {
+    files: {
+      "/entry.js": /* js */ `
+        import React from "react";
+        import { useLayoutEffect } from "react";
+        React.useLayoutEffect = React.useEffect;
+        console.log(React.useLayoutEffect === React.useEffect, useLayoutEffect === React.useEffect, React.useLayoutEffect());
+      `,
+      "/node_modules/react/package.json": /* json */ `
+        { "name": "react", "version": "19.0.0", "main": "index.js" }
+      `,
+      "/node_modules/react/index.js": /* js */ `
+        'use strict';
+        function useEffect() { return "effect"; }
+        function useLayoutEffect() { return "layout"; }
+        exports.useEffect = useEffect;
+        exports.useLayoutEffect = useLayoutEffect;
+      `,
+    },
+    cjs2esm: true,
+    run: {
+      stdout: "true true effect",
+    },
+  });
+  itBundled("cjs2esm/WriteThroughDefaultImportSplitting", {
+    files: {
+      "/a.js": /* js */ `
+        import config from "./config.js";
+        import { read } from "./shared.js";
+        config.debug = true;
+        console.log("a", config.debug, read());
+      `,
+      "/b.js": /* js */ `
+        import { read } from "./shared.js";
+        console.log("b", read());
+      `,
+      "/shared.js": /* js */ `
+        import { debug } from "./config.js";
+        export function read() { return debug; }
+      `,
+      ...writableConfig,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    outdir: "/out",
+    splitting: true,
+    run: [
+      { file: "/out/a.js", stdout: "a true true" },
+      { file: "/out/b.js", stdout: "b false" },
+    ],
   });
 });

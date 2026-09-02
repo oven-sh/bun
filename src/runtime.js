@@ -340,3 +340,16 @@ export var __promiseAll = args => Promise.all(args);
 // React Compiler memo-cache slot sentinels.
 export var __MEMO_CACHE_SENTINEL = /* @__PURE__ */ Symbol.for("react.memo_cache_sentinel");
 export var __EARLY_RETURN_SENTINEL = /* @__PURE__ */ Symbol.for("react.early_return_sentinel");
+
+// The namespace of a CommonJS module whose `exports.x = ...` were lifted to
+// bindings stands in for `module.exports`: a write through it assigns the
+// binding, so every importer sees it.
+export var __exportCjs = /* @__PURE__ */ (target, getters, setters) => {
+  for (var name in getters)
+    __defProp(target, name, {
+      get: getters[name],
+      set: setters[name],
+      enumerable: true,
+      configurable: true,
+    });
+};

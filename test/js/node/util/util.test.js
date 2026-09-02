@@ -792,4 +792,34 @@ describe("lazy inspect exports", () => {
     expect(JSON.parse(stdout)).toEqual({ replaced: true, deleted: true, gone: true, keys: ["format"] });
     expect(exitCode).toBe(0);
   });
+
+  it("stay read-only on a frozen util, as in node", async () => {
+    const fixture = `
+      const util = require("node:util");
+      Object.freeze(util);
+      const shape = d => ({ value: typeof d.value, writable: d.writable, enumerable: d.enumerable, configurable: d.configurable });
+      const before = shape(Object.getOwnPropertyDescriptor(util, "inspect"));
+      const first = util.inspect;
+      util.inspect = () => "replaced";
+      const after = shape(Object.getOwnPropertyDescriptor(util, "inspect"));
+      console.log(JSON.stringify({ frozen: Object.isFrozen(util), before, after, same: util.inspect === first, out: util.inspect({ a: 1 }) }));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const readOnly = { value: "function", writable: false, enumerable: true, configurable: false };
+    expect(JSON.parse(stdout)).toEqual({
+      frozen: true,
+      before: readOnly,
+      after: readOnly,
+      same: true,
+      out: "{ a: 1 }",
+    });
+    expect(exitCode).toBe(0);
+  });
 });

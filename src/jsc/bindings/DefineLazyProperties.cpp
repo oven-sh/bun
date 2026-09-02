@@ -46,13 +46,13 @@ JSC_DEFINE_CUSTOM_GETTER(lazyPropertyGetter, (JSGlobalObject * globalObject, Enc
     JSValue value = call(globalObject, loader, getCallData(loader), jsUndefined(), args);
     RETURN_IF_EXCEPTION(scope, {});
 
-    // Replace the getter with the value, as a plain data property with the
-    // same enumerable/configurable bits. Skip if the loader redefined the
-    // property itself, or if the object was frozen in the meantime (a
-    // ReadOnly CustomValue must stay read-only).
+    // Replace the getter with the value, as a data property with the same
+    // attributes (a frozen target keeps ReadOnly | DontDelete, as V8's
+    // ReconfigureDataProperty does). Skip if the loader redefined the
+    // property itself.
     unsigned attributes = 0;
     PropertyOffset offset = thisObject->getDirectOffset(vm, propertyName, attributes);
-    if (isValidOffset(offset) && (attributes & PropertyAttribute::CustomValue) && !(attributes & PropertyAttribute::ReadOnly)) {
+    if (isValidOffset(offset) && (attributes & PropertyAttribute::CustomValue)) {
         thisObject->putDirect(vm, propertyName, value, attributesForStructure(attributes) & ~static_cast<unsigned>(PropertyAttribute::CustomValue));
     }
 

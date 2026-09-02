@@ -4286,7 +4286,9 @@ impl<'a> LinkerContext<'a> {
                 }
                 pattern.properties().iter().all(|property| {
                     !property.flags.contains(bun_ast::flags::Property::IsSpread)
-                        && !property.flags.contains(bun_ast::flags::Property::IsComputed)
+                        && !property
+                            .flags
+                            .contains(bun_ast::flags::Property::IsComputed)
                         && property.default_value.is_none()
                         && matches!(property.key.data, bun_ast::ExprData::EString(_))
                         && matches!(property.value.data, bun_ast::b::B::BIdentifier(_))

@@ -48,6 +48,7 @@ function startMockCDP(behavior) {
   const sid = "SESS";
   let navN = 0;
   let evalN = 0;
+  let lifecycleEnabled = false;
   const send = (ws, obj) => ws.send(JSON.stringify(obj));
   const ev = (ws, method, params) => send(ws, { method, params, sessionId: sid });
   const frameNavigated = (ws, loaderId, url) =>
@@ -80,7 +81,16 @@ function startMockCDP(behavior) {
           case "Target.attachToTarget":
             return reply({ sessionId: sid });
           case "Page.enable":
+            // "slow-enable": hold the reply long enough for a short
+            // navigate timeout to fire mid-attach.
+            if (behavior === "slow-enable") {
+              setTimeout(() => reply({}), 2000);
+              return;
+            }
+            return reply({});
           case "Page.setLifecycleEventsEnabled":
+            lifecycleEnabled = true;
+            return reply({});
           case "Runtime.enable":
           case "Target.closeTarget":
             return reply({});
@@ -116,6 +126,18 @@ function startMockCDP(behavior) {
                 });
                 ev(ws, "Page.loadEventFired", { timestamp: 3 });
                 // Never commit url2 — the test asserts it stays pending.
+              }
+              return;
+            }
+
+            if (behavior === "slow-enable") {
+              // Lifecycle events only flow if the client actually sent
+              // Page.setLifecycleEventsEnabled for this session.
+              frameNavigated(ws, L, url);
+              if (lifecycleEnabled) {
+                ev(ws, "Page.lifecycleEvent", {
+                  frameId: "F", loaderId: L, name: "DOMContentLoaded", timestamp: 2,
+                });
               }
               return;
             }
@@ -164,7 +186,10 @@ function startMockCDP(behavior) {
 }
 `;
 
-async function run(behavior: "dcl-only" | "load" | "silent" | "stale-load" | "uninitiated", body: string) {
+async function run(
+  behavior: "dcl-only" | "load" | "silent" | "stale-load" | "uninitiated" | "slow-enable",
+  body: string,
+) {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -395,6 +420,33 @@ test.concurrent("navigate({timeout}): stale timer does not reject a later naviga
   expect(stderr).toBe("");
   // Still pending after the first navigate's stale 400ms timer fired.
   expect(stdout.trim()).toBe("after-stale=pending");
+  expect(exitCode).toBe(0);
+});
+
+// --- attach-chain races ------------------------------------------------------
+
+test.concurrent("a first-navigate timeout during the attach chain does not break the session", async () => {
+  // The mock holds the Page.enable reply for 2s, so navigate({timeout:300})
+  // rejects mid-attach and the stale gate drops the late reply. The
+  // per-session setup (Runtime.enable, Page.setLifecycleEventsEnabled)
+  // must go out from the attach step, not from that dropped reply: the
+  // mock emits lifecycleEvent(DCL) only if it received
+  // setLifecycleEventsEnabled, and the second navigate settles on it.
+  const { stdout, stderr, exitCode } = await run(
+    "slow-enable",
+    `
+    const first = await view.navigate("http://example/one", { timeout: 300 })
+      .then(() => "resolved", e => "rejected: " + e.message);
+    console.log("first=" + first);
+    await view.navigate("http://example/two", { waitUntil: "domcontentloaded", timeout: 3000 });
+    console.log("second=ok url=" + view.url);
+    `,
+  );
+  expect(stderr).toBe("");
+  expect(stdout.trim().split("\n")).toEqual([
+    "first=rejected: Navigation timeout of 300ms exceeded",
+    "second=ok url=http://example/two",
+  ]);
   expect(exitCode).toBe(0);
 });
 

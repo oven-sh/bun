@@ -813,22 +813,20 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         uint32_t cid = nextId();
         m_pending.add(cid, Pending { Method::PageEnable, entry.slot, entry.viewId, entry.navGen });
         send(cid, Command(cid, "Page.enable"_s, sidSpan));
+
+        // Per-session setup, fire-and-forget, sent here and not from the
+        // PageEnable reply handler: a navigate timeout makes the stale gate
+        // drop that reply, which must only cost the navigation, not the
+        // session's console and lifecycle events.
+        uint32_t rid = nextId();
+        send(0, Command(rid, "Runtime.enable"_s, sidSpan));
+        uint32_t lid = nextId();
+        send(0, Command(lid, "Page.setLifecycleEventsEnabled"_s, sidSpan).boolean("enabled"_s, true));
         return;
     }
     case Method::PageEnable: {
-        // Chain into Runtime.enable (for consoleAPICalled later) then
-        // Page.navigate to the stashed url.
         auto ss = view->m_sessionId.utf8();
         std::span<const char> sidSpan(ss.data(), ss.length());
-
-        // Runtime.enable — fire-and-forget, untracked. We don't need to
-        // wait for its reply before navigating.
-        uint32_t rid = nextId();
-        send(0, Command(rid, "Runtime.enable"_s, sidSpan));
-
-        // Fire-and-forget; Page.lifecycleEvent is what settles waitUntil:'domcontentloaded'.
-        uint32_t lid = nextId();
-        send(0, Command(lid, "Page.setLifecycleEventsEnabled"_s, sidSpan).boolean("enabled"_s, true));
 
         // Page.navigate with the url stashed by the first navigate() call.
         // The response confirms the navigation STARTED; Page.loadEventFired

@@ -1723,8 +1723,7 @@ impl<'a> Formatter<'a> {
                     } else if js_type == JSType::WeakMap {
                         0
                     } else {
-                        // A shadowed non-numeric `size` says nothing about the
-                        // real entry count; iterate so the diff shows the entries.
+                        // non-zero so `for_each` below prints the real entries
                         1
                     };
 
@@ -1775,8 +1774,7 @@ impl<'a> Formatter<'a> {
                     } else if js_type == JSType::WeakSet {
                         0
                     } else {
-                        // A shadowed non-numeric `size` says nothing about the
-                        // real entry count; iterate so the diff shows the entries.
+                        // non-zero so `for_each` below prints the real entries
                         1
                     };
 

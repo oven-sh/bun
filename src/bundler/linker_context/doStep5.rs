@@ -529,7 +529,7 @@ impl LinkerContext<'_> {
                 stmts: stmts_eat1!(Stmt::allocate(arena, S::Return { value: Some(value) }, loc,)),
                 loc,
             };
-            properties.push(G::Property {
+            let mut property = G::Property {
                 key: Some(Expr::allocate(
                     arena,
                     // TODO: test emoji work as expected (relevant for WASM exports)
@@ -549,7 +549,10 @@ impl LinkerContext<'_> {
                     loc,
                 )),
                 ..Default::default()
-            });
+            };
+            property.flags =
+                E::own_key_property_flags(property.key.as_ref().expect("infallible: prop has key"));
+            properties.push(property);
             ns_export_symbol_uses
                 .put_assume_capacity(exp_data.import_ref, SymbolUse { count_estimate: 1 });
 

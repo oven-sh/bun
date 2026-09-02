@@ -1445,6 +1445,216 @@ describe("bundler", () => {
       stdout: "false",
     },
   });
+  // "{ __proto__: x }" sets the prototype of the object. "{ __proto__ }" and
+  // "{ ["__proto__"]: x }" define an own property. Each form has to survive
+  // the printer as written, whatever happens to the value (renamed by the
+  // bundler, inlined by minify-syntax, or rewritten to a namespace access).
+  describe.each([
+    ["", {}],
+    ["MinifySyntax", { minifySyntax: true }],
+    ["MinifyIdentifiers", { minifyIdentifiers: true }],
+    ["MinifyAll", { minifySyntax: true, minifyIdentifiers: true, minifyWhitespace: true }],
+  ] as const)("ObjectLiteralProtoKeys%s", (suffix, minify) => {
+    itBundled(`edgecase/ObjectLiteralProtoKeys${suffix}`, {
+      ...minify,
+      files: {
+        "/entry.js": /* js */ `
+          import { P, __proto__ } from "./esm.js";
+          import { fromCjs } from "./from-cjs.js";
+          function colon(__proto__) { return { __proto__: __proto__ }; }
+          function quoted(__proto__) { return { "__proto__": __proto__ }; }
+          function computed(__proto__) { return { ["__proto__"]: __proto__ }; }
+          function shorthand(__proto__) { return { __proto__ }; }
+          // the nested locals collide with the import and get renamed
+          function shorthandRenamed(proto) { { let __proto__ = proto; return { __proto__ }; } }
+          function colonRenamed(proto) { { let __proto__ = proto; return { __proto__: __proto__ }; } }
+          function method() { return { __proto__() { return 1; } }; }
+          function accessor() { return { get __proto__() { return 2; } }; }
+          function spread(__proto__) { return { a: 1, ...{ b: 2, __proto__ }, c: 3 }; }
+          class Field { __proto__ = P; }
+          function destructure(o) { { let __proto__ = null; ({ __proto__ } = o); return __proto__; } }
+          // a default value has to print once, after the (renamed) target
+          function destructureDefault(o) { { let __proto__ = null; ({ __proto__: __proto__ = 7 } = o); return __proto__; } }
+          function destructureShorthandDefault(o) { { let __proto__ = null; ({ __proto__ = 8 } = o); return __proto__; } }
+          function describe(o) {
+            return [Object.getPrototypeOf(o) === P, Object.hasOwn(o, "__proto__")];
+          }
+          console.log(JSON.stringify({
+            colon: describe(colon(P)),
+            quoted: describe(quoted(P)),
+            computed: describe(computed(P)),
+            shorthand: describe(shorthand(P)),
+            shorthandRenamed: describe(shorthandRenamed(P)),
+            colonRenamed: describe(colonRenamed(P)),
+            method: describe(method()),
+            accessor: describe(accessor()),
+            spread: describe(spread(P)),
+            field: describe(new Field()),
+            destructure: destructure({ ["__proto__"]: 42 }),
+            destructureDefault: [destructureDefault(Object.create(null)), destructureDefault({ ["__proto__"]: 42 })],
+            destructureShorthandDefault: [destructureShorthandDefault(Object.create(null)), destructureShorthandDefault({ ["__proto__"]: 42 })],
+            importShorthand: describe({ __proto__ }),
+            importColon: describe({ __proto__: __proto__ }),
+            importComputed: describe({ ["__proto__"]: __proto__ }),
+            fromCjs,
+          }));
+        `,
+        "/esm.js": /* js */ `
+          export const P = { isP: true };
+          export { P as __proto__ };
+        `,
+        "/from-cjs.js": /* js */ `
+          import { P, __proto__ } from "./mod.cjs";
+          function describe(o) {
+            return [Object.getPrototypeOf(o) === P, Object.hasOwn(o, "__proto__")];
+          }
+          export const fromCjs = {
+            shorthand: describe({ __proto__ }),
+            colon: describe({ __proto__: __proto__ }),
+            computed: describe({ ["__proto__"]: __proto__ }),
+          };
+        `,
+        "/mod.cjs": /* js */ `
+          const P = { isP: true };
+          exports.P = P;
+          Object.defineProperty(exports, "__proto__", { value: P, enumerable: true });
+        `,
+      },
+      run: {
+        stdout: JSON.stringify({
+          colon: [true, false],
+          quoted: [true, false],
+          computed: [false, true],
+          shorthand: [false, true],
+          shorthandRenamed: [false, true],
+          colonRenamed: [true, false],
+          method: [false, true],
+          accessor: [false, true],
+          spread: [false, true],
+          field: [false, true],
+          destructure: 42,
+          destructureDefault: [7, 42],
+          destructureShorthandDefault: [8, 42],
+          importShorthand: [false, true],
+          importColon: [true, false],
+          importComputed: [false, true],
+          fromCjs: {
+            shorthand: [false, true],
+            colon: [true, false],
+            computed: [false, true],
+          },
+        }),
+      },
+    });
+  });
+  // An export alias named "__proto__" is a key of the generated
+  // "__export(exports, { ... })" object literal and must stay an own property.
+  itBundled("edgecase/ExportNamedProtoNamespace", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as ns from "./lib.js";
+        import * as star from "./star.js";
+        import { __proto__ as aliased, quoted } from "./lib.js";
+        console.log(JSON.stringify([
+          Object.getOwnPropertyNames(ns).sort(),
+          Object.hasOwn(ns, "__proto__"),
+          ns.__proto__ === aliased && aliased() === "x",
+          quoted === aliased,
+          Object.getOwnPropertyNames(star).sort(),
+          star.__proto__ === ns,
+        ]));
+      `,
+      "/lib.js": /* js */ `
+        function p() { return "x" }
+        export { p as __proto__, p as other, p as "quoted" }
+      `,
+      "/star.js": /* js */ `
+        export * as __proto__ from "./lib.js";
+      `,
+    },
+    run: {
+      stdout: JSON.stringify([["__proto__", "other", "quoted"], true, true, true, ["__proto__"], true]),
+    },
+  });
+  itBundled("edgecase/ExportNamedProtoCJSFormat", {
+    files: {
+      "/entry.js": /* js */ `
+        function p() { return "x" }
+        export { p as __proto__, p as other }
+      `,
+      "/test.js": /* js */ `
+        const lib = require("./out.js");
+        console.log(JSON.stringify([Object.hasOwn(lib, "__proto__"), lib.__proto__ === lib.other, Object.keys(lib).sort()]));
+      `,
+    },
+    format: "cjs",
+    run: {
+      file: "/test.js",
+      stdout: JSON.stringify([true, true, ["__proto__", "other"]]),
+    },
+  });
+  // The dev server lowers the exports of a module to "hmr.exports = { ... }".
+  // Four arms build that literal from a user-chosen name: an export clause
+  // alias, a moved constant, a class declaration and "export * as".
+  itBundled("edgecase/ExportNamedProtoHmrExports", {
+    format: "internal_bake_dev",
+    files: {
+      "/entry.ts": /* js */ `
+        import * as a from './a';
+        import * as b from './b';
+        import * as c from './c';
+        import * as d from './d';
+        console.log(a, b, c, d);
+      `,
+      "/a.ts": `const x = { own: true }; export { x as __proto__ };`,
+      "/b.ts": `export const __proto__ = 1;`,
+      "/c.ts": `export class __proto__ {}`,
+      "/d.ts": `export * as __proto__ from './other';`,
+      "/other.ts": `export const y = 1;`,
+    },
+    onAfterBundle(api) {
+      const output = api.readFile("/out.js");
+      const withProto = (output.match(/hmr\.exports = \{[^}]*\}/g) ?? []).filter(o => o.includes("__proto__"));
+      expect(withProto).toHaveLength(4);
+      for (const o of withProto) expect(o).toContain('["__proto__"]:');
+    },
+  });
+  // The namespace of a JSON module goes through the same "__export" literal.
+  itBundled("edgecase/JsonNamespaceImportProtoKey", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as ns from "./data.json";
+        const get = k => ns[k];
+        console.log(JSON.stringify([Object.keys(ns).sort(), get("__proto__"), get("a")]));
+      `,
+      "/data.json": `{ "__proto__": { "fromJson": true }, "a": 1 }`,
+    },
+    run: {
+      stdout: JSON.stringify([["__proto__", "a", "default"], { fromJson: true }, 1]),
+    },
+  });
+  // The named import turns the "__proto__" key of the JSON object literal into
+  // a reference to the exported variable. The key has to stay computed.
+  itBundled("edgecase/JsonNamedImportProtoKeyMinified", {
+    files: {
+      "/entry.js": /* js */ `
+        import data, { __proto__ as p, a } from "./data.json";
+        console.log(JSON.stringify([
+          Object.getPrototypeOf(data) === Object.prototype,
+          Object.hasOwn(data, "__proto__"),
+          data.__proto__ === p,
+          p,
+          a,
+        ]));
+      `,
+      "/data.json": `{ "__proto__": { "fromJson": true }, "a": 1 }`,
+    },
+    minifySyntax: true,
+    minifyIdentifiers: true,
+    run: {
+      stdout: JSON.stringify([true, true, true, { fromJson: true }, 1]),
+    },
+  });
   itBundled("edgecase/ImportOptionsArgument", {
     files: {
       "/entry.js": `

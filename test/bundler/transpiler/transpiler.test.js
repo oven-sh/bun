@@ -269,6 +269,85 @@ describe("Bun.Transpiler", () => {
     });
   });
 
+  // "{ __proto__: x }" sets the prototype of the object while "{ __proto__ }"
+  // and "{ ["__proto__"]: x }" define an own property, so the printer must not
+  // switch between these forms the way it does for any other key.
+  describe("__proto__ property keys", () => {
+    it("does not collapse a prototype setter into a shorthand property", () => {
+      ts.expectPrinted_(
+        "function foo(__proto__) { return { __proto__: __proto__ } }",
+        "function foo(__proto__) {\n  return { __proto__: __proto__ };\n}",
+      );
+      ts.expectPrinted_(
+        "function foo(__proto__) { return { '__proto__': __proto__ } }",
+        "function foo(__proto__) {\n  return { __proto__: __proto__ };\n}",
+      );
+      ts.expectPrinted_(
+        "import { __proto__ } from 'foo'; let foo = () => ({ __proto__: __proto__ })",
+        'import { __proto__ } from "foo";\nlet foo = () => ({ __proto__: __proto__ });\n',
+      );
+      ts.expectPrinted_(
+        "import { __proto__ } from 'foo'; let foo = () => ({ '__proto__': __proto__ })",
+        'import { __proto__ } from "foo";\nlet foo = () => ({ __proto__: __proto__ });\n',
+      );
+      ts.expectPrintedMin_(
+        "function bar(proto) { let __proto__ = proto; return { __proto__: __proto__ } }",
+        "function bar(proto) {\n  return { __proto__: proto };\n}",
+      );
+    });
+
+    it("keeps a shorthand property shorthand", () => {
+      ts.expectPrinted_(
+        "function foo(__proto__) { return { __proto__ } }",
+        "function foo(__proto__) {\n  return { __proto__ };\n}",
+      );
+      ts.expectPrinted_(
+        "import { __proto__ } from 'foo'; let foo = () => ({ __proto__ })",
+        'import { __proto__ } from "foo";\nlet foo = () => ({ __proto__ });\n',
+      );
+      ts.expectPrinted_("x = { a, ...{ b, __proto__, d }, e }", "x = { a, ...{ b, __proto__, d }, e }");
+    });
+
+    it("expands a shorthand property whose value changed into a computed key", () => {
+      // minify-syntax inlines the single-use "let", so the value is no longer the
+      // identifier "__proto__" and "__proto__: proto" would set the prototype
+      ts.expectPrintedMin_(
+        "function bar(proto) { let __proto__ = proto; return { __proto__ } }",
+        'function bar(proto) {\n  return { ["__proto__"]: proto };\n}',
+      );
+    });
+
+    it("leaves computed keys, methods, accessors and class fields alone", () => {
+      ts.expectPrinted_(
+        "function foo(__proto__) { return { ['__proto__']: __proto__ } }",
+        'function foo(__proto__) {\n  return { ["__proto__"]: __proto__ };\n}',
+      );
+      ts.expectPrinted_(
+        "import { __proto__ } from 'foo'; let foo = () => ({ ['__proto__']: __proto__ })",
+        'import { __proto__ } from "foo";\nlet foo = () => ({ ["__proto__"]: __proto__ });\n',
+      );
+      ts.expectPrintedMin_(
+        "function foo(__proto__) { return { ['__proto__']: __proto__ } }",
+        'function foo(__proto__) {\n  return { ["__proto__"]: __proto__ };\n}',
+      );
+      ts.expectPrinted_(
+        "x = { __proto__() {}, get __proto__() {}, set __proto__(v) {} }",
+        "x = { __proto__() {}, get __proto__() {}, set __proto__(v) {} }",
+      );
+      ts.expectPrinted_(
+        "class A { __proto__ = 1; static __proto__ = 2 }",
+        "class A {\n  __proto__ = 1;\n  static __proto__ = 2;\n}",
+      );
+      ts.expectPrinted_("({ __proto__: x, __proto__: y } = z)", "({ __proto__: x, __proto__: y } = z)");
+    });
+
+    it("prints a destructuring default once, in both key forms", () => {
+      ts.expectPrinted_("({ __proto__: __proto__ = 1 } = z)", "({ __proto__: __proto__ = 1 } = z)");
+      ts.expectPrinted_("({ __proto__ = 1 } = z)", "({ __proto__ = 1 } = z)");
+      ts.expectPrinted_("({ a: __proto__ = 1, __proto__: a = 2 } = z)", "({ a: __proto__ = 1, __proto__: a = 2 } = z)");
+    });
+  });
+
   describe("TypeScript", () => {
     it("import Foo = Baz.Bar", () => {
       ts.expectPrinted_("import Foo = Baz.Bar;\nexport default Foo;", "const Foo = Baz.Bar;\nexport default Foo");

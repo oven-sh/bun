@@ -950,6 +950,25 @@ where
     b'"'
 }
 
+/// A `__proto__` key keeps its parsed form: `{ __proto__: x }` sets the prototype, `{ __proto__ }` is an own property.
+fn can_use_shorthand_property(
+    key: &js_ast::e::String,
+    name: &[u8],
+    flags: js_ast::flags::PropertySet,
+) -> bool {
+    key.eql_bytes(name)
+        && (!key.eql_comptime(b"__proto__")
+            || flags.contains(js_ast::flags::Property::WasShorthand))
+}
+
+/// `["__proto__"]: x` is the only own-property form left once the shorthand value was renamed.
+fn must_print_proto_key_as_computed(
+    key: &js_ast::e::String,
+    flags: js_ast::flags::PropertySet,
+) -> bool {
+    flags.contains(js_ast::flags::Property::WasShorthand) && key.eql_comptime(b"__proto__")
+}
+
 #[derive(Clone, Copy)]
 pub struct Whitespacer {
     pub normal: &'static [u8],
@@ -4782,6 +4801,26 @@ pub(crate) mod __gated_printer {
             }
         }
 
+        /// The identifier a property value prints as, if it prints as a bare identifier.
+        fn shorthand_value_name(&mut self, item: &G::Property) -> Option<&'a [u8]> {
+            match &item.value.as_ref()?.data {
+                ExprData::EIdentifier(e) => Some(self.name_for_symbol(e.ref_)),
+                ExprData::EImportIdentifier(e) => {
+                    if self.options.input_files_for_dev_server.is_some() {
+                        return None;
+                    }
+                    // Make sure we're not using a property access instead of an identifier
+                    let ref_ = self.symbols().follow(e.ref_);
+                    let symbol = self.symbols().get_const(ref_)?;
+                    if symbol.namespace_alias.is_some() {
+                        return None;
+                    }
+                    Some(self.name_for_symbol(e.ref_))
+                }
+                _ => None,
+            }
+        }
+
         pub(crate) fn print_property(&mut self, item_in: &G::Property) {
             // `G::Property` isn't `Copy`, so take a borrow and shallow-copy the
             // mutable bits we may rewrite (key + flags).
@@ -4950,87 +4989,50 @@ pub(crate) mod __gated_printer {
                     self.add_source_mapping(key.loc);
                     if key_str.is_utf8() {
                         self.print_space_before_identifier();
-                        let mut allow_shorthand = true;
                         if !IS_JSON && lexer::is_identifier(key_str.slice8()) {
-                            self.print_identifier(key_str.slice8());
-                        } else {
-                            allow_shorthand = false;
-                            self.print_string_literal_e_string(&key_str, false);
-                        }
-
-                        // Use a shorthand property if the names are the same
-                        if let Some(val) = &item.value {
-                            match &val.data {
-                                ExprData::EIdentifier(e) => {
-                                    if key_str.slice8() == self.name_for_symbol(e.ref_) {
-                                        if let Some(initial) = &item.initializer {
-                                            self.print_initializer(*initial);
-                                        }
-                                        if allow_shorthand {
-                                            return;
-                                        }
+                            // Use a shorthand property if the names are the same
+                            if let Some(name) = self.shorthand_value_name(&item) {
+                                if can_use_shorthand_property(&key_str, name, item.flags) {
+                                    self.print_identifier(key_str.slice8());
+                                    if let Some(initial) = &item.initializer {
+                                        self.print_initializer(*initial);
                                     }
+                                    return;
                                 }
-                                ExprData::EImportIdentifier(e) => 'inner: {
-                                    let ref_ = self.symbols().follow(e.ref_);
-                                    if self.options.input_files_for_dev_server.is_some() {
-                                        break 'inner;
-                                    }
-                                    if let Some(symbol) = self.symbols().get_const(ref_) {
-                                        if symbol.namespace_alias.is_none()
-                                            && key_str.slice8() == self.name_for_symbol(e.ref_)
-                                        {
-                                            if let Some(initial) = &item.initializer {
-                                                self.print_initializer(*initial);
-                                            }
-                                            if allow_shorthand {
-                                                return;
-                                            }
-                                        }
-                                    }
-                                }
-                                _ => {}
                             }
+
+                            if must_print_proto_key_as_computed(&key_str, item.flags) {
+                                self.print(b"[");
+                                self.print_string_literal_e_string(&key_str, false);
+                                self.print(b"]");
+                            } else {
+                                self.print_identifier(key_str.slice8());
+                            }
+                        } else {
+                            self.print_string_literal_e_string(&key_str, false);
                         }
                     } else if !IS_JSON && self.can_print_identifier_utf16(key_str.slice16()) {
                         self.print_space_before_identifier();
-                        self.print_identifier_utf16(key_str.slice16())
-                            .expect("unreachable");
 
                         // Use a shorthand property if the names are the same
-                        if let Some(val) = &item.value {
-                            match &val.data {
-                                ExprData::EIdentifier(e) => {
-                                    if item.flags.contains(js_ast::flags::Property::WasShorthand)
-                                        || strings::utf16_eql_string(
-                                            key_str.slice16(),
-                                            self.name_for_symbol(e.ref_),
-                                        )
-                                    {
-                                        if let Some(initial) = &item.initializer {
-                                            self.print_initializer(*initial);
-                                        }
-                                        return;
-                                    }
+                        if let Some(name) = self.shorthand_value_name(&item) {
+                            if can_use_shorthand_property(&key_str, name, item.flags) {
+                                self.print_identifier_utf16(key_str.slice16())
+                                    .expect("unreachable");
+                                if let Some(initial) = &item.initializer {
+                                    self.print_initializer(*initial);
                                 }
-                                ExprData::EImportIdentifier(e) => {
-                                    let ref_ = self.symbols().follow(e.ref_);
-                                    if let Some(symbol) = self.symbols().get_const(ref_) {
-                                        if symbol.namespace_alias.is_none()
-                                            && strings::utf16_eql_string(
-                                                key_str.slice16(),
-                                                self.name_for_symbol(e.ref_),
-                                            )
-                                        {
-                                            if let Some(initial) = &item.initializer {
-                                                self.print_initializer(*initial);
-                                            }
-                                            return;
-                                        }
-                                    }
-                                }
-                                _ => {}
+                                return;
                             }
+                        }
+
+                        if must_print_proto_key_as_computed(&key_str, item.flags) {
+                            self.print(b"[");
+                            self.print_string_literal_e_string(&key_str, false);
+                            self.print(b"]");
+                        } else {
+                            self.print_identifier_utf16(key_str.slice16())
+                                .expect("unreachable");
                         }
                     } else {
                         let c = best_quote_char_for_string(key_str.slice16(), false);

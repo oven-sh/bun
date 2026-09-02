@@ -1452,6 +1452,24 @@ describe.concurrent("bundler", () => {
       file: "/test.js",
     },
   });
+  itBundled("default/ExportSpecialNameBundle", {
+    files: {
+      "/entry.js": /* js */ `
+        const lib = require('./lib.mjs');
+        console.log(lib.__proto__, Object.hasOwn(lib, '__proto__'));
+      `,
+      "/lib.mjs": `export const __proto__ = 123;`,
+    },
+    format: "cjs",
+    target: "node",
+    onAfterBundle(api) {
+      // A plain "__proto__:" key would set the prototype of the export object literal
+      api.expectFile("/out.js").toContain('["__proto__"]: () => __proto__');
+    },
+    run: {
+      stdout: "123 true",
+    },
+  });
   itBundled("default/MinifiedBundleES6", {
     files: {
       "/entry.js": /* js */ `
@@ -7092,5 +7110,118 @@ describe.concurrent("bundler", () => {
     run: {
       stdout: "5 9 2 7",
     },
+  });
+  // "{ __proto__: x }" sets the prototype while "{ __proto__ }" and
+  // "{ ['__proto__']: x }" define an own property. The renamer gives the
+  // nested locals new names, so a shorthand "__proto__" has to become a
+  // computed key instead of "__proto__: __proto__2".
+  describe.each([false, true])("ObjectLiteralProtoSetterEdgeCases (minifySyntax: %p)", minifySyntax => {
+    itBundled(`default/ObjectLiteralProtoSetterEdgeCases${minifySyntax ? "MinifySyntax" : ""}`, {
+      files: {
+        "/local-shorthand.js": /* js */ `
+          import { __proto__, bar } from 'foo'
+          export function foo(__proto__, bar) {
+            {
+              let __proto__, bar // These locals will be renamed
+              console.log(
+                'this must not become "{ __proto__: ... }":',
+                {
+                  __proto__,
+                  bar,
+                },
+              )
+            }
+          }
+        `,
+        "/local-computed.js": /* js */ `
+          import { __proto__, bar } from 'foo'
+          export function foo(__proto__, bar) {
+            {
+              let __proto__, bar // These locals will be renamed
+              console.log(
+                'this must not become "{ __proto__: ... }":',
+                {
+                  ['__proto__']: __proto__,
+                  ['bar']: bar,
+                },
+              )
+            }
+          }
+        `,
+        "/local-normal.js": /* js */ `
+          export function foo(__proto__, bar) {
+            console.log(
+              'this must not become "{ __proto__ }":',
+              {
+                __proto__: __proto__,
+                bar: bar,
+              },
+            )
+          }
+        `,
+        "/import-shorthand.js": /* js */ `
+          import { __proto__, bar } from 'foo'
+          export function foo() {
+            console.log(
+              'this must not become "{ __proto__: ... }":',
+              {
+                __proto__,
+                bar,
+              },
+            )
+          }
+        `,
+        "/import-computed.js": /* js */ `
+          import { __proto__, bar } from 'foo'
+          export function foo() {
+            console.log(
+              'this must not become "{ __proto__: ... }":',
+              {
+                ['__proto__']: __proto__,
+                ['bar']: bar,
+              },
+            )
+          }
+        `,
+        "/import-normal.js": /* js */ `
+          import { __proto__, bar } from 'foo'
+          export function foo() {
+            console.log(
+              'this must not become "{ __proto__ }":',
+              {
+                __proto__: __proto__,
+                bar: bar,
+              },
+            )
+          }
+        `,
+      },
+      entryPoints: [
+        "/local-shorthand.js",
+        "/local-computed.js",
+        "/local-normal.js",
+        "/import-shorthand.js",
+        "/import-computed.js",
+        "/import-normal.js",
+      ],
+      external: ["foo"],
+      outdir: "/out",
+      minifySyntax,
+      onAfterBundle(api) {
+        // the line of the object literal that holds the "__proto__" property
+        const property = (file: string) =>
+          api
+            .readFile(`/out/${file}.js`)
+            .split("\n")
+            .map(line => line.trim())
+            .find(line => line.startsWith("__proto__") || line.startsWith('["__proto__"]'));
+        expect(property("local-shorthand")).toMatch(/^\["__proto__"\]: __proto__\d+,$/);
+        expect(property("local-computed")).toMatch(/^\["__proto__"\]: __proto__\d+,$/);
+        expect(property("local-normal")).toBe("__proto__: __proto__,");
+        expect(property("import-shorthand")).toBe("__proto__,");
+        expect(property("import-computed")).toBe('["__proto__"]: __proto__,');
+        expect(property("import-normal")).toBe("__proto__: __proto__,");
+      },
+    });
   });
 });

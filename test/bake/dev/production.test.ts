@@ -659,4 +659,53 @@ export default function IndexPage() {
     // Verify NO JavaScript imports are included in the HTML
     expect(htmlContent).not.toContain('<script type="module"');
   });
+
+  // The client manifest is an object literal keyed by export name. A key named
+  // "__proto__" has to stay an own property, or it sets the prototype of the
+  // per-module entry and the export is missing from the manifest.
+  test("client component exported as __proto__ is an own key of the ssr manifest", async () => {
+    const dir = await tempDirWithBakeDeps("bake-production-proto-export", {
+      "src/index.tsx": `export default { app: { framework: "react" } };`,
+      "pages/index.tsx": `import { __proto__ as Client, other as Other } from "../components/Client";
+import { ssrManifest } from "bun:bake/server";
+
+export default function IndexPage() {
+  return (
+    <div>
+      <Client />
+      <Other />
+      <p id="manifest">{JSON.stringify(Object.values(ssrManifest).map(entry => Object.keys(entry).sort()))}</p>
+    </div>
+  );
+}`,
+      "components/Client.tsx": `"use client";
+
+function Client() {
+  return <div>Hello Client</div>;
+}
+function Other() {
+  return <b>Other</b>;
+}
+export { Client as __proto__, Other as other };`,
+      "package.json": JSON.stringify({
+        "name": "test-app",
+        "version": "1.0.0",
+        "devDependencies": {
+          "react": "^18.0.0",
+          "react-dom": "^18.0.0",
+        },
+      }),
+    });
+
+    const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx`
+      .cwd(dir)
+      .env(bunEnv)
+      .throws(false);
+    expect(stderr.toString()).not.toContain("error");
+    expect(exitCode).toBe(0);
+
+    const htmlContent = await Bun.file(path.join(dir, "dist", "index.html")).text();
+    expect(htmlContent).toContain("<div>Hello Client</div><b>Other</b>");
+    expect(htmlContent).toContain('<p id="manifest">[[&quot;__proto__&quot;,&quot;other&quot;]]</p>');
+  });
 });

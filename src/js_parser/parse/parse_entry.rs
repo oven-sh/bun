@@ -268,10 +268,16 @@ impl<'a> Options<'a> {
         self.features.hash_for_runtime_transpiler(hasher);
     }
 
-    // Used to determine if `joinWithComma` should be called in `visitStmts`. We do this
-    // to avoid changing line numbers too much to make source mapping more readable
-    pub(crate) fn runtime_merge_adjacent_expression_statements(&self) -> bool {
-        self.bundle
+    /// `minify_syntax` for a build: `bun build`, bundled or with `--no-bundle`.
+    ///
+    /// The runtime transpiler (`bun run`) also turns `minify_syntax` on, for
+    /// constant inlining, but it keeps one output statement per source statement
+    /// so that line numbers and `Function.prototype.toString()` stay close to
+    /// the source. Every pass that merges or restructures statements (comma
+    /// joins, `if` to `&&`/`?:`, return and throw chains, `while` to `for`,
+    /// arrow bodies to expressions) checks this instead of `minify_syntax`.
+    pub(crate) fn full_minify_syntax(&self) -> bool {
+        self.features.minify_syntax && (self.bundle || self.transform_only)
     }
 
     pub fn init(jsx: options::JSX::Pragma, loader: options::Loader) -> Options<'static> {

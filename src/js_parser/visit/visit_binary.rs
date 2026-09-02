@@ -72,6 +72,50 @@ fn try_optimize_typeof_undefined<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bo
     ))
 }
 
+/// "a === null || a === void 0" (or "a !== null && a !== void 0" with
+/// `BinStrictNe`): the two operands of the `== null` that replaces it.
+fn is_binary_null_and_undefined(left: Expr, right: Expr, op: Op::Code) -> Option<(Expr, Expr)> {
+    let ExprData::EBinary(a) = left.data else {
+        return None;
+    };
+    let ExprData::EBinary(b) = right.data else {
+        return None;
+    };
+    if a.op != op || b.op != op {
+        return None;
+    }
+
+    let (mut id_a, mut eq_a) = (a.left, a.right);
+    let (mut id_b, mut eq_b) = (b.left, b.right);
+
+    // Detect when the identifier comes second and flip the order of our checks
+    if matches!(eq_a.data, ExprData::EIdentifier(_)) {
+        core::mem::swap(&mut id_a, &mut eq_a);
+    }
+    if matches!(eq_b.data, ExprData::EIdentifier(_)) {
+        core::mem::swap(&mut id_b, &mut eq_b);
+    }
+
+    let (ExprData::EIdentifier(id_a), ExprData::EIdentifier(id_b)) = (id_a.data, id_b.data) else {
+        return None;
+    };
+    if id_a.ref_ != id_b.ref_ {
+        return None;
+    }
+
+    // "a === null || a === void 0"
+    if matches!(eq_a.data, ExprData::ENull(_)) && matches!(eq_b.data, ExprData::EUndefined(_)) {
+        return Some((a.left, a.right));
+    }
+
+    // "a === void 0 || a === null"
+    if matches!(eq_a.data, ExprData::EUndefined(_)) && matches!(eq_b.data, ExprData::ENull(_)) {
+        return Some((b.left, b.right));
+    }
+
+    None
+}
+
 // `Expr.Data.eql(left, right, p, .{loose,strict})` — thin adapter
 // from the `const STRICT: bool` shape used at the four call sites below to the
 // canonical `ExprData::eql<P, K: EqlKindT>` (Expr.rs). Kept as a free fn so
@@ -298,6 +342,11 @@ impl BinaryExpressionVisitor {
                     if let Some(optimized) = try_optimize_typeof_undefined(e_, p, Op::Code::BinGt) {
                         return optimized;
                     }
+
+                    // "typeof x === 'string'" => "typeof x == 'string'"
+                    if SideEffects::can_change_strict_to_loose(&e_.left.data, &e_.right.data) {
+                        e_.op = Op::Code::BinLooseEq;
+                    }
                 }
 
                 // const after_op_loc = locAfterOp(e_.);
@@ -348,6 +397,11 @@ impl BinaryExpressionVisitor {
                     if let Some(optimized) = try_optimize_typeof_undefined(e_, p, Op::Code::BinLt) {
                         return optimized;
                     }
+
+                    // "typeof x !== 'string'" => "typeof x != 'string'"
+                    if SideEffects::can_change_strict_to_loose(&e_.left.data, &e_.right.data) {
+                        e_.op = Op::Code::BinLooseNe;
+                    }
                 }
             }
             Op::Code::BinNullishCoalescing => {
@@ -372,6 +426,20 @@ impl BinaryExpressionVisitor {
                         return e_.right;
                     }
                 }
+
+                if p.options.features.minify_syntax {
+                    // "a ?? (b ?? c)" => "a ?? b ?? c"
+                    if let ExprData::EBinary(right) = e_.right.data
+                        && right.op == Op::Code::BinNullishCoalescing
+                    {
+                        e_.left = Expr::join_with_left_associative_op(
+                            Op::Code::BinNullishCoalescing,
+                            e_.left,
+                            right.left,
+                        );
+                        e_.right = right.right;
+                    }
+                }
             }
             Op::Code::BinLogicalOr => {
                 if let Some(side_effects) = SideEffects::to_boolean(p, &e_.left.data) {
@@ -394,6 +462,29 @@ impl BinaryExpressionVisitor {
                         return e_.right;
                     }
                 }
+
+                if p.options.features.minify_syntax {
+                    // "a || (b || c)" => "a || b || c"
+                    if let ExprData::EBinary(right) = e_.right.data
+                        && right.op == Op::Code::BinLogicalOr
+                    {
+                        e_.left = Expr::join_with_left_associative_op(
+                            Op::Code::BinLogicalOr,
+                            e_.left,
+                            right.left,
+                        );
+                        e_.right = right.right;
+                    }
+
+                    // "a === null || a === undefined" => "a == null"
+                    if let Some((left, right)) =
+                        is_binary_null_and_undefined(e_.left, e_.right, Op::Code::BinStrictEq)
+                    {
+                        e_.op = Op::Code::BinLooseEq;
+                        e_.left = left;
+                        e_.right = right;
+                    }
+                }
             }
             Op::Code::BinLogicalAnd => {
                 if let Some(side_effects) = SideEffects::to_boolean(p, &e_.left.data) {
@@ -414,6 +505,29 @@ impl BinaryExpressionVisitor {
                         }
 
                         return e_.right;
+                    }
+                }
+
+                if p.options.features.minify_syntax {
+                    // "a && (b && c)" => "a && b && c"
+                    if let ExprData::EBinary(right) = e_.right.data
+                        && right.op == Op::Code::BinLogicalAnd
+                    {
+                        e_.left = Expr::join_with_left_associative_op(
+                            Op::Code::BinLogicalAnd,
+                            e_.left,
+                            right.left,
+                        );
+                        e_.right = right.right;
+                    }
+
+                    // "a !== null && a !== undefined" => "a != null"
+                    if let Some((left, right)) =
+                        is_binary_null_and_undefined(e_.left, e_.right, Op::Code::BinStrictNe)
+                    {
+                        e_.op = Op::Code::BinLooseNe;
+                        e_.left = left;
+                        e_.right = right;
                     }
                 }
             }

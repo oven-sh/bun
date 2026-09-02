@@ -1,4 +1,5 @@
 #![warn(unused_must_use)]
+use super::mangle::{mangle_for, stmts_care_about_scope};
 use crate::Error;
 use crate::lexer as js_lexer;
 use crate::p::{P, ReactRefreshExportKind};
@@ -1346,6 +1347,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         data.stmt = p.visit_single_stmt(data.stmt, StmtsKind::None);
         p.pop_scope();
 
+        if p.full_minify_syntax() {
+            // Optimize "x: break x" which some people apparently write by hand
+            if let StmtData::SBreak(child) = data.stmt.data
+                && let Some(label) = child.label
+                && label.ref_ == ref_
+            {
+                return Ok(());
+            }
+
+            // Remove the label if it's not necessary
+            if p.symbols[ref_.inner_index() as usize].use_count_estimate == 0 {
+                p.append_if_body_preserving_scope(stmts, data.stmt);
+                return Ok(());
+            }
+        }
+
         stmts.push(*stmt);
         Ok(())
     }
@@ -1678,7 +1695,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         data.body = p.visit_loop_body(data.body);
 
         data.test = SideEffects::simplify_boolean(p, data.test);
-        if let Some(result) = SideEffects::to_boolean(p, &data.test.data) {
+        let known = SideEffects::to_boolean(p, &data.test.data);
+        if let Some(result) = known {
             if result.side_effects == SideEffects::NoSideEffects {
                 data.test = p.new_expr(
                     E::Boolean {
@@ -1687,6 +1705,34 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     data.test.loc,
                 );
             }
+        }
+
+        if p.full_minify_syntax() {
+            // "while (a) {}" => "for (;a;) {}"
+            // A true value is implied
+            let test = match known {
+                Some(result)
+                    if result.value && result.side_effects == SideEffects::NoSideEffects =>
+                {
+                    None
+                }
+                _ => Some(data.test),
+            };
+            let for_stmt = p.s(
+                S::For {
+                    init: None,
+                    test,
+                    update: None,
+                    body: data.body,
+                },
+                stmt.loc,
+            );
+            let StmtData::SFor(mut for_ref) = for_stmt.data else {
+                unreachable!()
+            };
+            mangle_for(&mut for_ref, p.arena);
+            stmts.push(for_stmt);
+            return Ok(());
         }
 
         stmts.push(*stmt);
@@ -1766,81 +1812,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         if p.options.features.minify_syntax {
-            if let Some(effects) = effects {
-                if effects.value {
-                    if data.no.is_none()
-                        || !SideEffects::should_keep_stmt_in_dead_control_flow(
-                            data.no.unwrap(),
-                            p.arena,
-                        )
-                    {
-                        if effects.side_effects == SideEffects::CouldHaveSideEffects {
-                            // Keep the condition if it could have side effects (but is still known to be truthy)
-                            if let Some(test) = SideEffects::simplify_unused_expr(p, data.test) {
-                                stmts.push(p.s(
-                                    S::SExpr {
-                                        value: test,
-                                        ..Default::default()
-                                    },
-                                    test.loc,
-                                ));
-                            }
-                        }
-
-                        return p.append_if_body_preserving_scope(stmts, data.yes);
-                    } else {
-                        // We have to keep the "no" branch
-                    }
-                } else {
-                    // The test is falsy
-                    if !SideEffects::should_keep_stmt_in_dead_control_flow(data.yes, p.arena) {
-                        if effects.side_effects == SideEffects::CouldHaveSideEffects {
-                            // Keep the condition if it could have side effects (but is still known to be truthy)
-                            if let Some(test) = SideEffects::simplify_unused_expr(p, data.test) {
-                                stmts.push(p.s(
-                                    S::SExpr {
-                                        value: test,
-                                        ..Default::default()
-                                    },
-                                    test.loc,
-                                ));
-                            }
-                        }
-
-                        if data.no.is_none() {
-                            return Ok(());
-                        }
-
-                        return p.append_if_body_preserving_scope(stmts, data.no.unwrap());
-                    }
-                }
-            }
-
-            // TODO: more if statement syntax minification
-            let can_remove_test = p.expr_can_be_removed_if_unused(&data.test);
-            match data.yes.data {
-                StmtData::SExpr(yes_expr) => {
-                    if yes_expr.value.is_missing() {
-                        if let Some(no) = data.no {
-                            if no.is_missing_expr() && can_remove_test {
-                                return Ok(());
-                            }
-                        } else if can_remove_test {
-                            return Ok(());
-                        }
-                    }
-                }
-                StmtData::SEmpty(_) => {
-                    if let Some(no) = data.no {
-                        if no.is_missing_expr() && can_remove_test {
-                            return Ok(());
-                        }
-                    } else if can_remove_test {
-                        return Ok(());
-                    }
-                }
-                _ => {}
-            }
+            let StmtData::SIf(s_ref) = stmt.data else {
+                unreachable!()
+            };
+            p.mangle_if(stmts, stmt.loc, s_ref);
+            return Ok(());
         }
 
         stmts.push(*stmt);
@@ -1886,14 +1862,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         local.decls.slice(),
                         RelocateVarsMode::Normal,
                     );
-                    if let Some(relocated) = relocate.stmt {
-                        data.init = Some(relocated);
+                    if relocate.ok {
+                        // `stmt` is the assignments that replace the declaration.
+                        // Without initializers there is nothing left to run here.
+                        data.init = relocate.stmt;
                     }
                 }
             }
         }
 
         p.pop_scope();
+
+        if p.full_minify_syntax() {
+            mangle_for(data, p.arena);
+        }
 
         stmts.push(*stmt);
         Ok(())
@@ -2072,6 +2054,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.pop_scope();
 
         if let Some(catch) = &mut data.catch {
+            let old_is_control_flow_dead = p.is_control_flow_dead;
+
+            // If the try body is empty, then the catch body is dead. Dead code is
+            // stripped whenever dead_code_elimination is on, so only mark it when
+            // minifying to leave plain transpiler output alone.
+            if data.body.is_empty() && p.options.features.minify_syntax {
+                p.is_control_flow_dead = true;
+            }
+
             p.push_scope_for_visit_pass(js_ast::scope::Kind::CatchBinding, catch.loc)
                 .expect("unreachable");
             {
@@ -2089,6 +2080,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 catch.body = list_to_stmts(_stmts);
             }
             p.pop_scope();
+
+            p.is_control_flow_dead = old_is_control_flow_dead;
         }
 
         if let Some(finally) = &mut data.finally {
@@ -2101,6 +2094,67 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 finally.stmts = list_to_stmts(_stmts);
             }
             p.pop_scope();
+        }
+
+        if p.full_minify_syntax() {
+            if data.body.is_empty() {
+                // Try to drop the whole thing if the try body is empty
+                let mut keep_catch = false;
+
+                // Certain "catch" blocks need to be preserved:
+                //
+                //   try {} catch { let foo } // Can be removed
+                //   try {} catch { var foo } // Must be kept
+                //
+                if let Some(catch) = &data.catch {
+                    for stmt2 in catch.body.slice() {
+                        if SideEffects::should_keep_stmt_in_dead_control_flow(*stmt2, p.arena) {
+                            keep_catch = true;
+                            break;
+                        }
+                    }
+                }
+
+                // Make sure to preserve the "finally" block if present
+                if !keep_catch {
+                    let Some(finally) = &data.finally else {
+                        return Ok(());
+                    };
+                    if !stmts_care_about_scope(finally.stmts.slice()) {
+                        stmts.extend_from_slice(finally.stmts.slice());
+                        return Ok(());
+                    }
+                    stmts.push(p.s(
+                        S::Block {
+                            stmts: finally.stmts,
+                            close_brace_loc: js_ast::Loc::EMPTY,
+                        },
+                        finally.loc,
+                    ));
+                    return Ok(());
+                }
+            } else if let Some(finally) = &data.finally
+                && finally.stmts.is_empty()
+            {
+                if data.catch.is_some() {
+                    // Just remove the "finally" block if there's a "catch"
+                    data.finally = None;
+                } else {
+                    // Otherwise, try to unwrap the whole "try" statement
+                    if !stmts_care_about_scope(data.body.slice()) {
+                        stmts.extend_from_slice(data.body.slice());
+                        return Ok(());
+                    }
+                    stmts.push(p.s(
+                        S::Block {
+                            stmts: data.body,
+                            close_brace_loc: js_ast::Loc::EMPTY,
+                        },
+                        stmt.loc,
+                    ));
+                    return Ok(());
+                }
+            }
         }
 
         stmts.push(*stmt);

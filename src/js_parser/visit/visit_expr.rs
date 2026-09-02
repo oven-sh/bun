@@ -1507,6 +1507,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let Some(side_effects) = SideEffects::to_boolean(p, &e_.test.data) else {
             p.visit_expr(&mut e_.yes);
             p.visit_expr(&mut e_.no);
+            if p.full_minify_syntax() {
+                let result = p.mangle_if_expr(e.loc, e_);
+                // "(a ? b.c : b.c)()" => "(0, b.c)()", not "b.c()"
+                *e = if is_call_target && result.has_value_for_this_in_call() {
+                    p.new_expr(E::Number::new(0.0), result.loc)
+                        .join_with_comma(result)
+                } else {
+                    result
+                };
+            }
             return;
         };
 
@@ -2675,19 +2685,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        // Collapse a single-`return` body to a shorthand expression body when
-        // minifying syntax while bundling: `(a) => { return a; }` becomes
-        // `(a) => a`. The printer (see js_printer EArrow) emits the shorthand
-        // when `prefer_expr` is set and the lone statement is a `return` with a
-        // value. A bare `return;` (no value) keeps the block body.
-        //
-        // Gated on `bundle` like the `e_function` name-drop below: the runtime
-        // transpiler forces `minify_syntax` on for `target.is_bun()`
-        // (see bundler/options.rs), so without this guard the collapse would
-        // also run for `bun run`/`bun test` and change an arrow's
-        // `Function.prototype.toString()` output.
-        if p.options.features.minify_syntax
-            && p.options.bundle
+        // Collapse a single-`return` body to a shorthand expression body:
+        // `(a) => { return a; }` becomes `(a) => a`. The printer (see
+        // js_printer EArrow) emits the shorthand when `prefer_expr` is set and
+        // the lone statement is a `return` with a value. A bare `return;` (no
+        // value) keeps the block body.
+        if p.full_minify_syntax()
             && stmts_list.len() == 1
             && matches!(
                 stmts_list[0].data,

@@ -5441,7 +5441,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// No spread, no computed key, and no `__proto__` (it sets the prototype).
+    /// Only string keys (a numeric key `0` is the same property as `"0"`), no spread, no computed key, and no `__proto__` (it sets the prototype).
     fn object_literal_has_only_plain_keys(literal: &E::Object) -> bool {
         literal.properties.slice().iter().all(|property| {
             property.kind != js_ast::g::PropertyKind::Spread
@@ -5452,8 +5452,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         data: js_ast::ExprData::EString(key),
                         ..
                     }) => !key.eql_comptime(b"__proto__"),
-                    Some(_) => true,
-                    None => false,
+                    _ => false,
                 }
         })
     }

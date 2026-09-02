@@ -2177,6 +2177,7 @@ describe("bundler", () => {
         var { ...KEEP19 } = { KEEP20: 1 }
         var { KEEP21: { KEEP22 } } = { KEEP21: undefined }
         var { KEEP23: [KEEP24] } = { KEEP23: null }
+        var { "0": KEEP25 } = { "0": 1, get 0() { return 2 } }
       `,
     },
     dce: true,

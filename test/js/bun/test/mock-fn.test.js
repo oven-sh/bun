@@ -1224,10 +1224,13 @@ describe("spyOn", () => {
     // stores it as a plain value. To JS it is a data property, so spyOn treats it as one.
     test("spyOn on a native lazy data property", () => {
       const fn = spyOn(console, "Console").mockImplementation(() => "mocked");
-      expect(console.Console).toBe(fn);
-      expect(console.Console()).toBe("mocked");
-      expect(fn).toHaveBeenCalledTimes(1);
-      fn.mockRestore();
+      try {
+        expect(console.Console).toBe(fn);
+        expect(console.Console()).toBe("mocked");
+        expect(fn).toHaveBeenCalledTimes(1);
+      } finally {
+        fn.mockRestore();
+      }
       expect(console.Console.name).toBe("Console");
       expect(typeof new console.Console(process.stdout).log).toBe("function");
       expect(Object.getOwnPropertyDescriptor(console, "Console")).toEqual({

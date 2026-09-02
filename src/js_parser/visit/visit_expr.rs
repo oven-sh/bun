@@ -194,9 +194,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         e_.ref_ = result.r#ref;
         e_.set_must_keep_due_to_with_stmt(result.is_inside_with_scope);
 
-        // Inside `with`, the name may resolve to a property of the `with`
-        // object instead, so the read cannot be attributed to this symbol.
-        if !in_.is_property_read_object || result.is_inside_with_scope {
+        // Only tree shaking reads the flag. Inside `with`, the name may
+        // resolve to a property of the `with` object instead, so the read
+        // cannot be attributed to this symbol.
+        if p.options.tree_shaking && (!in_.is_property_read_object || result.is_inside_with_scope) {
             p.record_non_property_read_use(result.r#ref);
         }
 

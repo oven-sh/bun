@@ -226,9 +226,10 @@ describe("bundler", () => {
   });
 
   // The shape of three.js's ShaderLib: exported literals whose initializers
-  // read each other. Nothing imports them, so all of them tree-shake. An
-  // export is not a use that can mutate the object before this module's own
-  // top-level code reads it.
+  // read each other. Nothing imports them, so all of them tree-shake. The
+  // statements with side effects after the reads do not change that: only
+  // code that runs between the declaration and the read could reach an
+  // exported object from another module.
   itBundled("object_literal_dce/ExportedLiteralsReadingEachOther", {
     files: {
       "/entry.js": /* js */ `
@@ -257,10 +258,114 @@ describe("bundler", () => {
         function removeMergeUniforms(uniforms) {
           return Object.assign({}, ...uniforms);
         }
+        console.log("three loaded");
+        globalThis.__three = true;
       `,
     },
     dce: true,
-    run: { stdout: "0" },
+    run: { stdout: "three loaded\n0" },
+  });
+
+  // Another module in an import cycle can reach an exported object through
+  // its import binding, but only while this module hands control to it. A
+  // read of an exported literal after a statement with unknown side effects
+  // stays. A module-private literal cannot be reached that way.
+  itBundled("object_literal_dce/ExportedLiteralReadAfterCallOut", {
+    files: {
+      "/entry.js": /* js */ `
+        import { install, noop } from "./b.js";
+
+        export const exported = { x: 1 };
+        const removePrivate = { x: 1 };
+        const removeReadBefore = exported.x;
+        install();
+        const KEEP_readAfter = exported.x;
+        const removeReadPrivate = removePrivate.x;
+
+        export const exportedLater = { x: 1 };
+        noop();
+        const KEEP_readLater = exportedLater.x;
+      `,
+      "/b.js": /* js */ `
+        import { exported } from "./entry.js";
+        export function install() {
+          Object.defineProperty(exported, "x", { get() { console.log("cycle getter"); return 1; } });
+        }
+        export function noop() {}
+      `,
+    },
+    dce: true,
+    run: { stdout: "cycle getter" },
+  });
+
+  // A read that stays because its object escaped may itself run a getter,
+  // which can reach another exported literal. It counts like any other
+  // statement with side effects for the reads after it.
+  itBundled("object_literal_dce/KeptReadCountsAsCallOut", {
+    files: {
+      "/entry.js": /* js */ `
+        import { setup } from "./b.js";
+        export const a = { x: 1 };
+        setup(a);
+        export const b = { y: 1 };
+        const KEEP_readA = a.x;
+        const KEEP_readB = b.y;
+      `,
+      "/b.js": /* js */ `
+        import { b } from "./entry.js";
+        export function setup(a) {
+          Object.defineProperty(a, "x", {
+            get() {
+              console.log("a getter");
+              Object.defineProperty(b, "y", { get() { console.log("b getter"); return 1; } });
+              return 1;
+            },
+          });
+        }
+      `,
+    },
+    dce: true,
+    run: { stdout: "a getter\nb getter" },
+  });
+
+  // A TypeScript enum is visited ahead of the other statements, but its
+  // initializers run at the enum's own position.
+  itBundled("object_literal_dce/EnumInitializerIsACallOut", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import { install } from "./b.js";
+        export const obj = { x: 1 };
+        enum E {
+          A = install(),
+        }
+        const KEEP_read = obj.x;
+        console.log(E.A);
+      `,
+      "/b.js": /* js */ `
+        import { obj } from "./entry.ts";
+        export function install() {
+          Object.defineProperty(obj, "x", { get() { console.log("enum getter"); return 1; } });
+          return 7;
+        }
+      `,
+    },
+    dce: true,
+    run: { stdout: "enum getter\n7" },
+  });
+
+  // A direct eval can reach any binding by name without a visible reference.
+  itBundled("object_literal_dce/DirectEvalKeepsReads", {
+    files: {
+      "/entry.js": /* js */ `
+        const obj = { x: 1 };
+        eval("Object.defineProperty(obj, 'x', { get() { console.log('eval getter'); return 1; } })");
+        obj.x;
+        const KEEP_read = obj.x;
+        export {};
+      `,
+    },
+    dce: true,
+    run: { stdout: "eval getter\neval getter" },
   });
 
   // Ported from rollup `test/form/samples/keep-property-access-side-effects`

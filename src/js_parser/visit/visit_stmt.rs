@@ -1147,7 +1147,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // two kinds: a `var` can be redeclared, or sit in a single-statement
         // `if` body and never run, so its binding is not known to hold the
         // literal when a later statement reads it.
-        if p.options.features.dead_code_elimination
+        if p.options.tree_shaking
+            && p.options.features.dead_code_elimination
             && matches!(data.kind, S::Kind::KConst | S::Kind::KLet)
             && p.current_scope == p.module_scope
             && !p.is_control_flow_dead

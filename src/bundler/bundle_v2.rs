@@ -6678,8 +6678,7 @@ pub mod bv2_impl {
                             >(
                                 self.transpiler.fs().top_level_dir, path.text
                             );
-                            // `Asset` is any cached module that is not JavaScript-like. Only a
-                            // copied file has an asset URL; a json or text module does not.
+                            // A cached json or text module is an `Asset` with no asset URL.
                             let asset_hash = if loader == Loader::Html
                                 && entry.kind == bake_types::CacheKind::Asset
                             {

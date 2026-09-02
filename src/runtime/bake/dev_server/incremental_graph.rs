@@ -83,9 +83,7 @@ pub enum Content {
     /// When stale, the code is "", otherwise it contains at least one
     /// non-whitespace character (empty chunks contain a function wrapper).
     Js(Box<[u8]>),
-    /// JavaScript of a module whose loader is not JavaScript-like: a copied
-    /// file, json, toml, text, or the html route's module. Only a copied file
-    /// (`Loader::should_copy_for_bundling`) has an entry in `DevServer::assets`.
+    /// A module whose loader is not JavaScript-like. Only a copied file is in `DevServer::assets`.
     Asset(Box<[u8]>),
     /// First file in a CSS bundle (the one HTML/JS points into). Re-bundles
     /// of any downstream `CssChild` re-queue the root.

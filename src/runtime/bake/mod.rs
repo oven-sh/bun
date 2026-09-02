@@ -412,10 +412,7 @@ impl Framework {
         }
     }
 
-    /// Resolves one framework specifier from the project root. Shared with
-    /// `bake_body::Framework::resolve_helper`. A resolve error or a disabled
-    /// result prints the reason to stderr, sets `had_errors` and returns
-    /// `None`. The text is `FilenameStore`-backed, so `'static`.
+    /// Resolves one framework specifier. A resolve error or a disabled result prints the reason, sets `had_errors` and returns `None`.
     pub(crate) fn resolve_specifier(
         r: &mut bun_resolver::Resolver,
         path: &[u8],

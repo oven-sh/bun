@@ -71,7 +71,6 @@ test/js/bun/io/bun-write.test.js  # 1 of 80 builds; parallel batch; Bun.write() 
 test/js/bun/jsc-stress/testFFI.test.ts  # 1 of 80 builds; debian
 test/js/bun/jsc/domjit.test.ts  # 3 of 80 builds; parallel batch; Script.runInNewContext — test timed out
 test/js/bun/net/socket.test.ts  # 1 of 80 builds; mac
-test/js/bun/net/tcp-server.test.ts  # 33 of 80 builds; parallel batch; should not leak memory — expect(received).toBeLessThanOrEqual(expected) (in the paralle...
 test/js/bun/resolve/bun-main-entry-point.test.ts  # 5 of 80 builds; windows
 test/js/bun/resolve/load-same-js-file-a-lot.test.ts  # 4 of 80 builds; parallel batch; load the same file 10000 times — test timed out
 test/js/bun/s3/s3.leak.test.ts  # 1 of 80 builds; windows

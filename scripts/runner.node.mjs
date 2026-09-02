@@ -1103,7 +1103,28 @@ async function runTests() {
         }
         evidence = failed.size + incomplete.size > 0;
       }
-      const retried = [...failed.keys()].filter(t => isFlakyTest(join("test", t).replaceAll("\\", "/")));
+      // A worker that died of a fatal signal (or the Windows equivalent) is a
+      // crash in Bun or a native addon, not a flaky test. The coordinator
+      // names the file in a banner, and every worker death in a "✗" line with
+      // its status. A crashed file is never run again, listed or not.
+      const crashed = new Set();
+      for (const line of stripAnsi(stdout).split(/\r?\n/)) {
+        const banner = /^error: a test worker process crashed with (.+?) while running (.+)\.$/.exec(line);
+        const died = /^✗ (.+?) \(worker crashed: (.+)\)$/.exec(line);
+        const [status, testPath] = banner
+          ? [banner[1], norm(banner[2])]
+          : died && isAlwaysFailure(died[2])
+            ? [died[2], norm(died[1])]
+            : [null, null];
+        if (testPath && failed.has(testPath)) {
+          crashed.add(testPath);
+          failed.set(testPath, `worker crashed with ${status} in the parallel batch`);
+        }
+      }
+      const retried = [...failed.keys()].filter(
+        t => !crashed.has(t) && isFlakyTest(join("test", t).replaceAll("\\", "/")),
+      );
+      const retriedSet = new Set(retried);
       const rerun = [...retried, ...incomplete];
 
       for (const t of bucketFiles) {
@@ -1133,7 +1154,7 @@ async function runTests() {
             if (message) console.log(message.replace(/^/gm, "    "));
           }
         };
-        if (isFlakyTest(title)) {
+        if (retriedSet.has(t)) {
           startGroup(`${title} - ${reason}`, printCases);
           continue;
         }
@@ -3131,7 +3152,10 @@ function getExitCode(outcome) {
 
 // A flaky segfault, sigtrap, or sigkill must never be ignored.
 // If it happens in CI, it will happen to our users.
-// Flaky AddressSanitizer errors cannot be ignored since they still represent real bugs.
+// Flaky AddressSanitizer and LeakSanitizer errors cannot be ignored since they still represent real bugs.
+// A bare signal name is what spawnSafe reports when the process died without
+// printing a crash report (or when the coordinator of a parallel batch names
+// the status of a worker that died mid-file).
 function isAlwaysFailure(error) {
   error = ((error || "") + "").toLowerCase().trim();
   return (
@@ -3141,6 +3165,13 @@ function isAlwaysFailure(error) {
     error.includes("sigtrap") ||
     error.includes("sigabrt") ||
     error.includes("sigkill") ||
+    error.includes("sigsegv") ||
+    error.includes("sigbus") ||
+    error.includes("sigill") ||
+    error.includes("sigfpe") ||
+    error.includes("sigsys") ||
+    error === "leak" ||
+    /^(direct|indirect) leak of /.test(error) ||
     error.includes("error: addresssanitizer") ||
     error.includes("internal assertion failure") ||
     error.includes("core dumped") ||

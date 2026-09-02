@@ -91,6 +91,7 @@ const rustIdentifierPaths: Record<string, string> = {
   "runtime/webcore/ByteStream.rs": "runtime/webcore/ByteStream.rs",
   "runtime/webcore/FileSink.rs": "runtime/webcore/FileSink.rs",
   "shell.rs": "runtime/shell/shell.rs",
+  "signal_ring_testing.rs": "runtime/signal_ring_testing.rs",
   "sourcemap/InternalSourceMap.rs": "sourcemap/InternalSourceMap.rs",
   "string/immutable/unicode.rs": "bun_core/string/immutable/unicode.rs",
   "subprocess.rs": "runtime/api/bun/subprocess.rs",

@@ -55,6 +55,7 @@ pub mod linear_fifo_testing;
 pub mod napi;
 #[path = "../bun.js.rs"]
 pub mod run_main;
+pub mod signal_ring_testing;
 pub mod timer;
 
 pub mod generated_classes; // include!()s ${BUN_CODEGEN_DIR}/generated_classes.rs

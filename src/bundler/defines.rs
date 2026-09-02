@@ -6,6 +6,7 @@ use bun_js_parser::lexer as js_lexer;
 
 use crate::defines_table::{
     GLOBAL_NO_SIDE_EFFECT_FUNCTION_CALLS_SAFE_FOR_TO_STRING as global_no_side_effect_function_calls_safe_for_to_string,
+    GLOBAL_NO_SIDE_EFFECT_FUNCTION_CALLS_WITH_PRIMITIVE_ARGS as global_no_side_effect_function_calls_with_primitive_args,
     GLOBAL_NO_SIDE_EFFECT_PROPERTY_ACCESSES as global_no_side_effect_property_accesses,
 };
 
@@ -141,10 +142,15 @@ impl DefineExt for Define {
         let key = global[global.len() - 1];
         let parts: Vec<Box<[u8]>> = global.iter().map(|p| Box::<[u8]>::from(*p)).collect();
         if let Some(existing) = self.dots.get_mut(key) {
-            existing.push(DotDefine {
-                parts,
-                data: value_define.clone(),
-            });
+            // The parser takes the first define whose parts match, so a later entry for the same chain replaces the earlier one.
+            if let Some(same) = existing.iter_mut().find(|d| d.parts == parts) {
+                same.data = value_define.clone();
+            } else {
+                existing.push(DotDefine {
+                    parts,
+                    data: value_define.clone(),
+                });
+            }
         } else {
             self.dots.put_assume_capacity(
                 key,
@@ -193,6 +199,17 @@ impl DefineExt for Define {
         if omit_unused_global_calls {
             for global in global_no_side_effect_function_calls_safe_for_to_string.iter() {
                 define.insert_global(global, &to_string_safe)?;
+            }
+            // These are also in the property-access table; the call flag replaces that entry.
+            let primitive_args = DefineData::init(Options {
+                value: ExprData::EUndefined(bun_ast::E::Undefined),
+                valueless: true,
+                can_be_removed_if_unused: true,
+                call_can_be_unwrapped_if_unused: bun_ast::E::CallUnwrap::IfUnusedAndPrimitiveArgs,
+                ..Default::default()
+            });
+            for global in global_no_side_effect_function_calls_with_primitive_args.iter() {
+                define.insert_global(global, &primitive_args)?;
             }
         } else {
             for global in global_no_side_effect_function_calls_safe_for_to_string.iter() {

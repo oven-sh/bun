@@ -1424,6 +1424,18 @@ impl PrimitiveType {
             PrimitiveType::Mixed
         }
     }
+
+    /// A known primitive whose numeric conversion never runs code or throws (a BigInt throws when mixed with a number).
+    pub fn is_non_bigint_primitive(self) -> bool {
+        matches!(
+            self,
+            PrimitiveType::Null
+                | PrimitiveType::Undefined
+                | PrimitiveType::Boolean
+                | PrimitiveType::Number
+                | PrimitiveType::String
+        )
+    }
 }
 
 // ───────────────────────────────────────────────────────────────────────────

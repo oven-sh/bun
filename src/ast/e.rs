@@ -294,6 +294,8 @@ pub enum CallUnwrap {
     Never,
     IfUnused,
     IfUnusedAndToStringSafe,
+    /// Pure and non-throwing when every argument is a non-BigInt primitive (`Math.floor(1.5)`); an object argument could run `valueOf`, so then the call stays.
+    IfUnusedAndPrimitiveArgs,
 }
 
 pub struct Dot {

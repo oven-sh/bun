@@ -1502,7 +1502,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             // Each of these tokens are split into a function to conserve
             // stack space.
-            let continuation = match p.lexer.token {
+            let token = p.lexer.token;
+            let continuation = match token {
                 T::TAmpersand => Self::sfx_t_ampersand(p, level, left),
                 T::TAmpersandAmpersandEquals => {
                     Self::sfx_t_ampersand_ampersand_equals(p, level, left)
@@ -1603,6 +1604,45 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             match continuation? {
                 Continuation::Next => {}
                 Continuation::Done => break,
+            }
+
+            // `left` is now the assignment or update expression the token started, with the target as its operand.
+            match token {
+                T::TEquals
+                | T::TPlusEquals
+                | T::TMinusEquals
+                | T::TAsteriskEquals
+                | T::TAsteriskAsteriskEquals
+                | T::TSlashEquals
+                | T::TPercentEquals
+                | T::TLessThanLessThanEquals
+                | T::TGreaterThanGreaterThanEquals
+                | T::TGreaterThanGreaterThanGreaterThanEquals
+                | T::TAmpersandEquals
+                | T::TBarEquals
+                | T::TCaretEquals
+                | T::TAmpersandAmpersandEquals
+                | T::TBarBarEquals
+                | T::TQuestionQuestionEquals => {
+                    if let ExprData::EBinary(bin) = left.data {
+                        p.record_parse_time_assignment_target(&bin.left);
+                    }
+                }
+                T::TPlusPlus | T::TMinusMinus => {
+                    if let ExprData::EUnary(un) = left.data {
+                        p.record_parse_time_assignment_target(&un.value);
+                    }
+                }
+                T::TOpenParen => {
+                    if p.options.bundle
+                        && let ExprData::ECall(call) = left.data
+                        && let ExprData::EIdentifier(id) = call.target.data
+                        && p.load_name_from_ref(id.ref_) == b"eval"
+                    {
+                        p.parse_pass_saw_direct_eval = true;
+                    }
+                }
+                _ => {}
             }
         }
 

@@ -662,6 +662,17 @@ pub(crate) enum Substitution {
     Continue,
 }
 
+/// Outcome of `substitute_single_use_symbol_in_stmt`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum StmtSubstitution {
+    /// The single use was replaced with the initializer.
+    Substituted,
+    /// The statement has no use of the symbol, and the initializer can move past all of it, so a longer statement may still take it.
+    NotFound,
+    /// Something in the statement stops the initializer; appending to the statement cannot change that.
+    Blocked,
+}
+
 /// If we are currently in a hoisted child of the module scope, relocate these
 /// declarations to the top level and return an equivalent assignment statement.
 /// Make sure to check that the declaration kind is "var" before calling this.

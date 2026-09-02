@@ -216,11 +216,24 @@ impl SideEffects {
 
                         return Self::simplify_unused_expr(p, un.value);
                     }
+                    // Numeric conversion of a non-BigInt primitive never runs code or throws ("+1n" throws).
+                    Op::Code::UnNeg | Op::Code::UnPos | Op::Code::UnCpl => {
+                        if p.bundler_minify_syntax() && p.is_known_non_bigint_primitive(&un.value) {
+                            return Self::simplify_unused_expr(p, un.value);
+                        }
+                    }
                     _ => {}
                 }
             }
 
             ExprData::ECall(call) => {
+                // Pure only with known-primitive arguments, so the whole call goes or the whole call stays.
+                if call.can_be_unwrapped_if_unused == CallUnwrap::IfUnusedAndPrimitiveArgs {
+                    if p.pure_global_call_can_be_removed(&call.args) {
+                        return None;
+                    }
+                    return Some(expr);
+                }
                 // A call that has been marked "__PURE__" can be removed if all arguments
                 // can be removed. The annotation causes us to ignore the target.
                 if call.can_be_unwrapped_if_unused != CallUnwrap::Never {
@@ -336,6 +349,37 @@ impl SideEffects {
 
                         if bin.right.is_empty() {
                             return Self::simplify_unused_expr(p, bin.left);
+                        }
+                    }
+
+                    // Arithmetic on non-BigInt primitives never runs code or throws (a BigInt mixed with a number throws).
+                    Op::Code::BinAdd
+                    | Op::Code::BinSub
+                    | Op::Code::BinMul
+                    | Op::Code::BinDiv
+                    | Op::Code::BinRem
+                    | Op::Code::BinPow
+                    | Op::Code::BinShl
+                    | Op::Code::BinShr
+                    | Op::Code::BinUShr
+                    | Op::Code::BinBitwiseAnd
+                    | Op::Code::BinBitwiseOr
+                    | Op::Code::BinBitwiseXor => {
+                        if p.bundler_minify_syntax()
+                            && p.is_known_non_bigint_primitive(&bin.left)
+                            && p.is_known_non_bigint_primitive(&bin.right)
+                        {
+                            let left = bin.left;
+                            let right = bin.right;
+                            let left_simplified = Self::simplify_unused_expr(p, left);
+                            let right_simplified = Self::simplify_unused_expr(p, right);
+                            if left_simplified.is_none() && right_simplified.is_none() {
+                                return None;
+                            }
+                            return Some(Expr::join_with_comma(
+                                left_simplified.unwrap_or_else(|| left.to_empty()),
+                                right_simplified.unwrap_or_else(|| right.to_empty()),
+                            ));
                         }
                     }
 

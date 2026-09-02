@@ -2,6 +2,7 @@
 //! AST visitor pass: visits statements, expressions, bindings, function bodies,
 //! classes, and declarations. This is the second pass after parsing.
 
+pub(crate) mod mangle_stmts;
 pub mod visit_binary;
 pub(crate) mod visit_expr;
 pub(crate) mod visit_stmt;
@@ -16,7 +17,6 @@ use crate::parser::{
 use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
 use bun_ast as js_ast;
 use bun_ast::G::{Decl, PropertyKind};
-use bun_ast::OpCode;
 use bun_ast::b::B as BData;
 use bun_ast::flags;
 use bun_ast::s::Kind as LocalKind;
@@ -24,7 +24,7 @@ use bun_ast::scope::{Kind as ScopeKind, Member as ScopeMember};
 use bun_ast::symbol::Kind as SymbolKind;
 use bun_ast::{
     AssignTarget, B, Binding, BindingNodeIndex, E, Expr, ExprData, ExprNodeList, G, LocRef, S,
-    Stmt, StmtData, Symbol,
+    Stmt, StmtData,
 };
 use bun_collections::VecExt;
 // `parser::SideEffects` is a stub enum without the assoc fns; the real
@@ -1450,6 +1450,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             None
         };
 
+        // Every list nested in a case body shares the switch scope, whose other cases are not visited yet.
+        let was_in_switch_case = p.in_switch_case;
+        p.in_switch_case = match kind {
+            StmtsKind::SwitchStmt => true,
+            StmtsKind::FnBody => false,
+            _ => was_in_switch_case,
+        };
+
         #[cfg(debug_assertions)]
         let initial_scope: js_ast::StoreRef<js_ast::Scope> = p.current_scope;
 
@@ -1744,6 +1752,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         if !p.options.features.minify_syntax || !p.options.features.dead_code_elimination {
+            p.in_switch_case = was_in_switch_case;
             return Ok(());
         }
 
@@ -1811,309 +1820,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        let mut is_control_flow_dead = false;
-
         let mut output: ListManaged<'a, Stmt> = ListManaged::with_capacity_in(stmts.len(), p.arena);
-
-        let dead_code_elimination = p.options.features.dead_code_elimination;
+        let mut mangler = p.stmt_list_mangler(kind);
         for stmt in stmts.iter().copied() {
-            if is_control_flow_dead
-                && dead_code_elimination
-                && !SideEffects::should_keep_stmt_in_dead_control_flow(stmt, p.arena)
-            {
-                // Strip unnecessary statements if the control flow is dead here
-                continue;
-            }
-
-            // Inline single-use variable declarations where possible:
-            //
-            //   // Before
-            //   let x = fn();
-            //   return x.y();
-            //
-            //   // After
-            //   return fn().y();
-            //
-            // The declaration must not be exported. We can't just check for the
-            // "export" keyword because something might do "export {id};" later on.
-            // Instead we just ignore all top-level declarations for now. That means
-            // this optimization currently only applies in nested scopes.
-            //
-            // Ignore declarations if the scope is shadowed by a direct "eval" call.
-            // The eval'd code may indirectly reference this symbol and the actual
-            // use count may be greater than 1.
-            // SAFETY: current_scope is a valid arena ptr for the parse.
-            if p.current_scope != p.module_scope && !p.current_scope().contains_direct_eval {
-                // Keep inlining variables until a failure or until there are none left.
-                // That handles cases like this:
-                //
-                //   // Before
-                //   let x = fn();
-                //   let y = x.prop;
-                //   return y;
-                //
-                //   // After
-                //   return fn().prop;
-                //
-                'inner: while output.len() > 0 {
-                    // Ignore "var" declarations since those have function-level scope and
-                    // we may not have visited all of their uses yet by this point. We
-                    // should have visited all the uses of "let" and "const" declarations
-                    // by now since they are scoped to this block which we just finished
-                    // visiting.
-                    let prev_idx = output.len() - 1;
-                    // borrowck: read the `StoreRef` (Copy) first, then re-borrow
-                    // `output` only when truncating.
-                    let StmtData::SLocal(mut local) = output[prev_idx].data else {
-                        break;
-                    };
-                    // "using" / "await using" declarations have disposal
-                    // side-effects on scope exit, so they must not be
-                    // removed by inlining their initializer into the use.
-                    if local.decls.len_u32() == 0
-                        || local.kind == LocalKind::KVar
-                        || local.kind.is_using()
-                        || local.is_export
-                    {
-                        break;
-                    }
-
-                    // The variable must be initialized, since we will be substituting
-                    // the value into the usage.
-                    let last_idx = (local.decls.len_u32() - 1) as usize;
-                    let last: &mut Decl = &mut local.decls.slice_mut()[last_idx];
-                    let Some(replacement) = last.value else { break };
-
-                    // The binding must be an identifier that is only used once.
-                    // Ignore destructuring bindings since that's not the simple case.
-                    // Destructuring bindings could potentially execute side-effecting
-                    // code which would invalidate reordering.
-                    let BData::BIdentifier(ident_ptr) = last.binding.data else {
-                        break;
-                    };
-                    let id = ident_ptr.r#ref;
-
-                    let symbol: &Symbol = &p.symbols[id.inner_index() as usize];
-
-                    // Try to substitute the identifier with the initializer. This will
-                    // fail if something with side effects is in between the declaration
-                    // and the usage.
-                    if symbol.use_count_estimate == 1
-                        && p.substitute_single_use_symbol_in_stmt(stmt, id, replacement)
-                    {
-                        // `const ns = await import(x); return ns` — the single use just
-                        // moved into `replacement`; unless it was an accounted-for read
-                        // (`f(ns.a)`), the namespace escapes there.
-                        if p.dynamic_import_namespace_locals.contains_key(&id)
-                            && p.namespace_tracked_uses.get(&id).copied().unwrap_or(0) == 0
-                        {
-                            // Read as "more uses than accounted for" when finalizing.
-                            p.namespace_tracked_uses.insert(id, u32::MAX);
-                        }
-                        match local.decls.len_u32() {
-                            1 => {
-                                local.decls.clear();
-                                let new_len = output.len() - 1;
-                                output.truncate(new_len);
-                                continue 'inner;
-                            }
-                            _ => {
-                                let n = local.decls.len() - 1;
-                                local.decls.truncate(n);
-                                continue 'inner;
-                            }
-                        }
-                    }
-                    break;
-                }
-            }
-
-            // don't merge super calls to ensure they are called before "this" is accessed
-            if stmt.is_super_call() {
-                output.push(stmt);
-                continue;
-            }
-
-            // The following calls to `joinWithComma` are only enabled during bundling. We do this
-            // to avoid changing line numbers too much for source maps
-
-            match stmt.data {
-                StmtData::SEmpty(_) => continue,
-
-                // skip directives for now
-                StmtData::SDirective(_) => continue,
-
-                StmtData::SLocal(local) => {
-                    // Merge adjacent local statements
-                    if output.len() > 0 {
-                        let prev_idx = output.len() - 1;
-                        let prev_stmt = &mut output[prev_idx];
-                        if let StmtData::SLocal(mut prev_local) = prev_stmt.data {
-                            if local.can_merge_with(&prev_local) {
-                                // `Vec::append_slice` requires `T: Clone`
-                                // but `G::Decl` lacks the derive (its fields are all
-                                // `Copy`). Per-element bitwise copy instead.
-                                //
-                                // The parse pass allocates `decls` in the bump arena
-                                // (`from_bump_slice` → `Origin::Borrowed`); promote to a
-                                // global-heap buffer before growing it.
-                                for d in local.decls.slice() {
-                                    // SAFETY: Decl is field-wise Copy (Binding, Option<Expr>).
-                                    prev_local.decls.push(unsafe { core::ptr::read(d) });
-                                }
-                                continue;
-                            }
-                        }
-                    }
-                }
-
-                StmtData::SExpr(s_expr) => {
-                    // Merge adjacent expression statements
-                    if output.len() > 0 {
-                        let prev_idx = output.len() - 1;
-                        let prev_stmt = &mut output[prev_idx];
-                        if let StmtData::SExpr(mut prev_expr) = prev_stmt.data {
-                            if !prev_stmt.is_super_call()
-                                && p.options.runtime_merge_adjacent_expression_statements()
-                            {
-                                prev_expr.does_not_affect_tree_shaking = prev_expr
-                                    .does_not_affect_tree_shaking
-                                    && s_expr.does_not_affect_tree_shaking;
-                                prev_expr.value =
-                                    Expr::join_with_comma(prev_expr.value, s_expr.value);
-                                continue;
-                            }
-                        } else if let StmtData::SLocal(prev_local) = prev_stmt.data {
-                            //
-                            // Input:
-                            //      var f;
-                            //      f = 123;
-                            // Output:
-                            //      var f = 123;
-                            //
-                            // This doesn't handle every case. Only the very simple one.
-                            if let ExprData::EBinary(bin_assign) = s_expr.value.data {
-                                if prev_local.decls.len_u32() == 1
-                                    && bin_assign.op == OpCode::BinAssign
-                                    // we can only do this with var because var is hoisted
-                                    // the statement we are merging into may use the statement before its defined.
-                                    && prev_local.kind == LocalKind::KVar
-                                {
-                                    if let ExprData::EIdentifier(left_id) = bin_assign.left.data {
-                                        // `prev_local` is a `StoreRef` (Copy) so
-                                        // re-slicing here writes through to the arena slot.
-                                        let mut prev_local = prev_local;
-                                        let decl = &mut prev_local.decls.slice_mut()[0];
-                                        if let BData::BIdentifier(bid_ptr) = decl.binding.data {
-                                            let bid_ref = bid_ptr.r#ref;
-                                            if bid_ref.eql(left_id.ref_)
-                                                // If the value was assigned, we shouldn't merge it incase it was used in the current statement
-                                                // https://github.com/oven-sh/bun/issues/2948
-                                                // We don't have a more granular way to check symbol usage so this is the best we can do
-                                                && decl.value.is_none()
-                                            {
-                                                decl.value = Some(bin_assign.right);
-                                                p.ignore_usage(left_id.ref_);
-                                                continue;
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                StmtData::SSwitch(mut s_switch) => {
-                    // Absorb a previous expression statement
-                    if output.len() > 0 && p.options.runtime_merge_adjacent_expression_statements()
-                    {
-                        let prev_idx = output.len() - 1;
-                        let prev_stmt = output[prev_idx];
-                        if let StmtData::SExpr(prev_expr) = prev_stmt.data {
-                            if !prev_stmt.is_super_call() {
-                                s_switch.test =
-                                    Expr::join_with_comma(prev_expr.value, s_switch.test);
-                                output.truncate(prev_idx);
-                            }
-                        }
-                    }
-                }
-                StmtData::SIf(mut s_if) => {
-                    // Absorb a previous expression statement
-                    if output.len() > 0 && p.options.runtime_merge_adjacent_expression_statements()
-                    {
-                        let prev_idx = output.len() - 1;
-                        let prev_stmt = output[prev_idx];
-                        if let StmtData::SExpr(prev_expr) = prev_stmt.data {
-                            if !prev_stmt.is_super_call() {
-                                s_if.test = Expr::join_with_comma(prev_expr.value, s_if.test);
-                                output.truncate(prev_idx);
-                            }
-                        }
-                    }
-
-                    // TODO: optimize jump
-                }
-
-                StmtData::SReturn(mut ret) => {
-                    // Merge return statements with the previous expression statement
-                    if output.len() > 0
-                        && ret.value.is_some()
-                        && p.options.runtime_merge_adjacent_expression_statements()
-                    {
-                        let prev_idx = output.len() - 1;
-                        let prev_stmt = output[prev_idx];
-                        if let StmtData::SExpr(prev_expr) = prev_stmt.data {
-                            if !prev_stmt.is_super_call() {
-                                ret.value = Some(Expr::join_with_comma(
-                                    prev_expr.value,
-                                    ret.value.unwrap(),
-                                ));
-                                output[prev_idx] = stmt;
-                                continue;
-                            }
-                        }
-                    }
-
-                    is_control_flow_dead = true;
-                }
-
-                StmtData::SBreak(_) | StmtData::SContinue(_) => {
-                    is_control_flow_dead = true;
-                }
-
-                StmtData::SThrow(s_throw) => {
-                    // Merge throw statements with the previous expression statement
-                    if output.len() > 0 && p.options.runtime_merge_adjacent_expression_statements()
-                    {
-                        let prev_idx = output.len() - 1;
-                        let prev_stmt = output[prev_idx];
-                        if let StmtData::SExpr(prev_expr) = prev_stmt.data {
-                            if !prev_stmt.is_super_call() {
-                                output[prev_idx] = p.s(
-                                    S::Throw {
-                                        value: Expr::join_with_comma(
-                                            prev_expr.value,
-                                            s_throw.value,
-                                        ),
-                                    },
-                                    stmt.loc,
-                                );
-                                continue;
-                            }
-                        }
-                    }
-
-                    is_control_flow_dead = true;
-                }
-
-                _ => {}
-            }
-
-            output.push(stmt);
+            p.mangle_stmt_into_list(&mut mangler, &mut output, stmt);
         }
+        p.in_switch_case = was_in_switch_case;
 
-        // stmts.deinit(); — Drop handles freeing the old buffer (BumpVec is arena-backed).
         *stmts = output;
         Ok(())
     }

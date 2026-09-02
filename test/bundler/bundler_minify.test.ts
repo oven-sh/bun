@@ -1681,6 +1681,333 @@ describe("bundler", () => {
       expect(code.match(/let keep = /g)).toHaveLength(10);
     },
   });
+
+  // A single-use `var` at the top level of a function body is inlined like a
+  // `let`: every use of it has been visited once the body is done. The
+  // declaration before the next statement, the next statement, and the
+  // statement after that collapse into one expression.
+  itBundled("minify/InlineSingleUseVarInFunctionBody", {
+    files: {
+      "/entry.js": /* js */ `
+        function f() { return 1; }
+        function g() { return 2; }
+        function h() { return 3; }
+        export function basic() { var r = 1, a = 2; g(r, a); var n = 3; return n; }
+        export function chain() { var a = f(); var b = a.prop; return b; }
+        export function staticBlock() { class K { static { var s = f(); g(s); } } return K; }
+
+        export function keepParamAlias(a) { var a = 2; return arguments[0]; }
+        export function keepBlockRedeclaration() { var x = 1; { var x = 2; g(x); } }
+        export function keepClosureUse() { var x = f(); return () => x; }
+        export function keepLoopUse() { var x = f(); while (g()) h(x); }
+        export function keepHoistedUse() { g(x); var x = f(); return 1; }
+      `,
+    },
+    minifySyntax: true,
+    minifyIdentifiers: false,
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      expect(code).toContain("return g(1, 2), 3;");
+      expect(code).toContain("return f().prop;");
+      expect(code).toContain("g(f());");
+      expect(code.match(/var /g)).toHaveLength(6);
+    },
+  });
+
+  // A declaration that nothing uses goes when its initializer has no side
+  // effects. An initializer with side effects stays behind as a statement, in
+  // its original position. Destructuring is left alone.
+  itBundled("minify/DropUnusedLocals", {
+    files: {
+      "/entry.js": /* js */ `
+        export function pure() { const DROP_A = Math.PI / 180; let DROP_B = 1 << 3; var DROP_C; return 1; }
+        export function cascade() { const DROP_D = Math.PI / 180; const DROP_E = DROP_D * 2; return 1; }
+        export function nested() { if (g()) { const DROP_F = [1, 2]; return 1; } }
+        export function sideEffects() { var DROP_G = f("first"), used = 2, DROP_H = f("third"); return used; }
+        export function closure() { const DROP_I = () => h(); return 1; }
+        export function keepDestructuring(o) { const { c } = o; return 1; }
+        export function keepUsed() { const keep = f(); return g(keep, keep); }
+        export function keepBlockVar() { if (g()) { var x = f(); } return 1; }
+      `,
+    },
+    minifySyntax: true,
+    minifyIdentifiers: false,
+    dce: true,
+    dceKeepMarkerCount: false,
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      // sideEffects(): both calls stay, in order, without the bindings.
+      expect(code).toContain('return f("first"), f("third"), 2;');
+      expect(code).toContain("let { c } = o;");
+      expect(code).toContain("let keep = f();");
+      expect(code).toContain("var x = f();");
+      expect(code).not.toContain("Math.PI");
+    },
+  });
+
+  // An initializer with side effects can still be moved past a read that
+  // cannot throw or change: a function declaration the file never assigns
+  // to, a known global like `console.log`, and a `const`, `let` or `class`
+  // declared earlier in the same function. A binding of an enclosing function
+  // can be in its TDZ, so reading it is not moved before the initializer.
+  itBundled("minify/InlineSingleUsePastStableReads", {
+    files: {
+      "/entry.js": /* js */ `
+        import { imported } from "./other.js";
+        function g(...a) { return a.join(","); }
+        const h = (...a) => a.join(",");
+        const flag = g();
+        let never = (x) => x;
+        let assigned = (x) => x;
+        assigned = (x) => x + 1;
+
+        export function intoFunction(n) { const t = n + 1; return g(t); }
+        export function intoGlobal() { const t = f(); return console.log(t); }
+        export function intoLocalFunction() { const t = f(); return later(t); function later(x) { return x; } }
+        export function intoLocalConst() { const local = (x) => x; const t = f(); return local(t) + local(1); }
+        export function intoAndBranchLiteral() { const t = 1; return flag && t; }
+
+        export function keepAssigned() { const keep = f(); return assigned(keep); }
+        export function keepOuterConst() { const keep = f(); return h(keep); }
+        export function keepOuterLet() { const keep = f(); return never(keep); }
+        export function keepThis() { const keep = f(); return g(this, keep); }
+        export function keepLaterConst() { const keep = f(); const r = later(keep); const later = (x) => x; return r; }
+        export function keepSelfReference() { const keep = f(); const self = [self, keep]; return self; }
+        export function keepSiblingCase(x) { switch (x) { case 1: const later = (y) => y; case 2: const keep = f(); return later(keep); } }
+        export function keepSiblingCaseNested(x) { switch (x) { case 1: const later = (y) => y; case 2: { const keep = f(); return later(keep); } } }
+        export function keepAndBranch() { const keep = f(); return flag && keep; }
+        export function keepOrBranch() { const keep = f(); return flag || keep; }
+        export function keepNullishBranch() { const keep = f(); return flag ?? keep; }
+        export function keepUnbound() { const keep = f(); return unbound(keep); }
+        export function keepGetter(o) { const keep = f(); return o.m(keep); }
+        export function keepThisProperty() { const keep = f(); return this.m(keep); }
+        export function keepParam(p) { const keep = f(); return p(keep); }
+        export function keepImport() { const keep = f(); return imported(keep); }
+      `,
+      "/other.js": /* js */ `
+        export function imported(x) { return x; }
+      `,
+    },
+    minifySyntax: true,
+    minifyIdentifiers: false,
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      expect(code).toContain("return g(n + 1);");
+      expect(code).toContain("return console.log(f());");
+      expect(code).toContain("return later(f());");
+      expect(code).toContain("return local(f()) + local(1);");
+      expect(code).toContain("return flag && 1;");
+      expect(code.match(/let keep = f\(\)[,;]/g)).toHaveLength(16);
+    },
+  });
+
+  // The cases of a switch share one scope but are visited one at a time, so a
+  // declaration in one case can have no visited use yet when its case is done.
+  itBundled("minify/UnusedLocalsKeptAcrossSwitchCases", {
+    files: {
+      "/entry.js": /* js */ `
+        function f(x) { switch (x) { case 1: let y = 42; case 2: return y; } }
+        console.log(f(1));
+      `,
+    },
+    minifySyntax: true,
+    minifyIdentifiers: false,
+    run: { stdout: "42" },
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toContain("let y = 42;");
+    },
+  });
+
+  // A `const` of an enclosing function can be in its TDZ when an `await`
+  // suspends, and initialized by the time it resumes. Reading it before the
+  // `await` would throw, so an initializer that suspends stays where it is.
+  itBundled("minify/KeepOuterBindingReadAfterAwait", {
+    files: {
+      "/entry.js": /* js */ `
+        let resolve;
+        const gate = new Promise((r) => { resolve = r; });
+        async function waits() { const t = await gate; return [v, t]; }
+        async function syncPart() { const t = gate.then((x) => x); return [v, await t]; }
+        const pending = waits();
+        const v = 42;
+        resolve("ok");
+        console.log(JSON.stringify([await pending, await syncPart()]));
+      `,
+    },
+    minifySyntax: true,
+    minifyIdentifiers: false,
+    run: { stdout: '[[42,"ok"],[42,"ok"]]' },
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      expect(code).toContain("let t = await gate;");
+      expect(code).toContain("let t = gate.then((x) => x);");
+    },
+  });
+
+  // A `super(...)` call is never merged with its neighbors (the class lowering
+  // looks for it to place field initializers), but a single-use declaration
+  // before it is still inlined into its arguments.
+  itBundled("minify/InlineIntoSuperCall", {
+    files: {
+      "/entry.js": /* js */ `
+        const log = [];
+        function compute() { log.push("compute"); return 2; }
+        class B { constructor(x) { log.push("B:" + x); this.x = x; } }
+        class Literal extends B { constructor() { const t = 1; super(t); } }
+        class Call extends B { constructor() { const t = compute(); super(t); } }
+        class Field extends B { y = log.push("field"); constructor() { log.push("before"); super(3); log.push("after"); } }
+        log.push(new Literal().x, new Call().x, new Field().y);
+        console.log(JSON.stringify(log));
+      `,
+    },
+    minifySyntax: true,
+    minifyIdentifiers: false,
+    run: { stdout: '["B:1","compute","B:2","before","B:3","field","after",1,2,6]' },
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      expect(code).toContain("super(1);");
+      expect(code).toContain("super(compute());");
+      expect(code).toContain("super(3);");
+      expect(code).not.toContain("let t");
+    },
+  });
+
+  // A direct `eval` anywhere in the file can assign any binding by name, so
+  // nothing is moved past a read of a binding that is not a `const`.
+  itBundled("minify/InlineSingleUseStopsAtDirectEval", {
+    files: {
+      "/entry.js": /* js */ `
+        function g(x) { return x; }
+        export function stable() { const keep = f(); return g(keep); }
+        export function evil(code) { return eval(code); }
+        export function scoped() { var keep = 1; return eval("keep"); }
+        export function inWith(o) { var keep = 1; with (o) return keep; }
+      `,
+    },
+    minifySyntax: true,
+    minifyIdentifiers: false,
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      expect(code).toMatch(/let keep\d* = f\(\);/);
+      expect(code.match(/var keep = 1;/g)).toHaveLength(2);
+    },
+  });
+
+  // An edit to the end of the list is followed by another look at the new
+  // end: after `return x` absorbs `a()`, the `let x = 1` before it is inlined.
+  itBundled("minify/RemergeAfterInlining", {
+    files: {
+      "/entry.js": /* js */ `
+        export function literalPastCall() { let x = 1; a(); return x; }
+        export function literalPastAssignment() { let x = 1; o[a()] = x; }
+        export function arrowPastCall() { const fn = () => 1; a(); return fn; }
+        export function unusedAfterInline() { const D = Math.PI / 180; const r = D * 2; return 1; }
+        export function ifTest() { let x = 1; a(); if (x) b(); }
+        export function keepSideEffectPastCall() { let keep = f(); a(); return keep; }
+      `,
+    },
+    minifySyntax: true,
+    minifyIdentifiers: false,
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      expect(code).toContain("return a(), 1;");
+      expect(code).toContain("o[a()] = 1;");
+      expect(code).toContain("return a(), () => 1;");
+      expect(code).toContain("unusedAfterInline() {\n  return 1;\n}");
+      expect(code).toContain("if (a(), 1)");
+      expect(code).toContain("let keep = f();");
+    },
+  });
+
+  // A call to a known pure global with primitive arguments is dropped when its
+  // result is unused. With an argument of unknown type the call stays, since
+  // converting an object runs its `valueOf`.
+  itBundled("minify/DropUnusedPureGlobalCalls", {
+    files: {
+      "/entry.js": /* js */ `
+        export function dropped() { Math.floor(1.5); Math.max(1, 2); Number.isNaN("x"); Array.isArray("x"); return 1; }
+        export function keptObjectArg(x) { Math.floor(x); return 1; }
+        export function keptRandom() { Math.random(); return 1; }
+        export function keptUsed() { return Math.floor(1.5); }
+      `,
+    },
+    minifySyntax: true,
+    minifyIdentifiers: false,
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      expect(code).toContain("dropped() {\n  return 1;\n}");
+      expect(code).toContain("Math.floor(x), 1;");
+      expect(code).toContain("Math.random(), 1;");
+      expect(code).toContain("return Math.floor(1.5);");
+      expect(code).not.toContain("Math.max");
+    },
+  });
+
+  // The bundled output behaves like the source: the order of side effects and
+  // the values are unchanged. (The expected output is what `bun entry.js`
+  // prints for the unbundled source.)
+  itBundled("minify/InlineAndDropPreservesSemantics", {
+    files: {
+      "/entry.js": /* js */ `
+        const log = [];
+        let counter = 0;
+        function side(tag) { log.push("side:" + tag); return ++counter; }
+        function g(...a) { log.push("g:" + a.join(",")); return a.length; }
+        let mutable = "m0";
+        let mutableSeq = 0;
+        function setMutable() { mutable = "m" + ++mutableSeq; return "set"; }
+
+        function t1() { var r = 1, a = 2; g(r, a); var n = 3; return n; }
+        function t2() { const t = side("t2"); return g(t); }
+        function t3() { const t = setMutable(); return g(mutable, t); }
+        function t4() { let m = mutable; const t = setMutable(); return g(m, t); }
+        function t5() { var x = side("t5a"), y = 2, z = side("t5b"); return y; }
+        function t6(a) { var a = 2; return a; }
+        function t7() { var x = 1; { var x = 2; g(x); } return x; }
+        function t8() { let x = 1; g("t8"); return x; }
+        function t9() { const o = { get p() { side("getter"); return "p"; } }; const t = o.p; return g(t); }
+        function t10() { let x = side("t10a"); let y = side("t10b"); return g(y, x); }
+        function t11() { const D = Math.PI / 180; const R = D * 2; return 1; }
+        function t12(x) { Math.floor(x); return 1; }
+        function t13() { var fns = []; for (var i = 0; i < 2; i++) { var j = i; fns.push(() => j); } return fns.map((f) => f()).join(); }
+        function t14() { let m = mutable; const t = setMutable(); return g(t, m); }
+
+        const results = [t1(), t2(), t3(), t4(), t5(), t6(7), t7(), t8(), t9(), t10(), t11(), t12({ valueOf() { log.push("valueOf"); return 1; } }), t13(), t14()];
+        console.log(JSON.stringify({ results, log }));
+        export {};
+      `,
+    },
+    minifySyntax: true,
+    run: {
+      stdout:
+        '{"results":[3,1,2,2,2,2,2,1,1,2,1,1,"1,1",2],"log":["g:1,2","side:t2","g:1","g:m1,set","g:m1,set","side:t5a","side:t5b","g:2","g:t8","side:getter","g:p","side:t10a","side:t10b","g:6,5","valueOf","g:set,m2"]}',
+    },
+  });
+
+  // All of the above is gated on bundling. The runtime transpiler forces
+  // minify-syntax on for bun targets, and its output must stay close to the
+  // source: `var` declarations and unused locals are kept in transform mode.
+  itBundled("minify/UnusedLocalsKeptWhenNotBundling", {
+    files: {
+      "/entry.js": /* js */ `
+        export function a() { var r = 1, a = 2; g(r, a); var n = 3; return n; }
+        export function b() { const D = Math.PI / 180; return 1; }
+        export function c() { let x = 1; g(); return x; }
+        export function d() { Math.floor(1.5); Math.PI / 180; return 1; }
+      `,
+    },
+    bundling: false,
+    minifySyntax: true,
+    minifyIdentifiers: false,
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      expect(code).toContain("var r = 1, a = 2;");
+      expect(code).toContain("const D = Math.PI / 180;");
+      expect(code).toContain("let x = 1;");
+      expect(code).toContain("Math.floor(1.5);");
+      expect(code).toContain("Math.PI / 180;");
+    },
+  });
 });
 
 // The runtime transpiler (`bun run`/`bun test`) implicitly enables

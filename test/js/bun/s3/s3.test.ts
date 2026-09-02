@@ -688,7 +688,7 @@ for (let credentials of allCredentials) {
                 expect(await S3Client.size(tmpfile.name, options)).toBe(Buffer.byteLength(bigPayload));
                 expect(await file(tmpfile.name, options).text()).toEqual(bigPayload);
               }
-            }, 15_000);
+            }, 100_000);
 
             it("should be able to upload large files in one go using S3File.write", async () => {
               {

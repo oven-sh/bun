@@ -839,6 +839,80 @@ describe("bundler", () => {
       '+"æ"',
     ],
   });
+  // https://github.com/oven-sh/bun/issues/31074
+  // Integers with trailing zeros should print in `<prefix>e<exp>` form when
+  // shorter than the full decimal. The old integer fast path only recognised
+  // exact powers of ten (10000 → 1e4), so 160000 stayed `160000` instead of
+  // shrinking to `16e4`, and 320000000 stayed 9 chars instead of 4 (`32e7`).
+  itBundled("minify/IntegerTrailingZeroScientificNotation", {
+    files: {
+      "/entry.ts": `
+        capture(160000);
+        capture(10000);
+        capture(50000);
+        capture(2048000);
+        capture(320000000);
+        capture(1000);
+        capture(100);
+        capture(999);
+        capture(0);
+        capture(1);
+        capture(10);
+      `,
+    },
+    minifySyntax: true,
+    capture: [
+      "16e4",
+      "1e4",
+      "5e4",
+      "2048e3",
+      "32e7",
+      "1e3",
+      "100", // 3 chars == "1e2" 3 chars; keep decimal on tie
+      "999",
+      "0",
+      "1",
+      "10",
+    ],
+  });
+  // https://github.com/oven-sh/bun/issues/29311
+  // The printer compares the plain decimal form with the integer-mantissa
+  // exponent form and prints the shorter one, as esbuild does. `1e300` used
+  // to print as a 1 followed by 300 zeros. With whitespace minification a
+  // fraction below 1 also drops its leading zero.
+  itBundled("minify/ShortestNumberForm", {
+    files: {
+      "/entry.js": /* js */ `
+        capture(1e300);
+        capture(-1e300);
+        capture(0.0000001);
+        capture(0.00001);
+        capture(1.5e20);
+        capture(2000000000);
+        capture(1000000000000);
+        capture(0.5);
+        capture(123);
+        capture(3.14159);
+      `,
+    },
+    minifySyntax: true,
+    minifyWhitespace: true,
+    capture: ["1e300", "-1e300", "1e-7", "1e-5", "15e19", "2e9", "1e12", ".5", "123", "3.14159"],
+  });
+  // The choice between the two forms does not depend on minification. esbuild
+  // prints `16e4` for `160000` without any flag. Only the leading zero of a
+  // fraction stays.
+  itBundled("minify/ShortestNumberFormWithoutMinify", {
+    files: {
+      "/entry.js": /* js */ `
+        capture(1e300);
+        capture(160000);
+        capture(1.5e20);
+        capture(0.5);
+      `,
+    },
+    capture: ["1e300", "16e4", "15e19", "0.5"],
+  });
   itBundled("minify/ImportMetaHotTreeShaking", {
     files: {
       "/entry.ts": `

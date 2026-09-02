@@ -3369,8 +3369,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         Ok(result)
     }
 
-    /// The TLS half over this `raw` half's fd (`upgradeTLS`); it holds the
-    /// loop for both, as node's single uv handle does.
+    /// The TLS half sharing this `raw` half's fd after `upgradeTLS`.
     fn tls_layer(&self) -> Option<bun_ptr::ThisPtr<TLSSocket>> {
         if !self.flags.get().contains(Flags::BYPASS_TLS) {
             return None;
@@ -3407,8 +3406,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         Ok(JSValue::UNDEFINED)
     }
 
-    /// `ref()` / `unref()`: this socket's hold on the loop, and its TLS layer's
-    /// when it is the `raw` half of an upgrade (node: one uv handle for both).
+    /// `ref()`/`unref()`; a `raw` half forwards to its TLS layer (node: one uv handle).
     pub(crate) fn set_ref(&self, hold: bool) {
         if let Some(tls) = self.tls_layer() {
             tls.set_ref(hold);
@@ -3765,8 +3763,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             }
         };
 
-        // `this` becomes the `raw` half (see `twin`): it follows the fd into
-        // the new `us_socket_t` but is never in its ext slot.
+        // `this` becomes the `raw` half (see `twin`).
         let raw: &TCPSocket = (this as &dyn core::any::Any)
             .downcast_ref::<TCPSocket>()
             .expect("SSL sockets returned above");
@@ -4164,8 +4161,7 @@ pub(crate) enum NativeCallbacks {
     /// (`upgradeDuplexToTLS` over a handle-backed net.Socket: named pipes,
     /// TLS over TLS, Http2SecureServer's injected sockets). Its bytes and EOF
     /// go to that engine, never to the JS handlers — node's TLSWrap taking
-    /// over the parent's stream. The engine clears this slot from its own
-    /// teardown (`release_transport`) before it is freed.
+    /// over the parent's stream. Cleared by the engine's `release_transport`.
     TlsTransport(bun_ptr::BackRef<UpgradedDuplex>),
     None,
 }
@@ -4178,8 +4174,7 @@ impl NativeCallbacks {
     pub(crate) fn on_data(&self, data: &[u8]) -> JsResult<bool> {
         let h2 = match self {
             NativeCallbacks::H2(h2) => h2.as_ptr(),
-            // Copied out: decrypted data re-enters JS, which may close this
-            // transport and overwrite the cell `self` borrows.
+            // Copied out: the feed re-enters JS, which may overwrite this cell.
             NativeCallbacks::TlsTransport(engine) => {
                 let engine = *engine;
                 engine.on_transport_data(data);

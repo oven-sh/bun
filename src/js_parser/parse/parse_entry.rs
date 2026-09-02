@@ -1549,11 +1549,9 @@ impl<'a> Parser<'a> {
             }
         }
 
-        // react-dom/index.js in production: `checkDCE(); module.exports = require('./cjs/...')`.
-        // `transpose_require` made the require() an `import * as ns` namespace, so the
-        // statement reads `module.exports = ns`. Replace it with `export * from`: the file
-        // is ESM without a `__commonJS` wrapper. The linker reads the export star of a
-        // `COMMONJS_LIFTED_TO_ESM` file as this assignment if it wraps the file after all.
+        // `checkDCE(); module.exports = require('./cjs/...')` (react-dom/index.js in production).
+        // The unwrapped require() is already an `import * as ns`, so `export * from` replaces
+        // the assignment and the file needs no wrapper (`convert_stmts_for_chunk` undoes it).
         if p.options.features.unwrap_commonjs_to_esm
             && p.unwrap_all_requires
             && !p.options.is_entry_point
@@ -1682,8 +1680,7 @@ impl<'a> Parser<'a> {
                         .get(&found.namespace_ref)
                         .is_some_and(|items| items.count() > 0);
                 if ns_is_unused {
-                    // Drop the unused `import * as ns` part. `remove` keeps the other
-                    // imports in source order.
+                    // Drop the unused `import * as ns` part, keeping the other imports in order.
                     if let Some(i) = before.iter().position(|before_part| {
                         before_part.tag == bun_ast::PartTag::ImportToConvertFromRequire
                             && before_part

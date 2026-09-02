@@ -420,9 +420,8 @@ pub(crate) fn scan_imports_and_exports(
                     let has_dynamic_exports =
                         dependency_wrapper.has_dynamic_exports_due_to_export_star(source_index);
 
-                    // A lifted CommonJS file's export star stands for `module.exports =
-                    // require("./b")`. With a CommonJS or external "./b", its named imports
-                    // cannot bind statically: keep the wrapper (`convert_stmts_for_chunk`).
+                    // A lifted file's export star was `module.exports = require("./b")`. With no
+                    // static exports in "./b", keep the wrapper (see `convert_stmts_for_chunk`).
                     if has_dynamic_exports
                         && dependency_wrapper.exports_kind[id] != ExportsKind::Cjs
                         && col_ref!(ast_flags_list)[id].contains(AstFlags::COMMONJS_LIFTED_TO_ESM)
@@ -1197,9 +1196,8 @@ pub(crate) fn scan_imports_and_exports(
                         (record.source_index,)
                     };
 
-                    // `convert_stmts_for_chunk` prints a wrapped lifted file's export star
-                    // as `module.exports = <value>`: the part needs `module` and the value
-                    // (a namespace object, or the `import * as ns` of an external module).
+                    // `convert_stmts_for_chunk` prints a wrapped lifted file's export star as
+                    // `module.exports = <value>`: the part needs `module` and that value.
                     if wrap == WrapKind::Cjs
                         && col_ref!(ast_flags_list)[id].contains(AstFlags::COMMONJS_LIFTED_TO_ESM)
                         && !(rec_source_index.is_valid() && rec_source_index.get() == source_index)

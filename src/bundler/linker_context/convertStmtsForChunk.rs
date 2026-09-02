@@ -162,9 +162,8 @@ pub(crate) fn convert_stmts_for_chunk(
                         break 'process_stmt;
                     }
 
-                    // A lifted CommonJS file's export star is the parser's rewrite of
-                    // `module.exports = require("path")` (`parse_entry.rs`). Inside a
-                    // `__commonJS` wrapper, print that assignment again.
+                    // A lifted CommonJS file's export star was `module.exports = require("path")`
+                    // (see `parse_entry.rs`): inside a `__commonJS` wrapper, print that again.
                     let is_module_exports_of_wrapped_file = wrap == WrapKind::Cjs
                         && ast.flags.contains(AstFlags::COMMONJS_LIFTED_TO_ESM)
                         && !(record.source_index.is_valid()

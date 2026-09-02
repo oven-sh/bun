@@ -4255,6 +4255,11 @@ impl<'a> LinkerContext<'a> {
         source_index: crate::IndexInt,
         part: &Part,
     ) -> bool {
+        // With a direct eval() in the file, the parser pins every
+        // symbol-declaring part: eval'd code can reference the bindings.
+        if self.graph.ast.items_module_scope()[source_index as usize].contains_direct_eval {
+            return false;
+        }
         let stmts = part.stmts.slice();
         if stmts.is_empty() {
             return false;

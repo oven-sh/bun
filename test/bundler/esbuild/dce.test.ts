@@ -2273,6 +2273,23 @@ describe("bundler", () => {
     },
     dce: true,
   });
+  // A direct eval() pins every symbol-declaring part: the eval'd code can
+  // reference the destructured binding by name.
+  itBundled("dce/DestructuringOfImportNamespaceDirectEval", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as ns from './lib.js'
+        const { helper } = ns
+        eval('helper()')
+      `,
+      "/lib.js": /* js */ `
+        export function helper() { console.log("HELPER RAN") }
+      `,
+    },
+    run: {
+      stdout: "HELPER RAN",
+    },
+  });
   // A lifted require() namespace is an ordinary local. When user code
   // rebinds it, the value can hold getters, so the destructuring must stay.
   itBundled("dce/DestructuringOfReboundUnwrappedRequire", {

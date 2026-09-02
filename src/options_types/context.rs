@@ -213,7 +213,8 @@ pub struct BundlerOptions {
     pub banner: Box<[u8]>,
     pub footer: Box<[u8]>,
     pub css_chunking: bool,
-    pub min_chunk_size: u64,
+    /// `None`: the target's default (`bun_bundler::options::default_min_chunk_size`).
+    pub min_chunk_size: Option<u64>,
     pub module_preload: bool,
     pub bake: bool,
     pub bake_debug_dump_server: bool,
@@ -272,7 +273,7 @@ impl Default for BundlerOptions {
             banner: Box::default(),
             footer: Box::default(),
             css_chunking: false,
-            min_chunk_size: 0,
+            min_chunk_size: None,
             module_preload: true,
             bake: false,
             bake_debug_dump_server: false,

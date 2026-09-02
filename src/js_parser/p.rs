@@ -8862,6 +8862,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let parts_list = core::mem::replace(parts, BumpVec::new_in(arena));
         let import_records = self.import_records.move_to_baby_list(arena);
 
+        let force_cjs_to_esm = self.unwrap_all_requires
+            || exports_kind == js_ast::ExportsKind::EsmWithDynamicFallbackFromCjs;
+
         // PERF: box at the construction site so the ~1 KB `Ast` is written
         // straight into the heap allocation and only the thin `Box` pointer is
         // returned up the `_parse → parse → cache → transpiler` chain (see
@@ -8892,8 +8895,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             require_ref,
 
-            force_cjs_to_esm: self.unwrap_all_requires
-                || exports_kind == js_ast::ExportsKind::EsmWithDynamicFallbackFromCjs,
+            force_cjs_to_esm,
+            commonjs_lifted_to_esm: force_cjs_to_esm && !self.has_es_module_syntax,
             uses_module_ref,
             uses_exports_ref,
             uses_require_ref,

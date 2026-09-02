@@ -348,13 +348,10 @@ enum class PendingSlot : uint8_t {
 // operations creates N ids but only one weak slot allocation. Response
 // handlers do m_views.find(entry.viewId)->value.get() to reach the view.
 //
-// navGen is the view's m_navGeneration at enqueue time for Navigate-
-// slot entries (0 = ungated, all other slots). armNavTimeout rejects
-// the navigate without pruning m_pending, so a stale response for the
-// timed-out navigation can arrive after a .catch() retry refilled
-// m_pendingNavigate — handleResponse drops it on gen mismatch instead
-// of settling the retry's promise (or, for the attach chain, creating
-// a second tab). Chained responses carry entry.navGen forward.
+// navGen: the view's m_navGeneration at enqueue (0 = ungated). A timeout
+// leaves its entries in m_pending; handleResponse drops the late response
+// on a mismatch instead of settling a retry's promise. Chained responses
+// carry it forward.
 struct Pending {
     Method method;
     PendingSlot slot;

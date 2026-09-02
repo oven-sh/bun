@@ -20,16 +20,13 @@ enum class WebViewBackend : uint8_t {
     Chrome, // Chrome DevTools Protocol via --remote-debugging-pipe
 };
 
-// navigate()/reload()/goBack()/goForward() `waitUntil` option. Chrome
-// settles on the matching Page.lifecycleEvent; WebKit only exposes
-// didFinishNavigation (= load), so DOMContentLoaded degrades to Load
-// there. Values are also the wire enum for a future IPC NavigatePayload.
+// navigate()/reload()/goBack()/goForward() `waitUntil` option. WebKit only
+// exposes didFinishNavigation (= load), so DOMContentLoaded degrades to
+// Load there.
 enum class NavWaitUntil : uint8_t {
-    Load = 0, // window `load` fired — all subresources done. Default.
-    DOMContentLoaded = 1, // document parsed; subresources may still be
-                          // loading. Lets navigate() settle when the page
-                          // holds a never-ending connection (SSE/long-poll)
-                          // that would otherwise block `load` forever.
+    Load = 0, // window `load` fired. Default.
+    DOMContentLoaded = 1, // document parsed; settles even when a
+                          // subresource never finishes (SSE, long-poll).
 };
 
 enum class ScreenshotFormat : uint8_t {
@@ -110,20 +107,13 @@ public:
     WTF::String m_sessionId;
     WTF::String m_targetId;
     WTF::String m_pendingChromeNavigateUrl;
-    // Main-frame id + the CURRENT navigation's loaderId. frameNavigated
-    // updates both (parentId absent = main frame); Page.lifecycleEvent
-    // only settles when its frameId/loaderId match — subframe events and
-    // the about:blank replay from setLifecycleEventsEnabled don't match.
-    // m_loaderId is cleared by beginChromeNavigation() (so a PRIOR
-    // document's trailing lifecycle/loadEventFired can be identified as
-    // stale) and repopulated by the next frameNavigated.
+    // Committed main-frame id + current navigation's loaderId, set by
+    // frameNavigated. Page.lifecycleEvent settles only on a match. Empty
+    // m_loaderId = not committed yet; prior-document events are stale.
     WTF::String m_frameId;
     WTF::String m_loaderId;
-    // Set once chainTitle() has enqueued the PageTitle fetch for THIS
-    // navigation. Further lifecycle/loadEventFired triggers for the
-    // same document drop instead of enqueuing duplicate PageTitle
-    // requests (whose responses could settle a LATER navigate). Cleared
-    // by beginChromeNavigation().
+    // True once this navigation's PageTitle fetch is enqueued; dedupes the
+    // DCL/load/loadEventFired triggers. Reset by beginChromeNavigation().
     bool m_navTitleChained = false;
     // clickSelector stash — the actionability eval chains into a
     // dispatchMouseEvent that needs these. WebViewHost has the same fields
@@ -141,11 +131,9 @@ public:
     // encoding → how the bytes are wrapped (Blob/Buffer/base64/shmem).
     ScreenshotFormat m_screenshotFormat = ScreenshotFormat::Png;
     ScreenshotEncoding m_screenshotEncoding = ScreenshotEncoding::Blob;
-    // navigate()/reload()/goBack()/goForward() stash — read by the
-    // Chrome Page.lifecycleEvent handler to pick which event settles.
-    // Generation bumps on every navigation start; the parent-side
-    // timeout timer captures it and no-ops if a later navigation (or the
-    // settle path) bumped it first. No explicit timer cancel.
+    // waitUntil stash for the Chrome lifecycle handler. The generation
+    // bumps on every navigation start and settle; a stale timeout timer
+    // sees the mismatch and no-ops.
     NavWaitUntil m_navWaitUntil = NavWaitUntil::Load;
     uint32_t m_navGeneration = 0;
 
@@ -210,12 +198,9 @@ public:
     JSC::JSPromise* reload(JSC::JSGlobalObject*, NavWaitUntil, uint32_t timeoutMs);
     void doClose();
 
-    // Arm the parent-side navigation timeout. dispatchAfter self-manages
-    // lifetime; the closure captures {viewId, backend, generation} and
-    // no-ops if the view was collected or m_navGeneration moved on.
-    // 0 = no timeout (Playwright convention). Must be called AFTER the
-    // backend op stored a promise in m_pendingNavigate — a sync-rejected
-    // op (transport dead) leaves the slot empty and we skip the timer.
+    // Arm the parent-side navigation timeout (0 = none). Call it after the
+    // backend op stored the promise; an empty slot skips the timer. The
+    // timer captures PODs only and no-ops on a generation mismatch.
     void armNavTimeout(JSC::JSGlobalObject*, uint32_t timeoutMs);
 
 #if OS(DARWIN)

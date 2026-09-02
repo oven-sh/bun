@@ -5070,9 +5070,8 @@ impl<'a> Resolver<'a> {
             return None;
         }
 
-        // Normalize the path so we can compare against it without getting confused by "./".
-        // The map keys use forward slashes on every platform (see `parse_package_json`),
-        // so the normalized path does too.
+        // Normalize the path (forward slashes, like the map keys) so we can compare
+        // against it without getting confused by "./"
         let cleaned: &[u8] = bun_paths::resolve_path::normalize_string_buf::<
             false,
             bun_paths::platform::Posix,
@@ -5084,8 +5083,7 @@ impl<'a> Resolver<'a> {
             return None;
         }
 
-        // A path inside the package is compared in its normalized form. A package
-        // path is compared as written.
+        // A path inside the package is compared normalized, a package path as written.
         let input_path: &[u8] = match KIND {
             BrowserMapPathKind::AbsolutePath => cleaned,
             BrowserMapPathKind::PackagePath => input_path,

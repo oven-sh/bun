@@ -711,7 +711,7 @@ impl<'a> LinkerContext<'a> {
                 let source_index: u32 = unsafe {
                     (*parse_graph).path_to_source_index_map(Target::Browser)
                 }
-                .get(path_text)
+                .get_with_loader(path_text, Loader::Html)
                 .unwrap_or_else(|| {
                     panic!("Assertion failed: HTML import file not found in pathToSourceIndexMap");
                 });

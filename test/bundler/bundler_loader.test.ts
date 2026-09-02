@@ -170,6 +170,93 @@ describe("bundler", async () => {
     },
   });
 
+  // A module is identified by its path and the loader the import asked for. One
+  // file imported with two different `type` attributes is two modules; the
+  // bundler used to merge them into whichever loader happened to get queued
+  // first.
+  describe("same file imported with different loaders", () => {
+    itBundled("bun/loader-same-file-different-loaders-across-modules", {
+      target: "bun",
+      files: {
+        "/entry.ts": /* js */ `
+          import { asText } from "./as-text";
+          import { asJson } from "./as-json";
+          console.log(JSON.stringify({ text: asText.trim(), json: asJson }));
+        `,
+        "/as-text.ts": /* js */ `
+          import data from "./data.json" with { type: "text" };
+          export const asText = data;
+        `,
+        "/as-json.ts": /* js */ `
+          import data from "./data.json";
+          export const asJson = data;
+        `,
+        "/data.json": `{"a":1}`,
+      },
+      run: { stdout: '{"text":"{\\"a\\":1}","json":{"a":1}}' },
+    });
+
+    itBundled("bun/loader-same-file-different-loaders-in-one-module", {
+      target: "bun",
+      files: {
+        "/entry.ts": /* js */ `
+          import asText from "./data.json" with { type: "text" };
+          import asJson from "./data.json";
+          console.log(JSON.stringify({ text: asText.trim(), json: asJson }));
+        `,
+        "/data.json": `{"a":1}`,
+      },
+      run: { stdout: '{"text":"{\\"a\\":1}","json":{"a":1}}' },
+    });
+
+    itBundled("bun/loader-same-file-different-loaders-dynamic-import", {
+      target: "bun",
+      files: {
+        "/entry.ts": /* js */ `
+          import asJson from "./data.json";
+          const { default: asText } = await import("./data.json", { with: { type: "text" } });
+          console.log(JSON.stringify({ text: asText.trim(), json: asJson }));
+        `,
+        "/data.json": `{"a":1}`,
+      },
+      run: { stdout: '{"text":"{\\"a\\":1}","json":{"a":1}}' },
+    });
+
+    itBundled("bun/loader-entry-point-imports-itself-as-text", {
+      target: "bun",
+      files: {
+        "/entry.ts": /* js */ `
+          import source from "./entry.ts" with { type: "text" };
+          console.log(typeof source, source.includes('with { type: "text" }'));
+        `,
+      },
+      run: { stdout: "string true" },
+    });
+
+    // An explicit `type` that matches the loader the extension already selects
+    // is still the same module.
+    itBundled("bun/loader-same-file-same-loader-is-one-module", {
+      target: "bun",
+      files: {
+        "/entry.ts": /* js */ `
+          import { a } from "./a";
+          import { b } from "./b";
+          console.log(a === b);
+        `,
+        "/a.ts": /* js */ `
+          import data from "./data.json" with { type: "json" };
+          export const a = data;
+        `,
+        "/b.ts": /* js */ `
+          import data from "./data.json";
+          export const b = data;
+        `,
+        "/data.json": `{"a":1}`,
+      },
+      run: { stdout: "true" },
+    });
+  });
+
   itBundled("bun/loader-json-proto-key-is-own-property", {
     target: "bun",
     files: {

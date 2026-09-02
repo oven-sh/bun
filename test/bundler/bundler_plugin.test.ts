@@ -544,6 +544,82 @@ describe("bundler", () => {
       },
     };
   });
+  // An onResolve callback that declines every import sends resolution through
+  // the plugin fallback path. The loader from the import attribute is still part
+  // of the module's identity there: the same file imported as text and as JSON
+  // is two modules.
+  itBundled("plugin/ResolveFallthroughSameFileDifferentLoaders", {
+    files: {
+      "index.ts": /* ts */ `
+        import { asText } from "./as-text";
+        import { asJson } from "./as-json";
+        console.log(JSON.stringify({ text: asText.trim(), json: asJson }));
+      `,
+      "as-text.ts": /* ts */ `
+        import data from "./data.json" with { type: "text" };
+        export const asText = data;
+      `,
+      "as-json.ts": /* ts */ `
+        import data from "./data.json";
+        export const asJson = data;
+      `,
+      "data.json": `{"a":1}`,
+    },
+    plugins(builder) {
+      builder.onResolve({ filter: /.*/ }, () => undefined);
+    },
+    run: { stdout: '{"text":"{\\"a\\":1}","json":{"a":1}}' },
+  });
+  // Same thing when onResolve itself resolves the specifier to a file on disk:
+  // each importer's attribute still picks that importer's loader.
+  itBundled("plugin/ResolveSuccessSameFileDifferentLoaders", ({ root }) => {
+    return {
+      files: {
+        "index.ts": /* ts */ `
+          import { asText } from "./as-text";
+          import { asJson } from "./as-json";
+          console.log(JSON.stringify({ text: asText.trim(), json: asJson }));
+        `,
+        "as-text.ts": /* ts */ `
+          import data from "virtual:data" with { type: "text" };
+          export const asText = data;
+        `,
+        "as-json.ts": /* ts */ `
+          import data from "virtual:data";
+          export const asJson = data;
+        `,
+        "data.json": `{"a":1}`,
+      },
+      plugins(builder) {
+        builder.onResolve({ filter: /^virtual:data$/ }, () => ({ path: join(root, "data.json") }));
+      },
+      run: { stdout: '{"text":"{\\"a\\":1}","json":{"a":1}}' },
+    };
+  });
+  // A `module.exports = require(...)` module is a redirect: importers are linked
+  // straight to its target. That must also hold when onResolve resolved the
+  // require, since such records get their module later than the rest.
+  itBundled("plugin/ResolveSuccessCommonJSReExportRedirect", ({ root }) => {
+    return {
+      files: {
+        "index.ts": /* ts */ `
+          import viaShim from "./shim.js";
+          import viaShimAgain from "./shim.js";
+          import direct from "./target.js";
+          console.log(viaShim.value, viaShim === viaShimAgain, viaShim === direct);
+        `,
+        "shim.js": `module.exports = require("./target.js");`,
+        "target.js": `module.exports = { value: "from target" };`,
+      },
+      plugins(builder) {
+        builder.onResolve({ filter: /\.js$/ }, args => ({ path: join(root, args.path.replace(/^\.\//, "")) }));
+      },
+      run: { stdout: "from target true true" },
+      onAfterBundle(api) {
+        expect(api.readFile("/out.js")).not.toContain("shim.js");
+      },
+    };
+  });
   itBundled("plugin/ManyFiles", ({ root }) => {
     const FILES = process.platform === "win32" ? 50 : 200; // windows is slower at this
     const create = (fn: (i: number) => string) => new Array(FILES).fill(0).map((_, i) => fn(i));

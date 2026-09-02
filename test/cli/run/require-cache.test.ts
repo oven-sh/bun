@@ -6,6 +6,7 @@ import {
   isASAN,
   isBroken,
   isCI,
+  isDebug,
   isIntelMacOS,
   isMacOS,
   isMusl,
@@ -13,6 +14,13 @@ import {
   tempDir,
 } from "harness";
 import { join } from "path";
+
+// The leak tests below measure RSS, which is what detects a leak; their clock
+// budgets only need to cover how long the module loads take. Under ASAN or
+// debug instrumentation each load is many times slower than in release, so
+// those builds share one wide budget in place of the per-block release ones.
+const instrumented = isDebug || isASAN;
+const leakTimeout = (release: number) => (instrumented ? 120_000 : release);
 
 describe.concurrent("require.cache", () => {
   test("require.cache is not an empty object literal when inspected", () => {
@@ -51,17 +59,19 @@ describe.concurrent("require.cache", () => {
   });
 
   describe.skipIf(isBroken && isIntelMacOS)("files transpiled and loaded don't leak the output source code", () => {
-    test("via require() with a lot of long export names", async () => {
-      let text = "";
-      for (let i = 0; i < 10000; i++) {
-        text += `exports.superDuperExtraCrazyLongNameWowSuchNameLongYouveNeverSeenANameThisLongForACommonJSModuleExport${i} = 1;\n`;
-      }
+    test(
+      "via require() with a lot of long export names",
+      async () => {
+        let text = "";
+        for (let i = 0; i < 10000; i++) {
+          text += `exports.superDuperExtraCrazyLongNameWowSuchNameLongYouveNeverSeenANameThisLongForACommonJSModuleExport${i} = 1;\n`;
+        }
 
-      console.log("Text length:", text.length);
+        console.log("Text length:", text.length);
 
-      await using dir = tempDir("require-cache-bug-leak-1", {
-        "index.js": text,
-        "require-cache-bug-leak-fixture.js": `
+        await using dir = tempDir("require-cache-bug-leak-1", {
+          "index.js": text,
+          "require-cache-bug-leak-fixture.js": `
           const path = require.resolve("./index.js");
           const gc = global.gc || globalThis?.Bun?.gc || (() => {});
           const rss = process.platform === "darwin" && typeof Bun !== "undefined" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
@@ -97,30 +107,34 @@ describe.concurrent("require.cache", () => {
 
           exports.abc = 123;
         `,
-      });
-      console.log({ dir });
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "run", "--smol", join(dir, "require-cache-bug-leak-fixture.js")],
-        env: bunEnv,
-        stdio: ["inherit", "inherit", "inherit"],
-      });
+        });
+        console.log({ dir });
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "run", "--smol", join(dir, "require-cache-bug-leak-fixture.js")],
+          env: bunEnv,
+          stdio: ["inherit", "inherit", "inherit"],
+        });
 
-      const exitCode = await proc.exited;
-      expect(exitCode).toBe(0);
-    }, 60000);
+        const exitCode = await proc.exited;
+        expect(exitCode).toBe(0);
+      },
+      leakTimeout(60_000),
+    );
 
-    test("via await import() with a lot of function calls", async () => {
-      let text = "function i() { return 1; }\n";
-      for (let i = 0; i < 20000; i++) {
-        text += `i();\n`;
-      }
-      text += "exports.forceCommonJS = true;\n";
+    test(
+      "via await import() with a lot of function calls",
+      async () => {
+        let text = "function i() { return 1; }\n";
+        for (let i = 0; i < 20000; i++) {
+          text += `i();\n`;
+        }
+        text += "exports.forceCommonJS = true;\n";
 
-      console.log("Text length:", text.length);
+        console.log("Text length:", text.length);
 
-      await using dir = tempDir("require-cache-bug-leak-3", {
-        "index.js": text,
-        "require-cache-bug-leak-fixture.js": `
+        await using dir = tempDir("require-cache-bug-leak-3", {
+          "index.js": text,
+          "require-cache-bug-leak-fixture.js": `
           const path = require.resolve("./index.js");
           const gc = global.gc || globalThis?.Bun?.gc || (() => {});
           const rss = process.platform === "darwin" && typeof Bun !== "undefined" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
@@ -151,26 +165,30 @@ describe.concurrent("require.cache", () => {
 
           export default 123;
         `,
-      });
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "run", "--smol", join(dir, "require-cache-bug-leak-fixture.js")],
-        env: bunEnv,
-        stdio: ["inherit", "inherit", "inherit"],
-      });
+        });
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "run", "--smol", join(dir, "require-cache-bug-leak-fixture.js")],
+          env: bunEnv,
+          stdio: ["inherit", "inherit", "inherit"],
+        });
 
-      const exitCode = await proc.exited;
-      expect(exitCode).toBe(0);
-    }, 60000); // takes 4s on an M1 in release build
+        const exitCode = await proc.exited;
+        expect(exitCode).toBe(0);
+      },
+      leakTimeout(60_000),
+    ); // takes 4s on an M1 in release build
 
-    test("via import() with a lot of long export names", async () => {
-      let text = "";
-      for (let i = 0; i < 10000; i++) {
-        text += `export const superDuperExtraCrazyLongNameWowSuchNameLongYouveNeverSeenANameThisLongForACommonJSModuleExport${i} = 1;\n`;
-      }
+    test(
+      "via import() with a lot of long export names",
+      async () => {
+        let text = "";
+        for (let i = 0; i < 10000; i++) {
+          text += `export const superDuperExtraCrazyLongNameWowSuchNameLongYouveNeverSeenANameThisLongForACommonJSModuleExport${i} = 1;\n`;
+        }
 
-      await using dir = tempDir("require-cache-bug-leak-4", {
-        "index.js": text,
-        "require-cache-bug-leak-fixture.js": `
+        await using dir = tempDir("require-cache-bug-leak-4", {
+          "index.js": text,
+          "require-cache-bug-leak-fixture.js": `
           const path = require.resolve("./index.js");
           const gc = global.gc || globalThis?.Bun?.gc || (() => {});
           const rss = process.platform === "darwin" && typeof Bun !== "undefined" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
@@ -201,17 +219,19 @@ describe.concurrent("require.cache", () => {
 
           export default 124;
         `,
-      });
-      console.log({ dir });
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "run", "--smol", join(dir, "require-cache-bug-leak-fixture.js")],
-        env: bunEnv,
-        stdio: ["inherit", "inherit", "inherit"],
-      });
+        });
+        console.log({ dir });
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "run", "--smol", join(dir, "require-cache-bug-leak-fixture.js")],
+          env: bunEnv,
+          stdio: ["inherit", "inherit", "inherit"],
+        });
 
-      const exitCode = await proc.exited;
-      expect(exitCode).toBe(0);
-    }, 60000);
+        const exitCode = await proc.exited;
+        expect(exitCode).toBe(0);
+      },
+      leakTimeout(60_000),
+    );
 
     test.todoIf(
       // Flaky specifically on macOS CI, and on musl-aarch64 under ThinLTO +
@@ -277,58 +297,16 @@ describe.concurrent("require.cache", () => {
         const exitCode = await proc.exited;
         expect(exitCode).toBe(0);
       },
-      60000,
+      leakTimeout(60_000),
     ); // takes 4s on an M1 in release build
   });
 
   describe("files transpiled and loaded don't leak the AST", () => {
-    test("via require()", async () => {
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "run", join(import.meta.dir, "require-cache-bug-leak-fixture.js")],
-        env: bunEnv,
-        stderr: "inherit",
-      });
-
-      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-
-      expect(stdout.trim()).toEndWith("--pass--");
-      expect(exitCode).toBe(0);
-    }, 20000);
-
-    test("via import()", async () => {
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "run", join(import.meta.dir, "esm-bug-leak-fixture.mjs")],
-        env: bunEnv,
-        stderr: "inherit",
-      });
-
-      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-
-      expect(stdout.trim()).toEndWith("--pass--");
-      expect(exitCode).toBe(0);
-    }, 20000);
-  });
-
-  // These tests are extra slow in debug builds
-  describe("files transpiled and loaded don't leak file paths", () => {
-    test("via require()", async () => {
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "--smol", "run", join(import.meta.dir, "cjs-fixture-leak-small.js")],
-        env: bunEnv,
-        stderr: "inherit",
-      });
-
-      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-
-      expect(stdout.trim()).toEndWith("--pass--");
-      expect(exitCode).toBe(0);
-    }, 30000);
-
     test(
-      "via import()",
+      "via require()",
       async () => {
         await using proc = Bun.spawn({
-          cmd: [bunExe(), "--smol", "run", join(import.meta.dir, "esm-fixture-leak-small.mjs")],
+          cmd: [bunExe(), "run", join(import.meta.dir, "require-cache-bug-leak-fixture.js")],
           env: bunEnv,
           stderr: "inherit",
         });
@@ -338,8 +316,64 @@ describe.concurrent("require.cache", () => {
         expect(stdout.trim()).toEndWith("--pass--");
         expect(exitCode).toBe(0);
       },
+      leakTimeout(20_000),
+    );
+
+    test(
+      "via import()",
+      async () => {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "run", join(import.meta.dir, "esm-bug-leak-fixture.mjs")],
+          env: bunEnv,
+          stderr: "inherit",
+        });
+
+        const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+        expect(stdout.trim()).toEndWith("--pass--");
+        expect(exitCode).toBe(0);
+      },
+      leakTimeout(20_000),
+    );
+  });
+
+  // The import() fixture here loads its module 100k times; under
+  // instrumentation it runs a scaled-down loop instead (LEAK_ITERATIONS,
+  // with the fixture's threshold scaling to match).
+  describe("files transpiled and loaded don't leak file paths", () => {
+    test(
+      "via require()",
+      async () => {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "--smol", "run", join(import.meta.dir, "cjs-fixture-leak-small.js")],
+          env: bunEnv,
+          stderr: "inherit",
+        });
+
+        const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+        expect(stdout.trim()).toEndWith("--pass--");
+        expect(exitCode).toBe(0);
+      },
+      leakTimeout(30_000),
+    );
+
+    test(
+      "via import()",
+      async () => {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "--smol", "run", join(import.meta.dir, "esm-fixture-leak-small.mjs")],
+          env: { ...bunEnv, LEAK_ITERATIONS: instrumented ? "10000" : "100000" },
+          stderr: "inherit",
+        });
+
+        const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+        expect(stdout.trim()).toEndWith("--pass--");
+        expect(exitCode).toBe(0);
+      },
       // TODO: Investigate why this is so slow on Windows
-      isWindows ? 60000 : 30000,
+      leakTimeout(isWindows ? 60_000 : 30_000),
     );
   });
 });

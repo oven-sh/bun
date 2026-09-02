@@ -2,8 +2,16 @@ import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 const dest = await import.meta.resolve("./esm-leak-fixture-large-ast.mjs");
 // ASAN's quarantine retains freed allocations (default 256 MB) so RSS deltas
-// run far higher under bun-asan; widen the threshold to avoid false positives.
-const isASAN = process.execPath.includes("bun-asan");
+// run far higher under ASAN; widen the threshold to avoid false positives.
+// Ask the runtime (same as harness.isASAN): debug builds also enable ASAN but
+// are named bun-debug, so the executable name alone is not enough.
+const isASAN = (() => {
+  try {
+    const { isASANEnabled } = require("bun:internal-for-testing");
+    if (typeof isASANEnabled === "function") return isASANEnabled();
+  } catch {}
+  return process.execPath.includes("bun-asan");
+})();
 const rss =
   process.platform === "darwin" && typeof Bun !== "undefined" && typeof Bun.unsafe.memoryFootprint === "function"
     ? Bun.unsafe.memoryFootprint

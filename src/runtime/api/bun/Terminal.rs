@@ -1911,14 +1911,15 @@ impl Terminal {
             return true;
         }
         v.extend_from_slice(chunk);
-        // MarkedArrayBuffer::from_bytes takes a `&mut [u8]` it will own (freed
-        // via mimalloc on the C++ side) — leak the Box and hand over the slice.
-        let bytes: &'static mut [u8] = Box::leak(v.into_boxed_slice());
-        // This is the pipe reader's landing frame: a buffer that cannot be
-        // built (allocation failure, a terminating VM) is folded here and
-        // reading goes on.
-        let data = match MarkedArrayBuffer::from_bytes(bytes, jsc::JSType::Uint8Array)
-            .to_node_buffer(global_this)
+        // Ownership of the boxed slice transfers to JSC (freed via the
+        // buffer's deallocator). This is the pipe reader's landing frame: a
+        // buffer that cannot be built (allocation failure, a terminating VM)
+        // is folded here and reading goes on.
+        let data = match MarkedArrayBuffer::from_owned_bytes(
+            v.into_boxed_slice(),
+            jsc::JSType::Uint8Array,
+        )
+        .to_node_buffer(global_this)
         {
             Ok(data) => data,
             Err(err) => {

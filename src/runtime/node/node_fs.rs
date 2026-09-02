@@ -6786,16 +6786,10 @@ impl NodeFS {
                     if let Some(file) = graph.find_ref(path.as_bytes()) {
                         let contents: &[u8] = file.utf8_contents();
                         return if args.encoding == Encoding::Buffer {
-                            // PORTING.md §Forbidden bans `Vec::leak()`; round-trip through
-                            // `into_boxed_slice()` so the allocation layout JSC frees with
-                            // matches what we hand it (capacity == len).
-                            let raw =
-                                bun_core::heap::into_raw(contents.to_vec().into_boxed_slice());
-                            // SAFETY: ownership of the allocation is transferred to JSC; the
-                            // ArrayBuffer finalizer reconstructs the Box and frees it
-                            // (PORTING.md:348 — `heap::alloc`/`from_raw` across FFI).
-                            Ok(ret::ReadFileWithOptions::Buffer(Buffer::from_bytes(
-                                unsafe { &mut *raw },
+                            // Ownership of the boxed slice transfers to the
+                            // `Buffer` (freed by it, or by JSC once converted).
+                            Ok(ret::ReadFileWithOptions::Buffer(Buffer::from_owned_bytes(
+                                contents.to_vec().into_boxed_slice(),
                                 bun_jsc::JSType::Uint8Array,
                             )))
                         } else if string_type == ReadFileStringType::Default {
@@ -6941,15 +6935,12 @@ impl NodeFS {
                             };
                         }
                     }
-                    let raw = bun_core::heap::into_raw(
+                    // Ownership of the boxed slice transfers to the `Buffer`
+                    // (freed by it, or by JSC once converted).
+                    Ok(ret::ReadFileWithOptions::Buffer(Buffer::from_owned_bytes(
                         temporary_read_buffer_before_stat_call
                             .to_vec()
                             .into_boxed_slice(),
-                    );
-                    // SAFETY: ownership transferred to JSC; freed via ArrayBuffer finalizer
-                    // (PORTING.md:348 — `heap::alloc`/`from_raw` across FFI).
-                    Ok(ret::ReadFileWithOptions::Buffer(Buffer::from_bytes(
-                        unsafe { &mut *raw },
                         bun_jsc::JSType::Uint8Array,
                     )))
                 }
@@ -7108,11 +7099,10 @@ impl NodeFS {
         match args.encoding {
             Encoding::Buffer => {
                 buf.truncate(final_len);
-                let raw = bun_core::heap::into_raw(buf.into_boxed_slice());
-                // SAFETY: ownership transferred to JSC; freed via ArrayBuffer finalizer
-                // (PORTING.md:348 — `heap::alloc`/`from_raw` across FFI).
-                Ok(ret::ReadFileWithOptions::Buffer(Buffer::from_bytes(
-                    unsafe { &mut *raw },
+                // Ownership of the boxed slice transfers to the `Buffer`
+                // (freed by it, or by JSC once converted).
+                Ok(ret::ReadFileWithOptions::Buffer(Buffer::from_owned_bytes(
+                    buf.into_boxed_slice(),
                     bun_jsc::JSType::Uint8Array,
                 )))
             }

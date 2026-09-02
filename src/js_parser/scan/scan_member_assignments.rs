@@ -11,6 +11,10 @@
 //! a value with side effects keeps the statement as an unconditional side
 //! effect, as before.
 //!
+//! `to_ast` detects candidates in the loop that builds
+//! `top_level_symbols_to_parts` and claims them once the map is complete: a
+//! later `X = ...` or a second declaration of `X` vetoes every candidate on `X`.
+//!
 //! Like Rollup, this ignores accessors inherited from `Object.prototype` and
 //! `Function.prototype`, and a TypeError the assignment could throw (a frozen
 //! object, a non-writable `name`, a TDZ read).
@@ -26,9 +30,10 @@ use bun_collections::{HashMap, VecExt as _};
 
 use crate::p::P;
 
-/// One `X.a.b = v` statement found in pass 1.
+/// A part that is one `X.a.b = v` statement, plus statements that are
+/// removable on their own.
 #[derive(Clone, Copy)]
-struct Candidate<'a> {
+pub(crate) struct Candidate<'a> {
     part_index: u32,
     /// `X`, with symbol links followed.
     owner: Ref,
@@ -92,58 +97,50 @@ fn value_is_fresh(value: &Expr) -> bool {
 }
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
-    /// Marks each part whose only side effect is a member assignment on a
-    /// qualifying top-level binding as removable, and registers it as a
-    /// declaring part of that binding. Runs once per file from `to_ast`, after
-    /// `top_level_symbols_to_parts` holds the real declarations.
-    pub(crate) fn claim_member_assignments_for_owners(
+    /// The member assignment that keeps `part` from being removable, if that
+    /// is the only thing that does.
+    pub(crate) fn member_assignment_candidate(
         &mut self,
-        parts: &mut [js_ast::Part],
-        top_level_symbols_to_parts: &mut TopLevelSymbolToParts,
-    ) {
-        if !self.options.features.dead_code_elimination || !self.options.tree_shaking {
-            return;
+        part: &js_ast::Part,
+        part_index: u32,
+    ) -> Option<Candidate<'a>> {
+        if part.can_be_removed_if_unused || part.tag != js_ast::PartTag::None {
+            return None;
         }
-        let arena = self.arena;
-
-        let mut candidates: BumpVec<'a, Candidate<'a>> = BumpVec::new_in(arena);
-        for (part_index, part) in parts.iter().enumerate() {
-            if part.can_be_removed_if_unused || part.tag != js_ast::PartTag::None {
+        let mut found: Option<Candidate<'a>> = None;
+        for stmt in part.stmts.slice() {
+            if let StmtData::SExpr(s_expr) = &stmt.data
+                && !s_expr.does_not_affect_tree_shaking
+                && let Some(candidate) = self.member_assignment(s_expr.value, part_index)
+            {
+                if found.is_some() {
+                    return None;
+                }
+                found = Some(candidate);
                 continue;
             }
-            let mut found: Option<Candidate<'a>> = None;
-            let mut ok = true;
-            for stmt in part.stmts.slice() {
-                if let StmtData::SExpr(s_expr) = &stmt.data
-                    && !s_expr.does_not_affect_tree_shaking
-                    && let Some(candidate) =
-                        self.member_assignment_candidate(s_expr.value, part_index as u32)
-                {
-                    if found.is_some() {
-                        ok = false;
-                        break;
-                    }
-                    found = Some(candidate);
-                    continue;
-                }
-                if !self
-                    .stmts_can_be_removed_if_unused_without_dce_check(core::slice::from_ref(stmt))
-                {
-                    ok = false;
-                    break;
-                }
-            }
-            if ok && let Some(candidate) = found {
-                candidates.push(candidate);
+            if !self.stmts_can_be_removed_if_unused_without_dce_check(core::slice::from_ref(stmt)) {
+                return None;
             }
         }
+        found
+    }
+
+    /// Marks each candidate whose owner qualifies as removable, and registers
+    /// it as a declaring part of the owner. `top_level_symbols_to_parts` must
+    /// hold every real declaration of the file.
+    pub(crate) fn claim_member_assignments(
+        &self,
+        parts: &mut [js_ast::Part],
+        top_level_symbols_to_parts: &mut TopLevelSymbolToParts,
+        candidates: &[Candidate<'a>],
+    ) {
         if candidates.is_empty() {
             return;
         }
-
         let mut shapes = ShapeCache::new();
-        let mut claimed: BumpVec<'a, Candidate<'a>> = BumpVec::new_in(arena);
-        for candidate in candidates.iter() {
+        let mut claimed: BumpVec<'a, Candidate<'a>> = BumpVec::new_in(self.arena);
+        for candidate in candidates {
             let Some(shape) = self.owner_shape(
                 candidate.owner,
                 parts,
@@ -194,11 +191,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     /// `X.a.b = v` with a side-effect-free `v`, rooted at a local identifier.
-    fn member_assignment_candidate(
-        &mut self,
-        value: Expr,
-        part_index: u32,
-    ) -> Option<Candidate<'a>> {
+    fn member_assignment(&mut self, value: Expr, part_index: u32) -> Option<Candidate<'a>> {
         let ExprData::EBinary(bin) = value.data else {
             return None;
         };

@@ -133,9 +133,8 @@ describe("bundler", () => {
   // ============================================================================
   // Tests with different targets
   // Target doesn't affect isNodeMode - it's based on the importer's module type.
-  // It does pick the getter shape __toESM uses for each property. The fixture
-  // assigns `module.exports` so the module keeps its CommonJS wrapper and the
-  // default import goes through __toESM.
+  // The fixture assigns `module.exports` so the module keeps its CommonJS
+  // wrapper and the default import goes through __toESM.
   // ============================================================================
 
   // Test 7: target=node
@@ -151,8 +150,7 @@ describe("bundler", () => {
     },
     target: "node",
     onAfterBundle(api) {
-      // On JavaScriptCore a bound function is the cheap getter shape
-      api.expectFile("/out.js").toContain("__accessProp.bind(mod, key)");
+      api.expectFile("/out.js").toContain("__toESM(");
     },
     run: {
       stdout: '{"x":1,"y":2}',
@@ -172,10 +170,7 @@ describe("bundler", () => {
     },
     target: "browser",
     onAfterBundle(api) {
-      // On V8 a bound function is the slow getter shape, so browser bundles
-      // get a closure per key instead
-      api.expectFile("/out.js").toContain("var __propGetter = (mod, key) => () => mod[key];");
-      api.expectFile("/out.js").not.toContain("__accessProp");
+      api.expectFile("/out.js").toContain("__toESM(");
     },
     run: {
       stdout: '{"x":1,"y":2}',
@@ -195,7 +190,7 @@ describe("bundler", () => {
     },
     target: "bun",
     onAfterBundle(api) {
-      api.expectFile("/out.js").toContain("__accessProp.bind(mod, key)");
+      api.expectFile("/out.js").toContain("__toESM(");
     },
     run: {
       stdout: '{"x":1,"y":2}',

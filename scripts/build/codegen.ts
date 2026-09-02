@@ -472,8 +472,7 @@ function emitRuntimeJs({ n, cfg, o, dirStamp }: Ctx): void {
     outputs: [out],
     rule: "esbuild",
     inputs: [src],
-    // `runtime.bun.js` re-exports `runtime.js`; esbuild reads both.
-    implicitInputs: [o.rootInstall, resolve(cfg.cwd, "src", "runtime.js")],
+    implicitInputs: [o.rootInstall],
     orderOnlyInputs: [dirStamp],
     vars: {
       cwd: cfg.cwd,

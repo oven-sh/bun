@@ -390,33 +390,6 @@ pub(crate) struct RuntimeSource {
 // context.
 const RUNTIME_REQUIRE_BUN: &str = "export var __require = import.meta.require;";
 
-// V8 calls a bound function through a slow path (about 4x a closure), so the
-// browser runtime gets a closure per property getter. See `__propGetter` in runtime.js.
-const RUNTIME_PROP_GETTER_BIND: &str =
-    "var __propGetter = (mod, key) => __accessProp.bind(mod, key);";
-const RUNTIME_PROP_GETTER_BROWSER: &str = "var __propGetter = (mod, key) => () => mod[key];";
-const RUNTIME_JS: &[u8] = include_bytes!("../runtime.js");
-// The swap is a text replacement, so the line has to exist as written.
-const _: () = assert!(const_contains(
-    RUNTIME_JS,
-    RUNTIME_PROP_GETTER_BIND.as_bytes()
-));
-
-const fn const_contains(haystack: &[u8], needle: &[u8]) -> bool {
-    let mut start = 0;
-    while start + needle.len() <= haystack.len() {
-        let mut i = 0;
-        while i < needle.len() && haystack[start + i] == needle[i] {
-            i += 1;
-        }
-        if i == needle.len() {
-            return true;
-        }
-        start += 1;
-    }
-    false
-}
-
 const RUNTIME_REQUIRE_NODE: &str = "\
 import { createRequire } from \"node:module\";
 export var __require = /* @__PURE__ */ createRequire(import.meta.url);
@@ -598,22 +571,10 @@ pub mod parse_worker {
                     RUNTIME_PRELOAD_BROWSER,
                 ),
             };
-            let body: Vec<u8> = match variant {
-                Variant::Other => strings::replace_owned(
-                    RUNTIME_JS,
-                    RUNTIME_PROP_GETTER_BIND.as_bytes(),
-                    RUNTIME_PROP_GETTER_BROWSER.as_bytes(),
-                ),
-                _ => RUNTIME_JS.to_vec(),
-            };
-            [
-                body.as_slice(),
-                require.as_bytes(),
-                using.as_bytes(),
-                preload.as_bytes(),
-            ]
-            .concat()
-            .into_boxed_slice()
+            [include_str!("../runtime.js"), require, using, preload]
+                .concat()
+                .into_bytes()
+                .into_boxed_slice()
         });
 
         let parse_task = ParseTask {

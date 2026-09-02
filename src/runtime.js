@@ -19,10 +19,6 @@ function __accessProp(key) {
   return this[key];
 }
 
-// The getter for one property of a CommonJS exports object. For `--target=browser`
-// the bundler swaps this line for a closure per key (`RUNTIME_PROP_GETTER_*` in ParseTask.rs).
-var __propGetter = (mod, key) => __accessProp.bind(mod, key);
-
 // This is used to implement "export * from" statements. It copies properties
 // from the imported module to the current module's ESM export object. If the
 // current module is an entry point and the target format is CommonJS, we
@@ -35,7 +31,7 @@ export var __reExport = (target, mod, secondTarget) => {
   for (let key of keys)
     if (!__hasOwnProp.call(target, key) && key !== "default")
       __defProp(target, key, {
-        get: __propGetter(mod, key),
+        get: __accessProp.bind(mod, key),
         enumerable: true,
       });
 
@@ -43,7 +39,7 @@ export var __reExport = (target, mod, secondTarget) => {
     for (let key of keys)
       if (!__hasOwnProp.call(secondTarget, key) && key !== "default")
         __defProp(secondTarget, key, {
-          get: __propGetter(mod, key),
+          get: __accessProp.bind(mod, key),
           enumerable: true,
         });
 
@@ -81,7 +77,7 @@ export var __toESM = (mod, isNodeMode, target) => {
     for (let key of __getOwnPropNames(mod))
       if (!__hasOwnProp.call(to, key))
         __defProp(to, key, {
-          get: __propGetter(mod, key),
+          get: __accessProp.bind(mod, key),
           enumerable: true,
         });
 
@@ -101,7 +97,7 @@ export var __toCommonJS = from => {
     for (var key of __getOwnPropNames(from))
       if (!__hasOwnProp.call(entry, key))
         __defProp(entry, key, {
-          get: __propGetter(from, key),
+          get: __accessProp.bind(from, key),
           enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable,
         });
   __moduleCache.set(from, entry);

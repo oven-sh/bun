@@ -82,11 +82,10 @@ pub enum Content {
     Unknown,
     /// When stale, the code is "", otherwise it contains at least one
     /// non-whitespace character (empty chunks contain a function wrapper).
-    /// Also used for html, json and text modules.
     Js(Box<[u8]>),
-    /// JavaScript of a module that exports the `/_bun/asset/` URL of a copied
-    /// file (`Loader::should_copy_for_bundling`). Every `Asset` path is in
-    /// `DevServer::assets`.
+    /// JavaScript of a module whose loader is not JavaScript-like: a copied
+    /// file, json, toml, text, or the html route's module. Only a copied file
+    /// (`Loader::should_copy_for_bundling`) has an entry in `DevServer::assets`.
     Asset(Box<[u8]>),
     /// First file in a CSS bundle (the one HTML/JS points into). Re-bundles
     /// of any downstream `CssChild` re-queue the root.
@@ -639,10 +638,10 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                     }
                     ReceiveChunkContent::Js { code, source_map } => {
                         let len = code.len();
-                        let kind = if ctx.loaders[index.get() as usize].should_copy_for_bundling() {
-                            Content::Asset(code)
-                        } else {
+                        let kind = if ctx.loaders[index.get() as usize].is_javascript_like() {
                             Content::Js(code)
+                        } else {
+                            Content::Asset(code)
                         };
                         if source_map.is_some() {
                             debug_assert!(html_route_bundle_index.is_none()); // suspect behind #17956
@@ -1397,6 +1396,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         if !found_existing {
             self.edge_lists.push(EdgeLists::default());
             self.ensure_stale_bit_capacity(true)?;
+            self.stale_files.set(idx);
         }
         Ok(InsertEmptyResult {
             index: FileIndex::init(idx as u32),
@@ -1426,6 +1426,9 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         };
         if !found_existing {
             self.edge_lists.push(EdgeLists::default());
+        }
+        if self.stale_files.bit_length > file_index.get() as usize {
+            self.stale_files.unset(file_index.get() as usize);
         }
         *ctx.get_cached_index(Side::Server, index) =
             CachedFileIndex::from(Some::<FileIndex<SIDE>>(file_index));

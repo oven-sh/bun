@@ -1549,21 +1549,11 @@ impl<'a> Parser<'a> {
             }
         }
 
-        // A file from the unwrap allowlist (react, react-dom, ...) that does
-        // some work and then re-exports one other file:
-        //
-        //    checkDCE();
-        //    module.exports = require('./cjs/react-dom.production.js');
-        //
-        // An example is react-dom/index.js. `transpose_require` already turned
-        // the require() into `import * as ns from '...'`, so the statement now
-        // reads `module.exports = ns`. Replace it with `export * from '...'`,
-        // which makes the file ESM and needs no `__commonJS` wrapper. The file
-        // has no ES module syntax of its own, so the linker knows the export
-        // star of a `COMMONJS_LIFTED_TO_ESM` file is this assignment. When it
-        // wraps the file as CommonJS after all (a re-exported file whose
-        // exports are not statically known), `convert_stmts_for_chunk` prints
-        // the assignment again.
+        // react-dom/index.js in production: `checkDCE(); module.exports = require('./cjs/...')`.
+        // `transpose_require` made the require() an `import * as ns` namespace, so the
+        // statement reads `module.exports = ns`. Replace it with `export * from`: the file
+        // is ESM without a `__commonJS` wrapper. The linker reads the export star of a
+        // `COMMONJS_LIFTED_TO_ESM` file as this assignment if it wraps the file after all.
         if p.options.features.unwrap_commonjs_to_esm
             && p.unwrap_all_requires
             && !p.options.is_entry_point
@@ -1577,9 +1567,8 @@ impl<'a> Parser<'a> {
             struct ModuleExportsOfNamespace {
                 part_idx: usize,
                 stmt_idx: usize,
-                /// `checkDCE(), module.exports = ns`: minification folded the
-                /// `if (process.env.NODE_ENV === 'production')` block into one
-                /// comma expression. This is the part before the assignment.
+                /// `checkDCE(), module.exports = ns` (the `if` block folded by
+                /// minification): the operand before the assignment.
                 leading: Option<Expr>,
                 assign_loc: bun_ast::Loc,
                 namespace_ref: js_ast::Ref,
@@ -1639,8 +1628,7 @@ impl<'a> Parser<'a> {
                 let part = &mut parts[found.part_idx];
                 let stmt_loc = part.stmts.slice()[found.stmt_idx].loc;
 
-                // Like `s_export_star`, the export star declares its own
-                // namespace symbol. `ns` stays with the import statement.
+                // Like `s_export_star`: the export star declares its own namespace symbol.
                 let name = p.load_name_from_ref(found.namespace_ref);
                 let export_star_ref = p.new_symbol(js_ast::symbol::Kind::Other, name);
                 VecExt::append(&mut p.module_scope_mut().generated, export_star_ref);
@@ -1694,10 +1682,8 @@ impl<'a> Parser<'a> {
                         .get(&found.namespace_ref)
                         .is_some_and(|items| items.count() > 0);
                 if ns_is_unused {
-                    // Nothing reads `ns` any more, not even as `ns.prop`. Drop
-                    // its `import * as ns` statement: the export star now owns
-                    // that import record. `remove` (not `swap_remove`) keeps the
-                    // other imports in source order.
+                    // Drop the unused `import * as ns` part. `remove` keeps the other
+                    // imports in source order.
                     if let Some(i) = before.iter().position(|before_part| {
                         before_part.tag == bun_ast::PartTag::ImportToConvertFromRequire
                             && before_part

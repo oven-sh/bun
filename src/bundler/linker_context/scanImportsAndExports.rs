@@ -420,11 +420,9 @@ pub(crate) fn scan_imports_and_exports(
                     let has_dynamic_exports =
                         dependency_wrapper.has_dynamic_exports_due_to_export_star(source_index);
 
-                    // A lifted CommonJS file has no export star of its own: the parser
-                    // made one out of `module.exports = require("./b")`. If "./b" has
-                    // dynamic exports (CommonJS or external) after all, named imports of
-                    // this file cannot bind statically, so keep it a CommonJS wrapper
-                    // around the original assignment (see `convert_stmts_for_chunk`).
+                    // A lifted CommonJS file's export star stands for `module.exports =
+                    // require("./b")`. With a CommonJS or external "./b", its named imports
+                    // cannot bind statically: keep the wrapper (`convert_stmts_for_chunk`).
                     if has_dynamic_exports
                         && dependency_wrapper.exports_kind[id] != ExportsKind::Cjs
                         && col_ref!(ast_flags_list)[id].contains(AstFlags::COMMONJS_LIFTED_TO_ESM)
@@ -1199,13 +1197,9 @@ pub(crate) fn scan_imports_and_exports(
                         (record.source_index,)
                     };
 
-                    // The export star of a lifted CommonJS file is the parser's rewrite of
-                    // `module.exports = require("path")`, and this file is a CommonJS
-                    // wrapper after all. `convert_stmts_for_chunk` prints the assignment
-                    // again, so the part needs the "module" parameter and the value: the
-                    // namespace object of a bundled ES module, the wrapper of a bundled
-                    // CommonJS module (an import record use, handled above), or the
-                    // `import * as ns` of an external module.
+                    // `convert_stmts_for_chunk` prints a wrapped lifted file's export star
+                    // as `module.exports = <value>`: the part needs `module` and the value
+                    // (a namespace object, or the `import * as ns` of an external module).
                     if wrap == WrapKind::Cjs
                         && col_ref!(ast_flags_list)[id].contains(AstFlags::COMMONJS_LIFTED_TO_ESM)
                         && !(rec_source_index.is_valid() && rec_source_index.get() == source_index)

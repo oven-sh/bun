@@ -2199,6 +2199,80 @@ describe("bundler", () => {
       stdout: "EFFECT1\nEFFECT2\nEFFECT3\nEFFECT3\nEFFECT1",
     },
   });
+  itBundled("dce/DCEOfDestructuringOfImportNamespace", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as ns from './lib.js'
+        import * as cjs from './cjs.js'
+        import { sub } from './reexport.js'
+        import * as ns2 from './lib3.js'
+
+        // An unused destructuring of a module namespace reads like a member
+        // access and is side-effect free
+        const { removeMe1 } = ns
+        const { shorthand: removeMe2, other: removeMe3 } = ns
+        var { x: removeMe4 } = cjs
+        let { inner: removeMe5 } = sub
+
+        // Anything that can run user code must stay
+        const { [KEEP0]: KEEP1 } = ns2
+        const { ...KEEP2 } = ns2
+        const { nested: { KEEP3 } } = ns2
+        const { withDefault: KEEP4 = keep4() } = ns2
+        const plain = keep5()
+        const { KEEP6 } = plain
+      `,
+      "/lib.js": /* js */ `
+        export const removeMe1 = 1
+        export const shorthand = 2, other = 3
+      `,
+      "/cjs.js": /* js */ `
+        exports.x = 1
+      `,
+      "/reexport.js": /* js */ `
+        export * as sub from './lib2.js'
+      `,
+      "/lib2.js": /* js */ `
+        export const inner = 7
+      `,
+      "/lib3.js": /* js */ `
+        export const nested = { a: 6 }, withDefault = 5
+      `,
+    },
+    dce: true,
+  });
+  itBundled("dce/DestructuringOfImportNamespaceRuntime", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as ns from './lib.js'
+        const { one, two: renamed } = ns
+        const { unused } = ns
+        console.log(one(), renamed)
+      `,
+      "/lib.js": /* js */ `
+        export function one() { return 1 }
+        export const two = 2
+        export const unused = 3
+      `,
+    },
+    run: {
+      stdout: "1 2",
+    },
+  });
+  itBundled("dce/DCEOfDestructuringOfUnwrappedRequire", {
+    files: {
+      "/entry.js": /* js */ `
+        export {}
+        const { x: removeMe1 } = require('react')
+        KEEP1()
+      `,
+      "/node_modules/react/index.js": /* js */ `
+        exports.x = 1
+      `,
+      "/node_modules/react/package.json": `{ "name": "react", "version": "19.0.0" }`,
+    },
+    dce: true,
+  });
   itBundled("dce/TreeShakingLoweredClassStaticField", {
     files: {
       "/entry.js": /* js */ `

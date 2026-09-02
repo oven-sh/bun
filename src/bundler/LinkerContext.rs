@@ -3044,6 +3044,15 @@ impl<'a> LinkerContext<'a> {
                 }
             }
 
+            // A destructuring of an import namespace reads like a member
+            // access, which is side-effect free. The parser cannot see that
+            // the initializer is a namespace, so refine its verdict here.
+            if !can_be_removed_if_unused
+                && self.part_is_removable_namespace_destructuring(source_index, part)
+            {
+                can_be_removed_if_unused = true;
+            }
+
             // The automatic JSX runtime import is synthesized by the parser; it
             // exists only so lowered JSX can reference `jsx`/`jsxDEV`/etc. If no
             // live part references those symbols the import must not be kept
@@ -4232,6 +4241,80 @@ impl<'a> LinkerContext<'a> {
         exports: &crate::bundled_ast::NamedExports,
     ) -> bool {
         importer_module_type != crate::options::ModuleType::Esm && exports.contains(b"__esModule")
+    }
+
+    /// `const { a } = ns` where `ns` is an import namespace. The parser
+    /// keeps such a part because a pattern over an arbitrary object can run
+    /// getters, but the linker knows `ns` is a module namespace, so every
+    /// key reads like `ns.a` and is side-effect free. True when each
+    /// declaration destructures plain string keys into identifiers (no
+    /// computed key, no rest, no default, no nested pattern) out of an
+    /// import namespace.
+    fn part_is_removable_namespace_destructuring(
+        &self,
+        source_index: crate::IndexInt,
+        part: &Part,
+    ) -> bool {
+        let stmts = part.stmts.slice();
+        if stmts.is_empty() {
+            return false;
+        }
+        stmts.iter().all(|stmt| {
+            let bun_ast::StmtData::SLocal(local) = &stmt.data else {
+                return false;
+            };
+            if matches!(
+                local.kind,
+                bun_ast::s::Kind::KUsing | bun_ast::s::Kind::KAwaitUsing
+            ) {
+                return false;
+            }
+            local.decls.slice().iter().all(|decl| {
+                let bun_ast::b::B::BObject(pattern) = decl.binding.data else {
+                    return false;
+                };
+                let Some(value) = &decl.value else {
+                    return false;
+                };
+                if !self.value_is_import_namespace(source_index, value) {
+                    return false;
+                }
+                pattern.properties().iter().all(|property| {
+                    !property.flags.contains(bun_ast::flags::Property::IsSpread)
+                        && !property.flags.contains(bun_ast::flags::Property::IsComputed)
+                        && property.default_value.is_none()
+                        && matches!(property.key.data, bun_ast::ExprData::EString(_))
+                        && matches!(property.value.data, bun_ast::b::B::BIdentifier(_))
+                })
+            })
+        })
+    }
+
+    /// Does `value` evaluate to a module namespace: a star import's binding,
+    /// an import that resolved to another module's namespace (`export * as`),
+    /// or a `require()` that `unwrap_commonjs_to_esm` turned into an import?
+    fn value_is_import_namespace(&self, source_index: crate::IndexInt, value: &Expr) -> bool {
+        let id = source_index as usize;
+        let ref_ = match &value.data {
+            bun_ast::ExprData::EIdentifier(identifier) => identifier.ref_,
+            // A named import that holds a namespace (`export * as`) prints as
+            // an import identifier.
+            bun_ast::ExprData::EImportIdentifier(identifier) => identifier.ref_,
+            bun_ast::ExprData::ERequireString(require) => {
+                return require.unwrapped_id.get().is_some();
+            }
+            _ => return false,
+        };
+        if let Some(named_import) = self.graph.ast.items_named_imports()[id].get(&ref_) {
+            if named_import.alias_is_star {
+                return true;
+            }
+        }
+        if let Some(import_data) = self.graph.meta.items_imports_to_bind()[id].get(&ref_) {
+            let target = import_data.data;
+            return self.is_esm_namespace_ref(target.source_index.get(), target.import_ref);
+        }
+        false
     }
 
     /// Resolves every named import in one file to its matching export,

@@ -90,7 +90,7 @@ interface JSCommonJSModule {
  * Binding files are located in `src/jsc/bindings`
  *
  * @see {@link $rust} for native Rust bindings.
- * @see `src/codegen/replacements.ts` for the script that performs replacement of this funciton.
+ * @see `src/codegen/replacements.ts` for the script that performs replacement of this function.
  *
  * @param filename name of the c++ file containing the function. Do not pass a path.
  * @param symbol   The name of the binding function to call. Use `dot.notation` to access
@@ -107,7 +107,7 @@ declare function $cpp<T = any>(filename: NativeFilenameCPP, symbol: string): T;
  * as Foo` instead.
  *
  * @see {@link $cpp} for native c++ bindings.
- * @see `src/codegen/replacements.ts` for the script that performs replacement of this funciton.
+ * @see `src/codegen/replacements.ts` for the script that performs replacement of this function.
  *
  * @param filename identifier of the Rust module containing the function (see
  *                 `rustIdentifierPaths` in `src/codegen/generate-js2native.ts`).

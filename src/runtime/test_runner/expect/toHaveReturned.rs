@@ -99,9 +99,9 @@ fn to_have_returned_times_fn(
         global,
         signature,
         "\n\n\
-         Expected number of succesful returns: {}<green>{}<r>\n\
-         Received number of succesful returns: {}<red>{}<r>\n\
-         Received number of calls:             {}<red>{}<r>\n",
+         Expected number of successful returns: {}<green>{}<r>\n\
+         Received number of successful returns: {}<red>{}<r>\n\
+         Received number of calls:              {}<red>{}<r>\n",
         str_, expected_success_count, spc, actual_success_count, spc, total_call_count,
     )
 }

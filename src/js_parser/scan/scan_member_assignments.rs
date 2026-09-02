@@ -177,8 +177,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         })
     }
 
-    /// `X.a['b'].c` to `X` and `[a, b, c]`. A `__proto__` key changes the
-    /// prototype chain, so it is never owned.
+    /// `X.a['b'].c` to `X` and `[a, b, c]`; a `__proto__` key is never owned.
     fn member_chain(target: Expr, arena: &'a Bump) -> Option<(E::Identifier, &'a [&'a [u8]])> {
         let mut keys: BumpVec<'a, &'a [u8]> = BumpVec::new_in(arena);
         let mut cur = target;
@@ -411,9 +410,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         false
     }
 
-    /// Every use of `class_ref` is an `extends` clause, an owned member
-    /// assignment, or an export. Any other use (a call argument, its own
-    /// methods) may install an accessor that a subclass inherits.
+    /// Any other use (a call argument, its own methods) may install an accessor a subclass inherits.
     fn class_is_only_extended(
         &self,
         class_ref: Ref,

@@ -23,6 +23,12 @@ static_assert(WTF::maxECMAScriptTime == 8.64e15, "bun_jsc::wtf::MAX_ECMASCRIPT_T
 #include <cassert>
 #include <signal.h>
 #include <termios.h>
+#include <unistd.h>
+#if OS(LINUX)
+#include <sys/auxv.h>
+#include <sys/resource.h>
+#include <sys/syscall.h>
+#endif
 static int orig_termios_fd = -1;
 static struct termios orig_termios;
 static std::atomic<int> orig_termios_spinlock;
@@ -293,16 +299,57 @@ size_t toISOString(JSC::VM& vm, double date, char in[64])
     return charactersWritten;
 }
 
-static thread_local WTF::StackBounds stackBoundsForCurrentThread = WTF::StackBounds::emptyBounds();
+// The lowest usable address of this thread's stack; null until `Bun__StackCheck__initialize` runs.
+static thread_local void* stackEndForCurrentThread = nullptr;
+
+#if OS(LINUX)
+// The main thread's stack bound without `pthread_getattr_np`, which for the main thread reads and
+// parses all of /proc/self/maps (tens of microseconds, at process start). The kernel places the
+// executable's filename (AT_EXECFN) as the topmost string on the initial stack, one pointer below
+// the end of the stack mapping, and the stack may grow until it spans RLIMIT_STACK from that end.
+// The bound is what WTF computes for the main thread (StackBounds.cpp): the mapping end, less the
+// limit, plus one page for the guard. Returns null if the auxiliary vector is unavailable.
+static void* mainThreadStackEnd()
+{
+    const char* execfn = reinterpret_cast<const char*>(getauxval(AT_EXECFN));
+    if (!execfn)
+        return nullptr;
+    uintptr_t top = reinterpret_cast<uintptr_t>(execfn) + strlen(execfn) + 1 + sizeof(void*);
+    const uintptr_t pageSize = static_cast<uintptr_t>(sysconf(_SC_PAGESIZE));
+    top = (top + pageSize - 1) & ~(pageSize - 1);
+
+    rlimit limit;
+    if (getrlimit(RLIMIT_STACK, &limit) != 0)
+        return nullptr;
+    uintptr_t size = limit.rlim_cur;
+    if (limit.rlim_cur == RLIM_INFINITY)
+        size = 8 * MB;
+    // account for a guard page
+    size -= pageSize;
+    return reinterpret_cast<void*>(top - size);
+}
+#endif
 
 extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__StackCheck__initialize()
 {
-    stackBoundsForCurrentThread = WTF::StackBounds::currentThreadStackBoundsForEmbedder();
+    // The bound of a thread does not change; the main thread gets here from `main` and again from
+    // every VM it creates.
+    if (stackEndForCurrentThread)
+        return;
+#if OS(LINUX)
+    if (getpid() == static_cast<pid_t>(syscall(SYS_gettid))) {
+        if (void* end = mainThreadStackEnd()) {
+            stackEndForCurrentThread = end;
+            return;
+        }
+    }
+#endif
+    stackEndForCurrentThread = WTF::StackBounds::currentThreadStackBoundsForEmbedder().end();
 }
 
 extern "C" [[ZIG_EXPORT(nothrow)]] __attribute__((__always_inline__)) void* Bun__StackCheck__getMaxStack()
 {
-    return stackBoundsForCurrentThread.end();
+    return stackEndForCurrentThread;
 }
 
 extern "C" void WTF__DumpStackTrace(void** stack, size_t stack_count)

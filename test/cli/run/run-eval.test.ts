@@ -1,7 +1,7 @@
 import { SyncSubprocess } from "bun";
 import { describe, expect, test } from "bun:test";
 import { rmSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isWindows, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, tempDir, tmpdirSync } from "harness";
 import { tmpdir } from "os";
 import { join, sep } from "path";
 
@@ -347,4 +347,30 @@ test("uncaught error from a CommonJS-sniffed stdin entry reports and exits 1", a
   expect(stderr).toContain("stdin-cjs-uncaught");
   expect(stdout).toBe("");
   expect(exitCode).toBe(1);
+});
+
+// A one-shot `bun -e` runs a trivial amount of JavaScript and exits, so
+// JSCInitialize keeps every JSC helper thread off: the concurrent JIT, the
+// parallel GC markers, and the MarkedBlock warm-up thread (which would bring
+// mimalloc's scavenger thread with it). The thread names come from the kernel,
+// so this reads them on Linux only.
+test.if(isLinux)("bun -e does not start the JSC warm-up and mimalloc scavenger threads", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const fs = require("fs");
+       const names = fs.readdirSync("/proc/self/task").map(t => fs.readFileSync("/proc/self/task/" + t + "/comm", "utf8").trim());
+       console.log(JSON.stringify(names));`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const names: string[] = JSON.parse(stdout);
+  expect(names).not.toContain("JSCWarmUp");
+  expect(names).not.toContain("mi-scavenger");
+  expect(exitCode).toBe(0);
 });

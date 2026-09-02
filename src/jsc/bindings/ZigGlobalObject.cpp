@@ -346,6 +346,10 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
                 // either knob back on for debugging.
                 JSC::Options::useConcurrentJIT() = false;
                 JSC::Options::numberOfGCMarkers() = 1;
+                // Same for the MarkedBlock warm-up helper: it is a thread that pre-faults
+                // heap blocks for a program that keeps allocating, and it starts (with
+                // mimalloc's scavenger thread behind it) on the first block the VM needs.
+                JSC::Options::useWarmUpMarkedBlocks() = false;
             }
 
             // `bun test --isolate`: FTL code dies with each file's global, so only tier up code hot enough to pay that back within one file.

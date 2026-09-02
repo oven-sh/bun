@@ -23,6 +23,10 @@ enum class AArch64CPUFeature : uint8_t {
 
 #include <windows.h>
 
+#else
+
+#include <cpuid.h>
+
 #endif
 
 static uint8_t x86_cpu_features()
@@ -44,20 +48,38 @@ static uint8_t x86_cpu_features()
 
 #else
 
-#if __has_builtin(__builtin_cpu_supports)
-    __builtin_cpu_init();
+    // cpuid directly, not `__builtin_cpu_supports`: that builtin links libgcc's
+    // `__cpu_indicator_init`, a constructor that runs a dozen cpuid instructions
+    // in every process before `main` (each one a VM exit under a hypervisor),
+    // while this function only runs on the crash-report path.
+    unsigned eax = 0, ebx = 0, ecx = 0, edx = 0;
+    if (!__get_cpuid(1, &eax, &ebx, &ecx, &edx))
+        return features;
 
-    if (__builtin_cpu_supports("sse4.2"))
+    if (ecx & bit_SSE4_2)
         features |= 1 << static_cast<uint8_t>(X86CPUFeature::sse42);
-    if (__builtin_cpu_supports("popcnt"))
+    if (ecx & bit_POPCNT)
         features |= 1 << static_cast<uint8_t>(X86CPUFeature::popcnt);
-    if (__builtin_cpu_supports("avx"))
+
+    // AVX also needs the OS to save the YMM state (XCR0 bits 1 and 2); AVX-512 the
+    // opmask and ZMM state too (bits 5, 6 and 7). The same checks as libgcc's.
+    uint64_t xcr0 = 0;
+    if ((ecx & bit_OSXSAVE) && (ecx & bit_AVX)) {
+        unsigned lo = 0, hi = 0;
+        __asm__ volatile("xgetbv" : "=a"(lo), "=d"(hi) : "c"(0));
+        xcr0 = (static_cast<uint64_t>(hi) << 32) | lo;
+    }
+    const bool avxState = (xcr0 & 0x6) == 0x6;
+    if (avxState) {
         features |= 1 << static_cast<uint8_t>(X86CPUFeature::avx);
-    if (__builtin_cpu_supports("avx2"))
-        features |= 1 << static_cast<uint8_t>(X86CPUFeature::avx2);
-    if (__builtin_cpu_supports("avx512f"))
-        features |= 1 << static_cast<uint8_t>(X86CPUFeature::avx512);
-#endif
+        unsigned eax7 = 0, ebx7 = 0, ecx7 = 0, edx7 = 0;
+        if (__get_cpuid_count(7, 0, &eax7, &ebx7, &ecx7, &edx7)) {
+            if (ebx7 & bit_AVX2)
+                features |= 1 << static_cast<uint8_t>(X86CPUFeature::avx2);
+            if ((ebx7 & bit_AVX512F) && (xcr0 & 0xe0) == 0xe0)
+                features |= 1 << static_cast<uint8_t>(X86CPUFeature::avx512);
+        }
+    }
 
 #endif
 

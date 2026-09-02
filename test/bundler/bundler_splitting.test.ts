@@ -2064,6 +2064,7 @@ describe("bundler", () => {
     ["BrowserOn", { minChunkSize: 16 * 1024 }, 3],
     ["Bun", { target: "bun" }, 4],
     ["BunOn", { target: "bun", minChunkSize: 16 * 1024 }, 3],
+    ["Node", { target: "node" }, 4],
   ] as const) {
     itBundled("splitting/MinChunkSizeDefault" + name, {
       files: {

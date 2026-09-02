@@ -325,8 +325,11 @@ fn inits_provided(
 
 /// `topo` for every live group: Kahn's algorithm, releasing ties in order of
 /// how many entries load the group so a fold target (loaded by a superset)
-/// tends to sort after the groups that would start importing it.
-fn number_topologically(groups: &mut [Group], indegree: &mut Vec<u32>) {
+/// tends to sort after the groups that would start importing it. False if the
+/// groups' imports already form a cycle, which `entry_bits` cannot produce (an
+/// importer's key is a subset of the imported file's); `reaches` would then
+/// prune wrongly, so rule 2 stops.
+fn number_topologically(groups: &mut [Group], indegree: &mut Vec<u32>) -> bool {
     use std::cmp::Reverse;
     use std::collections::BinaryHeap;
     indegree.clear();
@@ -363,16 +366,9 @@ fn number_topologically(groups: &mut [Group], indegree: &mut Vec<u32>) {
             }
         }
     }
-    for g in 0..groups.len() {
-        // A static import cycle between chunks cannot come out of
-        // `entry_bits` (an importer's key is a subset of the imported file's);
-        // number any stragglers last rather than loop.
-        if groups[g].merged_into.is_none() && indegree[g] != 0 {
-            debug_assert!(false, "static import cycle between chunks");
-            groups[g].topo = next;
-            next += 1;
-        }
-    }
+    let acyclic = (0..groups.len()).all(|g| groups[g].merged_into.is_some() || indegree[g] == 0);
+    debug_assert!(acyclic, "static import cycle between chunks");
+    acyclic
 }
 
 /// Walks `candidate`'s dependencies: each must already be loaded wherever
@@ -1213,7 +1209,9 @@ pub(crate) fn merge_small_chunks(
                 groups_by_entry[entry_id].push(group_index)
             });
         }
-        number_topologically(groups, &mut indegree);
+        if !number_topologically(groups, &mut indegree) {
+            break;
+        }
         let max_headroom = budget.headroom.iter().copied().max().unwrap_or(0);
         let mut progressed = false;
         for candidate in 0..group_count {
@@ -1421,11 +1419,12 @@ pub(crate) fn merge_small_chunks(
                 || out_of_order(&groups[candidate].deps, false);
             fold(groups, candidate, target);
             groups[candidate].hoisted = true;
-            if renumber {
-                number_topologically(groups, &mut indegree);
-            }
             folded_pure += 1;
             progressed = true;
+            if renumber && !number_topologically(groups, &mut indegree) {
+                progressed = false;
+                break;
+            }
         }
         if !progressed {
             break;

@@ -1,23 +1,6 @@
-//! Top-level member assignments owned by the binding they mutate.
-//!
-//! `X.y = v`, `X.prototype.y = v`, and `X.a.b = v` at the top level of a module
-//! only change an object that `X` owns. When `X` is a module-local class,
-//! function, or object literal that is never reassigned, and `v` has no side
-//! effects, the statement is observable only through `X`. Its part is marked
-//! `can_be_removed_if_unused` and registered as one of `X`'s declaring parts in
-//! `top_level_symbols_to_parts`, so the linker keeps it exactly when a live
-//! part reads or exports `X`. A setter the class or literal declares, a parent
-//! class that is not local, a key that is not a plain identifier or string, or
-//! a value with side effects keeps the statement as an unconditional side
-//! effect, as before.
-//!
-//! `to_ast` detects candidates in the loop that builds
-//! `top_level_symbols_to_parts` and claims them once the map is complete: a
-//! later `X = ...` or a second declaration of `X` vetoes every candidate on `X`.
-//!
-//! Like Rollup, this ignores accessors inherited from `Object.prototype` and
-//! `Function.prototype`, and a TypeError the assignment could throw (a frozen
-//! object, a non-writable `name`, a TDZ read).
+//! A top-level `X.y = v` on a local, never reassigned class, function, or
+//! object literal is observable only through `X`: its part becomes removable
+//! and a declaring part of `X`, so it lives exactly when `X` does.
 
 use bun_alloc::Arena as Bump;
 use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
@@ -30,17 +13,14 @@ use bun_collections::{HashMap, VecExt as _};
 
 use crate::p::P;
 
-/// A part that is one `X.a.b = v` statement, plus statements that are
-/// removable on their own.
+/// One `X.a.b = v` part.
 #[derive(Clone, Copy)]
 pub(crate) struct Candidate<'a> {
     part_index: u32,
-    /// `X`, with symbol links followed.
     owner: Ref,
-    /// The property names of the target, outermost first: `[a, b]`.
+    /// Outermost first: `[a, b]`.
     keys: &'a [&'a [u8]],
-    /// `v` is a literal, function, or class expression, so it cannot alias an
-    /// object that lives outside `X`.
+    /// `v` is a literal, function, or class, so it aliases nothing outside `X`.
     value_is_fresh: bool,
 }
 
@@ -59,7 +39,6 @@ impl ClassSource {
     }
 }
 
-/// How the owner binding is declared.
 #[derive(Clone, Copy)]
 enum OwnerShape {
     Class(ClassSource),
@@ -70,7 +49,7 @@ enum OwnerShape {
     Object(Expr),
 }
 
-/// Cache of `owner_shape` results. `None` means the binding does not qualify.
+/// `None` caches "does not qualify".
 type ShapeCache = HashMap<Ref, Option<OwnerShape>>;
 
 const MAX_EXTENDS_DEPTH: usize = 32;
@@ -97,8 +76,7 @@ fn value_is_fresh(value: &Expr) -> bool {
 }
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
-    /// The member assignment that keeps `part` from being removable, if that
-    /// is the only thing that does.
+    /// The member assignment that alone keeps `part` from being removable.
     pub(crate) fn member_assignment_candidate(
         &mut self,
         part: &js_ast::Part,
@@ -126,9 +104,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         found
     }
 
-    /// Marks each candidate whose owner qualifies as removable, and registers
-    /// it as a declaring part of the owner. `top_level_symbols_to_parts` must
-    /// hold every real declaration of the file.
+    /// Needs every real declaration in `top_level_symbols_to_parts` first.
     pub(crate) fn claim_member_assignments(
         &self,
         parts: &mut [js_ast::Part],
@@ -151,9 +127,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             };
             let keys = candidate.keys;
             if keys.len() >= 2 {
-                // `X.a = other; X.a.b = v` writes through to `other`. Keep the
-                // deeper write if any sibling assignment may have aliased a
-                // prefix of its path to an object `X` does not own.
+                // `X.a = other; X.a.b = v` writes through to `other`.
                 let aliased = candidates.iter().any(|other| {
                     other.owner == candidate.owner
                         && !other.value_is_fresh
@@ -213,9 +187,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         })
     }
 
-    /// Splits `X.a['b'].c` into the root identifier `X` and the property names
-    /// `[a, b, c]`. `None` if a link is optional, a key is not a plain
-    /// identifier or string, or the root is not an identifier.
+    /// `X.a['b'].c` to `X` and `[a, b, c]`.
     fn member_chain(target: Expr, arena: &'a Bump) -> Option<(E::Identifier, &'a [&'a [u8]])> {
         let mut keys: BumpVec<'a, &'a [u8]> = BumpVec::new_in(arena);
         let mut cur = target;
@@ -250,8 +222,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// How `owner` is declared, if it is a never-reassigned class, function, or
-    /// object literal declared exactly once at the top level of this file.
     fn owner_shape(
         &self,
         owner: Ref,
@@ -346,8 +316,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// Whether writing `keys` on an owner of this shape only touches objects
-    /// the owner created, and runs no accessor the owner declares.
+    /// The write reaches only objects the owner created and runs no accessor.
     fn chain_is_owned(
         &self,
         shape: OwnerShape,
@@ -380,9 +349,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// No getter or setter named `name`, static or not, on the class or on any
-    /// class it extends. Every class in the `extends` chain must be a local
-    /// class that `owner_shape` accepts.
+    /// Static or not, on the class or any local class it extends.
     fn class_chain_declares_no_accessor(
         &self,
         source: ClassSource,
@@ -432,9 +399,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         false
     }
 
-    /// `keys[..n-1]` name nested object literals inside `object`, and the last
-    /// key is not an accessor on the innermost one. A spread or `__proto__`
-    /// key makes the literal's shape unknown.
+    /// Each key but the last names a nested literal; the last is no accessor.
     fn object_literal_owns_path(object: Expr, keys: &[&[u8]], arena: &'a Bump) -> bool {
         let mut current = object;
         for (i, key) in keys.iter().enumerate() {
@@ -447,9 +412,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if property.kind == PropertyKind::Spread
                     || property.flags.contains(Flags::Property::IsSpread)
                 {
-                    // Spread copies data properties, never accessors, so it
-                    // cannot add a setter for the final key. It can replace a
-                    // nested literal with an object `X` does not own.
+                    // A spread copies data properties, never accessors.
                     if is_last {
                         continue;
                     }

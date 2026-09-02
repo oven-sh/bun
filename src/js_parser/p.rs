@@ -8749,8 +8749,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 symbols: &'s [Symbol],
                 part_index: u32,
             }
-            // `X.y = v` parts belong to `X`: removable, and pulled in with `X`.
-            // Detected here, claimed once the map holds every declaration.
+            // `X.y = v` parts belong to `X`; claimed once the map is complete.
             let claim_member_assignments =
                 self.options.features.dead_code_elimination && self.options.tree_shaking;
             let mut member_assignments = BumpVec::new_in(arena);

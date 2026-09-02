@@ -4398,6 +4398,23 @@ impl<'a> LinkerContext<'a> {
                         if let Some(index) = resolved_exports.get_index(name) {
                             let name = bun_ast::StoreStr::new(&resolved_exports.keys()[index]);
                             accesses.push((*base, target_source, name, prop_use.count_estimate));
+                        } else if &**name == b"default"
+                            && self.graph.ast.items_flags()[target_source as usize]
+                                .contains(AstFlags::COMMONJS_LIFTED_TO_ESM)
+                        {
+                            // `default` of a lifted CommonJS module is `module.exports`, the
+                            // namespace itself, the same as `ns.default` on `import * as ns`.
+                            let name = bun_ast::StoreStr::new(b"default");
+                            member_resolutions
+                                .entry((target_source, name))
+                                .or_insert_with(|| {
+                                    Some(ImportMemberResolution {
+                                        source_index: target_source,
+                                        r#ref: target.import_ref,
+                                        re_exports: Vec::new(),
+                                    })
+                                });
+                            accesses.push((*base, target_source, name, prop_use.count_estimate));
                         }
                     }
                 }

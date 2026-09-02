@@ -905,17 +905,20 @@ describe("bundler", () => {
       stdout: '{"zeta":1,"alpha":2} object 1',
     },
   });
-  itBundled("cjs2esm/DefaultImportDotDefaultIsUndefined", {
+  itBundled("cjs2esm/DefaultImportDotDefaultIsNamespace", {
     files: {
       "/entry.js": /* js */ `
         import React from "react";
-        console.log(typeof React.default, React.default, "default" in React);
+        import * as R from "react";
+        console.log(React.default === React, R.default === React, React.default.useState === React.useState);
       `,
       ...liftedReact,
     },
     cjs2esm: true,
     run: {
-      stdout: "undefined undefined false",
+      // the module has no `default` export, so `.default` is `module.exports`
+      // through both import forms
+      stdout: "true true true",
     },
   });
   itBundled("cjs2esm/DefaultImportDotDefaultOfExportsDefault", {

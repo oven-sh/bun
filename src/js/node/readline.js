@@ -41,7 +41,7 @@ const emitKeypressEvents = require("internal/readline/emitKeypressEvents");
 const { AbortError } = require("internal/repl/node-errors");
 // Don't destructure `inspect` — reading it loads internal/util/inspect (99 KB).
 const nodeInspect = require("internal/repl/node-inspect");
-const { kEmptyObject } = require("internal/shared");
+const { kEmptyObject, defineLazyProperties } = require("internal/shared");
 const kCustomPromisifiedSymbol = Symbol.for("nodejs.util.promisify.custom");
 const { validateAbortSignal } = require("internal/validators");
 
@@ -509,18 +509,8 @@ __node_module__.exports = {
   moveCursor,
 };
 
-let promises;
-Object.defineProperty(__node_module__.exports, "promises", {
-  __proto__: null,
-  configurable: true,
-  enumerable: true,
-  get() {
-    return (promises ??= require("node:readline/promises"));
-  },
-  set(value) {
-    Object.defineProperty(__node_module__.exports, "promises", { value, writable: true, enumerable: true, configurable: true });
-  },
-});
+// A data property, as in node, but node:readline/promises loads on first read.
+defineLazyProperties(__node_module__.exports, ["promises"], () => require("node:readline/promises"));
 
 // Bun-internal hook consumed by pre-existing readline tests/utilities.
 // Non-enumerable so it stays off the public node:readline surface.

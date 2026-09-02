@@ -113,6 +113,7 @@ using namespace JSC;
     macro(kResistStopPropagation) \
     macro(key) \
     macro(lazy) \
+    macro(lazyPropertyLoaders) \
     macro(lineText) \
     macro(loadEsmIntoCjs) \
     macro(main) \

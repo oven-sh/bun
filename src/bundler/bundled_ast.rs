@@ -30,6 +30,7 @@ pub(crate) type CssCol = Option<CssAstRef>;
 use bun_ast::import_record;
 use bun_core::strings;
 
+use crate::options::ModuleType;
 use bun_ast::ast_result::Ast;
 use bun_ast::{CharFreq, ExportsKind, Ref, Scope, SlotCounts, StoreStr, TlaCheck};
 use bun_ast::{part, symbol};
@@ -43,13 +44,21 @@ pub type TopLevelSymbolToParts = bun_ast::ast_result::TopLevelSymbolToParts;
 // `BundledAstColumns` (`items_named_imports()`,
 // `items_named_exports()`, …) at `crate::bundled_ast::*`.
 //
-// 26 fields ≤ `multi_array_list::MAX_FIELDS` (32).
+// 29 fields ≤ `multi_array_list::MAX_FIELDS` (32).
 
 pub struct BundledAst<'arena> {
     pub(crate) approximate_newline_count: u32,
     pub(crate) nested_scope_slot_counts: SlotCounts,
 
     pub(crate) exports_kind: ExportsKind,
+
+    /// The module type from the file extension (`.mjs`, `.mts`, `.cjs`, `.cts`)
+    /// or else the nearest package.json `"type"`. Unlike `exports_kind` it does
+    /// not depend on the syntax the file uses. The printer passes
+    /// `isNodeMode = 1` to `__toESM` only when this is `Esm`: then a default
+    /// import of a CommonJS module is the whole `module.exports`, as in Node.
+    /// Every other importer honors the `__esModule` marker, as esbuild does.
+    pub(crate) module_type: ModuleType,
 
     /// These are stored at the AST level instead of on individual AST nodes so
     /// they can be manipulated efficiently without a full AST traversal
@@ -106,6 +115,7 @@ bun_collections::multi_array_columns! {
         approximate_newline_count: u32,
         nested_scope_slot_counts: SlotCounts,
         exports_kind: ExportsKind,
+        module_type: ModuleType,
         import_records: import_record::List<'arena>,
         hashbang: StoreStr,
         export_default_alias_of_import: Ref,
@@ -163,6 +173,7 @@ impl<'arena> BundledAst<'arena> {
             approximate_newline_count: 0,
             nested_scope_slot_counts: SlotCounts::default(),
             exports_kind: ExportsKind::None,
+            module_type: ModuleType::Unknown,
             import_records: import_record::List::new_in(arena),
             hashbang: StoreStr::EMPTY,
             export_default_alias_of_import: Ref::NONE,
@@ -296,6 +307,9 @@ impl<'arena> BundledAst<'arena> {
             nested_scope_slot_counts: ast.nested_scope_slot_counts,
 
             exports_kind: ast.exports_kind,
+            // The parser does not record it; `ParseTask::run` sets it from the
+            // resolver result after `init`, next to `target`.
+            module_type: ModuleType::Unknown,
 
             import_records: ast.import_records,
 

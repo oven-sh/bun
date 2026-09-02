@@ -1220,8 +1220,7 @@ impl<'a> Resolver<'a> {
         // the alias first, but only follow it when it actually resolves to
         // a file on disk — a catch-all `"*": ["./types/*"]` for ambient
         // .d.ts stubs must still let real bare imports stay external.
-        if kind != ast::ImportKind::EntryPointBuild
-            && kind != ast::ImportKind::EntryPointRun
+        if !kind.is_entry_point()
             && self.opts.packages == options::Packages::External
             && is_package_path(import_path)
             && !self.matches_user_external_pattern(import_path)
@@ -1253,8 +1252,7 @@ impl<'a> Resolver<'a> {
 
         // Certain types of URLs default to being external for convenience,
         // while these rules should not be applied to the entrypoint as it is never external (#12734)
-        if kind != ast::ImportKind::EntryPointBuild
-            && kind != ast::ImportKind::EntryPointRun
+        if !kind.is_entry_point()
             && (self.is_external_pattern(import_path)
             // "fill: url(#filter);"
             || (kind.is_from_css() && import_path.starts_with(b"#"))
@@ -1821,7 +1819,8 @@ impl<'a> Resolver<'a> {
                 }
             }
 
-            if self.opts.external.abs_paths.count() > 0
+            if !kind.is_entry_point()
+                && self.opts.external.abs_paths.count() > 0
                 && self.opts.external.abs_paths.contains(import_path)
                 && !self.matches_excluded_external(import_path)
             {
@@ -1986,10 +1985,11 @@ impl<'a> Resolver<'a> {
                 }
             }
 
-            // Check for external packages first — but never externalize
+                        // Check for external packages first — but never externalize
             // anything matched by `--internal` (falls through to normal
-            // resolution below).
-            if !self.matches_excluded_external(import_path)
+            // resolution below), and never externalize entry points.
+            if !kind.is_entry_point()
+                && !self.matches_excluded_external(import_path)
                 && self.opts.external.node_modules.count() > 0
                 // Imports like "process/" need to resolve to the filesystem, not a builtin
                 && !import_path.ends_with(b"/")
@@ -2084,7 +2084,8 @@ impl<'a> Resolver<'a> {
             return ResultUnion::NotFound;
         };
 
-        if self.opts.external.abs_paths.count() > 0
+        if !kind.is_entry_point()
+            && self.opts.external.abs_paths.count() > 0
             && self.opts.external.abs_paths.contains(abs_path)
             && !self.matches_excluded_external(abs_path)
         {

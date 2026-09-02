@@ -3202,6 +3202,17 @@ declare module "bun" {
     minChunkSize?: number;
 
     /**
+     * With `splitting` and `target: "browser"`, HTML entrypoints get a
+     * `<link rel="modulepreload">` for every chunk their script statically
+     * imports, and each `import()` first adds one for every chunk its target
+     * statically imports, so a chunk's dependencies download in parallel
+     * instead of one import depth per round trip. CLI: `--no-module-preload`.
+     *
+     * @default true
+     */
+    modulePreload?: boolean;
+
+    /**
      * List of entrypoints, usually file paths
      */
     entrypoints: string[];

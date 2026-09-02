@@ -239,6 +239,7 @@ impl BuildCommand {
             };
         this_transpiler.options.css_chunking = ctx.bundler_options.css_chunking;
         this_transpiler.options.min_chunk_size = ctx.bundler_options.min_chunk_size;
+        this_transpiler.options.module_preload = ctx.bundler_options.module_preload;
         this_transpiler.options.metafile =
             !ctx.bundler_options.metafile.is_empty() || !ctx.bundler_options.metafile_md.is_empty();
 

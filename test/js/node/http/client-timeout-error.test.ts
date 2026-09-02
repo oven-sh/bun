@@ -185,31 +185,34 @@ describe("node:http client timeout", () => {
   // the old guard never triggers. Windows is skipped: winsock takes the whole
   // non-blocking send() into the kernel (all 64 MiB on loopback in CI), so the
   // write never goes async and the queue under test is never populated.
-  it.skipIf(isWindows)("net.Socket 'timeout' fires when a connected write is stalled by a non-reading peer", async () => {
-    const accepted: net.Socket[] = [];
-    const server = net.createServer(s => {
-      accepted.push(s);
-      s.on("error", () => {});
-      s.pause();
-    });
-    server.listen(0, "127.0.0.1");
-    await once(server, "listening");
-    const { port } = server.address() as net.AddressInfo;
+  it.skipIf(isWindows)(
+    "net.Socket 'timeout' fires when a connected write is stalled by a non-reading peer",
+    async () => {
+      const accepted: net.Socket[] = [];
+      const server = net.createServer(s => {
+        accepted.push(s);
+        s.on("error", () => {});
+        s.pause();
+      });
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const { port } = server.address() as net.AddressInfo;
 
-    const socket = net.connect({ host: "127.0.0.1", port });
-    socket.on("error", () => {});
-    try {
-      await once(socket, "connect");
-      expect(socket.write(Buffer.alloc(64 << 20))).toBe(false);
-      expect(socket.writableLength).toBeGreaterThan(0);
+      const socket = net.connect({ host: "127.0.0.1", port });
+      socket.on("error", () => {});
+      try {
+        await once(socket, "connect");
+        expect(socket.write(Buffer.alloc(64 << 20))).toBe(false);
+        expect(socket.writableLength).toBeGreaterThan(0);
 
-      socket.setTimeout(200);
-      await once(socket, "timeout");
-      expect(socket.connecting).toBe(false);
-    } finally {
-      socket.destroy();
-      for (const s of accepted) s.destroy();
-      server.close();
-    }
-  });
+        socket.setTimeout(200);
+        await once(socket, "timeout");
+        expect(socket.connecting).toBe(false);
+      } finally {
+        socket.destroy();
+        for (const s of accepted) s.destroy();
+        server.close();
+      }
+    },
+  );
 });

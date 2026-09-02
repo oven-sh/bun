@@ -349,7 +349,17 @@ const chromePath = findChrome();
       stdout: "pipe",
       stderr: "pipe",
     });
-    const result = (await printedJSON(proc)) as { chromeProcesses: number; [key: string]: unknown };
+    const result = (await printedJSON(proc)) as {
+      warmUp: { files: number; bytes: number; ms: number };
+      launchMs: number;
+      chrome: { browser: number; helpers: number };
+      [key: string]: unknown;
+    };
+    // This file is on the slow-test list because of the first Chrome launch
+    // on a fresh agent. Keep its cost visible in the CI log.
+    console.log(
+      `chrome warm-up: ${result.warmUp.files} files, ${(result.warmUp.bytes / 1e6).toFixed(0)} MB in ${result.warmUp.ms} ms; launch: ${result.launchMs} ms`,
+    );
     // Whichever the event loop sees first, the process exit or the pipe
     // closing, decides the wording; both must settle everything.
     const died = {
@@ -358,7 +368,10 @@ const chromePath = findChrome();
       message: expect.stringMatching(/^Chrome (killed by signal 9|process closed the pipe)$/),
     };
     expect(result).toEqual({
-      chromeProcesses: expect.any(Number),
+      warmUp: { files: expect.any(Number), bytes: expect.any(Number), ms: expect.any(Number) },
+      launchMs: expect.any(Number),
+      // The fixture counts processes through /proc, so only on Linux.
+      chrome: { browser: isLinux ? 1 : 0, helpers: expect.any(Number) },
       loadingBefore: true,
       closeAll: { returned: null },
       unanswered: { rejected: died },
@@ -369,10 +382,9 @@ const chromePath = findChrome();
         closeAll: { returned: null },
         close: { returned: null },
       },
-      // Every process of the browser's tree that existed before the kill
-      // has exited (the fixture polls; it only counts them through /proc).
-      chromeLeft: [],
+      // The browser process is dead and reaped (the fixture polls for it).
+      browserLeft: [],
     });
-    if (isLinux) expect(result.chromeProcesses).toBeGreaterThan(0);
+    if (isLinux) expect(result.chrome.helpers).toBeGreaterThan(0);
   },
 );

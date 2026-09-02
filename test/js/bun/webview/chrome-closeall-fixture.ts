@@ -40,9 +40,12 @@ function thrown(fn: () => unknown) {
 // to the kernel's read-ahead instead, which keeps the disk queue full, and
 // the launch then finds the pages in cache. One call reads at most one
 // read-ahead window, so each file is requested window by window. Best
-// effort: if anything here fails, the launch is only slower.
-function warmBrowserInstall(executable: string | undefined, libc: string | undefined): void {
-  if (process.platform !== "linux" || !executable || !libc) return;
+// effort: if anything here fails, the launch is only slower. Returns what
+// was requested, so the test can log it next to the launch time.
+function warmBrowserInstall(executable: string | undefined, libc: string | undefined) {
+  const done = { files: 0, bytes: 0, ms: 0 };
+  if (process.platform !== "linux" || !executable || !libc) return done;
+  const started = performance.now();
   try {
     const dir = dirname(realpathSync(executable));
     const files = readdirSync(dir, { withFileTypes: true })
@@ -54,7 +57,7 @@ function warmBrowserInstall(executable: string | undefined, libc: string | undef
       .sort((a, b) => b.size - a.size);
     // BUN_CHROME_PATH can name a wrapper script that lives anywhere. Only a
     // directory that holds a browser-sized binary is an install directory.
-    if (!files.length || files[0].size < 64 * 1024 * 1024) return;
+    if (!files.length || files[0].size < 64 * 1024 * 1024) return done;
     const POSIX_FADV_WILLNEED = 3;
     const WINDOW = 128 * 1024;
     const { posix_fadvise } = dlopen(libc, {
@@ -66,8 +69,12 @@ function warmBrowserInstall(executable: string | undefined, libc: string | undef
         posix_fadvise(fd, offset, Math.min(WINDOW, size - offset), POSIX_FADV_WILLNEED);
       }
       closeSync(fd);
+      done.files++;
+      done.bytes += size;
     }
   } catch {}
+  done.ms = Math.round(performance.now() - started);
+  return done;
 }
 
 type Proc = { pid: number; ppid: number; state: string };
@@ -96,39 +103,45 @@ function processTable(): Proc[] {
   return table;
 }
 
-function descendants(root: number): number[] {
-  const table = processTable();
+function children(table: Proc[], parent: number): number[] {
+  return table.filter(p => p.ppid === parent).map(p => p.pid);
+}
+
+function descendants(table: Proc[], roots: number[]): number[] {
   const pids: number[] = [];
-  const queue = [root];
+  const queue = [...roots];
   for (let parent = queue.shift(); parent !== undefined; parent = queue.shift()) {
-    for (const { pid, ppid } of table) {
-      if (ppid === parent) {
-        pids.push(pid);
-        queue.push(pid);
-      }
+    for (const pid of children(table, parent)) {
+      pids.push(pid);
+      queue.push(pid);
     }
   }
   return pids;
 }
 
 // Those of `pids` that still run. A zombie has exited and only waits to be
-// reaped, by us or by init.
+// reaped.
 function alive(pids: number[]): number[] {
   const table = processTable();
   return pids.filter(pid => table.some(p => p.pid === pid && p.state !== "Z"));
 }
 
-warmBrowserInstall(process.env.CHROME_EXECUTABLE, process.env.LIBC_PATH);
+const warmUp = warmBrowserInstall(process.env.CHROME_EXECUTABLE, process.env.LIBC_PATH);
 
 // --no-sandbox: Chrome refuses to start as root otherwise (containers).
+const launchStarted = performance.now();
 const view = new Bun.WebView({
   backend: { type: "chrome", url: false, argv: ["--no-sandbox"] },
   width: 100,
   height: 100,
 });
 await view.navigate("data:text/html,<body></body>");
-// The browser and the helpers it has spawned so far (zygote, GPU, renderer).
-const chrome = descendants(process.pid);
+const launchMs = Math.round(performance.now() - launchStarted);
+// The browser is this process's only child. Its helpers (zygote, GPU,
+// renderer, and the cat(1)s Chrome keeps on the debugging pipe) hang off it.
+const table = processTable();
+const browser = children(table, process.pid);
+const helpers = descendants(table, browser);
 
 // The document commits, but its <img> request is never answered, so the
 // load event never fires and navigate() stays pending.
@@ -159,25 +172,28 @@ const afterDeath = {
   close: thrown(() => view.close()),
 };
 
-// SIGKILL took the browser process. Its helpers notice and exit on their
-// own, a moment later.
+// closeAll() SIGKILLs the browser process and the runtime reaps it. Its
+// helpers are Chrome's own: they exit once they notice, which on a loaded
+// machine takes longer than this test waits, so only the browser is polled.
 const deadline = Date.now() + 5000;
-let chromeLeft = alive(chrome);
-while (chromeLeft.length && Date.now() < deadline) {
+let browserLeft = alive(browser);
+while (browserLeft.length && Date.now() < deadline) {
   await Bun.sleep(5);
-  chromeLeft = alive(chrome);
+  browserLeft = alive(browser);
 }
 
 console.log(
   JSON.stringify({
-    chromeProcesses: chrome.length,
+    warmUp,
+    launchMs,
+    chrome: { browser: browser.length, helpers: helpers.length },
     loadingBefore,
     closeAll,
     unanswered,
     navigate,
     loadingAfter,
     afterDeath,
-    chromeLeft,
+    browserLeft,
   }),
 );
 server.stop(true);

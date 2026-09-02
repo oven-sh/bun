@@ -5,6 +5,7 @@ const {
   validateFunction,
   validateInteger,
   validateEncoding,
+  validateRmdirRecursiveOptions,
   getValidatedPath,
   throwIfNullBytesInFileName,
 } = require("internal/validators");
@@ -113,8 +114,8 @@ var access = function access(path, mode, callback?) {
     }
     callback = ensureCallback(callback);
 
-    // Node 26 removed `recursive` (DEP0147), but packages still pass it. Keep it working through `rm`.
-    if (options?.recursive) settleCallback(require("node:fs/promises").rm(path, options), callback);
+    // Node 26 removed `recursive` (DEP0147), but packages still pass it. See promises.rmdir.
+    if (options?.recursive) settleCallback(require("node:fs/promises").rmdir(path, options), callback);
     else fs.rmdirCb(callback, path, options);
   },
   copyFile = function copyFile(src, dest, mode, callback?) {
@@ -576,8 +577,13 @@ var access = function access(path, mode, callback?) {
     return fs.rmSync(path, options);
   },
   rmdirSync = function rmdirSync(path, options) {
-    // Node 26 removed `recursive` (DEP0147), but packages still pass it. Keep it working through `rm`.
-    if (options?.recursive) return rmSync(path, options);
+    // Node 26 removed `recursive` (DEP0147), but packages still pass it. Node 16 to 24 sent only a
+    // directory to `rm`. Anything else went to the plain rmdir, which fails (ENOTDIR for a file).
+    if (options?.recursive) {
+      options = validateRmdirRecursiveOptions(options);
+      if (!fs.lstatSync(path).isDirectory()) return fs.rmdirSync(path);
+      return rmSync(path, options);
+    }
     return fs.rmdirSync(path, options);
   },
   writev = function writev(fd, buffers, position, callback?) {

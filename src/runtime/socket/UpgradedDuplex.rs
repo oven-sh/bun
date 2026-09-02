@@ -425,11 +425,8 @@ impl UpgradedDuplex {
         }
     }
 
-    pub(crate) fn has_transport(&self) -> bool {
-        !matches!(self.transport.get(), Transport::None)
-    }
-
     /// The transport's queued plaintext is out: send what was held, stop holding.
+    #[uws_callback(export = "UpgradedDuplex__release_output")]
     pub(crate) fn release_output(&self) {
         if let Some(held) = self.held_output.replace(None) {
             if !held.is_empty() {

@@ -556,9 +556,13 @@ impl<const SSL: bool> NewSocket<SSL> {
             + ssl_cost
     }
 
+    pub(crate) fn has_native_callback(&self) -> bool {
+        !matches!(self.native_callback.get(), NativeCallbacks::None)
+    }
+
     /// On `false` the rejected `callback` (and the ref it holds) is dropped.
     pub(crate) fn attach_native_callback(&self, callback: NativeCallbacks) -> bool {
-        if !matches!(self.native_callback.get(), NativeCallbacks::None) {
+        if self.has_native_callback() {
             return false;
         }
         self.native_callback.set(callback);
@@ -772,17 +776,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         _frame: &CallFrame,
     ) -> JsResult<JSValue> {
         let _keep = this.ref_guard();
-        match this.socket.get().socket {
-            // S008: `us_socket_t` is an `opaque_ffi!` ZST — safe deref.
-            uws::InternalSocket::Connected(s) => {
-                bun_opaque::opaque_deref_mut(s).release_tls_output()
-            }
-            // SAFETY: same allocation, runtime-side type (uws_sys shim).
-            uws::InternalSocket::UpgradedDuplex(d) => {
-                unsafe { &*d.cast::<UpgradedDuplex>() }.release_output()
-            }
-            _ => {}
-        }
+        this.socket.get().release_tls_output();
         Ok(JSValue::UNDEFINED)
     }
 
@@ -3375,6 +3369,22 @@ impl<const SSL: bool> NewSocket<SSL> {
         Ok(result)
     }
 
+    /// The TLS half over this `raw` half's fd (`upgradeTLS`); it holds the
+    /// loop for both, as node's single uv handle does.
+    fn tls_layer(&self) -> Option<bun_ptr::ThisPtr<TLSSocket>> {
+        if !self.flags.get().contains(Flags::BYPASS_TLS) {
+            return None;
+        }
+        let uws::InternalSocket::Connected(s) = self.socket.get().socket else {
+            return None;
+        };
+        let s = uws::us_socket_t::opaque_mut(s);
+        if s.kind() != uws::SocketKind::BunSocketTls {
+            return None;
+        }
+        *s.ext::<Option<bun_ptr::ThisPtr<TLSSocket>>>()
+    }
+
     #[bun_jsc::host_fn(method)]
     pub(crate) fn js_ref(
         this: &Self,
@@ -3382,13 +3392,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         _frame: &CallFrame,
     ) -> JsResult<JSValue> {
         jsc::mark_binding!();
-        this.update_flags(|f| f.remove(Flags::ENGINE_OUTPUT_HOLD));
-        if this.socket.get().is_established() {
-            this.poll_ref.with_mut(|p| p.ref_(js_loop_ctx()));
-        } else {
-            // `connect_finish` holds the loop until then; `on_open` applies this.
-            this.ref_pollref_on_connect.set(true);
-        }
+        this.set_ref(true);
         Ok(JSValue::UNDEFINED)
     }
 
@@ -3399,21 +3403,34 @@ impl<const SSL: bool> NewSocket<SSL> {
         _frame: &CallFrame,
     ) -> JsResult<JSValue> {
         jsc::mark_binding!();
+        this.set_ref(false);
+        Ok(JSValue::UNDEFINED)
+    }
+
+    /// `ref()` / `unref()`: this socket's hold on the loop, and its TLS layer's
+    /// when it is the `raw` half of an upgrade (node: one uv handle for both).
+    pub(crate) fn set_ref(&self, hold: bool) {
+        if let Some(tls) = self.tls_layer() {
+            tls.set_ref(hold);
+        }
         // A stream-level TLS engine's tail parked here keeps the loop until it
         // drains (node: the uv write req does), whatever node:net decides.
-        if !this.buffered_data_for_node_net.get().is_empty()
-            && matches!(this.native_callback.get(), NativeCallbacks::TlsTransport(_))
+        if !hold
+            && !self.buffered_data_for_node_net.get().is_empty()
+            && matches!(self.native_callback.get(), NativeCallbacks::TlsTransport(_))
         {
-            this.update_flags(|f| f.insert(Flags::ENGINE_OUTPUT_HOLD));
-            return Ok(JSValue::UNDEFINED);
+            self.update_flags(|f| f.insert(Flags::ENGINE_OUTPUT_HOLD));
+            return;
         }
-        this.update_flags(|f| f.remove(Flags::ENGINE_OUTPUT_HOLD));
-        if this.socket.get().is_established() {
-            this.poll_ref.with_mut(|p| p.unref(js_loop_ctx()));
+        self.update_flags(|f| f.remove(Flags::ENGINE_OUTPUT_HOLD));
+        if !self.socket.get().is_established() {
+            // `connect_finish` holds the loop until then; `on_open` applies this.
+            self.ref_pollref_on_connect.set(hold);
+        } else if hold {
+            self.poll_ref.with_mut(|p| p.ref_(js_loop_ctx()));
         } else {
-            this.ref_pollref_on_connect.set(false);
+            self.poll_ref.with_mut(|p| p.unref(js_loop_ctx()));
         }
-        Ok(JSValue::UNDEFINED)
     }
 
     pub fn finalize(&self) {
@@ -3750,9 +3767,9 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         // `this` becomes the `raw` half (see `twin`): it follows the fd into
         // the new `us_socket_t` but is never in its ext slot.
-        // SAFETY: `if SSL` returned above, so `Self` is `TCPSocket`.
-        let raw: bun_ptr::ThisPtr<TCPSocket> =
-            unsafe { bun_ptr::ThisPtr::new(this.as_ctx_ptr().cast::<TCPSocket>()) };
+        let raw: &TCPSocket = (this as &dyn core::any::Any)
+            .downcast_ref::<TCPSocket>()
+            .expect("SSL sockets returned above");
         // Preserve `socket.unref()` across the upgrade — node:tls callers
         // that unref the underlying TCP socket before upgrading must not
         // suddenly hold the loop open via the TLS wrapper.
@@ -4141,14 +4158,15 @@ impl_socket_js_class!(TLSSocket, js_TLSSocket);
 // NativeCallbacks — direct callbacks on HTTP2 when available
 // ──────────────────────────────────────────────────────────────────────────
 
-pub enum NativeCallbacks {
+pub(crate) enum NativeCallbacks {
     H2(RefPtr<H2FrameParser>),
     /// This socket is the transport under a stream-level TLS engine
     /// (`upgradeDuplexToTLS` over a handle-backed net.Socket: named pipes,
     /// TLS over TLS, Http2SecureServer's injected sockets). Its bytes and EOF
     /// go to that engine, never to the JS handlers — node's TLSWrap taking
-    /// over the parent's stream.
-    TlsTransport(RefPtr<TLSSocket>),
+    /// over the parent's stream. The engine clears this slot from its own
+    /// teardown (`release_transport`) before it is freed.
+    TlsTransport(bun_ptr::BackRef<UpgradedDuplex>),
     None,
 }
 
@@ -4160,15 +4178,10 @@ impl NativeCallbacks {
     pub(crate) fn on_data(&self, data: &[u8]) -> JsResult<bool> {
         let h2 = match self {
             NativeCallbacks::H2(h2) => h2.as_ptr(),
-            NativeCallbacks::TlsTransport(inner) => {
-                let Some(engine) = Self::engine(inner) else {
-                    // The engine's teardown detaches us before its socket goes.
-                    debug_assert!(false, "TlsTransport outlived its engine");
-                    return Ok(false);
-                };
-                // Own +1 across the feed: decrypted data re-enters JS, which
-                // may close this transport and drop the cell's ref.
-                let _keep = inner.clone();
+            // Copied out: decrypted data re-enters JS, which may close this
+            // transport and overwrite the cell `self` borrows.
+            NativeCallbacks::TlsTransport(engine) => {
+                let engine = *engine;
                 engine.on_transport_data(data);
                 return Ok(true);
             }
@@ -4181,11 +4194,9 @@ impl NativeCallbacks {
     pub(crate) fn on_writable(&self) -> bool {
         let h2 = match self {
             NativeCallbacks::H2(h2) => h2.as_ptr(),
-            NativeCallbacks::TlsTransport(inner) => {
-                if let Some(engine) = Self::engine(inner) {
-                    let _keep = inner.clone();
-                    engine.on_transport_writable();
-                }
+            NativeCallbacks::TlsTransport(engine) => {
+                let engine = *engine;
+                engine.on_transport_writable();
                 // node:net's own drain handler still runs for the wrapped socket.
                 return false;
             }
@@ -4198,11 +4209,9 @@ impl NativeCallbacks {
 
     /// `false`: also dispatch to the JS handlers.
     pub(crate) fn on_end(&self) -> bool {
-        if let NativeCallbacks::TlsTransport(inner) = self {
-            if let Some(engine) = Self::engine(inner) {
-                let _keep = inner.clone();
-                engine.on_transport_end();
-            }
+        if let NativeCallbacks::TlsTransport(engine) = self {
+            let engine = *engine;
+            engine.on_transport_end();
         }
         // node:net's own end handler still runs the wrapped socket's
         // half-open logic.
@@ -4213,21 +4222,8 @@ impl NativeCallbacks {
     pub(crate) fn on_close(self) {
         match self {
             NativeCallbacks::H2(h2) => h2.on_native_close(),
-            NativeCallbacks::TlsTransport(inner) => {
-                if let Some(engine) = Self::engine(&inner) {
-                    engine.close();
-                }
-            }
+            NativeCallbacks::TlsTransport(engine) => engine.close(),
             NativeCallbacks::None => {}
-        }
-    }
-
-    fn engine(inner: &RefPtr<TLSSocket>) -> Option<&UpgradedDuplex> {
-        match inner.socket.get().socket {
-            // SAFETY: same allocation, runtime-side type (uws_sys shim); live
-            // while `inner.socket` names it.
-            uws::InternalSocket::UpgradedDuplex(d) => Some(unsafe { &*d.cast::<UpgradedDuplex>() }),
-            _ => None,
         }
     }
 }
@@ -4892,19 +4888,12 @@ pub fn js_upgrade_duplex_to_tls(
         verify_error: JsCell::new(None),
     });
     // A handle-backed transport hands its bytes to the engine below JS.
-    let feed = || NativeCallbacks::TlsTransport(RefPtr::from_this(tls));
-    let linked = if let Some(t) = transport.as_class_ref::<TCPSocket>() {
-        t.attach_native_callback(feed())
-            .then(|| Transport::Tcp(t.ref_guard()))
-    } else if let Some(t) = transport.as_class_ref::<TLSSocket>() {
-        t.attach_native_callback(feed())
-            .then(|| Transport::Tls(t.ref_guard()))
-    } else {
-        None
-    };
-    let native_transport = transport.as_class_ref::<TCPSocket>().is_some()
-        || transport.as_class_ref::<TLSSocket>().is_some();
-    if native_transport && linked.is_none() {
+    let transport_tcp = transport.as_class_ref::<TCPSocket>();
+    let transport_tls = transport.as_class_ref::<TLSSocket>();
+    let native_transport = transport_tcp.is_some() || transport_tls.is_some();
+    let transport_taken = transport_tcp.is_some_and(|t| t.has_native_callback())
+        || transport_tls.is_some_and(|t| t.has_native_callback());
+    if transport_taken {
         // Its reads already go somewhere else (an HTTP/2 session, another TLS
         // layer); `data` events would never come either. Sole owner so far.
         tls.get().deref();
@@ -5034,11 +5023,19 @@ pub fn js_upgrade_duplex_to_tls(
     .register();
     DuplexUpgradeContext::start_tls(duplex_context_ref);
 
-    duplex_context_ref
-        .upgrade
-        .transport
-        .set(linked.unwrap_or(Transport::None));
-    let native_transport = duplex_context_ref.upgrade.has_transport();
+    let engine = bun_ptr::BackRef::new(&duplex_context_ref.upgrade);
+    let linked = if let Some(t) = transport_tcp {
+        let attached = t.attach_native_callback(NativeCallbacks::TlsTransport(engine));
+        debug_assert!(attached, "checked free above; nothing since ran JS");
+        Transport::Tcp(t.ref_guard())
+    } else if let Some(t) = transport_tls {
+        let attached = t.attach_native_callback(NativeCallbacks::TlsTransport(engine));
+        debug_assert!(attached, "checked free above; nothing since ran JS");
+        Transport::Tls(t.ref_guard())
+    } else {
+        Transport::None
+    };
+    duplex_context_ref.upgrade.transport.set(linked);
     if defer_handshake && native_transport {
         duplex_context_ref.upgrade.held_output.set(Some(Vec::new()));
     }

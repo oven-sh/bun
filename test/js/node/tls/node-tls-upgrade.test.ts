@@ -862,6 +862,34 @@ test.concurrent("ref() on the wrapped socket still holds the event loop after th
   expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "reply: late reply", exitCode: 0 });
 });
 
+test.concurrent("unref() on the wrapped socket releases the event loop after the upgrade", async () => {
+  // The other direction of the test above: once the TLS layer is up, unref()
+  // on the wrapped socket alone must let the process exit (node: one handle).
+  using server = await listenTCP(accepted => {
+    const secure = new tls.TLSSocket(accepted, { isServer: true, ...serverTLS });
+    secure.on("error", () => {});
+  });
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const net = require("net"), tls = require("tls");
+       const socket = net.connect(${server.port}, "127.0.0.1", () => {
+         const t = tls.connect({ socket, rejectUnauthorized: false }, () => {
+           t.on("data", () => {});
+           console.log("secured");
+           socket.unref();
+         });
+       });`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "secured", exitCode: 0 });
+});
+
 test.concurrent("upgrading a setEncoding() socket with buffered input reports ERR_STREAM_WRAP", async () => {
   // What the socket already buffered has to be handed to the TLS layer, and on
   // a setEncoding() socket that is a string: not bytes anymore. Node's

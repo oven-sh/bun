@@ -517,6 +517,18 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         )
     }
 
+    /// Let TLS output held behind the previous owner's writes go
+    /// (`us_socket_hold_tls_output` / the duplex engine's held output).
+    pub fn release_tls_output(&self) {
+        on_socket!(self.socket;
+            connected s => s.release_tls_output(),
+            connecting _c => {},
+            detached => {},
+            duplex d => d.release_output(),
+            pipe _p => {},
+        )
+    }
+
     pub fn resume_stream(&self) -> bool {
         on_socket!(self.socket;
             connected s => if s.is_established() { s.resume(); true } else { false },

@@ -223,6 +223,7 @@ unsafe extern "C" {
     safe fn UpgradedDuplex__abandon_js_side(this: &mut UpgradedDuplex);
     safe fn UpgradedDuplex__pause(this: &mut UpgradedDuplex) -> bool;
     safe fn UpgradedDuplex__resume(this: &mut UpgradedDuplex) -> bool;
+    safe fn UpgradedDuplex__release_output(this: &mut UpgradedDuplex);
 }
 impl UpgradedDuplex {
     /// Forwarded to the handle-backed transport, if any.
@@ -233,6 +234,10 @@ impl UpgradedDuplex {
     #[inline]
     pub(crate) fn resume(&mut self) -> bool {
         UpgradedDuplex__resume(self)
+    }
+    #[inline]
+    pub(crate) fn release_output(&mut self) {
+        UpgradedDuplex__release_output(self)
     }
     #[inline]
     pub(crate) fn ssl_error(&self) -> us_bun_verify_error_t {

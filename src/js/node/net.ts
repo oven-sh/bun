@@ -2455,8 +2455,6 @@ Socket.prototype.ref = function ref() {
     return this;
   }
   socket.ref();
-  // Its fd is a TLS layer's now; that is what holds the loop (node: one uv handle).
-  if (socket.fdIsTLS) this[kTLSLayer]?._handle?.ref();
   return this;
 };
 
@@ -2651,7 +2649,6 @@ Socket.prototype.unref = function unref() {
     return this;
   }
   socket.unref();
-  if (socket.fdIsTLS) this[kTLSLayer]?._handle?.unref();
   return this;
 };
 

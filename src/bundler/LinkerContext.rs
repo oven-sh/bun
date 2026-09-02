@@ -3577,6 +3577,7 @@ impl<'a> LinkerContext<'a> {
         let id = tracker.source_index.get();
         let exports_kind: &[ExportsKind] = self.graph.ast.items_exports_kind();
         let ast_flags = self.graph.ast.items_flags();
+        let is_import_stmt = first_hop.is_none();
 
         let (other_source_index, alias, alias_is_star, is_exported) = match first_hop {
             Some((source, alias)) => (source, Some(alias), false, false),
@@ -3677,6 +3678,40 @@ impl<'a> LinkerContext<'a> {
                     ..Default::default()
                 },
                 status: ImportTrackerStatus::Cjs,
+                ..Default::default()
+            };
+        }
+
+        // The default import of a lifted CommonJS module is `module.exports`,
+        // which is its namespace: bind it like `import * as X`. `ns.default` on
+        // `import * as ns` (a generated item) reads the namespace object's own
+        // `default` key when the module exports one.
+        if is_import_stmt
+            && !alias_is_star
+            && flags.contains(AstFlags::COMMONJS_LIFTED_TO_ESM)
+            && alias.is_some_and(|a| a.slice() == b"default")
+            && !Self::lifted_default_import_needs_wrapper(
+                self.graph.ast.items_module_type()[id as usize],
+                &self.graph.ast.items_named_exports()[other_id as usize],
+            )
+            && !(self
+                .graph
+                .symbols
+                .get_const(tracker.import_ref)
+                .is_some_and(|s| s.import_item_status == ImportItemStatus::Generated)
+                && self.graph.meta.items_resolved_exports()[other_id as usize]
+                    .get(b"default")
+                    .is_some())
+        {
+            let matching_export = &self.graph.meta.items_resolved_export_star()[other_id as usize];
+            return ImportTrackerIterator {
+                value: matching_export.data,
+                status: ImportTrackerStatus::Found,
+                import_data: bun_ptr::BackRef::new(
+                    matching_export
+                        .potentially_ambiguous_export_star_refs
+                        .slice(),
+                ),
                 ..Default::default()
             };
         }
@@ -4182,9 +4217,21 @@ impl<'a> LinkerContext<'a> {
             && ref_ == self.graph.ast.items_exports_ref()[id]
             && matches!(
                 self.graph.ast.items_exports_kind()[id],
-                ExportsKind::Esm | ExportsKind::EsmWithDynamicFallback
+                ExportsKind::Esm
+                    | ExportsKind::EsmWithDynamicFallback
+                    | ExportsKind::EsmWithDynamicFallbackFromCjs
             )
             && self.graph.meta.items_flags()[id].wrap != WrapKind::Cjs
+    }
+
+    /// A default import of a lifted CommonJS module that sets `__esModule` is
+    /// `exports.default` or `module.exports` depending on that flag's run-time
+    /// value, unless the importer is an ES module by type (Node ignores the flag).
+    pub(crate) fn lifted_default_import_needs_wrapper(
+        importer_module_type: crate::options::ModuleType,
+        exports: &crate::bundled_ast::NamedExports,
+    ) -> bool {
+        importer_module_type != crate::options::ModuleType::Esm && exports.contains(b"__esModule")
     }
 
     /// Resolves every named import in one file to its matching export,
@@ -4370,6 +4417,27 @@ impl<'a> LinkerContext<'a> {
                         // through `export *` from CommonJS): keep the property access.
                         if let Some(index) = resolved_exports.get_index(name) {
                             let name = bun_ast::StoreStr::new(&resolved_exports.keys()[index]);
+                            accesses.push((*base, target_source, name, prop_use.count_estimate));
+                        } else if &**name == b"default"
+                            && self.graph.ast.items_flags()[target_source as usize]
+                                .contains(AstFlags::COMMONJS_LIFTED_TO_ESM)
+                            && !Self::lifted_default_import_needs_wrapper(
+                                self.graph.ast.items_module_type()[id],
+                                &self.graph.ast.items_named_exports()[target_source as usize],
+                            )
+                        {
+                            // `default` of a lifted CommonJS module is `module.exports`, the
+                            // namespace itself, the same as `ns.default` on `import * as ns`.
+                            let name = bun_ast::StoreStr::new(b"default");
+                            member_resolutions
+                                .entry((target_source, name))
+                                .or_insert_with(|| {
+                                    Some(ImportMemberResolution {
+                                        source_index: target_source,
+                                        r#ref: target.import_ref,
+                                        re_exports: Vec::new(),
+                                    })
+                                });
                             accesses.push((*base, target_source, name, prop_use.count_estimate));
                         }
                     }

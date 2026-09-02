@@ -123,14 +123,18 @@ describe("bundler", () => {
       `,
     },
     run: {
-      // Namespace import only gets the CJS exports as-is, no default wrapper
-      stdout: '{"bar":"bar","foo":"foo"}',
+      // Namespace import only gets the CJS exports as-is, no default wrapper.
+      // The lifted module keeps the order of its `exports.x = ...` assignments,
+      // like `module.exports` would.
+      stdout: '{"foo":"foo","bar":"bar"}',
     },
   });
 
   // ============================================================================
   // Tests with different targets
-  // Target doesn't affect isNodeMode - it's based on the importer's module type
+  // Target doesn't affect isNodeMode - it's based on the importer's module type.
+  // The fixture assigns `module.exports` so the module keeps its CommonJS
+  // wrapper and the default import goes through __toESM.
   // ============================================================================
 
   // Test 7: target=node
@@ -141,11 +145,13 @@ describe("bundler", () => {
         console.log(JSON.stringify(lib));
       `,
       "/lib.cjs": /* js */ `
-        exports.x = 1;
-        exports.y = 2;
+        module.exports = { x: 1, y: 2 };
       `,
     },
     target: "node",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("__toESM(");
+    },
     run: {
       stdout: '{"x":1,"y":2}',
     },
@@ -159,11 +165,13 @@ describe("bundler", () => {
         console.log(JSON.stringify(lib));
       `,
       "/lib.cjs": /* js */ `
-        exports.x = 1;
-        exports.y = 2;
+        module.exports = { x: 1, y: 2 };
       `,
     },
     target: "browser",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("__toESM(");
+    },
     run: {
       stdout: '{"x":1,"y":2}',
     },
@@ -177,11 +185,13 @@ describe("bundler", () => {
         console.log(JSON.stringify(lib));
       `,
       "/lib.cjs": /* js */ `
-        exports.x = 1;
-        exports.y = 2;
+        module.exports = { x: 1, y: 2 };
       `,
     },
     target: "bun",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("__toESM(");
+    },
     run: {
       stdout: '{"x":1,"y":2}',
     },
@@ -361,8 +371,10 @@ describe("bundler", () => {
       `,
     },
     run: {
-      stdout:
-        '{"default":{"foo":"foo","bar":"bar"},"named":"foo","namespace":{"default":{"foo":"foo","bar":"bar"},"foo":"foo","bar":"bar"}}',
+      // The default import is `module.exports`, which for a lifted CommonJS
+      // module is the namespace object itself, so the namespace has no
+      // separate `default` key (the same as a lone `import *`, Test 6).
+      stdout: '{"default":{"foo":"foo","bar":"bar"},"named":"foo","namespace":{"foo":"foo","bar":"bar"}}',
     },
   });
 

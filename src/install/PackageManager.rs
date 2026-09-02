@@ -81,6 +81,8 @@ pub mod populate_manifest_cache;
 pub mod process_dependency_list;
 #[path = "PackageManager/ProgressStrings.rs"]
 pub mod progress_strings;
+#[path = "PackageManager/remove_stale_workspace_links.rs"]
+pub(crate) mod remove_stale_workspace_links;
 #[path = "PackageManager/runTasks.rs"]
 pub mod run_tasks;
 #[path = "PackageManager/security_scanner.rs"]

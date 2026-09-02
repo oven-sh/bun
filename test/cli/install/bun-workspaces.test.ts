@@ -2670,3 +2670,179 @@ describe("packages whose version label is longer than 512 bytes", () => {
     );
   });
 });
+
+// Both linkers only create or repoint the `node_modules/<name>` links the current
+// lockfile asks for. When a workspace is renamed or removed, its name leaves the
+// lockfile and the links bun had created under that name (in the root's node_modules
+// and, with the isolated linker, in the node_modules of the workspaces depending on
+// it) used to stay behind, still resolving to the workspace folder.
+describe("links of a renamed or removed workspace", () => {
+  type Linker = "hoisted" | "isolated";
+  const linkers: Linker[] = ["hoisted", "isolated"];
+
+  async function install(ctx: TestCtx, linker: Linker, ...args: string[]): Promise<string> {
+    await using proc = spawn({
+      cmd: [bunExe(), "install", "--linker", linker, ...args],
+      cwd: ctx.packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: ctx.env,
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(err).not.toContain("error:");
+    expect(exitCode).toBe(0);
+    return out;
+  }
+
+  function writeProject(
+    packageDir: string,
+    rootDependencies: Record<string, string>,
+    packages: Record<string, Record<string, unknown>>,
+  ) {
+    return Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({ name: "foo", workspaces: ["packages/*"], devDependencies: rootDependencies }),
+      ),
+      ...Object.entries(packages).map(([dir, packageJson]) =>
+        write(join(packageDir, "packages", dir, "package.json"), JSON.stringify({ version: "1.0.0", ...packageJson })),
+      ),
+    ]);
+  }
+
+  // Package entries of a node_modules directory (no `.bun`/`.bin`), or [] when it does
+  // not exist. A listing (rather than `exists`) also sees links whose target is gone.
+  async function entries(nodeModules: string): Promise<string[]> {
+    try {
+      return (await readdirSorted(nodeModules)).filter(name => !name.startsWith("."));
+    } catch (err: any) {
+      if (err.code !== "ENOENT") throw err;
+      return [];
+    }
+  }
+
+  for (const linker of linkers) {
+    test.concurrent(`${linker}: renaming a workspace removes the links under its old name`, async () => {
+      using ctx = await setupTest();
+      const { packageDir } = ctx;
+      const rootNodeModules = join(packageDir, "node_modules");
+      const bNodeModules = join(packageDir, "packages", "b", "node_modules");
+
+      await writeProject(
+        packageDir,
+        { a: "*", b: "*" },
+        { a: { name: "a" }, b: { name: "b", dependencies: { a: "*" } } },
+      );
+      await install(ctx, linker);
+      expect(await entries(rootNodeModules)).toEqual(["a", "b"]);
+      expect(await entries(bNodeModules)).toEqual(linker === "isolated" ? ["a"] : []);
+
+      await writeProject(
+        packageDir,
+        { "a-renamed": "*", b: "*" },
+        { a: { name: "a-renamed" }, b: { name: "b", dependencies: { "a-renamed": "*" } } },
+      );
+      await install(ctx, linker);
+      expect(await entries(rootNodeModules)).toEqual(["a-renamed", "b"]);
+      expect(await entries(bNodeModules)).toEqual(linker === "isolated" ? ["a-renamed"] : []);
+      expect(await file(join(rootNodeModules, "a-renamed", "package.json")).json()).toMatchObject({
+        name: "a-renamed",
+      });
+
+      expect(await install(ctx, linker)).toContain("(no changes)");
+      expect(await entries(rootNodeModules)).toEqual(["a-renamed", "b"]);
+      expect(await entries(bNodeModules)).toEqual(linker === "isolated" ? ["a-renamed"] : []);
+    });
+
+    test.concurrent(`${linker}: renaming a scoped workspace removes the link under its old name`, async () => {
+      using ctx = await setupTest();
+      const { packageDir } = ctx;
+      const scopeDir = join(packageDir, "node_modules", "@repo");
+
+      await writeProject(
+        packageDir,
+        { "@repo/a": "*", "@repo/b": "*" },
+        { a: { name: "@repo/a" }, b: { name: "@repo/b" } },
+      );
+      await install(ctx, linker);
+      expect(await entries(scopeDir)).toEqual(["a", "b"]);
+
+      await writeProject(
+        packageDir,
+        { "@repo/a-renamed": "*", "@repo/b": "*" },
+        { a: { name: "@repo/a-renamed" }, b: { name: "@repo/b" } },
+      );
+      await install(ctx, linker);
+      expect(await entries(scopeDir)).toEqual(["a-renamed", "b"]);
+      expect(await file(join(scopeDir, "a-renamed", "package.json")).json()).toMatchObject({ name: "@repo/a-renamed" });
+    });
+
+    test.concurrent(`${linker}: removing a workspace from the project removes its link`, async () => {
+      using ctx = await setupTest();
+      const { packageDir } = ctx;
+      const rootNodeModules = join(packageDir, "node_modules");
+
+      await writeProject(packageDir, { a: "*", b: "*" }, { a: { name: "a" }, b: { name: "b" } });
+      await install(ctx, linker);
+      expect(await entries(rootNodeModules)).toEqual(["a", "b"]);
+
+      await rm(join(packageDir, "packages", "a"), { recursive: true });
+      await writeProject(packageDir, { b: "*" }, { b: { name: "b" } });
+      await install(ctx, linker);
+      expect(await entries(rootNodeModules)).toEqual(["b"]);
+    });
+
+    // The old name is unlinked before the linker runs, so a dependency that still
+    // wants that name (here an alias of the renamed workspace) is linked again.
+    test.concurrent(`${linker}: the old name is linked again when a dependency still uses it`, async () => {
+      using ctx = await setupTest();
+      const { packageDir } = ctx;
+      const rootNodeModules = join(packageDir, "node_modules");
+
+      await writeProject(packageDir, { a: "*" }, { a: { name: "a" } });
+      await install(ctx, linker);
+      expect(await entries(rootNodeModules)).toEqual(["a"]);
+
+      await writeProject(packageDir, { a: "workspace:a-renamed@*" }, { a: { name: "a-renamed" } });
+      await install(ctx, linker);
+      expect(await entries(rootNodeModules)).toEqual(linker === "isolated" ? ["a"] : ["a", "a-renamed"]);
+      expect(await file(join(rootNodeModules, "a", "package.json")).json()).toMatchObject({ name: "a-renamed" });
+    });
+  }
+
+  // The isolated linker only links the workspaces the root depends on, so nothing is
+  // ever linked for `a` here and the directory under its name is not bun's to remove.
+  test.concurrent("a directory under the old name is left alone", async () => {
+    using ctx = await setupTest();
+    const { packageDir } = ctx;
+    const rootNodeModules = join(packageDir, "node_modules");
+    const marker = join(rootNodeModules, "a", "marker.txt");
+
+    await writeProject(packageDir, { b: "*" }, { a: { name: "a" }, b: { name: "b" } });
+    await install(ctx, "isolated");
+    expect(await entries(rootNodeModules)).toEqual(["b"]);
+
+    await write(marker, "not a workspace link");
+    await writeProject(packageDir, { b: "*" }, { a: { name: "a-renamed" }, b: { name: "b" } });
+    await install(ctx, "isolated");
+    expect(await entries(rootNodeModules)).toEqual(["a", "b"]);
+    expect(await file(marker).text()).toBe("not a workspace link");
+  });
+
+  test.concurrent("--dry-run does not touch the links", async () => {
+    using ctx = await setupTest();
+    const { packageDir } = ctx;
+    const rootNodeModules = join(packageDir, "node_modules");
+
+    await writeProject(packageDir, { a: "*", b: "*" }, { a: { name: "a" }, b: { name: "b" } });
+    await install(ctx, "hoisted");
+    expect(await entries(rootNodeModules)).toEqual(["a", "b"]);
+
+    await writeProject(packageDir, { "a-renamed": "*", b: "*" }, { a: { name: "a-renamed" }, b: { name: "b" } });
+    await install(ctx, "hoisted", "--dry-run");
+    expect(await entries(rootNodeModules)).toEqual(["a", "b"]);
+
+    await install(ctx, "hoisted");
+    expect(await entries(rootNodeModules)).toEqual(["a-renamed", "b"]);
+  });
+});

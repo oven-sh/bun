@@ -2723,8 +2723,7 @@ impl<'a> LinkerContext<'a> {
 
             let records = &ctx.import_records[source_index as usize];
 
-            // CSS and HTML files have no parts of their own: follow every
-            // import record, as tree shaking does.
+            // CSS and HTML files have no parts: follow every import record.
             if ctx.css_reprs[source_index as usize].is_some()
                 || ctx.loaders[source_index as usize] == Loader::Html
             {
@@ -2739,9 +2738,7 @@ impl<'a> LinkerContext<'a> {
                 continue;
             }
 
-            // Every live part of this file prints wherever the file lands, so
-            // the entry point needs what each of them imports or depends on.
-            // A dead part prints nothing and needs nothing.
+            // A dead part prints nothing, so only live parts reach other files.
             let parts_live = &self.graph.parts_live[source_index as usize];
             for (part_index, part) in ctx.parts[source_index as usize]
                 .as_slice()
@@ -2761,13 +2758,8 @@ impl<'a> LinkerContext<'a> {
                     }
                     let other = record.source_index.get();
 
-                    // An `import` or `export ... from` of a file that declares no
-                    // side effects prints nothing: the bindings it brings in are
-                    // part dependencies, resolved below. Tree shaking keeps the
-                    // target only through those dependencies, so this entry
-                    // point reaches it only through them too. Without this, a
-                    // `"sideEffects": false` barrel would hand every module it
-                    // re-exports to each entry point that uses one of them.
+                    // An `import`/`export from` of a side-effect-free file prints
+                    // nothing; its bindings are the part dependencies below.
                     if record.kind == ImportKind::Stmt && self.file_has_no_side_effects(other) {
                         continue;
                     }

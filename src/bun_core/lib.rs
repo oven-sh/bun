@@ -20,6 +20,8 @@ pub mod comptime_string_map;
 pub mod error;
 pub mod hint;
 pub mod result;
+#[cfg(unix)]
+pub mod signal_stack;
 pub mod thread_id;
 pub mod tty;
 pub mod util;
@@ -2599,6 +2601,9 @@ pub mod ffi {
     // SAFETY: integer-array struct on the gated targets; all-zero is valid.
     #[cfg(all(unix, not(target_vendor = "apple")))]
     unsafe impl Zeroable for libc::sigset_t {}
+    // SAFETY: C POD (raw pointer + integer fields); all-zero is valid.
+    #[cfg(unix)]
+    unsafe impl Zeroable for libc::stack_t {}
     // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
     #[cfg(unix)]
     unsafe impl Zeroable for libc::utsname {}

@@ -1,6 +1,6 @@
 import { crash_handler } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, isLinux, isPosix, isWindows, mergeWindowEnvs, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, isPosix, isWindows, mergeWindowEnvs, tempDir } from "harness";
 import { rmSync } from "node:fs";
 import { constants as osConstants } from "node:os";
 import path from "path";
@@ -127,6 +127,74 @@ describe.if(isPosix)("terminal signal reflects the crash cause", () => {
     expect(proc.signalCode).toBe(expectedSignal);
     expect(exitCode).not.toBe(0);
     void stdout;
+  });
+});
+
+// A native stack overflow faults on the guard page, so the kernel can only run
+// a signal handler on an alternate signal stack. Two things used to break that:
+// JSC's VM initialization re-registers SIGSEGV/SIGBUS for the JIT without
+// SA_ONSTACK, and only the main thread had a sigaltstack. Every native
+// recursion that lost its stack, on any thread, died with the default action:
+// exit 139 and nothing on stderr.
+//
+// Under ASAN bun leaves SIGSEGV to the sanitizer, which chains behind JSC's
+// handler and prints its own stack-overflow report.
+describe.if(isPosix)("native stack overflow is reported", () => {
+  const expected = isASAN ? "AddressSanitizer: stack-overflow" : "Stack overflow";
+  // The one-line ASAN report is enough; symbolizing its frames takes seconds.
+  const env = { ...noReportEnv, ASAN_OPTIONS: [noReportEnv.ASAN_OPTIONS, "symbolize=0"].filter(Boolean).join(":") };
+
+  // The CI agents run with `ulimit -s unlimited`, where the main thread's stack
+  // grows until it exhausts memory instead of hitting a guard page. Give the
+  // child the usual 8 MiB so the overflow is a fault, not an OOM kill.
+  test.concurrent("on the main thread", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        "/bin/sh",
+        "-c",
+        'ulimit -s 8192; exec "$0" "$@"',
+        bunExe(),
+        path.join(import.meta.dir, "fixture-crash.js"),
+        "stackOverflow",
+        "--debug-crash-handler-use-trace-string",
+      ],
+      env,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toContain(expected);
+    if (!isASAN) {
+      expect(stderr).toContain("panic(main thread): Stack overflow");
+      expect(proc.signalCode).toBe("SIGSEGV");
+    }
+    expect(exitCode).not.toBe(0);
+  });
+
+  test.concurrent("on a worker thread", async () => {
+    using dir = tempDir("stack-overflow-worker", {
+      "main.js": `
+        const worker = new Worker(new URL("./worker.js", import.meta.url).href, { name: "deep" });
+        worker.onerror = e => console.error("worker error: " + e.message);
+      `,
+      "worker.js": `
+        require("bun:internal-for-testing").crash_handler.stackOverflow();
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--debug-crash-handler-use-trace-string", "main.js"],
+      env,
+      cwd: String(dir),
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toContain(expected);
+    if (!isASAN) {
+      expect(stderr).toContain("panic(deep): Stack overflow");
+      expect(proc.signalCode).toBe("SIGSEGV");
+    }
+    expect(exitCode).not.toBe(0);
   });
 });
 

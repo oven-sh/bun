@@ -629,6 +629,41 @@ pub fn set_thread_name(name: &ZStr) {
     }
 }
 
+/// The calling thread's name from [`set_thread_name`], or empty. Async-signal-safe
+/// (syscalls only): the crash handler calls it from the SIGSEGV handler.
+#[cfg(unix)]
+pub fn current_thread_name(buf: &mut [u8; 64]) -> &[u8] {
+    buf.fill(0);
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    {
+        // SAFETY: PR_GET_NAME writes at most 16 bytes (TASK_COMM_LEN), NUL
+        // included, into `buf`.
+        if unsafe { libc::prctl(libc::PR_GET_NAME, buf.as_mut_ptr() as usize) } != 0 {
+            return &[];
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        // SAFETY: `buf` is writable for `buf.len()` bytes; the call writes a
+        // NUL-terminated name that fits.
+        if unsafe {
+            libc::pthread_getname_np(libc::pthread_self(), buf.as_mut_ptr().cast(), buf.len())
+        } != 0
+        {
+            return &[];
+        }
+    }
+    #[cfg(target_os = "freebsd")]
+    {
+        // SAFETY: `buf` is writable for `buf.len()` bytes; the call writes a
+        // NUL-terminated name that fits.
+        unsafe {
+            libc::pthread_get_name_np(libc::pthread_self(), buf.as_mut_ptr().cast(), buf.len());
+        }
+    }
+    crate::slice_to_nul(buf)
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // Exit callbacks
 // ──────────────────────────────────────────────────────────────────────────

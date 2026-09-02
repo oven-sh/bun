@@ -583,36 +583,57 @@ pub(crate) fn watch(
 // Platform backends
 // ────────────────────────────────────────────────────────────────────────────────
 
-/// Shared recursive directory walk for Linux and Kqueue: open `abs_dir`, iterate,
-/// and for every entry call `cb` with (abs, rel, is_file); recurse into
-/// subdirectories. When `dirs_only`, non-directory entries are skipped entirely
-/// (inotify delivers file events on the parent dir's wd so we only need a watch
-/// per directory; kqueue needs an fd per file too). Best-effort — an unreadable
-/// subdirectory just stops that branch (matches Node).
+/// Shared directory walk for Linux and Kqueue: call `cb` with (abs, rel, is_file)
+/// for every entry under `abs_dir`, depth-first pre-order. Iterative, with the
+/// open directories on a heap `Vec`: each level holds an 8 KiB `getdents` buffer,
+/// and a tree a few hundred levels deep overflowed the watcher thread's stack.
+/// `DIRS_ONLY` skips non-directories (inotify reports files on the parent's wd;
+/// kqueue needs an fd per file). Best-effort: an unreadable subdirectory just
+/// ends that branch (matches Node).
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
 fn walk_subtree<const DIRS_ONLY: bool>(
     abs_dir: &ZStr,
     rel_dir: &[u8],
     cb: &mut impl FnMut(&ZStr, &[u8], bool),
 ) {
-    let dfd = match sys::open(
-        abs_dir,
-        sys::O::RDONLY | sys::O::DIRECTORY | sys::O::CLOEXEC,
-        0,
-    ) {
-        Err(_) => return,
-        Ok(f) => f,
+    /// One open directory on the walk's stack.
+    struct Frame {
+        _close: sys::CloseOnDrop,
+        /// Boxed: `IteratorResult.name` points into the iterator's inline buffer,
+        /// which must not move when `Vec<Frame>` grows.
+        it: Box<sys::dir_iterator::WrappedIterator>,
+        abs: ZBox,
+        rel: Box<[u8]>,
+    }
+
+    impl Frame {
+        fn open(abs: &ZStr, rel: &[u8]) -> Option<Frame> {
+            let dfd =
+                sys::open(abs, sys::O::RDONLY | sys::O::DIRECTORY | sys::O::CLOEXEC, 0).ok()?;
+            Some(Frame {
+                _close: sys::CloseOnDrop::new(dfd),
+                it: Box::new(sys::dir_iterator::iterate(dfd)),
+                abs: ZBox::from_bytes(abs.as_bytes()),
+                rel: Box::from(rel),
+            })
+        }
+    }
+
+    let Some(root) = Frame::open(abs_dir, rel_dir) else {
+        return;
     };
-    let _close = sys::CloseOnDrop::new(dfd);
-    let mut it = sys::dir_iterator::iterate(dfd);
+    let mut stack: Vec<Frame> = vec![root];
     let mut abs_buf = path::path_buffer_pool::get();
     let mut abs_spill: Vec<u8> = Vec::new();
     let mut rel_buf = path::path_buffer_pool::get();
     let mut rel_spill: Vec<u8> = Vec::new();
-    loop {
-        let entry = match it.next() {
-            Err(_) => return,
-            Ok(None) => return,
+    while let Some(frame) = stack.last_mut() {
+        let entry = match frame.it.next() {
+            // End of this directory, or a read error: back up to the parent.
+            Err(_) | Ok(None) => {
+                stack.pop();
+                continue;
+            }
             Ok(Some(e)) => e,
         };
         let child_is_file = entry.kind != sys::EntryKind::Directory;
@@ -624,21 +645,23 @@ fn walk_subtree<const DIRS_ONLY: bool>(
         let child_abs = join_z_buf_spill::<platform::Posix>(
             abs_buf.as_mut_slice(),
             &mut abs_spill,
-            &[abs_dir.as_bytes(), name],
+            &[frame.abs.as_bytes(), name],
         );
-        let child_rel: &[u8] = if rel_dir.is_empty() {
+        let child_rel: &[u8] = if frame.rel.is_empty() {
             name
         } else {
             join_z_buf_spill::<platform::Posix>(
                 rel_buf.as_mut_slice(),
                 &mut rel_spill,
-                &[rel_dir, name],
+                &[&frame.rel, name],
             )
             .as_bytes()
         };
         cb(child_abs, child_rel, child_is_file);
         if !child_is_file {
-            walk_subtree::<DIRS_ONLY>(child_abs, child_rel, cb);
+            if let Some(child) = Frame::open(child_abs, child_rel) {
+                stack.push(child);
+            }
         }
     }
 }
@@ -747,7 +770,10 @@ impl Linux {
         manager.platform_fd.set(Fd::from_native(rc));
         // The manager is process-global and never torn down, so the reader thread is
         // a daemon — detach it instead of stashing a handle we'd never join.
-        match std::thread::Builder::new().spawn(move || Linux::thread_main(manager)) {
+        match std::thread::Builder::new()
+            .stack_size(bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE as usize)
+            .spawn(move || Linux::thread_main(manager))
+        {
             Ok(handle) => drop(handle), // detach
             Err(_) => {
                 manager.platform_fd.get().close();
@@ -1409,7 +1435,10 @@ impl Kqueue {
         let manager: &'static PathWatcherManager = unsafe { &*manager_ptr };
         manager.platform_fd.set(kq);
         // Daemon reader — the manager is process-global and never torn down.
-        match std::thread::Builder::new().spawn(move || Kqueue::thread_main(manager)) {
+        match std::thread::Builder::new()
+            .stack_size(bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE as usize)
+            .spawn(move || Kqueue::thread_main(manager))
+        {
             Ok(handle) => drop(handle), // detach
             Err(_) => {
                 manager.platform_fd.get().close();

@@ -256,10 +256,8 @@ void Bun__REPRL__registerFuzzilliFunctions(Zig::GlobalObject* globalObject)
     JSC::VM& vm = globalObject->vm();
 
 #if ASAN_ENABLED
-    // ASAN owns the handlers for SIGSEGV, SIGBUS, SIGFPE, SIGILL, SIGTRAP and
-    // SIGABRT (the last three are enabled in __asan_default_options), so every
-    // crash gets a report with a stack trace. Installing a handler here with
-    // signal() would replace ASAN's and discard that report.
+    // ASAN reports the fatal signals (see __asan_default_options). A signal()
+    // call here would replace its handler and lose that report.
     __sanitizer_set_death_callback(fuzzilliFlushOutputBeforeDeath);
 #endif
 

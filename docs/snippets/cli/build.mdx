@@ -95,6 +95,11 @@ bun build <entry points>
   superset of their importers
 </ParamField>
 
+<ParamField path="--no-module-preload" type="boolean">
+  With `--splitting` and `--target browser`, don't emit `<link rel="modulepreload">` for the chunks an entrypoint or
+  `import()` depends on
+</ParamField>
+
 <ParamField path="--public-path" type="string">
   Prefix the bundler adds to import paths in bundled code
 </ParamField>

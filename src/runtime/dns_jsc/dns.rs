@@ -1756,25 +1756,8 @@ impl DNSLookup {
 
     fn otel_end(&mut self, error: Option<c_ares::Error>) {
         let stub = core::mem::replace(&mut self.otel, bun_telemetry::SpanStub::NONE);
-        if !stub.is_recording() {
-            return;
-        }
         let name = self.otel_name.take();
-        crate::telemetry::end_leaf(
-            self.global_this(),
-            bun_telemetry::Instrument::Dns,
-            &stub,
-            b"dns.lookup",
-            bun_telemetry::SpanKind::Client,
-            |w| {
-                if let Some(n) = &name {
-                    w.attr_opt("dns.question.name", n);
-                }
-                if let Some(e) = error {
-                    w.fail(e.code().as_bytes(), e.label().as_bytes());
-                }
-            },
-        );
+        end_lookup_span(self.global_this(), &stub, name.as_deref(), error);
     }
 
     /// SAFETY: `this` must be a live node — either the inline head of a `*Request`
@@ -5232,6 +5215,8 @@ impl Resolver {
         global_this: &JSGlobalObject,
     ) -> JsResult<JSValue> {
         if !bun_dns::is_valid_hostname(name) {
+            // No resolver runs, but it is still a failed lookup to the caller.
+            failed_lookup_span(global_this, name, c_ares::Error::ENOTFOUND);
             let mut promise = JSPromiseStrong::init(global_this);
             let promise_value = promise.value();
             error_to_deferred(
@@ -6141,3 +6126,35 @@ export_host_fn!(
     internal::is_all_loopback_of_one_family_for_testing,
     "JS2Rust___src_runtime_dns_jsc_dns_rs__internal_isAllLoopbackOfOneFamilyForTesting"
 );
+
+fn end_lookup_span(
+    global: &JSGlobalObject,
+    stub: &bun_telemetry::SpanStub,
+    name: Option<&[u8]>,
+    error: Option<c_ares::Error>,
+) {
+    if !stub.is_recording() {
+        return;
+    }
+    crate::telemetry::end_leaf(
+        global,
+        bun_telemetry::Instrument::Dns,
+        stub,
+        b"dns.lookup",
+        bun_telemetry::SpanKind::Client,
+        |w| {
+            if let Some(n) = name {
+                w.attr_opt("dns.question.name", n);
+            }
+            if let Some(e) = error {
+                w.fail(e.code().as_bytes(), e.label().as_bytes());
+            }
+        },
+    );
+}
+
+/// A lookup that fails before any resolver is asked (the name is not a hostname).
+fn failed_lookup_span(global: &JSGlobalObject, name: &[u8], error: c_ares::Error) {
+    let stub = crate::telemetry::start_leaf(global, bun_telemetry::Instrument::Dns);
+    end_lookup_span(global, &stub, Some(name), Some(error));
+}

@@ -1352,9 +1352,7 @@ pub struct Options<'a> {
 
     pub require_or_import_meta_for_source_callback: RequireOrImportMetaCallback,
 
-    /// The module type of the file being printed (extension or package.json
-    /// `"type"`, not syntax). `Esm` prints `__toESM(..., 1)`: Node's interop,
-    /// which ignores `__esModule`.
+    /// Module type of the file being printed. `Esm` prints `__toESM(.., 1)`, which ignores `__esModule`.
     pub input_module_type: bundle_opts::ModuleType,
     pub module_type: bundle_opts::Format,
 

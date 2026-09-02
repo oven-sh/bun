@@ -185,7 +185,8 @@ extern "C" JSC::EncodedJSValue BakeGetOnModuleNamespace(
   auto scope = DECLARE_THROW_SCOPE(vm);
 
   auto* moduleNamespace = uncheckedDowncast<JSC::JSModuleNamespaceObject>(JSC::JSValue::decode(moduleNamespaceValue));
-  const auto propertyString = String(StringImpl::createWithoutCopying({ key.ptr, key.len }));
+  // Copy: Identifier::fromString atomizes the impl in place, and the key is only borrowed for this call.
+  const auto propertyString = String::fromUTF8(std::span { key.ptr, key.len });
   const auto identifier = JSC::Identifier::fromString(vm, propertyString);
   const auto property = JSC::PropertyName(identifier);
   JSC::JSValue value = moduleNamespace->get(global, property);

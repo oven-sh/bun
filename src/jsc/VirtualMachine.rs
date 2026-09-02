@@ -3767,28 +3767,71 @@ impl VirtualMachine {
         reason: JSValue,
         promise: JSValue,
     ) {
+        self.unhandled_rejection_in_context(global_object, reason, promise, None);
+    }
+
+    /// [`Self::unhandled_rejection`] with `rejection_context` (the promise's rejection-time async context) installed for the dispatch; a throwing listener is reported after the restore, as in Node.
+    pub fn unhandled_rejection_in_context(
+        &mut self,
+        global_object: &JSGlobalObject,
+        reason: JSValue,
+        promise: JSValue,
+        rejection_context: Option<JSValue>,
+    ) {
+        let scope = rejection_context.map(|context| global_object.enter_async_context(context));
+        let dispatched = self.dispatch_unhandled_rejection(global_object, reason, promise);
+        drop(scope);
+        if let Err(e) = dispatched {
+            // A termination is not this frame's to take; it stays pending for the frames above.
+            if global_object.has_pending_termination_exception() {
+                return;
+            }
+            let exception = global_object.take_exception(e);
+            if exception.is_termination_exception() {
+                return;
+            }
+            // The early return skipped the mode's drain. A handled throw resumes the turn, so what the listener and the handler queued runs now; an unhandled one ends it, as on Node.
+            if self.uncaught_exception(global_object, exception, false) {
+                let _cleared = global_object.enter_async_context(JSValue::UNDEFINED);
+                let _ = self.event_loop_mut().drain_microtasks();
+            }
+        }
+    }
+
+    /// `Err` when an `unhandledRejection` listener threw: the exception is left pending for the caller.
+    fn dispatch_unhandled_rejection(
+        &mut self,
+        global_object: &JSGlobalObject,
+        reason: JSValue,
+        promise: JSValue,
+    ) -> JsResult<()> {
         use bun_options_types::schema::api::UnhandledRejections as Mode;
 
         if self.is_shutting_down() || !self.script_allowed() || reason.is_termination_exception() {
             bun_core::debug_warn!("unhandledRejection during shutdown.");
-            return;
+            return Ok(());
         }
 
         if isBunTest.load(core::sync::atomic::Ordering::Relaxed) {
             self.unhandled_error_counter += 1;
             (self.on_unhandled_rejection)(self, global_object, reason);
-            return;
+            return Ok(());
         }
 
-        // Each arm drains microtasks on exit — hoisted into a closure.
+        // Each arm drains microtasks on exit with the context cleared, so a continuation with none of its own does not inherit the dispatch's.
         let drain = |this: &mut Self| {
+            let _scope = global_object.enter_async_context(JSValue::UNDEFINED);
             let _ = this.event_loop_mut().drain_microtasks();
         };
         // Wrapper over the `Bun__handleUnhandledRejection` FFI call (returns
         // whether a JS handler claimed it). Captures `global_object` / `reason`
         // / `promise` so the six branches below stay concise.
-        let handle_unhandled =
-            || -> bool { Bun__handleUnhandledRejection(global_object, reason, promise) > 0 };
+        let handle_unhandled = || -> JsResult<bool> {
+            let handled = jsc::from_js_host_call_generic(global_object, || {
+                Bun__handleUnhandledRejection(global_object, reason, promise)
+            })?;
+            Ok(handled > 0)
+        };
         let emit_warning = |this: &mut Self| {
             let r = jsc::from_js_host_call_generic(global_object, || {
                 Bun__promises__emitUnhandledRejectionWarning(global_object, reason, promise)
@@ -3802,64 +3845,64 @@ impl VirtualMachine {
 
         match self.unhandled_rejections_mode() {
             Mode::Bun => {
-                if handle_unhandled() {
-                    return;
+                if handle_unhandled()? {
+                    return Ok(());
                 }
                 // continue to default handler
             }
             Mode::None => {
-                let _ = handle_unhandled();
+                handle_unhandled()?;
                 drain(self);
-                return; // ignore the unhandled rejection
+                return Ok(()); // ignore the unhandled rejection
             }
             Mode::Warn => {
-                let _ = handle_unhandled();
+                handle_unhandled()?;
                 emit_warning(self);
                 drain(self);
-                return;
+                return Ok(());
             }
             Mode::WarnWithErrorCode => {
-                let handled = handle_unhandled();
-                if !handled {
+                if !handle_unhandled()? {
                     emit_warning(self);
                     self.exit_handler.exit_code = 1;
                 }
                 drain(self);
-                if handled {
-                    return;
-                }
-                return;
+                return Ok(());
             }
             Mode::Strict => {
                 let wrapped = unhandled_rejection_as_uncaught_error(global_object, reason);
                 let _ = self.uncaught_exception(global_object, wrapped, true);
-                let handled = handle_unhandled();
-                if !handled {
+                if !handle_unhandled()? {
                     emit_warning(self);
                 }
                 drain(self);
-                return;
+                return Ok(());
             }
             Mode::Throw => {
-                if handle_unhandled() {
+                if handle_unhandled()? {
                     drain(self);
-                    return;
+                    return Ok(());
                 }
                 let wrapped = unhandled_rejection_as_uncaught_error(global_object, reason);
                 if self.uncaught_exception(global_object, wrapped, true) {
                     drain(self);
-                    return;
+                    return Ok(());
                 }
                 // continue to default handler — but RETURN if this drain
                 // errors (the VM is dead; don't bump the counter or invoke the
                 // handler).
-                if self.event_loop_mut().drain_microtasks().is_err() {
-                    return;
+                let drained = {
+                    let _scope = global_object.enter_async_context(JSValue::UNDEFINED);
+                    self.event_loop_mut().drain_microtasks()
+                };
+                if drained.is_err() {
+                    return Ok(());
                 }
             }
         }
         self.unhandled_error_counter += 1;
         (self.on_unhandled_rejection)(self, global_object, reason);
+        Ok(())
     }
 
     /// After a hot reload, surfaces the entry-point promise's rejection (if any) and re-arms the watcher.

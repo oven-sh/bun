@@ -1124,6 +1124,17 @@ impl JSGlobalObject {
         crate::from_js_host_call_generic(self, || JSC__JSGlobalObject__handleRejectedPromises(self))
     }
 
+    /// Installs `context` as the current async context until the guard drops.
+    pub fn enter_async_context(&self, context: JSValue) -> AsyncContextScope<'_> {
+        let mut clear_count = 0u32;
+        let previous = AsyncContextFrame__exchangeAsyncContext(self, context, &mut clear_count);
+        AsyncContextScope {
+            global: self,
+            previous,
+            clear_count,
+        }
+    }
+
     // The `readableStreamTo*` consumers throw `ERR_INVALID_ARG_TYPE` when
     // `value` is not a `ReadableStream` and propagate what the consumer throws.
     pub fn readable_stream_to_array_buffer(&self, value: JSValue) -> JsResult<JSValue> {
@@ -1590,6 +1601,33 @@ unsafe extern "C" {
         old_global: &JSGlobalObject,
         console: *mut c_void,
     ) -> *mut JSGlobalObject;
+}
+
+unsafe extern "C" {
+    safe fn AsyncContextFrame__exchangeAsyncContext(
+        global: &JSGlobalObject,
+        context: JSValue,
+        clear_count: &mut u32,
+    ) -> JSValue;
+    safe fn AsyncContextFrame__restoreAsyncContext(
+        global: &JSGlobalObject,
+        previous: JSValue,
+        clear_count: u32,
+    );
+}
+
+/// Puts back the async context [`JSGlobalObject::enter_async_context`] replaced, or undefined if `enterWith()`'s one-shot cleanup cleared the slot meanwhile (the saved value is stale); stack-only, so `previous` stays GC-visible.
+#[must_use = "dropping immediately restores the previous async context; bind to a local"]
+pub struct AsyncContextScope<'a> {
+    global: &'a JSGlobalObject,
+    previous: JSValue,
+    clear_count: u32,
+}
+
+impl Drop for AsyncContextScope<'_> {
+    fn drop(&mut self) {
+        AsyncContextFrame__restoreAsyncContext(self.global, self.previous, self.clear_count);
+    }
 }
 
 impl ScriptExecutionContextIdentifier {

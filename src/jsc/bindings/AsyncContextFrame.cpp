@@ -97,6 +97,25 @@ extern "C" JSC::EncodedJSValue AsyncContextFrame__withAsyncContextIfNeeded(JSGlo
     return JSValue::encode(AsyncContextFrame::withAsyncContextIfNeeded(globalObject, JSValue::decode(callback)));
 }
 
+// Installs `context` as the async context of the thread's Zig::GlobalObject (a node:vm context's global shares its slot); the previous one and `clearCount` go back into AsyncContextFrame__restoreAsyncContext.
+extern "C" JSC::EncodedJSValue AsyncContextFrame__exchangeAsyncContext(JSGlobalObject* lexicalGlobalObject, JSC::EncodedJSValue context, uint32_t* clearCount)
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto* asyncContextData = globalObject->m_asyncContextData.get();
+    JSValue previous = asyncContextData->getInternalField(0);
+    *clearCount = globalObject->asyncContextClearCount;
+    asyncContextData->putInternalField(globalObject->vm(), 0, JSValue::decode(context));
+    return JSValue::encode(previous);
+}
+
+// Reinstalls `previous`, or undefined if enterWith()'s one-shot cleanup cleared the slot since the exchange (the saved value is stale).
+extern "C" void AsyncContextFrame__restoreAsyncContext(JSGlobalObject* lexicalGlobalObject, JSC::EncodedJSValue previous, uint32_t clearCount)
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    JSValue value = globalObject->asyncContextClearCount == clearCount ? JSValue::decode(previous) : jsUndefined();
+    globalObject->m_asyncContextData.get()->putInternalField(globalObject->vm(), 0, value);
+}
+
 #define ASYNCCONTEXTFRAME_CALL_IMPL(...)                                            \
     if (!functionObject.isCell())                                                   \
         return jsUndefined();                                                       \

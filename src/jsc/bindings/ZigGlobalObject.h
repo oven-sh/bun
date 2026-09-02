@@ -431,6 +431,8 @@ public:
     }
 
     bool asyncHooksNeedsCleanup = false;
+    // Bumped by each one-shot enterWith() cleanup (cleanupAsyncHooksData), so a save/restore spanning a drain can tell its saved value went stale.
+    uint32_t asyncContextClearCount = 0;
     double INSPECT_MAX_BYTES = 50;
     bool isInsideErrorPrepareStackTraceCallback = false;
 
@@ -812,7 +814,8 @@ private:
     DOMGuardedObjectSet m_guardedObjects WTF_GUARDED_BY_LOCK(m_gcLock);
     WebCore::SubtleCrypto* m_subtleCrypto = nullptr;
 
-    Bun::WriteBarrierList<JSC::JSPromise> m_aboutToBeNotifiedRejectedPromises;
+    // Each entry is a JSPromise, or an AsyncContextFrame holding one (as `callback`) plus its rejection-time context.
+    Bun::WriteBarrierList<JSC::JSCell> m_aboutToBeNotifiedRejectedPromises;
 
 public:
     // While handleRejectedPromises() is iterating its drained snapshot, this

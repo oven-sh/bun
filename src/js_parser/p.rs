@@ -227,12 +227,12 @@ pub enum ReactRefreshExportKind {
 }
 
 /// A top-level `const`/`let` bound to a plain object literal. See
-/// `P::register_plain_object_literal`.
+/// `PlainObjectLiterals::register`.
 pub(crate) struct PlainObjectLiteral {
     pub(crate) object: js_ast::StoreRef<E::Object>,
     /// Own string keys, built on first lookup past `SCAN_LIMIT` properties.
     keys: Option<StringHashMap<()>>,
-    /// Kept statements before the declaration, per `finalize_plain_object_reads`.
+    /// Kept statements before the declaration, per `PlainObjectLiterals::finalize`.
     kept_parts_before_decl: u32,
 }
 
@@ -268,7 +268,7 @@ impl PlainObjectLiteral {
     }
 }
 
-/// The key of a property access, for `P::plain_object_literal_read`.
+/// The key of a property access, for `PlainObjectLiterals::read`.
 #[derive(Clone, Copy)]
 pub(crate) enum PropertyKey<'k> {
     /// `obj.name`
@@ -287,6 +287,201 @@ impl PropertyKey<'_> {
             js_ast::ExprData::EString(s) if s.next.is_none() => Some(Self::Str(s)),
             js_ast::ExprData::ENumber(n) => Some(Self::Num(n.value())),
             _ => None,
+        }
+    }
+}
+
+/// Top-level `const`/`let` bindings whose initializer is a plain object
+/// literal, and the reads of them that `append_part` collects for the part it
+/// is finalizing. Not generic over the parser so the logic is compiled once.
+#[derive(Default)]
+pub(crate) struct PlainObjectLiterals {
+    literals: HashMap<Ref, PlainObjectLiteral>,
+    /// Only filled while `collecting` is set.
+    reads_for_current_part: Vec<Ref>,
+    collecting: bool,
+}
+
+impl PlainObjectLiterals {
+    /// Registers `ref_` when `value` is an object literal with only plain data
+    /// properties: no getter, setter, spread, computed key, or `__proto__`.
+    /// Reading an own key of such an object runs no user code.
+    pub(crate) fn register(&mut self, ref_: Ref, value: &Expr) {
+        let js_ast::ExprData::EObject(obj) = value.data else {
+            return;
+        };
+        for property in obj.properties.slice() {
+            if property.kind != js_ast::g::PropertyKind::Normal
+                || property.flags.contains(Flags::Property::IsComputed)
+                || property.flags.contains(Flags::Property::IsSpread)
+            {
+                return;
+            }
+            let Some(key) = property.key else { return };
+            match &key.data {
+                js_ast::ExprData::EString(s) => {
+                    // A rope key cannot be compared byte-wise.
+                    if s.next.is_some() || s.eql_comptime(b"__proto__") {
+                        return;
+                    }
+                }
+                js_ast::ExprData::ENumber(_) => {}
+                _ => return,
+            }
+        }
+        self.literals.insert(
+            ref_,
+            PlainObjectLiteral {
+                object: obj,
+                keys: None,
+                kept_parts_before_decl: u32::MAX,
+            },
+        );
+    }
+
+    /// The registered binding that `target.key` / `target[key]` reads an own
+    /// key of. Pure as long as `is_untouched` holds.
+    pub(crate) fn read(
+        &mut self,
+        arena: &Bump,
+        target: &Expr,
+        key: PropertyKey<'_>,
+    ) -> Option<Ref> {
+        let js_ast::ExprData::EIdentifier(id) = target.data else {
+            return None;
+        };
+        if id.must_keep_due_to_with_stmt() {
+            return None;
+        }
+        let literal = self.literals.get_mut(&id.ref_)?;
+        let properties = literal.object.properties.slice();
+        let has_own_key = match key {
+            PropertyKey::Name(name) => literal.has_own_string_key(name, arena),
+            PropertyKey::Str(s) => {
+                if s.is_utf8() {
+                    literal.has_own_string_key(s.slice8(), arena)
+                } else {
+                    let s = s.string(arena).expect("oom");
+                    literal.has_own_string_key(s, arena)
+                }
+            }
+            PropertyKey::Num(n) => properties.iter().any(|property| {
+                matches!(
+                    property.key.as_ref().map(|k| &k.data),
+                    Some(js_ast::ExprData::ENumber(k)) if k.value() == n
+                )
+            }),
+        };
+        has_own_key.then_some(id.ref_)
+    }
+
+    /// `read` for `expr_can_be_removed_if_unused`: only while `append_part`
+    /// collects, and records the binding for the part.
+    fn note_read(&mut self, arena: &Bump, target: &Expr, key: PropertyKey<'_>) -> bool {
+        if !self.collecting {
+            return false;
+        }
+        let Some(ref_) = self.read(arena, target, key) else {
+            return false;
+        };
+        if !self.reads_for_current_part.contains(&ref_) {
+            self.reads_for_current_part.push(ref_);
+        }
+        true
+    }
+
+    fn start_collecting(&mut self) {
+        debug_assert!(self.reads_for_current_part.is_empty());
+        self.collecting = true;
+    }
+
+    /// The bindings read since `start_collecting`, for `Part::plain_object_reads`.
+    fn finish_collecting(&mut self) -> Option<bun_alloc::AstBox<bun_alloc::AstVec<Ref>>> {
+        self.collecting = false;
+        if self.reads_for_current_part.is_empty() {
+            return None;
+        }
+        let mut refs = bun_alloc::AstAlloc::vec();
+        refs.extend_from_slice(&self.reads_for_current_part);
+        self.reads_for_current_part.clear();
+        Some(bun_alloc::ast_box(refs))
+    }
+
+    /// Whether `ref_` still holds its literal when a part preceded by
+    /// `kept_parts` effectful statements reads it. An exported binding can be
+    /// redefined by a module in an import cycle, but only while such a
+    /// statement hands control to it.
+    fn is_untouched(
+        &self,
+        symbols: &[js_ast::Symbol],
+        exported: &HashMap<Ref, ()>,
+        ref_: Ref,
+        kept_parts: u32,
+    ) -> bool {
+        let Some(literal) = self.literals.get(&ref_) else {
+            return false;
+        };
+        if literal.kept_parts_before_decl != kept_parts && exported.contains_key(&ref_) {
+            return false;
+        }
+        let mut ref_ = ref_;
+        loop {
+            let symbol = &symbols[ref_.inner_index() as usize];
+            if !symbol.has_link() {
+                return !symbol.has_been_assigned_to() && !symbol.has_non_property_read_use();
+            }
+            ref_ = symbol.link.get();
+        }
+    }
+
+    /// Resolves `Part::plain_object_reads` in program order. Runs in `to_ast`
+    /// after `named_exports` is complete and after the direct-eval pass has
+    /// marked every module-scope binding assigned. A part whose reads stay
+    /// may run a getter, so it counts as an effectful statement too.
+    fn finalize(
+        &mut self,
+        symbols: &[js_ast::Symbol],
+        named_exports: &bun_ast::ast_result::NamedExports,
+        parts: &mut [js_ast::Part],
+    ) {
+        if self.literals.is_empty() {
+            return;
+        }
+        let mut exported: HashMap<Ref, ()> = HashMap::default();
+        for export in named_exports.values() {
+            exported.insert(export.ref_, ());
+        }
+        let mut kept_parts: u32 = 0;
+        for part in parts.iter_mut() {
+            for stmt in part.stmts.slice() {
+                let js_ast::StmtData::SLocal(local) = &stmt.data else {
+                    continue;
+                };
+                for decl in local.decls.slice() {
+                    if let js_ast::binding::Data::BIdentifier(id) = decl.binding.data
+                        && let Some(literal) = self.literals.get_mut(&id.r#ref)
+                    {
+                        literal.kept_parts_before_decl = kept_parts;
+                    }
+                }
+            }
+            match part.plain_object_reads.take() {
+                Some(reads) => {
+                    if reads
+                        .iter()
+                        .all(|ref_| self.is_untouched(symbols, &exported, *ref_, kept_parts))
+                    {
+                        part.can_be_removed_if_unused = true;
+                    } else {
+                        kept_parts += 1;
+                    }
+                }
+                None => {
+                    if !part.can_be_removed_if_unused {
+                        kept_parts += 1;
+                    }
+                }
+            }
         }
     }
 }
@@ -691,13 +886,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
 
     pub(crate) const_values: bun_ast::ast_result::ConstValuesMap,
 
-    /// Top-level `const`/`let` bindings registered by
-    /// `register_plain_object_literal` when their declaration is visited.
-    pub(crate) plain_object_literals: HashMap<Ref, PlainObjectLiteral>,
-    /// Bindings from `plain_object_literals` read by the part `append_part`
-    /// is finalizing. Only filled while `collecting_plain_object_reads` is set.
-    pub(crate) plain_object_reads_for_current_part: Vec<Ref>,
-    pub(crate) collecting_plain_object_reads: bool,
+    pub(crate) plain_object_literals: PlainObjectLiterals,
 
     // These are backed by stack fallback allocators in _parse, and are uninitialized until then.
     pub(crate) binary_expression_stack: ListManaged<'a, BinaryExpressionVisitor>,
@@ -1939,164 +2128,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 return;
             }
             ref_ = symbol.link.get();
-        }
-    }
-
-    /// Registers `ref_` when `value` is an object literal with only plain data
-    /// properties: no getter, setter, spread, computed key, or `__proto__`.
-    /// Reading an own key of such an object runs no user code.
-    pub(crate) fn register_plain_object_literal(&mut self, ref_: Ref, value: &Expr) {
-        let js_ast::ExprData::EObject(obj) = value.data else {
-            return;
-        };
-        for property in obj.properties.slice() {
-            if property.kind != js_ast::g::PropertyKind::Normal
-                || property.flags.contains(Flags::Property::IsComputed)
-                || property.flags.contains(Flags::Property::IsSpread)
-            {
-                return;
-            }
-            let Some(key) = property.key else { return };
-            match &key.data {
-                js_ast::ExprData::EString(s) => {
-                    // A rope key cannot be compared byte-wise.
-                    if s.next.is_some() || s.eql_comptime(b"__proto__") {
-                        return;
-                    }
-                }
-                js_ast::ExprData::ENumber(_) => {}
-                _ => return,
-            }
-        }
-        self.plain_object_literals.insert(
-            ref_,
-            PlainObjectLiteral {
-                object: obj,
-                keys: None,
-                kept_parts_before_decl: u32::MAX,
-            },
-        );
-    }
-
-    /// The registered binding that `target.key` / `target[key]` reads an own
-    /// key of. Pure as long as `is_untouched_plain_object_literal` holds.
-    pub(crate) fn plain_object_literal_read(
-        &mut self,
-        target: &Expr,
-        key: PropertyKey<'_>,
-    ) -> Option<Ref> {
-        let js_ast::ExprData::EIdentifier(id) = target.data else {
-            return None;
-        };
-        if id.must_keep_due_to_with_stmt() {
-            return None;
-        }
-        let arena = self.arena;
-        let literal = self.plain_object_literals.get_mut(&id.ref_)?;
-        let properties = literal.object.properties.slice();
-        let has_own_key = match key {
-            PropertyKey::Name(name) => literal.has_own_string_key(name, arena),
-            PropertyKey::Str(s) => {
-                if s.is_utf8() {
-                    literal.has_own_string_key(s.slice8(), arena)
-                } else {
-                    let s = s.string(arena).expect("oom");
-                    literal.has_own_string_key(s, arena)
-                }
-            }
-            PropertyKey::Num(n) => properties.iter().any(|property| {
-                matches!(
-                    property.key.as_ref().map(|k| &k.data),
-                    Some(js_ast::ExprData::ENumber(k)) if k.value() == n
-                )
-            }),
-        };
-        has_own_key.then_some(id.ref_)
-    }
-
-    /// `plain_object_literal_read` for `expr_can_be_removed_if_unused`: only
-    /// while `append_part` collects, and records the binding for the part.
-    fn is_plain_object_property_read(&mut self, target: &Expr, key: PropertyKey<'_>) -> bool {
-        if !self.collecting_plain_object_reads {
-            return false;
-        }
-        let Some(ref_) = self.plain_object_literal_read(target, key) else {
-            return false;
-        };
-        if !self.plain_object_reads_for_current_part.contains(&ref_) {
-            self.plain_object_reads_for_current_part.push(ref_);
-        }
-        true
-    }
-
-    /// Whether `ref_` still holds its literal when a part preceded by
-    /// `kept_parts` effectful statements reads it. An exported binding can be
-    /// redefined by a module in an import cycle, but only while such a
-    /// statement hands control to it.
-    fn is_untouched_plain_object_literal(
-        &self,
-        ref_: Ref,
-        kept_parts: u32,
-        exported: &HashMap<Ref, ()>,
-    ) -> bool {
-        let Some(literal) = self.plain_object_literals.get(&ref_) else {
-            return false;
-        };
-        if literal.kept_parts_before_decl != kept_parts && exported.contains_key(&ref_) {
-            return false;
-        }
-        let mut ref_ = ref_;
-        loop {
-            let symbol = &self.symbols[ref_.inner_index() as usize];
-            if !symbol.has_link() {
-                return !symbol.has_been_assigned_to() && !symbol.has_non_property_read_use();
-            }
-            ref_ = symbol.link.get();
-        }
-    }
-
-    /// Resolves `Part::plain_object_reads` in program order. Runs in `to_ast`
-    /// after `named_exports` is complete and after the direct-eval pass has
-    /// marked every module-scope binding assigned. A part whose reads stay
-    /// may run a getter, so it counts as an effectful statement too.
-    pub(crate) fn finalize_plain_object_reads(&mut self, parts: &mut [js_ast::Part]) {
-        if self.plain_object_literals.is_empty() {
-            return;
-        }
-        let mut exported: HashMap<Ref, ()> = HashMap::default();
-        for export in self.named_exports.values() {
-            exported.insert(export.ref_, ());
-        }
-        let mut kept_parts: u32 = 0;
-        for part in parts.iter_mut() {
-            for stmt in part.stmts.slice() {
-                let js_ast::StmtData::SLocal(local) = &stmt.data else {
-                    continue;
-                };
-                for decl in local.decls.slice() {
-                    if let js_ast::binding::Data::BIdentifier(id) = decl.binding.data
-                        && let Some(literal) = self.plain_object_literals.get_mut(&id.r#ref)
-                    {
-                        literal.kept_parts_before_decl = kept_parts;
-                    }
-                }
-            }
-            match part.plain_object_reads.take() {
-                Some(reads) => {
-                    if reads.iter().all(|ref_| {
-                        self.is_untouched_plain_object_literal(*ref_, kept_parts, &exported)
-                    }) {
-                        part.can_be_removed_if_unused = true;
-                    } else {
-                        kept_parts += 1;
-                    }
-                }
-                None => {
-                    if !part.can_be_removed_if_unused {
-                        kept_parts += 1;
-                    }
-                }
-            }
         }
     }
 
@@ -5554,23 +5585,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // outstanding `&mut` aliases the stored pointer afterwards.
             let final_stmts = bun_ast::StoreSlice::from_bump(part_stmts);
 
-            debug_assert!(self.plain_object_reads_for_current_part.is_empty());
-            self.collecting_plain_object_reads = true;
+            self.plain_object_literals.start_collecting();
             let mut can_be_removed_if_unused =
                 self.stmts_can_be_removed_if_unused(final_stmts.slice());
-            self.collecting_plain_object_reads = false;
-            // The flag stays off until `finalize_plain_object_reads` confirms the reads.
-            let plain_object_reads = if can_be_removed_if_unused
-                && !self.plain_object_reads_for_current_part.is_empty()
-            {
+            // The flag stays off until `PlainObjectLiterals::finalize` confirms the reads.
+            let plain_object_reads = self
+                .plain_object_literals
+                .finish_collecting()
+                .filter(|_| can_be_removed_if_unused);
+            if plain_object_reads.is_some() {
                 can_be_removed_if_unused = false;
-                let mut refs = bun_alloc::AstAlloc::vec();
-                refs.extend_from_slice(&self.plain_object_reads_for_current_part);
-                Some(bun_alloc::ast_box(refs))
-            } else {
-                None
-            };
-            self.plain_object_reads_for_current_part.clear();
+            }
 
             parts.push(js_ast::Part {
                 stmts: final_stmts,
@@ -6025,14 +6050,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             js_ast::ExprData::EDot(ex) => {
                 return ex.can_be_removed_if_unused
-                    || self.is_plain_object_property_read(
+                    || self.plain_object_literals.note_read(
+                        self.arena,
                         &ex.target,
                         PropertyKey::Name(ex.name.slice()),
                     );
             }
             js_ast::ExprData::EIndex(ex) => {
-                return PropertyKey::from_index(ex.index)
-                    .is_some_and(|key| self.is_plain_object_property_read(&ex.target, key));
+                return PropertyKey::from_index(ex.index).is_some_and(|key| {
+                    self.plain_object_literals
+                        .note_read(self.arena, &ex.target, key)
+                });
             }
             js_ast::ExprData::EClass(ex) => return self.class_can_be_removed_if_unused(&**ex),
             js_ast::ExprData::EIdentifier(ex) => {
@@ -8863,7 +8891,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        self.finalize_plain_object_reads(parts.as_mut_slice());
+        self.plain_object_literals.finalize(
+            self.symbols.as_slice(),
+            &self.named_exports,
+            parts.as_mut_slice(),
+        );
 
         if wrap_mode == WrapMode::BunCommonjs && !self.options.features.remove_cjs_module_wrapper {
             // This transforms the user's code into.
@@ -9562,8 +9594,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             after_arrow_body_loc: bun_ast::Loc::EMPTY,
             const_values: Default::default(),
             plain_object_literals: Default::default(),
-            plain_object_reads_for_current_part: Vec::new(),
-            collecting_plain_object_reads: false,
             binary_expression_stack: BumpVec::new_in(arena),
             binary_expression_simplify_stack: BumpVec::new_in(arena),
             ref_to_ts_namespace_member: Default::default(),

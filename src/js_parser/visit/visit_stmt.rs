@@ -1154,7 +1154,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if let js_ast::binding::Data::BIdentifier(id) = decl.binding.data
                     && let Some(value) = &decl.value
                 {
-                    p.register_plain_object_literal(id.r#ref, value);
+                    p.plain_object_literals.register(id.r#ref, value);
                 }
             }
         }

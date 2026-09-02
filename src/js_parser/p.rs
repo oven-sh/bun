@@ -305,13 +305,9 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     // Used for forcing CommonJS
     pub(crate) has_with_scope: bool,
 
-    /// Hashes of every identifier name the parse pass saw as an assignment
-    /// target (`x = 1`, `x++`, `[x] = a`, `for (x of a)`). Complete for the
-    /// whole file before the visit pass starts, which the per-symbol
-    /// `has_been_assigned_to` flag is not.
+    /// Hashes of every identifier name the parse pass saw as an assignment target; complete for the whole file before the visit pass, unlike `has_been_assigned_to`.
     pub(crate) assigned_identifier_names: HashMap<u64, ()>,
-    /// The parse pass saw a call to the identifier `eval` somewhere in the
-    /// file. Such a call can assign any binding in scope by name.
+    /// The parse pass saw a direct `eval` call somewhere in the file; it can assign any binding by name.
     pub(crate) parse_pass_saw_direct_eval: bool,
 
     pub(crate) is_file_considered_to_have_esm_exports: bool,
@@ -2986,14 +2982,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Substitution::Failure(expr)
     }
 
-    /// Whether the initializer of a single-use binding can be evaluated after
-    /// `expr` instead of before it. `expr` was already checked for a use of the
-    /// binding, so this only has to rule out an observable change in order.
+    /// Whether the initializer of a single-use binding may be evaluated after `expr` (which has no use of the binding) instead of before it.
     fn can_reorder_replacement_past(&self, expr: &Expr, replacement: &Expr) -> bool {
-        // A literal reads no state, so nothing `expr` does can change its
-        // value, and it has no side effects that `expr` could observe. The
-        // same holds for creating a function (it captures variables, not
-        // values) or a regular expression.
+        // A literal, a function (it captures variables, not values) or a regex reads no state and has no side effects.
         if replacement.can_be_const_value()
             || matches!(
                 replacement.data,
@@ -3005,9 +2996,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return true;
         }
 
-        // Otherwise the replacement may have side effects. It can still move
-        // past a read that cannot throw, cannot run code, and reads a value
-        // that no side effect can change.
+        // A side-effecting replacement can still move past a read that cannot throw, run code, or change.
         match expr.data {
             js_ast::ExprData::EThis(_) => true,
             js_ast::ExprData::EIdentifier(id) => self.is_stable_identifier_read(id),
@@ -3017,8 +3006,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// A read of `id` that cannot throw, cannot run code, and yields the same
-    /// value no matter what code runs before it.
+    /// A read of `id` that cannot throw or run code, and yields the same value whatever code runs before it.
     fn is_stable_identifier_read(&self, id: E::Identifier) -> bool {
         if id.must_keep_due_to_with_stmt() {
             return false;
@@ -3032,10 +3020,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             js_ast::symbol::Kind::Unbound => id.can_be_removed_if_unused(),
             // When bundling, an assignment to a `const` is a compile error.
             js_ast::symbol::Kind::Constant => true,
-            // A binding that can only change through an assignment, and the
-            // whole file has none (a `var` or a parameter can also change
-            // through a redeclaration or a mapped `arguments` object, so
-            // those are not here). A direct `eval` could assign by name.
+            // Only an assignment (or a direct `eval`) can change these; a `var` or parameter can also change through a redeclaration or a mapped `arguments` object.
             js_ast::symbol::Kind::Other
             | js_ast::symbol::Kind::Class
             | js_ast::symbol::Kind::HoistedFunction
@@ -3047,9 +3032,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if self.name_is_assigned_somewhere(name) {
                     return false;
                 }
-                // The name must resolve to this very symbol from here. A
-                // generated symbol (a lowering temp) is not in any `members`
-                // map, and generated code may assign to it.
+                // The name must resolve to this symbol from here; a generated temp is in no `members` map, and generated code may assign to it.
                 let hash = Scope::get_member_hash(name);
                 let mut scope = Some(self.current_scope_ref());
                 while let Some(s) = scope {
@@ -5668,8 +5651,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         None
     }
 
-    /// Parse pass: `target` is being assigned to. Records the name of every
-    /// identifier in it (see `assigned_identifier_names`).
+    /// Parse pass: `target` is assigned to; records the name of every identifier in it.
     pub(crate) fn record_parse_time_assignment_target(&mut self, target: &Expr) {
         if !self.stack_check.is_safe_to_recurse() {
             return;
@@ -5703,8 +5685,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// Whether the parse pass saw `name` as an assignment target anywhere in
-    /// the file.
+    /// Whether the parse pass saw `name` as an assignment target anywhere in the file.
     pub(crate) fn name_is_assigned_somewhere(&self, name: &[u8]) -> bool {
         self.assigned_identifier_names
             .contains_key(&bun_wyhash::hash(name))
@@ -6062,8 +6043,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                     return self.expr_can_be_removed_if_unused_without_dce_check(&ex.value);
                 }
-                // Numeric conversion of a known primitive other than a BigInt
-                // ("+1n" throws) never runs code and never throws.
+                // Numeric conversion of a non-BigInt primitive never runs code or throws ("+1n" throws).
                 js_ast::op::Code::UnNeg | js_ast::op::Code::UnPos | js_ast::op::Code::UnCpl => {
                     return self.options.features.minify_syntax
                         && ex.value.data.known_primitive().is_non_bigint_primitive()
@@ -6126,9 +6106,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         _ => {}
                     }
                 }
-                // Arithmetic on known primitives other than BigInt (mixing one
-                // with a number throws) never runs code and never throws:
-                // "Math.PI / 180" or "1 << 3".
+                // Arithmetic on non-BigInt primitives ("Math.PI / 180", "1 << 3") never runs code or throws.
                 js_ast::op::Code::BinAdd
                 | js_ast::op::Code::BinSub
                 | js_ast::op::Code::BinMul

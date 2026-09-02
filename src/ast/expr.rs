@@ -1425,9 +1425,7 @@ impl PrimitiveType {
         }
     }
 
-    /// A known primitive whose arithmetic conversions never run code and
-    /// never throw: anything but a BigInt (which throws when mixed with a
-    /// number) or a type that is not known.
+    /// A known primitive whose numeric conversion never runs code or throws (a BigInt throws when mixed with a number).
     pub fn is_non_bigint_primitive(self) -> bool {
         matches!(
             self,
@@ -2449,9 +2447,7 @@ impl Data {
                 .yes
                 .data
                 .merge_known_primitive_with_check(&e_if.no.data, stack_check),
-            // `Math.PI` and the other numeric constants on `Math`. The define
-            // table only marks the access side-effect free when `Math` is the
-            // real global, so the value is known to be a number.
+            // `Math.PI` and friends: the define flags are only set when `Math` is the real global.
             Data::EDot(dot) => {
                 if dot.can_be_removed_if_unused
                     && matches!(dot.target.data, Data::EIdentifier(id) if id.can_be_removed_if_unused())

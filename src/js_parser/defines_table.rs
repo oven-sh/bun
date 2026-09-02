@@ -190,11 +190,7 @@ pub static GLOBAL_NO_SIDE_EFFECT_FUNCTION_CALLS_SAFE_FOR_TO_STRING: &[&[&[u8]]] 
     &[b"Symbol", b"for"],
 ];
 
-/// Calls to these globals have no side effects and never throw when every
-/// argument is a primitive other than a BigInt (no `valueOf` / `toString` can
-/// run, and no BigInt conversion can throw). An unused call with such
-/// arguments is dropped. `Math.random` is left out because it advances the
-/// generator state.
+/// Pure and non-throwing when every argument is a non-BigInt primitive, so an unused call is dropped. `Math.random` advances the generator state and is not here.
 pub static GLOBAL_NO_SIDE_EFFECT_FUNCTION_CALLS_WITH_PRIMITIVE_ARGS: &[&[&[u8]]] = &[
     &[b"Array", b"isArray"],
     &[b"Array", b"of"],

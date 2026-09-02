@@ -1606,8 +1606,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 Continuation::Done => break,
             }
 
-            // `left` is now the assignment (or update) expression the token
-            // started, with the target as its operand.
+            // `left` is now the assignment or update expression the token started, with the target as its operand.
             match token {
                 T::TEquals
                 | T::TPlusEquals

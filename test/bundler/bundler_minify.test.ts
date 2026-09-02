@@ -1751,6 +1751,7 @@ describe("bundler", () => {
   itBundled("minify/InlineSingleUsePastStableReads", {
     files: {
       "/entry.js": /* js */ `
+        import { imported } from "./other.js";
         function g(...a) { return a.join(","); }
         const h = (...a) => a.join(",");
         let never = (x) => x;

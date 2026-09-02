@@ -216,8 +216,7 @@ impl SideEffects {
 
                         return Self::simplify_unused_expr(p, un.value);
                     }
-                    // Numeric conversion of a known primitive other than a BigInt
-                    // ("+1n" throws) never runs code and never throws.
+                    // Numeric conversion of a non-BigInt primitive never runs code or throws ("+1n" throws).
                     Op::Code::UnNeg | Op::Code::UnPos | Op::Code::UnCpl => {
                         if p.options.features.minify_syntax
                             && un.value.data.known_primitive().is_non_bigint_primitive()
@@ -230,9 +229,7 @@ impl SideEffects {
             }
 
             ExprData::ECall(call) => {
-                // The call itself is pure only while every argument is a known
-                // primitive, so it is all or nothing: either the whole call goes
-                // or the whole call stays.
+                // Pure only with known-primitive arguments, so the whole call goes or the whole call stays.
                 if call.can_be_unwrapped_if_unused == CallUnwrap::IfUnusedAndPrimitiveArgs {
                     if Self::args_are_removable_primitives(p, &call.args) {
                         return None;
@@ -357,8 +354,7 @@ impl SideEffects {
                         }
                     }
 
-                    // Arithmetic on known primitives other than BigInt (mixing one
-                    // with a number throws) never runs code and never throws.
+                    // Arithmetic on non-BigInt primitives never runs code or throws (a BigInt mixed with a number throws).
                     Op::Code::BinAdd
                     | Op::Code::BinSub
                     | Op::Code::BinMul
@@ -515,8 +511,7 @@ impl SideEffects {
     /// Inline equivalent of `Expr::join_all_with_comma_callback(slice, p, simplify_unused_expr, _)`.
     /// Hand-rolled because that helper takes `fn(&C, _)` and we need `&mut P` for the
     /// recursive `simplify_unused_expr` call.
-    /// Every argument is a side-effect free primitive other than a BigInt, so a
-    /// call in `GLOBAL_NO_SIDE_EFFECT_FUNCTION_CALLS_WITH_PRIMITIVE_ARGS` can go.
+    /// Every argument is a side-effect free non-BigInt primitive, so a `GLOBAL_NO_SIDE_EFFECT_FUNCTION_CALLS_WITH_PRIMITIVE_ARGS` call can go.
     pub(crate) fn args_are_removable_primitives<'a, const TS: bool, const SCAN: bool>(
         p: &mut P<'a, TS, SCAN>,
         args: &[Expr],

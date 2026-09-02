@@ -667,12 +667,9 @@ pub(crate) enum Substitution {
 pub(crate) enum StmtSubstitution {
     /// The single use was replaced with the initializer.
     Substituted,
-    /// The statement does not use the symbol, and the initializer could be
-    /// moved past everything in it. Appending more code to the statement can
-    /// still make a substitution possible.
+    /// The statement has no use of the symbol, and the initializer can move past all of it, so a longer statement may still take it.
     NotFound,
-    /// Something in the statement stops the initializer from moving past it.
-    /// Appending more code to the statement cannot change that.
+    /// Something in the statement stops the initializer; appending to the statement cannot change that.
     Blocked,
 }
 

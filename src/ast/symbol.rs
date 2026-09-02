@@ -123,10 +123,7 @@ bitflags::bitflags! {
         /// chain. Read by HMR live bindings and the printer's same-target fold.
         const HAS_BEEN_ASSIGNED_TO = 1 << 5;
 
-        /// Another symbol's `link` points at this one: a redeclaration in the
-        /// same scope, a `var` hoisted out of a nested block, or a parameter
-        /// shadowed by a `var`. Uses of the name can be counted on that other
-        /// symbol, so `use_count_estimate` is not a complete count for this one.
+        /// Another symbol's `link` points here (a redeclaration, a `var` hoisted out of a nested block, a parameter shadowed by `var`), so uses counted on that symbol are missing from this `use_count_estimate`.
         const IS_LINK_TARGET = 1 << 6;
     }
 }

@@ -142,8 +142,7 @@ impl DefineExt for Define {
         let key = global[global.len() - 1];
         let parts: Vec<Box<[u8]>> = global.iter().map(|p| Box::<[u8]>::from(*p)).collect();
         if let Some(existing) = self.dots.get_mut(key) {
-            // The parser takes the first define whose parts match, so a later
-            // table entry for the same chain replaces the earlier one.
+            // The parser takes the first define whose parts match, so a later entry for the same chain replaces the earlier one.
             if let Some(same) = existing.iter_mut().find(|d| d.parts == parts) {
                 same.data = value_define.clone();
             } else {
@@ -201,8 +200,7 @@ impl DefineExt for Define {
             for global in global_no_side_effect_function_calls_safe_for_to_string.iter() {
                 define.insert_global(global, &to_string_safe)?;
             }
-            // These are also in the property-access table; `insert_global`
-            // replaces that entry so the call flag wins.
+            // These are also in the property-access table; the call flag replaces that entry.
             let primitive_args = DefineData::init(Options {
                 value: ExprData::EUndefined(bun_ast::E::Undefined),
                 valueless: true,

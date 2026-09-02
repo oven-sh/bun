@@ -294,10 +294,7 @@ pub enum CallUnwrap {
     Never,
     IfUnused,
     IfUnusedAndToStringSafe,
-    /// The call has no side effects and does not throw as long as every
-    /// argument is a primitive other than a BigInt (`Math.floor(1.5)`). With
-    /// an argument of unknown type the call stays: converting an object can
-    /// run its `valueOf`.
+    /// Pure and non-throwing when every argument is a non-BigInt primitive (`Math.floor(1.5)`); an object argument could run `valueOf`, so then the call stays.
     IfUnusedAndPrimitiveArgs,
 }
 

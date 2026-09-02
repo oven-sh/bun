@@ -189,11 +189,11 @@ describe.skipIf(!isASAN)("utf8 to utf16 output buffer allocation failure is catc
     expect(JSON.parse(stdout.trim() || JSON.stringify({ stdout, stderr, exitCode }))).toEqual([
       { name: "Error", code: "ENOMEM" },
       { name: "Error", code: "ENOMEM" },
-      { name: "RangeError", code: undefined },
       { name: "RangeError", code: "ERR_MEMORY_ALLOCATION_FAILED" },
-      { name: "RangeError", code: undefined },
       { name: "RangeError", code: "ERR_MEMORY_ALLOCATION_FAILED" },
-      { name: "RangeError", code: undefined },
+      { name: "RangeError", code: "ERR_MEMORY_ALLOCATION_FAILED" },
+      { name: "RangeError", code: "ERR_MEMORY_ALLOCATION_FAILED" },
+      { name: "RangeError", code: "ERR_MEMORY_ALLOCATION_FAILED" },
     ]);
     expect(exitCode).toBe(0);
   });
@@ -219,7 +219,7 @@ describe.skipIf(!isASAN)("utf8 to utf16 output buffer allocation failure is catc
         for (const run of [() => new Response(buf).text(), () => new Blob([buf]).text(), () => new Blob([json]).json()]) {
           await run().then(
             v => results.push("UNEXPECTED_SUCCESS length=" + JSON.stringify(v).length),
-            e => results.push({ name: e.name, message: e.message }),
+            e => results.push({ name: e.name, code: e.code, message: e.message }),
           );
         }
         console.log(JSON.stringify(results));
@@ -230,10 +230,15 @@ describe.skipIf(!isASAN)("utf8 to utf16 output buffer allocation failure is catc
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const allocationFailed = {
+      name: "RangeError",
+      code: "ERR_MEMORY_ALLOCATION_FAILED",
+      message: "Failed to allocate memory",
+    };
     expect(JSON.parse(stdout.trim() || JSON.stringify({ stdout, stderr, exitCode }))).toEqual([
-      { name: "RangeError", message: "Out of memory" },
-      { name: "RangeError", message: "Out of memory" },
-      { name: "RangeError", message: "Out of memory" },
+      allocationFailed,
+      allocationFailed,
+      allocationFailed,
     ]);
     expect(exitCode).toBe(0);
   });

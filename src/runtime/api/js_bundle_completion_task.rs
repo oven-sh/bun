@@ -1017,9 +1017,12 @@ impl CompletionStruct for JSBundleCompletionTask {
             .emit_dce_annotations
             .unwrap_or(!config.minify.whitespace);
         transpiler.options.ignore_dce_annotations = config.ignore_dce_annotations;
+        transpiler.options.deprecated_namespace_object_setters =
+            config.deprecated_namespace_object_setters;
         transpiler.options.tree_shaking_override = config.tree_shaking;
         transpiler.options.css_chunking = config.css_chunking;
         transpiler.options.min_chunk_size = config.min_chunk_size;
+        transpiler.options.module_preload = config.module_preload;
         let compile_to_standalone_html = 'brk: {
             if config.compile.is_none() || config.target != bun_ast::Target::Browser {
                 break 'brk false;

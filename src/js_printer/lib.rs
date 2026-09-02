@@ -1322,6 +1322,8 @@ pub struct Options<'a> {
     pub bundling: bool,
     pub to_commonjs_ref: Ref,
     pub to_esm_ref: Ref,
+    /// `__preload`: when set, an `import()` of a chunk is printed as `(__preload(chunkId), import(path))`.
+    pub module_preload_ref: Ref,
     pub require_ref: Option<Ref>,
     pub import_meta_ref: Ref,
     pub hmr_ref: Ref,
@@ -1352,8 +1354,7 @@ pub struct Options<'a> {
 
     pub require_or_import_meta_for_source_callback: RequireOrImportMetaCallback,
 
-    /// The module type of the importing file (after linking), used to determine interop helper behavior.
-    /// Controls whether __toESM uses Node ESM semantics (isNodeMode=1 for .esm) or respects __esModule markers.
+    /// Module type of the file being printed. `Esm` prints `__toESM(.., 1)`, which ignores `__esModule`.
     pub input_module_type: bundle_opts::ModuleType,
     pub module_type: bundle_opts::Format,
 
@@ -1362,6 +1363,9 @@ pub struct Options<'a> {
     /// Borrowed from `LinkerGraph.ts_enums` (one shared map for the whole
     /// bundle); the printer only reads from it.
     pub ts_enums: Option<&'a TsEnumsMap>,
+    /// Borrowed from `LinkerGraph.import_member_bindings`: `X.name` property
+    /// reads the linker bound straight to an export (see `E::Dot::is_import_property_use`).
+    pub import_member_bindings: Option<&'a js_ast::ast_result::ImportMemberBindings>,
 
     // If we're writing out a source map, this table of line start indices lets
     // us do binary search on to figure out what line a given AST node came from
@@ -1398,6 +1402,7 @@ impl<'a> Default for Options<'a> {
             bundling: false,
             to_commonjs_ref: Ref::NONE,
             to_esm_ref: Ref::NONE,
+            module_preload_ref: Ref::NONE,
             require_ref: None,
             import_meta_ref: Ref::NONE,
             hmr_ref: Ref::NONE,
@@ -1422,6 +1427,7 @@ impl<'a> Default for Options<'a> {
             input_module_type: bundle_opts::ModuleType::Unknown,
             module_type: bundle_opts::Format::Esm,
             ts_enums: None,
+            import_member_bindings: None,
             line_offset_tables: None,
             mangled_props: None,
         }
@@ -2749,6 +2755,9 @@ pub(crate) mod __gated_printer {
                     meta.exports_ref = Ref::NONE;
                 }
 
+                // Wrap this with a call to "__toESM()" if this is a CommonJS file
+                let wrap_with_to_esm = record.flags.contains(ImportRecordFlags::WRAP_WITH_TO_ESM);
+
                 // Internal "import()" of async ESM
                 if record.kind == ImportKind::Dynamic && meta.is_wrapper_async {
                     self.print_space_before_identifier();
@@ -2757,7 +2766,14 @@ pub(crate) mod __gated_printer {
                     if meta.exports_ref.is_valid() {
                         let _ = self.print_dot_then_prefix();
                         self.print_space_before_identifier();
+                        if wrap_with_to_esm {
+                            self.print_symbol(self.options.to_esm_ref);
+                            self.print(b"(");
+                        }
                         self.print_symbol(meta.exports_ref);
+                        if wrap_with_to_esm {
+                            self.print_to_esm_suffix();
+                        }
                         self.print_dot_then_suffix();
                     }
                     if wrap {
@@ -2779,19 +2795,18 @@ pub(crate) mod __gated_printer {
                     }
                 }
 
-                // Make sure the comma operator is properly wrapped
-                let wrap_comma_operator = meta.exports_ref.is_valid()
-                    && meta.wrapper_ref.is_valid()
-                    && level.gte(Level::Comma);
-                if wrap_comma_operator {
-                    self.print(b"(");
-                }
-
-                // Wrap this with a call to "__toESM()" if this is a CommonJS file
-                let wrap_with_to_esm = record.flags.contains(ImportRecordFlags::WRAP_WITH_TO_ESM);
                 if wrap_with_to_esm {
                     self.print_space_before_identifier();
                     self.print_symbol(self.options.to_esm_ref);
+                    self.print(b"(");
+                }
+
+                // Make sure the comma operator is properly wrapped, always as a
+                // call argument: `__toESM((init_foo(), exports_foo), 1)`.
+                let wrap_comma_operator = meta.exports_ref.is_valid()
+                    && meta.wrapper_ref.is_valid()
+                    && (level.gte(Level::Comma) || wrap_with_to_esm);
+                if wrap_comma_operator {
                     self.print(b"(");
                 }
 
@@ -2837,17 +2852,11 @@ pub(crate) mod __gated_printer {
                     }
                 }
 
-                if wrap_with_to_esm {
-                    if self.options.input_module_type == bundle_opts::ModuleType::Esm {
-                        self.print(b",");
-                        self.print_space();
-                        self.print(b"1");
-                    }
-                    self.print(b")");
-                }
-
                 if wrap_comma_operator {
                     self.print(b")");
+                }
+                if wrap_with_to_esm {
+                    self.print_to_esm_suffix();
                 }
                 if record.kind == ImportKind::Dynamic && has_side_effects {
                     self.print_dot_then_suffix();
@@ -2931,7 +2940,7 @@ pub(crate) mod __gated_printer {
                 self.print(b")");
 
                 if wrap_with_to_esm {
-                    self.print(b")");
+                    self.print_to_esm_suffix();
                 }
                 if wrap {
                     self.print(b")");
@@ -2943,6 +2952,20 @@ pub(crate) mod __gated_printer {
             self.add_source_mapping(record.range.loc);
 
             self.print_space_before_identifier();
+
+            let preload = record.flags.contains(ImportRecordFlags::IMPORTS_CHUNK)
+                && self.options.module_preload_ref.is_valid();
+            let wrap_preload = preload && !wrap && level.gte(Level::Comma);
+            if preload {
+                if wrap_preload {
+                    self.print(b"(");
+                }
+                self.print_symbol(self.options.module_preload_ref);
+                self.print(b"(");
+                self.print_string_literal_utf8(record.path.pretty, false);
+                self.print(b"),");
+                self.print_space();
+            }
 
             // Wrap with __toESM if importing a CommonJS module
             let wrap_with_to_esm = record.flags.contains(ImportRecordFlags::WRAP_WITH_TO_ESM);
@@ -2958,7 +2981,11 @@ pub(crate) mod __gated_printer {
                 self.print_string_literal_utf8(path.pretty, false);
             }
 
-            if !import_options.is_missing() {
+            // A bundled target is now a JavaScript chunk: attributes such as
+            // `with { type: "json" }` described the source file, not the chunk.
+            if !import_options.is_missing()
+                && !record.flags.contains(ImportRecordFlags::IMPORTS_CHUNK)
+            {
                 self.print_whitespacer(ws!(b", "));
                 self.print_expr(import_options, Level::Comma, ExprFlagSet::empty());
             }
@@ -2976,9 +3003,20 @@ pub(crate) mod __gated_printer {
                 self.print(b"))");
             }
 
-            if wrap {
+            if wrap || wrap_preload {
                 self.print(b")");
             }
+        }
+
+        /// Closes a `__toESM(` call: `, 1` (`isNodeMode`) for an ES module by
+        /// type, then `)`.
+        fn print_to_esm_suffix(&mut self) {
+            if self.options.input_module_type == bundle_opts::ModuleType::Esm {
+                self.print(b",");
+                self.print_space();
+                self.print(b"1");
+            }
+            self.print(b")");
         }
 
         #[inline]
@@ -3652,6 +3690,12 @@ pub(crate) mod __gated_printer {
                             self.print_inlined_enum(inlined, &e.name, level);
                             return;
                         }
+                        if e.is_import_property_use
+                            && let Some(binding) = self.import_member_binding(e.target, &e.name)
+                        {
+                            self.print_expr(binding, level, flags);
+                            return;
+                        }
                     } else {
                         if flags.contains(ExprFlag::HasNonOptionalChainParent) {
                             wrap = true;
@@ -3705,6 +3749,16 @@ pub(crate) mod __gated_printer {
                                     return;
                                 }
                             }
+                        }
+                        if e.is_import_property_use
+                            && let Some(str) = e.index.unwrap_inlined().data.as_e_string()
+                            && let str = str.flattened(self.bump)
+                            && str.is_utf8()
+                            && let Some(binding) =
+                                self.import_member_binding(e.target, str.slice8())
+                        {
+                            self.print_expr(binding, level, flags);
+                            return;
                         }
                     } else {
                         if flags.contains(ExprFlag::HasNonOptionalChainParent) {
@@ -6522,6 +6576,24 @@ pub(crate) mod __gated_printer {
                     _ => return false,
                 }
             }
+        }
+
+        /// `X.name` where the linker bound the access straight to an export
+        /// (`LinkerGraph::import_member_bindings`): the import identifier to
+        /// print in its place.
+        fn import_member_binding(&self, target: Expr, name: &[u8]) -> Option<Expr> {
+            let ExprData::EImportIdentifier(id) = &target.data else {
+                return None;
+            };
+            let binding = *self
+                .options
+                .import_member_bindings?
+                .get(&id.ref_)?
+                .get(name)?;
+            Some(Expr::init(
+                E::ImportIdentifier::new(binding, false),
+                target.loc,
+            ))
         }
 
         pub(crate) fn try_to_get_imported_enum_value(

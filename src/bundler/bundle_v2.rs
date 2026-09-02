@@ -3029,6 +3029,8 @@ pub mod bv2_impl {
             this.linker.options.minify_identifiers = this.transpiler.options.minify_identifiers;
             this.linker.options.minify_whitespace = this.transpiler.options.minify_whitespace;
             this.linker.options.emit_dce_annotations = this.transpiler.options.emit_dce_annotations;
+            this.linker.options.deprecated_namespace_object_setters =
+                this.transpiler.options.deprecated_namespace_object_setters;
             this.linker.options.ignore_dce_annotations =
                 this.transpiler.options.ignore_dce_annotations;
             // SAFETY: `transpiler.options.{banner,footer,public_path,metafile_*}` are
@@ -3039,7 +3041,11 @@ pub mod bv2_impl {
             // SAFETY: same `'a`-owned `Transpiler` field as `banner` above.
             this.linker.options.footer = unsafe { interned_slice(&this.transpiler.options.footer) };
             this.linker.options.css_chunking = this.transpiler.options.css_chunking;
-            this.linker.options.min_chunk_size = this.transpiler.options.min_chunk_size;
+            this.linker.options.min_chunk_size =
+                this.transpiler.options.min_chunk_size.unwrap_or_else(|| {
+                    crate::options::default_min_chunk_size(this.transpiler.options.target)
+                });
+            this.linker.options.module_preload = this.transpiler.options.module_preload;
             this.linker.options.source_maps = this.transpiler.options.source_map;
             this.linker.options.tree_shaking = this.transpiler.options.tree_shaking;
             // SAFETY: same `'a`-owned `Transpiler` field as `banner` above.
@@ -3767,6 +3773,7 @@ pub mod bv2_impl {
             source: &mut bun_ast::Source,
             loader: Loader,
             known_target: options::Target,
+            module_type: options::ModuleType,
         ) -> Result<IndexInt, AllocError> {
             let source_index = Index::init(u32::try_from(self.graph.ast.len()).expect("int cast"));
             let _ = self.graph.ast.append(JSAst::empty_in(self.graph.heap)); // OOM/capacity: fire-and-forget
@@ -3820,7 +3827,7 @@ pub mod bv2_impl {
                 side_effects: bun_ast::SideEffects::HasSideEffects,
                 jsx,
                 source_index: bun_ast::Index::init(source_index.get()),
-                module_type: options::ModuleType::Unknown,
+                module_type,
                 emit_decorator_metadata: false, // TODO
                 package_version: bun_ast::StoreStr::EMPTY,
                 loader: Some(loader),
@@ -6691,9 +6698,11 @@ pub mod bv2_impl {
                                     interned_slice(
                                         self.arena()
                                             .alloc_str(&format!(
-                                                "{}/{:016x}{}",
+                                                "{}/{}{}",
                                                 bake_types::ASSET_PREFIX,
-                                                hash,
+                                                bun_core::fmt::bytes_to_hex_lower_string(
+                                                    &hash.to_ne_bytes()
+                                                ),
                                                 bstr::BStr::new(bun_paths::extension(path.text)),
                                             ))
                                             .as_bytes(),
@@ -7433,6 +7442,8 @@ pub mod bv2_impl {
                         // and `.clone()` where an owned copy is needed.
                         let source_loader: Loader =
                             this.graph.input_files.items_loader()[result_source_index];
+                        let source_module_type: options::ModuleType =
+                            this.graph.ast.items_module_type()[result_source_index];
 
                         let (reference_source_index, ssr_index) = if separate_ssr_graph {
                             // Enqueue two files, one in server graph, one in ssr graph.
@@ -7472,6 +7483,7 @@ pub mod bv2_impl {
                                     &mut ssr_source,
                                     source_loader,
                                     Target::ServerComponentsSsr,
+                                    source_module_type,
                                 )
                                 .expect("oom");
 
@@ -7495,6 +7507,7 @@ pub mod bv2_impl {
                                     &mut server_source,
                                     source_loader,
                                     Target::Browser,
+                                    source_module_type,
                                 )
                                 .expect("oom");
 
@@ -7900,6 +7913,9 @@ pub mod bv2_impl {
         /// so the single read site in `match_import_with_export` is a safe `Deref`;
         /// the pointee slab is never reallocated while the iterator is live.
         pub(crate) import_data: bun_ptr::BackRef<[crate::ImportData]>,
+        /// `Found` an `export default X` where `X` is an import in that file
+        /// (`Ast::export_default_alias_of_import`).
+        pub(crate) default_alias_of: bun_ast::Ref,
     }
 
     impl Default for ImportTrackerIterator {
@@ -7908,6 +7924,7 @@ pub mod bv2_impl {
                 status: ImportTrackerStatus::default(),
                 value: crate::ImportTracker::default(),
                 import_data: bun_ptr::BackRef::new(&[] as &[crate::ImportData]),
+                default_alias_of: bun_ast::Ref::NONE,
             }
         }
     }

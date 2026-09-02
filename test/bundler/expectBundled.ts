@@ -227,6 +227,7 @@ export interface BundlerTestInput {
   bytecode?: boolean;
   bytecodeDepth?: number;
   emitDCEAnnotations?: boolean;
+  deprecatedNamespaceObjectSetters?: boolean;
   inject?: string[];
   jsx?: {
     runtime?: "automatic" | "classic";
@@ -260,6 +261,8 @@ export interface BundlerTestInput {
   splitting?: boolean;
   /** `splitRequire` (`--no-split-require` when false); on by default for target bun. */
   splitRequire?: boolean;
+  /** `modulePreload` (`--no-module-preload` when false); on by default for target browser. */
+  modulePreload?: boolean;
   /** `--min-chunk-size` / `minChunkSize`; requires `splitting` */
   minChunkSize?: number;
   serverComponents?: boolean;
@@ -539,6 +542,7 @@ function expectBundled(
     sourceMap,
     splitting,
     splitRequire,
+    modulePreload,
     minChunkSize,
     target,
     todo: notImplemented,
@@ -550,6 +554,7 @@ function expectBundled(
     bytecode = false,
     bytecodeDepth,
     emitDCEAnnotations,
+    deprecatedNamespaceObjectSetters,
     production,
     // @ts-expect-error
     _referenceFn,
@@ -613,7 +618,9 @@ function expectBundled(
           : entryPoints.length === 1;
 
   if (bundling === false && entryPoints.length > 1) {
-    throw new UnsupportedOptionError("bundling:false with more than one entry point is not implemented in this harness");
+    throw new UnsupportedOptionError(
+      "bundling:false with more than one entry point is not implemented in this harness",
+    );
   }
 
   if (!ESBUILD && legalComments) {
@@ -677,6 +684,12 @@ function expectBundled(
   if (ESBUILD && splitRequire !== undefined) {
     throw new UnsupportedOptionError("splitRequire not possible in esbuild backend");
   }
+  if (ESBUILD && modulePreload !== undefined) {
+    throw new UnsupportedOptionError("modulePreload not possible in esbuild backend");
+  }
+  if (ESBUILD && deprecatedNamespaceObjectSetters !== undefined) {
+    throw new UnsupportedOptionError("deprecatedNamespaceObjectSetters not possible in esbuild backend");
+  }
   if (ESBUILD && allowUnresolved !== undefined) {
     throw new UnsupportedOptionError("allowUnresolved not possible in esbuild backend");
   }
@@ -717,8 +730,7 @@ function expectBundled(
 
     outfile = useOutFile ? path.join(root, outfile ?? (compile ? "/out" : "/out.js")) : undefined;
     // The file `bun build --compile` writes: on Windows it appends `.exe` unless the name already ends with it.
-    const outfileOnDisk =
-      outfile && compile && isWindows && !outfile.endsWith(".exe") ? outfile + ".exe" : outfile;
+    const outfileOnDisk = outfile && compile && isWindows && !outfile.endsWith(".exe") ? outfile + ".exe" : outfile;
     outdir = !useOutFile && generateOutput ? path.join(root, outdir ?? "/out") : undefined;
     metafile = metafile ? path.join(root, metafile) : undefined;
     outputPaths = (
@@ -869,6 +881,7 @@ function expectBundled(
               assetNaming && assetNaming !== "[name]-[hash].[ext]" && [`--asset-naming`, assetNaming],
               splitting && `--splitting`,
               splitRequire === false && `--no-split-require`,
+              modulePreload === false && `--no-module-preload`,
               minChunkSize !== undefined && `--min-chunk-size=${minChunkSize}`,
               serverComponents && "--server-components",
               reactCompiler && "--react-compiler",
@@ -877,6 +890,7 @@ function expectBundled(
               footer && `--footer="${footer}"`,
               ignoreDCEAnnotations && `--ignore-dce-annotations`,
               emitDCEAnnotations && `--emit-dce-annotations`,
+              deprecatedNamespaceObjectSetters === false && `--no-deprecated-namespace-object-setters`,
               // inject && inject.map(x => ["--inject", path.join(root, x)]),
               // jsx.preserve && "--jsx=preserve",
               // legalComments && `--legal-comments=${legalComments}`,
@@ -1240,6 +1254,7 @@ function expectBundled(
           sourcemap: sourceMap,
           splitting,
           splitRequire,
+          modulePreload,
           minChunkSize,
           target,
           reactCompiler,
@@ -1248,6 +1263,7 @@ function expectBundled(
           bytecodeDepth,
           publicPath,
           emitDCEAnnotations,
+          deprecatedNamespaceObjectSetters,
           ignoreDCEAnnotations,
           drop,
           features,
@@ -1720,7 +1736,10 @@ for (const [key, blob] of build.outputs) {
               for (let i = 0; i < parsed.sources.length; i++) {
                 const source = parsed.sources[i];
                 const sourcemap_content = parsed.sourcesContent[i];
-                const actual_content = readFileSync(path.resolve(path.dirname(path.join(outdir!, file)), source), "utf-8");
+                const actual_content = readFileSync(
+                  path.resolve(path.dirname(path.join(outdir!, file)), source),
+                  "utf-8",
+                );
                 expect(sourcemap_content).toBe(actual_content);
               }
 

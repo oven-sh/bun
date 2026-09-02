@@ -1474,8 +1474,9 @@ describe("inbound stream lifecycle", () => {
         } catch (e) {
           console.log("destroy threw: " + e.message);
         }
-        // A numeric code must still tear every open stream down.
-        client.destroy(undefined, 8);
+        // A numeric code must still tear every open stream down. (null, not undefined: like node,
+        // an undefined error takes the NGHTTP2_NO_ERROR default and the code argument is ignored.)
+        client.destroy(null, 8);
         console.log("destroy:done");
       });
     `;

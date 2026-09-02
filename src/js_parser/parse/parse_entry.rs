@@ -1220,6 +1220,109 @@ impl<'a> Parser<'a> {
             }
         }
 
+        // Finalize referenced-export tracking for `import("str")` /
+        // `require("str")`. Several namespace refs may exist for one import
+        // record (the synthetic ref from `transpose_import` plus a
+        // `const ns = …` / `.then(ns => …)` / `{...rest}` local). A record is
+        // fully tracked only when *every* such ref had all its uses accounted
+        // for (`use_count_estimate == 0`); the alias set is the union across
+        // them. Untracked records get no entry and keep every export.
+        if !p
+            .imports_to_convert_from_dynamic_import
+            .as_slice()
+            .is_empty()
+        {
+            #[derive(Default)]
+            struct PerRecord {
+                escaped: bool,
+                aliases: Vec<bun_ast::StoreStr>,
+            }
+            let mut by_record: bun_collections::ArrayHashMap<u32, PerRecord> = Default::default();
+            // A namespace ref is listed once per registration and once per
+            // destructure of it; its alias map only needs one walk.
+            let mut seen_namespace: bun_collections::HashMap<(bun_ast::Ref, u32), ()> =
+                Default::default();
+            let arena = p.arena;
+            for i in 0..p.imports_to_convert_from_dynamic_import.len() {
+                let (ns_ref, import_record_id, scope) = {
+                    let d = &p.imports_to_convert_from_dynamic_import[i];
+                    (d.namespace.ref_, d.import_record_id, d.scope)
+                };
+                let escaped = {
+                    let symbol = &p.symbols[ns_ref.inner_index() as usize];
+                    // `must_not_be_renamed` / `contains_direct_eval` cover
+                    // direct `eval()` (or `with`) in scope, which can read the
+                    // namespace by name without a tracked property access. A
+                    // linked symbol was merged with another declaration (a
+                    // hoisted `var`, a parameter), so its own use count says
+                    // nothing.
+                    let tracked = p.namespace_tracked_uses.get(&ns_ref).copied().unwrap_or(0);
+                    // A source-visible local escapes when it has uses nobody
+                    // accounted for; the synthetic per-`import()` ref (never
+                    // referenced in source) escapes when its one consumer did not.
+                    (if p.dynamic_import_namespace_locals.contains_key(&ns_ref) {
+                        symbol.use_count_estimate > tracked || tracked == u32::MAX
+                    } else {
+                        tracked == 0
+                    }) || symbol.must_not_be_renamed()
+                        || symbol.has_link()
+                        || scope.is_some_and(|s| s.contains_direct_eval)
+                        || p.dynamic_import_escaped_records
+                            .contains_key(&import_record_id)
+                };
+                let entry = bun_core::handle_oom(by_record.get_or_put(import_record_id));
+                if !entry.found_existing {
+                    *entry.value_ptr = PerRecord::default();
+                }
+                let rec = entry.value_ptr;
+                rec.escaped |= escaped;
+                if rec.escaped
+                    || seen_namespace
+                        .insert((ns_ref, import_record_id), ())
+                        .is_some()
+                {
+                    continue;
+                }
+                let Some(map) = p.import_items_for_namespace.get(&ns_ref) else {
+                    continue;
+                };
+                for (key, loc_ref) in map.keys().iter().zip(map.values().iter()) {
+                    let local = loc_ref.ref_;
+                    // A destructured local that is never read does not keep
+                    // its export alive — unless it was merged with another
+                    // declaration or a direct `eval` can read it by name.
+                    if local.is_valid() {
+                        let symbol = &p.symbols[local.inner_index() as usize];
+                        if symbol.use_count_estimate == 0
+                            && !symbol.has_link()
+                            && !symbol.must_not_be_renamed()
+                        {
+                            continue;
+                        }
+                    }
+                    rec.aliases
+                        .push(bun_ast::StoreStr::new(arena.alloc_slice_copy(key)));
+                }
+            }
+
+            for i in 0..by_record.len() {
+                let import_record_id = by_record.keys()[i];
+                let rec = &mut by_record.values_mut()[i];
+                if rec.escaped {
+                    continue;
+                }
+                rec.aliases.sort_by(|a, b| a.slice().cmp(b.slice()));
+                rec.aliases.dedup_by(|a, b| a.slice() == b.slice());
+                let aliases = &rec.aliases;
+                let alias_slice = arena
+                    .alloc_slice_fill_with::<bun_ast::StoreStr, _>(aliases.len(), |j| aliases[j]);
+                bun_core::handle_oom(
+                    p.dynamic_import_aliases
+                        .put(import_record_id, bun_ast::StoreSlice::new(alias_slice)),
+                );
+            }
+        }
+
         // This is a workaround for broken module environment checks in packages like lodash-es
         // https://github.com/lodash/lodash/issues/5660
         let mut force_esm = false;

@@ -658,13 +658,6 @@ export const structuredCloneAdvanced: (
 
 export const isASANEnabled: () => boolean = $newCppFunction("InternalForTesting.cpp", "jsFunction_isASANEnabled", 0);
 
-/** Fails every WTF `try*` allocation above `bytes`; `Infinity` lifts the cap. False on a release build. */
-export const setMaxSingleAllocationSizeForTesting: (bytes: number) => boolean = $newCppFunction(
-  "InternalForTesting.cpp",
-  "jsFunction_setMaxSingleAllocationSizeForTesting",
-  1,
-);
-
 export const BunString_threadIsolatedCopyRefCountDelta: () => number = $newCppFunction(
   "InternalForTesting.cpp",
   "jsFunction_BunString_threadIsolatedCopyRefCountDelta",

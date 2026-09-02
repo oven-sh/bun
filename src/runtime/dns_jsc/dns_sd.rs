@@ -40,20 +40,43 @@ unsafe extern "C" {
     fn DNSServiceRefSockFD(sd_ref: DNSServiceRef) -> c_int;
     fn DNSServiceProcessResult(sd_ref: DNSServiceRef) -> DNSServiceErrorType;
     fn DNSServiceRefDeallocate(sd_ref: DNSServiceRef);
-    // SPI (macOS 12+): DNSServiceGetAddrInfo plus the attribute libinfo's getaddrinfo passes.
-    fn DNSServiceGetAddrInfoEx(
+    fn DNSServiceGetAddrInfo(
         sd_ref: *mut DNSServiceRef,
         flags: DNSServiceFlags,
         interface_index: u32,
         protocol: DNSServiceProtocol,
         hostname: *const c_char,
-        attr: *const DNSServiceAttribute,
         callback: GetAddrInfoReply,
         context: *mut c_void,
     ) -> DNSServiceErrorType;
-    /// Lets mDNSResponder fail a query over to other resolvers (scoped/supplemental), as getaddrinfo does.
-    #[allow(non_upper_case_globals)]
-    static kDNSServiceAttrAllowFailover: DNSServiceAttribute;
+}
+
+/// SPI: `DNSServiceGetAddrInfo` plus the attribute libinfo's getaddrinfo passes. Absent on macOS 12, so resolved at runtime.
+type GetAddrInfoExFn = unsafe extern "C" fn(
+    sd_ref: *mut DNSServiceRef,
+    flags: DNSServiceFlags,
+    interface_index: u32,
+    protocol: DNSServiceProtocol,
+    hostname: *const c_char,
+    attr: *const DNSServiceAttribute,
+    callback: GetAddrInfoReply,
+    context: *mut c_void,
+) -> DNSServiceErrorType;
+
+/// `DNSServiceGetAddrInfoEx` with `kDNSServiceAttrAllowFailover` (lets mDNSResponder fail a query over to
+/// scoped/supplemental resolvers, as getaddrinfo does), when this OS has both.
+fn getaddrinfo_ex() -> Option<(GetAddrInfoExFn, *const DNSServiceAttribute)> {
+    let f = bun_sys::dlsym_with_handle!(
+        GetAddrInfoExFn,
+        "DNSServiceGetAddrInfoEx",
+        Some(libc::RTLD_DEFAULT)
+    )?;
+    let attr = bun_sys::dlsym_with_handle!(
+        *const DNSServiceAttribute,
+        "kDNSServiceAttrAllowFailover",
+        Some(libc::RTLD_DEFAULT)
+    )?;
+    Some((f, attr))
 }
 
 #[repr(C)]
@@ -416,21 +439,34 @@ impl SharedConnection {
     ) -> Option<DNSServiceRef> {
         // ShareConnection requires `sub` to start as a copy of the primary ref.
         let mut sub: DNSServiceRef = self.main_ref;
+        let flags = FLAGS_SHARE_CONNECTION | FLAGS_TIMEOUT | FLAGS_RETURN_INTERMEDIATES | suppress;
+        let hostname = hostname.as_ptr().cast::<c_char>();
         // SAFETY: FFI; `hostname` is NUL-terminated (copied by dns_sd); `context` is only stored.
         let err = unsafe {
-            DNSServiceGetAddrInfoEx(
-                &raw mut sub,
-                FLAGS_SHARE_CONNECTION | FLAGS_TIMEOUT | FLAGS_RETURN_INTERMEDIATES | suppress,
-                0,
-                protocol,
-                hostname.as_ptr().cast::<c_char>(),
-                &raw const kDNSServiceAttrAllowFailover,
-                callback,
-                context,
-            )
+            match getaddrinfo_ex() {
+                Some((ex, attr)) => ex(
+                    &raw mut sub,
+                    flags,
+                    0,
+                    protocol,
+                    hostname,
+                    attr,
+                    callback,
+                    context,
+                ),
+                None => DNSServiceGetAddrInfo(
+                    &raw mut sub,
+                    flags,
+                    0,
+                    protocol,
+                    hostname,
+                    callback,
+                    context,
+                ),
+            }
         };
         if err != ERR_NO_ERROR {
-            bun_output::scoped_log!(dns, "DNSServiceGetAddrInfoEx failed: {}", err);
+            bun_output::scoped_log!(dns, "DNSServiceGetAddrInfo failed: {}", err);
             return None;
         }
         Some(sub)

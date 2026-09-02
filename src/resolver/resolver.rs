@@ -339,7 +339,6 @@ type Path = crate::fs::Path<'static>;
 pub struct Bufs {
     pub(crate) extension_path: PathBuffer,
     pub(crate) tsconfig_match_full_buf: PathBuffer,
-    pub(crate) tsconfig_match_full_buf2: PathBuffer,
     pub(crate) tsconfig_match_full_buf3: PathBuffer,
 
     pub(crate) esm_subpath: [u8; 512],
@@ -1171,8 +1170,7 @@ impl<'a> Resolver<'a> {
         // the alias first, but only follow it when it actually resolves to
         // a file on disk — a catch-all `"*": ["./types/*"]` for ambient
         // .d.ts stubs must still let real bare imports stay external.
-        if kind != ast::ImportKind::EntryPointBuild
-            && kind != ast::ImportKind::EntryPointRun
+        if !kind.is_entry_point()
             && self.opts.packages == options::Packages::External
             && is_package_path(import_path)
             && !self.matches_user_external_pattern(import_path)
@@ -1204,8 +1202,7 @@ impl<'a> Resolver<'a> {
 
         // Certain types of URLs default to being external for convenience,
         // while these rules should not be applied to the entrypoint as it is never external (#12734)
-        if kind != ast::ImportKind::EntryPointBuild
-            && kind != ast::ImportKind::EntryPointRun
+        if !kind.is_entry_point()
             && (self.is_external_pattern(import_path)
             // "fill: url(#filter);"
             || (kind.is_from_css() && import_path.starts_with(b"#"))
@@ -1571,17 +1568,6 @@ impl<'a> Resolver<'a> {
                 }
             }
 
-            // If you use mjs or mts, then you're using esm
-            // If you use cjs or cts, then you're using cjs
-            // This should win out over the module type from package.json
-            if !kind.is_from_css()
-                && module_type == options::ModuleType::Unknown
-                && name.ext.len() == 4
-            {
-                module_type =
-                    module_type_from_ext(name.ext).unwrap_or(options::ModuleType::Unknown);
-            }
-
             // Probe the listing in one `entries_mutex` critical section: a
             // concurrent resolver at a newer generation rewrites this `DirEntry`'s
             // map in place under that lock. The entry pointer stays valid after
@@ -1685,6 +1671,13 @@ impl<'a> Resolver<'a> {
             }
         }
 
+        // The extension wins over a package.json "type".
+        if !kind.is_from_css() {
+            if let Some(from_ext) = module_type_from_ext(result.path_pair.primary.name().ext) {
+                module_type = from_ext;
+            }
+        }
+
         result.module_type = module_type;
         Ok(())
     }
@@ -1772,7 +1765,8 @@ impl<'a> Resolver<'a> {
                 }
             }
 
-            if self.opts.external.abs_paths.count() > 0
+            if !kind.is_entry_point()
+                && self.opts.external.abs_paths.count() > 0
                 && self.opts.external.abs_paths.contains(import_path)
             {
                 // If the string literal in the source text is an absolute path and has
@@ -1937,9 +1931,10 @@ impl<'a> Resolver<'a> {
             }
 
             // Check for external packages first
-            if self.opts.external.node_modules.count() > 0
-            // Imports like "process/" need to resolve to the filesystem, not a builtin
-            && !import_path.ends_with(b"/")
+            if !kind.is_entry_point()
+                && self.opts.external.node_modules.count() > 0
+                // Imports like "process/" need to resolve to the filesystem, not a builtin
+                && !import_path.ends_with(b"/")
             {
                 let mut query = import_path;
                 loop {
@@ -2031,7 +2026,8 @@ impl<'a> Resolver<'a> {
             return ResultUnion::NotFound;
         };
 
-        if self.opts.external.abs_paths.count() > 0
+        if !kind.is_entry_point()
+            && self.opts.external.abs_paths.count() > 0
             && self.opts.external.abs_paths.contains(abs_path)
         {
             // If the string literal in the source text is an absolute path and has
@@ -2624,7 +2620,6 @@ impl<'a> Resolver<'a> {
                             if let Some(package_json) = pkg_dir_info.package_json() {
                                 if let Some(exports_map) = package_json.exports.as_ref() {
                                     // The condition set is determined by the kind of import
-                                    let mut module_type = package_json.module_type;
                                     // NOTE: keeping a single
                                     // `ESModule` (which holds `&mut self.debug_logs`) alive across a
                                     // `&mut self` call is aliased-&mut UB. Build a fresh short-lived
@@ -2650,7 +2645,6 @@ impl<'a> Resolver<'a> {
                                                 _ => &self.opts.conditions.import,
                                             },
                                             debug_logs: self.debug_logs.as_mut(),
-                                            module_type: &mut module_type,
                                         }
                                         .resolve(b"/", esm.subpath, &exports_map.root);
                                         // ESModule temporary dropped here; `self` is unborrowed.
@@ -2667,7 +2661,6 @@ impl<'a> Resolver<'a> {
                                             .is_success()
                                         {
                                             out.is_node_module = true;
-                                            out.module_type = module_type;
                                             self.extension_order = prev_extension_order;
                                             if let Some(d) = self.debug_logs.as_mut() {
                                                 d.decrease_indent();
@@ -2707,7 +2700,6 @@ impl<'a> Resolver<'a> {
                                                 _ => &self.opts.conditions.import,
                                             },
                                             debug_logs: self.debug_logs.as_mut(),
-                                            module_type: &mut module_type,
                                         }
                                         .resolve(
                                             b"/",
@@ -2726,7 +2718,6 @@ impl<'a> Resolver<'a> {
                                             .is_success()
                                         {
                                             out.is_node_module = true;
-                                            out.module_type = module_type;
                                             self.extension_order = prev_extension_order;
                                             if let Some(d) = self.debug_logs.as_mut() {
                                                 d.decrease_indent();
@@ -3124,7 +3115,6 @@ impl<'a> Resolver<'a> {
                     Ok(dir_info_to_use_) => {
                         if let Some(pkg_dir_info) = dir_info_to_use_ {
                             let abs_package_path = pkg_dir_info.abs_path;
-                            let mut module_type = options::ModuleType::Unknown;
                             if let Some(package_json) = pkg_dir_info.package_json() {
                                 if let Some(exports_map) = package_json.exports.as_ref() {
                                     // The condition set is determined by the kind of import
@@ -3145,7 +3135,6 @@ impl<'a> Resolver<'a> {
                                                 _ => &self.opts.conditions.import,
                                             },
                                             debug_logs: self.debug_logs.as_mut(),
-                                            module_type: &mut module_type,
                                         }
                                         .resolve(b"/", esm.subpath, &exports_map.root);
 
@@ -3184,7 +3173,6 @@ impl<'a> Resolver<'a> {
                                                 _ => &self.opts.conditions.import,
                                             },
                                             debug_logs: self.debug_logs.as_mut(),
-                                            module_type: &mut module_type,
                                         }
                                         .resolve(
                                             b"/",
@@ -4874,47 +4862,38 @@ impl<'a> Resolver<'a> {
                 let matched_text =
                     &path[longest_match.prefix.len()..path.len() - longest_match.suffix.len()];
 
-                let total_length: Option<u32> = strings::index_of_char(original_path, b'*');
-                let prefix_end = total_length
-                    .map(|v| v as usize)
-                    .unwrap_or(original_path.len());
-                let prefix_parts: [&[u8]; 2] = [abs_base_url, &original_path[0..prefix_end]];
-
-                // Concatenate the matched text with the suffix from the wildcard path
-                let matched_text_with_suffix = bufs!(tsconfig_match_full_buf3);
-                let mut matched_text_with_suffix_len: usize = 0;
-                if total_length.is_some() {
-                    let suffix = strings::trim_left(&original_path[prefix_end..], b"*");
-                    matched_text_with_suffix_len = matched_text.len() + suffix.len();
-                    if matched_text_with_suffix_len > matched_text_with_suffix.len() {
-                        continue;
-                    }
-                    ::bun_core::concat_into(matched_text_with_suffix, &[matched_text, suffix]);
-                }
-
-                // 1. Normalize the base path
-                // so that "/Users/foo/project/", "../components/*" => "/Users/foo/components/""
-                let Some(prefix) = self
-                    .fs_ref()
-                    .abs_buf_checked(&prefix_parts, bufs!(tsconfig_match_full_buf2))
-                else {
-                    continue;
-                };
-
-                // 2. Join the new base path with the matched result
-                // so that "/Users/foo/components/", "/foo/bar" => /Users/foo/components/foo/bar
-                let parts: [&[u8]; 3] = [
-                    prefix,
-                    if matched_text_with_suffix_len > 0 {
-                        strings::trim_left(
-                            &matched_text_with_suffix[0..matched_text_with_suffix_len],
-                            b"/",
-                        )
+                // Build the substituted target path as a contiguous string. The
+                // previous implementation split the target at '*' and rejoined
+                // the pieces via the path joiner, which inserts a separator
+                // between parts and so only worked when '*' sat on a segment
+                // boundary. Substitute textually instead, then resolve once.
+                let substituted_buf = bufs!(tsconfig_match_full_buf3);
+                let substituted: &[u8] =
+                    if let Some(star) = strings::index_of_char(original_path, b'*') {
+                        let star = star as usize;
+                        let before = &original_path[..star];
+                        let after = &original_path[star + 1..];
+                        let total = before.len() + matched_text.len() + after.len();
+                        if total > substituted_buf.len() {
+                            continue;
+                        }
+                        ::bun_core::concat_into(substituted_buf, &[before, matched_text, after]);
+                        &substituted_buf[..total]
                     } else {
-                        b""
-                    },
-                    strings::trim_left(longest_match.suffix, b"/"),
-                ];
+                        original_path
+                    };
+
+                // An absolute template (e.g. an expanded `${configDir}/src/*`)
+                // is normalized on its own; a relative one joins `baseUrl` —
+                // even when the substituted text happens to start with a
+                // separator (key "~*" → target "*", import "~/util" →
+                // matched_text "/util"), so strip leading separators first
+                // since the joiner resets on a rooted part.
+                let parts: [&[u8]; 2] = if bun_paths::is_absolute(original_path) {
+                    [substituted, b""]
+                } else {
+                    [abs_base_url, strings::trim_left(substituted, b"/\\")]
+                };
                 let Some(absolute_original_path) = self
                     .fs_ref()
                     .abs_buf_checked(&parts, bufs!(tsconfig_match_full_buf))
@@ -4992,7 +4971,6 @@ impl<'a> Resolver<'a> {
             }
             return MatchStatus::NotFound;
         }
-        let mut module_type = options::ModuleType::Unknown;
 
         // NOTE: keeping the `ESModule`'s borrow of `self.debug_logs` alive
         // across the subsequent `&mut self` calls would be aliased-&mut UB, so
@@ -5006,10 +4984,8 @@ impl<'a> Resolver<'a> {
                 _ => &self.opts.conditions.import,
             },
             debug_logs: self.debug_logs.as_mut(),
-            module_type: &mut module_type,
         }
         .resolve_imports(import_path, &imports_map.root);
-        let _ = module_type;
 
         if esm_resolution.status == crate::package_json::Status::PackageResolve {
             // https://github.com/oven-sh/bun/issues/4972
@@ -6751,8 +6727,9 @@ bun_core::comptime_string_map! {
     };
 }
 
+/// `.mjs`/`.mts` are ESM, `.cjs`/`.cts` are CommonJS, anything else is `None`.
 #[inline]
-fn module_type_from_ext(ext: &[u8]) -> Option<options::ModuleType> {
+pub fn module_type_from_ext(ext: &[u8]) -> Option<options::ModuleType> {
     MODULE_TYPE_FROM_EXT.get(ext).copied()
 }
 

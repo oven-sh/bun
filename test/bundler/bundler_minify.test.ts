@@ -1628,6 +1628,8 @@ describe("bundler", () => {
           try { b() } catch (e) { b() }
           if (typeof a === "string" || a === null || a === void 0) b();
           if ((a >>> 0) !== 0) b();
+          if (!!a && true) b();
+          if ((a || false) || false) b();
           a != null && a.b();
           return 0;
         }
@@ -1663,6 +1665,10 @@ describe("bundler", () => {
         if (typeof a === "string" || a === null || a === void 0)
           b();
         if (a >>> 0 !== 0)
+          b();
+        if (a)
+          b();
+        if (a)
           b();
         a != null && a.b();
         return 0;

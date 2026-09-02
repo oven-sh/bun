@@ -98,7 +98,11 @@ impl SideEffects {
                         && effects.side_effects == SideEffects::NoSideEffects
                     {
                         // "if (anything && truthyNoSideEffects)" => "if (anything)"
-                        return e.left;
+                        return if minify {
+                            e.left
+                        } else {
+                            Self::simplify_boolean(p, e.left)
+                        };
                     }
                 }
 
@@ -114,7 +118,11 @@ impl SideEffects {
                         && effects.side_effects == SideEffects::NoSideEffects
                     {
                         // "if (anything || falsyNoSideEffects)" => "if (anything)"
-                        return e.left;
+                        return if minify {
+                            e.left
+                        } else {
+                            Self::simplify_boolean(p, e.left)
+                        };
                     }
                 }
 

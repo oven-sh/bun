@@ -784,10 +784,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRunMain, (JSGlobalObject * globalObject, JSC:
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto arg1 = callFrame->argument(0);
 
-    // Node defaults the argument to process.argv[1] (the main entry point):
-    // `function executeUserEntryPoint(main = process.argv[1])`. Without this,
-    // `runMain()` with no argument would coerce `undefined` to the literal
-    // string "undefined" and fail to resolve it as a module.
+    // Node: `function executeUserEntryPoint(main = process.argv[1])`
     if (arg1.isUndefined()) {
         auto* zigGlobalObject = defaultGlobalObject(globalObject);
         if (auto* process = zigGlobalObject->processObject()) {

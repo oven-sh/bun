@@ -170,12 +170,18 @@ describe("node:http client timeout", () => {
     });
   });
 
-  // A connected peer that has stopped reading: writes back up in the handle's
-  // send queue and getBufferedAmount() stays nonzero. Node's _onTimeout
-  // heuristic suppresses 'timeout' only while the write queue is *draining*
-  // (writeQueueSize moved since the last check), re-arming each time; once the
-  // queue stalls it emits. The old `if (getBufferedAmount(handle) > 0) return`
-  // dropped the one-shot timer with no re-arm, so 'timeout' was lost for good.
+  // A connected peer that has stopped reading: the kernel send and receive
+  // buffers fill, the rest of the write sits in the handle's native queue, and
+  // getBufferedAmount() stays nonzero. Node's _onTimeout heuristic suppresses
+  // 'timeout' only while that queue is still *draining* (writeQueueSize moved
+  // since the last check), re-arming each time; once it stalls it emits. The
+  // old `if (getBufferedAmount(handle) > 0) return` dropped the one-shot timer
+  // with no re-arm, so 'timeout' was lost for good.
+  //
+  // One 64 MiB chunk is far above any loopback socket-buffer capacity (Linux
+  // defaults cap at 4 MiB send + 6 MiB receive), so the native queue can never
+  // drain. A smaller write can fit in the kernel outright, and then the old
+  // guard never triggers.
   it("net.Socket 'timeout' fires when a connected write is stalled by a non-reading peer", async () => {
     const accepted: net.Socket[] = [];
     const server = net.createServer(s => {
@@ -191,9 +197,7 @@ describe("node:http client timeout", () => {
     socket.on("error", () => {});
     try {
       await once(socket, "connect");
-      const chunk = Buffer.alloc(1 << 20, 0x42);
-      let mb = 0;
-      while (socket.write(chunk) && ++mb < 64) {}
+      expect(socket.write(Buffer.alloc(64 << 20))).toBe(false);
       expect(socket.writableLength).toBeGreaterThan(0);
 
       socket.setTimeout(200);

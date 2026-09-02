@@ -747,6 +747,10 @@ impl<'a> Transpiler<'a> {
 
     /// Rebuilds `options` and the resolver's copy from `opts`. Call `configure_defines` after.
     pub fn reset_transform_options(&mut self, opts: api::TransformOptions) -> crate::Result<()> {
+        // It copied the old options and env loader; the next parse makes a new one.
+        if let Some(ctx) = self.macro_context.take() {
+            ctx.deinit();
+        }
         // `from_api` leaves this at its default; the VM path applies it.
         let preserve_symlinks = opts.preserve_symlinks.unwrap_or(false);
         self.options = options::BundleOptions::from_api(self.fs_mut(), self.log, opts)?;

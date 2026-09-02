@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "fs";
+import { bunEnv, bunExe } from "harness";
 import tls from "node:tls";
 import { join } from "path";
 import privateKey from "../../third_party/jsonwebtoken/priv.pem" with { type: "text" };
@@ -152,21 +153,24 @@ describe("Bun.serve SSL validations", () => {
     }
   }
 
-  test.each([
-    ["Int16Array", (buffer: SharedArrayBuffer) => new Int16Array(buffer)],
-    ["DataView", (buffer: SharedArrayBuffer) => new DataView(buffer)],
-  ] as const)("SharedArrayBuffer-backed %s as ALPNProtocols does not crash", (_name, makeView) => {
-    const view = makeView(new SharedArrayBuffer(16));
-    expect(() => {
-      using server = Bun.serve({
-        port: 0,
-        fetch() {
-          return new Response("ok");
-        },
-        ALPNProtocols: view,
+  // Spawned so a regressed RELEASE_ASSERT aborts the child, not this test file.
+  test.concurrent.each(["Int16Array", "DataView"])(
+    "SharedArrayBuffer-backed %s as ALPNProtocols does not crash",
+    async viewType => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `Bun.serve({ port: 0, fetch() { return new Response("ok"); }, ALPNProtocols: new ${viewType}(new SharedArrayBuffer(16)) });`,
+        ],
+        env: bunEnv,
+        stderr: "pipe",
       });
-    }).toThrow(TypeError);
-  });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain("TypeError");
+      expect(exitCode).toBe(1);
+    },
+  );
 });
 
 describe("Bun.serve per-serverName client certificate policy", () => {

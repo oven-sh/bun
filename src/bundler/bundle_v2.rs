@@ -7438,8 +7438,6 @@ pub mod bv2_impl {
                         // and `.clone()` where an owned copy is needed.
                         let source_loader: Loader =
                             this.graph.input_files.items_loader()[result_source_index];
-                        // The re-parsed copies keep the module type the resolver
-                        // found for the original file.
                         let source_module_type: options::ModuleType =
                             this.graph.ast.items_module_type()[result_source_index];
 

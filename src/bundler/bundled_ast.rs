@@ -52,12 +52,8 @@ pub struct BundledAst<'arena> {
 
     pub(crate) exports_kind: ExportsKind,
 
-    /// The module type from the file extension (`.mjs`, `.mts`, `.cjs`, `.cts`)
-    /// or else the nearest package.json `"type"`. Unlike `exports_kind` it does
-    /// not depend on the syntax the file uses. The printer passes
-    /// `isNodeMode = 1` to `__toESM` only when this is `Esm`: then a default
-    /// import of a CommonJS module is the whole `module.exports`, as in Node.
-    /// Every other importer honors the `__esModule` marker, as esbuild does.
+    /// From the file extension or the nearest package.json `"type"`, not from
+    /// the syntax (that is `exports_kind`). `Esm` gives `__toESM` `isNodeMode = 1`.
     pub(crate) module_type: ModuleType,
 
     /// These are stored at the AST level instead of on individual AST nodes so
@@ -307,8 +303,7 @@ impl<'arena> BundledAst<'arena> {
             nested_scope_slot_counts: ast.nested_scope_slot_counts,
 
             exports_kind: ast.exports_kind,
-            // The parser does not record it; `ParseTask::run` sets it from the
-            // resolver result after `init`, next to `target`.
+            // `ParseTask::run` sets it from the resolver result, like `target`.
             module_type: ModuleType::Unknown,
 
             import_records: ast.import_records,

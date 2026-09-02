@@ -1352,11 +1352,9 @@ pub struct Options<'a> {
 
     pub require_or_import_meta_for_source_callback: RequireOrImportMetaCallback,
 
-    /// The module type of the file being printed, from its extension (`.mjs`,
-    /// `.mts`, `.cjs`, `.cts`) or the nearest package.json `"type"`, not from
-    /// the syntax it uses. `Esm` makes `__toESM` run with `isNodeMode = 1`: a
-    /// default import of a CommonJS module is then the whole `module.exports`,
-    /// as in Node. Otherwise `__toESM` honors the `__esModule` marker.
+    /// The module type of the file being printed (extension or package.json
+    /// `"type"`, not syntax). `Esm` prints `__toESM(..., 1)`: Node's interop,
+    /// which ignores `__esModule`.
     pub input_module_type: bundle_opts::ModuleType,
     pub module_type: bundle_opts::Format,
 

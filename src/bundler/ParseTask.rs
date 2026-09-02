@@ -2606,9 +2606,7 @@ pub mod parse_worker {
             topts.tree_shaking
         };
         opts.code_splitting = topts.code_splitting;
-        // A task that did not come through the resolver (a plugin `onResolve`
-        // result, an in-memory source) has no module type yet. The extension
-        // still decides it, as it does in the resolver.
+        // A task that bypassed the resolver (plugin result, in-memory source).
         if task.module_type == options::ModuleType::Unknown {
             if let Some(from_ext) = _resolver::module_type_from_ext(task.path.name().ext) {
                 task.module_type = from_ext;

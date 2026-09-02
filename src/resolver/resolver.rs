@@ -1673,8 +1673,7 @@ impl<'a> Resolver<'a> {
             }
         }
 
-        // `.mjs`, `.mts`, `.cjs` and `.cts` decide the module type by
-        // themselves, over any package.json "type".
+        // The extension wins over a package.json "type".
         if !kind.is_from_css() {
             if let Some(from_ext) = module_type_from_ext(result.path_pair.primary.name().ext) {
                 module_type = from_ext;
@@ -6727,8 +6726,7 @@ bun_core::comptime_string_map! {
     };
 }
 
-/// The module type a file extension decides by itself: `.mjs` and `.mts` are
-/// ESM, `.cjs` and `.cts` are CommonJS. `None` for every other extension.
+/// `.mjs`/`.mts` are ESM, `.cjs`/`.cts` are CommonJS, anything else is `None`.
 #[inline]
 pub fn module_type_from_ext(ext: &[u8]) -> Option<options::ModuleType> {
     MODULE_TYPE_FROM_EXT.get(ext).copied()

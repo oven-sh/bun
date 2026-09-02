@@ -5362,8 +5362,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(())
     }
 
-    /// An object pattern invokes getters and an array pattern invokes the
-    /// iterator, so a pattern is only side-effect free over a literal.
+    /// A pattern runs getters or the iterator on its value, so only a literal value is side-effect free.
     fn decl_binding_can_be_removed_if_unused_without_dce_check(
         &mut self,
         decl: &js_ast::g::Decl,
@@ -5459,8 +5458,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         })
     }
 
-    /// The value of data property `key`. The last duplicate key wins, and an
-    /// accessor gives `None`.
+    /// The value of data property `key`: the last duplicate key wins, an accessor gives `None`.
     fn object_literal_data_property(literal: &E::Object, key: &E::EString) -> Option<Expr> {
         literal
             .properties

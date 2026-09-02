@@ -111,10 +111,9 @@ struct Group {
     merged_into: Option<usize>,
 }
 
-/// Fold `from` into `into`: `into` inherits the size, dependencies, load
-/// conditions and impurity; the files are re-keyed through `resolve` at the
-/// end. The merged dependency list is resolved, so a group folded into
-/// either side is listed once, under the group that now owns its files.
+/// Fold `from` into `into`: `into` inherits the size, dependencies (resolved,
+/// so each group appears once), load conditions and impurity; the files are
+/// re-keyed through `resolve` at the end.
 fn fold(groups: &mut [Group], from: usize, into: usize) {
     groups[from].merged_into = Some(into);
     let mut deps = core::mem::take(&mut groups[from].deps);
@@ -199,13 +198,11 @@ fn collect_newly_loaded(
     true
 }
 
-/// Folding `candidate` into `target` hands the merged group both groups'
-/// dependencies and both groups' importers. If one of those dependencies
-/// reaches either group again, the result is a static import cycle between
-/// the merged chunk and the chunks on that path. Cross-chunk bindings are
-/// `var`s, so whichever chunk of the cycle runs first reads `undefined` from
-/// the other. (A direct edge between the two becomes a self-import and
-/// disappears.) Uses `scratch.visited` and `scratch.stack` only.
+/// The merged group imports both groups' dependencies; if one of them reaches
+/// either group, the fold closes a static import cycle, and whichever chunk
+/// runs first reads the other's `var` bindings as `undefined`. A direct edge
+/// between the two becomes a self-import and is fine. Leaves
+/// `scratch.newly_loaded` alone.
 fn fold_creates_cycle(
     groups: &[Group],
     candidate: usize,
@@ -683,10 +680,9 @@ pub(crate) fn merge_small_chunks(
         groups.put(key, group)?;
     }
 
-    // Static dependencies between groups: the edges `File.entry_bits` was
-    // assigned along (`mark_file_reachable_for_code_splitting`), so a
-    // dependency's key is a superset of its importer's. Only rule 2 consults
-    // them.
+    // Static dependencies between groups, along the edges that assigned
+    // `File.entry_bits`, so a dependency's key is a superset of its importer's.
+    // Only rule 2 consults them.
     for (source_index, &group_index) in group_of_file.iter().enumerate() {
         if !fold_pure {
             break;

@@ -963,7 +963,7 @@ impl QueryStringMap {
 
     pub(crate) fn str(&self, ptr: api::StringPointer) -> &[u8] {
         // SAFETY: `slice` is valid for the lifetime of `self` (either borrows
-        // `self.buffer` or an external query_string the caller keeps alive).
+        // `self._buffer` or an external query_string the caller keeps alive).
         let slice = unsafe { &*self.slice };
         &slice[ptr.offset as usize..ptr.offset as usize + ptr.length as usize]
     }

@@ -382,6 +382,30 @@ impl<'a> LinkerContext<'a> {
             && !self.options.ignore_dce_annotations
     }
 
+    /// The bundled file that a live part's import record makes the importer's
+    /// chunk depend on, if any. A split `import()` (or `require()`) loads
+    /// another entry point's chunk on demand instead. An `import` or
+    /// `export ... from` of a side-effect-free file prints nothing: the
+    /// bindings it brings in are part dependencies, which callers follow on
+    /// their own. Code splitting assigns chunks along these edges
+    /// (`mark_file_reachable_for_code_splitting`), so every pass that reasons
+    /// about which chunks load together uses the same ones.
+    pub(crate) fn file_loaded_by_import(
+        &self,
+        record: &ImportRecord,
+        source_index: u32,
+    ) -> Option<u32> {
+        if !record.source_index.is_valid() || self.is_external_dynamic_import(record, source_index)
+        {
+            return None;
+        }
+        let other = record.source_index.get();
+        if record.kind == ImportKind::Stmt && self.file_has_no_side_effects(other) {
+            return None;
+        }
+        Some(other)
+    }
+
     /// Note: this should call a `MimallocArena` debug hook
     /// (`helpCatchMemoryIssues`), but `Graph.heap` is currently
     /// `bun_alloc::Arena = bumpalo::Bump`, which has no such hook, so this is a
@@ -2791,19 +2815,11 @@ impl<'a> LinkerContext<'a> {
                 }
 
                 for &import_index in part.import_record_indices.iter() {
-                    let record = &records[import_index as usize];
-                    if !record.source_index.is_valid()
-                        || self.is_external_dynamic_import(record, source_index)
-                    {
+                    let Some(other) =
+                        self.file_loaded_by_import(&records[import_index as usize], source_index)
+                    else {
                         continue;
-                    }
-                    let other = record.source_index.get();
-
-                    // Prints nothing; its bindings are the part dependencies below.
-                    if record.kind == ImportKind::Stmt && self.file_has_no_side_effects(other) {
-                        continue;
-                    }
-
+                    };
                     if !ctx.file_entry_bits[other as usize].is_set(entry_points_count) {
                         ctx.queue.push_back((other, out_dist));
                     }

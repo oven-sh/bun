@@ -506,6 +506,30 @@ describe("bundler", () => {
   const jsOutput = (api: BundlerTestBundleAPI, name: string) =>
     api.readFile("/out/" + jsFilesIn(api).find(f => f === `${name}.js` || f.startsWith(`${name}-`))!);
 
+  // The files each JS output file statically imports (`... from "./x"`).
+  const staticImports = (api: BundlerTestBundleAPI) =>
+    new Map(
+      jsFilesIn(api).map(f => [f, [...api.readFile("/out/" + f).matchAll(/\bfrom\s*"\.\/([^"]+)"/g)].map(m => m[1])]),
+    );
+
+  // Cross-chunk bindings are `var`s, so a chunk that runs before a chunk it
+  // statically imports reads `undefined`: the static import graph must be
+  // acyclic.
+  const expectNoStaticImportCycle = (imports: Map<string, string[]>) => {
+    const onPath: string[] = [];
+    const done = new Set<string>();
+    const visit = (file: string) => {
+      if (done.has(file)) return;
+      const at = onPath.indexOf(file);
+      if (at !== -1) throw new Error(`static import cycle: ${[...onPath.slice(at), file].join(" -> ")}`);
+      onPath.push(file);
+      for (const other of imports.get(file) ?? []) visit(other);
+      onPath.pop();
+      done.add(file);
+    };
+    for (const file of imports.keys()) visit(file);
+  };
+
   itBundled("splitting/FoldsSharedIntoEntry", {
     files: {
       "/entry.js": /* js */ `
@@ -1993,6 +2017,81 @@ describe("bundler", () => {
       expect(api.readFile("/out/main.js").length).toBeGreaterThan(12000);
     },
     run: { file: "/out/main.js", stdout: "main 12000" },
+  });
+
+  // The entry chunk holds a `"sideEffects": false` barrel whose re-export of
+  // card.js prints nothing, so card.js is loaded by the routes that use it,
+  // not by the entry. card.js imports CommonJS react (a require_react() call
+  // at its top level), which lives in the entry chunk. If the small pure
+  // {r1, r2} chunk that uses Card were folded into the entry chunk, the entry
+  // chunk would import card.js's chunk and card.js's chunk would import
+  // require_react back from it: a static import cycle in which card.js runs
+  // first, while `require_react` is still undefined.
+  itBundled("splitting/MinChunkSizeNoCycleThroughSideEffectFreeReExport", {
+    files: {
+      "/node_modules/react/package.json": JSON.stringify({ name: "react", main: "index.js" }),
+      "/node_modules/react/index.js": /* js */ `
+        module.exports = { createElement(tag) { return "<" + tag + ">" } }
+      `,
+      "/node_modules/ui/package.json": JSON.stringify({ name: "ui", main: "index.js", sideEffects: false }),
+      "/node_modules/ui/index.js": /* js */ `
+        export { Button } from './button.js'
+        export { Card } from './card.js'
+      `,
+      // Padded so that what the entry may gain from a fold covers cards.js.
+      "/node_modules/ui/button.js": /* js */ `
+        import React from 'react'
+        export function Button() { return React.createElement('button') }
+        // ${Buffer.alloc(16 * 1024, "padding ").toString()}
+      `,
+      "/node_modules/ui/card.js": /* js */ `
+        import React from 'react'
+        export function Card() { return React.createElement('div') }
+      `,
+      "/entry.js": /* js */ `
+        import { Button } from 'ui'
+        console.log('entry', Button())
+        import('./r1.js')
+          .then(m => m.default())
+          .then(() => import('./r2.js'))
+          .then(m => m.default())
+          .then(() => import('./r3.js'))
+          .then(m => m.default())
+      `,
+      "/cards.js": /* js */ `
+        import { Card } from 'ui'
+        export function Cards() { return Card() + Card() }
+      `,
+      "/r1.js": /* js */ `
+        import { Cards } from './cards.js'
+        export default function () { console.log('r1', Cards()) }
+      `,
+      "/r2.js": /* js */ `
+        import { Cards } from './cards.js'
+        export default function () { console.log('r2', Cards()) }
+      `,
+      "/r3.js": /* js */ `
+        import { Card } from 'ui'
+        export default function () { console.log('r3', Card()) }
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    splitting: true,
+    minChunkSize: 1024,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      // entry, r1, r2, r3, and the {r1, r2, r3} chunk holding card.js, into
+      // which cards.js folds.
+      expect(jsFilesIn(api)).toHaveLength(5);
+      const cardChunk = chunkContaining(api, 'createElement("div")');
+      api.expectFile("/out/" + cardChunk).toContain("Card() + Card()");
+      const imports = staticImports(api);
+      expect(imports.get(cardChunk)).toEqual(["entry.js"]);
+      expect(imports.get("entry.js")).toEqual([]);
+      expectNoStaticImportCycle(imports);
+    },
+    run: { file: "/out/entry.js", stdout: "entry <button>\nr1 <div><div>\nr2 <div><div>\nr3 <div>" },
   });
 
   // Import attributes describe the source file; once the target is a chunk

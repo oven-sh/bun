@@ -113,11 +113,19 @@ struct Group {
 
 /// Fold `from` into `into`: `into` inherits the size, dependencies, load
 /// conditions and impurity; the files are re-keyed through `resolve` at the
-/// end.
+/// end. The merged dependency list is resolved, so a group folded into
+/// either side is listed once, under the group that now owns its files.
 fn fold(groups: &mut [Group], from: usize, into: usize) {
-    let deps = core::mem::take(&mut groups[from].deps);
-    let (size, pure) = (groups[from].size, groups[from].pure);
     groups[from].merged_into = Some(into);
+    let mut deps = core::mem::take(&mut groups[from].deps);
+    deps.extend(core::mem::take(&mut groups[into].deps));
+    for dep in deps.iter_mut() {
+        *dep = resolve(groups, *dep);
+    }
+    deps.sort_unstable();
+    deps.dedup();
+    deps.retain(|&d| d != into);
+    let (size, pure) = (groups[from].size, groups[from].pure);
     let (from, target) = if from < into {
         let (a, b) = groups.split_at_mut(into);
         (&a[from], &mut b[0])
@@ -128,10 +136,7 @@ fn fold(groups: &mut [Group], from: usize, into: usize) {
     target.size += size;
     target.pure &= pure;
     target.loaded.set_union(&from.loaded);
-    target.deps.extend(deps);
-    target.deps.sort_unstable();
-    target.deps.dedup();
-    target.deps.retain(|&d| d != into);
+    target.deps = deps;
 }
 
 /// Follow `merged_into` links to the group that now owns the files.
@@ -192,6 +197,47 @@ fn collect_newly_loaded(
             .extend(dep.deps.iter().map(|&e| resolve(groups, e)));
     }
     true
+}
+
+/// Folding `candidate` into `target` hands the merged group both groups'
+/// dependencies and both groups' importers. If one of those dependencies
+/// reaches either group again, the result is a static import cycle between
+/// the merged chunk and the chunks on that path. Cross-chunk bindings are
+/// `var`s, so whichever chunk of the cycle runs first reads `undefined` from
+/// the other. (A direct edge between the two becomes a self-import and
+/// disappears.) Uses `scratch.visited` and `scratch.stack` only.
+fn fold_creates_cycle(
+    groups: &[Group],
+    candidate: usize,
+    target: usize,
+    scratch: &mut Scratch,
+) -> bool {
+    scratch.epoch += 1;
+    let epoch = scratch.epoch;
+    scratch.stack.clear();
+    for &d in groups[candidate]
+        .deps
+        .iter()
+        .chain(groups[target].deps.iter())
+    {
+        let d = resolve(groups, d);
+        if d != candidate && d != target {
+            scratch.stack.push(d);
+        }
+    }
+    while let Some(d) = scratch.stack.pop() {
+        if core::mem::replace(&mut scratch.visited[d], epoch) == epoch {
+            continue;
+        }
+        for &e in groups[d].deps.iter() {
+            let e = resolve(groups, e);
+            if e == candidate || e == target {
+                return true;
+            }
+            scratch.stack.push(e);
+        }
+    }
+    false
 }
 
 const UNREACHED: u32 = u32::MAX;
@@ -281,7 +327,8 @@ fn immediate_dominators<'a>(
 ///    already loaded wherever that target is (or is side-effect free too); the
 ///    extra entries then carry some unused definitions, but no side effect
 ///    runs earlier than before. What an entry gains this way is capped
-///    relative to what it already loaded.
+///    relative to what it already loaded, and the merged chunk must not end
+///    up importing a chunk that imports it back (`fold_creates_cycle`).
 ///
 /// Runs before `compute_chunks` groups files by `entry_bits`; it rewrites
 /// `File.entry_bits` in place so everything downstream (chunk membership,
@@ -636,8 +683,10 @@ pub(crate) fn merge_small_chunks(
         groups.put(key, group)?;
     }
 
-    // Static dependencies between groups, from the live parts' import records
-    // and symbol dependencies. Only rule 2 consults them.
+    // Static dependencies between groups: the edges `File.entry_bits` was
+    // assigned along (`mark_file_reachable_for_code_splitting`), so a
+    // dependency's key is a superset of its importer's. Only rule 2 consults
+    // them.
     for (source_index, &group_index) in group_of_file.iter().enumerate() {
         if !fold_pure {
             break;
@@ -653,10 +702,8 @@ pub(crate) fn merge_small_chunks(
             }
             for &record_index in part.import_record_indices.iter() {
                 let record = &import_records[source_index][record_index as usize];
-                if record.source_index.is_valid()
-                    && !this.is_external_dynamic_import(record, source_index as u32)
-                {
-                    deps.push(group_of_file[record.source_index.get() as usize]);
+                if let Some(other) = this.file_loaded_by_import(record, source_index as u32) {
+                    deps.push(group_of_file[other as usize]);
                 }
             }
             for dependency in part.dependencies.iter() {
@@ -852,7 +899,7 @@ pub(crate) fn merge_small_chunks(
                     }
                     gained.push((entry_id, bytes));
                 }
-                true
+                !fold_creates_cycle(groups.values(), candidate, target, &mut scratch)
             });
             if let Some(target) = chosen {
                 for &(entry_id, bytes) in &gained {

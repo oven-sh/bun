@@ -158,10 +158,6 @@ const { values: options, positionals: filters } = parseArgs({
       multiple: true,
       default: undefined,
     },
-    ["skip-slower-than"]: {
-      type: "string",
-      default: undefined,
-    },
     ["quiet"]: {
       type: "boolean",
       default: false,
@@ -2564,22 +2560,6 @@ function getRelevantTests(cwd, testModifiers, testExpectations) {
       }
       !isQuiet && console.log("Excluding tests:", excludes, excludedTests.length, "/", availableTests.length);
     }
-  }
-
-  // Drop the slowest files by expected duration. Used on lanes that trade a
-  // little coverage for throughput; the same files still run on other lanes.
-  const skipSlowerThan = parseInt(options["skip-slower-than"]);
-  if (skipSlowerThan > 0) {
-    const durations = loadExpectedDurations(cwd);
-    const slow = availableTests.filter(testPath => (durations[testPath.replaceAll("\\", "/")] ?? 0) >= skipSlowerThan);
-    for (const testPath of slow) availableTests.splice(availableTests.indexOf(testPath), 1);
-    !isQuiet &&
-      console.log(
-        `Skipping tests slower than ${skipSlowerThan}ms:`,
-        slow.length,
-        "/",
-        availableTests.length + slow.length,
-      );
   }
 
   const skipExpectations = testExpectations

@@ -3,6 +3,7 @@ import {
   bunEnv,
   bunExe,
   isArm64,
+  isDebug,
   isLinux,
   isMacOS,
   isMusl,
@@ -13,7 +14,7 @@ import {
   nodeExe,
   tempDir,
 } from "harness";
-import { chmodSync, closeSync, cpSync, existsSync, openSync, readSync } from "node:fs";
+import { chmodSync, closeSync, cpSync, existsSync, openSync, readdirSync, readSync } from "node:fs";
 import { join } from "path";
 
 describe("Bun.build compile", () => {
@@ -721,9 +722,7 @@ if (isLinux) {
       return false;
     }
 
-    // isOhos: bottle 带 codesign 节导致 patchelf 把 interp 追加到文件尾，
-    // compile 的尾部搬移会丢内容（见台账 2026-08-09）；该场景是 NixOS 专属。
-    test.skipIf(isOhos || !patchelf || !existsSync(ldso) || hostLooksNix())(
+    test.skipIf(!patchelf || !existsSync(ldso) || hostLooksNix())(
       "compiled binary works when template bun has patchelf-inserted RW PT_LOAD (#31023)",
       async () => {
         using dir = tempDir("build-compile-patchelf-rw-regression", {
@@ -930,9 +929,7 @@ if (process.platform === "android") {
 // removed AFTER the process starts, which `Bun.spawn`'s `cwd` can't do, so a
 // shell wrapper `cd`s in, `rmdir`s, then execs the binary (how a user hits it).
 describe("compiled binary in a deleted cwd", () => {
-  // isOhos: 删除 cwd 后编译产物仍能启动（hmdfs/沙箱下 cwd 解析不炸），
-  // 平台行为差异，非回归。
-  test.if(isPosix && !isOhos)(
+  test.if(isPosix)(
     "exits cleanly instead of crashing",
     async () => {
       using dir = tempDir("build-compile-deleted-cwd", {
@@ -972,14 +969,14 @@ describe("compiled binary in a deleted cwd", () => {
   );
 });
 
-// src/runtime/api/bun/ohos_node_userinfo.rs: the NODE_OPTIONS injection is
-// wired into Bun.spawn itself, so a `bun build --compile` output inherits it
-// automatically (the compile embeds the running runtime) -- this is the one
-// test that actually proves that, as opposed to every other test in this
-// file running against a plain `bun run`.
-// Gated on the platform flag (not the device-detecting isOhos): this port's
-// app sandbox has no passwd entry for the app uid, so a standalone node child
-// reports username "unknown" and the assertion below can never pass here.
+// Every region of the embedded module graph (file contents, names, bytecode, the
+// module table) is addressed by a 32-bit offset and length. `to_bytes` used to cast
+// every offset with `as u32`, so a graph past 4 GiB was written with wrapped
+// offsets: the build succeeded and the executable failed at startup
+// (`Module not found ''`) or read the wrong bytes. The build has to fail instead.
+//
+// Debug builds lower the limit through BUN_DEBUG_TEST_STANDALONE_GRAPH_MAX_BYTES
+// so the test does not need a 4 GiB input. The message still names the real limit.
 const ohosNode = isOHOS ? nodeExe() : null;
 describe.skipIf(!isOHOS || !ohosNode)("HarmonyOS: compiled binary's spawned node child", () => {
   test("gets a working os.userInfo() with a clean env, simulating a fresh device", async () => {
@@ -1021,6 +1018,62 @@ describe.skipIf(!isOHOS || !ohosNode)("HarmonyOS: compiled binary's spawned node
     expect(typeof info.username).toBe("string");
     expect(info.username.length).toBeGreaterThan(0);
     expect(info.username).not.toBe("unknown");
+    expect(exitCode).toBe(0);
+  });
+});
+
+describe.concurrent("embedded module graph size limit", () => {
+  const asset = Buffer.alloc(8 * 1024 * 1024, "x");
+  const files = {
+    "app.js": `import big from "./big.bin" with { type: "file" };
+console.log(require("fs").statSync(big).size);`,
+    "big.bin": asset,
+  };
+
+  test.skipIf(!isDebug)("build --compile fails when the graph is larger than the offsets can address", async () => {
+    using dir = tempDir("build-compile-graph-too-large", files);
+
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", "app.js", "--outfile", "app"],
+      env: { ...bunEnv, BUN_DEBUG_TEST_STANDALONE_GRAPH_MAX_BYTES: String(4 * 1024 * 1024) },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+
+    expect(stderr).toContain(
+      "failed to generate module graph bytes: embedded module graph would exceed 4 GiB (its offsets are 32-bit)",
+    );
+    expect(exitCode).toBe(1);
+    // No executable, not even a partial one.
+    expect(readdirSync(String(dir)).sort()).toEqual(["app.js", "big.bin"]);
+  });
+
+  test.skipIf(!isDebug)("build --compile still succeeds when the graph fits under the limit", async () => {
+    using dir = tempDir("build-compile-graph-fits", files);
+    const outfile = join(String(dir), isWindows ? "app.exe" : "app");
+
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", "app.js", "--outfile", outfile],
+      env: { ...bunEnv, BUN_DEBUG_TEST_STANDALONE_GRAPH_MAX_BYTES: String(256 * 1024 * 1024) },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, buildStderr, buildExit] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+    expect(buildStderr).not.toContain("error");
+    expect(buildExit).toBe(0);
+
+    await using proc = Bun.spawn({
+      cmd: [outfile],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe(`${asset.byteLength}\n`);
     expect(exitCode).toBe(0);
   });
 });

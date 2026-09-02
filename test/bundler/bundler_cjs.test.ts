@@ -3,28 +3,27 @@ import { itBundled } from "./expectBundled";
 
 // Tests for CommonJS <> ESM interop, specifically the __toESM helper behavior.
 //
-// The key insight from the code change:
-// - `input_module_type` is set based on the AST's exports_kind (whether the importing
-//   file uses ESM syntax like import/export or CJS syntax like require/module.exports)
-// - When a file uses ESM syntax (import/export), isNodeMode = 1
-// - When a file uses CJS syntax (require), __toESM is not used at all
+// `__toESM(mod, isNodeMode)` builds the ESM view of a CommonJS module. The
+// bundler picks `isNodeMode` from the module type of the *importing* file, the
+// same way esbuild does. The syntax the importer uses does not matter.
 //
-// This means:
-// - Any file using `import` will always get isNodeMode=1, which IGNORES __esModule
-//   and always wraps the CJS module as the default export
-// - This matches Node.js ESM behavior where importing CJS from .mjs always wraps
-//   the entire exports object as the default
+// - `.mjs`, `.mts`, or a `.js`/`.ts` file under package.json `"type": "module"`:
+//   isNodeMode=1. The default import is the whole `module.exports`, as in
+//   Node. `__esModule` is ignored.
+// - Every other importer (`.js`, `.ts`, no package.json `"type"`, or
+//   `"type": "commonjs"`): isNodeMode=0. When `module.exports.__esModule` is
+//   truthy, the default import is `module.exports.default`. Otherwise it is
+//   the whole `module.exports`. This matches `bun run` and esbuild.
 //
-// The __esModule marker is only respected in non-bundled scenarios or when using
-// actual CommonJS require() syntax.
+// A bare `require()` never goes through `__toESM`.
 
 describe("bundler", () => {
   // ============================================================================
-  // Tests with ESM syntax (import statements)
-  // These all use isNodeMode=1, which IGNORES __esModule
+  // Tests with a `.js` importer and no package.json "type"
+  // These use isNodeMode=0, which honors __esModule
   // ============================================================================
 
-  // Test 1: import with __esModule marker - IGNORED
+  // Test 1: import with __esModule marker - honored
   itBundled("cjs/__toESM_import_syntax_with_esModule", {
     files: {
       "/entry.js": /* js */ `
@@ -38,9 +37,9 @@ describe("bundler", () => {
       `,
     },
     run: {
-      // With import syntax, isNodeMode=1, so __esModule is IGNORED
-      // The entire CJS exports object is wrapped as default
-      stdout: '{"__esModule":true,"default":{"value":"default export"},"named":"named export"}',
+      // The importer is a `.js` file with no package.json "type", so
+      // isNodeMode=0 and the default import is `exports.default`
+      stdout: '{"value":"default export"}',
     },
   });
 
@@ -124,14 +123,18 @@ describe("bundler", () => {
       `,
     },
     run: {
-      // Namespace import only gets the CJS exports as-is, no default wrapper
-      stdout: '{"bar":"bar","foo":"foo"}',
+      // Namespace import only gets the CJS exports as-is, no default wrapper.
+      // The lifted module keeps the order of its `exports.x = ...` assignments,
+      // like `module.exports` would.
+      stdout: '{"foo":"foo","bar":"bar"}',
     },
   });
 
   // ============================================================================
   // Tests with different targets
-  // Target doesn't affect isNodeMode - it's based on syntax
+  // Target doesn't affect isNodeMode - it's based on the importer's module type.
+  // The fixture assigns `module.exports` so the module keeps its CommonJS
+  // wrapper and the default import goes through __toESM.
   // ============================================================================
 
   // Test 7: target=node
@@ -142,11 +145,13 @@ describe("bundler", () => {
         console.log(JSON.stringify(lib));
       `,
       "/lib.cjs": /* js */ `
-        exports.x = 1;
-        exports.y = 2;
+        module.exports = { x: 1, y: 2 };
       `,
     },
     target: "node",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("__toESM(");
+    },
     run: {
       stdout: '{"x":1,"y":2}',
     },
@@ -160,11 +165,13 @@ describe("bundler", () => {
         console.log(JSON.stringify(lib));
       `,
       "/lib.cjs": /* js */ `
-        exports.x = 1;
-        exports.y = 2;
+        module.exports = { x: 1, y: 2 };
       `,
     },
     target: "browser",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("__toESM(");
+    },
     run: {
       stdout: '{"x":1,"y":2}',
     },
@@ -178,11 +185,13 @@ describe("bundler", () => {
         console.log(JSON.stringify(lib));
       `,
       "/lib.cjs": /* js */ `
-        exports.x = 1;
-        exports.y = 2;
+        module.exports = { x: 1, y: 2 };
       `,
     },
     target: "bun",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("__toESM(");
+    },
     run: {
       stdout: '{"x":1,"y":2}',
     },
@@ -208,8 +217,8 @@ describe("bundler", () => {
     },
     format: "esm",
     run: {
-      // __esModule ignored because we're using import syntax
-      stdout: '{"__esModule":true,"default":"the default","other":"other"}',
+      // __esModule honored: the `.js` importer has no package.json "type"
+      stdout: '"the default"',
     },
   });
 
@@ -228,8 +237,8 @@ describe("bundler", () => {
     },
     format: "cjs",
     run: {
-      // Still ignores __esModule because entry uses import syntax
-      stdout: '{"__esModule":true,"default":"the default","other":"other"}',
+      // Output format does not change isNodeMode either
+      stdout: '"the default"',
     },
   });
 
@@ -257,7 +266,7 @@ describe("bundler", () => {
     },
   });
 
-  // Test 13: .mjs re-exporting with __esModule (still ignored)
+  // Test 13: .mjs re-exporting with __esModule (ignored: the importer is .mjs)
   itBundled("cjs/__toESM_mjs_reexport_with_esModule", {
     files: {
       "/entry.js": /* js */ `
@@ -274,7 +283,8 @@ describe("bundler", () => {
       `,
     },
     run: {
-      // __esModule ignored - entire module wrapped as default
+      // The file that imports lib.cjs is wrapper.mjs, so isNodeMode=1 and the
+      // entire module is the default, as in Node
       stdout: '{"__esModule":true,"default":{"value":"from cjs"},"other":"other"}',
     },
   });
@@ -361,8 +371,10 @@ describe("bundler", () => {
       `,
     },
     run: {
-      stdout:
-        '{"default":{"foo":"foo","bar":"bar"},"named":"foo","namespace":{"default":{"foo":"foo","bar":"bar"},"foo":"foo","bar":"bar"}}',
+      // The default import is `module.exports`, which for a lifted CommonJS
+      // module is the namespace object itself, so the namespace has no
+      // separate `default` key (the same as a lone `import *`, Test 6).
+      stdout: '{"default":{"foo":"foo","bar":"bar"},"named":"foo","namespace":{"foo":"foo","bar":"bar"}}',
     },
   });
 
@@ -380,9 +392,8 @@ describe("bundler", () => {
       `,
     },
     run: {
-      // Even if __esModule were respected, only `true` would work
-      // But it's ignored anyway due to import syntax
-      stdout: '{"__esModule":"truthy","default":{"value":"default"},"other":"other"}',
+      // __toESM tests __esModule for truthiness, like esbuild
+      stdout: '{"value":"default"}',
     },
   });
 
@@ -400,7 +411,7 @@ describe("bundler", () => {
       `,
     },
     run: {
-      // Entire module wrapped as default (since we use import syntax)
+      // A falsy __esModule means the entire module is the default
       stdout: '{"__esModule":false,"default":{"value":"ignored"},"foo":"foo"}',
     },
   });
@@ -421,14 +432,14 @@ describe("bundler", () => {
       `,
     },
     run: {
-      // __esModule is in the object but ignored due to import syntax
-      stdout: '{"__esModule":true,"default":{"value":"nested"},"other":"prop"}',
+      // __esModule on a replaced module.exports is honored too
+      stdout: '{"value":"nested"}',
     },
   });
 
   // Test 21: Input=ESM, output=CJS, importing CJS with __esModule and named imports
-  // This test covers the specific fix for printing __toESM when output format is CJS
-  // and input uses ESM syntax to import both default and named exports from CJS with __esModule
+  // This test covers printing __toESM when output format is CJS and the input
+  // uses ESM syntax to import both default and named exports from CJS with __esModule
   itBundled("cjs/__toESM_input_esm_output_cjs_wrapper_print", {
     files: {
       "/entry.js": /* js */ `
@@ -443,10 +454,8 @@ describe("bundler", () => {
     },
     format: "cjs",
     run: {
-      // With the fix: ignores __esModule, wraps entire module as default
-      // So default gets the whole exports object, named gets the named property
-      stdout:
-        '{"default":{"__esModule":true,"default":{"value":"default"},"named":"named export"},"named":"named export"}',
+      // default gets `exports.default`, named gets the named property
+      stdout: '{"default":{"value":"default"},"named":"named export"}',
     },
   });
 
@@ -595,6 +604,327 @@ describe("bundler", () => {
     format: "cjs",
     run: {
       stdout: "loaded ok",
+    },
+  });
+
+  // ============================================================================
+  // isNodeMode follows the importer's module type: the file extension first,
+  // then the nearest package.json "type". One test per importer kind.
+  //
+  // `dep.cjs` sets the marker with Object.defineProperty, the way TypeScript
+  // and Babel emit it. `typeof d` tells the two interops apart: "function" is
+  // `exports.default`, "object" is the whole `module.exports`.
+  // ============================================================================
+
+  const esModuleDep = /* js */ `
+    "use strict";
+    Object.defineProperty(exports, "__esModule", { value: true });
+    exports.named = 1;
+    exports.default = function theDefault() {};
+  `;
+  const logDefaultAndNamed = /* js */ `
+    import d, { named } from "./dep.cjs";
+    console.log(typeof d, named);
+  `;
+
+  // Test 29: a `.ts` importer gets `exports.default`, the same as `bun run`
+  itBundled("cjs/__toESM_ts_importer_honors_esModule", {
+    files: {
+      "/entry.ts": logDefaultAndNamed,
+      "/dep.cjs": esModuleDep,
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("__toESM(require_dep())");
+    },
+    run: {
+      stdout: "function 1",
+    },
+  });
+
+  // Test 30: a `.mjs` importer gets the whole `module.exports`, as in Node
+  itBundled("cjs/__toESM_mjs_importer_node_mode", {
+    files: {
+      "/entry.mjs": logDefaultAndNamed,
+      "/dep.cjs": esModuleDep,
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("__toESM(require_dep(), 1)");
+    },
+    run: {
+      stdout: "object 1",
+    },
+  });
+
+  // Test 31: `.mts` behaves like `.mjs`
+  itBundled("cjs/__toESM_mts_importer_node_mode", {
+    files: {
+      "/entry.mts": logDefaultAndNamed,
+      "/dep.cjs": esModuleDep,
+    },
+    run: {
+      stdout: "object 1",
+    },
+  });
+
+  // Test 32: package.json "type": "module" makes a `.ts` importer ESM.
+  // The resolver reads "type" from the enclosing package.json, and it only
+  // treats a package.json with a "name" as enclosing.
+  itBundled("cjs/__toESM_type_module_importer_node_mode", {
+    files: {
+      "/entry.ts": logDefaultAndNamed,
+      "/dep.cjs": esModuleDep,
+      "/package.json": `{ "name": "app", "type": "module" }`,
+    },
+    run: {
+      stdout: "object 1",
+    },
+  });
+
+  // Test 33: package.json "type": "commonjs" keeps the `__esModule` interop
+  itBundled("cjs/__toESM_type_commonjs_importer_honors_esModule", {
+    files: {
+      "/entry.js": logDefaultAndNamed,
+      "/dep.cjs": esModuleDep,
+      "/package.json": `{ "name": "app", "type": "commonjs" }`,
+    },
+    run: {
+      stdout: "function 1",
+    },
+  });
+
+  // Test 34: the `.mjs` extension wins over package.json "type": "commonjs"
+  itBundled("cjs/__toESM_mjs_importer_overrides_type_commonjs", {
+    files: {
+      "/entry.mjs": logDefaultAndNamed,
+      "/dep.cjs": esModuleDep,
+      "/package.json": `{ "name": "app", "type": "commonjs" }`,
+    },
+    run: {
+      stdout: "object 1",
+    },
+  });
+
+  // Test 35: the rule applies per file. A `.ts` entry and a `.mjs` file that
+  // import the same CJS module each see their own interop.
+  itBundled("cjs/__toESM_per_importer_module_type", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import d from "./dep.cjs";
+        import { fromMjs } from "./other.mjs";
+        console.log(typeof d, typeof fromMjs);
+      `,
+      "/other.mjs": /* js */ `
+        import d from "./dep.cjs";
+        export const fromMjs = d;
+      `,
+      "/dep.cjs": esModuleDep,
+    },
+    run: {
+      stdout: "function object",
+    },
+  });
+
+  const dynamicImportLog = /* js */ `
+    const m = await import("./dep.cjs");
+    console.log(typeof m.default, m.named);
+  `;
+
+  // Test 36: dynamic import of a bundled CJS module, `.ts` importer
+  itBundled("cjs/__toESM_dynamic_import_ts_importer", {
+    files: {
+      "/entry.ts": dynamicImportLog,
+      "/dep.cjs": esModuleDep,
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("__toESM(require_dep())");
+    },
+    run: {
+      stdout: "function 1",
+    },
+  });
+
+  // Test 37: dynamic import of a bundled CJS module, `.mjs` importer
+  itBundled("cjs/__toESM_dynamic_import_mjs_importer", {
+    files: {
+      "/entry.mjs": dynamicImportLog,
+      "/dep.cjs": esModuleDep,
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("__toESM(require_dep(), 1)");
+    },
+    run: {
+      stdout: "object 1",
+    },
+  });
+
+  // Test 38: with splitting, the CJS module lands in its own chunk and the
+  // importer unwraps it with `.then((m) => __toESM(m.default))`
+  itBundled("cjs/__toESM_splitting_dynamic_import_ts_importer", {
+    files: {
+      "/entry.ts": dynamicImportLog,
+      "/dep.cjs": esModuleDep,
+    },
+    splitting: true,
+    outdir: "/out",
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.js").toContain("__toESM(m.default))");
+    },
+    run: {
+      file: "/out/entry.js",
+      stdout: "function 1",
+    },
+  });
+
+  // Test 39: the same with a `.mjs` importer
+  itBundled("cjs/__toESM_splitting_dynamic_import_mjs_importer", {
+    files: {
+      "/entry.mjs": dynamicImportLog,
+      "/dep.cjs": esModuleDep,
+    },
+    splitting: true,
+    outdir: "/out",
+    outputPaths: ["/out/entry.js"],
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.js").toContain("__toESM(m.default,1))");
+    },
+    run: {
+      file: "/out/entry.js",
+      stdout: "object 1",
+    },
+  });
+
+  const externalImportLog = /* js */ `
+    import d, { named } from "ext";
+    console.log(typeof d, named);
+  `;
+  const externalRuntimeFiles = {
+    "/node_modules/ext/package.json": `{ "name": "ext", "main": "index.js" }`,
+    "/node_modules/ext/index.js": esModuleDep,
+  };
+
+  // Test 40: an external CJS dependency in CJS output, `.ts` importer
+  itBundled("cjs/__toESM_external_require_ts_importer", {
+    files: {
+      "/entry.ts": externalImportLog,
+    },
+    runtimeFiles: externalRuntimeFiles,
+    external: ["ext"],
+    target: "node",
+    format: "cjs",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain('__toESM(require("ext"))');
+    },
+    run: {
+      stdout: "function 1",
+    },
+  });
+
+  // Test 41: an external CJS dependency in CJS output, `.mjs` importer
+  itBundled("cjs/__toESM_external_require_mjs_importer", {
+    files: {
+      "/entry.mjs": externalImportLog,
+    },
+    runtimeFiles: externalRuntimeFiles,
+    external: ["ext"],
+    target: "node",
+    format: "cjs",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain('__toESM(require("ext"), 1)');
+    },
+    run: {
+      stdout: "object 1",
+    },
+  });
+
+  // ============================================================================
+  // Files reached through a package.json "exports" map. The matched "import" or
+  // "require" condition is not a module type. Only the extension and the
+  // nearest package.json "type" are.
+  // ============================================================================
+
+  const cjsDepFiles = {
+    "/node_modules/cjs-dep/package.json": `{ "name": "cjs-dep", "main": "index.js" }`,
+    "/node_modules/cjs-dep/index.js": esModuleDep,
+  };
+  const reexportDefault = /* js */ `
+    import d from "cjs-dep";
+    export default d;
+  `;
+  const logTypeofDefault = /* ts */ `
+    import x from "pkg";
+    console.log(typeof x);
+  `;
+
+  // Test 42: "fake ESM" reached through the "import" condition of a package
+  // without "type" honors __esModule, like esbuild and `bun run`
+  itBundled("cjs/__toESM_exports_import_condition_without_type", {
+    files: {
+      "/entry.ts": logTypeofDefault,
+      "/node_modules/pkg/package.json": `{
+        "name": "pkg",
+        "exports": { "import": "./esm/index.js", "require": "./cjs/index.js" }
+      }`,
+      "/node_modules/pkg/esm/index.js": reexportDefault,
+      "/node_modules/pkg/cjs/index.js": /* js */ `module.exports = require("cjs-dep").default;`,
+      ...cjsDepFiles,
+    },
+    run: {
+      stdout: "function",
+    },
+  });
+
+  // Test 43: the same package with "type": "module" gets Node's interop
+  itBundled("cjs/__toESM_exports_import_condition_type_module", {
+    files: {
+      "/entry.ts": logTypeofDefault,
+      "/node_modules/pkg/package.json": `{
+        "name": "pkg",
+        "type": "module",
+        "exports": { "import": "./esm/index.js", "require": "./cjs/index.js" }
+      }`,
+      "/node_modules/pkg/esm/index.js": reexportDefault,
+      "/node_modules/pkg/cjs/index.js": /* js */ `module.exports = require("cjs-dep").default;`,
+      ...cjsDepFiles,
+    },
+    run: {
+      stdout: "object",
+    },
+  });
+
+  // Test 44: a nested package.json with "type": "module" next to the resolved
+  // file makes it ESM, whatever the package root says
+  itBundled("cjs/__toESM_exports_nested_type_module", {
+    files: {
+      "/entry.ts": logTypeofDefault,
+      "/node_modules/pkg/package.json": `{
+        "name": "pkg",
+        "exports": { "import": "./esm/index.js", "require": "./cjs/index.js" }
+      }`,
+      "/node_modules/pkg/esm/package.json": `{ "type": "module" }`,
+      "/node_modules/pkg/esm/index.js": reexportDefault,
+      "/node_modules/pkg/cjs/index.js": /* js */ `module.exports = require("cjs-dep").default;`,
+      ...cjsDepFiles,
+    },
+    run: {
+      stdout: "object",
+    },
+  });
+
+  // Test 45: a `.mjs` file is ESM even inside a "type": "commonjs" package
+  itBundled("cjs/__toESM_exports_mjs_in_type_commonjs_package", {
+    files: {
+      "/entry.ts": logTypeofDefault,
+      "/node_modules/pkg/package.json": `{
+        "name": "pkg",
+        "type": "commonjs",
+        "exports": { "import": "./index.mjs", "require": "./index.cjs" }
+      }`,
+      "/node_modules/pkg/index.mjs": reexportDefault,
+      "/node_modules/pkg/index.cjs": /* js */ `module.exports = require("cjs-dep").default;`,
+      ...cjsDepFiles,
+    },
+    run: {
+      stdout: "object",
     },
   });
 });

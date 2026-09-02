@@ -1317,7 +1317,7 @@ describe("bundler", () => {
     snapshotSourceMap: {
       "entry.js.map": {
         files: ["../node_modules/react/index.js", "../entry.js"],
-        mappingsExactMatch: "2lBACA,WAAW,IAAQ,EAAE,ICDrB,eACA,QAAQ,IAAI,CAAK",
+        mappingsExactMatch: "2lBACA,WAAW,IAAQ,EAAE,ICDrB,aACA,QAAQ,IAAI,CAAK",
       },
     },
   });
@@ -1696,6 +1696,103 @@ describe("bundler", () => {
       stdout: `
         Hello World
       `,
+    },
+  });
+  // Under --target bun/node the resolver returns a builtin as an external result. An entry point
+  // has to be bundled, so that used to be scheduled as a file named after the specifier ("File not
+  // found"). "bun:wrap" is the name the bundler registers its runtime under, so that one was dropped
+  // instead and the build failed with no entry point named.
+  itBundled("edgecase/EntryPointIsNodeBuiltinWithTargetBun", {
+    files: {
+      "/entry.ts": `console.log("never built");`,
+    },
+    entryPointsRaw: ["node:fs"],
+    target: "bun",
+    bundleErrors: {
+      "<bun>": ['Cannot use "node:fs" as an entry point: it resolves to a builtin module'],
+    },
+  });
+  itBundled("edgecase/EntryPointIsBareNodeBuiltinWithTargetNode", {
+    files: {
+      "/entry.ts": `console.log("never built");`,
+    },
+    entryPointsRaw: ["fs"],
+    target: "node",
+    bundleErrors: {
+      "<bun>": ['Cannot use "fs" as an entry point: it resolves to a builtin module'],
+    },
+  });
+  itBundled("edgecase/EntryPointIsBunWrap", {
+    files: {
+      "/entry.ts": `console.log("never built");`,
+    },
+    entryPointsRaw: ["bun:wrap"],
+    target: "bun",
+    bundleErrors: {
+      "<bun>": ['Cannot use "bun:wrap" as an entry point: it resolves to a builtin module'],
+    },
+  });
+  itBundled("edgecase/EntryPointIsBunBuiltinNextToRealEntryPoint", {
+    files: {
+      "/entry.ts": `console.log("built");`,
+    },
+    entryPoints: ["/entry.ts"],
+    entryPointsRaw: ["bun"],
+    outdir: "/out",
+    target: "bun",
+    bundleErrors: {
+      "<bun>": ['Cannot use "bun" as an entry point: it resolves to a builtin module'],
+    },
+  });
+  // A package.json "imports" entry that maps to a builtin resolves to the same external result.
+  itBundled("edgecase/EntryPointIsImportsAliasOfBuiltin", {
+    files: {
+      "/package.json": `{ "name": "app", "imports": { "#fs": "node:fs" } }`,
+      "/entry.ts": `console.log("never built");`,
+    },
+    entryPointsRaw: ["#fs"],
+    target: "bun",
+    bundleErrors: {
+      "<bun>": ['Cannot use "#fs" as an entry point: it resolves to a builtin module'],
+    },
+  });
+  // A bare entry point is retried as "./<name>" when it does not resolve to a package. A name that
+  // is also a builtin takes the same retry instead of failing.
+  itBundled("edgecase/EntryPointNamedLikeBuiltinIsALocalFile", {
+    files: {
+      "/util.ts": `console.log("local util");`,
+    },
+    entryPointsRaw: ["util"],
+    target: "bun",
+    onAfterBundle(api) {
+      api.expectFile("/out/util.js").toContain("local util");
+    },
+  });
+  // --external applies to imports, not to entry points (#12734 did this for the patterns). An exact
+  // match on the entry point's package name used to come back as the same unbundleable external result.
+  itBundled("edgecase/EntryPointIsExternalPackage", {
+    files: {
+      "/node_modules/pkg/package.json": `{ "name": "pkg", "main": "index.js" }`,
+      "/node_modules/pkg/index.js": `console.log("bundled pkg");`,
+    },
+    entryPointsRaw: ["pkg"],
+    external: ["pkg"],
+    target: "bun",
+    onAfterBundle(api) {
+      api.expectFile("/out/node_modules/pkg/index.js").toContain("bundled pkg");
+    },
+  });
+  // An exact match on the entry point's own file resolved to an external result too. That one was
+  // bundled, but without the package.json and tsconfig the normal resolution attaches.
+  itBundled("edgecase/EntryPointIsExternalFile", {
+    files: {
+      "/entry.tsx": `console.log(<div />);`,
+      "/tsconfig.json": `{ "compilerOptions": { "jsx": "react", "jsxFactory": "h" } }`,
+    },
+    external: ["./entry.tsx"],
+    target: "bun",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("h(");
     },
   });
   itBundled("edgecase/IntegerUnderflow#12547", {

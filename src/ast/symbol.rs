@@ -123,12 +123,9 @@ bitflags::bitflags! {
         /// chain. Read by HMR live bindings and the printer's same-target fold.
         const HAS_BEEN_ASSIGNED_TO = 1 << 5;
 
-        /// The file references this variable somewhere other than as the
-        /// object of a property read (`x.key`, `x[key]`, `const {key} = x`).
-        /// A call (`x.m()`), an argument (`f(x)`), a `delete x.key`, or any
-        /// other use lets the value escape, after which a property read on it
-        /// can no longer be assumed to be a plain data access. Set on the root
-        /// of the symbol's link chain.
+        /// The file uses this variable somewhere other than as the object of a
+        /// property read (`x.key`, `x[key]`, `const {key} = x`), so its value
+        /// escapes. Set on the root of the symbol's link chain.
         const HAS_NON_PROPERTY_READ_USE = 1 << 6;
     }
 }

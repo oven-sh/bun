@@ -1143,10 +1143,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
         data.decls.truncate(new_len);
 
-        // A top-level `const`/`let` bound to a plain object literal. Only these
-        // two kinds: a `var` can be redeclared, or sit in a single-statement
-        // `if` body and never run, so its binding is not known to hold the
-        // literal when a later statement reads it.
+        // Not `var`: it can be redeclared, or sit in an `if` body and never run.
         if p.options.tree_shaking
             && p.options.features.dead_code_elimination
             && matches!(data.kind, S::Kind::KConst | S::Kind::KLet)

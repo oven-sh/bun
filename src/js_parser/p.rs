@@ -230,12 +230,9 @@ pub enum ReactRefreshExportKind {
 /// `P::register_plain_object_literal`.
 pub(crate) struct PlainObjectLiteral {
     pub(crate) object: js_ast::StoreRef<E::Object>,
-    /// The literal's own string keys, built on the first lookup once the
-    /// literal has more than `PlainObjectLiteral::SCAN_LIMIT` properties. A
-    /// generated table can have thousands of keys and as many reads.
+    /// Own string keys, built on first lookup past `SCAN_LIMIT` properties.
     keys: Option<StringHashMap<()>>,
-    /// Set by `P::finalize_plain_object_reads`: how many statements with
-    /// unknown side effects precede the declaration. `u32::MAX` until then.
+    /// Kept statements before the declaration, per `finalize_plain_object_reads`.
     kept_parts_before_decl: u32,
 }
 
@@ -271,8 +268,7 @@ impl PlainObjectLiteral {
     }
 }
 
-/// The key of a property access, for comparison against the keys of an object
-/// literal in `P::is_plain_object_property_read`.
+/// The key of a property access, for `P::plain_object_literal_read`.
 #[derive(Clone, Copy)]
 pub(crate) enum PropertyKey<'k> {
     /// `obj.name`
@@ -284,8 +280,8 @@ pub(crate) enum PropertyKey<'k> {
 }
 
 impl PropertyKey<'_> {
-    /// The key an `EIndex` reads, when it is a literal. A rope (a folded
-    /// `"a" + "b"`) is left out because it cannot be compared byte-wise.
+    /// The key an `EIndex` reads, when it is a literal (a rope cannot be
+    /// compared byte-wise).
     pub(crate) fn from_index(index: Expr) -> Option<Self> {
         match index.unwrap_inlined().data {
             js_ast::ExprData::EString(s) if s.next.is_none() => Some(Self::Str(s)),
@@ -695,14 +691,11 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
 
     pub(crate) const_values: bun_ast::ast_result::ConstValuesMap,
 
-    /// Top-level `const`/`let` bindings whose initializer is a plain object
-    /// literal (see `register_plain_object_literal`), keyed by the binding's
-    /// ref. Registered when the declaration is visited, so a use that is
-    /// visited earlier (a read before the declaration) never matches.
+    /// Top-level `const`/`let` bindings registered by
+    /// `register_plain_object_literal` when their declaration is visited.
     pub(crate) plain_object_literals: HashMap<Ref, PlainObjectLiteral>,
-    /// Symbols from `plain_object_literals` whose properties the part that
-    /// `append_part` is finalizing reads. Only filled while
-    /// `collecting_plain_object_reads` is set; see `is_plain_object_property_read`.
+    /// Bindings from `plain_object_literals` read by the part `append_part`
+    /// is finalizing. Only filled while `collecting_plain_object_reads` is set.
     pub(crate) plain_object_reads_for_current_part: Vec<Ref>,
     pub(crate) collecting_plain_object_reads: bool,
 
@@ -1936,8 +1929,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// The identifier is used as a value rather than as the object of a
-    /// property read. See `SymbolFlags::HAS_NON_PROPERTY_READ_USE`.
+    /// See `SymbolFlags::HAS_NON_PROPERTY_READ_USE`.
     pub(crate) fn record_non_property_read_use(&mut self, ref_: Ref) {
         let mut ref_ = ref_;
         loop {
@@ -1950,12 +1942,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// Records `ref_` in `plain_object_literals` when `value` is an object
-    /// literal whose properties are all plain data: no getter, setter, spread,
-    /// computed key, or `__proto__`. Reading an own key of such an object runs
-    /// no user code, so `obj.key` can be treated as side-effect free while the
-    /// binding stays untouched (see `finalize_plain_object_reads`). The
-    /// property values do not matter: a read returns a value without invoking it.
+    /// Registers `ref_` when `value` is an object literal with only plain data
+    /// properties: no getter, setter, spread, computed key, or `__proto__`.
+    /// Reading an own key of such an object runs no user code.
     pub(crate) fn register_plain_object_literal(&mut self, ref_: Ref, value: &Expr) {
         let js_ast::ExprData::EObject(obj) = value.data else {
             return;
@@ -1970,9 +1959,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let Some(key) = property.key else { return };
             match &key.data {
                 js_ast::ExprData::EString(s) => {
-                    // `__proto__: v` sets the prototype, and a shorthand or
-                    // method named `__proto__` is left out with it. A rope key
-                    // cannot be compared byte-wise.
+                    // A rope key cannot be compared byte-wise.
                     if s.next.is_some() || s.eql_comptime(b"__proto__") {
                         return;
                     }
@@ -1991,11 +1978,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         );
     }
 
-    /// The binding `target.key` / `target[key]` reads, when `target` is a
-    /// binding from `plain_object_literals` and `key` names one of the
-    /// literal's own keys. Such a read runs no user code as long as the
-    /// binding stays untouched (`is_untouched_plain_object_literal`), which is
-    /// only known once the whole file is visited.
+    /// The registered binding that `target.key` / `target[key]` reads an own
+    /// key of. Pure as long as `is_untouched_plain_object_literal` holds.
     pub(crate) fn plain_object_literal_read(
         &mut self,
         target: &Expr,
@@ -2020,8 +2004,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     literal.has_own_string_key(s, arena)
                 }
             }
-            // `{1: v}[1]`: a number key and a number index both go through
-            // ToString, so equal values name the same property.
             PropertyKey::Num(n) => properties.iter().any(|property| {
                 matches!(
                     property.key.as_ref().map(|k| &k.data),
@@ -2032,11 +2014,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         has_own_key.then_some(id.ref_)
     }
 
-    /// `plain_object_literal_read` for `expr_can_be_removed_if_unused`. Only
-    /// answers while `append_part` collects for a part: elsewhere the visit is
-    /// still in progress and a later statement may still mutate the object.
-    /// A match records the binding as a dependency of the part so
-    /// `finalize_plain_object_reads` can check it stayed untouched.
+    /// `plain_object_literal_read` for `expr_can_be_removed_if_unused`: only
+    /// while `append_part` collects, and records the binding for the part.
     fn is_plain_object_property_read(&mut self, target: &Expr, key: PropertyKey<'_>) -> bool {
         if !self.collecting_plain_object_reads {
             return false;
@@ -2050,13 +2029,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         true
     }
 
-    /// Whether `ref_` still names the plain object literal it was declared
-    /// with when a part preceded by `kept_parts` statements with unknown side
-    /// effects reads it: never reassigned, never used other than as the object
-    /// of a property read anywhere in the file, and, if it is exported, no
-    /// such statement between the declaration and the read. A module in an
-    /// import cycle can redefine the property through its import binding, but
-    /// only while this file hands control to it.
+    /// Whether `ref_` still holds its literal when a part preceded by
+    /// `kept_parts` effectful statements reads it. An exported binding can be
+    /// redefined by a module in an import cycle, but only while such a
+    /// statement hands control to it.
     fn is_untouched_plain_object_literal(
         &self,
         ref_: Ref,
@@ -2079,15 +2055,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// Runs once in `to_ast`, after the import scanner has filled in
-    /// `named_exports` and after the direct-eval pass has marked every
-    /// module-scope binding assigned (a direct `eval` reaches any binding by
-    /// name). Walks the parts in program order and counts the ones that stay
-    /// and may run code from another module. A part whose only side effects
-    /// are property reads on plain object literals (`Part::plain_object_reads`)
-    /// becomes removable if every binding it reads is still untouched at that
-    /// point; otherwise it stays and its reads may run a getter, so it counts
-    /// like any other kept statement.
+    /// Resolves `Part::plain_object_reads` in program order. Runs in `to_ast`
+    /// after `named_exports` is complete and after the direct-eval pass has
+    /// marked every module-scope binding assigned. A part whose reads stay
+    /// may run a getter, so it counts as an effectful statement too.
     pub(crate) fn finalize_plain_object_reads(&mut self, parts: &mut [js_ast::Part]) {
         if self.plain_object_literals.is_empty() {
             return;
@@ -5588,9 +5559,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let mut can_be_removed_if_unused =
                 self.stmts_can_be_removed_if_unused(final_stmts.slice());
             self.collecting_plain_object_reads = false;
-            // The reads were taken as pure. Whether that holds is known only
-            // once the whole file is visited, so the flag stays off until
-            // `finalize_plain_object_reads` confirms it.
+            // The flag stays off until `finalize_plain_object_reads` confirms the reads.
             let plain_object_reads = if can_be_removed_if_unused
                 && !self.plain_object_reads_for_current_part.is_empty()
             {
@@ -8894,9 +8863,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        // After the import scanner (`named_exports` is complete) and after the
-        // direct-eval pass (it marks every binding assigned, which keeps every
-        // plain object read).
         self.finalize_plain_object_reads(parts.as_mut_slice());
 
         if wrap_mode == WrapMode::BunCommonjs && !self.options.features.remove_cjs_module_wrapper {

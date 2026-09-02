@@ -334,8 +334,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     self.react_compiler_candidate_name = Some(id.r#ref);
                     self.react_compiler_in_react_hoc = in_hoc;
                 }
-                // `const {a, b} = x` only reads properties off `x`. An array
-                // pattern calls `x[Symbol.iterator]()` instead.
+                // An array pattern calls `x[Symbol.iterator]()`, an object pattern only reads.
                 let is_property_read_object = matches!(decl.binding.data, BData::BObject(_))
                     && matches!(val.data, ExprData::EIdentifier(_));
                 self.visit_expr_in_out(

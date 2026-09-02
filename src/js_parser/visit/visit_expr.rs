@@ -194,9 +194,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         e_.ref_ = result.r#ref;
         e_.set_must_keep_due_to_with_stmt(result.is_inside_with_scope);
 
-        // Only tree shaking reads the flag. Inside `with`, the name may
-        // resolve to a property of the `with` object instead, so the read
-        // cannot be attributed to this symbol.
+        // Inside `with`, the name may resolve to a property of the `with` object.
         if p.options.tree_shaking && (!in_.is_property_read_object || result.is_inside_with_scope) {
             p.record_non_property_read_use(result.r#ref);
         }
@@ -1437,8 +1435,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             ExprIn {
                 property_access_for_method_call_maybe_should_replace_with_undefined: in_
                     .property_access_for_method_call_maybe_should_replace_with_undefined,
-                // A write through the property (`x.key = v`) only touches the
-                // property itself, so it still counts as a read of `x`.
+                // A write to the property (`x.key = v`) still only reads `x`.
                 is_property_read_object: !is_call_target
                     && !is_delete_target
                     && !in_.is_constructor_or_tag_target,

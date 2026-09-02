@@ -1813,23 +1813,30 @@ describe("bundler", () => {
     },
   });
 
-  // A `super(...)` call is never merged with its neighbors, but a single-use
-  // declaration before it is still inlined into its arguments.
+  // A `super(...)` call is never merged with its neighbors (the class lowering
+  // looks for it to place field initializers), but a single-use declaration
+  // before it is still inlined into its arguments.
   itBundled("minify/InlineIntoSuperCall", {
     files: {
       "/entry.js": /* js */ `
-        function compute() { return 2; }
-        class B { constructor(x) { this.x = x; } }
-        export class Literal extends B { constructor() { const t = 1; super(t); } }
-        export class Call extends B { constructor() { const t = compute(); super(t); } }
+        const log = [];
+        function compute() { log.push("compute"); return 2; }
+        class B { constructor(x) { log.push("B:" + x); this.x = x; } }
+        class Literal extends B { constructor() { const t = 1; super(t); } }
+        class Call extends B { constructor() { const t = compute(); super(t); } }
+        class Field extends B { y = log.push("field"); constructor() { log.push("before"); super(3); log.push("after"); } }
+        log.push(new Literal().x, new Call().x, new Field().y);
+        console.log(JSON.stringify(log));
       `,
     },
     minifySyntax: true,
     minifyIdentifiers: false,
+    run: { stdout: '["B:1","compute","B:2","before","B:3","field","after",1,2,6]' },
     onAfterBundle(api) {
       const code = api.readFile("/out.js");
       expect(code).toContain("super(1);");
       expect(code).toContain("super(compute());");
+      expect(code).toContain("super(3);");
       expect(code).not.toContain("let t");
     },
   });

@@ -47,6 +47,7 @@ const mockCDP = `
 function startMockCDP(behavior) {
   const sid = "SESS";
   let navN = 0;
+  let evalN = 0;
   const send = (ws, obj) => ws.send(JSON.stringify(obj));
   const ev = (ws, method, params) => send(ws, { method, params, sessionId: sid });
   const frameNavigated = (ws, loaderId, url) =>
@@ -126,7 +127,7 @@ function startMockCDP(behavior) {
                 frameId: "F", loaderId: L, name: "DOMContentLoaded", timestamp: 2,
               });
               // No loadEventFired — the page "never finishes loading".
-            } else if (behavior === "load") {
+            } else if (behavior === "load" || behavior === "uninitiated") {
               ev(ws, "Page.lifecycleEvent", {
                 frameId: "F", loaderId: L, name: "DOMContentLoaded", timestamp: 2,
               });
@@ -138,10 +139,22 @@ function startMockCDP(behavior) {
             // "silent": nothing — navigate() has only the timeout to save it.
             return;
           }
-          case "Runtime.evaluate":
+          case "Runtime.evaluate": {
             // document.title → PageTitle chain. The handler reads
             // result.result.value.
-            return reply({ result: { type: "string", value: "mock-title" } });
+            const k = ++evalN;
+            if (behavior !== "uninitiated") return reply({ result: { type: "string", value: "mock-title" } });
+            reply({ result: { type: "string", value: "title-" + k } });
+            // After each settled title, simulate a PAGE-initiated
+            // navigation (location.href style): frameNavigated +
+            // loadEventFired with no Page.navigate command. Two in a
+            // row prove the per-document title-fetch reset.
+            if (k <= 2) {
+              frameNavigated(ws, "U" + k, "http://example/self" + k);
+              ev(ws, "Page.loadEventFired", { timestamp: 10 + k });
+            }
+            return;
+          }
           default:
             return reply({});
         }
@@ -151,7 +164,7 @@ function startMockCDP(behavior) {
 }
 `;
 
-async function run(behavior: "dcl-only" | "load" | "silent" | "stale-load", body: string) {
+async function run(behavior: "dcl-only" | "load" | "silent" | "stale-load" | "uninitiated", body: string) {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -382,6 +395,30 @@ test.concurrent("navigate({timeout}): stale timer does not reject a later naviga
   expect(stderr).toBe("");
   // Still pending after the first navigate's stale 400ms timer fired.
   expect(stdout.trim()).toBe("after-stale=pending");
+  expect(exitCode).toBe(0);
+});
+
+// --- page-initiated navigations --------------------------------------------
+
+test.concurrent("view.title updates after a page-initiated navigation", async () => {
+  // The "uninitiated" mock settles navigate() with "title-1", then
+  // emits frameNavigated + loadEventFired with NO Page.navigate
+  // command (location.href style), twice. Each commit must chain a
+  // fresh PageTitle fetch: the loadEventFired handler cannot gate on
+  // m_pendingNavigate (none is pending), and frameNavigated must
+  // reset the per-document dedupe flag or the second one is skipped.
+  const { stdout, stderr, exitCode } = await run(
+    "uninitiated",
+    `
+    await view.navigate("http://example/first");
+    console.log("t1=" + view.title);
+    const deadline = Date.now() + 10_000;
+    while (view.title !== "title-3" && Date.now() < deadline) await Bun.sleep(5);
+    console.log("t3=" + view.title + " url=" + view.url + " loading=" + view.loading);
+    `,
+  );
+  expect(stderr).toBe("");
+  expect(stdout.trim().split("\n")).toEqual(["t1=title-1", "t3=title-3 url=http://example/self2 loading=false"]);
   expect(exitCode).toBe(0);
 });
 

@@ -1153,7 +1153,7 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
         return;
     }
 
-    // The PageTitle reply settles the navigate with view.title populated; one fetch per document.
+    // One title fetch per committed document, also for page-initiated navigations; the PageTitle reply updates view.title and settles the navigate (a no-op when none is pending).
     auto chainTitle = [&]() {
         view->m_navTitleChained = true;
         uint32_t tid = nextId();
@@ -1173,6 +1173,7 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
         // Page.lifecycleEvent below matches on these.
         view->m_frameId = WTF::String::fromUTF8(jsonString(jsonField(frame, { "id", 2 })));
         view->m_loaderId = WTF::String::fromUTF8(jsonString(jsonField(frame, { "loaderId", 8 })));
+        view->m_navTitleChained = false; // new document: allow one title fetch for it
         // m_loading stays true — loadEventFired flips it.
 
         if (JSObject* cb = view->m_onNavigated.get()) {
@@ -1206,7 +1207,8 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
     if (method.size() == 19 && memcmp(method.data(), "Page.loadEventFired", 19) == 0) {
         if (view->m_loaderId.isEmpty()) return; // the previous document's load; a new navigation is in flight
         view->m_loading = false;
-        if (view->m_pendingNavigate && !view->m_navTitleChained) chainTitle();
+        // Also with no pending navigate (a page-initiated navigation): the fetch keeps view.title fresh, and a later navigate()'s generation bump drops the reply if it races.
+        if (!view->m_navTitleChained) chainTitle();
         return;
     }
 

@@ -1,6 +1,4 @@
-//! A top-level `X.y = v` on a local, never reassigned class, function, or
-//! object literal is observable only through `X`: its part becomes removable
-//! and a declaring part of `X`, so it lives exactly when `X` does.
+//! A top-level `X.y = v` on a local, never reassigned class, function, or object literal lives exactly when `X` does.
 
 use bun_alloc::Arena as Bump;
 use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};

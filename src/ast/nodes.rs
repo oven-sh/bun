@@ -1063,6 +1063,15 @@ pub struct Part {
     /// don't have this flag enabled must be included.
     pub can_be_removed_if_unused: bool,
 
+    /// Top-level `const`/`let` symbols initialized to a plain object literal
+    /// whose properties this part reads (`obj.key`). Those reads are the only
+    /// thing that keeps `can_be_removed_if_unused` false. The parser resolves
+    /// this once the whole file is visited: if none of the symbols was
+    /// reassigned or used outside a property read, the flag is set. The whole
+    /// file has to be seen first because a hoisted function can mutate the
+    /// object before the read runs.
+    pub plain_object_reads: Option<bun_alloc::AstBox<[Ref]>>,
+
     /// This is used for generated parts that we don't want to be present if they
     /// aren't needed. This enables tree shaking for these parts even if global
     /// tree shaking isn't enabled.
@@ -1109,6 +1118,7 @@ impl Default for Part {
             import_symbol_property_uses: None,
             dependencies: Vec::new_in(bun_alloc::AstAlloc),
             can_be_removed_if_unused: false,
+            plain_object_reads: None,
             force_tree_shaking: false,
             tag: PartTag::None,
         }

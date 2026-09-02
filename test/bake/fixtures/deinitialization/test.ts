@@ -47,6 +47,10 @@ async function run({
 
   const closes: Promise<CloseEvent>[] = [];
   let stopped: Promise<void> | undefined;
+  // Recorded inside the plugin callback and asserted after the bundle. A throw
+  // inside the callback only fails the bundle, and after an abrupt stop there
+  // is no client left to report that to.
+  let refusedWhileBundling: string | undefined;
   try {
     // Serve plugins load on the first bundle, not when the server starts.
     expect(globalThis.pluginLoaded).toBe(pluginLoadedBefore);
@@ -73,13 +77,11 @@ async function run({
       globalThis.callback = async () => {
         callbackCalls++;
         stopped = server.stop(closeActiveConnections);
-        // The listener is closed synchronously. Prove it from a client while
-        // the bundle that serves `request` is still in flight.
-        expect(await fetchErrorCode(fetch(origin, { keepalive: false }))).toBe("ConnectionRefused");
-        if (requestErrorCode) {
-          // An abrupt stop also closed the socket of the in-flight request.
-          expect(await requestErrorCode).toBe("ECONNRESET");
-        }
+        // The bundle that serves `request` stays in flight until this returns.
+        refusedWhileBundling = await fetchErrorCode(fetch(origin, { keepalive: false }));
+        // An abrupt stop also closed the socket of `request`. Let the client
+        // see that before the bundle completes.
+        if (requestErrorCode) await requestErrorCode;
       };
 
       if (requestErrorCode) {
@@ -110,6 +112,8 @@ async function run({
   // the count must be exact here without any GC.
   await stopped;
   expect(getDevServerDeinitCount()).toBe(deinitsBefore + 1);
+  // `stop()` closed the listener synchronously, while the bundle was in flight.
+  expect(refusedWhileBundling).toBe(sendAnyRequests ? "ConnectionRefused" : undefined);
 
   // Dropping the DevServer closes every HMR socket it still had (an abrupt
   // stop closed them earlier). The clients see an abnormal closure.

@@ -679,6 +679,44 @@ describe("bunshell", () => {
       expect(results).toEqual([...Array(firstFailure).fill(ok), ...Array(results.length - firstFailure).fill(emfile)]);
       expect(exitCode).toBe(0);
     });
+
+    // Same sweep with the real `cat`, so every stage is a subprocess. Each
+    // spawn takes fds after posix_spawn returns (on Linux, a pidfd). For some
+    // lengths the pipes and the stdio of a stage still fit but that pidfd does
+    // not, and the spawn fails with the child already running. The pipeline
+    // must still finish: the spawn must not wait for a child that blocks on a
+    // pipe this process holds.
+    test("reports EMFILE from a subprocess spawn and finishes", async () => {
+      const script = /* ts */ `
+        import { $ } from "bun";
+        const results = [];
+        for (let n = 2; n <= 16; n++) {
+          const pipeline = ["(echo hi)", ...Array(n - 1).fill("cat")].join(" | ");
+          const r = await $\`\${{ raw: pipeline }}\`.nothrow().quiet();
+          results.push({ stdout: r.stdout.toString(), stderr: r.stderr.toString(), exitCode: r.exitCode });
+        }
+        console.log(JSON.stringify(results));
+      `;
+      await using proc = runWithFdLimit(40, script);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      const results = JSON.parse(stdout);
+      expect(results).toHaveLength(15);
+      const ok = { stdout: "hi\n", stderr: "", exitCode: 0 };
+      expect(results[0]).toEqual(ok);
+      // A failed stage that is not the last one leaves the exit code to the
+      // last `cat`, so only the stderr says that the pipeline ran out of fds.
+      expect(results.filter(r => r.stderr !== "").length).toBeGreaterThan(0);
+      for (const r of results) {
+        if (r.stderr === "") {
+          expect(r).toEqual(ok);
+        } else {
+          expect(r.stdout).toBe("");
+          expect(r.stderr).toContain("bun: Too many open files");
+        }
+      }
+      expect(exitCode).toBe(0);
+    });
   });
 
   describe("operators no spaces", async () => {

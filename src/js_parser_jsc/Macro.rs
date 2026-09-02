@@ -182,9 +182,7 @@ impl MacroContext {
         );
 
         let macro_entry = self.macros.get_or_put(hash).expect("unreachable");
-        // An entry loaded before another build moved this thread's VM to its
-        // options (`VirtualMachine::serve_macro_build`) points at a module
-        // graph that is gone. Load it again, under this build's options.
+        // Loaded before another build moved this VM (`serve_macro_build`): that module graph is gone.
         let stale = macro_entry.found_existing
             && !macro_entry.value_ptr.disabled
             && macro_entry.value_ptr.generation != VirtualMachine::get().macro_options_generation;
@@ -256,10 +254,7 @@ impl MacroContext {
     }
 }
 
-/// Moves what a macro VM logged into `log`, the build's log. A macro VM (see
-/// `VirtualMachine::macro_build_options`) outlives every build, so it keeps a
-/// log of its own instead of writing into a build's. Runtime and Worker VMs log
-/// into the program's log and are left alone.
+/// Moves what a macro VM logged into the build's `log`; the VM outlives the build, so it has its own.
 fn drain_macro_vm_log(log: &mut Log) {
     if !VirtualMachine::is_loaded() {
         return;
@@ -423,12 +418,10 @@ impl Default for Macro {
 /// The build's options as the macro VM's transpiler takes them.
 fn macro_vm_transform_options(build: &TransformOptions) -> TransformOptions {
     let mut transform_options = build.clone();
-    // Build-only flags about the output bundle. The macro module's own
-    // imports must still resolve.
+    // Build-only flags about the output bundle; the macro module's own imports must still resolve.
     transform_options.external = Vec::new();
     transform_options.packages = None;
-    // What `init_runtime_state` forces for every VM: the macro VM runs on bun
-    // and never writes the build's output directory.
+    // What `init_runtime_state` forces for every VM.
     transform_options.write = Some(false);
     transform_options.target = Some(TransformTarget::Bun);
     transform_options
@@ -464,8 +457,7 @@ impl Macro {
         specifier: &[u8],
         hash: i32,
     ) -> crate::Result<Macro> {
-        // `needs_defines`: the VM's transpiler options are new (a new VM, or a
-        // macro VM moved to this build) and have no defines loaded yet.
+        // `needs_defines`: new transpiler options (a new VM, or one moved to this build).
         let (vm, needs_defines): (*mut VirtualMachine, bool) = if VirtualMachine::is_loaded() {
             let vm = VirtualMachine::get_mut_ptr();
             // `Transpiler::init` always sets `env`, and `MacroContext` copies it.
@@ -482,8 +474,7 @@ impl Macro {
             // JSC needs to be initialized if building from CLI
             jsc::initialize(jsc::InitializeOptions::default());
 
-            // No `log`: the VM outlives the build, so it keeps a log of its
-            // own that `drain_macro_vm_log` moves into the build's.
+            // No `log`: the VM outlives the build; `drain_macro_vm_log` moves its own log out.
             let vm = VirtualMachine::init(VirtualMachineInitOptions {
                 transform_options: macro_vm_transform_options(build_options),
                 env_loader: NonNull::new(env),

@@ -726,8 +726,7 @@ impl<'a> Transpiler<'a> {
         self.configure_linker_with_auto_jsx(true);
     }
 
-    /// Takes the JSX pragma (unless the options set one), the decorator flags
-    /// and `useDefineForClassFields` from the root `tsconfig.json`.
+    /// Root `tsconfig.json`: JSX pragma (unless the options set one), decorators, class fields.
     fn apply_root_tsconfig(&mut self) {
         // Most of the time, this will already be cached
         let top_level_dir = self.fs().top_level_dir;
@@ -746,10 +745,7 @@ impl<'a> Transpiler<'a> {
         }
     }
 
-    /// Rebuilds `options`, and the resolver's projection of it, from `opts` the
-    /// way a VM's `init_runtime_state` does. The resolver caches, the linker
-    /// and the env loader stay. The new `options` has no defines loaded: call
-    /// [`Self::configure_defines`] afterwards.
+    /// Rebuilds `options` and the resolver's copy from `opts`. Call `configure_defines` after.
     pub fn reset_transform_options(&mut self, opts: api::TransformOptions) -> crate::Result<()> {
         // `from_api` leaves this at its default; the VM path applies it.
         let preserve_symlinks = opts.preserve_symlinks.unwrap_or(false);

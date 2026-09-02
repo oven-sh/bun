@@ -545,6 +545,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
             export_star_import_records: bun_alloc::AstAlloc::vec(),
             approximate_newline_count: 1,
             exports_kind: ExportsKind::Esm,
+            module_type: crate::options::ModuleType::Unknown,
             named_imports: core::mem::take(&mut self.named_imports),
             named_exports: core::mem::take(&mut self.named_exports),
             dynamic_import_aliases: Default::default(),

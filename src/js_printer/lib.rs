@@ -909,6 +909,158 @@ pub(crate) fn can_print_without_escape(c: i32, ascii_only: bool) -> bool {
 const INDENTATION_SPACE_BUF: [u8; 128] = [b' '; 128];
 const INDENTATION_TAB_BUF: [u8; 128] = [b'\t'; 128];
 
+/// Scratch size for [`format_non_negative_float`]. The longest output is a
+/// 17-digit mantissa plus `e-NNN` (22 bytes) or a 16-digit hex literal.
+pub(crate) const FLOAT_BUF_LEN: usize = 32;
+
+pub(crate) struct FormattedFloat<'b> {
+    pub(crate) text: &'b [u8],
+    /// True when the text is a bare run of digits, so `1.toString` would
+    /// lex as a decimal point and the printer must emit `1 .toString`.
+    pub(crate) needs_space_before_dot: bool,
+}
+
+/// The shortest round-trip decimal digits of a finite positive `float`,
+/// without a decimal point or trailing zeros, and the position `dp` of the
+/// decimal point: `float == 0.D1D2..Dn * 10^dp`.
+fn shortest_digits(float: f64, digits: &mut [u8; FLOAT_BUF_LEN]) -> (usize, i32) {
+    // `{:e}` yields the shortest digit string that round-trips, as
+    // `D.DDDe[-]N`. Re-split it into (digits, exponent).
+    let mut sci = [0u8; FLOAT_BUF_LEN];
+    let sci = bun_core::fmt::buf_print_infallible(&mut sci, format_args!("{float:e}"));
+    let e = strings::index_of_char_usize(sci, b'e').expect("`{:e}` output has an exponent");
+    let mut n = 0usize;
+    for &c in &sci[..e] {
+        if c != b'.' {
+            digits[n] = c;
+            n += 1;
+        }
+    }
+    let mut exp10: i32 = 0;
+    let mut neg = false;
+    for &c in &sci[e + 1..] {
+        if c == b'-' {
+            neg = true;
+        } else {
+            exp10 = exp10 * 10 + i32::from(c - b'0');
+        }
+    }
+    if neg {
+        exp10 = -exp10;
+    }
+    (n, exp10 + 1)
+}
+
+fn push_bytes(out: &mut [u8; FLOAT_BUF_LEN], len: &mut usize, bytes: &[u8]) {
+    out[*len..*len + bytes.len()].copy_from_slice(bytes);
+    *len += bytes.len();
+}
+
+fn push_zeros(out: &mut [u8; FLOAT_BUF_LEN], len: &mut usize, count: usize) {
+    out[*len..*len + count].fill(b'0');
+    *len += count;
+}
+
+/// Formats a finite, non-negative number the way esbuild does: the shortest
+/// of the plain decimal form and the integer-mantissa exponent form
+/// (`1e3`, `15e9`, `1e-6`), with a tie going to the plain form. With
+/// `minify_whitespace`, `0.5` drops its leading zero and integers of at
+/// least 1e12 use hex when that is shorter.
+pub(crate) fn format_non_negative_float<'b>(
+    float: f64,
+    minify_whitespace: bool,
+    out: &'b mut [u8; FLOAT_BUF_LEN],
+) -> FormattedFloat<'b> {
+    debug_assert!(float.is_finite() && !float.is_sign_negative());
+
+    // Exponent notation is never shorter for integers below 1000.
+    if float < 1000.0 && float == float.trunc() {
+        let mut itoa_buf = bun_core::fmt::ItoaBuf::new();
+        let text = bun_core::fmt::itoa(&mut itoa_buf, float as u16);
+        out[..text.len()].copy_from_slice(text);
+        return FormattedFloat {
+            text: &out[..text.len()],
+            needs_space_before_dot: true,
+        };
+    }
+
+    let mut digits = [0u8; FLOAT_BUF_LEN];
+    let (n, dp) = shortest_digits(float, &mut digits);
+    let digits = &digits[..n];
+    let n_i32 = n as i32;
+
+    // The exponent form prints the digits as an integer followed by
+    // `e<dp - n>`; it is omitted when the digits are already the integer.
+    let exp_value = dp - n_i32;
+    let mut exp_buf = bun_core::fmt::ItoaBuf::new();
+    let exp_text = bun_core::fmt::itoa(&mut exp_buf, exp_value);
+    let exp_len = if exp_value == 0 { n } else { n + 1 + exp_text.len() };
+
+    let plain_len = if dp <= 0 {
+        // "0.00D" or ".00D"
+        usize::from(!minify_whitespace) + 1 + (-dp) as usize + n
+    } else if dp < n_i32 {
+        // "D.D"
+        n + 1
+    } else {
+        // "D000"
+        dp as usize
+    };
+
+    let mut len = 0usize;
+    let mut has_dot_or_exp = false;
+    if exp_len < plain_len {
+        push_bytes(out, &mut len, digits);
+        push_bytes(out, &mut len, b"e");
+        push_bytes(out, &mut len, exp_text);
+        has_dot_or_exp = true;
+    } else if dp <= 0 {
+        if !minify_whitespace {
+            push_bytes(out, &mut len, b"0");
+        }
+        push_bytes(out, &mut len, b".");
+        push_zeros(out, &mut len, (-dp) as usize);
+        push_bytes(out, &mut len, digits);
+        has_dot_or_exp = true;
+    } else if dp < n_i32 {
+        push_bytes(out, &mut len, &digits[..dp as usize]);
+        push_bytes(out, &mut len, b".");
+        push_bytes(out, &mut len, &digits[dp as usize..]);
+        has_dot_or_exp = true;
+    } else {
+        push_bytes(out, &mut len, digits);
+        push_zeros(out, &mut len, (dp - n_i32) as usize);
+    }
+
+    // Integers from 1e12 up can be one byte shorter as hex. The upper bound
+    // is the largest f64 below 2^64 that still converts to u64 exactly.
+    if minify_whitespace && float >= 1_000_000_000_000.0 && float <= 18_446_744_073_709_549_568.0
+    {
+        let as_int = float as u64;
+        if as_int as f64 == float {
+            let mut hex = [0u8; 16];
+            let mut hex_len = 0usize;
+            let mut v = as_int;
+            while v != 0 {
+                hex_len += 1;
+                hex[16 - hex_len] = b"0123456789abcdef"[(v & 0xf) as usize];
+                v >>= 4;
+            }
+            if 2 + hex_len < len {
+                len = 0;
+                push_bytes(out, &mut len, b"0x");
+                push_bytes(out, &mut len, &hex[16 - hex_len..]);
+                has_dot_or_exp = true;
+            }
+        }
+    }
+
+    FormattedFloat {
+        text: &out[..len],
+        needs_space_before_dot: !has_dot_or_exp,
+    }
+}
+
 pub(crate) fn best_quote_char_for_string<T>(str: &[T], allow_backtick: bool) -> u8
 where
     T: Copy + Into<u32>,
@@ -2578,30 +2730,19 @@ pub(crate) mod __gated_printer {
             }
         }
 
+        /// Prints a finite, non-negative number in its shortest source form and
+        /// records `prev_num_end` when a following `.` would need a space.
         pub(crate) fn print_non_negative_float(&mut self, float: f64) {
-            // Is this actually an integer?
-            // @setRuntimeSafety(false) / @setFloatMode(.optimized) have no Rust equivalent.
-            let floored = float.floor();
-            let remainder = float - floored;
-            let is_integer = remainder == 0.0;
-            if float < (u64::MAX >> 12) as f64 /* maxInt(u52) */ && is_integer {
-                // In JavaScript, numbers are represented as 64 bit floats
-                // However, they could also be signed or unsigned int 32 (when doing bit shifts)
-                // In this case, it's always going to unsigned since that conversion has already happened.
-                let val = float as u64;
-                if let Some(e) = bun_core::fmt::pow10_exp_1e4_to_1e9(val) {
-                    self.print(b"1e");
-                    self.print(&[b'0' + e]);
-                    return;
-                }
-                let mut buf = bun_core::fmt::ItoaBuf::new();
-                self.print(bun_core::fmt::itoa(&mut buf, val));
-                return;
+            let mut buf = [0u8; FLOAT_BUF_LEN];
+            let formatted = format_non_negative_float(
+                float,
+                !IS_JSON && self.options.minify_whitespace,
+                &mut buf,
+            );
+            self.print(formatted.text);
+            if formatted.needs_space_before_dot {
+                self.prev_num_end = self.writer.written();
             }
-
-            // `Display` for f64 emits the shortest digit string that
-            // round-trips, never scientific notation.
-            let _ = self.fmt(format_args!("{}", float));
         }
 
         pub(crate) fn print_string_characters_utf8(&mut self, text: &[u8], quote: u8) {
@@ -6783,8 +6924,6 @@ pub(crate) mod __gated_printer {
             } else if !value.is_sign_negative() {
                 self.print_space_before_identifier();
                 self.print_non_negative_float(abs_value);
-                // Remember the end of the latest number
-                self.prev_num_end = self.writer.written();
             } else if level.gte(Level::Prefix) {
                 // Expressions such as "(-1).toString" need to wrap negative numbers.
                 // Instead of testing for "value < 0" we test for "signbit(value)" and
@@ -6797,8 +6936,6 @@ pub(crate) mod __gated_printer {
                 self.print_space_before_operator(Op::Code::UnNeg);
                 self.print(b"-");
                 self.print_non_negative_float(abs_value);
-                // Remember the end of the latest number
-                self.prev_num_end = self.writer.written();
             }
         }
 

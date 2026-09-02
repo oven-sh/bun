@@ -596,6 +596,10 @@ pub fn enqueue_dependency_to_root(
                 // raw `*mut` — `sleep_until`
                 // also receives this pointer, so `&mut` here would alias.
                 manager: *mut PackageManager,
+                // `sleep_until` ticks the JS event loop, and JS run there can
+                // swap `manager.log` and leave it pointing at a dead stack
+                // `Log`. `is_done` re-asserts this snapshot before each poll.
+                log: *mut bun_ast::Log,
             }
             impl Closure {
                 fn is_done(&mut self) -> bool {
@@ -603,6 +607,7 @@ pub fn enqueue_dependency_to_root(
                     // below; `sleep_until`/`tick_raw` hold no `&mut` across
                     // this callback, so this is the unique live borrow.
                     let manager = unsafe { &mut *self.manager };
+                    manager.log = self.log;
                     if manager.pending_task_count() > 0 {
                         // All callbacks void: `VoidRunTasksCallbacks` (below)
                         // has `Ctx = ()` and every `HAS_* = false`.
@@ -639,6 +644,7 @@ pub fn enqueue_dependency_to_root(
             let mut closure = Closure {
                 err: None,
                 manager: mgr,
+                log: this.log,
             };
             // SAFETY: `mgr` derived from the live exclusive `this` borrow;
             // `sleep_until` + `tick_raw` hold no `&mut PackageManager` across

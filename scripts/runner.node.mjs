@@ -686,18 +686,21 @@ async function runTests() {
    * @param {string} title
    * @param {function} fn
    * @param {boolean} [concurrent] this call may overlap with other runTest calls
+   * @param {TestResult} [priorFailure] the file already failed once, inside the
+   * parallel batch: that run was attempt 1
    * @returns {Promise<TestResult>}
    */
-  const runTest = async (title, fn, concurrent = parallelism > 1) => {
+  const runTest = async (title, fn, concurrent = parallelism > 1, priorFailure = undefined) => {
     const index = ++i;
     // A test file runs once unless test/flaky-tests.txt lists it. The runner's
     // own dependency installs (the package.json titles) are setup, not tests,
     // and keep their retries.
     const maxAttempts = title.endsWith("package.json") || isFlakyTest(title) ? 1 + retries : 1;
 
-    let result, failure, flaky;
-    let attempt = 1;
-    for (; attempt <= maxAttempts; attempt++) {
+    let result;
+    let failure = priorFailure;
+    let attempt;
+    for (attempt = priorFailure ? 2 : 1; attempt <= maxAttempts; attempt++) {
       if (attempt > 1) {
         await new Promise(resolve => setTimeout(resolve, 5000 + Math.random() * 10_000));
       }
@@ -713,15 +716,7 @@ async function runTests() {
       }
 
       const { ok, stdoutPreview, error } = result;
-      if (ok) {
-        if (failure) {
-          flakyResults.push(failure);
-          flakyResultsTitles.push(title);
-        } else {
-          okResults.push(result);
-        }
-        break;
-      }
+      if (ok) break;
 
       const color = attempt >= maxAttempts ? "red" : "yellow";
       const label = `${getAnsi(color)}[${index}/${total}] ${title} - ${error}${getAnsi("reset")}`;
@@ -737,22 +732,25 @@ async function runTests() {
       }
 
       failure ||= result;
-      flaky ||= true;
-
-      if (attempt >= maxAttempts || isAlwaysFailure(error)) {
-        flaky = false;
-        failedResults.push(failure);
-        failedResultsTitles.push(title);
-        break;
-      }
+      if (isAlwaysFailure(error)) break;
     }
 
     if (!failure) {
+      okResults.push(result);
       return result;
     }
 
+    // The first failure is the one reported. It is flaky when a later attempt passed.
+    const flaky = result?.ok === true;
+    if (flaky) {
+      flakyResults.push(failure);
+      flakyResultsTitles.push(title);
+    } else {
+      failedResults.push(failure);
+      failedResultsTitles.push(title);
+    }
     reportFailure(title, failure, flaky, attempt);
-    return result;
+    return result ?? failure;
   };
 
   /**
@@ -870,7 +868,7 @@ async function runTests() {
       }
     }
 
-    const runOneTest = async (testPath, concurrent) => {
+    const runOneTest = async (testPath, concurrent, priorFailure = undefined) => {
       await awaitNapiPrebuild(testPath);
       const absoluteTestPath = join(testsPath, testPath);
       const title = relative(cwd, absoluteTestPath).replaceAll(sep, "/");
@@ -985,6 +983,7 @@ async function runTests() {
             };
           },
           concurrent,
+          priorFailure,
         );
       } else {
         return runTest(
@@ -996,6 +995,7 @@ async function runTests() {
               stderr: concurrent ? () => {} : pipeTestStdout(process.stderr),
             }),
           concurrent,
+          priorFailure,
         );
       }
     };
@@ -1126,7 +1126,7 @@ async function runTests() {
         }
       }
       const retried = [...failed.keys()].filter(
-        t => !crashed.has(t) && isFlakyTest(join("test", t).replaceAll("\\", "/")),
+        t => retries > 0 && !crashed.has(t) && isFlakyTest(join("test", t).replaceAll("\\", "/")),
       );
       const retriedSet = new Set(retried);
       const rerun = [...retried, ...incomplete];
@@ -1147,6 +1147,7 @@ async function runTests() {
           stdoutPreview: "",
         });
       }
+      const batchFailures = new Map(); // test path -> TestResult, for the files that run again alone
       for (const t of bucketFiles) {
         const reason = failed.get(t);
         if (reason === undefined) continue;
@@ -1158,11 +1159,6 @@ async function runTests() {
             if (message) console.log(message.replace(/^/gm, "    "));
           }
         };
-        if (retriedSet.has(t)) {
-          startGroup(`${title} - ${reason}`, printCases);
-          continue;
-        }
-        startGroup(`${getAnsi("red")}[${++i}/${total}] ${title} - ${reason}${getAnsi("reset")}`, printCases);
         const preview = cases.map(({ name, message }) => `✗ ${name}\n${message}`).join("\n\n") || reason;
         const result = {
           testPath: title,
@@ -1174,6 +1170,12 @@ async function runTests() {
           stdout: preview,
           stdoutPreview: preview,
         };
+        if (retriedSet.has(t)) {
+          startGroup(`${getAnsi("yellow")}${title} - ${reason}${getAnsi("reset")}`, printCases);
+          batchFailures.set(t, result);
+          continue;
+        }
+        startGroup(`${getAnsi("red")}[${++i}/${total}] ${title} - ${reason}${getAnsi("reset")}`, printCases);
         failedResults.push(result);
         failedResultsTitles.push(title);
         reportFailure(title, result, false, 1);
@@ -1201,27 +1203,8 @@ async function runTests() {
         console.log(
           `${getAnsi("yellow")}parallel bucket: running ${retried.length} listed flaky file(s) that failed and ${incomplete.size} file(s) the batch never started, one at a time${getAnsi("reset")}`,
         );
-        for (const testPath of rerun) {
-          const result = await runOneTest(testPath, false);
-          if (result?.ok && failed.has(testPath) && isBuildkite) {
-            const title = join("test", testPath).replaceAll("\\", "/");
-            const cases = suites.get(title)?.cases ?? [];
-            const first = cases[0];
-            const firstError = first ? `${first.name} — ${first.message.split("\n")[0]}` : "";
-            const reason = firstError
-              ? escapeHtml(firstError.length > 100 ? `${firstError.slice(0, 97)}…` : firstError)
-              : "failed in the parallel batch";
-            const detail = cases.length
-              ? `\n\n\`\`\`terminal\n${cases.map(({ name, message }) => `✗ ${name}\n${message}`).join("\n\n")}\n\`\`\`\n\n`
-              : "";
-            reportAnnotationToBuildKite({
-              context: "flaky",
-              label: title,
-              style: "warning",
-              content: `<details><summary><a href="${getFileUrl(title)}"><code>${title}</code></a> - ${reason} <i>(in the parallel batch on ${getBuildLabel()}; passed alone)</i></summary>${detail}</details>`,
-            });
-          }
-        }
+        // A listed file's batch run was its first attempt: the solo runs are its retries.
+        for (const testPath of rerun) await runOneTest(testPath, false, batchFailures.get(testPath));
       }
     };
 
@@ -3157,29 +3140,23 @@ function getExitCode(outcome) {
 // A flaky segfault, sigtrap, or sigkill must never be ignored.
 // If it happens in CI, it will happen to our users.
 // Flaky AddressSanitizer and LeakSanitizer errors cannot be ignored since they still represent real bugs.
-// A bare signal name is what spawnSafe reports when the process died without
-// printing a crash report (or when the coordinator of a parallel batch names
-// the status of a worker that died mid-file).
+// Each pattern is anchored to the shape spawnSafe and spawnBun give such an
+// error, so that a test whose name or assertion mentions a signal is not taken
+// for a crash.
 function isAlwaysFailure(error) {
   error = ((error || "") + "").toLowerCase().trim();
   return (
-    error.includes("segmentation fault") ||
-    error.includes("illegal instruction") ||
-    error.includes("unchecked exception") ||
-    error.includes("sigtrap") ||
-    error.includes("sigabrt") ||
-    error.includes("sigkill") ||
-    error.includes("sigsegv") ||
-    error.includes("sigbus") ||
-    error.includes("sigill") ||
-    error.includes("sigfpe") ||
-    error.includes("sigsys") ||
+    // a crash report in the output: a panic, a segfault, an illegal
+    // instruction, an assertion, a sanitizer report, or SIGABRT
+    /^pid \d+ /.test(error) ||
+    // died of a fatal signal without printing a report, or the status the
+    // coordinator of a parallel batch gave a worker that died mid-file
+    /^sig(segv|bus|ill|fpe|sys|trap|abrt|kill)$/.test(error) ||
+    error.startsWith("unchecked exception") ||
     error === "leak" ||
     /^(direct|indirect) leak of /.test(error) ||
-    error.includes("error: addresssanitizer") ||
-    error.includes("internal assertion failure") ||
-    error.includes("core dumped") ||
-    error.includes("crash reported")
+    error === "core dumped" ||
+    error === "crash reported"
   );
 }
 

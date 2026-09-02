@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { isWindows } from "harness";
 import { once } from "node:events";
 import { createServer, get, request } from "node:http";
 import net from "node:net";
@@ -178,11 +179,13 @@ describe("node:http client timeout", () => {
   // old `if (getBufferedAmount(handle) > 0) return` dropped the one-shot timer
   // with no re-arm, so 'timeout' was lost for good.
   //
-  // One 64 MiB chunk is far above any loopback socket-buffer capacity (Linux
-  // defaults cap at 4 MiB send + 6 MiB receive), so the native queue can never
-  // drain. A smaller write can fit in the kernel outright, and then the old
-  // guard never triggers.
-  it("net.Socket 'timeout' fires when a connected write is stalled by a non-reading peer", async () => {
+  // One 64 MiB chunk is far above any POSIX loopback socket-buffer capacity
+  // (Linux defaults cap at 4 MiB send + 6 MiB receive), so the native queue
+  // can never drain. A smaller write can fit in the kernel outright, and then
+  // the old guard never triggers. Windows is skipped: winsock takes the whole
+  // non-blocking send() into the kernel (all 64 MiB on loopback in CI), so the
+  // write never goes async and the queue under test is never populated.
+  it.skipIf(isWindows)("net.Socket 'timeout' fires when a connected write is stalled by a non-reading peer", async () => {
     const accepted: net.Socket[] = [];
     const server = net.createServer(s => {
       accepted.push(s);

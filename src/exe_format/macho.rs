@@ -29,9 +29,7 @@ pub enum MachoError {
     MissingRequiredSegment,
     #[error("OutOfMemory")]
     OutOfMemory,
-    /// Embedding the bundle moved a `__LINKEDIT` load command offset past
-    /// `u32::MAX`. Mach-O stores those offsets as 32-bit, so the output cannot
-    /// be written whatever the segment layout.
+    /// A shifted `__LINKEDIT` load command offset no longer fits the u32 Mach-O stores.
     #[error("executable would exceed 4 GiB (Mach-O load commands store 32-bit file offsets)")]
     ExecutableTooLarge,
 }

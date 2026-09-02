@@ -172,6 +172,24 @@ impl<'a, T> BabyVec<'a, T> {
         }
     }
 
+    /// `Vec::remove` parity — remove the element at `index` and shift the
+    /// tail down by one, keeping the order of the remaining elements.
+    pub fn remove(&mut self, index: usize) -> T {
+        let len = self.len as usize;
+        assert!(index < len, "BabyVec::remove index {index} >= len {len}");
+        // SAFETY: `index < len`; the hole is read out before the tail
+        // `[index+1, len)` is shifted down over it. Len is decremented after
+        // the shift, so the now-duplicated last slot is no longer considered
+        // initialized.
+        unsafe {
+            let p = self.ptr.as_ptr().add(index);
+            let v = p.read();
+            ptr::copy(p.add(1), p, len - index - 1);
+            self.len -= 1;
+            v
+        }
+    }
+
     /// `Vec::append` parity — bitwise-move all elements from `other` to the
     /// end of `self`, leaving `other` empty.
     pub fn append(&mut self, other: &mut Self) {

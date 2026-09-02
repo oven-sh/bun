@@ -417,7 +417,22 @@ pub(crate) fn scan_imports_and_exports(
 
                 if dependency_wrapper.export_star_records[id].len() > 0 {
                     dependency_wrapper.export_star_map.clear();
-                    let _ = dependency_wrapper.has_dynamic_exports_due_to_export_star(source_index);
+                    let has_dynamic_exports =
+                        dependency_wrapper.has_dynamic_exports_due_to_export_star(source_index);
+
+                    // A lifted CommonJS file has no export star of its own: the parser
+                    // made one out of `module.exports = require("./b")`. If "./b" has
+                    // dynamic exports (CommonJS or external) after all, named imports of
+                    // this file cannot bind statically, so keep it a CommonJS wrapper
+                    // around the original assignment (see `convert_stmts_for_chunk`).
+                    if has_dynamic_exports
+                        && dependency_wrapper.exports_kind[id] != ExportsKind::Cjs
+                        && col_ref!(ast_flags_list)[id].contains(AstFlags::COMMONJS_LIFTED_TO_ESM)
+                    {
+                        dependency_wrapper.exports_kind[id] = ExportsKind::Cjs;
+                        dependency_wrapper.flags[id].wrap = WrapKind::Cjs;
+                        dependency_wrapper.wrap(source_index);
+                    }
                 }
 
                 // Even if the output file is CommonJS-like, we may still need to wrap
@@ -1183,6 +1198,44 @@ pub(crate) fn scan_imports_and_exports(
                             [*import_record_index as usize];
                         (record.source_index,)
                     };
+
+                    // The export star of a lifted CommonJS file is the parser's rewrite of
+                    // `module.exports = require("path")`, and this file is a CommonJS
+                    // wrapper after all. `convert_stmts_for_chunk` prints the assignment
+                    // again, so the part needs the "module" parameter and the value: the
+                    // namespace object of a bundled ES module, the wrapper of a bundled
+                    // CommonJS module (an import record use, handled above), or the
+                    // `import * as ns` of an external module.
+                    if wrap == WrapKind::Cjs
+                        && col_ref!(ast_flags_list)[id].contains(AstFlags::COMMONJS_LIFTED_TO_ESM)
+                        && !(rec_source_index.is_valid() && rec_source_index.get() == source_index)
+                    {
+                        if rec_source_index.is_valid() {
+                            let other_id = rec_source_index.get() as usize;
+                            if col_ref!(exports_kind)[other_id] != ExportsKind::Cjs {
+                                this.graph.generate_symbol_import_and_use(
+                                    source_index,
+                                    part_index as u32,
+                                    col_ref!(exports_refs)[other_id],
+                                    1,
+                                    Index::source(rec_source_index.get()),
+                                )?;
+                            }
+                        } else if output_format.keep_es6_import_export_syntax() {
+                            col!(import_records_list)[id].as_mut_slice()
+                                [*import_record_index as usize]
+                                .flags
+                                .insert(ImportRecordFlags::CONTAINS_IMPORT_STAR);
+                        }
+                        this.graph.generate_symbol_import_and_use(
+                            source_index,
+                            part_index as u32,
+                            col_ref!(module_refs)[id],
+                            1,
+                            Index::source(source_index),
+                        )?;
+                        continue;
+                    }
 
                     let mut happens_at_runtime = rec_source_index.is_invalid()
                         && (!is_entry_point || !output_format.keep_es6_import_export_syntax());

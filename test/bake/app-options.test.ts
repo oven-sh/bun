@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { disabledSpecifierCases, frameworkFiles } from "./disabled-specifier-cases";
 
 // Every option here is declared as `string` or `boolean` in bake.d.ts. A value
 // of another type must throw ERR_INVALID_ARG_TYPE from Bun.serve, before any
@@ -58,43 +59,6 @@ test("Bun.serve({ app }) rejects wrong-typed framework options", async () => {
   expect(exitCode).toBe(0);
 });
 
-// A framework specifier (`reactFastRefresh.importSource`, an entry point, the
-// server components runtime) can resolve to a disabled module: a stubbed
-// Node.js builtin, or anything the package.json "browser" field maps to
-// `false`. The resolve succeeds, but the result has no path. Such a specifier
-// must be reported like a missing module, not crash the process.
-const disabledSpecifierCases = [
-  {
-    name: "reactFastRefresh.importSource is a Node.js builtin",
-    packageJson: `{ "name": "app" }`,
-    framework: `{ fileSystemRouterTypes: [fsr], reactFastRefresh: { importSource: "node:fs" } }`,
-    error: `error: Cannot use "node:fs" for framework (react refresh runtime): it resolves to a builtin module`,
-  },
-  {
-    name: "clientEntryPoint is a Node.js builtin",
-    packageJson: `{ "name": "app" }`,
-    framework: `{ fileSystemRouterTypes: [{ ...fsr, clientEntryPoint: "fs" }] }`,
-    error: `error: Cannot use "fs" for framework (client side entrypoint): it resolves to a builtin module`,
-  },
-  {
-    name: "serverComponents.serverRuntimeImportSource is a Node.js builtin",
-    packageJson: `{ "name": "app" }`,
-    framework: `{ fileSystemRouterTypes: [fsr], serverComponents: { separateSSRGraph: false, serverRuntimeImportSource: "node:fs" } }`,
-    error: `error: Cannot use "node:fs" for framework (server components runtime): it resolves to a builtin module`,
-  },
-  {
-    name: "reactFastRefresh.importSource is disabled by the browser field",
-    packageJson: `{ "name": "app", "browser": { "react-refresh": false } }`,
-    framework: `{ fileSystemRouterTypes: [fsr], reactFastRefresh: { importSource: "react-refresh" } }`,
-    error: `error: Cannot use "react-refresh" for framework (react refresh runtime): it is disabled due to "browser" field in package.json`,
-  },
-];
-
-const frameworkFiles = {
-  "server.ts": `export default function render() { return new Response("ok"); }`,
-  "routes/index.ts": `export default () => null;`,
-};
-
 for (const c of disabledSpecifierCases) {
   test.concurrent(`Bun.serve({ app }) reports a disabled ${c.name}`, async () => {
     using dir = tempDir("bake-app-disabled", {
@@ -123,36 +87,5 @@ for (const c of disabledSpecifierCases) {
     expect(stderr.trim()).toBe(c.error);
     expect(stdout).toBe("AggregateError: Framework is missing required files!\n");
     expect(exitCode).toBe(0);
-  });
-
-  test.concurrent(`bun build --app reports a disabled ${c.name}`, async () => {
-    using dir = tempDir("bake-build-app-disabled", {
-      ...frameworkFiles,
-      "package.json": c.packageJson,
-      "bun.app.ts": `
-        const fsr = { root: "routes", style: "nextjs-pages", serverEntryPoint: "./server.ts" };
-        export default { app: { framework: ${c.framework} } };
-      `,
-    });
-
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "build", "--app", "./bun.app.ts"],
-      env: {
-        ...bunEnv,
-        // The config loader of `bun build --app` has unchecked exception scopes
-        // (`bakeModuleLoaderResolve`, `BakeGetDefaultExportFromModule`) that
-        // abort a debug build under validation before the framework resolves.
-        BUN_JSC_validateExceptionChecks: undefined,
-        BUN_JSC_dumpSimulatedThrows: undefined,
-      },
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-    expect(stderr).toContain(`\n${c.error}\nerror: Failed to resolve all imports required by the framework\n`);
-    expect(stdout).toBe("");
-    expect(exitCode).toBe(1);
   });
 }

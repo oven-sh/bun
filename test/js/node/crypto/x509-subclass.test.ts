@@ -130,11 +130,8 @@ describe("X509Certificate#checkIssued", () => {
   });
 });
 
-// X509Certificate.ca must be true only for certificates with a basicConstraints
-// extension that sets CA:TRUE (matching Node/OpenSSL's X509_check_ca() == 1).
-// Bun uses BoringSSL, whose X509_check_ca() returns 1 for X.509 v1 certificates
-// too, so the old `== 1` check reported a v1 cert with no basicConstraints as a
-// CA. https://github.com/oven-sh/bun/issues/31810
+// .ca is true only for certificates whose basicConstraints set CA:TRUE.
+// https://github.com/oven-sh/bun/issues/31810
 describe("X509Certificate#ca", () => {
   // Self-signed X.509 v1 certificate with no extensions (no basicConstraints).
   const v1NoExtensions = new X509Certificate(`-----BEGIN CERTIFICATE-----

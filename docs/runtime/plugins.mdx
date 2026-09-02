@@ -198,7 +198,7 @@ plugin({
 
 #### Resolving inside `onResolve`
 
-At runtime, module resolution re-enters the plugin pipeline. When an `onResolve()` callback calls `Bun.resolveSync()`, `require.resolve()`, or `import.meta.resolve()`, every matching `onResolve()` callback runs again, including the one that is currently running. Node.js `module.registerHooks()` resolve hooks behave the same way.
+At runtime, module resolution re-enters the plugin pipeline. When an `onResolve()` callback calls `Bun.resolveSync()`, `require.resolve()`, or `import.meta.resolve()`, every matching `onResolve()` callback runs again, including the one that is currently running. Node.js behaves the same way: a synchronous `module.registerHooks()` resolve hook that calls `require.resolve()` or `import.meta.resolve()` instead of its `nextResolve()` argument re-enters itself.
 
 A callback that resolves its own matched specifier therefore recurses until it throws `RangeError: Maximum call stack size exceeded`:
 

@@ -8,8 +8,13 @@ import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 // it, and no UploadPart response could resume the upload.
 const fixture = `
   const partSize = 5 * 1024 * 1024;
+  const queueSize = 5;
   const parts = [];
   let completed = false;
+  // Every PUT response is held until all five part bodies have arrived. At
+  // that point every queue slot is in flight, none has completed, and the
+  // client's file pump is parked with nothing in JS referring to the stream.
+  const allPartsReceived = Promise.withResolvers();
   const server = Bun.serve({
     port: 0,
     async fetch(req) {
@@ -23,9 +28,11 @@ const fixture = `
       if (req.method === "PUT") {
         const body = await req.arrayBuffer();
         parts.push([Number(url.searchParams.get("partNumber")), body.byteLength]);
-        // Every queue slot is in flight. The client reads more of the file
-        // only after this response. Nothing in JS refers to the file stream.
-        Bun.gc(true);
+        if (parts.length === queueSize) {
+          Bun.gc(true);
+          allPartsReceived.resolve();
+        }
+        await allPartsReceived.promise;
         return new Response("", { headers: { ETag: '"etag-' + url.searchParams.get("partNumber") + '"' } });
       }
       await req.text();
@@ -46,7 +53,7 @@ const fixture = `
   });
 
   // Five full parts: the smallest file that fills the default queue.
-  await Bun.write("payload.bin", new Uint8Array(5 * partSize));
+  await Bun.write("payload.bin", new Uint8Array(queueSize * partSize));
   const written = await s3.write("repro/payload.bin", Bun.file("payload.bin"));
   parts.sort((a, b) => a[0] - b[0]);
   console.log(JSON.stringify({ written, parts, completed }));

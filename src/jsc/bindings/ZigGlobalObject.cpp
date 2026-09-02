@@ -407,11 +407,11 @@ static void cleanupAsyncHooksData(JSC::VM& vm)
     auto* globalObject = defaultGlobalObject();
     globalObject->m_asyncContextData.get()->putInternalField(vm, 0, jsUndefined());
     globalObject->asyncHooksNeedsCleanup = false;
-    if (!globalObject->m_nextTickQueue) {
-        vm.setOnEachMicrotaskTick(&checkIfNextTickWasCalledDuringMicrotask);
-        checkIfNextTickWasCalledDuringMicrotask(vm);
-    } else {
+    if (auto* queue = globalObject->m_nextTickQueue.get()) {
         vm.setOnEachMicrotaskTick(nullptr);
+        queue->drain(vm, globalObject);
+    } else {
+        vm.setOnEachMicrotaskTick(&checkIfNextTickWasCalledDuringMicrotask);
     }
 }
 
@@ -3532,16 +3532,11 @@ JSC::Identifier StandaloneGlobalObject::moduleLoaderResolve(JSGlobalObject* glob
     return GlobalObject::moduleLoaderResolve(globalObject, loader, key, referrer, WTF::move(fetcher), b);
 }
 
-JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalObject,
-    JSModuleLoader*,
+static JSC::JSPromise* moduleLoaderImportModuleImpl(Zig::GlobalObject* globalObject,
     JSString* moduleNameValue,
     RefPtr<JSC::ScriptFetchParameters> parameters,
-    const SourceOrigin& sourceOrigin,
-    bool deferred)
+    const SourceOrigin& sourceOrigin)
 {
-    UNUSED_PARAM(deferred);
-    auto* globalObject = static_cast<Zig::GlobalObject*>(jsGlobalObject);
-
     VM& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -3629,6 +3624,72 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
 
     ASSERT(result);
     return result;
+}
+
+static JSC::JSPromise* tryTraceModuleImport(Zig::GlobalObject* globalObject,
+    JSString* moduleNameValue,
+    RefPtr<JSC::ScriptFetchParameters> parameters,
+    const SourceOrigin& sourceOrigin)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue moduleTracing = globalObject->internalModuleRegistry()->internalField(InternalModuleRegistry::Field::InternalModuleTracing).get();
+    if (!moduleTracing.isObject())
+        return nullptr;
+    JSObject* moduleTracingObject = asObject(moduleTracing);
+
+    JSValue traceImport = moduleTracingObject->getIfPropertyExists(globalObject, Identifier::fromString(vm, "traceImport"_s));
+    if (scope.exception()) [[unlikely]]
+        return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
+    if (!traceImport || !traceImport.isCallable())
+        return nullptr;
+
+    SourceOrigin sourceOriginCopy = sourceOrigin;
+    JSC::Strong<JSString> strongModuleName(vm, moduleNameValue);
+    auto* doImport = JSC::JSNativeStdFunction::create(vm, globalObject, 0, String(),
+        [strongModuleName = WTF::move(strongModuleName), parameters, sourceOriginCopy](JSGlobalObject* lexicalGlobalObject, CallFrame*) -> JSC::EncodedJSValue {
+            auto* global = static_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+            RefPtr<JSC::ScriptFetchParameters> parametersCopy = parameters;
+            return JSValue::encode(moduleLoaderImportModuleImpl(global, strongModuleName.get(), WTF::move(parametersCopy), sourceOriginCopy));
+        });
+
+    auto sourceURL = sourceOrigin.url();
+    JSValue parentURL = sourceURL.isEmpty() ? jsEmptyString(vm) : jsString(vm, sourceURL.string());
+
+    MarkedArgumentBuffer args;
+    args.append(doImport);
+    args.append(parentURL);
+    args.append(moduleNameValue);
+
+    auto callData = JSC::getCallData(traceImport);
+    JSValue result = JSC::call(globalObject, traceImport, callData, moduleTracingObject, args);
+    if (scope.exception()) [[unlikely]]
+        return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
+    if (auto* promise = dynamicDowncast<JSC::JSPromise>(result))
+        return promise;
+    JSPromise* adopted = JSPromise::resolvedPromise(globalObject, result);
+    if (scope.exception()) [[unlikely]]
+        return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
+    return adopted;
+}
+
+JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalObject,
+    JSModuleLoader*,
+    JSString* moduleNameValue,
+    RefPtr<JSC::ScriptFetchParameters> parameters,
+    const SourceOrigin& sourceOrigin,
+    bool deferred)
+{
+    UNUSED_PARAM(deferred);
+    auto* globalObject = static_cast<Zig::GlobalObject*>(jsGlobalObject);
+
+    if (globalObject->hasModuleImportSubscribers) [[unlikely]] {
+        if (auto* traced = tryTraceModuleImport(globalObject, moduleNameValue, parameters, sourceOrigin))
+            return traced;
+    }
+
+    return moduleLoaderImportModuleImpl(globalObject, moduleNameValue, WTF::move(parameters), sourceOrigin);
 }
 
 static JSC::JSPromise* rejectedInternalPromise(JSC::JSGlobalObject* globalObject, JSC::JSValue value)

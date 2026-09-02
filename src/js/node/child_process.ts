@@ -24,6 +24,13 @@ function getSignals() {
   return (signals ??= require("node:os").constants.signals);
 }
 
+let childProcessChannel, childProcessSpawn;
+function initChildProcessChannels() {
+  const dc = require("node:diagnostics_channel");
+  childProcessChannel = dc.channel("child_process");
+  childProcessSpawn = dc.tracingChannel("child_process.spawn");
+}
+
 var ArrayPrototypeJoin = Array.prototype.join;
 var ArrayPrototypeIncludes = Array.prototype.includes;
 var ArrayPrototypeSlice = Array.prototype.slice;
@@ -1114,6 +1121,16 @@ class ChildProcess extends EventEmitter {
   channel;
   killed = false;
 
+  constructor() {
+    super();
+    if (!childProcessChannel) initChildProcessChannels();
+    if (childProcessChannel.hasSubscribers) {
+      childProcessChannel.publish({
+        process: this,
+      });
+    }
+  }
+
   [Symbol.dispose]() {
     if (!this.killed) {
       this.kill();
@@ -1408,6 +1425,10 @@ class ChildProcess extends EventEmitter {
     // Bun.spawn() expects cmd[0] to be the command to run, and argv0 to replace the first arg when running the command,
     // so we have to set argv0 to spawnargs[0] and cmd[0] to file
 
+    if (childProcessSpawn.hasSubscribers) {
+      childProcessSpawn.start.publish({ process: this, options });
+    }
+
     try {
       this.#handle = Bun.spawn({
         cmd: [file, ...Array.prototype.slice.$call(spawnargs, 1)],
@@ -1449,6 +1470,10 @@ class ChildProcess extends EventEmitter {
 
       $debug("ChildProcess: spawn", this.pid, spawnargs);
 
+      if (childProcessSpawn.hasSubscribers) {
+        childProcessSpawn.end.publish({ process: this });
+      }
+
       process.nextTick(() => {
         this.emit("spawn");
       });
@@ -1486,6 +1511,9 @@ class ChildProcess extends EventEmitter {
         this.#handle = null;
         ex.syscall = "spawn " + this.spawnfile;
         ex.spawnargs = Array.prototype.slice.$call(this.spawnargs, 1);
+        if (childProcessSpawn.hasSubscribers) {
+          childProcessSpawn.error.publish({ process: this, error: ex });
+        }
         process.nextTick(() => {
           this.emit("error", ex);
           this.emit("close", (ex as SystemError).errno ?? -1);
@@ -1501,6 +1529,9 @@ class ChildProcess extends EventEmitter {
           // Node throws errors that are not in the deferred list above
           // synchronously, with `syscall: "spawn"` (no file appended).
           ex.syscall = "spawn";
+        }
+        if (childProcessSpawn.hasSubscribers) {
+          childProcessSpawn.error.publish({ process: this, error: ex });
         }
         throw ex;
       }

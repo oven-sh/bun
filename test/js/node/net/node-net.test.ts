@@ -1,7 +1,7 @@
 import { Socket as _BunSocket, TCPSocketListener } from "bun";
 import { heapStats } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, expectMaxObjectTypeCount, gc, isASAN, isDebug, isWindows, tmpdirSync } from "harness";
+import { bunEnv, bunExe, expectMaxObjectTypeCount, gc, isASAN, isDebug, isWindows, tempDir, tmpdirSync } from "harness";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import fs from "node:fs";
@@ -1285,6 +1285,100 @@ describe("Socket fd adoption", () => {
     // No explicit writable: true -> no adoption, no fstat. child_process
     // extra stdio relies on this path (connect({ fd }) attaches natively).
     expect(() => new Socket({ fd: 0x7ffff })).not.toThrow();
+  });
+});
+
+describe.concurrent("net diagnostics channels and fd-attached sockets", () => {
+  // dc subscriptions are process-global, so each case runs in its own process.
+  async function run(source: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", source],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim(), stderr: stderr.trim(), exitCode };
+  }
+
+  it("connect({ fd }) for child stdio pipes does not publish net.client.socket", async () => {
+    // child_process wraps extra stdio pipes via net.connect({ fd }), Bun's
+    // equivalent of Node's new Socket({ handle }), which publishes nothing.
+    const result = await run(`
+      const dc = require("diagnostics_channel");
+      const net = require("net");
+      const { spawn } = require("child_process");
+      let clientSockets = 0;
+      dc.subscribe("net.client.socket", () => clientSockets++);
+      const child = spawn(${JSON.stringify(bunExe())}, ["-e", "0"], {
+        env: ${JSON.stringify(bunEnv)},
+        stdio: ["ignore", "ignore", "ignore", "pipe"],
+      });
+      const stdioWrapped = child.stdio[3] instanceof net.Socket;
+      child.on("exit", () => {
+        const afterChild = clientSockets;
+        const server = net.createServer(s => s.end()).listen(0, () => {
+          const c = net.connect(server.address().port, "127.0.0.1");
+          c.on("close", () => {
+            console.log(JSON.stringify({ stdioWrapped, afterChild, afterConnect: clientSockets }));
+            server.close();
+          });
+        });
+      });
+    `);
+    expect(result.stderr).toBe("");
+    expect(JSON.parse(result.stdout)).toEqual({ stdioWrapped: true, afterChild: 0, afterConnect: 1 });
+    expect(result.exitCode).toBe(0);
+  });
+
+  it("cluster-worker listen and accepts publish the same net channels as Node", async () => {
+    // Under the default round-robin policy the worker's listen() ends in
+    // kClusterFauxListen and its accepts arrive via onClusterConnection; in
+    // Node both converge on setupListenHandle / onconnection, which publish
+    // net.server.listen asyncEnd and net.server.socket respectively.
+    using dir = tempDir("net-dc-cluster", {
+      "cluster-fixture.js": `
+      const cluster = require("cluster");
+      const net = require("net");
+      if (cluster.isPrimary) {
+        const worker = cluster.fork();
+        worker.on("message", msg => {
+          if (msg.port) {
+            const c = net.connect(msg.port, "127.0.0.1");
+            c.on("close", () => worker.send({ done: true }));
+          } else if (msg.counts) {
+            console.log(JSON.stringify(msg.counts));
+            worker.kill();
+          }
+        });
+        worker.on("exit", () => process.exit(0));
+      } else {
+        const dc = require("diagnostics_channel");
+        const counts = { listenStart: 0, listenEnd: 0, listenError: 0, server: 0, client: 0 };
+        dc.subscribe("tracing:net.server.listen:asyncStart", () => counts.listenStart++);
+        dc.subscribe("tracing:net.server.listen:asyncEnd", () => counts.listenEnd++);
+        dc.subscribe("tracing:net.server.listen:error", () => counts.listenError++);
+        dc.subscribe("net.server.socket", () => counts.server++);
+        dc.subscribe("net.client.socket", () => counts.client++);
+        const server = net.createServer(s => s.end());
+        server.listen(0, "127.0.0.1", () => process.send({ port: server.address().port }));
+        process.on("message", msg => {
+          if (msg.done) process.send({ counts });
+        });
+      }
+    `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "cluster-fixture.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr.trim()).toBe("");
+    expect(JSON.parse(stdout.trim())).toEqual({ listenStart: 1, listenEnd: 1, listenError: 0, server: 1, client: 0 });
+    expect(exitCode).toBe(0);
   });
 });
 

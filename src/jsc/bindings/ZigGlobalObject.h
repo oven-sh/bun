@@ -431,6 +431,7 @@ public:
     }
 
     bool asyncHooksNeedsCleanup = false;
+    bool hasModuleImportSubscribers = false;
     double INSPECT_MAX_BYTES = 50;
     bool isInsideErrorPrepareStackTraceCallback = false;
 

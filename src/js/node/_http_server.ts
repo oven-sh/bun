@@ -20,6 +20,16 @@ const {
 const { ConnResetException, hasObserver, startPerf, stopPerf, kInternalSendOptions } = require("internal/shared");
 const kServerResponseStatistics = Symbol("ServerResponseStatistics");
 
+let onServerRequestStartChannel, onServerResponseCreatedChannel, onServerResponseFinishChannel;
+let netServerListenChannel;
+function initHttpServerChannels() {
+  const dc = require("node:diagnostics_channel");
+  onServerRequestStartChannel = dc.channel("http.server.request.start");
+  onServerResponseCreatedChannel = dc.channel("http.server.response.created");
+  onServerResponseFinishChannel = dc.channel("http.server.response.finish");
+  netServerListenChannel = dc.tracingChannel("net.server.listen");
+}
+
 const { isPrimary } = require("internal/cluster/isPrimary");
 const {
   kInternalSocketData,
@@ -584,6 +594,14 @@ Server.prototype.listen = function () {
     this.once("listening", lastArg);
   }
 
+  if (!netServerListenChannel) initHttpServerChannels();
+  if (netServerListenChannel.hasSubscribers) {
+    const arg0 = arguments[0];
+    const options =
+      typeof arg0 === "object" && arg0 !== null ? arg0 : socketPath != null ? { path: socketPath } : { port, host };
+    netServerListenChannel.asyncStart.publish({ server: this, options });
+  }
+
   try {
     // listenInCluster
 
@@ -614,6 +632,9 @@ Server.prototype.listen = function () {
 
     server[kRealListen](tls, port, host, socketPath, true);
   } catch (err) {
+    if (netServerListenChannel.hasSubscribers) {
+      netServerListenChannel.error.publish({ server: this, error: err });
+    }
     process.nextTick(emitListenErrorNextTick, server, err);
   }
 
@@ -876,6 +897,26 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         // 'upgrade' listener and false for a declined upgrade that falls
         // through to 'request'.
         http_req.upgrade = is_upgrade;
+
+        if (!is_upgrade) {
+          if (!onServerResponseCreatedChannel) initHttpServerChannels();
+          if (onServerResponseCreatedChannel.hasSubscribers) {
+            onServerResponseCreatedChannel.publish({
+              request: http_req,
+              response: http_res,
+            });
+          }
+          if (onServerRequestStartChannel.hasSubscribers) {
+            onServerRequestStartChannel.publish({
+              request: http_req,
+              response: http_res,
+              socket,
+              server,
+            });
+          }
+          http_res.on("finish", publishServerResponseFinish);
+        }
+
         if (isPipelined) {
           // A previous response on this connection has not finished yet: like
           // Node.js, this response is queued (res.socket === null) and its
@@ -1061,6 +1102,10 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
     this.listening = true;
     getBunServerAllClosedPromise(this[serverSymbol]).$then(emitCloseNTServer.bind(this));
     applyServerCustomOptions(this);
+
+    if (netServerListenChannel.hasSubscribers) {
+      netServerListenChannel.asyncEnd.publish({ server: this });
+    }
 
     if (this?._unref) {
       this[serverSymbol]?.unref?.();
@@ -2095,6 +2140,17 @@ function _writeHead(statusCode, reason, obj, response) {
       throw $ERR_HTTP_TRAILER_INVALID("Trailers are invalid with this transfer encoding");
     }
   }
+}
+
+function publishServerResponseFinish(this: any) {
+  if (!onServerResponseFinishChannel.hasSubscribers) return;
+  const socket = this.req?.socket ?? this.socket;
+  onServerResponseFinishChannel.publish({
+    request: this.req,
+    response: this,
+    socket,
+    server: socket?.server,
+  });
 }
 
 function ServerResponse(req, options): void {

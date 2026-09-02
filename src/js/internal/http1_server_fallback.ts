@@ -7,6 +7,29 @@ const { SafeSet } = require("internal/primordials");
 const kHttp1Connections = Symbol("http1Connections");
 const kHttp1ActiveRequests = Symbol("http1ActiveRequests");
 
+// dc.channel() returns the per-name singleton, so these are the same channel
+// objects _http_server.ts publishes on from the Bun.serve-backed path; in
+// Node both entry paths converge on parserOnIncoming, which publishes all
+// three.
+let onServerRequestStartChannel, onServerResponseCreatedChannel, onServerResponseFinishChannel;
+function initHttp1FallbackChannels() {
+  const dc = require("node:diagnostics_channel");
+  onServerRequestStartChannel = dc.channel("http.server.request.start");
+  onServerResponseCreatedChannel = dc.channel("http.server.response.created");
+  onServerResponseFinishChannel = dc.channel("http.server.response.finish");
+}
+
+function publishHttp1FallbackResponseFinish(this: any) {
+  if (!onServerResponseFinishChannel.hasSubscribers) return;
+  const socket = this.req?.socket ?? this.socket;
+  onServerResponseFinishChannel.publish({
+    request: this.req,
+    response: this,
+    socket,
+    server: socket?.server,
+  });
+}
+
 function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTimeout) {
   const { _checkInvalidHeaderChar: checkInvalidHeaderChar } = require("node:_http_common");
   let head = null;
@@ -333,6 +356,26 @@ function connectionListenerHTTP1(server, socket, options) {
     res.on("finish", function onFallbackResponseFinish() {
       this.detachSocket(socket);
     });
+
+    // Accepted upgrades returned early above, so like the native dispatch
+    // path (and Node's parserOnIncoming) these fire for normal requests and
+    // for declined upgrades that fall through to 'request'.
+    if (!onServerResponseCreatedChannel) initHttp1FallbackChannels();
+    if (onServerResponseCreatedChannel.hasSubscribers) {
+      onServerResponseCreatedChannel.publish({
+        request: req,
+        response: res,
+      });
+    }
+    if (onServerRequestStartChannel.hasSubscribers) {
+      onServerRequestStartChannel.publish({
+        request: req,
+        response: res,
+        socket,
+        server,
+      });
+    }
+    res.on("finish", publishHttp1FallbackResponseFinish);
 
     // Node's parserOnIncoming Expect routing (the native dispatcher applies the
     // same at _http_server.ts's DISPATCH_HAS_EXPECT branch).

@@ -31,10 +31,15 @@ assert.strictEqual(test_function.TestCall(func4, 1), 2);
 assert.strictEqual(test_function.TestName.name, 'Name');
 assert.strictEqual(test_function.TestNameShort.name, 'Name_');
 
-let tracked_function = test_function.MakeTrackedFunction(common.mustCall());
-assert(!!tracked_function);
-tracked_function = null;
-global.gc();
+// We use IIFE for the tracked_function scope instead of {} to be compatible
+// with non-V8 JS engines that do not support scoped variables (same
+// convention as test_finalizer/test.js).
+(() => {
+  let tracked_function = test_function.MakeTrackedFunction(common.mustCall());
+  assert(!!tracked_function);
+  tracked_function = null;
+})();
+for (let i = 0; i < 10; ++i) global.gc();
 
 assert.deepStrictEqual(test_function.TestCreateFunctionParameters(), {
   envIsNull: 'Invalid argument',

@@ -7,9 +7,16 @@ export function main() {
 
 // This function is bound when constructing instances of CommonJSModule
 $visibility = "Private";
-export function require(this: JSCommonJSModule, _: string) {
+export function require(this: JSCommonJSModule, id: string, options: { paths?: string[] } | undefined = undefined) {
   // Do not use $tailCallForwardArguments here, it causes https://github.com/oven-sh/bun/issues/9225
-  return $overridableRequire.$apply(this, arguments);
+  // $call with the named params avoids materializing an `arguments` object on
+  // every require(). The 1-arg form is forwarded as 1 arg so overridableRequire's
+  // $argumentCount() still distinguishes require(id) from require(id, options)
+  // and the native $require keeps its skip-options fast path.
+  if (options === undefined) {
+    return $overridableRequire.$call(this, id);
+  }
+  return $overridableRequire.$call(this, id, options);
 }
 
 // overridableRequire can be overridden by setting `Module.prototype.require`

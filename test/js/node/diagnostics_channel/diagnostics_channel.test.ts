@@ -1,7 +1,10 @@
 import { gc } from "bun";
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { AsyncLocalStorage } from "node:async_hooks";
-import { channel, Channel, hasSubscribers, subscribe, unsubscribe } from "node:diagnostics_channel";
+import { channel, Channel, hasSubscribers, subscribe, tracingChannel, unsubscribe } from "node:diagnostics_channel";
+import { createServer, IncomingMessage, ServerResponse } from "node:http";
+import type { AddressInfo } from "node:net";
+import { connect as netConnect, createServer as netCreateServer } from "node:net";
 
 describe("Channel", () => {
   // test-diagnostics-channel-has-subscribers.js
@@ -358,6 +361,161 @@ describe("TracingChannel", () => {
   // Port tests from:
   // https://github.com/search?q=repo%3Anodejs%2Fnode+test-diagnostics-channel+AND+%2Ftracing%2F&type=code
   test.todo("TODO");
+
+  test("tracingChannel(null) throws ERR_INVALID_ARG_TYPE like Node", () => {
+    for (const bad of [null, 0, Symbol("x")]) {
+      expect(() => tracingChannel(bad as any)).toThrow(
+        expect.objectContaining({
+          code: "ERR_INVALID_ARG_TYPE",
+        }),
+      );
+    }
+  });
+});
+
+describe("node:http server channels", () => {
+  test("http.server.response.created publishes the request and response", async () => {
+    const events: Array<{ request: unknown; response: unknown }> = [];
+    const onCreated = (message: any) => events.push(message);
+    subscribe("http.server.response.created", onCreated);
+
+    const server = createServer((req, res) => res.end("ok"));
+    try {
+      const { promise, resolve, reject } = Promise.withResolvers<void>();
+      server.on("error", reject);
+      server.listen(0, "127.0.0.1", resolve);
+      await promise;
+
+      const { port } = server.address() as AddressInfo;
+      const response = await fetch(`http://127.0.0.1:${port}/`);
+      expect(await response.text()).toBe("ok");
+    } finally {
+      unsubscribe("http.server.response.created", onCreated);
+      server.close();
+    }
+
+    expect(events).toHaveLength(1);
+    expect(events[0].request).toBeInstanceOf(IncomingMessage);
+    expect(events[0].response).toBeInstanceOf(ServerResponse);
+    expect((events[0].response as ServerResponse).req).toBe(events[0].request);
+  });
+
+  test("http.server.* channels do not publish for accepted upgrades", async () => {
+    const counts = { created: 0, start: 0, finish: 0 };
+    let upgradeSeen = false;
+    const onCreated = () => counts.created++;
+    const onStart = () => counts.start++;
+    const onFinish = () => counts.finish++;
+    subscribe("http.server.response.created", onCreated);
+    subscribe("http.server.request.start", onStart);
+    subscribe("http.server.response.finish", onFinish);
+
+    const server = createServer((req, res) => res.end("ok"));
+    server.on("upgrade", (req, socket) => {
+      upgradeSeen = true;
+      socket.end("HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: test\r\n\r\n");
+    });
+    try {
+      const { promise: listening, resolve: onListening, reject } = Promise.withResolvers<void>();
+      server.on("error", reject);
+      server.listen(0, "127.0.0.1", onListening);
+      await listening;
+      const { port } = server.address() as AddressInfo;
+
+      const { promise: upgraded, resolve: onUpgraded, reject: onSockErr } = Promise.withResolvers<void>();
+      const sock = netConnect(port, "127.0.0.1", () => {
+        sock.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: test\r\n\r\n");
+      });
+      sock.on("data", () => {});
+      sock.on("error", onSockErr);
+      sock.on("close", onUpgraded);
+      await upgraded;
+      expect(upgradeSeen).toBe(true);
+      expect(counts).toEqual({ created: 0, start: 0, finish: 0 });
+
+      const response = await fetch(`http://127.0.0.1:${port}/`);
+      expect(await response.text()).toBe("ok");
+    } finally {
+      unsubscribe("http.server.response.created", onCreated);
+      unsubscribe("http.server.request.start", onStart);
+      unsubscribe("http.server.response.finish", onFinish);
+      server.close();
+    }
+
+    expect(counts).toEqual({ created: 1, start: 1, finish: 1 });
+  });
+
+  test("http.server.* channels publish on the emit('connection') fallback path", async () => {
+    // server.emit('connection', foreignSocket) routes through the llhttp-based
+    // fallback (internal/http1_server_fallback), which in Node converges on the
+    // same parserOnIncoming publishes as the native dispatch path.
+    const events: Array<{ name: string; message: any }> = [];
+    const onCreated = (message: any) => events.push({ name: "created", message });
+    const onStart = (message: any) => events.push({ name: "start", message });
+    const onFinish = (message: any) => events.push({ name: "finish", message });
+    subscribe("http.server.response.created", onCreated);
+    subscribe("http.server.request.start", onStart);
+    subscribe("http.server.response.finish", onFinish);
+
+    const httpServer = createServer((req, res) => res.end("ok"));
+    const tcp = netCreateServer(socket => httpServer.emit("connection", socket));
+    try {
+      const { promise: listening, resolve: onListening, reject } = Promise.withResolvers<void>();
+      tcp.on("error", reject);
+      tcp.listen(0, "127.0.0.1", onListening);
+      await listening;
+      const { port } = tcp.address() as AddressInfo;
+
+      const response = await fetch(`http://127.0.0.1:${port}/`);
+      expect(await response.text()).toBe("ok");
+    } finally {
+      unsubscribe("http.server.response.created", onCreated);
+      unsubscribe("http.server.request.start", onStart);
+      unsubscribe("http.server.response.finish", onFinish);
+      tcp.close();
+      httpServer.close();
+    }
+
+    expect(events.map(e => e.name)).toEqual(["created", "start", "finish"]);
+    for (const { message } of events) {
+      expect(message.request).toBeInstanceOf(IncomingMessage);
+      expect(message.response).toBeInstanceOf(ServerResponse);
+    }
+    expect(events[1].message.server).toBe(httpServer);
+    expect(events[2].message.server).toBe(httpServer);
+  });
+
+  test("http.Server.listen() publishes on net.server.listen", async () => {
+    const events: string[] = [];
+    let startMessage: any, endMessage: any;
+    const onStart = (m: any) => {
+      events.push("asyncStart");
+      startMessage = m;
+    };
+    const onEnd = (m: any) => {
+      events.push("asyncEnd");
+      endMessage = m;
+    };
+    subscribe("tracing:net.server.listen:asyncStart", onStart);
+    subscribe("tracing:net.server.listen:asyncEnd", onEnd);
+
+    const server = createServer((req, res) => res.end("ok"));
+    try {
+      const { promise, resolve, reject } = Promise.withResolvers<void>();
+      server.on("error", reject);
+      server.listen(0, "127.0.0.1", resolve);
+      await promise;
+    } finally {
+      unsubscribe("tracing:net.server.listen:asyncStart", onStart);
+      unsubscribe("tracing:net.server.listen:asyncEnd", onEnd);
+      server.close();
+    }
+
+    expect(events).toEqual(["asyncStart", "asyncEnd"]);
+    expect(startMessage.server).toBe(server);
+    expect(startMessage.options).toEqual({ port: 0, host: "127.0.0.1" });
+    expect(endMessage.server).toBe(server);
+  });
 });
 
 const mocks = new Map();

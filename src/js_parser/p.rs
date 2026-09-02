@@ -5362,10 +5362,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(())
     }
 
-    /// Destructuring runs code on the value: an object pattern invokes getters
-    /// and an array pattern invokes the value's iterator. So a pattern is only
-    /// side-effect free over a literal, where every read is known to be a data
-    /// property read or the built-in array iterator.
+    /// An object pattern invokes getters and an array pattern invokes the
+    /// iterator, so a pattern is only side-effect free over a literal.
     fn decl_binding_can_be_removed_if_unused_without_dce_check(
         &mut self,
         decl: &js_ast::g::Decl,
@@ -5386,8 +5384,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         match binding.data {
             js_ast::b::B::BIdentifier(_) | js_ast::b::B::BMissing(_) => true,
 
-            // Like esbuild, only identifiers and holes over an array literal are
-            // handled. A nested pattern over an element is left alone.
+            // Like esbuild: identifiers and holes over an array literal only.
             js_ast::b::B::BArray(bi) => {
                 if !matches!(value.data, js_ast::ExprData::EArray(_)) {
                     return false;
@@ -5409,8 +5406,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
 
             // Every key of the pattern must name a data property of the literal.
-            // A key that is missing from the literal reads the prototype, a rest
-            // element copies every property, and a computed key is not known.
             js_ast::b::B::BObject(bo) => {
                 let js_ast::ExprData::EObject(literal) = &value.data else {
                     return false;
@@ -5447,9 +5442,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// True when every key of the literal is a literal key that defines an own
-    /// property: no spread, no computed key, and no `__proto__`, which sets
-    /// the prototype instead.
+    /// No spread, no computed key, and no `__proto__` (it sets the prototype).
     fn object_literal_has_only_plain_keys(literal: &E::Object) -> bool {
         literal.properties.slice().iter().all(|property| {
             property.kind != js_ast::g::PropertyKind::Spread
@@ -5466,9 +5459,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         })
     }
 
-    /// The value of the own data property `key` of the literal. A later
-    /// property with the same key replaces an earlier one, so the last match
-    /// decides. `None` when there is no such key or it is an accessor.
+    /// The value of data property `key`. The last duplicate key wins, and an
+    /// accessor gives `None`.
     fn object_literal_data_property(literal: &E::Object, key: &E::EString) -> Option<Expr> {
         literal
             .properties
@@ -9109,10 +9101,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         {
                             for decl in local.decls.slice() {
                                 if let Some(value) = &decl.value {
-                                    // The linker only moves a declaration out of the
-                                    // wrapper when the value can be moved and the binding
-                                    // is an identifier. A destructuring pattern runs code
-                                    // on the value, so it stays inside.
+                                    // The linker keeps a pattern inside the wrapper.
                                     if !matches!(value.data, js_ast::ExprData::EMissing(_))
                                         && (!value.can_be_moved()
                                             || !matches!(

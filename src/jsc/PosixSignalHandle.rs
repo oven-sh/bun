@@ -1,7 +1,9 @@
 use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
 
+#[cfg(unix)]
+use crate::VirtualMachineRef as VirtualMachine;
 use crate::event_loop::EventLoop;
-use crate::{JSGlobalObject, Task, VirtualMachineRef as VirtualMachine};
+use crate::{JSGlobalObject, Task};
 use bun_event_loop::{Taskable, task_tag};
 use bun_threading::SignalRing;
 

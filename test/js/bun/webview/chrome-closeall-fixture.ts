@@ -34,14 +34,30 @@ function thrown(fn: () => unknown) {
   }
 }
 
+// The shared libraries a binary loads, resolved by ldd(1). Empty if ldd is
+// missing or fails.
+function sharedLibraries(binary: string): string[] {
+  const paths = new Set<string>();
+  try {
+    const ldd = Bun.spawnSync({ cmd: ["ldd", binary], stdout: "pipe", stderr: "ignore" });
+    if (!ldd.success) return [];
+    for (const line of ldd.stdout.toString().split("\n")) {
+      const resolved = / => (\/\S+) \(/.exec(line);
+      if (resolved) paths.add(realpathSync(resolved[1]));
+    }
+  } catch {}
+  return [...paths];
+}
+
 // On a fresh CI agent nothing of the browser is in the page cache yet, and
 // Chrome's start-up pages its ~200 MB in one page fault at a time: 6 to
 // 18 s on the Linux lanes. POSIX_FADV_WILLNEED hands the install directory
-// to the kernel's read-ahead instead, which keeps the disk queue full, and
-// the launch then finds the pages in cache. One call reads at most one
-// read-ahead window, so each file is requested window by window. Best
-// effort: if anything here fails, the launch is only slower. Returns what
-// was requested, so the test can log it next to the launch time.
+// and the browser's shared libraries to the kernel's read-ahead instead,
+// which keeps the disk queue full, and the launch then finds the pages in
+// cache. One call reads at most one read-ahead window, so each file is
+// requested window by window. Best effort: if anything here fails, the
+// launch is only slower. Returns what was requested, so the test can log it
+// next to the launch time.
 function warmBrowserInstall(executable: string | undefined, libc: string | undefined) {
   const done = { files: 0, bytes: 0, ms: 0 };
   if (process.platform !== "linux" || !executable || !libc) return done;
@@ -56,8 +72,12 @@ function warmBrowserInstall(executable: string | undefined, libc: string | undef
       })
       .sort((a, b) => b.size - a.size);
     // BUN_CHROME_PATH can name a wrapper script that lives anywhere. Only a
-    // directory that holds a browser-sized binary is an install directory.
+    // directory that holds a browser-sized binary is an install directory,
+    // and that binary is the browser.
     if (!files.length || files[0].size < 64 * 1024 * 1024) return done;
+    for (const path of sharedLibraries(files[0].path)) {
+      files.push({ path, size: statSync(path).size });
+    }
     const POSIX_FADV_WILLNEED = 3;
     const WINDOW = 128 * 1024;
     const { posix_fadvise } = dlopen(libc, {

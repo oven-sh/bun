@@ -202,6 +202,27 @@ describe("AsyncLocalStorage", () => {
   });
 });
 
+// Node's disable() deletes the storage from the current frame object in place,
+// so every disable() reaches continuations that captured that frame.
+test("consecutive disable() calls exit continuations that captured the frame", async () => {
+  const a = new AsyncLocalStorage();
+  const b = new AsyncLocalStorage();
+  a.enterWith(1);
+  b.enterWith(2);
+  const seen = Promise.all([
+    new Promise(resolve => setTimeout(() => resolve([a.getStore(), b.getStore()]), 1)),
+    Promise.resolve().then(() => [a.getStore(), b.getStore()]),
+  ]);
+  a.disable();
+  b.disable();
+  b.enterWith(3);
+  expect(await seen).toEqual([
+    [undefined, undefined],
+    [undefined, undefined],
+  ]);
+  b.disable();
+});
+
 test("AsyncResource", () => {
   const resource = new AsyncResource("prisma-client-request");
   var called = false;
@@ -1248,4 +1269,159 @@ describe("async generators", () => {
     });
     expect(caughtStore).toBe("STORE_X");
   });
+});
+
+// A frame installed with enterWith() inside an event-loop callback belongs to
+// that callback: it must not be inherited by unrelated callbacks that run later
+// (they run under whatever they captured when scheduled, like Node's
+// CallbackScope), and anything it references must become collectable.
+describe("enterWith() does not leak past the callback that called it", () => {
+  async function run(src: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    return { stdout: stdout.trim().split("\n"), exitCode };
+  }
+  const prelude = `const { AsyncLocalStorage } = require("node:async_hooks"); const als = new AsyncLocalStorage(); const seen = []; process.on("exit", () => { seen.push("exit:" + als.getStore()); console.log(seen.join("\\n")); });`;
+
+  test.concurrent("timers, immediates, I/O callbacks", async () => {
+    const { stdout, exitCode } = await run(
+      prelude +
+        `
+        const fs = require("node:fs");
+        setTimeout(() => { als.enterWith("timer1"); seen.push("timer1:" + als.getStore()); }, 1);
+        setTimeout(() => { seen.push("timer2:" + als.getStore()); }, 20);
+        setImmediate(() => { als.enterWith("immediate1"); });
+        setImmediate(() => { seen.push("immediate2:" + als.getStore()); });
+        setImmediate(() => { queueMicrotask(() => als.enterWith("immediate3-microtask")); process.nextTick(() => als.enterWith("immediate3-tick")); });
+        setImmediate(() => { seen.push("immediate4:" + als.getStore()); });
+        setTimeout(() => { Promise.resolve().then(() => { als.enterWith("timer5-reaction"); }); }, 5);
+        setTimeout(() => { seen.push("timer6:" + als.getStore()); }, 5);
+        fs.readFile(__filename, () => {
+          als.enterWith("readFile");
+          setTimeout(() => { seen.push("timer-in-readFile:" + als.getStore()); }, 1);
+          fs.readFile(__filename, () => { seen.push("readFile2:" + als.getStore()); });
+        });
+        setTimeout(() => { seen.push("timer3:" + als.getStore()); }, 60);
+      `,
+    );
+    expect(stdout.toSorted()).toEqual([
+      "exit:undefined",
+      "immediate2:undefined",
+      "immediate4:undefined",
+      "readFile2:readFile",
+      "timer-in-readFile:readFile",
+      "timer1:timer1",
+      "timer2:undefined",
+      "timer3:undefined",
+      "timer6:undefined",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("promise reactions and microtasks run under the frame they captured", async () => {
+    const { stdout, exitCode } = await run(
+      prelude +
+        `
+        const early = Promise.resolve().then(() => { als.enterWith("reaction1"); seen.push("reaction1:" + als.getStore()); });
+        Promise.resolve().then(() => { seen.push("reaction2:" + als.getStore()); });
+        queueMicrotask(() => { seen.push("microtask:" + als.getStore()); });
+        process.nextTick(() => { seen.push("nextTick:" + als.getStore()); });
+        (async () => { await early; seen.push("after-await:" + als.getStore()); })();
+        als.run("run", () => {
+          Promise.resolve().then(() => { seen.push("reaction-in-run:" + als.getStore()); });
+        });
+        // top-level enterWith after everything above was scheduled: none of it inherits this
+        als.enterWith("top");
+        seen.push("sync:" + als.getStore());
+        setTimeout(() => { seen.push("timer-after-top:" + als.getStore()); });
+      `,
+    );
+    expect(stdout.toSorted()).toEqual([
+      "after-await:undefined",
+      "exit:undefined",
+      "microtask:undefined",
+      "nextTick:undefined",
+      "reaction-in-run:run",
+      "reaction1:reaction1",
+      "reaction2:undefined",
+      "sync:top",
+      "timer-after-top:top",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent(
+    "a server handler's enterWith() is not seen by the next request and its store is collectable",
+    async () => {
+      const { stdout, exitCode } = await run(
+        prelude +
+          `
+        const registry = new FinalizationRegistry(id => { collected++; });
+        let collected = 0;
+        const server = Bun.serve({
+          port: 0,
+          fetch(req) {
+            const inherited = als.getStore();
+            const store = { id: new URL(req.url).pathname, payload: new Uint8Array(1024 * 1024) };
+            registry.register(store, store.id);
+            als.enterWith(store);
+            return new Response(String(inherited && inherited.id));
+          },
+        });
+        (async () => {
+          for (let i = 0; i < 20; i++) {
+            const res = await fetch(server.url + "req" + i);
+            seen.push(await res.text());
+          }
+          server.stop(true);
+          for (let i = 0; i < 20 && collected < 19; i++) { Bun.gc(true); await new Promise(r => setTimeout(r, 10)); }
+          // every store but (at most) the last one must be gone
+          seen.length = 0;
+          seen.push("collected>=19:" + (collected >= 19));
+        })();
+      `,
+      );
+      expect(stdout).toEqual(["collected>=19:true", "exit:undefined"]);
+      expect(exitCode).toBe(0);
+    },
+  );
+});
+
+// With a store active, awaiting and .then() must not allocate side objects to
+// carry the frame (it rides in the reaction / microtask itself).
+test("an active store adds no per-await / per-then helper allocations", () => {
+  const { heapStats } = require("bun:jsc");
+  const als = new AsyncLocalStorage();
+  const N = 5000;
+  const count = () => {
+    Bun.gc(true);
+    return heapStats().objectTypeCounts.InternalFieldTuple ?? 0;
+  };
+  const keep: unknown[] = [];
+  const never = new Promise(() => {});
+  const delta = als.run({ store: 1 }, () => {
+    const before = count();
+    for (let i = 0; i < N; i++) {
+      keep.push(
+        (async () => {
+          await never;
+        })(),
+      );
+      keep.push(never.then(() => {}));
+      keep.push(
+        never.then(
+          () => {},
+          () => {},
+        ),
+      );
+    }
+    return count() - before;
+  });
+  expect(keep.length).toBe(N * 3);
+  expect(delta).toBeLessThan(50);
 });

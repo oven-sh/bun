@@ -23,7 +23,6 @@
 // calls to $assert which will verify this invariant (only during bun-debug)
 //
 const setAsyncHooksEnabled = $newCppFunction("NodeAsyncHooks.cpp", "jsSetAsyncHooksEnabled", 1);
-const cleanupLater = $newCppFunction("NodeAsyncHooks.cpp", "jsCleanupLater", 0);
 const { validateFunction, validateString, validateObject } = require("internal/validators");
 // SameValue in pure operators. Node compares stores with the primordial
 // ObjectIs; capturing Object.is here would still inherit a patch applied
@@ -69,6 +68,10 @@ function debugFormatContextValue(value: ReadonlyArray<any> | undefined) {
   return str;
 }
 
+// Bumped whenever a frame is mutated in place (disable()), so run() can tell
+// that the frame it installed changed under it even though its identity did not.
+let frameMutations = 0;
+
 function get(): ReadonlyArray<any> | undefined {
   $debug("get", debugFormatContextValue($getInternalField($asyncContext, 0)));
   return $getInternalField($asyncContext, 0);
@@ -81,8 +84,8 @@ function set(contextValue: ReadonlyArray<any> | undefined) {
 }
 
 // Node parity: dispose() is enterWith(previousStore), which on a fresh ALS
-// installs [als, undefined] instead of splicing like run(). Bun's
-// cleanupAsyncHooksData resets top-level next tick, so residue is bounded.
+// installs [als, undefined] instead of splicing like run(). Like any
+// enterWith() residue, it is dropped at the next top-level checkpoint.
 class RunScope {
   #storage;
   #previousStore;
@@ -153,7 +156,6 @@ class AsyncLocalStorage {
   }
 
   enterWith(store) {
-    cleanupLater();
     // we must renable it when asyncLocalStorage.enterWith() is called https://nodejs.org/api/async_context.html#asynclocalstoragedisable
     this.#disabled = false;
     var context = get();
@@ -194,18 +196,19 @@ class AsyncLocalStorage {
     if (!this.#disabled && sameValue(this.getStore(), store_value)) {
       return callback.$apply(undefined, args);
     }
-    var context = get() as any[]; // we make sure to .slice() before mutating
+    var prior = get(); // the frame to come back to
+    var mutations = frameMutations;
+    var context: any[]; // the frame installed for the callback
     var hasPrevious = false;
     var previous_value;
     var i = 0;
-    var contextWasAlreadyInit = !context;
     // we must renable it when asyncLocalStorage.run() is called https://nodejs.org/api/async_context.html#asynclocalstoragedisable
     this.#disabled = false;
-    if (contextWasAlreadyInit) {
+    if (!prior) {
       set((context = [this, store_value]));
     } else {
       // it's safe to mutate context now that it was cloned
-      context = context!.slice();
+      context = prior.slice();
       // Scan even (key) slots only — a value slot can hold this storage when
       // another ALS stored it via enterWith/run.
       i = -1;
@@ -240,9 +243,11 @@ class AsyncLocalStorage {
       // entering a disabled storage must not leave store_value installed after run().
       {
         var context2 = get()! as any[]; // we make sure to .slice() before mutating
-        if (context2 === context && contextWasAlreadyInit) {
-          $assert(context2.length === 2, "context was mutated without copy");
-          set(undefined);
+        if (context2 === context && mutations === frameMutations) {
+          // Nothing inside the callback installed or mutated a frame, so the frame
+          // from before run() is exactly what restoring by value would rebuild.
+          // No allocation on this path.
+          set(prior);
         } else {
           // The context array can change shape during the callback (disable()
           // splices storages out), so re-locate this storage by identity
@@ -303,7 +308,9 @@ class AsyncLocalStorage {
       var { length } = context;
       for (var i = 0; i < length; i += 2) {
         if (context[i] === this) {
+          // In place: this also exits continuations that captured this frame.
           context.splice(i, 2);
+          frameMutations++;
           set(context.length ? context : undefined);
           break;
         }

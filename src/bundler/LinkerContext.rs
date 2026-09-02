@@ -2696,7 +2696,7 @@ impl<'a> js_printer::RequireOrImportMetaSource for LinkerContext<'a> {
 // DFS). Packing the slices into a borrowed context struct keeps each step at
 // 3-4 register-sized arguments.
 pub(crate) struct TreeShakeCtx<'a, 'r> {
-    pub(crate) parts: &'r [bun_ast::PartList<'a>],
+    pub(crate) parts: &'r mut [bun_ast::PartList<'a>],
     pub(crate) parts_live: &'r mut [bun_collections::AutoBitSet],
     pub(crate) import_records: &'r [bun_ast::import_record::List<'a>],
     pub(crate) entry_point_kinds: &'r [EntryPoint::Kind],
@@ -2872,13 +2872,36 @@ impl<'a> LinkerContext<'a> {
             }
             preload_entries.set(id);
             let part_index = self.entry_point_part_indices[id];
-            self.graph.generate_symbol_import_and_use(
-                entry,
-                part_index,
-                self.chunks_runtime_ref,
-                1,
-                Index::RUNTIME,
-            )?;
+            // Through `ctx.parts` (the tree shaker's view of the parts column), not a second `&mut` via `self.graph`.
+            {
+                let ast = self.graph.ast.split_raw();
+                let meta = self.graph.meta.split_raw();
+                // SAFETY: columns other than `parts`; stable for the link step and not otherwise borrowed here.
+                let (ast_flags, exports_ref, module_ref, top_level, imports_to_bind, overlay) = unsafe {
+                    (
+                        &mut *ast.flags,
+                        &*ast.exports_ref,
+                        &*ast.module_ref,
+                        &*ast.top_level_symbols_to_parts,
+                        &mut *meta.imports_to_bind,
+                        &*meta.top_level_symbol_to_parts_overlay,
+                    )
+                };
+                crate::linker_graph::generate_symbol_import_and_use(
+                    ctx.parts,
+                    ast_flags,
+                    exports_ref,
+                    module_ref,
+                    top_level,
+                    imports_to_bind,
+                    overlay,
+                    entry,
+                    part_index,
+                    self.chunks_runtime_ref,
+                    1,
+                    Index::RUNTIME,
+                )?;
+            }
             if ctx.parts_live[id].is_set(part_index as usize) {
                 for dependency in ctx.parts[id].as_slice()[part_index as usize]
                     .dependencies

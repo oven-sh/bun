@@ -194,6 +194,7 @@ impl<'a> Options<'a> {
                 no_macros: f.no_macros,
                 commonjs_named_exports: f.commonjs_named_exports,
                 minify_syntax: f.minify_syntax,
+                minify_syntax_statements: f.minify_syntax_statements,
                 minify_identifiers: f.minify_identifiers,
                 minify_keep_names: f.minify_keep_names,
                 minify_whitespace: f.minify_whitespace,
@@ -266,12 +267,6 @@ impl<'a> Options<'a> {
         }
 
         self.features.hash_for_runtime_transpiler(hasher);
-    }
-
-    // Used to determine if `joinWithComma` should be called in `visitStmts`. We do this
-    // to avoid changing line numbers too much to make source mapping more readable
-    pub(crate) fn runtime_merge_adjacent_expression_statements(&self) -> bool {
-        self.bundle
     }
 
     pub fn init(jsx: options::JSX::Pragma, loader: options::Loader) -> Options<'static> {

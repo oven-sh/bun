@@ -1179,8 +1179,8 @@ describe("bundler", () => {
       "e2 instanceof Error",
       'e1.message === "with new"',
       'e2.message === "without new"',
-      'typeof e1.stack === "string"',
-      'typeof e2.stack === "string"',
+      'typeof e1.stack == "string"',
+      'typeof e2.stack == "string"',
       "withNew.constructor === withoutNew.constructor",
     ],
     minifySyntax: true,
@@ -1354,12 +1354,12 @@ describe("bundler", () => {
       "JSON.stringify(a1) === JSON.stringify(a2)",
       "a1.constructor === a2.constructor",
       "sparse.length === 5",
-      "0 in sparse === !1",
+      "0 in sparse == !1",
       'JSON.stringify(sparse) === "[null,null,null,null,null]"',
       "a3.length === a4.length && a3.length === 3 && a3[0] === void 0",
-      "typeof o1 === typeof o2",
+      "typeof o1 == typeof o2",
       "o1.constructor === o2.constructor",
-      "typeof f1 === typeof f2",
+      "typeof f1 == typeof f2",
       "f1() === f2()",
       "r1.source === r2.source",
       "r1.flags === r2.flags",
@@ -1398,7 +1398,7 @@ describe("bundler", () => {
     onAfterBundle(api) {
       const file = api.readFile("out.js");
       expect(normalizeBunSnapshot(file)).toMatchInlineSnapshot(
-        `"console.log(typeof x<"u");console.log(typeof x<"u");console.log(typeof x<"u");console.log(typeof x<"u");console.log(typeof x>"u");console.log(typeof x>"u");console.log(typeof x>"u");console.log(typeof x>"u");console.log(typeof x==="string");console.log(x==="undefined");console.log(y==="undefined");console.log(typeof x==="undefinedx");"`,
+        `"console.log(typeof x<"u");console.log(typeof x<"u");console.log(typeof x<"u");console.log(typeof x<"u");console.log(typeof x>"u");console.log(typeof x>"u");console.log(typeof x>"u");console.log(typeof x>"u");console.log(typeof x=="string");console.log(x==="undefined");console.log(y==="undefined");console.log(typeof x=="undefinedx");"`,
       );
     },
   });
@@ -1485,13 +1485,14 @@ describe("bundler", () => {
     },
   });
 
-  // A bare `return;` (no value) cannot be expressed as a shorthand arrow body,
-  // so the block body must be preserved even when minifying.
+  // A bare `return;` (no value) cannot be expressed as a shorthand arrow body.
+  // A trailing `return;` is dropped, and the empty block body stays.
   itBundled("minify/ArrowBareReturnKeepsBlock", {
     files: {
       "/entry.js": /* js */ `
         export const bare = (x) => { return; };
         export const undef = (x) => { return undefined; };
+        export const tail = (x) => { x(); return; };
         export function fn(a) { return a + 1; }
       `,
     },
@@ -1499,9 +1500,10 @@ describe("bundler", () => {
     minifyIdentifiers: false,
     onAfterBundle(api) {
       const code = api.readFile("/out.js");
-      // Bare `return;` and `return undefined;` (normalized to `return;`) stay as blocks.
-      expect(code).toMatch(/bare = \(x\) => \{\s*return;?\s*\}/);
-      expect(code).toMatch(/undef = \(x\) => \{\s*return;?\s*\}/);
+      // Bare `return;` and `return undefined;` (normalized to `return;`) are dropped.
+      expect(code).toMatch(/bare = \(x\) => \{\s*\}/);
+      expect(code).toMatch(/undef = \(x\) => \{\s*\}/);
+      expect(code).toMatch(/tail = \(x\) => \{\s*x\(\);?\s*\}/);
       // Function declarations are never rewritten into arrows.
       expect(code).toContain("function fn(a)");
     },
@@ -1589,14 +1591,13 @@ describe("bundler", () => {
     },
   });
 
-  // The collapse is gated on bundling, so minify-syntax alone (no bundle) must
-  // keep the block body. The runtime transpiler (`bun run`/`bun test`) forces
-  // minify-syntax on for bun targets but never bundles, so collapsing here
-  // would change `Function.prototype.toString()` output at runtime.
-  itBundled("minify/ArrowReturnNotCollapsedWhenNotBundling", {
+  // `bun build --no-bundle --minify-syntax` runs the same statement-level
+  // passes as the bundler, including the arrow body collapse.
+  itBundled("minify/ArrowReturnCollapsedWhenNotBundling", {
     files: {
       "/entry.js": /* js */ `
         export const foo = (a) => { return a + 1; };
+        export function bar(a, b) { if (a) return b(); return 0; }
       `,
     },
     bundling: false,
@@ -1604,7 +1605,237 @@ describe("bundler", () => {
     minifyIdentifiers: false,
     onAfterBundle(api) {
       const code = api.readFile("/out.js");
-      expect(code).toMatch(/=>\s*\{\s*return a \+ 1;?\s*\}/);
+      expect(code).toMatch(/foo = \(a\) => a \+ 1/);
+      expect(code).toMatch(/return a \? b\(\) : 0/);
+    },
+  });
+
+  // The runtime transpiler (`bun run`/`bun test`) forces minify-syntax on for
+  // bun targets but never bundles. It must not restructure statements or
+  // rewrite comparisons, so that `Function.prototype.toString()` and line
+  // numbers stay close to the source.
+  test("runtime transpiler keeps statement structure", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        /* js */ `
+        const foo = (a) => { return a + 1; };
+        function bar(a, b) {
+          if (a) return b();
+          if (!a) b(); else b();
+          while (a) if (b()) break;
+          try { b() } catch (e) { b() }
+          if (typeof a === "string" || a === null || a === void 0) b();
+          if ((a >>> 0) !== 0) b();
+          if (!!a && true) b();
+          if ((a || false) || false) b();
+          a != null && a.b();
+          return 0;
+        }
+        console.log(foo.toString());
+        console.log(bar.toString());
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
+      "(a) => {
+        return a + 1;
+      }
+      function bar(a, b) {
+        if (a)
+          return b();
+        if (!a)
+          b();
+        else
+          b();
+        while (a)
+          if (b())
+            break;
+        try {
+          b();
+        } catch (e) {
+          b();
+        }
+        if (typeof a === "string" || a === null || a === void 0)
+          b();
+        if (a >>> 0 !== 0)
+          b();
+        if (a)
+          b();
+        if (a)
+          b();
+        a != null && a.b();
+        return 0;
+      }"
+    `);
+    expect(exitCode).toBe(0);
+  });
+
+  // Statement-level syntax minification (esbuild's mangleIf, mangleStmts,
+  // mangleFor, MangleIfExpr). Each function is checked for shape, then the
+  // bundle runs to show the rewrites keep the original behavior.
+  itBundled("minify/StatementLevelMangling", {
+    files: {
+      "/entry.js": /* js */ `
+        export function ifElseToTernary(a) { if (a) return 1; else return 2 }
+        export function ifChain(r) { if (!r) return 1; if (r.x) return 2; return 3 }
+        export function ifAnd(f, i, g) { if (f) { if (i) g() } }
+        export function ifOr(e, g) { if (e); else g() }
+        export function throwChain(a, b) { if (a) throw b; throw 1 }
+        export function whileBreak(g) { let n = 0; while (true) { if (g(n)) break; n++ } return n }
+        export function catchUnused(g, h) { try { g() } catch (t) { h() } }
+        export function catchVarQuirk() { try { throw 1 } catch (x) { var x = 2 } return x }
+        export function usedLabel(b) { x: { if (b) break x; return 1 } return 2 }
+        export function unusedLabel(b) { x: { return b } }
+        export function negZero(b) { return b ? -0 : 0 }
+        export function optChain(a) { return a != null ? a.b : undefined }
+        export function nullish(a, b) { return a != null ? a : b }
+        export function callTarget(o, a) { return (a ? o.m : o.m)() }
+        export function tagTarget(o, a) { return (a ? o.m : o.m)\`x\` }
+        export function tagTargetFolded(o) { return (1 ? o.m : 2)\`x\` }
+        export function tagTargetTypeof(o) { return (typeof o ? o.m : 2)\`x\` }
+        export function callTargetTypeof(o) { return (typeof o ? o.m : 2)() }
+        export function tagOptionalChain(a) { return (a != null ? a.b() : void 0)\`x\` }
+        export function implicitReturn(y, z) { if (y) return; z() }
+        export function loopContinue(xs, f) { for (const x of xs) { if (x > 2) continue; f(x) } }
+        export function typeofEq(t) { return typeof t === "string" }
+        export function nullUndef(n) { return n === void 0 || n === null }
+        export function ternaryBool(a) { return a ? true : false }
+        export function sameArgs(a, b, c, d) { return a ? b(c) : b(d) }
+        export function exprStmts(a, b) { a(); b(); return 1 }
+        export function deleteCond(o, t) { delete (t ? o.b : o.b); return "b" in o }
+
+        const out = [];
+        const log = (...v) => out.push(...v);
+        log(ifElseToTernary(1), ifElseToTernary(0));
+        log(ifChain(null), ifChain({ x: 1 }), ifChain({}));
+        { let n = 0; ifAnd(1, 1, () => n++); ifAnd(1, 0, () => n++); ifAnd(0, 1, () => n++); log(n); }
+        { let n = 0; ifOr(0, () => n++); ifOr(1, () => n++); log(n); }
+        try { throwChain(1, "b") } catch (e) { log(e) }
+        try { throwChain(0, "b") } catch (e) { log(e) }
+        log(whileBreak(n => n >= 3));
+        { let n = 0; catchUnused(() => { throw 0 }, () => n++); log(n); }
+        log(catchVarQuirk());
+        log(usedLabel(true), usedLabel(false), unusedLabel(7));
+        log(Object.is(negZero(true), -0), Object.is(negZero(false), 0));
+        log(optChain(null), optChain({ b: 5 }));
+        log(nullish(null, 2), nullish(0, 2));
+        log(callTarget({ m() { return this === undefined } }, true));
+        log(callTargetTypeof({ m() { return this === undefined } }));
+        log(tagOptionalChain({ b() { return s => s[0] } }));
+        { let n = 0; implicitReturn(true, () => n++); implicitReturn(false, () => n++); log(n); }
+        { const seen = []; loopContinue([1, 2, 3, 4], x => seen.push(x)); log(seen.join()); }
+        log(typeofEq("s"), typeofEq(1));
+        log(nullUndef(undefined), nullUndef(null), nullUndef(0));
+        log(ternaryBool(1), ternaryBool(""));
+        log(sameArgs(true, x => x * 2, 1, 2), sameArgs(false, x => x * 2, 1, 2));
+        { const seen = []; log(exprStmts(() => seen.push("a"), () => seen.push("b")), seen.join()); }
+        log(deleteCond({ b: 1 }, true), deleteCond({ b: 1 }, false));
+        console.log(JSON.stringify(out));
+      `,
+    },
+    minifySyntax: true,
+    minifyWhitespace: true,
+    minifyIdentifiers: false,
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      const fns = [...code.matchAll(/function (\w+)\([^)]*\)\{(.*?)\}(?=function |var out)/g)].map(m => [m[1], m[2]]);
+      expect(Object.fromEntries(fns)).toEqual({
+        ifElseToTernary: "return a?1:2",
+        ifChain: "return r?r.x?2:3:1",
+        ifAnd: "f&&i&&g()",
+        ifOr: "e||g()",
+        throwChain: "throw a?b:1",
+        whileBreak: "let n=0;for(;!g(n);)n++;return n",
+        catchUnused: "try{g()}catch{h()}",
+        // The hoisted `var x` shares its name with the catch binding, so the binding stays.
+        catchVarQuirk: "try{throw 1}catch(x){var x=2}return x",
+        usedLabel: "x:{if(b)break x;return 1}return 2",
+        unusedLabel: "return b",
+        // `-0` and `0` are not the same value, so the branches are not merged.
+        negZero: "return b?-0:0",
+        optChain: "return a?.b",
+        nullish: "return a??b",
+        // The comma keeps `this` unbound, as it was for the conditional. The
+        // bundle is right for the tag too, but the runtime transpiler drops
+        // that comma today (#40829), so only the shape is checked for it.
+        callTarget: "return(0,o.m)()",
+        tagTarget: "return(0,o.m)`x`",
+        tagTargetFolded: "return(0,o.m)`x`",
+        tagTargetTypeof: "return(0,o.m)`x`",
+        callTargetTypeof: "return(0,o.m)()",
+        // An optional chain cannot be a template tag, so the tag is parenthesized.
+        tagOptionalChain: "return(a?.b())`x`",
+        implicitReturn: "y||z()",
+        loopContinue: "for(let x of xs)x>2||f(x)",
+        typeofEq: 'return typeof t=="string"',
+        nullUndef: "return n==null",
+        ternaryBool: "return!!a",
+        sameArgs: "return b(a?c:d)",
+        exprStmts: "return a(),b(),1",
+        // `delete` of a conditional deletes nothing, so the conditional stays.
+        deleteCond: 'return delete(t?o.b:o.b),"b"in o',
+      });
+    },
+    run: {
+      stdout:
+        '[1,2,1,2,3,1,1,"b",1,3,1,null,2,1,7,true,true,null,5,2,0,true,true,"x",1,"1,2",true,false,true,true,false,true,false,2,4,1,"a,b",true,true]',
+    },
+  });
+
+  // Every `if` rewrite runs with a truthy and a falsy test. The side effects
+  // of the test and of each branch must match the original `if`, and
+  // comma-joined branches stay grouped inside the conditional.
+  itBundled("minify/IfStatementMangling", {
+    files: {
+      "/entry.js": /* js */ `
+        const out = [];
+        function both(a){if(a)out.push("y"+a);else out.push("n"+a);}
+        function yes(a){if(a)out.push("Y"+a);}
+        function notYes(a){if(!a)out.push("N"+a);}
+        function notBoth(a){if(!a)out.push("b"+a);else out.push("c"+a);}
+        function blocks(a){if(a){out.push("x"+a);out.push("y"+a);}else{out.push("z"+a);out.push("w"+a);}}
+        function retBoth(a){if(a)return "r1";else return "r2";}
+        function retMixed(a){if(a)return;else return "m";}
+        function throwBoth(a){try{if(a)throw "t1";else throw "t2";}catch(e){return e;}}
+        function emptyYes(a){if(a){}else out.push("E"+a);}
+        function emptyBoth(a){let n=0;if((n++,a)){}else{};out.push("eb"+n);}
+
+        for (const v of [0, 1]) {
+          both(v); yes(v); notYes(v); notBoth(v); blocks(v);
+          out.push(retBoth(v), String(retMixed(v)), throwBoth(v));
+          emptyYes(v); emptyBoth(v);
+        }
+        console.log(out.join(","));
+      `,
+    },
+    minifySyntax: true,
+    minifyWhitespace: true,
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      const fns = [...code.matchAll(/function (\w+)\([^)]*\)\{(.*?)\}(?=function |for\()/g)].map(m => [m[1], m[2]]);
+      expect(Object.fromEntries(fns)).toEqual({
+        both: 'a?out.push("y"+a):out.push("n"+a)',
+        yes: 'a&&out.push("Y"+a)',
+        notYes: 'a||out.push("N"+a)',
+        notBoth: 'a?out.push("c"+a):out.push("b"+a)',
+        blocks: 'a?(out.push("x"+a),out.push("y"+a)):(out.push("z"+a),out.push("w"+a))',
+        retBoth: 'return a?"r1":"r2"',
+        // `return a?void 0:"m"` at the end of a function body becomes an `if`.
+        retMixed: 'if(!a)return"m"',
+        throwBoth: 'try{throw a?"t1":"t2"}catch(e){return e}',
+        emptyYes: 'a||out.push("E"+a)',
+        emptyBoth: 'let n=0;n++,out.push("eb"+n)',
+      });
+    },
+    run: {
+      stdout: "n0,N0,b0,z0,w0,r2,m,t2,E0,eb1,y1,Y1,c1,x1,y1,r1,undefined,t1,eb1",
     },
   });
 
@@ -1681,6 +1912,137 @@ describe("bundler", () => {
       expect(code.match(/let keep = /g)).toHaveLength(10);
     },
   });
+
+  // A `let`/`const` declared in one case clause is scoped to the whole switch
+  // block, so a later clause can still read or assign it. The single-use
+  // inliner used to run per clause and deleted `tag`, `s` and `n` after it
+  // had only seen the uses in the declaring clause. `only` has its single use
+  // in the same clause and must still be inlined.
+  itBundled("minify/SwitchCaseDeclUsedInLaterCase", {
+    files: {
+      "/entry.js": /* js */ `
+        function capture(v) { return v; }
+        function fallthrough(k) {
+          switch (k) {
+            case 1: const tag = { id: 1 }; capture(tag);
+            case 2: return typeof tag;
+          }
+        }
+        function defaultClause() {
+          switch (1) {
+            case 1: let s = "s1"; capture(s.length);
+            default: { return s + "!"; }
+          }
+        }
+        function reassigned(k) {
+          switch (k) {
+            case 1: let n = k; capture(n);
+            case 2: n = 5; return n;
+          }
+        }
+        function sameClause(v) {
+          switch (v) {
+            case 1: const only = v; return capture(only + 1);
+          }
+        }
+        console.log(JSON.stringify([fallthrough(1), defaultClause(), reassigned(1), sameClause(1)]));
+      `,
+    },
+    capture: ["v", "tag", "s.length", "n", "v + 1"],
+    minifySyntax: true,
+    minifyIdentifiers: false,
+    target: "bun",
+    run: {
+      stdout: '["object","s1!",5,2]',
+    },
+  });
+
+  // A long run of `if (x) return;` nests into one `&&` chain and a long run
+  // of `if (x) return y;` into one `?:` chain. Both stop at 128 levels so the
+  // recursive walkers and the printer stay within the stack. The rest of the
+  // list stays as written (in `early` it joins the flat `||` chain that the
+  // same-jump merge builds), the build succeeds, and the output runs.
+  const longIfs = (n: number, body: (i: number) => string) =>
+    Array.from({ length: n }, (_, i) => `if (a[${i}]) ${body(i)};`).join("\n");
+  itBundled("minify/LongJumpChainsStayBounded", {
+    files: {
+      "/entry.js": /* js */ `
+        function early(a) { ${longIfs(600, () => "return")} return "end"; }
+        function lookup(a) { ${longIfs(600, i => `return ${i}`)} return -1; }
+        function raise(a) { ${longIfs(600, i => `throw ${i}`)} throw -1; }
+        const hit = i => { const a = []; a[i] = 1; return a; };
+        let thrown;
+        try { raise(hit(599)); } catch (e) { thrown = e; }
+        console.log(JSON.stringify([early(hit(599)), early([]), lookup(hit(0)), lookup(hit(599)), lookup([]), thrown]));
+      `,
+    },
+    minifySyntax: true,
+    minifyWhitespace: true,
+    minifyIdentifiers: false,
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      const fn = (name: string) => code.match(new RegExp(`function ${name}\\(a\\)\\{(.*?)\\}(?:function |var )`))![1];
+      const count = (s: string, re: RegExp) => (s.match(re) ?? []).length;
+      expect({
+        earlyAnd: count(fn("early"), /&&/g),
+        earlyOr: count(fn("early"), /\|\|/g),
+        earlyTernary: count(fn("early"), /\?/g),
+        lookupIfs: count(fn("lookup"), /if\(a\[\d+\]\)/g),
+        lookupTernary: count(fn("lookup"), /\?/g),
+        raiseIfs: count(fn("raise"), /if\(a\[\d+\]\)/g),
+        raiseTernary: count(fn("raise"), /\?/g),
+      }).toEqual({
+        earlyAnd: 127,
+        earlyOr: 471,
+        earlyTernary: 1,
+        lookupIfs: 472,
+        lookupTernary: 128,
+        raiseIfs: 472,
+        raiseTernary: 128,
+      });
+    },
+    run: {
+      stdout: '[null,"end",0,599,-1,599]',
+    },
+  });
+});
+
+// The runtime transpiler runs the same single-use inliner. A `const` declared
+// in one case clause and read after a fall-through into the next clause must
+// keep its declaration.
+test("runtime transpiler keeps a switch case declaration that a later case reads", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      /* js */ `
+        function f(k) {
+          switch (k) {
+            case 1: const tag = { id: 1 }; use(tag);
+            case 2: return typeof tag;
+          }
+        }
+        function g() {
+          switch (1) {
+            case 1: let s = "s1"; use(s.length);
+            default: { return s + "!"; }
+          }
+        }
+        function use(v) { return v; }
+        let r;
+        try { r = g(); } catch (e) { r = e.constructor.name; }
+        console.log(JSON.stringify([f(1), r]));
+      `,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout).toBe('["object","s1!"]\n');
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
 });
 
 // The runtime transpiler (`bun run`/`bun test`) implicitly enables

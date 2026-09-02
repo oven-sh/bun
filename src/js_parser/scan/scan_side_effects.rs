@@ -35,62 +35,148 @@ impl SideEffects {
             && left != bun_ast::expr::PrimitiveType::Mixed
     }
 
+    /// Simplify an expression that is only tested for truthiness, such as the
+    /// test of an `if`. Port of esbuild's `SimplifyBooleanExpr`.
+    ///
+    /// Some callers run this without `minify_syntax`, so the rules that
+    /// rewrite operands or comparisons only run for a minified build. The
+    /// rest is the behavior those callers had before.
     pub(crate) fn simplify_boolean<'a, const TS: bool, const SCAN: bool>(
-        p: &P<'a, TS, SCAN>,
+        p: &mut P<'a, TS, SCAN>,
         expr: Expr,
     ) -> Expr {
-        if !p.options.features.dead_code_elimination {
+        if !p.options.features.dead_code_elimination || !p.stack_check.is_safe_to_recurse() {
             return expr;
         }
-        let mut result: Expr = expr;
-        Self::_simplify_boolean(p, &mut result);
-        result
-    }
+        let minify = p.full_minify_syntax();
 
-    fn _simplify_boolean<'a, const TS: bool, const SCAN: bool>(
-        p: &P<'a, TS, SCAN>,
-        expr: &mut Expr,
-    ) {
-        loop {
-            match &mut expr.data {
-                ExprData::EUnary(e) => {
-                    if e.op == Op::Code::UnNot {
-                        // "!!a" => "a"
-                        if let ExprData::EUnary(inner) = &e.value.data {
-                            if inner.op == Op::Code::UnNot {
-                                *expr = inner.value;
-                                continue;
-                            }
+        match expr.data {
+            ExprData::EUnary(mut e) if e.op == Op::Code::UnNot => {
+                // "!!a" => "a"
+                if let ExprData::EUnary(inner) = e.value.data
+                    && inner.op == Op::Code::UnNot
+                {
+                    return Self::simplify_boolean(p, inner.value);
+                }
+
+                // "!!!a" => "!a"
+                e.value = Self::simplify_boolean(p, e.value);
+            }
+
+            ExprData::EBinary(mut e) => match e.op {
+                Op::Code::BinStrictEq
+                | Op::Code::BinStrictNe
+                | Op::Code::BinLooseEq
+                | Op::Code::BinLooseNe => {
+                    if minify
+                        && let Some(r) = e.right.data.extract_numeric_value()
+                        && r == 0.0
+                        && is_int32_or_uint32(&e.left.data, p.stack_check)
+                    {
+                        // If the left is guaranteed to be an integer (e.g. not NaN,
+                        // Infinity, or a non-numeric value) then a test against zero
+                        // in a boolean context is unnecessary because the value is
+                        // only truthy if it's not zero.
+                        if e.op == Op::Code::BinStrictNe || e.op == Op::Code::BinLooseNe {
+                            // "if ((a >>> b) !== 0)" => "if (a >>> b)"
+                            return e.left;
                         }
-                        Self::_simplify_boolean(p, &mut e.value);
+                        // "if ((a >>> b) === 0)" => "if (!(a >>> b))"
+                        return e.left.not(p.arena);
                     }
                 }
-                ExprData::EBinary(e) => match e.op {
-                    Op::Code::BinLogicalAnd => {
-                        if let Some(effects) = SideEffects::to_boolean(p, &e.right.data) {
-                            if effects.value && effects.side_effects == SideEffects::NoSideEffects {
-                                // "if (anything && truthyNoSideEffects)" => "if (anything)"
-                                *expr = e.left;
-                                continue;
-                            }
-                        }
+
+                Op::Code::BinLogicalAnd => {
+                    // "if (!!a && !!b)" => "if (a && b)"
+                    if minify {
+                        e.left = Self::simplify_boolean(p, e.left);
+                        e.right = Self::simplify_boolean(p, e.right);
                     }
-                    Op::Code::BinLogicalOr => {
-                        if let Some(effects) = SideEffects::to_boolean(p, &e.right.data) {
-                            if !effects.value && effects.side_effects == SideEffects::NoSideEffects
-                            {
-                                // "if (anything || falsyNoSideEffects)" => "if (anything)"
-                                *expr = e.left;
-                                continue;
-                            }
-                        }
+
+                    if let Some(effects) = SideEffects::to_boolean(p, &e.right.data)
+                        && effects.value
+                        && effects.side_effects == SideEffects::NoSideEffects
+                    {
+                        // "if (anything && truthyNoSideEffects)" => "if (anything)"
+                        return if minify {
+                            e.left
+                        } else {
+                            Self::simplify_boolean(p, e.left)
+                        };
                     }
-                    _ => {}
-                },
+                }
+
+                Op::Code::BinLogicalOr => {
+                    // "if (!!a || !!b)" => "if (a || b)"
+                    if minify {
+                        e.left = Self::simplify_boolean(p, e.left);
+                        e.right = Self::simplify_boolean(p, e.right);
+                    }
+
+                    if let Some(effects) = SideEffects::to_boolean(p, &e.right.data)
+                        && !effects.value
+                        && effects.side_effects == SideEffects::NoSideEffects
+                    {
+                        // "if (anything || falsyNoSideEffects)" => "if (anything)"
+                        return if minify {
+                            e.left
+                        } else {
+                            Self::simplify_boolean(p, e.left)
+                        };
+                    }
+                }
+
                 _ => {}
+            },
+
+            ExprData::EIf(mut e) if minify => {
+                // "if (a ? !!b : !!c)" => "if (a ? b : c)"
+                e.yes = Self::simplify_boolean(p, e.yes);
+                e.no = Self::simplify_boolean(p, e.no);
+
+                if let Some(effects) = SideEffects::to_boolean(p, &e.yes.data)
+                    && effects.side_effects == SideEffects::NoSideEffects
+                {
+                    if effects.value {
+                        // "if (anything1 ? truthyNoSideEffects : anything2)" => "if (anything1 || anything2)"
+                        return Expr::join_with_left_associative_op(
+                            Op::Code::BinLogicalOr,
+                            e.test,
+                            e.no,
+                        );
+                    }
+                    // "if (anything1 ? falsyNoSideEffects : anything2)" => "if (!anything1 && anything2)"
+                    return Expr::join_with_left_associative_op(
+                        Op::Code::BinLogicalAnd,
+                        e.test.not(p.arena),
+                        e.no,
+                    );
+                }
+
+                if let Some(effects) = SideEffects::to_boolean(p, &e.no.data)
+                    && effects.side_effects == SideEffects::NoSideEffects
+                {
+                    if effects.value {
+                        // "if (anything1 ? anything2 : truthyNoSideEffects)" => "if (!anything1 || anything2)"
+                        return Expr::join_with_left_associative_op(
+                            Op::Code::BinLogicalOr,
+                            e.test.not(p.arena),
+                            e.yes,
+                        );
+                    }
+                    // "if (anything1 ? anything2 : falsyNoSideEffects)" => "if (anything1 && anything2)"
+                    return Expr::join_with_left_associative_op(
+                        Op::Code::BinLogicalAnd,
+                        e.test,
+                        e.yes,
+                    );
+                }
             }
-            break;
+
+            _ => {}
         }
+
+        expr
     }
 
     // Re-exports of ExprData methods.
@@ -327,6 +413,13 @@ impl SideEffects {
                     Op::Code::BinLogicalAnd
                     | Op::Code::BinLogicalOr
                     | Op::Code::BinNullishCoalescing => {
+                        // If this is a boolean logical operation and the result is unused, then
+                        // we know the left operand will only be used for its boolean value and
+                        // can be simplified under that assumption
+                        if bin.op != Op::Code::BinNullishCoalescing && p.full_minify_syntax() {
+                            bin.left = Self::simplify_boolean(p, bin.left);
+                        }
+
                         let right = bin.right;
                         bin.right = Self::simplify_unused_expr(p, right)
                             .unwrap_or_else(|| right.to_empty());
@@ -336,6 +429,39 @@ impl SideEffects {
 
                         if bin.right.is_empty() {
                             return Self::simplify_unused_expr(p, bin.left);
+                        }
+
+                        // Try to take advantage of the optional chain operator to shorten code
+                        if p.full_minify_syntax()
+                            && let ExprData::EBinary(binary) = bin.left.data
+                            // "a != null && a.b()" => "a?.b()"
+                            // "a == null || a.b()" => "a?.b()"
+                            && ((binary.op == Op::Code::BinLooseNe
+                                && bin.op == Op::Code::BinLogicalAnd)
+                                || (binary.op == Op::Code::BinLooseEq
+                                    && bin.op == Op::Code::BinLogicalOr))
+                        {
+                            let test = if matches!(binary.right.data, ExprData::ENull(_)) {
+                                Some(binary.left)
+                            } else if matches!(binary.left.data, ExprData::ENull(_)) {
+                                Some(binary.right)
+                            } else {
+                                None
+                            };
+
+                            // Note: Technically unbound identifiers can refer to a getter on
+                            // the global object and that getter can have side effects that can
+                            // be observed if we run that getter once instead of twice. But this
+                            // seems like terrible coding practice and very unlikely to come up
+                            // in real software, so we deliberately ignore this possibility and
+                            // optimize for size instead of for this obscure edge case.
+                            if let Some(test) = test
+                                && let ExprData::EIdentifier(id) = test.data
+                                && !id.must_keep_due_to_with_stmt()
+                                && p.try_to_insert_optional_chain(test, bin.right)
+                            {
+                                return Some(bin.right);
+                            }
                         }
                     }
 
@@ -999,5 +1125,29 @@ impl SideEffects {
             },
             _ => None,
         }
+    }
+}
+
+/// True when the expression always evaluates to an int32 or uint32, so that it
+/// is falsy exactly when it is zero.
+fn is_int32_or_uint32(data: &ExprData, stack_check: bun_core::StackCheck) -> bool {
+    if !stack_check.is_safe_to_recurse() {
+        return false;
+    }
+    match data {
+        ExprData::EBinary(e) => match e.op {
+            // This is the only bitwise operator that can't return a bigint (because it throws instead)
+            Op::Code::BinUShr => true,
+            Op::Code::BinLogicalOr | Op::Code::BinLogicalAnd => {
+                is_int32_or_uint32(&e.left.data, stack_check)
+                    && is_int32_or_uint32(&e.right.data, stack_check)
+            }
+            _ => false,
+        },
+        ExprData::EIf(e) => {
+            is_int32_or_uint32(&e.yes.data, stack_check)
+                && is_int32_or_uint32(&e.no.data, stack_check)
+        }
+        _ => false,
     }
 }

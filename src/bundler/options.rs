@@ -1308,6 +1308,10 @@ pub struct BundleOptions<'a> {
     pub inline_entrypoint_import_meta_main: bool,
     pub minify_whitespace: bool,
     pub minify_syntax: bool,
+    /// Statement restructuring on top of `minify_syntax`. Set by `bun build`
+    /// only (the bundler's parse task derives it from `minify_syntax` itself).
+    /// See `bun_js_parser::RuntimeFeatures::minify_syntax_statements`.
+    pub minify_syntax_statements: bool,
     pub minify_identifiers: bool,
     pub keep_names: bool,
     pub dead_code_elimination: bool,
@@ -1519,6 +1523,7 @@ impl<'a> BundleOptions<'a> {
             inline_entrypoint_import_meta_main: self.inline_entrypoint_import_meta_main,
             minify_whitespace: self.minify_whitespace,
             minify_syntax: self.minify_syntax,
+            minify_syntax_statements: self.minify_syntax_statements,
             minify_identifiers: self.minify_identifiers,
             keep_names: self.keep_names,
             dead_code_elimination: self.dead_code_elimination,
@@ -1768,6 +1773,7 @@ impl<'a> BundleOptions<'a> {
             inline_entrypoint_import_meta_main: false,
             minify_whitespace: false,
             minify_syntax: false,
+            minify_syntax_statements: false,
             minify_identifiers: false,
             keep_names: false,
             dead_code_elimination: true,

@@ -442,6 +442,12 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// See [`bun_react_compiler::PendingCompile`]. Set by `visit_func` /
     /// arrow-visit, consumed inside `visit_stmts` between visit and mangle.
     pub(crate) react_compiler_pending: Option<bun_react_compiler::PendingCompile>,
+    /// True while visiting the body of a function the React Compiler may
+    /// compile. See `full_minify_syntax`.
+    pub(crate) in_react_compiler_candidate: bool,
+    /// Nesting of the `if (x) return; rest` to `if (!x) { rest }` rewrite in
+    /// `mangle_stmts`, bounded by `MAX_MANGLE_NESTING`.
+    pub(crate) mangle_jump_depth: u32,
     /// Compiled args/flags written by the `visit_stmts` hook for `visit_func` /
     /// arrow-visit to apply to the original `G::Fn` / `E::Arrow`.
     pub(crate) react_compiler_result: Option<bun_react_compiler::CompileResult>,
@@ -508,6 +514,10 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) stmt_expr_value: js_ast::ExprData,
     pub(crate) call_target: js_ast::ExprData,
     pub(crate) delete_target: js_ast::ExprData,
+    /// The tag of the tagged template being visited. A tag call binds `this`
+    /// like a method call, so a rewrite that turns a tag into a property access
+    /// must keep `this` undefined, as `call_target` does for a call.
+    pub(crate) template_tag: js_ast::ExprData,
     pub(crate) loop_body: js_ast::StmtData,
     pub(crate) module_scope: js_ast::StoreRef<js_ast::Scope>,
     pub(crate) module_scope_directive_loc: bun_ast::Loc,
@@ -5727,6 +5737,23 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         true
     }
 
+    /// `minify_syntax_statements` (see `RuntimeFeatures`): every pass that
+    /// merges or restructures statements (comma joins, `if` to `&&`/`?:`,
+    /// return and throw chains, `while` to `for`, arrow bodies to expressions)
+    /// and every expression rewrite that changes how a function prints checks
+    /// this instead of `minify_syntax`.
+    ///
+    /// It is off inside a function body the React Compiler may compile: the
+    /// compiler sees the body after its statements were visited, and it does
+    /// not lower some shapes the statement mangler produces (a `for (;;)` loop
+    /// made from a `while`, `ref.current == null && (ref.current = x)` made
+    /// from an `if`).
+    pub(crate) fn full_minify_syntax(&self) -> bool {
+        self.options.features.minify_syntax
+            && self.options.features.minify_syntax_statements
+            && !self.in_react_compiler_candidate
+    }
+
     // TODO:
     // When React Fast Refresh is enabled, anything that's a JSX component should not be removable
     // This is to improve the reliability of fast refresh between page loads.
@@ -6344,43 +6371,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         for decl in decls {
             self.mark_exported_binding_inside_namespace(ns_ref, decl.binding);
         }
-    }
-
-    pub(crate) fn append_if_body_preserving_scope(
-        &mut self,
-        stmts: &mut ListManaged<'a, Stmt>,
-        body: Stmt,
-    ) -> Result<(), crate::Error> {
-        if let js_ast::StmtData::SBlock(block) = &body.data {
-            // `S::Block.stmts` is `StoreSlice<Stmt>` arena-owned for parser 'a; no aliasing &mut.
-            let block_stmts: &[Stmt] = block.stmts.slice();
-            let mut keep_block = false;
-            for stmt in block_stmts {
-                if statement_cares_about_scope(stmt) {
-                    keep_block = true;
-                    break;
-                }
-            }
-            if !keep_block && !block_stmts.is_empty() {
-                stmts.extend_from_slice(block_stmts);
-                return Ok(());
-            }
-        }
-
-        if statement_cares_about_scope(&body) {
-            let block_stmts = self.arena.alloc_slice_copy(&[body]);
-            stmts.push(self.s(
-                S::Block {
-                    stmts: block_stmts.into(),
-                    close_brace_loc: bun_ast::Loc::EMPTY,
-                },
-                body.loc,
-            ));
-            return Ok(());
-        }
-
-        stmts.push(body);
-        Ok(())
     }
 
     #[cold]
@@ -9174,6 +9164,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             call_target: null_expr_data(),
             delete_target: null_expr_data(),
+            template_tag: null_expr_data(),
             stmt_expr_value: null_expr_data(),
             loop_body: null_stmt_data(),
             define,
@@ -9265,6 +9256,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             react_compiler_candidate_name: None,
             react_compiler_in_react_hoc: false,
             react_compiler_pending: None,
+            in_react_compiler_candidate: false,
+            mangle_jump_depth: 0,
             react_compiler_result: None,
             server_components_wrap_ref: Ref::NONE,
             jest: Jest::default(),

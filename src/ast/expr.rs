@@ -1247,7 +1247,7 @@ impl Expr {
     // will potentially be simplified to avoid generating unnecessary extra "!"
     // operators. For example, calling this with "!!x" will return "!x" instead
     // of returning "!!!x".
-    pub(crate) fn not(&self, bump: &Bump) -> Expr {
+    pub fn not(&self, bump: &Bump) -> Expr {
         self.maybe_simplify_not(bump).unwrap_or_else(|| {
             Expr::init(
                 E::Unary {
@@ -2491,6 +2491,15 @@ impl Data {
                         break 'brk PrimitiveType::Mixed; // Can be number or bigint or string (or an exception)
                     }
 
+                    crate::OpCode::BinAddAssign => {
+                        if binary.right.data.known_primitive_with_check(stack_check)
+                            == PrimitiveType::String
+                        {
+                            break 'brk PrimitiveType::String;
+                        }
+                        break 'brk PrimitiveType::Mixed; // Can be number or bigint or string (or an exception)
+                    }
+
                     crate::OpCode::BinSub
                     | crate::OpCode::BinSubAssign
                     | crate::OpCode::BinMul
@@ -2629,7 +2638,7 @@ impl Data {
         }
     }
 
-    pub(crate) fn extract_numeric_value(&self) -> Option<f64> {
+    pub fn extract_numeric_value(&self) -> Option<f64> {
         match self {
             Data::ENumber(n) => Some(n.value()),
             Data::EInlinedEnum(inlined) => match &inlined.value.data {

@@ -1644,6 +1644,7 @@ impl<'a> Transpiler<'a> {
 
                 opts.features.inject_jest_globals = this_parse.inject_jest_globals;
                 opts.features.minify_syntax = self.options.minify_syntax;
+                opts.features.minify_syntax_statements = self.options.minify_syntax_statements;
                 opts.features.minify_identifiers = self.options.minify_identifiers;
                 opts.features.dead_code_elimination = self.options.dead_code_elimination;
                 opts.features.remove_cjs_module_wrapper = this_parse.remove_cjs_module_wrapper;

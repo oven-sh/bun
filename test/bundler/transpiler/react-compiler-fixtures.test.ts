@@ -222,15 +222,6 @@ const TODO: Record<string, string> = Object.assign(Object.create(null), {});
 // `__proto__: null`: a fixture named "constructor" exists.
 const MINIFY_SYNTAX_DIVERGENCE: Record<string, { compiledFunctions: number; buildError?: true; reason: string }> =
   Object.assign(Object.create(null), {
-    // minify.syntax drops the unreferenced name from `function formatWithUnit() {}`,
-    // making it eligible for the compiler's function-outlining pass (upstream only
-    // outlines anonymous function expressions). The outlined module-level function
-    // is referentially stable with no memo slot, so `_c(1)` is legitimately gone.
-    // This is better output, not a bailout.
-    "new-mutability/repro-destructure-from-prop-with-default-value": {
-      compiledFunctions: 0,
-      reason: "anonymized function expression becomes outlineable; 0 slots needed",
-    },
     // minify.syntax constant-folds `const x = 0` into the `useMemo` dependency
     // array, turning `[x]` into `[0]`; the manual-memoization parser only accepts
     // identifier / member expressions as dependencies, so it errors. This is a

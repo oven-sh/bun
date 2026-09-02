@@ -2517,6 +2517,8 @@ pub mod parse_worker {
             options::Format::InternalBakeDev => js_parser::options::Format::InternalBakeDev,
         };
         opts.features.minify_syntax = topts.minify_syntax;
+        // A bundle is a build: it gets every syntax pass.
+        opts.features.minify_syntax_statements = topts.minify_syntax;
         opts.features.minify_identifiers = topts.minify_identifiers;
         opts.features.minify_keep_names = topts.keep_names;
         opts.features.minify_whitespace = topts.minify_whitespace;

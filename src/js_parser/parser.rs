@@ -199,6 +199,14 @@ pub mod Runtime {
         pub commonjs_named_exports: bool,
 
         pub minify_syntax: bool,
+        /// The rest of esbuild's `--minify-syntax`: statement restructuring
+        /// (`if` chains to `?:`/`&&`/`||`, `while` to `for`, merged returns)
+        /// and the expression rewrites that change how a function prints
+        /// (`===` to `==`, `a === null || a === void 0` to `a == null`).
+        /// Only `bun build` sets it. `minify_syntax` alone keeps one output
+        /// statement per source statement, which `bun run` relies on for
+        /// source maps, coverage and `Function.prototype.toString()`.
+        pub minify_syntax_statements: bool,
         pub minify_identifiers: bool,
         /// Preserve function/class names during minification (CLI: --keep-names)
         pub minify_keep_names: bool,
@@ -289,6 +297,7 @@ pub mod Runtime {
                 no_macros: false,
                 commonjs_named_exports: true,
                 minify_syntax: false,
+                minify_syntax_statements: false,
                 minify_identifiers: false,
                 minify_keep_names: false,
                 minify_whitespace: false,
@@ -359,13 +368,14 @@ pub mod Runtime {
         pub(crate) fn hash_for_runtime_transpiler(&self, hasher: &mut Wyhash) {
             debug_assert!(self.runtime_transpiler_cache.is_some());
 
-            let bools: [bool; 17] = [
+            let bools: [bool; 18] = [
                 self.top_level_await,
                 self.auto_import_jsx,
                 self.allow_runtime,
                 self.inlining,
                 self.commonjs_named_exports,
                 self.minify_syntax,
+                self.minify_syntax_statements,
                 self.minify_identifiers,
                 self.minify_keep_names,
                 self.dead_code_elimination,

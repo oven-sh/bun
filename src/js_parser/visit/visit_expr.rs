@@ -686,8 +686,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let expr = *e;
         let _ = in_;
         let mut e_ = expr.data.e_template().expect("infallible: variant checked");
-        if e_.tag.is_some() {
-            p.visit_expr(e_.tag.as_mut().unwrap());
+        if let Some(tag) = e_.tag.as_mut() {
+            p.template_tag = tag.data;
+            p.visit_expr(tag);
         }
 
         // Visit the interpolation values before the macro dispatch below: its
@@ -1495,6 +1496,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut e_ = e.data.e_if().expect("infallible: variant checked");
         let is_call_target =
             matches!(p.call_target, Data::EIf(ct) if core::ptr::eq(&raw const *e_, &raw const *ct));
+        let is_delete_target = matches!(p.delete_target, Data::EIf(dt) if core::ptr::eq(&raw const *e_, &raw const *dt));
+        let is_template_tag = matches!(p.template_tag, Data::EIf(tt) if core::ptr::eq(&raw const *e_, &raw const *tt));
 
         let prev_in_branch = p.in_branch_condition;
         p.in_branch_condition = true;
@@ -1507,6 +1510,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let Some(side_effects) = SideEffects::to_boolean(p, &e_.test.data) else {
             p.visit_expr(&mut e_.yes);
             p.visit_expr(&mut e_.no);
+            // "delete (a ? b.c : b.c)" deletes nothing, "delete b.c" would.
+            if p.full_minify_syntax() && !is_delete_target {
+                let result = p.mangle_if_expr(e.loc, e_);
+                // "(a ? b.c : b.c)()" => "(0, b.c)()", not "b.c()". A tagged
+                // template binds `this` the same way.
+                *e = if (is_call_target || is_template_tag) && result.has_value_for_this_in_call() {
+                    p.new_expr(E::Number::new(0.0), result.loc)
+                        .join_with_comma(result)
+                } else {
+                    result
+                };
+            }
             return;
         };
 
@@ -1519,24 +1534,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.visit_expr(&mut e_.no);
             p.is_control_flow_dead = old;
 
-            if side_effects.side_effects == SideEffects::CouldHaveSideEffects {
-                *e = SideEffects::simplify_unused_expr(p, e_.test)
-                    .unwrap_or_else(|| p.new_expr(E::Missing {}, e_.test.loc))
-                    .join_with_comma(e_.yes);
-                return;
-            }
-
-            // "(1 ? fn : 2)()" => "fn()"
-            // "(1 ? this.fn : 2)" => "this.fn"
-            // "(1 ? this.fn : 2)()" => "(0, this.fn)()"
-            if is_call_target && e_.yes.has_value_for_this_in_call() {
-                *e = p
-                    .new_expr(E::Number::new(0.0), e_.test.loc)
-                    .join_with_comma(e_.yes);
-                return;
-            }
-
-            *e = e_.yes;
+            // "(a, true) ? b : c" => "a, b"
+            *e = Self::fold_if_branch(
+                p,
+                side_effects.side_effects,
+                e_.test,
+                e_.yes,
+                is_call_target || is_template_tag,
+            );
         } else {
             // "false ? dead : live"
             let old = p.is_control_flow_dead;
@@ -1546,24 +1551,45 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.visit_expr(&mut e_.no);
 
             // "(a, false) ? b : c" => "a, c"
-            if side_effects.side_effects == SideEffects::CouldHaveSideEffects {
-                *e = SideEffects::simplify_unused_expr(p, e_.test)
-                    .unwrap_or_else(|| p.new_expr(E::Missing {}, e_.test.loc))
-                    .join_with_comma(e_.no);
-                return;
-            }
-
-            // "(1 ? fn : 2)()" => "fn()"
-            // "(1 ? this.fn : 2)" => "this.fn"
-            // "(1 ? this.fn : 2)()" => "(0, this.fn)()"
-            if is_call_target && e_.no.has_value_for_this_in_call() {
-                *e = p
-                    .new_expr(E::Number::new(0.0), e_.test.loc)
-                    .join_with_comma(e_.no);
-                return;
-            }
-            *e = e_.no;
+            *e = Self::fold_if_branch(
+                p,
+                side_effects.side_effects,
+                e_.test,
+                e_.no,
+                is_call_target || is_template_tag,
+            );
         }
+    }
+
+    /// The branch a constant-test conditional folds to. The test is kept in
+    /// front of it when it may have side effects. A call or template tag
+    /// target that turns into a property access gets `(0, …)` in front so it
+    /// still binds `this` to `undefined`:
+    ///
+    /// "(a, true) ? b : c" => "a, b"
+    /// "(1 ? fn : 2)()" => "fn()"
+    /// "(1 ? this.fn : 2)" => "this.fn"
+    /// "(1 ? this.fn : 2)()" => "(0, this.fn)()"
+    /// "(typeof x ? this.fn : 2)()" => "(0, this.fn)()"
+    fn fold_if_branch(
+        p: &mut Self,
+        test_side_effects: SideEffects,
+        test: Expr,
+        branch: Expr,
+        binds_this: bool,
+    ) -> Expr {
+        if test_side_effects == SideEffects::CouldHaveSideEffects
+            && let Some(test) = SideEffects::simplify_unused_expr(p, test)
+            && !test.is_missing()
+        {
+            return test.join_with_comma(branch);
+        }
+        if binds_this && branch.has_value_for_this_in_call() {
+            return p
+                .new_expr(E::Number::new(0.0), test.loc)
+                .join_with_comma(branch);
+        }
+        branch
     }
 
     #[inline(never)] // PERF(port:frame): see e_jsx_element.
@@ -2675,19 +2701,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        // Collapse a single-`return` body to a shorthand expression body when
-        // minifying syntax while bundling: `(a) => { return a; }` becomes
-        // `(a) => a`. The printer (see js_printer EArrow) emits the shorthand
-        // when `prefer_expr` is set and the lone statement is a `return` with a
-        // value. A bare `return;` (no value) keeps the block body.
-        //
-        // Gated on `bundle` like the `e_function` name-drop below: the runtime
-        // transpiler forces `minify_syntax` on for `target.is_bun()`
-        // (see bundler/options.rs), so without this guard the collapse would
-        // also run for `bun run`/`bun test` and change an arrow's
-        // `Function.prototype.toString()` output.
-        if p.options.features.minify_syntax
-            && p.options.bundle
+        // Collapse a single-`return` body to a shorthand expression body:
+        // `(a) => { return a; }` becomes `(a) => a`. The printer (see
+        // js_printer EArrow) emits the shorthand when `prefer_expr` is set and
+        // the lone statement is a `return` with a value. A bare `return;` (no
+        // value) keeps the block body.
+        if p.full_minify_syntax()
             && stmts_list.len() == 1
             && matches!(
                 stmts_list[0].data,
@@ -2720,10 +2739,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // Restore now so the stack-local pointer never escapes this frame.
         p.react_refresh.hook_ctx_storage = prev_hook_ctx;
 
-        // Remove unused function names when minifying (only when bundling is enabled)
-        // unless --keep-names is specified
-        if p.options.features.minify_syntax
-            && p.options.bundle
+        // Remove unused function names when minifying unless --keep-names is specified
+        if p.full_minify_syntax()
             && !p.options.features.minify_keep_names
             // SAFETY: current_scope is a live arena ptr while the parser exists.
             && !p.current_scope().contains_direct_eval
@@ -2789,10 +2806,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return;
         }
 
-        // Remove unused class names when minifying (only when bundling is enabled)
-        // unless --keep-names is specified
-        if p.options.features.minify_syntax
-            && p.options.bundle
+        // Remove unused class names when minifying unless --keep-names is specified
+        if p.full_minify_syntax()
             && !p.options.features.minify_keep_names
             // SAFETY: current_scope is a live arena ptr while the parser exists.
             && !p.current_scope().contains_direct_eval

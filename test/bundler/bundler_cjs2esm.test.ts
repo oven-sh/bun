@@ -1099,4 +1099,88 @@ describe("bundler", () => {
       stdout: "true true id",
     },
   });
+  // The shape of `@react-email/render`: a transpiled async function yields the
+  // `import()` promise and destructures `default` from what it resolves to.
+  // https://github.com/oven-sh/bun/issues/14061
+  const liftedReactDomServer = {
+    "/node_modules/react-dom/package.json": /* json */ `
+      { "name": "react-dom", "exports": { "./server": "./server.js" } }
+    `,
+    "/node_modules/react-dom/server.js": /* js */ `
+      'use strict';
+      exports.version = "18.3.1";
+      exports.renderToString = function () { return "html"; };
+    `,
+  };
+  itBundled("cjs2esm/DynamicImportYieldDefaultOfLiftedCommonJS#14061", {
+    files: {
+      "/entry.mjs": /* js */ `
+        function* render() {
+          const { default: reactDOMServer } = yield import("react-dom/server");
+          console.log(Object.hasOwn(reactDOMServer, "renderToString"), reactDOMServer.renderToString());
+        }
+        const it = render();
+        await Promise.resolve(it.next().value).then(v => it.next(v));
+      `,
+      ...liftedReactDomServer,
+    },
+    cjs2esm: true,
+    run: {
+      stdout: "true html",
+    },
+  });
+  itBundled("cjs2esm/DynamicImportWithStaticNamedImportOfLiftedCommonJS#14061", {
+    files: {
+      "/entry.mjs": /* js */ `
+        import { version } from "react-dom/server";
+        const ns = await import("react-dom/server");
+        console.log(version, ns.version, ns.default.version, ns.default.renderToString());
+      `,
+      ...liftedReactDomServer,
+    },
+    cjs2esm: true,
+    run: {
+      stdout: "18.3.1 18.3.1 18.3.1 html",
+    },
+  });
+  // `FORCE_CJS_TO_ESM` is path based. A real ES module in the react family has
+  // no lifted exports, so its `import()` keeps the plain namespace.
+  itBundled("cjs2esm/DynamicImportOfRealEsmInReactFamilyUnaffected", {
+    files: {
+      "/entry.mjs": /* js */ `
+        const ns = await import("react-dom/server");
+        console.log(ns.foo, ns.default);
+      `,
+      "/node_modules/react-dom/package.json": /* json */ `
+        { "name": "react-dom", "exports": { "./server": "./server.mjs" } }
+      `,
+      "/node_modules/react-dom/server.mjs": /* js */ `
+        export const foo = 42;
+      `,
+    },
+    cjs2esm: true,
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("__toESM");
+    },
+    run: {
+      stdout: "42 undefined",
+    },
+  });
+  // A lone `import * as ns` of a lifted CommonJS module: `ns.default` is
+  // `module.exports`, which is the namespace itself.
+  itBundled("cjs2esm/ImportStarOfLiftedCommonJSHasDefault", {
+    files: {
+      "/entry.mjs": /* js */ `
+        import * as ns from "./c.cjs";
+        console.log(typeof ns.default, ns.default.n, ns.default === ns, Object.keys(ns).join(","));
+      `,
+      "/c.cjs": /* js */ `
+        exports.n = 7;
+      `,
+    },
+    cjs2esm: true,
+    run: {
+      stdout: "object 7 true n",
+    },
+  });
 });

@@ -164,6 +164,9 @@ pub mod js_meta {
         pub cjs_export_copies: CjsExportCopies,
         pub wrapper_part_index: Index,
         pub dynamic_import_referenced_aliases: DynamicImportReferencedAliases,
+        /// The parameter of the setters on a lifted CommonJS module's namespace
+        /// object (`set: (value) => $foo = value`). `Ref::NONE` for other files.
+        pub lifted_setter_param: Ref,
         pub flags: Flags,
     }
 
@@ -179,6 +182,7 @@ pub mod js_meta {
                 cjs_export_copies: AstAlloc::vec(),
                 wrapper_part_index: Index::default(),
                 dynamic_import_referenced_aliases: DynamicImportReferencedAliases::default(),
+                lifted_setter_param: Ref::NONE,
                 flags: Flags::default(),
             }
         }
@@ -195,6 +199,7 @@ pub mod js_meta {
             cjs_export_copies: CjsExportCopies,
             wrapper_part_index: Index,
             dynamic_import_referenced_aliases: DynamicImportReferencedAliases,
+            lifted_setter_param: Ref,
             flags: Flags,
         }
     }

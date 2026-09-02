@@ -3663,7 +3663,9 @@ impl<'a> LinkerContext<'a> {
         }
 
         // The default import of a lifted CommonJS module is `module.exports`,
-        // which is its namespace: bind it like `import * as X`.
+        // which is its namespace: bind it like `import * as X`. `ns.default` on
+        // `import * as ns` (a generated item) reads the namespace object's own
+        // `default` key when the module exports one.
         if is_import_stmt
             && !alias_is_star
             && flags.contains(AstFlags::COMMONJS_LIFTED_TO_ESM)
@@ -3672,6 +3674,14 @@ impl<'a> LinkerContext<'a> {
                 self.graph.ast.items_module_type()[id as usize],
                 &self.graph.ast.items_named_exports()[other_id as usize],
             )
+            && !(self
+                .graph
+                .symbols
+                .get_const(tracker.import_ref)
+                .is_some_and(|s| s.import_item_status == ImportItemStatus::Generated)
+                && self.graph.meta.items_resolved_exports()[other_id as usize]
+                    .get(b"default")
+                    .is_some())
         {
             let matching_export = &self.graph.meta.items_resolved_export_star()[other_id as usize];
             return ImportTrackerIterator {

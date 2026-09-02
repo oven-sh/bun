@@ -922,7 +922,8 @@ describe("bundler", () => {
     files: {
       "/entry.js": /* js */ `
         import lib from "./lib.js";
-        console.log(lib.default(), lib.foo, Object.keys(lib).join(","));
+        import * as ns from "./lib.js";
+        console.log(lib.default(), ns.default(), ns.default === lib.default, lib.foo, Object.keys(lib).join(","));
       `,
       "/lib.js": /* js */ `
         exports.default = function def() { return "def"; };
@@ -931,13 +932,14 @@ describe("bundler", () => {
     },
     cjs2esm: true,
     onAfterBundle(api) {
-      // `lib.default` binds to the lifted export; no namespace object is needed
-      // for it, but `Object.keys(lib)` materializes one
+      // `lib.default` and `ns.default` bind to the lifted export; only
+      // `Object.keys(lib)` materializes the namespace object
       api.expectFile("/out.js").toContain("$default()");
     },
     run: {
-      // without `__esModule`, the default import is the whole `module.exports`
-      stdout: "def 1 default,foo",
+      // without `__esModule`, the default import is the whole `module.exports`,
+      // and `ns.default` is its own `default` key
+      stdout: "def def true 1 default,foo",
     },
   });
   itBundled("cjs2esm/DefaultImportWithEsModuleKeepsWrapper", {

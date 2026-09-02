@@ -8,6 +8,7 @@ const {
   validateObject,
   validateAbortSignal,
   validateEncoding,
+  validateRmdirRecursiveOptions,
 } = require("internal/validators");
 
 const constants = $processBindingConstants.fs;
@@ -360,8 +361,13 @@ const exports = {
     return fs.rm(path, options);
   },
   rmdir: async function rmdir(path, options) {
-    // Node 26 removed `recursive` (DEP0147), but packages still pass it. Keep it working through `rm`.
-    if (options?.recursive) return exports.rm(path, options);
+    // Node 26 removed `recursive` (DEP0147), but packages still pass it. Node 16 to 24 sent only a
+    // directory to `rm`. Anything else went to the plain rmdir, which fails (ENOTDIR for a file).
+    if (options?.recursive) {
+      options = validateRmdirRecursiveOptions(options);
+      if (!(await fs.lstat(path)).isDirectory()) return fs.rmdir(path);
+      return exports.rm(path, options);
+    }
     return fs.rmdir(path, options);
   },
   writev: async (fd, buffers, position) => {

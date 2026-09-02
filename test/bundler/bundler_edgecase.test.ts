@@ -2416,6 +2416,15 @@ describe("bundler", () => {
         Armed.install = 1;
         class ArmedChild extends Armed {}
         ArmedChild.prototype.x = 1;
+
+        class Stored { static { globalThis.stored = this } }
+        Object.defineProperty(globalThis.stored, 'y', { set(v) { hit('static-block-escape') } });
+        Stored.y = 1;
+
+        const register = (klass) => { globalThis.registered = klass; return klass };
+        class Registered { static self = register(this) }
+        Object.defineProperty(globalThis.registered, 'y', { set(v) { hit('static-initializer-escape') } });
+        Registered.y = 1;
       `,
     },
     run: {
@@ -2435,6 +2444,8 @@ describe("bundler", () => {
         "static-initializer",
         "sibling-static-block",
         "parent-setter-write",
+        "static-block-escape",
+        "static-initializer-escape",
       ].join(","),
     },
   });

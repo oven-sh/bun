@@ -71,7 +71,7 @@ impl SideEffects {
                     if minify
                         && let Some(r) = e.right.data.extract_numeric_value()
                         && r == 0.0
-                        && is_int32_or_uint32(&e.left.data)
+                        && is_int32_or_uint32(&e.left.data, p.stack_check)
                     {
                         // If the left is guaranteed to be an integer (e.g. not NaN,
                         // Infinity, or a non-numeric value) then a test against zero
@@ -1124,17 +1124,24 @@ impl SideEffects {
 
 /// True when the expression always evaluates to an int32 or uint32, so that it
 /// is falsy exactly when it is zero.
-fn is_int32_or_uint32(data: &ExprData) -> bool {
+fn is_int32_or_uint32(data: &ExprData, stack_check: bun_core::StackCheck) -> bool {
+    if !stack_check.is_safe_to_recurse() {
+        return false;
+    }
     match data {
         ExprData::EBinary(e) => match e.op {
             // This is the only bitwise operator that can't return a bigint (because it throws instead)
             Op::Code::BinUShr => true,
             Op::Code::BinLogicalOr | Op::Code::BinLogicalAnd => {
-                is_int32_or_uint32(&e.left.data) && is_int32_or_uint32(&e.right.data)
+                is_int32_or_uint32(&e.left.data, stack_check)
+                    && is_int32_or_uint32(&e.right.data, stack_check)
             }
             _ => false,
         },
-        ExprData::EIf(e) => is_int32_or_uint32(&e.yes.data) && is_int32_or_uint32(&e.no.data),
+        ExprData::EIf(e) => {
+            is_int32_or_uint32(&e.yes.data, stack_check)
+                && is_int32_or_uint32(&e.no.data, stack_check)
+        }
         _ => false,
     }
 }

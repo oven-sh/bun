@@ -795,10 +795,10 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRunMain, (JSGlobalObject * globalObject, JSC:
                 RETURN_IF_EXCEPTION(scope, {});
             }
         }
-        if (arg1.isUndefined()) {
-            // Node: resolveMainPath() calls path.resolve(process.argv[1]) and throws this
-            return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "paths[0]"_s, "string"_s, arg1);
-        }
+    }
+    if (!arg1.isString()) {
+        // Node: resolveMainPath() calls path.resolve(main) and throws this
+        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "paths[0]"_s, "string"_s, arg1);
     }
 
     auto name = arg1.toWTFString(globalObject);

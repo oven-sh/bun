@@ -406,15 +406,15 @@ console.log("survived", require("./late.js"));`,
     expect(Module._resolveFilename("fs")).toBe("fs");
   });
 
-  test("Module.runMain propagates an error from stringifying its argument", () => {
-    const boom = new Error("boom");
+  test("Module.runMain rejects a non-string argument without stringifying it", () => {
+    // Node validates typeof before any coercion, so the toString never runs.
     expect(() =>
       Module.runMain({
         toString() {
-          throw boom;
+          throw new Error("boom");
         },
       }),
-    ).toThrow(boom);
+    ).toThrow('The "paths[0]" argument must be of type string');
   });
 
   test("module.filename/id/path setters propagate a failed string conversion", () => {
@@ -918,19 +918,26 @@ console.log("survived", require("./late.js"));`,
 
   // With `-e` there is no process.argv[1]. Node throws ERR_INVALID_ARG_TYPE
   // from path.resolve(undefined) instead of resolving a module named
-  // "undefined".
-  test("runMain() with no argument and no main entry throws ERR_INVALID_ARG_TYPE", async () => {
+  // "undefined". Non-string arguments take the same path: Node's default
+  // parameter only substitutes `undefined`, so `runMain(null)` reaches
+  // path.resolve(null) and throws the same error.
+  test.each([
+    ["no argument, no main entry", `require("node:module").runMain()`],
+    ["null argument", `require("node:module").runMain(null)`],
+    ["number argument", `require("node:module").runMain(42)`],
+  ])("runMain() throws ERR_INVALID_ARG_TYPE (%s)", async (_name, source) => {
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", `require("node:module").runMain()`],
+      cmd: [bunExe(), "-e", source],
       env: bunEnv,
       stderr: "pipe",
       stdout: "pipe",
     });
 
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stderr).not.toContain("Cannot find package");
     expect(stderr).toContain('The "paths[0]" argument must be of type string');
+    expect(stdout).toBe("");
     expect(exitCode).toBe(1);
   });
 

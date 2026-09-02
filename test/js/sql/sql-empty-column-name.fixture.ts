@@ -1,11 +1,16 @@
-// Spawned by sql-empty-column-name.test.ts. Serves one result set whose
-// column names are given on the command line from an in-process mock server,
-// queries it with Bun.SQL and prints the decoded rows as JSON. It runs in its
-// own process because the bug under test takes the whole process down.
+// Spawned by sql-empty-column-name.test.ts. Takes a JSON array of jobs on the
+// command line and, for each one in order, serves one result set from an
+// in-process mock server, queries it with Bun.SQL and prints one line of JSON:
+// the job without its `names`, plus the decoded `rows`. One process runs many
+// jobs because a debug build pays most of a second to start up and
+// milliseconds per job. It is still a separate process because the bug under
+// test takes the whole process down: a crash shows up as a truncated list of
+// lines plus a signal, not as a dead test runner.
 //
-// Usage: <adapter: postgres | mysql> <protocol: simple | prepared> <JSON array of column names>
-// Every column holds the text value "v<index>". The mock servers ignore the
-// statement text; the result set they return is defined entirely by the names.
+// A job is `{ adapter: "postgres" | "mysql", protocol: "simple" | "prepared",
+// names: string[], ...rest }`; `rest` is echoed back untouched. Every column
+// holds the text value "v<index>". The mock servers ignore the statement text;
+// the result set they return is defined entirely by the names.
 //
 // All wire bytes come from ./wire-frames.ts.
 
@@ -33,9 +38,7 @@ import {
   pgRowDescription,
 } from "./wire-frames";
 
-const [adapter, protocol, namesJson] = process.argv.slice(2);
-const names: string[] = JSON.parse(namesJson);
-const values = names.map((_, i) => `v${i}`);
+type Job = { adapter: "postgres" | "mysql"; protocol: "simple" | "prepared"; names: string[] };
 
 const PG_TEXT_OID = 25;
 const COM_QUERY = 0x03;
@@ -44,7 +47,11 @@ const COM_STMT_EXECUTE = 0x17;
 const COM_STMT_CLOSE = 0x19;
 const MYSQL_TYPE_VAR_STRING = 0xfd;
 
-async function postgresServer() {
+const valuesFor = (names: string[]) => names.map((_, i) => `v${i}`);
+
+async function postgresServer(names: string[]) {
+  const values = valuesFor(names);
+  const rowDescription = pgRowDescription(names.map(name => ({ name, typeOid: PG_TEXT_OID })));
   const resultRows = Buffer.concat([pgDataRow(values.map(v => Buffer.from(v))), pgCommandComplete("SELECT 1")]);
   return listeningServer(socket => {
     socket.on("error", () => {});
@@ -60,17 +67,13 @@ async function postgresServer() {
       buffered = pgReadFrontendMessages(Buffer.concat([buffered, data]), type => {
         switch (String.fromCharCode(type)) {
           case "Q": // simple query
-            out.push(
-              pgRowDescription(names.map(name => ({ name, typeOid: PG_TEXT_OID }))),
-              resultRows,
-              pgReadyForQuery(),
-            );
+            out.push(rowDescription, resultRows, pgReadyForQuery());
             break;
           case "P": // Parse
             out.push(pgParseComplete());
             break;
           case "D": // Describe (statement)
-            out.push(pgParameterDescription([]), pgRowDescription(names.map(name => ({ name, typeOid: PG_TEXT_OID }))));
+            out.push(pgParameterDescription([]), rowDescription);
             break;
           case "B": // Bind
             out.push(pgBindComplete());
@@ -88,7 +91,8 @@ async function postgresServer() {
   });
 }
 
-async function mysqlServer() {
+async function mysqlServer(names: string[]) {
+  const values = valuesFor(names);
   const columns = names.map(name => ({ name, type: MYSQL_TYPE_VAR_STRING }));
   const columnDefinitions = (firstSeq: number) =>
     Buffer.concat(columns.map((column, i) => mysqlColumnDefinition(firstSeq + i, column)));
@@ -139,12 +143,15 @@ async function mysqlServer() {
   });
 }
 
-const { server, port } = adapter === "postgres" ? await postgresServer() : await mysqlServer();
-try {
-  await using sql = new SQL({ url: `${adapter}://u@127.0.0.1:${port}/db`, max: 1 });
-  const query = sql`select 1`;
-  const rows = await (protocol === "simple" ? query.simple() : query);
-  console.log(JSON.stringify(rows));
-} finally {
-  server.close();
+const jobs: Job[] = JSON.parse(process.argv[2]);
+for (const { names, ...job } of jobs) {
+  const { server, port } = job.adapter === "postgres" ? await postgresServer(names) : await mysqlServer(names);
+  try {
+    await using sql = new SQL({ url: `${job.adapter}://u@127.0.0.1:${port}/db`, max: 1 });
+    const query = sql`select 1`;
+    const rows = await (job.protocol === "simple" ? query.simple() : query);
+    console.log(JSON.stringify({ ...job, rows }));
+  } finally {
+    server.close();
+  }
 }

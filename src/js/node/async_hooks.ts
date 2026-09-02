@@ -116,9 +116,14 @@ function withoutAll(frame: Frame | undefined, storage: AsyncLocalStorage): Frame
 
 // Copies [from, stop) onto tail, dropping bindings that disable() exited.
 function copyUntil(from: Frame, stop: Frame, tail: Frame | undefined): Frame | undefined {
-  if (from === stop) return tail;
-  var rest = copyUntil(from.prev!, stop, tail);
-  return from.storage === undefined ? rest : new Frame(from.storage, from.value, rest);
+  var copied: Frame[] = [];
+  for (var f = from; f !== stop; f = f.prev!) {
+    if (f.storage !== undefined) copied.push(f);
+  }
+  for (var i = copied.length - 1; i >= 0; i--) {
+    tail = new Frame(copied[i].storage!, copied[i].value, tail);
+  }
+  return tail;
 }
 
 // Node parity: dispose() is enterWith(previousStore), which on a fresh ALS

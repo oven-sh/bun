@@ -173,7 +173,10 @@ class AsyncLocalStorage {
         return;
       }
     }
-    set(context.concat(this, store));
+    // Not concat(): it would spread an array store.
+    const appended = context.slice();
+    appended.push(this, store);
+    set(appended);
     $assert(sameValue(this.getStore(), store));
   }
 

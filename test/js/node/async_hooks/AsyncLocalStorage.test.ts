@@ -74,6 +74,96 @@ describe("AsyncLocalStorage", () => {
     }
   });
 
+  // Appending to a non-empty frame must not spread an array store: a store is
+  // one value slot, whatever its shape. Verified against Node v26.3.0.
+  test("enterWith() keeps an array store intact when another storage is active", () => {
+    const outer = new AsyncLocalStorage();
+    const arrayStore = new AsyncLocalStorage();
+    const objectStore = new AsyncLocalStorage();
+    const spreadableStore = new AsyncLocalStorage();
+    const emptyArrayStore = new AsyncLocalStorage();
+    const arr = [1, 2];
+    const obj = { x: 1 };
+    const spreadable = { length: 1, 0: "zero", [Symbol.isConcatSpreadable]: true };
+    const empty: unknown[] = [];
+    const stores = () => [
+      outer.getStore(),
+      arrayStore.getStore(),
+      objectStore.getStore(),
+      spreadableStore.getStore(),
+      emptyArrayStore.getStore(),
+    ];
+    try {
+      outer.run("outer", () => {
+        arrayStore.enterWith(arr);
+        objectStore.enterWith(obj);
+        spreadableStore.enterWith(spreadable);
+        emptyArrayStore.enterWith(empty);
+        expect(stores()).toEqual(["outer", arr, obj, spreadable, empty]);
+        expect(arrayStore.getStore()).toBe(arr);
+        expect(spreadableStore.getStore()).toBe(spreadable);
+        expect(emptyArrayStore.getStore()).toBe(empty);
+      });
+      // enterWith() is not scoped: the entries survive the enclosing run()
+      expect(stores()).toEqual([undefined, arr, obj, spreadable, empty]);
+
+      // replacing an existing entry with an array
+      outer.run("outer", () => {
+        outer.enterWith([3, 4]);
+        expect(stores()).toEqual([[3, 4], arr, obj, spreadable, empty]);
+      });
+      expect(stores()).toEqual([undefined, arr, obj, spreadable, empty]);
+    } finally {
+      arrayStore.disable();
+      objectStore.disable();
+      spreadableStore.disable();
+      emptyArrayStore.disable();
+    }
+  });
+
+  // The frame is immutable: enterWith() must append to a copy. A snapshot that
+  // captured the old frame by reference must not see the new entry, and run()
+  // must still restore from a frame it did not hand out. Verified against Node
+  // v26.3.0.
+  test("enterWith() appends to a copy of the frame", () => {
+    const a = new AsyncLocalStorage();
+    const b = new AsyncLocalStorage();
+    try {
+      a.run("A", () => {
+        const snap = AsyncLocalStorage.snapshot();
+        b.enterWith("B");
+        expect(snap(() => [a.getStore(), b.getStore()])).toEqual(["A", undefined]);
+        expect([a.getStore(), b.getStore()]).toEqual(["A", "B"]);
+      });
+      expect([a.getStore(), b.getStore()]).toEqual([undefined, "B"]);
+    } finally {
+      b.disable();
+    }
+  });
+
+  // withScope() enters and restores through enterWith().
+  test("withScope() with an array store nested under another storage", () => {
+    const outer = new AsyncLocalStorage();
+    // @types/node does not declare withScope() yet.
+    const inner = new AsyncLocalStorage() as any;
+    const prev = ["prev"];
+    const arr = [1, 2];
+    try {
+      outer.run("outer", () => {
+        inner.enterWith(prev);
+        {
+          using _scope = inner.withScope(arr);
+          expect([outer.getStore(), inner.getStore()]).toEqual(["outer", arr]);
+          expect(inner.getStore()).toBe(arr);
+        }
+        expect([outer.getStore(), inner.getStore()]).toEqual(["outer", prev]);
+        expect(inner.getStore()).toBe(prev);
+      });
+    } finally {
+      inner.disable();
+    }
+  });
+
   // Node compares stores with the primordial ObjectIs, which userland cannot
   // reach. Subprocess: patches a global. Verified against Node v26.3.0.
   test("run() is unaffected by a userland Object.is patch", async () => {

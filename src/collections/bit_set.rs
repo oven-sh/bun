@@ -1132,6 +1132,15 @@ impl AutoBitSet {
         self.raw_bytes()
     }
 
+    /// The backing words (bit `i` is `words()[i / usize::BITS] >> (i % usize::BITS) & 1`);
+    /// bits past the length are zero.
+    pub fn words(&self) -> &[usize] {
+        match self {
+            AutoBitSet::Static(s) => &s.masks,
+            AutoBitSet::Dynamic(d) => d.masks_slice(),
+        }
+    }
+
     pub fn eql(&self, b: &AutoBitSet) -> bool {
         self.raw_bytes() == b.raw_bytes()
     }

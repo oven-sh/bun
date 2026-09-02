@@ -1232,6 +1232,18 @@ fn module_dest_path(output_file: &OutputFile) -> &[u8] {
     bun_core::strings::remove_leading_dot_slash(&output_file.dest_path)
 }
 
+/// Every region of the serialized graph is addressed by a `StringPointer`, a `u32` offset and
+/// length, so the graph has to fit in 4 GiB. A debug build can lower the limit through
+/// `BUN_DEBUG_TEST_STANDALONE_GRAPH_MAX_BYTES` so a test reaches it without a 4 GiB input.
+fn max_graph_bytes() -> usize {
+    let limit = u32::MAX as usize;
+    #[cfg(debug_assertions)]
+    if let Some(test_limit) = bun_core::env_var::BUN_DEBUG_TEST_STANDALONE_GRAPH_MAX_BYTES.get() {
+        return usize::try_from(test_limit).map_or(limit, |test_limit| test_limit.min(limit));
+    }
+    limit
+}
+
 pub(crate) fn to_bytes(
     target: &CompileTarget,
     prefix: &[u8],
@@ -1573,6 +1585,12 @@ pub(crate) fn to_bytes(
         flags |= Flags::CROSS_COMPILED_BYTECODE;
     }
     let compile_exec_argv_ptr = string_builder.append_count_z(compile_exec_argv);
+
+    // Every region above is addressed by a `StringPointer`, so `len` itself has to fit in u32
+    // or the `as u32` casts that built those pointers have wrapped.
+    if string_builder.len > max_graph_bytes() {
+        return Err(crate::Error::ModuleGraphTooLarge);
+    }
 
     let offsets = Offsets {
         entry_point_id: entry_point_id as u32,

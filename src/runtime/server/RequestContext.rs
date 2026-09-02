@@ -354,6 +354,23 @@ fn as_response(value: JSValue) -> Option<*mut Response> {
     response::from_js(value).map(|p| p.cast::<Response>())
 }
 
+/// Release the body's hold on a stream the sink is done with, and mark a
+/// `Locked` body used. Non-generic and out of line: the eight `RequestContext`
+/// monomorphizations share one copy.
+#[inline(never)]
+fn release_body_stream(response: &mut Response, global_this: &JSGlobalObject) {
+    if let Some(stream) = response.get_body_readable_stream() {
+        stream.value.ensure_still_alive();
+        response.detach_readable_stream(global_this);
+        stream.done();
+    }
+    // Read after the stream calls: the check observes the post-detach state.
+    let body_value = response.get_body_value();
+    if matches!(body_value, Body::Value::Locked(_)) {
+        *body_value = Body::Value::Used;
+    }
+}
+
 // ─── sibling-subtree shims ───────────────────────────────────────────────────
 // These forward to methods that exist in webcore/ but are currently inside
 // impl blocks that fail to compile (codegen gc-slot stubs, opaque AbortSignal).
@@ -1572,15 +1589,7 @@ where
         // (`reclaim_promise_cell`), so its `handle_*_stream` cleanup never
         // runs: release the body's hold on the stream here.
         if let Some(resp) = self.response_mut() {
-            if let Some(stream) = resp.get_body_readable_stream() {
-                stream.value.ensure_still_alive();
-                resp.detach_readable_stream(global_this);
-                stream.done();
-            }
-            let body_value = resp.get_body_value();
-            if matches!(body_value, Body::Value::Locked(_)) {
-                *body_value = Body::Value::Used;
-            }
+            release_body_stream(resp, global_this);
         }
 
         let response_jsvalue = self.response_jsvalue.get();
@@ -3014,18 +3023,7 @@ where
         }
 
         if let Some(resp) = self.response_mut() {
-            // NOTE: the body value is read after the stream calls (the check
-            // observes the post-detach state).
-            if let Some(stream) = resp.get_body_readable_stream() {
-                stream.value.ensure_still_alive();
-                resp.detach_readable_stream(global_this);
-                stream.done();
-            }
-
-            let body_value = resp.get_body_value();
-            if matches!(body_value, Body::Value::Locked(_)) {
-                *body_value = Body::Value::Used;
-            }
+            release_body_stream(resp, global_this);
         }
 
         // aborted so call finalizeForAbort

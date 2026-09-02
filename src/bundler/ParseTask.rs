@@ -579,20 +579,24 @@ pub mod parse_worker {
                     RUNTIME_PRELOAD_BROWSER,
                 ),
             };
-            let body: &str = include_str!("../runtime.js");
-            debug_assert!(body.contains(RUNTIME_PROP_GETTER_BIND));
-            let body: std::borrow::Cow<str> = match variant {
-                Variant::Other => std::borrow::Cow::Owned(body.replacen(
-                    RUNTIME_PROP_GETTER_BIND,
-                    RUNTIME_PROP_GETTER_BROWSER,
-                    1,
-                )),
-                _ => std::borrow::Cow::Borrowed(body),
+            let body: &[u8] = include_bytes!("../runtime.js");
+            debug_assert!(strings::contains(body, RUNTIME_PROP_GETTER_BIND.as_bytes()));
+            let body: Vec<u8> = match variant {
+                Variant::Other => strings::replace_owned(
+                    body,
+                    RUNTIME_PROP_GETTER_BIND.as_bytes(),
+                    RUNTIME_PROP_GETTER_BROWSER.as_bytes(),
+                ),
+                _ => body.to_vec(),
             };
-            [&body, require, using, preload]
-                .concat()
-                .into_bytes()
-                .into_boxed_slice()
+            [
+                body.as_slice(),
+                require.as_bytes(),
+                using.as_bytes(),
+                preload.as_bytes(),
+            ]
+            .concat()
+            .into_boxed_slice()
         });
 
         let parse_task = ParseTask {

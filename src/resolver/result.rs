@@ -149,11 +149,10 @@ pub enum ExternalKind {
     ExternalRewritePath,
 }
 
-/// Why a successful resolve has no path to load (every path is `is_disabled`).
-/// An import of such a module becomes `{}`.
+/// Why a successful resolve has no path to load: every path is `is_disabled`.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum DisabledReason {
-    /// A Node.js builtin stubbed out under the browser target (`node:*`, or `fs`).
+    /// A Node.js builtin stubbed out under the browser target.
     NodeBuiltin,
     /// The package.json `"browser"` field maps the module to `false`.
     BrowserField,

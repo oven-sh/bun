@@ -412,19 +412,10 @@ impl Framework {
         }
     }
 
-    /// Resolves one framework specifier (an entry point, the react refresh
-    /// runtime, ...) from the project root. Shared with
-    /// `bake_body::Framework::resolve_helper`.
-    ///
-    /// Returns `None` after it prints the reason to stderr (not `r.log`) and
-    /// sets `had_errors`: the resolver failed, or it succeeded with every path
-    /// disabled (a stubbed Node.js builtin, or a module the package.json
-    /// `"browser"` field maps to `false`). An import of such a module becomes
-    /// `{}`, but the framework needs a file to load.
-    ///
-    /// The returned text is `&'static [u8]`: the resolver's `Path` alias is
-    /// `bun_paths::fs::Path<'static>`, populated from the `FilenameStore`
-    /// singleton.
+    /// Resolves one framework specifier from the project root. Shared with
+    /// `bake_body::Framework::resolve_helper`. A resolve error or a disabled
+    /// result prints the reason to stderr, sets `had_errors` and returns
+    /// `None`. The text is `FilenameStore`-backed, so `'static`.
     pub(crate) fn resolve_specifier(
         r: &mut bun_resolver::Resolver,
         path: &[u8],

@@ -2,6 +2,7 @@
 //! AST visitor pass: visits statements, expressions, bindings, function bodies,
 //! classes, and declarations. This is the second pass after parsing.
 
+pub(crate) mod mangle;
 pub mod visit_binary;
 pub(crate) mod visit_expr;
 pub(crate) mod visit_stmt;
@@ -1162,6 +1163,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
 
+                // "class { ['123'] = x }" => "class { 123 = x }"
+                if self.options.features.minify_syntax && !is_private {
+                    self.mangle_class_property_key(property);
+                }
+
                 // manual restore for the two `defer`s above
                 self.vis_scope().forbid_arguments = false;
                 self.fn_only_data_visit.is_this_nested = old_is_this_captured;
@@ -1453,6 +1459,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         #[cfg(debug_assertions)]
         let initial_scope: js_ast::StoreRef<js_ast::Scope> = p.current_scope;
 
+        let mangle_candidates_base = p.mangle_candidates.len();
+        if kind == StmtsKind::FnBody {
+            p.fn_body_depth += 1;
+        }
+
         {
             // Save the current control-flow liveness. This represents if we are
             // currently inside an "if (false) { ... }" block.
@@ -1695,6 +1706,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // manual restore for the block-level `defer`s
             p.nearest_stmt_list = prev_nearest_stmt_list;
             p.is_control_flow_dead = old_is_control_flow_dead;
+        }
+
+        if kind == StmtsKind::FnBody {
+            p.fn_body_depth -= 1;
+            // Every `var` this body declares has had all its uses visited.
+            p.apply_fn_body_mangle_candidates(stmts, mangle_candidates_base);
         }
 
         // Lower using declarations

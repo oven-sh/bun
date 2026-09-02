@@ -6114,3 +6114,303 @@ describe("same-target destructuring with an unstable target", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+describe("minify peepholes", () => {
+  const minifier = new Bun.Transpiler({
+    loader: "js",
+    minify: { syntax: true, whitespace: true, identifiers: false },
+    target: "browser",
+  });
+  const expectMinified = (code, out) => {
+    expect(minifier.transformSync(code).trim()).toBe(out);
+  };
+  const expectMinifiedSame = code => expectMinified(code, code);
+
+  it("prints numbers in their shortest form", () => {
+    expectMinified(
+      "x=[1e6,0.5,-0.25,1000,0.001,1e21,-0,0xFFFFFFFF,15e9,123456789]",
+      "x=[1e6,.5,-.25,1e3,.001,1e21,-0,4294967295,15e9,123456789];",
+    );
+    expectMinified(
+      "x=[1e-100,1e-5,1e-4,1e-3,1e-2,1e-1,1e0,1e1,1e2,1e3,1e4,1e100]",
+      "x=[1e-100,1e-5,1e-4,.001,.01,.1,1,10,100,1e3,1e4,1e100];",
+    );
+    expectMinified(
+      "x=[12e-100,12e-6,12e-5,12e-4,12e-3,12e-2,12e-1,12e0,12e1,12e2,12e3,12e4,12e100]",
+      "x=[12e-100,12e-6,12e-5,.0012,.012,.12,1.2,12,120,1200,12e3,12e4,12e100];",
+    );
+    expectMinified(
+      "x=[5e-324,1.7976931348623157e308,1e100,0.000001234,12345678901234567890]",
+      "x=[5e-324,17976931348623157e292,1e100,1234e-9,0xab54a98ceb1f0800];",
+    );
+    expectMinified(
+      "x=[999999999999,1000000000001,0x0FFF_FFFF_FFFF_FF80,0x1000_0000_0000_0000,0xFFFF_FFFF_FFFF_F000,0xFFFF_FFFF_FFFF_F800,0xFFFF_FFFF_FFFF_FFFF]",
+      "x=[999999999999,0xe8d4a51001,0xfffffffffffff80,1152921504606847e3,0xfffffffffffff000,1844674407370955e4,18446744073709552e3];",
+    );
+    expectMinified(
+      "x=[10000000000123456789,1000000000123456789,10000000123456789]",
+      "x=[0x8ac723049143d000,0xde0b6b3aebfcd00,0x2386f2771ccd14];",
+    );
+    // A bare integer needs a space before ".", an exponent or hex form does not
+    expectMinified(
+      "x=0.0001 .y;x=0.001 .y;x=0 .y;x=10 .y;x=1000 .y;x=12345 .y;x=0xFFFF_0000_FFFF_0000 .y",
+      "x=1e-4.y;x=.001.y;x=0 .y;x=10 .y;x=1e3.y;x=12345 .y;x=0xffff0000ffff0000.y;",
+    );
+    expectMinified(
+      "x=(0.5).toFixed(1)+(1e6).toFixed()+(-0.5).toFixed(1)+(-1).toString()",
+      "x=.5.toFixed(1)+1e6.toFixed()+(-.5).toFixed(1)+(-1).toString();",
+    );
+    // Without whitespace minification the leading zero stays
+    const syntaxOnly = new Bun.Transpiler({ loader: "js", minify: { syntax: true } });
+    expect(syntaxOnly.transformSync("x=[0.5,-0.25,1000,0.001,1000000000001]").trim()).toBe(
+      "x = [0.5, -0.25, 1e3, 1e-3, 1000000000001];",
+    );
+  });
+
+  it("prints numeric string keys as numbers", () => {
+    expectMinified(
+      'x={key:1,"2":2,"a b":3,"1.5":4,"01":5,"-1":6,"2147483647":7,"2147483648":8,"0":9,"1e3":10}',
+      'x={key:1,2:2,"a b":3,"1.5":4,"01":5,"-1":6,2147483647:7,"2147483648":8,0:9,"1e3":10};',
+    );
+    expectMinified('x={["__proto__"]:1,["y"]:2,[3]:4,["a b"]:5}', 'x={["__proto__"]:1,y:2,3:4,"a b":5};');
+    expectMinified(
+      'class C{"2"(){}["m"](){}static["x"]=1;static["prototype"]=1;["constructor"]=2;static["constructor"](){}}',
+      'class C{2(){}m(){}static x=1;static["prototype"]=1;["constructor"]=2;static constructor(){}}',
+    );
+    expectMinified(
+      'x["0"];x["-1"];x["01"];x["123"];x["2147483648"];x["-0"];x["y z"]',
+      'x[0];x[-1];x["01"];x[123];x["2147483648"];x["-0"];x["y z"];',
+    );
+    // An inlined enum key keeps the brackets a negative or non-finite number needs
+    const ts = new Bun.Transpiler({
+      loader: "ts",
+      minify: { syntax: true, whitespace: true, identifiers: false },
+      target: "browser",
+    });
+    expect(
+      ts
+        .transformSync(
+          "const enum E { N = -1, P = 2, S = 'a b', I = 1 / 0 } x = { [E.N]: 1, [E.P]: 2, [E.S]: 3, [E.I]: 4 }; class C { [E.N]() {} [E.P]() {} }",
+        )
+        .trim(),
+    ).toEndWith('x={[-1]:1,2:2,"a b":3,[1/0]:4};class C{[-1](){}2(){}}');
+  });
+
+  it("drops the typeof guard when the operand cannot throw", () => {
+    expectMinified(
+      'function f(e){return[typeof e.b<"u",typeof e.b>"u",typeof e.b!=="undefined",typeof e.b==="undefined","u">typeof e.b]}',
+      "function f(e){return[e.b!==void 0,e.b===void 0,e.b!==void 0,e.b===void 0,e.b!==void 0]}",
+    );
+    expectMinified(
+      'function f(x){return[typeof x>"u",typeof x<"u",typeof x==="undefined",typeof x!="undefined"]}',
+      "function f(x){return[x===void 0,x!==void 0,x===void 0,x!==void 0]}",
+    );
+    expectMinified(
+      'function f(){if(typeof r>"u")return 1;var r=2;return r}',
+      "function f(){if(r===void 0)return 1;var r=2;return r}",
+    );
+    // An unbound identifier keeps the guard: reading it could throw
+    expectMinified(
+      'function f(){return[typeof x>"u",typeof x<"u",typeof window==="undefined"]}',
+      'function f(){return[typeof x>"u",typeof x<"u",typeof window>"u"]}',
+    );
+  });
+
+  it("uses compound assignment operators", () => {
+    expectMinified(
+      "function f(n){n.count=n.count+1;n.count=n.count-1;n.x=n.x*2;n.x=n.x/2;n.x=n.x%2;n.x=n.x**2;n.x=n.x<<1;n.x=n.x>>1;n.x=n.x>>>1;n.x=n.x|1;n.x=n.x&1;n.x=n.x^1}",
+      "function f(n){n.count+=1;n.count-=1;n.x*=2;n.x/=2;n.x%=2;n.x**=2;n.x<<=1;n.x>>=1;n.x>>>=1;n.x|=1;n.x&=1;n.x^=1}",
+    );
+    expectMinified(
+      'function f(n){n=n+1;n.s=n.s+"x";n[0]=n[0]+1;n["a b"]=n["a b"]+1;this.a=this.a+1;return n}',
+      'function f(n){n+=1;n.s+="x";n[0]+=1;n["a b"]+=1;this.a+=1;return n}',
+    );
+    // A computed key that is not a literal is converted with ToPropertyKey
+    // twice as written and once as `+=`; an object key observes that
+    expectMinifiedSame("function f(n,k){n[k]=n[k]+1;n[this]=n[this]+1;n[k]=n[k]*2}");
+    // A logical assignment names an anonymous function on its right
+    expectMinifiedSame("function f(o){o=o||function(){};o=o??class{};o=o&&(()=>1);return o}");
+    expectMinified(
+      "function f(o,p){o=o||1;o=o&&1;o=o??1;return[o,p]}",
+      "function f(o,p){o||=1;o&&=1;o??=1;return[o,p]}",
+    );
+    // `||=` skips the write when the value is truthy, so a property setter
+    // or a global accessor would notice; only a declared identifier is rewritten
+    expectMinifiedSame("function f(o){o.x=o.x||1;o.x=o.x&&1;o.x=o.x??1;this.x=this.x||1;o[0]=o[0]||1}");
+    // The operands are not the same reference or are evaluated with side effects
+    expectMinifiedSame("function f(x){x.y.z=x.y.z+1;x=1+x;f().x=f().x+1;x[k()]=x[k()]+1;x=x-y+1;x=y+x}");
+    expectMinifiedSame("x=x||1;y.z=y.z||1;");
+    expectMinified("x=x+1;y.z=y.z+1", "x+=1;y.z=y.z+1;");
+  });
+
+  it("folds a null-or-undefined check into a loose null check", () => {
+    expectMinified(
+      "function f(a){return[a===null||a===void 0,a===undefined||a===null,a!==null&&a!==void 0,a!==undefined&&a!==null]}",
+      "function f(a){return[a==null,a==null,a!=null,a!=null]}",
+    );
+    expectMinifiedSame("function f(a,b){return[a===null||b===void 0,a===null||a===1,a===null&&a===void 0]}");
+    // An unbound global could be an accessor, so it keeps both reads
+    expectMinified(
+      "function f(){return[window===null||window===void 0,this===null||this===void 0]}",
+      "function f(){return[window===null||window===void 0,this==null]}",
+    );
+  });
+
+  it("recovers optional chains", () => {
+    expectMinified(
+      "function f(a){return[a==null?void 0:a.b,a!=null?a.b:void 0,null==a?void 0:a[b],a==null?void 0:a(b),a==null?void 0:a.b.c[d](e),a==null?void 0:a?.b.c,a==null?void 0:a.b?.c]}",
+      "function f(a){return[a?.b,a?.b,a?.[b],a?.(b),a?.b.c[d](e),a?.b.c,a?.b?.c]}",
+    );
+    expectMinified(
+      "function f(a){return[a===null||a===void 0?void 0:a.b,a!==null&&a!==void 0?a.b:void 0]}",
+      "function f(a){return[a?.b,a?.b]}",
+    );
+    // Not when the test can throw, the fallback is not undefined, or the
+    // result is called (the conditional yields a value, so `this` is undefined)
+    expectMinifiedSame(
+      "function f(a){return[b==null?void 0:b.c,a==null?null:a.b,a==null?void 0:c.b,(a==null?void 0:a.b)()]}",
+    );
+    // A parenthesized inner chain keeps its boundary: `(a.b?.c).d` throws when
+    // `a.b` is null, `a?.b?.c.d` would not
+    expectMinifiedSame(
+      "function f(a){return[a==null?void 0:(a.b?.c).d,a==null?void 0:(a.b?.c)(),a==null?void 0:(a()?.b).c]}",
+    );
+    expectMinified(
+      "function f(a){return[a==null?void 0:a.b?.c.d,a==null?void 0:(a.b).c]}",
+      "function f(a){return[a?.b?.c.d,a?.b.c]}",
+    );
+  });
+
+  it("parenthesizes an optional chain used as a constructor or template tag", () => {
+    expectMinified(
+      "new (a?.b)();(a?.b)`x`;new (a?.b.c)();new (a?.[0])();new (a?.());(a?.b.c)`y`;new a.b();a.b`z`",
+      "new(a?.b);(a?.b)`x`;new(a?.b.c);new(a?.[0]);new(a?.());(a?.b.c)`y`;new a.b;a.b`z`;",
+    );
+    // A conditional used as a template tag or deleted yields a value and stays as is
+    expectMinified(
+      "function f(a){return[new (a==null?void 0:a.b)(),(a==null?void 0:a.b)`x`,(a==null?void 0:a.b).c,delete (a==null?void 0:a.b)]}",
+      "function f(a){return[new(a?.b),(a==null?void 0:a.b)`x`,(a?.b).c,delete(a==null?void 0:a.b)]}",
+    );
+  });
+
+  it("recovers nullish coalescing", () => {
+    expectMinified(
+      "function f(a){return[a!=null?a:b,a==null?b:a,null!=a?a:b,a!==null&&a!==void 0?a:b]}",
+      "function f(a){return[a??b,a??b,a??b,a??b]}",
+    );
+    expectMinifiedSame("function f(a){return[b!=null?b:c,a!=null?a.b:c]}");
+  });
+
+  it("recovers optional chains and nullish coalescing through a temp", () => {
+    // Babel loose
+    expectMinified("function f(r){var n;return(n=r.x)==null?void 0:n.y}", "function f(r){return r.x?.y}");
+    expectMinified("function f(r){var n;return(n=r.x)!=null?n.y:void 0}", "function f(r){return r.x?.y}");
+    expectMinified("function f(r){var n;return(n=r.x)==null?void 0:n.y()}", "function f(r){return r.x?.y()}");
+    expectMinified("function f(r){var n;return(n=r.x)!=null?n:window}", "function f(r){return r.x??window}");
+    // Babel strict / TypeScript
+    expectMinified(
+      "function f(r){var _a;return(_a=r.x)===null||_a===void 0?void 0:_a.y}",
+      "function f(r){return r.x?.y}",
+    );
+    expectMinified(
+      "function f(r){var _a;return(_a=r.x)!==null&&_a!==void 0?_a:window}",
+      "function f(r){return r.x??window}",
+    );
+    expectMinified(
+      "function f(r){var _a;return(_a=r.x)===null||_a===void 0?void 0:_a.call(r)}",
+      "function f(r){return r.x?.call(r)}",
+    );
+    expectMinified(
+      "function f(r){var _a,_b;return(_b=(_a=r.x)===null||_a===void 0?void 0:_a.y)===null||_b===void 0?void 0:_b.z}",
+      "function f(r){return r.x?.y?.z}",
+    );
+    // Calling the temp must keep `this` undefined
+    expectMinified("function f(r){var n;return(n=r.x)==null?void 0:n()}", "function f(r){return(0,r.x)?.()}");
+    expectMinified("function f(r){var n;return(n=r())==null?void 0:n()}", "function f(r){return r()?.()}");
+    // Several temps, `let`, nested blocks and closures
+    expectMinified(
+      "function f(r){var n,m;return[(n=r.x)==null?void 0:n.y,(m=r.z)==null?void 0:m.w]}",
+      "function f(r){return[r.x?.y,r.z?.w]}",
+    );
+    expectMinified(
+      "function f(r){var n;a=(n=r.x)==null?void 0:n.y;b=(n=r.z)==null?void 0:n.w}",
+      "function f(r){a=r.x?.y;b=r.z?.w}",
+    );
+    expectMinified("function f(r){let n;return(n=r.x)==null?void 0:n.y}", "function f(r){return r.x?.y}");
+    expectMinified(
+      "function f(r){var n;if(r){return(n=r.x)==null?void 0:n.y}return 0}",
+      "function f(r){if(r)return r.x?.y;return 0}",
+    );
+    expectMinified("function f(r){var n;return()=>(n=r.x)==null?void 0:n.y}", "function f(r){return()=>r.x?.y}");
+    expectMinified("const f=r=>{var n;return(n=r.x)==null?void 0:n.y}", "const f=(r)=>{return r.x?.y};");
+    // The temp stays when it is read elsewhere, is a parameter, or eval can see it
+    expectMinified(
+      "function f(r){var n;x=(n=r.x)==null?void 0:n.y;return n}",
+      "function f(r){var n;x=(n=r.x)?.y;return n}",
+    );
+    expectMinified(
+      "function f(r){var n;return(n=r.x)==null?void 0:n.y,n.z}",
+      "function f(r){var n;return(n=r.x)?.y,n.z}",
+    );
+    expectMinified("function f(n,r){return(n=r.x)==null?void 0:n.y}", "function f(n,r){return(n=r.x)?.y}");
+    expectMinified(
+      'function f(r){var n;eval("n");return(n=r.x)==null?void 0:n.y}',
+      'function f(r){var n;eval("n");return(n=r.x)?.y}',
+    );
+    // A global temp is never dropped
+    expectMinified("var n;x=(n=r.x)==null?void 0:n.y", "var n;x=(n=r.x)?.y;");
+    // A nested `var n` redeclaration reads the same variable through its own symbol
+    expectMinified(
+      "function f(r){var n;a=(n=r.x)==null?void 0:n.y;{var n;return n}}",
+      "function f(r){var n;a=(n=r.x)?.y;{var n;return n}}",
+    );
+    expectMinified(
+      'function f(){"use strict";for(var e=arguments.length,t=Array(e),r=0;r<e;r++)t[r]=arguments[r];{var r;return[t,r]}}',
+      "function f(){for(var e=arguments.length,t=Array(e),r=0;r<e;r++)t[r]=arguments[r];{var r;return[t,r]}}",
+    );
+  });
+
+  it("rewrites the arguments copy loop to a spread", () => {
+    expectMinified(
+      'function f(){"use strict";for(var e=arguments.length,t=Array(e),r=0;r<e;r++)t[r]=arguments[r];return t}',
+      "function f(){var t=[...arguments];return t}",
+    );
+    expectMinified(
+      'function f(){"use strict";for(var e=arguments.length,t=new Array(e),r=0;r<e;r++){t[r]=arguments[r]}return t}',
+      "function f(){var t=[...arguments];return t}",
+    );
+    expectMinified(
+      'function f(){"use strict";for(var t=[],r=0;r<arguments.length;r++)t[r]=arguments[r];return t}',
+      "function f(){var t=[...arguments];return t}",
+    );
+    expectMinified(
+      'function f(){"use strict";for(var e=arguments.length,t=Array(e>1?e-1:0),r=1;r<e;r++)t[r-1]=arguments[r];return t}',
+      "function f(){var t=[...arguments].slice(1);return t}",
+    );
+    expectMinified(
+      'function f(){"use strict";for(var t=[],r=2;r<arguments.length;r++)t[r-2]=arguments[r];return t}',
+      "function f(){var t=[...arguments].slice(2);return t}",
+    );
+    // An unused copy disappears
+    expectMinified(
+      'function f(){"use strict";for(var e=arguments.length,t=Array(e),r=0;r<e;r++)t[r]=arguments[r]}',
+      "function f(){}",
+    );
+    // The loop stays when a temp is read after it, in sloppy mode, or when the body differs
+    expectMinified(
+      'function f(){"use strict";for(var e=arguments.length,t=Array(e),r=0;r<e;r++)t[r]=arguments[r];return[t,e]}',
+      "function f(){for(var e=arguments.length,t=Array(e),r=0;r<e;r++)t[r]=arguments[r];return[t,e]}",
+    );
+    expectMinifiedSame("function f(){for(var e=arguments.length,t=Array(e),r=0;r<e;r++)t[r]=arguments[r];return t}");
+    expectMinified(
+      'function f(){"use strict";for(var e=arguments.length,t=Array(e),r=0;r<e;r++)t[r+1]=arguments[r];return t}',
+      "function f(){for(var e=arguments.length,t=Array(e),r=0;r<e;r++)t[r+1]=arguments[r];return t}",
+    );
+  });
+
+  it("leaves long string arrays alone outside a bundle", () => {
+    // The split form saves bytes but runs on every evaluation, so only
+    // `bun build` applies it (see bundler_minify.test.ts).
+    expectMinifiedSame('x=["aa","bb","cc","dd","ee","ff","gg","hh","ii","jj","kk","ll","mm","nn","oo","pp"];');
+  });
+});

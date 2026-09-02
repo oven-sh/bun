@@ -923,32 +923,69 @@ pub(crate) struct FormattedFloat<'b> {
 /// The shortest round-trip decimal digits of a finite positive `float`,
 /// without a decimal point or trailing zeros, and the position `dp` of the
 /// decimal point: `float == 0.D1D2..Dn * 10^dp`.
+///
+/// An integer below 2^53 is exact as a `u64`, so its digits come straight
+/// from `itoa`. Anything else goes through WTF's double-conversion
+/// (`Number.prototype.toString`), the same shortest-digits algorithm JSC
+/// uses, and its text is split back into digits and exponent.
 fn shortest_digits(float: f64, digits: &mut [u8; FLOAT_BUF_LEN]) -> (usize, i32) {
-    // `{:e}` yields the shortest digit string that round-trips, as
-    // `D.DDDe[-]N`. Re-split it into (digits, exponent).
-    let mut sci = [0u8; FLOAT_BUF_LEN];
-    let sci = bun_core::fmt::buf_print_infallible(&mut sci, format_args!("{float:e}"));
-    let e = strings::index_of_char_usize(sci, b'e').expect("`{:e}` output has an exponent");
+    if float < 9_007_199_254_740_992.0 && float == float.trunc() {
+        let mut itoa_buf = bun_core::fmt::ItoaBuf::new();
+        let text = bun_core::fmt::itoa(&mut itoa_buf, float as u64);
+        let mut n = text.len();
+        while n > 1 && text[n - 1] == b'0' {
+            n -= 1;
+        }
+        digits[..n].copy_from_slice(&text[..n]);
+        return (n, text.len() as i32);
+    }
+
+    // "123.45", "0.000001", "15000000000", "1.5e-7", "1e+21"
+    let mut dtoa_buf = [0u8; 124];
+    let text = bun_core::fmt::FormatDouble::dtoa(&mut dtoa_buf, float);
+    let (mantissa, exp10) = match strings::index_of_char_usize(text, b'e') {
+        Some(e) => {
+            let mut exp10: i32 = 0;
+            let mut negative = false;
+            for &c in &text[e + 1..] {
+                match c {
+                    b'-' => negative = true,
+                    b'+' => {}
+                    _ => exp10 = exp10 * 10 + i32::from(c - b'0'),
+                }
+            }
+            (&text[..e], if negative { -exp10 } else { exp10 })
+        }
+        None => (text, 0),
+    };
+
     let mut n = 0usize;
-    for &c in &sci[..e] {
-        if c != b'.' {
+    let mut integer_digits: i32 = 0;
+    let mut leading_fraction_zeros: i32 = 0;
+    let mut after_dot = false;
+    for &c in mantissa {
+        if c == b'.' {
+            after_dot = true;
+        } else if n == 0 && c == b'0' {
+            // "0.00D": the zero before the dot says nothing; each zero after
+            // it moves the decimal point one place left.
+            leading_fraction_zeros += i32::from(after_dot);
+        } else {
             digits[n] = c;
             n += 1;
+            integer_digits += i32::from(!after_dot);
         }
     }
-    let mut exp10: i32 = 0;
-    let mut neg = false;
-    for &c in &sci[e + 1..] {
-        if c == b'-' {
-            neg = true;
-        } else {
-            exp10 = exp10 * 10 + i32::from(c - b'0');
-        }
+    // "15000000000": the trailing zeros are not significant digits.
+    while n > 1 && digits[n - 1] == b'0' {
+        n -= 1;
     }
-    if neg {
-        exp10 = -exp10;
-    }
-    (n, exp10 + 1)
+    let dp = if integer_digits > 0 {
+        integer_digits
+    } else {
+        -leading_fraction_zeros
+    };
+    (n, dp + exp10)
 }
 
 fn push_bytes(out: &mut [u8; FLOAT_BUF_LEN], len: &mut usize, bytes: &[u8]) {
@@ -994,7 +1031,11 @@ pub(crate) fn format_non_negative_float<'b>(
     let exp_value = dp - n_i32;
     let mut exp_buf = bun_core::fmt::ItoaBuf::new();
     let exp_text = bun_core::fmt::itoa(&mut exp_buf, exp_value);
-    let exp_len = if exp_value == 0 { n } else { n + 1 + exp_text.len() };
+    let exp_len = if exp_value == 0 {
+        n
+    } else {
+        n + 1 + exp_text.len()
+    };
 
     let plain_len = if dp <= 0 {
         // "0.00D" or ".00D"
@@ -1034,8 +1075,7 @@ pub(crate) fn format_non_negative_float<'b>(
 
     // Integers from 1e12 up can be one byte shorter as hex. The upper bound
     // is the largest f64 below 2^64 that still converts to u64 exactly.
-    if minify_whitespace && float >= 1_000_000_000_000.0 && float <= 18_446_744_073_709_549_568.0
-    {
+    if minify_whitespace && float >= 1_000_000_000_000.0 && float <= 18_446_744_073_709_549_568.0 {
         let as_int = float as u64;
         if as_int as f64 == float {
             let mut hex = [0u8; 16];
@@ -1673,6 +1713,17 @@ impl RequireOrImportMetaCallback {
             ctx: Some(NonNull::from(ctx).cast::<()>()),
             callback: thunk::<T>,
         }
+    }
+}
+
+/// Whether `expr` is an `a?.b` chain (or a continuation of one), which needs
+/// parentheses where the grammar only allows a member expression.
+fn is_optional_chain(expr: &js_ast::Expr) -> bool {
+    match &expr.data {
+        js_ast::ExprData::EDot(d) => d.optional_chain.is_some(),
+        js_ast::ExprData::EIndex(i) => i.optional_chain.is_some(),
+        js_ast::ExprData::ECall(c) => c.optional_chain.is_some(),
+        _ => false,
     }
 }
 
@@ -2732,13 +2783,24 @@ pub(crate) mod __gated_printer {
 
         /// Prints a finite, non-negative number in its shortest source form and
         /// records `prev_num_end` when a following `.` would need a space.
+        ///
+        /// JSON output (package.json rewrites, `bun pm pkg`) keeps the form
+        /// `JSON.stringify` gives: plain digits for an integer, otherwise
+        /// `Number.prototype.toString`.
         pub(crate) fn print_non_negative_float(&mut self, float: f64) {
+            if IS_JSON {
+                if float < 9_007_199_254_740_992.0 && float == float.trunc() {
+                    let mut itoa_buf = bun_core::fmt::ItoaBuf::new();
+                    self.print(bun_core::fmt::itoa(&mut itoa_buf, float as u64));
+                } else {
+                    let mut dtoa_buf = [0u8; 124];
+                    self.print(bun_core::fmt::FormatDouble::dtoa(&mut dtoa_buf, float));
+                }
+                return;
+            }
             let mut buf = [0u8; FLOAT_BUF_LEN];
-            let formatted = format_non_negative_float(
-                float,
-                !IS_JSON && self.options.minify_whitespace,
-                &mut buf,
-            );
+            let formatted =
+                format_non_negative_float(float, self.options.minify_whitespace, &mut buf);
             self.print(formatted.text);
             if formatted.needs_space_before_dot {
                 self.prev_num_end = self.writer.written();
@@ -3600,7 +3662,14 @@ pub(crate) mod __gated_printer {
                     self.add_source_mapping(expr.loc);
                     self.print(b"new");
                     self.print_space();
-                    self.print_expr(e.target, Level::New, ExprFlag::forbid_call());
+                    // Optional chains are forbidden as a constructor: "new (a?.b)()"
+                    if is_optional_chain(&e.target) {
+                        self.print(b"(");
+                        self.print_expr(e.target, Level::Lowest, ExprFlag::none());
+                        self.print(b")");
+                    } else {
+                        self.print_expr(e.target, Level::New, ExprFlag::forbid_call());
+                    }
                     let args = e.args.slice();
                     if !args.is_empty() || level.gte(Level::Postfix) {
                         self.print(b"(");
@@ -4338,14 +4407,7 @@ pub(crate) mod __gated_printer {
                     if let Some(tag) = &e.tag {
                         self.add_source_mapping(expr.loc);
                         // Optional chains are forbidden in template tags
-                        // `Expr::is_optional_chain` is gated upstream; inline its body.
-                        let is_optional_chain = match &expr.data {
-                            ExprData::EDot(d) => d.optional_chain.is_some(),
-                            ExprData::EIndex(i) => i.optional_chain.is_some(),
-                            ExprData::ECall(c) => c.optional_chain.is_some(),
-                            _ => false,
-                        };
-                        if is_optional_chain {
+                        if is_optional_chain(tag) {
                             self.print(b"(");
                             self.print_expr(*tag, Level::Lowest, ExprFlag::none());
                             self.print(b")");

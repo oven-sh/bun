@@ -112,7 +112,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             StmtData::SWhile(mut sr) => Self::s_while(p, stmts, stmt, &mut *sr),
             StmtData::SDoWhile(mut sr) => Self::s_do_while(p, stmts, stmt, &mut *sr),
             StmtData::SIf(mut sr) => Self::s_if(p, stmts, stmt, &mut *sr),
-            StmtData::SFor(mut sr) => Self::s_for(p, stmts, stmt, &mut *sr),
+            StmtData::SFor(mut sr) => {
+                Self::s_for(p, stmts, stmt, &mut *sr)?;
+                if p.options.features.minify_syntax {
+                    p.record_arguments_copy_loop(sr);
+                }
+                Ok(())
+            }
             StmtData::SForIn(mut sr) => Self::s_for_in(p, stmts, stmt, &mut *sr),
             StmtData::SForOf(mut sr) => Self::s_for_of(p, stmts, stmt, &mut *sr),
             StmtData::STry(mut sr) => Self::s_try(p, stmts, stmt, &mut *sr),

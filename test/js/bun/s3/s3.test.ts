@@ -1477,6 +1477,16 @@ describe.concurrent.skipIf(!minioCredentials)("Archive with S3", () => {
   });
 });
 
+// The S3 client does not honor NO_PROXY, so an inherited proxy would hijack the
+// requests to the mock servers below.
+const envWithoutProxy = {
+  ...bunEnv,
+  HTTP_PROXY: undefined,
+  HTTPS_PROXY: undefined,
+  http_proxy: undefined,
+  https_proxy: undefined,
+};
+
 describe("s3 multipart upload id validation", () => {
   it("rejects a CreateMultipartUpload response whose upload id contains non-ASCII bytes", async () => {
     // The whole scenario runs in a subprocess so a misbehaving runtime cannot take down the test runner.
@@ -1549,7 +1559,7 @@ describe("s3 multipart upload id validation", () => {
 
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", fixture],
-      env: bunEnv,
+      env: envWithoutProxy,
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -1610,7 +1620,7 @@ describe.concurrent("s3 upload stream body error", () => {
     `;
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", fixture],
-      env: bunEnv,
+      env: envWithoutProxy,
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -1806,7 +1816,7 @@ describe.concurrent("s3 upload stream body error", () => {
     `;
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", fixture],
-      env: bunEnv,
+      env: envWithoutProxy,
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -1887,7 +1897,7 @@ describe.concurrent("s3 upload stream body error", () => {
     `;
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", fixture],
-      env: bunEnv,
+      env: envWithoutProxy,
       stdout: "pipe",
       stderr: "pipe",
     });

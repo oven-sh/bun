@@ -208,8 +208,6 @@ describe("node:http client timeout", () => {
 
         socket.setTimeout(200);
         await once(socket, "timeout");
-        // The write is still in flight: 'timeout' came from the stalled-queue
-        // branch, not from an ordinary idle socket.
         expect(writeComplete).toBe(false);
         expect(socket.connecting).toBe(false);
       } finally {

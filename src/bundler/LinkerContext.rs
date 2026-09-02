@@ -4312,9 +4312,17 @@ impl<'a> LinkerContext<'a> {
         };
         // A require() lifted into an import binds an ordinary local, so user
         // code can rebind it to an object with getters. Only a binding that
-        // is never assigned still holds the namespace.
+        // is never assigned still holds the namespace. A `var` can also be
+        // re-initialized by a duplicate declaration or a `for (var ns of ..)`
+        // head, which the parser does not record as an assignment, so a
+        // hoisted symbol is never trusted.
         match self.graph.symbols.get_const(ref_) {
-            Some(symbol) if !symbol.has_been_assigned_to() => {}
+            Some(symbol)
+                if !symbol.has_been_assigned_to()
+                    && !matches!(
+                        symbol.kind,
+                        bun_ast::symbol::Kind::Hoisted | bun_ast::symbol::Kind::HoistedFunction
+                    ) => {}
             _ => return false,
         }
         if let Some(named_import) = self.graph.ast.items_named_imports()[id].get(&ref_) {

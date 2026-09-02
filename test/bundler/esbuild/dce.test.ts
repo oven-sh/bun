@@ -2290,6 +2290,27 @@ describe("bundler", () => {
       stdout: "HELPER RAN",
     },
   });
+  // A `for (var ns of ...)` head re-initializes the lifted namespace local
+  // without an assignment the parser records, so a hoisted symbol is never
+  // treated as a namespace and the destructuring stays.
+  itBundled("dce/DestructuringOfForOfReboundUnwrappedRequire", {
+    files: {
+      "/entry.js": /* js */ `
+        export {}
+        var ns = require('react')
+        for (var ns of [{ get x() { console.log("EFFECT") } }]) {}
+        const { x } = ns
+        console.log("entry")
+      `,
+      "/node_modules/react/index.js": /* js */ `
+        exports.x = 1
+      `,
+      "/node_modules/react/package.json": `{ "name": "react", "version": "19.0.0" }`,
+    },
+    run: {
+      stdout: "EFFECT\nentry",
+    },
+  });
   // A lifted require() namespace is an ordinary local. When user code
   // rebinds it, the value can hold getters, so the destructuring must stay.
   itBundled("dce/DestructuringOfReboundUnwrappedRequire", {

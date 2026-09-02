@@ -152,19 +152,20 @@ describe("Bun.serve SSL validations", () => {
     }
   }
 
-  test("SharedArrayBuffer-backed TypedArray as ALPNProtocols does not crash", () => {
-    const shared = new SharedArrayBuffer(16);
-    for (const view of [new Int16Array(shared), new DataView(shared)]) {
-      expect(() => {
-        using server = Bun.serve({
-          port: 0,
-          fetch() {
-            return new Response("ok");
-          },
-          ALPNProtocols: view,
-        });
-      }).toThrow(TypeError);
-    }
+  test.each([
+    ["Int16Array", (buffer: SharedArrayBuffer) => new Int16Array(buffer)],
+    ["DataView", (buffer: SharedArrayBuffer) => new DataView(buffer)],
+  ] as const)("SharedArrayBuffer-backed %s as ALPNProtocols does not crash", (_name, makeView) => {
+    const view = makeView(new SharedArrayBuffer(16));
+    expect(() => {
+      using server = Bun.serve({
+        port: 0,
+        fetch() {
+          return new Response("ok");
+        },
+        ALPNProtocols: view,
+      });
+    }).toThrow(TypeError);
   });
 });
 

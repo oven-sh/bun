@@ -1,7 +1,6 @@
 # List of tests for which we do NOT set validateExceptionChecks=1 when running in ASAN CI
 
 # List of tests that potentially throw inside of reifyStaticProperties
-test/bake/dev/production.test.ts
 test/integration/vite-build/vite-build.test.ts
 test/js/bun/test/parallel/test-integration-rspack.ts
 test/js/bun/util/BunObject.test.ts

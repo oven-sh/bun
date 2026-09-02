@@ -21,6 +21,8 @@ pub(crate) struct StmtListMangler {
     can_inline_locals: bool,
     /// Bundler only: declarations in this list that nothing uses may be dropped.
     can_drop_unused_locals: bool,
+    /// Bundler only: after a merge, look for an inlining target in the merged statement again.
+    can_retry_inline: bool,
     /// Bundler only: the outermost list of a function body, where every use of a `var` declared in it has been visited.
     can_touch_vars: bool,
     /// `output.len()` when the last declaration in `output` could not move into the statement after it; appending to that statement cannot change the outcome.
@@ -43,11 +45,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // The runtime transpiler keeps the old one-statement-at-a-time behavior so its output stays close to the source.
         let bundle = self.options.bundle;
         // A `let` declared in one `case` can be used by a later case, which is not visited yet.
-        let can_drop_unused_locals = can_inline_locals && bundle && kind != StmtsKind::SwitchStmt;
+        let counts_are_final = kind != StmtsKind::SwitchStmt;
         StmtListMangler {
             is_control_flow_dead: false,
             can_inline_locals,
-            can_drop_unused_locals,
+            can_drop_unused_locals: can_inline_locals && bundle && counts_are_final,
+            can_retry_inline: can_inline_locals && bundle && counts_are_final,
             can_touch_vars: can_inline_locals
                 && bundle
                 && kind == StmtsKind::FnBody
@@ -119,8 +122,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             .saturating_add(1);
             // `stmt` absorbed the statement before it, so a declaration two statements back is now right in front of it: `let x = 1; a(); return x` => `let x = 1; return a(), x` => `return a(), 1`.
-            try_inline = m.can_inline_locals
-                && self.options.bundle
+            try_inline = m.can_retry_inline
                 && m.blocked_tail_len != output.len()
                 && merge_count <= MAX_MERGES_TO_SEARCH;
         }

@@ -1813,6 +1813,32 @@ describe("bundler", () => {
     },
   });
 
+  // A `const` of an enclosing function can be in its TDZ when an `await`
+  // suspends, and initialized by the time it resumes. Reading it before the
+  // `await` would throw, so an initializer that suspends stays where it is.
+  itBundled("minify/KeepOuterBindingReadAfterAwait", {
+    files: {
+      "/entry.js": /* js */ `
+        let resolve;
+        const gate = new Promise((r) => { resolve = r; });
+        async function waits() { const t = await gate; return [v, t]; }
+        async function syncPart() { const t = gate.then((x) => x); return [v, await t]; }
+        const pending = waits();
+        const v = 42;
+        resolve("ok");
+        console.log(JSON.stringify([await pending, await syncPart()]));
+      `,
+    },
+    minifySyntax: true,
+    minifyIdentifiers: false,
+    run: { stdout: '[[42,"ok"],[42,"ok"]]' },
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      expect(code).toContain("let t = await gate;");
+      expect(code).toContain("return [v, await gate.then((x) => x)];");
+    },
+  });
+
   // A `super(...)` call is never merged with its neighbors (the class lowering
   // looks for it to place field initializers), but a single-use declaration
   // before it is still inlined into its arguments.
@@ -1962,6 +1988,7 @@ describe("bundler", () => {
         export function a() { var r = 1, a = 2; g(r, a); var n = 3; return n; }
         export function b() { const D = Math.PI / 180; return 1; }
         export function c() { let x = 1; g(); return x; }
+        export function d() { Math.floor(1.5); Math.PI / 180; return 1; }
       `,
     },
     bundling: false,
@@ -1972,6 +1999,8 @@ describe("bundler", () => {
       expect(code).toContain("var r = 1, a = 2;");
       expect(code).toContain("const D = Math.PI / 180;");
       expect(code).toContain("let x = 1;");
+      expect(code).toContain("Math.floor(1.5);");
+      expect(code).toContain("Math.PI / 180;");
     },
   });
 });

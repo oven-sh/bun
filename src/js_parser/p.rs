@@ -3010,15 +3010,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // A side-effecting replacement can still move past a read that cannot throw, run code, or change.
         match expr.data {
             js_ast::ExprData::EThis(_) | js_ast::ExprData::ESuper(_) => true,
-            js_ast::ExprData::EIdentifier(id) => self.is_stable_identifier_read(id),
+            js_ast::ExprData::EIdentifier(id) => self.is_stable_identifier_read(id, replacement),
             // A known global property access such as `console.log` or `Math.floor`.
             js_ast::ExprData::EDot(dot) => dot.can_be_removed_if_unused,
             _ => false,
         }
     }
 
-    /// A read of `id` that cannot throw or run code, and yields the same value whatever code runs before it.
-    fn is_stable_identifier_read(&self, id: E::Identifier) -> bool {
+    /// A read of `id` that cannot throw or run code, and yields the same value whether it happens before or after `replacement`.
+    fn is_stable_identifier_read(&self, id: E::Identifier, replacement: &Expr) -> bool {
         if id.must_keep_due_to_with_stmt() {
             return false;
         }
@@ -3029,32 +3029,110 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         match symbol.kind {
             // A known global such as `Math` or `console`.
             js_ast::symbol::Kind::Unbound => id.can_be_removed_if_unused(),
-            // When bundling, an assignment to a `const` is a compile error.
-            js_ast::symbol::Kind::Constant => true,
-            // Only an assignment (or a direct `eval`) can change these; a `var` or parameter can also change through a redeclaration or a mapped `arguments` object.
-            js_ast::symbol::Kind::Other
+            js_ast::symbol::Kind::Constant
+            | js_ast::symbol::Kind::Other
             | js_ast::symbol::Kind::Class
             | js_ast::symbol::Kind::HoistedFunction
             | js_ast::symbol::Kind::GeneratorOrAsyncFunction => {
-                if symbol.has_been_assigned_to() || self.parse_pass_saw_direct_eval {
+                // When bundling an assignment to a `const` is a compile error; the others can only change through an assignment (or a direct `eval`). A `var` or a parameter can also change through a redeclaration or a mapped `arguments` object.
+                let is_const = symbol.kind == js_ast::symbol::Kind::Constant;
+                if !is_const && (symbol.has_been_assigned_to() || self.parse_pass_saw_direct_eval) {
                     return false;
                 }
                 let name = symbol.original_name.slice();
-                if self.name_is_assigned_somewhere(name) {
+                if !is_const && self.name_is_assigned_somewhere(name) {
                     return false;
                 }
+                // A `let`, `const` or `class` of an enclosing function can still be in its TDZ here and leave it while `replacement` suspends; a function declaration has no TDZ.
+                let has_tdz = symbol.kind != js_ast::symbol::Kind::HoistedFunction
+                    && symbol.kind != js_ast::symbol::Kind::GeneratorOrAsyncFunction;
                 // The name must resolve to this symbol from here; a generated temp is in no `members` map, and generated code may assign to it.
                 let hash = Scope::get_member_hash(name);
+                let mut crossed_function = false;
                 let mut scope = Some(self.current_scope_ref());
                 while let Some(s) = scope {
                     if let Some(member) = s.get_member_with_hash(name, hash) {
-                        return member.ref_.eql(id.ref_);
+                        if !member.ref_.eql(id.ref_) {
+                            return false;
+                        }
+                        return !(has_tdz
+                            && crossed_function
+                            && Self::expr_may_suspend(replacement));
                     }
+                    crossed_function |= s.kind_stops_hoisting();
                     scope = s.parent;
                 }
                 false
             }
             _ => false,
+        }
+    }
+
+    /// Whether evaluating `expr` can suspend the current function (`await` or `yield` outside a nested function). Unknown shapes count as suspending.
+    fn expr_may_suspend(expr: &Expr) -> bool {
+        match expr.data {
+            js_ast::ExprData::EAwait(_) | js_ast::ExprData::EYield(_) => true,
+            js_ast::ExprData::EFunction(_)
+            | js_ast::ExprData::EArrow(_)
+            | js_ast::ExprData::EClass(_)
+            | js_ast::ExprData::EIdentifier(_)
+            | js_ast::ExprData::EImportIdentifier(_)
+            | js_ast::ExprData::ECommonjsExportIdentifier(_)
+            | js_ast::ExprData::EThis(_)
+            | js_ast::ExprData::ESuper(_)
+            | js_ast::ExprData::ENull(_)
+            | js_ast::ExprData::EUndefined(_)
+            | js_ast::ExprData::EBoolean(_)
+            | js_ast::ExprData::EBranchBoolean(_)
+            | js_ast::ExprData::ENumber(_)
+            | js_ast::ExprData::EBigInt(_)
+            | js_ast::ExprData::EString(_)
+            | js_ast::ExprData::ERegExp(_)
+            | js_ast::ExprData::EImportMeta(_)
+            | js_ast::ExprData::ERequireString(_)
+            | js_ast::ExprData::EMissing(_) => false,
+            js_ast::ExprData::EDot(dot) => Self::expr_may_suspend(&dot.target),
+            js_ast::ExprData::EIndex(index) => {
+                Self::expr_may_suspend(&index.target) || Self::expr_may_suspend(&index.index)
+            }
+            js_ast::ExprData::EUnary(un) => Self::expr_may_suspend(&un.value),
+            js_ast::ExprData::EBinary(bin) => {
+                Self::expr_may_suspend(&bin.left) || Self::expr_may_suspend(&bin.right)
+            }
+            js_ast::ExprData::EIf(ternary) => {
+                Self::expr_may_suspend(&ternary.test)
+                    || Self::expr_may_suspend(&ternary.yes)
+                    || Self::expr_may_suspend(&ternary.no)
+            }
+            js_ast::ExprData::ECall(call) => {
+                Self::expr_may_suspend(&call.target)
+                    || call.args.slice().iter().any(Self::expr_may_suspend)
+            }
+            js_ast::ExprData::ENew(new) => {
+                Self::expr_may_suspend(&new.target)
+                    || new.args.slice().iter().any(Self::expr_may_suspend)
+            }
+            js_ast::ExprData::EArray(array) => {
+                array.items.slice().iter().any(Self::expr_may_suspend)
+            }
+            js_ast::ExprData::EObject(object) => object.properties.slice().iter().any(|property| {
+                property.key.as_ref().is_some_and(Self::expr_may_suspend)
+                    || property.value.as_ref().is_some_and(Self::expr_may_suspend)
+                    || property
+                        .initializer
+                        .as_ref()
+                        .is_some_and(Self::expr_may_suspend)
+            }),
+            js_ast::ExprData::ETemplate(template) => {
+                template.tag.as_ref().is_some_and(Self::expr_may_suspend)
+                    || template
+                        .parts()
+                        .iter()
+                        .any(|part| Self::expr_may_suspend(&part.value))
+            }
+            js_ast::ExprData::ESpread(spread) => Self::expr_may_suspend(&spread.value),
+            js_ast::ExprData::EInlinedEnum(inlined) => Self::expr_may_suspend(&inlined.value),
+            _ => true,
         }
     }
 
@@ -5870,6 +5948,67 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.expr_can_be_removed_if_unused_without_dce_check(expr)
     }
 
+    /// The bundler's `--minify-syntax`; the runtime transpiler has `minify_syntax` on too, and its output must not change.
+    pub(crate) fn bundler_minify_syntax(&self) -> bool {
+        self.options.bundle && self.options.features.minify_syntax
+    }
+
+    /// `known_primitive()` plus what the bundler's purity checks need: the `Math` numeric constants, and arithmetic or numeric conversion on such operands.
+    pub(crate) fn is_known_non_bigint_primitive(&self, expr: &Expr) -> bool {
+        if !self.stack_check.is_safe_to_recurse() {
+            return false;
+        }
+        match expr.data {
+            js_ast::ExprData::EDot(dot) => {
+                dot.can_be_removed_if_unused
+                    && matches!(dot.target.data, js_ast::ExprData::EIdentifier(id) if id.can_be_removed_if_unused())
+                    && matches!(
+                        dot.name.slice(),
+                        b"E" | b"LN10"
+                            | b"LN2"
+                            | b"LOG10E"
+                            | b"LOG2E"
+                            | b"PI"
+                            | b"SQRT1_2"
+                            | b"SQRT2"
+                    )
+            }
+            js_ast::ExprData::EUnary(un) => match un.op {
+                js_ast::op::Code::UnNeg | js_ast::op::Code::UnPos | js_ast::op::Code::UnCpl => {
+                    self.is_known_non_bigint_primitive(&un.value)
+                }
+                _ => expr.data.known_primitive().is_non_bigint_primitive(),
+            },
+            js_ast::ExprData::EBinary(bin) => match bin.op {
+                js_ast::op::Code::BinAdd
+                | js_ast::op::Code::BinSub
+                | js_ast::op::Code::BinMul
+                | js_ast::op::Code::BinDiv
+                | js_ast::op::Code::BinRem
+                | js_ast::op::Code::BinPow
+                | js_ast::op::Code::BinShl
+                | js_ast::op::Code::BinShr
+                | js_ast::op::Code::BinUShr
+                | js_ast::op::Code::BinBitwiseAnd
+                | js_ast::op::Code::BinBitwiseOr
+                | js_ast::op::Code::BinBitwiseXor => {
+                    self.is_known_non_bigint_primitive(&bin.left)
+                        && self.is_known_non_bigint_primitive(&bin.right)
+                }
+                _ => expr.data.known_primitive().is_non_bigint_primitive(),
+            },
+            _ => expr.data.known_primitive().is_non_bigint_primitive(),
+        }
+    }
+
+    /// A call in `GLOBAL_NO_SIDE_EFFECT_FUNCTION_CALLS_WITH_PRIMITIVE_ARGS` whose result is unused can go when every argument is a side-effect free non-BigInt primitive. Bundler only.
+    pub(crate) fn pure_global_call_can_be_removed(&mut self, args: &[Expr]) -> bool {
+        self.bundler_minify_syntax()
+            && args.iter().all(|arg| {
+                self.is_known_non_bigint_primitive(arg) && self.expr_can_be_removed_if_unused(arg)
+            })
+    }
+
     fn expr_can_be_removed_if_unused_without_dce_check(&mut self, expr: &Expr) -> bool {
         if !self.stack_check.is_safe_to_recurse() || self.reported_stack_overflow.get() {
             self.report_stack_overflow(expr.loc);
@@ -5991,10 +6130,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             js_ast::ExprData::ECall(ex) => {
                 if ex.can_be_unwrapped_if_unused == js_ast::CanBeUnwrapped::IfUnusedAndPrimitiveArgs
                 {
-                    return crate::scan::scan_side_effects::SideEffects::args_are_removable_primitives(
-                        self,
-                        ex.args.slice(),
-                    );
+                    return self.pure_global_call_can_be_removed(ex.args.slice());
                 }
                 // A call that has been marked "__PURE__" can be removed if all arguments
                 // can be removed. The annotation causes us to ignore the target.
@@ -6056,8 +6192,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 // Numeric conversion of a non-BigInt primitive never runs code or throws ("+1n" throws).
                 js_ast::op::Code::UnNeg | js_ast::op::Code::UnPos | js_ast::op::Code::UnCpl => {
-                    return self.options.features.minify_syntax
-                        && ex.value.data.known_primitive().is_non_bigint_primitive()
+                    return self.bundler_minify_syntax()
+                        && self.is_known_non_bigint_primitive(&ex.value)
                         && self.expr_can_be_removed_if_unused_without_dce_check(&ex.value);
                 }
                 _ => {}
@@ -6130,9 +6266,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 | js_ast::op::Code::BinBitwiseAnd
                 | js_ast::op::Code::BinBitwiseOr
                 | js_ast::op::Code::BinBitwiseXor => {
-                    return self.options.features.minify_syntax
-                        && ex.left.data.known_primitive().is_non_bigint_primitive()
-                        && ex.right.data.known_primitive().is_non_bigint_primitive()
+                    return self.bundler_minify_syntax()
+                        && self.is_known_non_bigint_primitive(&ex.left)
+                        && self.is_known_non_bigint_primitive(&ex.right)
                         && self.expr_can_be_removed_if_unused_without_dce_check(&ex.left)
                         && self.expr_can_be_removed_if_unused_without_dce_check(&ex.right);
                 }

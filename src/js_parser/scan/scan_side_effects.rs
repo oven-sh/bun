@@ -218,9 +218,7 @@ impl SideEffects {
                     }
                     // Numeric conversion of a non-BigInt primitive never runs code or throws ("+1n" throws).
                     Op::Code::UnNeg | Op::Code::UnPos | Op::Code::UnCpl => {
-                        if p.options.features.minify_syntax
-                            && un.value.data.known_primitive().is_non_bigint_primitive()
-                        {
+                        if p.bundler_minify_syntax() && p.is_known_non_bigint_primitive(&un.value) {
                             return Self::simplify_unused_expr(p, un.value);
                         }
                     }
@@ -231,7 +229,7 @@ impl SideEffects {
             ExprData::ECall(call) => {
                 // Pure only with known-primitive arguments, so the whole call goes or the whole call stays.
                 if call.can_be_unwrapped_if_unused == CallUnwrap::IfUnusedAndPrimitiveArgs {
-                    if Self::args_are_removable_primitives(p, &call.args) {
+                    if p.pure_global_call_can_be_removed(&call.args) {
                         return None;
                     }
                     return Some(expr);
@@ -367,9 +365,9 @@ impl SideEffects {
                     | Op::Code::BinBitwiseAnd
                     | Op::Code::BinBitwiseOr
                     | Op::Code::BinBitwiseXor => {
-                        if p.options.features.minify_syntax
-                            && bin.left.data.known_primitive().is_non_bigint_primitive()
-                            && bin.right.data.known_primitive().is_non_bigint_primitive()
+                        if p.bundler_minify_syntax()
+                            && p.is_known_non_bigint_primitive(&bin.left)
+                            && p.is_known_non_bigint_primitive(&bin.right)
                         {
                             let left = bin.left;
                             let right = bin.right;
@@ -506,17 +504,6 @@ impl SideEffects {
         }
 
         Some(expr)
-    }
-
-    /// Every argument is a side-effect free non-BigInt primitive, so a `GLOBAL_NO_SIDE_EFFECT_FUNCTION_CALLS_WITH_PRIMITIVE_ARGS` call can go.
-    pub(crate) fn args_are_removable_primitives<'a, const TS: bool, const SCAN: bool>(
-        p: &mut P<'a, TS, SCAN>,
-        args: &[Expr],
-    ) -> bool {
-        args.iter().all(|arg| {
-            arg.data.known_primitive().is_non_bigint_primitive()
-                && p.expr_can_be_removed_if_unused(arg)
-        })
     }
 
     /// Inline equivalent of `Expr::join_all_with_comma_callback(slice, p, simplify_unused_expr, _)`.

@@ -790,10 +790,14 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRunMain, (JSGlobalObject * globalObject, JSC:
         if (auto* process = zigGlobalObject->processObject()) {
             JSValue argv = process->getArgv(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
-            if (auto* argvArray = dynamicDowncast<JSArray>(argv)) {
-                arg1 = argvArray->getIndex(globalObject, 1);
+            if (argv.isObject()) {
+                arg1 = argv.getObject()->get(globalObject, 1u);
                 RETURN_IF_EXCEPTION(scope, {});
             }
+        }
+        if (arg1.isUndefined()) {
+            // Node: resolveMainPath() calls path.resolve(process.argv[1]) and throws this
+            return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "paths[0]"_s, "string"_s, arg1);
         }
     }
 

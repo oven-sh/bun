@@ -916,6 +916,46 @@ console.log("survived", require("./late.js"));`,
     expect(exitCode).toBe(0);
   });
 
+  // With `-e` there is no process.argv[1]. Node throws ERR_INVALID_ARG_TYPE
+  // from path.resolve(undefined) instead of resolving a module named
+  // "undefined".
+  test("runMain() with no argument and no main entry throws ERR_INVALID_ARG_TYPE", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `require("node:module").runMain()`],
+      env: bunEnv,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+    expect(stderr).not.toContain("Cannot find package");
+    expect(stderr).toContain('The "paths[0]" argument must be of type string');
+    expect(exitCode).toBe(1);
+  });
+
+  // Node reads the default through a plain property get (`process.argv[1]`),
+  // so a non-array replacement of process.argv must still work.
+  test("runMain() with no argument reads a replaced array-like process.argv", async () => {
+    using dir = tempDir("run-main-argv-like", {
+      "entry.cjs": `process.argv = { 1: process.argv[1] };\nrequire("node:module").runMain();\nconsole.log("ran");\n`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "entry.cjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).not.toContain("Cannot find package");
+    expect(stdout.trim()).toBe("ran");
+    expect(exitCode).toBe(0);
+  });
+
   test.each(["no args", "--access-early"])("children, %s", async arg => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), path.join(import.meta.dir, "children-fixture/a.cjs"), arg],

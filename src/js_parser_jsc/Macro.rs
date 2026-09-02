@@ -468,9 +468,12 @@ impl Macro {
         // macro VM moved to this build) and have no defines loaded yet.
         let (vm, needs_defines): (*mut VirtualMachine, bool) = if VirtualMachine::is_loaded() {
             let vm = VirtualMachine::get_mut_ptr();
-            // SAFETY: `vm` is the per-thread VM; uniquely accessed here.
+            // `Transpiler::init` always sets `env`, and `MacroContext` copies it.
+            let env = NonNull::new(env).expect("MacroContext.env is set");
+            // SAFETY: `vm` is the per-thread VM; uniquely accessed here. `env`
+            // is the build's loader and outlives every macro call of the build.
             let moved = unsafe {
-                (*vm).serve_macro_build(build_options, || {
+                (*vm).serve_macro_build(env, build_options, || {
                     macro_vm_transform_options(build_options)
                 })?
             };

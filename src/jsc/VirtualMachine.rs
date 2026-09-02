@@ -1638,26 +1638,33 @@ impl VirtualMachine {
     /// runs on this thread (a `Bun.Transpiler` used inside a macro keeps the
     /// VM as it is).
     ///
-    /// If `build` is not the build the VM served last, the VM moves to it. The
-    /// transpiler options come from `transform_options` (the build's options
-    /// as the macro VM takes them), and everything the VM evaluated for the
-    /// previous build goes: the module registry, the require map and the
-    /// registered macro callbacks. The next [`load_macro_entry_point`] then
-    /// transpiles the macro modules again, with the build's `--define` and
-    /// loaders. Returns whether the VM moved; the caller then loads the
-    /// defines, as it does for a new VM.
+    /// The VM takes the build's `env` loader. The loader it was created with
+    /// belongs to the VM that ran that build, and a `Worker` frees its loader
+    /// when it exits. If `build` is not the build the VM served last, the VM
+    /// moves to it. The transpiler options come from `transform_options` (the
+    /// build's options as the macro VM takes them), and everything the VM
+    /// evaluated for the previous build goes: the module registry, the
+    /// require map and the registered macro callbacks. The next
+    /// [`load_macro_entry_point`] then transpiles the macro modules again,
+    /// with the build's `--define` and loaders. Returns whether the VM moved;
+    /// the caller then loads the defines, as it does for a new VM.
     ///
     /// [`macro_build_options`]: Self::macro_build_options
     /// [`load_macro_entry_point`]: Self::load_macro_entry_point
     pub fn serve_macro_build(
         &mut self,
+        env: NonNull<bun_dotenv::Loader>,
         build: &std::sync::Arc<bun_options_types::schema::api::TransformOptions>,
         transform_options: impl FnOnce() -> bun_options_types::schema::api::TransformOptions,
     ) -> crate::CrateResult<bool> {
         let Some(current) = &self.macro_build_options else {
             return Ok(false);
         };
-        if self.macro_guard_depth != 0 || std::sync::Arc::ptr_eq(current, build) {
+        if self.macro_guard_depth != 0 {
+            return Ok(false);
+        }
+        self.transpiler.env = env.as_ptr();
+        if std::sync::Arc::ptr_eq(current, build) {
             return Ok(false);
         }
         self.transpiler

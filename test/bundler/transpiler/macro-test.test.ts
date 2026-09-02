@@ -589,6 +589,74 @@ test.concurrent("a runtime import after Bun.build() does not see the build's def
   expect(exitCode).toBe(0);
 });
 
+// A `Bun.build()` from a Worker creates macro VMs that read the Worker's env. The Worker frees its
+// env when it exits. The main thread's build that follows moves those VMs to its own env, which the
+// macro reads through `process.env`.
+test.concurrent("a Bun.build() after a Worker's build with macros reads the main thread's env", async () => {
+  const libs = [0, 1, 2, 3];
+  using dir = tempDir("macro-build-api-after-worker", {
+    "macro.ts": [
+      `declare const BUILD_TAG: string;`,
+      `export function tag() {`,
+      `  return BUILD_TAG + ":" + process.env.MACRO_ENV;`,
+      `}`,
+      ``,
+    ].join("\n"),
+    ...Object.fromEntries(
+      libs.map(i => [
+        `lib${i}.ts`,
+        `import { tag } from "./macro.ts" with { type: "macro" };\nexport const tag${i} = tag();\n`,
+      ]),
+    ),
+    "entry.ts": [
+      ...libs.map(i => `import { tag${i} } from "./lib${i}.ts";`),
+      `console.log(${libs.map(i => `tag${i}`).join(", ")});`,
+      ``,
+    ].join("\n"),
+    "build.ts": `
+      export async function build(tagValue: string) {
+        const result = await Bun.build({
+          entrypoints: ["./entry.ts"],
+          target: "bun",
+          define: { BUILD_TAG: JSON.stringify(tagValue) },
+        });
+        if (!result.success) throw new AggregateError(result.logs, "build " + tagValue + " failed");
+        return [...(await result.outputs[0].text()).matchAll(/"[a-z]+:[a-z]+"/g)].map(m => m[0]);
+      }
+    `,
+    "worker.ts": `
+      import { parentPort } from "node:worker_threads";
+      import { build } from "./build.ts";
+      parentPort.postMessage(await build("worker"));
+    `,
+    "main.ts": `
+      import { Worker } from "node:worker_threads";
+      import { build } from "./build.ts";
+      const worker = new Worker("./worker.ts");
+      const fromWorker = await new Promise(resolve => worker.once("message", resolve));
+      await worker.terminate();
+      const fromMain = await build("main");
+      console.log(JSON.stringify({ fromWorker, fromMain }));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", "main.ts"],
+    env: { ...bunEnv, UV_THREADPOOL_SIZE: "2", MACRO_ENV: "env" },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ lastLine: stdout.trim().split("\n").pop(), stderr }).toEqual({
+    lastLine: JSON.stringify({
+      fromWorker: libs.map(() => `"worker:env"`),
+      fromMain: libs.map(() => `"main:env"`),
+    }),
+    stderr: "",
+  });
+  expect(exitCode).toBe(0);
+});
+
 describe("--no-macros", () => {
   const files = {
     "macro.ts": `

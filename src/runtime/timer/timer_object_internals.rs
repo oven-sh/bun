@@ -304,8 +304,7 @@ impl TimerObjectInternals {
             this_value: JsCell::new(JsRef::empty()),
         };
 
-        // Kept on the timer, not wrapped around the callback, so `_onTimeout`
-        // reads and writes the bare function as in Node's `initAsyncResource`.
+        // Stored on the timer, not around the callback, so `_onTimeout` is the bare function.
         let async_context = global.async_context();
 
         if kind == Kind::SetImmediate {

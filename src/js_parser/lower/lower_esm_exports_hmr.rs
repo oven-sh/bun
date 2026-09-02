@@ -468,6 +468,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                     let symbol = &mut p.symbols[namespace_ref.inner_index() as usize];
                     symbol.use_count_estimate = 0;
                     symbol.link.set(stmt.namespace_ref);
+                    p.symbols[stmt.namespace_ref.inner_index() as usize].set_is_link_target(true);
                     // Note: the concrete `P` always carries `symbol_uses`;
                     // once a `ParserLike` trait is introduced for
                     // AstBuilder, that variant should override this to a no-op.

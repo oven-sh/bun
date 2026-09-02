@@ -839,6 +839,80 @@ describe("bundler", () => {
       '+"æ"',
     ],
   });
+  // https://github.com/oven-sh/bun/issues/31074
+  // Integers with trailing zeros should print in `<prefix>e<exp>` form when
+  // shorter than the full decimal. The old integer fast path only recognised
+  // exact powers of ten (10000 → 1e4), so 160000 stayed `160000` instead of
+  // shrinking to `16e4`, and 320000000 stayed 9 chars instead of 4 (`32e7`).
+  itBundled("minify/IntegerTrailingZeroScientificNotation", {
+    files: {
+      "/entry.ts": `
+        capture(160000);
+        capture(10000);
+        capture(50000);
+        capture(2048000);
+        capture(320000000);
+        capture(1000);
+        capture(100);
+        capture(999);
+        capture(0);
+        capture(1);
+        capture(10);
+      `,
+    },
+    minifySyntax: true,
+    capture: [
+      "16e4",
+      "1e4",
+      "5e4",
+      "2048e3",
+      "32e7",
+      "1e3",
+      "100", // 3 chars == "1e2" 3 chars; keep decimal on tie
+      "999",
+      "0",
+      "1",
+      "10",
+    ],
+  });
+  // https://github.com/oven-sh/bun/issues/29311
+  // The printer compares the plain decimal form with the integer-mantissa
+  // exponent form and prints the shorter one, as esbuild does. `1e300` used
+  // to print as a 1 followed by 300 zeros. With whitespace minification a
+  // fraction below 1 also drops its leading zero.
+  itBundled("minify/ShortestNumberForm", {
+    files: {
+      "/entry.js": /* js */ `
+        capture(1e300);
+        capture(-1e300);
+        capture(0.0000001);
+        capture(0.00001);
+        capture(1.5e20);
+        capture(2000000000);
+        capture(1000000000000);
+        capture(0.5);
+        capture(123);
+        capture(3.14159);
+      `,
+    },
+    minifySyntax: true,
+    minifyWhitespace: true,
+    capture: ["1e300", "-1e300", "1e-7", "1e-5", "15e19", "2e9", "1e12", ".5", "123", "3.14159"],
+  });
+  // The choice between the two forms does not depend on minification. esbuild
+  // prints `16e4` for `160000` without any flag. Only the leading zero of a
+  // fraction stays.
+  itBundled("minify/ShortestNumberFormWithoutMinify", {
+    files: {
+      "/entry.js": /* js */ `
+        capture(1e300);
+        capture(160000);
+        capture(1.5e20);
+        capture(0.5);
+      `,
+    },
+    capture: ["1e300", "16e4", "15e19", "0.5"],
+  });
   itBundled("minify/ImportMetaHotTreeShaking", {
     files: {
       "/entry.ts": `
@@ -1504,6 +1578,260 @@ describe("bundler", () => {
       expect(code).toMatch(/undef = \(x\) => \{\s*return;?\s*\}/);
       // Function declarations are never rewritten into arrows.
       expect(code).toContain("function fn(a)");
+    },
+  });
+
+  // Lowered optional chains and nullish coalescing (Babel loose, Babel strict
+  // and TypeScript shapes) come back as the native operators, and a temp that
+  // only served the lowering disappears with its `var`.
+  itBundled("minify/OptionalChainRecoveryRuntime", {
+    files: {
+      "/entry.js": /* js */ `
+        function loose(r) { var n; return (n = r.x) == null ? void 0 : n.y; }
+        function strict(r) { var _a; return (_a = r.x) === null || _a === void 0 ? void 0 : _a.y; }
+        function chained(r) {
+          var _a, _b;
+          return (_b = (_a = r.x) === null || _a === void 0 ? void 0 : _a.y) === null || _b === void 0 ? void 0 : _b.z;
+        }
+        function callsMethod(r) { var n; return (n = r.x) == null ? void 0 : n.y(); }
+        function callsTemp(r) { var n; return (n = r.x) == null ? void 0 : n(); }
+        function callsTempFromCall(r) { var n; return (n = r()) == null ? void 0 : n(); }
+        function nullish(r) { var n; return (n = r.x) != null ? n : "fallback"; }
+        function nullishStrict(r) { var _a; return (_a = r.x) !== null && _a !== void 0 ? _a : "fallback"; }
+        function readsTemp(r) { var n; var v = (n = r.x) == null ? void 0 : n.y; return [v, n]; }
+        function redeclared(r) { var n; var v = (n = r.x) == null ? void 0 : n.y; { var n; return [v, n]; } }
+        function innerChain(a) { try { return a == null ? void 0 : (a.b?.c).d; } catch (e) { return e.constructor.name; } }
+        function ident(a) { return [a == null ? void 0 : a.b, a != null ? a : "d", a == null ? void 0 : a.b.c]; }
+        function chainedIdent(a) { return a === null || a === void 0 ? void 0 : a.b; }
+
+        const thisSeen = [];
+        const obj = { x: function () { thisSeen.push(this === obj ? "obj" : this === undefined ? "undefined" : "other"); return 1; } };
+        console.log(JSON.stringify([
+          loose({ x: { y: 1 } }), loose({}), loose({ x: null }),
+          strict({ x: { y: 2 } }), strict({}),
+          chained({ x: { y: { z: 3 } } }), chained({ x: {} }), chained({}),
+          callsMethod({ x: { y: () => 4 } }), callsMethod({}),
+          callsTemp(obj), callsTemp({}),
+          callsTempFromCall(() => () => 5), callsTempFromCall(() => null),
+          nullish({ x: 0 }), nullish({ x: null }), nullish({}),
+          nullishStrict({ x: false }), nullishStrict({}),
+          readsTemp({ x: { y: 6 } }), readsTemp({}),
+          redeclared({ x: { y: 9 } }),
+          innerChain({ b: null }), innerChain({ b: { c: { d: 10 } } }), innerChain(null),
+          ident({ b: { c: 7 } }), ident(null),
+          chainedIdent({ b: 8 }), chainedIdent(undefined),
+          thisSeen,
+        ]));
+      `,
+    },
+    minifySyntax: true,
+    minifyWhitespace: true,
+    minifyIdentifiers: false,
+    target: "bun",
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      expect(code).toContain("function loose(r){return r.x?.y}");
+      expect(code).toContain("function strict(r){return r.x?.y}");
+      expect(code).toContain("function chained(r){return r.x?.y?.z}");
+      expect(code).toContain("function callsMethod(r){return r.x?.y()}");
+      // The original called the temp as a plain value, so `this` stays undefined.
+      expect(code).toContain("function callsTemp(r){return(0,r.x)?.()}");
+      expect(code).toContain("function callsTempFromCall(r){return r()?.()}");
+      expect(code).toContain('function nullish(r){return r.x??"fallback"}');
+      expect(code).toContain('function nullishStrict(r){return r.x??"fallback"}');
+      // The temp is read after the chain, so the store and the `var` stay.
+      expect(code).toContain("function readsTemp(r){var n,v=(n=r.x)?.y;return[v,n]}");
+      // The nested `var n` reads the same variable, so the store and the `var` stay.
+      expect(code).toContain("function redeclared(r){var n,v=(n=r.x)?.y;{var n;return[v,n]}}");
+      expect(code).toContain("a==null?void 0:(a.b?.c).d");
+      expect(code).toContain('function ident(a){return[a?.b,a??"d",a?.b.c]}');
+      expect(code).toContain("function chainedIdent(a){return a?.b}");
+    },
+    run: {
+      stdout: JSON.stringify([
+        1,
+        undefined,
+        undefined,
+        2,
+        undefined,
+        3,
+        undefined,
+        undefined,
+        4,
+        undefined,
+        1,
+        undefined,
+        5,
+        undefined,
+        0,
+        "fallback",
+        "fallback",
+        false,
+        "fallback",
+        [6, { y: 6 }],
+        [undefined, undefined],
+        [9, { y: 9 }],
+        "TypeError",
+        10,
+        undefined,
+        [{ c: 7 }, { b: { c: 7 } }, 7],
+        [undefined, "d", undefined],
+        8,
+        undefined,
+        ["undefined"],
+      ]),
+    },
+  });
+
+  // Babel's rest-parameter loop becomes a spread, with the loop temps gone.
+  itBundled("minify/ArgumentsCopyLoopRuntime", {
+    files: {
+      "/entry.js": /* js */ `
+        "use strict";
+        function all() { for (var len = arguments.length, args = new Array(len), i = 0; i < len; i++) { args[i] = arguments[i]; } return args; }
+        function rest(first) { for (var _len = arguments.length, tail = Array(_len > 1 ? _len - 1 : 0), _key = 1; _key < _len; _key++) tail[_key - 1] = arguments[_key]; return [first, tail]; }
+        function untilLength() { for (var args = [], i = 0; i < arguments.length; i++) args[i] = arguments[i]; return args.length; }
+        function keepsLen() { for (var len = arguments.length, args = Array(len), i = 0; i < len; i++) args[i] = arguments[i]; return [args, len]; }
+        function unused() { for (var len = arguments.length, args = Array(len), i = 0; i < len; i++) args[i] = arguments[i]; return "unused"; }
+        console.log(JSON.stringify([all(1, 2, 3), rest("a", "b", "c"), rest("a"), untilLength(1, 2), keepsLen(4, 5), unused(6)]));
+      `,
+    },
+    minifySyntax: true,
+    minifyWhitespace: true,
+    minifyIdentifiers: false,
+    target: "bun",
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      expect(code).toContain("function all(){var args=[...arguments];return args}");
+      expect(code).toContain("function rest(first){var tail=[...arguments].slice(1);return[first,tail]}");
+      expect(code).toContain("function untilLength(){var args=[...arguments];return args.length}");
+      // `len` is read after the loop, so the loop stays.
+      expect(code).toContain(
+        "function keepsLen(){for(var len=arguments.length,args=Array(len),i=0;i<len;i++)args[i]=arguments[i];return[args,len]}",
+      );
+      expect(code).toContain('function unused(){return"unused"}');
+    },
+    run: {
+      stdout: JSON.stringify([[1, 2, 3], ["a", ["b", "c"]], ["a", []], 2, [[4, 5], 2], "unused"]),
+    },
+  });
+
+  // The small peepholes: shortest numbers, numeric keys, typeof guards,
+  // compound assignment and long string arrays all keep their runtime values.
+  itBundled("minify/SmallPeepholesRuntime", {
+    files: {
+      "/entry.js": /* js */ `
+        const numbers = [1e6, 0.5, -0.25, 1000, 0.001, 1e21, 5e-324, 1e100, 1000000000001, 12345678901234567890, 0.000001234, (0.5).toFixed(1), (1e6).toFixed(), (0).toFixed()];
+        const keys = { "2": "two", "0": "zero", "-1": "minus", "01": "oh-one", ["3"]: "three", ["a b"]: "space" };
+        class K { "4"() { return "four"; } static ["5"] = "five"; }
+        function typeofs(e, local) { return [typeof e.b < "u", typeof e.b > "u", typeof local === "undefined", typeof missingGlobal === "undefined"]; }
+        function compound(n, k) { n.count = n.count + 1; n.s = n.s + "x"; n[0] = n[0] + 1; n[k] = n[k] * 2; n.x = n.x || "or"; n.y = n.y ?? "nullish"; n.z = n.z && "and"; return n; }
+        function logical(a, b, c) { a = a || "or"; b = b ?? "nullish"; c = c && "and"; return [a, b, c]; }
+        function named(fn) { fn = fn || function () {}; return fn.name; }
+        const sets = [];
+        const withSetter = { get x() { return 1; }, set x(v) { sets.push(v); } };
+        withSetter.x = withSetter.x || 2;
+        let keyConversions = 0;
+        const key = { toString() { keyConversions++; return "3"; } };
+        const letters = ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p"];
+        const words = ["aa", "bb", "cc", "dd", "ee", "ff", "gg", "hh", "ii", "jj", "kk", "ll", "mm", "nn", "oo", "pp"];
+        console.log(JSON.stringify([numbers, keys, new K()[4](), K[5], typeofs({ b: 1 }, undefined), compound({ count: 1, s: "", 0: 1, 3: 5, x: 0, y: null, z: 1 }, key), keyConversions, logical(0, null, 1), named(null), sets, letters, words]));
+      `,
+    },
+    minifySyntax: true,
+    minifyWhitespace: true,
+    minifyIdentifiers: false,
+    target: "bun",
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      expect(code).toContain(
+        "[1e6,.5,-.25,1e3,.001,1e21,5e-324,1e100,0xe8d4a51001,0xab54a98ceb1f0800,1234e-9,.5.toFixed(1),1e6.toFixed(),0 .toFixed()]",
+      );
+      expect(code).toContain('{2:"two",0:"zero","-1":"minus","01":"oh-one",3:"three","a b":"space"}');
+      expect(code).toContain('class K{4(){return"four"}static 5="five"}');
+      expect(code).toContain('[e.b!==void 0,e.b===void 0,local===void 0,typeof missingGlobal>"u"]');
+      // A property setter would notice a skipped write, so only the identifiers use `||=`.
+      // A non-literal key is converted with ToPropertyKey twice as written and once as `*=`.
+      expect(code).toContain('n.count+=1,n.s+="x",n[0]+=1,n[k]=n[k]*2,n.x=n.x||"or",n.y=n.y??"nullish",n.z=n.z&&"and"');
+      expect(code).toContain('a||="or",b??="nullish",c&&="and"');
+      // `fn ||= function() {}` would name the function "fn"
+      expect(code).toContain("fn=fn||function(){}");
+      expect(code).toContain("withSetter.x=withSetter.x||2");
+      expect(code).toContain('"abcdefghijklmnop".split("")');
+      expect(code).toContain('"aa.bb.cc.dd.ee.ff.gg.hh.ii.jj.kk.ll.mm.nn.oo.pp".split(".")');
+    },
+    run: {
+      stdout: JSON.stringify([
+        [
+          1e6,
+          0.5,
+          -0.25,
+          1000,
+          0.001,
+          1e21,
+          5e-324,
+          1e100,
+          1000000000001,
+          12345678901234567890,
+          0.000001234,
+          "0.5",
+          "1000000",
+          "0",
+        ],
+        { "0": "zero", "2": "two", "3": "three", "-1": "minus", "01": "oh-one", "a b": "space" },
+        "four",
+        "five",
+        [true, false, true, true],
+        { "0": 2, "3": 10, count: 2, s: "x", x: "or", y: "nullish", z: "and" },
+        2,
+        ["or", "nullish", "and"],
+        "",
+        [1],
+        ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p"],
+        ["aa", "bb", "cc", "dd", "ee", "ff", "gg", "hh", "ii", "jj", "kk", "ll", "mm", "nn", "oo", "pp"],
+      ]),
+    },
+  });
+
+  // 16 or more string literals join into one string plus a split call, with
+  // the first of `.`, `,`, `(`, `)`, ` ` that no element contains as the
+  // delimiter (an empty delimiter when every element is one character).
+  itBundled("minify/StringArrayToSplit", {
+    files: {
+      "/entry.js": /* js */ `
+        const words = ["aa", "bb", "cc", "dd", "ee", "ff", "gg", "hh", "ii", "jj", "kk", "ll", "mm", "nn", "oo", "pp"];
+        const chars = [".", ",", "(", ")", " ", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p"];
+        const dotted = ["a.b", "b,c", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p"];
+        const short = ["aa", "bb", "cc", "dd", "ee", "ff", "gg", "hh", "ii", "jj", "kk", "ll", "mm", "nn", "oo"];
+        const mixed = ["aa", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", 1];
+        let a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, p;
+        [a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, p] = words;
+        console.log(JSON.stringify([words, chars, dotted, short, mixed, a, p]));
+      `,
+    },
+    minifySyntax: true,
+    minifyWhitespace: true,
+    minifyIdentifiers: false,
+    target: "bun",
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      expect(code).toContain('words="aa.bb.cc.dd.ee.ff.gg.hh.ii.jj.kk.ll.mm.nn.oo.pp".split(".")');
+      expect(code).toContain('chars=".,() fghijklmnop".split("")');
+      expect(code).toContain('dotted="a.b(b,c(c(d(e(f(g(h(i(j(k(l(m(n(o(p".split("(")');
+      expect(code).toContain('short=["aa","bb","cc","dd","ee","ff","gg","hh","ii","jj","kk","ll","mm","nn","oo"]');
+      expect(code).toContain('mixed=["aa","b","c","d","e","f","g","h","i","j","k","l","m","n","o",1]');
+      expect(code).toContain("[a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p]=words");
+    },
+    run: {
+      stdout: JSON.stringify([
+        ["aa", "bb", "cc", "dd", "ee", "ff", "gg", "hh", "ii", "jj", "kk", "ll", "mm", "nn", "oo", "pp"],
+        [".", ",", "(", ")", " ", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p"],
+        ["a.b", "b,c", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p"],
+        ["aa", "bb", "cc", "dd", "ee", "ff", "gg", "hh", "ii", "jj", "kk", "ll", "mm", "nn", "oo"],
+        ["aa", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", 1],
+        "aa",
+        "pp",
+      ]),
     },
   });
 

@@ -508,6 +508,8 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) stmt_expr_value: js_ast::ExprData,
     pub(crate) call_target: js_ast::ExprData,
     pub(crate) delete_target: js_ast::ExprData,
+    /// The tag of the template literal being visited, like `call_target`.
+    pub(crate) template_tag: js_ast::ExprData,
     pub(crate) loop_body: js_ast::StmtData,
     pub(crate) module_scope: js_ast::StoreRef<js_ast::Scope>,
     pub(crate) module_scope_directive_loc: bun_ast::Loc,
@@ -598,6 +600,14 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     // Temporary variables used for lowering
     pub(crate) temp_refs_to_declare: List<'a, TempRef>,
     pub(crate) temp_ref_count: i32,
+
+    /// Rewrites that wait for the enclosing function body's use counts to be
+    /// final. Entries past the depth's saved length belong to the body being
+    /// visited; see `apply_fn_body_mangle_candidates`.
+    pub(crate) mangle_candidates: Vec<crate::visit::mangle::MangleCandidate>,
+    /// How many function bodies are being visited. Candidates are only
+    /// recorded inside one, since the module scope is visited part by part.
+    pub(crate) fn_body_depth: u32,
 
     // When bundling, hoisted top-level local variables declared with "var" in
     // nested scopes are moved up to be declared in the top-level scope instead.
@@ -3397,6 +3407,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             {
                                 // Silently merge this symbol into the existing symbol
                                 self.symbols[symbol_idx].link.set(member_in_scope.ref_);
+                                self.symbols[existing_idx].set_is_link_target(true);
                                 // `StringHashMap` get_or_put already stores the key on insert and
                                 // cannot hand out `&mut K` (see StringHashMapGetOrPut docs), so
                                 // no key write is needed here.
@@ -3457,6 +3468,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             // If this is a catch identifier, silently merge the existing symbol
                             // into this symbol but continue hoisting past this catch scope
                             self.symbols[existing_idx].link.set(value.ref_);
+                            self.symbols[symbol_idx].set_is_link_target(true);
                             *_scope
                                 .get_or_put_member_with_hash(name, hash.unwrap())
                                 .value_ptr = value;
@@ -4894,6 +4906,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 MR::ReplaceWithNew => {
                     self.symbols[symbol_idx].link.set(ref_);
+                    self.symbols[ref_.inner_index() as usize].set_is_link_target(true);
 
                     // If these are both functions, remove the overwritten declaration
                     if kind.is_function() && self.symbols[symbol_idx].kind.is_function() {
@@ -9173,6 +9186,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             allow_in: true,
 
             call_target: null_expr_data(),
+            template_tag: null_expr_data(),
             delete_target: null_expr_data(),
             stmt_expr_value: null_expr_data(),
             loop_body: null_stmt_data(),
@@ -9286,6 +9300,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             has_non_local_export_declare_inside_namespace: false,
             await_target: None,
             temp_refs_to_declare: BumpVec::new_in(arena),
+            mangle_candidates: Vec::new(),
+            fn_body_depth: 0,
             temp_ref_count: 0,
             relocated_top_level_vars: BumpVec::new_in(arena),
             after_arrow_body_loc: bun_ast::Loc::EMPTY,

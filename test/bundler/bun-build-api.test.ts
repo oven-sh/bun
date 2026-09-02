@@ -1154,7 +1154,7 @@ export function testMacro(val: any) {
   expect(build.outputs).toHaveLength(1);
   expect(build.outputs[0].kind).toBe("entry-point");
   expect(await build.outputs[0].text()).toEqualIgnoringWhitespace(
-    `var t={borderRadius:{"1":"4px","2":"8px"}};export{t as testConfig};\n`,
+    `var t={borderRadius:{1:"4px",2:"8px"}};export{t as testConfig};\n`,
   );
 });
 

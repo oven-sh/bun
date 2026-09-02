@@ -258,6 +258,21 @@ describe.concurrent("bun pm pkg", () => {
       expect((await readPkg(dir)).testFloat).toBe(3.14);
     });
 
+    it("should write numbers the way JSON.stringify does", async () => {
+      using dir = makeTestDir();
+      const { code } = await runPmPkg(
+        ["set", "port=3000", "timeout=1e4", "tiny=0.001", "big=1e21", "huge=123456789012345680000", "--json"],
+        dir,
+      );
+      expect(code).toBe(0);
+      const text = await Bun.file(join(String(dir), "package.json")).text();
+      expect(text).toContain('"port": 3000');
+      expect(text).toContain('"timeout": 10000');
+      expect(text).toContain('"tiny": 0.001');
+      expect(text).toContain('"big": 1e+21');
+      expect(text).toContain('"huge": 123456789012345680000');
+    });
+
     it("should handle JSON objects with --json flag", async () => {
       using dir = makeTestDir();
       const { code } = await runPmPkg(["set", 'newObject={"key":"value","number":123}', "--json"], dir);

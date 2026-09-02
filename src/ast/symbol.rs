@@ -122,6 +122,12 @@ bitflags::bitflags! {
         /// `arguments` object can). Set on the root of the symbol's link
         /// chain. Read by HMR live bindings and the printer's same-target fold.
         const HAS_BEEN_ASSIGNED_TO = 1 << 5;
+
+        /// Another symbol's `link` points at this one (a hoisted `var`
+        /// redeclaration, a catch binding, a replaced declaration), so uses
+        /// recorded on that symbol are uses of this one too and
+        /// `use_count_estimate` alone undercounts them.
+        const IS_LINK_TARGET = 1 << 6;
     }
 }
 
@@ -147,6 +153,7 @@ symbol_flag_accessors! {
     must_not_be_renamed, set_must_not_be_renamed => MUST_NOT_BE_RENAMED;
     remove_overwritten_function_declaration, set_remove_overwritten_function_declaration => REMOVE_OVERWRITTEN_FUNCTION_DECLARATION;
     has_been_assigned_to, set_has_been_assigned_to => HAS_BEEN_ASSIGNED_TO;
+    is_link_target, set_is_link_target => IS_LINK_TARGET;
 }
 
 const _: () = assert!(core::mem::size_of::<Option<bun_alloc::AstBox<G::NamespaceAlias>>>() == 8);

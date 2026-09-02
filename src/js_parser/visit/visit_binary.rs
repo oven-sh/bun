@@ -47,6 +47,16 @@ fn try_optimize_typeof_undefined<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bo
         return None;
     };
 
+    if let Some(optimized) = try_drop_typeof_guard(
+        p,
+        typeof_expr,
+        replacement_op == Op::Code::BinGt,
+        string_expr.loc,
+        e_.left.loc,
+    ) {
+        return Some(optimized);
+    }
+
     // Create new string with "u"
     let u_string = p.new_expr(E::EString::from_static(b"u"), string_expr.loc);
 
@@ -70,6 +80,70 @@ fn try_optimize_typeof_undefined<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bo
         },
         e_.left.loc,
     ))
+}
+
+/// "typeof x.y === 'undefined'" => "x.y === void 0"
+/// "typeof x === 'undefined'" => "x === void 0" when "x" is declared
+///
+/// Reading a property or a declared binding cannot throw a ReferenceError, so
+/// the `typeof` guard is not needed. An unbound identifier keeps it.
+fn try_drop_typeof_guard<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool>(
+    p: &mut P<'a, TYPESCRIPT, SCAN_ONLY>,
+    typeof_expr: Expr,
+    is_undefined_check: bool,
+    undefined_loc: bun_ast::Loc,
+    loc: bun_ast::Loc,
+) -> Option<Expr> {
+    let ExprData::EUnary(unary) = typeof_expr.data else {
+        return None;
+    };
+    let operand = unary.value;
+    if !(matches!(operand.data, ExprData::EDot(_) | ExprData::EIndex(_))
+        || p.is_bound_identifier(&operand))
+    {
+        return None;
+    }
+    let op = if is_undefined_check {
+        Op::Code::BinStrictEq
+    } else {
+        Op::Code::BinStrictNe
+    };
+    let undefined = p.new_expr(E::Undefined {}, undefined_loc);
+    Some(p.new_expr(
+        E::Binary {
+            left: operand,
+            right: undefined,
+            op,
+        },
+        loc,
+    ))
+}
+
+/// The already-minified forms `typeof x > "u"` (undefined) and
+/// `typeof x < "u"` (defined): every other `typeof` result sorts before "u".
+fn try_optimize_typeof_compared_to_u<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool>(
+    e_: &E::Binary,
+    p: &mut P<'a, TYPESCRIPT, SCAN_ONLY>,
+) -> Option<Expr> {
+    let is_u = |expr: &Expr| matches!(expr.data, ExprData::EString(s) if s.eql_comptime(b"u"));
+    // `typeof x > "u"` and `"u" < typeof x` both test for undefined.
+    let (typeof_expr, is_undefined_check, undefined_loc) = if is_u(&e_.right) {
+        (e_.left, e_.op == Op::Code::BinGt, e_.right.loc)
+    } else if is_u(&e_.left) {
+        (e_.right, e_.op == Op::Code::BinLt, e_.left.loc)
+    } else {
+        return None;
+    };
+    if !matches!(typeof_expr.data, ExprData::EUnary(unary) if unary.op == Op::Code::UnTypeof) {
+        return None;
+    }
+    try_drop_typeof_guard(
+        p,
+        typeof_expr,
+        is_undefined_check,
+        undefined_loc,
+        e_.left.loc,
+    )
 }
 
 // `Expr.Data.eql(left, right, p, .{loose,strict})` — thin adapter
@@ -394,6 +468,13 @@ impl BinaryExpressionVisitor {
                         return e_.right;
                     }
                 }
+
+                // "a === null || a === void 0" => "a == null"
+                if p.options.features.minify_syntax {
+                    if let Some(folded) = p.mangle_null_or_undefined_check(e_, v.loc) {
+                        return folded;
+                    }
+                }
             }
             Op::Code::BinLogicalAnd => {
                 if let Some(side_effects) = SideEffects::to_boolean(p, &e_.left.data) {
@@ -414,6 +495,13 @@ impl BinaryExpressionVisitor {
                         }
 
                         return e_.right;
+                    }
+                }
+
+                // "a !== null && a !== void 0" => "a != null"
+                if p.options.features.minify_syntax {
+                    if let Some(folded) = p.mangle_null_or_undefined_check(e_, v.loc) {
+                        return folded;
                     }
                 }
             }
@@ -601,6 +689,13 @@ impl BinaryExpressionVisitor {
                         );
                     }
                 }
+
+                // "typeof x.y < 'u'" => "x.y !== void 0"
+                if p.options.features.minify_syntax {
+                    if let Some(optimized) = try_optimize_typeof_compared_to_u(e_, p) {
+                        return optimized;
+                    }
+                }
             }
             Op::Code::BinGt => {
                 if p.should_fold_typescript_constant_expressions {
@@ -624,6 +719,13 @@ impl BinaryExpressionVisitor {
                             },
                             v.loc,
                         );
+                    }
+                }
+
+                // "typeof x.y > 'u'" => "x.y === void 0"
+                if p.options.features.minify_syntax {
+                    if let Some(optimized) = try_optimize_typeof_compared_to_u(e_, p) {
+                        return optimized;
                     }
                 }
             }
@@ -690,6 +792,11 @@ impl BinaryExpressionVisitor {
                         name.slice(),
                         was_anonymous_named_expr,
                     );
+                }
+
+                // "x = x + y" => "x += y"
+                if p.options.features.minify_syntax {
+                    p.mangle_assignment_to_compound(e_);
                 }
             }
             Op::Code::BinNullishCoalescingAssign | Op::Code::BinLogicalOrAssign => {

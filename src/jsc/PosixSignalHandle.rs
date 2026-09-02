@@ -9,9 +9,8 @@ use bun_threading::SignalRing;
 
 const BUFFER_SIZE: usize = 8192;
 
-/// Signal numbers queued by signal handlers for the main thread's event
-/// loop. The ring is multi-producer: the kernel runs the handler of a
-/// process-directed signal on any thread that does not block it.
+/// Signal numbers queued by signal handlers (on any thread) for the main
+/// thread's event loop.
 #[derive(Default)]
 pub struct PosixSignalHandle {
     #[allow(dead_code)]
@@ -25,9 +24,7 @@ impl PosixSignalHandle {
         Box::new(init)
     }
 
-    /// Called by a signal handler (any thread, possibly several at once).
-    /// Returns `true` if enqueued successfully, or `false` if the ring is full.
-    /// The caller wakes the event loop after a successful enqueue.
+    /// Returns `false` if the ring is full. The caller wakes the loop on `true`.
     #[allow(dead_code)]
     pub(crate) fn enqueue(&self, signal: u8) -> bool {
         self.ring.enqueue(signal)
@@ -78,7 +75,7 @@ extern "C" fn Bun__onPosixSignal(number: i32) {
             // async-signal context is sound.
             if handler.enqueue(u8::try_from(number).expect("int cast")) {
                 // SAFETY: same process-lifetime event loop as above; `wakeup`
-                // only writes the loop's wakeup fd, which is async-signal-safe.
+                // is one async-signal-safe write to the loop's wakeup fd.
                 unsafe { (*(*vm).event_loop()).wakeup() };
             }
         }

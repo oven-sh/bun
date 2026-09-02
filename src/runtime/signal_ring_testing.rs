@@ -1,28 +1,18 @@
-//! Test-only bridge exposing `bun_threading::SignalRing` to
-//! `bun:internal-for-testing` (see `src/js/internal-for-testing.ts`).
-//!
-//! The ring's producers are POSIX signal handlers, and the thread that runs
-//! one is the kernel's choice, so a JS test cannot make two of them run at
-//! once on purpose. This probe runs the ring's contract with plain threads
-//! instead: `producers` threads each enqueue their own number `perProducer`
-//! times while the calling thread dequeues. The result says what came out,
-//! so a JS test can assert that every accepted signal came out exactly once
-//! and that the 0 sentinel never did.
-//!
-//! Registered via `$newRustFunction("signal_ring_testing.rs", "probe", 2)`.
+//! `bun:internal-for-testing` bridge for `bun_threading::SignalRing`. The
+//! ring's real producers are signal handlers on threads the kernel picks, so
+//! a JS test cannot line two up; this drives the ring from plain threads.
 
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_threading::SignalRing;
 
-/// Same capacity as the runtime's `PosixSignalHandle`.
+/// Same capacity as `PosixSignalHandle`.
 const CAPACITY: usize = 8192;
 
-/// `probe(producers, perProducer)` returns
-/// `{ accepted: number[], dequeued: number[], zeros, unknown }`: per producer,
-/// how many enqueues the ring accepted and how many of its number came out,
-/// plus how many 0 sentinels and unknown numbers came out.
+/// `probe(producers, perProducer)`: each producer thread enqueues its own
+/// number `perProducer` times while this thread dequeues. Returns
+/// `{ accepted: number[], dequeued: number[], zeros, unknown }`.
 pub(crate) fn probe(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let producers = frame.argument(0).to_int32().clamp(1, 64) as u8;
     let per_producer = frame.argument(1).to_int32().clamp(1, 1_000_000) as usize;
@@ -43,7 +33,6 @@ pub(crate) fn probe(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
                         if ring.enqueue(signal) {
                             accepted += 1;
                         } else {
-                            // Full: give the consumer a turn.
                             std::thread::yield_now();
                         }
                     }
@@ -61,9 +50,7 @@ pub(crate) fn probe(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
                 Some(_) => unknown += 1,
                 None if producers_done => break,
                 None => {
-                    // This `None` may predate the last producer's final
-                    // stores. Only a `None` read after `done` says every
-                    // producer returned means the ring is empty.
+                    // Only a `None` read after `done` reached `producers` means empty.
                     producers_done = done.load(Ordering::Acquire) == usize::from(producers);
                     std::hint::spin_loop();
                 }

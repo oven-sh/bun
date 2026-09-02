@@ -596,12 +596,9 @@ pub fn enqueue_dependency_to_root(
                 // raw `*mut` — `sleep_until`
                 // also receives this pointer, so `&mut` here would alias.
                 manager: *mut PackageManager,
-                // `sleep_until` ticks the JS event loop between polls; code
-                // run there (module transpile / nested resolve / AsyncModule)
-                // swaps `manager.log` and may restore it from a different
-                // source than the caller did, leaving it pointing at a dead
-                // stack `Log`. Snapshot the caller's log and re-assert it
-                // before every `run_tasks` so `log_mut()` never dangles.
+                // `sleep_until` ticks the JS event loop, and JS run there can
+                // swap `manager.log` and leave it pointing at a dead stack
+                // `Log`. `is_done` re-asserts this snapshot before each poll.
                 log: *mut bun_ast::Log,
             }
             impl Closure {

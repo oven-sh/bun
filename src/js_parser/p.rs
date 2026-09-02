@@ -5363,23 +5363,33 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     /// Destructuring runs code on the value: an object pattern invokes getters
-    /// and an array pattern invokes the value's iterator. Like esbuild, the only
-    /// pattern treated as side-effect free is an array pattern of identifiers
-    /// and holes over an array literal, which uses the built-in array iterator.
+    /// and an array pattern invokes the value's iterator. So a pattern is only
+    /// side-effect free over a literal, where every read is known to be a data
+    /// property read or the built-in array iterator.
     fn decl_binding_can_be_removed_if_unused_without_dce_check(
         &mut self,
         decl: &js_ast::g::Decl,
     ) -> bool {
-        match decl.binding.data {
-            js_ast::b::B::BIdentifier(_) => true,
+        match &decl.value {
+            Some(value) => {
+                self.pattern_can_be_removed_if_unused_without_dce_check(decl.binding, value)
+            }
+            None => matches!(decl.binding.data, js_ast::b::B::BIdentifier(_)),
+        }
+    }
+
+    fn pattern_can_be_removed_if_unused_without_dce_check(
+        &mut self,
+        binding: Binding,
+        value: &Expr,
+    ) -> bool {
+        match binding.data {
+            js_ast::b::B::BIdentifier(_) | js_ast::b::B::BMissing(_) => true,
+
+            // Like esbuild, only identifiers and holes over an array literal are
+            // handled. A nested pattern over an element is left alone.
             js_ast::b::B::BArray(bi) => {
-                if !matches!(
-                    decl.value,
-                    Some(Expr {
-                        data: js_ast::ExprData::EArray(_),
-                        ..
-                    })
-                ) {
+                if !matches!(value.data, js_ast::ExprData::EArray(_)) {
                     return false;
                 }
                 for item in bi.items.slice() {
@@ -5397,8 +5407,90 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 true
             }
-            js_ast::b::B::BObject(_) | js_ast::b::B::BMissing(_) => false,
+
+            // Every key of the pattern must name a data property of the literal.
+            // A key that is missing from the literal reads the prototype, a rest
+            // element copies every property, and a computed key is not known.
+            js_ast::b::B::BObject(bo) => {
+                let js_ast::ExprData::EObject(literal) = &value.data else {
+                    return false;
+                };
+                if !Self::object_literal_has_only_plain_keys(literal) {
+                    return false;
+                }
+                for property in bo.properties.slice() {
+                    if property.flags.contains(Flags::Property::IsSpread)
+                        || property.flags.contains(Flags::Property::IsComputed)
+                    {
+                        return false;
+                    }
+                    if let Some(default) = &property.default_value {
+                        if !self.expr_can_be_removed_if_unused_without_dce_check(default) {
+                            return false;
+                        }
+                    }
+                    let js_ast::ExprData::EString(key) = &property.key.data else {
+                        return false;
+                    };
+                    let Some(matched) = Self::object_literal_data_property(literal, key) else {
+                        return false;
+                    };
+                    if !self.pattern_can_be_removed_if_unused_without_dce_check(
+                        property.value,
+                        &matched,
+                    ) {
+                        return false;
+                    }
+                }
+                true
+            }
         }
+    }
+
+    /// True when every key of the literal is a literal key that defines an own
+    /// property: no spread, no computed key, and no `__proto__`, which sets
+    /// the prototype instead.
+    fn object_literal_has_only_plain_keys(literal: &E::Object) -> bool {
+        literal.properties.slice().iter().all(|property| {
+            property.kind != js_ast::g::PropertyKind::Spread
+                && !property.flags.contains(Flags::Property::IsComputed)
+                && property.initializer.is_none()
+                && match &property.key {
+                    Some(Expr {
+                        data: js_ast::ExprData::EString(key),
+                        ..
+                    }) => !key.eql_comptime(b"__proto__"),
+                    Some(_) => true,
+                    None => false,
+                }
+        })
+    }
+
+    /// The value of the own data property `key` of the literal. A later
+    /// property with the same key replaces an earlier one, so the last match
+    /// decides. `None` when there is no such key or it is an accessor.
+    fn object_literal_data_property(literal: &E::Object, key: &E::EString) -> Option<Expr> {
+        literal
+            .properties
+            .slice()
+            .iter()
+            .rev()
+            .find(|property| {
+                matches!(
+                    &property.key,
+                    Some(Expr {
+                        data: js_ast::ExprData::EString(literal_key),
+                        ..
+                    }) if literal_key.eql_string(key)
+                )
+            })
+            .and_then(|property| {
+                if property.kind == js_ast::g::PropertyKind::Normal {
+                    property.value
+                } else {
+                    None
+                }
+            })
     }
 
     fn stmts_can_be_removed_if_unused(&mut self, stmts: &[Stmt]) -> bool {

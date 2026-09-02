@@ -2150,13 +2150,33 @@ describe("bundler", () => {
         var [KEEP3 = x] = [null]
         var [[KEEP4]] = [[]]
         var [{ KEEP5 }] = [{}]
+        var [KEEP6] = {}
 
-        // Object patterns invoke getters, so they always stay
-        var { KEEP6 } = {}
-        var { KEEP7 = 0 } = {}
-        var { KEEP8 } = x
-        var { KEEP9: { KEEP10 } } = {}
-        var { ...KEEP11 } = {}
+        // Object patterns over an object literal are side-effect free when
+        // every key names a data property of the literal
+        var { remove8 } = { remove8: 1 }
+        var { remove9 = 0 } = { remove9: 1 }
+        var { remove10: remove11 } = { remove10: 1 }
+        var { remove12 } = { remove12() {} }
+        var { remove13, remove14 } = { remove13: 1, remove14: 2, other: 3 }
+        var { remove15 } = { get remove15() { return 1 }, remove15: 1 }
+        var { remove16: { remove17 } } = { remove16: { remove17: 1 } }
+        var { remove18: [remove19] } = { remove18: [1] }
+
+        // Anything else in an object pattern can invoke a getter
+        var { KEEP7 } = {}
+        var { KEEP8 = 0 } = {}
+        var { KEEP9 } = x
+        var { KEEP10: { KEEP11 } } = {}
+        var { ...KEEP12 } = {}
+        var { KEEP13 } = { get KEEP13() { return 1 } }
+        var { KEEP14 } = { KEEP14: 1, get KEEP14() { return 1 } }
+        var { KEEP15 } = { __proto__: null }
+        var { KEEP16 } = { other: 1 }
+        var { ["KEEP17"]: KEEP18 } = { KEEP17: 1 }
+        var { ...KEEP19 } = { KEEP20: 1 }
+        var { KEEP21: { KEEP22 } } = { KEEP21: undefined }
+        var { KEEP23: [KEEP24] } = { KEEP23: null }
       `,
     },
     dce: true,

@@ -236,15 +236,30 @@ pub fn install_with_manager(
 
                 had_any_diffs = manager.summary.has_diffs();
                 // Which workspaces asked for a self-contained node_modules is a property
-                // of their manifests, not of the dependency graph: mirror the freshly
-                // parsed manifests whether or not anything else changed, so the copy
-                // loaded from bun.lock never goes stale.
-                manager
-                    .lockfile
-                    .self_contained_workspaces
-                    .clear_retaining_capacity();
-                for key in lockfile.self_contained_workspaces.keys() {
-                    manager.lockfile.self_contained_workspaces.put(*key, ())?;
+                // of their manifests, not of the dependency graph, and the lockfile
+                // records it. A frozen install keeps the recorded set, so it installs
+                // the layout the lockfile describes: a lockfile written by 1.4.0 records
+                // none, because 1.4.0 ignored `installConfig.hoistingLimits`. Every
+                // other install records the manifests' set. A changed set is a change
+                // to the lockfile even when the hoisted tree stays the same.
+                if !manager.options.enable.frozen_lockfile() {
+                    let recorded = &manager.lockfile.self_contained_workspaces;
+                    let declared = &lockfile.self_contained_workspaces;
+                    let changed = recorded.count() != declared.count()
+                        || declared.keys().iter().any(|key| !recorded.contains(key));
+                    if changed {
+                        manager
+                            .lockfile
+                            .self_contained_workspaces
+                            .clear_retaining_capacity();
+                        for key in lockfile.self_contained_workspaces.keys() {
+                            manager.lockfile.self_contained_workspaces.put(*key, ())?;
+                        }
+                        manager
+                            .options
+                            .enable
+                            .set(Enable::FORCE_SAVE_LOCKFILE, true);
+                    }
                 }
                 if manager.subcommand == Subcommand::Dedupe {
                     crate::dedupe::dedupe_after_differ(manager);

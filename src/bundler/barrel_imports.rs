@@ -343,6 +343,7 @@ fn resolve_barrel_records(this: &mut BundleV2, barrel_idx: u32, un_deferred: &[u
     );
     let source = core::mem::take(&mut this.graph.input_files.items_source_mut()[idx]);
     let source_path: &'static [u8] = source.path.text;
+    let source_namespace: &'static [u8] = source.path.namespace;
 
     let resolve_result = this.resolve_import_records(&mut ResolveImportRecordCtx {
         import_records: &mut barrel_ir,
@@ -361,6 +362,7 @@ fn resolve_barrel_records(this: &mut BundleV2, barrel_idx: u32, un_deferred: &[u
         PatchImportRecordsCtx {
             source_index: Index::init(barrel_idx),
             source_path,
+            source_namespace,
             loader,
             target,
             only_records: Some(un_deferred),
@@ -447,9 +449,10 @@ pub(crate) fn schedule_barrel_deferred_imports(
     // surviving record's path.text becomes the resolved absolute path.
     // named_imports entries created for the dedup'd record still point at
     // its index, so the direct path lookup below fails for those entries.
-    // Build a fallback: raw specifier → surviving record's resolved path
-    // text, using non-unused records in this file. See #28886.
-    let mut dedup_fallback: StringArrayHashMap<&'static [u8]> = StringArrayHashMap::default();
+    // Build a fallback: raw specifier → surviving record's resolved path,
+    // using non-unused records in this file. See #28886.
+    let mut dedup_fallback: StringArrayHashMap<bun_paths::fs::Path<'static>> =
+        StringArrayHashMap::default();
     if dev_handle.is_some() {
         for ir_probe in file_import_records.as_slice() {
             if ir_probe.flags.contains(import_record::Flags::IS_UNUSED)
@@ -463,7 +466,7 @@ pub(crate) fn schedule_barrel_deferred_imports(
             if ir_probe.original_path == ir_probe.path.text {
                 continue;
             }
-            dedup_fallback.put(ir_probe.original_path, ir_probe.path.text)?;
+            dedup_fallback.put(ir_probe.original_path, ir_probe.path)?;
         }
     }
 
@@ -481,18 +484,15 @@ pub(crate) fn schedule_barrel_deferred_imports(
         // For dedup'd HMR records (is_unused), fall back to a sibling's
         // resolved path text since the record itself still has the raw
         // specifier in path.text.
-        let resolved_path_text = if ir.flags.contains(import_record::Flags::IS_UNUSED) {
-            dedup_fallback
-                .get(ir.path.text)
-                .copied()
-                .unwrap_or(ir.path.text)
+        let resolved_path = if ir.flags.contains(import_record::Flags::IS_UNUSED) {
+            dedup_fallback.get(ir.path.text).copied().unwrap_or(ir.path)
         } else {
-            ir.path.text
+            ir.path
         };
         let target = if ir.source_index.is_valid() {
             ir.source_index.get()
         } else if let Some(map) = path_to_source_index_map {
-            match map.get().get(resolved_path_text) {
+            match map.get().get_path(&resolved_path) {
                 Some(t) => t,
                 None => continue,
             }
@@ -514,7 +514,7 @@ pub(crate) fn schedule_barrel_deferred_imports(
             }
             // Persist the export request on DevServer so it survives across builds.
             if let Some(dev) = dev_handle {
-                persist_barrel_export(&dev, resolved_path_text, alias);
+                persist_barrel_export(&dev, resolved_path.text, alias);
             }
         }
     }
@@ -561,18 +561,15 @@ pub(crate) fn schedule_barrel_deferred_imports(
             continue;
         }
         let ir = &file_import_records.as_slice()[ni.import_record_index as usize];
-        let resolved_path_text = if ir.flags.contains(import_record::Flags::IS_UNUSED) {
-            dedup_fallback
-                .get(ir.path.text)
-                .copied()
-                .unwrap_or(ir.path.text)
+        let resolved_path = if ir.flags.contains(import_record::Flags::IS_UNUSED) {
+            dedup_fallback.get(ir.path.text).copied().unwrap_or(ir.path)
         } else {
-            ir.path.text
+            ir.path
         };
         let ir_target = if ir.source_index.is_valid() {
             ir.source_index.get()
         } else if let Some(map) = path_to_source_index_map {
-            match map.get().get(resolved_path_text) {
+            match map.get().get_path(&resolved_path) {
                 Some(t) => t,
                 None => continue,
             }

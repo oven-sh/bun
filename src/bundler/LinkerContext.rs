@@ -702,16 +702,13 @@ impl<'a> LinkerContext<'a> {
                 let html_import: u32 =
                     unsafe { (*parse_graph).html_imports.server_source_indices.slice()[i] };
                 // SAFETY: `input_files` SoA is append-only; read-only here.
-                let path_text = unsafe {
-                    &(*parse_graph).input_files.items_source()[html_import as usize]
-                        .path
-                        .text
-                };
+                let path =
+                    unsafe { (*parse_graph).input_files.items_source()[html_import as usize].path };
                 // SAFETY: sole `&mut` into the per-target map for this lookup.
                 let source_index: u32 = unsafe {
                     (*parse_graph).path_to_source_index_map(Target::Browser)
                 }
-                .get(path_text)
+                .get_path(&path)
                 .unwrap_or_else(|| {
                     panic!("Assertion failed: HTML import file not found in pathToSourceIndexMap");
                 });

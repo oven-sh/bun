@@ -212,9 +212,9 @@ async function doBuildkiteAgent(action, cliOptions = {}) {
 `;
       writeFile(plistPath, plist, { mode: 0o644 });
 
-      // Nightly wipe of builds/, cache/ and tmp, then a reboot. The script
-      // stops the agent and waits for its job first (see agent-cleanup.sh). It
-      // is embedded so that it stays root-owned, like the plist.
+      // Nightly wipe of builds/ and tmp, then a reboot. The script stops the
+      // agent and waits for its job first (see agent-cleanup.sh). It is
+      // embedded so that it stays root-owned, like the plist.
       const cleanupPlistPath = "/Library/LaunchDaemons/com.buildkite.cleanup.plist";
       const cleanupScript = readFileSync(join(srcDir, "agent-cleanup.sh"), "utf8");
       const cleanupLogPath = join(logsPath, "cleanup.log");
@@ -225,9 +225,8 @@ async function doBuildkiteAgent(action, cliOptions = {}) {
   <key>Label</key><string>com.buildkite.cleanup</string>
   <key>EnvironmentVariables</key>
   <dict>
-    <key>PATH</key><string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>PATH</key><string>/usr/bin:/bin:/usr/sbin:/sbin</string>
     <key>AGENT_HOME</key><string>${homePath}</string>
-    <key>AGENT_USER</key><string>${runAsUser}</string>
   </dict>
   <key>ProgramArguments</key>
   <array>

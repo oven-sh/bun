@@ -2273,9 +2273,11 @@ describe("bundler", () => {
     globalThis.links = [];
     globalThis.document = {
       createElement: tag => ({ tag }),
+      querySelector: () => null,
       head: {
         appendChild: link => {
           if (link.crossOrigin !== "") throw new Error("crossOrigin " + link.crossOrigin);
+          if (link.nonce !== undefined) throw new Error("nonce " + link.nonce);
           links.push(link.rel + " " + String(link.href).split("/").pop());
         },
       },
@@ -2676,6 +2678,32 @@ describe("bundler", () => {
       expect(jsFilesIn(api)).toHaveLength(4);
     },
     run: { file: "/out/static-page.js", stdout: "a2" },
+  });
+  // vite importAnalysisBuild: links carry the page's <meta property="csp-nonce"> nonce.
+  itBundled("splitting/ModulePreloadCspNonce", {
+    files: {
+      "/entry.js": `export const nav = () => import("./r0.js")`,
+      "/other.js": `export const nav = () => import("./r2.js")`,
+      ...preloadChainFiles(2),
+    },
+    entryPoints: ["/entry.js", "/other.js"],
+    splitting: true,
+    outdir: "/out",
+    target: "browser",
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        const links = [];
+        globalThis.document = {
+          createElement: tag => ({ tag }),
+          querySelector: sel => (sel === "meta[property=csp-nonce]" ? { nonce: "abc123" } : null),
+          head: { appendChild: link => links.push(link.nonce) },
+        };
+        const { nav } = await import("./out/entry.js");
+        await nav();
+        console.log(JSON.stringify(links));
+      `,
+    },
+    run: { file: "/test.js", stdout: `["abc123"]` },
   });
   for (const target of ["bun", "node"] as const) {
     itBundled(`splitting/ModulePreloadIsBrowserOnly_${target}`, {

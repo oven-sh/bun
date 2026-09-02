@@ -623,7 +623,7 @@ A chunk that absorbs other chunks exports the symbols those chunks' importers ne
 
 ### modulePreload
 
-With `splitting` and `target: "browser"`, the browser would otherwise discover a chunk's own imports only after downloading and parsing it, one level per round trip. Bun writes a `<link rel="modulepreload">` into HTML entrypoints for every chunk the page's script statically imports, and every `import()` first inserts one for each chunk its target statically imports (transitively), so the whole dependency chain downloads in parallel. Outside a document (workers, server-side) the `import()` helper does nothing. Enabled by default; set `modulePreload: false` (`--no-module-preload`) to emit plain `import()` calls and no links.
+With `splitting` and `target: "browser"`, the browser would otherwise discover a chunk's own imports only after downloading and parsing it, one level per round trip. Bun writes a `<link rel="modulepreload">` into HTML entrypoints for every chunk the page's script statically imports, and every `import()` first inserts one for each chunk its target statically imports (transitively), so the whole dependency chain downloads in parallel. Outside a document (workers, server-side) the `import()` helper does nothing. Inserted links copy the nonce from a `<meta property="csp-nonce" nonce="...">` tag if the page has one. Enabled by default; set `modulePreload: false` (`--no-module-preload`) to emit plain `import()` calls and no links.
 
 ### plugins
 

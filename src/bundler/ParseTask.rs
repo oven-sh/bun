@@ -426,17 +426,20 @@ export var __require = /* @__PURE__ */ (x =>
 // whole graph downloads in parallel instead of one module depth per round trip.
 // Globals go through `globalThis` so bundling does not reserve their names.
 const RUNTIME_PRELOAD_BROWSER: &str = "
-var __chunkGraphs, __chunkSeen;
+var __chunkGraphs, __chunkSeen, __chunkNonce;
 export var __preload = (id, seenOnly) => {
   for (var [base, graph, ids] of __chunkGraphs || [])
-    for (var stack = [id], g = globalThis, head, j, node, k, link; (j = stack.pop()); )
+    for (var stack = [id], g = globalThis, d = g.document, head, j, node, k, link; (j = stack.pop()); )
       if (!__chunkSeen[j] && (node = graph[j])) {
         __chunkSeen[j] = 1;
         for (k = 1; k < node.length; k++) stack.push(ids[node[k]]);
-        if (!seenOnly && j !== id && (head = g.document && g.document.head)) {
-          link = g.document.createElement('link');
+        if (!seenOnly && j !== id && (head = d && d.head)) {
+          if (__chunkNonce === void 0)
+            __chunkNonce = ((k = d.querySelector('meta[property=csp-nonce]')) && (k.nonce || k.getAttribute('nonce'))) || '';
+          link = d.createElement('link');
           link.rel = 'modulepreload';
           link.crossOrigin = '';
+          if (__chunkNonce) link.nonce = __chunkNonce;
           link.href = new g.URL(node[0], base);
           head.appendChild(link);
         }

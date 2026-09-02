@@ -4890,7 +4890,6 @@ pub fn js_upgrade_duplex_to_tls(
     // A handle-backed transport hands its bytes to the engine below JS.
     let transport_tcp = transport.as_class_ref::<TCPSocket>();
     let transport_tls = transport.as_class_ref::<TLSSocket>();
-    let native_transport = transport_tcp.is_some() || transport_tls.is_some();
     let transport_taken = transport_tcp.is_some_and(|t| t.has_native_callback())
         || transport_tls.is_some_and(|t| t.has_native_callback());
     if transport_taken {
@@ -5024,17 +5023,17 @@ pub fn js_upgrade_duplex_to_tls(
     DuplexUpgradeContext::start_tls(duplex_context_ref);
 
     let engine = bun_ptr::BackRef::new(&duplex_context_ref.upgrade);
-    let linked = if let Some(t) = transport_tcp {
-        let attached = t.attach_native_callback(NativeCallbacks::TlsTransport(engine));
-        debug_assert!(attached, "checked free above; nothing since ran JS");
-        Transport::Tcp(t.ref_guard())
-    } else if let Some(t) = transport_tls {
-        let attached = t.attach_native_callback(NativeCallbacks::TlsTransport(engine));
-        debug_assert!(attached, "checked free above; nothing since ran JS");
-        Transport::Tls(t.ref_guard())
-    } else {
-        Transport::None
+    let linked = match (transport_tcp, transport_tls) {
+        (Some(t), _) if t.attach_native_callback(NativeCallbacks::TlsTransport(engine)) => {
+            Transport::Tcp(t.ref_guard())
+        }
+        (_, Some(t)) if t.attach_native_callback(NativeCallbacks::TlsTransport(engine)) => {
+            Transport::Tls(t.ref_guard())
+        }
+        // Checked free above and nothing since ran JS; a Duplex otherwise.
+        _ => Transport::None,
     };
+    let native_transport = !matches!(linked, Transport::None);
     duplex_context_ref.upgrade.transport.set(linked);
     if defer_handshake && native_transport {
         duplex_context_ref.upgrade.held_output.set(Some(Vec::new()));

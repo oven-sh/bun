@@ -2,7 +2,7 @@ import { spawnSync, which } from "bun";
 import { CString, dlopen, ptr } from "bun:ffi";
 import { describe, expect, it } from "bun:test";
 import { familySync } from "detect-libc";
-import { bunEnv, bunExe, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isMacOS, isWindows, nodeExe, tempDir, tmpdirSync } from "harness";
 import { basename, join, resolve } from "path";
 
 const process_sleep = resolve(import.meta.dir, "process-sleep.js");
@@ -1406,6 +1406,32 @@ describe.concurrent(() => {
     );
   });
 
+  it("process._fatalException in a Worker logs a throwing capture callback instead of dropping it", async () => {
+    using dir = tempDir("process-test", {
+      "index.js": `
+        const { Worker } = require("node:worker_threads");
+        const w = new Worker(
+          \`process.setUncaughtExceptionCaptureCallback(() => { throw new Error("from capture"); });
+           console.log("handled:", process._fatalException(new Error("original")));
+           process.setUncaughtExceptionCaptureCallback(null);\`,
+          { eval: true },
+        );
+        w.on("exit", code => console.log("exit", code));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(String(dir), "index.js")],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toContain("handled: false");
+    expect(stderr).toContain("from capture");
+    expect(stdout).toContain("exit 0");
+    expect(exitCode).toBe(0);
+  });
+
   for (const stub of undefinedStubs) {
     it(`process.${stub}`, () => {
       expect(process[stub]()).toBeUndefined();
@@ -1439,6 +1465,8 @@ describe.concurrent(() => {
     expect(flags.has("require")).toBe(true);
     expect(flags.has("--no_warnings")).toBe(true);
     expect(flags.has("--require=./foo.js")).toBe(true);
+    expect(flags.has("--abort-on-uncaught-exception")).toBe(true);
+    expect(flags.has("--abort_on_uncaught_exception")).toBe(true);
     expect(flags.has("--not-a-real-flag")).toBe(false);
     flags.add("--not-a-real-flag");
     expect(flags.has("--not-a-real-flag")).toBe(false);
@@ -1629,6 +1657,222 @@ describe.concurrent(() => {
     expect(await proc.exited).toBe(42);
   });
 
+  const spawnAbort = async (src, extraFlags = [], exe = bunExe()) => {
+    const cmd = [exe, "--abort-on-uncaught-exception", ...extraFlags, "-e", src];
+    const proc = Bun.spawn(isWindows ? cmd : ["sh", "-c", 'ulimit -c 0 && exec "$@"', "sh", ...cmd], {
+      env: { ...bunEnv, BUN_CRASH_REPORT_URL: "", BUN_ENABLE_CRASH_REPORTING: "0" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode, signalCode: proc.signalCode };
+  };
+  // The set of terminations node's own common.nodeProcessAborted accepts:
+  const aborted = r =>
+    ["SIGABRT", "SIGILL", "SIGTRAP"].includes(r.signalCode) || r.exitCode === 134 || r.exitCode >>> 0 === 0x80000003;
+
+  const rejectionAbortFixture = `process.on("uncaughtExceptionMonitor", () => console.log("mon")); process.on("uncaughtException", () => console.log("listener")); Promise.reject(new Error("x"));`;
+
+  it("--abort-on-uncaught-exception aborts an unhandled rejection even with an uncaughtException listener", async () => {
+    const r = await spawnAbort(rejectionAbortFixture, ["--unhandled-rejections=strict"]);
+    expect(r.stdout).toBe("");
+    expect(aborted(r)).toBe(true);
+  });
+
+  it.skipIf(!nodeExe())("--abort-on-uncaught-exception rejection ordering matches node (differential)", async () => {
+    const r = await spawnAbort(rejectionAbortFixture, ["--unhandled-rejections=strict"], nodeExe());
+    expect(r.stdout).toBe("");
+    expect(aborted(r)).toBe(true);
+  });
+
+  it("--abort-on-uncaught-exception aborts an unhandled rejection with no listeners", async () => {
+    const r = await spawnAbort(`Promise.reject(new Error("x"));`, ["--unhandled-rejections=strict"]);
+    expect(r.stderr).toContain("x");
+    expect(aborted(r)).toBe(true);
+  });
+
+  it("--abort-on-uncaught-exception aborts a synchronous throw with no listeners", async () => {
+    const r = await spawnAbort(`throw new Error("x")`);
+    expect(r.stderr).toContain("x");
+    expect(aborted(r)).toBe(true);
+  });
+
+  it("--abort-on-uncaught-exception aborts a synchronous throw even with an uncaughtException listener", async () => {
+    const r = await spawnAbort(
+      `process.on("uncaughtException", () => process.exit(0)); setTimeout(() => { throw new Error("x") }, 0)`,
+    );
+    expect(aborted(r)).toBe(true);
+  });
+
+  it("--abort-on-uncaught-exception does not fire uncaughtExceptionMonitor before aborting", async () => {
+    const r = await spawnAbort(
+      `process.on("uncaughtExceptionMonitor", () => console.log("monitor ran")); setTimeout(() => { throw new Error("x") }, 0)`,
+    );
+    expect(r.stdout).toBe("");
+    expect(aborted(r)).toBe(true);
+  });
+
+  it("--abort-on-uncaught-exception aborts before monitor when node:domain is loaded but no domain would handle", async () => {
+    const r = await spawnAbort(
+      `require("domain"); process.on("uncaughtExceptionMonitor", () => console.log("monitor ran")); setTimeout(() => { throw new Error("x") }, 0)`,
+    );
+    expect(r.stdout).toBe("");
+    expect(aborted(r)).toBe(true);
+  });
+
+  it("--abort-on-uncaught-exception aborts before monitor when d.run() has no error listener", async () => {
+    const r = await spawnAbort(
+      `const d = require("domain").create(); process.on("uncaughtExceptionMonitor", () => console.log("monitor ran")); d.run(() => setTimeout(() => { throw new Error("x") }, 0))`,
+    );
+    expect(r.stdout).toBe("");
+    expect(aborted(r)).toBe(true);
+  });
+
+  it("--abort-on-uncaught-exception is suppressed by a capture callback (top-level throw)", async () => {
+    const r = await spawnAbort(
+      `process.setUncaughtExceptionCaptureCallback(e => console.log("capture", e.message)); throw new Error("foo")`,
+    );
+    expect(r.stdout.trim()).toBe("capture foo");
+    expect(aborted(r)).toBe(false);
+    expect(r.exitCode).toBe(0);
+  });
+
+  it("--abort-on-uncaught-exception is suppressed by a capture callback (setTimeout throw)", async () => {
+    const r = await spawnAbort(
+      `process.setUncaughtExceptionCaptureCallback(e => console.log("capture", e.message)); setTimeout(() => { throw new Error("foo") }, 0)`,
+    );
+    expect(r.stdout.trim()).toBe("capture foo");
+    expect(aborted(r)).toBe(false);
+    expect(r.exitCode).toBe(0);
+  });
+
+  it("--abort-on-uncaught-exception uses the throw-time capture snapshot even if the monitor clears it", async () => {
+    const r = await spawnAbort(
+      `process.setUncaughtExceptionCaptureCallback(() => {});
+       process.on("uncaughtExceptionMonitor", () => process.setUncaughtExceptionCaptureCallback(null));
+       process.on("uncaughtException", () => console.log("listener"));
+       setTimeout(() => { throw new Error("x") }, 0)`,
+    );
+    expect(r.stdout.trim()).toBe("listener");
+    expect(aborted(r)).toBe(false);
+  });
+
+  const setterCases = [
+    [
+      "async callback pairs with the setter's domain",
+      `setTimeout(() => { throw new Error("x") }, 0)`,
+      "handled x",
+      false,
+      0,
+    ],
+    [
+      "nextTick queued after the setter pairs too",
+      `process.nextTick(() => { throw new Error("x") })`,
+      "handled x",
+      false,
+      0,
+    ],
+    ["a synchronous throw still aborts", `throw new Error("x")`, "", true, undefined],
+  ];
+  for (const [name, tail, stdout, willAbort, code] of setterCases) {
+    const src = `const d = require("domain").create();
+       d.on("error", e => console.log("handled", e.message));
+       process.domain = d;
+       ${tail}`;
+    it(`--abort-on-uncaught-exception: process.domain setter — ${name}`, async () => {
+      const r = await spawnAbort(src);
+      expect(r.stdout.trim()).toBe(stdout);
+      expect(aborted(r)).toBe(willAbort);
+      if (code !== undefined) expect(r.exitCode).toBe(code);
+    });
+
+    it.skipIf(!nodeExe() || (isWindows && willAbort))(
+      `--abort-on-uncaught-exception: process.domain setter — ${name} (node differential)`,
+      async () => {
+        const r = await spawnAbort(src, [], nodeExe());
+        expect(r.stdout.trim()).toBe(stdout);
+        expect(aborted(r)).toBe(willAbort);
+        if (code !== undefined) expect(r.exitCode).toBe(code);
+      },
+    );
+  }
+
+  it("--abort-on-uncaught-exception: a non-Domain process.domain never suppresses the abort", async () => {
+    const r = await spawnAbort(
+      `require("domain"); process.domain = { listenerCount: () => 1 }; setTimeout(() => { throw new Error("x") }, 0)`,
+    );
+    expect(aborted(r)).toBe(true);
+  });
+
+  const monitorRemovesListenerFixture = `const d = require("domain").create();
+       d.on("error", () => console.log("domain-error"));
+       process.on("uncaughtExceptionMonitor", () => d.removeAllListeners("error"));
+       d.run(() => setTimeout(() => { throw new Error("x") }, 0))`;
+
+  it("--abort-on-uncaught-exception uses the throw-time domain snapshot even if the monitor removes the listener", async () => {
+    const r = await spawnAbort(monitorRemovesListenerFixture);
+    expect(aborted(r)).toBe(false);
+    expect(r.exitCode).toBe(1);
+  });
+
+  it.skipIf(!nodeExe())(
+    "--abort-on-uncaught-exception monitor-removes-domain-listener matches node (differential)",
+    async () => {
+      const r = await spawnAbort(monitorRemovesListenerFixture, [], nodeExe());
+      expect(aborted(r)).toBe(false);
+      expect(r.exitCode).toBe(1);
+    },
+  );
+
+  it("dispatches to a capture callback installed inside uncaughtExceptionMonitor", async () => {
+    const proc = Bun.spawn(
+      [
+        bunExe(),
+        "-e",
+        `
+        process.on("uncaughtExceptionMonitor", () =>
+          process.setUncaughtExceptionCaptureCallback(e => console.log("capture", e.message)),
+        );
+        process.on("uncaughtException", () => console.log("listener"));
+        setTimeout(() => { throw new Error("x") }, 0);
+      `,
+      ],
+      { env: bunEnv, stdout: "pipe", stderr: "pipe" },
+    );
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "capture x", exitCode: 0 });
+  });
+
+  it("uncaughtExceptionCaptureCallback survives domain enter/exit and hasUncaughtExceptionCaptureCallback reflects only the user slot", async () => {
+    const proc = Bun.spawn(
+      [
+        bunExe(),
+        "-e",
+        `
+        process.setUncaughtExceptionCaptureCallback(() => console.log("user cb ran"));
+        const domain = require("domain");
+        const d = domain.create();
+        d.on("error", () => {});
+        console.log("has-before-enter=" + process.hasUncaughtExceptionCaptureCallback());
+        d.enter();
+        console.log("has-inside=" + process.hasUncaughtExceptionCaptureCallback());
+        d.exit();
+        console.log("has-after-exit=" + process.hasUncaughtExceptionCaptureCallback());
+        setTimeout(() => { throw new Error("x") }, 0);
+      `,
+      ],
+      { env: bunEnv, stdout: "pipe", stderr: "pipe" },
+    );
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim().split("\n")).toEqual([
+      "has-before-enter=true",
+      "has-inside=true",
+      "has-after-exit=true",
+      "user cb ran",
+    ]);
+    expect({ stderr, exitCode }).toEqual({ stderr, exitCode: 0 });
+  });
+
   it("delivers many unhandledRejections in order, including ones queued from the handler", async () => {
     // Pins the observable behaviour: order is preserved, late .catch()
     // suppresses delivery, and a rejection raised from inside the handler is
@@ -1697,7 +1941,7 @@ describe.concurrent(() => {
     const proc = Bun.spawn([bunExe(), join(import.meta.dir, "process-uncaughtExceptionCaptureCallbackAbort.js")], {
       stderr: "pipe",
     });
-    expect(await proc.exited).toBe(1);
+    expect(await proc.exited).toBe(7);
     expect(await proc.stderr.text()).toContain("bar");
   });
 });
@@ -1909,7 +2153,7 @@ describe("process.exitCode", () => {
     );
   });
 
-  it.todoIf(isWindows)("zeroExitWithUncaughtHandler", async () => {
+  it("zeroExitWithUncaughtHandler", async () => {
     await runInlineFixture(
       `
       process.on('exit', (code) => {
@@ -1930,7 +2174,7 @@ describe("process.exitCode", () => {
     );
   });
 
-  it.todoIf(isWindows)("changeCodeInUncaughtHandler", async () => {
+  it("changeCodeInUncaughtHandler", async () => {
     await runInlineFixture(
       `
       process.on('exit', (code) => {

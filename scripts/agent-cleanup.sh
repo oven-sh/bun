@@ -25,7 +25,9 @@ if pgrep -x buildkite-agent >/dev/null; then
   echo "$(date) agent still running after ${waited}s, rebooting without the wipe"
 else
   echo "$(date) agent exited after ${waited}s, wiping and rebooting"
-  rm -rf "$AGENT_HOME"/builds/* /tmp/* /var/tmp/*
+  # builds/ itself, not builds/*: a glob would follow a builds symlink a job left behind, rm does not.
+  # The agent creates the directory again for its next job.
+  rm -rf "$AGENT_HOME"/builds /tmp/* /var/tmp/*
 fi
 
 shutdown -r now || reboot || launchctl kickstart system/buildkite-agent

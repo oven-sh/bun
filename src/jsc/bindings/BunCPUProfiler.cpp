@@ -3,6 +3,7 @@
 #include "ZigGlobalObject.h"
 #include "helpers.h"
 #include "BunString.h"
+#include <JavaScriptCore/FrameTracers.h>
 #include <JavaScriptCore/SamplingProfiler.h>
 #include <JavaScriptCore/VM.h>
 #include <JavaScriptCore/JSGlobalObject.h>
@@ -10,6 +11,7 @@
 #include <JavaScriptCore/FunctionExecutable.h>
 #include <JavaScriptCore/SourceProvider.h>
 #include <wtf/Stopwatch.h>
+#include <wtf/StringPrintStream.h>
 #include <wtf/text/StringBuilder.h>
 #include <wtf/JSONValues.h>
 #include <wtf/HashMap.h>
@@ -944,4 +946,28 @@ extern "C" void Bun__stopCPUProfiler(JSC::VM* vm, BunString* outJSON, BunString*
         *outJSON = Bun::toStringRef(jsonResult);
     if (outText)
         *outText = Bun::toStringRef(textResult);
+}
+
+// The text report JSC's own report-at-exit would write (top functions, then
+// top bytecodes) for `vm`'s sampling profiler. Leaves `out` empty when the VM
+// has no sampling profiler. Called once per VM from VirtualMachine::on_exit,
+// which writes it into the directory from BUN_JSC_samplingProfilerPath or
+// bun:jsc's startSamplingProfiler().
+extern "C" void Bun__SamplingProfiler__report(JSC::VM* vm, BunString* out)
+{
+    JSC::SamplingProfiler* profiler = vm->samplingProfiler();
+    if (!profiler)
+        return;
+
+    WTF::StringPrintStream report;
+    {
+        JSC::JSLockHolder locker(*vm);
+        // A terminated Worker reaches on_exit with its JSC termination exception
+        // still pending but the termination request already cleared; the report's
+        // DeferTermination asserts on that mix, so park the exception while reporting.
+        JSC::SuspendExceptionScope suspendExceptions(*vm);
+        profiler->reportTopFunctions(report);
+        profiler->reportTopBytecodes(report);
+    }
+    *out = Bun::toStringRef(report.toString());
 }

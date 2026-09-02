@@ -280,6 +280,16 @@ extern "C" long Bun__crashHandlerFromJSCFrame(void*, void*, void*, void*);
 // bun_icu_default_locale.cpp
 extern "C" void Bun__ensureICUDefaultLocale();
 
+// virtual_machine_exports.rs
+extern "C" void Bun__VirtualMachine__setSamplingProfilerDirectory(void* bunVM, const BunString* directory);
+
+// BUN_JSC_samplingProfilerPath, taken out of JSC::Options in JSCInitialize so
+// VM::VM does not register JSC's report-at-exit: that libc atexit handler
+// dereferences a null stream when it cannot open its output file, and
+// quick_exit skips it. VirtualMachine::on_exit writes the report instead.
+// Points at the fastStrDup'd copy Options::setOption made, never freed.
+static const char* s_samplingProfilerDirectory = nullptr;
+
 extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(const char* ptr, size_t length), bool evalMode, bool oneShotStartup, bool shortLivedGlobals)
 {
     static std::once_flag jsc_init_flag;
@@ -367,6 +377,10 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
                         onCrash(env, strlen(env));
                     }
                 }
+            }
+            if (const char* directory = JSC::Options::samplingProfilerPath()) {
+                s_samplingProfilerDirectory = directory;
+                JSC::Options::samplingProfilerPath() = nullptr;
             }
             JSC::Options::assertOptionsAreCoherent();
         }); // end JSC::initialize lambda
@@ -559,6 +573,16 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
     globalObject->isThreadLocalDefaultGlobalObject = true;
     Bun__setDefaultGlobalObject(globalObject);
     JSC::gcProtect(globalObject);
+
+    // Every VM samples under BUN_JSC_useSamplingProfiler, so every VM (workers
+    // included) gets the report directory; on_exit writes one report per VM.
+    if (s_samplingProfilerDirectory) {
+        auto directory = WTF::String::fromUTF8(s_samplingProfilerDirectory);
+        if (!directory.isEmpty()) {
+            auto directoryString = Bun::toString(directory);
+            Bun__VirtualMachine__setSamplingProfilerDirectory(Bun__getVM(), &directoryString);
+        }
+    }
 
 #ifdef FUZZILLI_ENABLED
     Bun__REPRL__registerFuzzilliFunctions(static_cast<Zig::GlobalObject*>(globalObject));

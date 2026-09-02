@@ -242,6 +242,33 @@ impl Loader {
         None
     }
 
+    /// `cache_directory` is the `--cache-dir` / bunfig `install.cache.dir` setting, if any.
+    pub fn install_cache_directory_path<'b>(
+        &self,
+        cache_directory: Option<&[u8]>,
+        buf: &'b mut [u8],
+    ) -> &'b [u8] {
+        use bun_paths::resolve_path::{join_abs_string_buf, platform};
+        let parts: &[&[u8]] = if let Some(dir) = self.get(b"BUN_INSTALL_CACHE_DIR") {
+            &[dir]
+        } else if let Some(dir) = cache_directory.filter(|dir| !dir.is_empty()) {
+            &[dir]
+        } else if let Some(dir) = self.get(b"BUN_INSTALL") {
+            &[dir, b"install/", b"cache/"]
+        } else if let Some(dir) = bun_core::env_var::XDG_CACHE_HOME.get() {
+            &[dir, b".bun/", b"install/", b"cache/"]
+        } else if let Some(dir) = bun_core::env_var::HOME.get() {
+            &[dir, b".bun/", b"install/", b"cache/"]
+        } else {
+            &[b"node_modules/.bun-cache"]
+        };
+        join_abs_string_buf::<platform::Loose>(
+            bun_paths::fs::FileSystem::instance().top_level_dir(),
+            buf,
+            parts,
+        )
+    }
+
     pub fn is_ci(&self) -> bool {
         self.get(b"CI")
             .or_else(|| self.get(b"TDDIUM"))

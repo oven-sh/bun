@@ -633,7 +633,10 @@ test.concurrent("a Bun.build() after a Worker's build with macros reads the main
       import { Worker } from "node:worker_threads";
       import { build } from "./build.ts";
       const worker = new Worker("./worker.ts");
-      const fromWorker = await new Promise(resolve => worker.once("message", resolve));
+      const { promise, resolve, reject } = Promise.withResolvers();
+      worker.once("message", resolve);
+      worker.once("error", reject);
+      const fromWorker = await promise;
       await worker.terminate();
       const fromMain = await build("main");
       console.log(JSON.stringify({ fromWorker, fromMain }));

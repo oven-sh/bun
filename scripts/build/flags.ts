@@ -13,7 +13,7 @@
 
 import { join } from "node:path";
 import { bunExeName, type Config } from "./config.ts";
-import { quote, slash } from "./shell.ts";
+import { slash } from "./shell.ts";
 import { ucrtServicingLibDir } from "./winsysroot.ts";
 
 export type FlagValue = string | string[] | ((cfg: Config) => string | string[]);
@@ -100,7 +100,7 @@ export const globalFlags: Flag[] = [
     // splat laid out like a VS install (VC/Tools/MSVC + Windows Kits/10),
     // covering the MSVC CRT/STL and Windows SDK headers + import libs.
     // The lld-link equivalent (/winsysroot:) is added in linkerFlags below.
-    flag: c => ["/winsysroot", quote(c.winsysroot!, false)],
+    flag: c => ["/winsysroot", c.winsysroot!],
     when: c => c.windows && c.winsysroot !== undefined,
     desc: "Windows cross-compile: MSVC CRT + Windows SDK root (xwin splat)",
   },
@@ -737,9 +737,9 @@ export const defines: Flag[] = [
     desc: "Core bun defines (always on)",
   },
   {
-    // Shell-escaped quotes so clang receives literal quotes in the define
-    // (the preprocessor needs the string to be "26.3.0", not bare 26.3.0).
-    flag: c => `REPORTED_NODEJS_VERSION=\\"${c.nodejsVersion}\\"`,
+    // Literal quotes: the preprocessor needs the string to be "26.3.0", not
+    // bare 26.3.0. Flags are argv entries, so nothing here is shell-escaped.
+    flag: c => `REPORTED_NODEJS_VERSION="${c.nodejsVersion}"`,
     desc: "Node.js version string reported by process.version",
   },
   {
@@ -747,7 +747,7 @@ export const defines: Flag[] = [
     desc: "Node.js ABI version (process.versions.modules)",
   },
   {
-    flag: c => `REPORTED_NODEJS_V8_VERSION=\\"${c.nodejsV8Version}\\"`,
+    flag: c => `REPORTED_NODEJS_V8_VERSION="${c.nodejsV8Version}"`,
     desc: "V8 version string (process.versions.v8)",
   },
   {
@@ -774,7 +774,7 @@ export const defines: Flag[] = [
   },
   {
     // slash(): path becomes a C string literal — `\U` would be a unicode escape.
-    flag: c => `BUN_DYNAMIC_JS_LOAD_PATH=\\"${slash(join(c.buildDir, "js"))}\\"`,
+    flag: c => `BUN_DYNAMIC_JS_LOAD_PATH="${slash(join(c.buildDir, "js"))}"`,
     when: c => c.debug && !c.ci,
     desc: "Hot-reload built-in JS from build dir (dev convenience)",
   },
@@ -949,7 +949,7 @@ export const linkerFlags: Flag[] = [
     // splat's stale copies (see UCRT_SERVICING_VERSION in winsysroot.ts —
     // the VS-manifest payload xwin downloads carries an ancient arm64 UCRT
     // with broken printf formatting).
-    flag: c => quote(`/libpath:${ucrtServicingLibDir(c)!}`, false),
+    flag: c => `/libpath:${ucrtServicingLibDir(c)!}`,
     when: c => c.windows && c.host.os !== "windows",
     desc: "Windows cross-compile: serviced Universal CRT static libs (SDK NuGet) override the splat's",
   },
@@ -959,7 +959,7 @@ export const linkerFlags: Flag[] = [
     // globalFlags — repeat it in lld-link's own spelling so the MSVC CRT
     // and Windows SDK import libraries (libcmt, kernel32, ...) are found
     // without a VS dev shell's LIB env.
-    flag: c => quote(`/winsysroot:${c.winsysroot!}`, false),
+    flag: c => `/winsysroot:${c.winsysroot!}`,
     when: c => c.windows && c.winsysroot !== undefined,
     desc: "Windows cross-compile: MSVC CRT + Windows SDK library search root (xwin splat)",
   },
@@ -1435,7 +1435,7 @@ export const linkerFlags: Flag[] = [
     // We only fall onto rust-lld for cross-language LTO when rustc's LLVM is
     // newer than the system clang/lld (see config.ts `cfg.ld` selection); in
     // that case the link-time flag is dropped and llvm-objcopy compresses
-    // post-link instead (shims.ts elfDebugCompressPostlinkCommand) — an
+    // post-link instead (shims.ts postlinkCommands) — an
     // uncompressed bun-profile is ~2x larger and every `--compile` test
     // copies it, so leaving it uncompressed times CI out.
     flag: "-Wl,--compress-debug-sections=zlib",

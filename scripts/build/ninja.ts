@@ -12,6 +12,7 @@ import { mkdir } from "node:fs/promises";
 import { isAbsolute, relative, resolve } from "node:path";
 import { BuildError, assert } from "./error.ts";
 import { writeIfChanged } from "./fs.ts";
+import { quote, quoteWin32Argv } from "./shell.ts";
 
 /**
  * A ninja `rule` — a reusable command template.
@@ -86,13 +87,81 @@ export interface NinjaOptions {
   buildDir: string;
   /** Minimum ninja version to require. */
   ninjaVersion?: string;
+  /** Host runs cmd.exe (affects how native tasks are quoted in build.ninja). Default: this process's platform. */
+  hostWindows?: boolean;
 }
 
 /**
- * Ninja build file writer.
+ * A `build()` statement as retained in memory for the engine bridge
+ * (`bridge.ts`). Same shape as `BuildNode`, but every path is already
+ * buildDir-relative and unescaped, and the rule is resolved. `build.ninja`
+ * is the serialized form of this list.
+ */
+export interface GraphEdge {
+  readonly id: number;
+  readonly rule: string;
+  readonly outputs: readonly string[];
+  readonly implicitOutputs: readonly string[];
+  readonly inputs: readonly string[];
+  readonly implicitInputs: readonly string[];
+  readonly orderOnlyInputs: readonly string[];
+  readonly vars: Readonly<Record<string, string>>;
+  /** Effective pool: the edge override, else the rule's pool, else "" (none). */
+  readonly pool: string;
+}
+
+/** One program invocation inside a `NativeTask`. argv paths are as the tool sees them (cwd-relative or absolute). */
+export interface NativeCommand {
+  argv: string[];
+  /** Working directory. Default: the build dir. */
+  cwd?: string | undefined;
+  /** Extra environment on top of the build's. */
+  env?: Record<string, string> | undefined;
+}
+
+/**
+ * A task declared with `Ninja.task()`: the native form, which the engine runs
+ * as-is (`engine.ts`). Paths are absolute. Unlike `BuildNode` there is no
+ * rule, no `$var` template, and no shell: the command is argv plus cwd/env.
+ * `toString()` still serializes it for `--runner=ninja`, with the shell
+ * quoting done in one place here instead of in every emitter.
+ */
+export interface NativeTask {
+  /** Display group: "cxx", "link", "fetch", … Also the exported rule name. */
+  kind: string;
+  /** Shown while running: the main output, or the dep name. */
+  label: string;
+  /** Runs in order; stops at the first failure. */
+  commands: NativeCommand[];
+  outputs: string[];
+  /** Outputs the engine tracks that are not the main product (linker maps, the PCH stub object). */
+  implicitOutputs?: string[] | undefined;
+  /** Inputs the command consumes. These are also the response file's lines when `rspfile` is set. */
+  inputs: string[];
+  /** Inputs tracked for staleness only (the PCH, a dep's .a, a symbol list). */
+  implicitInputs?: string[] | undefined;
+  /** Must exist first, mtime ignored: generated headers (the depfile tracks the ones really read), dir stamps. Paths or phony names. */
+  after?: string[] | undefined;
+  depfile?: { kind: "gcc"; path: string } | { kind: "msvc" } | undefined;
+  /** Response file: `inputs`, one per line. For linkers and archivers. */
+  rspfile?: string | undefined;
+  /** Outputs may be identical after a run; only a moved mtime is a change. */
+  restat?: boolean | undefined;
+  /** Run every build; the command tracks its own staleness (cargo, cmake). */
+  alwaysRun?: boolean | undefined;
+  pool?: string | undefined;
+  /** Owns the terminal while it runs. */
+  console?: boolean | undefined;
+}
+
+/**
+ * Build recorder and ninja file writer.
  *
- * Accumulates rules, build statements, variables, pools. Call `write()` to emit
- * `build.ninja` + `compile_commands.json`.
+ * Two ways to declare work, both retained in memory and both serializable to
+ * `build.ninja`:
+ * - `task()`: the native form (argv, cwd, env). New code uses this.
+ * - `rule()` + `build()`: ninja rule templates. The not-yet-ported emitters
+ *   use these; `bridge.ts` expands them for the engine.
  *
  * All paths given to this class should be ABSOLUTE. They are converted to
  * buildDir-relative at write time via `rel()`.
@@ -108,6 +177,14 @@ export class Ninja {
   private readonly defaults: string[] = [];
   private readonly compileCommands: CompileCommand[] = [];
 
+  // Structured copy of everything written to `lines`, for the engine.
+  // `build.ninja` stays the serialized form of the same data.
+  private readonly ruleSpecs = new Map<string, Rule>();
+  private readonly edgeList: GraphEdge[] = [];
+  private readonly nativeTasks: NativeTask[] = [];
+  /** Host shell dialect for the exported `$cmd` of native tasks. */
+  private readonly hostWindows: boolean;
+
   constructor(opts: NinjaOptions) {
     assert(isAbsolute(opts.buildDir), `Ninja buildDir must be absolute, got: ${opts.buildDir}`);
     this.buildDir = resolve(opts.buildDir);
@@ -115,6 +192,7 @@ export class Ninja {
     // (1.5), restat (1.0). We don't use dyndep (1.10's headline feature).
     // Some CI agents (darwin) ship 1.9 and we don't control their image.
     this.ninjaVersion = opts.ninjaVersion ?? "1.9";
+    this.hostWindows = opts.hostWindows ?? process.platform === "win32";
   }
 
   /**
@@ -158,6 +236,7 @@ export class Ninja {
     assert(/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(name), `Invalid ninja rule name: ${name}`);
     assert(!this.ruleNames.has(name), `Duplicate rule: ${name}`);
     this.ruleNames.add(name);
+    this.ruleSpecs.set(name, { ...spec });
 
     this.lines.push(`rule ${name}`);
     this.lines.push(`  command = ${spec.command}`);
@@ -212,11 +291,29 @@ export class Ninja {
       this.outputSet.add(abs);
     }
 
-    const outs = node.outputs.map(p => ninjaEscapePath(this.rel(p)));
-    const implOuts = (node.implicitOutputs ?? []).map(p => ninjaEscapePath(this.rel(p)));
-    const ins = node.inputs.map(p => ninjaEscapePath(this.rel(p)));
-    const implIns = (node.implicitInputs ?? []).map(p => ninjaEscapePath(this.rel(p)));
-    const orderIns = (node.orderOnlyInputs ?? []).map(p => ninjaEscapePath(this.rel(p)));
+    const relOuts = node.outputs.map(p => this.rel(p));
+    const relImplOuts = (node.implicitOutputs ?? []).map(p => this.rel(p));
+    const relIns = node.inputs.map(p => this.rel(p));
+    const relImplIns = (node.implicitInputs ?? []).map(p => this.rel(p));
+    const relOrderIns = (node.orderOnlyInputs ?? []).map(p => this.rel(p));
+
+    this.edgeList.push({
+      id: this.edgeList.length,
+      rule: node.rule,
+      outputs: relOuts,
+      implicitOutputs: relImplOuts,
+      inputs: relIns,
+      implicitInputs: relImplIns,
+      orderOnlyInputs: relOrderIns,
+      vars: { ...(node.vars ?? {}) },
+      pool: node.pool ?? this.ruleSpecs.get(node.rule)?.pool ?? "",
+    });
+
+    const outs = relOuts.map(ninjaEscapePath);
+    const implOuts = relImplOuts.map(ninjaEscapePath);
+    const ins = relIns.map(ninjaEscapePath);
+    const implIns = relImplIns.map(ninjaEscapePath);
+    const orderIns = relOrderIns.map(ninjaEscapePath);
 
     let line = `build ${outs.join(" ")}`;
     if (implOuts.length > 0) {
@@ -283,6 +380,54 @@ export class Ninja {
   }
 
   /**
+   * Declare a native task. Outputs must be unique across the whole build.
+   * Serialized to build.ninja as a rule named after `kind` (see
+   * `nativeRuleName`) with the shell-quoted command in `$cmd`.
+   */
+  task(t: NativeTask): void {
+    assert(t.outputs.length > 0, `task '${t.kind} ${t.label}' must have at least one output`);
+    assert(t.commands.length > 0, `task '${t.kind} ${t.label}' must have a command`);
+    assert(/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(t.kind), `Invalid task kind: ${t.kind}`);
+    for (const out of [...t.outputs, ...(t.implicitOutputs ?? [])]) {
+      const abs = resolve(this.buildDir, out);
+      if (this.outputSet.has(abs)) {
+        throw new BuildError(`Duplicate build output: ${out}`, {
+          hint: "Another build statement already produces this file",
+        });
+      }
+      this.outputSet.add(abs);
+    }
+    this.nativeTasks.push(t);
+  }
+
+  // ─── Structured graph access (for bridge.ts) ───
+
+  /** Every `build()` statement, in emission order. Paths are buildDir-relative. */
+  get edges(): readonly GraphEdge[] {
+    return this.edgeList;
+  }
+
+  /** Every `task()` declaration, in emission order. Paths are absolute. */
+  get tasks(): readonly NativeTask[] {
+    return this.nativeTasks;
+  }
+
+  /** The rule a build statement refers to. "phony" has no spec. */
+  getRule(name: string): Rule | undefined {
+    return this.ruleSpecs.get(name);
+  }
+
+  /** Declared pools. "console" is implicit (depth 1) and not listed here. */
+  get poolDepths(): ReadonlyMap<string, number> {
+    return this.pools;
+  }
+
+  /** Default targets, buildDir-relative. */
+  get defaultTargets(): readonly string[] {
+    return this.defaults;
+  }
+
+  /**
    * Record a compile command for compile_commands.json.
    * Called by `cxx()` and `cc()` in compile.ts.
    */
@@ -312,7 +457,75 @@ export class Ninja {
     const defaultLines: string[] =
       this.defaults.length > 0 ? [`default ${this.defaults.map(ninjaEscapePath).join(" ")}`, ""] : [];
 
-    return [...header, ...poolLines, ...this.lines, ...defaultLines].join("\n");
+    return [...header, ...poolLines, ...this.lines, ...this.nativeLines(), ...defaultLines].join("\n");
+  }
+
+  /**
+   * Native tasks as ninja text. One rule per distinct (kind, depfile, restat,
+   * rspfile, pool) combination; the command itself is a per-edge `$cmd`.
+   */
+  private nativeLines(): string[] {
+    const lines: string[] = [];
+    const rules = new Map<string, string>();
+    let usesAlways = false;
+    for (const t of this.nativeTasks) {
+      const pool = t.console ? "console" : t.pool;
+      const key = JSON.stringify([t.kind, t.depfile?.kind, t.restat === true, t.rspfile !== undefined, pool]);
+      let name = rules.get(key);
+      if (name === undefined) {
+        name = nativeRuleName(t.kind, [...rules.values()], this.ruleNames);
+        rules.set(key, name);
+        lines.push(`rule ${name}`, `  command = $cmd`, `  description = $desc`);
+        if (t.depfile?.kind === "gcc") lines.push(`  depfile = $depfile`, `  deps = gcc`);
+        if (t.depfile?.kind === "msvc") lines.push(`  deps = msvc`);
+        if (t.restat === true) lines.push(`  restat = 1`);
+        if (t.rspfile !== undefined) lines.push(`  rspfile = $rspfile`, `  rspfile_content = $in_newline`);
+        if (pool !== undefined) lines.push(`  pool = ${pool}`);
+        lines.push("");
+      }
+      const esc = (p: string) => ninjaEscapePath(this.rel(p));
+      let line = `build ${t.outputs.map(esc).join(" ")}`;
+      if (t.implicitOutputs?.length) line += ` | ${t.implicitOutputs.map(esc).join(" ")}`;
+      line += `: ${name}`;
+      if (t.inputs.length > 0) line += ` ${t.inputs.map(esc).join(" ")}`;
+      if (t.implicitInputs?.length) line += ` | ${t.implicitInputs.map(esc).join(" ")}`;
+      const after = [...(t.after ?? [])];
+      if (t.alwaysRun === true) {
+        after.push("always");
+        usesAlways = true;
+      }
+      if (after.length > 0) line += ` || ${after.map(esc).join(" ")}`;
+      lines.push(wrapLongLine(line));
+      lines.push(`  cmd = ${ninjaEscapeVarValue(this.shellCommand(t.commands))}`);
+      lines.push(`  desc = ${ninjaEscapeVarValue(`${t.kind} ${t.label}`)}`);
+      if (t.depfile?.kind === "gcc") lines.push(`  depfile = ${ninjaEscapeVarValue(this.rel(t.depfile.path))}`);
+      if (t.rspfile !== undefined) lines.push(`  rspfile = ${ninjaEscapeVarValue(this.rel(t.rspfile))}`);
+      lines.push("");
+    }
+    if (usesAlways && !this.outputSet.has(resolve(this.buildDir, "always"))) {
+      lines.push("build always: phony", "");
+    }
+    return lines;
+  }
+
+  /**
+   * The shell text ninja runs for a native task. posix: `cd X && K=V prog
+   * args && …`. Windows host: ninja hands the line to CreateProcess, so a cwd,
+   * env, or chain needs `cmd /c "…"`; a bare argv goes through verbatim with
+   * CommandLineToArgvW quoting (cmd leaves `\"` alone, so the same quoting
+   * works inside the wrapper).
+   */
+  private shellCommand(commands: NativeCommand[]): string {
+    const win = this.hostWindows;
+    const parts = commands.map(c => {
+      let s = "";
+      if (c.cwd !== undefined) s += win ? `cd /d ${quote(c.cwd, true)} && ` : `cd ${quote(c.cwd, false)} && `;
+      for (const [k, v] of Object.entries(c.env ?? {})) s += win ? `set ${k}=${v}&& ` : `${k}=${quote(v, false)} `;
+      return s + c.argv.map(a => (win ? quoteWin32Argv(a) : quote(a, false))).join(" ");
+    });
+    const joined = parts.join(" && ");
+    const needsShell = commands.length > 1 || commands.some(c => c.cwd !== undefined || c.env !== undefined);
+    return win && needsShell ? `cmd /c "${joined}"` : joined;
   }
 
   /**
@@ -349,6 +562,13 @@ export class Ninja {
 // 1. Paths in build lines: $ and space must be escaped with $
 // 2. Variable values: only $ needs escaping (newlines need $\n but we don't emit those)
 // ---------------------------------------------------------------------------
+
+/** `kind`, or `kind_2`, `kind_3`… when the same kind needs several rule variants. Never a legacy rule's name. */
+function nativeRuleName(kind: string, taken: string[], legacy: Set<string>): string {
+  let name = kind;
+  for (let i = 2; taken.includes(name) || legacy.has(name); i++) name = `${kind}_${i}`;
+  return name;
+}
 
 /** Escape a path for use in a `build` line. */
 function ninjaEscapePath(path: string): string {

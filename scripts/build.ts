@@ -23,6 +23,7 @@
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { declareAll } from "./build/bridge.ts";
 import {
   canTraceOrderFile,
   downloadArtifacts,
@@ -45,6 +46,7 @@ import {
 } from "./build/ci.ts";
 import { formatConfig, formatConfigUnchanged, type PartialConfig } from "./build/config.ts";
 import { configure, type ConfigureInput, type ConfigureResult } from "./build/configure.ts";
+import { Engine, type EngineOptions } from "./build/engine.ts";
 import { BuildError } from "./build/error.ts";
 import { STREAM_FD } from "./build/stream.ts";
 import { interactive, nameColor, status } from "./build/tty.ts";
@@ -95,7 +97,6 @@ async function main(): Promise<void> {
     ? loadConfigFile(args.configFile)
     : { profile: args.profile, overrides: args.overrides };
 
-  const ninjaArgv = (cfg: { buildDir: string }) => ["-C", cfg.buildDir, ...args.ninjaArgs, ...args.ninjaTargets];
   // GNU-style include-path vars (CPATH, C_INCLUDE_PATH, CPLUS_INCLUDE_PATH,
   // OBJC_INCLUDE_PATH) apply to every clang invocation regardless of
   // --target. The CI build containers set them for the *host* gcc toolchain
@@ -104,16 +105,6 @@ async function main(): Promise<void> {
   // found"). Scrub them for Windows cross builds — they are host-targeted by
   // definition. Native Windows builds (INCLUDE/LIB from the VS dev shell) and
   // every other target keep the environment as provisioned.
-  const ninjaEnv = (cfg: { windows: boolean; host: { os: string } }, env: Record<string, string>) => {
-    const merged: NodeJS.ProcessEnv = { ...process.env, ...env };
-    if (cfg.windows && cfg.host.os !== "windows") {
-      for (const name of ["CPATH", "C_INCLUDE_PATH", "CPLUS_INCLUDE_PATH", "OBJC_INCLUDE_PATH"]) {
-        delete merged[name];
-      }
-    }
-    return merged;
-  };
-
   if (isCI) {
     // CI: machine/env dump + collapsible groups + annotation-on-failure.
     printEnvironment();
@@ -140,10 +131,12 @@ async function main(): Promise<void> {
     let inherited = false;
 
     const runNinja = (targets: string[] = args.ninjaTargets) =>
-      spawnWithAnnotations("ninja", ["-C", result.cfg.buildDir, ...args.ninjaArgs, ...targets], {
-        label: "ninja",
-        env: ninjaEnv(result.cfg, result.env),
-      });
+      args.runner === "ts"
+        ? runExecutor(result, targets, args, { display: "plain" })
+        : spawnWithAnnotations("ninja", ["-C", result.cfg.buildDir, ...args.ninjaArgs, ...targets], {
+            label: "ninja",
+            env: buildEnv(result.cfg, result.env),
+          });
 
     // rust-and-link: build libbun_runtime.a first so cargo overlaps with the
     // sibling build-cpp job, THEN poll for build-cpp's outcome + download
@@ -236,43 +229,16 @@ async function main(): Promise<void> {
       }
       return;
     }
-    // FD 3 sideband — only when interactive. stream.ts (wrapping deps +
-    // cargo) writes live output there, bypassing ninja's per-job buffering.
-    // A human watching a terminal wants to see cmake configure spew and
-    // cargo build progress in real time. A log file (CI) doesn't —
-    // that live output is noise (hundreds of `-- Looking for header.h`
-    // lines from cmake). When FD 3 isn't set up, stream.ts falls back to
-    // stdout which ninja buffers per-job: deps stay quiet until they
-    // finish or fail, failure logs stay compact.
-    //
-    // Ninja's subprocess spawn only touches FDs 0-2; higher fds inherit
-    // through posix_spawn/CreateProcessA. Passing our stderr fd (2) at
-    // index STREAM_FD dups it there for the whole ninja process tree.
-    //
-    // In quiet mode, capture to buffers instead — dumped only on failure.
-    const stdio: (number | "inherit" | "pipe")[] = quiet
-      ? ["inherit", "pipe", "pipe"]
-      : ["inherit", "inherit", "inherit"];
-    if (!quiet && interactive) {
-      stdio[STREAM_FD] = 2;
-    }
-    const ninja = spawnSync("ninja", ninjaArgv(result.cfg), {
-      stdio,
-      env: ninjaEnv(result.cfg, result.env),
-      // cargo's compile output (now part of the ninja graph via emitRust) can
-      // be tens of MB on a cold build; the default 1 MB maxBuffer ENOBUFSes.
-      maxBuffer: 1024 * 1024 * 1024,
-    });
-    if (ninja.error) {
-      process.stderr.write(`Failed to exec ninja: ${ninja.error.message}\nIs ninja in your PATH?\n`);
-      process.exit(127);
-    }
-    if (ninja.status !== 0) {
-      if (quiet) {
-        if (ninja.stdout) process.stderr.write(ninja.stdout);
-        if (ninja.stderr) process.stderr.write(ninja.stderr);
-      }
-      process.exit(ninja.status ?? 1);
+
+    if (args.runner === "ts") {
+      // In-process executor. Same graph, no ninja binary. Console jobs and
+      // stream.ts (via fd 3) write to the terminal directly, as with ninja.
+      await runExecutor(result, args.ninjaTargets, args, {
+        display: quiet ? "quiet" : interactive ? "tty" : "plain",
+        streamFd: !quiet && interactive ? 2 : undefined,
+      });
+    } else {
+      runNinjaLocal(result, args, quiet);
     }
 
     if (args.execArgs.length === 0) {
@@ -305,6 +271,106 @@ async function main(): Promise<void> {
       return;
     }
     process.exit(child.status ?? 0);
+  }
+}
+
+/** The environment for build commands: ours plus ccache's, minus host include paths on Windows cross builds. */
+function buildEnv(cfg: { windows: boolean; host: { os: string } }, env: Record<string, string>): NodeJS.ProcessEnv {
+  const merged: NodeJS.ProcessEnv = { ...process.env, ...env };
+  if (cfg.windows && cfg.host.os !== "windows") {
+    for (const name of ["CPATH", "C_INCLUDE_PATH", "CPLUS_INCLUDE_PATH", "OBJC_INCLUDE_PATH"]) {
+      delete merged[name];
+    }
+  }
+  return merged;
+}
+
+/**
+ * Run the build in process (`--runner=ts`): declare every recorded task on the
+ * engine and run the requested targets. Exits the process on failure, like the
+ * ninja paths do.
+ */
+async function runExecutor(
+  result: ConfigureResult,
+  targets: string[],
+  args: CliArgs,
+  opts: Pick<EngineOptions, "display" | "streamFd">,
+): Promise<void> {
+  const start = Date.now();
+  const engine = new Engine({
+    buildDir: result.cfg.buildDir,
+    hostOs: result.cfg.host.os,
+    env: buildEnv(result.cfg, result.env),
+    jobs: args.jobs,
+    keepGoing: args.keepGoing,
+    verbose: args.verbose,
+    dryRun: args.dryRun,
+    explain: args.explain,
+    pools: Object.fromEntries(result.graph.poolDepths),
+    ...opts,
+  });
+  declareAll(engine, result.graph, result.cfg.host.os === "windows");
+  const names = targets.length > 0 ? targets : [...result.graph.defaultTargets];
+  const wanted = names.map(name => {
+    const task = engine.lookup(name);
+    if (task === undefined) {
+      throw new BuildError(`unknown target '${name}'`, {
+        hint: `Known targets: ${engine.aliasNames
+          .filter(a => !a.includes("/"))
+          .sort()
+          .join(", ")}`,
+      });
+    }
+    return task;
+  });
+  const outcome = await engine.run(wanted);
+  if (isCI) {
+    const elapsed = Date.now() - start;
+    const took = elapsed > 60000 ? `${(elapsed / 60000).toFixed(2)} minutes` : `${(elapsed / 1000).toFixed(2)} seconds`;
+    console.log(`build took ${took}`);
+  }
+  if (!outcome.ok) process.exit(outcome.interrupted ? 130 : 1);
+}
+
+/** Spawn ninja for a local (non-CI) build. Exits the process on failure. */
+function runNinjaLocal(result: ConfigureResult, args: CliArgs, quiet: boolean): void {
+  // FD 3 sideband — only when interactive. stream.ts (wrapping deps +
+  // cargo) writes live output there, bypassing ninja's per-job buffering.
+  // A human watching a terminal wants to see cmake configure spew and
+  // cargo build progress in real time. A log file (CI) doesn't —
+  // that live output is noise (hundreds of `-- Looking for header.h`
+  // lines from cmake). When FD 3 isn't set up, stream.ts falls back to
+  // stdout which ninja buffers per-job: deps stay quiet until they
+  // finish or fail, failure logs stay compact.
+  //
+  // Ninja's subprocess spawn only touches FDs 0-2; higher fds inherit
+  // through posix_spawn/CreateProcessA. Passing our stderr fd (2) at
+  // index STREAM_FD dups it there for the whole ninja process tree.
+  //
+  // In quiet mode, capture to buffers instead — dumped only on failure.
+  const stdio: (number | "inherit" | "pipe")[] = quiet
+    ? ["inherit", "pipe", "pipe"]
+    : ["inherit", "inherit", "inherit"];
+  if (!quiet && interactive) {
+    stdio[STREAM_FD] = 2;
+  }
+  const ninja = spawnSync("ninja", ["-C", result.cfg.buildDir, ...args.ninjaArgs, ...args.ninjaTargets], {
+    stdio,
+    env: buildEnv(result.cfg, result.env),
+    // cargo's compile output (now part of the ninja graph via emitRust) can
+    // be tens of MB on a cold build; the default 1 MB maxBuffer ENOBUFSes.
+    maxBuffer: 1024 * 1024 * 1024,
+  });
+  if (ninja.error) {
+    process.stderr.write(`Failed to exec ninja: ${ninja.error.message}\nIs ninja in your PATH?\n`);
+    process.exit(127);
+  }
+  if (ninja.status !== 0) {
+    if (quiet) {
+      if (ninja.stdout) process.stderr.write(ninja.stdout);
+      if (ninja.stderr) process.stderr.write(ninja.stderr);
+    }
+    process.exit(ninja.status ?? 1);
   }
 }
 
@@ -401,6 +467,18 @@ interface CliArgs {
    * Mutually exclusive with --profile/overrides.
    */
   configFile: string | undefined;
+  /** Which program runs the graph: the in-process engine, or ninja. */
+  runner: "ninja" | "ts";
+  /** -j<N>: parallel jobs. undefined = engine default (cores + 2). */
+  jobs: number | undefined;
+  /** -k<N>: failures tolerated before stopping. undefined = 1. */
+  keepGoing: number | undefined;
+  /** -v: print commands. */
+  verbose: boolean;
+  /** -n: plan only. */
+  dryRun: boolean;
+  /** --explain: say why each task runs. */
+  explain: boolean;
 }
 
 /**
@@ -428,6 +506,12 @@ function parseArgs(argv: string[]): CliArgs {
   let quiet = false;
   let configFile: string | undefined;
   let inExec = false;
+  let runner: "ninja" | "ts" = process.env.BUN_BUILD_RUNNER === "ts" ? "ts" : "ninja";
+  let jobs: number | undefined;
+  let keepGoing: number | undefined;
+  let verbose = false;
+  let dryRun = false;
+  let explain = false;
 
   // PartialConfig fields that are BOOLEANS. Used for value coercion.
   // Not exhaustive — add as needed. Unknown --<field> is rejected so you
@@ -482,10 +566,23 @@ function parseArgs(argv: string[]): CliArgs {
       continue;
     }
 
-    // Ninja passthrough: -j<N>, -v, -k<N>, -l<N>. Short flags only —
-    // anything starting with `--` is OURS.
-    if (/^-[jklv]/.test(arg)) {
+    // Ninja-style short flags: -j<N>, -v, -k<N>, -l<N>, -n. Kept for ninja
+    // and parsed for the engine. Anything starting with `--` is OURS.
+    if (/^-[jklvn]/.test(arg)) {
       ninjaArgs.push(arg);
+      const m = arg.match(/^-([jklvn])(\d*)$/);
+      if (m) {
+        if (m[1] === "j" && m[2]) jobs = Number(m[2]);
+        else if (m[1] === "k") keepGoing = m[2] ? Number(m[2]) : 0;
+        else if (m[1] === "v") verbose = true;
+        else if (m[1] === "n") dryRun = true;
+      }
+      continue;
+    }
+
+    if (arg === "--explain") {
+      explain = true;
+      ninjaArgs.push("-d", "explain");
       continue;
     }
 
@@ -526,7 +623,12 @@ function parseArgs(argv: string[]): CliArgs {
     const rawKey = eq[1]!;
     const key = rawKey.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase());
     const isOurs =
-      key === "profile" || key === "target" || key === "configFile" || boolFields.has(key) || stringFields.has(key);
+      key === "profile" ||
+      key === "target" ||
+      key === "configFile" ||
+      key === "runner" ||
+      boolFields.has(key) ||
+      stringFields.has(key);
 
     let value = eq[2];
     if (value === undefined) {
@@ -552,6 +654,13 @@ function parseArgs(argv: string[]): CliArgs {
       configureOnly = true;
       continue;
     }
+    if (key === "runner") {
+      if (value !== "ninja" && value !== "ts") {
+        throw new BuildError(`--runner must be ninja or ts, got: ${value}`);
+      }
+      runner = value;
+      continue;
+    }
     if (key === "profile") {
       profile = value;
     } else if (boolFields.has(key)) {
@@ -565,7 +674,22 @@ function parseArgs(argv: string[]): CliArgs {
     }
   }
 
-  return { profile, overrides, ninjaTargets, ninjaArgs, execArgs, configureOnly, quiet, configFile };
+  return {
+    profile,
+    overrides,
+    ninjaTargets,
+    ninjaArgs,
+    execArgs,
+    configureOnly,
+    quiet,
+    configFile,
+    runner,
+    jobs,
+    keepGoing,
+    verbose,
+    dryRun,
+    explain,
+  };
 }
 
 function parseBool(v: string): boolean {
@@ -594,9 +718,12 @@ Options:
                                   buildDir, mode (full|cpp-only|link-only),
                                   unifiedSources, timeTrace, os, arch, abi,
                                   winsysroot (Windows cross-compile SDK root)
-  --target=<name>         Build a specific ninja target (repeatable)
+  --target=<name>         Build a specific target (repeatable)
+  --runner=<ninja|ts>     ninja (default) or the in-process engine.
+                          BUN_BUILD_RUNNER=ts sets the default.
   --configure-only        Emit build.ninja, don't run it
-  -j<N>, -v, -k<N>        Passed through to ninja
+  -j<N>, -v, -k<N>, -n    Jobs, verbose, keep going, dry run
+  --explain               Say why each task runs
   --help                  Show this help
 
 Any bare positional and everything after is passed to the built binary:

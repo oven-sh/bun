@@ -18,11 +18,7 @@ import { parsePackedFeaturesList } from "../../scripts/build/features-json.ts";
 import { computeFlags, DARWIN_STACK_SIZE } from "../../scripts/build/flags.ts";
 import { MACOS_SDK_VERSION, macosSdkCachePath, resolveMacosSdkPath } from "../../scripts/build/macos-sdk.ts";
 import { rustTarget } from "../../scripts/build/rust.ts";
-import {
-  elfDebugCompressPostlinkCommand,
-  machoEntitlementsPlist,
-  machoPostlinkCommand,
-} from "../../scripts/build/shims.ts";
+import { machoEntitlementsPlist, machoPostlinkCommand, postlinkCommands } from "../../scripts/build/shims.ts";
 
 /** A fully-populated fake toolchain — resolveConfig never spawns any of these. */
 function mockToolchain(overrides: Partial<Toolchain> = {}): Toolchain {
@@ -229,7 +225,9 @@ describe.skipIf(isMacOS)("macOS cross-compile config (non-darwin host)", () => {
     );
     expect(withRustLld.ld).toBe(rustLld);
     expect(computeFlags(withRustLld).ldflags).not.toContain("-Wl,--compress-debug-sections=zlib");
-    expect(elfDebugCompressPostlinkCommand(withRustLld)).toContain("--compress-debug-sections=zlib $out");
+    expect(postlinkCommands(withRustLld, "bun-profile").map(c => c.argv.slice(1))).toEqual([
+      ["--compress-debug-sections=zlib", "bun-profile"],
+    ]);
 
     // System lld (no swap): compress at link time, no postlink pass.
     const systemLld = resolveConfig(
@@ -238,7 +236,7 @@ describe.skipIf(isMacOS)("macOS cross-compile config (non-darwin host)", () => {
     );
     expect(systemLld.ld).toBe("/fake/llvm/bin/ld.lld");
     expect(computeFlags(systemLld).ldflags).toContain("-Wl,--compress-debug-sections=zlib");
-    expect(elfDebugCompressPostlinkCommand(systemLld)).toBe("");
+    expect(postlinkCommands(systemLld, "bun-profile")).toEqual([]);
   });
 
   test("linux configs don't pick up darwin cross machinery", () => {

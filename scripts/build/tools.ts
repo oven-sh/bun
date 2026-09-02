@@ -466,7 +466,7 @@ export function resolveLlvmToolchain(
     }
   }
 
-  // Host compiler for build-time codegen tools (dep_host_cc) and host-side
+  // Host compiler for build-time codegen tools (host_cc) and host-side
   // cargo artifacts (.cargo/config.toml linker for the host triple). Normally
   // the same as cc/cxx, but when cross-compiling for windows from a unix
   // host, cc/cxx are clang-cl (which defaults to a *-windows-msvc triple,

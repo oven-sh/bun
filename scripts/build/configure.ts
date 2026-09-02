@@ -95,6 +95,8 @@ export function resolveToolchain(targetOs?: OS): Toolchain {
 export interface ConfigureResult {
   cfg: Config;
   output: BunOutput;
+  /** The assembled graph. build.ninja is its serialization; executor.ts runs it directly. */
+  graph: Ninja;
   /** Build.ninja absolute path. */
   ninjaFile: string;
   /** Env vars the caller should set before spawning ninja. */
@@ -361,5 +363,5 @@ export async function configure(input: ConfigureInput): Promise<ConfigureResult>
   const elapsed = Math.round(performance.now() - start);
   const exe = bunExeName(cfg) + (shouldStrip(cfg) ? " → bun (stripped)" : "");
 
-  return { cfg, output, ninjaFile, env: ccacheEnv(cfg), elapsed, changed, exe };
+  return { cfg, output, graph: n, ninjaFile, env: ccacheEnv(cfg), elapsed, changed, exe };
 }

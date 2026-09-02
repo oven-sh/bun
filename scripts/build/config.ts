@@ -190,7 +190,7 @@ export interface Config {
   cc: string;
   cxx: string;
   /**
-   * Compiler for build-time host tools (dep_host_cc codegen helpers).
+   * Compiler for build-time host tools (host_cc codegen helpers).
    * Same as `cc` except when cross-compiling for windows from a unix host,
    * where `cc` is clang-cl (emits COFF) and host tools need plain clang.
    */

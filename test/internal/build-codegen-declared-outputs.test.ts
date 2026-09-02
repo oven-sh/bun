@@ -24,7 +24,6 @@ import { readdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { emitBindgen, emitBindgenV2, registerCodegenRules, type CodegenOutputs } from "../../scripts/build/codegen.ts";
-import { registerDirStamps } from "../../scripts/build/compile.ts";
 import { resolveConfig, type Config, type Toolchain } from "../../scripts/build/config.ts";
 import { Ninja } from "../../scripts/build/ninja.ts";
 import type { Sources } from "../../scripts/glob-sources.ts";
@@ -82,7 +81,6 @@ function configure(buildDir: string): Configured {
     mockToolchain(),
   );
   const n = new Ninja({ buildDir });
-  registerDirStamps(n, cfg);
   registerCodegenRules(n, cfg);
   const o: CodegenOutputs = {
     all: [],

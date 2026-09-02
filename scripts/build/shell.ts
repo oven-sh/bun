@@ -63,6 +63,29 @@ export function quote(arg: string, windows: boolean): string {
 }
 
 /**
+ * Quote one argv entry for a Windows command line that CreateProcess hands
+ * to the program unchanged (no cmd.exe in between): CommandLineToArgvW rules,
+ * so `"` becomes `\"` and the backslashes before a quote are doubled. This is
+ * what ninja does for `$in`/`$out` on Windows. Safe characters pass through.
+ */
+export function quoteWin32Argv(arg: string): string {
+  if (/^[A-Za-z0-9_@%+=:,./\\\-]+$/.test(arg)) return arg;
+  let out = '"';
+  let backslashes = 0;
+  for (const ch of arg) {
+    if (ch === "\\") {
+      backslashes++;
+      out += ch;
+      continue;
+    }
+    if (ch === '"') out += "\\".repeat(backslashes) + '\\"';
+    else out += ch;
+    backslashes = 0;
+  }
+  return out + "\\".repeat(backslashes) + '"';
+}
+
+/**
  * Quote an array of arguments and join with spaces.
  *
  * Convenience for the common "I have argv[] and want a shell command string"

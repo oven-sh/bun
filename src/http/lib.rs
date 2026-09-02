@@ -635,6 +635,7 @@ use core::ptr::NonNull;
 /// HTTP thread can re-resolve `HTTPClient::http_proxy` per redirect hop.
 /// curl / Node's undici `EnvHttpProxyAgent` both re-run the no_proxy match
 /// and the http/https proxy choice against each redirected URL.
+#[derive(Clone)]
 pub struct ProxySettings {
     http_proxy: Box<[u8]>,
     https_proxy: Box<[u8]>,

@@ -1442,6 +1442,9 @@ impl ValkeyClient {
         checked_command.meta = command.meta.check(command);
 
         let mut promise = command::Promise::create(global_this, checked_command.meta);
+        if bun_telemetry::enabled(bun_telemetry::Instrument::Redis) {
+            promise.otel_begin(global_this, &checked_command, &self.address, self.database);
+        }
 
         let js_promise: *mut JSPromise = std::ptr::from_mut::<JSPromise>(promise.promise.get());
         if let Some(message) = self.send_rejection() {

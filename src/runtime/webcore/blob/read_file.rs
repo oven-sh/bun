@@ -67,6 +67,7 @@ pub struct NewReadFileHandler<'a, F: ReadFileToJs> {
     pub(crate) context: Blob,
     pub(crate) promise: JSPromiseStrong,
     pub global_this: &'a JSGlobalObject,
+    pub(crate) otel: bun_telemetry::SpanStub,
     _f: PhantomData<F>,
 }
 
@@ -76,8 +77,21 @@ impl<'a, F: ReadFileToJs> NewReadFileHandler<'a, F> {
             context,
             promise: JSPromiseStrong::default(),
             global_this,
+            otel: crate::telemetry::start_leaf(global_this, bun_telemetry::Instrument::Fs),
             _f: PhantomData,
         }
+    }
+}
+
+fn blob_path(blob: &Blob) -> Option<Vec<u8>> {
+    let store = blob.store.get();
+    let store = store.as_ref()?;
+    if store.data.tag() != super::store::DataTag::File {
+        return None;
+    }
+    match &store.data.as_file().pathlike {
+        bun_jsc::node_path::PathOrFileDescriptor::Path(p) => Some(p.slice().to_vec()),
+        bun_jsc::node_path::PathOrFileDescriptor::Fd(_) => None,
     }
 }
 
@@ -109,7 +123,31 @@ impl<'a, F: ReadFileToJs> ReadFileCompletion for NewReadFileHandler<'a, F> {
         let promise: *mut jsc::JSPromise = handler.promise.swap();
         let blob = core::mem::take(&mut handler.context);
         let global_this = handler.global_this;
+        let otel = handler.otel;
         drop(handler);
+        if otel.is_some() {
+            let path = blob_path(&blob);
+            let (code, msg) = match &maybe_bytes {
+                ReadFileResultType::Err(e) => (e.code.to_utf8(), e.message.to_utf8()),
+                ReadFileResultType::Result(_) => Default::default(),
+            };
+            crate::telemetry::end_leaf(
+                global_this,
+                bun_telemetry::Instrument::Fs,
+                &otel,
+                b"fs.read",
+                bun_telemetry::SpanKind::Internal,
+                |w| {
+                    if let Some(p) = &path {
+                        w.attr_opt("file.path", p);
+                    }
+                    if !code.is_empty() || !msg.is_empty() {
+                        w.attr_opt("error.type", &code);
+                        w.status(bun_telemetry::StatusCode::Error, &msg);
+                    }
+                },
+            );
+        }
         match maybe_bytes {
             ReadFileResultType::Result(result) => {
                 let bytes = result.buf;

@@ -648,6 +648,8 @@ mod _async_tasks {
         pub(crate) result: Maybe<R>,
         pub(crate) r#ref: KeepAlive,
         pub(crate) tracker: AsyncTaskTracker,
+        pub(crate) otel: bun_telemetry::SpanStub,
+        pub(crate) otel_end_ns: u64,
     }
 
     #[cfg(windows)]
@@ -682,6 +684,8 @@ mod _async_tasks {
                 req: bun_core::ffi::zeroed(),
                 r#ref: KeepAlive::default(),
                 tracker: AsyncTaskTracker::init(vm),
+                otel: crate::telemetry::start_leaf(global_object, bun_telemetry::Instrument::Fs),
+                otel_end_ns: 0,
             });
             // Transfer ownership to libuv: the box outlives the async request and is
             // reclaimed in `destroy()` (run_from_js_thread → scopeguard). `heap::release`
@@ -912,6 +916,9 @@ mod _async_tasks {
             // `this: &mut Self` is live, re-deriving through the raw `req` would create a
             // second overlapping `&mut` (Stacked-Borrows UB). Go through `this.req` instead.
             this.result = NodeFS::uv_dispatch::<R, A, F>(&mut node_fs, &this.args, this.req.result);
+            if this.otel.is_some() {
+                this.otel_end_ns = bun_telemetry::clock::now_unix_nanos();
+            }
             let this_ptr: *mut Self = this;
             this.global_object()
                 .bun_vm()
@@ -933,6 +940,9 @@ mod _async_tasks {
             let rc = this.req.result;
             this.result =
                 NodeFS::uv_dispatch_req::<R, A, F>(&mut node_fs, &this.args, &mut this.req, rc);
+            if this.otel.is_some() {
+                this.otel_end_ns = bun_telemetry::clock::now_unix_nanos();
+            }
             let this_ptr: *mut Self = this;
             this.global_object()
                 .bun_vm()
@@ -947,6 +957,16 @@ mod _async_tasks {
             // Move `result` out so the `global_object()` `&self` borrow can coexist
             // with consuming it below; the sentinel left behind is dropped in `destroy()`.
             let result = core::mem::replace(&mut self.result, Err(sys::Error::default()));
+            if self.otel.is_some() {
+                crate::telemetry::fs::end(
+                    self.global_object(),
+                    &self.otel,
+                    F.otel_name(false),
+                    self.args.path(),
+                    result.as_ref().err(),
+                    self.otel_end_ns,
+                );
+            }
             let global_object = self.global_object();
             let success = matches!(result, Ok(_));
             let promise_value = self.promise.value();
@@ -1013,10 +1033,14 @@ mod _async_tasks {
         fn signal(&self) -> Option<&AbortSignal> {
             None
         }
+        /// The primary path argument (`file.path` on the span).
+        fn path(&self) -> Option<&[u8]> {
+            None
+        }
     }
 
     /// Forward [`FsArgument`] to the inherent `from_js` each `args::*` struct
-    /// already defines.
+    /// already defines; `@path` types also report their `path_slice()`.
     macro_rules! impl_fs_argument {
     ( $( $ty:ty ),+ $(,)? ) => {
         $(
@@ -1027,12 +1051,32 @@ mod _async_tasks {
             #[inline] fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> { <$ty>::from_js(ctx, arguments) }
         } )+
     };
+    ( @path $( $ty:ty ),+ $(,)? ) => {
+        $(
+        // SAFETY: as above.
+        unsafe impl ThreadIsolatedArg for $ty {}
+        impl FsArgument for $ty {
+            #[inline] fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> { <$ty>::from_js(ctx, arguments) }
+            #[inline] fn path(&self) -> Option<&[u8]> { self.path_slice() }
+        } )+
+    };
 }
     impl_fs_argument!(
-        args::Rename<'static>,
-        args::Truncate<'static>,
         args::FdVectorIo,
         args::FTruncate,
+        args::Write<'static>,
+        args::Read,
+        args::Fchown,
+        args::FChmod,
+        args::Fstat,
+        args::Close,
+        args::Futimes,
+        args::FdataSync,
+        args::Fsync,
+    );
+    impl_fs_argument!(@path
+        args::Rename<'static>,
+        args::Truncate<'static>,
         args::Chown<'static>,
         args::Lutimes<'static>,
         args::Chmod<'static>,
@@ -1049,19 +1093,10 @@ mod _async_tasks {
         args::MkdirTemp<'static>,
         args::Readdir<'static>,
         args::Open<'static>,
-        args::Write<'static>,
-        args::Read,
         args::Exists<'static>,
         args::Access<'static>,
         args::CopyFile<'static>,
         args::Cp<'static>,
-        args::Fchown,
-        args::FChmod,
-        args::Fstat,
-        args::Close,
-        args::Futimes,
-        args::FdataSync,
-        args::Fsync,
     );
     // `ReadFile`/`WriteFile` carry an `AbortSignal` field — opt them in so the
     // `const _ = assert!(…::HAVE_ABORT_SIGNAL)` invariants in `async_` hold and
@@ -1082,6 +1117,10 @@ mod _async_tasks {
         fn signal(&self) -> Option<&AbortSignal> {
             self.signal.as_deref()
         }
+        #[inline]
+        fn path(&self) -> Option<&[u8]> {
+            self.path_slice()
+        }
     }
     impl FsArgument for args::WriteFile<'static> {
         const HAVE_ABORT_SIGNAL: bool = true;
@@ -1092,6 +1131,10 @@ mod _async_tasks {
         #[inline]
         fn signal(&self) -> Option<&AbortSignal> {
             self.signal.as_deref()
+        }
+        #[inline]
+        fn path(&self) -> Option<&[u8]> {
+            self.path_slice()
         }
     }
     impl FsArgument for args::AppendFile<'static> {
@@ -1104,6 +1147,10 @@ mod _async_tasks {
         #[inline]
         fn signal(&self) -> Option<&AbortSignal> {
             self.0.signal.as_deref()
+        }
+        #[inline]
+        fn path(&self) -> Option<&[u8]> {
+            self.0.path_slice()
         }
     }
 
@@ -1213,6 +1260,10 @@ mod _async_tasks {
     pub struct AsyncFSTask<R, A, const F: NodeFSFunctionEnum> {
         pub args: ThreadIsolated<A>,
         pub(crate) result: Maybe<R>,
+        pub(crate) otel: bun_telemetry::SpanStub,
+        /// Stamped on the pool thread when the operation finishes, so the
+        /// span does not include the hop back to the JS thread.
+        pub(crate) otel_end_ns: u64,
     }
     // SAFETY: results are plain data / owned buffers / WTF strings built off
     // thread for hand-off (`ret::*`); `ThreadIsolated<A>` is Send by its contract.
@@ -1242,6 +1293,9 @@ mod _async_tasks {
         ) -> Option<bun_jsc::Completion<Self>> {
             let mut node_fs = NodeFS::default();
             this.result = NodeFS::dispatch::<R, A, F>(&mut node_fs, &this.args, Flavor::Async);
+            if this.otel.is_some() {
+                this.otel_end_ns = bun_telemetry::clock::now_unix_nanos();
+            }
             Some(done)
         }
 
@@ -1254,6 +1308,16 @@ mod _async_tasks {
             let _dispatch = js.tracker.dispatch(global_object);
 
             let success = this.result.is_ok();
+            if this.otel.is_some() {
+                crate::telemetry::fs::end(
+                    global_object,
+                    &this.otel,
+                    F.otel_name(false),
+                    this.args.path(),
+                    this.result.as_ref().err(),
+                    this.otel_end_ns,
+                );
+            }
             let promise_value = js.promise.value();
             let promise = js.promise.get();
             let result = match core::mem::replace(&mut this.result, Err(sys::Error::default())) {
@@ -1314,6 +1378,11 @@ mod _async_tasks {
             bun_jsc::Job::<Self>::schedule(
                 &global_object.js_thread(),
                 Self {
+                    otel: crate::telemetry::start_leaf(
+                        global_object,
+                        bun_telemetry::Instrument::Fs,
+                    ),
+                    otel_end_ns: 0,
                     args,
                     // Sentinel — overwritten by `run` before any read. `Maybe<R>`
                     // may be niche-optimised; never construct an all-zero `Result`.
@@ -2607,6 +2676,57 @@ pub use _async_tasks::{
 // cost of instruction cache misses.
 pub mod args {
     use super::*;
+
+    /// `path_slice()`: the struct's primary path argument, for the span's `file.path`.
+    macro_rules! fs_args_path {
+        ($( $ty:ident . $primary:ident ),+ $(,)?) => {
+            $( impl $ty<'_> {
+                #[inline] pub fn path_slice(&self) -> Option<&[u8]> { PathSlice::path_slice(&self.$primary) }
+            } )+
+        };
+    }
+
+    pub(crate) trait PathSlice {
+        fn path_slice(&self) -> Option<&[u8]>;
+    }
+    impl PathSlice for PathLike<'_> {
+        #[inline]
+        fn path_slice(&self) -> Option<&[u8]> {
+            Some(self.slice())
+        }
+    }
+    impl PathSlice for PathOrFileDescriptor<'_> {
+        #[inline]
+        fn path_slice(&self) -> Option<&[u8]> {
+            match self {
+                PathOrFileDescriptor::Path(p) => Some(p.slice()),
+                PathOrFileDescriptor::Fd(_) => None,
+            }
+        }
+    }
+
+    fs_args_path!(
+        Rename.old_path,
+        Truncate.path,
+        Chown.path,
+        Lutimes.path,
+        Chmod.path,
+        StatFS.path,
+        Stat.path,
+        Link.old_path,
+        Symlink.target_path,
+        Readlink.path,
+        Realpath.path,
+        Unlink.path,
+        RmDir.path,
+        Mkdir.path,
+        MkdirTemp.prefix,
+        Readdir.path,
+        Open.path,
+        Access.path,
+        CopyFile.src,
+        Cp.src,
+    );
 
     pub struct Rename<'a> {
         pub(crate) old_path: PathLike<'a>,
@@ -3924,6 +4044,11 @@ pub mod args {
             }
         }
     }
+    impl ReadFile<'_> {
+        pub(crate) fn path_slice(&self) -> Option<&[u8]> {
+            self.path.path_slice()
+        }
+    }
     impl ReadFile<'static> {
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
             // `Drop` on `path` covers every
@@ -3999,6 +4124,11 @@ pub mod args {
             if let Some(signal) = self.signal.take() {
                 signal.pending_activity_unref();
             }
+        }
+    }
+    impl WriteFile<'_> {
+        pub(crate) fn path_slice(&self) -> Option<&[u8]> {
+            self.file.path_slice()
         }
     }
     impl WriteFile<'static> {
@@ -4104,6 +4234,11 @@ pub mod args {
 
     pub struct Exists<'a> {
         pub path: Option<PathLike<'a>>,
+    }
+    impl Exists<'_> {
+        pub(crate) fn path_slice(&self) -> Option<&[u8]> {
+            self.path.as_ref().map(|p| p.slice())
+        }
     }
     impl Exists<'static> {
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
@@ -9807,49 +9942,63 @@ fn zig_delete_tree_min_stack_size_with_kind_hint(
 // ──────────────────────────────────────────────────────────────────────────
 // NodeFSFunctionEnum — one variant per NodeFS method
 // ──────────────────────────────────────────────────────────────────────────
-#[derive(Copy, Clone, PartialEq, Eq, core::marker::ConstParamTy)]
-pub enum NodeFSFunctionEnum {
-    Access,
-    AppendFile,
-    Chmod,
-    Chown,
-    Close,
-    CopyFile,
-    Exists,
-    Fchmod,
-    Fchown,
-    Fdatasync,
-    Fstat,
-    Fsync,
-    Ftruncate,
-    Futimes,
-    Lchmod,
-    Lchown,
-    Link,
-    Lstat,
-    Lutimes,
-    Mkdir,
-    Mkdtemp,
-    Open,
-    Read,
-    Readdir,
-    ReadFile,
-    Readlink,
-    Readv,
-    Realpath,
-    RealpathNonNative,
-    Rename,
-    Rm,
-    Rmdir,
-    Stat,
-    Statfs,
-    Symlink,
-    Truncate,
-    Unlink,
-    Utimes,
-    Write,
-    WriteFile,
-    Writev,
+macro_rules! node_fs_functions {
+    ($($variant:ident => $js_name:literal),* $(,)?) => {
+        #[derive(Copy, Clone, PartialEq, Eq, core::marker::ConstParamTy)]
+        pub enum NodeFSFunctionEnum { $($variant,)* }
+
+        impl NodeFSFunctionEnum {
+            /// `fs.<name>` / `fs.<name>Sync`, for span names.
+            pub const fn otel_name(self, sync: bool) -> &'static str {
+                match self {
+                    $(Self::$variant => if sync { concat!("fs.", $js_name, "Sync") } else { concat!("fs.", $js_name) },)*
+                }
+            }
+        }
+    };
+}
+node_fs_functions! {
+    Access => "access",
+    AppendFile => "appendFile",
+    Chmod => "chmod",
+    Chown => "chown",
+    Close => "close",
+    CopyFile => "copyFile",
+    Exists => "exists",
+    Fchmod => "fchmod",
+    Fchown => "fchown",
+    Fdatasync => "fdatasync",
+    Fstat => "fstat",
+    Fsync => "fsync",
+    Ftruncate => "ftruncate",
+    Futimes => "futimes",
+    Lchmod => "lchmod",
+    Lchown => "lchown",
+    Link => "link",
+    Lstat => "lstat",
+    Lutimes => "lutimes",
+    Mkdir => "mkdir",
+    Mkdtemp => "mkdtemp",
+    Open => "open",
+    Read => "read",
+    Readdir => "readdir",
+    ReadFile => "readFile",
+    Readlink => "readlink",
+    Readv => "readv",
+    Realpath => "realpath",
+    RealpathNonNative => "realpath",
+    Rename => "rename",
+    Rm => "rm",
+    Rmdir => "rmdir",
+    Stat => "stat",
+    Statfs => "statfs",
+    Symlink => "symlink",
+    Truncate => "truncate",
+    Unlink => "unlink",
+    Utimes => "utimes",
+    Write => "write",
+    WriteFile => "writeFile",
+    Writev => "writev",
 }
 
 impl NodeFSFunctionEnum {

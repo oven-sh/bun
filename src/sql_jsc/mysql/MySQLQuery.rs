@@ -458,6 +458,10 @@ impl MySQLQuery {
         true
     }
 
+    pub(crate) fn query_text(&self) -> &BunString {
+        &self.query
+    }
+
     #[inline]
     pub(crate) fn is_completed(&self) -> bool {
         self.status == Status::Success || self.status == Status::Fail

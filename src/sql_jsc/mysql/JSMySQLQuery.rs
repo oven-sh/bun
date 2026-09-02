@@ -6,6 +6,7 @@ use crate::jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSGlobalObjectSqlExt as _, JSValue, JsRef, JsResult,
     VirtualMachine, VirtualMachineSqlExt as _,
 };
+use crate::shared::otel::{DbError, QuerySpan};
 use crate::shared::query_ctor_args::QueryCtorArgs;
 use bun_jsc::JsCell;
 use bun_ptr::{AsCtxPtr, BackRef, ParentRef, RefPtr};
@@ -45,6 +46,7 @@ pub struct JSMySQLQuery {
     vm: BackRef<VirtualMachine>,
     global_object: BackRef<JSGlobalObject>,
     query: JsCell<MySQLQuery>,
+    otel: QuerySpan,
 }
 
 impl JSMySQLQuery {
@@ -66,6 +68,19 @@ impl JSMySQLQuery {
     ) -> JsResult<*mut Self> {
         Err(global_this
             .throw_invalid_arguments(format_args!("MySQLQuery cannot be constructed directly")))
+    }
+
+    /// `error_type` becomes the span's `error.type`.
+    pub(crate) fn otel_end(&self, error_type: Option<&[u8]>) {
+        self.otel.end(
+            self.global_object(),
+            self.query.get().query_text(),
+            error_type.map(|ty| DbError {
+                ty,
+                message: b"",
+                from_server: false,
+            }),
+        );
     }
 
     pub fn finalize(&self) {
@@ -100,6 +115,7 @@ impl JSMySQLQuery {
                 bigint,
                 simple,
             )),
+            otel: QuerySpan::default(),
         }));
         // `heap::into_raw` is `Box::into_raw` — never null. Uniquely owned here
         // until handed to the JS wrapper. R-2: every field is interior-mutable,
@@ -146,7 +162,17 @@ impl JSMySQLQuery {
             return Err(global_object.throw_invalid_argument_type("run", "query", "Query"));
         }
         this.set_target(target);
+        {
+            let conn = connection.connection.get();
+            this.otel.begin(
+                global_object,
+                bun_telemetry::db::System::MySql,
+                &conn.address,
+                conn.database_name(),
+            );
+        }
         if let Err(err) = this.run(connection) {
+            this.otel_end(Some(<&'static str>::from(&err).as_bytes()));
             if !global_object.has_exception() {
                 return Err(global_object.throw_value(mysql_error_to_js(
                     global_object,
@@ -221,6 +247,9 @@ impl JSMySQLQuery {
         // allocation outlives the closure body.
         let _guard = self.ref_guard();
         let is_last_result = result.is_last_result;
+        if is_last_result {
+            self.otel_end(None);
+        }
         // R-2: `&Self` is `Copy`; the guard captures it by value and runs on
         // every exit path (defer). All mutation is `JsCell`-backed.
         let _downgrade = scopeguard::guard(self, move |s| {
@@ -289,6 +318,7 @@ impl JSMySQLQuery {
         // Attention: we cannot touch JS here
         // If you need to touch JS, you wanna to use reject or reject_with_js_value instead
         let _guard = self.ref_guard();
+        self.otel_end(Some(b"ConnectionClosed"));
         if self.this_value.get().is_not_empty() {
             self.this_value.with_mut(|v| v.downgrade());
         }
@@ -309,6 +339,8 @@ impl JSMySQLQuery {
         // `ref_guard` brackets re-entry; drops *after* `_downgrade` so the
         // allocation outlives the closure body.
         let _guard = self.ref_guard();
+        self.otel
+            .end_with_js_error(self.global_object(), self.query.get().query_text(), err);
         // R-2: `&Self` is `Copy`; the guard captures it by value and runs on
         // every exit path (defer). All mutation is `JsCell`-backed.
         let _downgrade = scopeguard::guard(self, |s| {

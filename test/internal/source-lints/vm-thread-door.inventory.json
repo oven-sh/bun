@@ -212,6 +212,17 @@
   "src/runtime/shell/interpreter.rs": {
     "WorkPool::schedule*": 1
   },
+  "src/runtime/telemetry/exporter.rs": {
+    "HTTPThread::schedule": 1,
+    "unsafe impl Send": [
+      "JsExporter",
+      "OtlpHttpExporter"
+    ],
+    "unsafe impl Sync": [
+      "JsExporter",
+      "OtlpHttpExporter"
+    ]
+  },
   "src/runtime/webcore/Blob.rs": {
     "WorkPool::schedule*": 1
   },

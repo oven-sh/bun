@@ -32,6 +32,7 @@ use bun_ptr::RefPtr;
 use bun_resolver::fs::FileSystem;
 use bun_standalone_graph::StandaloneModuleGraph;
 use bun_sys as sys;
+use bun_telemetry::http_record::Termination;
 use bun_url::URL;
 use bun_uws::{self as uws, AnyWebSocket, ResponseKind, WebSocketUpgradeContext};
 use bun_uws_sys as uws_sys;
@@ -112,6 +113,8 @@ trait RequestCtxOps: RequestCtx {
     fn render_missing(&self);
     fn to_async(&self, req: &mut Self::Req, request_object: &mut Request);
     fn ctx_method(&self) -> http::Method;
+    fn otel_begin(&self, global: &JSGlobalObject) -> Option<crate::telemetry::Entered>;
+    fn otel_set_route(&self, route: &[u8]);
     fn set_defer_deinit(&self, flag: Option<DeferDeinitFlag>);
     fn set_request_body(&self, body: Option<crate::webcore::body::BodyHiveHandle>);
     #[allow(
@@ -188,6 +191,14 @@ where
     #[inline]
     fn ctx_method(&self) -> http::Method {
         self.method
+    }
+    #[inline]
+    fn otel_begin(&self, global: &JSGlobalObject) -> Option<crate::telemetry::Entered> {
+        Self::otel_begin(self, global)
+    }
+    #[inline]
+    fn otel_set_route(&self, route: &[u8]) {
+        Self::otel_set_route(self, route)
     }
     #[inline]
     fn set_defer_deinit(&self, flag: Option<DeferDeinitFlag>) {
@@ -1247,6 +1258,7 @@ pub(crate) struct PreparedRequestFor<Ctx> {
     pub(crate) js_request: JSValue,
     pub(crate) request_object: *mut Request,
     pub ctx: *mut Ctx,
+    pub(crate) otel: Option<crate::telemetry::Entered>,
 }
 
 // `WebSocketUpgradeServer<SSL>` so `ServerWebSocket::behavior::<Self, SSL>` and
@@ -1896,11 +1908,10 @@ where
         // answered with an HTTP error and a |Sec-WebSocket-Version| header
         // listing the versions the server understands.
         if sec_websocket_version.slice() != b"13" {
-            resp.write_status(b"426 Upgrade Required");
-            resp.write_header(b"Sec-WebSocket-Version", b"13");
             // SAFETY: upgrader_ptr is live (ref_() above)
             let upgrader = unsafe { &*upgrader_ptr };
-            upgrader.flags.set_has_written_status(true);
+            upgrader.write_status(426);
+            resp.write_header(b"Sec-WebSocket-Version", b"13");
             upgrader.end_without_body(true);
             return Ok(JSValue::FALSE);
         }
@@ -2046,6 +2057,12 @@ where
         // on_abort nor an end path can reclaim a parked handler promise's
         // claim later. Reclaim it here.
         upgrader.reclaim_promise_cell();
+        // The HTTP exchange is complete once the 101 is written; end the
+        // request span now rather than when the pooled context is recycled.
+        let span = upgrader.otel_span.replace(bun_telemetry::NativeSpan::NONE);
+        if span.is_some() {
+            crate::telemetry::server::end(global, span, 101, Termination::Completed);
+        }
         upgrader.deref();
 
         resp.upgrade(
@@ -2669,12 +2686,41 @@ where
     }
 
     pub(super) fn on_mux_404<R: RespLike>(
-        _this: &mut Self,
-        _req: &mut uws::H3::Request,
+        this: &mut Self,
+        req: &mut uws::H3::Request,
         resp: &mut R,
     ) {
+        let span = Self::otel_fallback_begin(
+            this,
+            &uws::AnyRequest::H3(std::ptr::from_mut(req)),
+            resp.to_any_response(),
+        );
         resp.write_status(b"404 Not Found");
         resp.end_without_body(false);
+        if let Some(span) = span {
+            crate::telemetry::server::end(
+                this.global_this(),
+                span,
+                404,
+                bun_telemetry::http_record::Termination::Completed,
+            );
+        }
+    }
+
+    /// A request no route and no `fetch` handler takes (Bun answers 404 itself):
+    /// it still gets a `bun.http.server` span, named by method only.
+    #[inline]
+    pub(super) fn otel_fallback_begin(
+        this: &Self,
+        req: &uws::AnyRequest,
+        resp: uws::AnyResponse,
+    ) -> Option<bun_telemetry::NativeSpan> {
+        if !bun_telemetry::enabled(bun_telemetry::Instrument::HttpServer) {
+            return None;
+        }
+        let (span, entered) = crate::telemetry::server::begin(this.global_this(), req, resp, SSL)?;
+        drop(entered);
+        Some(span)
     }
 
     #[bun_jsc::host_fn(method)]
@@ -2773,6 +2819,10 @@ where
         ) else {
             return;
         };
+        if prepared.otel.is_some() {
+            // SAFETY: `prepared.ctx` is live for this frame.
+            RequestCtxOps::otel_set_route(unsafe { &*prepared.ctx }, &user_route.route.path);
+        }
 
         let _entered = server_ref.vm().enter_event_loop_scope_without_checkpoint();
         let server_request_list = Self::js_route_list_get_cached(server_js).unwrap();
@@ -3148,6 +3198,8 @@ where
             },
             request_object: request_object_ptr,
             ctx: ctx_slot,
+            // SAFETY: `ctx_slot` was fully initialised by `create_in` above.
+            otel: RequestCtxOps::otel_begin(unsafe { &*ctx_slot }, &server.global()),
         })
     }
 
@@ -3331,6 +3383,7 @@ where
         // SAFETY: `request_object_ptr` is live; no other borrow is outstanding.
         let args = [unsafe { (*request_object_ptr).to_js(&global) }, server_js];
         args[0].ensure_still_alive();
+        let _otel = ctx.otel_begin(&global);
 
         let response_value = match this.config.on_request.call(&global, server_js, &args) {
             Ok(v) => v,

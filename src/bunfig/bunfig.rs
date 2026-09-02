@@ -378,6 +378,55 @@ impl<'a> Parser<'a> {
             self.load_env_config(&env_expr)?;
         }
 
+        if matches!(
+            cmd,
+            CommandTag::RunCommand | CommandTag::AutoCommand | CommandTag::TestCommand
+        ) {
+            // [otel] — native OpenTelemetry (Bun.otel). OTEL_* environment variables override.
+            if let Some(expr) = json.get(b"otel") {
+                self.expect(&expr, ExprTag::EObject)?;
+                // The table's presence turns tracing on unless it says `enabled = false`.
+                let mut cfg = bun_telemetry_cold::config::Bunfig {
+                    enabled: Some(true),
+                    ..Default::default()
+                };
+                if let Some(e) = expr.get(b"enabled") {
+                    self.expect(&e, ExprTag::EBoolean)?;
+                    cfg.enabled = e.as_bool();
+                }
+                if let Some(e) = expr.get(b"endpoint") {
+                    self.expect(&e, ExprTag::EString)?;
+                    cfg.endpoint = e
+                        .as_string(self.bump)
+                        .map(|s| bstr::ByteSlice::to_str_lossy(s).into_owned());
+                }
+                if let Some(e) = expr.get(b"serviceName") {
+                    self.expect(&e, ExprTag::EString)?;
+                    cfg.service_name = e
+                        .as_string(self.bump)
+                        .map(|s| bstr::ByteSlice::to_str_lossy(s).into_owned());
+                }
+                if let Some(h) = expr.get(b"headers") {
+                    self.expect(&h, ExprTag::EObject)?;
+                    let obj = h.data.e_object().expect("infallible: type checked");
+                    for prop in obj.properties.slice() {
+                        let (Some(k), Some(v)) = (prop.key.as_ref(), prop.value.as_ref()) else {
+                            continue;
+                        };
+                        self.expect_string(v)?;
+                        if let (Some(k), Some(v)) = (k.as_string(self.bump), v.as_string(self.bump))
+                        {
+                            cfg.headers.push((
+                                bstr::ByteSlice::to_str_lossy(k).into_owned(),
+                                bstr::ByteSlice::to_str_lossy(v).into_owned(),
+                            ));
+                        }
+                    }
+                }
+                bun_telemetry_cold::config::set_bunfig(cfg);
+            }
+        }
+
         if cmd == CommandTag::RunCommand || cmd == CommandTag::AutoCommand {
             if let Some(expr) = json.get(b"serve") {
                 if let Some(port) = expr.get(b"port") {

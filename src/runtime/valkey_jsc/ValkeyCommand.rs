@@ -183,12 +183,116 @@ fn is_subscription_command(name: &[u8]) -> bool {
 pub struct Promise {
     pub(crate) meta: Meta,
     pub(crate) promise: jsc::JSPromiseStrong,
+    /// Native OpenTelemetry client span for this command; `None` when off.
+    pub(crate) otel: bun_telemetry::NativeSpan,
+}
+
+impl Drop for Promise {
+    fn drop(&mut self) {
+        // Dropped without resolve/reject (client torn down with the command
+        // still queued): the command never got a reply, so no span for it.
+        if self.otel.is_some() {
+            crate::telemetry::discard_native(
+                jsc::virtual_machine::VirtualMachine::get().global(),
+                core::mem::take(&mut self.otel),
+            );
+        }
+    }
 }
 
 impl Promise {
     pub(crate) fn create(global_object: &JSGlobalObject, meta: Meta) -> Promise {
         let promise = jsc::JSPromiseStrong::init(global_object);
-        Promise { meta, promise }
+        Promise {
+            meta,
+            promise,
+            otel: bun_telemetry::NativeSpan::NONE,
+        }
+    }
+
+    /// `db.query.text` is the command plus its first argument (the key, for
+    /// most commands) — never values.
+    pub(crate) fn otel_begin(
+        &mut self,
+        global_object: &JSGlobalObject,
+        command: &Command<'_>,
+        address: &super::valkey::Address,
+        database: u32,
+    ) {
+        use super::valkey::Address;
+        let mut dbbuf = bun_core::fmt::ItoaBuf::new();
+        let (host, port): (&[u8], u16) = match address {
+            Address::Unix(path) => (path, 0),
+            Address::Host { host, port } => (host, *port),
+        };
+        let span = bun_telemetry::db::begin(
+            global_object.as_ptr().cast(),
+            bun_telemetry::db::System::Redis,
+            &bun_telemetry::db::ConnectionInfo {
+                host,
+                port,
+                // semconv redis: the SELECT index, 0 included.
+                namespace: bun_core::fmt::itoa(&mut dbbuf, database),
+            },
+        );
+        if !span.is_some() {
+            return;
+        }
+        self.otel = span;
+        let Some(mut local) = crate::telemetry::local(global_object) else {
+            return;
+        };
+        bun_telemetry::pool::with(&mut local.pool, span, |s| {
+            let mut upper = [0u8; 24];
+            let n = command.command.len().min(upper.len());
+            for (dst, c) in upper.iter_mut().zip(&command.command[..n]) {
+                *dst = c.to_ascii_uppercase();
+            }
+            let name = &upper[..n];
+            // semconv `{operation} {target}`: begin() named the span by its target.
+            // prefix in place: the slot's name buffer is reused across spans
+            s.name
+                .splice(0..0, name.iter().copied().chain(core::iter::once(b' ')));
+            let limits = crate::telemetry::span::limits();
+            s.push_attribute(
+                b"db.operation.name",
+                &bun_telemetry::Value::Str(name),
+                limits,
+            );
+            let credential_bearing =
+                matches!(name, b"AUTH" | b"HELLO" | b"MIGRATE" | b"ACL" | b"CONFIG");
+            if credential_bearing || !bun_telemetry::capture_db_statement() {
+                return;
+            }
+            let first: &[u8] = match &command.args {
+                Args::Slices(a) => a.first().map_or(b"", |s| s.slice()),
+                Args::Args(a) => a.first().map_or(b"", |s| s.slice()),
+                Args::Raw(a) => a.first().copied().unwrap_or(b""),
+            };
+            let first = bun_telemetry::otlp::truncate_utf8(first, 256);
+            let mut text = Vec::with_capacity(n + 1 + first.len() + 4);
+            text.extend_from_slice(name);
+            if !first.is_empty() {
+                text.push(b' ');
+                text.extend_from_slice(first);
+                if command.args.len() > 1 {
+                    text.extend_from_slice(b" ...");
+                }
+            }
+            s.push_attribute(b"db.query.text", &bun_telemetry::Value::Str(&text), limits);
+        });
+    }
+
+    /// First call wins. Name and `db.operation.name` were set at begin.
+    fn otel_end(
+        &mut self,
+        global_object: &JSGlobalObject,
+        error: Option<bun_telemetry::db::DbError<'_>>,
+    ) {
+        let span = core::mem::take(&mut self.otel);
+        if span.is_some() {
+            bun_telemetry::db::end(global_object.as_ptr().cast(), span, b"", error);
+        }
     }
 
     pub(crate) fn resolve(
@@ -200,6 +304,17 @@ impl Promise {
             return_as_buffer: self.meta.contains(Meta::RETURN_AS_BUFFER),
         };
 
+        self.otel_end(
+            global_object,
+            match value {
+                protocol::RESPValue::Error(e) => Some(bun_telemetry::db::DbError {
+                    ty: &e[..bun_core::strings::index_of_char_usize(e, b' ').unwrap_or(e.len())],
+                    message: e,
+                    from_server: true,
+                }),
+                _ => None,
+            },
+        );
         let js_value = match resp_value_to_js_with_options(value, global_object, options) {
             Ok(v) => v,
             Err(err) => {
@@ -216,6 +331,35 @@ impl Promise {
         global_object: &JSGlobalObject,
         jsvalue: JsResult<JSValue>,
     ) -> JsResult<()> {
+        if self.otel.is_some() {
+            // Describing the error must not stand between it and the promise:
+            // a failed `code` read counts as no code (a termination surfaces
+            // from `promise.reject` below).
+            let code = match &jsvalue {
+                Ok(v) if v.is_object() => {
+                    let read = v.get(global_object, "code").and_then(|c| match c {
+                        Some(c) if c.is_string() => c.to_utf8(global_object).map(Some),
+                        _ => Ok(None),
+                    });
+                    match read {
+                        Ok(c) => c,
+                        Err(_) => {
+                            global_object.clear_exception_except_termination();
+                            None
+                        }
+                    }
+                }
+                _ => None,
+            };
+            self.otel_end(
+                global_object,
+                Some(bun_telemetry::db::DbError {
+                    ty: code.as_ref().map_or(b"_OTHER", |c| c.slice()),
+                    message: b"",
+                    from_server: false,
+                }),
+            );
+        }
         self.promise.reject(global_object, jsvalue)?;
         Ok(())
     }

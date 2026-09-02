@@ -277,6 +277,45 @@ impl Headers {
             .unwrap_or_else(|_| bun_alloc::out_of_memory());
     }
 
+    /// Replace the value of the first `name` header (appending it if absent).
+    pub fn set(&mut self, name: &[u8], value: &[u8]) {
+        let idx = {
+            let entries = self.entries.slice();
+            entries
+                .items_name()
+                .iter()
+                .position(|n| strings::eql_case_insensitive_ascii(self.as_str(*n), name, true))
+        };
+        let Some(i) = idx else {
+            return self.append(name, value);
+        };
+        let offset = u32::try_from(self.buf.len()).unwrap();
+        self.buf.extend_from_slice(value);
+        self.entries.items_mut::<"value", StringPointer>()[i] = StringPointer {
+            offset,
+            length: u32::try_from(value.len()).unwrap(),
+        };
+    }
+
+    /// Remove every `name` header.
+    pub fn remove(&mut self, name: &[u8]) {
+        loop {
+            let idx = {
+                let entries = self.entries.slice();
+                entries
+                    .items_name()
+                    .iter()
+                    .position(|n| strings::eql_case_insensitive_ascii(self.as_str(*n), name, true))
+            };
+            match idx {
+                Some(i) => {
+                    self.entries.ordered_remove(i);
+                }
+                None => return,
+            }
+        }
+    }
+
     pub fn get_content_disposition(&self) -> Option<&[u8]> {
         self.get(b"content-disposition")
     }

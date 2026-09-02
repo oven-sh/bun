@@ -133,6 +133,15 @@ impl Default for InitOptions {
     }
 }
 
+/// Flush native telemetry before the process image is replaced or exits
+/// without `on_exit` (watch-mode execve, `bun test --bail`). See
+/// [`RuntimeHooks::telemetry_flush_at_exit`].
+pub fn telemetry_flush_now(vm: Option<&mut VirtualMachine>, reload: bool) {
+    if let Some(h) = runtime_hooks() {
+        (h.telemetry_flush_at_exit)(vm, reload);
+    }
+}
+
 pub struct VirtualMachine {
     pub global: *mut JSGlobalObject,
     // allocator dropped per §Allocators (global mimalloc)
@@ -1817,6 +1826,11 @@ impl VirtualMachine {
 
         ExitHandler::dispatch_on_exit(self);
 
+        // Native telemetry: flush this VM's spans (and on the main thread drain
+        // the exporters) on every way out — process.exit() and fatal errors
+        // skip the cleanup-hook list below on the main thread.
+        telemetry_flush_now(Some(self), false);
+
         // process.exit() never reaches drain_microtasks; flush AutoFlusher sinks here.
         if !self.is_inside_deferred_task_queue.get() {
             self.is_inside_deferred_task_queue.set(true);
@@ -1876,6 +1890,10 @@ impl VirtualMachine {
 
     pub fn global_exit(&mut self) -> ! {
         debug_assert!(self.is_shutting_down());
+        if !self.has_run_cleanup_hooks {
+            // Left without on_exit (e.g. `bun test --bail`).
+            telemetry_flush_now(Some(self), false);
+        }
         // FIXME: we should be doing this, but we're not, but unfortunately
         // doing it causes like 50+ tests to break
         // self.event_loop().tick();
@@ -2217,6 +2235,9 @@ pub struct RuntimeHooks {
         unsafe fn(vm: *mut VirtualMachine) -> crate::CrateResult<*mut JSInternalPromise>,
     /// `ensureDebugger(block_until_connected)` — no-op when no debugger.
     pub ensure_debugger: unsafe fn(vm: *mut VirtualMachine, block_until_connected: bool),
+    /// Runs on the JS thread right before the entry point (main, worker or
+    /// `-e`) is loaded; used to initialise env-configured telemetry.
+    pub before_entry_point: unsafe fn(vm: *mut VirtualMachine),
     /// `eventLoop().autoTick()` — needs `Timer::All` for the timeout calc.
     /// Hoisted here so `event_loop.rs` doesn't need its own hook table.
     pub auto_tick: unsafe fn(vm: *mut VirtualMachine),
@@ -2374,6 +2395,12 @@ pub struct RuntimeHooks {
     /// # Safety
     /// JS thread; `runtime_state` installed.
     pub close_timer_loop_handles_after_vm_destroyed: unsafe fn(vm: *mut VirtualMachine),
+    /// Native OpenTelemetry: flush `vm`'s spans (and on the main thread drain
+    /// the exporters). Run from [`VirtualMachine::on_exit`] on every exit
+    /// path, and with `reload = true` (bounded to ~1 s so a dead collector
+    /// cannot stall the dev loop) before `--watch` re-execs. `vm` is None off
+    /// the JS thread. A no-op until tracing was configured.
+    pub telemetry_flush_at_exit: fn(vm: Option<&mut VirtualMachine>, reload: bool),
 }
 
 /// Canonical `EventLoopCtx` vtable for a `*mut VirtualMachine` owner — the JS
@@ -2853,6 +2880,10 @@ impl VirtualMachine {
 
         let hooks = runtime_hooks();
         let _ = self.ensure_debugger(true);
+        if let Some(h) = hooks {
+            // SAFETY: hook contract — `self` is the live per-thread VM.
+            unsafe { (h.before_entry_point)(self) };
+        }
 
         // Node.js `--trace-*` and `--stack-trace-limit` flags need
         // `internal/process/pre_execution` to run before any user code.
@@ -3971,6 +4002,7 @@ impl VirtualMachine {
             // execve will not reach on_exit; flush the compile cache here like
             // node's child does via AtExit(FlushCompileCache) on every restart.
             crate::node_compile_cache::persist_now();
+            telemetry_flush_now(Some(self), true);
             bun_core::Output::flush();
             bun_core::reload_process(should_clear_terminal, false);
         }
@@ -4961,6 +4993,10 @@ impl VirtualMachine {
         self.event_loop_mut().ensure_waker();
 
         let _ = self.ensure_debugger(true);
+        if let Some(h) = runtime_hooks() {
+            // SAFETY: hook contract — `self` is the live per-thread VM.
+            unsafe { (h.before_entry_point)(self) };
+        }
 
         if !self.transpiler.options.disable_transpilation {
             if let Some(hooks) = runtime_hooks() {

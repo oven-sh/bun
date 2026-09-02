@@ -155,6 +155,7 @@ pub(crate) fn new_detached_socket(global: &JSGlobalObject, frame: &CallFrame) ->
             native_callback: JsCell::new(NativeCallbacks::None),
             twin: JsCell::new(None),
             verify_error: JsCell::new(None),
+            otel_connect: core::cell::Cell::new(bun_telemetry::SpanStub::NONE),
         });
         socket.get_this_value(global)
     }

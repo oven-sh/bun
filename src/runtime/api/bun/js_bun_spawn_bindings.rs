@@ -1154,11 +1154,34 @@ fn spawn_maybe_sync(
         ..Default::default()
     };
 
+    let otel_stub =
+        crate::telemetry::start_leaf(global_this, bun_telemetry::Instrument::ChildProcess);
+    // process.executable.name is the resolved executable, not a pretend `argv0`.
+    let otel_cmd = otel_stub
+        .is_some()
+        .then(|| crate::telemetry::spawn::SpawnedCommand {
+            // SAFETY: both pointers are NUL-terminated strings kept alive in `cstr_storage` for this call.
+            exe: bun_paths::basename(
+                unsafe { core::ffi::CStr::from_ptr(argv0.unwrap_or(argv[0])) }.to_bytes(),
+            ),
+            argc: argv.iter().take_while(|p| !p.is_null()).count(),
+        });
     // SAFETY: `argv`/`env_array` are local null-terminated C-string arrays
     // with argv[0] non-null; valid for this call.
-    let mut spawned = match unsafe {
-        spawn::spawn_process(&spawn_options, argv.as_ptr(), env_array.as_ptr())
-    } {
+    let spawn_result =
+        unsafe { spawn::spawn_process(&spawn_options, argv.as_ptr(), env_array.as_ptr()) };
+    if let Some(cmd) = &otel_cmd {
+        match &spawn_result {
+            Err(err) => {
+                crate::telemetry::spawn::failed(global_this, &otel_stub, cmd, err.name().as_bytes())
+            }
+            Ok(Err(err)) => {
+                crate::telemetry::spawn::failed(global_this, &otel_stub, cmd, err.name())
+            }
+            Ok(Ok(_)) => {}
+        }
+    }
+    let mut spawned = match spawn_result {
         Err(err)
             if err == bun_spawn::Error::Sys(bun_errno::SystemErrno::EMFILE)
                 || err == bun_spawn::Error::Sys(bun_errno::SystemErrno::ENFILE) =>
@@ -1254,6 +1277,12 @@ fn spawn_maybe_sync(
     let spawned_stderr = spawned.stderr.take();
     let mut spawned_extra_pipes = core::mem::take(&mut spawned.extra_pipes);
     let process = spawned.to_process(loop_handle);
+    let otel = match &otel_cmd {
+        Some(cmd) => {
+            crate::telemetry::spawn::begin(global_this, otel_stub, cmd, i64::from(process.pid))
+        }
+        None => bun_telemetry::NativeSpan::NONE,
+    };
 
     #[cfg(unix)]
     let posix_ipc_fd = if !is_sync && maybe_ipc_mode.is_some() {
@@ -1313,6 +1342,7 @@ fn spawn_maybe_sync(
             crate::timer::EventLoopTimerTag::SubprocessTimeout,
         )),
         exited_due_to_maxbuf: Cell::new(None),
+        otel: Cell::new(otel),
     }));
     // SAFETY: subprocess_ptr is a freshly-boxed Subprocess; we hold the only reference.
     let subprocess = unsafe { &mut *subprocess_ptr };
@@ -1401,6 +1431,15 @@ fn spawn_maybe_sync(
             }
             subprocess.finalize_streams();
             subprocess.process_mut().detach();
+            crate::telemetry::spawn::setup_failed(
+                global_this,
+                subprocess.otel.replace(bun_telemetry::NativeSpan::NONE),
+                if global_this.has_exception() {
+                    b"Error"
+                } else {
+                    b"OutOfMemoryError"
+                },
+            );
             if let Some(ipc_data) = subprocess.ipc_data.take() {
                 // Nothing else holds it yet (no socket wired, no task scheduled).
                 ipc_data.detach();

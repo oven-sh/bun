@@ -10,6 +10,7 @@ use crate::jsc::{
     self as jsc, CallFrame, HasAutoFlush, JSGlobalObject, JSValue, JsResult, Strong,
     VirtualMachine, VirtualMachineSqlExt as _, bun_string_jsc,
 };
+use crate::shared::otel::ServerAddress;
 use bun_boringssl as BoringSSL;
 use bun_boringssl_sys::OwnedSslCtx;
 use bun_collections::{OffsetByteList, StringHashMap, StringMap};
@@ -145,6 +146,7 @@ pub struct PostgresSQLConnection {
     path: bun_ptr::RawSlice<u8>,
     options: bun_ptr::RawSlice<u8>,
     options_buf: Box<[u8]>,
+    pub(crate) address: ServerAddress,
 
     pub(crate) authentication_state: JsCell<AuthenticationState>,
 
@@ -273,6 +275,11 @@ impl PostgresSQLConnection {
     #[inline]
     pub(crate) fn user(&self) -> &[u8] {
         self.user.slice()
+    }
+
+    #[inline]
+    pub(crate) fn database_name(&self) -> &[u8] {
+        self.database.slice()
     }
 
     #[inline]
@@ -1189,6 +1196,11 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
             path,
             options,
             options_buf,
+            address: ServerAddress::new(
+                args.hostname_str.to_utf8().slice(),
+                args.port,
+                path_str.to_utf8().slice(),
+            ),
             authentication_state: JsCell::new(AuthenticationState::Pending),
             secure,
             tls_config,

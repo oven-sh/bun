@@ -1,0 +1,214 @@
+---
+title: OpenTelemetry
+description: Native distributed tracing for Bun.serve, fetch, databases and more, exported over OTLP
+---
+
+Bun has OpenTelemetry tracing built into the runtime. When you enable it, Bun's own APIs emit spans and propagate W3C `traceparent` headers with no SDK, no monkey-patching and no `AsyncLocalStorage`. Spans are batched natively and exported over OTLP/HTTP.
+
+```sh terminal icon="terminal"
+BUN_OTEL=1 OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 OTEL_SERVICE_NAME=my-api bun server.ts
+```
+
+That is enough to get a trace per request in any OTLP-compatible backend (Jaeger, Tempo, Honeycomb, Datadog, an OpenTelemetry Collector, …).
+
+---
+
+## What gets traced
+
+| Instrumentation | Spans                                                                                                                                                                                                                                                                                                                                                                         |
+| --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `http`          | `Bun.serve` and `node:http` servers: one `SERVER` span per request (handlers, static `Response` routes and HTML bundles; not `Bun.file` routes yet), named `GET /route` when a route matched. Work a handler schedules for after the response (timers, un-awaited promises) is not attributed to the ended request span; wrap it in `Bun.otel.span()` if it should be traced. |
+| `fetch`         | `fetch()` and `node:http`/`node:https` clients: one `CLIENT` span per request, ending with the response body. `traceparent` is injected; if the request already carries one, the span is parented under it and the header re-pointed at the span.                                                                                                                             |
+| `sql`           | `Bun.sql` (PostgreSQL, MySQL): one span per query with `db.query.text` — the text handed to the driver: parameterized for tagged templates, verbatim for `sql.unsafe(text)` / `sql.file()`. Server error messages (which can echo bound values) are recorded as the span's status even with `captureDbStatement: false`.                                                      |
+| `sqlite`        | `bun:sqlite`, and `Bun.sql` with a SQLite database (it runs on `bun:sqlite`): one span per statement.                                                                                                                                                                                                                                                                         |
+| `redis`         | `Bun.redis`: one span per command.                                                                                                                                                                                                                                                                                                                                            |
+| `net`           | `Bun.connect` / `node:net` / `node:tls`: a `tcp.connect` span per outgoing connection.                                                                                                                                                                                                                                                                                        |
+| `websocket`     | `new WebSocket()` connect (the handshake carries `traceparent`, so the server's upgrade span joins the trace); `ServerWebSocket` message handlers (linked to the upgrade request's trace).                                                                                                                                                                                    |
+| `fs`            | `node:fs` (except `cp` and recursive async `readdir`), `Bun.file()` reads (`text()`, `json()`, `bytes()`, `arrayBuffer()`, `stat()`, `delete()`) and `Bun.write()` from a string, bytes or `Response`. Streams (`Bun.file().stream()`, `.writer()`), file-to-file copies and files served as a `Response` body are not traced yet.                                            |
+| `spawn`         | `Bun.spawn` / `node:child_process`: one span from spawn to exit.                                                                                                                                                                                                                                                                                                              |
+| `dns`           | `Bun.dns.lookup` / `node:dns` lookups.                                                                                                                                                                                                                                                                                                                                        |
+
+By default `fs`, `sqlite`, `net`, `dns` and `spawn` only record when a span is already active (for example inside a request handler), so a script does not produce a trace per file read.
+
+Attribute names follow the stable OpenTelemetry [HTTP](https://opentelemetry.io/docs/specs/semconv/http/http-spans/) and [database](https://opentelemetry.io/docs/specs/semconv/database/database-spans/) semantic conventions — the same keys `@opentelemetry/instrumentation-http`, `-undici` and `-pg` emit:
+
+| Span                         | Name                | Attributes                                                                                                                                                                                                                                                                                                                                  |
+| ---------------------------- | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| HTTP server                  | `GET /route`, `GET` | `http.request.method`, `url.path`, `url.query`, `url.scheme`, `http.route`, `server.address`, `server.port`, `client.address` (honours `Forwarded` / `X-Forwarded-For`), `network.peer.address`, `network.peer.port`, `network.protocol.version`, `user_agent.original`, `http.response.status_code`, `http.request.header.<name>` (opt-in) |
+| HTTP client                  | `GET`               | `http.request.method`, `url.full` (credentials and signature-style query values such as `sig=` / `X-Goog-Signature=` redacted), `server.address`, `server.port`, `network.protocol.version`, `http.response.status_code`                                                                                                                    |
+| SQL / SQLite / Redis         | `SELECT mydb`       | `db.system.name`, `db.namespace`, `db.operation.name`, `db.query.text`, `server.address`, `server.port`, `db.response.status_code` (on error)                                                                                                                                                                                               |
+| `tcp.connect`, `tls.connect` |                     | `network.transport`, `server.address`, `server.port`, `network.peer.address`, `network.peer.port`; `tls.connect` adds `tls.authorized` and, when the peer did not verify but the connection was kept (`rejectUnauthorized: false`), `tls.authorization_error`. The span is an error only when the connection is rejected.                   |
+| `websocket.connect`          |                     | `url.full`, `server.address`, `server.port`                                                                                                                                                                                                                                                                                                 |
+| `websocket.message`          |                     | `websocket.message.type`, `websocket.message.length`; linked to the upgrade request                                                                                                                                                                                                                                                         |
+| `fs.readFile`, …             |                     | `file.path`                                                                                                                                                                                                                                                                                                                                 |
+| `spawn <cmd>`                |                     | `process.executable.name`, `process.args_count`, `process.pid`, `process.exit.code`                                                                                                                                                                                                                                                         |
+| `dns.lookup`                 |                     | `dns.question.name`                                                                                                                                                                                                                                                                                                                         |
+
+A server span is named `GET /route` when the request matched a `routes` pattern; a router that runs inside `fetch` (or a node:http handler) can name it by setting `http.route` itself (`Bun.otel.set("http.route", "/users/:id")` or `span.setAttribute`). Any of the attributes above that you set on the span replaces the value Bun would have derived.
+
+Failures set the span status to `ERROR` with the error message, `error.type` (the error's `code`, an HTTP status ≥ 500 / ≥ 400 for clients, an exit code or signal name), and an `exception` event. The resource carries `service.name` (default `unknown_service:bun`), `telemetry.sdk.*`, `process.runtime.*`, `process.pid`, `process.executable.*`, `process.command`, `host.name`, `host.arch`, `os.type` and `os.version`.
+
+---
+
+## Enabling
+
+Any one of these turns tracing on for the process:
+
+- `BUN_OTEL=1` in the environment.
+- An `[otel]` table in `bunfig.toml`:
+
+  ```toml title="bunfig.toml" icon="settings"
+  [otel]
+  endpoint = "http://localhost:4318"
+  serviceName = "my-api"
+  ```
+
+- Calling `Bun.otel.start()` from code.
+
+Once enabled, Bun reads the standard OpenTelemetry environment variables:
+
+| Variable                                                                                                                                                                                                    | Meaning                                                                                                                                                                                                                    |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `OTEL_SERVICE_NAME`, `OTEL_RESOURCE_ATTRIBUTES`                                                                                                                                                             | Resource attributes.                                                                                                                                                                                                       |
+| `OTEL_EXPORTER_OTLP_ENDPOINT`                                                                                                                                                                               | Collector base URL; Bun posts to `<endpoint>/v1/traces`. Default `http://localhost:4318`.                                                                                                                                  |
+| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`                                                                                                                                                                        | Full traces URL, used as-is.                                                                                                                                                                                               |
+| `OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_EXPORTER_OTLP_TRACES_HEADERS`                                                                                                                                           | `key=value,key2=value2` request headers (API keys).                                                                                                                                                                        |
+| `OTEL_EXPORTER_OTLP_COMPRESSION`, `OTEL_EXPORTER_OTLP_TRACES_COMPRESSION`                                                                                                                                   | `gzip` or `none`.                                                                                                                                                                                                          |
+| `OTEL_EXPORTER_OTLP_PROTOCOL`, `OTEL_EXPORTER_OTLP_TRACES_PROTOCOL`                                                                                                                                         | Only `http/protobuf` is implemented. `grpc` and `http/json` print a warning and the exporter still speaks http/protobuf to the configured endpoint — point it at the collector's 4318 port, not 4317.                      |
+| `OTEL_TRACES_SAMPLER`, `OTEL_TRACES_SAMPLER_ARG`                                                                                                                                                            | `always_on`, `always_off`, `traceidratio`, `parentbased_always_on` (default), `parentbased_always_off`, `parentbased_traceidratio`.                                                                                        |
+| `OTEL_TRACES_EXPORTER`                                                                                                                                                                                      | `otlp` (default), `console` (one OTLP/JSON document per batch on stderr), `none`.                                                                                                                                          |
+| `OTEL_BSP_SCHEDULE_DELAY`, `OTEL_BSP_MAX_QUEUE_SIZE`, `OTEL_BSP_MAX_EXPORT_BATCH_SIZE`, `OTEL_BSP_EXPORT_TIMEOUT`                                                                                           | Batch processor tuning. Spans waiting to be retried after a failed export count against the queue size.                                                                                                                    |
+| `OTEL_EXPORTER_OTLP_TIMEOUT`, `OTEL_EXPORTER_OTLP_TRACES_TIMEOUT`                                                                                                                                           | Milliseconds an export request may take in total (default 10000); a slower one is aborted and retried.                                                                                                                     |
+| `OTEL_INSTRUMENTATION_HTTP_CAPTURE_HEADERS_SERVER_REQUEST`                                                                                                                                                  | Comma-separated request header names to record as `http.request.header.<name>` on server spans.                                                                                                                            |
+| `OTEL_PROPAGATORS`                                                                                                                                                                                          | `tracecontext` and/or `baggage`.                                                                                                                                                                                           |
+| `OTEL_SDK_DISABLED=true`                                                                                                                                                                                    | Force tracing off.                                                                                                                                                                                                         |
+| `BUN_OTEL_INSTRUMENTATIONS`                                                                                                                                                                                 | Allow-list, e.g. `http,fetch,sql`. A `!` suffix records that integration even without a parent span (`fs!`), a `?` suffix only under one (`fetch?`) — the `"always"` / `"nested"` values of the `instrumentations` option. |
+| `BUN_OTEL_CAPTURE_DB_STATEMENT=false`                                                                                                                                                                       | Do not record `db.query.text` (same as `captureDbStatement: false`).                                                                                                                                                       |
+| `OTEL_SPAN_ATTRIBUTE_COUNT_LIMIT`, `OTEL_ATTRIBUTE_COUNT_LIMIT`, `OTEL_SPAN_ATTRIBUTE_VALUE_LENGTH_LIMIT`, `OTEL_ATTRIBUTE_VALUE_LENGTH_LIMIT`, `OTEL_SPAN_EVENT_COUNT_LIMIT`, `OTEL_SPAN_LINK_COUNT_LIMIT` | Span limits (the `limits` option).                                                                                                                                                                                         |
+| `BUN_OTEL_DISABLE`                                                                                                                                                                                          | Deny-list, e.g. `fs,dns`.                                                                                                                                                                                                  |
+
+The OTLP/HTTP protobuf protocol is supported. `grpc` is not. Export requests use `HTTP_PROXY` / `HTTPS_PROXY` / `NO_PROXY`, `NODE_EXTRA_CA_CERTS` and `NODE_TLS_REJECT_UNAUTHORIZED` the way `fetch()` does; the `OTEL_EXPORTER_OTLP_CERTIFICATE` / `CLIENT_KEY` / `CLIENT_CERTIFICATE` variables are not supported yet.
+
+---
+
+## `Bun.otel.start()`
+
+Configure tracing from code. Anything you leave out falls back to the environment variables above, read from `process.env` at the time of the call.
+
+```ts title="telemetry.ts" icon="/icons/typescript.svg"
+Bun.otel.start({
+  serviceName: "my-api",
+  exporters: [
+    { url: "https://otlp.example.com", headers: { "x-api-key": process.env.OTLP_KEY! } },
+    // Function exporters receive decoded spans on the batch interval.
+    {
+      // may be async: the batch counts as exported when the promise resolves
+      export(spans) {
+        for (const s of spans) console.log(s.name, s.endTime - s.startTime);
+      },
+    },
+  ],
+  sampler: 0.25, // keep 25% of new traces; follow the caller's decision for propagated ones
+  // no fs spans; SQLite statements (bun:sqlite, or Bun.sql on a SQLite file) even outside a request
+  instrumentations: { fs: false, sqlite: "always" },
+});
+```
+
+`instrumentations` takes either a list of names to enable (`["http", "fetch"]`) or an object keyed by the names in [What gets traced](#what-gets-traced): `true` / `false`, `"nested"` (only when another span is already active — the default for `fs`, `sqlite`, `net`, `dns`, `spawn`) or `"always"`.
+
+### Sending to a hosted backend
+
+Anything that accepts OTLP/HTTP works with `{ url, headers }` — a self-hosted or vendor-run OpenTelemetry Collector, or a vendor's OTLP intake directly (for example Honeycomb `https://api.honeycomb.io` with `x-honeycomb-team`, Grafana Cloud's OTLP gateway with basic auth, Datadog's Agent on `http://localhost:4318`). Backends that sign every request with short-lived credentials (AWS X-Ray, Google Cloud Trace) need a Collector next to the app.
+
+```ts
+Bun.otel.start({
+  serviceName: "checkout",
+  exporters: [
+    { url: "https://api.honeycomb.io", headers: { "x-honeycomb-team": process.env.HONEYCOMB_API_KEY! } },
+    { url: "http://localhost:4318" }, // a local Collector / Datadog Agent
+  ],
+});
+```
+
+## Creating spans
+
+`Bun.otel.span(name, attributes?, fn)` runs `fn` inside a new span. The span is active for everything `fn` does (so `fetch`, queries and nested spans become its children, across `await`), and it ends when `fn` returns or its promise settles. If `fn` throws or rejects, the error is recorded on the span and rethrown.
+
+```ts title="spans.ts" icon="/icons/typescript.svg"
+async function chargeCard(orderId: string) {
+  return Bun.otel.span("chargeCard", { "order.id": orderId }, async span => {
+    const res = await fetch("https://payments.example.com/charge", { method: "POST" }); // child of chargeCard
+    span.set("payment.status", res.status);
+    return res.ok;
+  });
+}
+
+Bun.serve({
+  routes: {
+    "/orders/:id/pay": async req => {
+      Bun.otel.set("order.id", req.params.id); // on the request's SERVER span
+      await chargeCard(req.params.id);
+      return new Response("ok");
+    },
+  },
+});
+```
+
+`Bun.otel.wrap(fn)` does the same for every call of a function, declared once: `this` and the arguments pass through, and the span is named after the function. The wrapped function is not a constructor (a class cannot be wrapped; wrap its methods), and a generator function cannot be wrapped either (it returns before its body runs; use `Bun.otel.span` inside it). When `fn` returns a thenable that is not a native `Promise` (a query builder, for example), it is adopted with `Promise.resolve()` while the span is active and that `Promise` is what the caller receives.
+
+```ts
+export const loadUser = Bun.otel.wrap(async function loadUser(id: string) {
+  Bun.otel.set("user.id", id); // attribute on the active span
+  return await sql`SELECT * FROM users WHERE id = ${id}`;
+});
+```
+
+`Bun.otel.set(key, value)` / `Bun.otel.set({ ... })` annotates whatever span is active — inside a request handler that is the request's span — and returns `false` when there is none.
+
+Without a callback, `Bun.otel.span()` returns the span, active until it is disposed. Use this form in synchronous code:
+
+```ts
+{
+  using span = Bun.otel.span("parse", { bytes: input.length });
+  const doc = parse(input);
+  span.set("nodes", doc.length);
+} // span ends here
+```
+
+For work that awaits, use the callback form, which keeps the span scoped to the callback:
+
+```ts
+const out = await Bun.otel.span("resize", { width, height }, () => sharp(input).resize(width, height).toBuffer());
+```
+
+A span has `set(key, value)` / `set({ ... })` for attributes, `fail(error)` (records the exception and marks the span failed), `ok()`, `addEvent(name, attributes?)` and `updateName(name)`. It also implements the full `@opentelemetry/api` `Span` interface; wherever that interface takes a `SpanKind` or `SpanStatusCode` number, Bun also accepts the name (`{ kind: "client" }`, `setStatus("error", message)`).
+
+Inside an `async` function prefer the callback forms (`span(name, fn)`, `wrap`, `startActiveSpan(name, fn)`): a `using span = …` before the first `await` runs in the _caller's_ frame and, like `AsyncLocalStorage.enterWith`, leaves the span active there after the function suspends. When the traced function returns a promise (or a thenable), the span ends when it settles and the caller receives the promise derived from it.
+
+For library instrumentation, `Bun.otel.tracer(name, version?)` returns an `@opentelemetry/api`-compatible `Tracer` (`startSpan`, `startActiveSpan`) whose spans carry that instrumentation scope.
+
+The active span follows `await`, promise callbacks, `queueMicrotask`, `process.nextTick`, timers and event-loop callbacks registered while it was active. `AsyncLocalStorage` keeps working alongside it (they share the same context slot).
+
+---
+
+## Using `@opentelemetry/api`
+
+When tracing is enabled Bun registers itself as the global `TracerProvider`, `ContextManager` and `TextMapPropagator` for `@opentelemetry/api`. Code and libraries written against the API need no changes and no SDK setup:
+
+```ts title="api.ts" icon="/icons/typescript.svg"
+import { trace } from "@opentelemetry/api";
+
+const tracer = trace.getTracer("checkout");
+await tracer.startActiveSpan("validate", async span => {
+  span.setAttribute("cart.items", 3);
+  span.end();
+});
+```
+
+Spans created this way are children of the active Bun span (for example the current request) and are exported through the same pipeline.
+
+Use either Bun's native tracing or the JavaScript tracing SDK (`@opentelemetry/sdk-node` / `sdk-trace-*`) in a process, not both. Whichever registers with `@opentelemetry/api` first wins: with `BUN_OTEL=1` that is Bun (at startup), so an SDK started afterwards gets `false` from its `register()` calls (a `diag` error, silent unless `OTEL_LOG_LEVEL` is set), its instrumentations record through Bun, and its own exporter receives nothing; with `Bun.otel.start()` called after the SDK registered, the SDK keeps the API and Bun's built-in instrumentation exports natively alongside it. Existing SDK setups keep working unchanged as long as `BUN_OTEL` / `Bun.otel.start()` are not used.
+
+`Bun.otel` covers tracing. OpenTelemetry metrics and logs are not implemented natively yet; use the JavaScript SDK's `MeterProvider` / `LoggerProvider` for those if you need them — they register separately from tracing, and their exporters' own HTTP requests are not traced (Bun honours the SDK's `suppressTracing` context, and runs its own exporter callbacks under it).
+
+`Bun.otel.start()` can be called again (from any thread) to reconfigure; options it omits go back to the environment/defaults process-wide, spans already recorded are flushed under the previous configuration, and the exporter list is kept unless `exporters`/`endpoint` is given. `await Bun.otel.shutdown()` flushes and turns tracing off until the next `start()`; call it before `process.exit()` if an exporter needs the network at exit (function exporters that return a promise are only given a microtask drain at exit, like Node after `'exit'`). Unflushed spans are also pushed out (bounded to a second) when `bun --watch` restarts the process.

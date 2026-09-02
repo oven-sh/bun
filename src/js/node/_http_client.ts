@@ -23,17 +23,26 @@ const { getTimerDuration } = require("internal/timers");
 const { addAbortSignal } = require("internal/streams/add-abort-signal");
 const finished = require("internal/streams/end-of-stream");
 const dc = require("node:diagnostics_channel");
+const { errorMonitor } = require("node:events");
 
 const ObjectAssign = Object.assign;
 const ObjectDefineProperty = Object.defineProperty;
 const ObjectKeys = Object.keys;
 const NumberIsFinite = Number.isFinite;
 const ArrayIsArray = Array.isArray;
+const ArrayPrototypeSlice = Array.prototype.slice;
+const ArrayPrototypeSplice = Array.prototype.splice;
+const StringPrototypeToLowerCase = String.prototype.toLowerCase;
 
 const onClientRequestCreatedChannel = dc.channel("http.client.request.created");
 const onClientRequestStartChannel = dc.channel("http.client.request.start");
 const onClientRequestErrorChannel = dc.channel("http.client.request.error");
 const onClientResponseFinishChannel = dc.channel("http.client.response.finish");
+const otelHttpClientEnabled = $newRustFunction("telemetry.rs", "httpClientEnabled", 0);
+// bun_telemetry::ENABLED viewed from JS: bit 1 = Instrument::HttpClient (const-asserted in src/telemetry/lib.rs).
+const otelMask = $newCppFunction("JSTelemetryTracer.cpp", "jsTelemetryEnabledMask", 0)() as Uint32Array;
+const otelHttpClientBegin = $newRustFunction("telemetry.rs", "httpClientBegin", 2);
+const otelHttpClientEnd = $newRustFunction("telemetry.rs", "httpClientEnd", 7);
 
 function emitErrorEvent(request, error) {
   if (onClientRequestErrorChannel.hasSubscribers) {
@@ -43,8 +52,8 @@ function emitErrorEvent(request, error) {
     });
   }
   // Every request-error path funnels here (ECONNREFUSED, DNS, parse error,
-  // reset): close the trace span; deduped by the per-request flag.
-  traceClientResponseEnd(request);
+  // reset): close the request's spans; deduped per request.
+  endRequestSpans(request, undefined, error);
   request.emit("error", error);
 }
 
@@ -153,11 +162,157 @@ function rewriteForProxiedHttp(req, reqOptions) {
 const kHttpTraceCat = "node,node.http";
 const kTraceRequestActive = Symbol("kTraceRequestActive");
 let traceEvents = null;
-function traceClientResponseEnd(req) {
+function traceClientRequestEnd(req) {
   if (req[kTraceRequestActive]) {
     req[kTraceRequestActive] = false;
     traceEvents.emitEvent("e", kHttpTraceCat, "http.client.request");
   }
+}
+
+// `host[:port]` for the Host header / url.full: IPv6 addresses are enclosed in
+// square brackets (https://tools.ietf.org/html/rfc3986#section-3.2.2) and the
+// scheme's default port is omitted.
+function formatAuthority(host: string, port, defaultPort: number) {
+  let out = host;
+  const posColon = out.indexOf(":");
+  if (posColon !== -1 && out.includes(":", posColon + 1) && out.charCodeAt(0) !== 91 /* '[' */) {
+    out = `[${out}]`;
+  }
+  if (port && +port !== defaultPort) {
+    out += ":" + port;
+  }
+  return out;
+}
+
+// Native OpenTelemetry (Bun.otel): one CLIENT span per request, recorded
+// natively by the same code as fetch() (telemetry/fetch.rs). The span's stub
+// rides on the request as bytes between begin and end. Off costs one typed-array
+// load (`otelMask`); `otelHttpClientEnabled` then decides nested/root.
+const kOtelSpan = Symbol("kOtelSpan");
+const kOtelUrl = Symbol("kOtelUrl");
+const kOtelFinish = Symbol("kOtelFinish");
+// `arrayHeaders`: the request's headers were given as an array (flat or
+// [[k, v]]), which is serialized as-is instead of kOutHeaders; returns the
+// array to serialize (a copy with trace context set when injected).
+function otelClientRequestStart(req, protocol, host, port, arrayHeaders?) {
+  let pairs = false;
+  let indexOf: ((name: string) => number) | undefined;
+  let callerTraceparent: string | undefined;
+  let hasBaggage = false;
+  if (arrayHeaders !== undefined) {
+    pairs = arrayHeaders.length && ArrayIsArray(arrayHeaders[0]);
+    // (non-string names are left for _storeHeader to reject)
+    indexOf = name => {
+      if (pairs) {
+        for (let i = 0; i < arrayHeaders.length; i++) {
+          const k = arrayHeaders[i]?.[0];
+          if (typeof k === "string" && StringPrototypeToLowerCase.$call(k) === name) return i;
+        }
+      } else {
+        for (let i = 0; i + 1 < arrayHeaders.length; i += 2) {
+          const k = arrayHeaders[i];
+          if (typeof k === "string" && StringPrototypeToLowerCase.$call(k) === name) return i;
+        }
+      }
+      return -1;
+    };
+    const ti = indexOf("traceparent");
+    if (ti !== -1) {
+      const v = pairs ? arrayHeaders[ti]?.[1] : arrayHeaders[ti + 1];
+      if (typeof v === "string") callerTraceparent = v;
+    }
+    hasBaggage = indexOf("baggage") !== -1;
+  } else {
+    const v = req.getHeader("traceparent");
+    if (typeof v === "string") callerTraceparent = v;
+    hasBaggage = req.getHeader("baggage") !== undefined;
+  }
+  const started = otelHttpClientBegin(callerTraceparent, hasBaggage);
+  if (started === undefined) return arrayHeaders;
+  const [stub, traceparent, tracestate, baggage] = started;
+  req[kOtelSpan] = stub;
+  const defaultPort = protocol === "https:" ? 443 : 80;
+  // CONNECT's request-target is the tunnel authority, not a path on this server.
+  req[kOtelUrl] =
+    protocol + "//" + formatAuthority(host, port, defaultPort) + (req.method === "CONNECT" ? "" : req.path);
+  // traceparent: set; tracestate: string = set, null = remove, undefined = leave; baggage: set if given.
+  if (arrayHeaders !== undefined) {
+    arrayHeaders = ArrayPrototypeSlice.$call(arrayHeaders);
+    const put = (k: string, v: string | null | undefined) => {
+      if (v === undefined) return;
+      const at = indexOf!(k);
+      if (v === null) {
+        if (at !== -1) ArrayPrototypeSplice.$call(arrayHeaders, at, pairs ? 1 : 2);
+      } else if (at === -1) {
+        if (pairs) arrayHeaders.push([k, v]);
+        else arrayHeaders.push(k, v);
+      } else if (pairs) arrayHeaders[at] = [k, v];
+      else arrayHeaders[at + 1] = v;
+    };
+    put("traceparent", traceparent);
+    put("tracestate", tracestate);
+    put("baggage", baggage);
+  } else {
+    if (traceparent !== undefined) req.setHeader("traceparent", traceparent);
+    if (tracestate === null) req.removeHeader("tracestate");
+    else if (tracestate !== undefined) req.setHeader("tracestate", tracestate);
+    if (baggage !== undefined) req.setHeader("baggage", baggage);
+  }
+  return arrayHeaders;
+}
+function otelEnd(req, res, err?) {
+  const stub = req[kOtelSpan];
+  req[kOtelSpan] = undefined;
+  otelHttpClientEnd(
+    stub,
+    req.method,
+    req[kOtelUrl],
+    res ? res.statusCode : 0,
+    res ? (res.httpVersionMajor === 1 ? res.httpVersionMinor : undefined) : undefined,
+    err ? ($telemetryErrorType(err) ?? "Error") : undefined,
+    err ? (typeof err?.message === "string" ? err.message : undefined) : undefined,
+  );
+}
+function otelClientUpgradeEnd(req, res) {
+  // 101 / CONNECT: the HTTP exchange is over; the tunnel is not this span's.
+  if (req[kOtelSpan] !== undefined) otelEnd(req, res);
+}
+function otelClientRequestEnd(req, res, err) {
+  if (req[kOtelSpan] === undefined) return;
+  if (req[kOtelFinish] !== undefined) {
+    // headers already arrived; this is the socket closing / an error mid-body
+    req[kOtelFinish](err);
+    return;
+  }
+  if (res) {
+    // Headers arrived: the span ends with the body (response 'end'), or with
+    // an error if the response is cut short — like fetch() and
+    // @opentelemetry/instrumentation-http. A response that completed is never
+    // an error, whatever closed the socket later.
+    let done = false;
+    const finish = (req[kOtelFinish] = (e?: any) => {
+      if (done) return;
+      done = true;
+      req[kOtelFinish] = undefined;
+      otelEnd(
+        req,
+        res,
+        res.complete ? undefined : (e ?? { code: "aborted", message: "response aborted before it completed" }),
+      );
+    });
+    res.once("end", () => finish());
+    // errorMonitor: observing must not change whether 'error' counts as handled.
+    res.once(errorMonitor, finish);
+    res.once("close", () => finish());
+    return;
+  }
+  otelEnd(req, undefined, err);
+}
+// The only way a ClientRequest's per-request spans end (trace_events 'http.client.request'
+// and the Bun.otel CLIENT span); both are idempotent per request.
+function endRequestSpans(req, res, err) {
+  traceClientRequestEnd(req);
+  otelClientRequestEnd(req, res, err);
 }
 
 function ClientRequest(input, options, cb) {
@@ -346,7 +501,7 @@ function ClientRequest(input, options, cb) {
     }
   }
 
-  const optionsHeaders = options.headers;
+  let optionsHeaders = options.headers;
   const headersArray = ArrayIsArray(optionsHeaders);
   if (!headersArray) {
     if (optionsHeaders) {
@@ -360,32 +515,38 @@ function ClientRequest(input, options, cb) {
     }
 
     if (host && !this.getHeader("host") && setHost) {
-      let hostHeader = host;
-
-      // For the Host header, ensure that IPv6 addresses are enclosed
-      // in square brackets, as defined by URI formatting
-      // https://tools.ietf.org/html/rfc3986#section-3.2.2
-      const posColon = hostHeader.indexOf(":");
-      if (posColon !== -1 && hostHeader.includes(":", posColon + 1) && hostHeader.charCodeAt(0) !== 91 /* '[' */) {
-        hostHeader = `[${hostHeader}]`;
-      }
-
-      if (port && +port !== defaultPort) {
-        hostHeader += ":" + port;
-      }
-      this.setHeader("Host", hostHeader);
+      this.setHeader("Host", formatAuthority(host, port, defaultPort));
     }
 
     const auth = options.auth;
     if (auth && !this.getHeader("Authorization")) {
       this.setHeader("Authorization", "Basic " + Buffer.from(auth).toString("base64"));
     }
+  }
 
+  if (!(otelMask[0] & 2) || !otelHttpClientEnabled()) {
+    finishInit.$call(this, options, optsWithoutSignal, headersArray, optionsHeaders, thisAgent);
+    return;
+  }
+  // Everything from the moment the client span exists can throw synchronously
+  // (header injection over user arrays, proxy rewriting, invalid headers, bad
+  // options, createConnection): the span then ends with that error.
+  try {
+    if (headersArray) optionsHeaders = otelClientRequestStart(this, protocol, host, port, optionsHeaders);
+    else otelClientRequestStart(this, protocol, host, port);
+    finishInit.$call(this, options, optsWithoutSignal, headersArray, optionsHeaders, thisAgent);
+  } catch (e) {
+    otelClientRequestEnd(this, undefined, e);
+    throw e;
+  }
+}
+
+function finishInit(this: any, options, optsWithoutSignal, headersArray, optionsHeaders, thisAgent) {
+  if (!headersArray) {
     if (this.getHeader("expect")) {
       if (this._header) {
         throw $ERR_HTTP_HEADERS_SENT("render");
       }
-
       rewriteForProxiedHttp(this, optsWithoutSignal);
       this._storeHeader(this.method + " " + this.path + " HTTP/1.1\r\n", this[kOutHeaders]);
     } else {
@@ -506,9 +667,9 @@ ClientRequest.prototype.destroy = function destroy(err) {
   }
   this.destroyed = true;
 
-  // Close the http.client.request trace span if no response ever arrived
-  // (req.destroy()/abort before headers); deduped by the per-request flag.
-  traceClientResponseEnd(this);
+  // Close the request's spans if no response ever arrived
+  // (req.destroy()/abort before headers); deduped per request.
+  endRequestSpans(this, undefined, err ?? { code: "aborted" });
 
   // If we're aborting, we don't care about any more response data.
   const res = this.res;
@@ -554,8 +715,8 @@ function socketCloseListenerInner() {
 
   req.destroyed = true;
   // Socket-level close without a response (connection reset, abort):
-  // close the trace span so it doesn't stay open forever.
-  traceClientResponseEnd(req);
+  // close the request's spans so they don't stay open forever.
+  endRequestSpans(req, undefined, { code: "ECONNRESET" });
   if (res) {
     // Socket closed before we emitted 'end' below.
     if (!res.complete) {
@@ -707,6 +868,8 @@ function processClientData(socket, d, parser) {
 
       const bodyHead = d.slice(bytesParsed, d.length);
 
+      // 101 / CONNECT: the HTTP exchange is over; the tunnel is not this span's.
+      otelClientUpgradeEnd(req, res);
       const eventName = req.method === "CONNECT" ? "connect" : "upgrade";
       if (req.listenerCount(eventName) > 0) {
         req.upgradeOrConnect = true;
@@ -836,8 +999,9 @@ function parserOnIncomingClient(res, shouldKeepAlive) {
     });
   }
   // The response arrived: close the 'http.client.request' span (Node ends it
-  // here, in parserOnIncomingClient, before handing the response to the user).
-  traceClientResponseEnd(req);
+  // here, in parserOnIncomingClient, before handing the response to the user);
+  // the Bun.otel CLIENT span follows the response body from here.
+  endRequestSpans(req, res, undefined);
   req.res = res;
   res.req = req;
 
@@ -1058,9 +1222,10 @@ function destroyRequestOnSocketNT(req, socket, err) {
   if (err && err.code !== "ERR_PROXY_TUNNEL" && !socket?._hadError) {
     emitErrorEvent(req, err);
   }
-  // The request is dead with no parser: close the trace span on the paths
-  // that skip emitErrorEvent above (proxy tunnel; error already emitted).
-  traceClientResponseEnd(req);
+  // The request is dead with no parser: close both spans on the paths that
+  // skip emitErrorEvent above (proxy tunnel error emitted by the agent; error
+  // already emitted).
+  endRequestSpans(req, undefined, err ?? { code: "aborted" });
   closeRequest(req);
 }
 

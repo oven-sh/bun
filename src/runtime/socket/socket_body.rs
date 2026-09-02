@@ -338,6 +338,8 @@ pub struct NewSocket<const SSL: bool> {
     /// keeps its verdict after detach (the live error borrows the `SSL`, and
     /// EPROTO reasons are stack-copied in uSockets).
     pub(crate) verify_error: JsCell<Option<StoredVerifyError>>,
+    /// Native OpenTelemetry `connect` span for client sockets.
+    pub(crate) otel_connect: Cell<bun_telemetry::SpanStub>,
 }
 
 /// Associated `Socket` handler type.
@@ -584,6 +586,14 @@ impl<const SSL: bool> NewSocket<SSL> {
         // SAFETY: `self` is live for this call and outlives the sockets below.
         let this = unsafe { bun_ptr::ThisPtr::new(self.as_ctx_ptr()) };
         let _guard = RefPtr::from_this(this);
+        if bun_telemetry::enabled(bun_telemetry::Instrument::Net) {
+            if let Some(h) = self.handlers.get().as_deref() {
+                self.otel_connect.set(crate::telemetry::start_leaf(
+                    &h.global_object,
+                    bun_telemetry::Instrument::Net,
+                ));
+            }
+        }
 
         // `VirtualMachine::get()` yields the canonical `*mut` (write
         // provenance) — never derive `&mut` from the `&'static` borrow stored
@@ -1097,6 +1107,90 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
     }
 
+    /// First call wins.
+    /// `error`: (`error.type`, message).
+    #[inline(always)]
+    pub(crate) fn otel_connect_end(&self, error: Option<(&str, &str)>) {
+        if !self.otel_connect.get().is_some() {
+            return;
+        }
+        self.otel_connect_end_slow(match error {
+            Some(e) => TlsOutcome::Rejected(e),
+            None => TlsOutcome::Kept { unauthorized: None },
+        });
+    }
+
+    #[inline(always)]
+    fn otel_connect_end_tls(&self, outcome: TlsOutcome<'_>) {
+        self.otel_connect_end_slow(outcome);
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn otel_connect_end_slow(&self, outcome: TlsOutcome<'_>) {
+        use bun_telemetry::http_record::PeerIp;
+        let stub = self.otel_connect.replace(bun_telemetry::SpanStub::NONE);
+        if !stub.is_recording() {
+            return;
+        }
+        use super::listener::UnixOrHost;
+        let conn = self.connection.get();
+        let (name, transport, host, port): (&[u8], &str, &[u8], u16) = match &conn {
+            Some(UnixOrHost::Unix(p)) => (
+                if SSL { b"tls.connect" } else { b"ipc.connect" },
+                "unix",
+                p,
+                0,
+            ),
+            Some(UnixOrHost::Host { host, port }) => (
+                if SSL { b"tls.connect" } else { b"tcp.connect" },
+                "tcp",
+                host,
+                *port,
+            ),
+            Some(UnixOrHost::Fd(_)) | None => (&b"socket.connect"[..], "tcp", &b""[..], 0),
+        };
+        crate::telemetry::end_leaf(
+            VirtualMachine::get().global(),
+            bun_telemetry::Instrument::Net,
+            &stub,
+            name,
+            bun_telemetry::SpanKind::Client,
+            |w| {
+                w.attr("network.transport", transport);
+                w.server(host, port);
+                let error = match outcome {
+                    TlsOutcome::Rejected(e) => Some(e),
+                    TlsOutcome::Kept { unauthorized } => {
+                        if SSL {
+                            w.attr("tls.authorized", unauthorized.is_none());
+                        }
+                        if let Some((code, _reason)) = unauthorized {
+                            w.attr("tls.authorization_error", code);
+                        }
+                        None
+                    }
+                };
+                if error.is_none() && !self.socket.get().is_detached() {
+                    let mut raw = [0u8; 16];
+                    let mut text = [0u8; 64];
+                    let peer = match self.socket.get().remote_address(&mut raw) {
+                        Some(b) if b.len() == 4 => PeerIp::V4(<[u8; 4]>::try_from(b).unwrap()),
+                        Some(b) if b.len() == 16 => PeerIp::V6(<[u8; 16]>::try_from(b).unwrap()),
+                        _ => PeerIp::None,
+                    };
+                    w.attr_opt("network.peer.address", peer.text(&mut text));
+                    if let Some(p) = self.socket.get().remote_port() {
+                        w.attr("network.peer.port", i64::from(p));
+                    }
+                }
+                if let Some((code, msg)) = error {
+                    w.fail(code.as_bytes(), msg.as_bytes());
+                }
+            },
+        );
+    }
+
     /// Takes `ThisPtr<Self>` for the same re-entrancy reason as `on_writable`:
     /// `callback.call`/`reject` re-enter JS which can `connectInner()`/mutate
     /// this socket via `m_ptr` (node:net `autoSelectFamily` retries inside the
@@ -1112,6 +1206,21 @@ impl<const SSL: bool> NewSocket<SSL> {
         errno: c_int,
         dns_error: i32,
     ) -> JsResult<()> {
+        if this.otel_connect.get().is_some() {
+            let sys = if dns_error != 0 {
+                None
+            } else {
+                bun_sys::SystemErrno::init((errno as i64).abs())
+            };
+            this.otel_connect_end(Some(match sys {
+                Some(e) => (
+                    <&'static str>::from(e),
+                    bun_sys::coreutils_error_map::get(e).unwrap_or(""),
+                ),
+                None if dns_error != 0 => ("DNS_ENOTFOUND", "getaddrinfo failed"),
+                None => ("ECONNREFUSED", "Failed to connect"),
+            }));
+        }
         let handlers = this.get_handlers();
         log!(
             "onConnectError {} ({}, {})",
@@ -1345,6 +1454,7 @@ impl<const SSL: bool> NewSocket<SSL> {
     /// not live in the ext slot so those are left for the caller's existing
     /// `debug_assert!` to catch.
     pub(crate) fn detach_for_reconnect(&self) {
+        self.otel_connect_end(Some(("reconnect", "socket replaced before connecting")));
         let old = self.socket.get();
         let Some(ext) = old.ext::<*mut c_void>() else {
             return;
@@ -1424,6 +1534,9 @@ impl<const SSL: bool> NewSocket<SSL> {
         socket: SocketHandler<SSL>,
     ) -> JsResult<()> {
         let this_ptr = this.as_ptr();
+        if !SSL || this.acts_as_tls_server() {
+            this.otel_connect_end(None);
+        }
         // A late event on a socket that already released its Handlers through
         // a path that did not route back through this dispatch - e.g. a
         // JS-side destroy on a TLS socket driven by an upgraded duplex. There
@@ -1835,6 +1948,37 @@ impl<const SSL: bool> NewSocket<SSL> {
         // BYPASS_TLS write path in the window before JS tears the pair down.
         let transport_unusable = reject_unauthorized || (SSL && success == 0);
 
+        if SSL && !this.acts_as_tls_server() && this.otel_connect.get().is_some() {
+            // The span's verdict is the socket's: failed only when the connection
+            // is rejected. A kept-but-unauthorized connection (rejectUnauthorized:
+            // false, or node:tls deferring the hostname check to JS) records why.
+            let verify_problem: Option<(&str, &str)> = if verify_failed {
+                Some((
+                    core::str::from_utf8(ssl_error.code_bytes())
+                        .ok()
+                        .filter(|c| !c.is_empty())
+                        .unwrap_or("handshake_failed"),
+                    core::str::from_utf8(ssl_error.reason_bytes()).unwrap_or(""),
+                ))
+            } else if hostname_mismatch && !flags.contains(Flags::DEFERS_SERVER_IDENTITY) {
+                Some((
+                    "ERR_TLS_CERT_ALTNAME_INVALID",
+                    "Hostname/IP does not match certificate's altnames",
+                ))
+            } else {
+                None
+            };
+            this.otel_connect_end_tls(if transport_unusable {
+                TlsOutcome::Rejected(
+                    verify_problem.unwrap_or(("handshake_failed", "TLS handshake failed")),
+                )
+            } else {
+                TlsOutcome::Kept {
+                    unauthorized: verify_problem,
+                }
+            });
+        }
+
         // `REJECTED` is set before the callback runs so no write path can
         // deliver application data to a peer that is about to be rejected —
         // including the raw twin of an `upgradeTLS` pair, which shares the fd.
@@ -2091,6 +2235,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         reason: Option<*mut c_void>,
     ) -> JsResult<()> {
         jsc::mark_binding!();
+        this.otel_connect_end(Some(("closed", "closed before connecting")));
         // A late close on a socket that already released its Handlers through
         // a path that did not route back through this dispatch - e.g. a
         // JS-side destroy on a TLS socket driven by an upgraded duplex. There
@@ -3134,6 +3279,10 @@ impl<const SSL: bool> NewSocket<SSL> {
         let is_semi_connect = socket.socket.get().is_some() && !socket.is_established();
         this.close_and_detach(uws::CloseCode::Failure);
         if is_semi_connect {
+            // No open/close callback follows; a cancelled attempt is not
+            // exported (like an aborted fetch), and a reuse of this wrapper is
+            // then not reported as "replaced".
+            this.otel_connect.set(bun_telemetry::SpanStub::NONE);
             this.poll_ref.with_mut(|p| {
                 p.unref(bun_io::posix_event_loop::get_vm_ctx(
                     bun_io::AllocatorType::Js,
@@ -3204,6 +3353,10 @@ impl<const SSL: bool> NewSocket<SSL> {
             ))
         });
         if is_semi_connect {
+            // No open/close callback follows; a cancelled attempt (incl. the
+            // one net.ts autoSelectFamily abandons on timeout) is not exported,
+            // and a reuse of this wrapper is then not reported as "replaced".
+            this.otel_connect.set(bun_telemetry::SpanStub::NONE);
             if !matches!(this.this_value.get(), JsRef::Finalized) {
                 this.this_value.with_mut(|r| r.downgrade());
             }
@@ -3553,6 +3706,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             native_callback: JsCell::new(NativeCallbacks::None),
             twin: JsCell::new(None),
             verify_error: JsCell::new(None),
+            otel_connect: Cell::new(bun_telemetry::SpanStub::NONE),
         });
         // Never shadow this with a long-lived borrow: it would alias the
         // reference dispatch materialises from the ext slot during
@@ -3657,6 +3811,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             native_callback: JsCell::new(NativeCallbacks::None),
             twin: JsCell::new(None),
             verify_error: JsCell::new(None),
+            otel_connect: Cell::new(bun_telemetry::SpanStub::NONE),
         });
         let raw_ref = raw;
         raw_ref.ref_();
@@ -4691,6 +4846,7 @@ pub fn js_upgrade_duplex_to_tls(
         native_callback: JsCell::new(NativeCallbacks::None),
         twin: JsCell::new(None),
         verify_error: JsCell::new(None),
+        otel_connect: Cell::new(bun_telemetry::SpanStub::NONE),
     });
     let tls_ref = tls;
     let tls_js_value = tls_ref.get_this_value(global);
@@ -5226,3 +5382,15 @@ pub mod testing_apis {
     }
 }
 pub use testing_apis as testing_ap_is;
+
+/// How a client connect span ends once the (TLS) handshake verdict is known.
+#[derive(Clone, Copy)]
+enum TlsOutcome<'a> {
+    /// The connection is torn down: (`error.type`, message).
+    Rejected((&'a str, &'a str)),
+    /// The connection stays up; `unauthorized` says why the peer did not
+    /// verify when it did not (the caller accepted it anyway).
+    Kept {
+        unauthorized: Option<(&'a str, &'a str)>,
+    },
+}

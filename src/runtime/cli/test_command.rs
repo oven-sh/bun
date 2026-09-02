@@ -1409,6 +1409,10 @@ impl CommandLineReporter {
                     Output::flush();
                     this.write_junit_report_if_needed();
                     this.write_timings_if_needed();
+                    bun_jsc::virtual_machine::telemetry_flush_now(
+                        Some(VirtualMachine::get().as_mut()),
+                        false,
+                    );
                     Global::exit(1);
                 }
             }

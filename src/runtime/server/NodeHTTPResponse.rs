@@ -10,6 +10,7 @@ use bun_core::scoped_log;
 use bun_http::Method as HttpMethod;
 use bun_jsc::JsCell;
 use bun_ptr::AsCtxPtr;
+use bun_telemetry::http_record::Termination;
 use bun_uws as uws;
 use bun_uws_sys as uws_sys;
 
@@ -59,6 +60,11 @@ pub struct NodeHTTPResponse {
     /// resolves through the socket's current response, which under pipelining is a different
     /// one; delivering through it loses the body. Kept alive by req[kHandle]; cleared on finalize.
     pub(crate) armed_this_value: Cell<JSValue>,
+    /// Native OpenTelemetry server span, ended in `on_request_complete`/`deinit`.
+    pub(crate) otel_span: Cell<bun_telemetry::NativeSpan>,
+    pub(crate) otel_status: Cell<u16>,
+    /// The handler threw / rejected: mark the span as an error even if a 2xx went out.
+    pub(crate) otel_handler_error: Cell<bool>,
     /// node:http: this request's header section captured at dispatch as
     /// [u32 nameLen][u32 valueLen][name][value]... so req.rawHeaders /
     /// req.headers materialize lazily (takeRawHeaders) instead of paying
@@ -589,6 +595,8 @@ impl NodeHTTPResponse {
 
         if let Some(raw_response) = self.raw_response.take() {
             self.update_flags(|f| f.insert(Flags::UPGRADED));
+            // uWS writes the 101 itself.
+            self.otel_status.set(101);
             // Unref the poll_ref since the socket is now upgraded to WebSocket
             // and will have its own lifecycle management
             let vm = self.server.global_this().bun_vm().as_mut();
@@ -966,6 +974,8 @@ impl NodeHTTPResponse {
             }
         }
 
+        self.otel_status
+            .set(u16::try_from(status_code).unwrap_or(0));
         'do_it: {
             if status_message_bytes.is_empty() {
                 if let Some(status_message) =
@@ -1252,6 +1262,7 @@ impl NodeHTTPResponse {
 
         if EVENT == AbortEvent::Abort {
             self.update_flags(|f| f.insert(Flags::SOCKET_CLOSED));
+            self.otel_end();
         }
 
         let _guard = self.ref_guard();
@@ -1434,6 +1445,7 @@ impl NodeHTTPResponse {
         }
         scoped_log!(NodeHTTPResponse, "onRequestComplete");
         self.update_flags(|f| f.insert(Flags::REQUEST_HAS_COMPLETED));
+        self.otel_end();
         self.poll_ref.with_mut(|r| r.unref(vm_get()));
 
         self.mark_request_as_done_if_necessary();
@@ -1499,6 +1511,15 @@ fn node_http_request_on_reject(global_object: &JSGlobalObject, callframe: &CallF
     });
     this.maybe_stop_reading_body(bun_vm_mut(global_object), arguments[1]);
 
+    // Describe the rejection on the request span first: reading the error's
+    // name/message/stack can run getters, so do it before response state is
+    // looked at. A pending termination just carries on to the cleanup below.
+    let span = this.otel_span.get();
+    if span.is_some() {
+        this.otel_handler_error.set(true);
+        let _ = crate::telemetry::span::record_exception(global_object, span, err);
+    }
+
     let flags = this.flags.get();
     if !flags.contains(Flags::REQUEST_HAS_COMPLETED)
         && !flags.contains(Flags::SOCKET_CLOSED)
@@ -1517,7 +1538,7 @@ fn node_http_request_on_reject(global_object: &JSGlobalObject, callframe: &CallF
             raw_response.clear_on_writable();
             raw_response.clear_timeout();
             if !raw_response.state().is_http_status_called() {
-                raw_response.write_status(b"500 Internal Server Error");
+                this.write_status(raw_response, 500);
             }
             raw_response.end_stream(raw_response.state().is_http_connection_close());
         }
@@ -2511,6 +2532,36 @@ impl NodeHTTPResponse {
         self.armed_this_value.set(JSValue::ZERO);
     }
 
+    /// A status line Bun writes on the handler's behalf (it never called `writeHead`).
+    pub(crate) fn write_status(&self, raw: uws::AnyResponse, status: u16) {
+        if !raw.state().is_http_status_called() {
+            self.otel_status.set(status);
+        }
+        let mut buf = [0u8; 16];
+        raw.write_status(crate::server::status_line(status, &mut buf));
+    }
+
+    pub(crate) fn otel_end(&self) {
+        let span = self.otel_span.replace(bun_telemetry::NativeSpan::NONE);
+        if span.is_some() {
+            let flags = self.flags.get();
+            let termination =
+                if flags.contains(Flags::SOCKET_CLOSED) && !flags.contains(Flags::ENDED) {
+                    Termination::Aborted
+                } else if self.otel_handler_error.get() {
+                    Termination::HandlerError
+                } else {
+                    Termination::Completed
+                };
+            crate::telemetry::server::end(
+                self.server.global_this(),
+                span,
+                self.otel_status.get(),
+                termination,
+            );
+        }
+    }
+
     #[inline]
     fn ref_(&self) {
         // SAFETY: `self` is live; only the interior-mutable count is touched.
@@ -2535,6 +2586,7 @@ impl NodeHTTPResponse {
 
 impl Drop for NodeHTTPResponse {
     fn drop(&mut self) {
+        self.otel_end();
         debug_assert!(!self.body_read_ref.get().has);
         debug_assert!(!self.poll_ref.get().has);
         debug_assert!(!self.pending_pinned_write.get().is_some());
@@ -2647,6 +2699,9 @@ pub(crate) unsafe extern "C" fn NodeHTTPResponse__createForJS(
         buffered_request_body_data_during_pause: JsCell::new(Vec::new()),
         request_trailers: JsCell::new(Vec::new()),
         armed_this_value: Cell::new(JSValue::ZERO),
+        otel_span: Cell::new(bun_telemetry::NativeSpan::NONE),
+        otel_status: Cell::new(0),
+        otel_handler_error: Cell::new(false),
         raw_request_headers: JsCell::new(Vec::new()),
         bytes_written: Cell::new(0),
         pending_pinned_write: Cell::new(PendingPinnedWrite::default()),

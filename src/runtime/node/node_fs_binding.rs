@@ -41,9 +41,20 @@ where
     // R-2: `JsCell::with_mut` scopes the `&mut NodeFS` to the blocking
     // syscall; `dispatch` never re-enters JS, and `Maybe<R>` is fully owned
     // (`sys::Error.path` is `Box<[u8]>`, not a borrow into `sync_error_buf`).
+    let otel = crate::telemetry::start_leaf(global, bun_telemetry::Instrument::Fs);
     let result = this
         .node_fs
         .with_mut(|nfs| NodeFS::dispatch::<R, A, F>(nfs, &args, Flavor::Sync));
+    if otel.is_some() {
+        crate::telemetry::fs::end(
+            global,
+            &otel,
+            F.otel_name(true),
+            args.path(),
+            result.as_ref().err(),
+            0,
+        );
+    }
     match result {
         Err(err) => Err(global.throw_value(err.to_js(global))),
         Ok(res) => res.fs_to_js(global),

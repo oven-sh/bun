@@ -33,6 +33,7 @@ use bun_uws_sys as uws_sys;
 use bun_uws_sys::app::c as uws_app_c;
 
 use bun_jsc::{JSGlobalObject, JSValue, JsResult};
+use bun_telemetry::http_record::Termination;
 
 // ─── httplog ─────────────────────────────────────────────────────────────────
 // Output.scoped(.Server, .visible) — debug-build no-op until bun_output wires.
@@ -148,16 +149,20 @@ pub(crate) fn write_status<const SSL: bool>(resp: *mut uws_sys::NewAppResponse<S
     // S008: `Response<SSL>` is a ZST opaque — safe `*mut → &mut` deref
     // (non-null checked above).
     let resp = bun_opaque::opaque_deref_mut(resp);
+    let mut buf = [0u8; 16];
+    resp.write_status(status_line(status, &mut buf));
+}
+
+pub(crate) fn status_line(status: u16, buf: &mut [u8; 16]) -> &[u8] {
     if let Some(text) = HTTPStatusText::get(status) {
-        resp.write_status(text);
-    } else {
-        use std::io::Write as _;
-        let mut buf = [0u8; 48];
-        let mut cursor = &mut buf[..];
-        write!(cursor, "{} HM", status).expect("unreachable");
-        let written = 48 - cursor.len();
-        resp.write_status(&buf[..written]);
+        return text;
     }
+    use std::io::Write as _;
+    let mut cursor = &mut buf[..];
+    write!(cursor, "{} HM", status).expect("unreachable");
+    let remaining = cursor.len();
+    let written = buf.len() - remaining;
+    &buf[..written]
 }
 
 // ─── AnyRoute ────────────────────────────────────────────────────────────────
@@ -360,6 +365,9 @@ pub struct PreparedRequest<const SSL: bool, const DEBUG: bool> {
     pub(crate) js_request: JSValue,
     pub(crate) request_object: *mut crate::webcore::Request,
     pub ctx: *mut ServerRequestContext<SSL, DEBUG>,
+    /// Keeps the request's telemetry span active while this frame dispatches
+    /// the handler; restores the previous async context on drop.
+    pub(crate) otel: Option<crate::telemetry::Entered>,
 }
 
 impl<const SSL: bool, const DEBUG: bool> PreparedRequest<SSL, DEBUG> {
@@ -905,6 +913,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             },
             request_object,
             ctx,
+            otel: ctx_ref.otel_begin(global),
         })
     }
 
@@ -961,6 +970,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     .ctx
                     .get::<ServerRequestContext<SSL, DEBUG>>()
                     .expect("ctx tag mismatch"),
+                otel: None,
             },
         };
         let ctx = prepared.ctx;
@@ -977,6 +987,17 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         let server = unsafe { &*this };
         let _entered = server.vm().enter_event_loop_scope_without_checkpoint();
         let global = server.global_this();
+        // A deferred (saved) request resumes later: make its span active again
+        // for the handler, as `prepare_js_request_context` did the first time.
+        let _otel_reentered = if prepared.otel.is_none() {
+            // SAFETY: `ctx` is the live request context for this dispatch.
+            let span = unsafe { &*ctx }.otel_span.get();
+            span.is_some().then(|| {
+                crate::telemetry::Entered::new(global, crate::telemetry::native_context_value(span))
+            })
+        } else {
+            None
+        };
         let response_value = match callback.call(global, server_js, &args) {
             Ok(v) => v,
             Err(err) => global.take_exception(err),
@@ -1171,6 +1192,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         ) else {
             return;
         };
+        if prepared.otel.is_some() {
+            // SAFETY: `prepared.ctx` is live for this frame.
+            unsafe { &*prepared.ctx }.otel_set_route(&user_route.route.path);
+        }
 
         // SAFETY: `server` is the live backref stored in `user_route`.
         let server_ref = unsafe { &*server };
@@ -1270,7 +1295,22 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // request, so only the first request for a given method pays the FFI hop
         // into `Bun__HTTPMethod__toJS`. (`get(..)` falls back to a fresh intern
         // if a future method variant ever indexes past the cache.)
-        let method_string = match bun_http::Method::find(req.method()) {
+        let method = bun_http::Method::find(req.method());
+        let (otel_span, _otel_entered) =
+            if bun_telemetry::enabled(bun_telemetry::Instrument::HttpServer) {
+                match crate::telemetry::server::begin(
+                    global,
+                    &uws::AnyRequest::H1(std::ptr::from_mut::<uws_sys::Request>(req)),
+                    any_response_from::<SSL>(std::ptr::from_mut(resp)),
+                    SSL,
+                ) {
+                    Some((span, entered)) => (span, Some(entered)),
+                    None => (bun_telemetry::NativeSpan::NONE, None),
+                }
+            } else {
+                (bun_telemetry::NativeSpan::NONE, None)
+            };
+        let method_string = match method {
             Some(m) => match this_ref.method_name_cache.get(m as usize) {
                 Some(slot) => {
                     let cached = slot.get();
@@ -1316,6 +1356,25 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             )
         })
         .unwrap_or_else(|err| global.take_exception(err));
+
+        if otel_span.is_some() {
+            if node_http_response.is_null() {
+                crate::telemetry::server::end(global, otel_span, 503, Termination::Completed);
+            } else {
+                // SAFETY: out-param written by `on_request_ffi`; live for this frame.
+                let nhr = unsafe { &*node_http_response };
+                if nhr.flags.get().contains(NhrFlags::REQUEST_HAS_COMPLETED) {
+                    crate::telemetry::server::end(
+                        global,
+                        otel_span,
+                        nhr.otel_status.get(),
+                        Termination::Completed,
+                    );
+                } else {
+                    nhr.otel_span.set(otel_span);
+                }
+            }
+        }
 
         if node_http_response.is_null() {
             // The request never reached the handler: an exception (in practice
@@ -1425,6 +1484,17 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         match &http_result {
             HttpResult::Exception(err) | HttpResult::Rejection(err) => {
+                if !node_http_response.is_null() {
+                    // Like the async rejection path: the thrown value is described
+                    // on the request span (exception event, error.type, message).
+                    // SAFETY: see `nhr` above.
+                    let nhr = unsafe { &*node_http_response };
+                    let span = nhr.otel_span.get();
+                    if span.is_some() {
+                        nhr.otel_handler_error.set(true);
+                        let _ = crate::telemetry::span::record_exception(global, span, *err);
+                    }
+                }
                 // SAFETY: `vm` is the process-static VirtualMachine; `&mut`
                 // scoped to this call.
                 let _ = unsafe {
@@ -1444,10 +1514,13 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                             if !nhr_flags.contains(NhrFlags::REQUEST_HAS_COMPLETED)
                                 && raw.state().is_response_pending()
                             {
+                                nhr.otel_handler_error.set(true);
                                 if raw.state().is_http_status_called() {
-                                    raw.write_status(b"500 Internal Server Error");
+                                    nhr.write_status(raw, 500);
                                     raw.end_without_body(true);
                                 } else {
+                                    // end_stream() without a status line sends 200.
+                                    nhr.otel_status.set(200);
                                     raw.end_stream(true);
                                 }
                             }
@@ -1489,6 +1562,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     // Raw 'upgrade'/'connect' handoff: the exchange left HTTP, so
                     // release the pending-request accounting now - a half-open
                     // tunnel never closes, which stranded `pending_requests`.
+                    // The request span covers the HTTP exchange, not the tunnel.
+                    nhr.otel_end();
                     nhr.mark_request_as_done_if_necessary();
                 }
             } else if nhr_flags.contains(NhrFlags::IS_REQUEST_PENDING) {
@@ -3391,13 +3466,24 @@ mod trampoline {
 
     pub(super) extern "C" fn on_404<const SSL: bool, const DEBUG: bool>(
         res: *mut uws_res,
-        _req: *mut UwsRequest,
-        _user_data: *mut c_void,
+        req: *mut UwsRequest,
+        user_data: *mut c_void,
     ) {
+        // user_data is the `*mut NewServer<..>` every `on_404` registration passes.
+        // SAFETY: the server outlives its uws app and this callback.
+        let server = unsafe { &*user_data.cast::<NewServer<SSL, DEBUG>>() };
+        let span = NewServer::<SSL, DEBUG>::otel_fallback_begin(
+            server,
+            &uws::AnyRequest::H1(req),
+            any_response_from::<SSL>(res.cast()),
+        );
         // S008: `Response<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
         let resp = bun_opaque::opaque_deref_mut(res.cast::<uws_sys::NewAppResponse<SSL>>());
         resp.write_status(b"404 Not Found");
         resp.end(b"", false);
+        if let Some(span) = span {
+            crate::telemetry::server::end(server.global_this(), span, 404, Termination::Completed);
+        }
     }
 
     pub(super) extern "C" fn on_request<const SSL: bool, const DEBUG: bool>(
@@ -3713,6 +3799,15 @@ pub struct AnyServer {
 }
 
 impl AnyServer {
+    /// The listener terminates TLS (any protocol version on it is https).
+    #[inline]
+    pub fn is_https(&self) -> bool {
+        matches!(
+            self.tag,
+            AnyServerTag::HTTPSServer | AnyServerTag::DebugHTTPSServer
+        )
+    }
+
     // ─── tag-checked downcasts ───────────────────────────────────────────────
     // Centralize the `unsafe { &*self.ptr.cast() }` pattern that the dispatch
     // macro and `h3_alt_svc` open-coded. Each accessor debug-asserts the tag

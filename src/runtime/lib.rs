@@ -4,6 +4,7 @@
 // are individually `#[allow]`ed at the extern block with a justification.
 #![deny(improper_ctypes, improper_ctypes_definitions)]
 #![feature(thread_local)]
+#![feature(optimize_attribute)]
 #![feature(adt_const_params)]
 
 pub mod error;
@@ -55,6 +56,7 @@ pub mod linear_fifo_testing;
 pub mod napi;
 #[path = "../bun.js.rs"]
 pub mod run_main;
+pub mod telemetry;
 pub mod timer;
 
 pub mod generated_classes; // include!()s ${BUN_CODEGEN_DIR}/generated_classes.rs

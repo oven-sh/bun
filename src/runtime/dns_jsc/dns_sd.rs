@@ -725,6 +725,8 @@ pub(crate) fn lookup(
 
     if let CacheHit::Inflight(inflight) = cache {
         let dns_lookup = DNSLookup::init(this.as_ctx_ptr(), global_this);
+        // SAFETY: just allocated; exclusively owned here.
+        unsafe { (*dns_lookup).otel_begin(global_this, &query.name) };
         // SAFETY: inflight points into resolver's HiveArray buffer
         unsafe { (*inflight).append(dns_lookup) };
         // SAFETY: `dns_lookup` was just heap-allocated by `DNSLookup::init`.
@@ -750,6 +752,8 @@ pub(crate) fn lookup(
         PendingCacheField::PendingHostCacheNative,
     );
     // SAFETY: request was just heap-allocated in init() and is exclusively owned here.
+    unsafe { (*request).head.otel_begin(global_this, &query.name) };
+    // SAFETY: as above.
     let promise_value = unsafe { (*request).head.promise.value() };
 
     let name_z = bun::ZBox::from_bytes(query.name.as_ref());

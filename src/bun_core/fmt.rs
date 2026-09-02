@@ -1193,6 +1193,28 @@ impl Display for URLFormatter<'_> {
 // HostFormatter
 // ───────────────────────────────────────────────────────────────────────────
 
+/// Split `host[:port]` (Host header / URL authority).
+pub fn split_host_port(host: &[u8]) -> (&[u8], Option<u16>) {
+    let port = |s: &[u8]| parse_unsigned::<u16>(s, 10).ok();
+    if host.first() == Some(&b'[') {
+        return match crate::strings::index_of_char_usize(host, b']') {
+            Some(end) => (
+                &host[..=end],
+                host[end + 1..].strip_prefix(b":").and_then(port),
+            ),
+            None => (host, None),
+        };
+    }
+    match crate::strings::last_index_of_char(host, b':') {
+        // A second ':' means an unbracketed IPv6 literal, which has no port.
+        Some(i) if !crate::strings::contains_char(&host[..i], b':') => match port(&host[i + 1..]) {
+            Some(p) => (&host[..i], Some(p)),
+            None => (host, None),
+        },
+        _ => (host, None),
+    }
+}
+
 /// Writes `host`, then `:port` unless `host` already carries one or `port` is the scheme default.
 pub struct HostFormatter<'a> {
     /// `example.com`, `example.com:8080`, `[::1]` or `[::1]:8080`.

@@ -574,3 +574,31 @@ declare function $getByIdDirectPrivate<T = any, K extends string = string>(
 declare var $Promise: PromiseConstructor;
 
 declare function $isPromise<T>(value: unknown): value is Promise<T>;
+/** Brand check for JSTelemetrySpan (exact JSType compare, JSTelemetrySpan.cpp). */
+declare function $isTelemetrySpan(value: unknown): boolean;
+// JSTelemetrySpan.cpp: mutators for native-owned spans (state lives in a bun_telemetry::pool slot).
+declare function $telemetrySetAttribute(span: unknown, key: string, value: unknown): void;
+// Plain `attributes` in one call; false = pass `$telemetryFlattenAttributes(attributes)` as `flat` instead.
+declare function $telemetrySetAttributes(span: unknown, attributes: object | null, flat: unknown[] | null): boolean;
+declare function $telemetrySetName(span: unknown, name: string): void;
+declare function $telemetrySetStatus(span: unknown, code: number, message: string): void;
+/** JS-owned spans too: buffers the event (timestamped now if `time` is absent) until end(). */
+declare function $telemetryAddEvent(span: unknown, name: string, flatAttributes: unknown[] | null, time: unknown): void;
+declare function $telemetryAddLink(
+  span: unknown,
+  traceId: string,
+  spanId: string,
+  traceFlags: number,
+  flatAttributes: unknown[] | null,
+  traceState: string,
+): void;
+/** TelemetrySpan.ts addOneLink builtin (shared by addLink/addLinks). */
+declare function $telemetryAddOneLink(span: unknown, state: number, link: unknown): void;
+/** TelemetrySpan.ts: `{k: v}` → `[k, v, …]` without null/undefined values; null if not an object. */
+declare function $telemetryFlattenAttributes(attributes: unknown): unknown[] | null;
+declare function $telemetrySpanRecordExceptionImpl(span: unknown, exception: unknown, time: unknown): unknown;
+/** TelemetrySpan.ts: the exception.type / error.type of a thrown value; undefined for primitives. */
+declare function $telemetryErrorType(error: unknown): string | undefined;
+declare function $telemetrySpanSetAttributeImpl(span: unknown, key: unknown, value: unknown): unknown;
+declare function $telemetrySpanSetAttributesImpl(span: unknown, attributes: unknown): unknown;
+declare function $telemetrySpanSetStatusImpl(span: unknown, status: unknown, message?: unknown): unknown;

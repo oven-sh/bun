@@ -63,6 +63,23 @@ impl Request {
         // SAFETY: uws returns a pointer+len pair valid for the lifetime of the request
         unsafe { bun_core::ffi::slice(p, n) }
     }
+    /// Every value of `name` (lower-case): the field itself when it occurs
+    /// once, every field joined with `", "` when it repeats; `None` when absent.
+    pub fn header_joined(&mut self, name: &[u8]) -> Option<std::borrow::Cow<'_, [u8]>> {
+        let mut out: Option<std::borrow::Cow<'_, [u8]>> = None;
+        // SAFETY: self is a live FFI handle; the callback only runs during the call with `out` alive.
+        unsafe {
+            c::uws_h3_req_for_each_header_value(
+                self,
+                name.as_ptr(),
+                name.len(),
+                crate::request::push_joined_header_value,
+                (&raw mut out).cast(),
+            )
+        };
+        out
+    }
+
     pub fn header(&mut self, name: &[u8]) -> Option<&[u8]> {
         let mut p: *const u8 = ptr::null();
         // SAFETY: self is a live FFI handle; name ptr/len valid for read; out-ptr is a valid local
@@ -779,5 +796,12 @@ mod c {
             len: usize,
             out: *mut *const u8,
         ) -> usize;
+        pub(super) fn uws_h3_req_for_each_header_value(
+            req: *mut Request,
+            name: *const u8,
+            len: usize,
+            handler: unsafe extern "C" fn(*const u8, usize, *mut core::ffi::c_void),
+            user_data: *mut core::ffi::c_void,
+        );
     }
 }

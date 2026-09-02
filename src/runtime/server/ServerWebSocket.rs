@@ -63,6 +63,13 @@ pub struct ServerWebSocket {
     // with intrusive WebCore ref-counting (ref/unref) — never `Arc`. The init
     // caller transfers a +1 ref; `finalize`/`on_close` unref it.
     signal: Cell<Option<NonNull<AbortSignal>>>,
+    /// Trace context of the request that upgraded this socket; message spans
+    /// link to it (they are not its children — that trace would never end).
+    otel_link: bun_telemetry::SpanContext,
+    /// Message spans whose async handler has not settled; ended with an
+    /// error when the socket closes first (a settled handle is stale by then
+    /// and ending it is a no-op).
+    otel_pending: core::cell::RefCell<Vec<bun_telemetry::NativeSpan>>,
 }
 
 // We pack the per-socket data into this struct below:
@@ -375,6 +382,12 @@ impl ServerWebSocket {
             this_value: JsCell::new(JsRef::empty()),
             flags: Cell::new(Flags::default()),
             signal: Cell::new(signal),
+            otel_link: if bun_telemetry::enabled(bun_telemetry::Instrument::WebSocket) {
+                crate::telemetry::active_context(global_object).unwrap_or_default()
+            } else {
+                bun_telemetry::SpanContext::default()
+            },
+            otel_pending: core::cell::RefCell::new(Vec::new()),
         }));
         // Get a strong ref and downgrade when terminating/close and GC will be able to collect the newly created value
         // SAFETY: `this` was just `heap::alloc`'d; ownership transfers to the
@@ -532,16 +545,38 @@ impl ServerWebSocket {
             result: Ok(JSValue::ZERO),
         };
 
+        let otel = crate::telemetry::websocket::begin_message(
+            global_object,
+            &self.otel_link,
+            opcode == Opcode::Binary,
+            message.len(),
+        );
         ws.cork(&mut corker, Corker::run);
         let result = match corker.result {
             Ok(result) => result,
             Err(e) => {
                 let err_value = global_object.take_error(e);
+                if let Some((span, entered)) = otel {
+                    drop(entered);
+                    crate::telemetry::websocket::end_message_thrown(
+                        span,
+                        global_object,
+                        err_value,
+                    )?;
+                }
                 return self
                     .handler()
                     .run_error_callback(on_error, global_object, err_value);
             }
         };
+        if let Some((span, entered)) = otel {
+            drop(entered);
+            if crate::telemetry::websocket::end_message(span, global_object, result)? {
+                let mut pending = self.otel_pending.borrow_mut();
+                pending.retain(|s| crate::telemetry::websocket::is_live(global_object, *s));
+                pending.push(span);
+            }
+        }
 
         if let Some(promise) = result.as_any_promise() {
             match promise.status() {
@@ -695,6 +730,9 @@ impl ServerWebSocket {
         let server = handler.server;
         let was_closed = self.is_closed();
         self.update_flags(|f| f.set_closed(true));
+        for span in self.otel_pending.take() {
+            crate::telemetry::websocket::end_message_unsettled(span, handler.global_object());
+        }
         // Whoever set the closed flag owns the decrement; close()/terminate()
         // and on_open's error path each decrement themselves when they flip it.
         scopeguard::defer! {

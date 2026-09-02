@@ -1,0 +1,18 @@
+[package]
+name = "bun_telemetry_cold"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+bstr.workspace = true
+bun_paths.workspace = true
+bun_base64.workspace = true
+bun_core.workspace = true
+bun_telemetry.workspace = true
+bun_url.workspace = true

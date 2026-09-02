@@ -16,6 +16,7 @@ use bun_http_types::Method::Method;
 use bun_jsc::JsCell;
 use bun_jsc::bun_string_jsc;
 use bun_ptr::{RefCount, RefPtr, ThisPtr};
+use bun_telemetry::http_record::Termination;
 use bun_uws::{AnyRequest, AnyResponse};
 
 use crate::api::js_bundle_completion_task::JSBundleCompletionTask;
@@ -278,11 +279,23 @@ impl Route {
                         resp.end_without_body(true);
                         return;
                     };
+                    let otel = crate::telemetry::server::begin_static(
+                        server.global_this(),
+                        &req,
+                        resp,
+                        server.is_https(),
+                    )
+                    .map(|(span, entered)| {
+                        drop(entered);
+                        span
+                    })
+                    .unwrap_or(bun_telemetry::NativeSpan::NONE);
                     let pending = PendingResponse {
                         method,
                         resp,
-                        _route: RefPtr::from_this(this),
+                        route: RefPtr::from_this(this),
                         is_response_pending: Cell::new(true),
+                        otel: Cell::new(otel),
                     };
                     route.pending_responses.with_mut(|v| v.push(pending));
                     resp.on_aborted_this(Self::on_pending_response_aborted, this);
@@ -297,7 +310,25 @@ impl Route {
                         );
                     }
                     // TODO: use the code from DevServer.rs to render the error
-                    resp.end_without_body(true);
+                    let global = server.global_this();
+                    match crate::telemetry::server::begin_static(
+                        global,
+                        &req,
+                        resp,
+                        server.is_https(),
+                    ) {
+                        Some((span, entered)) => {
+                            drop(entered);
+                            respond_build_failed(resp);
+                            crate::telemetry::server::end(
+                                global,
+                                span,
+                                500,
+                                Termination::Completed,
+                            );
+                        }
+                        None => respond_build_failed(resp),
+                    }
                 }
                 State::Html(html) => {
                     if bun_core::Environment::ENABLE_LOGS {
@@ -345,26 +376,33 @@ impl Route {
         Ok(())
     }
 
-    /// Leaves `State::Building`: answers the requests that arrived while the
-    /// route was building, then releases the pending request `schedule_bundle`
-    /// took on the server. The release comes last because it runs the server's
-    /// idle pass (`deinit_if_we_can`), which schedules the server's deinit when
-    /// this build was the only thing still keeping a stopped server alive.
-    fn finish_building(&self) {
-        debug_assert!(matches!(self.state.get(), State::Err(_) | State::Html(_)));
-        self.resume_pending_responses();
-        self.server.get().expect("server set").on_request_complete();
-    }
-
-    /// Production keeps the reason to itself, see `resume_pending_responses`.
-    fn set_build_error(&self, server: AnyServer, log: Log) {
-        if server.config().is_development() {
-            // `Log::print` takes the process-global writer as a `*mut io::Writer` through `IntoLogWrite`.
-            let writer: *mut bun_core::io::Writer = bun_output::error_writer_buffered();
-            let _ = log.print(writer);
-            bun_output::flush();
+    /// Leaves `State::Building` with `built`: stores the new state, answers
+    /// the requests that arrived while the route was building, then releases
+    /// the pending request `schedule_bundle` took on the server. The release
+    /// comes last because it runs the server's idle pass (`deinit_if_we_can`),
+    /// which schedules the server's deinit when this build was the only thing
+    /// still keeping a stopped server alive.
+    fn finish_building(&self, built: Built) {
+        let mut server = self.server.get().expect("server set");
+        if let Built::Err(log) = &built {
+            // Production keeps the reason to itself (see `resume_pending_responses`).
+            if server.config().is_development() {
+                // `Log::print` takes the process-global writer as a `*mut io::Writer` through `IntoLogWrite`.
+                let writer: *mut bun_core::io::Writer = bun_output::error_writer_buffered();
+                let _ = log.print(writer);
+                bun_output::flush();
+            }
         }
-        self.state.set(State::Err(log));
+        let resume = match &built {
+            Built::Html(html) => Some(html.clone()),
+            Built::Err(_) => None,
+        };
+        self.state.set(match built {
+            Built::Html(html) => State::Html(html),
+            Built::Err(log) => State::Err(log),
+        });
+        self.resume_pending_responses(resume);
+        server.on_request_complete();
     }
 
     pub(crate) fn on_plugins_resolved(
@@ -489,8 +527,7 @@ impl Route {
             "HTMLBundleRoute(0x{:x}) plugins rejected",
             std::ptr::from_ref(self) as usize
         );
-        self.state.set(State::Err(Log::init()));
-        self.finish_building();
+        self.finish_building(Built::Err(Log::init()));
         Ok(())
     }
 
@@ -501,14 +538,14 @@ impl Route {
         // `finish_building` (see `schedule_bundle`).
         let server = self.server.get().expect("server set");
 
-        match &mut completion_task.result {
+        let built = match &mut completion_task.result {
             BundleV2Result::Err(err) => {
                 if bun_core::Environment::ENABLE_LOGS {
                     bun_output::scoped_log!(debug, "onComplete: err - {}", err);
                 }
                 let mut log = Log::init();
                 completion_task.log.clone_to_with_recycled(&mut log, true);
-                self.set_build_error(server, log);
+                Built::Err(log)
             }
             BundleV2Result::Value(bundle) => 'bundle: {
                 if bun_core::Environment::ENABLE_LOGS {
@@ -543,13 +580,13 @@ impl Route {
                     output_file.output_kind == bundler_options::OutputKind::EntryPoint
                         && output_file.loader == Loader::Html
                 }) else {
-                    self.set_build_error(server, self.bundle.no_html_page_log());
-                    break 'bundle;
+                    break 'bundle Built::Err(self.bundle.no_html_page_log());
                 };
 
-                // The HTML entry point is registered after the loop: `clone()`
-                // needs it by `&mut` before it is shared. Static routes are keyed
-                // by `dest_path`, so registration order is immaterial.
+                // The HTML entry point is registered after the loop:
+                // `dupe_sharing_blob()` needs it by `&mut` before it is shared.
+                // Static routes are keyed by `dest_path`, so registration order
+                // is immaterial.
                 let mut this_html_route: Option<(StaticRoute, Box<[u8]>)> = None;
 
                 // Create static routes for each output file
@@ -632,26 +669,27 @@ impl Route {
 
                 let (mut html_route, html_route_path) =
                     this_html_route.expect("the loop above visited html_index");
-                let html_route_clone = html_route.clone(global_this);
+                let html_route_clone = html_route.dupe_sharing_blob(global_this);
                 bun_core::handle_oom(server.append_static_route(
                     &html_route_path,
                     AnyRoute::Static(RefPtr::new(html_route)),
                     MethodOptional::Any,
                 ));
-                self.state.set(State::Html(html_route_clone));
 
                 if !bun_core::handle_oom(server.reload_static_routes()) {
                     // Server has shutdown, so it won't receive any new requests
                     // TODO: handle this case
                 }
+                Built::Html(html_route_clone)
             }
             BundleV2Result::Pending => unreachable!(),
-        }
+        };
 
-        self.finish_building();
+        self.finish_building(built);
     }
 
-    fn resume_pending_responses(&self) {
+    /// `html`: the page the build produced, or `None` when it failed.
+    fn resume_pending_responses(&self, html: Option<RefPtr<StaticRoute>>) {
         // R-2: `JsCell::replace` moves the Vec out so the per-response loop
         // (which writes responses and may run uws callbacks) holds no borrow
         // into `self.pending_responses`.
@@ -666,41 +704,40 @@ impl Route {
             pending_response.is_response_pending.set(false);
             resp.clear_aborted();
 
-            match self.state.get() {
-                State::Html(html) => {
+            match &html {
+                Some(html) => {
                     if method == Method::HEAD {
                         StaticRoute::on_head(html.this_ptr(), resp);
                     } else {
                         StaticRoute::on(html.this_ptr(), resp);
                     }
+                    pending_response.otel_end(html.status_code, Termination::Completed);
                 }
-                State::Err(_log) => {
-                    if self
-                        .server
-                        .get()
-                        .expect("server set")
-                        .config()
-                        .is_development()
-                    {
-                        // TODO: use the code from DevServer.rs to render the error
-                    } else {
-                        // To protect privacy, do not show errors to end users in production.
-                        // TODO: Show a generic error page.
-                    }
-                    // This runs from a JS event-loop task, not a uWS handler,
-                    // so `end_without_body(true)` alone cannot close the
-                    // socket; write Content-Length so the client has framing.
-                    resp.write_status(b"500 Build Failed");
-                    resp.write_header_int(b"Content-Length", 0);
-                    resp.end_without_body(true);
-                }
-                _ => {
-                    resp.write_header_int(b"Content-Length", 0);
-                    resp.end_without_body(true);
+                None => {
+                    // TODO: in development, use the code from DevServer.rs to
+                    // render the error. In production, to protect privacy, do
+                    // not show errors to end users (TODO: a generic error page).
+                    respond_build_failed(resp);
+                    pending_response.otel_end(500, Termination::Completed);
                 }
             }
         }
     }
+}
+
+/// How a build left `State::Building`; the only input `finish_building` takes.
+enum Built {
+    Html(RefPtr<StaticRoute>),
+    Err(Log),
+}
+
+/// The one answer for a request that meets a failed build; Content-Length
+/// gives the client framing when this runs outside a uWS handler (where
+/// `end_without_body(true)` alone cannot close the socket).
+fn respond_build_failed(resp: AnyResponse) {
+    resp.write_status(b"500 Build Failed");
+    resp.write_header_int(b"Content-Length", 0);
+    resp.end_without_body(true);
 }
 
 impl Drop for Route {
@@ -716,11 +753,29 @@ pub struct PendingResponse {
     resp: AnyResponse,
     is_response_pending: Cell<bool>,
     /// Keeps the route alive while this response waits on it.
-    _route: RefPtr<Route>,
+    route: RefPtr<Route>,
+    /// SERVER span for a request parked while the bundle builds; ends when
+    /// it is answered (or aborted).
+    otel: Cell<bun_telemetry::NativeSpan>,
+}
+
+impl PendingResponse {
+    fn otel_end(&self, status: u16, termination: Termination) {
+        let span = self.otel.replace(bun_telemetry::NativeSpan::NONE);
+        if span.is_some() {
+            crate::telemetry::server::end(
+                self.route.bundle.global.get(),
+                span,
+                status,
+                termination,
+            );
+        }
+    }
 }
 
 impl Drop for PendingResponse {
     fn drop(&mut self) {
+        self.otel_end(0, Termination::Aborted);
         if self.is_response_pending.get() {
             self.resp.clear_aborted();
             self.resp.clear_on_writable();
@@ -746,6 +801,7 @@ impl Route {
         if let Some(pending_response) = removed {
             debug_assert!(pending_response.is_response_pending.get());
             pending_response.is_response_pending.set(false);
+            pending_response.otel_end(0, Termination::Aborted);
             drop(pending_response);
         }
     }

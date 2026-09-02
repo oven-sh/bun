@@ -1,4 +1,5 @@
 use crate::jsc::{JSValue, VirtualMachineSqlExt as _};
+use crate::shared::otel::ServerAddress;
 use bun_boringssl_sys::OwnedSslCtx;
 use bun_collections::{OffsetByteList, StringHashMap, VecExt};
 use bun_uws::{self as uws, AnySocket as Socket};
@@ -79,6 +80,7 @@ pub struct MySQLConnection {
 
     auth_data: Vec<u8>,
     database: Box<[u8]>,
+    pub(crate) address: ServerAddress,
     user: Box<[u8]>,
     password: Box<[u8]>,
     secure: Option<OwnedSslCtx>,
@@ -111,6 +113,7 @@ impl Default for MySQLConnection {
             full_auth_requested: false,
             auth_data: Vec::new(),
             database: Box::default(),
+            address: ServerAddress::default(),
             user: Box::default(),
             password: Box::default(),
             secure: None,
@@ -128,8 +131,14 @@ impl Default for MySQLConnection {
 bun_core::impl_field_parent! { MySQLConnection => JSMySQLConnection.connection; fn js_connection_ref; fn mut get_js_connection; }
 
 impl MySQLConnection {
+    #[inline]
+    pub(crate) fn database_name(&self) -> &[u8] {
+        &self.database
+    }
+
     pub(crate) fn init(
         database: Box<[u8]>,
+        address: ServerAddress,
         username: Box<[u8]>,
         password: Box<[u8]>,
         tls_config: SSLConfig,
@@ -139,6 +148,7 @@ impl MySQLConnection {
     ) -> Self {
         Self {
             database,
+            address,
             user: username,
             password,
             socket: Socket::SocketTcp(uws::SocketTCP::detached()),

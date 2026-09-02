@@ -921,6 +921,16 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
     Ok(ptr::null_mut())
 }
 
+/// See `RuntimeHooks::before_entry_point`.
+///
+/// # Safety
+/// `vm` is the live per-thread VM with its global created.
+unsafe fn before_entry_point(vm: *mut VirtualMachine) {
+    // SAFETY: per fn contract.
+    let global = unsafe { (*vm).global() };
+    crate::telemetry::init_for_vm(global);
+}
+
 /// `ensureDebugger(block_until_connected)` — no-op when no debugger.
 ///
 /// # Safety
@@ -1511,6 +1521,7 @@ static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     generate_entry_point,
     load_preloads,
     ensure_debugger,
+    before_entry_point,
     auto_tick,
     auto_tick_active,
     print_exception,
@@ -1535,6 +1546,7 @@ static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     stop_active_handles_for_vm_teardown: stop_active_handles_for_vm_teardown_hook,
     disarm_all_timers_for_vm_teardown,
     close_timer_loop_handles_after_vm_destroyed,
+    telemetry_flush_at_exit: crate::telemetry::flush_at_exit,
 };
 
 // ════════════════════════════════════════════════════════════════════════════

@@ -4305,6 +4305,13 @@ impl<'a> LinkerContext<'a> {
             }
             _ => return false,
         };
+        // A require() lifted into an import binds an ordinary local, so user
+        // code can rebind it to an object with getters. Only a binding that
+        // is never assigned still holds the namespace.
+        match self.graph.symbols.get_const(ref_) {
+            Some(symbol) if !symbol.has_been_assigned_to() => {}
+            _ => return false,
+        }
         if let Some(named_import) = self.graph.ast.items_named_imports()[id].get(&ref_) {
             if named_import.alias_is_star {
                 return true;

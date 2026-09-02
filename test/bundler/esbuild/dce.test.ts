@@ -2273,6 +2273,26 @@ describe("bundler", () => {
     },
     dce: true,
   });
+  // A lifted require() namespace is an ordinary local. When user code
+  // rebinds it, the value can hold getters, so the destructuring must stay.
+  itBundled("dce/DestructuringOfReboundUnwrappedRequire", {
+    files: {
+      "/entry.js": /* js */ `
+        export {}
+        var ns = require('react')
+        ns = { get x() { console.log("EFFECT"); return 2 } }
+        const { x } = ns
+        console.log("entry")
+      `,
+      "/node_modules/react/index.js": /* js */ `
+        exports.x = 1
+      `,
+      "/node_modules/react/package.json": `{ "name": "react", "version": "19.0.0" }`,
+    },
+    run: {
+      stdout: "EFFECT\nentry",
+    },
+  });
   itBundled("dce/TreeShakingLoweredClassStaticField", {
     files: {
       "/entry.js": /* js */ `

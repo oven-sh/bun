@@ -4,6 +4,7 @@
 #include "BakeGlobalObject.h"
 #include "JavaScriptCore/CallData.h"
 #include "JavaScriptCore/Completion.h"
+#include "JavaScriptCore/Error.h"
 #include "JavaScriptCore/Identifier.h"
 #include "JavaScriptCore/JSCJSValue.h"
 #include "JavaScriptCore/JSCast.h"
@@ -15,6 +16,7 @@
 #include "JavaScriptCore/JSString.h"
 #include "JavaScriptCore/JSModuleNamespaceObject.h"
 #include "ImportMetaObject.h"
+#include <wtf/text/MakeString.h>
 
 namespace Bake {
 
@@ -131,14 +133,17 @@ static JSC::JSModuleNamespaceObject* getModuleNamespace(JSC::JSGlobalObject* glo
   auto scope = DECLARE_THROW_SCOPE(vm);
 
   JSC::JSString* key = uncheckedDowncast<JSC::JSString>(keyValue);
-  String keyString = key->value(global);
+  String keyString = key->getString(global);
   RETURN_IF_EXCEPTION(scope, nullptr);
 
   auto keyIdent = JSC::Identifier::fromString(vm, keyString);
   auto* entry = global->moduleLoader()->registryEntry(keyIdent);
-  ASSERT(entry); // should have called BakeLoadModuleByKey and waited for that promise
   auto* module = entry ? entry->record() : nullptr;
-  ASSERT(module);
+  // The caller waited for BakeLoadModuleByKey's promise, so both exist unless the loader registered the module under another key.
+  if (!module) [[unlikely]] {
+    throwTypeError(global, scope, makeString("Module \""_s, keyString, "\" is not in the module registry"_s));
+    return nullptr;
+  }
   JSC::JSModuleNamespaceObject* namespaceObject = global->moduleLoader()->getModuleNamespaceObject(global, module);
   RETURN_IF_EXCEPTION(scope, nullptr);
   ASSERT(namespaceObject);

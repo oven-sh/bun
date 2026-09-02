@@ -158,6 +158,10 @@ describe("jsc-exception-lint in the build", () => {
     // are what clangd and the standalone tool read.
     const compileCommands = (n as unknown as { compileCommands: { arguments: string[] }[] }).compileCommands;
     expect(compileCommands).toHaveLength(1);
-    expect(compileCommands[0]!.arguments.some(a => a.includes("plugin"))).toBe(false);
+    const compileArgs = compileCommands[0]!.arguments;
+    for (const flag of flags) {
+      expect(compileArgs).not.toContain(flag);
+    }
+    expect(compileArgs.some(a => a.includes("plugin") || a.includes("data-hash"))).toBe(false);
   });
 });

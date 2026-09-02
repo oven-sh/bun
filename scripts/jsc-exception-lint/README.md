@@ -10,7 +10,7 @@ The checker is a clang plugin. `bun bd` loads it into every compile of
 bun's own C++ (`scripts/build/exception-lint.ts`), so a missing exception
 check is a compile error:
 
-```
+```text
 src/jsc/bindings/BunObject.cpp:412:16: error: jsc-exception-lint: call to
 JSC::JSValue::toString while an exception check is pending after
 JSC::JSValue::toString (BunObject.cpp:411); add RETURN_IF_EXCEPTION after it

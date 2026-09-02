@@ -1530,13 +1530,13 @@ private:
                     dot - (slash == std::string::npos ? 0 : slash + 1));
     if (m_cppStems.empty()) {
       for (auto it = SM.fileinfo_begin(); it != SM.fileinfo_end(); ++it) {
+        if (!it->first.getName().ends_with(".cpp"))
+          continue;
         std::string name = realPathOf(it->first);
-        if (name.size() > 4 && name.compare(name.size() - 4, 4, ".cpp") == 0) {
-          auto s2 = name.rfind('/');
-          m_cppStems.insert(name.substr(
-              s2 == std::string::npos ? 0 : s2 + 1,
-              name.size() - 4 - (s2 == std::string::npos ? 0 : s2 + 1)));
-        }
+        auto s2 = name.rfind('/');
+        m_cppStems.insert(name.substr(
+            s2 == std::string::npos ? 0 : s2 + 1,
+            name.size() - 4 - (s2 == std::string::npos ? 0 : s2 + 1)));
       }
       if (m_cppStems.empty())
         m_cppStems.insert("");
@@ -1569,9 +1569,12 @@ private:
                            const std::set<std::string> &used) {
     if (gBaseline.empty())
       return;
+    // Only the .cpp files matter: the entries below name .cpp files, and a
+    // translation unit reads thousands of headers.
     std::set<std::string> filesHere;
     for (auto it = SM.fileinfo_begin(); it != SM.fileinfo_end(); ++it)
-      filesHere.insert(relativeToRoot(realPathOf(it->first)));
+      if (it->first.getName().ends_with(".cpp"))
+        filesHere.insert(relativeToRoot(realPathOf(it->first)));
     DiagnosticsEngine &diags = m_ci->getDiagnostics();
     unsigned id = diags.getCustomDiagID(
         DiagnosticsEngine::Warning,

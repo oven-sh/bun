@@ -21,7 +21,7 @@ test("Bun.serve() with SNI hostnames does not leak per-hostname HttpRouter on st
       // On ASAN builds, freed memory sits in the quarantine and inflates
       // RSS even though it has been released. Disable quarantine so RSS
       // tracks live allocations. Release builds ignore ASAN_OPTIONS.
-      ASAN_OPTIONS: "quarantine_size_mb=0:allow_user_segv_handler=1:detect_leaks=0",
+      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0", "detect_leaks=0"].filter(Boolean).join(":"),
     },
     stdout: "pipe",
     stderr: "pipe",

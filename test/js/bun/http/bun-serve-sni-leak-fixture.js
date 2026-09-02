@@ -11,6 +11,13 @@
 //      ITERATIONS - number of create/stop cycles (default 250)
 //      SNI_NAMES - number of SNI hostnames per server (default 12)
 
+// On macOS, process.memoryUsage.rss() counts MADV_FREE_REUSABLE pages that
+// the allocator has already returned to the OS. Use the phys_footprint
+// accessor there so freed churn does not inflate the measurement.
+const rss =
+  process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function"
+    ? Bun.unsafe.memoryFootprint
+    : process.memoryUsage.rss;
 const cert = process.env.TLS_CERT;
 const key = process.env.TLS_KEY;
 const iterations = parseInt(process.env.ITERATIONS || "250", 10);
@@ -74,10 +81,10 @@ async function runBatches(total) {
 // Warmup so baseline includes one-time SSL library allocations, mimalloc
 // arena growth, etc.
 await runBatches(40);
-const baselineRss = process.memoryUsage.rss();
+const baselineRss = rss();
 
 await runBatches(iterations);
-const finalRss = process.memoryUsage.rss();
+const finalRss = rss();
 const growthMB = (finalRss - baselineRss) / (1024 * 1024);
 
 console.log(

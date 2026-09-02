@@ -429,16 +429,16 @@ const RUNTIME_PRELOAD_BROWSER: &str = "
 var __chunkGraphs, __chunkSeen;
 export var __preload = (id, seenOnly) => {
   for (var [base, graph, ids] of __chunkGraphs || [])
-    for (var stack = [id], g = globalThis, j, node, k, link; (j = stack.pop()); )
+    for (var stack = [id], g = globalThis, head, j, node, k, link; (j = stack.pop()); )
       if (!__chunkSeen[j] && (node = graph[j])) {
         __chunkSeen[j] = 1;
         for (k = 1; k < node.length; k++) stack.push(ids[node[k]]);
-        if (!seenOnly && j !== id && g.document) {
+        if (!seenOnly && j !== id && (head = g.document && g.document.head)) {
           link = g.document.createElement('link');
           link.rel = 'modulepreload';
           link.crossOrigin = '';
           link.href = new g.URL(node[0], base);
-          g.document.head.appendChild(link);
+          head.appendChild(link);
         }
       }
 };

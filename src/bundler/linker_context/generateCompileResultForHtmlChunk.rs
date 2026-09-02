@@ -299,16 +299,18 @@ impl<'a> HTMLLoader<'a> {
                     "<script type=\"module\" crossorigin src=\"{}\"></script>",
                     BStr::new(self.chunks[js_chunk_index].unique_key)
                 ));
-                let closure = bun_core::handle_oom(Chunk::reachable_chunks(
-                    self.chunks,
-                    js_chunk_index as u32,
-                    &[bun_ast::ImportKind::Stmt],
-                ));
-                for &other in &closure[1..] {
-                    array.push(format!(
-                        "<link rel=\"modulepreload\" crossorigin href=\"{}\">",
-                        BStr::new(self.chunks[other as usize].unique_key)
+                if self.linker.module_preload() {
+                    let closure = bun_core::handle_oom(Chunk::reachable_chunks(
+                        self.chunks,
+                        js_chunk_index as u32,
+                        &[bun_ast::ImportKind::Stmt],
                     ));
+                    for &other in &closure[1..] {
+                        array.push(format!(
+                            "<link rel=\"modulepreload\" crossorigin href=\"{}\">",
+                            BStr::new(self.chunks[other as usize].unique_key)
+                        ));
+                    }
                 }
             }
         }

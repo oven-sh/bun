@@ -2575,6 +2575,24 @@ describe("bundler", () => {
       expect(entry).toContain("import(globalThis.somewhere)");
     },
   });
+  itBundled("splitting/ModulePreloadDisabled", {
+    files: {
+      "/index.html": `<!DOCTYPE html><html><head><script type="module" src="./entry.js"></script></head><body></body></html>`,
+      "/entry.js": `import { nav } from "./other.js"; globalThis.go = () => [nav(), import("./r0.js")];`,
+      "/other.js": `export const nav = () => import("./r2.js")`,
+      ...preloadChainFiles(2),
+    },
+    entryPoints: ["/index.html", "/other.js"],
+    splitting: true,
+    outdir: "/out",
+    target: "browser",
+    modulePreload: false,
+    onAfterBundle(api) {
+      for (const file of readdirSync(api.outdir)) {
+        expect(api.readFile("/out/" + file)).not.toMatch(/__preload|__chunks|modulepreload/);
+      }
+    },
+  });
   for (const target of ["bun", "node"] as const) {
     itBundled(`splitting/ModulePreloadIsBrowserOnly_${target}`, {
       files: {

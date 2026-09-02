@@ -336,7 +336,8 @@ impl<'a> LinkerContext<'a> {
 
     /// Split browser ESM builds preload each `import()`ed chunk's static imports.
     pub(crate) fn module_preload(&self) -> bool {
-        self.graph.code_splitting
+        self.options.module_preload
+            && self.graph.code_splitting
             && self.options.target == Target::Browser
             && self.options.output_format == Format::Esm
     }
@@ -1327,6 +1328,7 @@ pub struct LinkerOptions {
     /// below this also fold into a chunk more entry points load (0 = off).
     /// See `merge_small_chunks`.
     pub(crate) min_chunk_size: u64,
+    pub(crate) module_preload: bool,
     pub(crate) source_maps: SourceMapOption,
     pub(crate) target: Target,
     pub(crate) compile_mode: CompileMode,
@@ -1371,6 +1373,7 @@ impl Default for LinkerOptions {
             footer: b"",
             css_chunking: false,
             min_chunk_size: 0,
+            module_preload: true,
             source_maps: SourceMapOption::None,
             target: Target::Browser,
             compile_mode: CompileMode::None,

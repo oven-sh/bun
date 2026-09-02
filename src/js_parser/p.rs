@@ -3318,11 +3318,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         continue;
                     }
 
-                    // `with (obj) var t = 2` declares `t` in the "with" scope, which the walk below starts above.
-                    if scope_is_with {
-                        self.set_must_not_be_renamed_through_links(value.ref_);
-                    }
-
                     let mut __scope: Option<js_ast::StoreRef<Scope>> = Some(scope_parent);
                     debug_assert!(__scope.is_some());
 
@@ -3368,6 +3363,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             symbol_idx = hoisted_ref.inner_index() as usize;
                             is_sloppy_mode_block_level_fn_stmt = true;
                         }
+                    }
+
+                    // `with (obj) var t = 2` declares `t` in the "with" scope, which the walk below starts above.
+                    if scope_is_with {
+                        self.set_must_not_be_renamed_through_links(value.ref_);
                     }
 
                     if hash.is_none() {

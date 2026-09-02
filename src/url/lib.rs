@@ -3,7 +3,6 @@
 pub mod error;
 pub use error::{Error, Result};
 
-use core::cell::RefCell;
 use core::mem::MaybeUninit;
 
 use bun_collections::bit_set::{ArrayBitSet, num_masks_for};
@@ -938,23 +937,9 @@ pub struct QueryStringMap {
     pub(crate) list: ParamList,
 }
 
-thread_local! {
-    // Unused in current code (commented-out path in get_name_count).
-    static NAME_COUNT_BUF: RefCell<[*const [u8]; 8]> = const { RefCell::new([std::ptr::from_ref::<[u8]>(&[]); 8]) };
-}
-
 impl QueryStringMap {
     pub fn get_name_count(&mut self) -> usize {
         self.list.len()
-        // if (this.name_count == null) {
-        //     var count: usize = 0;
-        //     var iterate = this.iter();
-        //     while (iterate.next(&_name_count) != null) {
-        //         count += 1;
-        //     }
-        //     this.name_count = count;
-        // }
-        // return this.name_count.?;
     }
 
     pub fn iter(&self) -> Iterator<'_> {

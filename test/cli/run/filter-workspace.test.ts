@@ -648,12 +648,19 @@ describe("bun", () => {
     expect(exitCode).toBe(0);
   });
 
-  // The terminal renderer is TTY-only on Windows (see runElideLinesTest).
-  test.skipIf(isWindows)("terminal output reports how long a successful script took", () => {
-    using dir = tempDir("filter-done-in", {
+  // The terminal renderer repaints the whole display on every event, wrapped
+  // in synchronized-update markers. The last frame is the final state; strip
+  // the ANSI escapes so assertions read like the rendered text.
+  function lastTerminalFrame(stdoutval: string): string {
+    const frames = stdoutval.split("\x1b[?2026l").filter(f => f.length > 0);
+    return frames[frames.length - 1].replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, "");
+  }
+
+  function runTerminalRenderTest(script: string): { frame: string; exitCode: number } {
+    using dir = tempDir("filter-terminal-render", {
       packages: {
         dep0: {
-          "package.json": JSON.stringify({ name: "dep0", scripts: { script: "exit 0" } }),
+          "package.json": JSON.stringify({ name: "dep0", scripts: { script } }),
         },
       },
       "package.json": JSON.stringify({ name: "ws", workspaces: ["packages/*"] }),
@@ -667,8 +674,26 @@ describe("bun", () => {
       stderr: "pipe",
     });
 
-    expect(stdout.toString()).toMatch(/Done in (?:\d+ ms|\d+\.\d{2} s)/);
+    return { frame: lastTerminalFrame(stdout.toString()), exitCode };
+  }
+
+  // The terminal renderer is TTY-only on Windows (see runElideLinesTest).
+  test.skipIf(isWindows)("a successful script with no output collapses to a single line", () => {
+    const { frame, exitCode } = runTerminalRenderTest("exit 0");
+    expect(frame).toMatch(/^dep0 script · Done in (?:\d+ ms|\d+\.\d{2} s)\n$/);
     expect(exitCode).toBe(0);
+  });
+
+  test.skipIf(isWindows)("a successful script with output keeps the expanded form", () => {
+    const { frame, exitCode } = runTerminalRenderTest("echo chatty_line");
+    expect(frame).toMatch(/^dep0 script \$ echo chatty_line\n│ chatty_line\n└─ Done in (?:\d+ ms|\d+\.\d{2} s)\n$/);
+    expect(exitCode).toBe(0);
+  });
+
+  test.skipIf(isWindows)("a failed script with no output keeps the expanded form", () => {
+    const { frame, exitCode } = runTerminalRenderTest("exit 7");
+    expect(frame).toMatch(/^dep0 script \$ exit 7\n└─ Exited with code 7\n$/);
+    expect(exitCode).toBe(7);
   });
 
   test("self-referential directory symlink in a workspace does not loop", () => {

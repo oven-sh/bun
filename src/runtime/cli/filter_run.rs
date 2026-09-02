@@ -501,6 +501,21 @@ impl<'a> State<'a> {
         }
     }
 
+    fn write_done(draw_buf: &mut Vec<u8>, proc: &ProcessInfo) -> crate::Result<()> {
+        if let Some(end) = proc.end_time {
+            let duration = end.duration_since(proc.start_time);
+            let ms = duration.as_nanos() as f64 / 1_000_000.0;
+            if ms > 1000.0 {
+                write!(draw_buf, fmt!("<cyan>Done in {:.2} s<r>\n"), ms / 1_000.0)?;
+            } else {
+                write!(draw_buf, fmt!("<cyan>Done in {:.0} ms<r>\n"), ms)?;
+            }
+        } else {
+            draw_buf.extend_from_slice(fmt!("<cyan>Done<r>\n").as_bytes());
+        }
+        Ok(())
+    }
+
     fn redraw(&mut self, is_abort: bool) -> crate::Result<()> {
         if !self.pretty_output {
             return Ok(());
@@ -519,6 +534,23 @@ impl<'a> State<'a> {
         // Reshaped for borrowck — iterating handles by index since draw_buf is also &mut self.
         for idx in 0..self.handles.len() {
             let handle = &self.handles[idx];
+            // a successful script with no output collapses to a single line
+            if handle.buffer.is_empty() {
+                if let Some(proc) = &handle.process {
+                    if let Status::Exited(exited) = &proc.status {
+                        if exited.code == 0 {
+                            write!(
+                                &mut self.draw_buf,
+                                fmt!("<b>{s}<r> {s} <d>·<r> "),
+                                bstr::BStr::new(&handle.config.package_name),
+                                bstr::BStr::new(&handle.config.script_name),
+                            )?;
+                            Self::write_done(&mut self.draw_buf, proc)?;
+                            continue;
+                        }
+                    }
+                }
+            }
             // normally we truncate the output to 10 lines, but on abort we print everything to aid debugging
             let elide_lines = if is_abort {
                 None
@@ -566,26 +598,7 @@ impl<'a> State<'a> {
                     }
                     Status::Exited(exited) => {
                         if exited.code == 0 {
-                            if let Some(end) = proc.end_time {
-                                let duration = end.duration_since(proc.start_time);
-                                let ms = duration.as_nanos() as f64 / 1_000_000.0;
-                                if ms > 1000.0 {
-                                    write!(
-                                        &mut self.draw_buf,
-                                        fmt!("<cyan>Done in {:.2} s<r>\n"),
-                                        ms / 1_000.0,
-                                    )?;
-                                } else {
-                                    write!(
-                                        &mut self.draw_buf,
-                                        fmt!("<cyan>Done in {:.0} ms<r>\n"),
-                                        ms,
-                                    )?;
-                                }
-                            } else {
-                                self.draw_buf
-                                    .extend_from_slice(fmt!("<cyan>Done<r>\n").as_bytes());
-                            }
+                            Self::write_done(&mut self.draw_buf, proc)?;
                         } else {
                             write!(
                                 &mut self.draw_buf,

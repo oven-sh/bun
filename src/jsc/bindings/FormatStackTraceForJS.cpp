@@ -686,8 +686,6 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionDefaultErrorPrepareStackTrace, (JSGlobalObjec
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
 
-    // Any object is accepted, like V8: Error.captureStackTrace works on
-    // plain objects and delegating wrappers pass them here (#41151).
     auto* errorObject = callFrame->argument(0).getObject();
     auto callSites = dynamicDowncast<JSC::JSArray>(callFrame->argument(1));
     if (!errorObject) {

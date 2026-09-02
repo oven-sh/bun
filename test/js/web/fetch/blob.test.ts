@@ -317,6 +317,25 @@ test("new File([file], name) does not rename the source", () => {
   expect([d.name, e.name]).toEqual(["d.txt", "e.txt"]);
 });
 
+test("new File(bits, name) converts the name to a USVString", async () => {
+  // `fileName` is a WebIDL USVString: an unpaired surrogate becomes U+FFFD.
+  const loneHigh = new File(["x"], "a\uD800b.txt");
+  const loneLow = new File(["x"], "a\uDC00b.txt");
+  const pairSplit = new File(["x"], "\uDC00\uD800");
+  expect([loneHigh.name, loneLow.name, pairSplit.name]).toEqual(["a\uFFFDb.txt", "a\uFFFDb.txt", "\uFFFD\uFFFD"]);
+
+  // a well-formed pair and a BMP character stay as they are
+  const wellFormed = new File(["x"], "\u{1F600}é.txt");
+  expect(wellFormed.name).toBe("\u{1F600}é.txt");
+
+  // the entry FormData hands back keeps the converted name
+  const formData = new FormData();
+  formData.append("f", loneHigh);
+  const entry = formData.get("f") as File;
+  expect(entry.name).toBe("a\uFFFDb.txt");
+  expect(await new Response(formData).text()).toContain('filename="a\uFFFDb.txt"');
+});
+
 test("dupeWithContentType does not alias the source's allocated content_type", async () => {
   // Regression: #23015 refactored Blob to be ref-counted and moved
   // `setNotHeapAllocated()` before the `isHeapAllocated()` guard in

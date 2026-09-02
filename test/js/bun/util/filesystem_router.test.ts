@@ -490,6 +490,88 @@ it("dir should be validated", async () => {
   }).toThrow("Expected dir to be a string");
 });
 
+it("reload() keeps route names when dir is reached through a symlink", async () => {
+  // The constructor stores the resolved real path of `dir`, which has no
+  // trailing separator, and reload() loads routes against it. The loader used
+  // to slice each entry's directory at the length of that path, so after a
+  // reload every name carried the last character of the directory name:
+  // `/b` became `s/b`. With an index route the name collapsed to one character
+  // and route validation looped forever, so this fixture has no index route.
+  using dir = tempDir("fsr-reload-symlink", {
+    "fixture.ts": /* ts */ `
+      import path from "path";
+      const router = new Bun.FileSystemRouter({
+        dir: path.join(import.meta.dir, "link", "pages"),
+        style: "nextjs",
+        fileExtensions: [".tsx"],
+      });
+      const before = Object.keys(router.routes).sort().join(" ");
+      router.reload();
+      console.log(before, "|", Object.keys(router.routes).sort().join(" "), router.match("/sub/c")?.name);
+    `,
+    "real/pages/b.tsx": "export default 1;\n",
+    "real/pages/sub/c.tsx": "export default 2;\n",
+  });
+  fs.symlinkSync(path.join(String(dir), "real"), path.join(String(dir), "link"), "junction");
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({
+    stdout: normalizeBunSnapshot(stdout, String(dir)),
+    stderr: normalizeBunSnapshot(stderr, String(dir)),
+    exitCode,
+    signalCode: proc.signalCode,
+  }).toEqual({ stdout: "/b /sub/c | /b /sub/c /sub/c", stderr: "", exitCode: 0, signalCode: null });
+});
+
+it("reload() returns when the resolver has dir cached without a trailing separator", async () => {
+  // After a failed relative resolve, the resolver has the entries of `pages`
+  // cached under a path with no trailing separator. A router over a
+  // subdirectory then caches `pages` itself under that spelling, and that is
+  // the path reload() loads routes against. The loader used to slice each
+  // entry's directory at the length of that path: the index route's name
+  // shrank to one character and route validation never ended, so an unfixed
+  // build never prints.
+  using dir = tempDir("fsr-reload-failed-resolve", {
+    "fixture.ts": /* ts */ `
+      import path from "path";
+      const pagesDir = path.join(import.meta.dir, "pages");
+      try {
+        Bun.resolveSync("./does-not-exist.ts", pagesDir);
+      } catch {}
+      new Bun.FileSystemRouter({ dir: path.join(pagesDir, "sub"), style: "nextjs", fileExtensions: [".tsx"] });
+      const router = new Bun.FileSystemRouter({ dir: pagesDir, style: "nextjs", fileExtensions: [".tsx"] });
+      const before = Object.keys(router.routes).sort().join(" ");
+      router.reload();
+      console.log(before, "|", Object.keys(router.routes).sort().join(" "), router.match("/")?.name);
+    `,
+    "pages/index.tsx": "export default 1;\n",
+    "pages/b.tsx": "export default 2;\n",
+    "pages/sub/c.tsx": "export default 3;\n",
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({
+    stdout: normalizeBunSnapshot(stdout, String(dir)),
+    stderr: normalizeBunSnapshot(stderr, String(dir)),
+    exitCode,
+    signalCode: proc.signalCode,
+  }).toEqual({ stdout: "/ /b /sub/c | / /b /sub/c /", stderr: "", exitCode: 0, signalCode: null });
+});
+
 it("origin should be validated", async () => {
   const { dir } = make(["posts.tsx"]);
 

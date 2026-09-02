@@ -146,8 +146,8 @@ impl FileSystemRouter {
             }
             let root_dir_path_ = dir.to_utf8(global_this)?;
             if !(root_dir_path_.slice().is_empty() || root_dir_path_.slice() == b".") {
-                // An absolute path is normalized too: a route is named by what follows this
-                // path in the resolver's spelling of its directory, which is normalized.
+                // An absolute path is normalized too, the way the resolver spells the
+                // directories it caches.
                 let Some(joined) =
                     path::resolve_path::join_abs_string_buf_checked::<path::platform::Auto>(
                         Fs::FileSystem::instance().top_level_dir,
@@ -258,20 +258,16 @@ impl FileSystemRouter {
         })
         .expect("unreachable");
 
+        if router
+            .load_routes(
+                &mut log,
+                &root_dir_info,
+                &mut RouterResolver(&mut vm.transpiler.resolver),
+            )
+            .is_err()
         {
-            let config_dir = router.config.dir.clone();
-            if router
-                .load_routes(
-                    &mut log,
-                    &root_dir_info,
-                    &mut RouterResolver(&mut vm.transpiler.resolver),
-                    &config_dir,
-                )
-                .is_err()
-            {
-                let err_value = log.to_js(global_this, format_args!("loading routes"));
-                return Err(global_this.throw_value(err_value?));
-            }
+            let err_value = log.to_js(global_this, format_args!("loading routes"));
+            return Err(global_this.throw_value(err_value?));
         }
 
         if let Some(origin) = argument.get(global_this, "origin")? {
@@ -488,20 +484,16 @@ impl FileSystemRouter {
             ..Default::default()
         })
         .expect("unreachable");
+        if router
+            .load_routes(
+                &mut log,
+                &root_dir_info,
+                &mut RouterResolver(&mut vm.transpiler.resolver),
+            )
+            .is_err()
         {
-            let config_dir = router.config.dir.clone();
-            if router
-                .load_routes(
-                    &mut log,
-                    &root_dir_info,
-                    &mut RouterResolver(&mut vm.transpiler.resolver),
-                    &config_dir,
-                )
-                .is_err()
-            {
-                let err_value = log.to_js(global_this, format_args!("loading routes"));
-                return Err(global_this.throw_value(err_value?));
-            }
+            let err_value = log.to_js(global_this, format_args!("loading routes"));
+            return Err(global_this.throw_value(err_value?));
         }
 
         // `this.router.deinit(); this.arena.deinit(); destroy(this.arena)` — drop old values.

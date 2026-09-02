@@ -202,11 +202,15 @@ describe("node:http client timeout", () => {
       socket.on("error", () => {});
       try {
         await once(socket, "connect");
-        expect(socket.write(Buffer.alloc(64 << 20))).toBe(false);
+        let writeComplete = false;
+        expect(socket.write(Buffer.alloc(64 << 20), () => (writeComplete = true))).toBe(false);
         expect(socket.writableLength).toBeGreaterThan(0);
 
         socket.setTimeout(200);
         await once(socket, "timeout");
+        // The write is still in flight: 'timeout' came from the stalled-queue
+        // branch, not from an ordinary idle socket.
+        expect(writeComplete).toBe(false);
         expect(socket.connecting).toBe(false);
       } finally {
         socket.destroy();

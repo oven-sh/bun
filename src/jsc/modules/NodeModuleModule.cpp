@@ -790,8 +790,6 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRunMain, (JSGlobalObject * globalObject, JSC:
         if (auto* process = zigGlobalObject->processObject()) {
             JSValue argv = process->getArgv(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
-            // A plain property get like Node's `process.argv[1]`: a replaced
-            // string indexes, null and undefined throw a TypeError.
             arg1 = argv.get(globalObject, 1u);
             RETURN_IF_EXCEPTION(scope, {});
         }

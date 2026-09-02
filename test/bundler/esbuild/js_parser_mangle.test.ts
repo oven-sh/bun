@@ -40,7 +40,7 @@ async function mangle(cases: Case[]): Promise<string[]> {
     cmd: [bunExe(), "build", "--no-bundle", "--minify-syntax", "--outdir=out", ...Object.keys(files)],
     cwd: String(dir),
     env: bunEnv,
-    stdout: "pipe",
+    stdout: "ignore",
     stderr: "pipe",
   });
   const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);

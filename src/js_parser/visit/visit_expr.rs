@@ -1495,6 +1495,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut e_ = e.data.e_if().expect("infallible: variant checked");
         let is_call_target =
             matches!(p.call_target, Data::EIf(ct) if core::ptr::eq(&raw const *e_, &raw const *ct));
+        let is_delete_target = matches!(p.delete_target, Data::EIf(dt) if core::ptr::eq(&raw const *e_, &raw const *dt));
 
         let prev_in_branch = p.in_branch_condition;
         p.in_branch_condition = true;
@@ -1507,7 +1508,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let Some(side_effects) = SideEffects::to_boolean(p, &e_.test.data) else {
             p.visit_expr(&mut e_.yes);
             p.visit_expr(&mut e_.no);
-            if p.full_minify_syntax() {
+            // "delete (a ? b.c : b.c)" deletes nothing, "delete b.c" would.
+            if p.full_minify_syntax() && !is_delete_target {
                 let result = p.mangle_if_expr(e.loc, e_);
                 // "(a ? b.c : b.c)()" => "(0, b.c)()", not "b.c()"
                 *e = if is_call_target && result.has_value_for_this_in_call() {

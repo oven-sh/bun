@@ -2056,10 +2056,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if let Some(catch) = &mut data.catch {
             let old_is_control_flow_dead = p.is_control_flow_dead;
 
-            // If the try body is empty, then the catch body is dead. Dead code is
-            // stripped whenever dead_code_elimination is on, so only mark it when
-            // minifying to leave plain transpiler output alone.
-            if data.body.is_empty() && p.options.features.minify_syntax {
+            // If the try body is empty, then the catch body is dead. Only the
+            // build paths strip it, so plain transpiler output stays as written.
+            if data.body.is_empty()
+                && p.full_minify_syntax()
+                && p.options.features.dead_code_elimination
+            {
                 p.is_control_flow_dead = true;
             }
 

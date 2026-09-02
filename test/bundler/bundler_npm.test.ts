@@ -58,14 +58,14 @@ describe("bundler", () => {
           ["react.development.js:524:'getContextName'", "1:5578:at"],
           ["react.development.js:2495:'actScopeDepth'", "23:3981:or++"],
           ["react.development.js:696:''Component'", '1:7616:\'Component "%s"'],
-          ["entry.tsx:6:'\"Content-Type\"'", '100:18570:"Content-Type"'],
-          ["entry.tsx:11:'<html>'", "100:18824:void"],
-          ["entry.tsx:23:'await'", "100:18923:await"],
+          ["entry.tsx:6:'\"Content-Type\"'", '100:18564:"Content-Type"'],
+          ["entry.tsx:11:'<html>'", "100:18818:void"],
+          ["entry.tsx:23:'await'", "100:18917:await"],
         ],
       },
     },
     expectExactFilesize: {
-      "out/entry.js": 218955,
+      "out/entry.js": 218949,
     },
     run: {
       stdout: "<!DOCTYPE html><html><body><h1>Hello World</h1><p>This is an example.</p></body></html>",

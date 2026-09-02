@@ -5730,13 +5730,25 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         true
     }
 
-    /// `Options::full_minify_syntax()` for this point of the visit. It is off
-    /// inside a function body the React Compiler may compile: the compiler sees
-    /// the body after its statements were visited, and it does not lower some
-    /// shapes the statement mangler produces (a `for (;;)` loop made from a
-    /// `while`, `ref.current == null && (ref.current = x)` made from an `if`).
+    /// `minify_syntax` for a build: `bun build`, bundled or with `--no-bundle`.
+    /// Every pass that merges or restructures statements (comma joins, `if` to
+    /// `&&`/`?:`, return and throw chains, `while` to `for`, arrow bodies to
+    /// expressions) checks this instead of `minify_syntax`.
+    ///
+    /// The runtime transpiler (`bun run`) also turns `minify_syntax` on, for
+    /// constant inlining, but it keeps one output statement per source statement
+    /// so that line numbers and `Function.prototype.toString()` stay close to
+    /// the source.
+    ///
+    /// It is also off inside a function body the React Compiler may compile:
+    /// the compiler sees the body after its statements were visited, and it
+    /// does not lower some shapes the statement mangler produces (a `for (;;)`
+    /// loop made from a `while`, `ref.current == null && (ref.current = x)`
+    /// made from an `if`).
     pub(crate) fn full_minify_syntax(&self) -> bool {
-        self.options.full_minify_syntax() && !self.in_react_compiler_candidate
+        self.options.features.minify_syntax
+            && (self.options.bundle || self.options.transform_only)
+            && !self.in_react_compiler_candidate
     }
 
     // TODO:

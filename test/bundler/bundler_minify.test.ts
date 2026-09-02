@@ -1689,9 +1689,10 @@ describe("bundler", () => {
         export function ternaryBool(a) { return a ? true : false }
         export function sameArgs(a, b, c, d) { return a ? b(c) : b(d) }
         export function exprStmts(a, b) { a(); b(); return 1 }
+        export function deleteCond(o, t) { delete (t ? o.b : o.b); return "b" in o }
 
         const out = [];
-        const log = v => out.push(v);
+        const log = (...v) => out.push(...v);
         log(ifElseToTernary(1), ifElseToTernary(0));
         log(ifChain(null), ifChain({ x: 1 }), ifChain({}));
         { let n = 0; ifAnd(1, 1, () => n++); ifAnd(1, 0, () => n++); ifAnd(0, 1, () => n++); log(n); }
@@ -1713,6 +1714,7 @@ describe("bundler", () => {
         log(ternaryBool(1), ternaryBool(""));
         log(sameArgs(true, x => x * 2, 1, 2), sameArgs(false, x => x * 2, 1, 2));
         { const seen = []; log(exprStmts(() => seen.push("a"), () => seen.push("b")), seen.join()); }
+        log(deleteCond({ b: 1 }, true), deleteCond({ b: 1 }, false));
         console.log(JSON.stringify(out));
       `,
     },
@@ -1747,10 +1749,13 @@ describe("bundler", () => {
         ternaryBool: "return!!a",
         sameArgs: "return b(a?c:d)",
         exprStmts: "return a(),b(),1",
+        // `delete` of a conditional deletes nothing, so the conditional stays.
+        deleteCond: 'return delete(t?o.b:o.b),"b"in o',
       });
     },
     run: {
-      stdout: '[1,1,1,1,"b",1,3,1,null,2,true,null,2,true,1,"1,2",true,true,true,2,1]',
+      stdout:
+        '[1,2,1,2,3,1,1,"b",1,3,1,null,2,1,7,true,true,null,5,2,0,true,1,"1,2",true,false,true,true,false,true,false,2,4,1,"a,b",true,true]',
     },
   });
 

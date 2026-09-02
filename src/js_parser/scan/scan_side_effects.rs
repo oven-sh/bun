@@ -37,6 +37,10 @@ impl SideEffects {
 
     /// Simplify an expression that is only tested for truthiness, such as the
     /// test of an `if`. Port of esbuild's `SimplifyBooleanExpr`.
+    ///
+    /// Some callers run this without `minify_syntax`, so the rules that
+    /// rewrite operands or comparisons only run when minifying. The rest is
+    /// the behavior those callers had before.
     pub(crate) fn simplify_boolean<'a, const TS: bool, const SCAN: bool>(
         p: &mut P<'a, TS, SCAN>,
         expr: Expr,
@@ -44,6 +48,7 @@ impl SideEffects {
         if !p.options.features.dead_code_elimination || !p.stack_check.is_safe_to_recurse() {
             return expr;
         }
+        let minify = p.options.features.minify_syntax;
 
         match expr.data {
             ExprData::EUnary(mut e) if e.op == Op::Code::UnNot => {
@@ -63,7 +68,8 @@ impl SideEffects {
                 | Op::Code::BinStrictNe
                 | Op::Code::BinLooseEq
                 | Op::Code::BinLooseNe => {
-                    if let Some(r) = e.right.data.extract_numeric_value()
+                    if minify
+                        && let Some(r) = e.right.data.extract_numeric_value()
                         && r == 0.0
                         && is_int32_or_uint32(&e.left.data)
                     {
@@ -82,8 +88,10 @@ impl SideEffects {
 
                 Op::Code::BinLogicalAnd => {
                     // "if (!!a && !!b)" => "if (a && b)"
-                    e.left = Self::simplify_boolean(p, e.left);
-                    e.right = Self::simplify_boolean(p, e.right);
+                    if minify {
+                        e.left = Self::simplify_boolean(p, e.left);
+                        e.right = Self::simplify_boolean(p, e.right);
+                    }
 
                     if let Some(effects) = SideEffects::to_boolean(p, &e.right.data)
                         && effects.value
@@ -96,8 +104,10 @@ impl SideEffects {
 
                 Op::Code::BinLogicalOr => {
                     // "if (!!a || !!b)" => "if (a || b)"
-                    e.left = Self::simplify_boolean(p, e.left);
-                    e.right = Self::simplify_boolean(p, e.right);
+                    if minify {
+                        e.left = Self::simplify_boolean(p, e.left);
+                        e.right = Self::simplify_boolean(p, e.right);
+                    }
 
                     if let Some(effects) = SideEffects::to_boolean(p, &e.right.data)
                         && !effects.value
@@ -111,7 +121,7 @@ impl SideEffects {
                 _ => {}
             },
 
-            ExprData::EIf(mut e) => {
+            ExprData::EIf(mut e) if minify => {
                 // "if (a ? !!b : !!c)" => "if (a ? b : c)"
                 e.yes = Self::simplify_boolean(p, e.yes);
                 e.no = Self::simplify_boolean(p, e.no);

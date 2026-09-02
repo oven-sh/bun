@@ -5,8 +5,8 @@
 //! `mangle_stmts` is the tail of `visit_stmts`: it runs once every statement in
 //! a list has been visited, so every branch and loop body it looks at has
 //! already been mangled. The passes that merge or restructure statements check
-//! `Options::full_minify_syntax()`; the ones that only fold constants run
-//! whenever `minify_syntax` is on.
+//! `P::full_minify_syntax()`; the ones that only fold constants run whenever
+//! `minify_syntax` is on.
 
 use crate::p::P;
 use crate::parser::{StmtsKind, statement_cares_about_scope};
@@ -234,17 +234,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         let prev_stmt = &mut output[prev_idx];
                         if let StmtData::SLocal(mut prev_local) = prev_stmt.data {
                             if local.can_merge_with(&prev_local) {
-                                // `Vec::append_slice` requires `T: Clone`
-                                // but `G::Decl` lacks the derive (its fields are all
-                                // `Copy`). Per-element bitwise copy instead.
-                                //
-                                // The parse pass allocates `decls` in the bump arena
-                                // (`from_bump_slice` → `Origin::Borrowed`); promote to a
-                                // global-heap buffer before growing it.
-                                for d in local.decls.slice() {
-                                    // SAFETY: Decl is field-wise Copy (Binding, Option<Expr>).
-                                    prev_local.decls.push(unsafe { core::ptr::read(d) });
-                                }
+                                append_decls(&mut prev_local.decls, local.decls.slice());
                                 continue;
                             }
                         }
@@ -535,12 +525,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                             && init_local.kind == LocalKind::KVar
                                             && init_local.origin == LocalOrigin::Normal
                                         {
-                                            for d in init_local.decls.slice() {
-                                                // SAFETY: Decl is field-wise Copy (Binding, Option<Expr>).
-                                                prev_local
-                                                    .decls
-                                                    .push(unsafe { core::ptr::read(d) });
-                                            }
+                                            append_decls(
+                                                &mut prev_local.decls,
+                                                init_local.decls.slice(),
+                                            );
                                             s_for.init = Some(prev_stmt);
                                             output[prev_idx] = stmt;
                                             continue;
@@ -1474,6 +1462,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             _ => false,
         }
+    }
+}
+
+/// `Vec::extend_from_slice` needs `T: Clone`, and `G::Decl` is field-wise `Copy`
+/// without the derive, so each declaration is copied bitwise.
+fn append_decls(dst: &mut G::DeclList, src: &[G::Decl]) {
+    for d in src {
+        // SAFETY: Decl is field-wise Copy (Binding, Option<Expr>).
+        dst.push(unsafe { core::ptr::read(d) });
     }
 }
 

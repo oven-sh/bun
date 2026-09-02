@@ -3802,7 +3802,10 @@ impl AnyServer {
     /// The listener terminates TLS (any protocol version on it is https).
     #[inline]
     pub fn is_https(&self) -> bool {
-        matches!(self.tag, AnyServerTag::HTTPSServer | AnyServerTag::DebugHTTPSServer)
+        matches!(
+            self.tag,
+            AnyServerTag::HTTPSServer | AnyServerTag::DebugHTTPSServer
+        )
     }
 
     // ─── tag-checked downcasts ───────────────────────────────────────────────

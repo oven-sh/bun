@@ -417,7 +417,11 @@ pub fn truncate_utf8(s: &[u8], max: usize) -> &[u8] {
     while end > 0 && max - end < 3 && (s[end] & 0xC0) == 0x80 {
         end -= 1;
     }
-    if (s[end] & 0xC0) == 0x80 { &s[..max] } else { &s[..end] }
+    if (s[end] & 0xC0) == 0x80 {
+        &s[..max]
+    } else {
+        &s[..end]
+    }
 }
 
 /// The semconv `exception.*` attribute set (stacktrace omitted when empty).

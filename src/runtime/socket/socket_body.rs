@@ -1969,9 +1969,13 @@ impl<const SSL: bool> NewSocket<SSL> {
                 None
             };
             this.otel_connect_end_tls(if transport_unusable {
-                TlsOutcome::Rejected(verify_problem.unwrap_or(("handshake_failed", "TLS handshake failed")))
+                TlsOutcome::Rejected(
+                    verify_problem.unwrap_or(("handshake_failed", "TLS handshake failed")),
+                )
             } else {
-                TlsOutcome::Kept { unauthorized: verify_problem }
+                TlsOutcome::Kept {
+                    unauthorized: verify_problem,
+                }
             });
         }
 
@@ -5386,5 +5390,7 @@ enum TlsOutcome<'a> {
     Rejected((&'a str, &'a str)),
     /// The connection stays up; `unauthorized` says why the peer did not
     /// verify when it did not (the caller accepted it anyway).
-    Kept { unauthorized: Option<(&'a str, &'a str)> },
+    Kept {
+        unauthorized: Option<(&'a str, &'a str)>,
+    },
 }

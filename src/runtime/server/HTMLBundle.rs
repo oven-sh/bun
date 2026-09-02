@@ -279,13 +279,17 @@ impl Route {
                         resp.end_without_body(true);
                         return;
                     };
-                    let otel =
-                        crate::telemetry::server::begin_static(server.global_this(), &req, resp, server.is_https())
-                            .map(|(span, entered)| {
-                                drop(entered);
-                                span
-                            })
-                            .unwrap_or(bun_telemetry::NativeSpan::NONE);
+                    let otel = crate::telemetry::server::begin_static(
+                        server.global_this(),
+                        &req,
+                        resp,
+                        server.is_https(),
+                    )
+                    .map(|(span, entered)| {
+                        drop(entered);
+                        span
+                    })
+                    .unwrap_or(bun_telemetry::NativeSpan::NONE);
                     let pending = PendingResponse {
                         method,
                         resp,
@@ -307,7 +311,12 @@ impl Route {
                     }
                     // TODO: use the code from DevServer.rs to render the error
                     let global = server.global_this();
-                    match crate::telemetry::server::begin_static(global, &req, resp, server.is_https()) {
+                    match crate::telemetry::server::begin_static(
+                        global,
+                        &req,
+                        resp,
+                        server.is_https(),
+                    ) {
                         Some((span, entered)) => {
                             drop(entered);
                             respond_build_failed(resp);

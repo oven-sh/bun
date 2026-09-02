@@ -84,7 +84,6 @@ impl QuerySpan {
         span.is_some().then_some(span)
     }
 
-
     pub fn end(
         &self,
         global: &JSGlobalObject,

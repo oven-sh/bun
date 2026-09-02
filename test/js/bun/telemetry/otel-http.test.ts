@@ -443,7 +443,13 @@ describe("Bun.serve", () => {
     using server = Bun.serve({ port: 0, routes: { "/ok": () => new Response("ok") } });
     await (await fetch(`http://127.0.0.1:${server.port}/missing?x=1`)).text();
     const [srv] = byName(await collect(1), "bun.http.server");
-    expect([srv.name, srv.kind, srv.attributes["http.response.status_code"], srv.attributes["url.path"], srv.status.code]).toEqual(["GET", 1, 404, "/missing", 0]);
+    expect([
+      srv.name,
+      srv.kind,
+      srv.attributes["http.response.status_code"],
+      srv.attributes["url.path"],
+      srv.status.code,
+    ]).toEqual(["GET", 1, 404, "/missing", 0]);
   });
 
   test("malformed traceparent is ignored (new root)", async () => {
@@ -470,7 +476,9 @@ describe("Bun.serve", () => {
         },
       },
     });
-    sock.write(`GET / HTTP/1.1\r\nHost: localhost\r\ntraceparent: ${tp1}\r\ntraceparent: ${tp2}\r\nConnection: close\r\n\r\n`);
+    sock.write(
+      `GET / HTTP/1.1\r\nHost: localhost\r\ntraceparent: ${tp1}\r\ntraceparent: ${tp2}\r\nConnection: close\r\n\r\n`,
+    );
     const [srv] = byName(await collect(1), "bun.http.server");
     expect(srv.parentSpanId).toBeUndefined();
     expect([tp1.slice(3, 35), tp2.slice(3, 35)]).not.toContain(srv.traceId);
@@ -1478,7 +1486,10 @@ describe("limits", () => {
   });
 
   test("attributeValueLengthLimit never splits a UTF-8 sequence and never over-runs on non-UTF-8 input", async () => {
-    Bun.otel.start({ exporters: [{ export: (b: any[]) => spans.push(...b) }], limits: { attributeValueLengthLimit: 4 } });
+    Bun.otel.start({
+      exporters: [{ export: (b: any[]) => spans.push(...b) }],
+      limits: { attributeValueLengthLimit: 4 },
+    });
     const s = Bun.otel.tracer("t").startSpan("lim");
     // 4-byte, 2-byte and 3-byte code points straddling the 4-byte limit, and a JS-owned span too
     s.setAttributes({ a: "a\u{1F600}b", b: "aaaé", c: "aa値", d: "abcd", e: "abcde" });

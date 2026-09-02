@@ -205,7 +205,11 @@ describe("net", () => {
       socket: { data() {}, open() {} },
     });
     Bun.otel.start({ exporters: [{ export: (b: any[]) => spans.push(...b) }], instrumentations: { net: "always" } });
-    const once = (s: any, ev: string) => new Promise<void>((res, rej) => { s.once(ev, () => res()); s.once("error", rej); });
+    const once = (s: any, ev: string) =>
+      new Promise<void>((res, rej) => {
+        s.once(ev, () => res());
+        s.once("error", rej);
+      });
     // (a) self-signed, caller accepts it anyway
     const a = tls.connect({ host: "127.0.0.1", port: listener.port, rejectUnauthorized: false });
     await once(a, "secureConnect");
@@ -217,7 +221,13 @@ describe("net", () => {
     expect(b.authorized).toBe(true);
     b.destroy();
     // (c) wrong name, but the caller's checkServerIdentity accepts it (node:tls decides in JS)
-    const c = tls.connect({ host: "127.0.0.1", port: listener.port, ca: tlsCert.cert, servername: "not-the-host.example", checkServerIdentity: () => undefined });
+    const c = tls.connect({
+      host: "127.0.0.1",
+      port: listener.port,
+      ca: tlsCert.cert,
+      servername: "not-the-host.example",
+      checkServerIdentity: () => undefined,
+    });
     await once(c, "secureConnect");
     c.destroy();
     // (d) default policy against a self-signed peer: rejected
@@ -226,7 +236,13 @@ describe("net", () => {
     expect(err.code).toBe("DEPTH_ZERO_SELF_SIGNED_CERT");
     const got = (await collect()).filter(s => s.name === "tls.connect");
     expect(
-      got.map(s => [s.status.code, s.attributes["tls.authorized"], s.attributes["tls.authorization_error"], s.attributes["error.type"], typeof s.attributes["network.peer.address"]]),
+      got.map(s => [
+        s.status.code,
+        s.attributes["tls.authorized"],
+        s.attributes["tls.authorization_error"],
+        s.attributes["error.type"],
+        typeof s.attributes["network.peer.address"],
+      ]),
     ).toEqual([
       [0, false, "DEPTH_ZERO_SELF_SIGNED_CERT", undefined, "string"],
       [0, true, undefined, undefined, "string"],

@@ -154,7 +154,11 @@ describe("Bun.otel", () => {
   test("a span cell is an ordinary object to generic builtins (Array.prototype with a length, JSON, spread)", () => {
     const s: any = Bun.otel.tracer("t").startSpan("x");
     s.length = 3;
-    expect([Array.prototype.indexOf.call(s, 1), Array.prototype.includes.call(s, undefined), [...Array.from(s)].length]).toEqual([-1, true, 3]);
+    expect([
+      Array.prototype.indexOf.call(s, 1),
+      Array.prototype.includes.call(s, undefined),
+      [...Array.from(s)].length,
+    ]).toEqual([-1, true, 3]);
     expect(typeof JSON.stringify(s)).toBe("string");
     s.end();
   });
@@ -801,7 +805,8 @@ describe("context propagation", () => {
       expect(Bun.otel.activeSpan()).toBeUndefined();
       await p;
       expect(Bun.otel.activeSpan()).toBeUndefined();
-    }));
+    }),
+  );
 
   test("coexists with AsyncLocalStorage in both nesting orders", () =>
     scoped(async () => {

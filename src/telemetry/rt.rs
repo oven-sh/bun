@@ -24,7 +24,8 @@ pub struct Hooks {
     /// A pooled span that had a JS cell materialized for it ended: release it.
     /// `snapshot`: what the ended span's cell keeps answering (see [`pool::Ended`]);
     /// `None` when the span was discarded.
-    pub release_cell: fn(js_cell: crate::pool::JsCellRef, snapshot: Option<&crate::pool::CellSnapshot>),
+    pub release_cell:
+        fn(js_cell: crate::pool::JsCellRef, snapshot: Option<&crate::pool::CellSnapshot>),
     /// `f(tracestate)` once, with the active span's W3C `tracestate` (empty if
     /// none); `f` may call [`with_local`]. Used by [`begin_pooled`].
     pub active_trace_state: fn(global: *mut c_void, f: &mut dyn FnMut(&[u8])),

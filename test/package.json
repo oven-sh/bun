@@ -126,6 +126,6 @@
   },
   "resolutions": {
     "react": "../node_modules/react",
-    "@types/node": "25.0.0"
+    "@types/node": "26.2.0"
   }
 }

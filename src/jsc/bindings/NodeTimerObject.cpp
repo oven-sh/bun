@@ -13,12 +13,13 @@
 #include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include "JavaScriptCore/JSCJSValue.h"
-#include "AsyncContextFrame.h"
 
 namespace Bun {
 using namespace JSC;
 
-static bool call(JSGlobalObject* globalObject, JSValue timerObject, JSValue callbackValue, JSValue argumentsValue)
+// `asyncContext` is the AsyncLocalStorage frame the timer captured when it was
+// created. It is installed around the callback and restored afterwards.
+static bool call(JSGlobalObject* globalObject, JSValue timerObject, JSValue callbackValue, JSValue argumentsValue, JSValue asyncContext)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
@@ -26,11 +27,10 @@ static bool call(JSGlobalObject* globalObject, JSValue timerObject, JSValue call
     JSValue restoreAsyncContext {};
     JSC::InternalFieldTuple* asyncContextData = nullptr;
 
-    if (auto* wrapper = dynamicDowncast<AsyncContextFrame>(callbackValue)) {
-        callbackValue = wrapper->callback.get();
+    if (!asyncContext.isUndefined()) {
         asyncContextData = globalObject->m_asyncContextData.get();
         restoreAsyncContext = asyncContextData->getInternalField(0);
-        asyncContextData->putInternalField(vm, 0, wrapper->context.get());
+        asyncContextData->putInternalField(vm, 0, asyncContext);
     }
 
     if (auto* promise = dynamicDowncast<JSPromise>(callbackValue)) {
@@ -40,6 +40,9 @@ static bool call(JSGlobalObject* globalObject, JSValue timerObject, JSValue call
         auto callData = JSC::getCallData(callbackValue);
         if (callData.type == CallData::Type::None) {
             Bun__reportUnhandledError(globalObject, JSValue::encode(createNotAFunctionError(globalObject, callbackValue)));
+            if (asyncContextData) {
+                asyncContextData->putInternalField(vm, 0, restoreAsyncContext);
+            }
             return true;
         }
 
@@ -79,14 +82,14 @@ static bool call(JSGlobalObject* globalObject, JSValue timerObject, JSValue call
 }
 
 // Returns true if an exception was thrown.
-extern "C" bool Bun__JSTimeout__call(JSGlobalObject* globalObject, EncodedJSValue timerObject, EncodedJSValue callbackValue, EncodedJSValue argumentsValue)
+extern "C" bool Bun__JSTimeout__call(JSGlobalObject* globalObject, EncodedJSValue timerObject, EncodedJSValue callbackValue, EncodedJSValue argumentsValue, EncodedJSValue asyncContext)
 {
     auto& vm = globalObject->vm();
     if (vm.hasPendingTerminationException() || WebCore::clientData(vm)->isStoppingOrStopped(vm)) [[unlikely]] {
         return true;
     }
 
-    return call(globalObject, JSValue::decode(timerObject), JSValue::decode(callbackValue), JSValue::decode(argumentsValue));
+    return call(globalObject, JSValue::decode(timerObject), JSValue::decode(callbackValue), JSValue::decode(argumentsValue), JSValue::decode(asyncContext));
 }
 
 }

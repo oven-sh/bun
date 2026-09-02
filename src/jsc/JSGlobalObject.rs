@@ -884,6 +884,14 @@ impl JSGlobalObject {
         JSC__JSGlobalObject__queueMicrotaskJob(self, function, first, second)
     }
 
+    /// The async context that is active right now (the `AsyncLocalStorage`
+    /// frame), or `undefined` when there is none. Store it on a resource that
+    /// runs a callback later, then install it around the call.
+    #[inline]
+    pub fn async_context(&self) -> JSValue {
+        JSC__JSGlobalObject__asyncContext(self)
+    }
+
     pub fn throw_value(&self, value: JSValue) -> JsError {
         // A termination exception (e.g. stack overflow) may already be
         // pending. Don't try to override it — that would hit
@@ -1531,6 +1539,7 @@ unsafe extern "C" {
         first: JSValue,
         second: JSValue,
     );
+    safe fn JSC__JSGlobalObject__asyncContext(this: &JSGlobalObject) -> JSValue;
 
     fn JSC__JSGlobalObject__createAggregateError(
         global: &JSGlobalObject,

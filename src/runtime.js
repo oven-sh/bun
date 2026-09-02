@@ -340,3 +340,31 @@ export var __promiseAll = args => Promise.all(args);
 // React Compiler memo-cache slot sentinels.
 export var __MEMO_CACHE_SENTINEL = /* @__PURE__ */ Symbol.for("react.memo_cache_sentinel");
 export var __EARLY_RETURN_SENTINEL = /* @__PURE__ */ Symbol.for("react.early_return_sentinel");
+
+/*__PURE__*/
+var __chunkGraphs;
+
+// Code splitting, browser: `<link rel=modulepreload>` every chunk that chunk
+// `i` statically imports before `import()`ing it, so its whole import graph
+// downloads in parallel instead of one module depth per round trip.
+export var __preload = (i, seenOnly) => {
+  if (__chunkGraphs)
+    for (var [base, graph, seen] of __chunkGraphs)
+      for (var stack = [i], j, node, k, link; stack.length; )
+        if (!seen[(j = stack.pop())] && (node = seen[j] = graph[j])) {
+          for (k = 1; k < node.length; k++) stack.push(node[k]);
+          if (!seenOnly && j !== i && typeof document !== "undefined") {
+            link = document.createElement("link");
+            link.rel = "modulepreload";
+            link.href = new URL(node[0], base);
+            document.head.appendChild(link);
+          }
+        }
+};
+
+// An entry chunk registers the chunks it can reach: `graph[i]` is chunk i's
+// path relative to `base`, then the indices of the chunks it imports.
+export var __chunks = (base, graph, entry) => {
+  (__chunkGraphs ||= []).push([base, graph, []]);
+  __preload(entry, 1);
+};

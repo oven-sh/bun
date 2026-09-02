@@ -97,6 +97,9 @@ pub struct LinkerContext<'a> {
 
     /// We may need to refer to the "__promiseAll" runtime symbol
     pub(crate) promise_all_runtime_ref: Ref,
+    /// `__preload` / `__chunks`: modulepreload for split browser `import()`s.
+    pub(crate) preload_runtime_ref: Ref,
+    pub(crate) chunks_runtime_ref: Ref,
 
     pub(crate) options: LinkerOptions,
 
@@ -150,6 +153,8 @@ impl<'a> Default for LinkerContext<'a> {
             esm_runtime_ref: Ref::NONE,
             unbound_module_ref: Ref::NONE,
             promise_all_runtime_ref: Ref::NONE,
+            preload_runtime_ref: Ref::NONE,
+            chunks_runtime_ref: Ref::NONE,
             options: Default::default(),
             r#loop: None,
             unique_key_buf: Box::default(),
@@ -329,6 +334,13 @@ impl<'a> LinkerContext<'a> {
         self.pending_task_count.fetch_sub(1, Ordering::Relaxed);
     }
 
+    /// Split browser ESM builds preload each `import()`ed chunk's static imports.
+    pub(crate) fn module_preload(&self) -> bool {
+        self.graph.code_splitting
+            && self.options.target == Target::Browser
+            && self.options.output_format == Format::Esm
+    }
+
     /// An `import()` — or a split `require()` — whose target is a
     /// chunk entry point: the record is resolved at runtime against the
     /// target's chunk instead of binding to a wrapper.
@@ -505,6 +517,14 @@ impl<'a> LinkerContext<'a> {
             .ref_;
         self.promise_all_runtime_ref = runtime_named_exports
             .get(b"__promiseAll")
+            .expect("infallible: runtime export")
+            .ref_;
+        self.preload_runtime_ref = runtime_named_exports
+            .get(b"__preload")
+            .expect("infallible: runtime export")
+            .ref_;
+        self.chunks_runtime_ref = runtime_named_exports
+            .get(b"__chunks")
             .expect("infallible: runtime export")
             .ref_;
 
@@ -2298,6 +2318,11 @@ impl<'a> LinkerContext<'a> {
 
             to_esm_ref,
             to_commonjs_ref,
+            module_preload_ref: if self.module_preload() {
+                self.preload_runtime_ref
+            } else {
+                Ref::NONE
+            },
             require_ref: match self.options.output_format {
                 Format::Cjs => None, // use unbounded global
                 _ => runtime_require_ref,
@@ -2861,6 +2886,18 @@ impl<'a> LinkerContext<'a> {
                     if !self.graph.files_live.is_set(other as usize) {
                         ctx.worklist.push(TreeShakeWork::File(other));
                     }
+                }
+            }
+            // The entry point part `scan_imports_and_exports` adds: its dependencies are the entry chunk's runtime imports.
+            let parts = ctx.parts[source_index as usize].as_slice();
+            for (part_index, part) in parts.iter().enumerate().skip(2) {
+                if !part.can_be_removed_if_unused
+                    && !ctx.parts_live[source_index as usize].is_set(part_index)
+                {
+                    ctx.worklist.push(TreeShakeWork::Part {
+                        part_index: part_index as u32,
+                        source_index,
+                    });
                 }
             }
             return;

@@ -291,17 +291,17 @@ console.log("About manifest:", aboutHtml);
               {
                 "headers": {
                   "content-type": "text/javascript;charset=utf-8",
-                  "etag": "Dl7kT6q7eY4",
+                  "etag": "cOKUeXG5rm8",
                 },
                 "input": "home.html",
                 "isEntry": true,
                 "loader": "js",
-                "path": "./home-ey4favse.js",
+                "path": "./home-g2mshsef.js",
               },
               {
                 "headers": {
                   "content-type": "text/html;charset=utf-8",
-                  "etag": "IhvRaM9jGDU",
+                  "etag": "22zOmjU9j1s",
                 },
                 "input": "home.html",
                 "isEntry": true,
@@ -326,17 +326,17 @@ console.log("About manifest:", aboutHtml);
               {
                 "headers": {
                   "content-type": "text/javascript;charset=utf-8",
-                  "etag": "RCRrF1EbBvo",
+                  "etag": "KJWEAXndpY0",
                 },
                 "input": "about.html",
                 "isEntry": true,
                 "loader": "js",
-                "path": "./about-44bqhv6t.js",
+                "path": "./about-8n41sx5d.js",
               },
               {
                 "headers": {
                   "content-type": "text/html;charset=utf-8",
-                  "etag": "2OGqRD6vx54",
+                  "etag": "u5gy4VlmH-M",
                 },
                 "input": "about.html",
                 "isEntry": true,

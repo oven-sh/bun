@@ -1322,6 +1322,8 @@ pub struct Options<'a> {
     pub bundling: bool,
     pub to_commonjs_ref: Ref,
     pub to_esm_ref: Ref,
+    /// `__preload`: when set, an `import()` of a chunk is printed as `(__preload(chunkIndex), import(path))`.
+    pub module_preload_ref: Ref,
     pub require_ref: Option<Ref>,
     pub import_meta_ref: Ref,
     pub hmr_ref: Ref,
@@ -1400,6 +1402,7 @@ impl<'a> Default for Options<'a> {
             bundling: false,
             to_commonjs_ref: Ref::NONE,
             to_esm_ref: Ref::NONE,
+            module_preload_ref: Ref::NONE,
             require_ref: None,
             import_meta_ref: Ref::NONE,
             hmr_ref: Ref::NONE,
@@ -2952,6 +2955,23 @@ pub(crate) mod __gated_printer {
 
             self.print_space_before_identifier();
 
+            let preload = record.flags.contains(ImportRecordFlags::IMPORTS_CHUNK)
+                && self.options.module_preload_ref.is_valid();
+            let wrap_preload = preload && !wrap && level.gte(Level::Comma);
+            if preload {
+                if wrap_preload {
+                    self.print(b"(");
+                }
+                self.print_symbol(self.options.module_preload_ref);
+                self.print(b"(");
+                // The last 8 bytes of a chunk's unique key are its index.
+                let digits = &record.path.text[record.path.text.len() - 8..];
+                let start = digits.iter().position(|&b| b != b'0').unwrap_or(7);
+                self.print(&digits[start..]);
+                self.print(b"),");
+                self.print_space();
+            }
+
             // Wrap with __toESM if importing a CommonJS module
             let wrap_with_to_esm = record.flags.contains(ImportRecordFlags::WRAP_WITH_TO_ESM);
 
@@ -2988,7 +3008,7 @@ pub(crate) mod __gated_printer {
                 self.print(b"))");
             }
 
-            if wrap {
+            if wrap || wrap_preload {
                 self.print(b")");
             }
         }

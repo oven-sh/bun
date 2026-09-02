@@ -272,6 +272,29 @@ impl Chunk {
         self.entry_point.is_entry_point()
     }
 
+    /// The chunks reachable from chunk `start` through cross-chunk imports of the given kinds, `start` first.
+    pub(crate) fn reachable_chunks(
+        chunks: &[Chunk],
+        start: u32,
+        kinds: &[ImportKind],
+    ) -> Result<Vec<u32>, AllocError> {
+        let mut seen = AutoBitSet::init_empty(chunks.len())?;
+        let mut order = vec![start];
+        seen.set(start as usize);
+        let mut i = 0;
+        while i < order.len() {
+            for import in chunks[order[i] as usize].cross_chunk_imports.iter() {
+                if kinds.contains(&import.import_kind) && !seen.is_set(import.chunk_index as usize)
+                {
+                    seen.set(import.chunk_index as usize);
+                    order.push(import.chunk_index);
+                }
+            }
+            i += 1;
+        }
+        Ok(order)
+    }
+
     /// Returns the HTML closing tag that must be escaped when this chunk's content
     /// is inlined into a standalone HTML file (e.g. "</script" for JS, "</style" for CSS).
     pub(crate) fn closing_tag_for_content(&self) -> &'static [u8] {
@@ -283,19 +306,19 @@ impl Chunk {
     }
 
     pub(crate) fn get_js_chunk_for_html<'a>(&self, chunks: &'a [Chunk]) -> Option<&'a Chunk> {
+        self.get_js_chunk_index_for_html(chunks).map(|i| &chunks[i])
+    }
+
+    pub(crate) fn get_js_chunk_index_for_html(&self, chunks: &[Chunk]) -> Option<usize> {
         // Non-entry chunks created under code splitting carry a default
         // entry_point_id of 0, so the id alone is ambiguous; require
         // is_entry_point to find the actual entry chunk.
         let entry_point_id = self.entry_point.entry_point_id();
-        for other in chunks.iter() {
-            if matches!(other.content, Content::Javascript(_))
+        chunks.iter().position(|other| {
+            matches!(other.content, Content::Javascript(_))
                 && other.entry_point.is_entry_point()
                 && other.entry_point.entry_point_id() == entry_point_id
-            {
-                return Some(other);
-            }
-        }
-        None
+        })
     }
 
     pub(crate) fn get_css_chunk_for_html<'a>(&self, chunks: &'a [Chunk]) -> Option<&'a Chunk> {

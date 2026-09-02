@@ -36,6 +36,74 @@ fn print_result_take_code(r: &mut PrintResult) -> Box<[u8]> {
     }
 }
 
+/// `__chunks(import.meta.url, graph, entry)` for a browser entry chunk of a
+/// split bundle: the chunk graph `__preload` walks (see runtime.js).
+fn module_preload_registration(
+    c: &mut LinkerContext,
+    chunk: &mut Chunk,
+    chunk_index: usize,
+    chunks: &[Chunk],
+) -> Result<(Vec<u8>, bool), crate::Error> {
+    use crate::EntryPoint;
+    use std::io::Write as _;
+    let mut code = Vec::new();
+    if !c.module_preload()
+        || c.graph.files.items_entry_point_kind()[chunk.entry_point.source_index() as usize]
+            != EntryPoint::Kind::UserSpecified
+    {
+        return Ok((code, false));
+    }
+    let chunks_ref = c.graph.symbols.follow(c.chunks_runtime_ref);
+    let declared_here =
+        c.graph.symbols.get_const(chunks_ref).unwrap().chunk_index() == Some(chunk_index as u32);
+    let imported_here = chunk
+        .content
+        .javascript()
+        .imports_from_other_chunks
+        .values()
+        .iter()
+        .any(|items| items.iter().any(|item| item.r#ref == chunks_ref));
+    if !declared_here && !imported_here {
+        return Ok((code, false));
+    }
+
+    let reached = Chunk::reachable_chunks(
+        chunks,
+        chunk_index as u32,
+        &[bun_ast::ImportKind::Stmt, bun_ast::ImportKind::Dynamic],
+    )?;
+    let len = reached.iter().copied().max().unwrap() as usize + 1;
+    let mut in_graph = bun_collections::AutoBitSet::init_empty(len)?;
+    for &i in &reached {
+        in_graph.set(i as usize);
+    }
+
+    let mut renamer = chunk.renamer.as_renamer();
+    write!(
+        &mut code,
+        "{}(import.meta.url,[",
+        bstr::BStr::new(renamer.name_for_symbol(chunks_ref))
+    )
+    .unwrap();
+    for i in 0..len {
+        if i > 0 {
+            code.push(b',');
+        }
+        if !in_graph.is_set(i) {
+            continue;
+        }
+        write!(&mut code, "[\"{}\"", bstr::BStr::new(chunks[i].unique_key)).unwrap();
+        for import in chunks[i].cross_chunk_imports.iter() {
+            if import.import_kind == bun_ast::ImportKind::Stmt {
+                write!(&mut code, ",{}", import.chunk_index).unwrap();
+            }
+        }
+        code.push(b']');
+    }
+    writeln!(&mut code, "],{});", chunk_index).unwrap();
+    Ok((code, declared_here))
+}
+
 /// This runs after we've already populated the compile results
 pub(crate) fn post_process_js_chunk(
     ctx: GenerateChunkCtx,
@@ -45,7 +113,6 @@ pub(crate) fn post_process_js_chunk(
 ) -> Result<(), crate::Error> {
     let _trace = perf::trace("Bundler.postProcessJSChunk");
 
-    let _ = chunk_index;
     let c: &mut LinkerContext = ctx.c();
     debug_assert!(matches!(
         chunk.content,
@@ -422,8 +489,20 @@ pub(crate) fn post_process_js_chunk(
         }
     }
 
+    let (mut preload_registration, preload_registration_after_runtime) =
+        module_preload_registration(c, chunk, chunk_index, &ctx.chunks)?;
+
     // For Kit, hoist runtime.js outside of the IIFE
     let compile_results = &chunk.compile_results_for_chunk;
+    // `__chunks` is declared by the runtime: register after it when it is in this chunk, else first.
+    let preload_registration_index = if preload_registration_after_runtime {
+        (0..compile_results.len())
+            .rev()
+            .find(|&i| compile_results[i].source_index() == Index::RUNTIME.value())
+            .map_or(0, |i| i + 1)
+    } else {
+        0
+    };
     if c.options.output_format == options::OutputFormat::InternalBakeDev {
         for compile_result in compile_results.iter() {
             let source_index = compile_result.source_index();
@@ -484,9 +563,15 @@ pub(crate) fn post_process_js_chunk(
 
     let sources: &[bun_ast::Source] = c.parse_graph().input_files.items_source();
     let targets: &[options::Target] = c.parse_graph().ast.items_target();
-    for compile_result in compile_results.iter() {
+    for (compile_result_index, compile_result) in compile_results.iter().enumerate() {
         let source_index = compile_result.source_index();
         let is_runtime = source_index == Index::RUNTIME.value();
+
+        if compile_result_index == preload_registration_index && !preload_registration.is_empty() {
+            newline_before_comment = true;
+            line_offset.advance(&preload_registration);
+            j.push_owned(core::mem::take(&mut preload_registration).into_boxed_slice());
+        }
 
         // TODO: extracated legal comments
 
@@ -606,6 +691,11 @@ pub(crate) fn post_process_js_chunk(
 
         // TODO: metafile
         newline_before_comment = !compile_result.code().is_empty();
+    }
+    if !preload_registration.is_empty() {
+        line_offset.advance(&preload_registration);
+        j.push_owned(preload_registration.into_boxed_slice());
+        newline_before_comment = true;
     }
 
     {

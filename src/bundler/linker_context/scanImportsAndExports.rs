@@ -603,6 +603,11 @@ pub(crate) fn scan_imports_and_exports(
 
         let mut runtime_export_symbol_ref: Ref = Ref::NONE;
         let mut ident_scratch: Vec<u8> = Vec::new();
+        let module_preload = this.module_preload();
+        let registers_chunks = module_preload
+            && col_ref!(entry_point_kinds)
+                .iter()
+                .any(|kind| *kind == EntryPoint::Kind::DynamicImport);
 
         for source_index_ in &reachable {
             let source_index = source_index_.get();
@@ -923,6 +928,17 @@ pub(crate) fn scan_imports_and_exports(
                         1,
                     )?;
                 }
+
+                if registers_chunks
+                    && col_ref!(entry_point_kinds)[id] == EntryPoint::Kind::UserSpecified
+                {
+                    this.graph.generate_runtime_symbol_import_and_use(
+                        source_index,
+                        Index::part(entry_point_part_index),
+                        b"__chunks",
+                        1,
+                    )?;
+                }
             }
 
             // Encode import-specific constraints in the dependency graph
@@ -939,6 +955,7 @@ pub(crate) fn scan_imports_and_exports(
                 let mut to_esm_uses: u32 = 0;
                 let mut to_common_js_uses: u32 = 0;
                 let mut runtime_require_uses: u32 = 0;
+                let mut preload_uses: u32 = 0;
 
                 // Imports of wrapped files must depend on the wrapper
                 // Iterate by index so each iteration re-borrows
@@ -968,6 +985,9 @@ pub(crate) fn scan_imports_and_exports(
                     if !rec_source_index.is_valid() || is_external_dyn {
                         if output_format == Format::InternalBakeDev {
                             continue;
+                        }
+                        if module_preload && is_external_dyn && kind == ImportKind::Dynamic {
+                            preload_uses += 1;
                         }
 
                         // This is an external import. Check if it will be a "require()" call.
@@ -1221,6 +1241,13 @@ pub(crate) fn scan_imports_and_exports(
                         Index::part(part_index as u32),
                         b"__reExport",
                         re_export_uses,
+                    )?;
+
+                    this.graph.generate_runtime_symbol_import_and_use(
+                        source_index,
+                        Index::part(part_index as u32),
+                        b"__preload",
+                        preload_uses,
                     )?;
                 }
             }

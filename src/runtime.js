@@ -19,11 +19,8 @@ function __accessProp(key) {
   return this[key];
 }
 
-// The getter for one property of a CommonJS exports object. On JavaScriptCore
-// a bound function is cheaper to create than a closure, and as fast to call.
-// On V8 a bound function is the slow getter shape, so for `--target=browser`
-// the bundler swaps this line for a closure per key (`RUNTIME_PROP_GETTER_*`
-// in src/bundler/ParseTask.rs).
+// The getter for one property of a CommonJS exports object. For `--target=browser`
+// the bundler swaps this line for a closure per key (`RUNTIME_PROP_GETTER_*` in ParseTask.rs).
 var __propGetter = (mod, key) => __accessProp.bind(mod, key);
 
 // This is used to implement "export * from" statements. It copies properties

@@ -36,10 +36,8 @@ pub struct Ast<'a> {
     pub commonjs_module_exports_assigned_deoptimized: bool,
 
     pub force_cjs_to_esm: bool,
-    /// `force_cjs_to_esm` for a file with no ES module syntax: its ES module
-    /// exports, if any, were lifted from `exports.foo = ...`, and its
-    /// `module.exports` is the module namespace. The linker binds a default
-    /// import of such a file to that namespace.
+    /// `force_cjs_to_esm` for a file with no ES module syntax: its exports were
+    /// lifted from `exports.foo = ...`, so its `module.exports` is the namespace.
     pub commonjs_lifted_to_esm: bool,
     pub exports_kind: ExportsKind,
 

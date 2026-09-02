@@ -2801,9 +2801,8 @@ pub(crate) mod __gated_printer {
                     self.print(b"(");
                 }
 
-                // Make sure the comma operator is properly wrapped. As the first
-                // argument of `__toESM(...)` it always needs the parentheses:
-                // `__toESM((init_foo(), exports_foo), 1)`.
+                // Make sure the comma operator is properly wrapped, always as a
+                // call argument: `__toESM((init_foo(), exports_foo), 1)`.
                 let wrap_comma_operator = meta.exports_ref.is_valid()
                     && meta.wrapper_ref.is_valid()
                     && (level.gte(Level::Comma) || wrap_with_to_esm);
@@ -3009,9 +3008,8 @@ pub(crate) mod __gated_printer {
             }
         }
 
-        /// Closes a `__toESM(` call opened around a module object: the
-        /// `isNodeMode` argument when the file being printed is an ES module by
-        /// type (`__esModule` is then ignored, as in Node), then `)`.
+        /// Closes a `__toESM(` call: `, 1` (`isNodeMode`) for an ES module by
+        /// type, then `)`.
         fn print_to_esm_suffix(&mut self) {
             if self.options.input_module_type == bundle_opts::ModuleType::Esm {
                 self.print(b",");

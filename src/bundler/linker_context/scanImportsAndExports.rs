@@ -187,9 +187,7 @@ pub(crate) fn scan_imports_and_exports(
                 {
                     continue;
                 }
-                // The default import of a lifted CommonJS module is its
-                // namespace (see `advance_import_tracker`), so it can observe
-                // every export, like `* as ns`.
+                // The default import of a lifted CommonJS module is its namespace.
                 if ni.alias_is_star
                     || (col_ref!(ast_flags_list)[other].contains(AstFlags::COMMONJS_LIFTED_TO_ESM)
                         && ni.alias.is_some_and(|alias| alias.slice() == b"default"))
@@ -248,8 +246,7 @@ pub(crate) fn scan_imports_and_exports(
                                 .get(&(import_record_index as u32))
                             {
                                 None => col!(dyn_ref_aliases)[other_file].merge_all(),
-                                // `default` of a lifted CommonJS module is its whole
-                                // `module.exports` (the namespace object).
+                                // `default` of a lifted CommonJS module is its namespace.
                                 Some(aliases)
                                     if record.kind == ImportKind::Dynamic
                                         && other_flags
@@ -318,10 +315,9 @@ pub(crate) fn scan_imports_and_exports(
                             col!(flags)[other_file].wrap = WrapKind::Cjs;
                         }
 
-                        // A default import of a lifted CommonJS module binds to the
-                        // module's namespace (see `advance_import_tracker`) unless
-                        // the `__esModule` interop has to be decided at run time
-                        // (see `lifted_default_import_needs_wrapper`).
+                        // A default import of a lifted CommonJS module binds to its
+                        // namespace (`advance_import_tracker`) unless `__esModule`
+                        // has to be checked at run time.
                         if record
                             .flags
                             .contains(ImportRecordFlags::CONTAINS_DEFAULT_ALIAS)
@@ -1111,11 +1107,8 @@ pub(crate) fn scan_imports_and_exports(
 
                         // This is an ES6 import of a CommonJS module, so it needs the
                         // "__toESM" wrapper as long as it's not a bare "require()".
-                        //
                         // A same-chunk `import()` of a lifted CommonJS module needs it
-                        // too: the module's namespace stands in for `module.exports`,
-                        // and `import()` of CommonJS resolves to a view of it with a
-                        // `default` that is `module.exports` itself.
+                        // too, so that `default` is `module.exports` (the namespace).
                         if kind != ImportKind::Require
                             && (other_export_kind == ExportsKind::Cjs
                                 || (kind == ImportKind::Dynamic

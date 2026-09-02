@@ -3662,13 +3662,8 @@ impl<'a> LinkerContext<'a> {
             };
         }
 
-        // `import X from "./cjs"` where `./cjs` had its `exports.foo = ...`
-        // assignments lifted to ES module exports: `X` is `module.exports`,
-        // which is now this module's namespace. Bind it like `import * as X`,
-        // so `X.foo` resolves to the lifted binding and the namespace object
-        // is only created when `X` itself escapes. This also covers `ns.default`
-        // on `import * as ns`. A `.default` member read on a namespace reached
-        // through `first_hop` keeps the normal export lookup below.
+        // The default import of a lifted CommonJS module is `module.exports`,
+        // which is its namespace: bind it like `import * as X`.
         if is_import_stmt
             && !alias_is_star
             && flags.contains(AstFlags::COMMONJS_LIFTED_TO_ESM)
@@ -4185,9 +4180,7 @@ impl<'a> LinkerContext<'a> {
     }
 
     /// Is `ref_` the `exports` object of ES module `source_index` (i.e. an
-    /// import that resolved here is that module's namespace)? A CommonJS
-    /// module whose `exports.foo = ...` assignments were lifted to ES module
-    /// exports counts: every name it can export is a static export.
+    /// import that resolved here is that module's namespace)?
     fn is_esm_namespace_ref(&self, source_index: crate::IndexInt, ref_: Ref) -> bool {
         let id = source_index as usize;
         id < self.graph.ast.len()
@@ -4201,13 +4194,9 @@ impl<'a> LinkerContext<'a> {
             && self.graph.meta.items_flags()[id].wrap != WrapKind::Cjs
     }
 
-    /// `import X from "./cjs"` where `./cjs` had its exports lifted to ES
-    /// module exports (`FORCE_CJS_TO_ESM`): does `X` still need the
-    /// `__commonJS` wrapper and `__toESM`? It does when the module sets
-    /// `__esModule` and the importer is not an ES module by type, because
-    /// then `X` is `exports.default` or `module.exports` depending on the
-    /// value of `__esModule` at run time. Otherwise `X` is `module.exports`,
-    /// which is the lifted module's namespace.
+    /// A default import of a lifted CommonJS module that sets `__esModule` is
+    /// `exports.default` or `module.exports` depending on that flag's run-time
+    /// value, unless the importer is an ES module by type (Node ignores the flag).
     pub(crate) fn lifted_default_import_needs_wrapper(
         importer_module_type: crate::options::ModuleType,
         exports: &crate::bundled_ast::NamedExports,

@@ -28,6 +28,34 @@ test("throw inside Error.prepareStackTrace doesnt crash", () => {
   expect(() => new Error().stack).toThrow("wat");
 });
 
+test("captureStackTrace on a non-Error target with a delegating prepareStackTrace wrapper", () => {
+  // https://github.com/oven-sh/bun/issues/41151
+  // Babel and source-map-support install wrappers that call the saved
+  // original prepareStackTrace. The native default must accept any object,
+  // because Error.captureStackTrace works on plain objects.
+  const old = Error.prepareStackTrace;
+  Error.prepareStackTrace = (err, trace) => old(err, trace);
+
+  function CustomError() {
+    // this.constructor is Error (inherited), not on the stack, so V8
+    // elides every frame. Node produces exactly "Error" here.
+    Error.captureStackTrace(this, this.constructor);
+  }
+  CustomError.prototype = new Error();
+
+  const err = new CustomError();
+  expect(err.stack).toBe("Error");
+
+  function CustomError2() {
+    Error.captureStackTrace(this, CustomError2);
+  }
+  CustomError2.prototype = new Error();
+
+  const err2 = new CustomError2();
+  expect(err2.stack).toStartWith("Error");
+  expect(err2.stack).toContain("\n    at ");
+});
+
 test("capture stack trace", () => {
   function f1() {
     f2();

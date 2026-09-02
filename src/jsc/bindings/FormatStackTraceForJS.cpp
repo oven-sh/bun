@@ -686,7 +686,11 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionDefaultErrorPrepareStackTrace, (JSGlobalObjec
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
 
-    auto errorObject = dynamicDowncast<JSC::ErrorInstance>(callFrame->argument(0));
+    // V8's default formatting accepts any object (Error.captureStackTrace
+    // works on plain objects), so a delegating wrapper like
+    // `Error.prepareStackTrace = (err, trace) => old(err, trace)` must too.
+    // https://github.com/oven-sh/bun/issues/41151
+    auto* errorObject = callFrame->argument(0).getObject();
     auto callSites = dynamicDowncast<JSC::JSArray>(callFrame->argument(1));
     if (!errorObject) {
         throwTypeError(lexicalGlobalObject, scope, "First argument must be an Error object"_s);

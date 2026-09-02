@@ -52,10 +52,12 @@ var __toESMCache_node;
 /*__PURE__*/
 var __toESMCache_esm;
 
-// Converts the module from CommonJS to ESM. When in node mode (i.e. in an
-// ".mjs" file, package.json has "type: module", or the "__esModule" export
-// in the CommonJS file is falsy or missing), the "default" property is
-// overridden to point to the original CommonJS exports object instead.
+// Converts the module from CommonJS to ESM. The "default" property is the
+// CommonJS "module.exports" object, unless the importer is not in node mode
+// (an ".mjs" file, or package.json has "type": "module") and the module has a
+// truthy "__esModule" export and its own "default" export. Then "default" is
+// that export. This is the rule `bun run` uses (populateESMExports in
+// JSCommonJSModule.cpp).
 export var __toESM = (mod, isNodeMode, target) => {
   var canCache = mod != null && typeof mod === "object";
   if (canCache) {
@@ -65,12 +67,10 @@ export var __toESM = (mod, isNodeMode, target) => {
   }
   target = mod != null ? __create(__getProtoOf(mod)) : {};
   const to =
-    isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target;
+    isNodeMode || !mod || !mod.__esModule || !__hasOwnProp.call(mod, "default")
+      ? __defProp(target, "default", { value: mod, enumerable: true })
+      : target;
 
-  // If the importer is in node compatibility mode or this is not an ESM
-  // file that has been converted to a CommonJS file using a Babel-
-  // compatible transform (i.e. "__esModule" has not been set), then set
-  // "default" to the CommonJS "module.exports" for node compatibility.
   // A CommonJS module may legitimately set "module.exports" to null,
   // undefined, or a primitive; only objects and functions have named exports.
   if ((mod && typeof mod === "object") || typeof mod === "function")

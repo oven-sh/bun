@@ -1196,9 +1196,9 @@ describe("bundler", () => {
     },
   });
   // `.default` of a lifted module that sets `__esModule` but exports no
-  // `default`: `undefined` for a `.js` importer (`__toESM` would read
-  // `exports.default`), the namespace for an ES module importer. Both routes to
-  // the namespace, `import * as ns` and `export * as Lib`, must agree.
+  // `default` is the namespace for every importer, as `__toESM` and `bun run`
+  // give `module.exports`. Both routes to the namespace, `import * as ns` and
+  // `export * as Lib`, must agree.
   const esModuleNoDefault = {
     "/lib.js": /* js */ `
       exports.__esModule = true;
@@ -1213,13 +1213,28 @@ describe("bundler", () => {
       "/entry.js": /* js */ `
         import * as ns from "./lib.js";
         import { Lib } from "./mid.js";
-        console.log(Lib === ns, typeof Lib.default, typeof ns.default, Lib.foo);
+        console.log(Lib === ns, Lib.default === ns, ns.default === ns, Lib.foo);
       `,
       ...esModuleNoDefault,
     },
     cjs2esm: true,
     run: {
-      stdout: "true undefined undefined 1",
+      stdout: "true true true 1",
+    },
+  });
+  // The default import of that module is the namespace too, so the module
+  // stays lifted for a `.js` importer
+  itBundled("cjs2esm/DefaultImportWithEsModuleNoDefaultFromCjsImporter", {
+    files: {
+      "/entry.js": /* js */ `
+        import lib, * as ns from "./lib.js";
+        console.log(lib === ns, lib.default === ns, lib.__esModule, lib.foo);
+      `,
+      ...esModuleNoDefault,
+    },
+    cjs2esm: true,
+    run: {
+      stdout: "true true true 1",
     },
   });
   itBundled("cjs2esm/DotDefaultWithEsModuleNoDefaultFromEsmImporter", {

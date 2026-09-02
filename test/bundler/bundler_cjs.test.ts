@@ -12,8 +12,10 @@ import { itBundled } from "./expectBundled";
 //   Node. `__esModule` is ignored.
 // - Every other importer (`.js`, `.ts`, no package.json `"type"`, or
 //   `"type": "commonjs"`): isNodeMode=0. When `module.exports.__esModule` is
-//   truthy, the default import is `module.exports.default`. Otherwise it is
-//   the whole `module.exports`. This matches `bun run` and esbuild.
+//   truthy and `module.exports` has its own `default` property, the default
+//   import is `module.exports.default`. Otherwise it is the whole
+//   `module.exports`. This matches `bun run`. esbuild matches it too, except
+//   that it gives `undefined` when the `default` property is missing.
 //
 // A bare `require()` never goes through `__toESM`.
 
@@ -925,6 +927,83 @@ describe("bundler", () => {
     },
     run: {
       stdout: "object",
+    },
+  });
+
+  // ============================================================================
+  // A module that sets `__esModule` and has no own `default` property.
+  // TypeScript and Babel emit this shape for a file with only named exports
+  // (rxjs, redis, mobx). `bun run` and Node give the whole `module.exports` as
+  // the default import. The bundle gives the same, for every importer.
+  // ============================================================================
+
+  const namedOnlyFiles = {
+    "/node_modules/named-only/package.json": `{ "name": "named-only", "main": "index.js" }`,
+    "/node_modules/named-only/index.js": /* js */ `
+      "use strict";
+      Object.defineProperty(exports, "__esModule", { value: true });
+      exports.named = 1;
+    `,
+  };
+  // `bun run` prints "object true true true 1" for this file.
+  const logNamedOnly = /* js */ `
+    import d, * as ns from "named-only";
+    import { named } from "named-only";
+    const m = await import("named-only");
+    console.log(typeof d, d === require("named-only"), ns.default === d, m.default === d, named);
+  `;
+
+  // Test 46: a `.js` importer
+  itBundled("cjs/__toESM_esModule_without_default_js_importer", {
+    files: {
+      "/entry.js": logNamedOnly,
+      ...namedOnlyFiles,
+    },
+    run: {
+      stdout: "object true true true 1",
+    },
+  });
+
+  // Test 47: a `.ts` importer with target=node
+  itBundled("cjs/__toESM_esModule_without_default_ts_importer_target_node", {
+    files: {
+      "/entry.ts": logNamedOnly,
+      ...namedOnlyFiles,
+    },
+    target: "node",
+    run: {
+      stdout: "object true true true 1",
+    },
+  });
+
+  // Test 48: a `.mjs` importer uses Node's interop and gets the same value
+  itBundled("cjs/__toESM_esModule_without_default_mjs_importer", {
+    files: {
+      "/entry.mjs": logNamedOnly,
+      ...namedOnlyFiles,
+    },
+    run: {
+      stdout: "object true true true 1",
+    },
+  });
+
+  // Test 49: an external dependency in CJS output, `.ts` importer
+  itBundled("cjs/__toESM_esModule_without_default_external_require", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import d, { named } from "named-only";
+        console.log(typeof d, d === require("named-only"), named);
+      `,
+    },
+    runtimeFiles: namedOnlyFiles,
+    external: ["named-only"],
+    target: "node",
+    format: "cjs",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain('__toESM(require("named-only"))');
+    },
+    run: {
+      stdout: "object true 1",
     },
   });
 });

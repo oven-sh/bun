@@ -134,7 +134,7 @@ var require_react = __commonJS(function(exports) {
 });
 
 // entry.tsx
-var import_react = __toESM(require_react(), 1);
+var import_react = __toESM(require_react());
 
 // node_modules/react/jsx-dev-runtime.js
 var $jsxDEV = () => null;

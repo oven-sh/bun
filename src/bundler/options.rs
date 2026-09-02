@@ -1320,6 +1320,8 @@ pub struct BundleOptions<'a> {
     /// smaller than this many bytes into a chunk more entry points load.
     /// 0 disables that; chunks with identical load conditions always fold.
     pub min_chunk_size: u64,
+    /// `<link rel=modulepreload>` for split browser chunks (HTML + `import()`).
+    pub module_preload: bool,
 
     pub ignore_dce_annotations: bool,
     pub emit_dce_annotations: bool,
@@ -1522,6 +1524,7 @@ impl<'a> BundleOptions<'a> {
             repl_mode: self.repl_mode,
             css_chunking: self.css_chunking,
             min_chunk_size: self.min_chunk_size,
+            module_preload: self.module_preload,
             ignore_dce_annotations: self.ignore_dce_annotations,
             emit_dce_annotations: self.emit_dce_annotations,
             deprecated_namespace_object_setters: self.deprecated_namespace_object_setters,
@@ -1700,6 +1703,7 @@ impl<'a> BundleOptions<'a> {
             transform_options: std::sync::Arc::clone(&transform),
             css_chunking: false,
             min_chunk_size: 0,
+            module_preload: true,
             drop: transform.drop.clone().into_boxed_slice(),
             bundler_feature_flags,
 

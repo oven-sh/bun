@@ -1322,6 +1322,8 @@ pub struct Options<'a> {
     pub bundling: bool,
     pub to_commonjs_ref: Ref,
     pub to_esm_ref: Ref,
+    /// `__preload`: when set, an `import()` of a chunk is printed as `(__preload(chunkId), import(path))`.
+    pub module_preload_ref: Ref,
     pub require_ref: Option<Ref>,
     pub import_meta_ref: Ref,
     pub hmr_ref: Ref,
@@ -1352,8 +1354,7 @@ pub struct Options<'a> {
 
     pub require_or_import_meta_for_source_callback: RequireOrImportMetaCallback,
 
-    /// The module type of the importing file (after linking), used to determine interop helper behavior.
-    /// Controls whether __toESM uses Node ESM semantics (isNodeMode=1 for .esm) or respects __esModule markers.
+    /// Module type of the file being printed. `Esm` prints `__toESM(.., 1)`, which ignores `__esModule`.
     pub input_module_type: bundle_opts::ModuleType,
     pub module_type: bundle_opts::Format,
 
@@ -1401,6 +1402,7 @@ impl<'a> Default for Options<'a> {
             bundling: false,
             to_commonjs_ref: Ref::NONE,
             to_esm_ref: Ref::NONE,
+            module_preload_ref: Ref::NONE,
             require_ref: None,
             import_meta_ref: Ref::NONE,
             hmr_ref: Ref::NONE,
@@ -2935,6 +2937,11 @@ pub(crate) mod __gated_printer {
                 self.print(b")");
 
                 if wrap_with_to_esm {
+                    if self.options.input_module_type == bundle_opts::ModuleType::Esm {
+                        self.print(b",");
+                        self.print_space();
+                        self.print(b"1");
+                    }
                     self.print(b")");
                 }
                 if wrap {
@@ -2947,6 +2954,20 @@ pub(crate) mod __gated_printer {
             self.add_source_mapping(record.range.loc);
 
             self.print_space_before_identifier();
+
+            let preload = record.flags.contains(ImportRecordFlags::IMPORTS_CHUNK)
+                && self.options.module_preload_ref.is_valid();
+            let wrap_preload = preload && !wrap && level.gte(Level::Comma);
+            if preload {
+                if wrap_preload {
+                    self.print(b"(");
+                }
+                self.print_symbol(self.options.module_preload_ref);
+                self.print(b"(");
+                self.print_string_literal_utf8(record.path.pretty, false);
+                self.print(b"),");
+                self.print_space();
+            }
 
             // Wrap with __toESM if importing a CommonJS module
             let wrap_with_to_esm = record.flags.contains(ImportRecordFlags::WRAP_WITH_TO_ESM);
@@ -2984,7 +3005,7 @@ pub(crate) mod __gated_printer {
                 self.print(b"))");
             }
 
-            if wrap {
+            if wrap || wrap_preload {
                 self.print(b")");
             }
         }

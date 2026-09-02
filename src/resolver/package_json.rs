@@ -1255,8 +1255,6 @@ pub type ConditionsMap = StringArrayHashMap<()>;
 pub(crate) struct ESModule<'a> {
     pub(crate) debug_logs: Option<&'a mut resolver::DebugLogs>,
     pub(crate) conditions: &'a ConditionsMap,
-    // allocator dropped — global mimalloc
-    pub(crate) module_type: &'a mut ModuleType,
 }
 
 #[derive(Clone)]
@@ -1535,8 +1533,6 @@ fn module_bufs() -> *mut ModuleBufs {
     })
 }
 
-// `module_type` / `debug_logs` are `&'a mut T`, so reading/writing them
-// requires `&mut self`. All resolution methods take `&mut self`.
 impl<'a> ESModule<'a> {
     pub(crate) fn resolve(
         &mut self,
@@ -2090,7 +2086,6 @@ impl<'a> ESModule<'a> {
                             ));
                         }
 
-                        let prev_module_type = *self.module_type;
                         let result = self.resolve_target::<PATTERN>(
                             package_url,
                             &entry.value,
@@ -2098,16 +2093,7 @@ impl<'a> ESModule<'a> {
                             internal,
                         );
                         if result.status.is_undefined() {
-                            *self.module_type = prev_module_type;
                             continue;
-                        }
-
-                        if key == b"import" {
-                            *self.module_type = ModuleType::Esm;
-                        }
-
-                        if key == b"require" {
-                            *self.module_type = ModuleType::Cjs;
                         }
 
                         return result;
@@ -2149,7 +2135,6 @@ impl<'a> ESModule<'a> {
 
                 for target_value in array.iter() {
                     // Let resolved be the result, continuing the loop on any Invalid Package Target error.
-                    let prev_module_type = *self.module_type;
                     let result = self.resolve_target::<PATTERN>(
                         package_url,
                         target_value,
@@ -2163,7 +2148,6 @@ impl<'a> ESModule<'a> {
                     }
 
                     if result.status.is_undefined() {
-                        *self.module_type = prev_module_type;
                         continue;
                     }
 

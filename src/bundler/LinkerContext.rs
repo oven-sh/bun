@@ -97,6 +97,9 @@ pub struct LinkerContext<'a> {
 
     /// We may need to refer to the "__promiseAll" runtime symbol
     pub(crate) promise_all_runtime_ref: Ref,
+    /// `__preload` / `__chunks`: modulepreload for split browser `import()`s.
+    pub(crate) preload_runtime_ref: Ref,
+    pub(crate) chunks_runtime_ref: Ref,
 
     pub(crate) options: LinkerOptions,
 
@@ -127,6 +130,11 @@ pub struct LinkerContext<'a> {
     /// chunk that exports it and every chunk that imports it
     /// (`assign_cross_chunk_names`). Values live in the linker arena.
     pub(crate) cross_chunk_names: bun_collections::HashMap<bun_ast::Ref, &'static [u8]>,
+
+    /// User entry points (by source index) that reach a split browser `import()`: their chunk registers the chunk graph.
+    pub(crate) preload_entries: AutoBitSet,
+    /// The part `scan_imports_and_exports` adds to each entry point file (`u32::MAX` elsewhere).
+    pub(crate) entry_point_part_indices: Vec<u32>,
 }
 
 // SAFETY: `LinkerContext` is shared across the worker pool via `each_ptr` /
@@ -150,6 +158,8 @@ impl<'a> Default for LinkerContext<'a> {
             esm_runtime_ref: Ref::NONE,
             unbound_module_ref: Ref::NONE,
             promise_all_runtime_ref: Ref::NONE,
+            preload_runtime_ref: Ref::NONE,
+            chunks_runtime_ref: Ref::NONE,
             options: Default::default(),
             r#loop: None,
             unique_key_buf: Box::default(),
@@ -161,6 +171,8 @@ impl<'a> Default for LinkerContext<'a> {
             framework: None,
             mangled_props: Default::default(),
             cross_chunk_names: Default::default(),
+            preload_entries: AutoBitSet::init_empty(0).expect("static AutoBitSet"),
+            entry_point_part_indices: Vec::new(),
         }
     }
 }
@@ -327,6 +339,15 @@ impl<'a> LinkerContext<'a> {
 
     pub(crate) fn mark_pending_task_done(&self) {
         self.pending_task_count.fetch_sub(1, Ordering::Relaxed);
+    }
+
+    /// Split browser ESM builds preload each `import()`ed chunk's static imports.
+    pub(crate) fn module_preload(&self) -> bool {
+        self.options.module_preload
+            && self.graph.code_splitting
+            && self.options.target == Target::Browser
+            && self.options.output_format == Format::Esm
+            && self.chunks_runtime_ref.is_valid()
     }
 
     /// An `import()` — or a split `require()` — whose target is a
@@ -507,6 +528,13 @@ impl<'a> LinkerContext<'a> {
             .get(b"__promiseAll")
             .expect("infallible: runtime export")
             .ref_;
+        // Browser runtime only (`RUNTIME_PRELOAD_BROWSER`).
+        self.preload_runtime_ref = runtime_named_exports
+            .get(b"__preload")
+            .map_or(Ref::NONE, |export| export.ref_);
+        self.chunks_runtime_ref = runtime_named_exports
+            .get(b"__chunks")
+            .map_or(Ref::NONE, |export| export.ref_);
 
         if self.options.output_format == Format::Cjs {
             self.unbound_module_ref = self.graph.generate_new_symbol(
@@ -877,6 +905,7 @@ impl<'a> LinkerContext<'a> {
         let entry_points: *const [crate::IndexInt] = self.graph.entry_points.items_source_index();
         let distances: *mut [u32] = self.graph.files.items_distance_from_entry_point_mut();
         let file_entry_bits: *mut [AutoBitSet] = self.graph.files.items_entry_bits_mut();
+        let loaders: *const [Loader] = self.parse_graph().input_files.items_loader();
 
         // SAFETY: see block comment above — disjoint SoA columns, stable slabs
         // (no reallocation during tree-shaking). All column derefs share that
@@ -892,6 +921,7 @@ impl<'a> LinkerContext<'a> {
             parts_live,
             distances,
             file_entry_bits,
+            loaders,
         ) = unsafe {
             (
                 &*entry_points,
@@ -902,6 +932,7 @@ impl<'a> LinkerContext<'a> {
                 &mut *parts_live,
                 &mut *distances,
                 &mut *file_entry_bits,
+                &*loaders,
             )
         };
         let entry_points_len = entry_points.len();
@@ -931,6 +962,10 @@ impl<'a> LinkerContext<'a> {
                 }
                 self.mark_file_live_for_tree_shaking(&mut ctx, entry_point);
             }
+
+            if self.module_preload() {
+                self.mark_preload_entries(&mut ctx, entry_points)?;
+            }
         }
 
         {
@@ -952,6 +987,7 @@ impl<'a> LinkerContext<'a> {
                 import_records,
                 file_entry_bits,
                 css_reprs,
+                loaders,
                 queue: std::collections::VecDeque::new(),
             };
 
@@ -1303,6 +1339,7 @@ pub struct LinkerOptions {
     /// below this also fold into a chunk more entry points load (0 = off).
     /// See `merge_small_chunks`.
     pub(crate) min_chunk_size: u64,
+    pub(crate) module_preload: bool,
     pub(crate) source_maps: SourceMapOption,
     pub(crate) target: Target,
     pub(crate) compile_mode: CompileMode,
@@ -1347,6 +1384,7 @@ impl Default for LinkerOptions {
             footer: b"",
             css_chunking: false,
             min_chunk_size: 0,
+            module_preload: true,
             source_maps: SourceMapOption::None,
             target: Target::Browser,
             compile_mode: CompileMode::None,
@@ -2287,13 +2325,18 @@ impl<'a> LinkerContext<'a> {
 
             minify_whitespace: self.options.minify_whitespace,
             minify_syntax: self.options.minify_syntax,
-            input_module_type: ast.exports_kind.into(),
+            input_module_type: ast.module_type,
             module_type: self.options.output_format,
             print_dce_annotations: self.options.emit_dce_annotations,
             has_run_symbol_renamer: true,
 
             to_esm_ref,
             to_commonjs_ref,
+            module_preload_ref: if self.module_preload() {
+                self.preload_runtime_ref
+            } else {
+                Ref::NONE
+            },
             require_ref: match self.options.output_format {
                 Format::Cjs => None, // use unbounded global
                 _ => runtime_require_ref,
@@ -2526,7 +2569,9 @@ impl<'a> LinkerContext<'a> {
                                 >(from_chunk_dir, path));
                             }
                         }
-                        crate::chunk::QueryKind::Chunk => out.push(piece.query.index()),
+                        crate::chunk::QueryKind::Chunk | crate::chunk::QueryKind::ChunkId => {
+                            out.push(piece.query.index())
+                        }
                         crate::chunk::QueryKind::Scb => {
                             let chunk_index = self.graph.files.items_entry_point_chunk_index()
                                 [piece.query.index() as usize];
@@ -2651,7 +2696,7 @@ impl<'a> js_printer::RequireOrImportMetaSource for LinkerContext<'a> {
 // DFS). Packing the slices into a borrowed context struct keeps each step at
 // 3-4 register-sized arguments.
 pub(crate) struct TreeShakeCtx<'a, 'r> {
-    pub(crate) parts: &'r [bun_ast::PartList<'a>],
+    pub(crate) parts: &'r mut [bun_ast::PartList<'a>],
     pub(crate) parts_live: &'r mut [bun_collections::AutoBitSet],
     pub(crate) import_records: &'r [bun_ast::import_record::List<'a>],
     pub(crate) entry_point_kinds: &'r [EntryPoint::Kind],
@@ -2674,6 +2719,7 @@ pub(crate) struct CodeSplitCtx<'a, 'r> {
     pub(crate) import_records: &'r [bun_ast::import_record::List<'a>],
     pub(crate) file_entry_bits: &'r mut [AutoBitSet],
     pub(crate) css_reprs: &'r [crate::bundled_ast::CssCol],
+    pub(crate) loaders: &'r [Loader],
     pub(crate) queue: std::collections::VecDeque<(crate::IndexInt, u32)>,
 }
 
@@ -2716,22 +2762,53 @@ impl<'a> LinkerContext<'a> {
             }
             let out_dist = distance + 1;
 
-            for record in ctx.import_records[source_index as usize].iter() {
-                if record.source_index.is_valid()
-                    && !self.is_external_dynamic_import(record, source_index)
-                    && !ctx.file_entry_bits[record.source_index.get() as usize]
-                        .is_set(entry_points_count)
-                {
-                    ctx.queue.push_back((record.source_index.get(), out_dist));
-                }
-            }
+            let records = &ctx.import_records[source_index as usize];
 
-            // CSS files only follow their import records.
-            if ctx.css_reprs[source_index as usize].is_some() {
+            // CSS and HTML files have no parts: follow every import record.
+            if ctx.css_reprs[source_index as usize].is_some()
+                || ctx.loaders[source_index as usize] == Loader::Html
+            {
+                for record in records.iter() {
+                    if record.source_index.is_valid()
+                        && !ctx.file_entry_bits[record.source_index.get() as usize]
+                            .is_set(entry_points_count)
+                    {
+                        ctx.queue.push_back((record.source_index.get(), out_dist));
+                    }
+                }
                 continue;
             }
 
-            for part in ctx.parts[source_index as usize].as_slice() {
+            // A dead part prints nothing, so only live parts reach other files.
+            let parts_live = &self.graph.parts_live[source_index as usize];
+            for (part_index, part) in ctx.parts[source_index as usize]
+                .as_slice()
+                .iter()
+                .enumerate()
+            {
+                if !parts_live.is_set(part_index) {
+                    continue;
+                }
+
+                for &import_index in part.import_record_indices.iter() {
+                    let record = &records[import_index as usize];
+                    if !record.source_index.is_valid()
+                        || self.is_external_dynamic_import(record, source_index)
+                    {
+                        continue;
+                    }
+                    let other = record.source_index.get();
+
+                    // Prints nothing; its bindings are the part dependencies below.
+                    if record.kind == ImportKind::Stmt && self.file_has_no_side_effects(other) {
+                        continue;
+                    }
+
+                    if !ctx.file_entry_bits[other as usize].is_set(entry_points_count) {
+                        ctx.queue.push_back((other, out_dist));
+                    }
+                }
+
                 for dependency in part.dependencies.iter() {
                     let dep = dependency.source_index.get();
                     if dep != source_index
@@ -2744,6 +2821,109 @@ impl<'a> LinkerContext<'a> {
         }
     }
 
+    /// Once liveness is known: each user entry point whose live code reaches a split
+    /// `import()` uses `__chunks` from its entry point part (see `module_preload_registration`).
+    fn mark_preload_entries(
+        &mut self,
+        ctx: &mut TreeShakeCtx<'a, '_>,
+        entry_points: &[crate::IndexInt],
+    ) -> Result<(), AllocError> {
+        let files_len = ctx.parts.len();
+        let mut reaches = AutoBitSet::init_empty(files_len)?;
+        loop {
+            let mut changed = false;
+            for source_index in 0..files_len {
+                if reaches.is_set(source_index) || !self.graph.files_live.is_set(source_index) {
+                    continue;
+                }
+                let records = ctx.import_records[source_index].as_slice();
+                'parts: for (part_index, part) in
+                    ctx.parts[source_index].as_slice().iter().enumerate()
+                {
+                    if !ctx.parts_live[source_index].is_set(part_index) {
+                        continue;
+                    }
+                    for &record_index in part.import_record_indices.iter() {
+                        let record = &records[record_index as usize];
+                        if !record.source_index.is_valid() {
+                            continue;
+                        }
+                        if reaches.is_set(record.source_index.get() as usize)
+                            || (record.kind == ImportKind::Dynamic
+                                && self.is_external_dynamic_import(record, source_index as u32))
+                        {
+                            reaches.set(source_index);
+                            changed = true;
+                            break 'parts;
+                        }
+                    }
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+
+        let mut preload_entries = AutoBitSet::init_empty(files_len)?;
+        for &entry in entry_points {
+            let id = entry as usize;
+            if ctx.entry_point_kinds[id] != EntryPoint::Kind::UserSpecified || !reaches.is_set(id) {
+                continue;
+            }
+            preload_entries.set(id);
+            let part_index = self.entry_point_part_indices[id];
+            // Through `ctx.parts` (the tree shaker's view of the parts column), not a second `&mut` via `self.graph`.
+            {
+                let ast = self.graph.ast.split_raw();
+                let meta = self.graph.meta.split_raw();
+                // SAFETY: columns other than `parts`; stable for the link step and not otherwise borrowed here.
+                let (ast_flags, exports_ref, module_ref, top_level, imports_to_bind, overlay) = unsafe {
+                    (
+                        &mut *ast.flags,
+                        &*ast.exports_ref,
+                        &*ast.module_ref,
+                        &*ast.top_level_symbols_to_parts,
+                        &mut *meta.imports_to_bind,
+                        &*meta.top_level_symbol_to_parts_overlay,
+                    )
+                };
+                crate::linker_graph::generate_symbol_import_and_use(
+                    ctx.parts,
+                    ast_flags,
+                    exports_ref,
+                    module_ref,
+                    top_level,
+                    imports_to_bind,
+                    overlay,
+                    entry,
+                    part_index,
+                    self.chunks_runtime_ref,
+                    1,
+                    Index::RUNTIME,
+                )?;
+            }
+            if ctx.parts_live[id].is_set(part_index as usize) {
+                for dependency in ctx.parts[id].as_slice()[part_index as usize]
+                    .dependencies
+                    .iter()
+                {
+                    ctx.worklist.push(TreeShakeWork::Part {
+                        part_index: dependency.part_index,
+                        source_index: dependency.source_index.get(),
+                    });
+                }
+            } else {
+                ctx.worklist.push(TreeShakeWork::Part {
+                    part_index,
+                    source_index: entry,
+                });
+            }
+            self.drain_tree_shake_worklist(ctx);
+        }
+        self.preload_entries = preload_entries;
+        Ok(())
+    }
+
     pub(crate) fn mark_file_live_for_tree_shaking(
         &mut self,
         ctx: &mut TreeShakeCtx<'a, '_>,
@@ -2751,6 +2931,10 @@ impl<'a> LinkerContext<'a> {
     ) {
         debug_assert!(ctx.worklist.is_empty());
         ctx.worklist.push(TreeShakeWork::File(source_index));
+        self.drain_tree_shake_worklist(ctx);
+    }
+
+    fn drain_tree_shake_worklist(&mut self, ctx: &mut TreeShakeCtx<'a, '_>) {
         while let Some(work) = ctx.worklist.pop() {
             match work {
                 TreeShakeWork::File(src) => self.mark_file_live_step(ctx, src),
@@ -4450,7 +4634,7 @@ impl<'a> LinkerContext<'a> {
                         break;
                     }
                 }
-                crate::chunk::QueryKind::Chunk => {
+                crate::chunk::QueryKind::Chunk | crate::chunk::QueryKind::ChunkId => {
                     if index >= count as usize {
                         if cfg!(debug_assertions) {
                             bun_core::debug_warn!("Invalid output piece boundary");

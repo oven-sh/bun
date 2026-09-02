@@ -604,7 +604,7 @@ With `splitting`, also fold small side-effect-free chunks into a chunk that more
       entrypoints: ['./index.tsx'],
       outdir: './out',
       splitting: true,
-      minChunkSize: 16 * 1024, // default 0 (disabled)
+      minChunkSize: 16 * 1024, // default 0 (off)
     })
     ```
   </Tab>
@@ -617,7 +617,9 @@ With `splitting`, also fold small side-effect-free chunks into a chunk that more
 
 Code splitting gives each distinct set of importers its own chunk, then folds chunks that are always loaded together: a module that `index.tsx` imports and that a lazily `import()`ed module also imports lives in `index.js`, and the lazy chunk imports it from there, because the lazy module can only load after `index.tsx` has run. That fold never makes an entrypoint load more code, so it is always on.
 
-`minChunkSize` goes further for chunks whose source files add up to fewer than this many bytes and whose modules run nothing at the top level: only declarations, `"sideEffects": false` in their `package.json`, or a lazily initialized CommonJS/ESM wrapper. Such a chunk folds into a chunk loaded by a superset of its importers. Everything it imports must already be loaded whenever that target is, or be side-effect free as well. The extra entrypoints then carry some unused definitions, capped at about 1.5% of what each entrypoint loaded to begin with. No side effect runs earlier than before and nothing lazy becomes eager. Because these rules bound what an entrypoint can end up loading, a large `minChunkSize` is reasonable.
+`minChunkSize` goes further for chunks whose source files add up to fewer than this many bytes and whose modules run nothing at the top level: only declarations, `"sideEffects": false` in their `package.json`, a lazily initialized CommonJS/ESM wrapper, or an import of a CommonJS module (such as `react`) that is already initialized wherever the chunk's code ends up. Such a chunk folds into a chunk loaded by a superset of its importers. Everything it imports must already be loaded whenever that target is, or be side-effect free as well. The extra entrypoints then carry some unused definitions, capped at about 1.5% of what each entrypoint loaded to begin with. No side effect runs earlier than before and nothing lazy becomes eager. Because these rules bound what an entrypoint can end up loading, a large `minChunkSize` is reasonable.
+
+For `target: "browser"`, where every chunk is a request, 16 KiB is a good starting point.
 
 A chunk that absorbs other chunks exports the symbols those chunks' importers need. An entrypoint that has exports of its own never absorbs one, so its module namespace stays as written; an entrypoint without exports can. With `--compile`, nothing folds into the entrypoint's own chunk.
 

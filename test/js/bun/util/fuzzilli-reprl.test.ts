@@ -41,24 +41,26 @@ const crashEnv = {
 describe.skipIf(!isFuzzilliBuild)("fuzzilli crash reporting", () => {
   // FUZZILLI_CRASH types: 0 is std::abort(), 1 is __builtin_trap() (SIGILL on
   // x64, SIGTRAP on arm64), 5 writes through a null pointer.
-  test.concurrent.each([
+  describe.each([
     [0, /AddressSanitizer: ABRT/],
     [1, /AddressSanitizer: (ILL|TRAP)/],
     [5, /AddressSanitizer: SEGV/],
-  ])("FUZZILLI_CRASH %d dies with an ASAN report", async (type, report) => {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", `fuzzilli("FUZZILLI_CRASH", ${type})`],
-      env: crashEnv,
-      stdout: "pipe",
-      stderr: "pipe",
+  ])("FUZZILLI_CRASH %d", (type, report) => {
+    test.concurrent("dies with an ASAN report", async () => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", `fuzzilli("FUZZILLI_CRASH", ${type})`],
+        env: crashEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stdout).toContain(`FUZZILLI_CRASH: ${type}`);
+      expect(stderr).toMatch(report);
+      // ASAN aborts after the report, so the death is still a signal, which is
+      // what Fuzzilli counts as a crash.
+      expect(proc.signalCode).toBe("SIGABRT");
     });
-
-    const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-    expect(stdout).toContain(`FUZZILLI_CRASH: ${type}`);
-    expect(stderr).toMatch(report);
-    // ASAN aborts after the report, so the death is still a signal, which is
-    // what Fuzzilli counts as a crash.
-    expect(proc.signalCode).toBe("SIGABRT");
   });
 });

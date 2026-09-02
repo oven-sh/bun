@@ -34,7 +34,7 @@
   },
   "overrides": {
     "@types/bun": "workspace:packages/@types/bun",
-    "@types/node": "26.3.0",
+    "@types/node": "26.2.0",
     "bun-types": "workspace:packages/bun-types",
   },
   "packages": {
@@ -132,7 +132,7 @@
 
     "@types/bun": ["@types/bun@workspace:packages/@types/bun"],
 
-    "@types/node": ["@types/node@26.3.0", "", { "dependencies": { "undici-types": "~8.3.0" } }, "sha512-L3fgrnchriRC2ExBflb8j4uZZURHZfQsmQeyVzhjcHW4kkwVyo8/0h1B2MVzMTrYUJYu6G7EWs14hW/L9putqw=="],
+    "@types/node": ["@types/node@26.2.0", "", { "dependencies": { "undici-types": "~8.3.0" } }, "sha512-5IviulTZeRNp2vAJ514cc/HUlY5nZ9fCbq9DMyC52BrhFZACo3nI0R7qBxhQmo/d27NFe96ur/b7Wwxklda+kg=="],
 
     "bun-types": ["bun-types@workspace:packages/bun-types"],
 

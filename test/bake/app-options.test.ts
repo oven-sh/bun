@@ -84,9 +84,9 @@ const disabledSpecifierCases = [
   },
   {
     name: "reactFastRefresh.importSource is disabled by the browser field",
-    packageJson: `{ "name": "app", "browser": { "react-refresh/runtime": false } }`,
-    framework: `{ fileSystemRouterTypes: [fsr], reactFastRefresh: { importSource: "react-refresh/runtime" } }`,
-    error: `error: Cannot use "react-refresh/runtime" for framework (react refresh runtime): it is disabled due to "browser" field in package.json`,
+    packageJson: `{ "name": "app", "browser": { "react-refresh": false } }`,
+    framework: `{ fileSystemRouterTypes: [fsr], reactFastRefresh: { importSource: "react-refresh" } }`,
+    error: `error: Cannot use "react-refresh" for framework (react refresh runtime): it is disabled due to "browser" field in package.json`,
   },
 ];
 
@@ -137,7 +137,14 @@ for (const c of disabledSpecifierCases) {
 
     await using proc = Bun.spawn({
       cmd: [bunExe(), "build", "--app", "./bun.app.ts"],
-      env: bunEnv,
+      env: {
+        ...bunEnv,
+        // The config loader of `bun build --app` has unchecked exception scopes
+        // (`bakeModuleLoaderResolve`, `BakeGetDefaultExportFromModule`) that
+        // abort a debug build under validation before the framework resolves.
+        BUN_JSC_validateExceptionChecks: undefined,
+        BUN_JSC_dumpSimulatedThrows: undefined,
+      },
       cwd: String(dir),
       stdout: "pipe",
       stderr: "pipe",

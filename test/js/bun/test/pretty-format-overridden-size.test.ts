@@ -13,38 +13,43 @@ describe("pretty_format should handle collections with an overridden `size` prop
         bunExe(),
         "-e",
         `
-const values = [];
+const cases = [];
 {
   const weakSet = new WeakSet();
   weakSet.size = BigUint64Array;
-  values.push(weakSet);
+  cases.push({ value: weakSet, includes: ["WeakSet {}"] });
 }
 {
   const weakMap = new WeakMap();
   weakMap.size = "not a number";
-  values.push(weakMap);
+  cases.push({ value: weakMap, includes: ["WeakMap {}"] });
 }
 {
-  const set = new Set([1]);
+  // The real entries must still print even though \`size\` is unusable.
+  const set = new Set(["set entry"]);
   Object.defineProperty(set, "size", { value: {} });
-  values.push(set);
+  cases.push({ value: set, includes: ["Set {", '"set entry"'], excludes: ["Set {}"] });
 }
 {
-  const map = new Map([[1, 2]]);
+  const map = new Map([["map key", "map value"]]);
   Object.defineProperty(map, "size", { value: BigUint64Array });
-  values.push(map);
+  cases.push({ value: map, includes: ["Map {", '"map key"', '"map value"'], excludes: ["Map {}"] });
 }
 {
   const weakSet = new WeakSet();
   weakSet.size = Symbol("size");
-  values.push(weakSet);
+  cases.push({ value: weakSet, includes: ["WeakSet {}"] });
 }
-for (const value of values) {
+for (const { value, includes, excludes = [] } of cases) {
   try {
     Bun.jest().expect(BigUint64Array).toEqual(value);
     console.log("DID NOT THROW");
   } catch (e) {
-    console.log(e.message.includes("expect(received).toEqual(expected)") ? "DIFF OK" : "UNEXPECTED: " + e.message);
+    const ok =
+      e.message.includes("expect(received).toEqual(expected)") &&
+      includes.every(s => e.message.includes(s)) &&
+      excludes.every(s => !e.message.includes(s));
+    console.log(ok ? "DIFF OK" : "UNEXPECTED: " + e.message);
   }
 }
 `,

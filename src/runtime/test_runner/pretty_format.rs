@@ -1720,8 +1720,12 @@ impl<'a> Formatter<'a> {
                         .unwrap_or_else(|| JSValue::js_number_from_int32(0));
                     let length = if length_value.is_number() {
                         length_value.coerce_to_i32(self.global_this)?
-                    } else {
+                    } else if js_type == JSType::WeakMap {
                         0
+                    } else {
+                        // A shadowed non-numeric `size` says nothing about the
+                        // real entry count; iterate so the diff shows the entries.
+                        1
                     };
 
                     let prev_quote_strings = self.quote_strings;
@@ -1768,8 +1772,12 @@ impl<'a> Formatter<'a> {
                         .unwrap_or_else(|| JSValue::js_number_from_int32(0));
                     let length = if length_value.is_number() {
                         length_value.coerce_to_i32(self.global_this)?
-                    } else {
+                    } else if js_type == JSType::WeakSet {
                         0
+                    } else {
+                        // A shadowed non-numeric `size` says nothing about the
+                        // real entry count; iterate so the diff shows the entries.
+                        1
                     };
 
                     let prev_quote_strings = self.quote_strings;

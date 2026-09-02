@@ -5789,15 +5789,6 @@ extern "C" size_t JSC__VM__externalMemorySize(JSC::VM* vm)
 #endif
 }
 
-extern "C" JSC::EncodedJSValue JSC__JSGlobalObject__asyncContext(JSC::JSGlobalObject* globalObject)
-{
-    JSValue asyncContext = globalObject->m_asyncContextData.get()->getInternalField(0);
-    if (asyncContext.isEmpty()) {
-        asyncContext = jsUndefined();
-    }
-    return JSValue::encode(asyncContext);
-}
-
 extern "C" void JSC__JSGlobalObject__queueMicrotaskJob(JSC::JSGlobalObject* arg0, JSC::EncodedJSValue JSValue1, JSC::EncodedJSValue JSValue3, JSC::EncodedJSValue JSValue4)
 {
     Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(arg0);

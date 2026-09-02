@@ -331,8 +331,7 @@ describe("_onTimeout", () => {
     }
   });
 
-  // A timer created inside AsyncLocalStorage.run() stores its callback wrapped
-  // with the async context. The wrapper must not leak through `_onTimeout`.
+  // The async context a timer captures must not show up in `_onTimeout`.
   it("is the callback that was passed in, inside AsyncLocalStorage.run()", () => {
     const als = new AsyncLocalStorage<string>();
     const fn = () => {};

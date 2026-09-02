@@ -647,7 +647,7 @@ async function runTests() {
   const flakyResultsTitles = [];
   const failedResults = [];
   const failedResultsTitles = [];
-  const retries = parseInt(options["retries"]) || 0;
+  const retries = Math.max(parseInt(options["retries"], 10) || 0, 0);
 
   const parallelism = options["parallel"] ? availableParallelism() : 1;
   console.log("parallelism", parallelism);

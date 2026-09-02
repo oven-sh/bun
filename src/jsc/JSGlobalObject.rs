@@ -884,9 +884,7 @@ impl JSGlobalObject {
         JSC__JSGlobalObject__queueMicrotaskJob(self, function, first, second)
     }
 
-    /// The async context that is active right now (the `AsyncLocalStorage`
-    /// frame), or `undefined` when there is none. Store it on a resource that
-    /// runs a callback later, then install it around the call.
+    /// The active async context (the `AsyncLocalStorage` frame), or `undefined`.
     #[inline]
     pub fn async_context(&self) -> JSValue {
         JSC__JSGlobalObject__asyncContext(self)

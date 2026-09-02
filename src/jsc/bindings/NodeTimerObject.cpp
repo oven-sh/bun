@@ -17,8 +17,6 @@
 namespace Bun {
 using namespace JSC;
 
-// `asyncContext` is the AsyncLocalStorage frame the timer captured when it was
-// created. It is installed around the callback and restored afterwards.
 static bool call(JSGlobalObject* globalObject, JSValue timerObject, JSValue callbackValue, JSValue argumentsValue, JSValue asyncContext)
 {
     auto& vm = JSC::getVM(globalObject);

@@ -97,8 +97,6 @@ extern "C" JSC::EncodedJSValue AsyncContextFrame__withAsyncContextIfNeeded(JSGlo
     return JSValue::encode(AsyncContextFrame::withAsyncContextIfNeeded(globalObject, JSValue::decode(callback)));
 }
 
-// The async context that is active right now, for a resource that stores it
-// separately from its callback (the timers) instead of in an AsyncContextFrame.
 extern "C" JSC::EncodedJSValue JSC__JSGlobalObject__asyncContext(JSGlobalObject* globalObject)
 {
     JSValue asyncContext = globalObject->m_asyncContextData.get()->getInternalField(0);

@@ -948,11 +948,7 @@ extern "C" void Bun__stopCPUProfiler(JSC::VM* vm, BunString* outJSON, BunString*
         *outText = Bun::toStringRef(textResult);
 }
 
-// The text report JSC's own report-at-exit would write (top functions, then
-// top bytecodes) for `vm`'s sampling profiler. Leaves `out` empty when the VM
-// has no sampling profiler. Called once per VM from VirtualMachine::on_exit,
-// which writes it into the directory from BUN_JSC_samplingProfilerPath or
-// bun:jsc's startSamplingProfiler().
+// The text report (top functions, then top bytecodes) of vm's sampling profiler; empty when the VM has none.
 extern "C" void Bun__SamplingProfiler__report(JSC::VM* vm, BunString* out)
 {
     JSC::SamplingProfiler* profiler = vm->samplingProfiler();
@@ -962,9 +958,7 @@ extern "C" void Bun__SamplingProfiler__report(JSC::VM* vm, BunString* out)
     WTF::StringPrintStream report;
     {
         JSC::JSLockHolder locker(*vm);
-        // A terminated Worker reaches on_exit with its JSC termination exception
-        // still pending but the termination request already cleared; the report's
-        // DeferTermination asserts on that mix, so park the exception while reporting.
+        // A terminated Worker's still-pending termination exception trips the report's DeferTermination assert.
         JSC::SuspendExceptionScope suspendExceptions(*vm);
         profiler->reportTopFunctions(report);
         profiler->reportTopBytecodes(report);

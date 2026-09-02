@@ -66,12 +66,7 @@ pub fn exit_during_uncaught_exception(this: &mut VirtualMachine) {
     this.exit_on_uncaught_exception = true;
 }
 
-/// Directory for the sampling profiler report `on_exit` writes: from
-/// `BUN_JSC_samplingProfilerPath` at global object creation, or from
-/// `bun:jsc`'s `startSamplingProfiler(directory)` (see
-/// [`crate::VirtualMachine::sampling_profiler_directory`]). Resolved to an
-/// absolute path now: the report is written at exit, when the working
-/// directory may differ.
+/// Made absolute now: the report is written at exit, when the working directory may differ.
 // HOST_EXPORT(Bun__VirtualMachine__setSamplingProfilerDirectory, c)
 pub fn set_sampling_profiler_directory(this: &mut VirtualMachine, directory: &BunString) {
     let directory = directory.to_owned_slice();

@@ -487,9 +487,7 @@ JSC_DEFINE_HOST_FUNCTION(functionStartSamplingProfiler,
                 return {};
             }
 
-            // Options::samplingProfilerPath() is frozen read-only since the VM
-            // was constructed (Config::finalize), so assigning it here segfaults.
-            // The directory lives on Bun's per-VM state; on_exit writes the report.
+            // Options::samplingProfilerPath() has been read-only since Config::finalize; the VM holds the directory instead.
             auto directory = Bun::toString(path);
             Bun__VirtualMachine__setSamplingProfilerDirectory(bunVM(globalObject), &directory);
         }

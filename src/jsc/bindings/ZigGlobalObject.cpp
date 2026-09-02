@@ -283,11 +283,7 @@ extern "C" void Bun__ensureICUDefaultLocale();
 // virtual_machine_exports.rs
 extern "C" void Bun__VirtualMachine__setSamplingProfilerDirectory(void* bunVM, const BunString* directory);
 
-// BUN_JSC_samplingProfilerPath, taken out of JSC::Options in JSCInitialize so
-// VM::VM does not register JSC's report-at-exit: that libc atexit handler
-// dereferences a null stream when it cannot open its output file, and
-// quick_exit skips it. VirtualMachine::on_exit writes the report instead.
-// Points at the fastStrDup'd copy Options::setOption made, never freed.
+// BUN_JSC_samplingProfilerPath, kept out of JSC::Options so VM::VM never registers JSC's atexit reporter (it crashes when fopen fails, and quick_exit skips it); VirtualMachine::write_profiles writes the report.
 static const char* s_samplingProfilerDirectory = nullptr;
 
 extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(const char* ptr, size_t length), bool evalMode, bool oneShotStartup, bool shortLivedGlobals)
@@ -574,8 +570,7 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
     Bun__setDefaultGlobalObject(globalObject);
     JSC::gcProtect(globalObject);
 
-    // Every VM samples under BUN_JSC_useSamplingProfiler, so every VM (workers
-    // included) gets the report directory; on_exit writes one report per VM.
+    // Every VM samples under BUN_JSC_useSamplingProfiler, so every VM gets the report directory.
     if (s_samplingProfilerDirectory) {
         auto directory = WTF::String::fromUTF8(s_samplingProfilerDirectory);
         if (!directory.isEmpty()) {

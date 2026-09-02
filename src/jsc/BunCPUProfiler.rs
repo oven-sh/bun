@@ -41,8 +41,7 @@ unsafe extern "C" {
     );
     /// Plain by-value `c_int`; sets a global sampler interval, no pointer invariants.
     safe fn Bun__setSamplingInterval(interval_microseconds: c_int);
-    /// The C++ side writes a +1 ref into `out` (the text report of `vm`'s
-    /// sampling profiler) and leaves it empty when the VM has no profiler.
+    /// Writes a +1 ref into `out`; leaves it empty when the VM has no sampling profiler.
     safe fn Bun__SamplingProfiler__report(vm: &mut VM, out: &mut BunString);
 }
 
@@ -57,11 +56,7 @@ pub fn start_cpu_profiler(vm: &mut VM) {
     Bun__startCPUProfiler(vm);
 }
 
-/// Writes the JSC sampling profiler report for `vm` into `directory` (the
-/// absolute UTF-8 path from `BUN_JSC_samplingProfilerPath` or `bun:jsc`'s
-/// `startSamplingProfiler()`), creating the directory if it is missing. Called
-/// once per VM from `VirtualMachine::on_exit`. A VM without a sampling
-/// profiler writes nothing.
+/// Writes `vm`'s sampling profiler report into `directory` (absolute UTF-8), creating it if missing.
 pub(crate) fn write_sampling_profiler_report(
     vm: &mut VM,
     directory: &[u8],
@@ -132,8 +127,7 @@ fn write_profile_to_file(
     write_file_creating_dir(&mut path_buf, config.dir, profile_slice.slice())
 }
 
-/// Writes `contents` to `path`. When the write fails because `dir` (the
-/// directory `path` is in) is missing, creates `dir` and retries once.
+/// Writes `contents` to `path`; on ENOENT/EPERM/EACCES creates `dir` and retries once.
 fn write_file_creating_dir(
     path: &mut AutoAbsPathChecked,
     dir: &[u8],

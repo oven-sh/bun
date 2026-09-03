@@ -2,7 +2,7 @@ import { spawn } from "bun";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, setDefaultTimeout } from "bun:test";
 import { mkdir, rm, writeFile } from "fs/promises";
 import { bunEnv, bunExe, isWindows, readdirSorted, tmpdirSync } from "harness";
-import { chmodSync, copyFileSync, readdirSync, symlinkSync } from "node:fs";
+import { chmodSync, copyFileSync, readdirSync, symlinkSync, utimesSync } from "node:fs";
 import { tmpdir } from "os";
 import { delimiter, join, resolve } from "path";
 import { dummyAfterAll, dummyBeforeAll, dummyBeforeEach, dummyRegistry, getPort, setHandler } from "./dummy.registry";
@@ -905,6 +905,7 @@ describe("bunx dist-tag cache", () => {
     setHandler(dummyRegistry([], { "1.0.0": { bin: { [pkg]: "cli.js" }, as: "1.0.0" }, latest: "1.0.0" }, 0, tgzDir));
 
     let [err, out, exited] = await runBunx(`${pkg}@latest`);
+    expect(err).not.toContain("error:");
     expect(out).toContain(`${pkg} 1.0.0`);
     expect(exited).toBe(0);
 
@@ -914,9 +915,43 @@ describe("bunx dist-tag cache", () => {
     await writeFile(marker, "keep");
 
     [err, out, exited] = await runBunx(`${pkg}@latest`);
+    expect(err).not.toContain("error:");
     expect(out).toContain(`${pkg} 1.0.0`);
     expect(exited).toBe(0);
     expect(await Bun.file(marker).exists()).toBe(true);
+  });
+
+  it("a stale cached install (>24h) is still force-refreshed", async () => {
+    const pkg = "dist-stale-pkg";
+    const tgzDir = tmpdirSync();
+    await makeTarball(tgzDir, pkg, "1.0.0");
+    setHandler(dummyRegistry([], { "1.0.0": { bin: { [pkg]: "cli.js" }, as: "1.0.0" }, latest: "1.0.0" }, 0, tgzDir));
+
+    // No version: this path runs the cached bin directly unless the cached
+    // .bin entry is older than 24h, in which case it re-installs with --force.
+    let [err, out, exited] = await runBunx(pkg);
+    expect(err).not.toContain("error:");
+    expect(out).toContain(`${pkg} 1.0.0`);
+    expect(exited).toBe(0);
+
+    const cacheDir = findBunxCacheDir(pkg);
+    const marker = join(cacheDir, "node_modules", pkg, "MARKER");
+    await writeFile(marker, "keep");
+
+    // Age every cached file bunx's staleness checks can read (the .bin entry
+    // and the root package.json) past the 24h validity window.
+    const old = new Date(Date.now() - 25 * 60 * 60 * 1000);
+    utimesSync(join(cacheDir, "package.json"), old, old);
+    for (const entry of readdirSync(join(cacheDir, "node_modules", ".bin"))) {
+      utimesSync(join(cacheDir, "node_modules", ".bin", entry), old, old);
+    }
+
+    [err, out, exited] = await runBunx(pkg);
+    expect(err).not.toContain("error:");
+    expect(out).toContain(`${pkg} 1.0.0`);
+    expect(exited).toBe(0);
+    // The stale tree was force-reinstalled, so the planted marker is gone.
+    expect(await Bun.file(marker).exists()).toBe(false);
   });
 
   it("a @latest run picks up a newly published latest version", async () => {
@@ -931,6 +966,7 @@ describe("bunx dist-tag cache", () => {
     setHandler(dummyRegistry([], { ...versions, latest: "1.0.0" }, 0, tgzDir));
 
     let [err, out, exited] = await runBunx(`${pkg}@latest`);
+    expect(err).not.toContain("error:");
     expect(out).toContain(`${pkg} 1.0.0`);
     expect(exited).toBe(0);
 
@@ -938,6 +974,7 @@ describe("bunx dist-tag cache", () => {
     setHandler(dummyRegistry([], { ...versions, latest: "1.1.0" }, 0, tgzDir));
 
     [err, out, exited] = await runBunx(`${pkg}@latest`);
+    expect(err).not.toContain("error:");
     expect(out).toContain(`${pkg} 1.1.0`);
     expect(exited).toBe(0);
   });

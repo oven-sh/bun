@@ -1356,11 +1356,8 @@ impl<'a> PackageInstall<'a> {
                             }
                         }
                         EntryKind::File => {
-                            // `bFailIfExists`: an existing destination is deleted and
-                            // copied again, never overwritten in place. It can be a
-                            // hardlink of the cache entry being copied (an earlier
-                            // install of the same package into this folder), and
-                            // overwriting it would empty the file in the cache.
+                            // An existing file can be a hardlink of the source, which
+                            // `CopyFileW` cannot overwrite. Delete it and copy again.
                             // SAFETY: FFI — src/dest are valid NUL-terminated WStr buffers.
                             let copy_file =
                                 || unsafe { windows::CopyFileW(src.as_ptr(), dest.as_ptr(), 1) } != 0;
@@ -1426,10 +1423,8 @@ impl<'a> PackageInstall<'a> {
                         destination_dir_.fd(),
                         bstr::BStr::new(entry.path.as_bytes())
                     );
-                    // An existing destination is replaced, never truncated in
-                    // place: it can be a hardlink of the cache entry being copied
-                    // (an earlier install of the same package into this folder),
-                    // and `O_TRUNC` through it would empty the file in the cache.
+                    // An existing file can be a hardlink of the source, and `O_TRUNC`
+                    // would empty the source too. Unlink it and create a new file.
                     let create = |path: &ZStr| {
                         let open = || {
                             sys::openat(

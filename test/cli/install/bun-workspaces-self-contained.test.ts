@@ -192,14 +192,13 @@ function findWithin(root: string, from: string, name: string): string | undefine
 // c's node_modules goes into the sibling's own node_modules, through the symlink. The
 // sibling's own tree can write the same directory. The second write used to truncate
 // the hardlinks of the first, and with them the files in the cache.
-it.each([
+describe.each([
   // baz@0.0.3 hoists to the root, so b's own tree also nests baz@0.0.5 in packages/b
   ["one nested in the sibling's own node_modules", {}],
   // b uses the root's baz@0.0.5, so only c's tree writes it into packages/b
   ["one provided by the root", { baz: "0.0.5" }],
-] as const)(
-  "siblings that need two versions of a package, %s: each resolves its own version inside the self-contained workspace, and the cache stays intact",
-  async (_label, rootDependencies) => {
+] as const)("siblings that need two versions of a package, %s", (_label, rootDependencies) => {
+  it("each resolves its own version inside the self-contained workspace, and the cache stays intact", async () => {
     setHandler(dummyRegistry([], { "0.0.3": {}, "0.0.5": {} }));
     // a cache outside node_modules, like the global one. The variable takes precedence
     // over the bunfig `cache` key, and the test runner sets it.
@@ -270,5 +269,5 @@ it.each([
     expect(again.out).toContain("(no changes)");
     expect(again.code).toBe(0);
     expect({ a: bazFrom("a"), b: bazFrom("b") }).toEqual({ a: "0.0.3", b: "0.0.5" });
-  },
-);
+  });
+});

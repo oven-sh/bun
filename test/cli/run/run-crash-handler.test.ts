@@ -130,6 +130,26 @@ describe.if(isPosix)("terminal signal reflects the crash cause", () => {
   });
 });
 
+// The report header names the CPU features the crash handler detected. On
+// x86_64 that detection uses cpuid directly (CPUFeatures.cpp); every machine
+// that runs this suite has the baseline of SSE4.2, POPCNT, AVX and AVX2.
+test.if(isPosix)("the crash report lists the CPU features", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), path.join(import.meta.dir, "fixture-crash.js"), "panic", "--debug-crash-handler-use-trace-string"],
+    env: noReportEnv,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(exitCode).not.toBe(0);
+
+  const cpuLine = stderr.split("\n").find(line => line.startsWith("CPU: "));
+  if (process.arch === "x64") {
+    expect(cpuLine).toMatch(/^CPU: sse42 popcnt avx avx2( avx512)?$/);
+  } else {
+    expect(cpuLine).toMatch(/^CPU: neon fp( \w+)*$/);
+  }
+});
+
 // POSIX-only: Windows refuses to remove a directory that is any process's cwd.
 describe.if(isPosix)("cwd deleted before startup", () => {
   test.concurrent.each(["install", "test"])("bun %s prints the cwd-deleted hint", async cmd => {

@@ -5769,16 +5769,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     /// A method call of an export that can read `this` reads the namespace object.
     fn use_namespace_for_method_calls(&self, parts: &mut [js_ast::Part]) {
-        let method_exports: Vec<Ref> = self
-            .commonjs_named_exports
-            .values()
-            .iter()
-            .map(|export| export.loc_ref.ref_)
-            .filter(|&ref_| {
-                let symbol = &self.symbols[ref_.inner_index() as usize];
-                symbol.called_as_method() && !symbol.call_ignores_this()
-            })
-            .collect();
+        let mut method_exports = RefMap::default();
+        for export in self.commonjs_named_exports.values() {
+            let symbol = &self.symbols[export.loc_ref.ref_.inner_index() as usize];
+            if symbol.called_as_method() && !symbol.call_ignores_this() {
+                method_exports.insert(export.loc_ref.ref_, ());
+            }
+        }
         if method_exports.is_empty() {
             return;
         }
@@ -5788,7 +5785,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .keys()
                 .iter()
                 .zip(part.symbol_uses.values())
-                .filter(|(ref_, _)| method_exports.contains(ref_))
+                .filter(|(ref_, _)| method_exports.contains_key(ref_))
                 .map(|(_, symbol_use)| symbol_use.count_estimate)
                 .sum();
             if count > 0 {

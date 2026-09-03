@@ -1262,6 +1262,8 @@ describe("spyOn", () => {
     // A process.env key that nothing has read is a native lazy property, so this needs a fresh process.
     // On Windows, process.env is a Proxy, and its keys are not native lazy properties.
     test.skipIf(process.platform === "win32")("spyOn on a process.env key that nothing has read", async () => {
+      // Jest and Vitest also run this file, and they cannot resolve "harness" at the top of it.
+      const { bunEnv, bunExe } = require("harness");
       const fixture = `
         const { spyOn } = require("bun:test");
         const key = "BUN_SPYON_ENV_TEST";
@@ -1274,8 +1276,8 @@ describe("spyOn", () => {
         console.log(JSON.stringify({ first, mocked, calls, descriptor: Object.getOwnPropertyDescriptor(process.env, key) }));
       `;
       await using proc = Bun.spawn({
-        cmd: [process.execPath, "-e", fixture],
-        env: { ...process.env, BUN_DEBUG_QUIET_LOGS: "1", BUN_SPYON_ENV_TEST: "from-env" },
+        cmd: [bunExe(), "-e", fixture],
+        env: { ...bunEnv, BUN_SPYON_ENV_TEST: "from-env" },
         stdout: "pipe",
         stderr: "pipe",
       });

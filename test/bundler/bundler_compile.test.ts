@@ -1,18 +1,53 @@
 import { Database } from "bun:sqlite";
-import { describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { rmSync } from "fs";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { BundlerTestInput, itBundled as itBundledBase } from "./expectBundled";
 
-// Default to the CLI backend. We intentionally use plain `describe` here
-// (not `describe.concurrent`): since the ELF-section inject path was added,
-// each `bun build --compile` on Linux reads + rewrites the full executable
-// (~500MB for profile builds). Running 20 of these concurrently exhausts CI
-// memory/IO and causes subprocess timeouts — see build #40193 failures.
+// Default to the CLI backend. expectBundled registers backend:"api" cases with
+// it.serial (the API backend calls process.chdir), so only CLI cases overlap.
 const itBundled = (id: string, opts: BundlerTestInput) => itBundledBase(id, { backend: "cli", ...opts });
 
-describe("bundler", () => {
+// Nearly every case below links a standalone executable. On Linux `bun build
+// --compile` copies the bun binary to the output path, reads the copy back and
+// writes it again with the bundle injected, so one link moves about three times
+// the binary through the page cache and holds about twice the binary in memory.
+// The cases are independent (expectBundled gives each one its own directory), but
+// describe.concurrent alone starts up to 20 links at once, which exhausted CI
+// memory and IO and made the build subprocesses time out (build #40193). The hooks
+// below let MAX_CONCURRENT_COMPILES cases run at a time. The rest wait in
+// beforeEach, where no per-test timeout is running yet. The wait itself has no
+// timeout: it ends when the cases ahead of it in the queue end, and each of those
+// has its own timeout.
+//
+// The limit depends on the size of the binary being linked. With the ~280 MB
+// profile binaries of the release lanes, three at a time took this file from
+// 13-59s (by lane and build) to 8-19s (build 101393 against builds 91981 and
+// 94834). The ASAN lane links a far larger binary, and the same gate made the file
+// slower there (170s against 102-107s one at a time): with that much data per link
+// the file is bound by page-cache writeback, and overlapping links only add to it.
+// Debug binaries are in the same size class. Both link one at a time until #33621
+// removes the extra copy.
+const MAX_CONCURRENT_COMPILES = isASAN || isDebug ? 1 : 3;
+let running = 0;
+const waiting: Array<() => void> = [];
+
+describe.concurrent("bundler", () => {
+  beforeEach(() => {
+    if (running < MAX_CONCURRENT_COMPILES) {
+      running++;
+      return;
+    }
+    return new Promise<void>(resolve => waiting.push(resolve));
+  }, Infinity);
+  afterEach(() => {
+    // Hand the slot straight to the next case in line, or free it.
+    const next = waiting.shift();
+    if (next) next();
+    else running--;
+  });
+
   itBundled("compile/HelloWorld", {
     compile: true,
     files: {
@@ -22,46 +57,45 @@ describe("bundler", () => {
     },
     run: { stdout: "Hello, world!", stderr: "" },
   });
-  // --footer/--banner are concatenated verbatim (UTF-8). Guard against the
+  // --banner/--footer are concatenated verbatim (UTF-8). Guard against the
   // standalone module graph treating those bytes as Latin-1, which would
   // print "rÃ©sumÃ©" / "ã\x81\x93ã\x82\x93..." (one Latin-1 char per UTF-8
-  // byte) instead of the original codepoints.
-  for (const [where, flag] of [
-    ["Footer", "--footer"],
-    ["Banner", "--banner"],
-  ] as const) {
-    test(`compile/${where}NonAsciiUTF8`, async () => {
-      using dir = tempDir(`compile-${where.toLowerCase()}-nonascii`, {
-        "entry.ts": `export const x = 1;`,
-      });
-      const outfile = join(String(dir), isWindows ? "out.exe" : "out");
-      {
-        await using proc = Bun.spawn({
-          cmd: [
-            bunExe(),
-            "build",
-            "--compile",
-            flag,
-            `console.log("résumé", "こんにちは");`,
-            "./entry.ts",
-            "--outfile",
-            outfile,
-          ],
-          env: bunEnv,
-          cwd: String(dir),
-          stdout: "pipe",
-          stderr: "pipe",
-        });
-        const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-        expect(stderr).not.toContain("error:");
-        expect(exitCode).toBe(0);
-      }
-      await using proc = Bun.spawn({ cmd: [outfile], env: bunEnv, cwd: String(dir), stdout: "pipe", stderr: "pipe" });
-      const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stdout).toBe("résumé こんにちは\n");
-      expect(exitCode).toBe(0);
+  // byte) instead of the original codepoints. One executable carries both: the
+  // banner prints before the (silent) entry point and the footer after it.
+  test("compile/BannerFooterNonAsciiUTF8", async () => {
+    using dir = tempDir("compile-banner-footer-nonascii", {
+      "entry.ts": `export const x = 1;`,
     });
-  }
+    const outfile = join(String(dir), isWindows ? "out.exe" : "out");
+    {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "build",
+          "--compile",
+          "--banner",
+          `console.log("banner", "résumé", "こんにちは");`,
+          "--footer",
+          `console.log("footer", "résumé", "こんにちは");`,
+          "./entry.ts",
+          "--outfile",
+          outfile,
+        ],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    }
+    await using proc = Bun.spawn({ cmd: [outfile], env: bunEnv, cwd: String(dir), stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("banner résumé こんにちは\nfooter résumé こんにちは\n");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  }, 30_000);
   // A chunk with non-ASCII text is embedded as UTF-16; reading it back as a file must still give the UTF-8 text.
   itBundled("compile/NonAsciiChunkReadsBackAsUTF8", {
     compile: true,
@@ -76,6 +110,9 @@ describe("bundler", () => {
     },
     run: { stdout: "true true true" },
   });
+  // The fixture module evaluates to whatever --compile inlined for `process.versions.bun`.
+  // That must be the exact version the embedded runtime reports, "-debug" suffix and all
+  // on debug builds, so the two are compared without normalizing either side.
   itBundled("compile/HelloWorldWithProcessVersionsBun", {
     compile: true,
     files: {
@@ -83,9 +120,9 @@ describe("bundler", () => {
         process.exitCode = 1;
         process.versions.bun = "bun!";
         if (process.versions.bun === "bun!") throw new Error("fail");
-        if (require("./${process.platform}-${process.arch}.js") === "${Bun.version.replaceAll("-debug", "")}") {
-          process.exitCode = 0;
-        }
+        const inlined = require("./${process.platform}-${process.arch}.js");
+        if (inlined !== Bun.version) throw new Error("inlined " + inlined + ", runtime is " + Bun.version);
+        process.exitCode = 0;
       `,
       [`/${process.platform}-${process.arch}.js`]: "module.exports = process.versions.bun;",
     },
@@ -102,10 +139,9 @@ describe("bundler", () => {
         process.exitCode = 1;
         process.versions.bun = "bun!";
         if (process.versions.bun === "bun!") throw new Error("fail");
-        const another = require("./${process.platform}-${process.arch}.js").replaceAll("-debug", "");
-        if (another === "${Bun.version.replaceAll("-debug", "")}") {
-          process.exitCode = 0;
-        }
+        const inlined = require("./${process.platform}-${process.arch}.js");
+        if (inlined !== Bun.version) throw new Error("inlined " + inlined + ", runtime is " + Bun.version);
+        process.exitCode = 0;
       `,
       [`/${process.platform}-${process.arch}.js`]: "module.exports = process.versions.bun;",
     },
@@ -186,8 +222,11 @@ describe("bundler", () => {
     });
   }
   // ESM bytecode test matrix: each scenario × {default, minified} = 2 tests per scenario.
-  // With --compile, static imports are inlined into one chunk, but dynamic imports
-  // create separate modules in the standalone graph — each with its own bytecode + ModuleInfo.
+  // Without --splitting every scenario bundles into one chunk: static imports are
+  // inlined and dynamic imports are lowered to Promise.resolve().then(...). That one
+  // chunk is what gets bytecode and a bundler-built module record, and the run below
+  // checks that the executable really loads it from the bytecode. Multi-chunk graphs
+  // are covered by bundler_compile_splitting.test.ts.
   const esmBytecodeScenarios: Array<{
     name: string;
     files: Record<string, string>;
@@ -224,8 +263,7 @@ describe("bundler", () => {
       stdout: "ok\nok",
     },
     {
-      // Dynamic import creates a separate module in the standalone graph,
-      // exercising per-module bytecode + ModuleInfo.
+      // The lowered dynamic import plus the top-level await that consumes it.
       name: "DynamicImport",
       files: {
         "/entry.ts": `
@@ -237,9 +275,8 @@ describe("bundler", () => {
       stdout: "lazy: 42",
     },
     {
-      // Dynamic import of a module that itself uses top-level await.
-      // The dynamically imported module is a separate chunk with async
-      // evaluation — stresses both ModuleInfo and async bytecode loading.
+      // Dynamic import of a module that itself uses top-level await, so the
+      // inlined module body is async too.
       name: "DynamicImportTLA",
       files: {
         "/entry.ts": `
@@ -251,8 +288,7 @@ describe("bundler", () => {
       stdout: "value: 99",
     },
     {
-      // Multiple dynamic imports: several separate modules in the graph,
-      // each with its own bytecode + ModuleInfo.
+      // Several lowered dynamic imports awaited together.
       name: "MultipleDynamicImports",
       files: {
         "/entry.ts": `
@@ -334,7 +370,16 @@ describe("bundler", () => {
           minifyWhitespace: true,
         }),
         files: scenario.files,
-        run: { stdout: scenario.stdout },
+        run: {
+          stdout: scenario.stdout,
+          env: { BUN_JSC_verboseDiskCache: "1" },
+          validate({ stderr }) {
+            // One chunk, so exactly one module loads from the embedded bytecode.
+            // (Misses are bun:main and any non-JS modules, see HelloWorldBytecode.)
+            const hits = stderr.split("\n").filter(line => line.includes("[Disk Cache] Cache hit for sourceCode"));
+            expect(hits).toHaveLength(1);
+          },
+        },
       });
     }
   }
@@ -365,6 +410,23 @@ describe("bundler", () => {
       stdout: "Hello, world!\nWorker loaded!\n",
       file: "dist/out",
       setCwd: true,
+      env: { BUN_JSC_verboseDiskCache: "1" },
+      // Same shape as WorkerRelativePathTSExtensionBytecode below: each thread
+      // loads its entry from bytecode (hit) and bun:main from source (miss), and
+      // only the multiset of lines is stable because the two threads interleave.
+      validate({ stderr }) {
+        const lines = stderr
+          .split("\n")
+          .map(line => line.trim())
+          .filter(line => line.startsWith("[Disk Cache]"))
+          .sort();
+        expect(lines).toEqual([
+          "[Disk Cache] Cache hit for sourceCode",
+          "[Disk Cache] Cache hit for sourceCode",
+          "[Disk Cache] Cache miss for sourceCode",
+          "[Disk Cache] Cache miss for sourceCode",
+        ]);
+      },
     },
   });
   // A second CommonJS entry point that is only reached through a runtime
@@ -1024,8 +1086,13 @@ describe("bundler", () => {
       `,
     },
     run: {
-      error: 'Cannot find package "express"',
+      // `error` only makes expectBundled require a failing exit; validate pins the message.
+      error: "Cannot find package 'express'",
+      stdout: "",
       setCwd: true,
+      validate({ stderr }) {
+        expect(stderr).toContain("error: Cannot find package 'express' from '");
+      },
     },
     compile: true,
   });
@@ -1391,8 +1458,11 @@ error: Hello World`,
         stdout: `This is compiled code\n{"isStandaloneExecutable":true}`,
       },
       {
+        // No arguments, so the executable prints bun's own help instead of running the bundle.
         env: { BUN_BE_BUN: "1" },
         validate({ stdout }) {
+          expect(stdout).toStartWith("Bun is a fast JavaScript runtime");
+          expect(stdout).toContain("Usage: bun <command>");
           expect(stdout).not.toContain("This is compiled code");
         },
       },
@@ -1410,7 +1480,10 @@ error: Hello World`,
     ],
   });
 
-  test("does not crash", async () => {
+  // https://github.com/oven-sh/bun/issues/22151: an HTML entry plus --minify --sourcemap
+  // --bytecode tripped an output-file count assertion in the bundler. The build has to
+  // succeed, and the executable has to serve both the embedded HTML and the API route.
+  test("html entry compiled with --minify --sourcemap --bytecode builds and serves", async () => {
     await using dir = tempDir("bundler-compile-shadcn", {
       "frontend.tsx": `console.log("Hello, world!");`,
       "index.html": `<!doctype html>
@@ -1430,6 +1503,7 @@ error: Hello World`,
 import index from "./index.html";
 
 const server = serve({
+  port: 0,
   routes: {
     // Serve index.html for all unmatched routes.
     "/*": index,
@@ -1466,19 +1540,51 @@ const server = serve({
   },
 });
 
+async function main() {
+  const html = await fetch(new URL("/", server.url));
+  console.log(html.status, (await html.text()).includes('<div id="root"></div>'));
+  const api = await fetch(new URL("/api/hello", server.url));
+  console.log(api.status, await api.text());
+  server.stop();
+}
+main();
 `,
     });
+    const outfile = join(String(dir), isWindows ? "app.exe" : "app");
 
-    // Step 2: Run bun build with compile, minify, sourcemap, and bytecode
-    await Bun.$`${bunExe()} build ./index.tsx --compile --minify --sourcemap --bytecode`
-      .cwd(dir)
-      .env(bunEnv)
-      .throws(true);
+    {
+      await using build = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "build",
+          "./index.tsx",
+          "--compile",
+          "--minify",
+          "--sourcemap",
+          "--bytecode",
+          "--outfile",
+          outfile,
+        ],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, stderr, exitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    }
+
+    await using app = Bun.spawn({ cmd: [outfile], cwd: String(dir), env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([app.stdout.text(), app.stderr.text(), app.exited]);
+    expect(stdout).toBe('200 true\n200 {"message":"Hello, world!","method":"GET"}\n');
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
   }, 30_000);
 
   // Verify ESM bytecode is actually loaded from the cache at runtime, not just generated.
-  // Uses regex matching on stderr (not itBundled) since we don't know the exact
-  // number of cache hit/miss lines for ESM standalone.
+  // The ESMBytecode matrix above checks the same thing through itBundled; this plain
+  // test() is the copy that also runs where itBundled cases are not registered (#34552).
   test("ESM bytecode cache is used at runtime", async () => {
     const ext = isWindows ? ".exe" : "";
     using dir = tempDir("esm-bytecode-cache", {
@@ -1519,8 +1625,10 @@ const server = serve({
 
     const [exeStdout, exeStderr, exeExitCode] = await Promise.all([exe.stdout.text(), exe.stderr.text(), exe.exited]);
 
-    expect(exeStdout).toContain("esm bytecode loaded");
-    expect(exeStderr).toMatch(/\[Disk Cache\].*Cache hit/i);
+    expect(exeStdout).toBe("esm bytecode loaded\n");
+    // One chunk, so exactly one module comes from the bytecode (the miss is bun:main).
+    const hits = exeStderr.split(/\r?\n/).filter(line => line.includes("[Disk Cache] Cache hit for sourceCode"));
+    expect(hits).toHaveLength(1);
     expect(exeExitCode).toBe(0);
   }, 30_000);
 
@@ -1541,7 +1649,9 @@ const server = serve({
     await Bun.$`${bunExe()} build --compile app.js assets/* --outfile app`.cwd(dir).env(bunEnv).throws(true);
 
     const result = await Bun.$`./app`.cwd(dir).env(bunEnv).nothrow();
-    expect(result.stdout.toString().trim()).toBe("IT WORKS");
+    expect(result.stdout.toString()).toBe("IT WORKS\n");
+    expect(result.stderr.toString()).toBe("");
+    expect(result.exitCode).toBe(0);
   }, 30_000);
 });
 

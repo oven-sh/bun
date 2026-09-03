@@ -149,13 +149,14 @@ function withoutAll(frame: Frame | undefined, storage: AsyncLocalStorage): Frame
   return copyUntil(frame!, found, withoutAll(found.prev, storage));
 }
 
-// Copies [from, stop) onto tail, keeping the view from `from`: each copy keeps
-// its original's mask, and when `from` itself is cut out its mask moves onto
-// (a copy of) the new head.
+// Copies [from, stop) onto tail so that the view from the result is the view
+// from `from` minus what was cut out: the new head carries `from`'s mask (a
+// deeper frame's own mask describes lookups that start *there* and is not
+// inherited), interior copies keep theirs.
 function copyUntil(from: Frame, stop: Frame, tail: Frame | undefined): Frame | undefined {
   if (from === stop) {
-    if (from.masked === undefined || tail === undefined) return tail;
-    return new Frame(tail.storage, tail.value, tail.prev, mergeMasks(tail.masked, from.masked));
+    if (tail === undefined || tail.masked === from.masked) return tail;
+    return new Frame(tail.storage, tail.value, tail.prev, from.masked);
   }
   var copied: Frame[] = [];
   for (var f = from; f !== stop; f = f.prev!) {

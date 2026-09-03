@@ -333,6 +333,26 @@ test("disable() inside a snapshot of an older frame only affects that frame and 
   b.disable();
 });
 
+test("re-entering after another storage's disable() stays cheap and does not inherit deeper deletions", () => {
+  const a = new AsyncLocalStorage();
+  const b = new AsyncLocalStorage();
+  a.enterWith(0);
+  b.enterWith(0);
+  b.disable();
+  for (let i = 0; i < 200; i++) a.enterWith(i); // must not blow up the frame's mask
+  expect([a.getStore(), b.getStore()]).toEqual([199, undefined]);
+  // Verified against Node v26: the delete happened on an older frame via a
+  // snapshot; re-entering b from the current frame keeps a.
+  a.enterWith(1);
+  const older = new AsyncResource("older");
+  b.enterWith(2);
+  older.runInAsyncScope(() => a.disable());
+  b.enterWith(3);
+  expect([a.getStore(), b.getStore()]).toEqual([1, 3]);
+  a.disable();
+  b.disable();
+});
+
 test("AsyncResource", () => {
   const resource = new AsyncResource("prisma-client-request");
   var called = false;

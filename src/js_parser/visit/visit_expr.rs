@@ -2789,7 +2789,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let decorator_name_from_context = p.decorator_class_name;
         p.decorator_class_name = None;
 
-        let _ = p.visit_class(expr.loc, &mut e_, Ref::NONE);
+        let _ = p.visit_class(expr.loc, &mut e_, Ref::NONE, false);
 
         // Lower standard decorators for class expressions
         if e_.should_lower_standard_decorators {

@@ -7,6 +7,7 @@ pub(crate) mod visit_expr;
 pub(crate) mod visit_stmt;
 
 use crate::lexer as js_lexer;
+use crate::lower::lower_decorators::wants_inner_class_binding;
 use crate::p::{LowerUsingDeclarationsContext, P};
 use crate::parser::{
     ExprIn, FnOnlyDataVisit, FnOrArrowDataVisit, ImportItemForNamespaceMap, PrependTempRefsOpts,
@@ -957,11 +958,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.stmts_to_single_stmt(stmt.loc, stmts.into_bump_slice_mut())
     }
 
+    /// Returns the `declare_inner_class_binding` the body resolved to (for `lower_class`) or NONE.
     pub(crate) fn visit_class(
         &mut self,
         name_scope_loc: bun_ast::Loc,
         class: &mut G::Class,
         default_name_ref: Ref,
+        is_stmt: bool,
     ) -> Ref {
         debug_assert!(
             !SCAN_ONLY,
@@ -973,6 +976,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if let Some(name) = class.class_name {
             self.record_declared_symbol(name.ref_);
         }
+
+        // Created in the enclosing scope, where the lowering declares it.
+        let inner_class_ref = match class.class_name {
+            Some(name) if is_stmt && wants_inner_class_binding(class) => {
+                self.declare_inner_class_binding(name.ref_)
+            }
+            _ => Ref::NONE,
+        };
 
         self.push_scope_for_visit_pass(ScopeKind::ClassName, name_scope_loc)
             .expect("unreachable");
@@ -988,17 +999,23 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // must be the original value of the name, not the re-assigned value.
         // Use "const" for this symbol to match JavaScript run-time semantics. You
         // are not allowed to assign to this symbol (it throws a TypeError).
-        let mut shadow_ref = if let Some(name) = class.class_name {
+        // With lowered class decorators the body resolves to `inner_class_ref` instead.
+        let shadow_ref = if let Some(name) = class.class_name {
             let name_ref = name.ref_;
             let original_name: &'a [u8] = self.symbols[name_ref.inner_index() as usize]
                 .original_name
                 .slice();
+            let body_ref = if inner_class_ref.is_symbol() {
+                inner_class_ref
+            } else {
+                name_ref
+            };
             self.vis_scope()
                 .members
                 .put(
                     original_name,
                     ScopeMember {
-                        ref_: name.ref_,
+                        ref_: body_ref,
                         loc: name.loc,
                     },
                 )
@@ -1420,12 +1437,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             self.enclosing_class_keyword = old_enclosing_class_keyword;
         }
 
-        if self.symbols[shadow_ref.inner_index() as usize].use_count_estimate == 0 {
-            // If there was originally no class name but something inside needed one
-            // (e.g. there was a static property initializer that referenced "this"),
-            // store our generated name so the class expression ends up with a name.
-            shadow_ref = Ref::NONE;
-        } else if class.class_name.is_none() {
+        // An anonymous class whose body used the generated name keeps it as its name.
+        if class.class_name.is_none()
+            && self.symbols[shadow_ref.inner_index() as usize].use_count_estimate > 0
+        {
             class.class_name = Some(LocRef {
                 ref_: shadow_ref,
                 loc: name_scope_loc,
@@ -1436,7 +1451,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // class name scope
         self.pop_scope();
 
-        shadow_ref
+        inner_class_ref
     }
 
     // Try separating the list for appending, so that it's not a pointer.

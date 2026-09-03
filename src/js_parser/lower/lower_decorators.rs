@@ -51,6 +51,8 @@ struct FieldInitEntry {
 enum StaticElementKind {
     Block,
     FieldOrAccessor,
+    /// Undecorated static field (`relocated_static_fields`).
+    PlainField,
 }
 
 #[derive(Clone, Copy)]
@@ -139,6 +141,95 @@ fn can_be_class_binding_name(name: &[u8]) -> bool {
         && !is_eval_or_arguments(name)
 }
 
+#[inline]
+fn is_plain_static_field(prop: &Property) -> bool {
+    prop.kind == PropertyKind::Normal
+        && prop.flags.contains(Flags::Property::IsStatic)
+        && !prop.flags.contains(Flags::Property::IsMethod)
+        && prop.ts_decorators.len_u32() == 0
+        && prop.key.is_some()
+        && !has_private_key(prop)
+}
+
+#[inline]
+fn has_private_key(prop: &Property) -> bool {
+    matches!(prop.key, Some(key) if matches!(key.data, js_ast::ExprData::EPrivateIdentifier(_)))
+}
+
+/// Its storage is initialized before the class decorator runs, outside step 7's source order.
+#[inline]
+fn is_undecorated_static_accessor(prop: &Property) -> bool {
+    prop.kind == PropertyKind::AutoAccessor
+        && prop.flags.contains(Flags::Property::IsStatic)
+        && prop.ts_decorators.len_u32() == 0
+}
+
+fn has_private_static_member(class: &G::Class) -> bool {
+    class
+        .properties
+        .slice()
+        .iter()
+        .any(|prop| prop.flags.contains(Flags::Property::IsStatic) && has_private_key(prop))
+}
+
+/// Shapes `rewrite_expr` walks fully; never `super`, `new.target`, `#names`, functions or classes.
+fn can_leave_class_body(expr: &Expr) -> bool {
+    use js_ast::ExprData as D;
+    match &expr.data {
+        D::EThis(_)
+        | D::EIdentifier(_)
+        | D::EImportIdentifier(_)
+        | D::EString(_)
+        | D::ENumber(_)
+        | D::EBigInt(_)
+        | D::EBoolean(_)
+        | D::ENull(_)
+        | D::EUndefined(_)
+        | D::ERegExp(_)
+        | D::EInlinedEnum(_)
+        | D::ERequireString(_)
+        | D::ERequireResolveString(_)
+        | D::EImportMeta(_)
+        | D::EMissing(_) => true,
+        D::EBinary(e) => can_leave_class_body(&e.left) && can_leave_class_body(&e.right),
+        D::ECall(e) => {
+            can_leave_class_body(&e.target) && e.args.slice().iter().all(can_leave_class_body)
+        }
+        D::ENew(e) => {
+            can_leave_class_body(&e.target) && e.args.slice().iter().all(can_leave_class_body)
+        }
+        D::EIndex(e) => can_leave_class_body(&e.target) && can_leave_class_body(&e.index),
+        D::EDot(e) => can_leave_class_body(&e.target),
+        D::ESpread(e) => can_leave_class_body(&e.value),
+        D::EUnary(e) => can_leave_class_body(&e.value),
+        D::EIf(e) => {
+            can_leave_class_body(&e.test)
+                && can_leave_class_body(&e.yes)
+                && can_leave_class_body(&e.no)
+        }
+        D::EArray(e) => e.items.slice().iter().all(can_leave_class_body),
+        D::EObject(e) => e.properties.slice().iter().all(|prop| {
+            !prop.flags.contains(Flags::Property::IsComputed)
+                && prop.initializer.is_none()
+                && prop.value.is_some_and(|value| can_leave_class_body(&value))
+        }),
+        D::ETemplate(e) => {
+            e.tag.is_none_or(|tag| can_leave_class_body(&tag))
+                && e.parts()
+                    .iter()
+                    .all(|part| can_leave_class_body(&part.value))
+        }
+        _ => false,
+    }
+}
+
+/// Private statics stay on the class as written, so `Foo.#x` in the body must keep naming it.
+pub(crate) fn wants_inner_class_binding(class: &G::Class) -> bool {
+    class.should_lower_standard_decorators
+        && class.ts_decorators.len_u32() > 0
+        && !has_private_static_member(class)
+}
+
 // ── impl P ───────────────────────────────────────────────────────────────────
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
@@ -170,6 +261,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let ref_ = self.new_symbol(kind, name);
         VecExt::append(&mut self.current_scope_mut().generated, ref_);
         ref_
+    }
+
+    /// `_Foo`, the body's name for `class Foo`: the binding the class itself provides is immutable.
+    pub(crate) fn declare_inner_class_binding(&mut self, class_name_ref: Ref) -> Ref {
+        let class_name: &'a [u8] = self.symbols[class_name_ref.inner_index() as usize]
+            .original_name
+            .slice();
+        let name = self.bump_name2(b"_", class_name);
+        self.new_sym(js_ast::symbol::Kind::Other, name)
     }
 
     /// Single var declaration statement.
@@ -1066,9 +1166,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     // ── Public API ───────────────────────────────────────
 
+    /// `inner_class_ref`: what `visit_class` returned for this class.
     pub(crate) fn lower_standard_decorators_stmt(
         &mut self,
         stmt: Stmt,
+        inner_class_ref: Ref,
         out: &mut BumpVec<'a, Stmt>,
     ) {
         // Every call site is the visitStmt `s_class` branch. `Stmt` and the
@@ -1080,7 +1182,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             js_ast::StmtData::SClass(c) => c,
             _ => unreachable!(),
         };
-        self.lower_impl(&mut s_class.class, stmt.loc, None, false, Some(stmt), out);
+        self.lower_impl(
+            &mut s_class.class,
+            stmt.loc,
+            None,
+            false,
+            Some(stmt),
+            inner_class_ref,
+            out,
+        );
     }
 
     pub(crate) fn lower_standard_decorators_expr(
@@ -1091,7 +1201,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) -> Expr {
         let bump = self.arena;
         let mut out = BumpVec::<Stmt>::new_in(bump);
-        self.lower_impl(class, loc, name_from_context, true, None, &mut out);
+        self.lower_impl(
+            class,
+            loc,
+            name_from_context,
+            true,
+            None,
+            Ref::NONE,
+            &mut out,
+        );
         if out.is_empty() {
             return self.new_expr(E::Missing {}, loc);
         }
@@ -1111,6 +1229,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         name_from_context: Option<&'a [u8]>,
         is_expr: bool,
         original_stmt: Option<Stmt>,
+        visited_inner_class_ref: Ref,
         out: &mut BumpVec<'a, Stmt>,
     ) {
         let p = self;
@@ -1158,15 +1277,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             class_name_loc = class.class_name.as_ref().unwrap().loc;
         }
 
-        let mut inner_class_ref: Ref = class_name_ref;
-        if !is_expr {
-            // SAFETY: original_name is arena-owned for 'a.
-            let cns: &'a [u8] = p.symbols[class_name_ref.inner_index() as usize]
-                .original_name
-                .slice();
-            let name = p.bump_name2(b"_", cns);
-            inner_class_ref = p.new_sym(js_ast::symbol::Kind::Other, name);
-        }
+        // Class expressions keep their own name binding (see `keep_static_fields_in_body`).
+        let inner_class_ref: Ref = if is_expr {
+            class_name_ref
+        } else if visited_inner_class_ref.is_symbol() {
+            visited_inner_class_ref
+        } else {
+            p.declare_inner_class_binding(class_name_ref)
+        };
 
         // `ExprNodeList = Vec<Expr>` owns its
         // buffer, so this MUST be a real ownership transfer; the previous
@@ -1176,6 +1294,24 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut class_decorators: ExprNodeList =
             bun_alloc::AstAlloc::take(&mut class.ts_decorators);
         let class_decorators_len = class_decorators.len_u32() as usize;
+
+        // Private statics stay in the body; an expression body using its name means the original.
+        let keep_static_fields_in_body = has_private_static_member(class)
+            || (is_expr
+                && !expr_class_is_anonymous
+                && p.symbols[class_name_ref.inner_index() as usize].use_count_estimate > 0);
+        // All or nothing (keys are pre-evaluated in Phase 2), so static members keep their order.
+        let relocate_static_fields = class_decorators_len > 0
+            && !keep_static_fields_in_body
+            && class.properties.slice().iter().all(|prop| {
+                !is_undecorated_static_accessor(prop)
+                    && (!prop.flags.contains(Flags::Property::IsComputed)
+                        || prop.key.is_none_or(|key| can_leave_class_body(&key)))
+                    && (!is_plain_static_field(prop)
+                        || prop
+                            .initializer
+                            .is_none_or(|init| can_leave_class_body(&init)))
+            });
 
         let init_ref = p.new_sym(js_ast::symbol::Kind::Other, b"_init");
         if is_expr {
@@ -1270,7 +1406,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             if prop.flags.contains(Flags::Property::IsComputed)
                 && prop.key.is_some()
-                && prop.ts_decorators.len_u32() > 0
+                && (prop.ts_decorators.len_u32() > 0 || relocate_static_fields)
             {
                 computed_key_counter += 1;
                 let key_name: &'a [u8] = if computed_key_counter == 1 {
@@ -1315,6 +1451,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
             }
+        }
+
+        // Read before the lowering itself references the binding.
+        let inner_binding_used =
+            !is_expr && p.symbols[inner_class_ref.inner_index() as usize].use_count_estimate > 0;
+        if !is_expr && !inner_binding_used {
+            // Not declared below, so merge it into the class name instead.
+            p.symbols[inner_class_ref.inner_index() as usize]
+                .link
+                .set(class_name_ref);
         }
 
         // For named class expressions: swap to expr_class_ref for suffix ops
@@ -1387,6 +1533,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut static_init_entries = BumpVec::<FieldInitEntry>::new_in(bump);
         let mut instance_init_entries = BumpVec::<FieldInitEntry>::new_in(bump);
         let mut static_element_order = BumpVec::<StaticElement>::new_in(bump);
+        let mut relocated_static_fields = BumpVec::<Property>::new_in(bump);
         let mut extracted_static_blocks =
             BumpVec::<js_ast::StoreRef<G::ClassStaticBlock>>::new_in(bump);
         let mut prefix_stmts = BumpVec::<Stmt>::new_in(bump);
@@ -1661,6 +1808,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         });
                         extracted_static_blocks.push(sb);
                     }
+                    continue;
+                }
+                if relocate_static_fields && is_plain_static_field(prop) {
+                    static_element_order.push(StaticElement {
+                        kind: StaticElementKind::PlainField,
+                        index: relocated_static_fields.len(),
+                    });
+                    relocated_static_fields.push(prop_copy(prop));
                     continue;
                 }
                 new_properties.push(prop_full_copy(prop));
@@ -2088,7 +2243,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             let cls_dec_list = ExprNodeList::from_bump_vec(cls_dec_args);
             let dec_call = p.call_runtime(loc, b"__decorateElement", cls_dec_list);
-            suffix_exprs.push(p.assign_to(class_name_ref, dec_call, class_name_loc));
+            // `Foo = _Foo = __decorateElement(...)`
+            let decorated = if inner_binding_used {
+                p.assign_to(inner_class_ref, dec_call, class_name_loc)
+            } else {
+                dec_call
+            };
+            suffix_exprs.push(p.assign_to(class_name_ref, decorated, class_name_loc));
         }
 
         // 6: Static method extra initializers
@@ -2198,6 +2359,36 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         let n_e = p.new_expr(E::Number::new(Self::extra_init_flag(field_idx)), loc);
                         let c_e = p.use_ref(class_name_ref, class_name_loc);
                         suffix_exprs.push(p.call_rt(loc, b"__runInitializers", &[i_e, n_e, c_e]));
+                    }
+                    StaticElementKind::PlainField => {
+                        // __publicField defines; an assignment would run inherited setters.
+                        let field = &mut relocated_static_fields[elem.index];
+                        let key = field.key.expect("infallible: prop has key");
+                        let target = p.use_ref(class_name_ref, class_name_loc);
+                        match field.initializer.as_mut() {
+                            Some(init) => {
+                                p.rewrite_expr(
+                                    init,
+                                    RewriteKind::ReplaceThis {
+                                        ref_: class_name_ref,
+                                        loc: class_name_loc,
+                                    },
+                                );
+                                let init = *init;
+                                suffix_exprs.push(p.call_rt(
+                                    key.loc,
+                                    b"__publicField",
+                                    &[target, key, init],
+                                ));
+                            }
+                            None => {
+                                suffix_exprs.push(p.call_rt(
+                                    key.loc,
+                                    b"__publicField",
+                                    &[target, key],
+                                ));
+                            }
+                        }
                     }
                 }
             }
@@ -2424,6 +2615,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             new_properties = merged;
         }
 
+        // `static { _Foo = this }`: initializers left in the body run before the suffix assigns it.
+        if inner_binding_used {
+            let this_e = p.new_expr(E::This {}, class_name_loc);
+            let capture = p.assign_to(inner_class_ref, this_e, class_name_loc);
+            let block = p.make_static_block(capture, class_name_loc);
+            new_properties.insert(0, block);
+        }
+
         class.properties = bun_ast::StoreSlice::new_mut(new_properties.into_bump_slice_mut());
         class.has_decorators = false;
         class.should_lower_standard_decorators = false;
@@ -2554,6 +2753,28 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
         out.extend_from_slice(&pre_eval_stmts);
         out.extend_from_slice(&prefix_stmts);
+        // After the pre-evaluated keys and decorators (TDZ); `let` so loops get fresh bindings.
+        if inner_binding_used {
+            p.record_declared_symbol(inner_class_ref);
+            let binding = p.b(
+                B::Identifier {
+                    r#ref: inner_class_ref,
+                },
+                class_name_loc,
+            );
+            let decls = DeclList::from_slice(&[G::Decl {
+                binding,
+                value: None,
+            }]);
+            out.push(p.s(
+                S::Local {
+                    kind: S::Kind::KLet,
+                    decls,
+                    ..Default::default()
+                },
+                loc,
+            ));
+        }
         out.push(init_decl_stmt);
         out.push(original_stmt.unwrap());
         for expr in suffix_exprs.iter() {
@@ -2563,32 +2784,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     ..Default::default()
                 },
                 expr.loc,
-            ));
-        }
-        // Inner class binding: let _Foo = Foo
-        if !inner_class_ref.eql(class_name_ref) {
-            p.record_usage(class_name_ref);
-            let binding = p.b(
-                B::Identifier {
-                    r#ref: inner_class_ref,
-                },
-                loc,
-            );
-            let value = Some(p.new_expr(
-                E::Identifier {
-                    ref_: class_name_ref,
-                    ..Default::default()
-                },
-                class_name_loc,
-            ));
-            let decls = DeclList::from_slice(&[G::Decl { binding, value }]);
-            out.push(p.s(
-                S::Local {
-                    kind: S::Kind::KLet,
-                    decls,
-                    ..Default::default()
-                },
-                loc,
             ));
         }
     }

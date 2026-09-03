@@ -9,7 +9,7 @@
   "devDependencies": {
     "@lezer/common": "^1.2.3",
     "@lezer/cpp": "^1.1.6",
-    "@types/bun": "workspace:*",
+    "@types/bun": "*",
     "esbuild": "^0.21.5",
     "oxlint": "1.70.0",
     "prettier": "^3.6.2",

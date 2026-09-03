@@ -7,7 +7,7 @@
       "devDependencies": {
         "@lezer/common": "^1.2.3",
         "@lezer/cpp": "^1.1.6",
-        "@types/bun": "workspace:*",
+        "@types/bun": "*",
         "esbuild": "^0.21.5",
         "oxlint": "1.70.0",
         "prettier": "^3.6.2",
@@ -22,11 +22,12 @@
       "name": "@types/bun",
       "version": "1.2.2",
       "dependencies": {
-        "bun-types": "workspace:",
+        "bun-types": "*",
       },
     },
     "packages/bun-types": {
       "name": "bun-types",
+      "version": "0.0.0",
       "dependencies": {
         "@types/node": "*",
       },

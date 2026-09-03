@@ -45,7 +45,7 @@
   },
   "scripts": {},
   "dependencies": {
-    "bun-types": "workspace:"
+    "bun-types": "*"
   },
   "peerDependencies": {},
   "typesPublisherContentHash": "caeb56f2d4753af08a8e57856ec5e9d86ad3542da2171a68e19698ec4539995a",

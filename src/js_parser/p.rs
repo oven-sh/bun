@@ -5362,11 +5362,37 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(())
     }
 
-    fn binding_can_be_removed_if_unused_without_dce_check(&mut self, binding: Binding) -> bool {
+    /// A pattern runs getters or the iterator on its value, so only a literal value is side-effect free.
+    fn decl_binding_can_be_removed_if_unused_without_dce_check(
+        &mut self,
+        decl: &js_ast::g::Decl,
+    ) -> bool {
+        match &decl.value {
+            Some(value) => {
+                self.pattern_can_be_removed_if_unused_without_dce_check(decl.binding, value)
+            }
+            None => matches!(decl.binding.data, js_ast::b::B::BIdentifier(_)),
+        }
+    }
+
+    fn pattern_can_be_removed_if_unused_without_dce_check(
+        &mut self,
+        binding: Binding,
+        value: &Expr,
+    ) -> bool {
         match binding.data {
+            js_ast::b::B::BIdentifier(_) | js_ast::b::B::BMissing(_) => true,
+
+            // Like esbuild: identifiers and holes over an array literal only.
             js_ast::b::B::BArray(bi) => {
+                if !matches!(value.data, js_ast::ExprData::EArray(_)) {
+                    return false;
+                }
                 for item in bi.items.slice() {
-                    if !self.binding_can_be_removed_if_unused_without_dce_check(item.binding) {
+                    if !matches!(
+                        item.binding.data,
+                        js_ast::b::B::BIdentifier(_) | js_ast::b::B::BMissing(_)
+                    ) {
                         return false;
                     }
                     if let Some(default) = &item.default_value {
@@ -5375,15 +5401,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
                     }
                 }
+                true
             }
-            js_ast::b::B::BObject(bi) => {
-                for property in bi.properties.slice() {
-                    if !property.flags.contains(Flags::Property::IsSpread)
-                        && !self.expr_can_be_removed_if_unused_without_dce_check(&property.key)
+
+            // Every key of the pattern must name a data property of the literal.
+            js_ast::b::B::BObject(bo) => {
+                let js_ast::ExprData::EObject(literal) = &value.data else {
+                    return false;
+                };
+                if !Self::object_literal_has_only_plain_keys(literal) {
+                    return false;
+                }
+                for property in bo.properties.slice() {
+                    if property.flags.contains(Flags::Property::IsSpread)
+                        || property.flags.contains(Flags::Property::IsComputed)
                     {
-                        return false;
-                    }
-                    if !self.binding_can_be_removed_if_unused_without_dce_check(property.value) {
                         return false;
                     }
                     if let Some(default) = &property.default_value {
@@ -5391,11 +5423,63 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             return false;
                         }
                     }
+                    let js_ast::ExprData::EString(key) = &property.key.data else {
+                        return false;
+                    };
+                    let Some(matched) = Self::object_literal_data_property(literal, key) else {
+                        return false;
+                    };
+                    if !self.pattern_can_be_removed_if_unused_without_dce_check(
+                        property.value,
+                        &matched,
+                    ) {
+                        return false;
+                    }
                 }
+                true
             }
-            _ => {}
         }
-        true
+    }
+
+    /// Only string keys (a numeric key `0` is the same property as `"0"`), no spread, no computed key, and no `__proto__` (it sets the prototype).
+    fn object_literal_has_only_plain_keys(literal: &E::Object) -> bool {
+        literal.properties.slice().iter().all(|property| {
+            property.kind != js_ast::g::PropertyKind::Spread
+                && !property.flags.contains(Flags::Property::IsComputed)
+                && property.initializer.is_none()
+                && match &property.key {
+                    Some(Expr {
+                        data: js_ast::ExprData::EString(key),
+                        ..
+                    }) => !key.eql_comptime(b"__proto__"),
+                    _ => false,
+                }
+        })
+    }
+
+    /// The value of data property `key`: the last duplicate key wins, an accessor gives `None`.
+    fn object_literal_data_property(literal: &E::Object, key: &E::EString) -> Option<Expr> {
+        literal
+            .properties
+            .slice()
+            .iter()
+            .rev()
+            .find(|property| {
+                matches!(
+                    &property.key,
+                    Some(Expr {
+                        data: js_ast::ExprData::EString(literal_key),
+                        ..
+                    }) if literal_key.eql_string(key)
+                )
+            })
+            .and_then(|property| {
+                if property.kind == js_ast::g::PropertyKind::Normal {
+                    property.value
+                } else {
+                    None
+                }
+            })
     }
 
     fn stmts_can_be_removed_if_unused(&mut self, stmts: &[Stmt]) -> bool {
@@ -5441,7 +5525,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
 
                     for decl in st.decls.slice() {
-                        if !self.binding_can_be_removed_if_unused_without_dce_check(decl.binding) {
+                        if !self.decl_binding_can_be_removed_if_unused_without_dce_check(decl) {
                             return false;
                         }
                         if let Some(decl_value) = &decl.value {
@@ -9017,8 +9101,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         {
                             for decl in local.decls.slice() {
                                 if let Some(value) = &decl.value {
+                                    // The linker keeps a pattern inside the wrapper.
                                     if !matches!(value.data, js_ast::ExprData::EMissing(_))
-                                        && !value.can_be_moved()
+                                        && (!value.can_be_moved()
+                                            || !matches!(
+                                                decl.binding.data,
+                                                js_ast::b::B::BIdentifier(_)
+                                            ))
                                     {
                                         return true;
                                     }

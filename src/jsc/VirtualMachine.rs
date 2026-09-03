@@ -880,6 +880,8 @@ impl VirtualMachine {
         VM.get()
     }
 
+    /// The signal handler path (unix only) reaches the main VM through this.
+    #[cfg(unix)]
     pub(crate) fn get_main_thread_vm() -> Option<*mut VirtualMachine> {
         let p = MAIN_THREAD_VM.load(core::sync::atomic::Ordering::Acquire);
         if p.is_null() { None } else { Some(p) }

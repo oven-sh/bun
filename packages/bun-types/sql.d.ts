@@ -762,9 +762,10 @@ declare module "bun" {
      * @param values Array values to bind
      * @param typeNameOrTypeID Element type name or type ID. When omitted, the
      * type is inferred from the values: strings bind as `TEXT`, integers as
-     * `INTEGER` or `BIGINT`, other numbers as `DOUBLE PRECISION`, booleans as
-     * `BOOLEAN`, dates as `TIMESTAMPTZ`, buffers as `BYTEA`. Objects, mixed
-     * kinds, empty arrays and arrays of only `null` bind as `JSON`.
+     * `INTEGER` or `BIGINT`, other numbers as `DOUBLE PRECISION`, bigints as
+     * `BIGINT` (or `NUMERIC` when one is outside the 64-bit range), booleans
+     * as `BOOLEAN`, dates as `TIMESTAMPTZ`, buffers as `BYTEA`. Objects,
+     * mixed kinds, empty arrays and arrays of only `null` bind as `JSON`.
      * @returns The array parameter, ready to interpolate into a query
      *
      * @example

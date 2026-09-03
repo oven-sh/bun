@@ -415,7 +415,7 @@ await sql`SELECT * FROM products WHERE id = ANY(${sql.array([1, 2, 3])})`;
 await sql`INSERT INTO events (ids) VALUES (${sql.array(["a0eebc99-..."], "UUID")})`;
 ```
 
-Without an explicit type, strings bind as `TEXT`, integers as `INTEGER` or `BIGINT`, other numbers as `DOUBLE PRECISION`, booleans as `BOOLEAN`, dates as `TIMESTAMPTZ`, buffers as `BYTEA`. Objects, mixed kinds, empty arrays and arrays of only `null` bind as `JSON`. `null` and `undefined` elements bind as `NULL`.
+Without an explicit type, strings bind as `TEXT`, integers as `INTEGER` or `BIGINT`, other numbers as `DOUBLE PRECISION`, bigints as `BIGINT` (or `NUMERIC` when one is outside the 64-bit range), booleans as `BOOLEAN`, dates as `TIMESTAMPTZ`, buffers as `BYTEA`. Objects, mixed kinds, empty arrays and arrays of only `null` bind as `JSON`. `null` and `undefined` elements bind as `NULL`.
 
 <Note>`sql.array` is PostgreSQL-only. Multi-dimensional arrays may not be supported yet.</Note>
 

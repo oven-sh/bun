@@ -242,12 +242,12 @@ class AsyncLocalStorage {
         // restore only this storage's binding, re-enabling the storage.
         this.#disabled = false;
         var before = find(prior, this);
-        var current = live(get());
-        // Drop the binding the callback left for this storage (ours, or the one an
-        // enterWith() replaced it with) unless it already is the prior one.
-        if (find(current, this) !== before) current = without(current, this);
-        if (before !== undefined && find(current, this) !== before) current = new Frame(this, before.value, current);
-        set(current);
+        // Frames may have been copied (enterWith() of a storage bound further down
+        // copies everything above it), so go by value, not identity: drop every
+        // binding of this storage and put the prior one back on top. Enclosing
+        // run()s of the same storage restore their own value the same way.
+        var current = withoutAll(live(get()), this);
+        set(before !== undefined ? new Frame(this, before.value, current) : current);
       }
       $assert(
         sameValue(this.getStore(), find(prior, this) !== undefined ? find(prior, this)!.value : this.#defaultValue),
@@ -269,7 +269,10 @@ class AsyncLocalStorage {
     if (top === undefined) return;
     var below = withoutAll(top.prev, this);
     if (top.storage !== this && below === top.prev) return;
-    if (top.storage === this) top.storage = undefined;
+    if (top.storage === this) {
+      top.storage = undefined;
+      top.value = undefined;
+    }
     top.prev = below;
     frameMutations++;
   }

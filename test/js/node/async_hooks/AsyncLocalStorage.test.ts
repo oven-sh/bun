@@ -247,6 +247,21 @@ test("run() restores its own binding after enterWith()/withScope()/exit() inside
     expect(a.getStore()).toBe(1);
   });
   expect(a.getStore()).toBe(undefined);
+  // enterWith() of a storage bound below the run() frames copies them; the
+  // restore must still go by value.
+  const b = new AsyncLocalStorage();
+  b.enterWith(0);
+  a.run(1, () => {
+    a.run(2, () => {
+      a.run(3, () => {
+        b.enterWith(9);
+      });
+      expect([a.getStore(), b.getStore()]).toEqual([2, 9]);
+    });
+    expect([a.getStore(), b.getStore()]).toEqual([1, 9]);
+  });
+  expect([a.getStore(), b.getStore()]).toEqual([undefined, 9]);
+  b.disable();
 });
 
 test("re-entering a storage inside run() does not grow the context", () => {

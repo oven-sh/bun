@@ -766,7 +766,8 @@ declare module "bun" {
      * `BIGINT` (or `NUMERIC` when one is outside the 64-bit range), booleans
      * as `BOOLEAN`, dates as `TIMESTAMPTZ`, buffers as `BYTEA`. A mix of
      * numbers and bigints binds as `BIGINT` or `NUMERIC`. Objects, any other
-     * mix of kinds, empty arrays and arrays of only `null` bind as `JSON`.
+     * mix of kinds, empty arrays and arrays of only `null` or `undefined` bind
+     * as `JSON`.
      * @returns The array parameter, ready to interpolate into a query
      *
      * @example

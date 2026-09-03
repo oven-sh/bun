@@ -2129,10 +2129,8 @@ pub mod formatter {
                         });
                     }
                     Ok(Some(callback_value)) if callback_value.is_callable() => {
-                        // Like util.inspect, skip the hook on a prototype object. The
-                        // hook expects an instance, and a native hook throws
-                        // ERR_INVALID_THIS for the prototype.
-                        if !crate::cpp::JSC__JSValue__isPrototypeObject(global_this, value)? {
+                        // Like util.inspect: a hook expects an instance, not the prototype.
+                        if !crate::cpp::JSC__JSValue__isConstructorPrototype(global_this, value)? {
                             return Ok(TagResult {
                                 tag: TagPayload::CustomFormattedObject(CustomFormattedObject {
                                     function: callback_value,

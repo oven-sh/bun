@@ -33,9 +33,8 @@ it("prototype", () => {
   Bun.gc(true);
 });
 
-// The inspect.custom of CompressionStream throws ERR_INVALID_THIS for its prototype. Like
-// util.inspect, console.log and the reportError printer must not call it for a prototype.
-it("console.log and reportError format a prototype whose class has a native inspect.custom", async () => {
+// The inspect.custom of CompressionStream throws ERR_INVALID_THIS when `this` is the prototype.
+it.concurrent("console.log and reportError format a prototype whose class has an inspect.custom", async () => {
   const code = `
     console.log(CompressionStream.prototype);
     try {
@@ -52,11 +51,18 @@ it("console.log and reportError format a prototype whose class has a native insp
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stdout).toStartWith("CompressionStream {\n");
-  expect(stdout).toEndWith("}\nreportError returned\n");
-  expect(stderr).toContain("prototype: CompressionStream {\n");
-  // reportError reports the value as an uncaught error, and that sets the exit code.
-  expect(exitCode).toBe(1);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout:
+      "CompressionStream {\n" +
+      "  readable: undefined,\n" +
+      "  writable: undefined,\n" +
+      "  [Symbol(nodejs.util.inspect.custom)]: [Function: anonymous],\n" +
+      "}\n" +
+      "reportError returned\n",
+    stderr: expect.stringContaining("\n  prototype: CompressionStream {\n"),
+    // reportError reports the value as an uncaught error, and that sets the exit code.
+    exitCode: 1,
+  });
 });
 
 it("getters", () => {

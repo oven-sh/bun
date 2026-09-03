@@ -199,6 +199,8 @@ if (isDockerEnabled()) {
           pg_typeof(${sql.array([true, false])}) as booleans,
           pg_typeof(${sql.array([new Date()])}) as dates,
           pg_typeof(${sql.array([Buffer.from("hi")])}) as buffers,
+          pg_typeof(${sql.array([new Uint8Array([1, 2])])}) as views,
+          pg_typeof(${sql.array(new Int32Array([1, 2]))}) as typed_array,
           pg_typeof(${sql.array([
             [1, 2],
             [3, null],
@@ -219,6 +221,8 @@ if (isDockerEnabled()) {
           booleans: "boolean[]",
           dates: "timestamp with time zone[]",
           buffers: "bytea[]",
+          views: "json[]",
+          typed_array: "integer[]",
           nested: "integer[]",
           with_null: "text[]",
           objects: "json[]",
@@ -262,7 +266,7 @@ if (isDockerEnabled()) {
         expect(int_cast).toEqual(new Int32Array([1, 2]));
       });
 
-      test("sql.array encodes null and undefined elements as SQL NULL", async () => {
+      test("sql.array encodes a null element as SQL NULL", async () => {
         await using sql = postgres(options);
         const [{ text_nulls, json_nulls, bool_nulls }] = await sql`select
           ${sql.array(["a", null, undefined, "null"], "TEXT")} as text_nulls,

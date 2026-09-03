@@ -146,16 +146,21 @@ function arrayValueSerializer(type: ArrayType, is_numeric: boolean, is_json: boo
   // we do minimal to none type validation, we just try to format nicely and let the server handle if is valid SQL
   // postgres will try to convert string -> array type
   // postgres will emit a nice error saying what value dont have the expected format outputing the value in the error
+  if (value === null) {
+    // Unquoted null is SQL NULL in array literal syntax. typeof null is "object",
+    // so without this check the default branch would JSON.stringify it and emit
+    // the quoted string "null".
+    return "null";
+  }
   if ($isArray(value) || isTypedArray(value)) {
     if (!value.length) return "{}";
     const delimiter = type === "BOX" ? ";" : ",";
     return `{${value.map(arrayValueSerializer.bind(this, type, is_numeric, is_json)).join(delimiter)}}`;
   }
 
-  // An unquoted NULL is the SQL NULL element. A quoted "null" is the string.
-  if (value === null || value === undefined) return "NULL";
-
   switch (typeof value) {
+    case "undefined":
+      return "null";
     case "string":
       if (is_json) {
         return `"${arrayEscape(JSON.stringify(value))}"`;
@@ -256,7 +261,7 @@ function inferArrayType(values: any[]): ArrayType {
 
   function visit(value: any) {
     if (value === null || value === undefined) return;
-    if ($isArray(value) || isTypedArray(value)) {
+    if ($isArray(value)) {
       for (let i = 0; i < value.length; i++) visit(value[i]);
       return;
     }
@@ -285,6 +290,7 @@ function inferArrayType(values: any[]): ArrayType {
         } else if (Buffer.isBuffer(value)) {
           current = ElementKind.buffer;
         } else {
+          // Objects and typed array views keep the JSON default.
           current = ElementKind.json;
         }
     }
@@ -296,7 +302,12 @@ function inferArrayType(values: any[]): ArrayType {
     }
   }
 
-  if ($isArray(values) || isTypedArray(values)) visit(values);
+  if ($isArray(values)) {
+    visit(values);
+  } else if (ArrayBuffer.isView(values) && !Buffer.isBuffer(values)) {
+    // A top-level typed array serializes as a flat list of its numbers.
+    for (let i = 0; i < values.length; i++) visit(values[i]);
+  }
 
   switch (kind) {
     case ElementKind.string:

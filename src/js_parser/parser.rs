@@ -910,6 +910,7 @@ impl IdentifierOpts {
     const IS_DELETE_TARGET: u8 = 1 << 2;
     const WAS_ORIGINALLY_IDENTIFIER: u8 = 1 << 3;
     const IS_CALL_TARGET: u8 = 1 << 4;
+    const IS_TEMPLATE_TAG: u8 = 1 << 5;
 
     #[inline]
     pub(crate) const fn assign_target(self) -> js_ast::AssignTarget {
@@ -937,6 +938,11 @@ impl IdentifierOpts {
     pub(crate) const fn is_call_target(self) -> bool {
         self.0 & Self::IS_CALL_TARGET != 0
     }
+    /// The tag of a tagged template, which passes `this` like a call target.
+    #[inline]
+    pub(crate) const fn is_template_tag(self) -> bool {
+        self.0 & Self::IS_TEMPLATE_TAG != 0
+    }
 
     // Builder-style helpers (this stays a packed u8 rather than a
     // named-field struct).
@@ -962,6 +968,11 @@ impl IdentifierOpts {
     #[inline]
     pub(crate) const fn with_is_call_target(mut self, v: bool) -> Self {
         self.0 = (self.0 & !Self::IS_CALL_TARGET) | ((v as u8) << 4);
+        self
+    }
+    #[inline]
+    pub(crate) const fn with_is_template_tag(mut self, v: bool) -> Self {
+        self.0 = (self.0 & !Self::IS_TEMPLATE_TAG) | ((v as u8) << 5);
         self
     }
 }

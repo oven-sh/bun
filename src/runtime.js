@@ -325,7 +325,17 @@ export var __decorateElement = (array, flags, name, decorators, target, extra) =
   );
 };
 
-export var __esm = (fn, res) => () => (fn && (res = fn((fn = 0))), res);
+// A module whose evaluation threw throws the same error on every later import.
+export var __esm = (fn, res, err) => () => {
+  if (fn)
+    try {
+      res = fn((fn = 0));
+    } catch (e) {
+      err = [e];
+    }
+  if (err) throw err[0];
+  return res;
+};
 
 // This is used for JSX inlining with React.
 export var $$typeof = /* @__PURE__ */ Symbol.for("react.element");

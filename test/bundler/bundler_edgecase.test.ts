@@ -1302,7 +1302,7 @@ describe("bundler", () => {
     snapshotSourceMap: {
       "entry.js.map": {
         files: ["../node_modules/react/index.js", "../entry.js"],
-        mappingsExactMatch: "2lBACA,WAAW,IAAQ,EAAE,ICDrB,aACA,QAAQ,IAAI,CAAK",
+        mappingsExactMatch: "inBACA,WAAW,IAAQ,EAAE,ICDrB,aACA,QAAQ,IAAI,CAAK",
       },
     },
   });

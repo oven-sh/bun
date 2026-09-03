@@ -1435,6 +1435,50 @@ describe("bundler", () => {
       stdout: "expr arrow decl expr decl nested",
     },
   });
+  // A call of `exports.name()` in the file itself passes `module.exports` as `this`.
+  itBundled("cjs2esm/SelfMethodCallKeepsThis", {
+    files: {
+      "/entry.js": /* js */ `
+        import st from "./lib.cjs";
+        import * as ns from "./lib.cjs";
+        console.log(st.internal(), ns.viaModule(), st.viaTag());
+      `,
+      "/lib.cjs": /* js */ `
+        exports.parse = function (s) { return this._helper(s); };
+        exports._helper = function (s) { return "helped:" + s; };
+        exports.tag = function (strings) { return this._helper(strings[0]); };
+        exports.internal = function () { return exports.parse("in"); };
+        exports.viaModule = function () { return module.exports.parse("module"); };
+        exports.viaTag = function () { return exports.tag\`tag\`; };
+      `,
+    },
+    cjs2esm: true,
+    run: {
+      stdout: "helped:in helped:module helped:tag",
+    },
+  });
+  itBundled("cjs2esm/SelfMethodCallWithoutThisBindsDirectly", {
+    files: {
+      "/entry.js": /* js */ `
+        import { run } from "./lib.cjs";
+        console.log(run());
+      `,
+      "/lib.cjs": /* js */ `
+        exports.free = function (s) { return "free:" + s; };
+        exports.run = function () { return exports.free("x"); };
+        exports.unused = function () { return this.free("y"); };
+      `,
+    },
+    cjs2esm: true,
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toContain('$free("x")');
+      expect(out).not.toContain("exports_lib");
+    },
+    run: {
+      stdout: "free:x",
+    },
+  });
   itBundled("cjs2esm/DefaultImportJsxClassicRuntime", {
     files: {
       "/entry.jsx": /* jsx */ `

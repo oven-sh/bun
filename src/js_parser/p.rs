@@ -5723,9 +5723,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.commonjs_named_exports_deoptimized = true;
     }
 
-    pub(crate) fn count_commonjs_export_assignment(&mut self, name: &[u8]) {
-        if let Some(export) = self.commonjs_named_exports.get_mut(name) {
+    /// Records an assignment to `exports.name`, or a call of it.
+    pub(crate) fn note_commonjs_export_use(
+        &mut self,
+        name: &[u8],
+        ref_: Ref,
+        opts: IdentifierOpts,
+    ) {
+        if opts.assign_target() != js_ast::AssignTarget::None
+            && let Some(export) = self.commonjs_named_exports.get_mut(name)
+        {
             export.assign_count = export.assign_count.saturating_add(1);
+        }
+        if opts.is_call_target() || opts.is_template_tag() {
+            self.symbols[ref_.inner_index() as usize].set_called_as_method(true);
         }
     }
 
@@ -5752,6 +5763,42 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if ignores_this {
                 self.symbols[export.loc_ref.ref_.inner_index() as usize]
                     .set_call_ignores_this(true);
+            }
+        }
+    }
+
+    /// The printer prints `exports.name()` as a call on the namespace object
+    /// when the export can read `this`, so each part that uses such an export
+    /// also uses `exports_ref`.
+    fn use_namespace_for_method_calls(&self, parts: &mut [js_ast::Part]) {
+        let method_exports: Vec<Ref> = self
+            .commonjs_named_exports
+            .values()
+            .iter()
+            .map(|export| export.loc_ref.ref_)
+            .filter(|&ref_| {
+                let symbol = &self.symbols[ref_.inner_index() as usize];
+                symbol.called_as_method() && !symbol.call_ignores_this()
+            })
+            .collect();
+        if method_exports.is_empty() {
+            return;
+        }
+        for part in parts {
+            let count: u32 = part
+                .symbol_uses
+                .keys()
+                .iter()
+                .zip(part.symbol_uses.values())
+                .filter(|(ref_, _)| method_exports.contains(ref_))
+                .map(|(_, symbol_use)| symbol_use.count_estimate)
+                .sum();
+            if count > 0 {
+                part.symbol_uses
+                    .get_or_put_value(self.exports_ref, Default::default())
+                    .expect("OOM")
+                    .value_ptr
+                    .count_estimate += count;
             }
         }
     }
@@ -9110,6 +9157,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         if !self.commonjs_named_exports_deoptimized {
             self.mark_commonjs_exports_that_ignore_this();
+            if self.options.bundle {
+                self.use_namespace_for_method_calls(parts.as_mut_slice());
+            }
         }
 
         // Re-tag the arena-backed buffer

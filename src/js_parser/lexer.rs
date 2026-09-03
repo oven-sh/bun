@@ -2090,8 +2090,7 @@ impl<'a> Lexer<'a> {
 
                     0x23 | 0x40 => {
                         let pragma_trigger_pos = self.end;
-                        // `__PURE__` is an annotation only as the first word of a
-                        // `//` comment. Anywhere else it is prose.
+                        // `__PURE__` must be the first word of a `//` comment.
                         let allow_pure = strings::is_all_whitespace(
                             &contents[self.start + 2..pragma_trigger_pos],
                         );

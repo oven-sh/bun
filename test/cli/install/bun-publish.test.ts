@@ -1602,13 +1602,13 @@ describe("--recursive", () => {
     expect(exitCode).toBe(1);
   });
 
-  test.skipIf(isWindows)("continues after a lifecycle script killed by a signal", async () => {
+  test.skipIf(isWindows)("continues after a lifecycle script that crashed", async () => {
     using mock = mockRegistry();
     const packageDir = await workspace(
       "rec-signal",
       `http://localhost:${mock.server.port}/`,
       {},
-      { a: { prepack: "kill -TERM $$" } },
+      { a: { prepack: "kill -SEGV $$" } },
     );
 
     const { out, err, exitCode } = await publish(env, packageDir, "-r");
@@ -1617,6 +1617,29 @@ describe("--recursive", () => {
     expect(mock.puts).toEqual(["rec-signal-b@1.0.0", "rec-signal-c@1.0.0"]);
     expect(out.match(/ \+ rec-signal-\w+@1\.0\.0/g)).toEqual([" + rec-signal-b@1.0.0", " + rec-signal-c@1.0.0"]);
     expect(exitCode).toBe(1);
+  });
+
+  test.skipIf(isWindows)("stops the run when a lifecycle script is told to stop", async () => {
+    using mock = mockRegistry();
+    const packageDir = await workspace(
+      "rec-term",
+      `http://localhost:${mock.server.port}/`,
+      {},
+      { a: { prepack: "kill -TERM $$" } },
+    );
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "publish", "-r"],
+      cwd: packageDir,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [err] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(err).toContain('script "prepack" was terminated by signal SIGTERM');
+    expect(err).not.toContain("failed to publish");
+    expect(mock.puts).toEqual([]);
+    expect(proc.signalCode).toBe("SIGTERM");
   });
 
   test("continues after a package whose scope has no credentials", async () => {

@@ -102,12 +102,30 @@ pub(crate) enum ScriptStatus {
 }
 
 impl ScriptStatus {
+    /// The exit code of a failed script. A signal that asks bun to stop (Ctrl+C, SIGTERM, ...)
+    /// is re-raised here instead, so a batch does not carry on past it.
     pub(crate) fn exit_code(self) -> u32 {
+        use bun_core::SignalCode;
         match self {
             ScriptStatus::Exited(code) => code,
+            ScriptStatus::Signaled(Some(
+                sig @ (SignalCode::SIGINT
+                | SignalCode::SIGTERM
+                | SignalCode::SIGHUP
+                | SignalCode::SIGQUIT),
+            )) => Self::raise(sig),
             ScriptStatus::Signaled(Some(sig)) => 128 + sig as u8 as u32,
             ScriptStatus::Signaled(None) => 1,
         }
+    }
+
+    fn raise(sig: bun_core::SignalCode) -> ! {
+        if bun_core::env_var::feature_flag::BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN.get()
+            == Some(true)
+        {
+            bun_crash_handler::suppress_reporting();
+        }
+        Global::raise_ignoring_panic_handler(sig)
     }
 }
 
@@ -302,14 +320,12 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         )? {
             ScriptStatus::Exited(0) => Ok(()),
             ScriptStatus::Exited(code) => Global::exit(code),
-            ScriptStatus::Signaled(sig) => {
+            ScriptStatus::Signaled(Some(sig)) => ScriptStatus::raise(sig),
+            ScriptStatus::Signaled(None) => {
                 if bun_core::env_var::feature_flag::BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN.get()
                     == Some(true)
                 {
                     bun_crash_handler::suppress_reporting();
-                }
-                if let Some(sig) = sig {
-                    Global::raise_ignoring_panic_handler(sig);
                 }
                 Global::exit(1)
             }

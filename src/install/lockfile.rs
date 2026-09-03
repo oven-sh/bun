@@ -180,7 +180,7 @@ pub struct Lockfile {
     pub(crate) scripts: Scripts,
     pub(crate) workspace_paths: NameHashMap,
     pub workspace_versions: VersionHashMap,
-    /// Name hashes of the self-contained workspaces. bun.lock and bun.lockb record the set.
+    /// Name hashes of the self-contained workspaces, from the manifests. Not saved.
     pub self_contained_workspaces: ArrayHashMap<PackageNameHash, (), ArrayIdentityContextU64>,
 
     /// Optional because `trustedDependencies` in package.json might be an
@@ -819,7 +819,7 @@ impl Lockfile {
     /// root manifest's `workspaces.selfContained` (by path or name) or declaring
     /// `"installConfig": { "hoistingLimits": "workspaces" }` in their own manifest.
     /// Both are recorded in `self_contained_workspaces` while the workspaces are
-    /// parsed (and persisted per workspace in bun.lock).
+    /// parsed.
     pub(crate) fn self_contained_workspace_ids(&self) -> Vec<PackageID> {
         if self.self_contained_workspaces.count() == 0 {
             return Vec::new();
@@ -1361,13 +1361,19 @@ impl Lockfile {
     ) -> Result<bool, tree::SubtreeError> {
         let slice = self.packages.slice();
 
+        // Only the install applies the barrier, so the saved tree does not depend on it.
+        let self_contained = if METHOD == tree::BuilderMethod::Filter {
+            self.self_contained_workspace_ids()
+        } else {
+            Vec::new()
+        };
+
         // `tree::Builder` stores `lockfile: ParentRef<Lockfile>` so
         // the `&mut buffers.resolutions` split-borrow below can coexist with
         // the read-only lockfile view inside the builder (see Tree.rs note).
         // `ParentRef::new` captures `SharedReadOnly` provenance from `&*self`,
         // which is exactly what `Builder` needs (it only ever `Deref`s); the
         // `Builder` does not outlive this `&mut self` borrow.
-        let self_contained = self.self_contained_workspace_ids();
         let lockfile_ref = bun_ptr::ParentRef::<Lockfile>::new(&*self);
         let mut builder = tree::Builder::<METHOD> {
             self_contained,

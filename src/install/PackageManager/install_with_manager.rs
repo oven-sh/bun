@@ -235,33 +235,13 @@ pub fn install_with_manager(
                 };
 
                 had_any_diffs = manager.summary.has_diffs();
-                let recorded = &manager.lockfile.self_contained_workspaces;
-                let declared = &lockfile.self_contained_workspaces;
-                let nothing_recorded = recorded.count() == 0;
-                let self_contained_changed = recorded.count() != declared.count()
-                    || declared.keys().iter().any(|key| !recorded.contains(key));
-                if self_contained_changed {
-                    if !manager.options.enable.frozen_lockfile() {
-                        // A set change alone forces a save: the hoisted tree can stay the same.
-                        manager
-                            .lockfile
-                            .self_contained_workspaces
-                            .clear_retaining_capacity();
-                        for key in lockfile.self_contained_workspaces.keys() {
-                            manager.lockfile.self_contained_workspaces.put(*key, ())?;
-                        }
-                        manager
-                            .options
-                            .enable
-                            .set(Enable::FORCE_SAVE_LOCKFILE, true);
-                    } else if nothing_recorded {
-                        // Bun 1.4.0 ignored the setting. A frozen install keeps that layout.
-                        if log_level != Options::LogLevel::Silent {
-                            note_unrecorded_self_contained(&lockfile, &maybe_root, &load_result);
-                        }
-                    } else {
-                        manager.summary.self_contained_changed = true;
-                    }
+                // The lockfile does not store the set. Every install takes it from the manifests.
+                manager
+                    .lockfile
+                    .self_contained_workspaces
+                    .clear_retaining_capacity();
+                for key in lockfile.self_contained_workspaces.keys() {
+                    manager.lockfile.self_contained_workspaces.put(*key, ())?;
                 }
                 if manager.subcommand == Subcommand::Dedupe {
                     crate::dedupe::dedupe_after_differ(manager);
@@ -1444,36 +1424,8 @@ fn frozen_changed_section(
         Some(overrides_field_name(manager, root_package_json_path))
     } else if manager.summary.catalogs_changed {
         Some("the catalog")
-    } else if manager.summary.self_contained_changed {
-        Some("installConfig.hoistingLimits or workspaces.selfContained")
     } else {
         None
-    }
-}
-
-#[cold]
-#[inline(never)]
-fn note_unrecorded_self_contained(
-    declared: &Lockfile,
-    root: &lockfile::Package,
-    load_result: &lockfile::LoadResult,
-) {
-    let string_bytes = declared.buffers.string_bytes.as_slice();
-    let mut any = false;
-    for dep in root.dependencies.get(&declared.buffers.dependencies) {
-        if dep.behavior.is_workspace()
-            && declared.self_contained_workspaces.contains(&dep.name_hash)
-        {
-            bun_core::note!(
-                "{} does not record that workspace \"{}\" is self-contained, so this install does not apply it",
-                loaded_lockfile_name(load_result),
-                bstr::BStr::new(dep.name.slice(string_bytes)),
-            );
-            any = true;
-        }
-    }
-    if any {
-        bun_core::note!("run <d>bun install<r> without <d>--frozen-lockfile<r> to record it");
     }
 }
 

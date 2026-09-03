@@ -40,7 +40,6 @@ const HAS_OVERRIDES_TAG: u64 = u64::from_ne_bytes(*b"oVeRriDs");
 const HAS_CATALOGS_TAG: u64 = u64::from_ne_bytes(*b"cAtAlOgS");
 const HAS_CONFIG_VERSION_TAG: u64 = u64::from_ne_bytes(*b"cNfGvRsN");
 const HAS_SCOPED_OVERRIDES_TAG: u64 = u64::from_ne_bytes(*b"sCoPdOvR");
-const HAS_SELF_CONTAINED_WORKSPACES_TAG: u64 = u64::from_ne_bytes(*b"sElFcOnT");
 
 /// Wraps a growing `Vec<u8>` to provide both positional-write semantics
 /// (`get_pos`/`pwrite`) and append semantics (`write_all`/`write_int_*`) for
@@ -374,13 +373,6 @@ pub(crate) fn save(
             externals.push(dependency::to_external(&rule.dep));
         }
         write_array::<dependency::External>(&mut stream, &externals, PREFIX_DEP_EXTERNAL)?;
-    }
-
-    if this.self_contained_workspaces.count() > 0 {
-        stream.write_all(&HAS_SELF_CONTAINED_WORKSPACES_TAG.to_ne_bytes())?;
-        let mut name_hashes: Vec<PackageNameHash> = this.self_contained_workspaces.keys().to_vec();
-        name_hashes.sort_unstable();
-        write_array::<PackageNameHash>(&mut stream, &name_hashes, PREFIX_U64)?;
     }
 
     *total_size = stream.get_pos()?;
@@ -809,22 +801,6 @@ pub(crate) fn load(
                         dep: dependency::to_dependency(*dep, &mut context),
                     };
                     overrides.push_scoped(rule, string_bytes);
-                }
-            } else {
-                stream.pos -= 8;
-            }
-        }
-    }
-
-    {
-        let remaining_in_buffer = total_buffer_size.saturating_sub(stream.pos as u64);
-
-        if remaining_in_buffer > 8 && total_buffer_size <= stream.buffer.len() as u64 {
-            let next_num = stream.read_int_le::<u64>()?;
-            if next_num == HAS_SELF_CONTAINED_WORKSPACES_TAG {
-                let name_hashes: Vec<PackageNameHash> = buffers::read_array(stream)?;
-                for name_hash in name_hashes {
-                    lockfile.self_contained_workspaces.put(name_hash, ())?;
                 }
             } else {
                 stream.pos -= 8;

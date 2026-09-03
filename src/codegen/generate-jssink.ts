@@ -1,3 +1,4 @@
+import { mkdirSync, writeFileSync } from "fs";
 import { join, resolve } from "path";
 
 const classes = [
@@ -1267,13 +1268,14 @@ function lutInput() {
 }
 
 const outDir = resolve(process.argv[2]);
+mkdirSync(outDir, { recursive: true });
 
-await Bun.write(resolve(outDir + "/JSSink.h"), header());
-await Bun.write(resolve(outDir + "/JSSink.cpp"), await implementation());
-await Bun.write(resolve(outDir + "/JSSink.lut.txt"), lutInput());
+writeFileSync(resolve(outDir + "/JSSink.h"), header());
+writeFileSync(resolve(outDir + "/JSSink.cpp"), await implementation());
+writeFileSync(resolve(outDir + "/JSSink.lut.txt"), lutInput());
 {
   const { src, symbols } = rustSink();
-  await Bun.write(resolve(outDir + "/generated_jssink.rs"), src);
+  writeFileSync(resolve(outDir + "/generated_jssink.rs"), src);
   console.log(`generated_jssink.rs: ${classes.length} sinks, ${symbols.length} exported symbols`);
 }
 

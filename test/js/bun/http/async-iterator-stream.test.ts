@@ -4,13 +4,17 @@ import { bunEnv, bunExe } from "harness";
 
 describe.concurrent("Streaming body via", () => {
   test("async generator function", async () => {
+    // The generator writes its second chunk only after the client has read the first. A timer
+    // between the two writes does not keep them apart: if the event loop is busy for longer
+    // than the timer, fetch delivers both writes as one chunk.
+    const { promise: firstChunkRead, resolve: onChunkRead } = Promise.withResolvers<void>();
     using server = Bun.serve({
       port: 0,
 
       async fetch(req) {
         return new Response(async function* yo() {
           yield "Hello, ";
-          await Bun.sleep(30);
+          await firstChunkRead;
           yield Buffer.from("world!");
           return "not a chunk";
         });
@@ -18,13 +22,13 @@ describe.concurrent("Streaming body via", () => {
     });
 
     const res = await fetch(`${server.url}/`);
-    const chunks = [];
+    const chunks: string[] = [];
     for await (const chunk of res.body) {
-      chunks.push(chunk);
+      chunks.push(Buffer.from(chunk).toString());
+      onChunkRead();
     }
 
-    expect(Buffer.concat(chunks).toString()).toBe("Hello, world!");
-    expect(chunks).toHaveLength(2);
+    expect(chunks).toEqual(["Hello, ", "world!"]);
   });
 
   test("a hand-written async iterator without return() completes", async () => {
@@ -173,6 +177,8 @@ describe.concurrent("Streaming body via", () => {
   });
 
   test("[Symbol.asyncIterator]", async () => {
+    // As in "async generator function", the last write waits for the client to read the first chunk.
+    const { promise: firstChunkRead, resolve: onChunkRead } = Promise.withResolvers<void>();
     using server = Bun.serve({
       port: 0,
 
@@ -181,7 +187,7 @@ describe.concurrent("Streaming body via", () => {
           async *[Symbol.asyncIterator]() {
             var controller = yield "my string goes here\n";
             var controller2 = yield Buffer.from("my buffer goes here\n");
-            await Bun.sleep(30);
+            await firstChunkRead;
             yield Buffer.from("end!\n");
             if (controller !== controller2 || typeof controller.sinkId !== "number") {
               throw new Error("Controller mismatch");
@@ -193,13 +199,14 @@ describe.concurrent("Streaming body via", () => {
     });
 
     const res = await fetch(`${server.url}/`);
-    const chunks = [];
+    const chunks: string[] = [];
     for await (const chunk of res.body) {
-      chunks.push(chunk);
+      chunks.push(Buffer.from(chunk).toString());
+      onChunkRead();
     }
 
-    expect(Buffer.concat(chunks).toString()).toBe("my string goes here\nmy buffer goes here\nend!\n");
-    expect(chunks).toHaveLength(2);
+    // The two writes before the await are sent in one flush.
+    expect(chunks).toEqual(["my string goes here\nmy buffer goes here\n", "end!\n"]);
   });
 
   test("[Symbol.asyncIterator] with a custom iterator", async () => {

@@ -1060,6 +1060,11 @@ pub struct Part {
     /// don't have this flag enabled must be included.
     pub can_be_removed_if_unused: bool,
 
+    /// Plain object literal bindings whose property reads are all that keeps
+    /// `can_be_removed_if_unused` false. The parser resolves this after the
+    /// visit (`finalize_plain_object_reads`).
+    pub plain_object_reads: Option<bun_alloc::AstBox<bun_alloc::AstVec<Ref>>>,
+
     /// This is used for generated parts that we don't want to be present if they
     /// aren't needed. This enables tree shaking for these parts even if global
     /// tree shaking isn't enabled.
@@ -1106,6 +1111,7 @@ impl Default for Part {
             import_symbol_property_uses: None,
             dependencies: Vec::new_in(bun_alloc::AstAlloc),
             can_be_removed_if_unused: false,
+            plain_object_reads: None,
             force_tree_shaking: false,
             tag: PartTag::None,
         }

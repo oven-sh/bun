@@ -1143,6 +1143,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
         data.decls.truncate(new_len);
 
+        // Not `var`: it can be redeclared, or sit in an `if` body and never run.
+        if p.options.tree_shaking
+            && p.options.features.dead_code_elimination
+            && matches!(data.kind, S::Kind::KConst | S::Kind::KLet)
+            && p.current_scope == p.module_scope
+            && !p.is_control_flow_dead
+        {
+            for decl in data.decls.slice() {
+                if let js_ast::binding::Data::BIdentifier(id) = decl.binding.data
+                    && let Some(value) = &decl.value
+                {
+                    p.plain_object_literals.register(id.r#ref, value);
+                }
+            }
+        }
+
         // Handle being exported inside a namespace
         if data.is_export && p.enclosing_namespace_arg_ref.is_some() {
             for d in data.decls.slice() {

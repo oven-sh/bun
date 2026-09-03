@@ -1018,6 +1018,14 @@ pub struct ExprIn {
     pub(crate) is_immediately_assigned_to_decl: bool,
 
     pub(crate) property_access_for_method_call_maybe_should_replace_with_undefined: bool,
+
+    /// The parent only reads a property off this expression (an `EDot`/`EIndex`
+    /// that is not deleted, called, constructed, or a template tag, or an
+    /// object destructuring pattern). See `HAS_NON_PROPERTY_READ_USE`.
+    pub(crate) is_property_read_object: bool,
+
+    /// The callee of `new` or the tag of a template literal.
+    pub(crate) is_constructor_or_tag_target: bool,
 }
 
 /// This function exists to tie all of these checks together in one place

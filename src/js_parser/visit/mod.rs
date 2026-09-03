@@ -334,10 +334,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     self.react_compiler_candidate_name = Some(id.r#ref);
                     self.react_compiler_in_react_hoc = in_hoc;
                 }
+                // An array pattern calls `x[Symbol.iterator]()`, an object pattern only reads.
+                let is_property_read_object = matches!(decl.binding.data, BData::BObject(_))
+                    && matches!(val.data, ExprData::EIdentifier(_));
                 self.visit_expr_in_out(
                     &mut val,
                     ExprIn {
                         is_immediately_assigned_to_decl: true,
+                        is_property_read_object,
                         ..Default::default()
                     },
                 );

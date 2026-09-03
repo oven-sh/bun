@@ -194,6 +194,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         e_.ref_ = result.r#ref;
         e_.set_must_keep_due_to_with_stmt(result.is_inside_with_scope);
 
+        // Inside `with`, the name may resolve to a property of the `with` object.
+        if p.options.tree_shaking && (!in_.is_property_read_object || result.is_inside_with_scope) {
+            p.record_non_property_read_use(result.r#ref);
+        }
+
         // Handle assigning to a constant
         if in_.assign_target != js_ast::AssignTarget::None {
             if p.symbols[result.r#ref.inner_index() as usize].kind == js_ast::symbol::Kind::Constant
@@ -686,8 +691,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let expr = *e;
         let _ = in_;
         let mut e_ = expr.data.e_template().expect("infallible: variant checked");
-        if e_.tag.is_some() {
-            p.visit_expr(e_.tag.as_mut().unwrap());
+        if let Some(tag) = e_.tag.as_mut() {
+            p.visit_expr_in_out(
+                tag,
+                ExprIn {
+                    is_constructor_or_tag_target: true,
+                    ..Default::default()
+                },
+            );
         }
 
         // Visit the interpolation values before the macro dispatch below: its
@@ -910,7 +921,23 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        p.visit_expr_in_out(&mut e_.target, ExprIn::default());
+        // A computed key may be `__proto__`, which changes what a later write can run.
+        let is_plain_write = in_.assign_target == js_ast::AssignTarget::None
+            || match e_.index.unwrap_inlined().data {
+                Data::EString(s) => !s.eql_comptime(b"__proto__"),
+                Data::ENumber(_) => true,
+                _ => false,
+            };
+        p.visit_expr_in_out(
+            &mut e_.target,
+            ExprIn {
+                is_property_read_object: is_plain_write
+                    && !is_call_target
+                    && !is_delete_target
+                    && !in_.is_constructor_or_tag_target,
+                ..Default::default()
+            },
+        );
 
         match e_.index.data {
             Data::EPrivateIdentifier(mut private) => {
@@ -1411,11 +1438,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
+        // `x.__proto__ = v` changes what a later write to `x` can run.
+        let is_plain_write =
+            in_.assign_target == js_ast::AssignTarget::None || e_.name != b"__proto__";
         p.visit_expr_in_out(
             &mut e_.target,
             ExprIn {
                 property_access_for_method_call_maybe_should_replace_with_undefined: in_
                     .property_access_for_method_call_maybe_should_replace_with_undefined,
+                is_property_read_object: is_plain_write
+                    && !is_call_target
+                    && !is_delete_target
+                    && !in_.is_constructor_or_tag_target,
                 ..Default::default()
             },
         );
@@ -2473,7 +2507,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     fn e_new(p: &mut Self, e: &mut Expr, _: ExprIn) {
         let expr = *e;
         let mut e_ = expr.data.e_new().expect("infallible: variant checked");
-        p.visit_expr(&mut e_.target);
+        p.visit_expr_in_out(
+            &mut e_.target,
+            ExprIn {
+                is_constructor_or_tag_target: true,
+                ..Default::default()
+            },
+        );
 
         for arg in e_.args.slice_mut() {
             p.visit_expr(arg);

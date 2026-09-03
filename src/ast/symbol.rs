@@ -122,6 +122,11 @@ bitflags::bitflags! {
         /// `arguments` object can). Set on the root of the symbol's link
         /// chain. Read by HMR live bindings and the printer's same-target fold.
         const HAS_BEEN_ASSIGNED_TO = 1 << 5;
+
+        /// The file uses this variable somewhere other than as the object of a
+        /// property read (`x.key`, `x[key]`, `const {key} = x`), so its value
+        /// escapes. Set on the root of the symbol's link chain.
+        const HAS_NON_PROPERTY_READ_USE = 1 << 6;
     }
 }
 
@@ -147,6 +152,7 @@ symbol_flag_accessors! {
     must_not_be_renamed, set_must_not_be_renamed => MUST_NOT_BE_RENAMED;
     remove_overwritten_function_declaration, set_remove_overwritten_function_declaration => REMOVE_OVERWRITTEN_FUNCTION_DECLARATION;
     has_been_assigned_to, set_has_been_assigned_to => HAS_BEEN_ASSIGNED_TO;
+    has_non_property_read_use, set_has_non_property_read_use => HAS_NON_PROPERTY_READ_USE;
 }
 
 const _: () = assert!(core::mem::size_of::<Option<bun_alloc::AstBox<G::NamespaceAlias>>>() == 8);

@@ -1,7 +1,6 @@
 # Test files that the CI runner may run again when they fail (up to 3 retries,
-# see --retries in scripts/runner.node.mjs). Every other file runs once, and a
-# failure is final. A crash is never retried, listed or not. The parallel batch
-# follows the same rules: a failure there counts as it does in a serial run.
+# see --retries in scripts/runner.node.mjs). Every other test file runs once,
+# in a serial run and in the parallel batch, and its failure is final.
 #
 # One path per line, relative to the repository root, with the reason after
 # `#`. Keep the failing test and its symptom next to the entry so the owner

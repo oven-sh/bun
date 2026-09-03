@@ -1219,6 +1219,43 @@ describe("bundler", () => {
     },
   });
 
+  // A folded `"a" + "b"` key reads `ab`. The parser keeps the folded string
+  // as a chain of parts, and the first part alone is "a".
+  for (const splitting of [true, false]) {
+    itBundled(`dynamic_import_dce/FoldedStringKey${splitting ? "Splitting" : "NoSplit"}`, {
+      files: {
+        "/entry.js": /* js */ `
+          const ns = await import("./lib.js");
+          console.log(ns["a" + "b"], ns["a" + "-b"], ns["" + "x"]);
+        `,
+        "/lib.js": `export const a = "a", ab = "ab", x = "x"; export { x as "a-b" };`,
+      },
+      splitting,
+      format: "esm",
+      outdir: "/out",
+      run: { file: "/out/entry.js", stdout: "ab x x" },
+    });
+
+    // An enum member is folded without minification too.
+    itBundled(`dynamic_import_dce/FoldedEnumKeyNarrows${splitting ? "Splitting" : "NoSplit"}`, {
+      files: {
+        "/entry.ts": /* ts */ `
+          enum K { AB = "a" + "b", X = "" + "x" }
+          const ns = await import("./lib.js");
+          console.log(ns[K.AB], ns[K.X]);
+        `,
+        "/lib.js": `export const a = "DROPPED", ab = "ab", x = "x";`,
+      },
+      splitting,
+      format: "esm",
+      outdir: "/out",
+      run: { file: "/out/entry.js", stdout: "ab x" },
+      onAfterBundle(api) {
+        expect(readAllOutputs(api.outdir)).not.toContain("DROPPED");
+      },
+    });
+  }
+
   // rolldown: chunk_merging/already_loaded_unexported_read_namespace_extraction
   // — a tracked read of a name the importee does not export stays `undefined`
   // and does not disturb the exports that do exist.

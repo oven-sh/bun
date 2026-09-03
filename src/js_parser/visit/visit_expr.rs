@@ -997,6 +997,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let unwrapped = e_.index.unwrap_inlined();
                 if let Some(mut s) = unwrapped.data.e_string() {
                     if !s.is_utf16 {
+                        // A folded `"a" + "b"` is a rope whose `data` is only "a".
+                        s.resolve_rope_if_needed(p.arena);
+
                         // "a['b' + '']" => "a.b"
                         // "enum A { B = 'b' }; a[A.B]" => "a.b"
                         if p.options.features.minify_syntax && s.is_identifier(p.arena) {

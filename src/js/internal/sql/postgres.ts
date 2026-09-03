@@ -153,7 +153,8 @@ function arrayValueSerializer(type: ArrayType | undefined, is_numeric: boolean, 
     return `{${Array.prototype.map.$call(value, arrayValueSerializer.bind(this, type, is_numeric, is_json)).join(delimiter)}}`;
   }
 
-  if (value === null) return "null";
+  // SQL NULL, except in a json[] where null stays the JSON value null.
+  if (value === null && !is_json) return "null";
   switch (typeof value) {
     case "undefined":
       return "null";

@@ -115,6 +115,12 @@ describe("untyped sql.array", () => {
       oids: [0],
       params: ['{"\\\\x6869",null}'],
     });
+    // In a json[] a null element stays the JSON value null, as before.
+    expect(await captureBind(sql => sql`SELECT ${sql.array([null, undefined], "JSON")}`)).toEqual({
+      query: "SELECT $1::JSON[] ",
+      oids: [0],
+      params: ['{"null",null}'],
+    });
   });
 
   test("typed array elements keep their values", async () => {

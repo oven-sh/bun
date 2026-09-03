@@ -410,8 +410,7 @@ var InternalResolver = class Resolver {
       throw $ERR_INVALID_ARG_TYPE("rrtype", "string", rrtype);
     }
 
-    // Case-sensitive, like Node: "a" is invalid. `this` may be undefined when
-    // the module-level function is called unbound, so $call keeps it as is.
+    // $call: the module-level function runs with `this` undefined when destructured.
     switch (rrtype) {
       case "A":
         return Resolver.prototype.resolve4.$call(this, hostname, callback);

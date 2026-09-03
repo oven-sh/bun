@@ -11,8 +11,12 @@ use bun_core::{Environment, Global, Output};
 use bun_core::{ZStr, strings};
 use bun_dotenv as dotenv;
 use bun_http as http;
+use bun_install::lockfile::package::PackageColumns as _;
 use bun_install::lockfile::{LoadResult, LoadStep};
-use bun_install::{self as install, Lockfile, Npm, PackageManager, Subcommand};
+use bun_install::package_manager::workspace_selection;
+use bun_install::{
+    self as install, Lockfile, Npm, PackageManager, ResolutionTag, Subcommand, WorkspaceFilter,
+};
 use bun_libarchive::lib::{Archive, ArchiveIterator, IteratorResult as ArchiveIterResult};
 use bun_parsers::json as json_mod;
 use bun_paths::resolve_path::{join_abs_string_buf_z, normalize_buf, normalize_buf_z};
@@ -448,33 +452,25 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
         })
     }
 
-    /// `bun publish` without a tarball path. Automatically pack the current workspace and get
-    /// information required for publishing
-    // Note: the return type is pinned to `Context<'static, true>`, the only
-    // valid shape. `'static` matches `pack::pack`'s return —
-    // the embedded `&mut PackageManager` / `Command::Context` are process-
-    // lifetime singletons reborrowed through raw pointers there.
-    pub(crate) fn from_workspace(
-        ctx: Command::Context<'a>,
-        manager: &'a mut PackageManager,
-    ) -> Result<Context<'static, true>, FromWorkspaceError> {
+    /// The lockfile of the workspace root. `None` when there is none.
+    pub(crate) fn load_lockfile(manager: &mut PackageManager) -> Option<Lockfile> {
         let mut lockfile = Lockfile::default();
         let manager_ptr: *mut PackageManager = manager;
         let log: &mut bun_ast::Log = manager.log_mut();
-        // SAFETY: `manager_ptr` was just derived from `manager: &'a mut PackageManager`;
+        // SAFETY: `manager_ptr` was just derived from `manager: &mut PackageManager`;
         // `log` borrows the disjoint `.log` field, so the re-derived `&mut`
         // never touches memory the live `log` borrow covers.
         let load_from_disk_result =
             lockfile.load_from_cwd::<false>(Some(unsafe { &mut *manager_ptr }), log);
 
-        let lockfile_ref: Option<&Lockfile> = match load_from_disk_result {
-            LoadResult::Ok(ok) => Some(&*ok.lockfile),
-            LoadResult::NotFound => None,
+        let found = match load_from_disk_result {
+            LoadResult::Ok(_) => true,
+            LoadResult::NotFound => false,
             LoadResult::Err(cause) => 'err: {
                 match cause.step {
                     LoadStep::OpenFile => {
                         if cause.value == bun_install::Error::Sys(bun_errno::SystemErrno::ENOENT) {
-                            break 'err None;
+                            break 'err false;
                         }
                         Output::err_generic("failed to open lockfile: {}", (cause.value.name(),));
                     }
@@ -500,28 +496,31 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
             }
         };
 
-        // Note: capture the package.json path before constructing
-        // `pack::Context` so the `&mut PackageManager` borrow doesn't conflict.
-        // SAFETY: `manager_ptr` came from `&'a mut PackageManager`.
-        let abs_pkg_json = bun_core::ZBox::from_bytes(
-            unsafe { &*manager_ptr }
-                .original_package_json_path
-                .as_bytes(),
-        );
+        found.then_some(lockfile)
+    }
 
+    /// `bun publish` without a tarball path. Pack the package at `abs_pkg_json` and get
+    /// information required for publishing
+    // Note: the return type is pinned to `Context<'static, true>`, the only
+    // valid shape. `'static` matches `pack::pack`'s return —
+    // the embedded `&mut PackageManager` / `Command::Context` are process-
+    // lifetime singletons reborrowed through raw pointers there.
+    pub(crate) fn from_workspace(
+        ctx: Command::Context<'a>,
+        manager: &'a mut PackageManager,
+        lockfile: Option<&Lockfile>,
+        abs_pkg_json: &ZStr,
+    ) -> Result<Context<'static, true>, FromWorkspaceError> {
         let mut pack_ctx = pack::Context {
-            // SAFETY: `manager_ptr` came from `&'a mut PackageManager`;
-            // `lockfile_ref` borrows the local `lockfile`, not the manager,
-            // so the re-derived `&mut` is the only live manager borrow.
-            manager: unsafe { &mut *manager_ptr },
+            manager,
             command_ctx: ctx,
-            lockfile: lockfile_ref,
+            lockfile,
             bundled_deps: Vec::new(),
             stats: pack::Stats::default(),
         };
 
         // `pack::<true>` returns `Some(Context<true>)` on success.
-        Ok(pack::pack::<true>(&mut pack_ctx, &abs_pkg_json)?
+        Ok(pack::pack::<true>(&mut pack_ctx, abs_pkg_json)?
             .expect("pack::<true> always yields a publish context"))
     }
 }
@@ -549,7 +548,6 @@ impl PublishCommand {
                     Global::crash();
                 }
             };
-        drop(original_cwd);
         let manager_ptr: *mut PackageManager = manager;
 
         if cli.positionals.len() > 1 {
@@ -619,34 +617,22 @@ impl PublishCommand {
             return Ok(());
         }
 
-        let context = match Context::<true>::from_workspace(ctx, manager) {
-            Ok(c) => c,
-            Err(err) => {
-                use pack::PackError;
-                match err {
-                    PackError::OutOfMemory => bun_core::out_of_memory(),
-                    PackError::MissingPackageName => {
-                        Output::err_generic("missing `name` string in package.json", ());
-                    }
-                    PackError::MissingPackageVersion => {
-                        Output::err_generic("missing `version` string in package.json", ());
-                    }
-                    PackError::InvalidPackageName | PackError::InvalidPackageVersion => {
-                        Output::err_generic(
-                            "package.json `name` and `version` fields must be non-empty strings",
-                            (),
-                        );
-                    }
-                    PackError::RestrictedUnscopedPackage => {
-                        Output::err_generic("unable to restrict access to unscoped package", ());
-                    }
-                    PackError::PrivatePackage => {
-                        Output::err_generic("attempted to publish a private package", ());
-                    }
+        if Self::is_workspace_publish(manager) {
+            return Self::exec_workspaces(ctx, manager, &original_cwd);
+        }
+        drop(original_cwd);
+
+        let lockfile = Context::<true>::load_lockfile(manager);
+        let abs_pkg_json =
+            bun_core::ZBox::from_bytes(manager.original_package_json_path.as_bytes());
+        let context =
+            match Context::<true>::from_workspace(ctx, manager, lockfile.as_ref(), &abs_pkg_json) {
+                Ok(c) => c,
+                Err(err) => {
+                    Self::report_pack_error(err);
+                    Global::crash();
                 }
-                Global::crash();
-            }
-        };
+            };
 
         // TODO: read this into memory
         let _ = bun_sys::unlink(&context.abs_tarball_path);
@@ -655,6 +641,167 @@ impl PublishCommand {
             err.report_and_crash();
         }
 
+        Self::finish_directory_publish(context, &abs_pkg_json)
+    }
+
+    /// `-r` or `--filter`: the run covers workspace packages, not only the current one.
+    fn is_workspace_publish(manager: &PackageManager) -> bool {
+        manager.options.do_.recursive() || !manager.options.filter_patterns.is_empty()
+    }
+
+    fn report_pack_error(err: FromWorkspaceError) {
+        use pack::PackError;
+        match err {
+            PackError::OutOfMemory => bun_core::out_of_memory(),
+            PackError::MissingPackageName => {
+                Output::err_generic("missing `name` string in package.json", ());
+            }
+            PackError::MissingPackageVersion => {
+                Output::err_generic("missing `version` string in package.json", ());
+            }
+            PackError::InvalidPackageName | PackError::InvalidPackageVersion => {
+                Output::err_generic(
+                    "package.json `name` and `version` fields must be non-empty strings",
+                    (),
+                );
+            }
+            PackError::RestrictedUnscopedPackage => {
+                Output::err_generic("unable to restrict access to unscoped package", ());
+            }
+            PackError::PrivatePackage => {
+                Output::err_generic("attempted to publish a private package", ());
+            }
+        }
+    }
+
+    /// `bun publish -r` / `bun publish --filter <pattern>`: pack and publish each selected
+    /// workspace package, dependencies before dependents. A version the registry already has is
+    /// skipped. A package the registry rejects is reported and the run continues with the next
+    /// one, then the process exits with 1.
+    fn exec_workspaces(
+        ctx: Command::Context,
+        manager: &mut PackageManager,
+        original_cwd: &[u8],
+    ) -> Result<(), Error> {
+        let Some(lockfile) = Context::<true>::load_lockfile(manager) else {
+            Output::err_generic("missing lockfile, nothing to publish", ());
+            bun_core::note!("run 'bun install' first");
+            Global::crash();
+        };
+
+        let filter_patterns = manager.options.filter_patterns;
+        let ids = WorkspaceFilter::select_workspaces(&lockfile, filter_patterns, original_cwd);
+        if ids.is_empty() {
+            workspace_selection::error_unmatched(filter_patterns);
+        }
+        let ids = workspace_selection::order_lockfile_workspaces(&lockfile, &ids);
+
+        struct Member {
+            name: Box<[u8]>,
+            abs_pkg_json: bun_core::ZBox,
+        }
+
+        let members: Vec<Member> = {
+            let pkg_resolutions = lockfile.packages.items_resolution();
+            let pkg_names = lockfile.packages.items_name();
+            let string_buf = lockfile.buffers.string_bytes.as_slice();
+            let top_level_dir = FileSystem::instance().top_level_dir;
+            let mut path_buf = PathBuffer::uninit();
+            ids.iter()
+                .map(|&pkg_id| {
+                    let res = &pkg_resolutions[pkg_id as usize];
+                    let rel_dir: &[u8] = match res.tag {
+                        ResolutionTag::Workspace => res.workspace().slice(string_buf),
+                        _ => b".",
+                    };
+                    let abs_pkg_json = join_abs_string_buf_z::<path::platform::Auto>(
+                        top_level_dir,
+                        &mut path_buf,
+                        &[rel_dir, b"package.json"],
+                    );
+                    Member {
+                        name: pkg_names[pkg_id as usize].slice(string_buf).into(),
+                        abs_pkg_json: bun_core::ZBox::from_bytes(abs_pkg_json.as_bytes()),
+                    }
+                })
+                .collect()
+        };
+
+        // `pack` copies `publishConfig` from each package.json into these when the flag was not
+        // given. Restore the flag values before every package so one package.json does not
+        // configure the next.
+        let cli_tag = manager.options.publish_config.tag;
+        let cli_access = manager.options.publish_config.access;
+
+        let mut attempted: usize = 0;
+        let mut failed: Vec<Box<[u8]>> = Vec::new();
+        for member in &members {
+            manager.options.publish_config.tag = cli_tag;
+            manager.options.publish_config.access = cli_access;
+
+            bun_core::prettyln!("\n<b><magenta>{}<r>", bstr::BStr::new(&member.name));
+
+            let context = match Context::<true>::from_workspace(
+                &mut *ctx,
+                &mut *manager,
+                Some(&lockfile),
+                &member.abs_pkg_json,
+            ) {
+                Ok(c) => c,
+                Err(pack::PackError::PrivatePackage) => {
+                    bun_core::prettyln!("<d>skipping private package<r>");
+                    continue;
+                }
+                Err(err) => {
+                    Self::report_pack_error(err);
+                    attempted += 1;
+                    failed.push(member.name.clone());
+                    continue;
+                }
+            };
+            attempted += 1;
+
+            let _ = bun_sys::unlink(&context.abs_tarball_path);
+
+            match Self::publish::<true>(&context) {
+                Ok(()) => {}
+                Err(err @ (PublishError::OutOfMemory | PublishError::NeedAuth)) => {
+                    err.report_and_crash();
+                }
+                Err(PublishError::RequestFailed | PublishError::Rejected) => {
+                    failed.push(member.name.clone());
+                    continue;
+                }
+            }
+
+            Self::finish_directory_publish(context, &member.abs_pkg_json)?;
+        }
+
+        if !failed.is_empty() {
+            Output::flush();
+            let mut names: Vec<u8> = Vec::new();
+            for (i, name) in failed.iter().enumerate() {
+                if i > 0 {
+                    names.extend_from_slice(b", ");
+                }
+                names.extend_from_slice(name);
+            }
+            Output::err_generic(
+                "failed to publish {} of {} packages: {}",
+                (failed.len(), attempted, bstr::BStr::new(&names)),
+            );
+            Global::crash();
+        }
+
+        Ok(())
+    }
+
+    /// Prints the `+ name@version` line and runs the `publish` and `postpublish` scripts of the
+    /// package at `abs_pkg_json`.
+    fn finish_directory_publish(
+        context: Context<'static, true>,
+        abs_pkg_json: &ZStr,
+    ) -> Result<(), Error> {
         bun_core::prettyln!(
             "\n<green> +<r> {}@{}{}",
             bstr::BStr::new(&context.package_name),
@@ -671,12 +818,10 @@ impl PublishCommand {
             .do_
             .contains(install::PackageManagerDoStub::RUN_SCRIPTS)
         {
-            let abs_workspace_path: Box<[u8]> =
-                strings::without_trailing_slash(strings::without_suffix_comptime(
-                    PackageManager::get().original_package_json_path.as_bytes(),
-                    b"package.json",
-                ))
-                .into();
+            let abs_workspace_path: Box<[u8]> = strings::without_trailing_slash(
+                strings::without_suffix_comptime(abs_pkg_json.as_bytes(), b"package.json"),
+            )
+            .into();
             let script_env = context
                 .script_env
                 .expect("DIRECTORY_PUBLISH=true sets script_env");
@@ -855,8 +1000,11 @@ impl PublishCommand {
             return Err(PublishError::NeedAuth);
         }
 
-        let tolerate_republish = ctx.manager.options.publish_config.tolerate_republish;
-        if tolerate_republish {
+        // A workspace run re-publishes what a previous run already pushed, so an existing
+        // version is a skip there too.
+        let skip_existing_version = ctx.manager.options.publish_config.tolerate_republish
+            || Self::is_workspace_publish(ctx.manager);
+        if skip_existing_version {
             let version_without_build_tag = dependency::without_build_tag(&ctx.package_version);
             let package_exists = Self::check_package_version_exists(
                 &ctx.package_name,
@@ -949,7 +1097,7 @@ impl PublishCommand {
                     return Err(PublishError::OutOfMemory);
                 }
                 Output::err(e, "failed to publish package", ());
-                Global::crash();
+                return Err(PublishError::RequestFailed);
             }
         };
 
@@ -990,12 +1138,13 @@ impl PublishCommand {
 
                 if !prompt_for_otp {
                     // general error
-                    Npm::response_error::<false>(
+                    Npm::print_response_error::<false>(
                         &req,
                         &res,
                         Some((&ctx.package_name, &ctx.package_version)),
                         &mut response_buf,
                     )?;
+                    return Err(PublishError::Rejected);
                 }
 
                 // https://github.com/npm/cli/blob/534ad7789e5c61f579f44d782bdd18ea3ff1ee20/node_modules/npm-registry-fetch/lib/check-response.js#L14
@@ -1042,18 +1191,19 @@ impl PublishCommand {
                             return Err(PublishError::OutOfMemory);
                         }
                         Output::err(e, "failed to publish package", ());
-                        Global::crash();
+                        return Err(PublishError::RequestFailed);
                     }
                 };
 
                 match otp_res.status_code() {
                     400..=u32::MAX => {
-                        Npm::response_error::<true>(
+                        Npm::print_response_error::<true>(
                             &otp_req,
                             &otp_res,
                             Some((&ctx.package_name, &ctx.package_version)),
                             &mut response_buf,
                         )?;
+                        return Err(PublishError::Rejected);
                     }
                     _ => {
                         // https://github.com/npm/cli/blob/534ad7789e5c61f579f44d782bdd18ea3ff1ee20/node_modules/npm-registry-fetch/lib/check-response.js#L14
@@ -2079,6 +2229,12 @@ pub(crate) enum PublishError {
     OutOfMemory,
     #[error("NeedAuth")]
     NeedAuth,
+    /// The request never got a response. Already reported.
+    #[error("RequestFailed")]
+    RequestFailed,
+    /// The registry answered with an error status. Already reported.
+    #[error("Rejected")]
+    Rejected,
 }
 bun_core::oom_from_alloc!(PublishError);
 
@@ -2090,6 +2246,7 @@ impl PublishError {
                 Output::err_generic("missing authentication (run <cyan>`bunx npm login`<r>)", ());
                 Global::crash();
             }
+            PublishError::RequestFailed | PublishError::Rejected => Global::crash(),
         }
     }
 }

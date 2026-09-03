@@ -2042,6 +2042,14 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
     };
 
     if FOR_PUBLISH {
+        if let Some(private) = json.root.get(b"private") {
+            if let Some(is_private) = private.as_bool() {
+                if is_private {
+                    return Err(PackError::PrivatePackage);
+                }
+            }
+        }
+
         if let Some(config) = json.root.get(b"publishConfig") {
             if ctx.manager.options.publish_config.tag.is_empty() {
                 if let Some(tag) = config.get_string_cloned(bump, b"tag")? {
@@ -2097,16 +2105,6 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
         .ok_or(PackError::InvalidPackageVersion)?;
     if package_version.is_empty() || has_unsafe_tarball_filename_part(package_version) {
         return Err(PackError::InvalidPackageVersion);
-    }
-
-    if FOR_PUBLISH {
-        if let Some(private) = json.root.get(b"private") {
-            if let Some(is_private) = private.as_bool() {
-                if is_private {
-                    return Err(PackError::PrivatePackage);
-                }
-            }
-        }
     }
 
     // Note: `Transpiler` has no `Default`;

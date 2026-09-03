@@ -262,6 +262,13 @@ test("run() restores its own binding after enterWith()/withScope()/exit() inside
   });
   expect([a.getStore(), b.getStore()]).toEqual([undefined, 9]);
   b.disable();
+  // disable() from inside a snapshot of the prior frame exits that frame in
+  // place; run() still restores the value it saw on entry.
+  a.enterWith(1);
+  const resource = new AsyncResource("prior-frame");
+  a.run(2, () => resource.runInAsyncScope(() => a.disable()));
+  expect(a.getStore()).toBe(1);
+  a.disable();
 });
 
 test("re-entering a storage inside run() does not grow the context", () => {

@@ -213,18 +213,21 @@ class AsyncLocalStorage {
 
   run(store_value, callback, ...args) {
     $debug("run " + (this as any).__id__);
+    var prior = get();
+    var before = find(prior, this);
+    var hadBefore = before !== undefined;
+    var beforeValue = hadBefore ? before!.value : undefined;
     // Node short-circuits when the value is unchanged: no enterWith, no
     // finally-restore. Observable when the callback calls enterWith() —
     // the new value survives past run() (verified against Node v22/v26).
     // Not while disabled: getStore() masks the frame with #defaultValue then,
     // so a match here would skip installing store_value and let the callback
     // read the unmasked frame value instead.
-    if (!this.#disabled && sameValue(this.getStore(), store_value)) {
+    if (!this.#disabled && sameValue(hadBefore ? beforeValue : this.#defaultValue, store_value)) {
       return callback.$apply(undefined, args);
     }
     // we must renable it when asyncLocalStorage.run() is called https://nodejs.org/api/async_context.html#asynclocalstoragedisable
     this.#disabled = false;
-    var prior = get();
     var mutations = frameMutations;
     // Shadows any outer binding of this storage: lookups stop at the innermost.
     var frame = new Frame(this, store_value, prior);
@@ -239,18 +242,18 @@ class AsyncLocalStorage {
       } else {
         // enterWith()/disable() ran inside the callback. Node's finally is
         // enterWith(prior value): keep whatever else the callback installed and
-        // restore only this storage's binding, re-enabling the storage.
+        // restore only this storage's binding as it was on entry (disable() may
+        // have exited the prior frame itself since), re-enabling the storage.
+        // Frames may have been copied (enterWith() of a storage bound further
+        // down copies everything above it), so go by value, not identity: drop
+        // every binding of this storage and put the prior one back on top.
+        // Enclosing run()s of the same storage restore their own value likewise.
         this.#disabled = false;
-        var before = find(prior, this);
-        // Frames may have been copied (enterWith() of a storage bound further down
-        // copies everything above it), so go by value, not identity: drop every
-        // binding of this storage and put the prior one back on top. Enclosing
-        // run()s of the same storage restore their own value the same way.
         var current = withoutAll(live(get()), this);
-        set(before !== undefined ? new Frame(this, before.value, current) : current);
+        set(hadBefore ? new Frame(this, beforeValue, current) : current);
       }
       $assert(
-        sameValue(this.getStore(), find(prior, this) !== undefined ? find(prior, this)!.value : this.#defaultValue),
+        sameValue(this.getStore(), hadBefore ? beforeValue : this.#defaultValue),
         "run: previous value was not restored",
       );
     }

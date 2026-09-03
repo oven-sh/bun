@@ -292,6 +292,13 @@ function getImageName(platform, options) {
     return `${name}-build-${getBuildNumber()}`;
   }
 
+  // Trial branch: run on the images this branch baked in build #109813 (bootstrap v45 with the
+  // per-lane /opt/bun-toolchain/<variant> from bun-toolchain-…-d98dac36) instead of the published
+  // v<N>, so follow-up commits need no rebake.
+  if (hostOs === "linux") {
+    return `${name}-build-109813`;
+  }
+
   return `${name}-v${getBootstrapVersion(hostOs)}`;
 }
 

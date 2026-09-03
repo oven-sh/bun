@@ -42,12 +42,13 @@ const rss =
     : process.memoryUsage.rss;
 
 // An allocator metric counts only if it sees a JSC string, the kind of
-// allocation a retained source is. A GC can free a little between the reads.
+// allocation a retained source is. The second GC frees the Buffer.
 function seesJSCMemory(measure) {
   try {
     Bun.gc(true);
     const before = measure();
-    const probe = "a".repeat(8 * MB);
+    const probe = Buffer.alloc(8 * MB, "a").toString("latin1");
+    Bun.gc(true);
     return measure() - before >= probe.length / 2;
   } catch {
     return false;

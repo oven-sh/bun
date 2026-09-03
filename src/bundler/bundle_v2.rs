@@ -931,9 +931,6 @@ pub mod bv2_impl {
                 /// not found. Handles direct key matches and relative specifiers
                 /// joined against `dirname(source_file)` (with Windows
                 /// drive-letter / separator normalization).
-                ///
-                /// `arena` is the build's bump arena (`BundleV2::arena()`), see
-                /// [`Self::result_for_key`].
                 pub(crate) fn resolve(
                     &self,
                     arena: &bun_alloc::Arena,
@@ -944,15 +941,7 @@ pub mod bv2_impl {
                     Some(Self::result_for_key(arena, key))
                 }
 
-                /// [`Self::resolve`] for an import. A relative or absolute
-                /// specifier that names no key also matches the keys that the
-                /// disk resolver tries for it, see [`Self::probe`].
-                ///
-                /// A probed key that names a file on disk returns `None`, so the
-                /// import takes the disk route as it did before the probe. The
-                /// disk resolver then picks the file, the file gets its
-                /// directory's `tsconfig.json` and `package.json`, and the parse
-                /// task reads the contents from the map (`Self::get`).
+                /// [`Self::resolve`] for an import, which also tries the names in [`Self::probe`].
                 pub(crate) fn resolve_import(
                     &self,
                     arena: &bun_alloc::Arena,
@@ -964,12 +953,12 @@ pub mod bv2_impl {
                 ) -> Option<bun_resolver::Result> {
                     let (key, probed) =
                         self.find(source_file, specifier, Some((&resolver.opts, kind)))?;
+                    // A probed key for a file on disk keeps the disk route and its tsconfig.json.
                     if probed {
-                        // The key names a file on disk when the disk resolver finds
-                        // the key itself. Through a symlink it finds another path.
+                        // The disk resolver resolves such a key to the key itself.
                         if let Ok(disk) = resolver.resolve(source_dir, key, kind) {
-                            // Compare in the spelling of the keys (`file_map_from_js`).
                             let mut disk_path = disk.path_pair.primary.text.to_vec();
+                            // Compare in the spelling of the keys (`file_map_from_js`).
                             bun_paths::resolve_path::dangerously_convert_path_to_posix_in_place::<u8>(
                                 &mut disk_path,
                             );
@@ -981,9 +970,7 @@ pub mod bv2_impl {
                     Some(Self::result_for_key(arena, key))
                 }
 
-                /// The key that `specifier` names from `source_file`, and whether
-                /// [`Self::probe`] found it. `import` holds the resolver options
-                /// and the import kind. Without it, only an exact key matches.
+                /// The key for `specifier`, and whether it came from [`Self::probe`], which needs `import`.
                 fn find(
                     &self,
                     source_file: &[u8],
@@ -1008,15 +995,13 @@ pub mod bv2_impl {
                         return Some((&**key, false));
                     }
 
-                    // `path` is the file the specifier names.
+                    // Also try joining a relative specifier against the importer's
+                    // directory. Relative = not posix-absolute and not Windows
+                    // drive-absolute (e.g. `C:/`).
                     let mut buf = bun_paths::path_buffer_pool::get();
                     let path: &[u8] = if bun_paths::is_absolute_loose(specifier) {
                         posix_specifier
                     } else if !specifier.is_empty() {
-                        // Also try joining a relative specifier against the importer's
-                        // directory. Relative = not posix-absolute and not Windows
-                        // drive-absolute (e.g. `C:/`).
-                        //
                         // `source_file` may itself be relative (e.g. on Windows
                         // when the bundler stores paths relative to cwd).
                         let mut abs_source_buf = bun_paths::path_buffer_pool::get();
@@ -1089,13 +1074,7 @@ pub mod bv2_impl {
                     Some((key, true))
                 }
 
-                /// The key the disk resolver finds for `specifier` when no key
-                /// equals `path`, the file that `specifier` names.
-                /// `Resolver::check_relative_path` tries the same names in the
-                /// same order: `path` with each extension, the TypeScript rewrite
-                /// of its extension (`a.js` to `a.ts`), then `path/index` with
-                /// each extension. A specifier that names a directory (`./lib/`)
-                /// tries only the index names.
+                /// The first key among the names that `Resolver::check_relative_path` tries for `path`.
                 fn probe(
                     &self,
                     path: &[u8],
@@ -1107,6 +1086,7 @@ pub mod bv2_impl {
                     let extension_order = options.path_extension_order(kind, in_node_modules);
                     let mut candidate: Vec<u8> = Vec::with_capacity(path.len() + 16);
 
+                    // A specifier that names a directory (`./lib/`) tries only the index names.
                     if !bun_resolver::Resolver::import_path_names_directory(specifier) {
                         for ext in extension_order {
                             if let Some(key) = self.key_for(&mut candidate, &[path, &ext[..]]) {
@@ -1141,8 +1121,7 @@ pub mod bv2_impl {
                     None
                 }
 
-                /// The map's copy of the key that `parts` spell when joined.
-                /// `candidate` is scratch space.
+                /// The map's copy of the key that `parts` spell, joined in `candidate`.
                 fn key_for(&self, candidate: &mut Vec<u8>, parts: &[&[u8]]) -> Option<&[u8]> {
                     candidate.clear();
                     for part in parts {
@@ -1153,10 +1132,7 @@ pub mod bv2_impl {
                         .map(|(key, _)| &**key)
                 }
 
-                /// Build a `bun_resolver::Result` for a matched key. The key is
-                /// copied into `arena`, the build's bump arena, so the returned
-                /// `Path<'static>` borrows arena memory (lives for the entire
-                /// build pass) instead of the map's key storage.
+                /// A `bun_resolver::Result` for `key`, with a copy of `key` in the build's `arena`.
                 #[inline]
                 fn result_for_key(arena: &bun_alloc::Arena, key: &[u8]) -> bun_resolver::Result {
                     // SAFETY: ARENA — `arena` is the build-pass bump arena

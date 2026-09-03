@@ -139,8 +139,7 @@ impl BundleOptions {
         }
     }
 
-    /// The extensions `Resolver::check_relative_path` tries, in order, on a
-    /// path imported with `kind`. A path inside `node_modules` has its own order.
+    /// The extension order of `Resolver::check_relative_path` for a path imported with `kind`.
     pub fn path_extension_order(
         &self,
         kind: bun_ast::ImportKind,

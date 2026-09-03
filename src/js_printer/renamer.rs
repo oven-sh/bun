@@ -1152,7 +1152,14 @@ pub fn compute_initial_reserved_names(
 
     const EXTRAS: [&[u8]; 2] = [b"Promise", b"Require"];
 
-    const CJS_NAMES: [&[u8]; 2] = [b"exports", b"module"];
+    // The wrapper's parameters: a top-level class with one of these names is a syntax error.
+    const CJS_NAMES: [&[u8]; 5] = [
+        b"exports",
+        b"require",
+        b"module",
+        b"__filename",
+        b"__dirname",
+    ];
 
     let cjs_names_len: u32 = if output_format == Format::Cjs {
         CJS_NAMES.len() as u32

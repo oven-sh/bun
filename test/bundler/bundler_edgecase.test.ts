@@ -3611,6 +3611,390 @@ describe("bundler", () => {
       api.expectFile("/out.js").toContain("var arguments = 1;");
     },
   });
+
+  // The bundler inlines `var __dirname = "..."` / `var __filename = "..."` into every
+  // module that uses them. Modules that are not wrapped in a closure share the chunk's
+  // top-level scope, so each module needs its own binding or the last module printed
+  // overwrites the value for all of them. The modules below read the values inside
+  // functions that the entry point calls after every module has been evaluated, which
+  // is when the collision is observable. The entry point prints every path relative to
+  // its own directory so the expected output is the same on every platform.
+  const dirnameModule = /* ts */ `
+    export function dir() { return __dirname; }
+    export function file() { return __filename; }
+  `;
+  const dirnameEntryPrelude = /* ts */ `
+    const base = __dirname;
+    const rel = (p: string) => p.slice(base.length).replaceAll("\\\\", "/");
+  `;
+  itBundled("edgecase/DirnameFilenamePerModule", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import * as a from "./a/a";
+        import * as b from "./b/b";
+        import c from "./c/c.cjs";
+        import { d } from "./d/d";
+        ${dirnameEntryPrelude}
+        console.log(JSON.stringify({
+          entry: [rel(__dirname), rel(__filename)],
+          a: [rel(a.dir()), rel(a.file())],
+          b: [rel(b.dir()), rel(b.file())],
+          c: [rel(c.dir()), rel(c.file())],
+          d: d(),
+        }));
+      `,
+      "/a/a.ts": dirnameModule,
+      "/b/b.ts": dirnameModule,
+      "/c/c.cjs": /* js */ `
+        module.exports = { dir: () => __dirname, file: () => __filename };
+      `,
+      "/d/d.ts": /* ts */ `
+        export function d() { return "d"; }
+      `,
+    },
+    onAfterBundle(api) {
+      // A module that does not use the names (d.ts) must not reserve them: the first
+      // module that uses them keeps the plain names.
+      api.expectFile("/out.js").toContain('var __dirname = "');
+      api.expectFile("/out.js").toContain('__filename = "');
+      // The CJS module keeps its own declaration inside its closure. Only the suffix
+      // of the name depends on the other modules of the chunk.
+      api.expectFile("/out.js").toMatch(/var __dirname\d* = "[^"]*c", __filename\d* = "[^"]*c\.cjs";/);
+    },
+    run: {
+      stdout: JSON.stringify({
+        entry: ["", "/entry.ts"],
+        a: ["/a", "/a/a.ts"],
+        b: ["/b", "/b/b.ts"],
+        c: ["/c", "/c/c.cjs"],
+        d: "d",
+      }),
+    },
+  });
+  // require() of an ES module wraps it in an __esm() closure and the linker hoists the
+  // injected declarations out of that closure, so they also need their own names there.
+  // On main, even a read at the top level of such a module saw the wrong value.
+  itBundled("edgecase/DirnameFilenamePerModuleEsmWrapper", {
+    files: {
+      "/entry.ts": /* ts */ `
+        const a = require("./a/a");
+        const b = require("./b/b");
+        ${dirnameEntryPrelude}
+        console.log(JSON.stringify({
+          entry: [rel(__dirname), rel(__filename)],
+          a: [rel(a.topDir), rel(a.topFile), rel(a.dir()), rel(a.file())],
+          b: [rel(b.topDir), rel(b.topFile), rel(b.dir()), rel(b.file())],
+        }));
+      `,
+      "/a/a.ts": /* ts */ `
+        export const topDir = __dirname;
+        export const topFile = __filename;
+        ${dirnameModule}
+      `,
+      "/b/b.ts": /* ts */ `
+        export const topDir = __dirname;
+        export const topFile = __filename;
+        ${dirnameModule}
+      `,
+    },
+    target: "bun",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("__esm(");
+    },
+    run: {
+      stdout: JSON.stringify({
+        entry: ["", "/entry.ts"],
+        a: ["/a", "/a/a.ts", "/a", "/a/a.ts"],
+        b: ["/b", "/b/b.ts", "/b", "/b/b.ts"],
+      }),
+    },
+  });
+  // In CommonJS output the names are reserved, so the injected declarations do not shadow
+  // the __dirname parameter of the wrapper. A module that only reaches the name through
+  // eval() therefore sees the directory of the output file (out/).
+  itBundled("edgecase/DirnameFilenamePerModuleCJSFormat", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import * as a from "./a/a";
+        import * as b from "./b/b";
+        import { viaEval } from "./e/e";
+        ${dirnameEntryPrelude}
+        console.log(JSON.stringify({
+          entry: [rel(__dirname), rel(__filename)],
+          a: [rel(a.dir()), rel(a.file())],
+          b: [rel(b.dir()), rel(b.file())],
+          wrapper: rel(viaEval()),
+        }));
+      `,
+      "/a/a.ts": dirnameModule,
+      "/b/b.ts": dirnameModule,
+      "/e/e.ts": /* ts */ `
+        export function viaEval() { return eval("__dirname"); }
+      `,
+    },
+    target: "bun",
+    format: "cjs",
+    outdir: "/out",
+    run: {
+      stdout: JSON.stringify({
+        entry: ["", "/entry.ts"],
+        a: ["/a", "/a/a.ts"],
+        b: ["/b", "/b/b.ts"],
+        wrapper: "/out",
+      }),
+    },
+  });
+  // CommonJS output runs inside a function whose parameters are named exports, require,
+  // module, __filename and __dirname. A top-level class with one of these names has to be
+  // renamed, or the output is a syntax error. On main the bundler's own unbound symbols
+  // reserved the names by accident, so this guards the explicit reservation.
+  itBundled("edgecase/DirnameFilenameUserClassCJSFormat", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import { __dirname as Dir, __filename as File } from "./names/names";
+        import * as a from "./a/a";
+        ${dirnameEntryPrelude}
+        console.log(JSON.stringify({
+          classes: [Dir.tag, File.tag],
+          a: [rel(a.dir()), rel(a.file())],
+        }));
+      `,
+      "/names/names.ts": /* ts */ `
+        export class __dirname { static tag = "dir class"; }
+        export class __filename { static tag = "file class"; }
+      `,
+      "/a/a.ts": dirnameModule,
+    },
+    target: "bun",
+    format: "cjs",
+    run: {
+      stdout: JSON.stringify({
+        classes: ["dir class", "file class"],
+        a: ["/a", "/a/a.ts"],
+      }),
+    },
+  });
+  itBundled("edgecase/DirnameFilenamePerModuleMinifyIdentifiers", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import * as a from "./a/a";
+        import * as b from "./b/b";
+        ${dirnameEntryPrelude}
+        console.log(JSON.stringify({
+          entry: [rel(__dirname), rel(__filename)],
+          a: [rel(a.dir()), rel(a.file())],
+          b: [rel(b.dir()), rel(b.file())],
+        }));
+      `,
+      "/a/a.ts": dirnameModule,
+      "/b/b.ts": dirnameModule,
+    },
+    target: "bun",
+    minifyIdentifiers: true,
+    run: {
+      stdout: JSON.stringify({
+        entry: ["", "/entry.ts"],
+        a: ["/a", "/a/a.ts"],
+        b: ["/b", "/b/b.ts"],
+      }),
+    },
+  });
+  // A module with a direct eval() keeps the literal names `__dirname` / `__filename`
+  // so that the eval'd code can still see them. The other modules are renamed around it.
+  itBundled("edgecase/DirnameFilenamePerModuleDirectEval", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import * as a from "./a/a";
+        import * as e from "./e/e";
+        import f from "./f/f.cjs";
+        ${dirnameEntryPrelude}
+        console.log(JSON.stringify({
+          entry: [rel(__dirname), rel(__filename)],
+          a: [rel(a.dir()), rel(a.file())],
+          e: [rel(e.dir()), rel(e.file())],
+          eEval: [rel(e.evalDir()), rel(e.evalFile())],
+          f: [rel(f.dir()), rel(f.file())],
+          fEval: [rel(f.evalDir()), rel(f.evalFile())],
+        }));
+      `,
+      "/a/a.ts": dirnameModule,
+      "/e/e.ts": /* ts */ `
+        ${dirnameModule}
+        export function evalDir() { return eval("__dirname"); }
+        export function evalFile() { return eval("__filename"); }
+      `,
+      "/f/f.cjs": /* js */ `
+        exports.dir = () => __dirname;
+        exports.file = () => __filename;
+        exports.evalDir = () => eval("__dirname");
+        exports.evalFile = () => eval("__filename");
+      `,
+    },
+    target: "bun",
+    run: {
+      stdout: JSON.stringify({
+        entry: ["", "/entry.ts"],
+        a: ["/a", "/a/a.ts"],
+        e: ["/e", "/e/e.ts"],
+        eEval: ["/e", "/e/e.ts"],
+        f: ["/f", "/f/f.cjs"],
+        fEval: ["/f", "/f/f.cjs"],
+      }),
+    },
+  });
+  // A module that declares its own `__dirname` must not be confused with the ones the
+  // bundler injects into the other modules of the same chunk. The bundler's unused
+  // symbol for that module must not reserve the name either: u.ts comes first in the
+  // chunk, so its own declarations keep the plain names.
+  itBundled("edgecase/DirnameFilenamePerModuleUserDeclared", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import * as u from "./u/u";
+        import * as a from "./a/a";
+        ${dirnameEntryPrelude}
+        console.log(JSON.stringify({
+          entry: [rel(__dirname), rel(__filename)],
+          a: [rel(a.dir()), rel(a.file())],
+          u: [u.dir(), u.file()],
+        }));
+      `,
+      "/a/a.ts": dirnameModule,
+      "/u/u.ts": /* ts */ `
+        const __dirname = "user-dir";
+        const __filename = "user-file";
+        export function dir() { return __dirname; }
+        export function file() { return __filename; }
+      `,
+    },
+    target: "bun",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain('var __dirname = "user-dir"');
+      api.expectFile("/out.js").toContain('var __filename = "user-file"');
+    },
+    run: {
+      stdout: JSON.stringify({
+        entry: ["", "/entry.ts"],
+        a: ["/a", "/a/a.ts"],
+        u: ["user-dir", "user-file"],
+      }),
+    },
+  });
+  // https://github.com/oven-sh/bun/issues/15996: the same for a module that exports its
+  // own `__dirname` and `__filename`. Nothing else in the bundle uses the names, so they
+  // must not be renamed.
+  itBundled("edgecase/DirnameFilenameUserExported", {
+    files: {
+      "/entry.ts": /* ts */ `
+        export const __filename = "user-file";
+        export const __dirname = "user-dir";
+        console.log(__dirname, __filename);
+      `,
+    },
+    target: "bun",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("__dirname2");
+      api.expectFile("/out.js").not.toContain("__filename2");
+    },
+    run: { stdout: "user-dir user-file" },
+  });
+  itBundled("edgecase/DirnameFilenamePerModuleCompile", {
+    compile: true,
+    files: {
+      "/entry.ts": /* ts */ `
+        import * as a from "./a/a";
+        import * as b from "./b/b";
+        ${dirnameEntryPrelude}
+        console.log(JSON.stringify({
+          entry: [rel(__dirname), rel(__filename)],
+          a: [rel(a.dir()), rel(a.file())],
+          b: [rel(b.dir()), rel(b.file())],
+        }));
+      `,
+      "/a/a.ts": dirnameModule,
+      "/b/b.ts": dirnameModule,
+    },
+    run: {
+      stdout: JSON.stringify({
+        entry: ["", "/entry.ts"],
+        a: ["/a", "/a/a.ts"],
+        b: ["/b", "/b/b.ts"],
+      }),
+    },
+  });
+  itBundled("edgecase/DirnameFilenamePerModuleSplitting", {
+    files: {
+      "/entry1.ts": /* ts */ `
+        import * as a from "./a/a";
+        import * as shared from "./shared/shared";
+        ${dirnameEntryPrelude}
+        console.log(JSON.stringify({
+          entry: [rel(__dirname), rel(__filename)],
+          a: [rel(a.dir()), rel(a.file())],
+          shared: [rel(shared.dir()), rel(shared.file())],
+        }));
+      `,
+      "/entry2.ts": /* ts */ `
+        import * as b from "./b/b";
+        import * as shared from "./shared/shared";
+        ${dirnameEntryPrelude}
+        console.log(JSON.stringify({
+          entry: [rel(__dirname), rel(__filename)],
+          b: [rel(b.dir()), rel(b.file())],
+          shared: [rel(shared.dir()), rel(shared.file())],
+        }));
+      `,
+      "/a/a.ts": dirnameModule,
+      "/b/b.ts": dirnameModule,
+      "/shared/shared.ts": dirnameModule,
+    },
+    entryPoints: ["/entry1.ts", "/entry2.ts"],
+    outdir: "/out",
+    splitting: true,
+    target: "bun",
+    run: [
+      {
+        file: "/out/entry1.js",
+        stdout: JSON.stringify({
+          entry: ["", "/entry1.ts"],
+          a: ["/a", "/a/a.ts"],
+          shared: ["/shared", "/shared/shared.ts"],
+        }),
+      },
+      {
+        file: "/out/entry2.js",
+        stdout: JSON.stringify({
+          entry: ["", "/entry2.ts"],
+          b: ["/b", "/b/b.ts"],
+          shared: ["/shared", "/shared/shared.ts"],
+        }),
+      },
+    ],
+  });
+  // `define` replaces the identifiers during the visit pass, so nothing is injected.
+  itBundled("edgecase/DirnameFilenameDefine", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import * as a from "./a/a";
+        console.log(JSON.stringify({ entry: [__dirname, __filename], a: [a.dir(), a.file()] }));
+      `,
+      "/a/a.ts": dirnameModule,
+    },
+    target: "bun",
+    define: {
+      __dirname: '"/defined"',
+      __filename: '"/defined/entry.js"',
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("__dirname");
+      api.expectFile("/out.js").not.toContain("__filename");
+    },
+    run: {
+      stdout: JSON.stringify({
+        entry: ["/defined", "/defined/entry.js"],
+        a: ["/defined", "/defined/entry.js"],
+      }),
+    },
+  });
 });
 
 for (const backend of ["api", "cli"] as const) {

@@ -1218,6 +1218,14 @@ impl<'a> Parser<'a> {
                 uses_dirname = false;
                 uses_filename = false;
             }
+
+            // Renamable per module, unused refs too: an unbound name stays reserved chunk-wide.
+            if p.options.bundle && !p.module_scope().contains_direct_eval {
+                for ref_ in [p.dirname_ref, p.filename_ref] {
+                    p.symbols.as_mut_slice()[ref_.inner_index() as usize].kind =
+                        js_ast::symbol::Kind::Hoisted;
+                }
+            }
         }
 
         // Finalize referenced-export tracking for `import("str")` /

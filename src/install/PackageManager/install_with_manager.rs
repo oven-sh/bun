@@ -235,13 +235,9 @@ pub fn install_with_manager(
                 };
 
                 had_any_diffs = manager.summary.has_diffs();
-                // Which workspaces asked for a self-contained node_modules is a property
-                // of their manifests, not of the dependency graph, and the lockfile
-                // records it. A frozen install keeps the recorded set, so it installs
-                // the layout the lockfile describes: a lockfile written by 1.4.0 records
-                // none, because 1.4.0 ignored `installConfig.hoistingLimits`. Every
-                // other install records the manifests' set. A changed set is a change
-                // to the lockfile even when the hoisted tree stays the same.
+                // A frozen install keeps the self-contained set the lockfile recorded.
+                // Every other install records the manifests' set, and saves the
+                // lockfile when only that set changed.
                 if !manager.options.enable.frozen_lockfile() {
                     let recorded = &manager.lockfile.self_contained_workspaces;
                     let declared = &lockfile.self_contained_workspaces;

@@ -376,8 +376,6 @@ pub(crate) fn save(
         write_array::<dependency::External>(&mut stream, &externals, PREFIX_DEP_EXTERNAL)?;
     }
 
-    // bun.lock records this set per workspace entry. A reader that does not know
-    // this tag stops before it, like for every other trailing section.
     if this.self_contained_workspaces.count() > 0 {
         stream.write_all(&HAS_SELF_CONTAINED_WORKSPACES_TAG.to_ne_bytes())?;
         let mut name_hashes: Vec<PackageNameHash> = this.self_contained_workspaces.keys().to_vec();

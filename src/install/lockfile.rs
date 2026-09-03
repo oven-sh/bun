@@ -180,12 +180,9 @@ pub struct Lockfile {
     pub(crate) scripts: Scripts,
     pub(crate) workspace_paths: NameHashMap,
     pub workspace_versions: VersionHashMap,
-    /// Workspaces (by name hash) that must get a self-contained node_modules: those
-    /// listed in the root manifest's `workspaces.selfContained` and those declaring
-    /// `installConfig.hoistingLimits = "workspaces"`. Persisted per workspace in bun.lock
-    /// (`"hoistingLimits"`) and as a trailing section of bun.lockb, so a tree rebuilt
-    /// from the lockfile is hoisted the same way. Every install except a frozen one
-    /// mirrors it from the manifests; a frozen install keeps the recorded set.
+    /// Workspaces (by name hash) that must get a self-contained node_modules, from
+    /// `workspaces.selfContained` and `installConfig.hoistingLimits = "workspaces"`.
+    /// bun.lock and bun.lockb record the set, so a rebuilt tree is hoisted the same way.
     pub self_contained_workspaces: ArrayHashMap<PackageNameHash, (), ArrayIdentityContextU64>,
 
     /// Optional because `trustedDependencies` in package.json might be an

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { itBundled } from "./expectBundled";
@@ -598,6 +598,38 @@ describe("bundler", () => {
 
       await using proc = Bun.spawn({
         cmd: [result.outputs[0].path],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout).toBe("main ran\nmain main\n");
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    // `--outfile .` writes the executable as `index`. The entry point is embedded under that name too, so `main.ts`
+    // resolves `./tool.ts` next to it, and `tool.ts` can load `main.ts` back.
+    test("bun build --outfile . embeds the entry point as index", async () => {
+      using dir = tempDir("compile-splitting-outfile-dot", entryPointImportedBack);
+      await using build = Bun.spawn({
+        cmd: [bunExe(), "build", "--compile", "--splitting", "./main.ts", "./tool.ts", "--outfile", "."],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, buildStderr, buildExitCode] = await Promise.all([
+        build.stdout.text(),
+        build.stderr.text(),
+        build.exited,
+      ]);
+      expect(buildStderr).toBe("");
+      expect(buildExitCode).toBe(0);
+
+      await using proc = Bun.spawn({
+        cmd: [join(String(dir), isWindows ? "index.exe" : "index")],
         env: bunEnv,
         cwd: String(dir),
         stdout: "pipe",

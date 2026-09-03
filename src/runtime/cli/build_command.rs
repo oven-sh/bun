@@ -360,7 +360,7 @@ impl BuildCommand {
                 }
 
                 this_transpiler.options.compile_entry_point_name =
-                    bun_paths::basename(outfile).into();
+                    bun_paths::basename(compile_outfile(outfile)).into();
             }
         }
 
@@ -774,7 +774,7 @@ impl BuildCommand {
         if ctx.bundler_options.compile && !ctx.bundler_options.compile_assets.is_empty() {
             if let Err(msg) = collect_compile_assets(
                 &ctx.bundler_options.compile_assets,
-                outfile,
+                compile_outfile(outfile),
                 &mut output_files,
             ) {
                 Output::err_generic("{}", (msg.as_str(),));
@@ -877,9 +877,7 @@ impl BuildCommand {
 
                 let is_cross_compile = !compile_target.is_default();
 
-                if outfile.is_empty() || outfile == b"." || outfile == b".." || outfile == b"../" {
-                    outfile = b"index";
-                }
+                outfile = compile_outfile(outfile);
 
                 let mut outfile_owned: Vec<u8>;
                 if compile_target.os == OperatingSystem::Windows
@@ -1183,6 +1181,16 @@ impl BuildCommand {
             if had_err { 1 } else { 0 },
             ctx.debug.hot_reload == HotReload::Watch,
         );
+    }
+}
+
+/// The outfile that `--compile` writes. For an empty name, `.`, `..` and
+/// `../`, it is `index`.
+fn compile_outfile(outfile: &[u8]) -> &[u8] {
+    if outfile.is_empty() || outfile == b"." || outfile == b".." || outfile == b"../" {
+        b"index"
+    } else {
+        outfile
     }
 }
 

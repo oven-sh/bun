@@ -687,8 +687,8 @@ impl CopyFile {
 
                             match self.do_clonefile() {
                                 Ok(()) => {
-                                    let stat_size =
-                                        SizeType::try_from(stat_.unwrap().st_size).expect("int cast");
+                                    let stat_size = SizeType::try_from(stat_.unwrap().st_size)
+                                        .expect("int cast");
                                     let copy_len = self.copy_length(stat_size);
                                     if copy_len < stat_size {
                                         // If this fails...well, there's not much we can do about it.

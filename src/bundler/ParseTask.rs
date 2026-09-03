@@ -2500,8 +2500,7 @@ pub mod parse_worker {
         opts.package_version = task.package_version.slice();
 
         opts.features.allow_runtime = !task.source_index.is_runtime();
-        // Unwrapping turns a file that is only `module.exports = require(x)`
-        // into a redirect to `x`, and the scanned graph then loses that file.
+        // Unwrapping turns `module.exports = require(x)` files into redirects, which drop edges.
         opts.features.unwrap_commonjs_to_esm = output_format == options::Format::Esm
             && FeatureFlags::UNWRAP_COMMONJS_TO_ESM
             && !topts.scan_graph_as_written;

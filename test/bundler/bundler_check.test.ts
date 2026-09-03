@@ -71,8 +71,7 @@ describe("bun build --check", () => {
   });
 
   test.concurrent("reports a resolve error and a cycle in one run", async () => {
-    // A file with an import that does not resolve stops the scan of its other
-    // imports, so the cycle is in a file that the scan still reaches.
+    // An import that does not resolve stops the scan of its file, so the cycle is in other files.
     using dir = tempDir("build-check-resolve-error", {
       "index.ts": `import "./broken";\nimport "./a";\n`,
       "broken.ts": `import "./missing";\n`,
@@ -191,8 +190,7 @@ describe("bun build --check", () => {
   });
 
   test.concurrent("follows a re-export that a build would defer", async () => {
-    // With "sideEffects": false, a build does not load "./unused" because no file
-    // imports `unused` from the barrel. The program that runs unbundled loads it.
+    // With "sideEffects": false, a build never loads unused.ts. Unbundled code does.
     using dir = tempDir("build-check-barrel", {
       "package.json": JSON.stringify({ name: "app", sideEffects: false }),
       "index.ts": `import { used } from "./barrel";\nconsole.log(used);\n`,

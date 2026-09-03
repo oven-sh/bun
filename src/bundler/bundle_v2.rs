@@ -2264,10 +2264,7 @@ pub mod bv2_impl {
             Err(crate::Error::BuildFailed)
         }
 
-        /// `check` mode ends the build after the scan phase. It logs an error
-        /// for each circular dependency. The walk also runs when the scan
-        /// logged errors, so one run reports both. The link and print steps do
-        /// not run, so the result has no output files.
+        /// Ends a `check` build after the scan. The walk runs even if the scan logged errors.
         fn check_module_graph(&self) -> Result<BuildResult, Error> {
             crate::circular_imports::report_circular_imports(self);
             if self.transpiler.log().has_errors() {
@@ -6074,11 +6071,7 @@ pub mod bv2_impl {
         // take `&mut BundleV2` directly — callers reach them as free functions.
         // (was: pub use barrel_imports::{apply_barrel_optimization, schedule_barrel_deferred_imports})
 
-        /// Returns true when barrel optimization is enabled. Barrel optimization
-        /// can apply to any package with sideEffects: false or listed in
-        /// optimize_imports, so it is enabled unless the caller reads the
-        /// scanned graph: the unbundled program runs each re-export, so an
-        /// edge that a build defers is still an edge.
+        /// Barrel deferral drops edges, so it is off when the caller reads the scanned graph.
         fn is_barrel_optimization_enabled(&self) -> bool {
             !self.transpiler.options.scan_graph_as_written
         }

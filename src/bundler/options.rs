@@ -1272,14 +1272,9 @@ pub struct BundleOptions<'a> {
     pub transform_options: std::sync::Arc<api::TransformOptions>,
     pub(crate) polyfill_node_globals: bool,
     pub transform_only: bool,
-    /// `bun build --check` / `Bun.build({ check: true })`: stop after the scan
-    /// phase, report circular dependencies, and produce no output files.
+    /// `--check`: report circular dependencies after the scan, and write nothing.
     pub check: bool,
-    /// The scan keeps each file and each import that the source code has. A
-    /// barrel file does not defer a re-export, and a file that is only
-    /// `module.exports = require(x)` does not redirect its importers to `x`.
-    /// Each of these rewrites removes an edge, so a caller that reads the
-    /// scanned graph (`check`) sets this.
+    /// Turns off the scan-time rewrites that drop edges: barrel deferral and CommonJS redirects.
     pub scan_graph_as_written: bool,
     pub load_tsconfig_json: bool,
     pub(crate) load_package_json: bool,

@@ -1,9 +1,4 @@
 //! Circular dependency detection for `bun build --check` and `Bun.build({ check: true })`.
-//!
-//! The walk reads the graph that the scan phase produced, before
-//! `find_reachable_files` runs. A check sets `scan_graph_as_written`, which
-//! turns off the scan-time rewrites that remove an edge from that graph. So
-//! each cycle names the files and the import statements that the user wrote.
 
 use std::io::Write;
 
@@ -29,10 +24,7 @@ struct Frame {
     record: u32,
 }
 
-/// The file that `record` runs when its importer runs. `import()` and
-/// `import defer` do not run the target at that point, so a cycle through
-/// them cannot read a binding before it is initialized. An unused record (a
-/// TypeScript import that is only used as a type) does not exist at runtime.
+/// `import()` and `import defer` do not run the target when the importer runs, so they are not edges.
 fn followed_target(record: &ImportRecord, sources: &[Source]) -> Option<u32> {
     if !matches!(record.kind, ImportKind::Stmt | ImportKind::Require) {
         return None;
@@ -54,10 +46,7 @@ fn followed_target(record: &ImportRecord, sources: &[Source]) -> Option<u32> {
     Some(target.get())
 }
 
-/// Walks the graph depth-first from each entry point and logs one error for
-/// each import that leads back to a file on the current path. Each file is
-/// expanded once, so the number of errors is at most the number of imports,
-/// and the order follows the entry points and the import order in each file.
+/// Logs one error for each import that leads back to a file on the depth-first path.
 pub(crate) fn report_circular_imports(this: &BundleV2<'_>) {
     let sources = this.graph.input_files.items_source();
     let all_records = this.graph.ast.items_import_records();
@@ -133,9 +122,7 @@ fn records_of<'r>(
         .map_or(&[], |records| records.as_slice())
 }
 
-/// `cycle[i].record` imports `cycle[i + 1]`, and the record of the last frame
-/// imports `cycle[0]`. The error points at the first import. Each later import
-/// is a note.
+/// The record of each frame imports the next frame. The record of the last frame imports `cycle[0]`.
 fn log_cycle(
     log: &mut Log,
     sources: &[Source],

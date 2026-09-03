@@ -137,13 +137,13 @@ export function findBun(os: OS): string {
   })!.path;
 }
 
-/** Find npm for `--root-package-manager=npm`. npm ships with Node.js. */
+/** Find npm for `--package-manager=npm`. npm ships with Node.js. */
 export function findNpm(): string {
   return findTool({
     names: ["npm"],
     windowsExt: ".cmd",
     required: true,
-    hint: "--root-package-manager=npm installs the root package.json with npm. Install Node.js, which includes npm.",
+    hint: "--package-manager=npm installs with npm. Install Node.js, which includes npm.",
   })!.path;
 }
 

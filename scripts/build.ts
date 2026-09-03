@@ -460,7 +460,7 @@ function parseArgs(argv: string[]): CliArgs {
     "mode",
     "webkit",
     "localDeps",
-    "rootPackageManager",
+    "packageManager",
     "buildDir",
     "cacheDir",
     "nodejsVersion",
@@ -592,8 +592,8 @@ Options:
                                   canary, valgrind, webkit (prebuilt|local),
                                   local-deps (name=path[,name=path] — build a
                                   vendored dep from a local checkout),
-                                  root-package-manager (bun|npm, installs
-                                  the root package.json),
+                                  package-manager (bun|npm, installs the
+                                  package.json files the build needs),
                                   buildDir, mode (full|cpp-only|link-only),
                                   unifiedSources, timeTrace, os, arch, abi,
                                   winsysroot (Windows cross-compile SDK root)

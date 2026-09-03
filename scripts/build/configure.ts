@@ -15,7 +15,7 @@ import {
   type Config,
   type OS,
   type PartialConfig,
-  type RootPackageManager,
+  type PackageManager,
   type Toolchain,
   detectHost,
   findRepoRoot,
@@ -43,7 +43,7 @@ import { checkWorkarounds } from "./workarounds.ts";
  * Throws BuildError with a hint if a required tool is missing. Optional
  * tools (ccache, cargo if no rust deps needed) become `undefined`.
  */
-export function resolveToolchain(targetOs?: OS, rootPackageManager: RootPackageManager = "bun"): Toolchain {
+export function resolveToolchain(targetOs?: OS, packageManager: PackageManager = "bun"): Toolchain {
   const host = detectHost();
   const llvm = resolveLlvmToolchain(host.os, host.arch, targetOs ?? host.os);
 
@@ -69,11 +69,11 @@ export function resolveToolchain(targetOs?: OS, rootPackageManager: RootPackageM
   // (and the build itself runs the install first via the root install
   // stamp, so this path will exist by the time esbuild rules fire).
   // On Windows, bun writes `.bin/esbuild.exe` and npm writes `.bin/esbuild.cmd`.
-  const windowsBin = rootPackageManager === "npm" ? "esbuild.cmd" : "esbuild.exe";
+  const windowsBin = packageManager === "npm" ? "esbuild.cmd" : "esbuild.exe";
   const esbuild = resolve(repoRoot, "node_modules", ".bin", host.os === "windows" ? windowsBin : "esbuild");
 
   const bun = findBun(host.os);
-  const npm = rootPackageManager === "npm" ? findNpm() : undefined;
+  const npm = packageManager === "npm" ? findNpm() : undefined;
 
   // jsRuntime: shell-ready prefix for running .ts subprocesses. Propagate
   // whatever's running us — if node, the strip-types flag comes along; if
@@ -264,7 +264,7 @@ export async function configure(input: ConfigureInput): Promise<ConfigureResult>
     });
   }
 
-  const toolchain = resolveToolchain(partial.os, partial.rootPackageManager);
+  const toolchain = resolveToolchain(partial.os, partial.packageManager);
   mark("resolveToolchain");
   const cfg = resolveConfig(partial, toolchain);
 

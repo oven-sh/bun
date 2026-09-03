@@ -23,8 +23,8 @@ export type Abi = "gnu" | "musl" | "android";
 export type BuildType = "Debug" | "Release" | "RelWithDebInfo" | "MinSizeRel";
 export type BuildMode = "full" | "cpp-only" | "rust-only" | "link-only" | "rust-and-link" | "archive-link";
 export type WebKitMode = "prebuilt" | "local";
-/** The package manager that installs the repo-root package.json. */
-export type RootPackageManager = "bun" | "npm";
+/** The package manager for the package.json files the build installs. */
+export type PackageManager = "bun" | "npm";
 
 /**
  * Host platform — what's running the build. Distinguish from target
@@ -176,10 +176,11 @@ export interface Config {
    */
   localDeps: Record<string, string>;
   /**
-   * Installs the repo-root package.json (esbuild, the lezer C++ parser). Set
-   * via `--root-package-manager=npm`. The other installs always use bun.
+   * Installs the package.json files the build needs: the repo root (esbuild,
+   * the lezer C++ parser), packages/bun-error, and src/node-fallbacks. Set
+   * via `--package-manager=npm`.
    */
-  rootPackageManager: RootPackageManager;
+  packageManager: PackageManager;
 
   // ─── Paths (all absolute) ───
   /** Repository root. */
@@ -241,7 +242,7 @@ export interface Config {
   dsymutil: string | undefined;
   /** Self-host bun for codegen (bun install, bun build). */
   bun: string;
-  /** npm, set only when `rootPackageManager` is "npm". */
+  /** npm, set only when `packageManager` is "npm". */
   npm: string | undefined;
   /**
    * Shell-ready command prefix for running .ts subprocesses (stream.ts,
@@ -359,8 +360,8 @@ export interface PartialConfig {
    * resolve against the repo root. See `Config.localDeps`.
    */
   localDeps?: string;
-  /** `bun` (default) or `npm`. See `Config.rootPackageManager`. */
-  rootPackageManager?: RootPackageManager;
+  /** `bun` (default) or `npm`. See `Config.packageManager`. */
+  packageManager?: PackageManager;
   buildDir?: string;
   cacheDir?: string;
   /** Override NDK location (default: $ANDROID_NDK_ROOT etc). Only used when abi=android. */
@@ -448,7 +449,7 @@ export interface Toolchain {
   nm: string | undefined;
   dsymutil: string | undefined;
   bun: string;
-  /** Found only when the root package.json is installed with npm. */
+  /** Found only when the build installs with npm. */
   npm?: string | undefined;
   jsRuntime: string;
   esbuild: string;
@@ -1099,11 +1100,11 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   const nodejsV8Version = partial.nodejsV8Version ?? versionDefaults.nodejsV8Version;
   const webkitVersion = partial.webkitVersion ?? versionDefaults.webkitVersion;
 
-  const rootPackageManager = partial.rootPackageManager ?? "bun";
-  if (rootPackageManager !== "bun" && rootPackageManager !== "npm") {
-    throw new BuildError(`Unknown rootPackageManager: ${rootPackageManager}`, { hint: "Use bun or npm" });
+  const packageManager = partial.packageManager ?? "bun";
+  if (packageManager !== "bun" && packageManager !== "npm") {
+    throw new BuildError(`Unknown packageManager: ${packageManager}`, { hint: "Use bun or npm" });
   }
-  assert(rootPackageManager === "bun" || toolchain.npm !== undefined, "rootPackageManager=npm needs toolchain.npm");
+  assert(packageManager === "bun" || toolchain.npm !== undefined, "packageManager=npm needs toolchain.npm");
 
   // ─── macOS SDK ───
   // Must be passed to nested cmake builds or they'll pick the wrong SDK.
@@ -1213,7 +1214,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     buildkite,
     webkit: partial.webkit ?? "prebuilt",
     localDeps: parseLocalDeps(partial.localDeps, cwd),
-    rootPackageManager,
+    packageManager,
     cwd,
     buildDir,
     codegenDir,
@@ -1243,7 +1244,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     nm: toolchain.nm,
     dsymutil: toolchain.dsymutil,
     bun: toolchain.bun,
-    npm: rootPackageManager === "npm" ? toolchain.npm : undefined,
+    npm: packageManager === "npm" ? toolchain.npm : undefined,
     jsRuntime: toolchain.jsRuntime,
     esbuild: toolchain.esbuild,
     ccache: toolchain.ccache,
@@ -1583,7 +1584,7 @@ export function formatConfig(cfg: Config, exe: string): string {
   // Non-default modes — show so you notice when a build is unusual.
   if (cfg.webkit !== "prebuilt") features.push(`webkit:${cfg.webkit}`);
   for (const name of Object.keys(cfg.localDeps)) features.push(`local:${name}`);
-  if (cfg.rootPackageManager !== "bun") features.push(`root-package-manager:${cfg.rootPackageManager}`);
+  if (cfg.packageManager !== "bun") features.push(`package-manager:${cfg.packageManager}`);
   if (cfg.mode !== "full") features.push(`mode:${cfg.mode}`);
   // Version pin overrides — show an identifying value so you catch "forgot
   // to revert my WebKit test branch" before the build goes weird. Strip the

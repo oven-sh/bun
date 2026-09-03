@@ -158,7 +158,7 @@ export function registerCodegenRules(n: Ninja, cfg: Config): void {
   });
   n.pool("bun_install", 1);
 
-  // `--root-package-manager=npm` installs the root package.json with `npm ci`.
+  // `--package-manager=npm` installs each package.json with `npm ci`.
   // npm-ci.ts writes package-lock.json from bun.lock for the duration of the
   // install and deletes it after. `npm ci` replaces node_modules, so a tree
   // that `bun install` wrote does not get in the way.
@@ -273,7 +273,7 @@ export function emitCodegen(n: Ninja, cfg: Config, sources: Sources): CodegenOut
   const dirStamp = codegenDirStamp(cfg);
 
   // ─── Root install (provides esbuild + lezer-cpp for cppbind) ───
-  const rootInstall = emitRootInstall(n, cfg);
+  const rootInstall = emitPackageInstall(n, cfg, cfg.cwd);
 
   const o: CodegenOutputs = {
     all: [],
@@ -338,19 +338,15 @@ export function emitCodegen(n: Ninja, cfg: Config, sources: Sources): CodegenOut
 // ───────────────────────────────────────────────────────────────────────────
 
 /**
- * Emit a `bun install` step for a package directory. Returns the stamp file
+ * Emit the install step for a package directory, with `cfg.packageManager`. Returns the stamp file
  * path — use it as an implicit input on anything that needs node_modules/.
  *
  * The stamp is the explicit output; each node_modules/<dep>/package.json is
  * an implicit output (so deleting node_modules/ correctly retriggers install,
  * and restat prunes downstream when install was a no-op).
  */
-function emitBunInstall(
-  n: Ninja,
-  cfg: Config,
-  pkgDir: string,
-  rule: "bun_install" | "npm_install" = "bun_install",
-): string {
+function emitPackageInstall(n: Ninja, cfg: Config, pkgDir: string): string {
+  const rule = cfg.packageManager === "npm" ? "npm_install" : "bun_install";
   const depPackageJsons = readPackageDeps(pkgDir);
   assert(depPackageJsons.length > 0, `package.json has no dependencies: ${pkgDir}/package.json`);
 
@@ -387,11 +383,6 @@ function emitBunInstall(
   return stamp;
 }
 
-/** The install step for the repo-root package.json, with the package manager that `cfg.rootPackageManager` names. */
-function emitRootInstall(n: Ninja, cfg: Config): string {
-  return emitBunInstall(n, cfg, cfg.cwd, cfg.rootPackageManager === "npm" ? "npm_install" : "bun_install");
-}
-
 /**
 /** `--debug=ON` / `--debug=OFF` flag used by several scripts. */
 function debugFlag(cfg: Config): string {
@@ -412,7 +403,7 @@ function shJoin(cfg: Config, args: string[]): string {
 
 function emitBunError({ n, cfg, sources, o, dirStamp }: Ctx): void {
   const sourceDir = resolve(cfg.cwd, "packages", "bun-error");
-  const installStamp = emitBunInstall(n, cfg, sourceDir);
+  const installStamp = emitPackageInstall(n, cfg, sourceDir);
 
   const outDir = resolve(cfg.codegenDir, "bun-error");
   const outputs = [resolve(outDir, "index.js"), resolve(outDir, "bun-error.css")];
@@ -522,7 +513,7 @@ function emitRuntimeJs({ n, cfg, o, dirStamp }: Ctx): void {
 
 function emitNodeFallbacks({ n, cfg, sources, o, dirStamp }: Ctx): void {
   const sourceDir = resolve(cfg.cwd, "src", "node-fallbacks");
-  const installStamp = emitBunInstall(n, cfg, sourceDir);
+  const installStamp = emitPackageInstall(n, cfg, sourceDir);
 
   const outDir = resolve(cfg.codegenDir, "node-fallbacks");
   // Two outputs per source: the bundled `.js` (read at runtime by debug

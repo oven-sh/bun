@@ -1,5 +1,5 @@
 /**
- * The `npm_install` ninja rule for `--root-package-manager=npm`:
+ * The `npm_install` ninja rule for `--package-manager=npm`:
  *
  *   <jsRuntime> npm-ci.ts <npm> <dir>
  *

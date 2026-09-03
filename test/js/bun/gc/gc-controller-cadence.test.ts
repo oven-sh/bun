@@ -240,19 +240,24 @@ describe("idle release lets FTL code age out", () => {
       stderr: "inherit",
     });
     const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    expect(exitCode).toBe(0);
-    return JSON.parse(stdout.trim()) as { before: number; after: number };
+    const counts = (stdout.trim().startsWith("{") ? JSON.parse(stdout.trim()) : {}) as {
+      before?: number;
+      after?: number;
+    };
+    return { ...counts, stdout, exitCode };
   }
 
   test.concurrent("the idle collections drop the warmed-up code", async () => {
-    const { before, after } = await run({ BUN_IDLE_GC_SECONDS: "1,1,1" });
-    expect(before).toBeGreaterThan(40);
-    expect(after).toBeLessThan(before / 4);
+    const { before, after, stdout, exitCode } = await run({ BUN_IDLE_GC_SECONDS: "1,1,1" });
+    expect(before, stdout).toBeGreaterThan(40);
+    expect(after, stdout).toBeLessThan(before! / 4);
+    expect(exitCode).toBe(0);
   });
 
   test.concurrent("collections the program forces itself do not", async () => {
-    const { before, after } = await run({ BUN_IDLE_GC_SECONDS: "0", MODE: "forced" });
-    expect(before).toBeGreaterThan(40);
-    expect(after).toBeGreaterThan(before / 2);
+    const { before, after, stdout, exitCode } = await run({ BUN_IDLE_GC_SECONDS: "0", MODE: "forced" });
+    expect(before, stdout).toBeGreaterThan(40);
+    expect(after, stdout).toBeGreaterThan(before! / 2);
+    expect(exitCode).toBe(0);
   });
 });

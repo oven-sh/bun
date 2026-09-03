@@ -21,8 +21,8 @@ test("sourceStamp() is the first four bytes of the SHA-256 digest, big-endian, w
 
   const { stdout, stderr, exitCode } = await runWithoutBunApis([join(String(dir), "stamp-fixture.ts")]);
 
-  expect(stderr).toBe("");
+  // stderr is in the object so that a failure shows the script's error.
+  expect({ exitCode, stderr }).toMatchObject({ exitCode: 0 });
   // The SHA-256 digest of "ab" starts with fb8e20fc. The digest of "" starts with e3b0c442.
   expect(stdout).toBe(`${0xfb8e20fc} ${0xe3b0c442}\n`);
-  expect(exitCode).toBe(0);
 });

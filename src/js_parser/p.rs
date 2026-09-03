@@ -304,8 +304,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     // Used for forcing CommonJS
     pub(crate) has_with_scope: bool,
 
-    /// A module-scope `var` has the name of a top-level function. Module code
-    /// rejects that, so a CommonJS file with it keeps its wrapper.
+    /// A module-scope `var` has the name of a top-level function, which module code rejects.
     pub(crate) has_top_level_function_merged_with_var: bool,
 
     pub(crate) is_file_considered_to_have_esm_exports: bool,

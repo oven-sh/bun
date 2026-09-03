@@ -4224,11 +4224,9 @@ impl<'a> LinkerContext<'a> {
             && self.graph.meta.items_flags()[id].wrap != WrapKind::Cjs
     }
 
-    /// A default import of a lifted CommonJS module that sets `__esModule` and
-    /// exports `default` is `exports.default` or `module.exports` depending on
-    /// that flag's run-time value, unless the importer is an ES module by type
-    /// (Node ignores the flag). Without a `default` export it is `module.exports`
-    /// for every importer, as `__toESM` gives.
+    /// The default import of a lifted module that sets `__esModule` and exports
+    /// `default` depends on the flag's run-time value, unless the importer is an
+    /// ES module by type (Node ignores the flag).
     pub(crate) fn lifted_default_import_needs_wrapper(
         importer_module_type: crate::options::ModuleType,
         exports: &crate::bundled_ast::NamedExports,

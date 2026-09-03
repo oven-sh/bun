@@ -52,12 +52,9 @@ var __toESMCache_node;
 /*__PURE__*/
 var __toESMCache_esm;
 
-// Converts the module from CommonJS to ESM. The "default" property is the
-// CommonJS "module.exports" object, unless the importer is not in node mode
-// (an ".mjs" file, or package.json has "type": "module") and the module has a
-// truthy "__esModule" export and its own "default" export. Then "default" is
-// that export. This is the rule `bun run` uses (populateESMExports in
-// JSCommonJSModule.cpp).
+// Converts the module from CommonJS to ESM. "default" is "module.exports",
+// except outside node mode when "__esModule" is truthy and the module has its
+// own "default" property. `bun run` uses the same rule.
 export var __toESM = (mod, isNodeMode, target) => {
   var canCache = mod != null && typeof mod === "object";
   if (canCache) {

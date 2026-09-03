@@ -339,10 +339,8 @@ impl FileResponseStream {
                     },
                     self.as_ptr(),
                 );
-                // `false` alone does not stop an event-driven reader: a pollable
-                // fd re-arms its poll after EAGAIN, and a Windows read completes
-                // later. `on_writable` unpauses it. `pause()` does not call back
-                // into this object.
+                // `false` alone does not stop the reader. `on_writable` unpauses
+                // it, and `pause()` does not call back into this object.
                 self.reader_mut().pause();
                 false
             }

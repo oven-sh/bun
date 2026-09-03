@@ -103,14 +103,22 @@ describe.each([
     { installConfig: { hoistingLimits: "dependencies" } },
     { selfContained: ["desktop"] },
   ],
+  // yarn's default value is the same as no value; the root list still applies
+  [
+    'hoistingLimits "none" plus the root list',
+    { installConfig: { hoistingLimits: "none" } },
+    { selfContained: ["desktop"] },
+  ],
 ] as const)("self-contained workspace via %s", (_label, desktopExtra, workspacesExtra) => {
   it("gets a complete, physical node_modules while other workspaces still hoist", async () => {
     await writeProject(desktopExtra, workspacesExtra);
     const r = await install(package_dir);
     expect(r.err).not.toContain("error:");
-    if ("installConfig" in desktopExtra && (desktopExtra as any).installConfig.hoistingLimits !== "workspaces") {
+    if ((desktopExtra as any).installConfig?.hoistingLimits === "dependencies") {
       // the unsupported value is reported (and otherwise ignored)
       expect(r.err).toContain('installConfig.hoistingLimits "dependencies" is not supported');
+    } else {
+      expect(r.err).not.toContain("hoistingLimits");
     }
     expect(r.code).toBe(0);
 
@@ -165,6 +173,18 @@ it("an entry that matches no workspace warns and the rest still applies", async 
     "baz",
     "shared",
   ]);
+});
+
+// "none" is yarn's default: no hoisting limit, so nothing to warn about
+it('hoistingLimits "none" hoists the workspace normally and does not warn', async () => {
+  await writeProject({ installConfig: { hoistingLimits: "none" } }, {});
+  const r = await install(package_dir);
+  expect(r.err).not.toContain("error:");
+  expect(r.err).not.toContain("hoistingLimits");
+  expect(r.code).toBe(0);
+  expect(existsSync(join(package_dir, "apps", "desktop", "node_modules"))).toBeFalse();
+  expect(existsSync(join(package_dir, "node_modules", "@barn", "moo", "package.json"))).toBeTrue();
+  expect(await Bun.file(join(package_dir, "bun.lock")).text()).not.toContain("hoistingLimits");
 });
 
 it("without either setting the workspace is hoisted normally", async () => {

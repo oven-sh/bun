@@ -866,11 +866,11 @@ describe("bunx dist-tag cache", () => {
     const pkgRoot = tmpdirSync();
     const packageDir = join(pkgRoot, "package");
     await mkdir(packageDir, { recursive: true });
+    await writeFile(join(packageDir, "package.json"), JSON.stringify({ name, version, bin: { [name]: "cli.js" } }));
     await writeFile(
-      join(packageDir, "package.json"),
-      JSON.stringify({ name, version, bin: { [name]: "cli.js" } }),
+      join(packageDir, "cli.js"),
+      `#!/usr/bin/env node\nconsole.log(${JSON.stringify(`${name} ${version}`)});\n`,
     );
-    await writeFile(join(packageDir, "cli.js"), `#!/usr/bin/env node\nconsole.log(${JSON.stringify(`${name} ${version}`)});\n`);
     chmodSync(join(packageDir, "cli.js"), 0o755);
     await Bun.$`cd ${pkgRoot} && tar -czf ${join(tgzDir, `${name}-${version}.tgz`)} package`;
   }

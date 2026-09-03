@@ -3098,10 +3098,12 @@ describe("bundler", () => {
     run: { stdout: '["Café","naïve","Cafá","模块",1,2,3]' },
     onAfterBundle(api) {
       const out = api.readFile("/out.js");
-      expect(out).toContain("class Café");
+      // Top-level class statements become `var X = class {}` when bundling;
+      // the identifier must survive un-mangled either way.
+      expect(out).toContain("var Café = class");
       expect(out).toContain("function naïve");
-      expect(out).toContain("class Cafá");
-      expect(out).toContain("class 模块");
+      expect(out).toContain("var Cafá = class");
+      expect(out).toContain("var 模块 = class");
       expect(out).toContain("var aπ");
       expect(out).toContain("var a𝒜");
       expect(out).toContain("var élan");

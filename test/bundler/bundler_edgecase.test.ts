@@ -3611,6 +3611,29 @@ describe("bundler", () => {
       api.expectFile("/out.js").toContain("var arguments = 1;");
     },
   });
+  // Bun.Transpiler's treeShaking drops imports whose users were removed; the bundler shares the
+  // parser but keeps every imported module for its side effects.
+  itBundled("edgecase/TSImportsOnlyUsedByRemovedCodeKeepSideEffects", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import { helperDependency } from './side';
+        import { devOnly } from './side2';
+        function unusedHelper() { return helperDependency(); }
+        if (process.env.NODE_ENV !== 'production') { devOnly(); }
+        console.log('entry');
+      `,
+      "/side.ts": /* ts */ `
+        console.log('side');
+        export function helperDependency() {}
+      `,
+      "/side2.ts": /* ts */ `
+        console.log('side2');
+        export function devOnly() {}
+      `,
+    },
+    define: { "process.env.NODE_ENV": '"production"' },
+    run: { stdout: "side\nside2\nentry" },
+  });
 });
 
 for (const backend of ["api", "cli"] as const) {

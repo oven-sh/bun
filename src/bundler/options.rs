@@ -1283,6 +1283,8 @@ pub struct BundleOptions<'a> {
     pub conditions: ESMConditions,
     pub tree_shaking: bool,
     pub tree_shaking_override: Option<bool>,
+    /// Bun.Transpiler's treeShaking; distinct from `tree_shaking`, which the runtime sets too.
+    pub remove_unused_declarations: bool,
     pub code_splitting: bool,
     /// With `code_splitting`, target bun: `require()` of a bundled ESM file
     /// becomes a chunk of its own, loaded synchronously at the call. On by
@@ -1507,6 +1509,7 @@ impl<'a> BundleOptions<'a> {
             },
             tree_shaking: self.tree_shaking,
             tree_shaking_override: self.tree_shaking_override,
+            remove_unused_declarations: self.remove_unused_declarations,
             code_splitting: self.code_splitting,
             split_require: self.split_require,
             source_map: self.source_map,
@@ -1756,6 +1759,7 @@ impl<'a> BundleOptions<'a> {
             }, // filled below
             tree_shaking: false,
             tree_shaking_override: None,
+            remove_unused_declarations: false,
             code_splitting: false,
             split_require: true,
             source_map: SourceMapOption::None,

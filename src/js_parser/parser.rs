@@ -209,6 +209,9 @@ pub mod Runtime {
 
         pub trim_unused_imports: bool,
 
+        /// Run `P::remove_unused_parts`; `Options.tree_shaking` alone only splits up parts.
+        pub remove_unused_declarations: bool,
+
         /// Allow runtime usage of require(), converting `require` into `__require`
         pub auto_polyfill_require: bool,
 
@@ -295,6 +298,7 @@ pub mod Runtime {
                 dead_code_elimination: true,
                 set_breakpoint_on_first_line: false,
                 trim_unused_imports: false,
+                remove_unused_declarations: false,
                 auto_polyfill_require: false,
                 replace_exports: ReplaceableExportMap::default(),
                 dont_bundle_twice: false,
@@ -358,6 +362,8 @@ pub mod Runtime {
         // Takes `Wyhash` (NOT `Wyhash11`).
         pub(crate) fn hash_for_runtime_transpiler(&self, hasher: &mut Wyhash) {
             debug_assert!(self.runtime_transpiler_cache.is_some());
+            // Bun.Transpiler-only (like `replace_exports`), so never set on a cached parse.
+            debug_assert!(!self.remove_unused_declarations);
 
             let bools: [bool; 17] = [
                 self.top_level_await,

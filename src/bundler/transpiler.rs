@@ -1617,6 +1617,7 @@ impl<'a> Transpiler<'a> {
                     .options
                     .trim_unused_imports
                     .unwrap_or_else(|| loader.is_typescript());
+                opts.features.remove_unused_declarations = self.options.remove_unused_declarations;
                 opts.features.no_macros = self.options.no_macros;
                 // `bun_ast::RuntimeTranspilerCache` is the single nominal
                 // type on both sides; thread the pointer directly.

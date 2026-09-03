@@ -252,3 +252,39 @@ describe("unterminated string literals in large files", () => {
     expect(exitCode).toBe(1);
   });
 });
+
+// Bun.Transpiler's treeShaking removes helpers nothing uses and the imports they held onto; the
+// runtime loader parses with the same parser but must keep loading every imported module.
+test("imports only referenced by unused or dead code are still loaded at runtime", async () => {
+  using dir = tempDir("runtime-keeps-unused-imports", {
+    "entry.ts": `
+      import { helperDependency } from "./side";
+      import { devOnly } from "./side2";
+      function unusedHelper() { return helperDependency(); }
+      if (false) { devOnly(); }
+      console.log("entry");
+    `,
+    "side.ts": `
+      console.log("side");
+      export function helperDependency() {}
+    `,
+    "side2.ts": `
+      console.log("side2");
+      export function devOnly() {}
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "entry.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(stdout).toBe("side\nside2\nentry\n");
+  expect(exitCode).toBe(0);
+});

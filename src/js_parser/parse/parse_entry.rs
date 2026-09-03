@@ -200,6 +200,7 @@ impl<'a> Options<'a> {
                 dead_code_elimination: f.dead_code_elimination,
                 set_breakpoint_on_first_line: f.set_breakpoint_on_first_line,
                 trim_unused_imports: f.trim_unused_imports,
+                remove_unused_declarations: f.remove_unused_declarations,
                 auto_polyfill_require: f.auto_polyfill_require,
                 replace_exports: Default::default(),
                 dont_bundle_twice: f.dont_bundle_twice,
@@ -1128,6 +1129,11 @@ impl<'a> Parser<'a> {
 
         // `perf::Ctx` ends the span in its `Drop` impl — bind it for the rest of `_parse`.
         let _postvisit_tracer = bun_core::perf::trace("JSParser::postvisit");
+
+        // Before anything below reads use counts (`__dirname`, `exports`, runtime helpers).
+        if p.options.features.remove_unused_declarations {
+            p.remove_unused_parts(&mut before, &mut parts);
+        }
 
         let mut uses_dirname =
             p.symbols.as_slice()[p.dirname_ref.inner_index() as usize].use_count_estimate > 0;

@@ -1046,6 +1046,7 @@ impl JSTranspiler {
         transpiler.options.transform_only = !transpiler.options.allow_runtime;
 
         transpiler.options.tree_shaking = config.tree_shaking;
+        transpiler.options.remove_unused_declarations = config.tree_shaking;
         transpiler.options.trim_unused_imports = config.trim_unused_imports;
         transpiler.options.allow_runtime = config.runtime.allow_runtime;
         transpiler.options.auto_import_jsx = config.runtime.auto_import_jsx;

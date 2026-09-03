@@ -3000,7 +3000,24 @@ declare module "bun" {
       eliminate?: string[];
       replace?: Record<string, string>;
     };
+    /**
+     * Remove top-level functions, classes and variables (with side-effect-free
+     * initializers) that nothing exported or executed by the file refers to,
+     * then the imports they were the last users of (unless
+     * {@link trimUnusedImports} is `false`). Combined with `exports.eliminate`,
+     * this also removes whatever only the eliminated exports used. Only the one
+     * file being transformed is considered, and a direct `eval()` anywhere in it
+     * disables the removal.
+     *
+     * @default false (`true` when {@link exports} has entries)
+     */
     treeShaking?: boolean;
+    /**
+     * Remove imported bindings that the output does not use. Imports written
+     * without bindings (`import "./setup"`) are kept.
+     *
+     * Defaults to the value of {@link treeShaking}.
+     */
     trimUnusedImports?: boolean;
     jsxOptimizationInline?: boolean;
 

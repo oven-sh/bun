@@ -423,6 +423,44 @@ test.concurrent("node:util: a spy on the exports object does not reach the ESM b
   expect(exitCode).toBe(0);
 });
 
+// node:repl defines REPLServer and writer with defineLazyProperties. The REPL body adds several hundred functions.
+test.concurrent("node:repl: importing does not load the REPL, and the export names match node", async () => {
+  const result = await runEntry(`
+    import { heapStats } from "bun:jsc";
+    import { createRequire } from "node:module";
+    import { print } from "./helper.mjs";
+    const repl = createRequire(import.meta.url)("node:repl");
+    const functions = () => heapStats().objectTypeCounts.Function;
+    const beforeImport = functions();
+    const ns = await import("node:repl");
+    const afterImport = functions();
+    const { REPLServer } = ns;
+    const afterRead = functions();
+    print({
+      importLoaded: afterImport - beforeImport > 100,
+      readLoaded: afterRead - afterImport > 100,
+      same: REPLServer === repl.REPLServer && ns.writer === repl.writer,
+      // repl.repl is not an export: the REPLServer constructor sets it for a standalone REPL.
+      names: Object.keys(ns),
+    });
+  `);
+  expect(result).toEqual({
+    importLoaded: false,
+    readLoaded: true,
+    same: true,
+    names: [
+      "REPLServer",
+      "REPL_MODE_SLOPPY",
+      "REPL_MODE_STRICT",
+      "Recoverable",
+      "default",
+      "isValidSyntax",
+      "start",
+      "writer",
+    ],
+  });
+});
+
 test.concurrent('"bun": re-exports construct the properties that get bound, not the rest of the object', async () => {
   const result = await runEntry(
     `

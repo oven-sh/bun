@@ -90,6 +90,7 @@ const {
 // destructures `{start, Recoverable, REPL_MODE_*}` at import time pays
 // nothing until start() is actually called.
 const { REPL_MODE_SLOPPY, REPL_MODE_STRICT } = require("internal/repl/mode");
+const { defineLazyProperties } = require("internal/shared");
 
 class Recoverable extends SyntaxError {
   constructor(err) {
@@ -106,9 +107,6 @@ function isValidSyntax() {
   return loadImpl().isValidSyntax.$apply(this, arguments);
 }
 
-// REPLServer / writer / repl / builtinModules stay accessors: REPLServer extends
-// readline.Interface so reading it means loading anyway, and writer carries a
-// mutable `.options` that references util.inspect.defaultOptions.
 let _loaded;
 function loadImpl() {
   if (_loaded) return _loaded;
@@ -404,7 +402,7 @@ class REPLServer extends Interface {
     if (options[kStandaloneREPL]) {
       // It is possible to introspect the running REPL accessing this variable
       // from inside the REPL. This is useful for anyone working on the REPL.
-      _loaded.repl = this;
+      __node_module__.exports.repl = this;
     } else {
       addProcessNewListener();
       this.once("exit", removeProcessNewListener);
@@ -723,7 +721,7 @@ class REPLServer extends Interface {
     defineDefaultCommands(this);
 
     // Figure out which "writer" function to use
-    self.writer = options.writer || _loaded.writer;
+    self.writer = options.writer || __node_module__.exports.writer;
 
     if (self.writer === writer) {
       // Conditionally turn on ANSI coloring.
@@ -1509,18 +1507,8 @@ ObjectAssign(__node_module__.exports, {
   REPL_MODE_STRICT,
   isValidSyntax,
 });
-// Accessors for what can't be hollow: REPLServer extends readline.Interface,
-// writer carries a mutable .options bound to util.inspect.defaultOptions, and
-// repl is assigned by createInternalRepl.
-for (const name of ["REPLServer", "writer", "repl"]) {
-  ObjectDefineProperty(__node_module__.exports, name, {
-    __proto__: null,
-    get: () => loadImpl()[name],
-    set: v => { loadImpl()[name] = v; },
-    enumerable: true,
-    configurable: true,
-  });
-}
+// Data properties, as in node. REPLServer needs node:readline and writer needs inspect, so both load on first read.
+defineLazyProperties(__node_module__.exports, ["REPLServer", "writer"], name => loadImpl()[name]);
 for (const name of ["builtinModules", "_builtinLibs"]) {
   ObjectDefineProperty(__node_module__.exports, name, {
     __proto__: null,

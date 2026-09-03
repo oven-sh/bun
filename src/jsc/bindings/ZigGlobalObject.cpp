@@ -327,6 +327,13 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
             // it off in Bun while upstream stabilises it.
             // BUN_JSC_useWasmMemory64=1 re-enables it for opt-in testing.
             JSC::Options::useWasmMemory64() = false;
+#if OS(WINDOWS)
+            // oven-sh/WebKit#553 starts the MarkedBlock warm-up helper thread from
+            // the allocation slow path once the heap has ramped; on Windows that
+            // hangs the sampling profiler (@datadog/pprof, test/integration/datadog-pprof).
+            // BUN_JSC_useWarmUpMarkedBlocks=1 re-enables it.
+            JSC::Options::useWarmUpMarkedBlocks() = false;
+#endif
             JSC::dangerouslyOverrideJSCBytecodeCacheVersion(getWebKitBytecodeCacheVersion());
 
 #ifdef BUN_DEBUG

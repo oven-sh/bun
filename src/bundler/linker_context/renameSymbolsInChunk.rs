@@ -8,7 +8,9 @@ use bun_ast::symbol;
 use bun_ast::{Part, Ref, SlotCounts};
 
 use crate::bun_renamer as renamer;
-use crate::bun_renamer::{ChunkRenamer, MinifyRenamer, NumberRenamer, StableSymbolCount};
+use crate::bun_renamer::{
+    ChunkRenamer, MinifyRenamer, NumberRenamer, ScopeUses, StableSymbolCount,
+};
 use crate::chunk::Content;
 use crate::js_meta;
 use crate::{Chunk, LinkerContext, StableRef, WrapKind};
@@ -72,7 +74,7 @@ pub(crate) unsafe fn rename_symbols_in_chunk(
     // elements; the lists do not reallocate during this function. Read-only
     // columns are deref'd to `&[T]`; the two written columns
     // (`module_scope`, `parts`) are deref'd to `&mut [T]` — see CONCURRENCY
-    // note above re: code-splitting overlap. All eleven derefs share the same
+    // note above re: code-splitting overlap. All derefs share the same
     // invariant, so they are grouped under one `unsafe` block.
     let (
         all_module_scopes,
@@ -86,7 +88,8 @@ pub(crate) unsafe fn rename_symbols_in_chunk(
         module_ref_col,
         nested_slot_counts_col,
         cjs_export_copies_col,
-    ): (_, &[js_meta::Flags], _, _, _, _, _, _, _, _, _) = unsafe {
+        scope_uses_col,
+    ): (_, &[js_meta::Flags], _, _, _, _, _, _, _, _, _, _) = unsafe {
         (
             &mut *ast.module_scope,
             &*meta.flags,
@@ -99,6 +102,7 @@ pub(crate) unsafe fn rename_symbols_in_chunk(
             &*ast.module_ref,
             &*ast.nested_scope_slot_counts,
             &*meta.cjs_export_copies,
+            &*ast.scope_uses,
         )
     };
 
@@ -207,8 +211,8 @@ pub(crate) unsafe fn rename_symbols_in_chunk(
         let mut freq = bun_ast::CharFreq { freqs: [0i32; 64] };
 
         for &source_index in files_in_order {
-            if ast_flags_col[source_index as usize].contains(AstFlags::HAS_CHAR_FREQ) {
-                freq.include(&char_freq_col[source_index as usize]);
+            if let Some(char_freq) = &char_freq_col[source_index as usize] {
+                freq.include(char_freq);
             }
         }
 
@@ -451,19 +455,32 @@ pub(crate) unsafe fn rename_symbols_in_chunk(
         r.add_top_level_symbol(copy);
     }
 
-    for &(source_index, scope) in &nested_scopes {
-        // Raw pointer for borrowck: `assign_names_*` takes `&mut r` plus
-        // `r.root`, and never reaches `self.root` through `self`.
-        let root: *mut renamer::NumberScope = core::ptr::addr_of_mut!(r.root);
-        // SAFETY: each `scope` is a live arena-allocated scope collected
-        // above; nothing mutates those scopes in between.
-        r.assign_names_recursive_with_number_scope(
-            root,
-            unsafe { &*scope },
+    // `nested_scopes` is grouped by file.
+    for group in nested_scopes.chunk_by(|a, b| a.0 == b.0) {
+        let source_index = group[0].0;
+        let uses = ScopeUses::new(
             source_index,
-            &mut sorted,
+            &scope_uses_col[source_index as usize],
+            all_parts[source_index as usize].as_slice(),
+            &c.graph.parts_live[source_index as usize],
+            // SAFETY: `symbols` points to the live `c.graph.symbols`; read-only here.
+            unsafe { &*symbols },
         );
-        r.number_scope_pool.hive.used = bun_collections::hive_array::HiveBitSet::init_empty();
+        for &(_, scope) in group {
+            // Raw pointer for borrowck: `assign_names_*` takes `&mut r` plus
+            // `r.root`, and never reaches `self.root` through `self`.
+            let root: *mut renamer::NumberScope = core::ptr::addr_of_mut!(r.root);
+            // SAFETY: each `scope` is a live arena-allocated scope collected
+            // above; nothing mutates those scopes in between.
+            r.assign_names_recursive_with_number_scope(
+                root,
+                unsafe { &*scope },
+                source_index,
+                &mut sorted,
+                &uses,
+            );
+            r.number_scope_pool.hive.used = bun_collections::hive_array::HiveBitSet::init_empty();
+        }
     }
 
     Ok(ChunkRenamer::Number(r))

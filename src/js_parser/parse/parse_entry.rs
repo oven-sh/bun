@@ -1717,7 +1717,7 @@ impl<'a> Parser<'a> {
                 p.symbols.as_mut_slice()[p.module_ref.inner_index() as usize].use_count_estimate =
                     0;
                 match part.symbol_uses.get_mut(&found.namespace_ref) {
-                    Some(uses) if uses.count_estimate > 1 => uses.count_estimate -= 1,
+                    Some(uses) if uses.count_estimate() > 1 => uses.subtract(1),
                     _ => {
                         let _ = part.symbol_uses.swap_remove(&found.namespace_ref);
                     }

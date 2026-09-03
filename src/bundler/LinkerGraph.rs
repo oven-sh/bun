@@ -460,11 +460,9 @@ pub(crate) fn generate_symbol_import_and_use(
         let part: &mut Part = &mut parts[source_index as usize].as_mut_slice()[part_index as usize];
         let uses_entry = part.symbol_uses.get_or_put(ref_)?;
         if !uses_entry.found_existing {
-            *uses_entry.value_ptr = symbol::Use {
-                count_estimate: use_count,
-            };
+            *uses_entry.value_ptr = symbol::Use::unscoped(use_count);
         } else {
-            uses_entry.value_ptr.count_estimate += use_count;
+            uses_entry.value_ptr.merge(symbol::Use::unscoped(use_count));
         }
     }
 

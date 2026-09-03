@@ -19,7 +19,6 @@ pub(crate) type MemberHashMap = StringHashMap<Member, AstAlloc>;
 // longer derives `Clone` (private `origin` field); callers that need a shallow copy must
 // `core::mem::take` or `core::ptr::read` instead.
 pub struct Scope {
-    pub id: usize,
     pub kind: Kind,
     // BACKREF: parent owns this scope via `children`. `StoreRef` (arena
     // back-pointer with safe `Deref`/`DerefMut`) so callers don't open-code
@@ -31,6 +30,10 @@ pub struct Scope {
     pub members: MemberHashMap,
     /// `AstVec`: arena-backed.
     pub generated: AstVec<Ref>,
+    /// This scope's index in the visit pass's pre-order walk and the index of
+    /// the last scope inside it, which `Ast::scope_uses` refers to.
+    /// `u32::MAX` for a scope the visit pass never entered.
+    pub visit_span: [u32; 2],
 
     // This is used to store the ref of the label symbol for ScopeLabel scopes.
     pub label_ref: Ref,
@@ -64,12 +67,12 @@ impl Scope {
     /// const-folded zero header rather than three out-of-line `default()`
     /// calls. `AstAlloc::vec` and `StringHashMap::new_in` are both `const fn`.
     pub const EMPTY: Self = Self {
-        id: 0,
         kind: Kind::Block,
         parent: None,
         children: AstAlloc::vec(),
         members: MemberHashMap::new_in(AstAlloc),
         generated: AstAlloc::vec(),
+        visit_span: [u32::MAX, u32::MAX],
         label_ref: Ref::NONE,
         label_stmt_is_loop: false,
         contains_direct_eval: false,
@@ -88,6 +91,13 @@ impl Default for Scope {
 }
 
 impl Scope {
+    /// `(first, last)`: this scope and everything inside it, as visit-pass
+    /// pre-order indices. `None` if the visit pass did not enter and leave it.
+    pub fn visit_span(&self) -> Option<(u32, u32)> {
+        let [first, last] = self.visit_span;
+        (first != u32::MAX && first <= last).then_some((first, last))
+    }
+
     // Must agree with `StringHashMap`'s `BuildHasher` (`bun_wyhash::BuildHasher`,
     // i.e. `BuildHasherDefault<OneShotHasher>`) so the precomputed hash can be
     // fed to `get_hashed` without a rehash per scope level. If the map's hasher

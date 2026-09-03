@@ -531,6 +531,19 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) module_scope: js_ast::StoreRef<js_ast::Scope>,
     pub(crate) module_scope_directive_loc: bun_ast::Loc,
     pub(crate) is_control_flow_dead: bool,
+    /// Fill `scope_uses` (bundling with the number renamer).
+    pub(crate) track_scope_uses: bool,
+    /// Next `Scope::visit_span` pre-order index. The module scope is 0.
+    pub(crate) visit_scope_count: u32,
+    /// Class body scopes whose field initializer is being visited. Lowering
+    /// may move the initializer into the constructor, so its uses count as
+    /// uses anywhere in the class body.
+    pub(crate) field_init_class_bodies: Vec<js_ast::StoreRef<Scope>>,
+    /// Becomes `Ast::scope_uses`.
+    pub(crate) scope_uses: Vec<js_ast::ast_result::ScopeUse>,
+    /// `(class body scope, symbol)`; becomes `Ast::scope_uses.spans` once the
+    /// visit pass has numbered every scope. A `None` scope is the whole file.
+    pub(crate) span_uses: Vec<(Option<js_ast::StoreRef<Scope>>, u32)>,
 
     /// True while `visit_single_stmt` is visiting a non-block body. `if`,
     /// `else`, `while`, and `do` reach it without pushing a scope, so inside
@@ -1778,7 +1791,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             symbols[r#ref.inner_index() as usize].use_count_estimate = symbols
                 [r#ref.inner_index() as usize]
                 .use_count_estimate
-                .saturating_sub(prev.count_estimate);
+                .saturating_sub(prev.count_estimate());
         }
         let declared_refs = part.declared_symbols.refs();
         for declared in declared_refs {
@@ -1787,6 +1800,54 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     // s() lives in the impl block above (deduped).
+
+    fn take_scope_uses(&mut self) -> js_ast::ast_result::ScopeUseList {
+        use js_ast::ast_result::{ScopeUseList, ScopeUseSpan};
+        if !self.track_scope_uses {
+            return ScopeUseList::default();
+        }
+        // Pushed first in the visit pass and never popped.
+        self.module_scope_mut().visit_span[1] = self.visit_scope_count.saturating_sub(1);
+        let file = ScopeUseSpan::whole_file;
+        let mut spans: Vec<ScopeUseSpan> = Vec::with_capacity(self.span_uses.len() + 2);
+        for &(scope, symbol) in &self.span_uses {
+            spans.push(match scope.and_then(|scope| scope.visit_span()) {
+                Some((first, last)) => ScopeUseSpan {
+                    symbol,
+                    first,
+                    last,
+                },
+                None => file(symbol),
+            });
+        }
+        // `module.exports` prints as `exports`, `exports` may print as
+        // `module.exports`.
+        spans.push(file(self.exports_ref.inner_index()));
+        spans.push(file(self.module_ref.inner_index()));
+        // The parser may print a temporary or helper it generated in a deeper
+        // scope than it referenced it in; not so its generated import items.
+        fn generated(symbols: &[Symbol], scope: &Scope, spans: &mut Vec<ScopeUseSpan>) {
+            for ref_ in scope.generated.slice() {
+                if symbols[ref_.inner_index() as usize].kind != js_ast::symbol::Kind::Import {
+                    spans.push(ScopeUseSpan::whole_file(ref_.inner_index()));
+                }
+            }
+            for child in scope.children.slice() {
+                generated(symbols, child, spans);
+            }
+        }
+        generated(self.symbols.as_slice(), self.module_scope(), &mut spans);
+        spans.sort_unstable();
+        spans.dedup();
+
+        let list = ScopeUseList {
+            tracked: true,
+            points: bun_alloc::AstAlloc::vec_from_slice(&self.scope_uses),
+            spans: bun_alloc::AstAlloc::vec_from_slice(&spans),
+        };
+        self.scope_uses = Vec::new();
+        list
+    }
 
     fn compute_character_frequency(&mut self) -> Option<js_ast::CharFreq> {
         if !self.options.features.minify_identifiers || self.is_source_runtime() {
@@ -1935,6 +1996,45 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     pub(crate) fn record_usage(&mut self, ref_: Ref) {
+        self.record_usage_impl(ref_, true);
+    }
+
+    fn record_scope_use(&mut self, ref_: Ref) {
+        if !self.track_scope_uses {
+            return;
+        }
+        let symbol = ref_.inner_index();
+        let scope = self.current_scope;
+        if scope.visit_span[0] == u32::MAX {
+            // The parse pass (TypeScript decorator metadata resolves type
+            // names then): no scope numbering yet.
+            self.span_uses.push((None, symbol));
+        } else if scope.kind == js_ast::scope::Kind::ClassBody {
+            // A field initializer is visited in the class body scope but may
+            // be printed inside the constructor.
+            if self.span_uses.last().copied() != Some((Some(scope), symbol)) {
+                self.span_uses.push((Some(scope), symbol));
+            }
+        } else {
+            let point = js_ast::ast_result::ScopeUse {
+                scope: scope.visit_span[0],
+                symbol,
+            };
+            if self.scope_uses.last().copied() != Some(point) {
+                self.scope_uses.push(point);
+            }
+        }
+        for &class_body in &self.field_init_class_bodies {
+            if self.span_uses.last().copied() != Some((Some(class_body), symbol)) {
+                self.span_uses.push((Some(class_body), symbol));
+            }
+        }
+    }
+
+    /// `scope_use = false`: the reference can never be captured by renaming
+    /// another binding (an unbound global, whose name every scope already
+    /// avoids), so `scope_uses` skips it.
+    pub(crate) fn record_usage_impl(&mut self, ref_: Ref, scope_use: bool) {
         if self.is_revisit_for_substitution {
             return;
         }
@@ -1949,7 +2049,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .get_or_put(ref_)
                 .expect("unreachable")
                 .value_ptr
-                .count_estimate += 1;
+                .add_scoped(1);
+            if scope_use {
+                self.record_scope_use(ref_);
+            }
         }
 
         // The correctness of TypeScript-to-JavaScript conversion relies on accurate
@@ -3661,7 +3764,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             self.panic("Scope mismatch while visiting", format_args!(""));
         }
 
-        self.current_scope = order.scope_ref();
+        let mut scope = order.scope_ref();
+        scope.visit_span[0] = self.visit_scope_count;
+        self.visit_scope_count += 1;
+        self.current_scope = scope;
         self.scopes_for_current_part.push(order.scope);
         Ok(())
     }
@@ -5252,6 +5358,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
+        // The parse pass pops scopes before the visit pass numbers them.
+        let mut scope = current_scope;
+        if scope.visit_span[0] != u32::MAX {
+            scope.visit_span[1] = self.visit_scope_count - 1;
+        }
         self.current_scope = current_scope.parent.unwrap_or_else(|| {
             self.panic(
                 "Internal error: attempted to call popScope() on the topmost scope",
@@ -6496,7 +6607,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let Some(use_) = self.symbol_uses.get_mut(&base) else {
             return false;
         };
-        use_.count_estimate = use_.count_estimate.saturating_sub(1);
+        use_.subtract(1);
         // note: this use is not removed as we assume it exists later
 
         let gop = self
@@ -6522,8 +6633,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let Some(mut use_) = self.symbol_uses.get(&r#ref).copied() else {
                 return;
             };
-            use_.count_estimate = use_.count_estimate.saturating_sub(1);
-            if use_.count_estimate == 0 {
+            use_.subtract(1);
+            if use_.count_estimate() == 0 {
                 let _ = self.symbol_uses.swap_remove(&r#ref);
             } else {
                 self.symbol_uses.put_assume_capacity(r#ref, use_);
@@ -9145,7 +9256,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let ts_enums = self.compute_ts_enums_map(arena)?;
 
-        let char_freq: Option<js_ast::CharFreq> = self.compute_character_frequency();
+        let char_freq = self.compute_character_frequency().map(bun_alloc::ast_box);
+        let scope_uses = self.take_scope_uses();
 
         let module_scope_strict = self.module_scope().strict_mode;
         // Scope is not `Clone` (Vec/HashMap members), so move it out and leave
@@ -9216,6 +9328,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             export_keyword: self.esm_export_keyword,
             top_level_symbols_to_parts,
             char_freq,
+            scope_uses,
             directive: if module_scope_strict == js_ast::StrictModeKind::ExplicitStrictMode {
                 Some(bun_ast::StoreStr::new(b"use strict"))
             } else {
@@ -9447,6 +9560,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // literal in the by-value-return shape; now precomputed so the
         // literal below is the *only* write to `*out`). ───
         lexer.track_comments = opts.features.minify_identifiers;
+        let track_scope_uses = opts.bundle && !opts.features.minify_identifiers;
         lexer.track_react_suppressions = opts.features.react_compiler.is_enabled();
 
         if !TYPESCRIPT {
@@ -9622,6 +9736,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             scope_order_to_visit: &[],
             module_scope_directive_loc: bun_ast::Loc::default(),
             is_control_flow_dead: false,
+            track_scope_uses,
+            visit_scope_count: 0,
+            field_init_class_bodies: Vec::new(),
+            scope_uses: Vec::new(),
+            span_uses: Vec::new(),
             is_inside_single_stmt_body: false,
             is_revisit_for_substitution: false,
             method_call_must_be_replaced_with_undefined: false,

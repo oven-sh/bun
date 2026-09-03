@@ -629,21 +629,9 @@ trait NameScopes {
     /// Takes `name` for `owner` in the current scope if free, else the first
     /// free `name2`, `name3`, …. `None`: `name` itself was free.
     fn find_unused_name(&mut self, input_name: NameStr, owner: Ref) -> Option<NameStr> {
-        // `MutableString::ensure_valid_identifier` always heap-allocates, even
-        // when the input is already a valid ASCII identifier; the strict-mode
-        // reserved-word remap (`let` → `_let`, ...) is the only transform that
-        // fires for an otherwise-valid ASCII name.
-        let owned_name;
-        let (name, normalized): (&[u8], bool) = if is_simple_ascii_identifier(input_name.slice())
-            && !bun_ast::lexer_tables::is_strict_mode_reserved_word(input_name.slice())
-        {
-            (input_name.slice(), false)
-        } else {
-            owned_name =
-                MutableString::ensure_valid_identifier(input_name.slice()).expect("unreachable");
-            (&owned_name, true)
-        };
-        debug_assert!(js_lexer::is_identifier(name));
+        let owned_name = valid_identifier_for(input_name.slice());
+        let normalized = owned_name.is_some();
+        let name: &[u8] = owned_name.as_deref().unwrap_or_else(|| input_name.slice());
 
         let id = self.id_of(name);
         let use_ = self.find(id);
@@ -678,15 +666,10 @@ trait NameScopes {
             NameUse::SameScope(count) => count,
             _ => 1,
         };
-        let mut candidate = MutableString::init_empty();
-        candidate
-            .grow_if_needed(name.len() + 4)
-            .expect("unreachable");
-        candidate.append_slice(name).expect("unreachable");
+        let mut candidate = numbered_name_buffer(name);
         loop {
             tries += 1;
-            candidate.reset_to(name.len());
-            candidate.append_int(tries as u64).expect("unreachable");
+            write_numbered_name(&mut candidate, name.len(), tries);
             let candidate_id = self.id_of(candidate.slice());
             if let NameUse::Unused = self.find(candidate_id) {
                 let scope = self.scope();
@@ -721,6 +704,39 @@ trait NameScopes {
             }
         }
     }
+}
+
+/// `name` made a valid identifier (`let` → `_let`, non-ASCII escapes), or
+/// `None` when it already is one.
+fn valid_identifier_for(name: &[u8]) -> Option<Box<[u8]>> {
+    // `MutableString::ensure_valid_identifier` always heap-allocates, even
+    // when the input is already a valid ASCII identifier; the strict-mode
+    // reserved-word remap is the only transform that fires for an
+    // otherwise-valid ASCII name.
+    if is_simple_ascii_identifier(name)
+        && !bun_ast::lexer_tables::is_strict_mode_reserved_word(name)
+    {
+        debug_assert!(js_lexer::is_identifier(name));
+        return None;
+    }
+    let valid = MutableString::ensure_valid_identifier(name).expect("unreachable");
+    debug_assert!(js_lexer::is_identifier(&valid));
+    Some(valid)
+}
+
+fn numbered_name_buffer(name: &[u8]) -> MutableString {
+    let mut candidate = MutableString::init_empty();
+    candidate
+        .grow_if_needed(name.len() + 4)
+        .expect("unreachable");
+    candidate.append_slice(name).expect("unreachable");
+    candidate
+}
+
+/// `candidate[..prefix_len]` followed by `n`.
+fn write_numbered_name(candidate: &mut MutableString, prefix_len: usize, n: u32) {
+    candidate.reset_to(prefix_len);
+    candidate.append_int(u64::from(n)).expect("unreachable");
 }
 
 fn intern_into(ids: &mut NameIds, next_id: u32, name: NameStr) -> (u32, bool) {

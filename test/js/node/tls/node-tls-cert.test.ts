@@ -160,13 +160,9 @@ it("Request cert from TLS1.2 client that doesn't have one.", async () => {
 });
 
 it("Request cert from TLS1.3 client that doesn't have one.", async () => {
-  // TLS 1.3 completes the client's handshake before the server checks the
-  // client certificate. The rejection is a certificate_required alert that
-  // arrives after 'secureConnect', and Node emits it as an 'error' on the client.
-  // The code is BoringSSL's name for the alert: Node's test-tls-client-auth.js
-  // expects ERR_SSL_TLSV1_ALERT_CERTIFICATE_REQUIRED when
-  // process.features.openssl_is_boringssl is true, and
-  // ERR_SSL_TLSV13_ALERT_CERTIFICATE_REQUIRED with OpenSSL.
+  // TLS 1.3 finishes the client's handshake before the server checks the
+  // certificate, so the alert arrives after 'secureConnect'. The code is the
+  // BoringSSL name. With OpenSSL it is ERR_SSL_TLSV13_ALERT_CERTIFICATE_REQUIRED.
   const server = tls.createServer({
     key: serverTls.key,
     cert: serverTls.cert,

@@ -48,10 +48,7 @@ static uint8_t x86_cpu_features()
 
 #else
 
-    // cpuid directly, not `__builtin_cpu_supports`: that builtin links libgcc's
-    // `__cpu_indicator_init`, a constructor that runs a dozen cpuid instructions
-    // in every process before `main` (each one a VM exit under a hypervisor),
-    // while this function only runs on the crash-report path.
+    // Not __builtin_cpu_supports: it links __cpu_indicator_init, a constructor that runs cpuid before main.
     unsigned eax = 0, ebx = 0, ecx = 0, edx = 0;
     if (!__get_cpuid(1, &eax, &ebx, &ecx, &edx))
         return features;
@@ -61,8 +58,7 @@ static uint8_t x86_cpu_features()
     if (ecx & bit_POPCNT)
         features |= 1 << static_cast<uint8_t>(X86CPUFeature::popcnt);
 
-    // AVX also needs the OS to save the YMM state (XCR0 bits 1 and 2); AVX-512 the
-    // opmask and ZMM state too (bits 5, 6 and 7). The same checks as libgcc's.
+    // AVX needs the OS to save the YMM state (XCR0 bits 1 and 2), AVX-512 the ZMM state too (bits 5 to 7).
     uint64_t xcr0 = 0;
     if ((ecx & bit_OSXSAVE) && (ecx & bit_AVX)) {
         unsigned lo = 0, hi = 0;

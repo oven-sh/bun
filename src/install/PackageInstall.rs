@@ -1372,17 +1372,19 @@ impl<'a> PackageInstall<'a> {
                                         unsafe { windows::DeleteFileW(dest.as_ptr()) };
                                         copy_file()
                                     }
-                                    _ => match bun_paths::Dirname::dirname_u16(entry.path.as_slice())
-                                    {
-                                        Some(entry_dirname) => {
-                                            let _ = bun_sys::MakePath::make_path_u16(
-                                                destination_dir_,
-                                                entry_dirname,
-                                            );
-                                            copy_file()
+                                    _ => {
+                                        match bun_paths::Dirname::dirname_u16(entry.path.as_slice())
+                                        {
+                                            Some(entry_dirname) => {
+                                                let _ = bun_sys::MakePath::make_path_u16(
+                                                    destination_dir_,
+                                                    entry_dirname,
+                                                );
+                                                copy_file()
+                                            }
+                                            None => false,
                                         }
-                                        None => false,
-                                    },
+                                    }
                                 };
                                 if copied {
                                     continue;

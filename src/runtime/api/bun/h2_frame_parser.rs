@@ -7521,10 +7521,10 @@ impl H2FrameParser {
         self.native_socket.detach();
     }
 
-    /// node keeps these session limits as doubles, so callers such as grpc-js pass
-    /// `Number.MAX_SAFE_INTEGER` to mean "no limit". Saturate instead of wrapping.
+    /// Session limits are u32 fields. Saturate so a huge value (grpc-js passes
+    /// `Number.MAX_SAFE_INTEGER` to mean "no limit") does not wrap to 0.
     fn session_option_u32(value: JSValue) -> u32 {
-        value.as_number() as u32
+        u32::try_from(value.to_uint64_no_truncate()).unwrap_or(u32::MAX)
     }
 
     pub(crate) fn constructor(
@@ -7678,7 +7678,7 @@ impl H2FrameParser {
                     if max_pings.is_number() {
                         this_ref
                             .max_outstanding_pings
-                            .set(max_pings.as_number() as u64);
+                            .set(max_pings.to_uint64_no_truncate());
                     }
                 }
                 if let Some(max_memory) = settings_js.get(global_object, "maxSessionMemory")? {

@@ -49,6 +49,25 @@ it(`Bun.hash.xxHash64()`, () => {
   expect(Bun.hash.xxHash64("", 16269921104521594740n)).toBe(3224619365169652240n);
   gcTick();
 });
+// A Number seed is read through the same u64 conversion as node:http2 session limits.
+// Doubles at or above 2^51 used to read as 0 (#41294); now they read exactly, and values
+// at or above 2^64 saturate to 2^64 - 1.
+it("Bun.hash.xxHash64() reads a large Number seed exactly", () => {
+  const input = "hello world";
+  const seeds = [2 ** 51 - 1, 2 ** 51, Number.MAX_SAFE_INTEGER, 2 ** 60, 2 ** 63];
+  expect(seeds.map(seed => Bun.hash.xxHash64(input, seed))).toEqual(
+    seeds.map(seed => Bun.hash.xxHash64(input, BigInt(seed))),
+  );
+  expect(Bun.hash.xxHash64(input, 2 ** 51)).not.toBe(Bun.hash.xxHash64(input, 0));
+  expect([2 ** 64, Infinity].map(seed => Bun.hash.xxHash64(input, seed))).toEqual([
+    Bun.hash.xxHash64(input, 2n ** 64n - 1n),
+    Bun.hash.xxHash64(input, 2n ** 64n - 1n),
+  ]);
+  expect([-1.5, NaN].map(seed => Bun.hash.xxHash64(input, seed))).toEqual([
+    Bun.hash.xxHash64(input, 0),
+    Bun.hash.xxHash64(input, 0),
+  ]);
+});
 it(`Bun.hash.xxHash3()`, () => {
   expect(Bun.hash.xxHash3("hello world")).toBe(0xd447b1ea40e6988bn);
   gcTick();

@@ -4430,14 +4430,15 @@ uint64_t JSC__JSValue__toUInt64NoTruncate(JSC::EncodedJSValue val)
     }
     ASSERT(value.isDouble());
 
-    int64_t result = JSC::tryConvertToInt52(value.asDouble());
-    if (result != JSC::JSValue::notInt52) {
-        if (result < 0)
-            return 0;
-
-        return static_cast<uint64_t>(result);
-    }
-    return 0;
+    // Saturate: NaN and negatives read as 0, values at or above 2^64 read as
+    // UINT64_MAX. Callers pass Number.MAX_SAFE_INTEGER (or Infinity) to mean
+    // "no limit", so a huge double must not collapse to 0.
+    double number = value.asDouble();
+    if (!(number >= 0.0))
+        return 0;
+    if (number >= 18446744073709551616.0)
+        return std::numeric_limits<uint64_t>::max();
+    return static_cast<uint64_t>(number);
 }
 
 JSC::EncodedJSValue JSC__JSValue__createObject2(JSC::JSGlobalObject* globalObject, const EncodedSlice* arg1,

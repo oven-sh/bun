@@ -5779,8 +5779,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// Takes the calls that `note_commonjs_export_use` recorded out of each part.
-    /// A call of an export that can read `this` prints as `exports.name()`.
+    /// Moves the recorded calls out of each part. A call that reads `this` uses `exports_ref`.
     fn use_namespace_for_method_calls(&self, parts: &mut [js_ast::Part]) {
         for part in parts {
             let Some(uses) = part.import_symbol_property_uses.as_mut() else {

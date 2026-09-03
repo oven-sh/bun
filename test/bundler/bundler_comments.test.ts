@@ -298,6 +298,15 @@ describe("single-line comments", () => {
     },
   });
 
+  itBundled("many markers after leading whitespace in a single-line comment", {
+    files: {
+      "/entry.js": `//${Buffer.alloc(4096, " ").toString()}${Buffer.alloc(4096, "@").toString()}__PURE__\nconsole.log("hello");`,
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("hello");
+    },
+  });
+
   itBundled("__PURE__ comment in single-line comment with text after", {
     files: {
       "/entry.js": `// #__PURE__ some text\nconsole.log("hello");`,

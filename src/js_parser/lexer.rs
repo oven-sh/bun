@@ -2068,6 +2068,9 @@ impl<'a> Lexer<'a> {
     fn scan_single_line_comment(&mut self) {
         // PERF: keep the source slice register-resident — see `next_codepoint_with`.
         let contents: &[u8] = self.contents;
+        // `__PURE__` must be the first word of a `//` comment. Only the first
+        // `#` / `@` can qualify.
+        let mut first_marker = true;
         loop {
             // Find index of newline (ASCII/Unicode), non-ASCII, '#', or '@'.
             if let Some(relative_index) =
@@ -2090,10 +2093,11 @@ impl<'a> Lexer<'a> {
 
                     0x23 | 0x40 => {
                         let pragma_trigger_pos = self.end;
-                        // `__PURE__` must be the first word of a `//` comment.
-                        let allow_pure = strings::is_all_whitespace(
-                            &contents[self.start + 2..pragma_trigger_pos],
-                        );
+                        let allow_pure = first_marker
+                            && strings::is_all_whitespace(
+                                &contents[self.start + 2..pragma_trigger_pos],
+                            );
+                        first_marker = false;
                         let chunk = js_ast::StoreStr::new(self.remaining());
                         self.current +=
                             self.scan_pragma(pragma_trigger_pos, chunk.slice(), true, allow_pure);

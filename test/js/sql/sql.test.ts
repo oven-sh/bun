@@ -243,16 +243,18 @@ if (isDockerEnabled()) {
             id SERIAL PRIMARY KEY,
             tags TEXT[],
             nums INT[],
-            flags BOOLEAN[]
+            flags BOOLEAN[],
+            blobs BYTEA[]
         );`;
 
-        const [{ id, tags, nums, flags }] =
-          await sql`insert into ${sql(random_name)} (tags, nums, flags) values (${sql.array(["a", 'b"c', null])}, ${sql.array([1, 2, 3])}, ${sql.array([true, false])}) returning *`;
-        expect({ id, tags, nums, flags }).toEqual({
+        const [{ id, tags, nums, flags, blobs }] =
+          await sql`insert into ${sql(random_name)} (tags, nums, flags, blobs) values (${sql.array(["a", 'b"c', null])}, ${sql.array([1, 2, 3])}, ${sql.array([true, false])}, ${sql.array([Buffer.from("hi"), Buffer.from([0, 255])])}) returning *`;
+        expect({ id, tags, nums, flags, blobs }).toEqual({
           id: 1,
           tags: ["a", 'b"c', null],
           nums: new Int32Array([1, 2, 3]),
           flags: [true, false],
+          blobs: [Buffer.from("hi"), Buffer.from([0, 255])],
         });
 
         // the stored strings carry no JSON quotes

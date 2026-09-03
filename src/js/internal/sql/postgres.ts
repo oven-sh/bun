@@ -196,7 +196,8 @@ function arrayValueSerializer(type: ArrayType, is_numeric: boolean, is_json: boo
         const hexValue = value.toString("hex");
         // bytea array
         if (type === "BYTEA") {
-          return `"\\x${arrayEscape(hexValue)}"`;
+          // The array parser unescapes the backslash, so byteain sees \xHEX.
+          return `"${arrayEscape("\\x" + hexValue)}"`;
         }
         if (is_json) {
           return `"${arrayEscape(JSON.stringify(hexValue))}"`;

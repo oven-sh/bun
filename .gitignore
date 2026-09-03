@@ -53,6 +53,7 @@ Library/Caches
 **/*.sln*
 **/*.vcxproj*
 **/package-lock.json
+!/package-lock.json
 /.cache
 /.webkit-cache
 /build-*/

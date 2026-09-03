@@ -158,21 +158,18 @@ export function registerCodegenRules(n: Ninja, cfg: Config): void {
   });
   n.pool("bun_install", 1);
 
-  // `--root-package-manager=npm` installs the root package.json with npm.
-  // npm cannot read bun.lock, so the versions come from the package.json
-  // ranges. The rule deletes node_modules first, as `npm ci` does: npm fails
-  // on the symlinks that `bun install` writes (it reads each linked package's
-  // devDependencies). On Windows, `rmdir /s /q` reports success even when it
-  // cannot delete a file, so the rule checks that node_modules is gone. npm is
-  // a batch file there, and `call` returns to this line.
+  // `--root-package-manager=npm` installs the root package.json with `npm ci`
+  // from package-lock.json, which `bun run lock:npm` writes from bun.lock.
+  // `npm ci` replaces node_modules, so a tree that `bun install` wrote does
+  // not get in the way. On Windows, npm is a batch file, and `call` returns
+  // to this line.
   if (cfg.npm !== undefined) {
     const npm = q(cfg.npm);
-    const args = "install --no-save --no-package-lock --include=dev --no-audit --no-fund";
-    const clean = "(if exist node_modules rmdir /s /q node_modules) && (if exist node_modules exit 1)";
+    const args = "ci --include=dev --no-audit --no-fund";
     n.rule("npm_install", {
       command: hostWin
-        ? `cmd /c "cd /d $dir && ${clean} && call ${npm} ${args} && ${touch} $stamp"`
-        : `cd $dir && rm -rf node_modules && ${npm} ${args} && ${touch} $stamp`,
+        ? `cmd /c "cd /d $dir && call ${npm} ${args} && ${touch} $stamp"`
+        : `cd $dir && ${npm} ${args} && ${touch} $stamp`,
       description: "npm install $dir",
       restat: true,
       pool: "bun_install",
@@ -362,8 +359,8 @@ function emitBunInstall(
   assert(depPackageJsons.length > 0, `package.json has no dependencies: ${pkgDir}/package.json`);
 
   const pkgJson = resolve(pkgDir, "package.json");
-  const lockfile = resolve(pkgDir, "bun.lock");
-  // bun.lock is optional (some packages might not have one yet), but if it
+  const lockfile = resolve(pkgDir, rule === "npm_install" ? "package-lock.json" : "bun.lock");
+  // The lockfile is optional (some packages might not have one yet), but if it
   // exists it MUST be an input — lockfile bumps reinstall.
   const inputs = [pkgJson];
   try {

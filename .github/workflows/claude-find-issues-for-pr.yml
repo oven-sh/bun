@@ -31,7 +31,7 @@ jobs:
           persist-credentials: false
 
       - name: Find issues this PR may fix
-        uses: anthropics/claude-code-action/base-action@3f854a8fb5146b39d5cbf8b57f70d80810e1366f # v1.0.198
+        uses: anthropics/claude-code-action/base-action@e8c2d7c16c018cf1e694711c1c07a5f5db2b5eb1 # v1.0.208
         env:
           ANTHROPIC_MODEL: claude-opus-5
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -41,7 +41,7 @@ jobs:
 
       - name: Find duplicate PRs
         if: always()
-        uses: anthropics/claude-code-action/base-action@3f854a8fb5146b39d5cbf8b57f70d80810e1366f # v1.0.198
+        uses: anthropics/claude-code-action/base-action@e8c2d7c16c018cf1e694711c1c07a5f5db2b5eb1 # v1.0.208
         env:
           ANTHROPIC_MODEL: claude-opus-5
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

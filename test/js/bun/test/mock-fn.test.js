@@ -1174,6 +1174,42 @@ describe("spyOn", () => {
       expect(fn).not.toHaveBeenCalled();
     });
 
+    test("spyOn works with indexed properties that hold a non-function value", () => {
+      const arr = [];
+      arr[0] = 42;
+
+      for (const target of [arr, [42], { 0: 42 }]) {
+        const fn = spyOn(target, 0);
+        expect(fn).not.toHaveBeenCalled();
+        expect(target[0]).toBe(42);
+        expect(fn).toHaveBeenCalledTimes(1);
+
+        target[0] = 1;
+        expect(fn).toHaveBeenCalledTimes(2);
+        expect(fn.mock.calls[1]).toEqual([1]);
+        expect(target[0]).toBe(42);
+
+        fn.mockRestore();
+        expect(fn).not.toHaveBeenCalled();
+        expect(target[0]).toBe(42);
+        target[0] = 1;
+        expect(target[0]).toBe(1);
+      }
+    });
+
+    test("spyOn twice on a missing indexed property throws instead of crashing", () => {
+      const arr = [];
+      const fn = spyOn(arr, 4);
+      expect(arr[4]).toBeUndefined();
+      expect(fn).toHaveBeenCalledTimes(1);
+      expect(() => spyOn(arr, 4)).toThrow("spyOn(target, prop) does not support accessor properties yet");
+
+      fn.mockRestore();
+      expect(Object.hasOwn(arr, 4)).toBe(true);
+      expect(arr[4]).toBeUndefined();
+      expect(fn).not.toHaveBeenCalled();
+    });
+
     // The engine serves a function's `prototype` property specially, so it cannot be
     // replaced with a getter/setter spy; historically this crashed the process.
     test("spyOn on a function's prototype property throws instead of crashing", () => {

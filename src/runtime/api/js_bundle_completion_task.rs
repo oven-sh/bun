@@ -1042,8 +1042,9 @@ impl CompletionStruct for JSBundleCompletionTask {
             config.compile = None;
         }
         if let Some(compile) = &config.compile {
+            let executable = executable_path(config, compile);
             transpiler.options.compile_entry_point_name =
-                Box::from(executable_entry_point_name(&executable_path(config, compile)));
+                Box::from(executable_entry_point_name(&executable));
         }
         // `BundleOptions.{banner,footer}` are `Cow<'static, [u8]>`; clone into
         // Owned so the static bound holds without tying `&mut self` to `'a`.

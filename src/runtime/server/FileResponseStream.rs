@@ -339,9 +339,11 @@ impl FileResponseStream {
                     },
                     self.as_ptr(),
                 );
-                #[cfg(not(unix))]
-                // SAFETY: reader entry point; `pause()` does not call back into
-                // this object.
+                // `false` only ends a synchronous read loop. A pollable fd
+                // re-arms its poll after EAGAIN and a Windows read completes
+                // later, so both keep writing into the backpressured response
+                // until the reader is paused. `on_writable` unpauses it.
+                // `pause()` does not call back into this object.
                 self.reader_mut().pause();
                 false
             }
@@ -393,6 +395,8 @@ impl FileResponseStream {
         }
         self.resp.get().timeout(self.idle_timeout.get());
         self.hold_read_ref();
+        // A paused POSIX reader ignores `read()`.
+        self.reader_mut().unpause();
         // SAFETY: `read()` dispatches `on_read_chunk`/`on_reader_done` back
         // into this object through the parent pointer, so no cell borrow
         // spans it.

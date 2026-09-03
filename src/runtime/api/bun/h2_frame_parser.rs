@@ -7521,8 +7521,7 @@ impl H2FrameParser {
         self.native_socket.detach();
     }
 
-    /// Session limits are u32 fields. Saturate so a huge value (grpc-js passes
-    /// `Number.MAX_SAFE_INTEGER` to mean "no limit") does not wrap to 0.
+    /// Saturating read of a numeric session limit into its u32 field.
     fn session_option_u32(value: JSValue) -> u32 {
         u32::try_from(value.to_uint64_no_truncate()).unwrap_or(u32::MAX)
     }

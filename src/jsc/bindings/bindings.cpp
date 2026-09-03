@@ -4430,9 +4430,7 @@ uint64_t JSC__JSValue__toUInt64NoTruncate(JSC::EncodedJSValue val)
     }
     ASSERT(value.isDouble());
 
-    // Saturate: NaN and negatives read as 0, values at or above 2^64 read as
-    // UINT64_MAX. Callers pass Number.MAX_SAFE_INTEGER (or Infinity) to mean
-    // "no limit", so a huge double must not collapse to 0.
+    // Saturating: NaN and negatives read as 0, values at or above 2^64 as UINT64_MAX.
     double number = value.asDouble();
     if (!(number >= 0.0))
         return 0;

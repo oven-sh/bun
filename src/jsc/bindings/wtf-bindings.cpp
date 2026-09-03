@@ -297,6 +297,9 @@ static thread_local WTF::StackBounds stackBoundsForCurrentThread = WTF::StackBou
 
 extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__StackCheck__initialize()
 {
+    // A thread's bounds do not change, and the main thread's cost a parse of /proc/self/maps on Linux.
+    if (!stackBoundsForCurrentThread.isEmpty())
+        return;
     stackBoundsForCurrentThread = WTF::StackBounds::currentThreadStackBoundsForEmbedder();
 }
 

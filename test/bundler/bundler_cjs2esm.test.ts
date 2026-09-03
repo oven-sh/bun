@@ -2047,7 +2047,9 @@ describe("bundler", () => {
   });
   // Module code makes a top-level function declaration lexical, so a `var`
   // with the same name is a SyntaxError there. A function body allows it, so
-  // these files keep their `__commonJS` wrapper.
+  // these files keep their `__commonJS` wrapper. In sloppy mode the bundler
+  // prints a block-level function with a `var` of its name, so
+  // block-function.cjs has the same conflict.
   itBundled("cjs2esm/VarWithTheNameOfATopLevelFunctionKeepsWrapper", {
     files: {
       "/entry.js": /* js */ `
@@ -2108,9 +2110,9 @@ describe("bundler", () => {
       stdout: "var var var block var var",
     },
   });
-  // A repeated `var` and a `var` in a nested function are valid module code.
-  // Of two top-level functions with one name, the parser drops the first. So
-  // this file is still lifted.
+  // Module code allows a `var` that repeats a `var`, and a function and a `var`
+  // with one name inside a nested function. Of two top-level functions with one
+  // name, the parser drops the first. So this file is still lifted.
   itBundled("cjs2esm/OtherRedeclarationsAreStillLifted", {
     files: {
       "/entry.js": /* js */ `
@@ -2121,10 +2123,18 @@ describe("bundler", () => {
         function top() { return "first"; }
         function top() { return "second"; }
         var count = 1;
-        var count = 2;
+        if (count) {
+          var count = 2;
+        }
         function wrap() {
-          var top = function () { return "inner"; };
-          return top();
+          var top = function () { return "shadow"; };
+          function inner() { return "declaration"; }
+          var inner = function () { return "inner"; };
+          function other() { return "declaration"; }
+          {
+            var other = function () { return "other"; };
+          }
+          return [top(), inner(), other()].join(" ");
         }
         exports.top = top;
         exports.count = count;
@@ -2133,7 +2143,7 @@ describe("bundler", () => {
     },
     cjs2esm: true,
     run: {
-      stdout: "second 2 inner",
+      stdout: "second 2 shadow inner other",
     },
   });
   // `module.exports = require()` in an unwrapped package becomes

@@ -495,15 +495,16 @@ pub(crate) fn run_nested_rename_task(
     task: *mut NestedRenameTask,
     _task_index: usize,
 ) {
-    // SAFETY: `each_ptr` hands us a unique `*mut NestedRenameTask`.
-    let task = unsafe { &mut *task };
+    // SAFETY: `each_ptr` hands us a unique `*mut NestedRenameTask`; nothing
+    // below re-enters it.
+    let (chunk_index, scope_range) = unsafe { ((*task).chunk_index, (*task).scopes.clone()) };
     let c: &LinkerContext<'_> = &ctx.c;
-    let chunk = &ctx.chunks[task.chunk_index as usize];
+    let chunk = &ctx.chunks[chunk_index as usize];
     let ChunkRenamer::Number(root) = &chunk.renamer else {
         unreachable!()
     };
     let scopes =
-        &chunk.nested_scopes_to_rename[task.scopes.start as usize..task.scopes.end as usize];
+        &chunk.nested_scopes_to_rename[scope_range.start as usize..scope_range.end as usize];
     let source_index = scopes[0].0;
     let ast = c.graph.ast.split_raw();
     // SAFETY: read-only column views; see `rename_symbols_in_chunk`.
@@ -526,5 +527,6 @@ pub(crate) fn run_nested_rename_task(
         // SAFETY: live arena-allocated scope (see `rename_symbols_in_chunk`).
         nested.assign_names_recursive(unsafe { &*scope }, &mut sorted);
     }
-    task.names = Some(nested.into_names());
+    // SAFETY: as above.
+    unsafe { (*task).names = Some(nested.into_names()) };
 }

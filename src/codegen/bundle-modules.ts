@@ -8,6 +8,7 @@
 // One day, this entire setup should be rewritten, but also it would be cool if Bun natively
 // supported macros that aren't json value -> json value. Otherwise, I'd use a real JS parser/ast
 // library, instead of RegExp hacks.
+import { createHash } from "crypto";
 import fs from "fs";
 import { mkdir, writeFile } from "fs/promises";
 import { builtinModules } from "node:module";
@@ -426,10 +427,10 @@ const BUILTINS_HEADER_SIZE = 48;
 // Identifies these module sources to bytecode generated from them ahead of time (bun build --compile embeds bytecode for
 // the internal modules an app uses); computed over the bundled outputs so it is meaningful in debug builds too.
 const internalModulesStamp = (() => {
-  const h = new Bun.CryptoHasher("sha256");
+  const h = createHash("sha256");
   for (const id of moduleList.slice(0, nativeStartIndex))
     h.update(outputs.get(id.slice(0, -3).replaceAll("/", path.sep)) ?? "");
-  return new DataView(h.digest().buffer).getUint32(0);
+  return h.digest().readUInt32BE(0);
 })();
 
 // require() edges between JS internal modules (ids are enum order), as offsets into one flat list. `bun build --compile

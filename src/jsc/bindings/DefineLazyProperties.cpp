@@ -14,28 +14,40 @@ namespace Bun {
 
 using namespace JSC;
 
-// key -> loader, stored on the target under a private name (CustomGetterSetter has no payload).
-static JSObject* lazyPropertyLoaders(VM& vm, JSObject* target)
+// A target's lazy properties read a values object (private name lazyPropertyValues), and so do its ESM bindings
+// (ModuleLoader.cpp). Each key of that object is a CustomValue that calls its loader (lazyPropertyLoaders) once.
+
+JSObject* lazyPropertyValues(VM& vm, JSObject* target)
 {
-    JSValue loaders = target->getDirect(vm, WebCore::builtinNames(vm).lazyPropertyLoadersPrivateName());
-    return loaders ? loaders.getObject() : nullptr;
+    JSValue values = target->getDirect(vm, WebCore::builtinNames(vm).lazyPropertyValuesPrivateName());
+    return values ? values.getObject() : nullptr;
 }
 
-JSC_DEFINE_CUSTOM_GETTER(lazyPropertyGetter, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName propertyName))
+// Replaces the CustomValue that `getter` serves with `value`. The other attributes stay: a frozen object keeps
+// ReadOnly, like V8's ReconfigureDataProperty.
+static void materialize(VM& vm, JSObject* object, PropertyName name, JSValue value, GetValueFunc getter)
+{
+    unsigned attributes = 0;
+    PropertyOffset offset = object->getDirectOffset(vm, name, attributes);
+    if (!isValidOffset(offset) || !(attributes & PropertyAttribute::CustomValue))
+        return;
+    if (uncheckedDowncast<CustomGetterSetter>(object->getDirect(offset))->getter() != getter)
+        return;
+    object->putDirect(vm, name, value, attributesForStructure(attributes) & ~static_cast<unsigned>(PropertyAttribute::CustomValue));
+}
+
+JSC_DEFINE_CUSTOM_GETTER(lazyValueGetter, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName propertyName))
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     // For a CustomValue, JSC passes the object that owns the property, not the receiver.
-    JSObject* thisObject = JSValue::decode(thisValue).getObject();
-    if (!thisObject) [[unlikely]]
+    JSObject* values = JSValue::decode(thisValue).getObject();
+    if (!values) [[unlikely]]
         return JSValue::encode(jsUndefined());
 
-    JSObject* loaders = lazyPropertyLoaders(vm, thisObject);
-    if (!loaders) [[unlikely]]
-        return JSValue::encode(jsUndefined());
-
-    JSValue loader = loaders->getDirect(vm, propertyName);
+    JSValue loaders = values->getDirect(vm, WebCore::builtinNames(vm).lazyPropertyLoadersPrivateName());
+    JSValue loader = loaders && loaders.isObject() ? asObject(loaders)->getDirect(vm, propertyName) : JSValue();
     if (!loader || !loader.isCallable()) [[unlikely]]
         return JSValue::encode(jsUndefined());
 
@@ -44,20 +56,37 @@ JSC_DEFINE_CUSTOM_GETTER(lazyPropertyGetter, (JSGlobalObject * globalObject, Enc
     JSValue value = call(globalObject, loader, getCallData(loader), jsUndefined(), args);
     RETURN_IF_EXCEPTION(scope, {});
 
-    // Same attributes minus CustomValue: a frozen target stays ReadOnly, like V8's ReconfigureDataProperty.
-    unsigned attributes = 0;
-    PropertyOffset offset = thisObject->getDirectOffset(vm, propertyName, attributes);
-    if (isValidOffset(offset) && (attributes & PropertyAttribute::CustomValue)) {
-        thisObject->putDirect(vm, propertyName, value, attributesForStructure(attributes) & ~static_cast<unsigned>(PropertyAttribute::CustomValue));
-    }
-
+    materialize(vm, values, propertyName, value, lazyValueGetter);
     return JSValue::encode(value);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(lazyPropertyGetter, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName propertyName))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSObject* target = JSValue::decode(thisValue).getObject();
+    JSObject* values = target ? lazyPropertyValues(vm, target) : nullptr;
+    if (!values) [[unlikely]]
+        return JSValue::encode(jsUndefined());
+
+    JSValue value = values->get(globalObject, propertyName);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    materialize(vm, target, propertyName, value, lazyPropertyGetter);
+    return JSValue::encode(value);
+}
+
+bool isPendingLazyProperty(const PropertySlot& slot)
+{
+    return slot.isCustom() && (slot.attributes() & PropertyAttribute::CustomValue) && slot.customGetter() == GetValueFunc(lazyPropertyGetter);
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionDefineLazyProperties, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+    auto& builtinNames = WebCore::builtinNames(vm);
 
     JSObject* target = callFrame->argument(0).getObject();
     JSArray* keys = dynamicDowncast<JSArray>(callFrame->argument(1));
@@ -67,13 +96,17 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionDefineLazyProperties, (JSGlobalObject * globa
         return {};
     }
 
-    JSObject* loaders = lazyPropertyLoaders(vm, target);
-    if (!loaders) {
-        loaders = constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
-        target->putDirect(vm, WebCore::builtinNames(vm).lazyPropertyLoadersPrivateName(), loaders, 0);
+    JSObject* values = lazyPropertyValues(vm, target);
+    if (!values) {
+        values = constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
+        JSObject* loaders = constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
+        values->putDirect(vm, builtinNames.lazyPropertyLoadersPrivateName(), loaders, 0);
+        target->putDirect(vm, builtinNames.lazyPropertyValuesPrivateName(), values, 0);
     }
+    JSObject* loaders = asObject(values->getDirect(vm, builtinNames.lazyPropertyLoadersPrivateName()));
 
-    auto* getterSetter = CustomGetterSetter::create(vm, lazyPropertyGetter, nullptr);
+    auto* valueGetter = CustomGetterSetter::create(vm, lazyValueGetter, nullptr);
+    auto* propertyGetter = CustomGetterSetter::create(vm, lazyPropertyGetter, nullptr);
     unsigned length = keys->length();
     for (unsigned i = 0; i < length; i++) {
         JSValue keyValue = keys->getIndex(globalObject, i);
@@ -82,13 +115,14 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionDefineLazyProperties, (JSGlobalObject * globa
         RETURN_IF_EXCEPTION(scope, {});
 
         // putDirectCustomAccessor only adds new properties.
-        if (isValidOffset(target->getDirectOffset(vm, key)) || parseIndex(key)) [[unlikely]] {
+        if (isValidOffset(target->getDirectOffset(vm, key)) || isValidOffset(values->getDirectOffset(vm, key)) || parseIndex(key)) [[unlikely]] {
             throwTypeError(globalObject, scope, makeString("defineLazyProperties: \""_s, key.string(), "\" is already defined on the target or is an index"_s));
             return {};
         }
 
         loaders->putDirect(vm, key, loader, 0);
-        target->putDirectCustomAccessor(vm, key, getterSetter, PropertyAttribute::CustomValue | 0);
+        values->putDirectCustomAccessor(vm, key, valueGetter, PropertyAttribute::CustomValue | 0);
+        target->putDirectCustomAccessor(vm, key, propertyGetter, PropertyAttribute::CustomValue | 0);
     }
 
     return JSValue::encode(jsUndefined());

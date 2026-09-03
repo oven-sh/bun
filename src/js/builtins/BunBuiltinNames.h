@@ -114,6 +114,7 @@ using namespace JSC;
     macro(key) \
     macro(lazy) \
     macro(lazyPropertyLoaders) \
+    macro(lazyPropertyValues) \
     macro(lineText) \
     macro(loadEsmIntoCjs) \
     macro(main) \

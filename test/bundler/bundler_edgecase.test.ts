@@ -1302,7 +1302,7 @@ describe("bundler", () => {
     snapshotSourceMap: {
       "entry.js.map": {
         files: ["../node_modules/react/index.js", "../entry.js"],
-        mappingsExactMatch: "2lBACA,WAAW,IAAQ,EAAE,ICDrB,aACA,QAAQ,IAAI,CAAK",
+        mappingsExactMatch: "inBACA,WAAW,IAAQ,EAAE,ICDrB,aACA,QAAQ,IAAI,CAAK",
       },
     },
   });
@@ -2844,6 +2844,32 @@ describe("bundler", () => {
       expect(out).toContain("__esm");
       expect(out).not.toMatch(/function ZI\(\w+, e3,/);
     },
+  });
+  // A module wrapped in `__esm` has its top-level declarations hoisted outside
+  // the closure. A destructuring pattern runs code on its value (a getter
+  // here), so the pattern must run when the module is first evaluated, not
+  // when the bundle loads. This holds for an unused pattern and for an
+  // exported one, and for a module that holds nothing else.
+  itBundled("edgecase/EsmWrapDestructuringRunsOnInit", {
+    files: {
+      "/lazy.js": `
+        const { x } = class { static get x() { console.log("EFFECT1"); return 1 } };
+        export const y = 2;
+      `,
+      "/lazy2.js": `
+        export const { z } = class { static get z() { console.log("EFFECT2"); return 3 } };
+      `,
+      "/entry.js": `
+        console.log("before");
+        const a = await import("./lazy.js");
+        console.log(a.y);
+        const b = await import("./lazy2.js");
+        console.log(b.z);
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    target: "bun",
+    run: { stdout: "before\nEFFECT1\n2\nEFFECT2\n3" },
   });
   // https://github.com/oven-sh/bun/issues/30269
   // Same bug for a nested `let` binding instead of a function parameter.

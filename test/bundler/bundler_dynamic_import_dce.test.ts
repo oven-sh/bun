@@ -1,7 +1,7 @@
 import { describe, expect } from "bun:test";
 import { readdirSync, readFileSync } from "fs";
 import path from "path";
-import { itBundled } from "./expectBundled";
+import { itBundled, type BundlerTestInput } from "./expectBundled";
 
 function readAllOutputs(outdir: string) {
   return readdirSync(outdir)
@@ -40,8 +40,9 @@ describe("bundler", () => {
     dce: true,
     run: { stdout: "43" },
     onAfterBundle(api) {
-      // Still lazy (namespace served from `exports_b`), `d` tree-shaken.
-      api.expectFile("/out.js").toContain("exports_b");
+      // `d` tree-shaken, and no namespace object: `c` is bound to the export.
+      api.expectFile("/out.js").toContain("return c(42)");
+      api.expectFile("/out.js").not.toContain("exports_b");
       api.expectFile("/out.js").not.toContain("99");
     },
   });
@@ -1217,6 +1218,43 @@ describe("bundler", () => {
       expect(readAllOutputs(api.outdir)).not.toContain("DROPPED");
     },
   });
+
+  // A folded `"a" + "b"` key reads `ab`. The parser keeps the folded string
+  // as a chain of parts, and the first part alone is "a".
+  for (const splitting of [true, false]) {
+    itBundled(`dynamic_import_dce/FoldedStringKey${splitting ? "Splitting" : "NoSplit"}`, {
+      files: {
+        "/entry.js": /* js */ `
+          const ns = await import("./lib.js");
+          console.log(ns["a" + "b"], ns["a" + "-b"], ns["" + "x"]);
+        `,
+        "/lib.js": `export const a = "a", ab = "ab", x = "x"; export { x as "a-b" };`,
+      },
+      splitting,
+      format: "esm",
+      outdir: "/out",
+      run: { file: "/out/entry.js", stdout: "ab x x" },
+    });
+
+    // An enum member is folded without minification too.
+    itBundled(`dynamic_import_dce/FoldedEnumKeyNarrows${splitting ? "Splitting" : "NoSplit"}`, {
+      files: {
+        "/entry.ts": /* ts */ `
+          enum K { AB = "a" + "b", X = "" + "x" }
+          const ns = await import("./lib.js");
+          console.log(ns[K.AB], ns[K.X]);
+        `,
+        "/lib.js": `export const a = "DROPPED", ab = "ab", x = "x";`,
+      },
+      splitting,
+      format: "esm",
+      outdir: "/out",
+      run: { file: "/out/entry.js", stdout: "ab x" },
+      onAfterBundle(api) {
+        expect(readAllOutputs(api.outdir)).not.toContain("DROPPED");
+      },
+    });
+  }
 
   // rolldown: chunk_merging/already_loaded_unexported_read_namespace_extraction
   // — a tracked read of a name the importee does not export stays `undefined`
@@ -2673,7 +2711,7 @@ describe("bundler", () => {
     format: "esm",
     run: { stdout: "after" },
     onAfterBundle(api) {
-      api.expectFile("/out.js").toContain("exports_b");
+      api.expectFile("/out.js").not.toContain("exports_b");
       api.expectFile("/out.js").not.toContain("DROPPED");
     },
   });
@@ -3236,9 +3274,9 @@ describe("bundler", () => {
     },
   });
 
-  // Importee exports `then`: `await import()` resolves through it. `then` is
-  // observed by the `await` itself, so it must be kept even though no
-  // importer names it.
+  // Importee exports `then`. Unbundled, `await import()` resolves through it.
+  // That is intentionally not special-cased without splitting: `v` is bound to
+  // the export.
   itBundled("dynamic_import_dce/NoSplitThenableImportee", {
     files: {
       "/entry.js": /* js */ `
@@ -3248,9 +3286,10 @@ describe("bundler", () => {
       "/b.js": `export const v = "direct"; export function then(r) { r({ v: "unwrapped" }); }`,
     },
     format: "esm",
-    run: { stdout: "unwrapped" },
+    run: { stdout: "direct" },
   });
 
+  // With splitting the importee is a real ES module, so `then` is called.
   itBundled("dynamic_import_dce/SplittingThenableImportee", {
     files: {
       "/entry.js": /* js */ `
@@ -3522,5 +3561,850 @@ describe("bundler", () => {
     },
     format: "esm",
     bundleErrors: { "/entry.js": ['Cannot assign to import "foo"'] },
+  });
+
+  // ──────────────────────────────────────────────────────────────────────
+  // No namespace object. When every use of a narrowed importee names its
+  // exports, the `import()` / `require()` evaluates to an object literal of
+  // the exports a destructuring pattern reads, or to `{}` for a namespace
+  // local whose reads print the exports themselves. `__export`, `exports_x`
+  // and the helpers go away. Each case runs as ESM and CJS, minified and not.
+  // ──────────────────────────────────────────────────────────────────────
+
+  const minify = { minifySyntax: true, minifyIdentifiers: true, minifyWhitespace: true };
+  const elisionVariants = {
+    esm: { format: "esm" },
+    cjs: { format: "cjs" },
+    esmMinify: { format: "esm", ...minify },
+    cjsMinify: { format: "cjs", ...minify },
+  } as const;
+
+  function itElides(
+    name: string,
+    opts: {
+      files: Record<string, string>;
+      stdout: string;
+      variants?: (keyof typeof elisionVariants)[];
+      /** Some call still needs the namespace object. */
+      keepsNamespace?: boolean;
+      /** Checks on the unminified `/out.js`. */
+      output?: (out: string) => void;
+    },
+  ) {
+    for (const variant of opts.variants ?? (Object.keys(elisionVariants) as (keyof typeof elisionVariants)[])) {
+      const options = elisionVariants[variant];
+      itBundled(`dynamic_import_dce/Elide${name}_${variant}`, {
+        files: opts.files,
+        ...options,
+        run: { stdout: opts.stdout },
+        onAfterBundle(api) {
+          const out = api.readFile("/out.js");
+          expect(out).not.toContain("DROPPED");
+          if (!("minifyIdentifiers" in options)) {
+            if (opts.keepsNamespace) {
+              expect(out).toContain("__export");
+            } else {
+              expect(out).not.toContain("__export");
+              expect(out).not.toMatch(/exports_\w/);
+            }
+            opts.output?.(out);
+          }
+        },
+      });
+    }
+  }
+
+  itBundled("dynamic_import_dce/ElideIsExample", {
+    files: {
+      "/entry.ts": /* ts */ `
+        const { isOdd } = await import("./is");
+        console.log(isOdd(3));
+      `,
+      "/is.ts": /* ts */ `
+        export function isNumber(n) { return typeof n === "number"; }
+        export function isOdd(n) { return isNumber(n) && n % 2 === 1; }
+        export function isEven(n) { return !isOdd(n); }
+      `,
+    },
+    run: { stdout: "true" },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toContain("await Promise.resolve();");
+      expect(out).toContain("console.log(isOdd(3))");
+      expect(out).not.toContain("isEven");
+      expect(out).not.toContain("__export");
+      expect(out).not.toContain("__defProp");
+      expect(out).not.toContain("exports_is");
+    },
+  });
+
+  // The importee's top-level code runs when the `import()` resolves.
+  itElides("Order", {
+    files: {
+      "/entry.js": /* js */ `
+        async function main() {
+          console.log("before");
+          const { x } = await import("./x.js");
+          console.log("after", x);
+          const loaded = import("./y.js").then(({ y }) => console.log("then", y));
+          console.log("sync after import()");
+          await loaded;
+        }
+        main();
+      `,
+      "/x.js": `console.log("x init"); export const x = 1; export const d = "DROPPED";`,
+      "/y.js": `console.log("y init"); export const y = 2; export const d = "DROPPED";`,
+    },
+    stdout: "before\nx init\nafter 1\nsync after import()\ny init\nthen 2",
+    output(out) {
+      expect(out).toContain("await Promise.resolve().then(() => init_x());");
+      expect(out).toContain("init_y(), {}");
+    },
+  });
+
+  // A throwing importee rejects the `import()` (caught by the surrounding
+  // `try`), and every later `import()` / `require()` throws the same error.
+  itElides("InitThrows", {
+    files: {
+      "/entry.js": /* js */ `
+        async function load() {
+          try {
+            const { z } = await import("./bad.js");
+            return z;
+          } catch (e) {
+            return e;
+          }
+        }
+        function loadSync() {
+          try {
+            const { z } = require("./bad.js");
+            return z;
+          } catch (e) {
+            return e;
+          }
+        }
+        async function main() {
+          const first = await load();
+          const second = await load();
+          console.log(first instanceof Error, first.message, first === second, loadSync() === first);
+          await import("./bad.js").then(
+            ns => console.log("resolved", ns.z),
+            e => console.log("rejected", e === first),
+          );
+        }
+        main();
+      `,
+      "/bad.js": /* js */ `
+        console.log("bad init");
+        throw new Error("boom");
+        export const z = 1;
+        export const d = "DROPPED";
+      `,
+    },
+    stdout: "bad init\ntrue boom true true\nrejected true",
+  });
+
+  // A read through the namespace is live: it prints the binding.
+  itElides("LiveRead", {
+    files: {
+      "/entry.js": /* js */ `
+        async function main() {
+          const ns = await import("./x.js");
+          console.log(ns.b);
+          ns.bump();
+          console.log(ns.b, ns["b"]);
+          const r = require("./x.js");
+          r.bump();
+          console.log(r.b);
+          await import("./x.js").then(m => {
+            m.bump();
+            console.log(m.b);
+          });
+        }
+        main();
+      `,
+      "/x.js": /* js */ `
+        export let b = 1;
+        export function bump() { b++; }
+        export const d = "DROPPED";
+      `,
+    },
+    stdout: "1\n2 2\n3\n4",
+    output(out) {
+      expect(out).toContain("console.log(b, b)");
+    },
+  });
+
+  // A destructured binding is a snapshot taken when the pattern runs. An
+  // export that can change stays a copy, so its call keeps the object.
+  itElides("Snapshot", {
+    keepsNamespace: true,
+    files: {
+      "/entry.js": /* js */ `
+        async function main() {
+          const { b } = await import("./x.js");
+          const ns = await import("./x.js");
+          ns.bump();
+          const { b: b2 } = ns;
+          ns.bump();
+          const { b: b3 } = require("./x.js");
+          ns.bump();
+          console.log(b, b2, b3, ns.b);
+        }
+        main();
+      `,
+      "/x.js": /* js */ `
+        console.log("x init");
+        export let b = 1;
+        export function bump() { b++; }
+        export const d = "DROPPED";
+      `,
+    },
+    stdout: "x init\n1 2 3 4",
+    output(out) {
+      expect(out).toContain("const { b: b3 } = (init_x(), __toCommonJS(exports_x));");
+    },
+  });
+
+  // `init_x()` of an importee with top-level await is a promise: the object
+  // is built after it settles. (CJS output has no top-level await.)
+  itElides("TopLevelAwaitInImportee", {
+    variants: ["esm", "esmMinify"],
+    files: {
+      "/entry.js": /* js */ `
+        console.log("before");
+        const { u } = await import("./t.js");
+        const ns = await import("./t.js");
+        console.log("got", u, ns.t);
+        await import("./t.js").then(ns => console.log("then", ns.t));
+      `,
+      "/t.js": /* js */ `
+        console.log("t start");
+        export let t = "early";
+        export const u = "u";
+        await 0;
+        t = "late";
+        console.log("t end");
+        export const d = "DROPPED";
+      `,
+    },
+    stdout: "before\nt start\nt end\ngot u late\nthen late",
+    output(out) {
+      expect(out).toContain("await init_t().then(() => ({}))");
+    },
+  });
+
+  // The importee statically imports the module that dynamically imports it.
+  itElides("Cycle", {
+    files: {
+      "/entry.js": /* js */ `
+        import { run } from "./a.js";
+        run();
+      `,
+      "/a.js": /* js */ `
+        export const fromA = "a";
+        export async function run() {
+          const { fromX, readA } = await import("./x.js");
+          const x = await import("./x.js");
+          console.log(fromX, readA(), x.readA());
+        }
+      `,
+      "/x.js": /* js */ `
+        import { fromA } from "./a.js";
+        console.log("x init", fromA);
+        export const fromX = "x";
+        export function readA() { return fromA; }
+        export const d = "DROPPED";
+      `,
+    },
+    stdout: "x init a\nx a a",
+  });
+
+  // A default value reads the name off the real object.
+  itElides("ThenAndPromiseAll", {
+    keepsNamespace: true,
+    files: {
+      "/entry.js": /* js */ `
+        async function main() {
+          await import("./x.js").then(({ a, b: renamed = "default" }) => console.log("then", a, renamed));
+          await import("./x.js").then(ns => console.log("ns", ns.a));
+          await import("./x.js").then(() => console.log("bare"));
+          const [{ a }, ns, , { missing = "fallback" }] = await Promise.all([
+            import("./x.js"),
+            import("./x.js"),
+            import("./x.js"),
+            import("./x.js"),
+          ]);
+          console.log(a, ns.a, missing);
+        }
+        main();
+      `,
+      "/x.js": `console.log("x init"); export const a = "a"; export const d = "DROPPED";`,
+    },
+    stdout: "x init\nthen a default\nns a\nbare\na a fallback",
+  });
+
+  // `...rest` is a copy of the real object.
+  itElides("Rest", {
+    keepsNamespace: true,
+    files: {
+      "/entry.js": /* js */ `
+        async function main() {
+          const { a, ...rest } = await import("./x.js");
+          console.log(a, rest.b, rest.c, rest.a);
+        }
+        main();
+      `,
+      "/x.js": `export const a = "a", b = "b"; export let c = "c"; export const d = "DROPPED";`,
+    },
+    stdout: "a b c undefined",
+  });
+
+  // `ns.name` of a name that is not an export reads `undefined`, as it does on
+  // a namespace object (which has no prototype). `__proto__` is an export like
+  // any other.
+  itElides("OddKeys", {
+    files: {
+      "/entry.js": /* js */ `
+        async function main() {
+          const ns = await import("./x.js");
+          const { a, "with-dash": w, "__proto__": pp } = await import("./x.js");
+          console.log(a, w, pp);
+          console.log(ns.missing, ns.constructor, ns["with-dash"], ns["__proto__"], typeof ns);
+        }
+        main();
+      `,
+      "/x.js": /* js */ `
+        const p = "P";
+        export { p as "__proto__", p as "with-dash" };
+        export const a = "a";
+        export const d = "DROPPED";
+      `,
+    },
+    stdout: "a P P\nundefined undefined P P object",
+  });
+
+  // A pattern reads a name the importee does not export off the real object.
+  itElides("PatternReadsMissingName", {
+    keepsNamespace: true,
+    files: {
+      "/entry.js": /* js */ `
+        async function main() {
+          const { b, missing } = await import("./x.js");
+          console.log(b, missing);
+        }
+        main();
+      `,
+      "/x.js": `export const b = 2; export const d = "DROPPED";`,
+    },
+    stdout: "2 undefined",
+  });
+
+  // A wrapped importer turns its top-level declarations into assignments;
+  // the pattern's source is still the object literal.
+  itElides("WrappedImporter", {
+    files: {
+      "/entry.js": /* js */ `
+        async function main() {
+          const { show } = await import("./inner.js");
+          show();
+        }
+        main();
+      `,
+      "/inner.js": /* js */ `
+        const { b } = require("./x.js");
+        const ns = require("./x.js");
+        const one = ns.a, two = ns.b;
+        export function show() { console.log(b, one, two, ns.a); }
+      `,
+      "/x.js": `console.log("x init"); export const a = "a", b = "b"; export const d = "DROPPED";`,
+    },
+    stdout: "x init\nb a b a",
+  });
+
+  // The minifier's `a = ns.x, b = ns.y` => `{x: a, y: b} = ns` would read `{}`.
+  itElides("SameTargetDestructuring", {
+    files: {
+      "/entry.js": /* js */ `
+        const ns = require("./x.js");
+        const one = ns.a, two = ns.b;
+        console.log(one, two);
+      `,
+      "/x.js": `console.log("x init"); export const a = "a", b = "b"; export const d = "DROPPED";`,
+    },
+    stdout: "x init\na b",
+  });
+
+  itElides("ReExport", {
+    files: {
+      "/entry.js": /* js */ `
+        async function main() {
+          const { a, renamed } = await import("./barrel.js");
+          const ns = await import("./barrel.js");
+          console.log(a, renamed, ns.star);
+        }
+        main();
+      `,
+      "/barrel.js": /* js */ `
+        export { a, b as renamed } from "./x.js";
+        export * from "./y.js";
+        export const d = "DROPPED";
+      `,
+      "/x.js": `export const a = "a", b = "b"; export const d2 = "DROPPED";`,
+      "/y.js": `export const star = "star"; export const d3 = "DROPPED";`,
+    },
+    stdout: "a b star",
+  });
+
+  // `export *` of the importee, from a file imported statically, does not need
+  // its namespace object either.
+  itElides("ExportStarOfImportee", {
+    variants: ["esm", "esmMinify"],
+    files: {
+      "/entry.js": `import { a as viaBarrel } from "./barrel.js"; const { a } = await import("./x.js"); console.log(a, viaBarrel);`,
+      "/barrel.js": `export * from "./x.js";`,
+      "/x.js": `export const a = "a"; export const d = "DROPPED";`,
+    },
+    stdout: "a a",
+  });
+
+  // Intentionally not special-cased: unbundled, `await import()` would call a
+  // `then` export. Bundled, the import resolves to `{}`.
+  itElides("ThenExport", {
+    files: {
+      "/entry.js": /* js */ `
+        async function main() {
+          const { a } = await import("./x.js");
+          console.log(a);
+        }
+        main();
+      `,
+      "/x.js": `export function then(resolve) { resolve({ a: "DROPPED" }); } export const a = "a";`,
+    },
+    stdout: "a",
+  });
+
+  // `import * as z; export { z }` (zod, Effect): a `const` destructured from
+  // the call is bound like `import { z }`, so `z.a` reads the export and the
+  // rest of the namespace tree-shakes.
+  itElides("NamespaceExport", {
+    files: {
+      "/entry.js": /* js */ `
+        async function main() {
+          const { z } = await import("./lib.js");
+          const { z: fromRequire } = require("./lib.js");
+          console.log(z.a(), fromRequire.b, z.b === fromRequire.b);
+        }
+        main();
+      `,
+      "/lib.js": `import * as z from "./external.js"; export { z }; export const d = "DROPPED";`,
+      "/external.js": /* js */ `
+        export function a() { return "a"; }
+        export const b = "b";
+        export const unused = "DROPPED";
+      `,
+    },
+    stdout: "a b true",
+  });
+
+  itElides("NamespaceExportReadsOnly", {
+    files: {
+      "/entry.js": /* js */ `
+        async function main() {
+          const { z } = await import("./lib.js");
+          console.log(z.a(), z.b);
+        }
+        main();
+      `,
+      "/lib.js": `import * as z from "./external.js"; export { z };`,
+      "/external.js": `export function a() { return "a"; } export const b = "b"; export const unused = "DROPPED";`,
+    },
+    stdout: "a b",
+    output(out) {
+      expect(out).toContain("console.log(a(), b)");
+    },
+  });
+
+  // A `var` redeclared in another branch is one variable, so it stays a local.
+  itElides("VarRedeclaredInBranches", {
+    keepsNamespace: true,
+    files: {
+      "/entry.js": /* js */ `
+        async function pick(first) {
+          if (first) {
+            var { a } = await import("./x.js");
+          } else {
+            var { a } = await import("./y.js");
+          }
+          return a;
+        }
+        pick(true).then(a => pick(false).then(b => console.log(a, b)));
+      `,
+      "/x.js": `export const a = "x"; export const d = "DROPPED";`,
+      "/y.js": `export const a = "y"; export const d = "DROPPED";`,
+    },
+    stdout: "x y",
+  });
+
+  // A read off a split chunk's namespace is not matched: a name it can't see
+  // (from `export *` of an external) must not print `undefined`.
+  itBundled("dynamic_import_dce/SplitChunkExternalStarRead", {
+    files: {
+      "/entry.js": /* js */ `
+        const mod = await import("./reexports.js");
+        const { rfs } = await import("./reexports.js");
+        console.log(typeof mod.join, typeof mod.rfs, typeof rfs);
+      `,
+      "/reexports.js": /* js */ `
+        export * from "node:path";
+        export { readFileSync as rfs } from "node:fs";
+      `,
+    },
+    target: "bun",
+    format: "esm",
+    splitting: true,
+    outdir: "/out",
+    run: { file: "/out/entry.js", stdout: "function function function" },
+  });
+
+  // A `var` with another declaration is one variable, so it stays a local.
+  itElides("VarDeclaredTwice", {
+    keepsNamespace: true,
+    files: {
+      "/entry.js": /* js */ `
+        var a = 1;
+        var { a } = await import("./x.js");
+        for (var b of [3]) {}
+        var { b } = await import("./x.js");
+        console.log(a, b, (await import("./other.js")).a);
+      `,
+      "/x.js": `export const a = 2, b = 4;`,
+      "/other.js": `import { a } from "./x.js"; export { a };`,
+    },
+    variants: ["esm", "esmMinify"],
+    stdout: "2 4 2",
+  });
+
+  // A `{...rest}` copy of the same namespace still needs `a` in the object.
+  itElides("RestBesideBoundName", {
+    keepsNamespace: true,
+    files: {
+      "/entry.js": /* js */ `
+        async function main() {
+          const ns = await import("./x.js");
+          const { ...rest } = ns;
+          const { a } = ns;
+          console.log(rest.a, a);
+        }
+        main();
+      `,
+      "/x.js": `export const a = 1; export const d = "DROPPED";`,
+    },
+    stdout: "1 1",
+  });
+
+  itElides("EnumBoundName", {
+    files: {
+      "/entry.ts": /* ts */ `
+        async function main() {
+          const { E } = await import("./x.ts");
+          console.log(E.A, E.B);
+        }
+        main();
+      `,
+      "/x.ts": `export enum E { A = 1, B = 2 } export const d = "DROPPED";`,
+    },
+    stdout: "1 2",
+  });
+
+  // An importer of the file that destructured the name must not bind
+  // through it: that would load the split chunk eagerly.
+  itBundled("dynamic_import_dce/ReexportedDestructuredNameStaysLazy", {
+    files: {
+      "/entry.js": `import { a } from "./mid.js"; console.log("entry", a);`,
+      "/mid.js": /* js */ `
+        console.log("mid start");
+        const { a } = await import("./x.js");
+        export { a };
+      `,
+      "/x.js": `console.log("x init"); export const a = 1;`,
+    },
+    splitting: true,
+    outdir: "/out",
+    run: { file: "/out/entry.js", stdout: "mid start\nx init\nentry 1" },
+  });
+
+  // `require()` reads `default` off `module.exports`.
+  itBundled("dynamic_import_dce/RequireDefaultOfLiftedCommonJS", {
+    files: {
+      "/entry.js": /* js */ `
+        const { default: d, a } = require("./lib.cjs");
+        console.log(d, a);
+      `,
+      "/lib.cjs": `exports.a = 1;`,
+    },
+    run: { stdout: "undefined 1" },
+  });
+
+  // A wrapped importer hoists its top-level names out of the closure. A bound
+  // name is the export's own binding (here a class), so it is not redeclared.
+  itElides("WrappedImporterBoundClass", {
+    files: {
+      "/entry.js": `const { y } = require("./b.js"); console.log(y);`,
+      "/b.js": `const { z } = require("./a.js"); export const y = z.v;`,
+      "/a.js": `export class z { static v = "zv" } export const d = "DROPPED";`,
+    },
+    stdout: "zv",
+  });
+
+  // No single export to bind to: the name reads `undefined`, with no warning.
+  itBundled("dynamic_import_dce/AmbiguousStarExportIsQuiet", {
+    files: {
+      "/entry.js": `const { q } = await import("./amb.js"); console.log(q);`,
+      "/amb.js": `export * from "./x.js"; export * from "./y.js";`,
+      "/x.js": `export const q = 1;`,
+      "/y.js": `export const q = 2;`,
+    },
+    run: { stdout: "undefined" },
+    bundleWarnings: {},
+  });
+
+  // `const p = ns.foo, q = ns.bar` must not become `{foo: p, bar: q} = ns`
+  // when `ns` is a bound name: there is no namespace object to read.
+  itElides("BoundNamespaceSameTargetReads", {
+    files: {
+      "/entry.js": /* js */ `
+        async function main() {
+          const { ns } = await import("./a.js");
+          const p = ns.foo, q = ns.bar;
+          console.log(p, q);
+        }
+        main();
+      `,
+      "/a.js": `import * as ns from "./c.js"; export { ns }; export const d = "DROPPED";`,
+      "/c.js": `export const foo = 1, bar = 2;`,
+    },
+    stdout: "1 2",
+  });
+
+  // A `"sideEffects": false` barrel: the names the pattern reads without
+  // binding them (a default value, a nested pattern) keep their re-exports.
+  itBundled("dynamic_import_dce/BarrelKeepsUnboundNames", {
+    files: {
+      "/entry.js": /* js */ `
+        const { a, b = "default", c: { x } } = await import("barrel");
+        console.log(a, b, x);
+      `,
+      "/node_modules/barrel/package.json": `{ "name": "barrel", "sideEffects": false }`,
+      "/node_modules/barrel/index.js": /* js */ `
+        export { a } from "./a.js";
+        export { b } from "./b.js";
+        export { c } from "./c.js";
+      `,
+      "/node_modules/barrel/a.js": `export const a = "A";`,
+      "/node_modules/barrel/b.js": `export const b = "B";`,
+      "/node_modules/barrel/c.js": `export const c = { x: "X" };`,
+    },
+    run: { stdout: "A B X" },
+  });
+
+  // Only the re-exports a tracked call reads are loaded from the barrel.
+  itBundled("dynamic_import_dce/BarrelLoadsOnlyReadNames", {
+    files: {
+      "/entry.js": /* js */ `
+        const { a } = await import("barrel");
+        console.log(a, (await import("barrel")).b);
+      `,
+      "/node_modules/barrel/package.json": `{ "name": "barrel", "sideEffects": false }`,
+      "/node_modules/barrel/index.js": /* js */ `
+        export { a } from "./a.js";
+        export { b } from "./b.js";
+        export { c } from "./c.js";
+      `,
+      "/node_modules/barrel/a.js": `export const a = "A";`,
+      "/node_modules/barrel/b.js": `export const b = "B";`,
+      "/node_modules/barrel/c.js": `export const c = "DROPPED";`,
+    },
+    run: { stdout: "A B" },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("DROPPED");
+    },
+  });
+
+  // A direct `eval` in the exporting file can assign the export, so the
+  // destructured name stays a snapshot.
+  itBundled("dynamic_import_dce/EvalAssignedExportStaysSnapshot", {
+    files: {
+      "/entry.js": /* js */ `
+        const { a, set } = await import("./b.js");
+        set();
+        console.log(a);
+      `,
+      "/b.js": `export let a = 1; export function set() { eval("a = 2"); }`,
+    },
+    run: { stdout: "1" },
+  });
+
+  // A CommonJS module lifted to ESM keeps its exports in assignment order.
+  itBundled("dynamic_import_dce/LiftedCommonJSNamespaceReads", {
+    files: {
+      "/entry.js": /* js */ `
+        const ns = await import("react");
+        console.log(ns.useState(1)[0], ns.useId(), ns.version);
+      `,
+      "/node_modules/react/package.json": `{ "name": "react", "main": "index.js" }`,
+      "/node_modules/react/index.js": /* js */ `
+        "use strict";
+        function useState(i) { return [i]; }
+        function useId() { return "id"; }
+        exports.useState = useState;
+        exports.useId = useId;
+        exports.version = "19.0.0";
+      `,
+    },
+    run: { stdout: "1 id 19.0.0" },
+  });
+
+  // `ns` holds one of two namespaces, so `a` has no single export.
+  itBundled("dynamic_import_dce/DestructureOfEitherNamespace", {
+    files: {
+      "/entry.js": /* js */ `
+        async function f(c) {
+          const ns = c ? await import("./x.js") : await import("./y.js");
+          const { a } = ns;
+          return a;
+        }
+        console.log(await f(true), await f(false));
+      `,
+      "/x.js": `export const a = "x";`,
+      "/y.js": `export const a = "y";`,
+    },
+    run: { stdout: "x y" },
+  });
+
+  itBundled("dynamic_import_dce/DestructureOfFileWithoutExportsIsQuiet", {
+    files: {
+      "/entry.js": `const { foo } = await import("./notes.txt"); console.log(foo);`,
+      "/notes.txt": `hello`,
+    },
+    run: { stdout: "undefined" },
+    bundleWarnings: {},
+  });
+
+  // A lifted CommonJS export changes through `exports.x`, so a destructured
+  // copy of it stays a snapshot.
+  itBundled("dynamic_import_dce/LiftedCommonJSDestructureIsSnapshot", {
+    files: {
+      "/entry.js": `const { count, inc } = await import("react"); inc(); console.log(count);`,
+      "/node_modules/react/package.json": `{ "name": "react", "main": "index.js" }`,
+      "/node_modules/react/index.js": `exports.count = 0; exports.inc = function () { exports.count++; };`,
+    },
+    run: { stdout: "0" },
+  });
+
+  // ── Cases that keep the namespace object ──────────────────────────────
+
+  function itKeepsNamespace(
+    name: string,
+    opts: Omit<BundlerTestInput, "files" | "run" | "onAfterBundle"> & {
+      files: Record<string, string>;
+      stdout?: string;
+      expected: string;
+    },
+  ) {
+    const { files, stdout, expected, ...rest } = opts;
+    itBundled(`dynamic_import_dce/KeepNamespace${name}`, {
+      files,
+      ...rest,
+      run: stdout === undefined ? undefined : { stdout, file: rest.outdir ? "/out/entry.js" : undefined },
+      onAfterBundle(api) {
+        expect(rest.outdir ? readAllOutputs(api.outdir) : api.readFile("/out.js")).toContain(expected);
+      },
+    });
+  }
+
+  itKeepsNamespace("Escapes", {
+    files: {
+      "/entry.js": `const ns = await import("./x.js"); console.log(Object.keys(ns).join());`,
+      "/x.js": `export const a = "a"; export const b = "b";`,
+    },
+    stdout: "a,b",
+    expected: "__export(exports_x",
+  });
+
+  itKeepsNamespace("CommonJS", {
+    files: {
+      "/entry.js": `const { a } = await import("./x.cjs"); console.log(a);`,
+      "/x.cjs": `exports.a = "a";`,
+    },
+    stdout: "a",
+    expected: "__toESM(require_x())",
+  });
+
+  itKeepsNamespace("External", {
+    files: {
+      "/entry.js": `const { a } = await import("ext"); console.log(a);`,
+    },
+    external: ["ext"],
+    expected: `import("ext")`,
+  });
+
+  itKeepsNamespace("ImportStarValue", {
+    files: {
+      "/entry.js": `import "./other.js"; const { a } = await import("./x.js"); console.log(a);`,
+      "/other.js": `import * as ns from "./x.js"; console.log(typeof ns);`,
+      "/x.js": `export const a = "a";`,
+    },
+    stdout: "object\na",
+    expected: "__export(exports_x",
+  });
+
+  // A read with no local to bind (`(await import(x)).a`, `require(x).a`) reads
+  // the namespace object, as does one that `import * as` from the same file
+  // makes a value.
+  itKeepsNamespace("CallMemberRead", {
+    files: {
+      "/entry.js": /* js */ `
+        const { bump } = await import("./x.js");
+        console.log((await import("./x.js")).b, require("./x.js").b);
+        bump();
+        console.log(require("./x.js")["b"]);
+      `,
+      "/x.js": `export let b = 1; export function bump() { b++; }`,
+    },
+    stdout: "1 1\n2",
+    expected: "__export(exports_x",
+  });
+
+  // A local that may hold either namespace, or null.
+  itKeepsNamespace("ConditionalLocal", {
+    files: {
+      "/entry.js": `const ns = process.argv.length > 99 ? null : require("./x.js"); if (ns) console.log(ns.a);`,
+      "/x.js": `export const a = "a";`,
+    },
+    stdout: "a",
+    expected: "__export(exports_x",
+  });
+
+  // `require()` of an ES module reads `__esModule` off the `__toCommonJS()` copy.
+  itKeepsNamespace("RequireEsModuleMarker", {
+    files: {
+      "/entry.js": `console.log(require("./x.js").__esModule, require("./x.js").a);`,
+      "/x.js": `export const a = "a";`,
+    },
+    stdout: "true a",
+    expected: "__toCommonJS(exports_x)",
+  });
+
+  // With splitting, the importee is its own chunk and a real ES module.
+  itKeepsNamespace("Splitting", {
+    files: {
+      "/entry.js": `const { a } = await import("./x.js"); console.log(a);`,
+      "/x.js": `export const a = "a"; export const b = "DROPPED";`,
+    },
+    splitting: true,
+    outdir: "/out",
+    stdout: "a",
+    expected: `import("./x-`,
   });
 });

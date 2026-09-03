@@ -4891,27 +4891,25 @@ pub mod bv2_impl {
                 }
                 jsc_api::JSBundler::ResolveValue::Success(result) => {
                     let mut out_source_index: Option<Index> = None;
+                    // SAFETY: `result.{path,namespace}` are `Box<[u8]>`. Each arm below
+                    // either moves both boxes into `this.free_list` before it stores
+                    // `path` (`!found_existing`, external import), or drops them and
+                    // never stores `path` (`found_existing`, external entry point).
+                    // `free_list` keeps the bytes until `deinit_without_freeing_arena`,
+                    // and the heap data does not move when a `Box` moves.
+                    let (result_path_static, result_ns_static): (&'static [u8], &'static [u8]) = unsafe {
+                        (
+                            &*std::ptr::from_ref::<[u8]>(result.path.as_ref()),
+                            &*std::ptr::from_ref::<[u8]>(result.namespace.as_ref()),
+                        )
+                    };
+                    let mut path = Fs::Path::init(result_path_static);
+                    if result.namespace.is_empty() || result.namespace.as_ref() == b"file" {
+                        path.namespace = b"file";
+                    } else {
+                        path.namespace = result_ns_static;
+                    }
                     if !result.external {
-                        // SAFETY: `result.{path,namespace}` are `Box<[u8]>` whose heap
-                        // allocations are moved into `this.free_list` below (in the
-                        // `!found_existing` branch) and thus outlive `BundleV2`. Erase
-                        // to `'static` so `Fs::Path<'static>` can borrow them across
-                        // `path_with_pretty_initialized` / `ParseTask`. In the `found_existing`/`external`
-                        // branches `path` is dead before the boxes drop, so the dangling
-                        // `'static` is never observed.
-                        let (result_path_static, result_ns_static): (&'static [u8], &'static [u8]) = unsafe {
-                            (
-                                &*std::ptr::from_ref::<[u8]>(result.path.as_ref()),
-                                &*std::ptr::from_ref::<[u8]>(result.namespace.as_ref()),
-                            )
-                        };
-                        let mut path = Fs::Path::init(result_path_static);
-                        if result.namespace.is_empty() || result.namespace.as_ref() == b"file" {
-                            path.namespace = b"file";
-                        } else {
-                            path.namespace = result_ns_static;
-                        }
-
                         // SAFETY: `GetOrPutResult` borrows `&mut this` for its whole
                         // lifetime, blocking the `free_list`/`graph` accesses below.
                         // Capture `value_ptr` as a raw ptr + `found_existing` and drop
@@ -5032,23 +5030,32 @@ pub mod bv2_impl {
                             drop(result.namespace);
                             drop(result.path);
                         }
-                    } else {
-                        if resolve.import_record.kind == ImportKind::EntryPointBuild {
-                            let log = this.log_for_resolution_failures(
-                                &resolve.import_record.source_file,
-                                resolve.import_record.original_target.bake_graph(),
-                            );
-                            log.add_error_fmt(
-                                None,
-                                bun_ast::Loc::EMPTY,
-                                format_args!(
-                                    "The entry point {} cannot be marked as external",
-                                    bun_core::fmt::quote(&resolve.import_record.specifier),
-                                ),
-                            );
-                        }
+                    } else if resolve.import_record.kind == ImportKind::EntryPointBuild {
+                        let log = this.log_for_resolution_failures(
+                            &resolve.import_record.source_file,
+                            resolve.import_record.original_target.bake_graph(),
+                        );
+                        log.add_error_fmt(
+                            None,
+                            bun_ast::Loc::EMPTY,
+                            format_args!(
+                                "The entry point {} cannot be marked as external",
+                                bun_core::fmt::quote(&resolve.import_record.specifier),
+                            ),
+                        );
                         drop(result.namespace);
                         drop(result.path);
+                    } else {
+                        // Like esbuild, print the external import with the path the plugin returned.
+                        this.free_list.push(result.namespace);
+                        this.free_list.push(result.path);
+                        // Answers run as posted tasks, after the importer's records are on the graph.
+                        let import_record: &mut ImportRecord =
+                            &mut this.graph.ast.items_import_records_mut()
+                                [resolve.import_record.importer_source_index as usize]
+                                .as_mut_slice()
+                                [resolve.import_record.import_record_index as usize];
+                        import_record.path = path_as_static(&path);
                     }
 
                     if let Some(source_index) = out_source_index {

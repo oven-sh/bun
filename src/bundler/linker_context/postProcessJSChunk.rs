@@ -913,6 +913,9 @@ pub(crate) fn generate_entry_point_tail_js<'a>(
                         &c.graph.meta.items_sorted_and_filtered_export_aliases()
                             [source_index as usize];
 
+                    let default_is_namespace =
+                        LinkerContext::chunk_default_export_is_namespace(flags, ast.flags);
+
                     if !sorted_and_filtered_export_aliases.is_empty()
                         || !cross_chunk_exports.is_empty()
                     {
@@ -933,6 +936,10 @@ pub(crate) fn generate_entry_point_tail_js<'a>(
                         let mut had_default_export = false;
 
                         for (i, alias) in sorted_and_filtered_export_aliases.iter().enumerate() {
+                            if default_is_namespace && **alias == *b"default" {
+                                continue;
+                            }
+
                             // Only `.data` (an `ImportTracker`, `Copy`) is
                             // read/mutated below, so copy that field instead of
                             // the whole `ExportData`.
@@ -1077,16 +1084,19 @@ pub(crate) fn generate_entry_point_tail_js<'a>(
                         // collected Vec into the linker arena. The arena slice is also iterated
                         // below for the synthetic-default-export path.
                         let items: &mut [bun_ast::ClauseItem] = arena.alloc_slice_fill_iter(items);
-                        stmts.push(Stmt::alloc(
-                            S::ExportClause {
-                                items: bun_ast::StoreSlice::new_mut(items),
-                                is_single_line: false,
-                            },
-                            bun_ast::Loc::EMPTY,
-                        ));
+                        if !items.is_empty() {
+                            stmts.push(Stmt::alloc(
+                                S::ExportClause {
+                                    items: bun_ast::StoreSlice::new_mut(items),
+                                    is_single_line: false,
+                                },
+                                bun_ast::Loc::EMPTY,
+                            ));
+                        }
                         let items = &items[..own_len];
 
                         if flags.needs_synthetic_default_export
+                            && !default_is_namespace
                             && !had_default_export
                             && !items.is_empty()
                         {
@@ -1158,6 +1168,23 @@ pub(crate) fn generate_entry_point_tail_js<'a>(
                                 bun_ast::Loc::EMPTY,
                             ));
                         }
+                    }
+
+                    if default_is_namespace {
+                        // "export default exports_foo;"
+                        stmts.push(Stmt::alloc(
+                            S::ExportDefault {
+                                default_name: bun_ast::LocRef {
+                                    ref_: Ref::NONE,
+                                    loc: bun_ast::Loc::EMPTY,
+                                },
+                                value: StmtOrExpr::Expr(Expr::init_identifier(
+                                    ast.exports_ref,
+                                    bun_ast::Loc::EMPTY,
+                                )),
+                            },
+                            bun_ast::Loc::EMPTY,
+                        ));
                     }
                 }
             }

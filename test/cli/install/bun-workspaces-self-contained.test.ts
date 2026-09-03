@@ -51,11 +51,11 @@ async function install(cwd: string, args: string[] = []) {
   return { out, err, code };
 }
 
-async function writeProject(desktopExtra: object, workspacesExtra: object) {
+async function writeProject(desktopExtra: object, workspacesExtra: object, saveTextLockfile = true) {
   await writeFile(
     join(package_dir, "bunfig.toml"),
     Bun.TOML.stringify({
-      install: { cache: false, registry: root_url + "/", saveTextLockfile: true, linker: "hoisted" },
+      install: { cache: false, registry: root_url + "/", saveTextLockfile, linker: "hoisted" },
     }),
   );
   await mkdir(join(package_dir, "apps", "desktop"), { recursive: true });
@@ -103,14 +103,22 @@ describe.each([
     { installConfig: { hoistingLimits: "dependencies" } },
     { selfContained: ["desktop"] },
   ],
+  // yarn's default value is the same as no value; the root list still applies
+  [
+    'hoistingLimits "none" plus the root list',
+    { installConfig: { hoistingLimits: "none" } },
+    { selfContained: ["desktop"] },
+  ],
 ] as const)("self-contained workspace via %s", (_label, desktopExtra, workspacesExtra) => {
   it("gets a complete, physical node_modules while other workspaces still hoist", async () => {
     await writeProject(desktopExtra, workspacesExtra);
     const r = await install(package_dir);
     expect(r.err).not.toContain("error:");
-    if ("installConfig" in desktopExtra && (desktopExtra as any).installConfig.hoistingLimits !== "workspaces") {
+    if ((desktopExtra as any).installConfig?.hoistingLimits === "dependencies") {
       // the unsupported value is reported (and otherwise ignored)
       expect(r.err).toContain('installConfig.hoistingLimits "dependencies" is not supported');
+    } else {
+      expect(r.err).not.toContain("hoistingLimits");
     }
     expect(r.code).toBe(0);
 
@@ -167,6 +175,18 @@ it("an entry that matches no workspace warns and the rest still applies", async 
   ]);
 });
 
+// "none" is yarn's default: no hoisting limit, so nothing to warn about
+it('hoistingLimits "none" hoists the workspace normally and does not warn', async () => {
+  await writeProject({ installConfig: { hoistingLimits: "none" } }, {});
+  const r = await install(package_dir);
+  expect(r.err).not.toContain("error:");
+  expect(r.err).not.toContain("hoistingLimits");
+  expect(r.code).toBe(0);
+  expect(existsSync(join(package_dir, "apps", "desktop", "node_modules"))).toBeFalse();
+  expect(existsSync(join(package_dir, "node_modules", "@barn", "moo", "package.json"))).toBeTrue();
+  expect(await Bun.file(join(package_dir, "bun.lock")).text()).not.toContain("hoistingLimits");
+});
+
 it("without either setting the workspace is hoisted normally", async () => {
   await writeProject({}, {});
   const r = await install(package_dir);
@@ -176,3 +196,108 @@ it("without either setting the workspace is hoisted normally", async () => {
   expect(existsSync(join(package_dir, "node_modules", "@barn", "moo", "package.json"))).toBeTrue();
   expect(existsSync(join(package_dir, "node_modules", "baz", "package.json"))).toBeTrue();
 });
+
+// The lockfile does not record the setting. Bun 1.4.0 ignored
+// `installConfig.hoistingLimits`, so a repo that upgrades keeps its lockfile, and every
+// install, a frozen one too, reads the setting from the manifests.
+const spellings = {
+  "installConfig.hoistingLimits": [{ installConfig: { hoistingLimits: "workspaces" } }, {}],
+  "workspaces.selfContained": [{}, { selfContained: ["apps/desktop"] }],
+} as const;
+
+describe.each([
+  ["hoisted", "bun.lock", "installConfig.hoistingLimits"],
+  ["hoisted", "bun.lock", "workspaces.selfContained"],
+  ["isolated", "bun.lock", "installConfig.hoistingLimits"],
+  ["hoisted", "bun.lockb", "installConfig.hoistingLimits"],
+  ["hoisted", "bun.lockb", "workspaces.selfContained"],
+] as const)("with the %s linker, %s, and %s", (linker, lockfileName, spelling) => {
+  const [desktopExtra, workspacesExtra] = spellings[spelling];
+  const text = lockfileName === "bun.lock";
+  const readLockfile = () => Bun.file(join(package_dir, lockfileName)).bytes();
+  const desktopNm = () => join(package_dir, "apps", "desktop", "node_modules");
+  const cleanTree = async () => {
+    await rm(join(package_dir, "node_modules"), { recursive: true, force: true });
+    await rm(desktopNm(), { recursive: true, force: true });
+  };
+  // the isolated linker has no hoisting to limit, so only the hoisted layout differs
+  const expectLayout = async (layout: "hoisted" | "self-contained") => {
+    if (linker !== "hoisted") return;
+    if (layout === "hoisted") {
+      expect(existsSync(desktopNm())).toBeFalse();
+      expect(existsSync(join(package_dir, "node_modules", "@barn", "moo", "package.json"))).toBeTrue();
+    } else {
+      expect(await readdirSorted(desktopNm())).toEqual(["@barn", "bar", "baz", "shared"]);
+      if (!isWindows) expect(statSync(join(desktopNm(), "bar", "package.json")).nlink).toBe(1);
+    }
+  };
+
+  it("the setting does not change the lockfile", async () => {
+    await writeProject({}, {}, text);
+    let r = await install(package_dir, [`--linker=${linker}`]);
+    expect(r.err).not.toContain("error:");
+    expect(r.code).toBe(0);
+    const without = await readLockfile();
+
+    await writeProject(desktopExtra, workspacesExtra, text);
+    await cleanTree();
+    r = await install(package_dir, [`--linker=${linker}`]);
+    expect(r.err).not.toContain("error:");
+    expect(r.code).toBe(0);
+    expect(await readLockfile()).toEqual(without);
+    await expectLayout("self-contained");
+  });
+
+  it("a frozen install applies the manifest's setting to the same lockfile", async () => {
+    // the lockfile that bun 1.4.0 writes for this project
+    await writeProject({}, {}, text);
+    let r = await install(package_dir, [`--linker=${linker}`]);
+    expect(r.err).not.toContain("error:");
+    expect(r.code).toBe(0);
+    const lockfile = await readLockfile();
+
+    // the manifests declare the setting (the yarn key was there all along; 1.4.0 ignored it)
+    await writeProject(desktopExtra, workspacesExtra, text);
+    await cleanTree();
+    r = await install(package_dir, [`--linker=${linker}`, "--frozen-lockfile"]);
+    expect(r.err).not.toContain("error:");
+    expect(r.code).toBe(0);
+    expect(await readLockfile()).toEqual(lockfile);
+    await expectLayout("self-contained");
+
+    // the manifest drops the setting, and the workspace hoists again
+    await writeProject({}, {}, text);
+    await cleanTree();
+    r = await install(package_dir, [`--linker=${linker}`, "--frozen-lockfile"]);
+    expect(r.err).not.toContain("error:");
+    expect(r.code).toBe(0);
+    expect(await readLockfile()).toEqual(lockfile);
+    await expectLayout("hoisted");
+  });
+});
+
+it.each(Object.keys(spellings) as (keyof typeof spellings)[])(
+  "bun prune keeps the packages of a workspace made self-contained by %s",
+  async spelling => {
+    const [desktopExtra, workspacesExtra] = spellings[spelling];
+    await writeProject(desktopExtra, workspacesExtra);
+    const r = await install(package_dir);
+    expect(r.err).not.toContain("error:");
+    expect(r.code).toBe(0);
+    const desktopNm = join(package_dir, "apps", "desktop", "node_modules");
+    expect(await readdirSorted(desktopNm)).toEqual(["@barn", "bar", "baz", "shared"]);
+
+    await using proc = spawn({
+      cmd: [bunExe(), "prune"],
+      cwd: package_dir,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, err, code] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(err).not.toContain("error:");
+    expect(code).toBe(0);
+    expect(await readdirSorted(desktopNm)).toEqual(["@barn", "bar", "baz", "shared"]);
+    expect(existsSync(join(desktopNm, "bar", "package.json"))).toBeTrue();
+  },
+);

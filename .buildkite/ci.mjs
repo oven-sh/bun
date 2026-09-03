@@ -826,13 +826,6 @@ function getTestBunStep(platform, options, testOptions = {}) {
     args.push("--exclude=internal/source-lints");
   }
 
-  // The untiered darwin lane PR builds get (see prDarwinTestPlatforms) skips
-  // the ~1% of files that take 10s or more; they are ~60% of a shard's wall
-  // time and still run on every other PR lane and on main's darwin lanes.
-  if (os === "darwin" && (!platform.tier || platform.tier === "beta")) {
-    args.push("--skip-slower-than=10000");
-  }
-
   const depends = [];
   if (!buildId) {
     depends.push(`${getTargetKey(platform)}-build-bun`);
@@ -857,7 +850,9 @@ function getTestBunStep(platform, options, testOptions = {}) {
     // PR's own build, and a cancel clears it.
     parallelism: platform.tier === "beta" ? 1 : os === "darwin" ? 2 : os === "windows" ? 8 : 20,
     ...(platform.tier === "beta" ? { soft_fail: true } : {}),
-    timeout_in_minutes: profile === "asan" || os === "windows" || os === "darwin" ? 45 : 30,
+    // The beta lane runs the whole suite as one shard on one box (~35 min).
+    timeout_in_minutes:
+      platform.tier === "beta" ? 60 : profile === "asan" || os === "windows" || os === "darwin" ? 45 : 30,
     env: {
       ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=0",
       // Platform smoke check: runner.node.mjs asserts the agent matches what

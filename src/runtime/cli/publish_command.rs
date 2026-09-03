@@ -751,8 +751,7 @@ impl PublishCommand {
 
             bun_core::prettyln!("\n<b><magenta>{}<r>", bstr::BStr::new(&member.name));
 
-            // Decide the skips before `pack` runs the pre-publish scripts. An unreadable
-            // package.json falls through: `pack` reports it.
+            // Skip before `pack` runs the pre-publish scripts. `pack` reports an unreadable file.
             if let Some(manifest) = Self::read_manifest(manager, &member.abs_pkg_json) {
                 if manifest.private {
                     bun_core::prettyln!("<d>skipping private package<r>");
@@ -834,11 +833,9 @@ impl PublishCommand {
         Ok(())
     }
 
-    /// `private`, `name` and `version` of a package.json. `None` when the file cannot be read or
-    /// parsed, or lacks a string `name` or `version`.
+    /// `None` when the package.json cannot be read, or lacks a string `name` or `version`.
     fn read_manifest(manager: &mut PackageManager, abs_pkg_json: &ZStr) -> Option<Manifest> {
-        // SAFETY: `manager.log` is set once at init. `workspace_package_json_cache` is a
-        // different field, so the two `&mut` do not overlap.
+        // SAFETY: `manager.log` is set once at init and is not `workspace_package_json_cache`.
         let log: &mut bun_ast::Log = unsafe { &mut *manager.log };
         let install::GetJsonResult::Entry(entry) =
             manager.workspace_package_json_cache.get_with_path(

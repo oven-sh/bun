@@ -14,5 +14,4 @@ exclude:
     - packages/bun-inspector-frontend
     - packages/bun-error
     - packages/bun-debug-adapter-protocol
-    - packages/bun-build-mdx-rs
     - packages/@types/bun

@@ -802,9 +802,7 @@ pub mod posix_spawn {
         }
     }
 
-    // Higher-tier re-exports (`Process`/`Status`/`spawn_process`/`sync`/
-    // `Windows*`) live in `bun_spawn::posix_spawn::bun_spawn`, which augments
-    // this module — they need event-loop types this `-sys` crate cannot name.
+    // `Process`/`Status`/`spawn_process` live in `bun_spawn::process` (they need event-loop types).
     pub use crate::spawn_process::{PosixSpawnResult, Rusage};
 }
 

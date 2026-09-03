@@ -76,8 +76,6 @@ bun-zigld
 cmake_install.cmake
 CMakeCache.txt
 CMakeFiles
-cold-jsc-start
-cold-jsc-start.d
 compile_commands.json
 cover
 coverage
@@ -90,9 +88,6 @@ examples/lotta-modules/bun-yday
 failing-tests.txt
 github
 make-dev-stats.csv
-misctools/fetch
-misctools/machbench
-misctools/sha
 myscript.sh
 node_modules
 node_modules_*

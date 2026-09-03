@@ -1667,27 +1667,6 @@ pub use smol_str::SmolStr;
 pub use string_builder::StringBuilder;
 
 // ──────────────────────────────────────────────────────────────────────────
-// `encoding` — Node.js Buffer encoding tag. Self-contained.
-// ──────────────────────────────────────────────────────────────────────────
-pub mod encoding {
-    #[repr(u8)]
-    #[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
-    pub enum Encoding {
-        #[default]
-        Utf8 = 0,
-        Ucs2,
-        Utf16le,
-        Latin1,
-        Ascii,
-        Base64,
-        Base64url,
-        Hex,
-        Buffer,
-    }
-}
-pub use encoding::Encoding as NodeEncoding;
-
-// ──────────────────────────────────────────────────────────────────────────
 // `lexer` — identifier predicates. Thin `u32`-taking wrapper over the
 // [`identifier`] two-stage Unicode tables (moved down from `bun_js_parser`).
 // ──────────────────────────────────────────────────────────────────────────

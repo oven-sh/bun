@@ -139,16 +139,6 @@ impl SymbolTable for [symbol::Symbol] {
     }
 }
 
-impl SymbolTable for Vec<symbol::Symbol> {
-    #[inline]
-    fn get_symbol(&mut self, r: Ref) -> &mut symbol::Symbol {
-        &mut self[r.inner_index() as usize]
-    }
-}
-
-// `impl SymbolTable for symbol::Map` (the bundler's 2-D table arm) lives next
-// to `Map` in `symbol.rs` — it does the `source_index + inner_index` lookup.
-
 /// `Ref` methods that need `Symbol` / JSON writer.
 impl Ref {
     #[inline]

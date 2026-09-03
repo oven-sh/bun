@@ -744,14 +744,6 @@ pub(crate) unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i6
             }
         }
         poll_tag::TERMINAL_POLL => poll_arm!(TerminalPoll),
-        // `OutputReader = BufferedReader` in install crate — separate tag for ownership.
-        poll_tag::LIFECYCLE_SCRIPT_SUBPROCESS_OUTPUT_READER => {
-            poll_arm!(bun_io::BufferedReader, |h| {
-                // SAFETY: tag matched, so `owner.ptr` is a live `*mut BufferedReader`
-                // set at `FilePoll::init`. Passed raw (see BUFFERED_READER above).
-                unsafe { bun_io::BufferedReader::on_poll(h, size_or_offset as isize, hup) }
-            })
-        }
 
         poll_tag::NULL => {
             // The low-tier `on_update` already logged before calling the hook

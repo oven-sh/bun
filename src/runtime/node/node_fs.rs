@@ -346,26 +346,6 @@ fn with_path_like(err: sys::Error, p: &PathOrFileDescriptor) -> sys::Error {
     }
 }
 
-/// `node::Encoding` → `bun_core::NodeEncoding`. Both are `#[repr(u8)]` with the
-/// identical discriminant layout (`Utf8..Buffer`); `webcore::encoding` was ported
-/// against the upstream copy, so adapt at the boundary instead of changing
-/// either definition.
-#[inline]
-fn encoding_to_node(e: Encoding) -> bun_core::NodeEncoding {
-    use bun_core::NodeEncoding as N;
-    match e {
-        Encoding::Utf8 => N::Utf8,
-        Encoding::Ucs2 => N::Ucs2,
-        Encoding::Utf16le => N::Utf16le,
-        Encoding::Latin1 => N::Latin1,
-        Encoding::Ascii => N::Ascii,
-        Encoding::Base64 => N::Base64,
-        Encoding::Base64url => N::Base64url,
-        Encoding::Hex => N::Hex,
-        Encoding::Buffer => N::Buffer,
-    }
-}
-
 /// uv-shaped stat struct. `Stats::init` (from
 /// `super::stat`) takes its sibling `PosixStat` by reference, so route through
 /// that definition rather than `bun_sys::PosixStat` to keep the parameter
@@ -6142,7 +6122,7 @@ impl NodeFS {
             if T::IS_DIRENT && dirent_path.is_empty() {
                 dirent_path = webcore::encoding::to_bun_string(
                     without_nt_prefix::<u8>(basename.as_bytes()),
-                    encoding_to_node(args.encoding),
+                    args.encoding,
                 );
             }
 
@@ -6195,7 +6175,7 @@ impl NodeFS {
             if T::IS_DIRENT && dirent_path.is_empty() {
                 dirent_path = webcore::encoding::to_bun_string(
                     without_nt_prefix::<u8>(basename.as_bytes()),
-                    encoding_to_node(args.encoding),
+                    args.encoding,
                 );
             }
 
@@ -6553,7 +6533,7 @@ impl NodeFS {
                     if dirent_path_prev.is_empty() || dirent_path_prev.byte_slice() != path_u8 {
                         dirent_path_prev = webcore::encoding::to_bun_string(
                             without_nt_prefix::<u8>(path_u8),
-                            encoding_to_node(args.encoding),
+                            args.encoding,
                         );
                     }
                 }

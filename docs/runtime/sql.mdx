@@ -400,19 +400,24 @@ await sql`SELECT * FROM users WHERE id IN ${sql(users, "id")}`;
 
 ### `sql.array` helper
 
-The `sql.array` helper creates PostgreSQL array literals from JavaScript arrays:
+The `sql.array` helper binds a JavaScript array as a typed PostgreSQL array parameter:
 
 ```ts
-// Create array literals for PostgreSQL
+// The element type is inferred from the values
 await sql`INSERT INTO tags (items) VALUES (${sql.array(["red", "blue", "green"])})`;
-// Generates: INSERT INTO tags (items) VALUES (ARRAY['red', 'blue', 'green'])
+// Binds: $1::TEXT[] with '{"red","blue","green"}'
 
 // Works with numeric arrays too
-await sql`SELECT * FROM products WHERE ids = ANY(${sql.array([1, 2, 3])})`;
-// Generates: SELECT * FROM products WHERE ids = ANY(ARRAY[1, 2, 3])
+await sql`SELECT * FROM products WHERE id = ANY(${sql.array([1, 2, 3])})`;
+// Binds: $1::INTEGER[] with '{1,2,3}'
+
+// Pass the element type explicitly when inference is not enough
+await sql`INSERT INTO events (ids) VALUES (${sql.array(["a0eebc99-..."], "UUID")})`;
 ```
 
-<Note>`sql.array` is PostgreSQL-only. Multi-dimensional arrays and NULL elements may not be supported yet.</Note>
+Without an explicit type, strings bind as `TEXT`, integers as `INTEGER` or `BIGINT`, other numbers as `DOUBLE PRECISION`, booleans as `BOOLEAN`, dates as `TIMESTAMPTZ`, buffers as `BYTEA`. Objects, mixed kinds and empty arrays bind as `JSON`. `null` and `undefined` elements bind as `NULL`.
+
+<Note>`sql.array` is PostgreSQL-only. Multi-dimensional arrays may not be supported yet.</Note>
 
 ---
 

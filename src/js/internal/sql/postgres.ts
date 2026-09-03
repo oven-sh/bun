@@ -152,9 +152,10 @@ function arrayValueSerializer(type: ArrayType, is_numeric: boolean, is_json: boo
     return `{${value.map(arrayValueSerializer.bind(this, type, is_numeric, is_json)).join(delimiter)}}`;
   }
 
+  // An unquoted NULL is the SQL NULL element. A quoted "null" is the string.
+  if (value === null || value === undefined) return "NULL";
+
   switch (typeof value) {
-    case "undefined":
-      return "null";
     case "string":
       if (is_json) {
         return `"${arrayEscape(JSON.stringify(value))}"`;
@@ -205,7 +206,7 @@ function arrayValueSerializer(type: ArrayType, is_numeric: boolean, is_json: boo
       return `"${arrayEscape(JSON.stringify(value))}"`;
   }
 }
-function getArrayType(typeNameOrID: number | ArrayType | undefined = undefined): ArrayType {
+function getArrayType(values: any[], typeNameOrID: number | ArrayType | undefined): ArrayType {
   const typeOfType = typeof typeNameOrID;
   if (typeOfType === "number") {
     return getPostgresArrayType(typeNameOrID as number) ?? "JSON";
@@ -226,8 +227,94 @@ function getArrayType(typeNameOrID: number | ArrayType | undefined = undefined):
     }
     return type;
   }
-  // default to JSON so we accept most of the types
-  return "JSON";
+  return inferArrayType(values);
+}
+
+const enum ElementKind {
+  none,
+  string,
+  number,
+  bigint,
+  boolean,
+  date,
+  buffer,
+  json,
+}
+
+function isNumericKind(kind: ElementKind) {
+  return kind === ElementKind.number || kind === ElementKind.bigint;
+}
+
+// Picks the element type from the values themselves when the caller gives none.
+// Every value must be of the same kind, otherwise the array falls back to JSON.
+// Numbers mirror the scalar inference in tag_jsc.rs: int4 when every value fits
+// int32, int8 for other safe integers, float8 otherwise.
+function inferArrayType(values: any[]): ArrayType {
+  let kind = ElementKind.none;
+  let fitsInt32 = true;
+  let allSafeIntegers = true;
+
+  function visit(value: any) {
+    if (value === null || value === undefined) return;
+    if ($isArray(value) || isTypedArray(value)) {
+      for (let i = 0; i < value.length; i++) visit(value[i]);
+      return;
+    }
+    let current: ElementKind;
+    switch (typeof value) {
+      case "string":
+        current = ElementKind.string;
+        break;
+      case "number":
+        current = ElementKind.number;
+        if (!Number.isSafeInteger(value)) {
+          allSafeIntegers = false;
+        } else if (value < -2147483648 || value > 2147483647) {
+          fitsInt32 = false;
+        }
+        break;
+      case "bigint":
+        current = ElementKind.bigint;
+        break;
+      case "boolean":
+        current = ElementKind.boolean;
+        break;
+      default:
+        if (value instanceof Date) {
+          current = ElementKind.date;
+        } else if (Buffer.isBuffer(value)) {
+          current = ElementKind.buffer;
+        } else {
+          current = ElementKind.json;
+        }
+    }
+    if (kind === ElementKind.none) {
+      kind = current;
+    } else if (kind !== current) {
+      // A number mixed with a bigint is still numeric. Any other mix is JSON.
+      kind = isNumericKind(kind) && isNumericKind(current) ? ElementKind.bigint : ElementKind.json;
+    }
+  }
+
+  if ($isArray(values) || isTypedArray(values)) visit(values);
+
+  switch (kind) {
+    case ElementKind.string:
+      return "TEXT";
+    case ElementKind.number:
+      if (!allSafeIntegers) return "DOUBLE PRECISION";
+      return fitsInt32 ? "INTEGER" : "BIGINT";
+    case ElementKind.bigint:
+      return allSafeIntegers ? "BIGINT" : "NUMERIC";
+    case ElementKind.boolean:
+      return "BOOLEAN";
+    case ElementKind.date:
+      return "TIMESTAMPTZ";
+    case ElementKind.buffer:
+      return "BYTEA";
+    default:
+      return "JSON";
+  }
 }
 function serializeArray(values: any[], type: ArrayType) {
   if (!$isArray(values) && !isTypedArray(values)) return values;
@@ -443,7 +530,7 @@ class PostgresAdapter
   }
 
   array(values: any[], typeNameOrID?: number | ArrayType): SQLArrayParameter {
-    const arrayType = getArrayType(typeNameOrID);
+    const arrayType = getArrayType(values, typeNameOrID);
     return new SQLArrayParameter(serializeArray(values, arrayType), arrayType);
   }
 

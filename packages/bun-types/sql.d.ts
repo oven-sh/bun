@@ -760,7 +760,11 @@ declare module "bun" {
     /**
      * Creates a SQL array parameter
      * @param values Array values to bind
-     * @param typeNameOrTypeID Element type name or type ID; defaults to JSON when omitted
+     * @param typeNameOrTypeID Element type name or type ID. When omitted, the
+     * type is inferred from the values: strings bind as `TEXT`, integers as
+     * `INTEGER` or `BIGINT`, other numbers as `DOUBLE PRECISION`, booleans as
+     * `BOOLEAN`, dates as `TIMESTAMPTZ`, buffers as `BYTEA`. Objects, mixed
+     * kinds and empty arrays bind as `JSON`.
      * @returns The array parameter, ready to interpolate into a query
      *
      * @example
@@ -768,6 +772,9 @@ declare module "bun" {
      * const array = sql.array([1, 2, 3], "INT");
      * await sql`CREATE TABLE users_posts (user_id INT, posts_id INT[])`;
      * await sql`INSERT INTO users_posts (user_id, posts_id) VALUES (${user.id}, ${array})`;
+     *
+     * // the element type is inferred from the values
+     * await sql`SELECT * FROM users WHERE id = ANY(${sql.array([1, 2, 3])})`;
      * ```
      */
     array(values: any[], typeNameOrTypeID?: number | ArrayType): SQLArrayParameter;

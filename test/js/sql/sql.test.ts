@@ -186,6 +186,93 @@ if (isDockerEnabled()) {
         expect(update_roles).toEqual(["c", "d"]);
       });
 
+      test("sql.array without a type infers the element type from the values", async () => {
+        await using sql = postgres(options);
+        const [row] = await sql`select
+          pg_typeof(${sql.array(["a", "b"])}) as strings,
+          pg_typeof(${sql.array([1, 2])}) as ints,
+          pg_typeof(${sql.array([1, 2 ** 40])}) as bigints,
+          pg_typeof(${sql.array([1n, 2n])}) as native_bigints,
+          pg_typeof(${sql.array([1, 2n])}) as mixed_ints,
+          pg_typeof(${sql.array([1.5, 2n])}) as mixed_float_bigint,
+          pg_typeof(${sql.array([1.5, 2])}) as floats,
+          pg_typeof(${sql.array([true, false])}) as booleans,
+          pg_typeof(${sql.array([new Date()])}) as dates,
+          pg_typeof(${sql.array([Buffer.from("hi")])}) as buffers,
+          pg_typeof(${sql.array([
+            [1, 2],
+            [3, null],
+          ])}) as nested,
+          pg_typeof(${sql.array([null, "a"])}) as with_null,
+          pg_typeof(${sql.array([{ a: 1 }])}) as objects,
+          pg_typeof(${sql.array(["a", 1])}) as mixed,
+          pg_typeof(${sql.array([])}) as empty,
+          pg_typeof(${sql.array([null])}) as only_null`;
+        expect(row).toEqual({
+          strings: "text[]",
+          ints: "integer[]",
+          bigints: "bigint[]",
+          native_bigints: "bigint[]",
+          mixed_ints: "bigint[]",
+          mixed_float_bigint: "numeric[]",
+          floats: "double precision[]",
+          booleans: "boolean[]",
+          dates: "timestamp with time zone[]",
+          buffers: "bytea[]",
+          nested: "integer[]",
+          with_null: "text[]",
+          objects: "json[]",
+          mixed: "json[]",
+          empty: "json[]",
+          only_null: "json[]",
+        });
+      });
+
+      test("sql.array without a type works with casts and typed columns", async () => {
+        await using sql = postgres(options);
+        const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
+        await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (
+            id SERIAL PRIMARY KEY,
+            tags TEXT[],
+            nums INT[],
+            flags BOOLEAN[]
+        );`;
+
+        const [{ id, tags, nums, flags }] =
+          await sql`insert into ${sql(random_name)} (tags, nums, flags) values (${sql.array(["a", 'b"c', null])}, ${sql.array([1, 2, 3])}, ${sql.array([true, false])}) returning *`;
+        expect({ id, tags, nums, flags }).toEqual({
+          id: 1,
+          tags: ["a", 'b"c', null],
+          nums: new Int32Array([1, 2, 3]),
+          flags: [true, false],
+        });
+
+        // the stored strings carry no JSON quotes
+        const [{ lengths }] = await sql.unsafe(
+          `select array(select length(t) from unnest(tags) as t) as lengths from ${random_name}`,
+        );
+        expect(lengths).toEqual([1, 3, null]);
+
+        const [{ found }] = await sql`select id as found from ${sql(random_name)} where id = ANY(${sql.array([1, 5])})`;
+        expect(found).toBe(1);
+
+        const [{ text_cast, int_cast }] =
+          await sql`select ${sql.array(["a", "b"])}::text[] as text_cast, ${sql.array([1, 2])}::int[] as int_cast`;
+        expect(text_cast).toEqual(["a", "b"]);
+        expect(int_cast).toEqual(new Int32Array([1, 2]));
+      });
+
+      test("sql.array encodes null and undefined elements as SQL NULL", async () => {
+        await using sql = postgres(options);
+        const [{ text_nulls, json_nulls, bool_nulls }] = await sql`select
+          ${sql.array(["a", null, undefined, "null"], "TEXT")} as text_nulls,
+          ${sql.array([{ a: 1 }, null, undefined], "JSON")} as json_nulls,
+          ${sql.array([true, null], "BOOLEAN")} as bool_nulls`;
+        expect(text_nulls).toEqual(["a", null, null, "null"]);
+        expect(json_nulls).toEqual([{ a: 1 }, null, null]);
+        expect(bool_nulls).toEqual([true, null]);
+      });
+
       test("sql.array should support jsonb and json", async () => {
         await using sql = postgres(options);
         {
@@ -1081,22 +1168,22 @@ if (isDockerEnabled()) {
       }
     });
 
-    // t("Empty array", async () => [true, Array.isArray((await sql`select ${sql.array([], 1009)} as x`)[0].x)]);
+    test("Empty array", async () =>
+      expect(Array.isArray((await sql`select ${sql.array([], 1009)} as x`)[0].x)).toBe(true));
 
     test("string arg with ::int -> Array<int>", async () =>
       expect((await sql`select ${"{1,2,3}"}::int[] as x`)[0].x).toEqual(new Int32Array([1, 2, 3])));
 
-    // t("Array of Integer", async () => ["3", (await sql`select ${sql.array([1, 2, 3])} as x`)[0].x[2]]);
+    test("Array of Integer", async () => expect((await sql`select ${sql.array([1, 2, 3])} as x`)[0].x[2]).toBe(3));
 
-    // t('Array of String', async() =>
-    //   ['c', (await sql`select ${ sql.array(['a', 'b', 'c']) } as x`)[0].x[2]]
-    // )
+    test("Array of String", async () =>
+      expect((await sql`select ${sql.array(["a", "b", "c"])} as x`)[0].x[2]).toBe("c"));
 
-    // test("Array of Date", async () => {
-    //   const now = new Date();
-    //   const result = await sql`select ${sql.array([now, now, now])} as x`;
-    //   expect(result[0].x[2].getTime()).toBe(now.getTime());
-    // });
+    test("Array of Date", async () => {
+      const now = new Date();
+      const result = await sql`select ${sql.array([now, now, now])} as x`;
+      expect(result[0].x[2].getTime()).toBe(now.getTime());
+    });
 
     test("Array of Box", async () => {
       const result = await sql`select ${"{(1,2),(3,4);(4,5),(6,7)}"}::box[] as x`;

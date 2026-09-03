@@ -2875,6 +2875,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
         let mut root_full = json.root;
         Some(Publish::PublishCommand::normalized_package(
             ctx.manager,
+            abs_workspace_path,
             package_name,
             package_version,
             &mut root_full,

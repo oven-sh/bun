@@ -1652,6 +1652,38 @@ describe("--recursive", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("bin entries resolve against the member directory", async () => {
+    const bins: Record<string, unknown> = {};
+    using binRegistry = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        if (req.method === "GET") return new Response("not found", { status: 404 });
+        const body = await req.json();
+        bins[body.name] = body.versions["1.0.0"].bin;
+        return new Response("OK");
+      },
+    });
+    const packageDir = await workspace("rec-bin", `http://localhost:${binRegistry.port}/`, {
+      "packages/tool": { name: "rec-bin-tool", version: "1.0.0", directories: { bin: "bins" } },
+      "packages/cli": { name: "rec-bin-cli", version: "1.0.0", bin: "cli.js" },
+    });
+    // The root has a `bins` directory too. It must not leak into the member's manifest.
+    await Promise.all([
+      write(join(packageDir, "bins", "root.js"), "#!/usr/bin/env bun\n"),
+      write(join(packageDir, "packages", "tool", "bins", "tool.js"), "#!/usr/bin/env bun\n"),
+      write(join(packageDir, "packages", "cli", "cli.js"), "#!/usr/bin/env bun\n"),
+    ]);
+
+    const { err, exitCode } = await publish(env, packageDir, "--filter", "rec-bin-tool", "--filter", "rec-bin-cli");
+    expect(err).not.toContain("error:");
+    expect(err).not.toContain("does not exist");
+    expect(bins).toEqual({
+      "rec-bin-tool": { "tool.js": "bins/tool.js" },
+      "rec-bin-cli": { "rec-bin-cli": "cli.js" },
+    });
+    expect(exitCode).toBe(0);
+  });
+
   test("without a lockfile asks for bun install", async () => {
     using mock = mockRegistry();
     using dir = tempDir("rec-nolock", {

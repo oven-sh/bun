@@ -414,8 +414,14 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
         drop(sha512);
 
         let mut json = json;
+        let cwd_package_dir: Box<[u8]> = strings::without_suffix_comptime(
+            manager.original_package_json_path.as_bytes(),
+            b"package.json",
+        )
+        .into();
         let normalized_pkg_info = PublishCommand::normalized_package(
             manager,
+            &cwd_package_dir,
             &package_name,
             &package_version,
             &mut json,
@@ -1507,8 +1513,10 @@ impl PublishCommand {
         }
     }
 
+    /// `package_dir` is where `directories.bin` is resolved.
     pub(crate) fn normalized_package(
         manager: &mut PackageManager,
+        package_dir: &[u8],
         package_name: &[u8],
         package_version: &[u8],
         json: &mut Expr,
@@ -1644,14 +1652,7 @@ impl PublishCommand {
         )?;
 
         {
-            let workspace_root = match bun_sys::open_a(
-                strings::without_suffix_comptime(
-                    manager.original_package_json_path.as_bytes(),
-                    b"package.json",
-                ),
-                bun_sys::O::DIRECTORY,
-                0,
-            ) {
+            let workspace_root = match bun_sys::open_a(package_dir, bun_sys::O::DIRECTORY, 0) {
                 Ok(fd) => fd,
                 Err(e) => {
                     Output::err(e, "failed to open workspace directory", ());

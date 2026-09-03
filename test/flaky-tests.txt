@@ -42,6 +42,7 @@ test/cli/install/frozen-lockfile-pruned.test.ts  # 3 of 80 builds; alpine, debia
 test/cli/install/hoist.test.ts  # 1 of 80 builds; debian
 test/cli/install/migration/complex-workspace.test.ts  # 1 of 80 builds; mac; error: Failed to install
 test/cli/install/migration/migrate.test.ts  # 6 of 80 builds; parallel batch; failed in the parallel batch
+test/cli/install/migration/pnpm-migration.test.ts  # Verdaccio exited with code 2 before the test ran, and beforeAll timed out (build 109692, ubuntu 25.04 aarch64). Exit code 2 is the verdaccio listen error. VerdaccioRegistry picks randomPort(), and that port was in use
 test/cli/install/npmrc.test.ts  # 2 of 80 builds; debian, ubuntu
 test/cli/install/public-hoist-pattern.test.ts  # 2 of 80 builds; ubuntu
 test/cli/run/cpu-prof.test.ts  # 4 of 80 builds; windows

@@ -103,13 +103,6 @@ pub struct ConsoleObject {
     _pin: core::marker::PhantomPinned,
 }
 
-impl core::fmt::Display for ConsoleObject {
-    fn fmt(&self, _: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        // Intentionally prints nothing.
-        Ok(())
-    }
-}
-
 impl ConsoleObject {
     /// `adapt_to_new_api(&mut self.stderr_buffer)` captures a raw pointer into
     /// the buffer field, so the struct is self-referential once initialized:

@@ -77,8 +77,6 @@ pub mod api {
         pub entry_points: Vec<Box<[u8]>>,
         /// write
         pub write: Option<bool>,
-        /// inject
-        pub inject: Vec<Box<[u8]>>,
         /// output_dir
         pub output_dir: Option<Box<[u8]>>,
         /// external
@@ -89,18 +87,12 @@ pub mod api {
         pub main_fields: Vec<Box<[u8]>>,
         /// target
         pub target: Option<Target>,
-        /// serve
-        pub serve: Option<bool>,
         /// env_files
         pub env_files: Vec<Box<[u8]>>,
         /// disable_default_env_files
         pub disable_default_env_files: bool,
         /// extension_order
         pub extension_order: Vec<Box<[u8]>>,
-        /// no_summary
-        pub no_summary: Option<bool>,
-        /// disable_hmr
-        pub disable_hmr: bool,
         /// port
         pub port: Option<u16>,
         /// logLevel
@@ -121,7 +113,6 @@ pub mod api {
         pub serve_minify_identifiers: Option<bool>,
         pub serve_env_behavior: DotEnvBehavior,
         pub serve_env_prefix: Option<Box<[u8]>>,
-        pub serve_splitting: bool,
         pub serve_public_path: Option<Box<[u8]>>,
         pub serve_hmr: Option<bool>,
         pub serve_define: Option<StringMap>,
@@ -210,10 +201,6 @@ pub mod api {
         pub default_registry: Option<NpmRegistry>,
         /// scoped
         pub scoped: Option<NpmRegistryMap>,
-        /// lockfile_path
-        pub lockfile_path: Option<Box<[u8]>>,
-        /// save_lockfile_path
-        pub save_lockfile_path: Option<Box<[u8]>>,
         /// cache_directory
         pub cache_directory: Option<Box<[u8]>>,
         /// dry_run

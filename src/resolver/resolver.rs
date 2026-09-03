@@ -1326,11 +1326,6 @@ impl<'a> Resolver<'a> {
             // is backwards compat with Bun 1.0 behavior)
             // See https://github.com/oven-sh/bun/issues/8994 for more details.
             if source_dir.is_empty() {
-                // if let Some(debug) = self.debug_logs.as_mut() {
-                //     debug.add_note(b"Cannot resolve this path without a directory".to_vec());
-                //     let _ = self.flush_debug_logs(FlushMode::Fail);
-                // }
-                // return ResultUnion::Failure(crate::Error::MissingResolveDir);
                 break 'brk Fs::FileSystem::instance().top_level_dir;
             }
 
@@ -1338,11 +1333,6 @@ impl<'a> Resolver<'a> {
             // or call the module resolver from javascript (Bun.resolveSync)
             // with a faulty parent specifier.
             if !bun_paths::is_absolute(source_dir) {
-                // if let Some(debug) = self.debug_logs.as_mut() {
-                //     debug.add_note(b"Cannot resolve this path without an absolute directory".to_vec());
-                //     let _ = self.flush_debug_logs(FlushMode::Fail);
-                // }
-                // return ResultUnion::Failure(crate::Error::InvalidResolveDir);
                 break 'brk Fs::FileSystem::instance().top_level_dir;
             }
 

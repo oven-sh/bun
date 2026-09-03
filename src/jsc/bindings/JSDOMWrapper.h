@@ -47,7 +47,6 @@ class ScriptExecutionContext;
 
 inline constexpr uint8_t JSDOMWrapperType = 0b11101110;
 inline constexpr uint8_t JSEventType = 0b11101111;
-inline constexpr uint8_t JSNodeType = 0b11110000;
 inline constexpr uint8_t JSNodeTypeMask = 0b00001111;
 inline constexpr uint8_t JSElementType = 0b11110000 | NodeConstants::ELEMENT_NODE;
 inline constexpr uint8_t JSAsJSONType = JSElementType;

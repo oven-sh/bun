@@ -2,8 +2,6 @@
 //! (a typed slab) and are bulk-freed by `Store::reset()`. `Expr` and
 //! `Data` carry the arena lifetime.
 
-use core::fmt;
-
 use crate::Loc;
 use bun_alloc::{AllocError, Arena as Bump};
 use bun_collections::VecExt;
@@ -1222,12 +1220,6 @@ impl Tag {
             Tag::ERequireString => "require",
             other => <&'static str>::from(other),
         }
-    }
-}
-
-impl fmt::Display for Tag {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.type_name())
     }
 }
 

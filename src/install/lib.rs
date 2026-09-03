@@ -185,16 +185,12 @@ pub use update_request::UpdateRequest;
 pub mod package_manager {
     pub use crate::package_manager_real::package_manager_options::LogLevel;
     pub use crate::package_manager_real::*;
-    pub use crate::update_request;
 
     /// `PackageManager.Options` namespace alias — `LogLevel` plus the
-    /// free-function helpers callers spell as `Options::open_global_dir`.
+    /// free-function helpers.
     #[allow(non_snake_case)]
     pub mod Options {
         pub use crate::package_manager_real::package_manager_options::*;
-        // `open_global_dir` lives in PackageManagerOptions.rs; re-export so
-        // `Options::open_global_dir` resolves.
-        pub use crate::package_manager_real::package_manager_options::open_global_dir;
     }
 
     /// Re-export the file-backed workspace package.json cache.
@@ -204,13 +200,6 @@ pub mod package_manager {
         GetJSONOptions as GetJsonOptions, GetResult as GetJsonResult,
         MapEntry as WorkspacePackageJsonCacheEntry, WorkspacePackageJSONCache,
     };
-
-    /// `CommandLineArguments.AuditLevel` (subset surfaced for
-    /// `bun_runtime::cli::audit_command`). Re-exported alongside the full
-    /// `command_line_arguments` module from `package_manager_real`.
-    pub mod audit {
-        pub use crate::package_manager_real::command_line_arguments::AuditLevel;
-    }
 
     /// Re-export the file-backed security-scanner module so callers naming
     /// `bun_install::package_manager::security_scanner` reach the real
@@ -272,30 +261,22 @@ pub use resolution::Resolution;
 // local PnpmMatcher.rs duplicate (4-arg `from_expr`, dead) was deleted.
 pub use bun_install_types::NodeLinker::PnpmMatcher;
 
-pub use bun_collections::identity_context::ArrayIdentityContext;
-pub use bun_collections::identity_context::IdentityContext;
-
-pub use external::ExternalPackageNameHashList;
-pub use external::ExternalSlice;
-pub use external::ExternalStringList;
-pub use external::ExternalStringMap;
-pub use external::VersionSlice;
-pub use external_slice as external;
+pub use external_slice::ExternalSlice;
+pub use external_slice::ExternalStringList;
+pub use external_slice::ExternalStringMap;
+pub use external_slice::VersionSlice;
 
 pub use dependency::Behavior;
-pub use dependency::{Dependency, DependencyExt, TagExt, VersionExt};
+pub use dependency::Dependency;
 pub use integrity::Integrity;
 
 pub use bin::Bin;
-pub use lockfile_real::bun_lock as TextLockfile;
 
 pub use dependency::Tag as DependencyVersionTag;
 pub use extract_tarball::ExtractTarball;
-pub use lockfile::{LoadResult, LoadStep, Lockfile, PatchedDep};
+pub use lockfile::{LoadResult, Lockfile, PatchedDep};
 pub use package_manager::Options::LogLevel;
-pub use package_manager::{
-    GetJsonOptions, GetJsonResult, WorkspaceFilter, WorkspacePackageJsonCacheEntry,
-};
+pub use package_manager::{GetJsonOptions, GetJsonResult, WorkspacePackageJsonCacheEntry};
 pub use repository::{Repository, RepositoryExt};
 pub use resolution::Tag as ResolutionTag;
 
@@ -313,10 +294,7 @@ pub use tarball_stream::TarballStream;
 // PackageManager + its associated types — re-exported from the file-backed
 // `package_manager_real` so `crate::PackageManager` and
 // `package_manager_real::PackageManager` are the SAME type.
-pub use package_manager_real::{
-    AsyncNetworkTaskQueue, CommandLineArguments, PackageManager, PatchTaskQueue, RootPackageId,
-    Subcommand,
-};
+pub use package_manager_real::{CommandLineArguments, PackageManager, Subcommand};
 
 // ──────────────────────────────────────────────────────────────────────────
 // Back-compat type aliases — `*Stub` names that other files still reference

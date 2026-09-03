@@ -1,7 +1,6 @@
 //! E — expression node payloads for the JS AST.
 
 use core::cmp::Ordering;
-use core::fmt;
 
 use bun_alloc::Arena as Bump;
 
@@ -2079,37 +2078,6 @@ fn array_sorter_is_less_than(lhs: &Expr, rhs: &Expr) -> Ordering {
             .expect("infallible: variant checked")
             .get(),
     )
-}
-
-impl fmt::Display for EString {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("E.String")?;
-        if self.next.is_none() {
-            f.write_str("(")?;
-            if self.is_utf8() {
-                write!(f, "\"{}\"", bstr::BStr::new(&self.data))?;
-            } else {
-                write!(f, "\"{}\"", bun_core::fmt::utf16(self.slice16()))?;
-            }
-            f.write_str(")")?;
-        } else {
-            f.write_str("(rope: [")?;
-            let mut it: Option<&EString> = Some(self);
-            while let Some(part) = it {
-                if part.is_utf8() {
-                    write!(f, "\"{}\"", bstr::BStr::new(&part.data))?;
-                } else {
-                    write!(f, "\"{}\"", bun_core::fmt::utf16(part.slice16()))?;
-                }
-                it = part.next.as_deref();
-                if it.is_some() {
-                    f.write_str(" ")?;
-                }
-            }
-            f.write_str("])")?;
-        }
-        Ok(())
-    }
 }
 
 // value is in the Node

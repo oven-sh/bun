@@ -263,7 +263,6 @@ impl E {
     pub const E2BIG: E = E::_2BIG;
     pub const ENOEXEC: E = E::NOEXEC;
     pub const EBADF: E = E::BADF;
-    pub const ECHILD: E = E::CHILD;
     pub const EAGAIN: E = E::AGAIN;
     pub const ENOMEM: E = E::NOMEM;
     pub const EACCES: E = E::ACCES;
@@ -290,13 +289,11 @@ impl E {
     pub const ENOSYS: E = E::NOSYS;
     pub const ENOTEMPTY: E = E::NOTEMPTY;
     pub const ELOOP: E = E::LOOP;
-    pub const EWOULDBLOCK: E = E::WOULDBLOCK;
     pub const EOVERFLOW: E = E::OVERFLOW;
     pub const ENOTSOCK: E = E::NOTSOCK;
     pub const EMSGSIZE: E = E::MSGSIZE;
     pub const EPROTONOSUPPORT: E = E::PROTONOSUPPORT;
     pub const ENOTSUP: E = E::NOTSUP;
-    pub const EOPNOTSUPP: E = E::NOTSUP;
     pub const EAFNOSUPPORT: E = E::AFNOSUPPORT;
     pub const EADDRINUSE: E = E::ADDRINUSE;
     pub const EADDRNOTAVAIL: E = E::ADDRNOTAVAIL;
@@ -310,7 +307,6 @@ impl E {
     pub const ECONNREFUSED: E = E::CONNREFUSED;
     pub const EHOSTUNREACH: E = E::HOSTUNREACH;
     pub const EALREADY: E = E::ALREADY;
-    pub const EINPROGRESS: E = E::INPROGRESS;
     pub const ECANCELED: E = E::CANCELED;
     pub const EUNKNOWN: E = E::UNKNOWN;
     pub const ECHARSET: E = E::CHARSET;
@@ -334,14 +330,8 @@ impl From<&E> for &'static str {
 }
 
 /// Mirrors `bun_errno::posix` on POSIX targets so callers can `use
-/// bun_errno::posix::*` unconditionally. Windows has no real `mode_t`/kernel
-/// `errno`, so this is the minimal subset higher tiers reach for.
+/// bun_errno::posix::*` unconditionally.
 pub mod posix {
-    pub type mode_t = i32;
-
-    /// Alias to the platform errno enum so cross-platform
-    /// `posix::E::FOO` paths resolve on Windows too.
-    pub type E = super::E;
     /// File-mode bits. Re-export the canonical module so
     /// `posix::S::IFDIR` / `posix::S::ISREG(m)` resolve identically to POSIX.
     pub use super::s as S;

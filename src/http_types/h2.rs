@@ -163,16 +163,6 @@ pub struct FrameHeader {
     pub flags: u8,
     pub stream_identifier: u32,
 }
-impl Default for FrameHeader {
-    fn default() -> Self {
-        Self {
-            length: 0,
-            type_: FrameType::HTTP_FRAME_SETTINGS as u8,
-            flags: 0,
-            stream_identifier: 0,
-        }
-    }
-}
 impl FrameHeader {
     pub const BYTE_SIZE: usize = 9;
 

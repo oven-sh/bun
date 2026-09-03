@@ -62,7 +62,6 @@ public:
     Vector<AtomString> eventTypes() const;
 
     template<typename Visitor> void visitJSEventListeners(Visitor&);
-    Lock& lock() { return m_lock; }
 
 private:
     void releaseAssertOrSetThreadUID()

@@ -2263,7 +2263,7 @@ class CloneDeserializer : public CloneBase {
 
 public:
     static DeserializationResult deserialize(JSGlobalObject* lexicalGlobalObject, JSGlobalObject* globalObject, const Vector<RefPtr<MessagePort>>& messagePorts,
-        ArrayBufferContentsArray* arrayBufferContentsArray, const std::span<uint8_t>& buffer, const Vector<String>& blobURLs, const Vector<String> blobFilePaths, ArrayBufferContentsArray* sharedBuffers
+        ArrayBufferContentsArray* arrayBufferContentsArray, const std::span<uint8_t>& buffer, ArrayBufferContentsArray* sharedBuffers
 #if ENABLE(WEBASSEMBLY)
         ,
         WasmModuleArray* wasmModules, WasmMemoryHandleArray* wasmMemoryHandles
@@ -2272,7 +2272,7 @@ public:
     {
         if (!buffer.size())
             return std::make_pair(jsNull(), SerializationReturnCode::UnspecifiedError);
-        CloneDeserializer deserializer(lexicalGlobalObject, globalObject, messagePorts, arrayBufferContentsArray, std::span<uint8_t> { buffer.begin(), buffer.end() }, blobURLs, blobFilePaths, sharedBuffers
+        CloneDeserializer deserializer(lexicalGlobalObject, globalObject, messagePorts, arrayBufferContentsArray, std::span<uint8_t> { buffer.begin(), buffer.end() }, sharedBuffers
 #if ENABLE(WEBASSEMBLY)
             ,
             wasmModules, wasmMemoryHandles
@@ -2351,7 +2351,6 @@ private:
         )
         : CloneBase(lexicalGlobalObject)
         , m_globalObject(globalObject)
-        , m_isDOMGlobalObject(globalObject->inherits<JSDOMGlobalObject>())
         , m_ptr(buffer.data())
         , m_end(buffer.data() + buffer.size())
         , m_version(0xFFFFFFFF)
@@ -2367,7 +2366,7 @@ private:
             m_version = 0xFFFFFFFF;
     }
 
-    CloneDeserializer(JSGlobalObject* lexicalGlobalObject, JSGlobalObject* globalObject, const Vector<RefPtr<MessagePort>>& messagePorts, ArrayBufferContentsArray* arrayBufferContents, const std::span<uint8_t>& buffer, const Vector<String>& blobURLs, const Vector<String> blobFilePaths, ArrayBufferContentsArray* sharedBuffers
+    CloneDeserializer(JSGlobalObject* lexicalGlobalObject, JSGlobalObject* globalObject, const Vector<RefPtr<MessagePort>>& messagePorts, ArrayBufferContentsArray* arrayBufferContents, const std::span<uint8_t>& buffer, ArrayBufferContentsArray* sharedBuffers
 #if ENABLE(WEBASSEMBLY)
         ,
         WasmModuleArray* wasmModules, WasmMemoryHandleArray* wasmMemoryHandles
@@ -2375,15 +2374,12 @@ private:
         )
         : CloneBase(lexicalGlobalObject)
         , m_globalObject(globalObject)
-        , m_isDOMGlobalObject(globalObject->inherits<JSDOMGlobalObject>())
         , m_ptr(buffer.data())
         , m_end(buffer.data() + buffer.size())
         , m_version(0xFFFFFFFF)
         , m_messagePorts(messagePorts)
         , m_arrayBufferContents(arrayBufferContents)
         , m_arrayBuffers(arrayBufferContents ? arrayBufferContents->size() : 0)
-        , m_blobURLs(blobURLs)
-        , m_blobFilePaths(blobFilePaths)
         , m_sharedBuffers(sharedBuffers)
 #if ENABLE(WEBASSEMBLY)
         , m_wasmModules(wasmModules)
@@ -3946,7 +3942,6 @@ private:
     }
 
     JSGlobalObject* const m_globalObject;
-    const bool m_isDOMGlobalObject;
     const uint8_t* m_ptr;
     const uint8_t* const m_end;
     unsigned m_version;
@@ -3958,8 +3953,6 @@ private:
     const Vector<RefPtr<MessagePort>>& m_messagePorts;
     ArrayBufferContentsArray* m_arrayBufferContents;
     Vector<RefPtr<JSC::ArrayBuffer>> m_arrayBuffers;
-    Vector<String> m_blobURLs;
-    Vector<String> m_blobFilePaths;
     ArrayBufferContentsArray* m_sharedBuffers;
 #if ENABLE(WEBASSEMBLY)
     WasmModuleArray* const m_wasmModules;
@@ -4859,8 +4852,6 @@ JSC::JSValue SerializedScriptValue::fromArrayBuffer(JSC::JSGlobalObject& domGlob
 
         return JSC::jsUndefined();
     }
-    auto blobURLs = Vector<String> {};
-    auto blobFiles = Vector<String> {};
 
     if (arrayBuffer->isShared()) {
         // prevent detaching while in-use
@@ -4871,7 +4862,7 @@ JSC::JSValue SerializedScriptValue::fromArrayBuffer(JSC::JSGlobalObject& domGlob
     auto size = std::min(arrayBuffer->byteLength(), maxByteLength);
     auto span = std::span<uint8_t> { data, size };
 
-    auto result = CloneDeserializer::deserialize(&domGlobal, globalObject, {}, nullptr, span, blobURLs, blobFiles, nullptr
+    auto result = CloneDeserializer::deserialize(&domGlobal, globalObject, {}, nullptr, span, nullptr
 #if ENABLE(WEBASSEMBLY)
         ,
         nullptr, nullptr
@@ -4895,22 +4886,13 @@ JSC::JSValue SerializedScriptValue::fromArrayBuffer(JSC::JSGlobalObject& domGlob
     return result.first ? result.first : jsNull();
 }
 
-JSValue SerializedScriptValue::deserialize(JSGlobalObject& lexicalGlobalObject, JSGlobalObject* globalObject, const Vector<RefPtr<MessagePort>>& messagePorts, SerializationErrorMode throwExceptions, bool* didFail)
-{
-    Vector<String> dummyBlobs;
-    Vector<String> dummyPaths;
-    return deserialize(lexicalGlobalObject, globalObject, messagePorts, dummyBlobs, dummyPaths, throwExceptions, didFail);
-}
-
 JSValue SerializedScriptValue::deserialize(JSGlobalObject& lexicalGlobalObject, JSGlobalObject* globalObject, SerializationErrorMode throwExceptions, bool* didFail)
 {
-    Vector<String> dummyBlobs;
-    Vector<String> dummyPaths;
     Vector<RefPtr<MessagePort>> dummyPorts;
-    return deserialize(lexicalGlobalObject, globalObject, dummyPorts, dummyBlobs, dummyPaths, throwExceptions, didFail);
+    return deserialize(lexicalGlobalObject, globalObject, dummyPorts, throwExceptions, didFail);
 }
 
-JSValue SerializedScriptValue::deserialize(JSGlobalObject& lexicalGlobalObject, JSGlobalObject* globalObject, const Vector<RefPtr<MessagePort>>& messagePorts, const Vector<String>& blobURLs, const Vector<String>& blobFilePaths, SerializationErrorMode throwExceptions, bool* didFail)
+JSValue SerializedScriptValue::deserialize(JSGlobalObject& lexicalGlobalObject, JSGlobalObject* globalObject, const Vector<RefPtr<MessagePort>>& messagePorts, SerializationErrorMode throwExceptions, bool* didFail)
 {
     VM& vm = lexicalGlobalObject.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -5116,9 +5098,9 @@ JSValue SerializedScriptValue::deserialize(JSGlobalObject& lexicalGlobalObject, 
     }
 
     DeserializationResult result = CloneDeserializer::deserialize(&lexicalGlobalObject, globalObject, messagePorts,
-        m_arrayBufferContentsArray.get(), m_data, blobURLs, blobFilePaths, m_sharedBufferContentsArray.get()
+        m_arrayBufferContentsArray.get(), m_data, m_sharedBufferContentsArray.get()
 #if ENABLE(WEBASSEMBLY)
-                                                                               ,
+                                                      ,
         m_wasmModulesArray.get(), m_wasmMemoryHandlesArray.get()
 #endif
     );

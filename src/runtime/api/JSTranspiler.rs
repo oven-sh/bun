@@ -54,7 +54,6 @@ pub struct JSTranspiler {
 
 fn default_transform_options() -> api::TransformOptions {
     api::TransformOptions {
-        disable_hmr: true,
         target: Some(api::Target::Browser),
         ..Default::default()
     }

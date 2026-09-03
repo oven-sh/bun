@@ -61,41 +61,8 @@ public:
             m_variant);
     }
 
-    template<class Encoder> void encode(Encoder&) const;
-    template<class Decoder> static std::optional<BufferSource> decode(Decoder&);
-
 private:
     VariantType m_variant;
 };
-
-template<class Encoder>
-void BufferSource::encode(Encoder& encoder) const
-{
-    encoder << static_cast<uint64_t>(length());
-    if (!length())
-        return;
-
-    encoder.encodeFixedLengthData(data(), length() * sizeof(uint8_t), alignof(uint8_t));
-}
-
-template<class Decoder>
-std::optional<BufferSource> BufferSource::decode(Decoder& decoder)
-{
-    std::optional<uint64_t> size;
-    decoder >> size;
-    if (!size)
-        return std::nullopt;
-    if (!*size)
-        return BufferSource();
-
-    auto dataSize = CheckedSize { *size };
-    if (dataSize.hasOverflowed()) [[unlikely]]
-        return std::nullopt;
-
-    const uint8_t* data = decoder.decodeFixedLengthReference(dataSize, alignof(uint8_t));
-    if (!data)
-        return std::nullopt;
-    return BufferSource(JSC::ArrayBuffer::tryCreate({ static_cast<const uint8_t*>(data), dataSize.value() }));
-}
 
 } // namespace WebCore

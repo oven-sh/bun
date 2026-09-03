@@ -53,8 +53,6 @@ class JSValue;
 
 namespace WebCore {
 
-class WebCoreOpaqueRoot;
-
 struct StructuredSerializeOptions;
 
 DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(MessagePort);
@@ -90,7 +88,6 @@ public:
     static Ref<MessagePort> entangle(ScriptExecutionContext&, TransferredMessagePort&&);
     TransferredMessagePort disentangle();
 
-    bool started() const { return m_started; }
     bool isDetached() const { return m_isDetached; }
 
     // Called by the pipe on this port's context thread with one dequeued message.
@@ -173,7 +170,5 @@ private:
     // Reconciles the listener event-loop ref with (m_isRefd && m_messageEventCount > 0).
     void updateListenerEventLoopRef();
 };
-
-WebCoreOpaqueRoot root(MessagePort*);
 
 } // namespace WebCore

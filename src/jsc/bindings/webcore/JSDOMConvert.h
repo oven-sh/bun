@@ -43,4 +43,4 @@
 #include "JSDOMConvertStrings.h"
 #include "JSDOMConvertUnion.h"
 
-#include "JSDOMConvertBufferSource+JSBuffer.h"
+#include "JSBuffer.h"

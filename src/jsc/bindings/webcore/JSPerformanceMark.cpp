@@ -255,38 +255,8 @@ void JSPerformanceMark::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     Base::analyzeHeap(cell, analyzer);
 }
 
-#if ENABLE(BINDING_INTEGRITY)
-#if PLATFORM(WIN)
-#pragma warning(disable : 4483)
-extern "C" {
-extern void (*const __identifier("??_7PerformanceMark@WebCore@@6B@")[])();
-}
-#else
-extern "C" {
-extern void* _ZTVN7WebCore15PerformanceMarkE[];
-}
-#endif
-#endif
-
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<PerformanceMark>&& impl)
 {
-
-    if constexpr (std::is_polymorphic_v<PerformanceMark>) {
-#if ENABLE(BINDING_INTEGRITY)
-        // const void* actualVTablePointer = getVTablePointer(impl.ptr());
-#if PLATFORM(WIN)
-        void* expectedVTablePointer = __identifier("??_7PerformanceMark@WebCore@@6B@");
-#else
-        // void* expectedVTablePointer = &_ZTVN7WebCore15PerformanceMarkE[2];
-#endif
-
-        // If you hit this assertion you either have a use after free bug, or
-        // PerformanceMark has subclasses. If PerformanceMark has subclasses that get passed
-        // to toJS() we currently require PerformanceMark you to opt out of binding hardening
-        // by adding the SkipVTableValidation attribute to the interface IDL definition
-        // RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
-#endif
-    }
     return createWrapper<PerformanceMark>(globalObject, WTF::move(impl));
 }
 

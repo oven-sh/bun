@@ -96,7 +96,6 @@ private:
     }
 
     EventEmitterData* eventTargetData() { return &m_eventTargetData; }
-    EventEmitterData* eventTargetDataConcurrently() { return &m_eventTargetData; }
     EventEmitterData& ensureEventEmitterData() { return m_eventTargetData; }
     void eventListenersDidChange()
     {

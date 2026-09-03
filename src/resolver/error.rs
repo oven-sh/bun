@@ -4,10 +4,6 @@ pub enum Error {
     Unusable,
     #[error("InvalidDataURL")]
     InvalidDataURL,
-    #[error("MissingResolveDir")]
-    MissingResolveDir,
-    #[error("InvalidResolveDir")]
-    InvalidResolveDir,
     #[error("ModuleNotFound")]
     ModuleNotFound,
     #[error("VersionSpecifierNotAllowedHere")]
@@ -30,8 +26,6 @@ impl Error {
         match self {
             Self::Unusable => "Unusable",
             Self::InvalidDataURL => "InvalidDataURL",
-            Self::MissingResolveDir => "MissingResolveDir",
-            Self::InvalidResolveDir => "InvalidResolveDir",
             Self::ModuleNotFound => "ModuleNotFound",
             Self::VersionSpecifierNotAllowedHere => "VersionSpecifierNotAllowedHere",
             Self::ParseErrorAlreadyLogged => "ParseErrorAlreadyLogged",

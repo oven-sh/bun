@@ -407,10 +407,6 @@ impl Route {
             }
         }
 
-        if xform.serve_splitting {
-            config.code_splitting = xform.serve_splitting;
-        }
-
         config.target = bun_ast::Target::Browser;
         let is_development = development.is_development();
 

@@ -37,7 +37,6 @@
 #include "MessagePortPipe.h"
 #include "MessageWithMessagePorts.h"
 #include "StructuredSerializeOptions.h"
-#include "WebCoreOpaqueRoot.h"
 #include <wtf/TZoneMallocInlines.h>
 
 extern "C" void Bun__Process__emitWarning(Zig::GlobalObject*, JSC::EncodedJSValue warning, JSC::EncodedJSValue type, JSC::EncodedJSValue code, JSC::EncodedJSValue ctor);
@@ -553,11 +552,6 @@ bool MessagePort::removeEventListener(const AtomString& eventType, EventListener
     if (!hasEventListeners(eventNames().closeEvent))
         m_hasCloseEventListener.store(false, std::memory_order_release);
     return result;
-}
-
-WebCoreOpaqueRoot root(MessagePort* port)
-{
-    return WebCoreOpaqueRoot { port };
 }
 
 void MessagePort::jsRef(JSGlobalObject* lexicalGlobalObject)

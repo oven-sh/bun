@@ -375,11 +375,6 @@ impl WindowsLoop {
         unsafe { c::us_wakeup_loop(self) };
     }
 
-    #[inline]
-    pub fn wake(&mut self) {
-        self.wakeup();
-    }
-
     /// Signature matches the POSIX impl so callers need no `cfg`. `now_ns` is unused here: on
     /// Windows the park hook is driven from `us_loop_run` (libuv.c), which reads libuv's
     /// already-refreshed clock via `uv_now` rather than taking one of its own.
@@ -420,13 +415,8 @@ impl WindowsLoop {
         unsafe { c::us_loop_run(self) };
     }
 
-    // TODO: remove these two aliases
     #[inline]
     pub fn tick(&mut self) {
-        self.run();
-    }
-    #[inline]
-    pub fn wait(&mut self) {
         self.run();
     }
 
@@ -441,10 +431,6 @@ impl WindowsLoop {
     #[inline]
     pub fn ref_(&mut self) {
         self.inc();
-    }
-    #[inline]
-    pub fn unref(&mut self) {
-        self.dec();
     }
 
     pub fn drain_closed_sockets(&mut self) {

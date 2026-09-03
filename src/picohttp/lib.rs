@@ -75,13 +75,6 @@ pub struct Header {
     value_len: usize,
 }
 
-impl Default for Header {
-    #[inline]
-    fn default() -> Self {
-        Self::ZERO
-    }
-}
-
 impl Header {
     /// All-zero sentinel — name/value are empty slices. Used by callers to
     /// initialize fixed-size header arrays before filling them.
@@ -295,28 +288,6 @@ impl<'a> Request<'a> {
             headers: unsafe { &*core::ptr::from_ref::<[Header]>(self.headers) },
             bytes_read: self.bytes_read,
         }
-    }
-}
-
-impl fmt::Display for Request<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if enable_ansi_colors_stderr() {
-            f.write_str(pretty_fmt!("<r><d>[fetch]<r> ", true))?;
-        }
-        writeln!(
-            f,
-            "> HTTP/1.1 {} {}",
-            BStr::new(self.method),
-            BStr::new(self.path)
-        )?;
-        for header in self.headers {
-            if enable_ansi_colors_stderr() {
-                f.write_str(pretty_fmt!("<r><d>[fetch]<r> ", true))?;
-            }
-            f.write_str("> ")?;
-            writeln!(f, "{}", header)?;
-        }
-        Ok(())
     }
 }
 

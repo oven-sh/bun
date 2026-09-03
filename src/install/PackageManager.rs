@@ -205,42 +205,30 @@ pub use self::package_manager_directories as directories;
 use directories::attempt_to_create_package_json_and_open;
 pub use directories::{
     attempt_to_create_package_json, cached_git_folder_name, cached_git_folder_name_print,
-    cached_git_folder_name_print_auto, cached_github_folder_name, cached_github_folder_name_print,
-    cached_github_folder_name_print_auto, cached_npm_package_folder_name,
-    cached_npm_package_folder_name_print, cached_npm_package_folder_print_basename,
-    cached_tarball_folder_name, cached_tarball_folder_name_print, compute_cache_dir_and_subpath,
-    fetch_cache_directory_path, get_cache_directory, get_cache_directory_and_abs_path,
-    get_temporary_directory, global_link_dir, global_link_dir_path, is_folder_in_cache,
-    path_for_cached_npm_path, path_for_resolution, save_lockfile, setup_global_dir,
-    update_lockfile_if_needed, write_yarn_lock,
+    cached_github_folder_name, cached_npm_package_folder_name, cached_tarball_folder_name,
+    compute_cache_dir_and_subpath, fetch_cache_directory_path, get_cache_directory,
+    get_temporary_directory, global_link_dir, global_link_dir_path, path_for_cached_npm_path,
+    save_lockfile, setup_global_dir, update_lockfile_if_needed, write_yarn_lock,
 };
 
 pub use self::package_manager_enqueue as enqueue;
 pub use enqueue::{
-    GitEnqueueResult, create_extract_task_for_streaming, enqueue_dependency_list,
-    enqueue_dependency_to_root, enqueue_dependency_with_main,
-    enqueue_dependency_with_main_and_success_fn, enqueue_extract_npm_package, enqueue_git_checkout,
+    GitEnqueueResult, enqueue_dependency_list, enqueue_dependency_with_main,
     enqueue_git_for_checkout, enqueue_network_task, enqueue_package_for_download,
-    enqueue_parse_npm_package, enqueue_patch_task, enqueue_patch_task_pre,
-    enqueue_tarball_for_download, enqueue_tarball_for_reading,
+    enqueue_patch_task, enqueue_patch_task_pre, enqueue_tarball_for_download,
+    enqueue_tarball_for_reading,
 };
 
 use self::package_manager_lifecycle as lifecycle;
 pub use lifecycle::{determine_preinstall_state, get_preinstall_state, set_preinstall_state};
 
 use self::package_manager_resolution as resolution;
-pub use resolution::{assign_root_resolution, resolve_from_disk_cache};
 
 pub use self::progress_strings::ProgressStrings;
 
 pub use self::patch_package::PatchCommitResult;
 
-pub use self::run_tasks::{
-    alloc_github_url, decrement_pending_tasks, drain_dependency_list, flush_dependency_queue,
-    flush_network_queue, flush_patch_task_queue, generate_network_task_for_tarball,
-    get_network_task, has_created_network_task, increment_pending_tasks, is_network_task_required,
-    pending_task_count, run_tasks, schedule_tasks,
-};
+pub use self::run_tasks::{generate_network_task_for_tarball, run_tasks};
 
 pub use self::update_package_json_and_install::{
     update_package_json_and_install_and_cli, update_package_json_and_install_with_manager,
@@ -1382,8 +1370,6 @@ fn overlay_bunfig_install(install: &mut Api::BunInstall, bunfig: Api::BunInstall
     let Api::BunInstall {
         default_registry,
         scoped,
-        lockfile_path,
-        save_lockfile_path,
         cache_directory,
         dry_run,
         force,
@@ -1437,8 +1423,6 @@ fn overlay_bunfig_install(install: &mut Api::BunInstall, bunfig: Api::BunInstall
         };
     }
     overlay!(
-        lockfile_path,
-        save_lockfile_path,
         cache_directory,
         dry_run,
         force,

@@ -10014,6 +10014,67 @@ describe.concurrent("bun-install", () => {
     });
   });
 
+  it("should ignore unknown install.lockfile keys in bunfig.toml", async () => {
+    await withContext(defaultOpts, async ctx => {
+      await Promise.all([
+        write(
+          join(ctx.package_dir, "bunfig.toml"),
+          Bun.TOML.stringify({
+            install: {
+              cache: false,
+              registry: ctx.registry_url,
+              lockfile: {
+                save: true,
+                path: "custom.lock",
+                savePath: "custom.lock",
+              },
+            },
+          }),
+        ),
+        write(
+          join(ctx.package_dir, "package.json"),
+          JSON.stringify({
+            name: "foo",
+            workspaces: ["packages/*"],
+            dependencies: {
+              "pkg-one": "workspace:*",
+            },
+          }),
+        ),
+        write(
+          join(ctx.package_dir, "packages", "pkg1", "package.json"),
+          JSON.stringify({
+            name: "pkg-one",
+            version: "1.0.0",
+          }),
+        ),
+      ]);
+
+      const { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: ctx.package_dir,
+        stdout: "pipe",
+        stderr: "pipe",
+        env,
+      });
+
+      const err = await stderr.text();
+      expect(err).not.toContain("error:");
+      expect(err).toContain("Saved lockfile");
+      const out = await stdout.text();
+      expect(out).toContain("Checked 3 installs across 2 packages (no changes)");
+      expect(await exited).toBe(0);
+
+      expect(
+        await Promise.all([
+          exists(join(ctx.package_dir, "bun.lock")),
+          exists(join(ctx.package_dir, "custom.lock")),
+          exists(join(ctx.package_dir, "bun.lockb")),
+        ]),
+      ).toEqual([true, false, false]);
+    });
+  });
+
   test("providing invalid url in lockfile does not crash", async () => {
     await withContext(defaultOpts, async ctx => {
       await Promise.all([

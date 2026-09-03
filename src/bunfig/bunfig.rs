@@ -1403,18 +1403,6 @@ impl<'a> Parser<'a> {
             if let Some(v) = lockfile_expr.get(b"save").and_then(|e| e.as_bool()) {
                 install.save_lockfile = Some(v);
             }
-            if let Some(v) = lockfile_expr
-                .get(b"path")
-                .and_then(|e| e.as_string(self.bump))
-            {
-                install.lockfile_path = Some(v.into());
-            }
-            if let Some(v) = lockfile_expr
-                .get(b"savePath")
-                .and_then(|e| e.as_string(self.bump))
-            {
-                install.save_lockfile_path = Some(v.into());
-            }
         }
 
         if let Some(v) = install_obj.get(b"optional").and_then(|e| e.as_bool()) {

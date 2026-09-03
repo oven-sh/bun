@@ -102,7 +102,7 @@ With the hoisted linker, dependencies shared by several workspaces are hoisted t
 `node_modules`. Some tools cannot follow that: Electron packagers and serverless bundlers walk,
 prune and repackage _one workspace's_ `node_modules` and expect every dependency to be physically
 present under it. Mark such a workspace as self-contained, either in its own `package.json`
-(the same key Yarn uses; only the `"workspaces"` value is recognized):
+(the same key Yarn uses; only the `"workspaces"` value changes the layout):
 
 ```json title="apps/desktop/package.json" icon="file-json"
 {

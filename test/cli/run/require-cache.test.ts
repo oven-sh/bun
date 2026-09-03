@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isArm64, isASAN, isDebug, isWindows, tempDir } from "harness";
-import { join } from "path";
+import { basename, join } from "path";
 
 describe.concurrent("require.cache", () => {
   test("require.cache is not an empty object literal when inspected", () => {
@@ -46,6 +46,26 @@ describe.concurrent("require.cache", () => {
   const leakFixtureEnv = isASAN
     ? { ...bunEnv, Malloc: "1", ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":") }
     : bunEnv;
+  const leakFixtureMemory = join(import.meta.dir, "leak-fixture-memory.cjs");
+
+  // On a build where neither allocator metric sees JSC memory, the helper
+  // falls back to RSS. Fail instead, so that no lane goes back to RSS unseen.
+  test("the leak fixtures measure live bytes, not RSS", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `console.log(require(${JSON.stringify(leakFixtureMemory)}).metric)`],
+      env: leakFixtureEnv,
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout.trim()).toBe(isASAN ? "sanitizer allocator" : "mimalloc heaps");
+    expect(exitCode).toBe(0);
+  });
+
+  // One line per fixture in the log, so that each lane's margin stays visible.
+  function logReport(name: string, stdout: string) {
+    const lines = stdout.split("\n").filter(line => line.startsWith("cells ") || line.startsWith("leaked "));
+    console.log(`${name}: ${lines.join(", ")}`);
+  }
 
   // Every JSC cell type that is created once per module load and owns the
   // module's transpiled source through its SourceCode. After the module is
@@ -76,7 +96,7 @@ describe.concurrent("require.cache", () => {
   // retained per load. Pass esm: true for a top-level-await fixture.
   function leakFixture({ load, esm, limitBytesPerLoad }: { load: string; esm: boolean; limitBytesPerLoad: number }) {
     return `
-      const memory = require(${JSON.stringify(join(import.meta.dir, "leak-fixture-memory.cjs"))});
+      const memory = require(${JSON.stringify(leakFixtureMemory)});
       const { heapStats } = require("bun:jsc");
       const path = require.resolve("./index.js");
       const types = ${JSON.stringify(MODULE_CELL_TYPES)};
@@ -119,6 +139,7 @@ describe.concurrent("require.cache", () => {
       stderr: "inherit",
     });
     const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    logReport(basename(dir), stdout);
     expect(stdout.trim()).toEndWith("--pass--");
     const cells = stdout.split("\n").find(line => line.startsWith("cells "))!;
     const survived: Record<string, number> = JSON.parse(cells.slice("cells ".length));
@@ -194,6 +215,7 @@ describe.concurrent("require.cache", () => {
     });
 
     const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    logReport(fixture, stdout);
 
     expect(stdout.trim()).toEndWith("--pass--");
     expect(exitCode).toBe(0);

@@ -41,13 +41,14 @@ const rss =
     ? Bun.unsafe.memoryFootprint
     : process.memoryUsage.rss;
 
-// An allocator metric counts only if it sees a JSC allocation, the kind a
-// retained source or module is. A GC can free a little between the two reads.
+// An allocator metric counts only if it sees a JSC string, the kind of
+// allocation a retained source is. A GC can free a little between the reads.
 function seesJSCMemory(measure) {
   try {
+    Bun.gc(true);
     const before = measure();
-    const probe = new ArrayBuffer(8 * MB);
-    return measure() - before >= probe.byteLength / 2;
+    const probe = "a".repeat(8 * MB);
+    return measure() - before >= probe.length / 2;
   } catch {
     return false;
   }
@@ -67,6 +68,7 @@ const metric =
 const NOISE_FLOOR_BYTES = (metric.exact ? 16 : 64) * MB;
 
 module.exports = {
+  metric: metric.name,
   measure: metric.measure,
 
   // Debug builds are 10x slower than the release ASAN build CI runs.
@@ -79,12 +81,9 @@ module.exports = {
     if (isASAN && !metric.exact) {
       limit *= 4;
     }
-    console.log({
-      leaked: `${(leakedBytes / MB) | 0} MB`,
-      limit: `${(limit / MB) | 0} MB`,
-      iterations: count,
-      metric: metric.name,
-    });
+    console.log(
+      `leaked ${(leakedBytes / MB).toFixed(1)} MB, limit ${(limit / MB) | 0} MB, ${count} iterations, ${metric.name}`,
+    );
     if (leakedBytes > limit) {
       console.log("\n--fail--\n");
       process.exit(1);

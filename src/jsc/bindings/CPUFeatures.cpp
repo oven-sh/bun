@@ -66,13 +66,19 @@ static uint8_t x86_cpu_features()
         xcr0 = (static_cast<uint64_t>(hi) << 32) | lo;
     }
     const bool avxState = (xcr0 & 0x6) == 0x6;
+#if OS(DARWIN)
+    // Darwin turns on the ZMM state at a process's first AVX-512 instruction, so XCR0 does not show it yet.
+    const bool avx512State = avxState;
+#else
+    const bool avx512State = avxState && (xcr0 & 0xe0) == 0xe0;
+#endif
     if (avxState) {
         features |= 1 << static_cast<uint8_t>(X86CPUFeature::avx);
         unsigned eax7 = 0, ebx7 = 0, ecx7 = 0, edx7 = 0;
         if (__get_cpuid_count(7, 0, &eax7, &ebx7, &ecx7, &edx7)) {
             if (ebx7 & bit_AVX2)
                 features |= 1 << static_cast<uint8_t>(X86CPUFeature::avx2);
-            if ((ebx7 & bit_AVX512F) && (xcr0 & 0xe0) == 0xe0)
+            if ((ebx7 & bit_AVX512F) && avx512State)
                 features |= 1 << static_cast<uint8_t>(X86CPUFeature::avx512);
         }
     }

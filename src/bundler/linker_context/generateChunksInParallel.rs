@@ -1018,7 +1018,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             }
 
             // Compute side early so it can be used for bytecode, module_info, and main chunk output files
-            let side: options::Side = chunk.output_side(c.graph.ast.items_target());
+            let side: options::Side = c.chunk_side(chunk);
 
             let bytecode_output_file: Option<options::OutputFile> = 'brk: {
                 if c.options.generate_bytecode_cache {
@@ -1195,7 +1195,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 None
             };
 
-            let output_kind = chunk.output_kind(c.graph.files.items_entry_point_kind());
+            let output_kind = c.chunk_output_kind(chunk);
 
             let chunk_index =
                 output_files.insert_for_chunk(options::OutputFile::init(options::OutputFileInit {

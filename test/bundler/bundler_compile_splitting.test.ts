@@ -1,18 +1,18 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, tempDir } from "harness";
+import { bunEnv, isWindows, tempDir } from "harness";
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { itBundled } from "./expectBundled";
 
-// `main.ts` loads `tool.ts` at run time, and `tool.ts` loads the main entry point back with `import()` and `require()`.
+// `main.ts` loads the entry point `tool.ts` at run time. `tool.ts` loads `main.ts` back with `import()` and with
+// `require()`, and `main.ts` prints what each of the two returns, or the first line of its error.
 const entryPointImportedBack = {
   "main.ts": /* js */ `
     export const who = "main";
     console.log("main ran");
+    const settle = async (f: () => unknown) => { try { return await f(); } catch (e) { return String(e).split("\\n")[0]; } };
     const s = (x: string) => x;
-    import(s("./tool.ts"))
-      .then(async tool => console.log(await tool.viaImport(), tool.viaRequire()))
-      .catch(e => console.log(String(e).split("\\n")[0]));
+    import(s("./tool.ts")).then(async tool => console.log(await settle(tool.viaImport), await settle(tool.viaRequire)));
   `,
   "tool.ts": /* js */ `
     export const viaImport = async () => (await import("./main.ts")).who;
@@ -541,8 +541,28 @@ describe("bundler", () => {
       });
     }
 
-    // The executable embeds the main entry point at `/$bunfs/root/<outfile>`. Another entry point's `import()` and
-    // `require()` of it must name that path, and must get the module that already ran, not a second copy.
+    // The executable embeds its entry point at `/$bunfs/root/<outfile>`. A chunk that loads the entry point with
+    // `import()` or `require()` must name that path, and must get the module that already ran, not a second copy.
+    // (The "api" backend of `itBundled` sets `naming.entry` to the name of the outfile, so it would not show the bug.)
+    itBundled("compile/splitting/ImportEntryPointFromLazyChunk", {
+      backend: "cli",
+      compile: true,
+      splitting: true,
+      files: {
+        "/entry.ts": /* js */ `
+          export const who = "entry";
+          console.log("entry ran");
+          const settle = async (f: () => unknown) => { try { return await f(); } catch (e) { return String(e).split("\\n")[0]; } };
+          import("./lazy.ts").then(async lazy => console.log(await settle(lazy.viaImport), await settle(lazy.viaRequire)));
+        `,
+        "/lazy.ts": /* js */ `
+          export const viaImport = async () => (await import("./entry.ts")).who;
+          export const viaRequire = () => require("./entry.ts").who;
+        `,
+      },
+      run: { stdout: "entry ran\nentry entry" },
+    });
+
     itBundled("compile/splitting/ImportMainEntryPointFromOtherEntryPoint", {
       backend: "cli",
       compile: true,
@@ -553,15 +573,28 @@ describe("bundler", () => {
       run: { file: "dist/out", stdout: "main ran\nmain main" },
     });
 
+    // The chunk of the entry point has the name of the executable, and so do its source map and its metafile output.
     test("Bun.build: import() and require() of the main entry point from another entry point", async () => {
       using dir = tempDir("compile-splitting-import-main", entryPointImportedBack);
       const result = await Bun.build({
         entrypoints: [join(String(dir), "main.ts"), join(String(dir), "tool.ts")],
         compile: { outfile: join(String(dir), "dist", "out") },
         splitting: true,
+        sourcemap: "external",
+        metafile: true,
       });
       expect(result.logs).toEqual([]);
       expect(result.success).toBe(true);
+      expect(result.outputs.map(output => [output.kind, basename(output.path)])).toEqual([
+        ["entry-point", isWindows ? "out.exe" : "out"],
+        ["sourcemap", "out.map"],
+        ["sourcemap", "tool.js.map"],
+      ]);
+      expect(Object.keys(result.metafile!.outputs).sort()).toEqual(["./out", "./tool.js"]);
+      expect(result.metafile!.outputs["./tool.js"].imports).toEqual([
+        { path: "./out", kind: "dynamic-import" },
+        { path: "./out", kind: "require-call" },
+      ]);
 
       await using proc = Bun.spawn({
         cmd: [result.outputs[0].path],

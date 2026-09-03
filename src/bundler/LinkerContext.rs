@@ -760,6 +760,35 @@ impl<'a> LinkerContext<'a> {
         }
     }
 
+    /// The side of the output file of `chunk`.
+    pub(crate) fn chunk_side(&self, chunk: &Chunk) -> crate::options::Side {
+        use crate::options::Side;
+        if matches!(chunk.content, crate::chunk::Content::Css(_))
+            || chunk
+                .flags
+                .contains(crate::chunk::Flags::IS_BROWSER_CHUNK_FROM_SERVER_BUILD)
+        {
+            return Side::Client;
+        }
+        match self.graph.ast.items_target()[chunk.entry_point.source_index() as usize] {
+            Target::Browser => Side::Client,
+            _ => Side::Server,
+        }
+    }
+
+    /// The output kind of the output file of `chunk`.
+    pub(crate) fn chunk_output_kind(&self, chunk: &Chunk) -> crate::options::OutputKind {
+        use crate::options::OutputKind;
+        if matches!(chunk.content, crate::chunk::Content::Css(_)) {
+            OutputKind::Asset
+        } else if chunk.entry_point.is_entry_point() {
+            self.graph.files.items_entry_point_kind()[chunk.entry_point.source_index() as usize]
+                .output_kind()
+        } else {
+            OutputKind::Chunk
+        }
+    }
+
     /// See [`Self::load`] for why `bundle` is a raw `*mut` (caller passes
     /// `self` while the receiver is `self.linker`; field-disjoint access only).
     ///

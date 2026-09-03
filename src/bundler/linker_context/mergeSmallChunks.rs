@@ -858,7 +858,10 @@ pub(crate) fn merge_small_chunks(
     // entry point has exports: absorbing one adds the bindings other chunks
     // need to its module namespace (Rollup's `preserveEntrySignatures:
     // "exports-only"`). Chunks loaded together with it still fold into each
-    // other. `--compile` leaves the chunks of user entry points alone too.
+    // other. `--compile` also leaves the chunks of user entry points alone.
+    // Other chunks can import the executable's entry point by the name it is
+    // embedded under (`compute_chunks`), so this keeps a layout. It is not
+    // needed for correctness.
     let export_aliases = this.graph.meta.items_sorted_and_filtered_export_aliases();
     let pin_entry_chunk = |entry_id: usize| {
         let source_index = entry_source_indices[entry_id] as usize;

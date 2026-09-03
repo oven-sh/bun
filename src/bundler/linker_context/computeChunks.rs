@@ -627,8 +627,8 @@ pub(crate) fn compute_chunks(
         // With the name set here, the paths that other chunks print for this
         // chunk (`import()`, `require()`, module records) name that module.
         if compile_entry_point_pending
-            && chunk.output_kind(kinds) == OutputKind::EntryPoint
-            && chunk.output_side(ast_targets) == Side::Server
+            && this.chunk_output_kind(chunk) == OutputKind::EntryPoint
+            && this.chunk_side(chunk) == Side::Server
         {
             compile_entry_point_pending = false;
             chunk.template = PathTemplate {

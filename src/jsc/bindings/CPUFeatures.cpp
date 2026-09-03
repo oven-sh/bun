@@ -19,36 +19,14 @@ enum class AArch64CPUFeature : uint8_t {
 
 #if CPU(X86_64)
 
-#if OS(WINDOWS)
-
-#include <windows.h>
-
-#else
-
 #include <cpuid.h>
-
-#endif
 
 static uint8_t x86_cpu_features()
 {
     uint8_t features = 0;
 
-#if OS(WINDOWS)
-    if (IsProcessorFeaturePresent(PF_SSE4_2_INSTRUCTIONS_AVAILABLE))
-        features |= 1 << static_cast<uint8_t>(X86CPUFeature::sse42);
-
-    if (IsProcessorFeaturePresent(PF_AVX_INSTRUCTIONS_AVAILABLE))
-        features |= 1 << static_cast<uint8_t>(X86CPUFeature::avx);
-
-    if (IsProcessorFeaturePresent(PF_AVX2_INSTRUCTIONS_AVAILABLE))
-        features |= 1 << static_cast<uint8_t>(X86CPUFeature::avx2);
-
-    if (IsProcessorFeaturePresent(PF_AVX512F_INSTRUCTIONS_AVAILABLE))
-        features |= 1 << static_cast<uint8_t>(X86CPUFeature::avx512);
-
-#else
-
     // Not __builtin_cpu_supports: it links __cpu_indicator_init, a constructor that runs cpuid before main.
+    // Not IsProcessorFeaturePresent: Windows Server 2019 returns false for SSE4.2 and AVX on CPUs that have them.
     unsigned eax = 0, ebx = 0, ecx = 0, edx = 0;
     if (!__get_cpuid(1, &eax, &ebx, &ecx, &edx))
         return features;
@@ -82,8 +60,6 @@ static uint8_t x86_cpu_features()
                 features |= 1 << static_cast<uint8_t>(X86CPUFeature::avx512);
         }
     }
-
-#endif
 
     return features;
 }

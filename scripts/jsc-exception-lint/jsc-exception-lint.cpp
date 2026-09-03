@@ -1424,21 +1424,27 @@ static std::string relativeToRoot(const std::string &file) {
 
 // A name as it appears in a baseline key: without its template arguments,
 // so one entry covers every instantiation of a template (each translation
-// unit may instantiate different ones), and with the line number taken off
-// `<lambda at file:line>`, so an edit above the lambda does not change the
-// key. The lambdas of one file that share a function, kind and callee then
-// share an entry.
+// unit may instantiate different ones). The markers that report() and
+// describeCallee() write are not template arguments and stay:
+// `<indirect call through get>` as it is, and `<lambda at file:line>` without
+// the line number, so an edit above the lambda does not change the key. The
+// lambdas of one file that share a function, kind and callee then share an
+// entry.
 static std::string stripTemplateArgs(const std::string &name) {
   std::string out;
   int depth = 0;
   for (size_t i = 0; i < name.size(); i++) {
     char c = name[i];
-    if (c == '<' && depth == 0 && name.compare(i, 8, "<lambda ") == 0) {
+    bool lambda = name.compare(i, 8, "<lambda ") == 0;
+    if (c == '<' && depth == 0 &&
+        (lambda || name.compare(i, 10, "<indirect ") == 0)) {
       size_t close = name.find('>', i);
       if (close == std::string::npos)
         return name;
+      size_t end = close;
       size_t colon = name.rfind(':', close);
-      size_t end = colon != std::string::npos && colon > i ? colon : close;
+      if (lambda && colon != std::string::npos && colon > i)
+        end = colon;
       out += name.substr(i, end - i);
       out += '>';
       i = close;

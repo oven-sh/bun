@@ -328,6 +328,19 @@ struct Ref {
   }
 };
 
+// A call through a function pointer member: its callee has no name.
+struct Table {
+  JSValue (*get)(JSGlobalObject*);
+};
+
+JSValue viaTable(JSGlobalObject* g, Table t) {
+  auto scope = DECLARE_THROW_SCOPE(g->vm());
+  t.get(g);
+  t.get(g);
+  RETURN_IF_EXCEPTION(scope, {});
+  return {};
+}
+
 template<typename T> JSValue generic(JSGlobalObject* g, T) {
   auto scope = DECLARE_THROW_SCOPE(g->vm());
   JSValue v;
@@ -375,6 +388,7 @@ const fixtureKeys = [
   `src/fixture.cpp\tBox::twice(JSC::JSGlobalObject *) const\tpending-call\t${toString}`,
   `src/fixture.cpp\tRef::twice(JSC::JSGlobalObject *) &\tpending-call\t${toString}`,
   `src/fixture.cpp\tRef::twice(JSC::JSGlobalObject *) &&\tpending-call\t${toString}`,
+  `src/fixture.cpp\tviaTable(JSC::JSGlobalObject *, Table)\tpending-call\t<indirect call through get>`,
   `src/fixture.cpp\tgeneric(JSC::JSGlobalObject *, T)\tpending-call\t${toString}`,
   `src/fixture.cpp\t<lambda at fixture.cpp>\tpending-call\t${toString}`,
   `src/helper.h\thelperTwice(JSC::JSGlobalObject *, JSC::JSValue)\tpending-call\t${toString}`,
@@ -397,7 +411,7 @@ async function lint(dir: string, file: string, pluginArgs: string[] = []) {
       file,
     ],
     cwd: join(dir, "src"),
-    stdout: "pipe",
+    stdout: "ignore",
     stderr: "pipe",
   });
   const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
@@ -411,7 +425,7 @@ async function lint(dir: string, file: string, pluginArgs: string[] = []) {
 }
 
 describe.skipIf(built === undefined)("the jsc-exception-lint plugin", () => {
-  test("a baseline key tells overloads apart, and covers every instantiation of a template", async () => {
+  test.concurrent("a baseline key tells overloads apart, and covers every instantiation of a template", async () => {
     using dir = tempDir("exception-lint-plugin", fixtures);
     const result = await lint(String(dir), "fixture.cpp");
     // One error per function: the two instantiations of generic() are one
@@ -424,24 +438,27 @@ describe.skipIf(built === undefined)("the jsc-exception-lint plugin", () => {
     });
   });
 
-  test("a baseline entry silences its finding only, and an entry that no longer fires is a warning", async () => {
-    using dir = tempDir("exception-lint-plugin", {
-      ...fixtures,
-      "baseline.tsv": [
-        "# known findings",
-        `src/fixture.cpp\ttwice(JSC::JSGlobalObject *, int)\tpending-call\t${toString}`,
-        `src/fixture.cpp\tgone(int)\tpending-call\t${toString}`,
-      ].join("\n"),
-    });
-    const result = await lint(String(dir), "fixture.cpp", [`baseline=${join(String(dir), "baseline.tsv")}`]);
-    expect({ errors: result.errors, keys: result.keys, stale: result.stale }).toEqual({
-      errors: fixtureKeys.length - 1,
-      keys: fixtureKeys.filter(key => !key.includes(", int)")).sort(),
-      stale: [`src/fixture.cpp\tgone(int)\tpending-call\t${toString}`],
-    });
-  });
+  test.concurrent(
+    "a baseline entry silences its finding only, and an entry that no longer fires is a warning",
+    async () => {
+      using dir = tempDir("exception-lint-plugin", {
+        ...fixtures,
+        "baseline.tsv": [
+          "# known findings",
+          `src/fixture.cpp\ttwice(JSC::JSGlobalObject *, int)\tpending-call\t${toString}`,
+          `src/fixture.cpp\tgone(int)\tpending-call\t${toString}`,
+        ].join("\n"),
+      });
+      const result = await lint(String(dir), "fixture.cpp", [`baseline=${join(String(dir), "baseline.tsv")}`]);
+      expect({ errors: result.errors, keys: result.keys, stale: result.stale }).toEqual({
+        errors: fixtureKeys.length - 1,
+        keys: fixtureKeys.filter(key => !key.includes(", int)")).sort(),
+        stale: [`src/fixture.cpp\tgone(int)\tpending-call\t${toString}`],
+      });
+    },
+  );
 
-  test("a function that checks after each call compiles", async () => {
+  test.concurrent("a function that checks after each call compiles", async () => {
     using dir = tempDir("exception-lint-plugin", fixtures);
     const result = await lint(String(dir), "clean.cpp");
     // Only the lint's own lines: a warning of another clang version is not

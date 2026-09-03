@@ -55,7 +55,8 @@ every C++ compile (a change recompiles everything, through ccache too):
   file is relative to the repo root. The function has its parameter types
   and, for a member function, its qualifiers (`const`, `&&`), so overloads
   have their own entries. Names have no template arguments, so one entry
-  covers every instantiation, and a lambda is `<lambda at file>`.
+  covers every instantiation. A lambda is `<lambda at file>`, and a call
+  through a function pointer member is `<indirect call through member>`.
   There are no line numbers, so an edit elsewhere in the file does not
   change a key. The error note prints the key. An entry for a `.cpp` file
   that no longer fires is a warning that names it, so the list only

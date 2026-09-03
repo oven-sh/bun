@@ -1337,6 +1337,18 @@ describe("stdin: a sliced Bun.file() sends only the slice", () => {
     }).toEqual({ size: end - start, identical: true, stderr: "", exitCode: 0 });
   });
 
+  // procfs files are regular files with st_size == 0, so only the window bounds the read.
+  it.concurrent.skipIf(!isLinux)("a window of a file that reports no size", async () => {
+    const version = readFileSync("/proc/version", "utf8");
+    const file = Bun.file("/proc/version");
+    const [middle, toEnd] = await Promise.all([sendToChild(file.slice(3, 8)), sendToChild(file.slice(3))]);
+
+    expect({ middle, toEnd }).toEqual({
+      middle: { stdout: version.slice(3, 8), stderr: "", exitCode: 0 },
+      toEnd: { stdout: version.slice(3), stderr: "", exitCode: 0 },
+    });
+  });
+
   it("spawnSync", () => {
     using dir = tempDir("spawn-stdin-slice-sync", { "src.txt": content });
     const { stdout, stderr, exitCode } = spawnSync({

@@ -42,8 +42,7 @@ pub struct CopyFile {
     pub offset: SizeType,
     #[cfg(not(windows))]
     pub(crate) max_length: SizeType,
-    /// The source Blob's view: `Bun.file(p).slice(start, end)` copies only
-    /// `[source_offset, source_offset + source_size)`. `MAX_SIZE` is "to EOF".
+    /// The source Blob's window. `source_size` is `MAX_SIZE` to copy to EOF.
     #[cfg(not(windows))]
     pub(crate) source_offset: SizeType,
     #[cfg(not(windows))]
@@ -175,8 +174,7 @@ impl CopyFile {
         )
     }
 
-    /// Bytes to copy out of a regular source file of `st_size` bytes: the
-    /// source view clamped to the file, then capped by the destination view.
+    /// Bytes to copy from a regular source file of `st_size` bytes.
     #[cfg(not(windows))]
     fn copy_length(&self, st_size: SizeType) -> SizeType {
         let available = st_size.saturating_sub(self.source_offset);
@@ -559,8 +557,7 @@ impl CopyFile {
                     //
                     // bun test bun-write.test | xargs echo
                     //
-                    // The ftruncate that trims a view does nothing to a pipe,
-                    // so the loop stops at `max_length` itself.
+                    // ftruncate cannot trim a pipe, so the loop stops at the window.
                     bun_sys::E::EBADF => {
                         return self.do_read_write_loop_capped(self.max_length);
                     }
@@ -813,9 +810,7 @@ impl CopyFile {
                     );
                 }
             } else if self.source_size != MAX_SIZE {
-                // No length to clamp against (a char device, a socket, a
-                // procfs file), so the view's size is the only bound on a
-                // source that may never hit EOF.
+                // A source with no length (a char device, a socket) ends at the window.
                 self.max_length = self.max_length.min(self.source_size);
                 if self.max_length == 0 {
                     self.do_close();
@@ -823,9 +818,7 @@ impl CopyFile {
                 }
             }
 
-            // Every copy primitive below reads from the source fd's position.
-            // Only a regular file has one to move; a pipe, socket or char
-            // device is read from where it is.
+            // The copy reads from the fd's position, which only a regular file has.
             if is_regular && self.source_offset > 0 {
                 if let bun_sys::Result::Err(err) =
                     bun_sys::set_file_offset(self.source_fd, self.source_offset)
@@ -890,12 +883,9 @@ impl CopyFile {
             {
                 // fcopyfile rewrites dest from offset 0 and the slice trim is
                 // ftruncate; both are only safe for a dest Bun opened O_TRUNC.
-                // It copies the whole source, so it only serves a view that
-                // starts at byte 0 and that the ftruncate can trim: anything
-                // else takes the capped read/write loop from the seeked position.
-                let fcopyfile_serves_view =
-                    self.source_offset == 0 && (is_regular || self.source_size == MAX_SIZE);
-                if fcopyfile_serves_view
+                // fcopyfile copies the whole source, so a window takes the capped loop.
+                let whole_source = self.source_offset == 0 && self.source_size == MAX_SIZE;
+                if whole_source
                     && matches!(
                         self.destination_file_store.pathlike,
                         PathOrFileDescriptor::Path(_)
@@ -925,10 +915,14 @@ impl CopyFile {
 
             #[cfg(target_os = "freebsd")]
             {
-                if matches!(
-                    self.destination_file_store.pathlike,
-                    PathOrFileDescriptor::Path(_)
-                ) {
+                // This loop reads to EOF, so a window takes the capped loop.
+                if self.source_offset == 0
+                    && self.source_size == MAX_SIZE
+                    && matches!(
+                        self.destination_file_store.pathlike,
+                        PathOrFileDescriptor::Path(_)
+                    )
+                {
                     let mut total_written: u64 = 0;
                     match node_fs::NodeFS::copy_file_using_read_write_loop(
                         bun_core::ZStr::EMPTY,
@@ -985,13 +979,9 @@ fn read_write_fallback(
     cap: SizeType,
     total: &mut u64,
 ) -> bun_sys::Result<()> {
-    // `NodeFS::copy_file_using_read_write_loop` treats its length as a
-    // stat hint and drains the source to EOF past it; `cap` is a bound.
     read_write_loop_capped(src_fd, dest_fd, cap, total)?;
     if bun_opened_dest {
-        // Bun opened dest with O_TRUNC, but run_async may have fallocate'd it
-        // to the stat'd length, which is longer than the copy if the source
-        // shrank underneath us.
+        // run_async may have fallocate'd dest past what the loop copied.
         let _ = bun_sys::ftruncate(dest_fd, i64::try_from(*total).expect("int cast"));
     }
     Ok(())
@@ -1095,8 +1085,7 @@ pub struct CopyFileWindows<'a> {
 
     pub(crate) size: SizeType,
 
-    /// The source Blob's view, as on [`CopyFile`]. `uv_fs_copyfile` copies
-    /// a whole file, so any other view goes through the read/write loop.
+    /// The source Blob's window, as on [`CopyFile`].
     pub(crate) source_offset: SizeType,
     pub(crate) source_size: SizeType,
 
@@ -1117,8 +1106,7 @@ pub struct ReadWriteLoop {
     pub(crate) destination_fd: Fd,
     pub(crate) must_close_destination_fd: bool,
     pub(crate) written: usize,
-    /// File position of the next read. `-1` reads from the current position
-    /// (a source that is not a regular file).
+    /// Position of the next read, or `-1` for the fd's current position.
     pub(crate) read_pos: i64,
     /// Bytes left in the source view. `MAX_SIZE` is "to EOF".
     pub(crate) remaining: SizeType,
@@ -1198,8 +1186,7 @@ impl<'a> CopyFileWindows<'a> {
         bun_sys::Result::Ok(())
     }
 
-    /// Whether the copy covers the whole source file, which `uv_fs_copyfile`
-    /// can do in one call. A view with a size needs the file's length to tell.
+    /// Whether `uv_fs_copyfile` can do the copy. It copies whole files only.
     fn source_view_is_whole_file(&self) -> bool {
         if self.source_offset != 0 {
             return false;
@@ -1222,9 +1209,7 @@ impl<'a> CopyFileWindows<'a> {
         }
     }
 
-    /// The loop stops at the end of the source view. A view that starts past
-    /// byte 0 is read from that position, as `CopyFile` seeks to it. Only a
-    /// regular file has a position; anything else is read from where it is.
+    /// Sets where the loop starts and stops. Only a regular file has a position.
     fn apply_source_view(&mut self, source_fd: Fd) {
         self.read_write_loop.remaining = self.source_size;
         if self.source_offset > 0
@@ -1525,8 +1510,7 @@ impl<'a> CopyFileWindows<'a> {
     }
 
     fn prepare_read_write_loop(&mut self) {
-        // Open the source first: opening the destination truncates it, and a
-        // source that cannot be read must leave the destination alone.
+        // A source that cannot be opened must leave the destination untouched.
         self.read_write_loop.source_fd = match Self::prepare_pathlike(
             &mut Store::data_mut(&self.source_file_store)
                 .as_file_mut()
@@ -1551,8 +1535,7 @@ impl<'a> CopyFileWindows<'a> {
             bun_sys::Result::Ok(fd) => fd,
             bun_sys::Result::Err(err) => {
                 if self.mkdirp_if_not_exists && err.get_errno() == bun_sys::E::ENOENT {
-                    // `copyfile()` runs again after mkdirp and opens the
-                    // source again.
+                    // `copyfile()` opens the source again after mkdirp.
                     self.read_write_loop.close();
                     self.mkdirp();
                     return;
@@ -1565,8 +1548,7 @@ impl<'a> CopyFileWindows<'a> {
 
         self.apply_source_view(self.read_write_loop.source_fd);
         if self.read_write_loop.remaining == 0 {
-            // An empty view: the destination was opened (and truncated)
-            // above and nothing is read.
+            // An empty window: the destination is already truncated.
             self.on_complete(0);
             return;
         }

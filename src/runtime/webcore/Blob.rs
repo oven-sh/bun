@@ -2224,9 +2224,7 @@ impl BlobExt for Blob {
                     let available = store_size - self.offset.get();
                     self.size.set(window_size(self.size.get(), available));
                 }
-                // A pipe or a FIFO has no size. Nor does a file that could
-                // not be stat'd: it may exist by the next call, which stats
-                // it again. The size stays unknown in both cases.
+                // A pipe has no size. A failed stat is tried again on the next call.
             }
             store::DataTag::S3 => self.size.set(0),
         }
@@ -2272,9 +2270,7 @@ impl BlobExt for Blob {
         }
     }
 
-    /// The window that `slice()` set on a file Blob, as `(offset, size)`.
-    /// `None` when the Blob is not a file or names the whole file. `size` is
-    /// `MAX_SIZE` for a window that runs to EOF. Does not stat the file.
+    /// The `(offset, size)` that `slice()` set on a file Blob, or `None` for the whole file.
     fn file_window(&self) -> Option<(SizeType, SizeType)> {
         let store = self.store.get().as_ref()?;
         let store::Data::File(file) = &store.data else {
@@ -2287,7 +2283,7 @@ impl BlobExt for Blob {
         } else {
             self.size.get()
         };
-        // A size equal to the stat'd size came from `.size` or `exists()`.
+        // `.size` and `exists()` cache the stat'd size, so that size means the whole file.
         if offset == 0 && (size == MAX_SIZE || size == file.max_size) {
             return None;
         }

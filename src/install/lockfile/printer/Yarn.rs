@@ -145,15 +145,16 @@ fn packages(this: &mut Printer, writer: &mut impl bun_io::Write) -> Result<(), c
             let mut prev_dependency_version: Option<&dependency::Version> = None;
             let mut needs_comma = false;
             for dependency_version in dependency_versions {
+                let version_name: &[u8] = dependency_version.literal.slice(string_buf);
                 if needs_comma {
+                    // one key per requested spec as written
                     if let Some(prev) = prev_dependency_version {
-                        if prev.eql(dependency_version, string_buf, string_buf) {
+                        if prev.literal.slice(string_buf) == version_name {
                             continue;
                         }
                     }
                     writer.write_all(b", ")?;
                 }
-                let version_name: &[u8] = dependency_version.literal.slice(string_buf);
                 let needs_quote = always_needs_quote
                     || strings::index_of_any(version_name, b" |\t-/!:\"\\,\n\r").is_some()
                     || version_name.starts_with(b"npm:");

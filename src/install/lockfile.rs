@@ -2085,30 +2085,46 @@ impl Lockfile {
         self.loaded_package_count = self.packages.len() as PackageID;
     }
 
-    /// Gives every npm-range or `workspace:` edge that resolved to a workspace package the shape
-    /// `Package::parse` gives a linked edge: tag `Workspace`, value the workspace's path, literal
-    /// kept. Loaders (bun.lock, bun.lockb, migrated foreign lockfiles) rebuild edges from the
-    /// literal, so every loader finishes with this; the tag comes from the recorded resolution, so
-    /// it matches a reparse of the same package.json whenever `linked_workspace` made that
-    /// resolution (not when an override redirected it, and not once the workspace moves). Other
-    /// tags (`catalog:`, dist tags, folders) keep their parsed shape, as in `Package::parse`.
+    /// Reshapes edges resolved to a workspace package the way `Package::parse` shaped them when the
+    /// lockfile was written. Loaders (bun.lock, bun.lockb, migrated foreign lockfiles) rebuild an
+    /// edge from its literal alone, so every loader finishes with this: a `workspace:` edge gets the
+    /// workspace's path as its value, and an npm range becomes a workspace edge when
+    /// `linked_workspace`, asked with the workspaces this lockfile records, links it. A range bound to
+    /// a workspace some other way (a peer that took the sibling's version, an override, a link only
+    /// a foreign lockfile could express) stays an npm range, as it does in a reparse.
     pub(crate) fn tag_workspace_links(&mut self) {
         let pkg_resolutions = self.packages.items_resolution();
+        let buf = self.buffers.string_bytes.as_slice();
         for (dep, &pkg_id) in self
             .buffers
             .dependencies
             .iter_mut()
             .zip(self.buffers.resolutions.iter())
         {
-            if !matches!(
-                dep.version.tag,
-                dependency::Tag::Npm | dependency::Tag::Workspace
-            ) || pkg_id as usize >= pkg_resolutions.len()
-            {
+            if pkg_id as usize >= pkg_resolutions.len() {
                 continue;
             }
             let res = &pkg_resolutions[pkg_id as usize];
             if res.tag != ResolutionTag::Workspace {
+                continue;
+            }
+            let linked = match dep.version.tag {
+                dependency::Tag::Workspace => true,
+                dependency::Tag::Npm => {
+                    let npm = dep.version.npm();
+                    linked_workspace(
+                        true,
+                        &self.workspace_paths,
+                        &self.workspace_versions,
+                        Semver::string::Builder::string_hash(npm.name.slice(buf)),
+                        &npm.version,
+                        buf,
+                    )
+                    .is_some()
+                }
+                _ => false,
+            };
+            if !linked {
                 continue;
             }
             // Whole-struct assign so `DependencyVersion::Drop` frees the npm chain.

@@ -10,7 +10,9 @@ use bun_ast::{Part, Ref, SlotCounts};
 use crate::bun_renamer as renamer;
 use crate::bun_renamer::{ChunkRenamer, MinifyRenamer, NumberRenamer, StableSymbolCount};
 use crate::chunk::Content;
+use crate::defines_table;
 use crate::js_meta;
+use crate::options;
 use crate::{Chunk, LinkerContext, StableRef, WrapKind};
 
 /// TODO: investigate if we need to parallelize this function
@@ -149,6 +151,38 @@ pub(crate) unsafe fn rename_symbols_in_chunk(
             unsafe { &*symbols },
             &mut reserved_names,
         );
+    }
+
+    // A browser ESM chunk loaded as a classic `<script>` assigns its scope-hoisted top-level `var`/`function` onto `globalThis`, so reserve names that collide with known host globals so the renamer suffixes the binding.
+    if c.options.output_format == options::OutputFormat::Esm
+        && c.options.target == options::Target::Browser
+    {
+        for &source_index in files_in_order {
+            if all_flags[source_index as usize].wrap == WrapKind::Cjs {
+                continue;
+            }
+            let scope = &all_module_scopes[source_index as usize];
+            for member in scope.members.values() {
+                // SAFETY: `symbols` points to the live `c.graph.symbols`; read-only here.
+                let symbol = unsafe { &*symbols }.get_const(member.ref_).unwrap();
+                if matches!(
+                    symbol.kind,
+                    symbol::Kind::Hoisted
+                        | symbol::Kind::HoistedFunction
+                        | symbol::Kind::GeneratorOrAsyncFunction
+                        | symbol::Kind::Constant
+                        | symbol::Kind::Other
+                        | symbol::Kind::TsEnum
+                        | symbol::Kind::TsNamespace
+                ) && !symbol.must_not_be_renamed()
+                    && defines_table::is_pure_global_identifier(symbol.original_name.slice())
+                {
+                    reserved_names
+                        .put(symbol.original_name.slice(), 1)
+                        .expect("unreachable");
+                }
+            }
+        }
     }
 
     let sorted_imports_from_other_chunks: Vec<StableRef> = {

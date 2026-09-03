@@ -3219,6 +3219,160 @@ describe("bundler", () => {
     },
     120_000,
   );
+  // https://github.com/oven-sh/bun/issues/14110
+  itBundled("edgecase/EsmTopLevelVarShadowsHostGlobal", {
+    files: {
+      "/entry.js": /* js */ `
+        import { getComputedStyle, requestAnimationFrame } from "./helpers.js";
+        const el = { ownerDocument: { defaultView: globalThis } };
+        console.log(getComputedStyle(el));
+        requestAnimationFrame(v => console.log(v));
+      `,
+      "/helpers.js": /* js */ `
+        export const getComputedStyle = el => el.ownerDocument.defaultView.getComputedStyle(el, null);
+        export const requestAnimationFrame = cb => cb("raf");
+      `,
+    },
+    format: "esm",
+    target: "browser",
+    runtimeFiles: {
+      "/run.cjs": /* js */ `
+        let calls = 0;
+        globalThis.getComputedStyle = function native() {
+          if (++calls > 1000) throw new RangeError("Maximum call stack size exceeded");
+          return "native";
+        };
+        globalThis.requestAnimationFrame = cb => cb("native-raf");
+        const src = require("fs").readFileSync(__dirname + "/out.js", "utf8");
+        // Indirect eval runs in the global scope so top-level "var" becomes a
+        // globalThis property, matching a classic <script> tag.
+        (0, eval)(src);
+        console.log("calls=" + calls);
+      `,
+    },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).not.toMatch(/\bvar getComputedStyle\b/);
+      expect(out).not.toMatch(/\bvar requestAnimationFrame\b/);
+      expect(out).toContain("defaultView.getComputedStyle(");
+    },
+    run: {
+      file: "/run.cjs",
+      stdout: "native\nraf\ncalls=1",
+    },
+  });
+  itBundled("edgecase/EsmTopLevelVarShadowsHostGlobalUnboundReference", {
+    files: {
+      "/entry.js": /* js */ `
+        import { fetch as moduleFetch } from "./helpers.js";
+        console.log(moduleFetch());
+        console.log(typeof fetch);
+      `,
+      "/helpers.js": /* js */ `
+        export const fetch = () => "module fetch";
+      `,
+    },
+    format: "esm",
+    target: "browser",
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).not.toMatch(/\bvar fetch\b/);
+      expect(out).toMatch(/typeof fetch\b/);
+    },
+    run: { stdout: "module fetch\nfunction" },
+  });
+  itBundled("edgecase/EsmTopLevelVarShadowsHostGlobalScoping", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import { Response as ModResponse } from "external-pkg";
+        import cjs from "./cjs.cjs";
+        export class Response { body = "mine"; }
+        export enum Event { Click }
+        export namespace Text { export const x = 1; }
+        console.log(new Response().constructor.name, cjs.URL, typeof ModResponse, Event.Click, Text.x);
+      `,
+      "/cjs.cjs": /* js */ `
+        const URL = "cjs-url";
+        const fetch = () => "cjs-fetch";
+        module.exports = { URL, fetch };
+      `,
+    },
+    format: "esm",
+    target: "browser",
+    external: ["external-pkg"],
+    runtimeFiles: {
+      "/node_modules/external-pkg/index.js": `export const Response = 1;`,
+    },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toMatch(/\bclass Response\b/);
+      expect(out).not.toMatch(/\bclass Response2\b/);
+      expect(out).toMatch(/\bimport { Response\b/);
+      expect(out).toContain("{ URL, fetch }");
+      expect(out).not.toMatch(/\bURL2\b/);
+      expect(out).not.toMatch(/\bvar Event\b/);
+      expect(out).not.toMatch(/\bvar Text\b/);
+    },
+    run: { stdout: "Response cjs-url number 0 1" },
+  });
+  for (const target of ["bun", "node"] as const) {
+    itBundled(`edgecase/EsmTopLevelVarShadowsHostGlobalTarget_${target}`, {
+      files: {
+        "/entry.js": /* js */ `
+          import { getComputedStyle } from "./helpers.js";
+          const name = "app";
+          const status = "ok";
+          console.log(name, status, typeof getComputedStyle);
+        `,
+        "/helpers.js": /* js */ `
+          export const getComputedStyle = () => 0;
+        `,
+      },
+      format: "esm",
+      target,
+      onAfterBundle(api) {
+        const out = api.readFile("/out.js");
+        expect(out).toMatch(/\bvar getComputedStyle\b/);
+        expect(out).toMatch(/\bvar name\b/);
+        expect(out).toMatch(/\bvar status\b/);
+      },
+      run: { stdout: "app ok function" },
+    });
+  }
+  itBundled("edgecase/IifeTopLevelVarShadowsHostGlobal", {
+    files: {
+      "/entry.js": /* js */ `
+        import { getComputedStyle } from "./helpers.js";
+        globalThis.gcs = getComputedStyle;
+      `,
+      "/helpers.js": /* js */ `
+        export const getComputedStyle = el => el.ownerDocument.defaultView.getComputedStyle(el, null);
+      `,
+    },
+    format: "iife",
+    target: "browser",
+    runtimeFiles: {
+      "/run.cjs": /* js */ `
+        let calls = 0;
+        globalThis.getComputedStyle = function native() {
+          if (++calls > 1000) throw new RangeError("Maximum call stack size exceeded");
+          return "native";
+        };
+        const src = require("fs").readFileSync(__dirname + "/out.js", "utf8");
+        (0, eval)(src);
+        console.log(globalThis.gcs({ ownerDocument: { defaultView: globalThis } }));
+        console.log("calls=" + calls);
+      `,
+    },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toMatch(/\bvar getComputedStyle\b/);
+    },
+    run: {
+      file: "/run.cjs",
+      stdout: "native\ncalls=1",
+    },
+  });
   itBundled("edgecase/NonAsciiPathDerivedWrapperName", {
     files: {
       "/entry.ts": /* js */ `

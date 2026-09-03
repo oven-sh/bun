@@ -28,14 +28,15 @@ test("node:dgram close() inside 'message' handler stops remaining batch datagram
         }
       });
       rx.on("close", () => trace.push("closeEvent"));
+      rx.on("error", closed.reject);
       const tx = dgram.createSocket("udp4");
-      tx.on("error", () => {});
+      tx.on("error", closed.reject);
       // Queue a burst on the kernel rx buffer before the loop dispatches
       // 'message'. Each send is awaited so its syscall has completed before
       // the next one starts; on loopback this deterministically yields a
       // multi-packet recvmmsg batch.
       for (let i = 0; i < 16; i++) {
-        await new Promise(r => tx.send(String(i), port, "127.0.0.1", r));
+        await new Promise((r, j) => tx.send(String(i), port, "127.0.0.1", e => (e ? j(e) : r())));
       }
       // Loopback delivery is asynchronous on macOS, so wait for the close
       // itself, not for a number of loop turns. Then give a replay of the rest

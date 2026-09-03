@@ -129,7 +129,7 @@ directly or transitively (including through other workspaces it depends on), is 
 `apps/desktop/node_modules`, so that directory is a complete tree — and materializes those
 packages as real copies instead of hardlinks / clones from the cache, so tools that rewrite them
 cannot affect the cache or other projects. All other workspaces keep hoisting to the root as usual. The setting is recorded in the lockfile (`bun.lock` or `bun.lockb`) for the workspace, so installs from the lockfile reproduce the same layout.
-A `--frozen-lockfile` install uses the recorded setting. After you add or remove the setting, run `bun install` once to update the lockfile.
+If the lockfile does not record the setting yet (Bun 1.4.0 and earlier ignored it), a `--frozen-lockfile` install keeps the recorded layout and prints a note. If the lockfile records the setting and a `package.json` changes it, a `--frozen-lockfile` install fails. Run `bun install` to update the lockfile.
 This setting has no effect with the isolated linker, where every package already resolves only its
 own dependencies.
 

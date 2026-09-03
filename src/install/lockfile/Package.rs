@@ -912,6 +912,8 @@ pub struct DiffSummary {
     pub(crate) script_only_updates: u32,
     pub(crate) overrides_changed: bool,
     pub(crate) catalogs_changed: bool,
+    /// The manifests change the self-contained set that the lockfile records.
+    pub(crate) self_contained_changed: bool,
 
     pub(crate) added_trusted_dependencies:
         ArrayHashMap<TruncatedPackageNameHash, AddedTrustedDependency, ArrayIdentityContext>,

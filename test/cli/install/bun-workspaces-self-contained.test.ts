@@ -177,9 +177,9 @@ it("without either setting the workspace is hoisted normally", async () => {
   expect(existsSync(join(package_dir, "node_modules", "baz", "package.json"))).toBeTrue();
 });
 
-// A frozen install installs the layout the lockfile recorded. Bun 1.4.0 ignored
-// `installConfig.hoistingLimits`, so a lockfile it wrote has no record of the setting
-// while the manifest still carries it; CI must accept that lockfile as-is.
+// Bun 1.4.0 ignored `installConfig.hoistingLimits`, so a lockfile it wrote records no
+// self-contained workspace while the manifest still has the key. A frozen install
+// accepts that lockfile and keeps its layout. A recorded setting must still match.
 describe.each([
   ["hoisted", "bun.lock"],
   ["isolated", "bun.lock"],
@@ -217,6 +217,7 @@ describe.each([
     await cleanTree();
     r = await install(package_dir, [`--linker=${linker}`, "--frozen-lockfile"]);
     expect(r.err).not.toContain("lockfile had changes");
+    expect(r.err).toContain(`${lockfileName} does not record that workspace "desktop" is self-contained`);
     expect(r.code).toBe(0);
     expect(await readLockfile()).toEqual(before);
     await expectLayout("hoisted");
@@ -234,12 +235,13 @@ describe.each([
     await cleanTree();
     r = await install(package_dir, [`--linker=${linker}`, "--frozen-lockfile"]);
     expect(r.err).not.toContain("error:");
+    expect(r.err).not.toContain("does not record");
     expect(r.code).toBe(0);
     expect(await readLockfile()).toEqual(after);
     await expectLayout("self-contained");
   });
 
-  it("keeps the recorded layout after the manifest drops hoistingLimits", async () => {
+  it("fails when the manifest drops a hoistingLimits that the lockfile records", async () => {
     await writeProject({ installConfig: { hoistingLimits: "workspaces" } }, {}, text);
     let r = await install(package_dir, [`--linker=${linker}`]);
     expect(r.err).not.toContain("error:");
@@ -250,10 +252,12 @@ describe.each([
     await writeProject({}, {}, text);
     await cleanTree();
     r = await install(package_dir, [`--linker=${linker}`, "--frozen-lockfile"]);
-    expect(r.err).not.toContain("lockfile had changes");
-    expect(r.code).toBe(0);
+    expect(r.err).toContain("error: lockfile had changes, but lockfile is frozen");
+    expect(r.err).toContain(
+      `installConfig.hoistingLimits or workspaces.selfContained in package.json changed since ${lockfileName} was saved`,
+    );
+    expect(r.code).toBe(1);
     expect(await readLockfile()).toEqual(recorded);
-    await expectLayout("self-contained");
 
     // a plain install drops the record …
     r = await install(package_dir, [`--linker=${linker}`]);

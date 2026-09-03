@@ -15,8 +15,8 @@ src/jsc/bindings/BunObject.cpp:412:16: error: jsc-exception-lint: call to
 JSC::JSValue::toString while an exception check is pending after
 JSC::JSValue::toString (BunObject.cpp:411); add RETURN_IF_EXCEPTION after it
 src/jsc/bindings/BunObject.cpp:412:16: note: in Bun::functionFoo; baseline
-entry: src/jsc/bindings/BunObject.cpp | Bun::functionFoo | pending-call |
-JSC::JSValue::toString
+entry: src/jsc/bindings/BunObject.cpp | Bun::functionFoo(JSC::JSGlobalObject *,
+JSC::CallFrame *) | pending-call | JSC::JSValue::toString
 ```
 
 The plugin runs on the AST the compile already has. Loading it and reading
@@ -51,16 +51,20 @@ every C++ compile (a change recompiles everything, through ccache too):
   "Summaries"). Only the rows that differ from the signature convention
   are kept.
 - `baseline.tsv`: findings that are known and tolerated while they are
-  being fixed. One per line: `<file>\t<function>\t<kind>\t<callee>`, the
-  file relative to the repo root, names without template arguments, a
-  lambda as `<lambda at file>`: no line numbers, so an edit elsewhere in
-  the file does not change a key. The error note prints the key. An entry
+  being fixed. One per line: `<file>\t<function>\t<kind>\t<callee>`. The
+  file is relative to the repo root. The function has its parameter types,
+  so overloads have their own entries. Names have no template arguments, so
+  one entry covers every instantiation, and a lambda is `<lambda at file>`.
+  There are no line numbers, so an edit elsewhere in the file does not
+  change a key. The error note prints the key. An entry for a `.cpp` file
   that no longer fires is a warning that names it, so the list only
   shrinks. Fix the finding instead of adding to this file. If the finding
   is a false positive, add the callee to `nothrow.txt`.
 
-A finding in a header is reported by the compile of the `.cpp` with the
-same stem, or by every compile when no such file exists.
+A finding in a header is reported by every compile that produces it, like
+a compiler warning in a header. Compiles see different template
+instantiations, so no single one sees them all. For the same reason an
+entry for a header is not reported when it stops firing.
 
 ## Run by hand
 

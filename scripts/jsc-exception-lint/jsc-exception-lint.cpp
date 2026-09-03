@@ -257,6 +257,9 @@ struct Finding {
   unsigned line = 0;
   unsigned col = 0;
   std::string function;
+  // The function column of the baseline key: the qualified name and the
+  // parameter types, so that overloads do not share an entry.
+  std::string functionKey;
   std::string callee;
   std::string kind; // pending-call | thrown-call | unchecked-exit |
                     // scope-while-pending | lambda-check
@@ -403,6 +406,29 @@ private:
 
 static std::string summaryKey(const FunctionDecl *FD) {
   return qualifiedName(FD) + "/" + std::to_string(FD->getNumParams());
+}
+
+// `name(type, type)`. Types print with their full scope whatever the source
+// spells (`JSGlobalObject *` under a using-directive is `JSC::JSGlobalObject
+// *`), and typedefs stay typedefs, so the key is the same on every platform.
+// A template instantiation uses its pattern, so that every instantiation has
+// the key of the template (`T`, not `int`).
+static std::string signatureKey(const FunctionDecl *FD) {
+  if (const FunctionDecl *pattern = FD->getTemplateInstantiationPattern())
+    FD = pattern;
+  FD = FD->getCanonicalDecl();
+  PrintingPolicy policy = FD->getASTContext().getPrintingPolicy();
+  policy.SuppressElaboration = true;
+  std::string key = qualifiedName(FD) + "(";
+  for (unsigned i = 0; i < FD->getNumParams(); i++) {
+    if (i)
+      key += ", ";
+    key += FD->getParamDecl(i)->getType().getAsString(policy);
+  }
+  if (const auto *FPT = FD->getType()->getAs<FunctionProtoType>())
+    if (FPT->isVariadic())
+      key += FD->getNumParams() ? ", ..." : "...";
+  return key + ")";
 }
 
 static bool isGlobalObjectRecord(const CXXRecordDecl *RD) {
@@ -868,10 +894,13 @@ private:
     f.line = P.isValid() ? P.getLine() : 0;
     f.col = P.isValid() ? P.getColumn() : 0;
     f.function = qualifiedName(FD);
+    f.functionKey = signatureKey(FD);
     if (const auto *MD = dyn_cast<CXXMethodDecl>(FD))
-      if (MD->getParent()->isLambda())
+      if (MD->getParent()->isLambda()) {
         f.function =
             "<lambda at " + locString(MD->getParent()->getLocation()) + ">";
+        f.functionKey = f.function;
+      }
     f.callee = stableCallee(callee);
     f.kind = kind;
     f.message = message;
@@ -1416,8 +1445,8 @@ static std::string stripTemplateArgs(const std::string &name) {
 }
 
 static std::string baselineKey(const Finding &f) {
-  return relativeToRoot(f.file) + "\t" + stripTemplateArgs(f.function) + "\t" +
-         f.kind + "\t" + stripTemplateArgs(f.callee);
+  return relativeToRoot(f.file) + "\t" + stripTemplateArgs(f.functionKey) +
+         "\t" + f.kind + "\t" + stripTemplateArgs(f.callee);
 }
 
 class Consumer : public ASTConsumer {
@@ -1473,8 +1502,11 @@ public:
         // a call after a helper that may have thrown into our scope and
         // returned a failure value the caller usually tests, which the
         // analysis cannot see; the standalone tool shows them on request.
-        if (f.kind == "maybe-thrown-call" ||
-            !ownsFile(Ctx.getSourceManager(), f.file))
+        //
+        // A finding in a header is reported by every unit that produces
+        // it, like a compiler warning in a header. Units see different
+        // template instantiations, so no single unit sees them all.
+        if (f.kind == "maybe-thrown-call")
           continue;
         std::string bkey = baselineKey(f);
         if (gBaseline.count(bkey)) {
@@ -1516,39 +1548,6 @@ public:
   }
 
 private:
-  // A header is included by many translation units. Report its findings
-  // from the one that also compiles the .cpp with the same stem, or from
-  // every unit when no such .cpp exists anywhere.
-  bool ownsFile(SourceManager &SM, const std::string &file) {
-    if (file.size() > 4 && file.compare(file.size() - 4, 4, ".cpp") == 0)
-      return true;
-    auto slash = file.rfind('/');
-    auto dot = file.rfind('.');
-    if (dot == std::string::npos || (slash != std::string::npos && dot < slash))
-      return true;
-    std::string dir =
-        slash == std::string::npos ? "" : file.substr(0, slash + 1);
-    std::string stem =
-        file.substr(slash == std::string::npos ? 0 : slash + 1,
-                    dot - (slash == std::string::npos ? 0 : slash + 1));
-    if (m_cppStems.empty()) {
-      for (auto it = SM.fileinfo_begin(); it != SM.fileinfo_end(); ++it) {
-        if (!it->first.getName().ends_with(".cpp"))
-          continue;
-        std::string name = realPathOf(it->first);
-        auto s2 = name.rfind('/');
-        m_cppStems.insert(name.substr(
-            s2 == std::string::npos ? 0 : s2 + 1,
-            name.size() - 4 - (s2 == std::string::npos ? 0 : s2 + 1)));
-      }
-      if (m_cppStems.empty())
-        m_cppStems.insert("");
-    }
-    if (m_cppStems.count(stem))
-      return true;
-    return !llvm::sys::fs::exists(dir + stem + ".cpp");
-  }
-
   void emit(const Finding &f) {
     DiagnosticsEngine &diags = m_ci->getDiagnostics();
     unsigned id = diags.getCustomDiagID(
@@ -1593,7 +1592,6 @@ private:
   }
 
   CompilerInstance *m_ci;
-  std::set<std::string> m_cppStems;
 };
 
 #ifdef JSC_EXCEPTION_LINT_PLUGIN

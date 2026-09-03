@@ -3,13 +3,11 @@
   "name": "bun",
   "version": "1.4.1",
   "workspaces": [
-    "./packages/bun-types",
-    "./packages/@types/bun"
+    "./packages/bun-types"
   ],
   "devDependencies": {
     "@lezer/common": "^1.2.3",
     "@lezer/cpp": "^1.1.6",
-    "@types/bun": "*",
     "esbuild": "^0.21.5",
     "oxlint": "1.70.0",
     "prettier": "^3.6.2",
@@ -21,7 +19,6 @@
   },
   "resolutions": {
     "bun-types": "workspace:packages/bun-types",
-    "@types/bun": "workspace:packages/@types/bun",
     "@types/node": "26.2.0"
   },
   "scripts": {

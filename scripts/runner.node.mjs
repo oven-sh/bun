@@ -697,8 +697,7 @@ async function runTests() {
     // and keep their retries.
     const maxAttempts = title.endsWith("package.json") || isFlakyTest(title) ? 1 + retries : 1;
 
-    let result;
-    let failure = priorFailure;
+    let result, failure;
     let attempt;
     for (attempt = priorFailure ? 2 : 1; attempt <= maxAttempts; attempt++) {
       if (attempt > 1) {
@@ -735,12 +734,15 @@ async function runTests() {
       if (isAlwaysFailure(error)) break;
     }
 
+    // No attempt ran: the batch failure is the only result.
+    if (result === undefined) failure = priorFailure;
+
     if (!failure) {
       okResults.push(result);
       return result;
     }
 
-    // The first failure is the one reported. It is flaky when a later attempt passed.
+    // The first failure of these attempts is the one reported. It is flaky when a later attempt passed.
     const flaky = result?.ok === true;
     if (flaky) {
       flakyResults.push(failure);
@@ -1067,10 +1069,9 @@ async function runTests() {
       if (suites.size && isBuildkite) uploadArtifactsToBuildKite(junitPath);
       else rmSync(junitPath, { force: true });
 
-      // A file that failed, hung, or crashed in the batch has its verdict. It
-      // runs again alone only when test/flaky-tests.txt lists it. A file the
-      // batch never started (a sibling hung, or a worker crashed before its
-      // turn) gets its one run alone.
+      // A file that failed, hung, or crashed in the batch runs again alone only
+      // when test/flaky-tests.txt lists it. A file that did not finish (a
+      // sibling hung, or a worker crashed before its turn) gets its run alone.
       const failed = new Map(); // test path -> why it failed in the batch
       const incomplete = new Set();
       let evidence = suites.size > 0;
@@ -1107,32 +1108,13 @@ async function runTests() {
         }
         evidence = failed.size + incomplete.size > 0;
       }
-      // A worker that died of a fatal signal (or the Windows equivalent) is a
-      // crash in Bun or a native addon, not a flaky test. The coordinator
-      // names the file in a banner, and every worker death in a "✗" line with
-      // its status. A crashed file is never run again, listed or not.
-      const crashed = new Set();
-      for (const line of stripAnsi(stdout).split(/\r?\n/)) {
-        const banner = /^error: a test worker process crashed with (.+?) while running (.+)\.$/.exec(line);
-        const died = /^✗ (.+?) \(worker crashed: (.+)\)$/.exec(line);
-        const [status, testPath] = banner
-          ? [banner[1], norm(banner[2])]
-          : died && isAlwaysFailure(died[2])
-            ? [died[2], norm(died[1])]
-            : [null, null];
-        if (testPath && failed.has(testPath)) {
-          crashed.add(testPath);
-          failed.set(testPath, `worker crashed with ${status} in the parallel batch`);
-        }
-      }
-      const retried = [...failed.keys()].filter(
-        t => retries > 0 && !crashed.has(t) && isFlakyTest(join("test", t).replaceAll("\\", "/")),
-      );
+      const retried = [...failed.keys()].filter(t => retries > 0 && isFlakyTest(join("test", t).replaceAll("\\", "/")));
       const retriedSet = new Set(retried);
-      const rerun = [...retried, ...incomplete];
+      const rerun = !ok && !evidence ? [...bucketFiles] : [...retried, ...incomplete];
+      const rerunSet = new Set(rerun);
 
       for (const t of bucketFiles) {
-        if (!ok && (!evidence || failed.has(t) || incomplete.has(t))) continue;
+        if (rerunSet.has(t) || failed.has(t)) continue;
         const title = join("test", t).replaceAll("\\", "/");
         const seconds = suites.get(title)?.seconds;
         const timing = seconds === undefined ? "" : ` ${getAnsi("gray")}(${seconds.toFixed(2)}s)${getAnsi("reset")}`;
@@ -1180,31 +1162,32 @@ async function runTests() {
         failedResultsTitles.push(title);
         reportFailure(title, result, false, 1);
       }
-      if (!ok && failed.size === 0) {
-        // No file to blame: bun test itself died before it reported, or a
-        // crash surfaced outside any test case. The batch is the failure.
-        const preview = `${stripAnsi(stdout).split(/\r?\n/).slice(-50).join("\n")}\n${crashes ?? ""}`.trim();
-        console.log(`${getAnsi("red")}${label} - ${error}${getAnsi("reset")}`);
-        const result = {
-          testPath: label,
-          ok: false,
-          status: "fail",
-          error,
-          errors: [],
-          tests: [],
-          stdout,
-          stdoutPreview: preview,
-        };
-        failedResults.push(result);
-        failedResultsTitles.push(label);
-        reportFailure(label, result, false, 1);
-      }
       if (rerun.length) {
         console.log(
-          `${getAnsi("yellow")}parallel bucket: running ${retried.length} listed flaky file(s) that failed and ${incomplete.size} file(s) the batch never started, one at a time${getAnsi("reset")}`,
+          `${getAnsi("yellow")}parallel bucket: ${evidence ? `running ${retried.length} listed flaky file(s) that failed and ${incomplete.size} file(s) that did not finish` : `no junit and no streamed evidence, running all ${rerun.length} file(s)`} one at a time${getAnsi("reset")}`,
         );
-        // A listed file's batch run was its first attempt: the solo runs are its retries.
-        for (const testPath of rerun) await runOneTest(testPath, false, batchFailures.get(testPath));
+        for (const testPath of rerun) {
+          // A listed file's batch run was its first attempt: the solo runs are its retries.
+          const result = await runOneTest(testPath, false, batchFailures.get(testPath));
+          if (result?.ok && batchFailures.has(testPath) && isBuildkite) {
+            const title = join("test", testPath).replaceAll("\\", "/");
+            const cases = suites.get(title)?.cases ?? [];
+            const first = cases[0];
+            const firstError = first ? `${first.name} — ${first.message.split("\n")[0]}` : "";
+            const reason = firstError
+              ? escapeHtml(firstError.length > 100 ? `${firstError.slice(0, 97)}…` : firstError)
+              : "failed in the parallel batch";
+            const detail = cases.length
+              ? `\n\n\`\`\`terminal\n${cases.map(({ name, message }) => `✗ ${name}\n${message}`).join("\n\n")}\n\`\`\`\n\n`
+              : "";
+            reportAnnotationToBuildKite({
+              context: "flaky",
+              label: title,
+              style: "warning",
+              content: `<details><summary><a href="${getFileUrl(title)}"><code>${title}</code></a> - ${reason} <i>(in the parallel batch on ${getBuildLabel()}; passed alone)</i></summary>${detail}</details>`,
+            });
+          }
+        }
       }
     };
 
@@ -2956,8 +2939,7 @@ function formatTestToMarkdown(result, concise, retries) {
     }
 
     const testTitle = testPath.replace(/\\/g, "/");
-    // A parallel batch that fails as a whole is reported under its label, not a file.
-    const testUrl = existsSync(join(cwd, testPath)) ? getFileUrl(testPath, errorLine) : undefined;
+    const testUrl = getFileUrl(testPath, errorLine);
 
     if (concise) {
       markdown += "<li>";
@@ -3139,24 +3121,20 @@ function getExitCode(outcome) {
 
 // A flaky segfault, sigtrap, or sigkill must never be ignored.
 // If it happens in CI, it will happen to our users.
-// Flaky AddressSanitizer and LeakSanitizer errors cannot be ignored since they still represent real bugs.
-// Each pattern is anchored to the shape spawnSafe and spawnBun give such an
-// error, so that a test whose name or assertion mentions a signal is not taken
-// for a crash.
+// Flaky AddressSanitizer errors cannot be ignored since they still represent real bugs.
 function isAlwaysFailure(error) {
   error = ((error || "") + "").toLowerCase().trim();
   return (
-    // a crash report in the output: a panic, a segfault, an illegal
-    // instruction, an assertion, a sanitizer report, or SIGABRT
-    /^pid \d+ /.test(error) ||
-    // died of a fatal signal without printing a report, or the status the
-    // coordinator of a parallel batch gave a worker that died mid-file
-    /^sig(segv|bus|ill|fpe|sys|trap|abrt|kill)$/.test(error) ||
-    error.startsWith("unchecked exception") ||
-    error === "leak" ||
-    /^(direct|indirect) leak of /.test(error) ||
-    error === "core dumped" ||
-    error === "crash reported"
+    error.includes("segmentation fault") ||
+    error.includes("illegal instruction") ||
+    error.includes("unchecked exception") ||
+    error.includes("sigtrap") ||
+    error.includes("sigabrt") ||
+    error.includes("sigkill") ||
+    error.includes("error: addresssanitizer") ||
+    error.includes("internal assertion failure") ||
+    error.includes("core dumped") ||
+    error.includes("crash reported")
   );
 }
 

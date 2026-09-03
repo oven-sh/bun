@@ -273,16 +273,15 @@ pub fn print_response_error<const OTP_RESPONSE: bool>(
             bstr::BStr::new(package_version),
         );
     } else if let Some(msg) = &message {
-        if OTP_RESPONSE {
-            if res.status_code() == 401
-                && strings::contains(
-                    msg,
-                    b"You must provide a one-time pass. Upgrade your client to npm@latest in order to use 2FA.",
-                )
-            {
-                bun_core::pretty_errorln!("\n - Received invalid OTP");
-                Global::crash();
-            }
+        if OTP_RESPONSE
+            && res.status_code() == 401
+            && strings::contains(
+                msg,
+                b"You must provide a one-time pass. Upgrade your client to npm@latest in order to use 2FA.",
+            )
+        {
+            bun_core::pretty_errorln!("\n - Received invalid OTP");
+            return Ok(());
         }
         bun_core::pretty_errorln!("\n - {}", bstr::BStr::new(msg));
     }

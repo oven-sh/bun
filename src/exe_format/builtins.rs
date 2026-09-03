@@ -65,11 +65,6 @@ pub struct Builtins<'a> {
 }
 
 impl<'a> Builtins<'a> {
-    /// Locate and parse the builtins section of an ELF, Mach-O or PE executable image.
-    pub fn from_executable(file: &'a [u8]) -> Result<Self, BuiltinsError> {
-        Self::parse(find_section(file)?)
-    }
-
     /// Parse a builtins section (header onward). Trailing bytes past the blob are ignored.
     pub fn parse(section: &'a [u8]) -> Result<Self, BuiltinsError> {
         use BuiltinsError::Invalid;
@@ -133,15 +128,7 @@ impl<'a> Builtins<'a> {
         })
     }
 
-    /// Number of JS internal modules; ids `0..len()` are InternalModuleRegistry field indices.
-    pub fn len(&self) -> u32 {
-        self.count
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.count == 0
-    }
-
+    /// Module ids `0..count` are InternalModuleRegistry field indices.
     pub fn module(&self, id: u32) -> Option<Module<'a>> {
         if id >= self.count {
             return None;
@@ -173,10 +160,6 @@ impl<'a> Builtins<'a> {
         };
         let deps = self.deps;
         (start..end).map(move |i| u16_at(deps, i * 2) as u32)
-    }
-
-    pub fn modules(&self) -> impl Iterator<Item = Module<'a>> + '_ {
-        (0..self.count).filter_map(move |id| self.module(id))
     }
 }
 

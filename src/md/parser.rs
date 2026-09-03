@@ -126,14 +126,6 @@ pub enum ParserError {
 
 bun_core::oom_from_alloc!(ParserError);
 
-impl core::fmt::Display for ParserError {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.write_str(<&'static str>::from(*self))
-    }
-}
-
-impl core::error::Error for ParserError {}
-
 /// The longest `OFF`-typed fixed lookahead the parser performs from an
 /// in-bounds offset: the `<![CDATA[` probe in `is_html_block_start_condition`
 /// checks `off + MAX_LOOKAHEAD <= size`. (Probes that add in `usize`, like

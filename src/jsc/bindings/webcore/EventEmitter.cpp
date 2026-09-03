@@ -5,7 +5,6 @@
 
 #include "DOMWrapperWorld.h"
 #include "EventNames.h"
-#include "JSErrorHandler.h"
 #include "JSEventListener.h"
 #include <wtf/MainThread.h>
 #include <wtf/NeverDestroyed.h>

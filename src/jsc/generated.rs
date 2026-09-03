@@ -158,7 +158,7 @@ impl<T: Copy> ExternOptional<T> {
     }
 }
 
-/// `bindgen.ExternArrayList(T)` — `extern struct { data: ?[*]T, length: c_uint,
+/// Extern layout of a C++ vector handed to Rust: `{ data: ?[*]T, length: c_uint,
 /// capacity: c_uint }`.
 // Clone/Copy: bitwise OK — FFI mirror of a C++ buffer; Rust treats it as a
 // borrowed view and adopts ownership exactly once at the call site.
@@ -178,8 +178,6 @@ fn adopt_string(ptr: RawWTFStringImpl) -> GenString {
 
 #[inline]
 fn adopt_opt_string(ptr: RawWTFStringImpl) -> GenOpt<GenString> {
-    // `BindgenOptional(BindgenString).ExternType` is `?WTFStringImpl` — single-word
-    // nullable ptr (custom `OptionalExternType`), NOT an `ExternTaggedUnion`.
     GenOpt(if ptr.is_null() {
         None
     } else {
@@ -444,7 +442,7 @@ struct ExternSSLConfigFile {
 #[repr(C)]
 #[derive(Clone, Copy)]
 union ExternSSLConfigFileData {
-    _0: u8, // BindgenNull
+    _0: u8, // null / undefined arm
     _1: RawWTFStringImpl,
     _2: GenArrayBuffer,
     _3: GenBlob,

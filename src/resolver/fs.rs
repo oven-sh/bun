@@ -41,7 +41,7 @@ bun_alloc::bss_list! { pub entry_store_backing : Entry, preallocate::counts::FIL
 
 /// Pre-resolved `FilenameStore` appender for the `readdir` hot loop.
 ///
-/// `<FilenameStore as Appender>::append` re-evaluates `filename_store_backing()`
+/// `FilenameStore::append` re-evaluates `filename_store_backing()`
 /// (a `bss_singleton!` accessor: `Once::call_once` + `AtomicPtr::load`) on every
 /// call. `add_entry` runs once per directory entry, so for the
 /// @material-ui/icons-style 11,000-entry directories that's 11,000+ redundant
@@ -69,13 +69,6 @@ impl strings::Appender for FilenameStoreAppender {
         let r = unsafe { FilenameStoreBacking::append(self.backing, &s)? };
         // SAFETY: storage owned by the process-lifetime `BSSStringList` singleton
         // (never freed); `Interned` is the canonical proof type for this widen.
-        Ok(unsafe { bun_ptr::Interned::assume(r) }.as_bytes())
-    }
-    #[inline]
-    fn append_lower_case(&mut self, s: &[u8]) -> core::result::Result<&[u8], AllocError> {
-        // SAFETY: see `append`.
-        let r = unsafe { FilenameStoreBacking::append_lower_case(self.backing, s)? };
-        // SAFETY: see `append`.
         Ok(unsafe { bun_ptr::Interned::assume(r) }.as_bytes())
     }
 }

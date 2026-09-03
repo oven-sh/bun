@@ -53,7 +53,6 @@ String makeThisTypeErrorMessage(ASCIILiteral interfaceName, ASCIILiteral functio
 
 WEBCORE_EXPORT JSC::EncodedJSValue throwThisTypeError(JSC::JSGlobalObject&, JSC::ThrowScope&, ASCIILiteral interfaceName, ASCIILiteral attributeName);
 
-WEBCORE_EXPORT JSC::EncodedJSValue rejectPromiseWithGetterTypeError(JSC::JSGlobalObject&, const JSC::ClassInfo*, JSC::PropertyName attributeName);
 WEBCORE_EXPORT JSC::EncodedJSValue rejectPromiseWithThisTypeError(DeferredPromise&, ASCIILiteral interfaceName, ASCIILiteral operationName);
 WEBCORE_EXPORT JSC::EncodedJSValue rejectPromiseWithThisTypeError(JSC::JSGlobalObject&, ASCIILiteral interfaceName, ASCIILiteral operationName);
 

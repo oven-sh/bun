@@ -42,17 +42,6 @@ function cppSourcePath(type: NamedType): string {
   return `${codegenPath}/Generated${type.name}.cpp`;
 }
 
-function toZigNamespace(name: string): string {
-  const result = name
-    .replace(/([^A-Z_])([A-Z])/g, "$1_$2")
-    .replace(/([A-Z])([A-Z][a-z])/g, "$1_$2")
-    .toLowerCase();
-  if (result === name) {
-    return result + "_namespace";
-  }
-  return result;
-}
-
 /** Must name every file generate() writes: the build declares these as the outputs of the generate step. */
 function listOutputs(): void {
   const outputs: string[] = [];
@@ -64,8 +53,6 @@ function listOutputs(): void {
 }
 
 function generate(): void {
-  const names = new Set<string>();
-
   const namedExports = getNamedExports();
   {
     const namedDependencies = new Set<NamedType>();
@@ -89,15 +76,6 @@ function generate(): void {
   }
 
   for (const type of namedExports) {
-    const zigNamespace = toZigNamespace(type.name);
-    const size = names.size;
-    names.add(type.name);
-    names.add(zigNamespace);
-    if (names.size !== size + 2) {
-      console.error(`error: duplicate name: ${type.name}`);
-      process.exit(1);
-    }
-
     const cppHeader = type.cppHeader;
     const cppSource = type.cppSource;
     if (cppHeader) {

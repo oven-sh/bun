@@ -1,9 +1,6 @@
 import util from "node:util";
 import type { NullableType, OptionalType } from "./optional";
 
-/** Default is "compact". */
-export type CodeStyle = "compact" | "pretty";
-
 export abstract class Type {
   /** Treats `undefined` as a not-provided value. */
   get optional(): OptionalType {
@@ -16,21 +13,6 @@ export abstract class Type {
   }
 
   abstract readonly idlType: string;
-  abstract readonly bindgenType: string;
-
-  /**
-   * This can be overridden to make the generated code clearer. If overridden, it must return an
-   * expression that evaluates to the same type as `${this.bindgenType}.ZigType`; it should not
-   * actually change the type.
-   */
-  zigType(style?: CodeStyle): string {
-    return this.bindgenType + ".ZigType";
-  }
-
-  /** This must be overridden if a custom `OptionalZigType` is defined. */
-  optionalZigType(style?: CodeStyle): string {
-    return `?${this.zigType(style)}`;
-  }
 
   /** Converts a JS value into a C++ expression. Used for default values. */
   abstract toCpp(value: any): string;

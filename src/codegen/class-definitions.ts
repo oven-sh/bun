@@ -248,6 +248,11 @@ export function define(
     ...rest
   } = {} as Partial<ClassDefinition>,
 ): ClassDefinition {
+  if (call && rest.noConstructor) {
+    throw new Error(
+      `${rest.name}: \`call: true\` has no effect with \`noConstructor: true\` (the constructor is what gets the call target)`,
+    );
+  }
   if (inspectCustom) {
     proto.inspectCustom = {
       fn: "inspectCustom",

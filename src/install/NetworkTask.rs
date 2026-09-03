@@ -18,16 +18,11 @@ use crate::npm::{self as npm, PackageManifest};
 use crate::{ExtractTarball, PackageManager, PatchTask, TarballStream, Task};
 
 // Adapter so `StringOrTinyString::init_append_if_needed` can intern overflow
-// names into the resolver's filename arena. The bun_sys-level `FilenameStore` exposes `append` /
-// `append_lower_case` but doesn't itself implement `strings::Appender` (that
-// impl lives in `bun_resolver`, which this crate can't reach without a cycle).
+// names into the resolver's filename arena.
 pub struct FilenameStoreAppender<'a>(pub(crate) &'a FilenameStore);
 impl strings::Appender for FilenameStoreAppender<'_> {
     fn append(&mut self, s: &[u8]) -> Result<&[u8], bun_alloc::AllocError> {
         self.0.append(s)
-    }
-    fn append_lower_case(&mut self, s: &[u8]) -> Result<&[u8], bun_alloc::AllocError> {
-        self.0.append_lower_case(s)
     }
 }
 
@@ -455,11 +450,6 @@ impl From<ForManifestError> for crate::Error {
             ForManifestError::OutOfMemory => crate::Error::Alloc(bun_alloc::AllocError),
             ForManifestError::InvalidURL => crate::Error::InvalidURL,
         }
-    }
-}
-impl bun_core::output::ErrName for ForManifestError {
-    fn name(&self) -> &[u8] {
-        <&'static str>::from(self).as_bytes()
     }
 }
 

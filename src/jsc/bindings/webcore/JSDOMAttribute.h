@@ -54,6 +54,7 @@ public:
     template<Getter getter, CastedThisErrorBehavior shouldThrow = CastedThisErrorBehavior::Throw>
     static JSC::EncodedJSValue get(JSC::JSGlobalObject& lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName attributeName)
     {
+        static_assert(shouldThrow != CastedThisErrorBehavior::RejectPromise, "IDLAttribute::get has no RejectPromise path; no getter uses it");
         auto throwScope = DECLARE_THROW_SCOPE(JSC::getVM(&lexicalGlobalObject));
 
         if constexpr (shouldThrow == CastedThisErrorBehavior::Assert) {
@@ -65,8 +66,6 @@ public:
             if (!thisObject) [[unlikely]] {
                 if constexpr (shouldThrow == CastedThisErrorBehavior::Throw)
                     return JSC::throwVMDOMAttributeGetterTypeError(&lexicalGlobalObject, throwScope, JSClass::info(), attributeName);
-                else if constexpr (shouldThrow == CastedThisErrorBehavior::RejectPromise)
-                    RELEASE_AND_RETURN(throwScope, rejectPromiseWithGetterTypeError(lexicalGlobalObject, JSClass::info(), attributeName));
                 else
                     return JSC::JSValue::encode(JSC::jsUndefined());
             }

@@ -1329,7 +1329,6 @@ impl EventLoop {
 }
 
 /// Testing API to expose event loop state
-#[bun_jsc::host_fn]
 pub fn get_active_tasks(global_object: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     // fields and call &-methods on it for the duration of this host fn.
     let vm_ref = global_object.bun_vm();

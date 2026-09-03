@@ -720,22 +720,6 @@ pub mod fs {
     use bun_sys::Fd;
     use bun_threading::Mutex;
 
-    // `StringOrTinyString::init*_append_if_needed` needs an `Appender`; route the
-    // ZST `FilenameStore` handle through to the backing `BSSStringList` singleton.
-    impl strings::Appender for &FilenameStore {
-        fn append(&mut self, s: &[u8]) -> core::result::Result<&[u8], bun_alloc::AllocError> {
-            // Route through the inherent method (which already handles the
-            // singleton deref + `'static` widening) instead of open-coding it.
-            FilenameStore::append(self, s)
-        }
-        fn append_lower_case(
-            &mut self,
-            s: &[u8],
-        ) -> core::result::Result<&[u8], bun_alloc::AllocError> {
-            FilenameStore::append_lower_case(self, s)
-        }
-    }
-
     // Port of `threadlocal var temp_entries_option: EntriesOption = undefined` —
     // `read_directory*` returns a pointer into this when the entry-cache is
     // disabled or the path is `mark_not_found`. `RefCell` (not `UnsafeCell`) so

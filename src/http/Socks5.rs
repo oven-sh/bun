@@ -240,15 +240,13 @@ impl Socks5 {
 
     #[inline]
     fn queue_greeting(&mut self) {
-        self.outgoing.push(0x05);
-        // If credentials were supplied, the user expects them to be used;
-        // advertising NO_AUTH would let a proxy legitimately choose 0x00 and
-        // downgrade authentication. Advertise only the method the user
-        // configured.
+        // With credentials, offer NO AUTHENTICATION as well (curl, Go
+        // x/net/proxy and Node `socks` do the same): a proxy that does not
+        // require auth still connects, and nothing is sent under 0x00.
         if self.authentication.is_some() {
-            self.outgoing.extend_from_slice(&[1, 0x02]);
+            self.outgoing.extend_from_slice(&[0x05, 2, 0x00, 0x02]);
         } else {
-            self.outgoing.extend_from_slice(&[1, 0x00]);
+            self.outgoing.extend_from_slice(&[0x05, 1, 0x00]);
         }
     }
 
@@ -325,18 +323,8 @@ impl Socks5 {
         if self.incoming[0] != 0x05 {
             return Err(Socks5Error::InvalidVersion);
         }
-        let method = self.incoming[1];
-        match method {
+        match self.incoming[1] {
             0x00 => {
-                if self.authentication.is_some() {
-                    // Server chose unauthenticated while we offered only
-                    // USERNAME_PASSWORD – this is the downgrade case.
-                    // Currently we treat it as acceptable only if the server
-                    // legitimately offered 0x00 and we advertised it. Since we
-                    // now advertise only 0x02 when credentials exist, 0x00 here
-                    // means NoAcceptableMethods.
-                    return Err(Socks5Error::NoAcceptableMethods);
-                }
                 self.queue_connect();
                 self.state = State::Connecting;
             }
@@ -344,8 +332,6 @@ impl Socks5 {
                 self.queue_authentication();
                 self.state = State::Authentication;
             }
-            0x02 => return Err(Socks5Error::NoAcceptableMethods),
-            0xff => return Err(Socks5Error::NoAcceptableMethods),
             _ => return Err(Socks5Error::NoAcceptableMethods),
         }
         Ok(Some(2))
@@ -493,7 +479,7 @@ mod tests {
     }
 
     #[test]
-    fn greeting_advertises_only_configured_method() {
+    fn greeting_offers_no_auth_and_user_pass_when_credentials_exist() {
         let no_auth = Socks5::new(
             Authentication::None,
             TargetHost::Domain(b"example.com".to_vec().into_boxed_slice()),
@@ -508,7 +494,7 @@ mod tests {
             80,
         )
         .unwrap();
-        assert_eq!(with_auth.pending_write(), &[5, 1, 2]);
+        assert_eq!(with_auth.pending_write(), &[5, 2, 0, 2]);
     }
 
     #[test]
@@ -519,8 +505,8 @@ mod tests {
             0,
         )
         .unwrap();
-        assert_eq!(socks.pending_write(), &[5, 1, 2]);
-        socks.written(3).unwrap();
+        assert_eq!(socks.pending_write(), &[5, 2, 0, 2]);
+        socks.written(4).unwrap();
         socks.receive(&[5, 2]).unwrap();
         assert_eq!(
             socks.pending_write(),
@@ -716,19 +702,27 @@ mod tests {
     }
 
     #[test]
-    fn auth_downgrade_is_rejected() {
-        // Client advertised only USERNAME_PASSWORD, server choosing NO_AUTH
-        // must be rejected.
+    fn server_may_select_no_auth_even_with_credentials() {
         let mut socks = Socks5::new(
             auth_user_pass(b"u", b"p"),
             TargetHost::Ip("127.0.0.1".parse().unwrap()),
             80,
         )
         .unwrap();
-        assert_eq!(socks.pending_write(), &[5, 1, 2]);
-        socks.written(3).unwrap();
+        socks.written(4).unwrap();
+        assert!(!socks.receive(&[5, 0]).unwrap());
+        // Straight to CONNECT; the credentials are never written.
+        assert_eq!(socks.pending_write()[..3], [5, 1, 0]);
+
+        let mut socks = Socks5::new(
+            auth_user_pass(b"u", b"p"),
+            TargetHost::Ip("127.0.0.1".parse().unwrap()),
+            80,
+        )
+        .unwrap();
+        socks.written(4).unwrap();
         assert_eq!(
-            socks.receive(&[5, 0]),
+            socks.receive(&[5, 0xff]),
             Err(Socks5Error::NoAcceptableMethods)
         );
     }

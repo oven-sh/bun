@@ -1791,7 +1791,13 @@ impl<'a> HTTPClient<'a> {
         &mut self,
         socket: HttpSocket<IS_SSL>,
     ) -> crate::Result<()> {
-        debug_assert!(IS_SSL == self.uses_transport_tls());
+        if cfg!(debug_assertions) {
+            if let Some(proxy) = &self.http_proxy {
+                debug_assert!(IS_SSL == proxy.is_https());
+            } else {
+                debug_assert!(IS_SSL == self.url.is_https());
+            }
+        }
         self.register_abort_tracker::<IS_SSL>(socket);
         bun_core::scoped_log!(fetch, "Connected {} \n", BStr::new(self.url.href));
 
@@ -2256,7 +2262,7 @@ impl<'a> HTTPClient<'a> {
     fn get_request_body_send_buffer(&self) -> Vec<u8> {
         let actual_estimated_size =
             self.request_body().len() + self.estimated_request_header_byte_length();
-        let estimated_size = if self.uses_transport_tls() {
+        let estimated_size = if HTTPClient::is_https(self) {
             actual_estimated_size.min(MAX_TLS_RECORD_SIZE)
         } else {
             actual_estimated_size * 2
@@ -2719,10 +2725,10 @@ impl<'a> HTTPClient<'a> {
     }
 
     /// **Not thread safe while request is in-flight**
-    /// Whether the origin request uses HTTPS. Proxy transport TLS is separate;
-    /// in particular SOCKS always carries a plain outer socket even for an
-    /// HTTPS destination.
     pub(crate) fn is_https(&self) -> bool {
+        if let Some(proxy) = &self.http_proxy {
+            return proxy.is_https();
+        }
         self.url.is_https()
     }
 
@@ -2731,22 +2737,12 @@ impl<'a> HTTPClient<'a> {
         self.http_proxy.as_ref().is_some_and(URL::is_socks)
     }
 
-    /// Whether the socket connecting to `connected_url` uses TLS. HTTP(S)
-    /// proxies terminate the outer transport according to their own scheme;
-    /// SOCKS and direct HTTP use a plain socket.
-    pub(crate) fn uses_transport_tls(&self) -> bool {
-        match self.http_proxy.as_ref() {
-            Some(proxy) => proxy.is_https(),
-            None => self.url.is_https(),
-        }
-    }
-
     pub(crate) fn start(&mut self, body: HTTPRequestBody<'a>) {
         debug_assert!(self.state.response_message_buffer.list.capacity() == 0);
         self.state = InternalState::init(body);
         self.socks = None;
 
-        if self.uses_transport_tls() {
+        if self.is_https() {
             self.start_::<true>();
         } else {
             self.start_::<false>();

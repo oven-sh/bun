@@ -229,20 +229,20 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                         );
                     }
                     js_ast::StmtOrExpr::Stmt(s) => {
+                        let ref_ = match s.data {
+                            js_ast::StmtData::SClass(mut class) => {
+                                // The visit pass names an anonymous default function
+                                // but leaves an anonymous default class unnamed. A
+                                // class statement needs a binding, so use the
+                                // statement's default name like convertStmtsForChunk.
+                                class.class.class_name.get_or_insert(st.default_name).ref_
+                            }
+                            js_ast::StmtData::SFunction(func) => func.func.name.unwrap().ref_,
+                            _ => unreachable!(),
+                        };
                         self.export_props.push(G::Property {
                             key: Some(Expr::init(E::EString::init(b"default"), stmt.loc)),
-                            value: Some(Expr::init_identifier(
-                                match s.data {
-                                    js_ast::StmtData::SClass(class) => {
-                                        class.class.class_name.unwrap().ref_
-                                    }
-                                    js_ast::StmtData::SFunction(func) => {
-                                        func.func.name.unwrap().ref_
-                                    }
-                                    _ => unreachable!(),
-                                },
-                                stmt.loc,
-                            )),
+                            value: Some(Expr::init_identifier(ref_, stmt.loc)),
                             ..Default::default()
                         });
                         break 'stmt *s;

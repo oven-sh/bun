@@ -145,7 +145,8 @@ pub mod js_bundler {
         pub(crate) metafile_markdown_path: OwnedString,
         pub(crate) css_chunking: bool,
         /// `minChunkSize`: see `BundleOptions::min_chunk_size`.
-        pub(crate) min_chunk_size: u64,
+        pub(crate) min_chunk_size: Option<u64>,
+        pub(crate) module_preload: bool,
         pub(crate) drop: StringSet,
         pub(crate) features: StringSet,
         pub(crate) throw_on_error: bool,
@@ -209,7 +210,8 @@ pub mod js_bundler {
                 metafile_json_path: OwnedString::default(),
                 metafile_markdown_path: OwnedString::default(),
                 css_chunking: false,
-                min_chunk_size: 0,
+                min_chunk_size: None,
+                module_preload: true,
                 drop: StringSet::default(),
                 features: StringSet::default(),
                 throw_on_error: true,
@@ -805,6 +807,9 @@ pub mod js_bundler {
             if let Some(split_require) = config.get_boolean_loose(global_this, "splitRequire")? {
                 this.split_require = split_require;
             }
+            if let Some(module_preload) = config.get_boolean_loose(global_this, "modulePreload")? {
+                this.module_preload = module_preload;
+            }
 
             if let Some(min_chunk_size) =
                 config.get_optional_int::<u64>(global_this, "minChunkSize")?
@@ -814,7 +819,7 @@ pub mod js_bundler {
                         "minChunkSize requires splitting to be true."
                     )));
                 }
-                this.min_chunk_size = min_chunk_size;
+                this.min_chunk_size = Some(min_chunk_size);
             }
 
             if let Some(minify) = config.get_truthy(global_this, "minify")? {

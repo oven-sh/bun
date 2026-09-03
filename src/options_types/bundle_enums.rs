@@ -263,18 +263,3 @@ pub enum BuiltInModule {
     Import(Box<[u8]>),
     Code(Box<[u8]>),
 }
-
-// `ExportsKind::to_module_type` — moved here from `bun_ast::nodes` to avoid
-// the `bun_options_types → bun_ast → bun_options_types` cycle.
-impl From<bun_ast::ExportsKind> for ModuleType {
-    fn from(k: bun_ast::ExportsKind) -> Self {
-        use bun_ast::ExportsKind as K;
-        match k {
-            K::None => ModuleType::Unknown,
-            K::Cjs => ModuleType::Cjs,
-            K::EsmWithDynamicFallback | K::EsmWithDynamicFallbackFromCjs | K::Esm => {
-                ModuleType::Esm
-            }
-        }
-    }
-}

@@ -36,6 +36,9 @@ pub struct Ast<'a> {
     pub commonjs_module_exports_assigned_deoptimized: bool,
 
     pub force_cjs_to_esm: bool,
+    /// `force_cjs_to_esm` for a file with no ES module syntax: its exports were
+    /// lifted from `exports.foo = ...`, so its `module.exports` is the namespace.
+    pub commonjs_lifted_to_esm: bool,
     pub exports_kind: ExportsKind,
 
     // This is a list of ES6 features. They are ranges instead of booleans so
@@ -114,6 +117,7 @@ impl<'a> Ast<'a> {
             uses_require_ref: false,
             commonjs_module_exports_assigned_deoptimized: false,
             force_cjs_to_esm: false,
+            commonjs_lifted_to_esm: false,
             exports_kind: ExportsKind::None,
             export_keyword: Range::NONE,
             top_level_await_keyword: Range::NONE,
@@ -160,8 +164,26 @@ pub struct CommonJSNamedExport {
 pub type CommonJSNamedExports = StringArrayHashMap<CommonJSNamedExport, StringContext, AstAlloc>;
 
 pub type NamedImports = ArrayHashMap<Ref, NamedImport, AutoContext, AstAlloc>;
-pub type DynamicImportAliases =
-    ArrayHashMap<u32, crate::StoreSlice<crate::StoreStr>, AutoContext, AstAlloc>;
+/// One `import()` / `require()` whose every use the parser accounted for.
+#[derive(Clone, Copy, Default)]
+pub struct DynamicImportUse {
+    /// The export names read off the result, sorted and deduplicated.
+    pub aliases: crate::StoreSlice<crate::StoreStr>,
+    /// The import items those names are read through: a local a pattern
+    /// binds (`const { z } = …`) or a read off a namespace local (`ns.z`).
+    pub items: crate::StoreSlice<DynamicImportItem>,
+    /// Some use needs the namespace object whatever the linker binds: a read
+    /// that is not an item, or a local that may hold several namespaces.
+    pub needs_namespace_object: bool,
+}
+
+#[derive(Clone, Copy)]
+pub struct DynamicImportItem {
+    pub local: Ref,
+    pub alias: crate::StoreStr,
+    pub namespace_ref: Ref,
+}
+pub type DynamicImportAliases = ArrayHashMap<u32, DynamicImportUse, AutoContext, AstAlloc>;
 pub type NamedExports = StringArrayHashMap<NamedExport, StringContext, AstAlloc>;
 pub type ConstValuesMap = ArrayHashMap<Ref, Expr, AutoContext, AstAlloc>;
 pub type TsEnumsMap =

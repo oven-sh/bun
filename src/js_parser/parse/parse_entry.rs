@@ -1459,7 +1459,7 @@ impl<'a> Parser<'a> {
                             }
                         }
 
-                        if needs_decl_count > 0 {
+                        if needs_decl_count > 0 || p.has_top_level_function_merged_with_var {
                             p.symbols.as_mut_slice()[p.exports_ref.inner_index() as usize]
                                 .use_count_estimate += export_refs_len as u32;
                             p.deoptimize_commonjs_named_exports();
@@ -1609,6 +1609,7 @@ impl<'a> Parser<'a> {
             && p.commonjs_named_exports.count() == 0
             && !p.has_top_level_return
             && !p.has_with_scope
+            && !p.has_top_level_function_merged_with_var
             && p.symbols.as_slice()[p.module_ref.inner_index() as usize].use_count_estimate == 1
             && p.symbols.as_slice()[p.exports_ref.inner_index() as usize].use_count_estimate == 0
         {

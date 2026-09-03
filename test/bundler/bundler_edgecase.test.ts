@@ -3693,6 +3693,33 @@ describe("bundler", () => {
     format: "cjs",
     run: { file: "/check.js", stdout: `[{"y":2},{"x":1,"fromExt":true}]` },
   });
+  // A file that something require()s gets an ESM wrapper. When all of its
+  // top-level statements hoist, the wrapper is empty and is not printed, so the
+  // output of that entry point has no wrapper to call.
+  itBundled("edgecase/EntryPointRequiredByEntryPointCommonJS", {
+    files: {
+      "/a.ts": `const b = require("./b.ts"); export const fromA = b.x;`,
+      "/b.ts": `export const x = 1; export const y = 2;`,
+    },
+    runtimeFiles: {
+      "/check.js": `console.log(JSON.stringify([require("./out/a.js"), require("./out/b.js")]));`,
+    },
+    entryPoints: ["/a.ts", "/b.ts"],
+    outdir: "/out",
+    format: "cjs",
+    run: { file: "/check.js", stdout: `[{"fromA":1},{"x":1,"y":2}]` },
+  });
+  itBundled("edgecase/RequiredEntryPointWithoutWrapperCommonJS", {
+    files: {
+      "/entry.ts": `export function load() { return require("./c.ts"); } export const x = 1;`,
+      "/c.ts": `module.exports = require("./entry.ts");`,
+    },
+    runtimeFiles: {
+      "/check.js": `const m = require("./out.js"); console.log(JSON.stringify(m), m.load() === m);`,
+    },
+    format: "cjs",
+    run: { file: "/check.js", stdout: `{"x":1} true` },
+  });
 });
 
 for (const backend of ["api", "cli"] as const) {

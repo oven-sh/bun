@@ -2143,19 +2143,33 @@ describe.concurrent("--interactive", () => {
 });
 
 // ts-node does `require("repl")` at import time but only touches
-// repl.start/repl.Recoverable inside createRepl(); those (plus the REPL_MODE
-// symbols and isValidSyntax) are data properties so the destructure is free,
-// and only calling start() or reading REPLServer/writer loads the body.
+// repl.start/repl.Recoverable inside createRepl(), so reading those (plus the
+// REPL_MODE symbols and isValidSyntax) must not load the body. REPLServer and
+// writer are data properties, as in node, and the first read of either loads it.
+// The readout is the number of functions on the heap: the body adds several hundred.
 test.concurrent("require('node:repl') is hollow until start() or REPLServer is used", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
       "-e",
       `
+        const { heapStats } = require("bun:jsc");
+        const functions = () => heapStats().objectTypeCounts.Function;
         const repl = require("node:repl");
+        const beforeRead = functions();
+        const {start, Recoverable, REPL_MODE_SLOPPY, REPL_MODE_STRICT, isValidSyntax} = repl;
+        const keys = Object.keys(repl).sort();
+        // As in node, repl.repl exists only after a standalone REPL starts.
+        const hasRepl = "repl" in repl;
+        const afterCheap = functions();
+        const REPLServer = repl.REPLServer;
+        const afterLoad = functions();
         const shape = n => "value" in Object.getOwnPropertyDescriptor(repl, n) ? "data" : "accessor";
         console.log(JSON.stringify({
-          keys: Object.keys(repl).sort(),
+          cheapLoaded: afterCheap - beforeRead > 100,
+          bodyLoaded: afterLoad - afterCheap > 100,
+          keys,
+          hasRepl,
           desc: {
             start: shape("start"),
             Recoverable: shape("Recoverable"),
@@ -2165,8 +2179,6 @@ test.concurrent("require('node:repl') is hollow until start() or REPLServer is u
             writer: shape("writer"),
           },
         }));
-        // Reading the cheap five must not throw and must not require readline.
-        const {start, Recoverable, REPL_MODE_SLOPPY, REPL_MODE_STRICT, isValidSyntax} = repl;
         console.log(JSON.stringify({
           start: typeof start,
           Recoverable: typeof Recoverable,
@@ -2174,8 +2186,7 @@ test.concurrent("require('node:repl') is hollow until start() or REPLServer is u
           isValidSyntax: typeof isValidSyntax,
         }));
         console.log("recoverable-is-error=" + (new Recoverable(new SyntaxError("m")) instanceof SyntaxError));
-        // Now force the full load and check REPLServer is real.
-        console.log("REPLServer=" + typeof repl.REPLServer);
+        console.log("REPLServer=" + typeof REPLServer);
         // Recoverable identity: the one exposed before load is the one the impl uses.
         console.log("same-Recoverable=" + (repl.Recoverable === Recoverable));
         repl.repl = "x";
@@ -2190,23 +2201,17 @@ test.concurrent("require('node:repl') is hollow until start() or REPLServer is u
   expect(stderr).toBe("");
   const lines = stdout.trim().split("\n");
   expect(JSON.parse(lines[0])).toEqual({
-    keys: [
-      "REPLServer",
-      "REPL_MODE_SLOPPY",
-      "REPL_MODE_STRICT",
-      "Recoverable",
-      "isValidSyntax",
-      "repl",
-      "start",
-      "writer",
-    ],
+    cheapLoaded: false,
+    bodyLoaded: true,
+    keys: ["REPLServer", "REPL_MODE_SLOPPY", "REPL_MODE_STRICT", "Recoverable", "isValidSyntax", "start", "writer"],
+    hasRepl: false,
     desc: {
       start: "data",
       Recoverable: "data",
       REPL_MODE_SLOPPY: "data",
       isValidSyntax: "data",
-      REPLServer: "accessor",
-      writer: "accessor",
+      REPLServer: "data",
+      writer: "data",
     },
   });
   expect(JSON.parse(lines[1])).toEqual({
@@ -2221,6 +2226,36 @@ test.concurrent("require('node:repl') is hollow until start() or REPLServer is u
     "same-Recoverable=true",
     "repl.repl=x",
   ]);
+  expect(exitCode).toBe(0);
+});
+
+// As in node, the REPLServer constructor reads the default writer from the exports object.
+test.concurrent("a writer stored on node:repl is the default writer of a new REPLServer", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const repl = require("node:repl");
+        const { PassThrough } = require("node:stream");
+        const writer = value => "custom " + value;
+        repl.writer = writer;
+        const input = new PassThrough();
+        const output = new PassThrough();
+        let text = "";
+        output.setEncoding("utf8").on("data", chunk => (text += chunk));
+        const server = repl.start({ input, output, prompt: "", terminal: false });
+        server.on("exit", () => console.log(JSON.stringify({ same: server.writer === writer, text })));
+        input.end("1 + 1\\n");
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({ same: true, text: "custom 2\n" });
   expect(exitCode).toBe(0);
 });
 

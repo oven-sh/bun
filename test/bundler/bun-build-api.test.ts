@@ -912,6 +912,56 @@ describe("Bun.build", () => {
     expect(x.logs[0].position).toBeTruthy();
   });
 
+  test.concurrent("JSX pragma warnings point at the pragma argument", async () => {
+    // Each pragma comment comes after other source text, so a location that
+    // counts the comment's own offset twice lands on a later line.
+    const files = {
+      "line-comment.jsx": "const x = 1;\nconst y = 2;\n// @jsxRuntime bogus\nexport default <div />;\n",
+      "block-comment.jsx": "const x = 1;\nconst y = 2;\n/** @jsxRuntime bogus */\nexport default <div />;\n",
+      "doc-comment.jsx": "const x = 1;\n/**\n * @param x The x.\n * @jsxRuntime bogus */\nexport default <div />;\n",
+    };
+    using dir = tempDir("build-api-jsx-pragma-position", files);
+    const x = await Bun.build({
+      entrypoints: Object.keys(files).map(name => join(String(dir), name)),
+      outdir: join(String(dir), "out"),
+      external: ["*"],
+    });
+    expect(x.success).toBe(true);
+
+    const warnings = Object.fromEntries(
+      x.logs.map(log => {
+        const { file, line, column, length, offset, lineText } = log.position!;
+        return [path.basename(file), { message: log.message, line, column, length, offset, lineText }];
+      }),
+    );
+    expect(warnings).toEqual({
+      "line-comment.jsx": {
+        message: 'Unsupported JSX runtime: "bogus"',
+        line: 3,
+        column: 16,
+        length: 5,
+        offset: files["line-comment.jsx"].indexOf("bogus"),
+        lineText: "// @jsxRuntime bogus",
+      },
+      "block-comment.jsx": {
+        message: 'Unsupported JSX runtime: "bogus"',
+        line: 3,
+        column: 17,
+        length: 5,
+        offset: files["block-comment.jsx"].indexOf("bogus"),
+        lineText: "/** @jsxRuntime bogus */",
+      },
+      "doc-comment.jsx": {
+        message: 'Unsupported JSX runtime: "bogus"',
+        line: 4,
+        column: 16,
+        length: 5,
+        offset: files["doc-comment.jsx"].indexOf("bogus"),
+        lineText: " * @jsxRuntime bogus */",
+      },
+    });
+  });
+
   test.concurrent("module() throws error", async () => {
     expect(() =>
       Bun.build({

@@ -371,6 +371,35 @@ describe.each([
   });
 });
 
+// `bun update` removes copies that an ancestor node_modules now provides. A self-contained
+// workspace takes nothing from its ancestors, so its copies of the root's packages stay.
+it.each(Object.keys(spellings) as (keyof typeof spellings)[])(
+  "bun update keeps the packages of a workspace made self-contained by %s",
+  async spelling => {
+    const [desktopExtra, workspacesExtra] = spellings[spelling];
+    await writeProject(desktopExtra, workspacesExtra);
+    const r = await install(package_dir);
+    expect(r.err).not.toContain("error:");
+    expect(r.code).toBe(0);
+    const desktopNm = join(package_dir, "apps", "desktop", "node_modules");
+    expect(await readdirSorted(desktopNm)).toEqual(["@barn", "bar", "baz", "shared"]);
+
+    await using proc = spawn({
+      cmd: [bunExe(), "update"],
+      cwd: package_dir,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, err, code] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(err).not.toContain("error:");
+    expect(code).toBe(0);
+    expect(await readdirSorted(desktopNm)).toEqual(["@barn", "bar", "baz", "shared"]);
+    expect(existsSync(join(desktopNm, "bar", "package.json"))).toBeTrue();
+    expect(existsSync(join(desktopNm, "baz", "package.json"))).toBeTrue();
+  },
+);
+
 it.each(Object.keys(spellings) as (keyof typeof spellings)[])(
   "bun prune keeps the packages of a workspace made self-contained by %s",
   async spelling => {

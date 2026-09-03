@@ -1224,7 +1224,9 @@ pub(crate) fn generate_entry_point_tail_js<'a>(
                         ),
                     ));
                 }
-                crate::WrapKind::Esm => {
+                // A file without a wrapper symbol prints unwrapped (`needs_wrapper_ref`
+                // in the parser), so there is no `init_foo` to call.
+                crate::WrapKind::Esm if ast.wrapper_ref.is_valid() => {
                     // "init_foo();"
                     stmts.push(Stmt::alloc(
                         S::SExpr {

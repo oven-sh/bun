@@ -286,8 +286,17 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
         && parts_live.is_set(namespace_export_part_index as usize)
     {
         // SAFETY: see `parts` raw-pointer note above; index bounded by the range check just above.
-        let ns_part_stmts: &[Stmt] =
+        let mut ns_part_stmts: &[Stmt] =
             unsafe { (*parts)[namespace_export_part_index as usize].stmts }.slice();
+        // Step 5 ends this part of a CommonJS entry point with
+        // `module.exports = __toCommonJS(exports)`. Only the chunk of that entry point runs it.
+        if output_format == OutputFormat::Cjs
+            && flags.force_include_exports_for_entry_point
+            && !chunk.is_entry_point_file(source_index as u32)
+            && let Some((_module_exports, rest)) = ns_part_stmts.split_last()
+        {
+            ns_part_stmts = rest;
+        }
         if let Err(err) = convert_stmts_for_chunk(
             c,
             source_index as u32,

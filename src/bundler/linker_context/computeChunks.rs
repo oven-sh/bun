@@ -1,5 +1,4 @@
 use crate::mal_prelude::*;
-use bun_alloc::ArenaVecExt as _;
 use core::sync::atomic::AtomicUsize;
 
 use bun_alloc::Arena; // bumpalo::Bump re-export
@@ -109,28 +108,16 @@ pub(crate) fn compute_chunks(
 
         let has_html_chunk = loaders[source_index as usize] == Loader::Html;
 
-        // For code splitting, entry point chunks should be keyed by ONLY the entry point's
-        // own bit, not the full entry_bits. This ensures that if an entry point file is
-        // reachable from other entry points (e.g., via re-exports), its content goes into
-        // a shared chunk rather than staying in the entry point's chunk.
+        // Entry point chunks are keyed by ONLY the entry point's own bit, not the full
+        // entry_bits. Entry points that reach each other have the same entry_bits, and
+        // each one still needs its own chunk. With code splitting, an entry point file
+        // that other entry points reach (e.g., via re-exports) goes into a shared chunk.
         // https://github.com/evanw/esbuild/blob/cd832972927f1f67b6d2cc895c06a8759c1cf309/internal/linker/linker.go#L3882
         let mut entry_point_chunk_bits = AutoBitSet::init_empty(this.graph.entry_points.len())?;
         entry_point_chunk_bits.set(entry_bit as usize);
 
-        let js_chunk_key: &[u8] = 'brk: {
-            if code_splitting {
-                break 'brk temp
-                    .alloc_slice_copy(entry_point_chunk_bits.bytes(this.graph.entry_points.len()));
-            } else {
-                // Force HTML chunks to always be generated, even if there's an identical JS file.
-                // Build the byte key directly since
-                // entry_bits is arbitrary bytes (not UTF-8) and cannot go through fmt::Display.
-                let mut v = bun_alloc::ArenaVec::new_in(temp);
-                v.push((!has_html_chunk) as u8);
-                v.extend_from_slice(entry_bits.bytes(this.graph.entry_points.len()));
-                break 'brk v.into_bump_slice();
-            }
-        };
+        let js_chunk_key: &[u8] =
+            temp.alloc_slice_copy(entry_point_chunk_bits.bytes(this.graph.entry_points.len()));
 
         // Put this early on in this loop so that CSS-only entry points work.
         if has_html_chunk {
@@ -162,9 +149,7 @@ pub(crate) fn compute_chunks(
             // Create a chunk for the entry point here to ensure that the chunk is
             // always generated even if the resulting file is empty
             let hash_to_use = if !this.options.css_chunking {
-                bun_wyhash::hash(
-                    temp.alloc_slice_copy(entry_bits.bytes(this.graph.entry_points.len())),
-                )
+                bun_wyhash::hash(entry_point_chunk_bits.bytes(this.graph.entry_points.len()))
             } else {
                 let mut hasher = Wyhash::init(5);
                 bun_core::write_any_to_hasher(&mut hasher, order.len());
@@ -203,6 +188,7 @@ pub(crate) fn compute_chunks(
         // Create a chunk for the entry point here to ensure that the chunk is
         // always generated even if the resulting file is empty
         let js_chunk_entry = js_chunks.get_or_put(js_chunk_key)?;
+        debug_assert!(!js_chunk_entry.found_existing);
         entry_point_to_js_chunk_idx[entry_id_] =
             u32::try_from(js_chunk_entry.index).expect("int cast");
         *js_chunk_entry.value_ptr = Chunk {

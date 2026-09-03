@@ -3510,6 +3510,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             {
                                 // Silently merge this symbol into the existing symbol
                                 self.symbols[symbol_idx].link.set(member_in_scope.ref_);
+                                if Symbol::is_kind_function(existing_kind) {
+                                    self.symbols[existing_idx].set_redeclared_by_var(true);
+                                }
                                 // `StringHashMap` get_or_put already stores the key on insert and
                                 // cannot hand out `&mut K` (see StringHashMapGetOrPut docs), so
                                 // no key write is needed here.
@@ -5011,6 +5014,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // If these are both functions, remove the overwritten declaration
                     if kind.is_function() && self.symbols[symbol_idx].kind.is_function() {
                         self.symbols[symbol_idx].set_remove_overwritten_function_declaration(true);
+                    } else if kind.is_function() {
+                        self.symbols[ref_.inner_index() as usize].set_redeclared_by_var(true);
                     }
                 }
                 MR::BecomePrivateGetSetPair => {
@@ -5724,54 +5729,30 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     /// Sets `CALL_IGNORES_THIS` on each lifted export that the file assigns
     /// once, to a function that does not read `this`.
-    fn mark_commonjs_exports_that_ignore_this(
-        &mut self,
-        top_level_symbols_to_parts: &bun_ast::ast_result::TopLevelSymbolToParts,
-    ) {
+    fn mark_commonjs_exports_that_ignore_this(&mut self) {
         use bun_ast::ast_result::CommonJSExportValue;
 
-        // `exports.name = name`, where `name` is a function declaration:
-        // (export, function) pairs.
-        let mut declared_functions: Vec<(Ref, Ref)> = Vec::new();
         for export in self.commonjs_named_exports.values() {
             if export.assign_count != 1 {
                 continue;
             }
-            match export.decl_value {
-                CommonJSExportValue::Other => {}
-                CommonJSExportValue::FunctionIgnoringThis => {
-                    self.symbols[export.loc_ref.ref_.inner_index() as usize]
-                        .set_call_ignores_this(true);
-                }
-                CommonJSExportValue::Identifier(function) => {
-                    let symbol = &self.symbols[function.inner_index() as usize];
-                    // An assignment or a second declaration (a `var` of the
-                    // same name) can change the value of the binding.
-                    if symbol.kind.is_function()
+            let ignores_this = match export.decl_value {
+                CommonJSExportValue::Other => false,
+                CommonJSExportValue::FunctionIgnoringThis => true,
+                // `exports.name = name`: an assignment or a `var` of the same
+                // name can change the value of the binding.
+                CommonJSExportValue::Identifier(binding) => {
+                    let symbol = &self.symbols[binding.inner_index() as usize];
+                    symbol.kind.is_function()
                         && symbol.call_ignores_this()
-                        && !symbol.has_link()
+                        && !symbol.redeclared_by_var()
                         && !symbol.has_been_assigned_to()
-                        && top_level_symbols_to_parts
-                            .get(&function)
-                            .is_some_and(|parts| parts.len() == 1)
-                    {
-                        declared_functions.push((export.loc_ref.ref_, function));
-                    }
                 }
+            };
+            if ignores_this {
+                self.symbols[export.loc_ref.ref_.inner_index() as usize]
+                    .set_call_ignores_this(true);
             }
-        }
-        if declared_functions.is_empty() {
-            return;
-        }
-        // A `var` in a nested scope is linked to the function of the same name.
-        for symbol in self.symbols.iter() {
-            let link = symbol.link.get();
-            if link.is_valid() {
-                declared_functions.retain(|&(_, function)| function != link);
-            }
-        }
-        for (export, _) in declared_functions {
-            self.symbols[export.inner_index() as usize].set_call_ignores_this(true);
         }
     }
 
@@ -9128,7 +9109,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let runtime_imports = core::mem::take(&mut self.runtime_imports);
 
         if !self.commonjs_named_exports_deoptimized {
-            self.mark_commonjs_exports_that_ignore_this(&top_level_symbols_to_parts);
+            self.mark_commonjs_exports_that_ignore_this();
         }
 
         // Re-tag the arena-backed buffer

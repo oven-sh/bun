@@ -1372,13 +1372,14 @@ describe("bundler", () => {
     },
   });
   // A `var` with the name of a function declaration can change the value of the
-  // binding. An ES module cannot declare a function and a `var` with one name,
-  // so this output does not load. The test reads the printed calls.
+  // binding, and so can a block-level function in sloppy mode. An ES module
+  // cannot declare a function and a `var` with one name, so this output does
+  // not load. The test reads the printed calls.
   itBundled("cjs2esm/MethodCallKeepsThisWhenAVarRedeclaresTheFunction", {
     files: {
       "/entry.js": /* js */ `
         import lib from "./lib.cjs";
-        console.log(lib.nested(), lib.top(), lib.top2());
+        console.log(lib.nested(), lib.top(), lib.top2(), lib.block());
       `,
       "/lib.cjs": /* js */ `
         function nested() { return "declaration"; }
@@ -1390,13 +1391,18 @@ describe("bundler", () => {
         var top2 = function () { return this.name; };
         function top2() { return "declaration"; }
         exports.top2 = top2;
+        function block() { return "declaration"; }
+        { function block() { return this.name; } }
+        exports.block = block;
         exports.name = "lib";
       `,
     },
     cjs2esm: true,
     onAfterBundle(api) {
       const out = api.readFile("/out.js");
-      expect(out).toContain("console.log(exports_lib.nested(), exports_lib.top(), exports_lib.top2());");
+      expect(out).toContain(
+        "console.log(exports_lib.nested(), exports_lib.top(), exports_lib.top2(), exports_lib.block());",
+      );
     },
   });
   itBundled("cjs2esm/MethodCallWithoutThisBindsDirectly", {

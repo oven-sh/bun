@@ -4646,20 +4646,10 @@ impl<'a> LinkerContext<'a> {
         let parts_len = self.graph.ast.items_parts()[id].len();
         // `X.name()` passes `X` as `this`. The printer substitutes a binding at
         // every `X.name` in the file, so a call that needs that `this` keeps
-        // each `X.name` in the file as written.
-        let mut called: HashMap<(Ref, bun_ast::StoreStr), ()> = HashMap::default();
-        for part in self.graph.ast.items_parts()[id].as_slice() {
-            let Some(uses) = part.import_symbol_property_uses.as_ref() else {
-                continue;
-            };
-            for (base, properties) in uses.keys().iter().zip(uses.values()) {
-                for (name, prop_use) in properties.iter() {
-                    if prop_use.is_call_target {
-                        called.insert((*base, bun_ast::StoreStr::new(name)), ());
-                    }
-                }
-            }
-        }
+        // each `X.name` in the file as written. The first read of an export
+        // that can read `this` builds the set, before any such read is bound.
+        // The loop removes the reads it binds, and those are of other exports.
+        let mut called: Option<HashMap<(Ref, bun_ast::StoreStr), ()>> = None;
         let mut accesses: Vec<(Ref, crate::IndexInt, bun_ast::StoreStr, u32)> = Vec::new();
         let mut dependencies: Vec<Dependency> = Vec::new();
         let mut bound_bases: Vec<Ref> = Vec::new();
@@ -4742,8 +4732,10 @@ impl<'a> LinkerContext<'a> {
                 let Some(resolved) = member_resolutions.get(&(target_source, name)).unwrap() else {
                     continue;
                 };
-                if called.contains_key(&(base, name))
-                    && self.method_call_needs_this(resolved.source_index, resolved.r#ref)
+                if self.method_call_needs_this(resolved.source_index, resolved.r#ref)
+                    && called
+                        .get_or_insert_with(|| self.called_import_properties(id))
+                        .contains_key(&(base, name))
                 {
                     continue;
                 }
@@ -4819,6 +4811,24 @@ impl<'a> LinkerContext<'a> {
                 }
             }
         }
+    }
+
+    /// The `X.name` reads in file `id` that some use calls, as in `X.name()`.
+    fn called_import_properties(&self, id: usize) -> HashMap<(Ref, bun_ast::StoreStr), ()> {
+        let mut called = HashMap::default();
+        for part in self.graph.ast.items_parts()[id].as_slice() {
+            let Some(uses) = part.import_symbol_property_uses.as_ref() else {
+                continue;
+            };
+            for (base, properties) in uses.keys().iter().zip(uses.values()) {
+                for (name, prop_use) in properties.iter() {
+                    if prop_use.is_call_target {
+                        called.insert((*base, bun_ast::StoreStr::new(name)), ());
+                    }
+                }
+            }
+        }
+        called
     }
 
     /// Records a `Normal`/`NormalAndNamespace` match for `import_ref`.

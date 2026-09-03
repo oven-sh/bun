@@ -18,9 +18,6 @@ pub mod typeinference;
 pub mod utils;
 pub mod validation;
 
-pub use hir::environment;
-pub use hir::environment_config::EnvironmentConfig;
-
 mod compile_result;
 mod imports;
 mod options;

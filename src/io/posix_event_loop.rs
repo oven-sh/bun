@@ -82,7 +82,7 @@ fn deregistration_already_gone(errno: sys::E) -> bool {
     matches!(errno, sys::E::ENOENT | sys::E::EBADF)
 }
 
-pub use crate::{EventLoopCtx, EventLoopCtxKind, OpaqueCallback};
+pub use crate::{EventLoopCtx, OpaqueCallback};
 
 unsafe extern "Rust" {
     /// Defined `#[no_mangle]` in `bun_runtime::jsc_hooks`.

@@ -96,7 +96,6 @@ pub trait VecExt<T>: Sized {
     fn ensure_total_capacity(&mut self, n: usize);
     fn ensure_unused_capacity(&mut self, n: usize);
     fn shrink_retaining_capacity(&mut self, new_len: usize);
-    fn shrink_and_free(&mut self, new_len: usize);
     fn clear_retaining_capacity(&mut self);
     fn clear_and_free(&mut self);
     /// Drop the first `n` elements in place via `copy_within(n.., 0)` +
@@ -106,9 +105,6 @@ pub trait VecExt<T>: Sized {
     where
         T: Copy;
     fn ordered_remove(&mut self, index: usize) -> T;
-    fn insert_slice(&mut self, index: usize, vals: &[T])
-    where
-        T: Clone;
     /// # Safety
     /// Exposes `self[len..capacity]` as initialized. Every element must be
     /// overwritten before any read (including Drop). Prefer
@@ -150,11 +146,8 @@ pub trait VecExt<T>: Sized {
     /// Non-owning header alias.  For `Vec` this is `from_raw_parts` into a
     /// `ManuallyDrop` — same UB-if-dropped contract as before.
     fn shallow_copy(&self) -> ManuallyDrop<Self>;
-    fn shallow_clone(&self) -> ManuallyDrop<Self>;
 
     // ── misc ──────────────────────────────────────────────────────────────
-    fn unused_capacity_slice(&mut self) -> &mut [core::mem::MaybeUninit<T>];
-    fn allocated_slice(&mut self) -> &mut [core::mem::MaybeUninit<T>];
     fn memory_cost(&self) -> usize;
     fn deep_clone_with<F>(&self, clone_one: F) -> Self
     where
@@ -340,11 +333,6 @@ impl<T, A: Allocator + Default + 'static> VecExt<T> for Vec<T, A> {
         self.truncate(new_len);
     }
     #[inline]
-    fn shrink_and_free(&mut self, new_len: usize) {
-        self.truncate(new_len);
-        self.shrink_to_fit();
-    }
-    #[inline]
     fn clear_retaining_capacity(&mut self) {
         self.clear();
     }
@@ -362,13 +350,6 @@ impl<T, A: Allocator + Default + 'static> VecExt<T> for Vec<T, A> {
     #[inline]
     fn ordered_remove(&mut self, index: usize) -> T {
         self.remove(index)
-    }
-    #[inline]
-    fn insert_slice(&mut self, index: usize, vals: &[T])
-    where
-        T: Clone,
-    {
-        self.splice(index..index, vals.iter().cloned());
     }
     #[inline]
     unsafe fn expand_to_capacity(&mut self) {
@@ -449,25 +430,7 @@ impl<T, A: Allocator + Default + 'static> VecExt<T> for Vec<T, A> {
             )
         })
     }
-    #[inline]
-    fn shallow_clone(&self) -> ManuallyDrop<Self> {
-        self.shallow_copy()
-    }
 
-    #[inline]
-    fn unused_capacity_slice(&mut self) -> &mut [core::mem::MaybeUninit<T>] {
-        self.spare_capacity_mut()
-    }
-    #[inline]
-    fn allocated_slice(&mut self) -> &mut [core::mem::MaybeUninit<T>] {
-        // SAFETY: ptr[0..cap] is the full allocation.
-        unsafe {
-            core::slice::from_raw_parts_mut(
-                self.as_mut_ptr().cast::<core::mem::MaybeUninit<T>>(),
-                self.capacity(),
-            )
-        }
-    }
     #[inline]
     fn memory_cost(&self) -> usize {
         self.capacity() * core::mem::size_of::<T>()

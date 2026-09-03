@@ -122,7 +122,6 @@ pub mod outline;
 pub mod overflow;
 pub mod position;
 pub mod prefix_handler;
-pub mod shape;
 pub mod size;
 pub mod text;
 pub mod transform;

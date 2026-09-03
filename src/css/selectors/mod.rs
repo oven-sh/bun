@@ -22,7 +22,7 @@ pub mod parser;
 #[path = "selector.rs"]
 pub mod selector;
 
-pub use parser::{Component, PseudoClass, PseudoElement, Selector, SelectorList};
+pub use parser::SelectorList;
 
 /// Our implementation of the `SelectorImpl` interface. Defined in the hub
 /// (not in `selector.rs`) to break the parser↔selector dependency cycle:

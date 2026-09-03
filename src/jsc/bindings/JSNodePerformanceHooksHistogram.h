@@ -138,8 +138,6 @@ public:
 
     ~JSNodePerformanceHooksHistogram();
 
-    hdr_histogram& histogram() { return *m_histogramData.histogram; }
-
     bool record(int64_t value);
     uint64_t recordDelta(JSGlobalObject* globalObject);
     void reset();

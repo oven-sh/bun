@@ -753,11 +753,6 @@ pub mod ntdll {
         pub fn RtlWakeAddressSingle(Address: *const c_void);
         pub fn RtlWakeAddressAll(Address: *const c_void);
 
-        /// `RtlExitUserProcess` (ntdll). The Win32 `ExitProcess` forwards to
-        /// this; the freestanding `bun_shim_impl` calls it directly to avoid
-        /// linking kernel32 in the standalone PE.
-        pub fn RtlExitUserProcess(ExitStatus: u32) -> !;
-
         /// `NtQueryInformationProcess` (`winternl.h`). With
         /// `ProcessBasicInformation` (0), fills a [`PROCESS_BASIC_INFORMATION`].
         pub fn NtQueryInformationProcess(
@@ -836,8 +831,6 @@ pub mod kernel32 {
     unsafe extern "system" {
         /// No preconditions; reads thread-local Win32 error slot.
         pub safe fn GetLastError() -> DWORD;
-        /// No preconditions; writes the thread-local Win32 error slot.
-        pub safe fn SetLastError(dwErrCode: DWORD);
         pub fn VirtualQuery(
             lpAddress: LPCVOID,
             lpBuffer: *mut MEMORY_BASIC_INFORMATION,

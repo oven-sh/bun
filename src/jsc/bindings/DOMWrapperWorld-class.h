@@ -20,10 +20,7 @@ public:
     }
     WEBCORE_EXPORT ~DOMWrapperWorld();
 
-    Type type() const { return m_type; }
     bool isNormal() const { return m_type == Type::Normal; }
-
-    const String& name() const { return m_name; }
 
     JSC::VM& vm() const { return m_vm; }
 

@@ -312,10 +312,6 @@ class PushQueue {
     }
   }
 
-  get totalBytesWritten() {
-    return this.#bytesWritten;
-  }
-
   get error() {
     return this.#error;
   }

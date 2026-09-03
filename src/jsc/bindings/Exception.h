@@ -38,11 +38,9 @@ public:
     explicit Exception(ExceptionCode, String = {}, String = {});
 
     ExceptionCode code() const { return m_code; }
-    const String& message() const { return m_message; }
     String&& releaseMessage() { return WTF::move(m_message); }
     // Optional secondary payload for codes that need more than one string to
     // shape the JS error (currently InvalidURLError's `error.base`).
-    const String& extra() const { return m_extra; }
     String&& releaseExtra() { return WTF::move(m_extra); }
 
     Exception isolatedCopy() const

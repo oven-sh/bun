@@ -2264,6 +2264,20 @@ pub mod bv2_impl {
             Err(crate::Error::BuildFailed)
         }
 
+        /// `check` mode ends the build after the scan phase. It logs an error
+        /// for each circular import. The link and print steps do not run, so
+        /// the result has no output files.
+        fn check_module_graph(&self) -> Result<BuildResult, Error> {
+            if crate::circular_imports::report_circular_imports(self) > 0 {
+                return Err(crate::Error::BuildFailed);
+            }
+            Ok(BuildResult {
+                output_files: Vec::new(),
+                metafile: None,
+                metafile_markdown: None,
+            })
+        }
+
         /// `BUN_THREADPOOL_STATS=1` instrumentation hook — dump aggregate worker
         /// idle/busy time since the previous call. No-op when env var unset.
         #[inline]
@@ -4064,6 +4078,13 @@ pub mod bv2_impl {
 
                 this.scan_for_secondary_paths();
 
+                if this.transpiler.options.check {
+                    let result = this.check_module_graph();
+                    let reachable_files = this.find_reachable_files()?;
+                    *reachable_files_count = reachable_files.len().saturating_sub(1); // - 1 for the runtime
+                    return result;
+                }
+
                 this.process_server_component_manifest_files()?;
 
                 let reachable_files = this.find_reachable_files()?;
@@ -5255,6 +5276,10 @@ pub mod bv2_impl {
 
             self.scan_for_secondary_paths();
 
+            if self.transpiler.options.check {
+                return self.check_module_graph();
+            }
+
             self.process_server_component_manifest_files()?;
 
             /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
@@ -6047,9 +6072,11 @@ pub mod bv2_impl {
 
         /// Returns true when barrel optimization is enabled. Barrel optimization
         /// can apply to any package with sideEffects: false or listed in
-        /// optimize_imports, so it is always enabled during bundling.
+        /// optimize_imports, so it is enabled for every build except `check`.
+        /// A check must follow each re-export: the unbundled program runs all
+        /// of them, so a cycle through one that a build defers is still real.
         fn is_barrel_optimization_enabled(&self) -> bool {
-            true
+            !self.transpiler.options.check
         }
 
         // TODO: remove ResolveQueue
@@ -7186,7 +7213,9 @@ pub mod bv2_impl {
             let mut process_log = true;
 
             if matches!(parse_result.value, parse_task::ResultValue::Success(_)) {
-                barrel_imports::apply_barrel_optimization(this, parse_result);
+                if this.is_barrel_optimization_enabled() {
+                    barrel_imports::apply_barrel_optimization(this, parse_result);
+                }
                 resolve_queue = Self::run_resolution_for_parse_task(parse_result, this);
                 if matches!(parse_result.value, parse_task::ResultValue::Err(_)) {
                     process_log = false;

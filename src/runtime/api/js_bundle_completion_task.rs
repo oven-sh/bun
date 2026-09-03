@@ -1013,6 +1013,7 @@ impl CompletionStruct for JSBundleCompletionTask {
         };
         transpiler.options.code_splitting = config.code_splitting;
         transpiler.options.split_require = config.split_require;
+        transpiler.options.check = config.check;
         transpiler.options.emit_dce_annotations = config
             .emit_dce_annotations
             .unwrap_or(!config.minify.whitespace);

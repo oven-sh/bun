@@ -75,6 +75,7 @@
 #include "JavaScriptCore/MicrotaskQueue.h"
 #include "JavaScriptCore/ArrayConstructor.h"
 #include "JavaScriptCore/BigIntConstructor.h"
+#include "JavaScriptCore/MathCommon.h"
 #include "JavaScriptCore/BooleanConstructor.h"
 #include "JavaScriptCore/DateConstructor.h"
 #include "JavaScriptCore/ErrorConstructor.h"
@@ -4425,19 +4426,16 @@ uint64_t JSC__JSValue__toUInt64NoTruncate(JSC::EncodedJSValue val)
         }
     }
 
-    // Saturating: NaN and negatives read as 0, values at or above 2^64 as UINT64_MAX.
     if (value.isInt32()) {
-        int32_t i = value.asInt32();
-        return i < 0 ? 0 : static_cast<uint64_t>(i);
+        return static_cast<uint64_t>(static_cast<int64_t>(value.asInt32()));
     }
     ASSERT(value.isDouble());
 
+    // >= 2^64 (and +Infinity) saturates; below that JSC::toUInt64 is exact, NaN -> 0, negatives wrap like the int32 path.
     double number = value.asDouble();
-    if (!(number >= 0.0))
-        return 0;
     if (number >= 18446744073709551616.0)
         return std::numeric_limits<uint64_t>::max();
-    return static_cast<uint64_t>(number);
+    return JSC::toUInt64(number);
 }
 
 JSC::EncodedJSValue JSC__JSValue__createObject2(JSC::JSGlobalObject* globalObject, const EncodedSlice* arg1,

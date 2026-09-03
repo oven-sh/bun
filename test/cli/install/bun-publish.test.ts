@@ -1602,13 +1602,14 @@ describe("--recursive", () => {
     expect(exitCode).toBe(1);
   });
 
-  test.skipIf(isWindows)("continues after a lifecycle script that crashed", async () => {
+  test.skipIf(isWindows)("continues after a lifecycle script that was killed", async () => {
     using mock = mockRegistry();
+    // SIGKILL, not SIGSEGV: a core file from the shell would fail the CI job.
     const packageDir = await workspace(
       "rec-signal",
       `http://localhost:${mock.server.port}/`,
       {},
-      { a: { prepack: "kill -SEGV $$" } },
+      { a: { prepack: "kill -KILL $$" } },
     );
 
     const { out, err, exitCode } = await publish(env, packageDir, "-r");

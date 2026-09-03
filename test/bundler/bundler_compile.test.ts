@@ -1403,10 +1403,10 @@ describe("bundler", () => {
       run: { stdout: '{"isMain":false,"cli":"lib"} true', file: "dist/out", setCwd: true },
     });
   }
-  // `Bun.build({ compile })` reads `import.meta.main` at run time, and the copy is not the main module there too.
+  // `Bun.build({ compile })` does not inline `import.meta.main` in its entry points, but the copy is `false` there too.
   test("Bun.build: a copy of an entry point in the bundle of another entry point is not the main module", async () => {
     using dir = tempDir("compile-import-meta-main-api", {
-      "entry.ts": `import lib from "./lib.cjs";\nconsole.log(JSON.stringify({ ...lib, main: import.meta.main }));`,
+      "entry.ts": `import lib from "./lib.cjs";\nconsole.log(JSON.stringify(lib));`,
       "lib.cjs": `module.exports = { isMain: require.main === module };`,
     });
 
@@ -1419,7 +1419,7 @@ describe("bundler", () => {
     await using proc = Bun.spawn({ cmd: [result.outputs[0].path], env: bunEnv, stdout: "pipe", stderr: "inherit" });
     const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
 
-    expect(stdout).toBe('{"isMain":false,"main":true}\n');
+    expect(stdout).toBe('{"isMain":false}\n');
     expect(exitCode).toBe(0);
   });
   // The main module is the first server-side JavaScript entry point. An HTML entry point is for

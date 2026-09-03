@@ -26,6 +26,10 @@ pub mod ansi {
     pub const MAGENTA: &str = "\x1b[35m";
     pub const CYAN: &str = "\x1b[36m";
     pub(crate) const WHITE: &str = "\x1b[37m";
+    /// SGR 90 (bright black). Prefer it over [`DIM`] for text that must read
+    /// as muted on the legacy Windows console: conhost and winpty do not
+    /// implement SGR 2 and render it as the default foreground.
+    pub const GRAY: &str = "\x1b[90m";
     pub const BRIGHT_WHITE: &str = "\x1b[97m";
     pub(crate) const BG_RED: &str = "\x1b[41m";
     pub(crate) const BG_GREEN: &str = "\x1b[42m";

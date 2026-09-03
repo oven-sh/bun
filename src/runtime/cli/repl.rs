@@ -1305,14 +1305,14 @@ impl<'a> Repl<'a> {
     fn get_prompt(&self) -> &'static [u8] {
         if self.input_mode != InputMode::Normal {
             if self.use_colors {
-                return concat!("\x1b[2m", "... ", "\x1b[0m").as_bytes();
+                return concat!("\x1b[90m", "... ", "\x1b[0m").as_bytes();
             } else {
                 return b"... ";
             }
         }
 
         if self.use_colors {
-            concat!("\x1b[2m", "\u{276f}", "\x1b[0m", " ").as_bytes()
+            concat!("\x1b[90m", "\u{276f}", "\x1b[0m", " ").as_bytes()
         } else {
             b"> "
         }
@@ -1376,7 +1376,7 @@ impl<'a> Repl<'a> {
 
         let ghost = self.drawn_suggestion();
         if !ghost.is_empty() {
-            self.write(Color::DIM.as_bytes());
+            self.write(Color::GRAY.as_bytes());
             self.write(ghost);
             self.write(Color::RESET.as_bytes());
         }

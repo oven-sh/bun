@@ -190,6 +190,46 @@ describe("bundler", () => {
     run: { stdout: "3" },
   });
 
+  // An unused object pattern over a plain literal binding reads the literal's
+  // own keys, so it is removable like `obj.key`. A nested pattern is not: a
+  // plain write may have replaced the nested value. A key the literal does
+  // not own reads the prototype, and a binding that is not an untouched plain
+  // literal may run a getter.
+  itBundled("object_literal_dce/DestructuringAPlainLiteral", {
+    files: {
+      "/entry.js": /* js */ `
+        const source = { x: 1, y: 2, "quoted key": 3 };
+        const { x: removeX, y: removeY = 0, "quoted key": removeQuoted } = source;
+        const { missing: POSSIBLE_REMOVAL_missing } = source;
+
+        const nested = { x: { y: 1 } };
+        nested.x = { get y() { console.log("nested getter"); return 1; } };
+        const { x: { y: KEEP_nestedY } } = nested;
+
+        const withGetter = { get x() { console.log("getter"); return 1; } };
+        const { x: KEEP_getterX } = withGetter;
+
+        let reassigned = { x: 1 };
+        reassigned = { get x() { console.log("reassigned getter"); return 1; } };
+        const { x: KEEP_reassignedX } = reassigned;
+
+        const escaped = { x: 1 };
+        Object.defineProperty(escaped, "x", { get() { console.log("escaped getter"); return 1; } });
+        const { x: KEEP_escapedX } = escaped;
+        export {};
+      `,
+    },
+    dce: true,
+    run: {
+      stdout: `
+        nested getter
+        getter
+        reassigned getter
+        escaped getter
+      `,
+    },
+  });
+
   // `var` is left out: a second declaration is a plain redeclaration, not an
   // assignment, and a `var` in a single-statement `if` body may never run.
   itBundled("object_literal_dce/VarIsNotTracked", {

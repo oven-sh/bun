@@ -5693,6 +5693,40 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             // Every key of the pattern must name a data property of the literal.
             js_ast::b::B::BObject(bo) => {
+                // Over a registered plain object literal, each key must be an own
+                // key and each value a plain binding: a write may have replaced a
+                // nested value. An empty pattern records no read, so it stays.
+                if matches!(value.data, js_ast::ExprData::EIdentifier(_)) {
+                    if bo.properties.slice().is_empty() {
+                        return false;
+                    }
+                    for property in bo.properties.slice() {
+                        if property.flags.contains(Flags::Property::IsSpread)
+                            || property.flags.contains(Flags::Property::IsComputed)
+                            || !matches!(property.value.data, js_ast::b::B::BIdentifier(_))
+                        {
+                            return false;
+                        }
+                        if let Some(default) = &property.default_value {
+                            if !self.expr_can_be_removed_if_unused_without_dce_check(default) {
+                                return false;
+                            }
+                        }
+                        let js_ast::ExprData::EString(key) = property.key.data else {
+                            return false;
+                        };
+                        if key.next.is_some()
+                            || !self.plain_object_literals.note_read(
+                                self.arena,
+                                value,
+                                PropertyKey::Str(key),
+                            )
+                        {
+                            return false;
+                        }
+                    }
+                    return true;
+                }
                 let js_ast::ExprData::EObject(literal) = &value.data else {
                     return false;
                 };

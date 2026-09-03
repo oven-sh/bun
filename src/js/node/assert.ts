@@ -24,6 +24,7 @@
 const { isPromise, isRegExp } = require("node:util/types");
 const { innerOk } = require("internal/assert/utils");
 const { validateFunction, validateOneOf } = require("internal/validators");
+const { defineLazyProperties } = require("internal/shared");
 
 const ArrayPrototypeIndexOf = Array.prototype.indexOf;
 const ArrayPrototypeJoin = Array.prototype.join;
@@ -203,18 +204,22 @@ function fail(
 
 Assert.prototype.fail = fail;
 
-// The AssertionError is defined in internal/error.
-Object.defineProperty(assert, "AssertionError", {
-  get() {
+var CallTracker;
+function loadLazyExport(key: string) {
+  if (key === "AssertionError") {
     loadAssertionError();
     return AssertionError;
-  },
-  set(value) {
-    Object.defineProperty(this, "AssertionError", { value, writable: true, enumerable: true, configurable: true });
-  },
-  configurable: true,
-  enumerable: true,
-});
+  }
+  if (CallTracker === undefined) {
+    const { deprecate } = require("internal/util/deprecate");
+    CallTracker = deprecate(require("internal/assert/calltracker"), "assert.CallTracker is deprecated.", "DEP0173");
+  }
+  return CallTracker;
+}
+
+// Data properties, as in node. assertion_error pulls in node:fs, so each loads on first read.
+const lazyExports = ["AssertionError", "CallTracker"];
+defineLazyProperties(assert, lazyExports, loadLazyExport);
 
 /**
  * Pure assertion tests whether a value is truthy, as determined
@@ -907,23 +912,6 @@ Assert.prototype.doesNotMatch = function doesNotMatch(string, regexp, message) {
   internalMatch(string, regexp, message, doesNotMatch);
 };
 
-var CallTracker;
-Object.defineProperty(assert, "CallTracker", {
-  get() {
-    if (CallTracker === undefined) {
-      const { deprecate } = require("internal/util/deprecate");
-      CallTracker = deprecate(require("internal/assert/calltracker"), "assert.CallTracker is deprecated.", "DEP0173");
-    }
-    return CallTracker;
-  },
-  set(value) {
-    Object.defineProperty(this, "CallTracker", { value, writable: true, enumerable: true, configurable: true });
-  },
-  configurable: true,
-  enumerable: true,
-});
-// assert.CallTracker = CallTracker
-
 /**
  * Expose a strict only variant of assert.
  * @param {...any} args
@@ -956,7 +944,10 @@ for (const name of [
   assert[name] = Assert.prototype[name];
 }
 
+// Reading the descriptor of a lazy property loads it, so strict gets its own.
+defineLazyProperties(strict, lazyExports, loadLazyExport);
 for (const key of ObjectKeys(assert)) {
+  if (ArrayPrototypeIndexOf.$call(lazyExports, key) !== -1) continue;
   ObjectDefineProperty(strict, key, ObjectGetOwnPropertyDescriptor(assert, key));
 }
 assert.strict = ObjectAssign(strict, {

@@ -1,4 +1,5 @@
 const assert = require("assert");
+const { describe, expect, spyOn, test } = require("bun:test");
 const { bunEnv, bunExe } = require("harness");
 
 test("assert from require as a function does not throw", () => assert(true));
@@ -179,5 +180,55 @@ describe("AssertionError diff rendering", () => {
       charDiff(same("'") + added("wö") + removed("😀") + same("rld, hello!'")),
     ]);
     expect(exitCode).toBe(0);
+  });
+});
+
+describe("lazy exports", () => {
+  // A fresh process, so nothing has read AssertionError yet. internal/assert/assertion_error loads
+  // internal/util/inspect, so the readout is the number of functions on the heap: that load adds several hundred.
+  test("AssertionError and CallTracker are data properties that load on first read", async () => {
+    const fixture = `
+      const { heapStats } = require("bun:jsc");
+      const functions = () => heapStats().objectTypeCounts.Function;
+      const assert = require("node:assert");
+      const beforeRead = functions();
+      const AssertionError = assert.AssertionError;
+      const afterRead = functions();
+      const shape = (object, key) => {
+        const { value, get, writable, enumerable, configurable } = Object.getOwnPropertyDescriptor(object, key);
+        return { value: typeof value, get: typeof get, writable, enumerable, configurable };
+      };
+      console.log(JSON.stringify({
+        readLoaded: afterRead - beforeRead > 100,
+        descriptors: [assert, assert.strict].flatMap(object => [shape(object, "AssertionError"), shape(object, "CallTracker")]),
+        same: assert.strict.AssertionError === AssertionError && assert.strict.CallTracker === assert.CallTracker,
+      }));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const data = { value: "function", get: "undefined", writable: true, enumerable: true, configurable: true };
+    expect(JSON.parse(stdout)).toEqual({ readLoaded: true, descriptors: [data, data, data, data], same: true });
+    expect(exitCode).toBe(0);
+  });
+
+  // Nothing in this file reads assert.CallTracker first, so the first spy on it replaces a property that has not loaded.
+  test("spyOn accepts AssertionError and CallTracker on assert and assert.strict", () => {
+    for (const [object, other] of [
+      [assert, assert.strict],
+      [assert.strict, assert],
+    ]) {
+      for (const key of ["AssertionError", "CallTracker"]) {
+        const spy = spyOn(object, key);
+        expect(object[key]).toBe(spy);
+        spy.mockRestore();
+        expect(object[key]).toBe(other[key]);
+      }
+    }
   });
 });

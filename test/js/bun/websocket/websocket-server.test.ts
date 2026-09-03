@@ -1980,7 +1980,11 @@ describe.concurrent("publish() return value reflects subscriber backpressure", (
   ) {
     const sockets: Record<string, ServerWebSocket<string>> = {};
     const opened = { slow: Promise.withResolvers<void>(), sender: Promise.withResolvers<void>() };
+    // Bind the address that both clients dial. On macOS a wildcard port-0 bind can
+    // get a port that another process holds on 127.0.0.1, and that listener then
+    // receives the connections (see #37141).
     await using server = serve<string, {}>({
+      hostname: "127.0.0.1",
       port: 0,
       websocket: {
         backpressureLimit: 64 * 1024,

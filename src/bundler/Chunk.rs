@@ -275,6 +275,13 @@ impl Chunk {
         self.entry_point.is_entry_point()
     }
 
+    /// Whether `source_index` is the entry point of this chunk. Without code
+    /// splitting, the files of other entry points can print in this chunk too.
+    #[inline]
+    pub(crate) fn is_entry_point_file(&self, source_index: u32) -> bool {
+        self.entry_point.is_entry_point() && self.entry_point.source_index() == source_index
+    }
+
     /// Stable short name for this chunk in generated code: its final content hash, as `[hash]` prints it.
     pub(crate) fn id(&self) -> [u8; CHUNK_ID_LEN] {
         bun_core::fmt::truncated_hash32_bytes(

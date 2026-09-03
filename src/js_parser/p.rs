@@ -304,6 +304,9 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     // Used for forcing CommonJS
     pub(crate) has_with_scope: bool,
 
+    /// A module-scope `var` has the name of a top-level function, which module code rejects.
+    pub(crate) has_top_level_function_merged_with_var: bool,
+
     pub(crate) is_file_considered_to_have_esm_exports: bool,
 
     pub(crate) has_called_runtime: bool,
@@ -345,6 +348,8 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) commonjs_named_exports: bun_ast::ast_result::CommonJSNamedExports,
     pub(crate) commonjs_named_exports_deoptimized: bool,
     pub(crate) commonjs_module_exports_assigned_deoptimized: bool,
+    /// Uses of `module` that became `module.exports` and stay in its use count.
+    pub(crate) module_exports_rewrite_count: u32,
     pub(crate) commonjs_named_exports_needs_conversion: u32,
     pub(crate) had_commonjs_named_exports_this_visit: bool,
     pub(crate) commonjs_replacement_stmts: StmtNodeList,
@@ -3510,15 +3515,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             {
                                 // Silently merge this symbol into the existing symbol
                                 self.symbols[symbol_idx].link.set(member_in_scope.ref_);
-                                if Symbol::is_kind_function(existing_kind) {
-                                    self.symbols[existing_idx].set_redeclared_by_var(true);
-                                }
                                 // `StringHashMap` get_or_put already stores the key on insert and
                                 // cannot hand out `&mut K` (see StringHashMapGetOrPut docs), so
                                 // no key write is needed here.
                                 *_scope
                                     .get_or_put_member_with_hash(name, hash.unwrap())
                                     .value_ptr = member_in_scope;
+
+                                // "function foo() {} { var foo; }"
+                                if _scope_ptr == self.module_scope
+                                    && self.symbols[symbol_idx].kind
+                                        == js_ast::symbol::Kind::Hoisted
+                                    && Symbol::is_kind_function(existing_kind)
+                                {
+                                    self.has_top_level_function_merged_with_var = true;
+                                }
                                 continue 'next_member;
                             }
 
@@ -5011,11 +5022,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 MR::ReplaceWithNew => {
                     self.symbols[symbol_idx].link.set(ref_);
 
+                    let existing_kind = self.symbols[symbol_idx].kind;
                     // If these are both functions, remove the overwritten declaration
-                    if kind.is_function() && self.symbols[symbol_idx].kind.is_function() {
+                    if kind.is_function() && existing_kind.is_function() {
                         self.symbols[symbol_idx].set_remove_overwritten_function_declaration(true);
-                    } else if kind.is_function() {
-                        self.symbols[ref_.inner_index() as usize].set_redeclared_by_var(true);
+                    } else if self.current_scope == self.module_scope
+                        && ((existing_kind == js_ast::symbol::Kind::Hoisted && kind.is_function())
+                            || (existing_kind.is_function()
+                                && kind == js_ast::symbol::Kind::Hoisted))
+                    {
+                        // "var foo; function foo() {}" or "function foo() {} var foo;"
+                        self.has_top_level_function_merged_with_var = true;
                     }
                 }
                 MR::BecomePrivateGetSetPair => {
@@ -5738,12 +5755,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let ignores_this = match export.decl_value {
                 CommonJSExportValue::Other => false,
                 CommonJSExportValue::FunctionIgnoringThis => true,
-                // An assignment or a `var` of the same name can change `name`.
+                // An assignment can change `name`. A merged `var` keeps the file wrapped.
                 CommonJSExportValue::Identifier(binding) => {
                     let symbol = &self.symbols[binding.inner_index() as usize];
                     symbol.kind.is_function()
                         && symbol.call_ignores_this()
-                        && !symbol.redeclared_by_var()
                         && !symbol.has_been_assigned_to()
                 }
             };
@@ -9497,6 +9513,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             macro_call_count: 0,
             hoisted_ref_for_sloppy_mode_block_fn: Default::default(),
             has_with_scope: false,
+            has_top_level_function_merged_with_var: false,
             is_file_considered_to_have_esm_exports: false,
             has_called_runtime: false,
             symbol_uses,
@@ -9514,6 +9531,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             unwrap_all_requires,
             commonjs_named_exports: Default::default(),
             commonjs_module_exports_assigned_deoptimized: false,
+            module_exports_rewrite_count: 0,
             commonjs_named_exports_needs_conversion: u32::MAX,
             had_commonjs_named_exports_this_visit: false,
             commonjs_replacement_stmts: js_ast::StmtNodeList::EMPTY,

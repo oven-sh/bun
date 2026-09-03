@@ -1100,6 +1100,15 @@ if (then === "resume") {
   socket.on("data", () => {});
   socket.resume();
   await waitForRead("resumed");
+
+  // Stop reading again before the disconnect. A stream that waits for pipe
+  // data when its client disconnects stays allocated while the pipe is open,
+  // and the leak check at exit reports it. A paused stream is freed.
+  socket.pause();
+  await waitForStall();
+  socket.destroy();
+  const res = await fetch("http://127.0.0.1:" + server.port + "/alive");
+  await res.text();
 } else {
   // Disconnect the stalled client. The server must survive the abort of the
   // backpressured file stream and still answer requests. The second request
@@ -1131,7 +1140,7 @@ process.exit(0);
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
       expect(stdout.trim()).toBe(
-        then === "resume" ? "streaming\nstalled\nresumed" : "streaming\nstalled\nalive\nalive",
+        then === "resume" ? "streaming\nstalled\nresumed\nstalled" : "streaming\nstalled\nalive\nalive",
       );
       expect(stderr).toBe("");
       expect(exitCode).toBe(0);

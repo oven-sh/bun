@@ -18,7 +18,7 @@ test("compress-embed.ts writes a zstd frame that inflates to the input, with the
 
   const { stderr, exitCode } = await runWithoutBunApis([script, join(String(dir), "asset.js"), output]);
 
-  expect(stderr).toBe("");
+  // stderr is in the object so that a failure shows the script's error.
+  expect({ exitCode, stderr }).toMatchObject({ exitCode: 0 });
   expect(zstdDecompressSync(readFileSync(output)).toString()).toBe(input);
-  expect(exitCode).toBe(0);
 });

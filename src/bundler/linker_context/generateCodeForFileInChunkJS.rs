@@ -647,6 +647,8 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                     // BackRef: the arena is the caller's `temp_arena: &Bump`,
                     // which strictly outlives this local helper struct.
                     arena: bun_ptr::BackRef<Bump>,
+                    // BackRef: `c.graph.symbols`, not resized while printing.
+                    symbols: bun_ptr::BackRef<bun_ast::symbol::Map>,
                 }
 
                 impl ExportHoist {
@@ -666,6 +668,47 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                         Expr::init_identifier(ref_, loc)
                     }
 
+                    /// The pattern without the locals the linker bound to exports
+                    /// (`const { a } = await import(…)`): assigning one would
+                    /// overwrite the export.
+                    fn without_bound_items(&self, binding: Binding) -> Binding {
+                        let bun_ast::binding::Data::BObject(object) = binding.data else {
+                            return binding;
+                        };
+                        let symbols = self.symbols.get();
+                        let is_bound = |property: &&B::Property| {
+                            matches!(property.value.data, bun_ast::binding::Data::BIdentifier(id)
+                                if symbols.get_const(id.get().r#ref)
+                                    .is_some_and(|symbol| symbol.is_bound_import_item()))
+                        };
+                        let properties = object.get().properties.slice();
+                        if !properties.iter().any(|property| is_bound(&property)) {
+                            return binding;
+                        }
+                        let mut kept = bun_alloc::ArenaVec::with_capacity_in(
+                            properties.len(),
+                            self.arena.get(),
+                        );
+                        for property in properties.iter().filter(|property| !is_bound(property)) {
+                            kept.push(B::Property {
+                                flags: property.flags,
+                                key: property.key,
+                                value: property.value,
+                                default_value: property.default_value,
+                            });
+                        }
+                        Binding::alloc(
+                            self.arena.get(),
+                            B::Object {
+                                properties: bun_ast::StoreSlice::new_mut(
+                                    kept.into_bump_slice_mut(),
+                                ),
+                                is_single_line: object.get().is_single_line,
+                            },
+                            binding.loc,
+                        )
+                    }
+
                     /// Trampoline matching `ToExprWrapper`'s erased fn-pointer signature.
                     fn wrap_trampoline(
                         ctx: *mut core::ffi::c_void,
@@ -681,6 +724,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                 let mut hoist = ExportHoist {
                     decls: Vec::new(),
                     arena: bun_ptr::BackRef::new(temp_arena),
+                    symbols: bun_ptr::BackRef::new(&c.graph.symbols),
                 };
                 let hoist_wrapper = ToExprWrapper::new(temp_arena, ExportHoist::wrap_trampoline);
 
@@ -720,7 +764,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                                             // A pattern runs getters or the iterator, so it stays inside the wrapper
                                             // ie `var { append } = { append() {} }` => `var append; __esm(() => ({ append } = { append() {} }))`
                                             let binding = Binding::to_expr(
-                                                &decl.binding,
+                                                &hoist.without_bound_items(decl.binding),
                                                 (&raw mut hoist).cast::<core::ffi::c_void>(),
                                                 hoist_wrapper,
                                             );
@@ -731,7 +775,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                                         }
                                     } else {
                                         let _ = Binding::to_expr(
-                                            &decl.binding,
+                                            &hoist.without_bound_items(decl.binding),
                                             (&raw mut hoist).cast::<core::ffi::c_void>(),
                                             hoist_wrapper,
                                         );

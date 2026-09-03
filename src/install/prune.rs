@@ -596,6 +596,15 @@ pub(crate) fn exit_unless_lockfile_matches_package_json(
         }
     };
 
+    // The lockfile does not store the set. Take it from the manifests, as an install does.
+    manager
+        .lockfile
+        .self_contained_workspaces
+        .clear_retaining_capacity();
+    for key in to_lockfile.self_contained_workspaces.keys() {
+        manager.lockfile.self_contained_workspaces.put(*key, ())?;
+    }
+
     if summary.changes_dependencies() {
         if !quiet {
             Output::err_generic(

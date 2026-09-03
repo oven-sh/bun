@@ -427,6 +427,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 .is_some()
                             {
                                 self.note_tracked_namespace_use(namespace_ref);
+                                // Another `var` declaration is the same variable.
+                                if kind != LocalKind::KVar && !is_export {
+                                    self.note_destructured_locals(obj.properties());
+                                }
                             }
                         }
                         // `var ns` redeclaration resolves to the same ref;
@@ -468,6 +472,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             self.dynamic_import_escaped_records.insert(r, ());
                         }
                         break 'conditional;
+                    }
+                    // `ns.a` can't become `a`: `ns` may be null.
+                    for &r in &records {
+                        self.dynamic_import_needs_object.insert(r, ());
                     }
                     if !records.is_empty()
                         && !self.import_items_for_namespace.contains_key(&id.r#ref)
@@ -521,6 +529,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             {
                                 self.dynamic_import_escaped_records
                                     .insert(req.import_record_index, ());
+                            } else if kind != LocalKind::KVar && !is_export {
+                                self.note_destructured_locals(obj.properties());
                             }
                         }
                         BData::BIdentifier(id) if kind != LocalKind::KVar && !is_export => {

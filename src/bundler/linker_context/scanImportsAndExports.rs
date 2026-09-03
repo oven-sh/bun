@@ -248,20 +248,21 @@ pub(crate) fn scan_imports_and_exports(
                             {
                                 None => col!(dyn_ref_aliases)[other_file].merge_all(),
                                 // `default` of a lifted CommonJS module is its namespace.
-                                Some(aliases)
+                                Some(dynamic_use)
                                     if record.kind == ImportKind::Dynamic
                                         && other_flags
                                             .contains(AstFlags::COMMONJS_LIFTED_TO_ESM)
-                                        && aliases
+                                        && dynamic_use
+                                            .aliases
                                             .slice()
                                             .iter()
                                             .any(|alias| alias.slice() == b"default") =>
                                 {
                                     col!(dyn_ref_aliases)[other_file].merge_all()
                                 }
-                                Some(aliases) => {
+                                Some(dynamic_use) => {
                                     col!(dyn_ref_aliases)[other_file]
-                                        .merge_partial(aliases.slice());
+                                        .merge_partial(dynamic_use.aliases.slice());
                                     // Observed without being named: `await import()`
                                     // resolves through a `then` export, and `require()`
                                     // of an ES module returns its `module.exports`
@@ -358,6 +359,30 @@ pub(crate) fn scan_imports_and_exports(
                                 // TODO: introduce a NamedRequire for require("./foo").Bar AST nodes to support tree-shaking those.
                                 col!(flags)[other_file].wrap = WrapKind::Cjs;
                                 col!(exports_kind)[other_file] = ExportsKind::Cjs;
+                            }
+                        } else if other_flags.contains(AstFlags::FORCE_CJS_TO_ESM)
+                            && this.is_external_dynamic_import(record, id as u32)
+                        {
+                            let exports = &col_ref!(named_exports)[other_file];
+                            let user_entry = col_ref!(entry_point_kinds)[other_file]
+                                == EntryPoint::Kind::UserSpecified;
+                            // `__esModule` makes `exports.default` the `default`, as in `bun run`.
+                            let default_is_module_exports = !exports.contains(b"default")
+                                || (other_flags.contains(AstFlags::COMMONJS_LIFTED_TO_ESM)
+                                    && !user_entry
+                                    && !exports.contains(b"__esModule"));
+                            let default_is_read = user_entry
+                                || col_ref!(dynamic_import_aliases)[id]
+                                    .get(&(import_record_index as u32))
+                                    .is_none_or(|dynamic_use| {
+                                        dynamic_use
+                                            .aliases
+                                            .slice()
+                                            .iter()
+                                            .any(|alias| alias.slice() == b"default")
+                                    });
+                            if default_is_module_exports && default_is_read {
+                                col!(flags)[other_file].needs_synthetic_default_export = true;
                             }
                         }
                     }
@@ -648,6 +673,43 @@ pub(crate) fn scan_imports_and_exports(
         this.check_for_memory_corruption();
     }
 
+    // An `import()` / `require()` of a wrapped ES module whose every read step
+    // 4 bound to an export needs no value: nothing depends on the namespace
+    // object through it, so tree shaking can drop that object.
+    for source_index_ in &reachable {
+        let id = source_index_.get() as usize;
+        let uses = &col_ref!(dynamic_import_aliases)[id];
+        for (&record_index, dynamic_use) in uses.keys().iter().zip(uses.values()) {
+            let record = &col_ref!(import_records_list)[id].as_slice()[record_index as usize];
+            if dynamic_use.needs_namespace_object
+                || !record.source_index.is_valid()
+                || col_ref!(flags)[record.source_index.get() as usize].wrap != WrapKind::Esm
+                || col_ref!(exports_kind)[record.source_index.get() as usize] != ExportsKind::Esm
+            {
+                continue;
+            }
+            let bound = &col_ref!(imports_to_bind_list)[id];
+            // `ns.a` of a name the importee does not export prints `undefined`.
+            // A pattern would read it off `{}`, which has a prototype.
+            let satisfied = |item: &bun_ast::ast_result::DynamicImportItem| {
+                bound.contains(&item.local)
+                    || this
+                        .graph
+                        .symbols
+                        .get_const(item.local)
+                        .is_some_and(|symbol| {
+                            symbol.import_item_status == bun_ast::ImportItemStatus::Missing
+                                && symbol.namespace_alias.is_some()
+                        })
+            };
+            if dynamic_use.items.slice().iter().all(satisfied) {
+                col!(import_records_list)[id].as_mut_slice()[record_index as usize]
+                    .flags
+                    .insert(ImportRecordFlags::NAMESPACE_UNUSED);
+            }
+        }
+    }
+
     // Step 6: Bind imports to exports. This adds non-local dependencies on the
     // parts that declare the export to all parts that use the import. Also
     // generate wrapper parts for wrapped files.
@@ -910,9 +972,14 @@ pub(crate) fn scan_imports_and_exports(
             // If this is an entry point, depend on all exports so they are included
             if is_entry_point {
                 let force_include_exports = flag.force_include_exports_for_entry_point;
+                let include_namespace = force_include_exports
+                    || LinkerContext::chunk_default_export_is_namespace(
+                        flag,
+                        col_ref!(ast_flags_list)[id],
+                    );
                 let add_wrapper = wrap != WrapKind::None;
 
-                let extra_count = (force_include_exports as usize) + (add_wrapper as usize);
+                let extra_count = (include_namespace as usize) + (add_wrapper as usize);
 
                 let mut dependencies =
                     bun_ast::DependencyList::with_capacity_in(extra_count, bun_alloc::AstAlloc);
@@ -954,7 +1021,7 @@ pub(crate) fn scan_imports_and_exports(
                 dependencies.reserve(extra_count);
 
                 // Ensure "exports" is included if the current output format needs it
-                if force_include_exports {
+                if include_namespace {
                     dependencies.push(Dependency {
                         source_index: bun_ast::Index::source(source_index as usize),
                         part_index: bun_ast::NAMESPACE_EXPORT_PART_INDEX,
@@ -1051,17 +1118,7 @@ pub(crate) fn scan_imports_and_exports(
                                 && col_ref!(ast_flags_list)[other_id]
                                     .contains(AstFlags::FORCE_CJS_TO_ESM)
                             {
-                                // If the CommonJS module was converted to ESM
-                                // and the developer `import("cjs_module")`, then
-                                // they may have code that expects the default export to return the CommonJS module.exports object
-                                // That module.exports object does not exist.
-                                // We create a default object with getters for each statically-known export
-                                // This is kind of similar to what Node.js does
-                                // Once we track usages of the dynamic import, we can remove this.
-                                if !col_ref!(named_exports)[other_id].contains(b"default") {
-                                    col!(flags)[other_id].needs_synthetic_default_export = true;
-                                }
-
+                                // The chunk of a module converted to ESM provides `default` itself.
                                 continue;
                             } else {
                                 // We should use "__require" instead of "require" if we're not
@@ -1073,6 +1130,24 @@ pub(crate) fn scan_imports_and_exports(
                                     && should_call_runtime_require(output_format)
                                 {
                                     runtime_require_uses += 1;
+                                }
+
+                                // A split `require()` whose target is CommonJS at link
+                                // time (for example a lifted `module.exports = require()`
+                                // file the linker wrapped again): the chunk exports only
+                                // `default: module.exports`, so the printed call reads
+                                // `.default` to return `module.exports`, the same value
+                                // an unsplit `require()` returns.
+                                if kind == ImportKind::Require
+                                    && is_external_dyn
+                                    && rec_source_index.is_valid()
+                                    && col_ref!(exports_kind)[rec_source_index.get() as usize]
+                                        == ExportsKind::Cjs
+                                {
+                                    col!(import_records_list)[id].as_mut_slice()
+                                        [import_record_index as usize]
+                                        .flags
+                                        .insert(ImportRecordFlags::CROSS_CHUNK_REQUIRE_DEFAULT);
                                 }
 
                                 // If this wasn't originally a "require()" call, then we may need
@@ -1167,7 +1242,10 @@ pub(crate) fn scan_imports_and_exports(
                         // This must be done for "require()" and "import()" expressions
                         // but does not need to be done for "import" statements since
                         // those just cause us to reference the exports directly.
-                        if other_flags.wrap == WrapKind::Esm && kind != ImportKind::Stmt {
+                        if other_flags.wrap == WrapKind::Esm
+                            && kind != ImportKind::Stmt
+                            && !rec_flags.contains(ImportRecordFlags::NAMESPACE_UNUSED)
+                        {
                             this.graph.generate_symbol_import_and_use(
                                 source_index,
                                 part_index as u32,

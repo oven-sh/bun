@@ -158,8 +158,7 @@ pub struct CommonJSNamedExport {
     pub decl_value: CommonJSExportValue,
 }
 
-/// The value in `exports.name = value`, as far as a call of the export can
-/// read `this`.
+/// The kind of value in `exports.name = value`, for a call of the export.
 #[derive(Clone, Copy, Default)]
 pub enum CommonJSExportValue {
     #[default]

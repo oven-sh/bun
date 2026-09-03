@@ -4283,11 +4283,8 @@ impl<'a> LinkerContext<'a> {
                 })
     }
 
-    /// `X.name()` passes `X` as `this`. Must the call keep `X` when `X.name`
-    /// resolved to export `ref_` of `source_index`? A call through the
-    /// namespace of an ES module drops it. A lifted CommonJS export is a
-    /// property of `module.exports`, so the call keeps it unless the parser
-    /// found that the function does not read `this`.
+    /// Must `X.name()` keep `X` as `this`, where `X.name` is export `ref_`?
+    /// Only a lifted CommonJS export can need it, as a `module.exports` property.
     fn method_call_needs_this(&self, source_index: crate::IndexInt, ref_: Ref) -> bool {
         self.graph.ast.items_flags()[source_index as usize]
             .contains(AstFlags::COMMONJS_LIFTED_TO_ESM)
@@ -4298,9 +4295,7 @@ impl<'a> LinkerContext<'a> {
                 .is_some_and(|symbol| symbol.call_ignores_this())
     }
 
-    /// `ns.name()` on `import * as ns` calls the item that the parser made for
-    /// `ns.name`. An item that is not bound prints as `ns.name`, so the call
-    /// keeps `ns` as `this`.
+    /// `ns.name()` for `import * as ns`. An unbound item prints as `ns.name`.
     fn method_call_item_needs_this(
         &self,
         import_ref: Ref,
@@ -4651,11 +4646,9 @@ impl<'a> LinkerContext<'a> {
         }
         let id = source_index as usize;
         let parts_len = self.graph.ast.items_parts()[id].len();
-        // `X.name()` passes `X` as `this`. The printer substitutes a binding at
-        // every `X.name` in the file, so a call that needs that `this` keeps
-        // each `X.name` in the file as written. The first read of an export
-        // that can read `this` builds the set, before any such read is bound.
-        // The loop removes the reads it binds, and those are of other exports.
+        // The printer substitutes a binding at each `X.name` of the file, so a
+        // call `X.name()` that needs `X` as `this` keeps all of them. The set
+        // is built before the loop binds any read that can need `this`.
         let mut called: Option<HashMap<(Ref, bun_ast::StoreStr), ()>> = None;
         let mut accesses: Vec<(Ref, crate::IndexInt, bun_ast::StoreStr, u32)> = Vec::new();
         let mut dependencies: Vec<Dependency> = Vec::new();

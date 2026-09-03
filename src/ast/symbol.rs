@@ -116,10 +116,8 @@ bitflags::bitflags! {
         /// Renaming can also break any identifier used inside a "with" statement.
         const MUST_NOT_BE_RENAMED = 1 << 2;
 
-        /// A function declaration that a `var` of the same name merged into,
-        /// from the same scope or a nested one (a sloppy-mode block function
-        /// hoists like a `var`). It can set the binding with no assignment
-        /// expression.
+        /// A `var` or a sloppy-mode block function of the same name merged
+        /// into this function declaration, so it can set the binding.
         const REDECLARED_BY_VAR = 1 << 3;
 
         const REMOVE_OVERWRITTEN_FUNCTION_DECLARATION = 1 << 4;
@@ -129,14 +127,11 @@ bitflags::bitflags! {
         /// chain. Read by HMR live bindings and the printer's same-target fold.
         const HAS_BEEN_ASSIGNED_TO = 1 << 5;
 
-        /// An import item generated for `ns.name` where some use calls it,
-        /// as in `ns.name()`. That call passes `ns` as `this`.
+        /// An import item for `ns.name` that some use calls, as `ns.name()`.
         const CALLED_AS_METHOD = 1 << 6;
 
-        /// On a function declaration: the function does not read `this`. On a
-        /// lifted CommonJS export (`exports.name = function () {}`): the file
-        /// assigns the export once, to such a function. A call through the
-        /// module namespace can then drop the namespace as `this`.
+        /// A call of this function declaration, or of this lifted CommonJS
+        /// export, does not read `this`.
         const CALL_IGNORES_THIS = 1 << 7;
     }
 }

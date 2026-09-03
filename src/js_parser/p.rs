@@ -315,12 +315,12 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// is done (`take_symbol_uses`); empty while visiting.
     pub(crate) symbol_uses: SymbolUseMap,
     /// The current part's uses in first-use order. By symbol inner index,
-    /// `part_use_generation[i] == part_generation` says symbol `i` has a live
-    /// entry at `part_uses[part_use_index[i]]`. One dense lookup per reference
-    /// instead of one hash-map probe.
+    /// `part_use_slot[i]` says whether symbol `i` has a live entry in
+    /// `part_uses` this part and where: one dense lookup per reference
+    /// instead of a hash-map probe.
     pub(crate) part_uses: Vec<(Ref, js_ast::symbol::Use)>,
-    pub(crate) part_use_generation: Vec<u32>,
-    pub(crate) part_use_index: Vec<u32>,
+    /// `generation << 32 | index`.
+    pub(crate) part_use_slot: Vec<u64>,
     pub(crate) part_generation: u32,
     pub(crate) declared_symbols: bun_ast::DeclaredSymbolList,
     pub(crate) runtime_imports: RuntimeImports,
@@ -2044,34 +2044,33 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// The current part's use entry for `ref_`, created if absent.
     fn part_use(&mut self, ref_: Ref) -> &mut js_ast::symbol::Use {
         let i = ref_.inner_index() as usize;
-        if i >= self.part_use_generation.len() {
-            let len = self.symbols.len();
-            self.part_use_generation.resize(len, 0);
-            self.part_use_index.resize(len, 0);
+        if i >= self.part_use_slot.len() {
+            self.part_use_slot.resize(self.symbols.len(), 0);
         }
-        if self.part_use_generation[i] != self.part_generation {
-            self.part_use_generation[i] = self.part_generation;
-            self.part_use_index[i] = self.part_uses.len() as u32;
+        let slot = self.part_use_slot[i];
+        let index = if (slot >> 32) as u32 == self.part_generation {
+            slot as u32 as usize
+        } else {
+            let index = self.part_uses.len();
+            self.part_use_slot[i] = (u64::from(self.part_generation) << 32) | index as u64;
             self.part_uses.push((ref_, js_ast::symbol::Use::default()));
-        }
-        &mut self.part_uses[self.part_use_index[i] as usize].1
+            index
+        };
+        &mut self.part_uses[index].1
     }
 
     fn existing_part_use(&mut self, ref_: Ref) -> Option<&mut js_ast::symbol::Use> {
-        let i = ref_.inner_index() as usize;
-        if self.part_use_generation.get(i).copied() != Some(self.part_generation) {
+        let slot = *self.part_use_slot.get(ref_.inner_index() as usize)?;
+        if (slot >> 32) as u32 != self.part_generation {
             return None;
         }
-        Some(&mut self.part_uses[self.part_use_index[i] as usize].1)
+        Some(&mut self.part_uses[slot as u32 as usize].1)
     }
 
     /// Drop the current part's uses of `ref_`.
     pub(crate) fn forget_part_use(&mut self, ref_: Ref) {
-        if let Some(generation) = self
-            .part_use_generation
-            .get_mut(ref_.inner_index() as usize)
-        {
-            *generation = 0;
+        if let Some(slot) = self.part_use_slot.get_mut(ref_.inner_index() as usize) {
+            *slot = 0;
         }
     }
 
@@ -2080,11 +2079,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut map = core::mem::take(&mut self.symbol_uses);
         map.clear_retaining_capacity();
         map.ensure_total_capacity(self.part_uses.len())?;
+        let generation = u64::from(self.part_generation) << 32;
         for (at, &(ref_, use_)) in self.part_uses.iter().enumerate() {
-            let i = ref_.inner_index() as usize;
-            if self.part_use_generation[i] == self.part_generation
-                && self.part_use_index[i] as usize == at
-            {
+            if self.part_use_slot[ref_.inner_index() as usize] == generation | at as u64 {
                 map.put_assume_capacity(ref_, use_);
             }
         }
@@ -3546,7 +3543,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     let members = &scope_ref.members;
                     let mut v = BumpVec::with_capacity_in(members.count(), arena);
                     for (k, m) in members.iter() {
-                        v.push((js_ast::StoreStr::new(k.as_ref()), *m));
+                        v.push((js_ast::StoreStr::new(k), *m));
                     }
                     v
                 };
@@ -3560,7 +3557,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                     // `Symbol.original_name` is an arena-owned `StoreStr` valid for 'a.
                     let name: &'a [u8] = self.symbols[symbol_idx].original_name.slice();
-                    let mut hash: Option<u64> = None;
+                    let mut hash: Option<u32> = None;
 
                     if scope_parent.kind == js_ast::scope::Kind::CatchBinding
                         && self.symbols[symbol_idx].kind != js_ast::symbol::Kind::Hoisted
@@ -3679,9 +3676,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 // `StringHashMap` get_or_put already stores the key on insert and
                                 // cannot hand out `&mut K` (see StringHashMapGetOrPut docs), so
                                 // no key write is needed here.
-                                *_scope
-                                    .get_or_put_member_with_hash(name, hash.unwrap())
-                                    .value_ptr = member_in_scope;
+                                // SAFETY: `name` is a symbol's `original_name`.
+                                *unsafe {
+                                    _scope.get_or_put_member_with_hash(name, hash.unwrap())
+                                }
+                                .value_ptr = member_in_scope;
 
                                 // "function foo() {} { var foo; }"
                                 if _scope_ptr == self.module_scope
@@ -3745,14 +3744,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             // If this is a catch identifier, silently merge the existing symbol
                             // into this symbol but continue hoisting past this catch scope
                             self.symbols[existing_idx].link.set(value.ref_);
-                            *_scope
-                                .get_or_put_member_with_hash(name, hash.unwrap())
+                            // SAFETY: `name` is a symbol's `original_name`.
+                            *unsafe { _scope.get_or_put_member_with_hash(name, hash.unwrap()) }
                                 .value_ptr = value;
                         }
 
                         if _scope.kind_stops_hoisting() {
-                            *_scope
-                                .get_or_put_member_with_hash(name, hash.unwrap())
+                            // SAFETY: `name` is a symbol's `original_name`.
+                            *unsafe { _scope.get_or_put_member_with_hash(name, hash.unwrap()) }
                                 .value_ptr = value;
                             break;
                         }
@@ -3926,7 +3925,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // lexer string-table (see `get_or_put_member_with_hash`),
                     // both of which outlive every arena-backed `Scope`. Avoids
                     // a per-argument `mi_heap_malloc` on every function body.
-                    unsafe { scope.members.put_borrowed(key, value)? };
+                    unsafe { scope.members.put(key, value) };
                 }
             }
         }
@@ -5048,13 +5047,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let ref_ = self.new_symbol(kind, name);
 
         if member.is_none() {
-            self.module_scope_mut().members.put(
-                name,
-                js_ast::scope::Member {
-                    ref_,
-                    loc: bun_ast::Loc::EMPTY,
-                },
-            )?;
+            // SAFETY: `name` is `'static`.
+            unsafe {
+                self.module_scope_mut().members.put(
+                    name,
+                    js_ast::scope::Member {
+                        ref_,
+                        loc: bun_ast::Loc::EMPTY,
+                    },
+                )
+            };
             return Ok(ref_);
         }
 
@@ -5156,7 +5158,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let scope_kind = scope.kind;
         // SAFETY: see key-lifetime note above — `name: &'a [u8]` outlives the
         // arena-owned `Scope` map.
-        let entry = unsafe { scope.members.get_or_put_borrowed(name) };
+        let entry = unsafe {
+            scope
+                .members
+                .get_or_put_hashed(js_ast::scope::Members::hash(name), name)
+        };
         if entry.found_existing {
             let existing: js_ast::scope::Member = *entry.value_ptr;
             let symbol_idx = existing.ref_.inner_index() as usize;
@@ -5987,7 +5993,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     .get_or_put_value(self.exports_ref, Default::default())
                     .expect("OOM")
                     .value_ptr
-                    .count_estimate += count;
+                    .merge(js_ast::symbol::Use::unscoped(count));
             }
         }
     }
@@ -9595,9 +9601,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             parent: None,
             ..Default::default()
         });
-        let _ = scope_obj
-            .members
-            .ensure_total_capacity(estimated_symbol_count);
+        scope_obj.members.reserve(estimated_symbol_count);
         let scope = js_ast::StoreRef::from_bump(scope_obj);
 
         scope_order.push(Some(ScopeOrder::new(loc_module_scope, scope.as_ptr())));
@@ -9743,8 +9747,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             has_called_runtime: false,
             symbol_uses,
             part_uses: Vec::new(),
-            part_use_generation: Vec::new(),
-            part_use_index: Vec::new(),
+            part_use_slot: Vec::new(),
             part_generation: 1,
             declared_symbols: Default::default(),
             runtime_imports: RuntimeImports::default(),

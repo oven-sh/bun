@@ -112,9 +112,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 });
             }
 
-            let gpe = self
-                .module_scope_mut()
-                .get_or_put_member_with_hash(name, hash);
+            // SAFETY: `name` is a slice of the source or the lexer's string table.
+            let gpe = unsafe {
+                self.module_scope_mut()
+                    .get_or_put_member_with_hash(name, hash)
+            };
 
             // I don't think this happens?
             if gpe.found_existing {
@@ -127,10 +129,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // Drop gpe, allocate, then re-insert.
             let new_ref = self.new_symbol(js_ast::symbol::Kind::Unbound, name);
 
-            *self
-                .module_scope_mut()
-                .get_or_put_member_with_hash(name, hash)
-                .value_ptr = js_ast::scope::Member { ref_: new_ref, loc };
+            // SAFETY: as above.
+            *unsafe {
+                self.module_scope_mut()
+                    .get_or_put_member_with_hash(name, hash)
+            }
+            .value_ptr = js_ast::scope::Member { ref_: new_ref, loc };
 
             declare_loc = loc;
             scope_use = false;

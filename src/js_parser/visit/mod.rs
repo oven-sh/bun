@@ -1005,16 +1005,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let original_name: &'a [u8] = self.symbols[name_ref.inner_index() as usize]
                 .original_name
                 .slice();
-            self.vis_scope()
-                .members
-                .put(
+            // SAFETY: `original_name` is an AST-arena slice.
+            unsafe {
+                self.vis_scope().members.put(
                     original_name,
                     ScopeMember {
                         ref_: name.ref_,
                         loc: name.loc,
                     },
                 )
-                .expect("oom");
+            };
             name_ref
         } else {
             let name_str: &'a [u8] = if default_name_ref.is_empty() {

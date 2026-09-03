@@ -314,6 +314,25 @@ test("disable() inside another storage's run() does not reach earlier continuati
   expect(seen).toEqual([1, undefined]);
 });
 
+// Node deletes from the current frame object only: a disable() run inside a
+// snapshot of an older frame does not reach frames that were already derived
+// from it, but frames derived afterwards inherit the deletion.
+test("disable() inside a snapshot of an older frame only affects that frame and later copies", async () => {
+  const a = new AsyncLocalStorage();
+  const b = new AsyncLocalStorage();
+  a.enterWith(1);
+  const older = new AsyncResource("older"); // snapshot of the frame with a=1
+  b.enterWith("x"); // current frame now derives from it
+  const derivedBefore = new Promise(resolve => setTimeout(() => resolve([a.getStore(), b.getStore()]), 1));
+  older.runInAsyncScope(() => a.disable());
+  expect(a.getStore()).toBe(1); // current frame was derived before the delete
+  const derivedAfter = older.runInAsyncScope(() => b.run(2, () => a.getStore()));
+  expect(derivedAfter).toBe(undefined);
+  expect(await derivedBefore).toEqual([1, "x"]);
+  a.disable();
+  b.disable();
+});
+
 test("AsyncResource", () => {
   const resource = new AsyncResource("prisma-client-request");
   var called = false;

@@ -35,13 +35,26 @@ function sameValue(a, b) {
 }
 
 class Frame {
-  storage: AsyncLocalStorage | undefined; // undefined once disable() has exited it
-  value: unknown;
-  prev: Frame | undefined;
-  constructor(storage: AsyncLocalStorage, value: unknown, prev: Frame | undefined) {
+  readonly storage: AsyncLocalStorage;
+  readonly value: unknown;
+  readonly prev: Frame | undefined;
+  // Storages that disable() exited while this frame was current. A lookup that
+  // *starts* here (or at a frame later pushed on top, which inherits the mask)
+  // sees no binding for them; lookups that merely pass through from an older
+  // frame above are unaffected. This is Node deleting the key from the current
+  // frame object: holders of that exact frame and copies made from it later lose
+  // the binding, earlier copies keep it. Usually undefined.
+  masked: AsyncLocalStorage[] | undefined;
+  constructor(
+    storage: AsyncLocalStorage,
+    value: unknown,
+    prev: Frame | undefined,
+    masked: AsyncLocalStorage[] | undefined,
+  ) {
     this.storage = storage;
     this.value = value;
     this.prev = prev;
+    this.masked = masked;
   }
 }
 
@@ -49,10 +62,8 @@ class Frame {
 function assertValidFrame(frame: unknown): boolean {
   for (var f = frame, n = 0; f !== undefined; f = (f as Frame).prev, n++) {
     $assert(f instanceof Frame, "AsyncContextData must be a Frame chain or undefined, got", f);
-    $assert(
-      (f as Frame).storage === undefined || (f as Frame).storage instanceof AsyncLocalStorage,
-      "Frame.storage must be an AsyncLocalStorage",
-    );
+    $assert((f as Frame).storage instanceof AsyncLocalStorage, "Frame.storage must be an AsyncLocalStorage");
+    $assert((f as Frame).masked === undefined || $isJSArray((f as Frame).masked), "Frame.masked must be an array");
     $assert(n < 10000, "AsyncContextData chain is unreasonably long (cycle?)");
   }
   return true;
@@ -63,12 +74,12 @@ function debugFormatContextValue(frame: Frame | undefined) {
   if (frame === undefined) return "undefined";
   let str = "{";
   for (var f: Frame | undefined = frame; f !== undefined; f = f.prev) {
-    str += ` ${f.storage ? (f.storage as any).__id__ : "<exited>"}: ${typeof f.value};`;
+    str += ` ${(f.storage as any).__id__}: ${typeof f.value};`;
   }
   return str + " }";
 }
 
-// Bumped whenever disable() exits a frame in place, so run() can tell that the
+// Bumped whenever disable() masks a frame in place, so run() can tell that the
 // chain it installed changed under it even though its identity did not.
 let frameMutations = 0;
 
@@ -83,14 +94,31 @@ function set(frame: Frame | undefined) {
   return $putInternalField($asyncContext, 0, frame);
 }
 
-// `frame` without the exited bindings on top of it. Continuations that captured
-// an exited frame keep holding it; the slot need not.
-function live(frame: Frame | undefined): Frame | undefined {
-  while (frame !== undefined && frame.storage === undefined) frame = frame.prev;
-  return frame;
+function isMasked(frame: Frame | undefined, storage: AsyncLocalStorage): boolean {
+  if (frame === undefined || frame.masked === undefined) return false;
+  var masked = frame.masked;
+  for (var i = 0, n = masked.length; i < n; i++) {
+    if (masked[i] === storage) return true;
+  }
+  return false;
 }
 
-// The innermost frame binding `storage`, or undefined.
+function unmask(masked: AsyncLocalStorage[] | undefined, storage: AsyncLocalStorage): AsyncLocalStorage[] | undefined {
+  if (masked === undefined) return undefined;
+  var rest: AsyncLocalStorage[] = [];
+  for (var i = 0, n = masked.length; i < n; i++) {
+    if (masked[i] !== storage) $arrayPush(rest, masked[i]);
+  }
+  return rest.length === 0 ? undefined : rest.length === masked.length ? masked : rest;
+}
+
+// The binding of `storage` visible from `start`, or undefined.
+function lookup(start: Frame | undefined, storage: AsyncLocalStorage): Frame | undefined {
+  if (isMasked(start, storage)) return undefined;
+  return find(start, storage);
+}
+
+// The innermost frame binding `storage` at or below `frame`, ignoring masks.
 function find(frame: Frame | undefined, storage: AsyncLocalStorage): Frame | undefined {
   for (var f = frame; f !== undefined; f = f.prev) {
     if (f.storage === storage) return f;
@@ -98,8 +126,15 @@ function find(frame: Frame | undefined, storage: AsyncLocalStorage): Frame | und
   return undefined;
 }
 
+// A new binding on top of `head`; what was visible from `head` stays visible.
+function push(head: Frame | undefined, storage: AsyncLocalStorage, value: unknown): Frame {
+  return new Frame(storage, value, head, head === undefined ? undefined : unmask(head.masked, storage));
+}
+
 // `frame` with the innermost binding of `storage` removed. Frames above it are
 // copied (they may be shared with other captures); the tail below it is shared.
+// The view from the result is the view from `frame` minus that binding, masks
+// included.
 function without(frame: Frame | undefined, storage: AsyncLocalStorage): Frame | undefined {
   var found = find(frame, storage);
   if (found === undefined) return frame;
@@ -114,16 +149,30 @@ function withoutAll(frame: Frame | undefined, storage: AsyncLocalStorage): Frame
   return copyUntil(frame!, found, withoutAll(found.prev, storage));
 }
 
-// Copies [from, stop) onto tail, dropping bindings that disable() exited.
+// Copies [from, stop) onto tail, keeping the view from `from`: each copy keeps
+// its original's mask, and when `from` itself is cut out its mask moves onto
+// (a copy of) the new head.
 function copyUntil(from: Frame, stop: Frame, tail: Frame | undefined): Frame | undefined {
+  if (from === stop) {
+    if (from.masked === undefined || tail === undefined) return tail;
+    return new Frame(tail.storage, tail.value, tail.prev, mergeMasks(tail.masked, from.masked));
+  }
   var copied: Frame[] = [];
   for (var f = from; f !== stop; f = f.prev!) {
-    if (f.storage !== undefined) $arrayPush(copied, f);
+    $arrayPush(copied, f);
   }
   for (var i = copied.length - 1; i >= 0; i--) {
-    tail = new Frame(copied[i].storage!, copied[i].value, tail);
+    tail = new Frame(copied[i].storage, copied[i].value, tail, copied[i].masked);
   }
   return tail;
+}
+
+function mergeMasks(a: AsyncLocalStorage[] | undefined, b: AsyncLocalStorage[]): AsyncLocalStorage[] {
+  if (a === undefined) return b;
+  var merged: AsyncLocalStorage[] = [];
+  for (var i = 0, n = a.length; i < n; i++) $arrayPush(merged, a[i]);
+  for (var i = 0, n = b.length; i < n; i++) $arrayPush(merged, b[i]);
+  return merged;
 }
 
 // Node parity: dispose() is enterWith(previousStore), which on a fresh ALS
@@ -154,7 +203,6 @@ class RunScope {
 }
 
 class AsyncLocalStorage {
-  #disabled = false;
   #defaultValue = undefined;
   #name = undefined;
 
@@ -199,11 +247,9 @@ class AsyncLocalStorage {
   }
 
   enterWith(store) {
-    // we must renable it when asyncLocalStorage.enterWith() is called https://nodejs.org/api/async_context.html#asynclocalstoragedisable
-    this.#disabled = false;
     // Replace rather than shadow an existing binding so repeated enterWith() calls
     // keep the chain bounded by the number of storages.
-    set(new Frame(this, store, without(live(get()), this)));
+    set(push(without(get(), this), this, store));
     $assert(sameValue(this.getStore(), store));
   }
 
@@ -214,23 +260,17 @@ class AsyncLocalStorage {
   run(store_value, callback, ...args) {
     $debug("run " + (this as any).__id__);
     var prior = get();
-    var before = find(prior, this);
-    var hadBefore = before !== undefined;
-    var beforeValue = hadBefore ? before!.value : undefined;
+    var before = lookup(prior, this);
+    var beforeValue = before !== undefined ? before.value : this.#defaultValue;
     // Node short-circuits when the value is unchanged: no enterWith, no
     // finally-restore. Observable when the callback calls enterWith() —
     // the new value survives past run() (verified against Node v22/v26).
-    // Not while disabled: getStore() masks the frame with #defaultValue then,
-    // so a match here would skip installing store_value and let the callback
-    // read the unmasked frame value instead.
-    if (!this.#disabled && sameValue(hadBefore ? beforeValue : this.#defaultValue, store_value)) {
+    if (sameValue(beforeValue, store_value)) {
       return callback.$apply(undefined, args);
     }
-    // we must renable it when asyncLocalStorage.run() is called https://nodejs.org/api/async_context.html#asynclocalstoragedisable
-    this.#disabled = false;
     var mutations = frameMutations;
     // Shadows any outer binding of this storage: lookups stop at the innermost.
-    var frame = new Frame(this, store_value, prior);
+    var frame = push(prior, this, store_value);
     set(frame);
     try {
       // $apply, not a spread: spreading goes through Array.prototype[Symbol.iterator],
@@ -241,43 +281,33 @@ class AsyncLocalStorage {
         set(prior);
       } else {
         // enterWith()/disable() ran inside the callback. Node's finally is
-        // enterWith(prior value): keep whatever else the callback installed and
-        // restore only this storage's binding as it was on entry (disable() may
-        // have exited the prior frame itself since), re-enabling the storage.
-        // Frames may have been copied (enterWith() of a storage bound further
-        // down copies everything above it), so go by value, not identity: drop
-        // every binding of this storage and put the prior one back on top.
-        // Enclosing run()s of the same storage restore their own value likewise.
-        this.#disabled = false;
-        var current = withoutAll(live(get()), this);
-        set(hadBefore ? new Frame(this, beforeValue, current) : current);
+        // enterWith(prior store): keep whatever else the callback installed and
+        // rebind this storage to what getStore() returned on entry. Frames may
+        // have been copied since (enterWith() of a storage bound further down
+        // copies everything above it), so go by value, not identity: drop every
+        // binding of this storage and put the prior one back on top. Enclosing
+        // run()s of the same storage restore their own value likewise.
+        set(push(withoutAll(get(), this), this, beforeValue));
       }
-      $assert(
-        sameValue(this.getStore(), hadBefore ? beforeValue : this.#defaultValue),
-        "run: previous value was not restored",
-      );
+      $assert(sameValue(this.getStore(), beforeValue), "run: previous value was not restored");
     }
   }
 
   disable() {
     $debug("disable " + (this as any).__id__);
-    if (this.#disabled) return;
-    this.#disabled = true;
-    // Node deletes the key from the current frame object, so continuations that
-    // captured the current frame lose the binding while older captures keep it.
-    // The innermost Frame is what those continuations hold: exit its own
-    // binding in place and unlink any deeper ones from it, leaving the shared
-    // tail untouched for everyone else.
+    // Node deletes the key from the current frame object: continuations holding
+    // that exact frame (and frames later pushed onto it) lose the binding, older
+    // ones keep it. Mask it on the current frame rather than unlinking shared
+    // nodes; see Frame.masked.
     var top = get();
-    if (top === undefined) return;
-    var below = withoutAll(top.prev, this);
-    if (top.storage !== this && below === top.prev) return;
-    if (top.storage === this) {
-      top.storage = undefined;
-      top.value = undefined;
+    if (top !== undefined && lookup(top, this) !== undefined) {
+      var masked: AsyncLocalStorage[] = [this];
+      if (top.masked !== undefined) {
+        for (var i = 0, n = top.masked.length; i < n; i++) $arrayPush(masked, top.masked[i]);
+      }
+      top.masked = masked;
+      frameMutations++;
     }
-    top.prev = below;
-    frameMutations++;
   }
 
   get name() {
@@ -286,11 +316,9 @@ class AsyncLocalStorage {
 
   getStore() {
     $debug("getStore " + (this as any).__id__);
-    // Node v26: both ALS impls return #defaultValue after disable() — the
-    // frame impl has no disabled flag; the legacy impl's not-enabled branch
-    // is `return this.#defaultValue`.
-    if (this.#disabled) return this.#defaultValue;
-    for (var f = get(); f !== undefined; f = f.prev) {
+    var start = get();
+    if (start === undefined || (start.masked !== undefined && isMasked(start, this))) return this.#defaultValue;
+    for (var f: Frame | undefined = start; f !== undefined; f = f.prev) {
       if (f.storage === this) return f.value;
     }
     return this.#defaultValue;

@@ -396,7 +396,7 @@ test.concurrent.each([
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [err, code] = await Promise.all([update.stderr.text(), update.exited]);
+  const [, err, code] = await Promise.all([update.stdout.text(), update.stderr.text(), update.exited]);
   expect(err).not.toContain("error:");
   expect(code).toBe(0);
   expect(await file(join(packageDir, "node_modules", "aliased", "package.json")).json()).toEqual({

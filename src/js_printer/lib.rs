@@ -1366,6 +1366,9 @@ pub struct Options<'a> {
     /// Borrowed from `LinkerGraph.import_member_bindings`: `X.name` property
     /// reads the linker bound straight to an export (see `E::Dot::is_import_property_use`).
     pub import_member_bindings: Option<&'a js_ast::ast_result::ImportMemberBindings>,
+    /// Some `import()` / `require()` in this file reads through import items,
+    /// so a pattern may bind one (see `Symbol::is_bound_import_item`).
+    pub has_dynamic_import_items: bool,
 
     // If we're writing out a source map, this table of line start indices lets
     // us do binary search on to figure out what line a given AST node came from
@@ -1428,6 +1431,7 @@ impl<'a> Default for Options<'a> {
             module_type: bundle_opts::Format::Esm,
             ts_enums: None,
             import_member_bindings: None,
+            has_dynamic_import_items: false,
             line_offset_tables: None,
             mangled_props: None,
         }
@@ -2275,7 +2279,10 @@ pub(crate) mod __gated_printer {
                         let symbols = self.renamer.symbols();
                         let target_ref = symbols.follow(target_id.ref_);
 
-                        if !self.is_stable_destructuring_target(*target_id, target_ref) {
+                        if !self.is_stable_destructuring_target(*target_id, target_ref)
+                            // A local bound like an import: its reads print as exports.
+                            || self.import_ref(target_e_dot.target).is_some()
+                        {
                             break 'brk;
                         }
 
@@ -2757,6 +2764,9 @@ pub(crate) mod __gated_printer {
 
                 // Wrap this with a call to "__toESM()" if this is a CommonJS file
                 let wrap_with_to_esm = record.flags.contains(ImportRecordFlags::WRAP_WITH_TO_ESM);
+                // The linker bound every name read off the result, so the
+                // namespace object may not exist: the result is `{}`.
+                let namespace_unused = record.flags.contains(ImportRecordFlags::NAMESPACE_UNUSED);
 
                 // Internal "import()" of async ESM
                 if record.kind == ImportKind::Dynamic && meta.is_wrapper_async {
@@ -2766,13 +2776,17 @@ pub(crate) mod __gated_printer {
                     if meta.exports_ref.is_valid() {
                         let _ = self.print_dot_then_prefix();
                         self.print_space_before_identifier();
-                        if wrap_with_to_esm {
-                            self.print_symbol(self.options.to_esm_ref);
-                            self.print(b"(");
-                        }
-                        self.print_symbol(meta.exports_ref);
-                        if wrap_with_to_esm {
-                            self.print_to_esm_suffix();
+                        if namespace_unused {
+                            self.print(b"({})");
+                        } else {
+                            if wrap_with_to_esm {
+                                self.print_symbol(self.options.to_esm_ref);
+                                self.print(b"(");
+                            }
+                            self.print_symbol(meta.exports_ref);
+                            if wrap_with_to_esm {
+                                self.print_to_esm_suffix();
+                            }
                         }
                         self.print_dot_then_suffix();
                     }
@@ -2832,7 +2846,15 @@ pub(crate) mod __gated_printer {
                     }
 
                     // Return the namespace object if this is an ESM file
-                    if meta.exports_ref.is_valid() {
+                    if meta.exports_ref.is_valid() && namespace_unused {
+                        // Without `init_x(), ` before it, `{}` could start an
+                        // arrow body or a statement.
+                        self.print(if meta.wrapper_ref.is_valid() {
+                            b"{}".as_slice()
+                        } else {
+                            b"({})".as_slice()
+                        });
+                    } else if meta.exports_ref.is_valid() {
                         // Wrap this with a call to "__toCommonJS()" if this is an ESM file
                         let wrap_with_to_cjs = record
                             .flags
@@ -5159,16 +5181,32 @@ pub(crate) mod __gated_printer {
                 BindingData::BObject(b) => {
                     let b = b.get();
                     let properties = slice_of(b.properties);
+                    // A local the linker bound to an export (`const { a } =
+                    // await import(…)`) is that export, so it is not declared.
+                    let is_bound = |printer: &Self, property: &B::Property| {
+                        printer.options.has_dynamic_import_items
+                            && matches!(&property.value.data, BindingData::BIdentifier(id)
+                                if printer.symbols().get_const(id.get().r#ref)
+                                    .is_some_and(|symbol| symbol.is_bound_import_item()))
+                    };
                     self.print(b"{");
-                    if !properties.is_empty() {
+                    if !properties.is_empty()
+                        && (!self.options.has_dynamic_import_items
+                            || properties.iter().any(|property| !is_bound(self, property)))
+                    {
                         if !b.is_single_line {
                             self.indent();
                         }
 
-                        for (i, property) in properties.iter().enumerate() {
-                            if i != 0 {
+                        let mut printed = 0usize;
+                        for property in properties.iter() {
+                            if is_bound(self, property) {
+                                continue;
+                            }
+                            if printed != 0 {
                                 self.print(b",");
                             }
+                            printed += 1;
 
                             if b.is_single_line {
                                 self.print_space();
@@ -5755,10 +5793,33 @@ pub(crate) mod __gated_printer {
                     }
                 }
                 StmtData::SLocal(s) => {
-                    self.print_indent();
-                    self.print_space_before_identifier();
-                    self.add_source_mapping(stmt.loc);
-                    self.print_decl_stmt(s.is_export, s.kind, s.decls.slice());
+                    // `const { a } = await import(…)` whose names are all bound
+                    // to exports declares nothing: only the load is left. The
+                    // other declarators keep their order around it.
+                    let decls = s.decls.slice();
+                    let mut run_start = 0;
+                    if self.options.has_dynamic_import_items && !s.is_export {
+                        for (i, decl) in decls.iter().enumerate() {
+                            if !self.binds_only_bound_imports(decl) {
+                                continue;
+                            }
+                            if run_start < i {
+                                self.print_local_stmt(
+                                    stmt.loc,
+                                    false,
+                                    s.kind,
+                                    &decls[run_start..i],
+                                );
+                            }
+                            run_start = i + 1;
+                            if let Some(value) = decl.value {
+                                self.print_unused_load(stmt.loc, value);
+                            }
+                        }
+                    }
+                    if run_start == 0 || run_start < decls.len() {
+                        self.print_local_stmt(stmt.loc, s.is_export, s.kind, &decls[run_start..]);
+                    }
                 }
                 StmtData::SIf(s) => {
                     self.print_indent();
@@ -6578,17 +6639,91 @@ pub(crate) mod __gated_printer {
             }
         }
 
+        /// A declarator whose pattern binds only names the linker bound to
+        /// exports, so it declares nothing.
+        fn binds_only_bound_imports(&self, decl: &G::Decl) -> bool {
+            let BindingData::BObject(object) = &decl.binding.data else {
+                return false;
+            };
+            let properties = slice_of(object.get().properties);
+            !properties.is_empty()
+                && properties.iter().all(|property| {
+                    matches!(&property.value.data, BindingData::BIdentifier(id)
+                        if self.symbols().get_const(id.get().r#ref)
+                            .is_some_and(|symbol| symbol.is_bound_import_item()))
+                })
+        }
+
+        fn print_local_stmt(
+            &mut self,
+            loc: bun_ast::Loc,
+            is_export: bool,
+            kind: S::Kind,
+            decls: &[G::Decl],
+        ) {
+            self.print_semicolon_if_needed();
+            self.print_indent();
+            self.print_space_before_identifier();
+            self.add_source_mapping(loc);
+            self.print_decl_stmt(is_export, kind, decls);
+        }
+
+        /// The initializer of such a declarator, as a statement. Its value is
+        /// `{}`, so an `await` of it is unused too.
+        fn print_unused_load(&mut self, loc: bun_ast::Loc, value: Expr) {
+            if matches!(value.data, ExprData::EIdentifier(_)) {
+                return;
+            }
+            self.print_semicolon_if_needed();
+            if !self.options.minify_whitespace && self.options.indent.count > 0 {
+                self.print_indent();
+            }
+            self.stmt_start = self.writer.written();
+            self.add_source_mapping(loc);
+            if let ExprData::EAwait(e) = value.data {
+                self.print_space_before_identifier();
+                self.print(b"await");
+                self.print_space();
+                self.print_expr(
+                    e.value,
+                    Level::Prefix.sub(1),
+                    ExprFlag::expr_result_is_unused(),
+                );
+            } else {
+                self.print_expr(value, Level::Lowest, ExprFlag::expr_result_is_unused());
+            }
+            self.print_semicolon_after_statement();
+        }
+
+        /// The import `target` names: an import identifier, or a local a
+        /// pattern binds that the linker bound like one (`const { X } = await
+        /// import(…)`).
+        #[inline]
+        fn import_ref(&self, target: Expr) -> Option<Ref> {
+            match &target.data {
+                ExprData::EImportIdentifier(id) => Some(id.ref_),
+                ExprData::EIdentifier(id)
+                    if self.options.has_dynamic_import_items
+                        && self
+                            .symbols()
+                            .get_const(id.ref_)
+                            .is_some_and(|symbol| symbol.is_bound_import_item()) =>
+                {
+                    Some(id.ref_)
+                }
+                _ => None,
+            }
+        }
+
         /// `X.name` where the linker bound the access straight to an export
         /// (`LinkerGraph::import_member_bindings`): the import identifier to
         /// print in its place.
         fn import_member_binding(&self, target: Expr, name: &[u8]) -> Option<Expr> {
-            let ExprData::EImportIdentifier(id) = &target.data else {
-                return None;
-            };
+            let import_ref = self.import_ref(target)?;
             let binding = *self
                 .options
                 .import_member_bindings?
-                .get(&id.ref_)?
+                .get(&import_ref)?
                 .get(name)?;
             Some(Expr::init(
                 E::ImportIdentifier::new(binding, false),
@@ -6601,8 +6736,9 @@ pub(crate) mod __gated_printer {
             target: Expr,
             name: &[u8],
         ) -> Option<js_ast::InlinedEnumValueDecoded> {
-            if let ExprData::EImportIdentifier(id) = &target.data {
-                let ref_ = self.symbols().follow(id.ref_);
+            let base = self.import_ref(target)?;
+            {
+                let ref_ = self.symbols().follow(base);
                 if let Some(symbol) = self.symbols().get_const(ref_) {
                     if symbol.kind == js_ast::symbol::Kind::TsEnum {
                         if let Some(enum_value) = self.options.ts_enums.and_then(|m| m.get(&ref_)) {

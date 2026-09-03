@@ -600,8 +600,10 @@ impl PublishCommand {
                 }
             };
 
-            if let Err(err) = Self::publish::<false>(&context) {
-                err.report_and_crash();
+            match Self::publish::<false>(&context) {
+                Ok(Published::Yes) => {}
+                Ok(Published::AlreadyOnRegistry) => return Ok(()),
+                Err(err) => err.report_and_crash(),
             }
 
             bun_core::prettyln!(
@@ -638,8 +640,10 @@ impl PublishCommand {
         // TODO: read this into memory
         let _ = bun_sys::unlink(&context.abs_tarball_path);
 
-        if let Err(err) = Self::publish::<true>(&context) {
-            err.report_and_crash();
+        match Self::publish::<true>(&context) {
+            Ok(Published::Yes) => {}
+            Ok(Published::AlreadyOnRegistry) => return Ok(()),
+            Err(err) => err.report_and_crash(),
         }
 
         Self::finish_directory_publish(context, &abs_pkg_json)

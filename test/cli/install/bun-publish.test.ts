@@ -1384,6 +1384,7 @@ describe("--tolerate-republish", async () => {
     const pkgJson = {
       name: "republish-test-2",
       version: "1.0.0",
+      scripts: { postpublish: "echo postpublish ran" },
     };
 
     await Promise.all([
@@ -1396,12 +1397,14 @@ describe("--tolerate-republish", async () => {
     let { out, err, exitCode } = await publish(env, packageDir);
     expect(exitCode).toBe(0);
     expect(out).toContain("+ republish-test-2@1.0.0");
+    expect(out).toContain("postpublish ran");
 
-    // Second publish with --tolerate-republish should skip
+    // Second publish with --tolerate-republish should skip: no success line, no publish scripts
     ({ out, err, exitCode } = await publish(env, packageDir, "--tolerate-republish"));
     expect(exitCode).toBe(0);
     expect(err).toBe("warn: Registry already knows about version 1.0.0; skipping.\n");
-    expect(err).not.toContain("error:");
+    expect(out).not.toContain("+ republish-test-2@1.0.0");
+    expect(out).not.toContain("postpublish ran");
   });
 
   test("republishing tarball with --tolerate-republish skips when version exists", async () => {
@@ -1430,7 +1433,7 @@ describe("--tolerate-republish", async () => {
     ({ out, err, exitCode } = await publish(env, packageDir, "./republish-test-3-1.0.0.tgz", "--tolerate-republish"));
     expect(exitCode).toBe(0);
     expect(err).toBe("warn: Registry already knows about version 1.0.0; skipping.\n");
-    expect(err).not.toContain("error:");
+    expect(out).not.toContain("+ republish-test-3@1.0.0");
   });
 });
 

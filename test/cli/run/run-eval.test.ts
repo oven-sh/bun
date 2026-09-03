@@ -1,7 +1,7 @@
 import { SyncSubprocess } from "bun";
 import { describe, expect, test } from "bun:test";
-import { rmSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isWindows, tempDir, tmpdirSync } from "harness";
+import { readdirSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { bunEnv, bunExe, isLinux, isWindows, tempDir, tmpdirSync } from "harness";
 import { tmpdir } from "os";
 import { join, sep } from "path";
 
@@ -347,4 +347,36 @@ test("uncaught error from a CommonJS-sniffed stdin entry reports and exits 1", a
   expect(stderr).toContain("stdin-cjs-uncaught");
   expect(stdout).toBe("");
   expect(exitCode).toBe(1);
+});
+
+// JSC starts its MarkedBlock warm-up thread after 64 block requests. A script
+// that only waits on stdin asks for about 27, for `-e` and for a file alike, so
+// it must run without that thread. The child prints "ready" once it has started,
+// and the test reads the child's thread names from /proc, so this is Linux only.
+test.if(isLinux)("a script that allocates little does not start the JSC warm-up thread", async () => {
+  const waitForStdin = `console.log("ready"); await Bun.stdin.text();`;
+  using dir = tempDir("warmup-thread", { "wait.js": waitForStdin });
+
+  const threadNames = async (cmd: string[]) => {
+    await using proc = Bun.spawn({ cmd, cwd: String(dir), env: bunEnv, stdin: "pipe", stdout: "pipe", stderr: "pipe" });
+    const reader = proc.stdout.getReader();
+    const first = await reader.read();
+    const names = readdirSync(`/proc/${proc.pid}/task`).map(tid =>
+      readFileSync(`/proc/${proc.pid}/task/${tid}/comm`, "utf8").trim(),
+    );
+    proc.stdin.end();
+    reader.releaseLock();
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(new TextDecoder().decode(first.value)).toBe("ready\n");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    return names;
+  };
+
+  const [evalThreads, fileThreads] = await Promise.all([
+    threadNames([bunExe(), "-e", waitForStdin]),
+    threadNames([bunExe(), "wait.js"]),
+  ]);
+  expect(evalThreads).not.toContain("JSCWarmUp");
+  expect(fileThreads).not.toContain("JSCWarmUp");
 });

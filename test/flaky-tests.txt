@@ -62,6 +62,7 @@ test/js/bun/http/proxy-stress-concurrent.test.ts  # 1 of 80 builds; mac
 test/js/bun/http/proxy.test.js  # 3 of 80 builds; parallel batch; should use proxy when NO_PROXY has different port: expect(received).toBe(expected) (in...
 test/js/bun/http/proxy.test.ts  # 1 of 80 builds; parallel batch; https target (CONNECT): expect(received).toBe(expected)
 test/js/bun/http/request-smuggling.test.ts  # 3 of 80 builds; mac
+test/js/bun/http/serve-error-handler-stream.test.ts  # async reject -> error() async-iterator body completes (Connection: close): status 404, len 43 (build 109693, darwin x64). The fixture never answers 404, so another server did. It binds the wildcard and dials 127.0.0.1 (see #37141)
 test/js/bun/http/serve-http2-lifecycle.test.ts  # stop with a stream open on each: test timed out (17 of the last 20 failures), HTTP3HandshakeFailed (2 of 20); PING frames do not keep a connection alive: no GOAWAY before the close (1 of 20)
 test/js/bun/http/serve-http2.test.ts  # 4 of 80 builds; parallel batch; 2 MB request body streamed to the handler (WINDOW_UPDATE path): expect(received).toBe(...
 test/js/bun/http/serve-http3.test.ts  # 3 of 80 builds; mac, windows

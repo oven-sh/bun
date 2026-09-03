@@ -160,14 +160,17 @@ export function registerCodegenRules(n: Ninja, cfg: Config): void {
 
   // `--root-package-manager=npm` installs the root package.json with npm.
   // npm cannot read bun.lock, so the versions come from the package.json
-  // ranges. On Windows, npm is a batch file, and `call` returns to this line.
+  // ranges. The rule deletes node_modules first, as `npm ci` does: npm fails
+  // on the symlinks that `bun install` writes (it reads each linked package's
+  // devDependencies). On Windows, npm is a batch file, and `call` returns to
+  // this line.
   if (cfg.npm !== undefined) {
     const npm = q(cfg.npm);
     const args = "install --no-save --no-package-lock --include=dev --no-audit --no-fund";
     n.rule("npm_install", {
       command: hostWin
-        ? `cmd /c "cd /d $dir && call ${npm} ${args} && ${touch} $stamp"`
-        : `cd $dir && ${npm} ${args} && ${touch} $stamp`,
+        ? `cmd /c "cd /d $dir && (if exist node_modules rmdir /s /q node_modules) & call ${npm} ${args} && ${touch} $stamp"`
+        : `cd $dir && rm -rf node_modules && ${npm} ${args} && ${touch} $stamp`,
       description: "npm install $dir",
       restat: true,
       pool: "bun_install",

@@ -3007,7 +3007,6 @@ it("http2 session.altsvc() sends an object origin unchanged, like Node", async (
   const { promise, resolve, reject } = Promise.withResolvers();
   const received = [];
   const outcomes = [];
-  let sent = 0;
 
   const server = http2.createServer();
   server.on("session", session => {
@@ -3023,7 +3022,6 @@ it("http2 session.altsvc() sends an object origin unchanged, like Node", async (
       try {
         session.altsvc('h2=":8000"', originOrStream);
         outcomes.push("SENT");
-        sent++;
       } catch (err) {
         outcomes.push(err.code);
       }

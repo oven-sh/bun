@@ -342,7 +342,7 @@ describe.concurrent("require.cache", () => {
       },
       // TODO: Investigate why this is so slow on Windows
       // OHOS: the --smol spawn under the test runner takes >30s.
-      isWindows || Bun.env.BUN_OHOS === "1" ? 60000 : 30000,
+      isWindows || isASAN || Bun.env.BUN_OHOS === "1" ? 60000 : 30000,
     );
   });
 });

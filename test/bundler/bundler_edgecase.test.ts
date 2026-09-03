@@ -1317,7 +1317,7 @@ describe("bundler", () => {
     snapshotSourceMap: {
       "entry.js.map": {
         files: ["../node_modules/react/index.js", "../entry.js"],
-        mappingsExactMatch: "2lBACA,WAAW,IAAQ,EAAE,ICDrB,aACA,QAAQ,IAAI,CAAK",
+        mappingsExactMatch: "inBACA,WAAW,IAAQ,EAAE,ICDrB,aACA,QAAQ,IAAI,CAAK",
       },
     },
   });
@@ -2860,6 +2860,32 @@ describe("bundler", () => {
       expect(out).not.toMatch(/function ZI\(\w+, e3,/);
     },
   });
+  // A module wrapped in `__esm` has its top-level declarations hoisted outside
+  // the closure. A destructuring pattern runs code on its value (a getter
+  // here), so the pattern must run when the module is first evaluated, not
+  // when the bundle loads. This holds for an unused pattern and for an
+  // exported one, and for a module that holds nothing else.
+  itBundled("edgecase/EsmWrapDestructuringRunsOnInit", {
+    files: {
+      "/lazy.js": `
+        const { x } = class { static get x() { console.log("EFFECT1"); return 1 } };
+        export const y = 2;
+      `,
+      "/lazy2.js": `
+        export const { z } = class { static get z() { console.log("EFFECT2"); return 3 } };
+      `,
+      "/entry.js": `
+        console.log("before");
+        const a = await import("./lazy.js");
+        console.log(a.y);
+        const b = await import("./lazy2.js");
+        console.log(b.z);
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    target: "bun",
+    run: { stdout: "before\nEFFECT1\n2\nEFFECT2\n3" },
+  });
   // https://github.com/oven-sh/bun/issues/30269
   // Same bug for a nested `let` binding instead of a function parameter.
   itBundled("identifiers/NestedLocalDoesNotShadowLaterHoistedFunction", {
@@ -3599,6 +3625,115 @@ describe("bundler", () => {
     onAfterBundle(api) {
       api.expectFile("/out.js").toContain("var arguments = 1;");
     },
+  });
+
+  // Without code splitting, each entry point gets its own output file, even when
+  // entry points import each other. Each file runs its modules in the order that
+  // its own entry point imports them, so it prints what the unbundled entry prints.
+  itBundled("edgecase/EntryPointsImportEachOther", {
+    files: {
+      "/a.ts": /* ts */ `
+        import { b } from "./b.ts";
+        export function a() { return "a"; }
+        console.log("a runs, b() is", b());
+      `,
+      "/b.ts": /* ts */ `
+        import { a } from "./a.ts";
+        export function b() { return "b"; }
+        console.log("b runs, a() is", a());
+      `,
+    },
+    entryPoints: ["/a.ts", "/b.ts"],
+    outdir: "/out",
+    run: [
+      { file: "/out/a.js", stdout: "b runs, a() is a\na runs, b() is b" },
+      { file: "/out/b.js", stdout: "a runs, b() is b\nb runs, a() is a" },
+    ],
+  });
+  itBundled("edgecase/EntryPointImportsEntryPointModuleOrder", {
+    files: {
+      "/a.ts": `import "./c.ts"; import "./b.ts"; console.log("a");`,
+      "/b.ts": `import "./d.ts"; console.log("b");`,
+      "/c.ts": `console.log("c");`,
+      "/d.ts": `console.log("d");`,
+    },
+    entryPoints: ["/a.ts", "/b.ts"],
+    outdir: "/out",
+    run: [
+      { file: "/out/a.js", stdout: "c\nd\nb\na" },
+      { file: "/out/b.js", stdout: "d\nb" },
+    ],
+  });
+  itBundled("edgecase/CSSEntryPointsImportEachOther", {
+    files: {
+      "/a.css": `@import "./b.css"; .a { color: red }`,
+      "/b.css": `@import "./a.css"; .b { color: blue }`,
+    },
+    entryPoints: ["/a.css", "/b.css"],
+    outdir: "/out",
+    minifyWhitespace: true,
+    onAfterBundle(api) {
+      api.expectFile("/out/a.css").toEqualIgnoringWhitespace(".b{color:#00f}.a{color:red}");
+      api.expectFile("/out/b.css").toEqualIgnoringWhitespace(".a{color:red}.b{color:#00f}");
+    },
+  });
+  // With --format=cjs, the module.exports of each output holds the exports of its
+  // own entry point, also when the file of another entry point prints in it.
+  itBundled("edgecase/EntryPointsImportEachOtherCommonJS", {
+    files: {
+      "/a.ts": `import { b } from "./b.ts"; export function a() { return b(); }`,
+      "/b.ts": `import { a } from "./a.ts"; export function b() { return "b"; } export const useA = () => a;`,
+    },
+    runtimeFiles: {
+      "/check.js": `console.log(JSON.stringify([require("./out/a.js"), require("./out/b.js")].map(Object.keys)));`,
+    },
+    entryPoints: ["/a.ts", "/b.ts"],
+    outdir: "/out",
+    format: "cjs",
+    run: { file: "/check.js", stdout: `[["a"],["b","useA"]]` },
+  });
+  itBundled("edgecase/EntryPointImportsEntryPointCommonJS", {
+    files: {
+      "/index.ts": `import { x } from "./lib.ts"; export const y = x + 1;`,
+      "/lib.ts": `export * from "ext"; export const x = 1;`,
+    },
+    runtimeFiles: {
+      "/node_modules/ext/index.js": `module.exports = { fromExt: true };`,
+      "/check.js": `console.log(JSON.stringify([require("./out/index.js"), require("./out/lib.js")]));`,
+    },
+    entryPoints: ["/index.ts", "/lib.ts"],
+    outdir: "/out",
+    external: ["ext"],
+    target: "node",
+    format: "cjs",
+    run: { file: "/check.js", stdout: `[{"y":2},{"x":1,"fromExt":true}]` },
+  });
+  // A file that something require()s gets an ESM wrapper. When all of its
+  // top-level statements hoist, the wrapper is empty and is not printed, so the
+  // output of that entry point has no wrapper to call.
+  itBundled("edgecase/EntryPointRequiredByEntryPointCommonJS", {
+    files: {
+      "/a.ts": `const b = require("./b.ts"); export const fromA = b.x;`,
+      "/b.ts": `export const x = 1; export const y = 2;`,
+    },
+    runtimeFiles: {
+      "/check.js": `console.log(JSON.stringify([require("./out/a.js"), require("./out/b.js")]));`,
+    },
+    entryPoints: ["/a.ts", "/b.ts"],
+    outdir: "/out",
+    format: "cjs",
+    run: { file: "/check.js", stdout: `[{"fromA":1},{"x":1,"y":2}]` },
+  });
+  itBundled("edgecase/RequiredEntryPointWithoutWrapperCommonJS", {
+    files: {
+      "/entry.ts": `export function load() { return require("./c.ts"); } export const x = 1;`,
+      "/c.ts": `module.exports = require("./entry.ts");`,
+    },
+    runtimeFiles: {
+      "/check.js": `const m = require("./out.js"); console.log(JSON.stringify(m), m.load() === m);`,
+    },
+    format: "cjs",
+    run: { file: "/check.js", stdout: `{"x":1} true` },
   });
 });
 

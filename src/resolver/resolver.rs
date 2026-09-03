@@ -1520,11 +1520,21 @@ impl<'a> Resolver<'a> {
 
         let mut iter = result.path_pair.iter();
         let mut module_type = result.module_type;
+        let mut is_primary = true;
         while let Some(path) = iter.next() {
             let name = path.name();
+            let primary = core::mem::take(&mut is_primary);
             let Ok(Some(dir)) = self.read_dir_info(name.dir) else {
                 continue;
             };
+
+            // Node reads "type" from the nearest package.json, named or not.
+            if primary && !kind.is_from_css() && module_type == options::ModuleType::Unknown {
+                if let Some(pkg) = dir.package_json_for_module_type {
+                    module_type = pkg.module_type;
+                }
+            }
+
             let mut needs_side_effects = true;
             if let Some(existing) = Result::deref_package_json(result.package_json) {
                 // if we don't have it here, they might put it in a sideEfffects
@@ -1662,12 +1672,6 @@ impl<'a> Resolver<'a> {
 
                     path.set_realpath(symlink);
                 }
-            }
-        }
-
-        if !kind.is_from_css() && module_type == options::ModuleType::Unknown {
-            if let Some(pkg) = result.package_json_ref() {
-                module_type = pkg.module_type;
             }
         }
 
@@ -6396,6 +6400,10 @@ impl<'a> Resolver<'a> {
                 }
             }
         }
+
+        info.package_json_for_module_type = info
+            .package_json()
+            .or_else(|| parent.and_then(|parent_| parent_.package_json_for_module_type));
 
         // Record if this directory has a tsconfig.json or jsconfig.json file
         if self.opts.load_tsconfig_json {

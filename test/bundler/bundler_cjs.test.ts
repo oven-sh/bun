@@ -12,8 +12,10 @@ import { itBundled } from "./expectBundled";
 //   Node. `__esModule` is ignored.
 // - Every other importer (`.js`, `.ts`, no package.json `"type"`, or
 //   `"type": "commonjs"`): isNodeMode=0. When `module.exports.__esModule` is
-//   truthy, the default import is `module.exports.default`. Otherwise it is
-//   the whole `module.exports`. This matches `bun run` and esbuild.
+//   truthy and `module.exports` has its own `default` property, the default
+//   import is `module.exports.default`. Otherwise it is the whole
+//   `module.exports`. This matches `bun run`. esbuild matches it too, except
+//   that it gives `undefined` when the `default` property is missing.
 //
 // A bare `require()` never goes through `__toESM`.
 
@@ -667,8 +669,6 @@ describe("bundler", () => {
   });
 
   // Test 32: package.json "type": "module" makes a `.ts` importer ESM.
-  // The resolver reads "type" from the enclosing package.json, and it only
-  // treats a package.json with a "name" as enclosing.
   itBundled("cjs/__toESM_type_module_importer_node_mode", {
     files: {
       "/entry.ts": logDefaultAndNamed,
@@ -925,6 +925,314 @@ describe("bundler", () => {
     },
     run: {
       stdout: "object",
+    },
+  });
+
+  // ============================================================================
+  // A module that sets `__esModule` and has no own `default` property.
+  // TypeScript and Babel emit this shape for a file with only named exports
+  // (rxjs, redis, mobx). `bun run` and Node give the whole `module.exports` as
+  // the default import. The bundle gives the same, for every importer.
+  // ============================================================================
+
+  const namedOnlyFiles = {
+    "/node_modules/named-only/package.json": `{ "name": "named-only", "main": "index.js" }`,
+    "/node_modules/named-only/index.js": /* js */ `
+      "use strict";
+      Object.defineProperty(exports, "__esModule", { value: true });
+      exports.named = 1;
+    `,
+  };
+  // `bun run` prints "object true true true 1" for this file.
+  const logNamedOnly = /* js */ `
+    import d, * as ns from "named-only";
+    import { named } from "named-only";
+    const m = await import("named-only");
+    console.log(typeof d, d === require("named-only"), ns.default === d, m.default === d, named);
+  `;
+
+  // Test 46: a `.js` importer
+  itBundled("cjs/__toESM_esModule_without_default_js_importer", {
+    files: {
+      "/entry.js": logNamedOnly,
+      ...namedOnlyFiles,
+    },
+    run: {
+      stdout: "object true true true 1",
+    },
+  });
+
+  // Test 47: a `.ts` importer with target=node
+  itBundled("cjs/__toESM_esModule_without_default_ts_importer_target_node", {
+    files: {
+      "/entry.ts": logNamedOnly,
+      ...namedOnlyFiles,
+    },
+    target: "node",
+    run: {
+      stdout: "object true true true 1",
+    },
+  });
+
+  // Test 48: a `.mjs` importer uses Node's interop and gets the same value
+  itBundled("cjs/__toESM_esModule_without_default_mjs_importer", {
+    files: {
+      "/entry.mjs": logNamedOnly,
+      ...namedOnlyFiles,
+    },
+    run: {
+      stdout: "object true true true 1",
+    },
+  });
+
+  // Test 49: an external dependency in CJS output, `.ts` importer
+  itBundled("cjs/__toESM_esModule_without_default_external_require", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import d, { named } from "named-only";
+        console.log(typeof d, d === require("named-only"), named);
+      `,
+    },
+    runtimeFiles: namedOnlyFiles,
+    external: ["named-only"],
+    target: "node",
+    format: "cjs",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain('__toESM(require("named-only"))');
+    },
+    run: {
+      stdout: "object true 1",
+    },
+  });
+
+  // Test 50: a `.js` importer under package.json "type": "commonjs"
+  itBundled("cjs/__toESM_esModule_without_default_type_commonjs_importer", {
+    files: {
+      "/entry.js": logNamedOnly,
+      "/package.json": `{ "name": "app", "type": "commonjs" }`,
+      ...namedOnlyFiles,
+    },
+    run: {
+      stdout: "object true true true 1",
+    },
+  });
+
+  // Test 51: a dynamic import with no static import of the module
+  itBundled("cjs/__toESM_esModule_without_default_dynamic_import_only", {
+    files: {
+      "/entry.ts": /* ts */ `
+        const m = await import("named-only");
+        console.log(typeof m.default, m.default?.named, m.named);
+      `,
+      ...namedOnlyFiles,
+    },
+    run: {
+      stdout: "object 1 1",
+    },
+  });
+
+  // Test 52: an own `default` property is the default export even when its
+  // value is falsy. `bun run` prints "undefined 0" too.
+  itBundled("cjs/__toESM_esModule_with_falsy_default", {
+    files: {
+      "/entry.js": /* js */ `
+        import a from "./a.cjs";
+        import b from "./b.cjs";
+        console.log(a, b);
+      `,
+      "/a.cjs": /* js */ `
+        Object.defineProperty(exports, "__esModule", { value: true });
+        exports.default = undefined;
+        exports.named = 1;
+      `,
+      "/b.cjs": /* js */ `
+        Object.defineProperty(exports, "__esModule", { value: true });
+        exports.default = 0;
+        exports.named = 1;
+      `,
+    },
+    run: {
+      stdout: "undefined 0",
+    },
+  });
+
+  // ============================================================================
+  // The nearest package.json decides "type", with or without a "name". A dual
+  // package marks its ESM build with a nameless `dist/esm/package.json` that
+  // holds only `{ "type": "module" }`. Node and esbuild read that file whatever
+  // the path that reached it.
+  //
+  // `seen` tells the interops apart: Node's gives the whole `module.exports`
+  // ("object/function"), the other gives `exports.default` ("function/undefined").
+  // ============================================================================
+
+  const seenFromCjsDep = /* js */ `
+    import d from "cjs-dep";
+    export const seen = typeof d + "/" + typeof d.default;
+  `;
+  const logSeen = /* ts */ `
+    import { seen } from "pkg";
+    console.log(seen);
+  `;
+
+  // Test 53: the nested marker is reached through "main"
+  itBundled("cjs/__toESM_nested_nameless_type_module_via_main", {
+    files: {
+      "/entry.ts": logSeen,
+      "/node_modules/pkg/package.json": `{ "name": "pkg", "main": "./dist/esm/index.js" }`,
+      "/node_modules/pkg/dist/esm/package.json": `{ "type": "module" }`,
+      "/node_modules/pkg/dist/esm/index.js": seenFromCjsDep,
+      ...cjsDepFiles,
+    },
+    target: "node",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("__toESM(require_cjs_dep(), 1)");
+    },
+    run: {
+      stdout: "object/function",
+    },
+  });
+
+  // Test 54: a nested package.json with a "name" counts the same way
+  itBundled("cjs/__toESM_nested_named_type_module_via_main", {
+    files: {
+      "/entry.ts": logSeen,
+      "/node_modules/pkg/package.json": `{ "name": "pkg", "main": "./dist/esm/index.js" }`,
+      "/node_modules/pkg/dist/esm/package.json": `{ "name": "pkg-esm", "type": "module" }`,
+      "/node_modules/pkg/dist/esm/index.js": seenFromCjsDep,
+      ...cjsDepFiles,
+    },
+    run: {
+      stdout: "object/function",
+    },
+  });
+
+  // Test 55: the nameless marker, reached through "module"
+  itBundled("cjs/__toESM_nested_nameless_type_module_via_module_field", {
+    files: {
+      "/entry.ts": logSeen,
+      "/node_modules/pkg/package.json": `{
+        "name": "pkg",
+        "main": "./dist/cjs/index.js",
+        "module": "./dist/esm/index.js"
+      }`,
+      "/node_modules/pkg/dist/cjs/index.js": /* js */ `exports.seen = "cjs build";`,
+      "/node_modules/pkg/dist/esm/package.json": `{ "type": "module" }`,
+      "/node_modules/pkg/dist/esm/index.js": seenFromCjsDep,
+      ...cjsDepFiles,
+    },
+    run: {
+      stdout: "object/function",
+    },
+  });
+
+  // Test 56: the nameless marker, reached through a relative path
+  itBundled("cjs/__toESM_nested_nameless_type_module_via_relative_path", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import { seen } from "./lib/esm/index.js";
+        console.log(seen);
+      `,
+      "/package.json": `{ "name": "app" }`,
+      "/lib/esm/package.json": `{ "type": "module" }`,
+      "/lib/esm/index.js": seenFromCjsDep,
+      ...cjsDepFiles,
+    },
+    run: {
+      stdout: "object/function",
+    },
+  });
+
+  // Test 57: the marker applies to every file below it, not only to the
+  // directory that holds it
+  itBundled("cjs/__toESM_nested_nameless_type_module_in_subdirectory", {
+    files: {
+      "/entry.ts": logSeen,
+      "/node_modules/pkg/package.json": `{ "name": "pkg", "main": "./dist/esm/index.js" }`,
+      "/node_modules/pkg/dist/esm/package.json": `{ "type": "module" }`,
+      "/node_modules/pkg/dist/esm/index.js": /* js */ `export { seen } from "./inner/seen.js";`,
+      "/node_modules/pkg/dist/esm/inner/seen.js": seenFromCjsDep,
+      ...cjsDepFiles,
+    },
+    run: {
+      stdout: "object/function",
+    },
+  });
+
+  // Test 58: a project package.json with "type" and no "name" counts too
+  itBundled("cjs/__toESM_nameless_project_type_module", {
+    files: {
+      "/entry.ts": logDefaultAndNamed,
+      "/dep.cjs": esModuleDep,
+      "/package.json": `{ "type": "module" }`,
+    },
+    run: {
+      stdout: "object 1",
+    },
+  });
+
+  // Test 59: the nearest package.json wins. A nameless "type": "commonjs"
+  // marker below a "type": "module" package keeps the __esModule interop.
+  itBundled("cjs/__toESM_nested_nameless_type_commonjs_under_type_module", {
+    files: {
+      "/entry.ts": logSeen,
+      "/node_modules/pkg/package.json": `{ "name": "pkg", "type": "module", "main": "./dist/cjs/index.js" }`,
+      "/node_modules/pkg/dist/cjs/package.json": `{ "type": "commonjs" }`,
+      "/node_modules/pkg/dist/cjs/index.js": seenFromCjsDep,
+      ...cjsDepFiles,
+    },
+    run: {
+      stdout: "function/undefined",
+    },
+  });
+
+  // Test 60: the nearest package.json is the scope even when it has no "type".
+  // The lookup does not continue to the "type": "module" package root.
+  itBundled("cjs/__toESM_nearest_package_json_without_type_is_the_scope", {
+    files: {
+      "/entry.ts": logSeen,
+      "/node_modules/pkg/package.json": `{ "name": "pkg", "type": "module", "main": "./dist/index.js" }`,
+      "/node_modules/pkg/dist/package.json": `{ "sideEffects": false }`,
+      "/node_modules/pkg/dist/index.js": seenFromCjsDep,
+      ...cjsDepFiles,
+    },
+    run: {
+      stdout: "function/undefined",
+    },
+  });
+
+  // Test 61: the lookup does not stop at a node_modules directory. A package
+  // without a package.json of its own takes the "type" of the one above it.
+  itBundled("cjs/__toESM_nameless_type_module_above_node_modules", {
+    files: {
+      "/entry.ts": logSeen,
+      "/package.json": `{ "type": "module" }`,
+      "/node_modules/pkg/index.js": seenFromCjsDep,
+      ...cjsDepFiles,
+    },
+    run: {
+      stdout: "object/function",
+    },
+  });
+
+  // Test 62: only the file in the bundle decides. With the default target,
+  // "module" wins and "main" is the fallback for require(). The fallback's
+  // package.json does not give the "module" file its "type".
+  itBundled("cjs/__toESM_type_from_module_field_not_main_fallback", {
+    files: {
+      "/entry.ts": logSeen,
+      "/node_modules/pkg/package.json": `{
+        "name": "pkg",
+        "main": "./lib/index.js",
+        "module": "./esm/index.js"
+      }`,
+      "/node_modules/pkg/lib/package.json": `{ "type": "module" }`,
+      "/node_modules/pkg/lib/index.js": /* js */ `export const seen = "main build";`,
+      "/node_modules/pkg/esm/index.js": seenFromCjsDep,
+      ...cjsDepFiles,
+    },
+    run: {
+      stdout: "function/undefined",
     },
   });
 });

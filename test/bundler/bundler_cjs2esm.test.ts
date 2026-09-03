@@ -1508,6 +1508,33 @@ describe("bundler", () => {
       stdout: "function",
     },
   });
+  itBundled("cjs2esm/SelfMethodCallNextToAReadKeepsNoNamespace", {
+    files: {
+      "/entry.js": /* js */ `
+        import { mixed } from "./lib.cjs";
+        console.log(mixed());
+      `,
+      "/lib.cjs": /* js */ `
+        exports.parse = function (s) { return this._helper(s); };
+        exports._helper = function (s) { return "helped:" + s; };
+        exports.run = function () { return exports.parse("x"); };
+        exports.pure = function (f) { return typeof f; };
+        exports.mixed = function () { return exports.pure(exports.parse); };
+        exports.other = "tree-shaken";
+      `,
+    },
+    cjs2esm: true,
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      // `mixed` reads `parse` and calls `pure`. Neither needs the namespace object.
+      expect(out).toContain("return $pure($parse);");
+      expect(out).not.toContain("exports_lib");
+      expect(out).not.toContain("tree-shaken");
+    },
+    run: {
+      stdout: "function",
+    },
+  });
   itBundled("cjs2esm/DefaultImportJsxClassicRuntime", {
     files: {
       "/entry.jsx": /* jsx */ `

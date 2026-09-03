@@ -470,6 +470,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) import_records: ImportRecordList<'a>,
     pub(crate) import_records_for_current_part: List<'a, u32>,
     pub(crate) export_star_import_records: List<'a, u32>,
+    /// Also holds the calls of `exports.name` under `exports_ref`, until `to_ast`.
     pub(crate) import_symbol_property_uses: SymbolPropertyUseMap,
 
     // These are for handling ES6 imports and exports
@@ -5737,13 +5738,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
         if opts.is_call_target() || opts.is_template_tag() {
             self.symbols[ref_.inner_index() as usize].set_called_as_method(true);
-            // `to_ast` drops this use if the part's calls all ignore `this`.
             if !self.is_revisit_for_substitution {
-                self.symbol_uses
-                    .get_or_put(self.exports_ref)
+                let call = self
+                    .import_symbol_property_uses
+                    .get_or_put_value(self.exports_ref, Default::default())
                     .expect("OOM")
                     .value_ptr
-                    .count_estimate += 1;
+                    .get_or_put_value(name, Default::default())
+                    .expect("OOM");
+                call.count_estimate += 1;
+                call.is_call_target = true;
             }
         }
     }
@@ -5775,26 +5779,35 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// Drops the `exports_ref` use of each part with no call that can read `this`.
-    fn drop_namespace_uses_of_calls_that_ignore_this(&self, parts: &mut [js_ast::Part]) {
-        let mut method_exports = RefMap::default();
-        for export in self.commonjs_named_exports.values() {
-            let symbol = &self.symbols[export.loc_ref.ref_.inner_index() as usize];
-            if symbol.called_as_method() && !symbol.call_ignores_this() {
-                method_exports.insert(export.loc_ref.ref_, ());
-            }
-        }
+    /// Takes the calls that `note_commonjs_export_use` recorded out of each part.
+    /// A call of an export that can read `this` prints as `exports.name()`.
+    fn use_namespace_for_method_calls(&self, parts: &mut [js_ast::Part]) {
         for part in parts {
-            if part.symbol_uses.get(&self.exports_ref).is_none() {
+            let Some(uses) = part.import_symbol_property_uses.as_mut() else {
                 continue;
+            };
+            let Some(calls) = uses.remove(&self.exports_ref) else {
+                continue;
+            };
+            if uses.is_empty() {
+                part.import_symbol_property_uses = None;
             }
-            let calls_method_export = part
-                .symbol_uses
-                .keys()
+            let count: u32 = calls
                 .iter()
-                .any(|ref_| method_exports.contains_key(ref_));
-            if !calls_method_export {
-                let _ = part.symbol_uses.swap_remove(&self.exports_ref);
+                .filter(|(name, _)| {
+                    self.commonjs_named_exports.get(name).is_some_and(|export| {
+                        !self.symbols[export.loc_ref.ref_.inner_index() as usize]
+                            .call_ignores_this()
+                    })
+                })
+                .map(|(_, call)| call.count_estimate)
+                .sum();
+            if count > 0 {
+                part.symbol_uses
+                    .get_or_put_value(self.exports_ref, Default::default())
+                    .expect("OOM")
+                    .value_ptr
+                    .count_estimate += count;
             }
         }
     }
@@ -9153,10 +9166,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         if !self.commonjs_named_exports_deoptimized {
             self.mark_commonjs_exports_that_ignore_this();
-            // When nothing reads `exports`, each `exports_ref` use is a recorded call.
-            if self.symbols[self.exports_ref.inner_index() as usize].use_count_estimate == 0 {
-                self.drop_namespace_uses_of_calls_that_ignore_this(parts.as_mut_slice());
-            }
+        }
+        if self.should_unwrap_common_js_to_esm() {
+            self.use_namespace_for_method_calls(parts.as_mut_slice());
         }
 
         // Re-tag the arena-backed buffer

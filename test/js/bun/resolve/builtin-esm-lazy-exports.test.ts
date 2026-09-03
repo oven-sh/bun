@@ -298,7 +298,7 @@ test.concurrent("accessors on other builtins bind to what require() returns", as
     import { print } from "./helper.mjs";
     const require = createRequire(import.meta.url);
     print({
-      // node:assert's exports object is a function; AssertionError is an accessor defined on it.
+      // node:assert's exports object is a function; AssertionError is a lazy property defined on it.
       assertIsFunction: typeof assert === "function",
       assertionError: typeof AssertionError === "function" && AssertionError === require("node:assert").AssertionError,
       timersPromises: timers.promises === require("node:timers/promises"),
@@ -306,6 +306,35 @@ test.concurrent("accessors on other builtins bind to what require() returns", as
     });
   `);
   expect(result).toEqual({ assertIsFunction: true, assertionError: true, timersPromises: true, streamPromises: true });
+});
+
+// node:assert defines AssertionError and CallTracker with defineLazyProperties (internal/shared). The readout is the
+// number of functions on the heap: internal/assert/assertion_error adds several hundred when it loads.
+test.concurrent("node:assert: importing does not load AssertionError, and a later store is not bound", async () => {
+  const result = await runEntry(`
+    import { heapStats } from "bun:jsc";
+    import { createRequire } from "node:module";
+    import { print } from "./helper.mjs";
+    const require = createRequire(import.meta.url);
+    const assert = require("node:assert");
+    const functions = () => heapStats().objectTypeCounts.Function;
+    const beforeImport = functions();
+    const ns = await import("node:assert");
+    const strictNs = await import("node:assert/strict");
+    const afterImport = functions();
+    // Node's facade copies the exports when the module is imported, so a value stored later does not reach a binding.
+    const stub = function Stub() {};
+    assert.AssertionError = stub;
+    const { AssertionError } = ns;
+    const afterRead = functions();
+    print({
+      importLoaded: afterImport - beforeImport > 100,
+      readLoaded: afterRead - afterImport > 100,
+      bindingIsStub: AssertionError === stub,
+      same: AssertionError === strictNs.AssertionError && strictNs.CallTracker === ns.CallTracker,
+    });
+  `);
+  expect(result).toEqual({ importLoaded: false, readLoaded: true, bindingIsStub: false, same: true });
 });
 
 test.concurrent("spyOn and mock.module on an imported builtin", async () => {

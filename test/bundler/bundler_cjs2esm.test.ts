@@ -529,6 +529,52 @@ describe("bundler", () => {
       stdout: "side effect\nrendered render,version object",
     },
   });
+  // `module.exports = ns` re-exports the whole namespace, so `default` of an
+  // ES module target comes through too (a plain `export *` would drop it).
+  itBundled("cjs2esm/ReactSpecificUnwrappingSideEffectTargetHasDefault", {
+    files: {
+      "/entry.js": /* js */ `
+        import ReactDOM, { version } from "react-dom";
+        import * as ns from "react-dom";
+        const m = require("react-dom");
+        console.log(version, typeof ReactDOM.default, ReactDOM.default(), typeof ns.default, ns.default(), m.default(), Object.keys(ns).sort().join(","));
+      `,
+      "/node_modules/react-dom/index.js": /* js */ `
+        console.log('side effect');
+        module.exports = require('./impl');
+      `,
+      "/node_modules/react-dom/impl.js": /* js */ `
+        export default function render() { return "rendered"; }
+        export const version = "19.0.0";
+      `,
+    },
+    cjs2esm: true,
+    minifySyntax: true,
+    run: {
+      stdout: "side effect\n19.0.0 function rendered function rendered rendered default,version",
+    },
+  });
+  itBundled("cjs2esm/ReactSpecificUnwrappingSideEffectTargetHasDefaultRequireOnly", {
+    files: {
+      "/entry.js": /* js */ `
+        const m = require("react-dom");
+        console.log(Object.keys(m).sort().join(","), typeof m.default, m.default(), m.version);
+      `,
+      "/node_modules/react-dom/index.js": /* js */ `
+        console.log('side effect');
+        module.exports = require('./impl');
+      `,
+      "/node_modules/react-dom/impl.js": /* js */ `
+        export default function render() { return "rendered"; }
+        export const version = "19.0.0";
+      `,
+    },
+    cjs2esm: true,
+    minifySyntax: true,
+    run: {
+      stdout: "side effect\ndefault,version function rendered 19.0.0",
+    },
+  });
   // The namespace the require() became stays imported when the file also
   // reads from it before the `module.exports =` assignment.
   itBundled("cjs2esm/ReactSpecificUnwrappingNamespaceStillUsed", {

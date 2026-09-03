@@ -301,11 +301,7 @@ class AsyncLocalStorage {
     // nodes; see Frame.masked.
     var top = get();
     if (top !== undefined && lookup(top, this) !== undefined) {
-      var masked: AsyncLocalStorage[] = [this];
-      if (top.masked !== undefined) {
-        for (var i = 0, n = top.masked.length; i < n; i++) $arrayPush(masked, top.masked[i]);
-      }
-      top.masked = masked;
+      top.masked = mergeMasks(top.masked, [this]);
       frameMutations++;
     }
   }
@@ -317,7 +313,7 @@ class AsyncLocalStorage {
   getStore() {
     $debug("getStore " + (this as any).__id__);
     var start = get();
-    if (start === undefined || (start.masked !== undefined && isMasked(start, this))) return this.#defaultValue;
+    if (start === undefined || isMasked(start, this)) return this.#defaultValue;
     for (var f: Frame | undefined = start; f !== undefined; f = f.prev) {
       if (f.storage === this) return f.value;
     }

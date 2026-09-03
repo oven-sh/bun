@@ -1113,6 +1113,24 @@ pub(crate) fn scan_imports_and_exports(
                                     runtime_require_uses += 1;
                                 }
 
+                                // A split `require()` whose target is CommonJS at link
+                                // time (for example a lifted `module.exports = require()`
+                                // file the linker wrapped again): the chunk exports only
+                                // `default: module.exports`, so the printed call reads
+                                // `.default` to return `module.exports`, the same value
+                                // an unsplit `require()` returns.
+                                if kind == ImportKind::Require
+                                    && is_external_dyn
+                                    && rec_source_index.is_valid()
+                                    && col_ref!(exports_kind)[rec_source_index.get() as usize]
+                                        == ExportsKind::Cjs
+                                {
+                                    col!(import_records_list)[id].as_mut_slice()
+                                        [import_record_index as usize]
+                                        .flags
+                                        .insert(ImportRecordFlags::CROSS_CHUNK_REQUIRE_DEFAULT);
+                                }
+
                                 // If this wasn't originally a "require()" call, then we may need
                                 // to wrap this in a call to the "__toESM" wrapper to convert from
                                 // CommonJS semantics to ESM semantics.

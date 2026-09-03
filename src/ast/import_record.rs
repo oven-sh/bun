@@ -101,6 +101,11 @@ bitflags::bitflags! {
         /// `import()` / `require()` whose value nothing reads: the linker bound
         /// every name read off it to an export, so it evaluates to `{}`.
         const NAMESPACE_UNUSED = 1 << 17;
+
+        /// A split `require()` whose target is CommonJS at link time: the
+        /// chunk's namespace is `{ default: module.exports }`, so the call
+        /// reads `.default` to return `module.exports`.
+        const CROSS_CHUNK_REQUIRE_DEFAULT = 1 << 18;
     }
 }
 

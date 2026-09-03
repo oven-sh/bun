@@ -92,17 +92,27 @@ describe("Structured Clone Fast Path", () => {
   test("structuredClone should use a constant amount of memory for simple object inputs", () => {
     // Create a 512KB string to test fast path
     const largeValue = { property: Buffer.alloc(512 * 1024, "a").toString() };
+    const cloneMany = (count: number) => {
+      for (let i = 0; i < count; i++) {
+        structuredClone(largeValue);
+      }
+    };
+    // Keep one clone in 101 alive through the GC. The 10000 measured clones then fit in the cells
+    // of the 10000 that died, so the heap takes no new MarkedBlocks. A new block can start a refill
+    // of JSC's warm-up supply (useWarmUpMarkedBlocks), which makes up to 32 blocks resident: 2 MiB
+    // on Linux arm64, where a MarkedBlock is 64 KiB. The warm-up also gets cloneMany compiled.
+    const kept: object[] = [];
     for (let i = 0; i < 100; i++) {
-      structuredClone(largeValue);
+      kept.push(structuredClone(largeValue));
+      cloneMany(100);
     }
     Bun.gc(true);
     const rss1 = rss();
-    for (let i = 0; i < 10000; i++) {
-      structuredClone(largeValue);
-    }
+    cloneMany(10000);
     Bun.gc(true);
     const rss2 = rss();
     const delta = rss2 - rss1;
+    expect(kept).toHaveLength(100);
     // ASAN's free quarantine (default 256 MB) plus redzones and glibc page
     // retention inflate RSS even when nothing is leaking.
     expect(delta).toBeLessThan(isASAN ? 1024 * 1024 * 400 : 1024 * 1024);

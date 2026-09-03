@@ -4617,9 +4617,7 @@ pub(crate) mod __gated_printer {
             }
         }
 
-        /// `exports.name`, which prints as the lifted binding `$name` or as a
-        /// property of the exports object. A call that can read `this` uses the
-        /// property, so that `this` is the exports object.
+        /// `exports.name`: the binding `$name`, or a property for a call that reads `this`.
         fn print_commonjs_export_identifier(
             &mut self,
             id: E::CommonJSExportIdentifier,

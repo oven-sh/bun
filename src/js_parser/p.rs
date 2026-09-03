@@ -5767,9 +5767,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// The printer prints `exports.name()` as a call on the namespace object
-    /// when the export can read `this`, so each part that uses such an export
-    /// also uses `exports_ref`.
+    /// A method call of an export that can read `this` reads the namespace object.
     fn use_namespace_for_method_calls(&self, parts: &mut [js_ast::Part]) {
         let method_exports: Vec<Ref> = self
             .commonjs_named_exports

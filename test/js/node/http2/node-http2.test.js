@@ -3016,6 +3016,7 @@ it("http2 session.altsvc() sends an object origin unchanged, like Node", async (
       { origin: "null" },
       { origin: "https://example.org:8111/path" },
       { origin: "not a url" },
+      { origin: "https://m\u00fcnich.example/path" },
       "https://a.example/path",
       new URL("https://b.example/path"),
     ]) {
@@ -3057,10 +3058,12 @@ it("http2 session.altsvc() sends an object origin unchanged, like Node", async (
     "SENT",
     "SENT",
     "SENT",
+    "SENT",
   ]);
   expect(received).toEqual([
     { alt: 'h2=":8000"', origin: "https://example.org:8111/path", stream: 0 },
     { alt: 'h2=":8000"', origin: "not a url", stream: 0 },
+    { alt: 'h2=":8000"', origin: "https://m\u00fcnich.example/path", stream: 0 },
     { alt: 'h2=":8000"', origin: "https://a.example", stream: 0 },
     { alt: 'h2=":8000"', origin: "https://b.example", stream: 0 },
   ]);

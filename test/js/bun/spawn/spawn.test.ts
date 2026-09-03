@@ -17,7 +17,8 @@ import {
   tmpdirSync,
   withoutAggressiveGC,
 } from "harness";
-import { closeSync, fstatSync, openSync, readFileSync, readSync, rmSync, writeFileSync } from "node:fs";
+import { randomBytes } from "node:crypto";
+import { appendFileSync, closeSync, fstatSync, openSync, readFileSync, readSync, rmSync, writeFileSync } from "node:fs";
 import path, { join } from "path";
 
 let tmp: string;
@@ -1252,6 +1253,114 @@ describe("close handling", () => {
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "PASS", stderr: "", exitCode: 0 });
     });
+  });
+});
+
+// A sliced Bun.file() is a view (`offset`, `size`) over a store that names the
+// whole file. The child got the store's path or fd, so it read the whole file.
+describe("stdin: a sliced Bun.file() sends only the slice", () => {
+  const content = "abcdefghijklmnopqrstuvwxyz";
+  const echoStdin = "process.stdin.pipe(process.stdout)";
+
+  async function sendToChild(stdin: Blob | Response | ReadableStream) {
+    await using proc = spawn({ cmd: [bunExe(), "-e", echoStdin], env: bunEnv, stdin, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  it.concurrent.each([
+    ["a window in the middle", 10, 20],
+    ["a window at the start", 0, 5],
+    ["a window to EOF", 3, undefined],
+    ["a window that ends past EOF", 20, 100],
+    ["an empty window", 5, 5],
+    ["a window past EOF", 30, 40],
+  ])("%s", async (_, start, end) => {
+    using dir = tempDir("spawn-stdin-slice", { "src.txt": content });
+    const file = Bun.file(join(String(dir), "src.txt"));
+
+    expect(await sendToChild(file.slice(start, end))).toEqual({
+      stdout: content.slice(start, end),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it.concurrent.each([
+    ["a Response over the slice", (slice: Blob) => new Response(slice)],
+    ["a Response over the slice's stream", (slice: Blob) => new Response(slice.stream())],
+    ["the slice's stream", (slice: Blob) => slice.stream()],
+  ])("%s", async (_, wrap) => {
+    using dir = tempDir("spawn-stdin-slice-body", { "src.txt": content });
+    const slice = Bun.file(join(String(dir), "src.txt")).slice(10, 20);
+
+    expect(await sendToChild(wrap(slice))).toEqual({ stdout: "klmnopqrst", stderr: "", exitCode: 0 });
+  });
+
+  it.concurrent("a window of a file descriptor, without moving its position", async () => {
+    using dir = tempDir("spawn-stdin-slice-fd", { "src.txt": content });
+    const fd = openSync(join(String(dir), "src.txt"), "r");
+    try {
+      const child = await sendToChild(Bun.file(fd).slice(10, 20));
+      const next = Buffer.alloc(5);
+      const n = readSync(fd, next, 0, 5, null);
+
+      expect({ child, next: next.toString("utf8", 0, n) }).toEqual({
+        child: { stdout: "klmnopqrst", stderr: "", exitCode: 0 },
+        next: "abcde",
+      });
+    } finally {
+      closeSync(fd);
+    }
+  });
+
+  it.concurrent("a window larger than a pipe buffer", async () => {
+    const payload = randomBytes(3 * 1024 * 1024);
+    using dir = tempDir("spawn-stdin-slice-large", { "src.bin": payload });
+    const start = 1024 * 1024 + 3;
+    const end = 2 * 1024 * 1024 + 11;
+
+    await using proc = spawn({
+      cmd: [bunExe(), "-e", echoStdin],
+      env: bunEnv,
+      stdin: Bun.file(join(String(dir), "src.bin")).slice(start, end),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.bytes(), proc.stderr.text(), proc.exited]);
+    expect({
+      size: stdout.byteLength,
+      identical: Buffer.from(stdout).equals(payload.subarray(start, end)),
+      stderr,
+      exitCode,
+    }).toEqual({ size: end - start, identical: true, stderr: "", exitCode: 0 });
+  });
+
+  it("spawnSync", () => {
+    using dir = tempDir("spawn-stdin-slice-sync", { "src.txt": content });
+    const { stdout, stderr, exitCode } = spawnSync({
+      cmd: [bunExe(), "-e", echoStdin],
+      env: bunEnv,
+      stdin: Bun.file(join(String(dir), "src.txt")).slice(10, 20),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    expect({ stdout: stdout.toString(), stderr: stderr.toString(), exitCode }).toEqual({
+      stdout: "klmnopqrst",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it.concurrent("an unsliced Bun.file() whose size was read sends the whole file", async () => {
+    using dir = tempDir("spawn-stdin-size-read", { "src.txt": content });
+    const src = join(String(dir), "src.txt");
+    const file = Bun.file(src);
+    expect(file.size).toBe(content.length);
+    appendFileSync(src, "0123");
+
+    expect(await sendToChild(file)).toEqual({ stdout: content + "0123", stderr: "", exitCode: 0 });
   });
 });
 

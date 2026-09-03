@@ -1,6 +1,6 @@
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use bun_collections::VecExt;
-use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult};
+use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult, SysErrorJsc as _};
 #[cfg(windows)]
 use bun_sys::windows::libuv as uv;
 use bun_sys::{self as sys, Fd, FdExt as _};
@@ -8,6 +8,7 @@ use bun_sys::{self as sys, Fd, FdExt as _};
 // `bun.jsc.WebCore` lives in this crate (not `bun_jsc`); alias so the body can
 // say `webcore::ReadableStream` / `webcore::body::Value`.
 use crate::webcore;
+use crate::webcore::blob::BlobExt as _;
 use crate::webcore::blob::store::Data as StoreData;
 use crate::webcore::node_types::{PathLike, PathOrFileDescriptor};
 
@@ -580,6 +581,20 @@ impl Stdio {
     ) -> JsResult<()> {
         let fd = FdStdio::from_int(i).map(FdStdio::fd);
 
+        // A view of a regular file (`Bun.file(p).slice(start, end)`) cannot
+        // be handed to the child as the file's fd or path: the child would
+        // read the whole file. Read the view and pass it like any other bytes.
+        // Only stdin: at the other indices the child can write to the file.
+        let view = if i == 0 { file_view(&blob) } else { None };
+        let blob = match view {
+            Some((offset, len)) => {
+                let store = blob.store().expect("file_view found a store");
+                let file = store.data.as_file();
+                webcore::blob::Any::from_owned_slice(read_file_view(global, file, offset, len)?)
+            }
+            None => blob,
+        };
+
         if blob.needs_to_read_file() {
             if let Some(store) = blob.store() {
                 if let StoreData::File(ref file) = store.data {
@@ -649,6 +664,68 @@ impl Stdio {
         *self = Stdio::Blob(blob);
         Ok(())
     }
+}
+
+/// The `(offset, len)` window a sliced file Blob names, clamped to the file.
+/// `None` when the Blob is the whole file, when the file is not a regular
+/// file, or when it cannot be stat'd: those go to the child as an fd or path.
+fn file_view(blob: &webcore::blob::Any) -> Option<(u64, usize)> {
+    let webcore::blob::Any::Blob(blob) = blob else {
+        return None;
+    };
+    let store = blob.store()?;
+    if !matches!(store.data, StoreData::File(_)) {
+        return None;
+    }
+    if blob.offset.get() == 0 && blob.size.get() == webcore::blob::MAX_SIZE {
+        return None;
+    }
+    // Stats the file (once per store) and clamps the view to its length.
+    let (offset, size) = blob.resolved_size();
+    let file = store.data.as_file();
+    if file.seekable != Some(true) {
+        return None;
+    }
+    if offset == 0 && size == file.max_size {
+        return None;
+    }
+    Some((offset, usize::try_from(size).expect("int cast")))
+}
+
+fn read_file_view(
+    global: &JSGlobalObject,
+    file: &webcore::blob::store::File,
+    offset: u64,
+    len: usize,
+) -> JsResult<Vec<u8>> {
+    let opened;
+    let source: &sys::File = match &file.pathlike {
+        PathOrFileDescriptor::Fd(fd) => sys::File::borrow(fd),
+        PathOrFileDescriptor::Path(path) => {
+            opened = match sys::File::openat(
+                Fd::cwd(),
+                path.slice(),
+                sys::O::RDONLY | sys::O::CLOEXEC,
+                0,
+            ) {
+                Ok(file) => file,
+                Err(err) => return Err(err.with_path(path.slice()).throw(global)),
+            };
+            &opened
+        }
+    };
+    let mut bytes: Vec<u8> = Vec::new();
+    if bytes.try_reserve_exact(len).is_err() {
+        return Err(sys::Error::from_code(sys::E::ENOMEM, sys::Tag::read).throw(global));
+    }
+    bytes.resize(len, 0);
+    // pread leaves a user-supplied fd's position alone.
+    let read = match source.pread_all(&mut bytes, offset) {
+        Ok(read) => read,
+        Err(err) => return Err(err.throw(global)),
+    };
+    bytes.truncate(read);
+    Ok(bytes)
 }
 
 impl Stdio {

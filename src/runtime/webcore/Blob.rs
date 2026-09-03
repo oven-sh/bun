@@ -4503,6 +4503,19 @@ pub(crate) fn write_file_with_source_destination(
     }
     // If this is file <> file, we can just copy the file
     else if destination_type == store::DataTag::File && source_type == store::DataTag::File {
+        // The copy reads only the source view. A file Blob's size is
+        // `MAX_SIZE` until it is stat'd, so `slice(start)` leaves
+        // `offset + size == MAX_SIZE`: that view runs to EOF. So does an
+        // unsliced Blob whose size was read: it equals the stat'd size.
+        let source_offset = source_blob.offset.get();
+        let source_size = source_blob.size.get();
+        let source_size = if source_offset.saturating_add(source_size) >= MAX_SIZE
+            || (source_offset == 0 && source_size == source_store.data.as_file().max_size)
+        {
+            MAX_SIZE
+        } else {
+            source_size
+        };
         #[cfg(windows)]
         {
             return Ok(copy_file::CopyFileWindows::init(
@@ -4511,6 +4524,8 @@ pub(crate) fn write_file_with_source_destination(
                 ctx.bun_vm().event_loop_shared(),
                 options.mkdirp_if_not_exists.unwrap_or(true),
                 destination_blob.size.get(),
+                source_offset,
+                source_size,
                 options.mode,
             ));
         }
@@ -4521,6 +4536,8 @@ pub(crate) fn write_file_with_source_destination(
                 source_store,
                 destination_blob.offset.get(),
                 destination_blob.size.get(),
+                source_offset,
+                source_size,
                 ctx,
                 options.mkdirp_if_not_exists.unwrap_or(true),
                 options.mode,

@@ -213,38 +213,36 @@ function validateOrderOption(options) {
   }
 }
 
-// Node's resolveMap: an rrtype is valid exactly when a resolve* method exists for it, case-sensitively.
-const resolveMethodNames = {
-  __proto__: null,
-  A: "resolve4",
-  AAAA: "resolve6",
-  ANY: "resolveAny",
-  CAA: "resolveCaa",
-  CNAME: "resolveCname",
-  MX: "resolveMx",
-  NAPTR: "resolveNaptr",
-  NS: "resolveNs",
-  PTR: "resolvePtr",
-  SOA: "resolveSoa",
-  SRV: "resolveSrv",
-  TXT: "resolveTxt",
-};
-
-// Bound at module load: reassigning resolve4 later does not change resolve(), as in Node.
-function createResolveMap(methods) {
-  const map = { __proto__: null };
-  for (const rrtype in resolveMethodNames) {
-    map[rrtype] = methods[resolveMethodNames[rrtype]];
+// The resolve* method that resolve(hostname, rrtype) dispatches to. Case-sensitive, like Node.
+function resolveMethodName(rrtype) {
+  switch (rrtype) {
+    case "A":
+      return "resolve4";
+    case "AAAA":
+      return "resolve6";
+    case "ANY":
+      return "resolveAny";
+    case "CAA":
+      return "resolveCaa";
+    case "CNAME":
+      return "resolveCname";
+    case "MX":
+      return "resolveMx";
+    case "NAPTR":
+      return "resolveNaptr";
+    case "NS":
+      return "resolveNs";
+    case "PTR":
+      return "resolvePtr";
+    case "SOA":
+      return "resolveSoa";
+    case "SRV":
+      return "resolveSrv";
+    case "TXT":
+      return "resolveTxt";
+    default:
+      throw $ERR_INVALID_ARG_VALUE("rrtype", rrtype, "is invalid");
   }
-  return map;
-}
-
-function getResolveMethod(map, rrtype) {
-  const method = map[rrtype];
-  if (method === undefined) {
-    throw $ERR_INVALID_ARG_VALUE("rrtype", rrtype, "is invalid");
-  }
-  return method;
 }
 
 // Validates and returns the callback wrapped by guardCallback.
@@ -444,7 +442,7 @@ var InternalResolver = class Resolver {
       throw $ERR_INVALID_ARG_TYPE("rrtype", "string", rrtype);
     }
 
-    getResolveMethod(resolveMap, rrtype).$call(this, hostname, callback);
+    InternalResolver.prototype[resolveMethodName(rrtype)].$call(this, hostname, callback);
   }
 
   resolve4(hostname, options, callback) {
@@ -697,8 +695,6 @@ var InternalResolver = class Resolver {
   }
 };
 
-const resolveMap = createResolveMap(InternalResolver.prototype);
-
 function Resolver(options) {
   return new InternalResolver(options);
 }
@@ -842,7 +838,7 @@ const promises = {
     } else if (typeof rrtype !== "string") {
       throw $ERR_INVALID_ARG_TYPE("rrtype", "string", rrtype);
     }
-    const method = getResolveMethod(promisesResolveMap, rrtype);
+    const method = promises[resolveMethodName(rrtype)];
 
     if (typeof hostname !== "string") {
       throw $ERR_INVALID_ARG_TYPE("hostname", "string", hostname);
@@ -918,7 +914,7 @@ const promises = {
       } else if (typeof rrtype !== "string") {
         throw $ERR_INVALID_ARG_TYPE("rrtype", "string", rrtype);
       }
-      const method = getResolveMethod(promisesResolverResolveMap, rrtype);
+      const method = Resolver.prototype[resolveMethodName(rrtype)];
 
       if (typeof hostname !== "string") {
         throw $ERR_INVALID_ARG_TYPE("hostname", "string", hostname);
@@ -998,9 +994,6 @@ const promises = {
   getServers,
   setServers,
 };
-
-const promisesResolveMap = createResolveMap(promises);
-const promisesResolverResolveMap = createResolveMap(promises.Resolver.prototype);
 
 // Compatibility with util.promisify(dns[method])
 for (const [method, pMethod] of [

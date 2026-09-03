@@ -2657,7 +2657,6 @@ describe("worker stop ordering as seen by the worker's own handlers", () => {
     socketError: 4,
     udpClose: 5,
     watcherClose: 6,
-    intervalTick: 7,
     streamCancel: 8,
     portClose: 9,
     beforeExit: 10,
@@ -2675,7 +2674,9 @@ describe("worker stop ordering as seen by the worker's own handlers", () => {
     server.on("close", () => put(${TAG.serverClose}));
     const udp = dgram.createSocket("udp4"); udp.bind(0, "127.0.0.1"); udp.on("close", () => put(${TAG.udpClose}));
     const watcher = fs.watch(os.tmpdir(), () => {}); watcher.on("close", () => put(${TAG.watcherClose}));
-    setInterval(() => put(${TAG.intervalTick}), 1).unref();
+    // The tick keeps callbacks running, and it does not write to the log. A
+    // terminate() that lands inside put() leaves a counted slot with no tag.
+    setInterval(() => {}, 1).unref();
     const { port1, port2 } = new MessageChannel(); port1.on("message", () => {}); port1.on("close", () => put(${TAG.portClose})); globalThis.keepPeer = port2;
     Bun.serve({ port: 0, development: false, fetch: () => new Response("x") });
     new ReadableStream({ pull() {}, cancel() { put(${TAG.streamCancel}); } }).getReader().read();
@@ -2709,7 +2710,7 @@ describe("worker stop ordering as seen by the worker's own handlers", () => {
       code = await exited;
     }
     const n = Math.min(Atomics.load(log, 0), log.length - 1);
-    const tags = Array.from(log.slice(1, 1 + n)).filter(t => t !== TAG.intervalTick);
+    const tags = Array.from(log.slice(1, 1 + n));
     return { code, tags, errors };
   }
 

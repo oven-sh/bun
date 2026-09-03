@@ -2083,14 +2083,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         Ok(())
     }
 
-    /// A fatal TLS error on an established session, for example the peer's
-    /// `certificate_required` alert. `openssl.c` closes the socket right after.
-    /// The `error` handler gets `true` as a third argument: node:net emits such
-    /// an error without a destroy, but destroys the socket for an error that a
-    /// handler threw. With no `error` handler the close alone reports it, so a
-    /// peer cannot raise an uncaught exception in this process.
-    ///
-    /// Takes `ThisPtr<Self>` for the same re-entrancy reason as `on_writable`.
+    /// A fatal TLS error before the close. The third argument tells node:net that no handler threw it.
     pub(crate) fn on_ssl_error(this: bun_ptr::ThisPtr<Self>, err_code: u32) -> JsResult<()> {
         jsc::mark_binding!();
         if !this.has_handlers() || this.flags.get().contains(Flags::FINALIZING) {

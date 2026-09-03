@@ -284,11 +284,7 @@ pub(crate) unsafe extern "C" fn us_dispatch_keylog(
     crate::dispatch::fold(TLSSocket::on_keylog(tls, slice));
 }
 
-/// A fatal TLS error on an established session (`err` is the packed BoringSSL
-/// error code). `openssl.c` dispatches it just before it closes the socket.
-///
-/// # Safety
-/// `openssl.c` must pass a live, non-null `s`.
+/// A fatal TLS error (a packed BoringSSL code) on a live, established `s`, just before its close.
 #[unsafe(no_mangle)]
 pub(crate) unsafe extern "C" fn us_dispatch_ssl_error(s: *mut us_socket_t, err: u32) {
     let s_ref = us_socket_t::opaque_mut(s);

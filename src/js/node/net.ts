@@ -1052,9 +1052,7 @@ const ServerHandlers: SocketHandler<NetSocket> = {
         // Ignore server's authorization errors
         data.destroy();
       } else if (tlsFatal && !callback) {
-        // The native side closes the socket right after this error, so the
-        // reason for the destroy below does not apply. Emit it like Node, and
-        // the close gives 'end' and 'close'.
+        // The native close that follows ends the socket, so emit it the way Node does.
         data._emitTLSError(error);
       } else {
         // Node emits through _emitTLSError and leaves the socket alive. Bun
@@ -1402,9 +1400,7 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
 
     onClientHandshakeComplete(self, socket, verifyError);
   },
-  // `tlsFatal` is true for a fatal TLS error on an established session (a peer
-  // alert, a record that does not decrypt). The native side closes the socket
-  // right after it.
+  // `tlsFatal`: a fatal TLS error on the established session. The native close follows it.
   error(socket, error, tlsFatal?: boolean) {
     $debug("Bun.Socket error");
     if (socket.data === undefined) return;
@@ -1417,9 +1413,7 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
       self[kwriteCallback] = null;
       callback(error);
     } else if (tlsFatal && self._secureEstablished) {
-      // Node's onerror emits such an error without a destroy, so the close
-      // that follows gives 'end' and 'close'.
-      // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L467-L498
+      // No destroy, like https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L467-L498
       self._emitTLSError(error);
       return;
     }

@@ -765,9 +765,7 @@ impl BlobExt for Blob {
                 writer.write_int_le::<u32>(stored_name.len() as u32)?;
                 writer.write_all(stored_name)?;
             } else {
-                // Version 4: the window end of a sliced file-backed blob. Any
-                // other blob puts MAX_SIZE (unknown) on the wire, also one that
-                // cached the file's size, and the receiver stats it locally, like v3.
+                // Version 4: a window's end. MAX_SIZE (unknown) makes the receiver stat the file.
                 writer.write_int_le::<u64>(if self.size_is_explicit.get() {
                     self.size.get()
                 } else {

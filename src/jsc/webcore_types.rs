@@ -125,8 +125,7 @@ pub struct Blob {
     pub charset: Cell<AsciiStatus>,
     /// Was it created via the `File` constructor?
     pub is_jsdom_file: Cell<bool>,
-    /// Whether `size` is a window that `slice()` set. On a file Blob, `.size`
-    /// and `exists()` also store the file's size there, and that is not a window.
+    /// Whether `size` is a window that `slice()` set, not a file size that `.size` cached.
     pub size_is_explicit: Cell<bool>,
     /// `bun.ptr.RawRefCount(u32, .single_threaded)` — counts in-flight `*Blob`
     /// borrows handed to async readers; not the JS GC retain count. Zero while

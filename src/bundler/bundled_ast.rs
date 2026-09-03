@@ -30,6 +30,7 @@ pub(crate) type CssCol = Option<CssAstRef>;
 use bun_ast::import_record;
 use bun_core::strings;
 
+use crate::options::ModuleType;
 use bun_ast::ast_result::Ast;
 use bun_ast::{CharFreq, ExportsKind, Ref, Scope, SlotCounts, StoreStr, TlaCheck};
 use bun_ast::{part, symbol};
@@ -43,13 +44,16 @@ pub type TopLevelSymbolToParts = bun_ast::ast_result::TopLevelSymbolToParts;
 // `BundledAstColumns` (`items_named_imports()`,
 // `items_named_exports()`, …) at `crate::bundled_ast::*`.
 //
-// 26 fields ≤ `multi_array_list::MAX_FIELDS` (32).
+// 29 fields ≤ `multi_array_list::MAX_FIELDS` (32).
 
 pub struct BundledAst<'arena> {
     pub(crate) approximate_newline_count: u32,
     pub(crate) nested_scope_slot_counts: SlotCounts,
 
     pub(crate) exports_kind: ExportsKind,
+
+    /// Extension or package.json `"type"`, not syntax. `Esm` prints `__toESM(.., 1)`.
+    pub(crate) module_type: ModuleType,
 
     /// These are stored at the AST level instead of on individual AST nodes so
     /// they can be manipulated efficiently without a full AST traversal
@@ -58,6 +62,8 @@ pub struct BundledAst<'arena> {
     // Ast.hashbang is `StoreStr`; mirror it here so init/to_ast can
     // round-trip.
     pub(crate) hashbang: StoreStr,
+    /// See `Ast::export_default_alias_of_import`.
+    pub(crate) export_default_alias_of_import: Ref,
     pub(crate) parts: part::List<'arena>,
     // See `CssAstRef` doc for the arena drop-order invariant that backs the
     // safe `Deref`.
@@ -80,6 +86,7 @@ pub struct BundledAst<'arena> {
     pub(crate) named_imports: NamedImports,
     pub(crate) named_exports: NamedExports,
     pub(crate) export_star_import_records: bun_alloc::AstVec<u32>,
+    pub(crate) dynamic_import_aliases: bun_ast::ast_result::DynamicImportAliases,
 
     pub(crate) top_level_symbols_to_parts: TopLevelSymbolToParts,
 
@@ -103,8 +110,10 @@ bun_collections::multi_array_columns! {
         approximate_newline_count: u32,
         nested_scope_slot_counts: SlotCounts,
         exports_kind: ExportsKind,
+        module_type: ModuleType,
         import_records: import_record::List<'arena>,
         hashbang: StoreStr,
+        export_default_alias_of_import: Ref,
         parts: part::List<'arena>,
         css: CssCol,
         url_for_css: &'arena [u8],
@@ -120,6 +129,7 @@ bun_collections::multi_array_columns! {
         named_imports: NamedImports,
         named_exports: NamedExports,
         export_star_import_records: bun_alloc::AstVec<u32>,
+        dynamic_import_aliases: bun_ast::ast_result::DynamicImportAliases,
         top_level_symbols_to_parts: TopLevelSymbolToParts,
         commonjs_named_exports: CommonJSNamedExports,
         redirect_import_record_index: u32,
@@ -145,7 +155,9 @@ bitflags::bitflags! {
         const COMMONJS_MODULE_EXPORTS_ASSIGNED_DEOPTIMIZED = 1 << 6;
         const HAS_EXPLICIT_USE_STRICT_DIRECTIVE = 1 << 7;
         const HAS_IMPORT_META = 1 << 8;
-        // _padding: u7 fills the rest
+        /// See `Ast::commonjs_lifted_to_esm`.
+        const COMMONJS_LIFTED_TO_ESM = 1 << 9;
+        // _padding: u6 fills the rest
     }
 }
 
@@ -158,8 +170,10 @@ impl<'arena> BundledAst<'arena> {
             approximate_newline_count: 0,
             nested_scope_slot_counts: SlotCounts::default(),
             exports_kind: ExportsKind::None,
+            module_type: ModuleType::Unknown,
             import_records: import_record::List::new_in(arena),
             hashbang: StoreStr::EMPTY,
+            export_default_alias_of_import: Ref::NONE,
             parts: part::List::new_in(arena),
             css: None,
             url_for_css: b"",
@@ -175,6 +189,7 @@ impl<'arena> BundledAst<'arena> {
             named_imports: NamedImports::default(),
             named_exports: NamedExports::default(),
             export_star_import_records: bun_alloc::AstAlloc::vec(),
+            dynamic_import_aliases: Default::default(),
             top_level_symbols_to_parts: TopLevelSymbolToParts::default(),
             commonjs_named_exports: CommonJSNamedExports::default(),
             redirect_import_record_index: u32::MAX,
@@ -197,6 +212,7 @@ impl<'arena> BundledAst<'arena> {
             import_records: self.import_records,
 
             hashbang: self.hashbang,
+            export_default_alias_of_import: self.export_default_alias_of_import,
             parts: self.parts,
             // This list may be mutated later, so we should store the capacity
             symbols: self.symbols,
@@ -218,6 +234,7 @@ impl<'arena> BundledAst<'arena> {
             named_imports: self.named_imports,
             named_exports: self.named_exports,
             export_star_import_records: self.export_star_import_records,
+            dynamic_import_aliases: self.dynamic_import_aliases,
 
             top_level_symbols_to_parts: self.top_level_symbols_to_parts,
 
@@ -246,6 +263,7 @@ impl<'arena> BundledAst<'arena> {
                 loc: bun_ast::Loc::default(),
             },
             force_cjs_to_esm: self.flags.contains(Flags::FORCE_CJS_TO_ESM),
+            commonjs_lifted_to_esm: self.flags.contains(Flags::COMMONJS_LIFTED_TO_ESM),
             has_lazy_export: self.flags.contains(Flags::HAS_LAZY_EXPORT),
             commonjs_module_exports_assigned_deoptimized: self
                 .flags
@@ -271,6 +289,7 @@ impl<'arena> BundledAst<'arena> {
         flags.set(Flags::USES_EXPORT_KEYWORD, ast.export_keyword.len > 0);
         flags.set(Flags::HAS_CHAR_FREQ, ast.char_freq.is_some());
         flags.set(Flags::FORCE_CJS_TO_ESM, ast.force_cjs_to_esm);
+        flags.set(Flags::COMMONJS_LIFTED_TO_ESM, ast.commonjs_lifted_to_esm);
         flags.set(Flags::HAS_LAZY_EXPORT, ast.has_lazy_export);
         flags.set(
             Flags::COMMONJS_MODULE_EXPORTS_ASSIGNED_DEOPTIMIZED,
@@ -287,10 +306,13 @@ impl<'arena> BundledAst<'arena> {
             nested_scope_slot_counts: ast.nested_scope_slot_counts,
 
             exports_kind: ast.exports_kind,
+            // `ParseTask::run` sets it from the resolver result, like `target`.
+            module_type: ModuleType::Unknown,
 
             import_records: ast.import_records,
 
             hashbang: ast.hashbang,
+            export_default_alias_of_import: ast.export_default_alias_of_import,
             parts: ast.parts,
             css: None,
             url_for_css: b"",
@@ -311,6 +333,7 @@ impl<'arena> BundledAst<'arena> {
             named_imports: ast.named_imports,
             named_exports: ast.named_exports,
             export_star_import_records: ast.export_star_import_records,
+            dynamic_import_aliases: ast.dynamic_import_aliases,
 
             // arena: ast.arena,
             top_level_symbols_to_parts: ast.top_level_symbols_to_parts,

@@ -142,7 +142,7 @@ JSC::JSPromise* bakeModuleLoaderFetch(JSC::JSGlobalObject* globalObject,
         if (global->m_perThreadData) [[likely]] {
             BunString moduleKeyBunString = Bun::toString(moduleKey);
             BunString source = BakeProdLoad(global->m_perThreadData, &moduleKeyBunString);
-            if (source.tag != BunStringTag::Dead) {
+            if (!source.isDead()) {
                 JSC::SourceOrigin origin = JSC::SourceOrigin(WTF::URL(moduleKey));
                 JSC::SourceCode sourceCode = JSC::SourceCode(Bake::SourceProvider::create(
                     globalObject,

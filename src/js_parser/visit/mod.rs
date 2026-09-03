@@ -257,8 +257,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     pub(crate) fn visit_decls<const IS_POSSIBLY_DECL_TO_REMOVE: bool>(
         &mut self,
         decls: &mut [G::Decl],
-        was_const: bool,
+        kind: LocalKind,
+        is_export: bool,
     ) -> usize {
+        let was_const = kind == LocalKind::KConst;
         let mut j: usize = 0;
         // Iterate by index so kept entries can be written back through `decls[j]`
         // while scanning ahead.
@@ -384,6 +386,168 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 }
                             }
                         }
+                    }
+                }
+
+                // `const|let|var <binding> = await import("str")` — record which
+                // exports of the importee are observed so the linker can drop
+                // the rest from its namespace. The statement is left as written.
+                'dyn_import_await: {
+                    if !self.options.bundle {
+                        break 'dyn_import_await;
+                    }
+                    // `await import(x)`, or a local already holding a tracked
+                    // namespace (`const ns = await import(x); const { a } = ns`).
+                    let (namespace_ref, records): (_, Vec<u32>) = match val.data {
+                        ExprData::EAwait(aw) => match aw.value.data {
+                            ExprData::EImport(im) if im.namespace_ref.is_valid() => {
+                                (im.namespace_ref, vec![im.import_record_index])
+                            }
+                            _ => break 'dyn_import_await,
+                        },
+                        ExprData::EIdentifier(id) => {
+                            match self.dynamic_import_namespace_locals.get(&id.ref_) {
+                                Some(records) if matches!(decl.binding.data, BData::BObject(_)) => {
+                                    (id.ref_, records.clone())
+                                }
+                                _ => break 'dyn_import_await,
+                            }
+                        }
+                        _ => break 'dyn_import_await,
+                    };
+                    match decl.binding.data {
+                        BData::BObject(obj) => {
+                            if self
+                                .try_track_dynamic_import_destructure(
+                                    namespace_ref,
+                                    &records,
+                                    obj.properties(),
+                                    is_export,
+                                )
+                                .is_some()
+                            {
+                                self.note_tracked_namespace_use(namespace_ref);
+                                // Another `var` declaration is the same variable.
+                                if kind != LocalKind::KVar && !is_export {
+                                    self.note_destructured_locals(obj.properties());
+                                }
+                            }
+                        }
+                        // `var ns` redeclaration resolves to the same ref;
+                        // accesses after the second decl would be tracked
+                        // against the FIRST decl's record.
+                        BData::BIdentifier(id) if kind != LocalKind::KVar && !is_export => {
+                            let local = id.r#ref;
+                            if self.import_items_for_namespace.contains_key(&local) {
+                                break 'dyn_import_await;
+                            }
+                            self.register_dynamic_import_namespace_local_multi(
+                                local,
+                                decl.binding.loc,
+                                &records,
+                            );
+                            self.note_tracked_namespace_use(namespace_ref);
+                        }
+                        _ => {}
+                    }
+                }
+
+                // `const ns = cond ? require("./a") : null` — a local bound to one
+                // of several namespaces (or nothing).
+                'conditional: {
+                    if !self.options.bundle || is_export || kind == LocalKind::KVar {
+                        break 'conditional;
+                    }
+                    let (ExprData::EIf(_), BData::BIdentifier(id)) = (val.data, decl.binding.data)
+                    else {
+                        break 'conditional;
+                    };
+                    let mut records = Vec::new();
+                    if self
+                        .conditional_namespace_records(val, &mut records)
+                        .is_none()
+                    {
+                        // `await import()` branches already consumed above must escape.
+                        for r in records {
+                            self.dynamic_import_escaped_records.insert(r, ());
+                        }
+                        break 'conditional;
+                    }
+                    // `ns.a` can't become `a`: `ns` may be null.
+                    for &r in &records {
+                        self.dynamic_import_needs_object.insert(r, ());
+                    }
+                    if !records.is_empty()
+                        && !self.import_items_for_namespace.contains_key(&id.r#ref)
+                    {
+                        self.register_dynamic_import_namespace_local_multi(
+                            id.r#ref,
+                            decl.binding.loc,
+                            &records,
+                        );
+                    }
+                }
+
+                // `const [{a}, ns] = await Promise.all([import("a"), import("b")])`
+                'promise_all: {
+                    if !self.options.bundle || is_export || kind == LocalKind::KVar {
+                        break 'promise_all;
+                    }
+                    let ExprData::EAwait(aw) = val.data else {
+                        break 'promise_all;
+                    };
+                    let ExprData::ECall(call) = aw.value.data else {
+                        break 'promise_all;
+                    };
+                    let BData::BArray(pattern) = decl.binding.data else {
+                        break 'promise_all;
+                    };
+                    let Some(items) = self.promise_all_import_items(&call) else {
+                        break 'promise_all;
+                    };
+                    self.track_promise_all_destructure(items, &pattern);
+                }
+
+                // `const {x} = require("str")` / `const ns = require("str")`
+                'split_require: {
+                    let ExprData::ERequireString(req) = val.data else {
+                        break 'split_require;
+                    };
+                    match decl.binding.data {
+                        BData::BObject(obj) => {
+                            let Some(ns) = self.require_namespace_ref(req) else {
+                                break 'split_require;
+                            };
+                            if self
+                                .try_track_dynamic_import_destructure(
+                                    ns,
+                                    &[req.import_record_index],
+                                    obj.properties(),
+                                    is_export,
+                                )
+                                .is_none()
+                            {
+                                self.dynamic_import_escaped_records
+                                    .insert(req.import_record_index, ());
+                            } else if kind != LocalKind::KVar && !is_export {
+                                self.note_destructured_locals(obj.properties());
+                            }
+                        }
+                        BData::BIdentifier(id) if kind != LocalKind::KVar && !is_export => {
+                            let local = id.r#ref;
+                            if self.import_items_for_namespace.contains_key(&local)
+                                || !self.options.bundle
+                                || req.unwrapped_id.get().is_some()
+                            {
+                                break 'split_require;
+                            }
+                            self.register_dynamic_import_namespace_local(
+                                local,
+                                decl.binding.loc,
+                                req.import_record_index,
+                            );
+                        }
+                        _ => {}
                     }
                 }
 
@@ -1144,6 +1308,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         target: this_target,
                                         index: key,
                                         optional_chain: None,
+                                        is_import_property_use: false,
                                     },
                                     key.loc,
                                 ),
@@ -1746,6 +1911,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     if symbol.use_count_estimate == 1
                         && p.substitute_single_use_symbol_in_stmt(stmt, id, replacement)
                     {
+                        // `const ns = await import(x); return ns` — the single use just
+                        // moved into `replacement`; unless it was an accounted-for read
+                        // (`f(ns.a)`), the namespace escapes there.
+                        if p.dynamic_import_namespace_locals.contains_key(&id)
+                            && p.namespace_tracked_uses.get(&id).copied().unwrap_or(0) == 0
+                        {
+                            // Read as "more uses than accounted for" when finalizing.
+                            p.namespace_tracked_uses.insert(id, u32::MAX);
+                        }
                         match local.decls.len_u32() {
                             1 => {
                                 local.decls.clear();

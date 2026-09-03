@@ -2901,7 +2901,7 @@ impl Package<u64> {
                             Some(source),
                             bun_ast::Loc::EMPTY,
                             format_args!(
-                                "workspace \"{}\": installConfig.hoistingLimits \"{}\" is not supported (only \"workspaces\" is); ignoring",
+                                "workspace \"{}\": installConfig.hoistingLimits \"{}\" is not supported (only \"workspaces\" and \"none\" are); ignoring",
                                 bstr::BStr::new(&entry.name),
                                 bstr::BStr::new(v),
                             ),

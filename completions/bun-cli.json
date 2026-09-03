@@ -1903,7 +1903,7 @@
         },
         {
           "name": "linker",
-          "description": "Prune a node_modules installed with the given linker (one of \"isolated\" or \"hoisted\")",
+          "description": "Linker to assume when node_modules mixes isolated and hoisted installs (one of \"isolated\" or \"hoisted\")",
           "hasValue": true,
           "valueType": "val",
           "required": false,

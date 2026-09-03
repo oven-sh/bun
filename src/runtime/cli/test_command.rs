@@ -1995,6 +1995,8 @@ impl TestCommand {
             vm.test_isolation_state.proxy_env = Some(
                 bun_jsc::rare_data::ProxyEnvSnapshot::capture(&vm.env_loader().map),
             );
+            vm.test_isolation_state.synthetic_allocation_limit =
+                Some(bun_jsc::virtual_machine::synthetic_allocation_limit());
         }
 
         if ctx.test_options.test_worker {

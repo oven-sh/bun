@@ -106,6 +106,20 @@ pub(crate) fn find_imported_parts_in_js_order(
 
     Order::sort(&mut chunk_order_array);
 
+    // Without code splitting, a chunk holds every file that its entry point reaches.
+    // Distances are the minimum over all entry points, so other entry points in this
+    // chunk also sort at distance 0. Visit this chunk's own entry point first, so the
+    // files print in the order that this entry point imports them.
+    if !this.graph.code_splitting && chunk.entry_point.is_entry_point() {
+        let entry_point = chunk.entry_point.source_index();
+        if let Some(i) = chunk_order_array
+            .iter()
+            .position(|order| order.source_index == entry_point)
+        {
+            chunk_order_array[..=i].rotate_right(1);
+        }
+    }
+
     part_ranges_shared.clear();
     parts_prefix_shared.clear();
 

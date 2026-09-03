@@ -923,4 +923,28 @@ console.log("survived", require("./late.js"));`,
    ./k.cjs (seen)`);
     expect(await proc.exited).toBe(0);
   });
+
+  test("new Module().exports survives object spread", async () => {
+    // exports was built with inline capacity 0, so spreading it hit JSC's
+    // tryCreateObjectViaCloning hasInlineStorage() debug assert. Run in a
+    // subprocess so a regressing assert shows up as missing stdout rather than
+    // killing the test runner.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const Module = require("node:module");
+         const m = new Module("x");
+         m.exports.a = 1;
+         console.log(JSON.stringify({ ...m.exports }));`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim()).toBe('{"a":1}');
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
 });

@@ -688,6 +688,12 @@ export const isMemoryPressureWatcherInstalled: () => boolean = $newCppFunction(
   0,
 );
 
+// `parallelism` threads each spawn `iterations` no-op threads through bun's own pthread_create,
+// writing every failure to `fd`. Returns the first failing errno, or with `detach` 0 as soon as
+// every loop runs; a detached loop also writes to `fd` when it runs out of iterations.
+export const spawnThreadsForTesting: (iterations: number, fd: number, parallelism: number, detach?: boolean) => number =
+  $newCppFunction("InternalForTesting.cpp", "jsFunction_spawnThreadsForTesting", 4);
+
 // True when the installed watcher registered a real OS source (a PSI trigger
 // on Linux). The watcher installs silently without one when the kernel
 // refuses the trigger, so isMemoryPressureWatcherInstalled() cannot tell.

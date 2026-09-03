@@ -109,6 +109,19 @@ describe("untyped sql.array", () => {
     });
   });
 
+  test("typed array elements keep their values", async () => {
+    expect(await captureBind(sql => sql`SELECT ${sql.array(new Int32Array([100, 200]))}`)).toEqual({
+      query: "SELECT $1 ",
+      oids: [0],
+      params: ['{"100","200"}'],
+    });
+    expect(await captureBind(sql => sql`SELECT ${sql.array([new Float64Array([1.5, 2])], "TEXT")}`)).toEqual({
+      query: "SELECT $1::TEXT[] ",
+      oids: [0],
+      params: ['{{"1.5","2"}}'],
+    });
+  });
+
   test("an explicit type still casts", async () => {
     expect(await captureBind(sql => sql`SELECT ${sql.array(["a", 1], "TEXT")}`)).toEqual({
       query: "SELECT $1::TEXT[] ",

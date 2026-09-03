@@ -418,7 +418,7 @@ await sql`SELECT ${sql.array([1, 2, 3], "INT")} AS ids`;
 
 Without a type, the parameter has no cast. PostgreSQL infers the element type from the target column, the compared value, or a cast in the query. Pass the type when the query gives the server no context: a bare `SELECT ${sql.array([1])}` comes back as the literal text `{"1"}`, and a function argument such as `unnest(${sql.array([1])})` fails with `could not determine polymorphic type`. Pass `"JSON"` or `"JSONB"` for string elements that go into a `json[]` or `jsonb[]` column, so each string is JSON-encoded.
 
-<Note>`sql.array` is PostgreSQL-only. Multi-dimensional arrays and NULL elements may not be supported yet.</Note>
+<Note>`sql.array` is PostgreSQL-only. Multi-dimensional arrays may not be supported yet.</Note>
 
 ---
 

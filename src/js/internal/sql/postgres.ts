@@ -149,7 +149,8 @@ function arrayValueSerializer(type: ArrayType | undefined, is_numeric: boolean, 
   if ($isArray(value) || isTypedArray(value)) {
     if (!value.length) return "{}";
     const delimiter = type === "BOX" ? ";" : ",";
-    return `{${value.map(arrayValueSerializer.bind(this, type, is_numeric, is_json)).join(delimiter)}}`;
+    // Array.prototype.map: a TypedArray's own map coerces each result back to a number.
+    return `{${Array.prototype.map.$call(value, arrayValueSerializer.bind(this, type, is_numeric, is_json)).join(delimiter)}}`;
   }
 
   if (value === null) return "null";
@@ -239,7 +240,18 @@ function serializeArray(values: any[], type: ArrayType | undefined) {
   // Only _box (1020) has the ';' delimiter for arrays, all other types use the ',' delimiter
   const delimiter = type === "BOX" ? ";" : ",";
 
-  return `{${values.map(arrayValueSerializer.bind(this, type, type !== undefined && isPostgresNumericType(type), type !== undefined && isPostgresJsonType(type))).join(delimiter)}}`;
+  // Array.prototype.map: a TypedArray's own map coerces each result back to a number.
+  return `{${Array.prototype.map
+    .$call(
+      values,
+      arrayValueSerializer.bind(
+        this,
+        type,
+        type !== undefined && isPostgresNumericType(type),
+        type !== undefined && isPostgresJsonType(type),
+      ),
+    )
+    .join(delimiter)}}`;
 }
 
 function wrapPostgresError(error: Error | PostgresErrorOptions) {

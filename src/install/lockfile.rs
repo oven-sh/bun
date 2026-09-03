@@ -180,11 +180,7 @@ pub struct Lockfile {
     pub(crate) scripts: Scripts,
     pub(crate) workspace_paths: NameHashMap,
     pub workspace_versions: VersionHashMap,
-    /// Workspaces (by name hash) that must get a self-contained node_modules: those
-    /// listed in the root manifest's `workspaces.selfContained` and those declaring
-    /// `installConfig.hoistingLimits = "workspaces"`. Mirrored from the manifests on
-    /// every install and persisted per workspace in bun.lock (`"hoistingLimits"`), so a
-    /// tree rebuilt from the lockfile is hoisted the same way.
+    /// Name hashes of the self-contained workspaces, from the manifests. Not saved.
     pub self_contained_workspaces: ArrayHashMap<PackageNameHash, (), ArrayIdentityContextU64>,
 
     /// Optional because `trustedDependencies` in package.json might be an
@@ -823,7 +819,7 @@ impl Lockfile {
     /// root manifest's `workspaces.selfContained` (by path or name) or declaring
     /// `"installConfig": { "hoistingLimits": "workspaces" }` in their own manifest.
     /// Both are recorded in `self_contained_workspaces` while the workspaces are
-    /// parsed (and persisted per workspace in bun.lock).
+    /// parsed.
     pub(crate) fn self_contained_workspace_ids(&self) -> Vec<PackageID> {
         if self.self_contained_workspaces.count() == 0 {
             return Vec::new();
@@ -1365,13 +1361,19 @@ impl Lockfile {
     ) -> Result<bool, tree::SubtreeError> {
         let slice = self.packages.slice();
 
+        // Only the install applies the barrier, so the saved tree does not depend on it.
+        let self_contained = if METHOD == tree::BuilderMethod::Filter {
+            self.self_contained_workspace_ids()
+        } else {
+            Vec::new()
+        };
+
         // `tree::Builder` stores `lockfile: ParentRef<Lockfile>` so
         // the `&mut buffers.resolutions` split-borrow below can coexist with
         // the read-only lockfile view inside the builder (see Tree.rs note).
         // `ParentRef::new` captures `SharedReadOnly` provenance from `&*self`,
         // which is exactly what `Builder` needs (it only ever `Deref`s); the
         // `Builder` does not outlive this `&mut self` borrow.
-        let self_contained = self.self_contained_workspace_ids();
         let lockfile_ref = bun_ptr::ParentRef::<Lockfile>::new(&*self);
         let mut builder = tree::Builder::<METHOD> {
             self_contained,
@@ -2974,30 +2976,6 @@ impl Lockfile {
             string_builder.count(SCRIPTS_END);
         }
 
-        // Self-contained workspaces change the hoisted layout without changing any
-        // resolution; include them (sorted, only when present) so bun.lockb's
-        // frozen-lockfile check notices. Text lockfiles compare the tree itself.
-        const SELF_CONTAINED_BEGIN: &[u8] = b"\n-- BEGIN SELF-CONTAINED WORKSPACES --\n";
-        let mut self_contained_names: Vec<&[u8]> = Vec::new();
-        if self.self_contained_workspaces.count() > 0 {
-            for i in 0..packages_len {
-                if resolutions[i].tag == crate::resolution::Tag::Workspace
-                    && self
-                        .self_contained_workspaces
-                        .contains(&self.packages.items_name_hash()[i])
-                {
-                    self_contained_names.push(names[i].slice(bytes));
-                }
-            }
-            self_contained_names.sort_unstable();
-            if !self_contained_names.is_empty() {
-                string_builder.count(SELF_CONTAINED_BEGIN);
-                for n in &self_contained_names {
-                    string_builder.fmt_count(format_args!("{}\n", bstr::BStr::new(n)));
-                }
-            }
-        }
-
         {
             let alphabetizer = package::Alphabetizer::<u64> {
                 names: names.into(),
@@ -3034,13 +3012,6 @@ impl Lockfile {
                 }
             }
             let _ = string_builder.append(SCRIPTS_END);
-        }
-
-        if !self_contained_names.is_empty() {
-            let _ = string_builder.append(SELF_CONTAINED_BEGIN);
-            for n in &self_contained_names {
-                let _ = string_builder.fmt(format_args!("{}\n", bstr::BStr::new(n)));
-            }
         }
 
         let _ = string_builder.append(HASH_SUFFIX);

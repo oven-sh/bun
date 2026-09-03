@@ -13,6 +13,7 @@ import {
   tempDir,
   withoutAggressiveGC,
 } from "harness";
+import { mkfifo } from "mkfifo";
 import { once } from "node:events";
 import http from "node:http";
 import path, { join } from "path";
@@ -279,6 +280,157 @@ const IS_UV_FS_COPYFILE_DISABLED =
     }
   });
 
+  // uv_fs_copyfile (Windows) and fcopyfile (macOS) do not report a count.
+  it("Bun.write(dest, Bun.file(src)) resolves with the number of bytes copied", async () => {
+    using dir = tempDir("bun-write-copy-size", { "src.txt": "hello world", "src-empty.txt": "" });
+    const src = join(String(dir), "src.txt");
+    const dst = join(String(dir), "dst.txt");
+    const dstEmpty = join(String(dir), "dst-empty.txt");
+
+    const toPath = await Bun.write(dst, Bun.file(src));
+    const overExisting = await Bun.write(Bun.file(dst), Bun.file(src));
+    const fromEmpty = await Bun.write(dstEmpty, Bun.file(join(String(dir), "src-empty.txt")));
+    expect({
+      toPath,
+      overExisting,
+      fromEmpty,
+      copied: fs.readFileSync(dst, "utf8"),
+      copiedEmpty: fs.readFileSync(dstEmpty, "utf8"),
+    }).toEqual({ toPath: 11, overExisting: 11, fromEmpty: 0, copied: "hello world", copiedEmpty: "" });
+  });
+
+  // The file-to-file copy took the destination Blob's `size` as the number of
+  // bytes to copy. On an unsliced Bun.file(), `.size` and `exists()` store the
+  // file's size there, so the copy stopped at the old length of the
+  // destination: 0 bytes for the `exists()` guard in #4930.
+  describe("Bun.file -> Bun.file is not capped by the destination's cached size", () => {
+    const source = Buffer.alloc(100_000, "S").toString();
+
+    function expectCopiedWhole(destPath, written) {
+      expect({ written, size: fs.statSync(destPath).size }).toEqual({ written: source.length, size: source.length });
+      expect(fs.readFileSync(destPath, "utf8")).toBe(source);
+    }
+
+    // Each primer caches the destination's size on a Blob and returns the Blob
+    // to write to. The size is cached on that Blob, so the clone and the
+    // whole-file slice are the destination.
+    const primers = [
+      [
+        "f.size",
+        (f, size) => {
+          expect(f.size).toBe(size);
+          return f;
+        },
+      ],
+      [
+        "await f.exists()",
+        async f => {
+          expect(await f.exists()).toBe(true);
+          return f;
+        },
+      ],
+      [
+        "expect(f).toHaveLength()",
+        (f, size) => {
+          expect(f).toHaveLength(size);
+          return f;
+        },
+      ],
+      [
+        "structuredClone(f), which stats f while serializing it",
+        f => {
+          structuredClone(f);
+          return f;
+        },
+      ],
+      [
+        "f.size, writing to structuredClone(f)",
+        (f, size) => {
+          expect(f.size).toBe(size);
+          return structuredClone(f);
+        },
+      ],
+      [
+        "f.slice().size, writing to the whole-file slice",
+        (f, size) => {
+          const whole = f.slice();
+          expect(whole.size).toBe(size);
+          return whole;
+        },
+      ],
+    ];
+
+    describe.each([
+      ["shorter", "short"],
+      ["empty", ""],
+    ])("%s existing destination", (_, existing) => {
+      it.each(primers)("primed by %s", async (_, prime) => {
+        using dir = tempDir("bun-write-dest-size-cached", { "src.bin": source, "dest.bin": existing });
+        const destPath = join(String(dir), "dest.bin");
+        const dest = await prime(Bun.file(destPath), existing.length);
+
+        const written = await Bun.write(dest, Bun.file(join(String(dir), "src.bin")));
+        expectCopiedWhole(destPath, written);
+      });
+    });
+
+    it("primed by exists() on a destination that does not exist yet (#4930)", async () => {
+      using dir = tempDir("bun-write-dest-exists-guard", { "in.txt": source });
+      const outPath = join(String(dir), "out.txt");
+      const out = Bun.file(outPath);
+      expect(await out.exists()).toBe(false);
+
+      const written = await Bun.write(out, Bun.file(join(String(dir), "in.txt")));
+      expectCopiedWhole(outPath, written);
+    });
+
+    it("primed by .size on an fd destination", async () => {
+      using dir = tempDir("bun-write-fd-dest-size-cached", { "src.bin": source, "dest.bin": "short" });
+      const destPath = join(String(dir), "dest.bin");
+      const fd = fs.openSync(destPath, "r+");
+      let written;
+      try {
+        const dest = Bun.file(fd);
+        expect(dest.size).toBe(5);
+        written = await Bun.write(dest, Bun.file(join(String(dir), "src.bin")));
+      } finally {
+        fs.closeSync(fd);
+      }
+      expectCopiedWhole(destPath, written);
+    });
+
+    // On Windows, the copy also padded a shorter copy out to the cached size.
+    it("primed by .size, a shorter source replaces a longer destination", async () => {
+      using dir = tempDir("bun-write-dest-shrinks", {
+        "src.bin": "tiny",
+        "dest.bin": Buffer.alloc(1000, "D").toString(),
+      });
+      const destPath = join(String(dir), "dest.bin");
+      const dest = Bun.file(destPath);
+      expect(dest.size).toBe(1000);
+
+      const written = await Bun.write(dest, Bun.file(join(String(dir), "src.bin")));
+      expect({ written, copied: fs.readFileSync(destPath, "utf8") }).toEqual({ written: 4, copied: "tiny" });
+    });
+
+    // A window that slice() set still caps the copy. That holds through
+    // structuredClone, and for a window as long as the size that `.size` cached.
+    it.each([
+      ["f.slice(0, 4)", f => f.slice(0, 4), "SSSS"],
+      ["structuredClone(f.slice(0, 4))", f => structuredClone(f.slice(0, 4)), "SSSS"],
+      ["f.slice(0, f.size)", f => f.slice(0, f.size), "SSSSSSSSSS"],
+    ])("a destination sliced with %s is still bounded by the slice", async (_, slice, expected) => {
+      using dir = tempDir("bun-write-dest-window", { "src.bin": source, "dest.bin": "0123456789" });
+      const destPath = join(String(dir), "dest.bin");
+
+      const written = await Bun.write(slice(Bun.file(destPath)), Bun.file(join(String(dir), "src.bin")));
+      expect({ written, copied: fs.readFileSync(destPath, "utf8") }).toEqual({
+        written: expected.length,
+        copied: expected,
+      });
+    });
+  });
+
   it("Bun.file", async () => {
     const file = path.join(import.meta.dir, "fetch.js.txt");
     await gcTick();
@@ -523,22 +675,34 @@ const IS_UV_FS_COPYFILE_DISABLED =
   describe("Bun.write(dest, Bun.file(src).slice(start, end)) copies only the slice", () => {
     const content = "abcdefghijklmnopqrstuvwxyz";
 
+    // Each window is copied to a new file, and over a longer file that the copy truncates.
     it.each([
       ["a window in the middle", 10, 20],
       ["a window at the start", 0, 5],
       ["a window to EOF", 3, undefined],
       ["a window that ends past EOF", 20, 100],
+      ["a window at the start that ends past EOF", 0, 100],
+      ["a window of the whole file", 0, content.length],
+      ["a window from the start to EOF", 0, undefined],
       ["an empty window", 5, 5],
+      ["an empty window at the start", 0, 0],
       ["a window past EOF", 30, 40],
     ])("%s", async (_, start, end) => {
-      using dir = tempDir("bun-write-src-slice", { "src.txt": content });
-      const dst = join(String(dir), "dst.txt");
-      const expected = content.slice(start, end);
+      using dir = tempDir("bun-write-src-slice", {
+        "src.txt": content,
+        "longer.txt": Buffer.alloc(64, "Z").toString(),
+      });
+      const slice = Bun.file(join(String(dir), "src.txt")).slice(start, end);
+      const copy = async name => {
+        const dst = join(String(dir), name);
+        const written = await Bun.write(dst, slice);
+        return { written, copied: fs.readFileSync(dst, "utf8") };
+      };
+      const expected = { written: content.slice(start, end).length, copied: content.slice(start, end) };
 
-      const written = await Bun.write(dst, Bun.file(join(String(dir), "src.txt")).slice(start, end));
-      expect({ written, copied: fs.readFileSync(dst, "utf8") }).toEqual({
-        written: expected.length,
-        copied: expected,
+      expect({ created: await copy("dst.txt"), overwritten: await copy("longer.txt") }).toEqual({
+        created: expected,
+        overwritten: expected,
       });
     });
 
@@ -599,6 +763,29 @@ const IS_UV_FS_COPYFILE_DISABLED =
       expect(exitCode).toBe(0);
     });
 
+    // A FIFO has no position either, and lseek on one fails with ESPIPE. Linux
+    // does not copy from a FIFO into a file, so the copy fails at the type check.
+    it.skipIf(!isLinux)("a window of a FIFO", async () => {
+      using dir = tempDir("bun-write-src-slice-fifo", {});
+      const fifo = join(String(dir), "src.fifo");
+      mkfifo(fifo);
+      // O_RDWR, so the open does not wait for a writer.
+      const fd = fs.openSync(fifo, fs.constants.O_RDWR);
+      try {
+        fs.writeSync(fd, content);
+        const err = await Bun.write(join(String(dir), "dst.txt"), Bun.file(fd).slice(5, 10)).then(
+          () => null,
+          e => e,
+        );
+        expect({ syscall: err?.syscall, message: err?.message }).toEqual({
+          syscall: "fstat",
+          message: "Non-regular files aren't supported yet",
+        });
+      } finally {
+        fs.closeSync(fd);
+      }
+    });
+
     it("a window of a file larger than the preallocation threshold", async () => {
       const payload = randomBytes(8 * 1024 * 1024);
       using dir = tempDir("bun-write-src-slice-large", { "src.bin": payload });
@@ -627,23 +814,35 @@ const IS_UV_FS_COPYFILE_DISABLED =
       }
     });
 
-    it.skipIf(!isLinux)("a window through the read/write fallback", async () => {
-      using dir = tempDir("bun-write-src-slice-fallback", { "src.txt": content });
-      const src = join(String(dir), "src.txt");
-      const dst = join(String(dir), "dst.txt");
-      const script = `process.stdout.write(String(await Bun.write(${JSON.stringify(dst)}, Bun.file(${JSON.stringify(src)}).slice(10, 20))))`;
+    // The fallback reads 64 KiB at a time. This window takes many reads, and it
+    // is longer than the preallocation threshold.
+    it("a window through the read/write fallback", async () => {
+      const payload = randomBytes(4 * 1024 * 1024);
+      using dir = tempDir("bun-write-src-slice-fallback", { "src.bin": payload });
+      const src = join(String(dir), "src.bin");
+      const dst = join(String(dir), "dst.bin");
+      const start = 512 * 1024 + 7;
+      const end = payload.length - 5;
+      const script = `process.stdout.write(String(await Bun.write(${JSON.stringify(dst)}, Bun.file(${JSON.stringify(src)}).slice(${start}, ${end}))))`;
 
       await using proc = Bun.spawn({
         cmd: [bunExe(), "-e", script],
-        env: { ...bunEnv, BUN_CONFIG_DISABLE_COPY_FILE_RANGE: "1" },
+        env: { ...bunEnv, BUN_CONFIG_DISABLE_COPY_FILE_RANGE: "1", BUN_FEATURE_FLAG_DISABLE_UV_FS_COPYFILE: "1" },
         stdout: "pipe",
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect({ stdout, stderr, copied: fs.readFileSync(dst, "utf8") }).toEqual({
-        stdout: "10",
+      const copied = fs.readFileSync(dst);
+      expect({
+        stdout,
+        stderr,
+        size: copied.byteLength,
+        identical: copied.equals(payload.subarray(start, end)),
+      }).toEqual({
+        stdout: String(end - start),
         stderr: "",
-        copied: "klmnopqrst",
+        size: end - start,
+        identical: true,
       });
       expect(exitCode).toBe(0);
     });

@@ -567,7 +567,12 @@ impl CopyFile {
                     }
                 }
             }
-            bun_sys::Result::Ok(()) => {}
+            bun_sys::Result::Ok(()) => {
+                // fcopyfile does not report a count. Bun opened the destination with O_TRUNC.
+                if let bun_sys::Result::Ok(st) = bun_sys::fstat(self.destination_fd) {
+                    self.read_len = SizeType::try_from(st.st_size).expect("int cast");
+                }
+            }
         }
         Ok(())
     }
@@ -1194,15 +1199,7 @@ impl<'a> CopyFileWindows<'a> {
         if self.source_size == MAX_SIZE {
             return true;
         }
-        let source = self.source_file_store.data.as_file();
-        let stat = match &source.pathlike {
-            PathOrFileDescriptor::Fd(fd) => bun_sys::fstat(*fd),
-            PathOrFileDescriptor::Path(path) => {
-                let mut buf = bun_paths::path_buffer_pool::get();
-                bun_sys::stat(path.slice_z(&mut buf))
-            }
-        };
-        match stat {
+        match stat_store_file(self.source_file_store.data.as_file()) {
             bun_sys::Result::Ok(stat) => self.source_size >= stat.st_size as SizeType,
             // Let the copy itself report the error.
             bun_sys::Result::Err(_) => true,
@@ -1219,6 +1216,17 @@ impl<'a> CopyFileWindows<'a> {
             )
         {
             self.read_write_loop.read_pos = i64::try_from(self.source_offset).expect("int cast");
+        }
+    }
+}
+
+#[cfg(windows)]
+fn stat_store_file(file: &store::File) -> bun_sys::Maybe<bun_sys::Stat> {
+    match &file.pathlike {
+        PathOrFileDescriptor::Fd(fd) => bun_sys::fstat(*fd),
+        PathOrFileDescriptor::Path(path) => {
+            let mut buf = bun_paths::path_buffer_pool::get();
+            bun_sys::stat(path.slice_z(&mut buf))
         }
     }
 }
@@ -1953,7 +1961,15 @@ extern "C" fn on_copy_file(req: *mut libuv::fs_t) {
         return;
     }
 
-    let size = this.io_request.statbuf.size();
+    // `CopyFileW` does not fill `statbuf`, so a whole-file copy reads its size from the destination.
+    let mut size = this.io_request.statbuf.size();
+    if size == 0 && this.size == MAX_SIZE {
+        if let bun_sys::Result::Ok(stat) =
+            stat_store_file(this.destination_file_store.data.as_file())
+        {
+            size = stat.st_size;
+        }
+    }
     this.on_complete(size as usize);
 }
 

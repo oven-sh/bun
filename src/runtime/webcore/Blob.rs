@@ -765,10 +765,14 @@ impl BlobExt for Blob {
                 writer.write_int_le::<u32>(stored_name.len() as u32)?;
                 writer.write_all(stored_name)?;
             } else {
-                // Version 4: a file-backed slice's window end. Written before
-                // resolve_size() so an unresolved blob stays MAX_SIZE (unknown)
-                // on the wire and the receiver stats it locally, like v3.
-                writer.write_int_le::<u64>(self.size.get())?;
+                // Version 4: the window end of a sliced file-backed blob. Any
+                // other blob puts MAX_SIZE (unknown) on the wire, also one that
+                // cached the file's size, and the receiver stats it locally, like v3.
+                writer.write_int_le::<u64>(if self.size_is_explicit.get() {
+                    self.size.get()
+                } else {
+                    MAX_SIZE
+                })?;
                 self.resolve_size();
                 store.serialize(writer)?;
             }
@@ -1895,6 +1899,8 @@ impl BlobExt for Blob {
         let blob = self.dupe();
         blob.offset.set(offset);
         blob.size.set(len);
+        // `slice()` and `slice(0)` of a file whose size is unknown cover the whole file.
+        blob.size_is_explicit.set(len != MAX_SIZE);
 
         let content_type_was_allocated = content_type.is_owned() && !content_type.is_empty();
         // infer the content type if it was not specified
@@ -2273,18 +2279,18 @@ impl BlobExt for Blob {
     /// The `(offset, size)` that `slice()` set on a file Blob, or `None` for the whole file.
     fn file_window(&self) -> Option<(SizeType, SizeType)> {
         let store = self.store.get().as_ref()?;
-        let store::Data::File(file) = &store.data else {
+        if !matches!(store.data, store::Data::File(_)) {
             return None;
-        };
+        }
         let offset = self.offset.get();
+        let size = self.size.get();
         // An unknown size is `MAX_SIZE`, and `slice(start)` of it ends there.
-        let size = if offset.saturating_add(self.size.get()) >= MAX_SIZE {
-            MAX_SIZE
+        let size = if self.size_is_explicit.get() && offset.saturating_add(size) < MAX_SIZE {
+            size
         } else {
-            self.size.get()
+            MAX_SIZE
         };
-        // `.size` and `exists()` cache the stat'd size, so that size means the whole file.
-        if offset == 0 && (size == MAX_SIZE || size == file.max_size) {
+        if offset == 0 && size == MAX_SIZE {
             return None;
         }
         Some((offset, size))
@@ -3200,6 +3206,7 @@ impl BlobExt for Blob {
                                     ),
                                     charset: Cell::new(blob.charset.get()),
                                     is_jsdom_file: Cell::new(blob.is_jsdom_file.get()),
+                                    size_is_explicit: Cell::new(blob.size_is_explicit.get()),
                                     ref_count: bun_ptr::RawRefCount::init(0), // setNotHeapAllocated
                                     global_this: Cell::new(blob.global_this.get()),
                                     last_modified: Cell::new(blob.last_modified.get()),
@@ -4038,6 +4045,7 @@ fn on_structured_clone_deserialize<B: AsRef<[u8]>>(
         // resolve_size() clamps this to the actual file size on first use.
         if size != MAX_SIZE {
             blob.size.set(size as SizeType);
+            blob.size_is_explicit.set(true);
         }
     }
     if let Some(store) = blob.store.get() {
@@ -4515,6 +4523,8 @@ pub(crate) fn write_file_with_source_destination(
     else if destination_type == store::DataTag::File && source_type == store::DataTag::File {
         // The copy reads only the source's window.
         let (source_offset, source_size) = source_blob.file_window().unwrap_or((0, MAX_SIZE));
+        // Only a window that `slice()` set on the destination caps the copy.
+        let destination_window = destination_blob.file_window().unwrap_or((0, MAX_SIZE));
         #[cfg(windows)]
         {
             return Ok(copy_file::CopyFileWindows::init(
@@ -4522,7 +4532,7 @@ pub(crate) fn write_file_with_source_destination(
                 source_store,
                 ctx.bun_vm().event_loop_shared(),
                 options.mkdirp_if_not_exists.unwrap_or(true),
-                destination_blob.size.get(),
+                destination_window.1,
                 source_offset,
                 source_size,
                 options.mode,
@@ -4533,8 +4543,8 @@ pub(crate) fn write_file_with_source_destination(
             return Ok(copy_file::CopyFile::create(
                 destination_store,
                 source_store,
-                destination_blob.offset.get(),
-                destination_blob.size.get(),
+                destination_window.0,
+                destination_window.1,
                 source_offset,
                 source_size,
                 ctx,

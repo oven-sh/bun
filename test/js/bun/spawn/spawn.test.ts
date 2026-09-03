@@ -1268,18 +1268,46 @@ describe("stdin: a sliced Bun.file() sends only the slice", () => {
     return { stdout, stderr, exitCode };
   }
 
-  it.concurrent.each([
+  function sendToChildSync(stdin: Blob) {
+    const { stdout, stderr, exitCode } = spawnSync({
+      cmd: [bunExe(), "-e", echoStdin],
+      env: bunEnv,
+      stdin,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    return { stdout: stdout.toString(), stderr: stderr.toString(), exitCode };
+  }
+
+  const windows: [name: string, start: number, end: number | undefined][] = [
     ["a window in the middle", 10, 20],
     ["a window at the start", 0, 5],
     ["a window to EOF", 3, undefined],
     ["a window that ends past EOF", 20, 100],
+    ["a window at the start that ends past EOF", 0, 100],
+    ["a window of the whole file", 0, content.length],
+    ["a window from the start to EOF", 0, undefined],
     ["an empty window", 5, 5],
     ["a window past EOF", 30, 40],
-  ])("%s", async (_, start, end) => {
+  ];
+
+  it.concurrent.each(windows)("%s", async (_, start, end) => {
     using dir = tempDir("spawn-stdin-slice", { "src.txt": content });
     const file = Bun.file(join(String(dir), "src.txt"));
 
     expect(await sendToChild(file.slice(start, end))).toEqual({
+      stdout: content.slice(start, end),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // Not concurrent: spawnSync blocks the event loop of the concurrent tests.
+  it.each(windows)("spawnSync: %s", (_, start, end) => {
+    using dir = tempDir("spawn-stdin-slice-sync", { "src.txt": content });
+    const file = Bun.file(join(String(dir), "src.txt"));
+
+    expect(sendToChildSync(file.slice(start, end))).toEqual({
       stdout: content.slice(start, end),
       stderr: "",
       exitCode: 0,
@@ -1349,20 +1377,56 @@ describe("stdin: a sliced Bun.file() sends only the slice", () => {
     });
   });
 
-  it("spawnSync", () => {
-    using dir = tempDir("spawn-stdin-slice-sync", { "src.txt": content });
+  it("spawnSync: a window at the end of a large file", () => {
+    const payload = randomBytes(1024 * 1024);
+    using dir = tempDir("spawn-stdin-slice-tail", { "src.bin": payload });
     const { stdout, stderr, exitCode } = spawnSync({
       cmd: [bunExe(), "-e", echoStdin],
       env: bunEnv,
-      stdin: Bun.file(join(String(dir), "src.txt")).slice(10, 20),
+      stdin: Bun.file(join(String(dir), "src.bin")).slice(payload.length - 12, payload.length),
       stdout: "pipe",
       stderr: "pipe",
     });
 
-    expect({ stdout: stdout.toString(), stderr: stderr.toString(), exitCode }).toEqual({
-      stdout: "klmnopqrst",
+    expect({ stdout: stdout.toString("hex"), stderr: stderr.toString(), exitCode }).toEqual({
+      stdout: payload.subarray(payload.length - 12).toString("hex"),
       stderr: "",
       exitCode: 0,
+    });
+  });
+
+  // A missing file has no window to read. It goes to the child as an unsliced file does.
+  it("a window of a missing file", () => {
+    using dir = tempDir("spawn-stdin-slice-missing", {});
+    const outcome = (stdin: Blob) => {
+      try {
+        return sendToChildSync(stdin);
+      } catch (err) {
+        return { code: (err as NodeJS.ErrnoException).code };
+      }
+    };
+
+    expect(outcome(Bun.file(join(String(dir), "a.txt")).slice(0, 5))).toEqual(
+      outcome(Bun.file(join(String(dir), "b.txt"))),
+    );
+  });
+
+  // The window applies to stdin only. At stdout, the child writes to the file.
+  it.concurrent("a window at stdout", async () => {
+    using dir = tempDir("spawn-stdout-slice", { "out.txt": "" });
+    const out = join(String(dir), "out.txt");
+    await using proc = spawn({
+      cmd: [bunExe(), "-e", "process.stdout.write('written')"],
+      env: bunEnv,
+      stdout: Bun.file(out).slice(0, 2),
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+    expect({ stderr, exitCode, written: readFileSync(out, "utf8") }).toEqual({
+      stderr: "",
+      exitCode: 0,
+      written: "written",
     });
   });
 

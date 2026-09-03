@@ -1,6 +1,8 @@
 const memory = require("./leak-metric.cjs");
 const dest = require.resolve("./require-cache-bug-leak-fixture-large-ast.js");
-const count = memory.iterations(50);
+// bun 1.0.0 retained 20 MB per load here, eight times the limit. Each load
+// parses a 200 KB file, so ASAN runs fewer.
+const count = memory.iterations({ release: 50, asan: 10 });
 // require() appends every new Module to the parent's children list, as in
 // Node. That list is not what this fixture measures.
 module.children = { indexOf: () => 0 };

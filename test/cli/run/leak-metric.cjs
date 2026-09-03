@@ -11,9 +11,8 @@
 // in use. On ASAN builds the sanitizer allocator reports the bytes allocated
 // and not yet freed, quarantine excluded, but only sees JSC memory when the
 // process runs with Malloc=1 (WebKit then uses system malloc). The test spawns
-// the fixtures that way. Both numbers are exact to a few MB, so fewer
-// iterations are enough. A build where neither sees JSC memory falls back to
-// RSS with the full workload.
+// the fixtures that way. Both numbers are exact to a few MB. A build where
+// neither sees JSC memory falls back to RSS.
 let internals;
 try {
   internals = require("bun:internal-for-testing");
@@ -72,8 +71,10 @@ module.exports = {
   metric: metric.name,
   measure: metric.measure,
 
-  // Debug builds are 10x slower than the release ASAN build CI runs.
-  iterations: count => Math.max(5, Math.round(count * (isDebug ? 0.02 : isASAN ? 0.2 : 1))),
+  // Iterations for this build. `asan` is for a workload too slow to run in
+  // full under ASAN. Debug builds are 10x slower than the builds CI runs, and
+  // only need to run the code.
+  iterations: ({ release, asan = release }) => (isDebug ? Math.max(5, Math.round(asan / 50)) : isASAN ? asan : release),
 
   // Prints the result and exits 1 on a leak. `limitBytesPerIteration` is the
   // retained memory per iteration that counts as a leak.

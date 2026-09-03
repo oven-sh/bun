@@ -241,7 +241,7 @@ describe.concurrent("require.cache", () => {
       async () => {
         await expectFixtureToPass("esm-fixture-leak-small.mjs", "--smol");
       },
-      // 100k imports take longer on Windows and ASAN builds.
+      // Windows and ASAN builds run the 40k imports more slowly.
       isWindows || isASAN ? 60000 : 30000,
     );
   });

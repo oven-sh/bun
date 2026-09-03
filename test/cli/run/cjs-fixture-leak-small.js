@@ -1,6 +1,8 @@
 const memory = require("./leak-metric.cjs");
 const dest = require.resolve("./leak-fixture-small-ast.js");
-const count = memory.iterations(10_000);
+// bun 1.0.0 retained 10 KB per require here (104 MB at 10k requires), twice
+// the limit.
+const count = memory.iterations({ release: 10_000 });
 // require() appends every new Module to the parent's children list, as in
 // Node. That list is not what this fixture measures.
 module.children = { indexOf: () => 0 };

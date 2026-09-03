@@ -146,6 +146,44 @@ for (const [name, inspect] of process.versions.bun
     expect(inspect(obj, { depth: 3 }).replace(/\s/g, "")).toBe(expected);
   });
 
+  test(name + " does not call inspect.custom on a prototype object", () => {
+    const receivers = [];
+    class Foo {
+      [customSymbol]() {
+        receivers.push(this === Foo.prototype ? "prototype" : "instance");
+        return "custom";
+      }
+    }
+
+    expect(inspect(new Foo())).toBe("custom");
+    inspect(Foo.prototype);
+    inspect({ nested: Foo.prototype });
+    expect(receivers).toEqual(["instance"]);
+  });
+
+  test(name + " finds a prototype object only through an own constructor data property", () => {
+    const receivers = [];
+    function custom() {
+      receivers.push(this.name);
+      return "custom";
+    }
+    const primitiveConstructor = { name: "primitive", constructor: 1, [customSymbol]: custom };
+    const accessorConstructor = {
+      name: "accessor",
+      get constructor() {
+        throw new Error("the constructor getter must not run");
+      },
+      [customSymbol]: custom,
+    };
+    const prototypeObject = { name: "prototype", [customSymbol]: custom };
+    prototypeObject.constructor = { prototype: prototypeObject };
+
+    expect(inspect(primitiveConstructor)).toBe("custom");
+    expect(inspect(accessorConstructor)).toBe("custom");
+    inspect(prototypeObject);
+    expect(receivers).toEqual(["primitive", "accessor"]);
+  });
+
   const exceptions = [new Error("don't crash!"), 42];
 
   test.each(exceptions)(name + " handles exceptions %s", err => {
@@ -330,4 +368,23 @@ describe("Web Streams [nodejs.util.inspect.custom]", () => {
     // formats as a plain object instead of throwing.
     expect(inspect(globalThis[className].prototype)).toContain("encoding: [Getter]");
   });
+});
+
+// The native inspect.custom of these classes throws ERR_INVALID_THIS when `this` is not an
+// instance. Bun.inspect and console.log must not call it with the prototype as `this`.
+test.each([
+  "CompressionStream",
+  "DecompressionStream",
+  "TextEncoderStream",
+  "TextDecoderStream",
+  "BroadcastChannel",
+  "Buffer",
+])("Bun.inspect formats %s.prototype without its inspect.custom", className => {
+  const prototype = globalThis[className].prototype;
+  expect(prototype[customSymbol]).toBeFunction();
+  expect(() => prototype[customSymbol].call(prototype, 2, {})).toThrow(
+    expect.objectContaining({ code: "ERR_INVALID_THIS" }),
+  );
+  expect(Bun.inspect(prototype)).toStartWith(`${className} {\n`);
+  expect(Bun.inspect({ nested: prototype })).toStartWith(`{\n  nested: ${className} {\n`);
 });

@@ -2129,13 +2129,21 @@ pub mod formatter {
                         });
                     }
                     Ok(Some(callback_value)) if callback_value.is_callable() => {
-                        return Ok(TagResult {
-                            tag: TagPayload::CustomFormattedObject(CustomFormattedObject {
-                                function: callback_value,
-                                this: value,
-                            }),
-                            cell: js_type,
-                        });
+                        // Like util.inspect, skip the hook on a prototype object. The
+                        // hook expects an instance, and a native hook throws
+                        // ERR_INVALID_THIS for the prototype.
+                        let is_prototype = jsc::from_js_host_call_generic(global_this, || {
+                            JSC__JSValue__isPrototypeObject(global_this, value)
+                        })?;
+                        if !is_prototype {
+                            return Ok(TagResult {
+                                tag: TagPayload::CustomFormattedObject(CustomFormattedObject {
+                                    function: callback_value,
+                                    this: value,
+                                }),
+                                cell: js_type,
+                            });
+                        }
                     }
                     _ => {}
                 }
@@ -3189,6 +3197,9 @@ pub mod formatter {
             max_depth: u32,
             colors: bool,
         ) -> JSValue;
+        /// C++ helper (`UtilInspect.cpp`). True when `value` is the `prototype`
+        /// of its own `constructor` data property. Can throw.
+        safe fn JSC__JSValue__isPrototypeObject(global: &JSGlobalObject, value: JSValue) -> bool;
     }
 
     // ───────────────────────────────────────────────────────────────────────

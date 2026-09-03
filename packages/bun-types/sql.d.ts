@@ -764,7 +764,7 @@ declare module "bun" {
      * type is inferred from the values: strings bind as `TEXT`, integers as
      * `INTEGER` or `BIGINT`, other numbers as `DOUBLE PRECISION`, booleans as
      * `BOOLEAN`, dates as `TIMESTAMPTZ`, buffers as `BYTEA`. Objects, mixed
-     * kinds and empty arrays bind as `JSON`.
+     * kinds, empty arrays and arrays of only `null` bind as `JSON`.
      * @returns The array parameter, ready to interpolate into a query
      *
      * @example

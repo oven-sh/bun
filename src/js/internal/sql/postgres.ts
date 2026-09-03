@@ -146,12 +146,8 @@ function arrayValueSerializer(type: ArrayType, is_numeric: boolean, is_json: boo
   // we do minimal to none type validation, we just try to format nicely and let the server handle if is valid SQL
   // postgres will try to convert string -> array type
   // postgres will emit a nice error saying what value dont have the expected format outputing the value in the error
-  if (value === null) {
-    // Unquoted null is SQL NULL in array literal syntax. typeof null is "object",
-    // so without this check the default branch would JSON.stringify it and emit
-    // the quoted string "null".
-    return "null";
-  }
+  // An unquoted null is the SQL NULL element. The default branch would quote it.
+  if (value === null) return "null";
   if ($isArray(value) || isTypedArray(value)) {
     if (!value.length) return "{}";
     const delimiter = type === "BOX" ? ";" : ",";
@@ -250,14 +246,15 @@ function isNumericKind(kind: ElementKind) {
   return kind === ElementKind.number || kind === ElementKind.bigint;
 }
 
-// Picks the element type from the values themselves when the caller gives none.
-// Every value must be of the same kind, otherwise the array falls back to JSON.
-// Numbers mirror the scalar inference in tag_jsc.rs: int4 when every value fits
-// int32, int8 for other safe integers, float8 otherwise.
+const INT64_MIN = -(2n ** 63n);
+const INT64_MAX = 2n ** 63n - 1n;
+
+// Numbers follow the scalar inference in tag_jsc.rs (int4, int8, float8).
 function inferArrayType(values: any[]): ArrayType {
   let kind = ElementKind.none;
   let fitsInt32 = true;
-  let allSafeIntegers = true;
+  let fitsInt64 = true;
+  let allIntegers = true;
 
   function visit(value: any) {
     if (value === null || value === undefined) return;
@@ -273,13 +270,14 @@ function inferArrayType(values: any[]): ArrayType {
       case "number":
         current = ElementKind.number;
         if (!Number.isSafeInteger(value)) {
-          allSafeIntegers = false;
+          allIntegers = false;
         } else if (value < -2147483648 || value > 2147483647) {
           fitsInt32 = false;
         }
         break;
       case "bigint":
         current = ElementKind.bigint;
+        if (value < INT64_MIN || value > INT64_MAX) fitsInt64 = false;
         break;
       case "boolean":
         current = ElementKind.boolean;
@@ -313,10 +311,10 @@ function inferArrayType(values: any[]): ArrayType {
     case ElementKind.string:
       return "TEXT";
     case ElementKind.number:
-      if (!allSafeIntegers) return "DOUBLE PRECISION";
+      if (!allIntegers) return "DOUBLE PRECISION";
       return fitsInt32 ? "INTEGER" : "BIGINT";
     case ElementKind.bigint:
-      return allSafeIntegers ? "BIGINT" : "NUMERIC";
+      return allIntegers && fitsInt64 ? "BIGINT" : "NUMERIC";
     case ElementKind.boolean:
       return "BOOLEAN";
     case ElementKind.date:

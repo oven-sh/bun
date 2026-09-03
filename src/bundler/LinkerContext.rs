@@ -4404,10 +4404,7 @@ impl<'a> LinkerContext<'a> {
         false
     }
 
-    /// Does the chunk of a lifted CommonJS module export the module's namespace
-    /// object as `default`? That object is the module's `module.exports`, and
-    /// what a default import of it binds to. Step 1 of `scan_imports_and_exports`
-    /// sets `needs_synthetic_default_export` when a split `import()` reads it.
+    /// The chunk of a lifted CommonJS module exports its namespace object as `default`.
     pub(crate) fn chunk_default_export_is_namespace(
         meta_flags: crate::js_meta::Flags,
         ast_flags: AstFlags,

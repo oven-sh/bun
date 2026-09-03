@@ -363,16 +363,10 @@ pub(crate) fn scan_imports_and_exports(
                         } else if other_flags.contains(AstFlags::FORCE_CJS_TO_ESM)
                             && this.is_external_dynamic_import(record, id as u32)
                         {
-                            // A split `import()` of a CommonJS module converted to ESM
-                            // gets `module.exports` as `default` from the module's own
-                            // chunk: the namespace object when the exports were lifted,
-                            // else an object with a getter per export. `exports.default`
-                            // is a property of that object, unless the module also sets
-                            // `__esModule` (as with `bun run`) or is a user's entry point.
-                            // Decided here so that step 6 can keep the namespace alive.
                             let exports = &col_ref!(named_exports)[other_file];
                             let user_entry = col_ref!(entry_point_kinds)[other_file]
                                 == EntryPoint::Kind::UserSpecified;
+                            // `__esModule` makes `exports.default` the `default`, as in `bun run`.
                             let default_is_module_exports = !exports.contains(b"default")
                                 || (other_flags.contains(AstFlags::COMMONJS_LIFTED_TO_ESM)
                                     && !user_entry
@@ -1026,8 +1020,7 @@ pub(crate) fn scan_imports_and_exports(
 
                 dependencies.reserve(extra_count);
 
-                // Ensure "exports" is included if the current output format needs it,
-                // or if the chunk exports the namespace object as `default`
+                // Ensure "exports" is included if the current output format needs it
                 if include_namespace {
                     dependencies.push(Dependency {
                         source_index: bun_ast::Index::source(source_index as usize),
@@ -1125,9 +1118,7 @@ pub(crate) fn scan_imports_and_exports(
                                 && col_ref!(ast_flags_list)[other_id]
                                     .contains(AstFlags::FORCE_CJS_TO_ESM)
                             {
-                                // A split `import()` of a CommonJS module converted to
-                                // ESM: its chunk provides `default` (step 1 decides
-                                // `needs_synthetic_default_export`), so no `__toESM`.
+                                // The chunk of a module converted to ESM provides `default` itself.
                                 continue;
                             } else {
                                 // We should use "__require" instead of "require" if we're not

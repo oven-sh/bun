@@ -913,8 +913,6 @@ pub(crate) fn generate_entry_point_tail_js<'a>(
                         &c.graph.meta.items_sorted_and_filtered_export_aliases()
                             [source_index as usize];
 
-                    // The module's own `default` export, if any, is a property of
-                    // the namespace object, and not the chunk's `default`.
                     let default_is_namespace =
                         LinkerContext::chunk_default_export_is_namespace(flags, ast.flags);
 

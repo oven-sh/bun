@@ -279,7 +279,6 @@ impl<'a, 'bump> CrossChunkDependencies<'a, 'bump> {
                         .sorted_and_filtered_export_aliases
                         [chunk.entry_point.source_index() as usize];
                     for alias in sorted_and_filtered_export_aliases.iter() {
-                        // The chunk exports the namespace object as `default`.
                         if default_is_namespace && **alias == *b"default" {
                             continue;
                         }
@@ -323,8 +322,7 @@ impl<'a, 'bump> CrossChunkDependencies<'a, 'bump> {
                     let _ = chunk_meta.imports.put(chunks_ref, ()); // OOM-only Result
                 }
 
-                // Ensure "exports" is included if the current output format needs it,
-                // or if the chunk exports the namespace object as `default`
+                // Ensure "exports" is included if the current output format needs it
                 // https://github.com/evanw/esbuild/blob/v0.27.2/internal/linker/linker.go#L1049-L1051
                 if flags.force_include_exports_for_entry_point || default_is_namespace {
                     // result intentionally discarded

@@ -123,7 +123,7 @@ export interface ConfigureResult {
  */
 function configureInputs(cwd: string): string[] {
   const buildDir = resolve(cwd, "scripts", "build");
-  const excluded = new Set(["fetch-cli.ts", "download.ts", "ci.ts", "stream.ts"]);
+  const excluded = new Set(["fetch-cli.ts", "download.ts", "ci.ts", "stream.ts", "npm-ci.ts"]);
 
   const scripts = globSync("*.ts", { cwd: buildDir })
     .filter(f => !excluded.has(f))

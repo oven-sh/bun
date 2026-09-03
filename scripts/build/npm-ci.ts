@@ -178,26 +178,40 @@ function packageLockFromBunLock(root: string): object {
   return output;
 }
 
+/** Runs npm with the given arguments in `dir` and returns its exit code. */
+function npm(exe: string, args: string[], dir: string): number {
+  // npm is a batch file on Windows, so it needs a shell there. The shell
+  // joins the command line without quotes, so quote a path with spaces.
+  const windows = process.platform === "win32";
+  const result = spawnSync(windows ? `"${exe}"` : exe, args, { cwd: dir, stdio: "inherit", shell: windows });
+  if (result.error) throw result.error;
+  return result.status ?? 1;
+}
+
 function main(): void {
-  const [npm, dir] = process.argv.slice(2);
-  if (!npm || !dir) {
+  const [exe, dir] = process.argv.slice(2);
+  if (!exe || !dir) {
     console.error("usage: npm-ci.ts <npm> <dir>");
     process.exit(1);
   }
   const lockPath = join(dir, "package-lock.json");
   writeFileSync(lockPath, JSON.stringify(packageLockFromBunLock(dir), null, 2) + "\n");
+  let status: number;
   try {
-    // npm is a batch file on Windows, so it needs a shell there.
-    const result = spawnSync(npm, ["ci", "--include=dev", "--no-audit", "--no-fund"], {
-      cwd: dir,
-      stdio: "inherit",
-      shell: process.platform === "win32",
-    });
-    if (result.error) throw result.error;
-    process.exitCode = result.status ?? 1;
+    status = npm(exe, ["ci", "--include=dev", "--no-audit", "--no-fund"], dir);
   } finally {
     rmSync(lockPath, { force: true });
   }
+  if (status !== 0) {
+    process.exitCode = status;
+    return;
+  }
+  // `npm ci` runs install scripts only for packages the lockfile flags with
+  // hasInstallScript, which bun.lock does not record. `npm rebuild` reads
+  // the real package.json files, but only when no lockfile is left, not even
+  // npm's own copy under node_modules.
+  rmSync(join(dir, "node_modules", ".package-lock.json"), { force: true });
+  process.exitCode = npm(exe, ["rebuild", "--no-audit", "--no-fund"], dir);
 }
 
 main();

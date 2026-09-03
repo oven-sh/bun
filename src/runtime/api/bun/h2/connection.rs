@@ -310,14 +310,8 @@ pub struct Connection {
     evict_buf: Vec<u32>,
 
     preface_received: usize,
-    /// Highest stream id seen in either direction (inbound HEADERS/PUSH_PROMISE, locally sent
-    /// header blocks and pushes). Used for GOAWAY and the RST_STREAM idle check.
     pub last_stream_id: u32,
-    /// Highest peer-initiated stream id (§5.1.1): on a server, the highest odd id an inbound
-    /// HEADERS has opened, refused streams included; on a client, the highest promised id. A
-    /// peer id at or below it with no `streams` entry is closed, never idle (nghttp2's
-    /// last_recv_stream_id). Unlike `last_stream_id` it is never raised by local streams, so a
-    /// server that pushed even ids still recognises a lower odd id as new.
+    /// Highest peer-initiated stream id (§5.1.1); never raised by local streams.
     pub last_peer_stream_id: u32,
     pub going_away: bool,
 }

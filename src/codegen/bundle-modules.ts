@@ -77,12 +77,39 @@ async function retry(n, fn) {
 
 const bunRepoRoot = path.join(CMAKE_BUILD_ROOT, "..", "..");
 
+// Modules that only exist on one platform. Other targets keep the registry
+// slot (module IDs stay target-independent) and the specifier stays a
+// builtin there too, but its body is a stub whose evaluation throws the
+// error the macOS build throws when the frameworks cannot load. A module
+// with `generated` has its body written by the build (the committed file
+// only keeps the slot): on its platform that file is bundled instead.
+const targetPlatform = process.env.TARGET_PLATFORM ?? process.platform;
+const platformOnlyModules: Record<string, { platform: string; throws: string; generated?: string }> = {
+  "bun/appkit.ts": { platform: "darwin", throws: '$ERR_OBJC_UNAVAILABLE("bun:appkit is only available on macOS")' },
+  "bun/objc.ts": { platform: "darwin", throws: '$ERR_OBJC_UNAVAILABLE("bun:objc is only available on macOS")' },
+  "internal/appkit_enums.ts": {
+    platform: "darwin",
+    throws: '$ERR_OBJC_UNAVAILABLE("bun:objc is only available on macOS")',
+    // scripts/appkit-generate.ts --out, from the macOS SDK the build links.
+    generated: path.join(CODEGEN_DIR, "appkit", "appkit_enums.ts"),
+  },
+};
+
 // Preprocess builtins
 const bundledEntryPoints: string[] = [];
 for (let i = 0; i < nativeStartIndex; i++) {
   try {
     const file = path.join(BASE, moduleList[i]);
     let input = fs.readFileSync(file, "utf8");
+    const onlyOn = platformOnlyModules[moduleList[i]];
+    if (onlyOn && onlyOn.platform !== targetPlatform) {
+      input = `export default (() => { throw ${onlyOn.throws}; })();`;
+    } else if (onlyOn?.generated) {
+      if (!fs.existsSync(onlyOn.generated)) {
+        throw new Error(`${onlyOn.generated} is missing: the build writes it (scripts/appkit-generate.ts --out)`);
+      }
+      input = fs.readFileSync(onlyOn.generated, "utf8");
+    }
 
     if (!/\bexport\s+(?:function|class|const|default|{)/.test(input)) {
       if (input.includes("module.exports")) {
@@ -814,7 +841,7 @@ for (const file of evalFiles) {
     format: "esm",
     env: "disable",
     define: {
-      "process.platform": JSON.stringify(process.env.TARGET_PLATFORM ?? process.platform),
+      "process.platform": JSON.stringify(targetPlatform),
       "process.arch": JSON.stringify(process.env.TARGET_ARCH ?? process.arch),
     },
   });

@@ -1,0 +1,558 @@
+---
+title: Objective-C bridge
+description: Call any Objective-C class from JavaScript on macOS with bun:objc
+---
+
+`bun:objc` is a bridge to the Objective-C runtime on macOS: every class, selector and protocol that Foundation, AppKit, QuartzCore, Metal and MetalKit register, under Apple's own names, every `NS_ENUM`, `NS_OPTIONS` and exported constant of those frameworks, their C functions, blocks made from JavaScript functions, out-parameters, classes defined in JavaScript for delegates, data sources, targets and subclass overrides, and `app`, the `NSApplication` lifecycle with the main run loop routed through Bun's event loop. It converts arguments and results by each method's type signature, turns an `NSException` into a JavaScript error, and manages retain and release for you, so someone with Apple's documentation open can predict what any call does. [`bun:appkit`](/runtime/appkit) is a curated layer of windows, stacks and controls written in JavaScript on nothing but this module's public surface.
+
+<Warning>
+  This API is experimental and macOS-only (arm64; x64 builds but is untested). It may change in future releases.
+</Warning>
+
+A menu-bar utility, start to finish:
+
+```ts uptime.ts icon="/icons/typescript.svg"
+import { objc, app } from "bun:objc";
+const { NSStatusBar, NSMenu, NSProcessInfo } = objc.classes;
+
+app.start("accessory"); // NSApplication and its run loop; no Dock icon, nothing shown
+// Needs a logged-in desktop session: without one this throws ERR_INVALID_STATE (app.hasDisplay is false).
+const item = NSStatusBar.systemStatusBar().statusItemWithLength_(objc.enums.NSVariableStatusItemLength);
+const hours = Math.floor(NSProcessInfo.processInfo().systemUptime() / 3600);
+item.button().setTitle_(`up ${hours}h`);
+const menu = NSMenu.new();
+const quit = objc.target(() => app.quit()); // an object whose action: calls the function
+menu.addItemWithTitle_action_keyEquivalent_("Quit", "action:", "q").setTarget_(quit);
+item.setMenu_(menu);
+const hold = app.retain(); // no window keeps this process open, so hold it
+```
+
+```sh
+bun uptime.ts
+```
+
+A window, with nothing but the bridge:
+
+```ts window.ts icon="/icons/typescript.svg"
+import { objc, app } from "bun:objc";
+const { NSWindow, NSTextField, NSNotificationCenter } = objc.classes;
+const { NSWindowStyleMask, NSBackingStoreType } = objc.enums;
+
+const win = NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
+  { x: 0, y: 0, width: 360, height: 120 },
+  NSWindowStyleMask.titled | NSWindowStyleMask.closable | NSWindowStyleMask.resizable,
+  NSBackingStoreType.buffered,
+  false,
+);
+win.setTitle_("bun:objc");
+const label = NSTextField.labelWithString_("An NSWindow, made by sending messages.");
+label.setFrameOrigin_({ x: 20, y: 50 });
+win.contentView().addSubview_(label);
+win.center();
+const hold = app.retain(); // hold the process open until the window closes
+NSNotificationCenter.defaultCenter().addObserverForName_object_queue_usingBlock_(
+  objc.constants.NSWindowWillCloseNotification,
+  win,
+  null,
+  () => hold.release(),
+);
+app.activate(); // starts NSApplication ("regular": Dock icon, menu bar) and brings it forward
+win.makeKeyAndOrderFront_(null);
+```
+
+Nothing is linked into `bun` for this: the frameworks are loaded with `dlopen` the first time the module is imported, so programs that never touch it pay nothing. It does not need the app to be running (Foundation classes work in a plain script, and in `bun test`), and it works in a `Worker` for everything except AppKit's user-interface classes; see [Threads and Workers](#threads-and-workers). `bun:objc` exists only on macOS: elsewhere it is not a builtin, so importing it fails to resolve and `process.getBuiltinModule("bun:objc")` returns `undefined`. On macOS it throws an `Error` with `code: "ERR_OBJC_UNAVAILABLE"` only if the system frameworks cannot be loaded at all. Feature-test with `process.getBuiltinModule("bun:objc")` or `process.platform === "darwin"`.
+
+The module exports `objc`, the bridge, and `app` (the same object as `objc.app`); every member of `objc` is also a named export, so `import { classes, defineClass, app } from "bun:objc"` works too, and the default export is the whole module.
+
+In numbers: the 26 curated elements are made of 31 AppKit and Foundation classes; the bridge reaches the roughly 770 classes, 280 protocols and 17,300 selectors that Foundation, AppKit, QuartzCore, Metal and MetalKit declare in a current macOS SDK (about a third of AppKit's `NSView` subclasses have a curated element; every other one is an `objc.classes.X` and a `NativeView` away), `objc.enums` knows about 580 enumerations and 830 loose constants (the exact count follows the SDK the build linked), `objc.functions` about 1700 C functions, and the only Objective-C compiled into `bun` for all this is 43 classes and 164 selectors of typed bindings for the app lifecycle, `MetalView`, `gpu` and the bridge itself. `bun scripts/appkit-coverage.ts` in the Bun repository prints the breakdown against the macOS SDK the build pins.
+
+---
+
+## Calling Objective-C
+
+```ts
+import { objc } from "bun:objc";
+import { VStack, Window } from "bun:appkit"; // the curated layer's objects are handles too, through .native
+
+const { NSString, NSMutableArray, NSProcessInfo } = objc.classes; // any class by name; an unknown name throws a TypeError
+const s = NSString.stringWithString_("hi"); // a JavaScript string is boxed to NSString where an object is expected
+s.length(); // 2
+s.UTF8String(); // "hi"
+const list = NSMutableArray.new();
+list.addObject_(s);
+list.count(); // 1
+`${NSProcessInfo.processInfo().processName()}`; // objects come back as handles; `${}` / String() gives -description
+
+const win = new Window({ title: "t", visible: false });
+win.native.setTitle_("u"); // .native is the NSWindow; win.title now reads "u"
+win.native.frame(); // { origin: { x, y }, size: { width, height } }
+win.native.setFrame_display_({ origin: { x: 0, y: 0 }, size: { width: 300, height: 200 } }, true);
+new VStack().native.isKindOfClass_(objc.classes.NSStackView); // true
+```
+
+Every property of such a handle is a method that sends the selector of the same name, spelled PyObjC style: each `_` stands for a `:`, and the call takes exactly as many arguments as there are colons (`setFrame_display_(rect, true)` sends `setFrame:display:`, `count()` sends `count`). Leading underscores are kept (`_isKeyWindow()`), and `__` inside a name is a literal `_`. Reading a property sends nothing; calling it does. `handle.msgSend("setFrame:display:", rect, true)` takes the selector spelled the Objective-C way instead; a few selectors can only be sent that way, since no property spells them: one with an `_` right before a trailing `:` or at its end (`isNSArray__`), and one with `::` anywhere but at the end (`CA_interpolateValues:::interpolator:`). In `defineClass` such a selector is given as a colon-spelled key. A selector the receiver does not respond to, a wrong argument count and a value that does not fit the argument's type are `TypeError`s; nothing is sent in those cases.
+
+Arguments and results are converted by the method's Objective-C type signature, never guessed from the JavaScript value:
+
+| Objective-C type                                                                                                                                                                                                 | pass                                                                                                                                                                                                                                                                                                                     | returns                                                                                                                                                |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `id`                                                                                                                                                                                                             | a handle, `null`, or a string / number / boolean / array / plain object (boxed as `objc.ns()` does)                                                                                                                                                                                                                      | a handle, or `null` for `nil` (never unboxed)                                                                                                          |
+| `Class`                                                                                                                                                                                                          | `objc.classes.X`                                                                                                                                                                                                                                                                                                         | the same shared class handle                                                                                                                           |
+| `SEL`                                                                                                                                                                                                            | `"terminate:"` or `objc.sel("terminate:")`                                                                                                                                                                                                                                                                               | a string                                                                                                                                               |
+| `BOOL`                                                                                                                                                                                                           | boolean                                                                                                                                                                                                                                                                                                                  | boolean                                                                                                                                                |
+| integers (`NSInteger`, `NSUInteger`, `int`, ...)                                                                                                                                                                 | an integral number in range (also a `bigint` for 64-bit types)                                                                                                                                                                                                                                                           | a number, or a `bigint` above 2^53                                                                                                                     |
+| `float`, `double`, `CGFloat`                                                                                                                                                                                     | number                                                                                                                                                                                                                                                                                                                   | number                                                                                                                                                 |
+| `const char *`                                                                                                                                                                                                   | string (UTF-8, valid for the call)                                                                                                                                                                                                                                                                                       | the text up to the first NUL byte, decoded as UTF-8 and copied at once, or `null` for `NULL`                                                           |
+| `CGRect` / `NSRect`                                                                                                                                                                                              | `{ origin: { x, y }, size: { width, height } }` or `{ x, y, width, height }`                                                                                                                                                                                                                                             | `{ origin, size }`                                                                                                                                     |
+| `CGPoint`, `CGSize`, `CGVector`, `NSRange`, `NSEdgeInsets`, `NSDirectionalEdgeInsets`, `CGAffineTransform`, `CATransform3D`                                                                                      | `{ x, y }`, `{ width, height }`, `{ dx, dy }`, `{ location, length }`, `{ top, left, bottom, right }`, `{ top, leading, bottom, trailing }`, `{ a, b, c, d, tx, ty }`, `{ m11 … m44 }`, or an array of the members in that order                                                                                         | the same shape (integer members above 2^53, such as `NSNotFound` in an `NSRange`, are `bigint`s and are accepted back as such)                         |
+| any other struct of numbers and booleans passed by value (`MTLSize`, `CMTime`, one of your own)                                                                                                                  | an array of its members in declaration order, nested structs flattened (`[width, height, depth]`, `[value, timescale, flags, epoch]`)                                                                                                                                                                                    | that array                                                                                                                                             |
+| block (`void (^)(id, NSUInteger, BOOL *)`, ...)                                                                                                                                                                  | a function, where the bridge knows the block's type ([Blocks](#blocks-completion-handlers-and-callbacks)), a block from `objc.block()`, or `null`                                                                                                                                                                        | a handle on the block object                                                                                                                           |
+| pointer to one of the above (`NSError **`, `BOOL *`, `NSRangePointer`, `CGFloat *`)                                                                                                                              | `objc.out()` (or any `{}`) to receive the value in `.value`, or `null` for `NULL` ([Out-parameters](#out-parameters))                                                                                                                                                                                                    | the address as a `bigint`                                                                                                                              |
+| C array or buffer (`unichar *buffer`, `id objects[]`, `char *`, `const CGFloat *`)                                                                                                                               | an `ArrayBuffer` or typed array, lent for the call (its byte length is checked against the `count:`, `length:` or `range:` argument when the method has one), or `null`                                                                                                                                                  | the address as a `bigint`                                                                                                                              |
+| Core Foundation types: `CGColorRef`, `CGPathRef`, `CTFontRef`, `SecCertificateRef`, … and the toll-free bridged `CFStringRef`, `CFArrayRef`, `CFDictionaryRef`, … (the SDK's `…Ref` types with a `…GetTypeID()`) | a handle on an object of that type (they are Objective-C objects at run time; the type is checked with `CFGetTypeID`): `layer.setBackgroundColor_(color.CGColor())`; a toll-free bridged type also takes what its class takes (a string for a `CFStringRef`); anything else is a `TypeError`. `CFTypeRef` is any object. | a handle (a `Create…`/`Copy…` result is yours, as Core Foundation's Create Rule says, and released with the handle); `objc.js()` unboxes a bridged one |
+| other pointers (`void *`, `NSZone *`, ...)                                                                                                                                                                       | an `ArrayBuffer` or typed array lent for the call (checked against a `length:` or `range:` after a `void *`), the `bigint` address a pointer result gave, or `null`                                                                                                                                                      | `null` for `NULL`, otherwise the address as a `bigint`                                                                                                 |
+| `void`                                                                                                                                                                                                           |                                                                                                                                                                                                                                                                                                                          | `undefined`                                                                                                                                            |
+
+`objc.js(handle)` converts Foundation values the other way: `NSString` to string, `NSNumber` to number or boolean, `NSData` to a `Uint8Array` and `NSDate` to a `Date` (both copied), `NSArray` and `NSDictionary` element by element, `NSNull` to `null`; anything else stays a handle. `objc.ns(value)` boxes a JavaScript value (a `Date` as `NSDate`, an `ArrayBuffer` or typed array as `NSData`). `handle[objc.pointer]` is the object's address as a `bigint`.
+
+`objc.NSNotFound` is the `bigint` `9223372036854775807n` that `indexOfObject:`, `rangeOfString:` and similar lookups return for no match. Every integer result above 2^53 is a `bigint`, so `===` against it is exact. The declarations therefore type an `NSUInteger` result `number | bigint` (`count()`, `length()`, `hash()`): compare it with `===` or convert it with `Number()` before arithmetic.
+
+A `bun:appkit` `View` or `Window` is not a handle: pass its `.native`. A `const char *` result is read as a C string; a method documented to return a pointer to bytes that are not text (declared `const char *` rather than `void *`) is not usable this way.
+
+### Handles and ownership
+
+One object has one handle for as long as your program can reach the handle, so `===` compares objects (`win.native === win.native.contentView().window()`; `objc.same(a, b)` is the same test), and a class always comes back as its `objc.classes` handle.
+
+A handle holds one reference to its object and the garbage collector owns the handle: drop it and the reference goes when the handle is collected. The collector is told what an `NSData`, an `NSString` or an `NSBitmapImageRep` weighs (and told again when an `NSMutableData` or `NSMutableString` grows through its handle), so a loop that makes large ones and drops them is collected as it goes.
+
+`handle.release()` (or `using data = …`, which releases at the end of the block) gives the reference back at once instead. The handle then throws for every variable that holds it, anywhere in the program; the next message that returns the object mints a fresh handle. That is for letting go of something large you created the moment you are done with it. There is nothing to balance, and nothing else needs it; a handle from `objc.block()` or `objc.target()` holds on to its reference until it is collected even so, for what native code still calls through it. Release only objects your code created: the windows and views of `bun:appkit` hold objects through the same one handle a message hands you (`win.native`, `button.native`, a field's `delegate()`, a view's constraints, a menu's items), so releasing one of those ends the module's use of it too, and a delegate released that way stops delivering events.
+
+`console.log(handle)` and `util.inspect` print `[objc ClassName: description]`. `"count" in handle` tells whether the object responds to that selector. `Object.keys(handle)` lists the selectors its class chain implements that a property can spell, spelled as properties (every key answers `in`). The Foundation collections work with `for…of`, spread and `Array.from`: an `NSArray`, `NSSet` or `NSOrderedSet` yields its objects (as handles), an `NSDictionary` its keys, an `NSIndexSet` its indexes, an `NSEnumerator` (`reverseObjectEnumerator()`) whatever it has left.
+
+```ts
+const list = objc.ns(["b", "a"]);
+for (const item of list) console.log(`${item}`);
+const sorted = [...list.sortedArrayUsingSelector_("compare:")].map(objc.js); // ["a", "b"]
+console.log(list); // [objc __NSArrayM: (b, a)]
+```
+
+Ownership follows Cocoa's rules for you. A handle keeps its object retained until it is garbage collected or released. Results of `alloc`, `new`, `copy` and `mutableCopy` are taken over rather than retained again, and an `init…` consumes the `alloc()` handle it was called on (using that handle afterwards throws). The `alloc` itself is only sent when the `init…` is (or, for a class cluster such as `NSAttributedString` whose instances alone know their `init…` methods, when the first `init…` is looked up), so an `init…` whose arguments are wrong leaves nothing initialised behind, and an `alloc()` result accepts nothing but an `init…` until one succeeds. `NSString.alloc().initWithUTF8String_("x")` therefore neither leaks nor over-releases. Where a header says more than the selector does, the SDK tables carry it: a method declared `NS_RETURNS_RETAINED` or `CF_RETURNS_RETAINED` (`-[CIContext calculateHDRStatsForCGImage:]`) has its result taken over the same way, one declared `NS_RELEASES_ARGUMENT` hands the callee a reference of its own to the argument so your handle keeps its (`unarchiver:didDecodeObject:`), and one declared `NS_REPLACES_RECEIVER` (`awakeAfterUsingCoder:`) the same for the receiver. The `retain`, `release` and `autorelease` selectors themselves are refused, and so is `NSAutoreleasePool` (every send already runs inside a pool).
+
+A window that comes back from an `init…` or `new…` message, or from any class method of `NSWindow` or a subclass (`NSWindow.windowWithContentViewController_(vc)`, `NSSavePanel.savePanel()`), is sent `setReleasedWhenClosed:NO` right after, because AppKit's default for a window made in code would release it a second time when it closes; the handle therefore stays valid after `close()`.
+
+Receivers that are `NSProxy` instances (such as the one `-[NSUndoManager prepareWithInvocationTarget:]` returns) work: the bridge asks them only `methodSignatureForSelector:` before sending, never `respondsToSelector:`, so the message you send is the first one the proxy sees. A selector the proxy has no signature for is a `TypeError` when the proxy answers `nil` (NSUndoManager's does) and an `ERR_OBJC_EXCEPTION` error when the proxy raises (`NSProxy`'s own `methodSignatureForSelector:` does). `objc.js()` leaves a proxy as a handle.
+
+A C-array or raw-pointer argument (`unichar *`, `const CGFloat *`, `NSPoint *`, `void *`) takes an `ArrayBuffer` or a typed array, whose storage the callee reads or fills during the call and which is pinned for it (a `SharedArrayBuffer` or a resizable `ArrayBuffer`, which a callout during the send could shrink, is a `TypeError`); when the SDK names the argument that counts its elements (`count:`, `length:`, the length of a `range:`), a buffer too short for that many is a `TypeError` before anything is sent (a `void *` before `length:` counts bytes: `-[NSData getBytes:length:]`, `+dataWithBytes:length:`). A `void *` also takes the `bigint` address a pointer result gave you. The storage is lent for the call only: a method that keeps the pointer after it returns (`dataWithBytesNoCopy:length:freeWhenDone:`, `initWithBytesNoCopy:…`, `CGDataProviderCreateWithData` without a release callback) must be given memory that outlives it, such as an address you allocated through `bun:ffi`, or `null`, never a typed array. Nothing checks what a C function does with a `NULL` it was not written for (`CFStringGetLength(null)` crashes as it does in C).
+
+Not supported yet, each a `TypeError` naming the type:
+
+- structs and unions that contain an array, a bit-field, a pointer or a `long double`, or exceed 128 bytes;
+- SIMD vector types;
+- pointer and C-string results from methods you define.
+
+Messages, block calls and C function calls go through macOS's libffi (`/usr/lib/libffi.dylib`), and the methods and blocks you define are libffi closures. A process where libffi cannot make closures (on x86_64 only: one signed with the hardened runtime and without the `com.apple.security.cs.allow-unsigned-executable-memory` entitlement, the one JavaScriptCore's JIT needs too; see [Code signing on macOS](/bundler/executables#code-signing-on-macos)) is left with the compiled block signatures, and defined classes whose methods arrive through `forwardInvocation:`: no `classMethods` and no `forwardingTargetForSelector:` override there (both are a `TypeError` at definition).
+
+A block object can be passed as an argument, released, sent messages (`description`, `copy`), and called. `block.invoke(...args)` calls it with arguments converted by the type signature the block was compiled with (every block clang builds records one; one without is a `TypeError`), whether the block came from `objc.block()` or from a framework (`expression.expressionBlock()`, a `completionHandler` a delegate method receives).
+
+Variadic methods (the ones the macOS SDK headers declare with `...`, on the declaring class and its subclasses) take their variable arguments after the named ones, each passed as an object (a handle, string, number, boolean or `null`). `NSArray.arrayWithObjects_("a", "b", 3)` and `NSDictionary.dictionaryWithObjectsAndKeys_(v1, "k1", v2, "k2")` add the terminating `nil` themselves, so a `null` or `undefined` among the variable arguments of such a list is a `TypeError` (it would end the list early); only the first, named argument may be `null` (`arrayWithObjects_(null)` is the empty array). `NSString.stringWithFormat_("%@ of %@", 1, total)` and `NSPredicate.predicateWithFormat_("name == %@ AND %K > %@", name, "age", 3)` accept a format whose conversions are all `%@` (or `%K`), since any other conversion reads a C value a JavaScript number cannot stand in for. A `%d`, fewer values than conversions, a method whose list mixes in C values (`initWithColorsAndLocations:`) and one taking a `va_list` are a `TypeError`.
+
+`performSelector:`, `performSelector:withObject:` and `performSelector:withObject:withObject:` are refused too: they are declared to return an object whatever the performed method returns, so the result cannot be converted safely. Send the selector itself (`receiver.msgSend(name, ...args)` when the name is in a variable).
+
+An Objective-C exception raised inside a method you call (`list.objectAtIndex_(99)`, `dict.setObject_forKey_(null, "k")`) is caught where the message was sent and thrown as an `Error` with `code` `"ERR_OBJC_EXCEPTION"`: `name` is the `NSException` name (`"NSRangeException"`), `message` its reason, `userInfo` its `userInfo` dictionary printed when there is one, and `exception` a handle on the `NSException` itself. The process carries on, and whatever the method did before raising stays done. Exceptions raised anywhere else (inside AppKit while it dispatches an event, say) are not caught and end the process as described under [Event loop](/runtime/appkit#event-loop).
+
+```ts
+try {
+  objc.classes.NSArray.array().objectAtIndex_(3);
+} catch (e) {
+  e.name; // "NSRangeException"
+  e.message; // "*** -[__NSArray0 objectAtIndex:]: index 3 beyond bounds for empty array"
+}
+```
+
+### TypeScript
+
+In TypeScript, `objc`, its handles and `app` are typed by `bun-types` like any builtin module. The classes `bun:appkit` builds on and the common Foundation and AppKit ones are declared with their methods, generated from the SDK headers, in a file `bun-types` does not load by default because of its size. Reference it from any one file of the project:
+
+```ts
+/// <reference types="bun-types/objc-sdk" />
+```
+
+Without it those classes are declared empty, so `const { NSString } = objc.classes` and `window.native` have types but every selector on them, and every name in `objc.enums`, is `any`.
+
+With it:
+
+- `objc.classes.NSWindow` completes its class methods, and what they return is an `objc.NSWindow` (also the type of `window.native`; `button.native` is an `objc.NSButton`) with the instance methods of `NSWindow` and its superclasses. Each takes one argument per colon, typed the way the table above converts it: an `NSString *` parameter takes a string or a handle, a `BOOL` a boolean, an `NSRect` a `Rect` or `{ origin, size }`, a block a function where the bridge knows its type, an `NS_OPTIONS` parameter its `objc.enums` members.
+- `for...of` over an `objc.NSArray` yields handles.
+- `objc.enums` lists every enumeration with its members and every constant, so a name it lacks is a type error.
+- The delegate and data-source protocols are declared (`objc.protocols.NSWindowDelegate`), with their `@optional` methods optional: test `"windowShouldClose_" in delegate` before calling one (`?.()` would still send, since every selector reads as a function).
+- Any other class is a plain `ObjCObject`, and a selector the declarations lack still type-checks through the index signature as before.
+
+---
+
+## The application: `app`
+
+`app` (also `objc.app`) is the `NSApplication` lifecycle: what a program that builds on the bridge alone uses to start AppKit, stay running and quit, and what [`bun:appkit`'s `app`](/runtime/appkit#the-app-object) is written on. Everything on it is a message to `NSApplication` except the two things a script cannot do by sending messages: starting AppKit with the main run loop routed through Bun's event loop, and holding the process open.
+
+```ts
+import { app } from "bun:objc";
+
+app.activationPolicy = "accessory"; // before the start: what it will use; after: -[NSApplication activationPolicy], read live
+app.start(); // NSApplication, the delegate, the run loop; idempotent, never activates
+const hold = app.retain(); // keeps the process (and App Nap off) until hold.release(); `using` works too
+app.on("beforequit", e => e.preventDefault()); // applicationShouldTerminate: and app.quit(): decide
+app.on("willquit", e => saveEverything()); // nobody cancelled: act (a preventDefault() here still cancels)
+app.on("reopen", visible => {}); // the Dock icon while running
+app.badge = 3; // -[NSDockTile setBadgeLabel:]
+app.isDark; // effectiveAppearance
+app.activate();
+app.hide();
+app.quit(); // beforequit then willquit may cancel; otherwise process.exit(process.exitCode) at the next loop turn
+```
+
+Timers, operation-queue blocks, `performBlock:` and notifications Foundation delivers "later" run on the main run loop, and only a started application runs it: schedule an `NSTimer` from a plain script and nothing fires, however long Bun's own event loop keeps turning, until `app.start()` (or `app.activate()`; with `bun:appkit`, a `Window` or `app.keepAlive`). `retain()` keeps the process around for them without a window (it holds the process whether or not the app has started; it does not start it), and in a `Worker` keeps the Worker around. It is also what keeps a script alive for a block or defined method another thread will call later (a completion handler, an operation): nothing else does; see [Blocks called on another thread](#blocks-called-on-another-thread).
+
+A quit (`app.quit()`, Cmd-Q, the Quit menu item, the Dock, a logout) asks in two rounds. Every `beforequit` listener runs first and may cancel with `event.preventDefault()` or by returning `false`; nothing should be acted on there, because a later listener can still cancel (`event.defaultPrevented` says whether an earlier one did). Only when none cancelled do the `willquit` listeners run: that is where to save, close and stop things, and where `bun:appkit` asks each open `Window`'s `shouldClose` and closes it; a `willquit` listener may still cancel, but what ran before it is not undone. A listener that throws is reported as an uncaught error and counts as neither.
+
+The application delegate is `BunApplicationDelegate`, a class the bridge defines in JavaScript the first time it is needed: when the app starts, when `app.delegate` is set, or when `defineClass` names it as a `superclass` (so a subclass can be defined, and its instance set as the delegate, before anything starts the app; `start()` then installs that instance). It implements only what has no other route: `applicationShouldTerminate:` (the two rounds above; nothing else, so a subclass may turn its `NSTerminateNow` into `NSTerminateLater`), `applicationWillTerminate:` (runs the process's exit path before AppKit's `exit`), `applicationShouldHandleReopen:hasVisibleWindows:` (`reopen`) and `applicationSupportsSecureRestorableState:` (YES). Start-up does not depend on it: the bridge hears `NSApplicationDidFinishLaunchingNotification` through an observer of its own. To receive delegate messages, define a subclass and set an instance as `app.delegate`:
+
+```ts
+const Delegate = objc.defineClass({
+  superclass: "BunApplicationDelegate",
+  methods: {
+    "application:openURLs:"(application, urls) {
+      for (const url of urls) open(String(url.absoluteString()));
+    },
+    "applicationShouldTerminate:"(sender) {
+      const verdict = this.super.applicationShouldTerminate_(sender); // asks beforequit, then willquit
+      if (verdict === objc.enums.NSTerminateCancel) return verdict;
+      flush().then(() => sender.replyToApplicationShouldTerminate_(true));
+      return objc.enums.NSTerminateLater;
+    },
+  },
+});
+app.delegate = Delegate.new();
+```
+
+It is installed as the delegate itself; an override of one of the four built-in methods reaches the built-in part with `this.super` (an `applicationWillTerminate:` override calls up last, since the process ends in there). Anything else assigned to `app.delegate` is a `TypeError`; `null` goes back to the bridge's own instance. Keep your object referenced: AppKit holds delegates weakly.
+
+Once the application has started, for the rest of the process, Bun keeps its own event loop as the outer loop and waits for I/O inside AppKit's event dispatch, so timers, `fetch`, sockets, `Bun.serve`, subprocesses and `Worker` messages keep running, and blocks, delegate methods and targets AppKit calls run in the same phase of the tick as socket callbacks. A long synchronous piece of JavaScript freezes the UI as it would freeze a server; while AppKit runs a tracking loop of its own (a menu held open, a live resize, a modal session such as `NSApp.runModalForWindow_()` or an alert's `runModal()`) timers and I/O callbacks pause until it ends, so prefer the sheet and completion-handler forms. [`bun:appkit`'s event-loop notes](/runtime/appkit#event-loop) say more. An Objective-C exception raised while AppKit waits for or dispatches an event on the main run loop (a view's handler, a timer's target, a block on the main queue) is reported as an uncaught `ERR_OBJC_EXCEPTION` error, as one from a listener would be, and the loop carries on, the way `-[NSApplication run]` reports and continues. One raised anywhere else outside a message you sent (another thread, a callback some other native library runs) is not caught and ends the process the way an uncaught JavaScript error does: stderr gets `error: uncaught Objective-C exception <name>: <reason>` and the call stack it was raised from, the exit code is 1, and no crash report is written or sent. `process.on("uncaughtException")` and `process.on("exit")` listeners do not run for it: the exception unwinds native code on whichever thread raised it, where no JavaScript can.
+
+---
+
+## Out-parameters
+
+Where a method takes a pointer to a value it fills in (`NSError **error`, `BOOL *isDirectory`, `double *result`, `NSRangePointer`), pass `objc.out()` and read its `.value` after the call, or pass `null` for `NULL`; out-parameters at the end of the argument list may simply be left off, which passes `NULL`. `objc.out(initial)` (or a plain `{ value: initial }`) sets what the storage holds going in, for the methods that read it; unset, it holds zero / `nil`. What comes back in `.value` is converted like a result of the pointed-to type: an `NSError` as a handle (`null` when the method left it `nil`), a `double` as a number, an `NSRange` as `{ location, length }`.
+
+`objc.out()` is storage for one value. A parameter that is a C array or buffer the method reads or fills element by element (`-[NSArray getObjects:range:]`, `-[NSString getCharacters:range:]` and `getCString:maxLength:encoding:`, `-[NSIndexSet getIndexes:maxCount:inIndexRange:]`, `+[NSArray arrayWithObjects:count:]`, `-[NSColor getComponents:]`, `-[NSInputStream read:maxLength:]`) takes an `ArrayBuffer` or typed array lent for the call instead, or `null`, and an `objc.out()` there is a `TypeError` (see [Handles and ownership](#handles-and-ownership)). Those parameters are the ones the macOS SDK headers declare as arrays (`id objects[]`, or a pointer next to a `count:`, `length:`, `range:` or similar part), every `const` pointer to values (`const CGFloat *`), and every `char *` that is not `const`. A `BOOL *` is an out-parameter on both architectures: on x86_64, where `BOOL` is a signed char, the runtime encodes one exactly like a `char *`, and the SDK tables say which parameters of the five frameworks' methods, protocol methods and block types are the `BOOL *` ones; a `BOOL *` of a class the tables were not generated from, or of a block made elsewhere, reads as a buffer there.
+
+```ts
+const { NSFileManager, NSScanner } = objc.classes;
+
+const error = objc.out();
+const attributes = NSFileManager.defaultManager().attributesOfItemAtPath_error_("/nope", error);
+if (attributes === null) console.log(`${error.value.domain()} ${error.value.code()}`); // NSCocoaErrorDomain 260
+
+const value = objc.out();
+NSScanner.scannerWithString_("6.5").scanDouble_(value); // true
+value.value; // 6.5
+
+const isDirectory = objc.out();
+NSFileManager.defaultManager().fileExistsAtPath_isDirectory_("/tmp", isDirectory); // isDirectory.value === true
+```
+
+A block or a [defined method](#defining-classes-delegates-data-sources-targets) called with such a pointer receives the same kind of object: `.value` holds what the caller's storage holds for numbers, booleans and structs, and starts `null` for an out-only object pointer (`NSError **`: the caller need not have initialised it) but holds the caller's object for one declared `inout` (`N^@`: KVC's `validateValue:forKey:error:`, a formatter's partial-string pointer); whatever the function leaves in `.value` is stored back when it returns (an object stored through `NSError **` is autoreleased, as the convention requires). A `NULL` pointer arrives holding zero and stores nothing.
+
+---
+
+## Constants and enums
+
+`objc.constants` reads the constants the loaded frameworks export as globals, by name, each time one is read: AppKit, Foundation and what they link first, then anything else the process has loaded, such as a framework brought in with `NSBundle`. The `NSString` keys, notification names and run-loop modes (`objc.constants.NSFontAttributeName`, `NSWindowDidResizeNotification`, `NSDefaultRunLoopMode`) come back as handles. The numbers and structs Foundation and AppKit declare (`NSFontWeightBold`, `NSViewNoIntrinsicMetric`, `NSZeroRect`, `NSUnderlineByWordMask`, and the CoreFoundation, CoreGraphics and C library numbers their headers include, such as `kCFAbsoluteTimeIntervalSince1970` or `vm_page_size`) come back as numbers and objects.
+
+Any other name is read as an object, after a check that what the global holds is one (nil, or a pointer whose class the runtime knows). A global that holds something else (a `double` from another framework, a struct of callbacks) is a `TypeError` telling you to give its type: `objc.constant(name, { type: "d" })` reads a `double` (`"q"` `NSInteger`, `"Q"` `NSUInteger`, `"B"` `BOOL`, `"{CGSize=dd}"` a struct), `objc.constant("kCAAnimationRotateAuto")` an object. An unknown name, or the name of a function (`NSBeep`, `NSClassFromString`: those are [`objc.functions`](#c-functions)), is a `TypeError` as well. An explicit type that is wrong reads garbage, as it would in C.
+
+`objc.enums` has every `NS_ENUM`, `NS_OPTIONS` and `NS_CLOSED_ENUM` of Foundation, AppKit, QuartzCore, Metal and MetalKit by type name, each with its members under Apple's name less the shared prefix, first word in lower case (`objc.enums.NSWindowStyleMask.titled`, `NSEventType.leftMouseDown`, `NSBitmapImageFileType.png`, `NSLineBreakMode.byWordWrapping`, `MTLPixelFormat.bgra8Unorm`) and under the full name (`NSWindowStyleMask.NSWindowStyleMaskTitled`); and, flat, every member, every constant of an unnamed enum and every `static const` number of those headers (`objc.enums.NSWindowStyleMaskTitled`, `NSUTF8StringEncoding`, `NSModalResponseOK`, `NSControlStateValueOn`, `NSUpArrowFunctionKey`, `NSLayoutPriorityRequired`). Values are plain numbers (`bigint` above 2^53) generated from the macOS SDK, so architecture-dependent ones (`NSTextAlignment.center`) are right for the running binary; the enum objects are frozen and list both spellings in `Object.keys()`.
+
+```ts
+const { NSPanel, NSNotificationCenter } = objc.classes;
+const { NSWindowStyleMask, NSBackingStoreType } = objc.enums;
+const mask = NSWindowStyleMask.titled | NSWindowStyleMask.closable | NSWindowStyleMask.resizable;
+const panel = NSPanel.alloc().initWithContentRect_styleMask_backing_defer_(
+  { x: 0, y: 0, width: 300, height: 120 },
+  mask,
+  NSBackingStoreType.buffered,
+  false,
+);
+const label = objc.classes.NSTextField.labelWithString_("centered");
+label.setAlignment_(objc.enums.NSTextAlignment.center);
+NSNotificationCenter.defaultCenter().addObserverForName_object_queue_usingBlock_(
+  objc.constants.NSWindowDidResizeNotification,
+  panel,
+  null,
+  note => console.log(`${note.name()}`),
+);
+```
+
+---
+
+## Blocks: completion handlers and callbacks
+
+Where a method takes a block, pass a JavaScript function. The bridge knows the block's type for every block parameter the Foundation, AppKit, QuartzCore, Metal and MetalKit headers in the macOS SDK declare (their methods, their block-typed properties, and those of the frameworks they include, such as CoreImage and CoreData), so a function is enough there.
+
+Anywhere else (another framework's method) make the block yourself with `objc.block(fn, types)`, or the `TypeError` says so. `types` is the block's Objective-C type encoding: the return type, `@?` for the block itself, then one code per argument.
+
+| Block type                         | `types`             |
+| ---------------------------------- | ------------------- |
+| `void (^)(void)`                   | `"v@?"`             |
+| `void (^)(id, NSUInteger, BOOL *)` | `"v@?@Q^B"`         |
+| `NSComparator`                     | `"q@?@@"`           |
+| `CGPoint (^)(double)`              | `"{CGPoint=dd}@?d"` |
+
+Any encoding of the types in the table above works, except a C-string or pointer return: the block's invoke function is a libffi closure made once per signature. `objc.block(fn)` without `types` makes a block returning `void` whose arguments are all objects, one per parameter `fn` declares. A block made either way is a handle like any other and can be passed to any number of methods.
+
+Where the bridge knows the method's block type, a block from `objc.block()` of a different type is a `TypeError`. Anywhere else `types` must match the method's block parameter exactly, as the block's declaration must in C, and a mismatch is undefined behaviour (a crash, or worse).
+
+```ts
+const { NSOperationQueue, NSExpression, NSTimer } = objc.classes;
+const list = objc.ns(["b", "a", "c"]);
+
+list.enumerateObjectsUsingBlock_((obj, index, stop) => {
+  console.log(index, objc.js(obj));
+  if (index === 1) stop.value = true; // BOOL *stop
+});
+const sorted = list.sortedArrayUsingComparator_((a, b) => `${a}`.localeCompare(`${b}`)); // NSComparator returns NSComparisonResult
+const matches = list.indexesOfObjectsPassingTest_((obj, index, stop) => `${obj}` !== "b"); // BOOL return
+app.start(); // timers and the main queue need the app's run loop; app.retain() keeps the process for them
+NSTimer.scheduledTimerWithTimeInterval_repeats_block_(1, true, timer => console.log("tick"));
+NSOperationQueue.new().addOperationWithBlock_(() => console.log("ran on the main thread, next turn")); // handed over
+panel.beginWithCompletionHandler_(response => console.log(response === 1 ? `${panel.URL()}` : "cancelled"));
+
+// A method the bridge has no block type for: spell it out.
+const expr = NSExpression.expressionForBlock_arguments_(
+  objc.block((object, expressions, context) => `got ${objc.js(object)}`, "@@?@@@"),
+  [],
+);
+```
+
+### When the function runs
+
+The function runs on the thread that made the block. For enumerations and comparators that is synchronously, inside your own call. For completion handlers, timers and the main operation queue it is later, from the main run loop, for a block the main thread made; those only run once the application has started (`app.start()` or `app.activate()`, or `bun:appkit` starting it; see [`app`](#the-application-app)).
+
+Arguments arrive converted as message results are (objects as handles). A `BOOL *` argument (the `stop` flag of an enumeration) arrives as an object whose `value` you can set to `true`. The return value is converted as a message argument of the block's return type would be. If the function throws, or returns something that does not fit, the native caller receives `0` / `NO` / `nil` and any `BOOL *stop` is set so an enumeration ends; then, once the send of yours that reached the block has returned, that send throws the error: `list.sortedArrayUsingComparator_(throwing)` throws in JavaScript what the comparator threw (its first throw, however often the sort called on). When blocks nest (a block that itself sends with a throwing comparator), the innermost send around the throw is the one that throws, inside the outer block. A block reached from the event loop instead (a timer, a completion handler) has no send to throw from, and the error is reported as an uncaught one (`process.on("uncaughtException")` sees it). Methods of classes you define, targets and observers never throw into their caller either way; see [When and where a method runs](#when-and-where-a-method-runs).
+
+### Blocks called on another thread
+
+A block called on another thread (a background queue's operation, a notification observer with its own queue, `NSOperation`'s `completionBlock`, a `URLSession` completion handler) returns to that caller at once with zero. When the block returns `void` and takes no pointer or C-string arguments, the call is handed over to the block's own thread, its object arguments retained for the trip, and the function runs there on that thread's next turn. A block that returns a value, or takes a pointer, cannot be handed over: an uncaught error naming its type is reported on the block's thread instead.
+
+The hand-over has two consequences worth knowing before building synchronisation on a block. A native wait on the block's completion (`waitUntilAllOperationsAreFinished`, an operation's `waitUntilFinished`, `dispatch_group_wait`) returns before the function has run, since the call was made and done with as far as the framework can see. And a wait on the block's own thread for something the function must do (signal an `NSCondition` or a semaphore, set a flag) never returns: the function needs that thread's next turn, which the wait is holding up. Wait in JavaScript instead (a promise the function resolves), or do the signalling in a native object. Handed-over calls queue without bound, in the order they were made, each with its retained arguments, so a thread that does not yield accumulates them.
+
+A hand-over holds nothing open. A plain script whose last statement has run, or a `Worker` with nothing left to do, ends before a completion handler on another thread gets to the block, and the call is dropped; if the native caller reaches the block while the thread is going away, stderr notes it once (`objc: block v@?@@@ was called after the script that created it finished`), otherwise nothing says so. A script that waits on a completion, an operation, a file coordinator or any other off-thread callback holds [`app.retain()`](#the-application-app) (a `Worker` can too) until the callback has run.
+
+A `Worker` has no run loop of its own. A block made there runs when called synchronously inside the Worker's send, or when handed over from another thread while the Worker lives (see [Threads and Workers](#threads-and-workers)).
+
+### How long the function lives
+
+The block's handle keeps `fn` reachable while your program holds the handle, and while anything native retains the block (the framework that copied it: a timer, a notification centre, a pending completion) whether or not you kept the handle. The one loop neither side can collect is `fn` keeping reachable the handle of the very object that retains the block (`op.setCompletionBlock_(() => use(op))`): see [Lifetime and cycles](#lifetime-and-cycles) under defining classes for how to break it.
+
+---
+
+## C functions
+
+`objc.functions` has the C functions Foundation, AppKit, CoreGraphics and CoreFoundation export whose argument and result types the bridge converts: about 1700 in a current SDK, generated from its headers (`NSBeep`, `NSLog`, `NSHomeDirectory`, `NSStringFromClass`, `NSClassFromString`, `NSRectFill`, `NSIntersectionRect`, `CGColorCreateGenericRGB`, `CGMainDisplayID`, `CFStringGetLength`, `CFPreferencesCopyAppValue`, ...). Each is a JavaScript function whose arguments and result cross exactly as a message's do by the table above.
+
+`objc.fn(name, { returns, args, format })` reaches any other exported function by name, found with `dlsym` (AppKit, Foundation and what they link, then anything loaded in the process) and called through libffi by the encodings you give. `returns` is the result's (`"v"` when omitted) and `args` one per parameter. `format` is the index of a format-string argument when the function takes `...` after it; the values are then passed as objects and the conversions must all be `%@` (that is how `NSLog` is declared in the table).
+
+Who owns an object a function returns comes from its declaration, as it does for a method: a result the header marks `CF_RETURNS_RETAINED` or `NS_RETURNS_RETAINED` (the SDK table carries that for `objc.functions`; `objc.fn()` takes `returnsRetained: true` for a function typed by hand), or a Core Foundation object from a function named `Create` or `Copy` (Core Foundation's Create Rule), is yours and is released with its handle; any other object result, an `NSString` from `NSCreateFilenamePboardType` included, is retained for its handle the way a method's is. A `…Ref *` out-parameter (`CFErrorRef *`, `CFReadStreamRef *`) takes `objc.out()` like `NSError **` does and gives a handle: one that owns what a `Create` or `Copy` function stored there, what any function stored in a `CFErrorRef *` (errors are always created for the caller), and what a parameter declared `CF_RETURNS_RETAINED` holds (`objc.fn()` takes `retainedOuts: [index]` for those); a `*` out-parameter of any other function is read at +0 and retained. In an encoding you write, spell the pointee of a pointer to a CF reference with its `=` (`"^^{__CFError=}"`): that is the form the runtime keeps the name in. The functions that retain, release, allocate or deallocate an object (`CGColorRelease`, `CGPathRetain`, `CFRelease`, `NSDeallocateObject`) are neither in the table nor accepted by `objc.fn()`, for the reason the `release` selector is refused: the handle gives its reference back itself. Neither are the ones that take a `va_list` (`NSLogv`), which no JavaScript value can be. A name nothing exports, or a constant's, is a `TypeError`. Types the function does not have are undefined behaviour, as a wrong prototype is in C.
+
+```ts
+const { NSBeep, NSLog, NSStringFromClass, CGColorCreateGenericRGB } = objc.functions;
+NSBeep();
+NSLog("%@ items: %@", list.count(), list);
+`${NSStringFromClass(objc.classes.NSString)}`; // "NSString"
+layer.setBackgroundColor_(CGColorCreateGenericRGB(1, 0, 0, 1));
+
+const getpid = objc.fn("getpid", { returns: "i" });
+const NSStringFromSelector = objc.fn("NSStringFromSelector", { returns: "@", args: [":"] });
+```
+
+---
+
+## Defining classes: delegates, data sources, targets
+
+`objc.defineClass()` registers an Objective-C class whose methods are JavaScript functions, so AppKit can call your code: a table's data source, a window's delegate, a control's target, or a subclass that overrides framework methods (`drawRect:`, `initWithFrame:`, a class method) and calls up with `this.super`. It returns the class; instances come from `.new()` or `.alloc().init…()` like any other, and are ordinary handles.
+
+```ts
+import { objc } from "bun:objc";
+const { NSTableView, NSTableColumn } = objc.classes;
+
+const rows = ["alpha", "beta", "gamma"];
+const DataSource = objc.defineClass({
+  name: "RowsDataSource", // optional; must be free; also reachable as objc.classes.RowsDataSource
+  protocols: ["NSTableViewDataSource"], // conformsToProtocol: answers YES; types the methods below
+  methods: {
+    "numberOfRowsInTableView:": () => rows.length,
+    "tableView:objectValueForTableColumn:row:": (_table, _column, row) => rows[row],
+  },
+});
+const dataSource = DataSource.new();
+const table = NSTableView.alloc().initWithFrame_({ x: 0, y: 0, width: 200, height: 100 });
+table.addTableColumn_(NSTableColumn.alloc().initWithIdentifier_("name"));
+table.setDataSource_(dataSource); // weak: keep `dataSource` referenced yourself
+table.reloadData();
+
+// Overriding superclass methods: the encodings are read off NSView. A method
+// whose answer never changes takes the answer itself: no JavaScript runs.
+// `this.super` is the superclass's implementation; an init override hands
+// `this` (what alloc made) to the superclass's initializer and returns what
+// that returns, as Objective-C does.
+const Badge = objc.defineClass({
+  superclass: "NSView",
+  methods: {
+    isFlipped: true,
+    initWithFrame_(frame) {
+      const self = this.super.initWithFrame_(frame); // consumes `this`
+      self?.setWantsLayer_(true);
+      return self;
+    },
+    drawRect_(dirty) {
+      this.super.drawRect_(dirty);
+      objc.classes.NSColor.systemRedColor().setFill();
+      objc.functions.NSRectFill(this.bounds());
+    },
+    "mouseDown:": event => console.log(`${event}`), // typed by NSView's mouseDown:
+  },
+  classMethods: {
+    requiresConstraintBasedLayout: true,
+    badgeWithSide_: {
+      types: "@@:d",
+      fn(side) {
+        return this.alloc().initWithFrame_({ x: 0, y: 0, width: side, height: side });
+      },
+    },
+  },
+});
+
+// A selector nothing declares needs its encoding spelled out.
+const Doubler = objc.defineClass({
+  methods: { "twice:": { types: "q@:q", fn: n => n * 2 } },
+});
+
+// A control target in one line; the action selector is "action:".
+const target = objc.target(sender => console.log(`clicked ${sender}`));
+button.setTarget_(target); // weak as well
+button.setAction_("action:");
+```
+
+### Method keys, constants and type encodings
+
+Methods are keyed by selector. Write the key with colons (`"tableView:objectValueForTableColumn:row:"`) or with underscores the way sends spell them (`tableView_objectValueForTableColumn_row_`). Keys never carry the `-` or `+` of a declaration; class methods go in `classMethods`. A function that declares more parameters than the selector has colons is a `TypeError`.
+
+A method given as a constant instead of a function (a boolean, a number or `null`, bare or as `{ types, value }`) is a native method that returns that value. It can be called on any thread and costs no call into JavaScript. The value must fit the return type (`true` for a `BOOL`, a number for a numeric type, `null` for an object or pointer), else a `TypeError`.
+
+Each method's Objective-C type encoding is the first of these that exists:
+
+1. The `types` you give: `{ types: "v@:@", fn }` is the return type, then `@:` for the receiver and `_cmd`, then one code per argument. Write `BOOL` as `B` on both architectures (on x86_64, where `BOOL` is a signed char, the runtime spells it `c`; `B` is accepted as the same thing). When one of the sources below also declares the selector, yours must pass the arguments the same way (a `CGRect` by value stays one; an object where a block is declared is fine), or the definition is a `TypeError` naming both encodings.
+2. What a listed protocol declares for that selector, required or optional.
+3. What the superclass chain implements for it.
+4. What a protocol the superclass chain adopts declares for it (a subclass of your `NSTableViewDataSource` class needs no `protocols` of its own).
+
+A selector none of those declares (one of your own, `"twice:"` above, or a delegate method whose protocol you did not list) is a `TypeError` at definition until you give `types` or list the protocol; the bridge does not guess. The message names the registered protocols that declare the selector (`numberOfRowsInTableView:` suggests `NSTableViewDataSource`). A class method's encoding comes from `types`, else the superclass's class method of that name, else the same `TypeError`.
+
+Every protocol the Foundation, AppKit, QuartzCore, Metal and MetalKit headers declare can be listed in `protocols`, including the ones no framework registers at run time (`NSTokenFieldDelegate`, `NSStackViewDelegate`, `MTKViewDelegate`): the bridge registers those from the SDK's description on first use. Listing a protocol without defining or inheriting every method it marks required is a `TypeError`; optional methods stay optional.
+
+### What a defined class is
+
+Each method is a real method of the class, its implementation a libffi closure for its encoding. So `respondsToSelector:`, `instancesRespondToSelector:`, `methodSignatureForSelector:`, `conformsToProtocol:` (with `objc.protocols.NSTableViewDataSource`, a `Protocol` handle by name) and key-value coding all answer truthfully, and a method the superclass implements is overridden. `classMethods` puts methods on the class object the same way; `this` is the class handle there. A subclass of a defined class inherits its methods and may override them.
+
+These cannot be defined: the reference-counting methods (`retain`, `release`, `autorelease`, `retainCount`, `allowsWeakReference`, `retainWeakReference`), `dealloc`, `forwardInvocation:`, `methodSignatureForSelector:`, and the class methods `alloc` and `allocWithZone:`.
+
+A `name` must be free. The one exception is the same script loaded again on the same thread (each file under `bun test --isolate` loads its imports afresh): defining a class with the name, superclass, protocols, selectors, types and constants of the one that load defined before gives back that class, and its methods call the new load's functions from then on. Any other second definition of a name is a `TypeError`.
+
+### `super` and `init`
+
+Inside a method, `this.super` is the object as seen by the superclass of the class that defines the running method: `this.super.drawRect_(rect)` is `[super drawRect:rect]`. It is bound to the defining class rather than the receiver's, so a subclass of a subclass calls up one level at a time. The binding is made when `this.super` is read and kept by what the read gives, as the compiler fixes `[super …]` to the class it appears in: a `const sup = this.super` taken in a method sends to that class's superclass after an `await`, from a timer, or from a closure run while a subclass's method is on the stack. Reading `this.super` where no method of the object is running (after an `await`, in a callback) is a `TypeError`, since there is no class to bind to; read it first, or use `objc.super(object, cls)`, which names the class explicitly and works anywhere. `object` must be a `cls` (or, for a class object, `cls` or a subclass), else a `TypeError`, since the superclass's method would otherwise run on an object it was not written for.
+
+An `init…` method receives as `this` the object `alloc` made, holding the reference `init` is given to consume. Hand it to the superclass's initializer with `this.super.init…(…)`. That consumes `this` like any `init…` receiver and returns the initialized object (usually the same one, as a fresh handle) or `null`; set that up and return it. Returning `null` abandons the object. A convenience initializer hands `this` to another of the class's own initializers instead (`init() { return this.initWithFrame_(frame) }`), which consumes it the same way. Outside its `init…` methods an initialized object accepts no `init…`. The same ownership rules the headers state for a framework method hold for your implementation of it: `unarchiver:didDecodeObject:` (`NSKeyedUnarchiverDelegate`) owns the object it is given and must return a retained one, and `awakeAfterUsingCoder:` owns `this` like an `init…` does; the bridge reads those declarations from the SDK, so the function you write needs nothing beyond returning the object it means.
+
+### When and where a method runs
+
+A method runs on the thread that defined the class, synchronously, inside whatever sent the message: AppKit dispatching an event while the app runs, or your own bridged call (`table.reloadData()` above asks the data source before it returns). A method reached from inside your own call does not run pending promise jobs or `process.nextTick` callbacks; those wait for your call to return, as they would for any JavaScript function it called.
+
+`this` is the receiver's handle. Arguments arrive converted as the results column of the table above describes: objects stay handles (use `objc.js()`), and an out-parameter is an object whose `.value` you set. The return value is converted as the pass column describes for the method's return type; `undefined` is `nil` for an object return. A block argument (a `completionHandler` AppKit passes) arrives as a handle to call with `.invoke(...args)`; a block return takes a handle from `objc.block()`. `char *` and other pointer returns are not supported in defined methods.
+
+If the function throws, or returns a value that does not fit the return type, that is reported as an uncaught JavaScript error (`process.on("uncaughtException")` sees it) and the sender receives `0`, `NO` or `nil`, also when the sender is a call of your own: a delegate, data source, target or observer is a listener, and its failure is not the failure of the call that happened to notify it (a block you pass to a call is different; see [Blocks](#when-the-function-runs)). It never becomes an Objective-C exception. A message that a superclass's `dealloc` sends while the object is being destroyed is not delivered to JavaScript and returns zero.
+
+A message that reaches the object on another thread than the one that defined the class returns zero to that sender at once. When the method returns `void` and takes no pointer or C-string arguments it is then handed over to the defining thread, receiver and object arguments retained, and runs there on that thread's next turn, with the same consequences as a [block's hand-over](#blocks-called-on-another-thread): a native wait on its completion passes early, a wait on the defining thread for something the method must do never returns, and nothing holds the thread open for it. Any other is reported on the defining thread as an uncaught error naming the method. An `init…` you defined that is reached this way (or after the defining Worker ended) answers `nil` and releases the object, as it would had the function returned `null`.
+
+### Lifetime and cycles
+
+A defined class lives for the rest of the process, and so do its methods and everything they close over. Define classes once, at module scope, not per window or per component, and not in a `Worker` spawned per task: every Worker that runs the definition registers its own class (see [Threads and Workers](#threads-and-workers)).
+
+The function given to `objc.target()` or `objc.block()` belongs to its handle instead (all targets share one class). It stays reachable while your program can reach the handle, and while anything native still retains the object (a timer, a notification centre, an array, a pending completion handler) whether or not your program can. Once neither holds it, handle, object and function are collected together.
+
+An instance of a class you defined keeps its one handle the same way: for as long as your program can reach it or anything native retains the object, `this` in every method is that same handle, so per-instance state goes in a `WeakMap` (or a `Map` you clean up) keyed by it. Handles refuse new properties; there are no instance variables. `release()` on such a handle is your program saying it is done with the instance: the handle may be collected then even though a table view or a window still holds the object, and a later message mints a fresh one.
+
+A cycle through JavaScript alone is collected: a function that closes over its own handle, or over an object that merely refers to it, goes when nothing else reaches them. A cycle through the native side is not: when the function keeps reachable the handle of an object that natively retains the target or block (the array it was added to, the operation whose `completionBlock` it is, a `representedObject` that points back), neither collector can see the whole loop, and all of it stays until the native reference goes. Break such a loop yourself: refer to the holder through a `WeakRef` inside the function, clear the native property (`setCompletionBlock_(null)`, `removeAllObjects()`), or `release()` the holder's handle when you are done with it.
+
+AppKit holds nearly every delegate, data source and target zeroing-weak. Keep the handle referenced (a variable, a property on your view object) for as long as AppKit should call it: once your program drops the handle and nothing else retains the object, they are collected, the property reads `nil` and the control silently stops firing. A few delegate-like properties are still declared `assign`, a plain pointer typed `id <SomeDelegate>` (`NSXMLParser.delegate`, `NSComboBox.dataSource`, `NSCache.delegate`, `NSKeyedArchiver.delegate`, `NSTextFinder.client`, `NSFileManager.delegate` among them; the list is read out of the SDK headers). For those the bridge has the receiver hold the object you set until you set another or `null`, so a collected delegate cannot leave it pointing at freed memory. A subclass that redeclares one weak (`NSTextView`'s `delegate` over `NSText`'s) and back-pointers typed as a class (`NSMenuItem.menu`, `nextResponder`) are left alone. Holders registered through a method rather than a property are outside both rules and keep a plain pointer: `NSUndoManager`'s `registerUndoWithTarget:selector:object:`, KVO's `addObserver:forKeyPath:options:context:`, `NSAppleEventManager` event handlers. Keep the handle reachable for as long as such a holder has the object, and unregister (`removeAllActionsWithTarget:`, `removeObserver:forKeyPath:`, `removeEventHandlerForEventClass:andEventID:`) before letting the handle go or calling `release()`; a holder left pointing at a collected object is the same dangling pointer it would be in a native program.
+
+---
+
+## Errors
+
+Every refusal the bridge makes is an error with a `code`, one per kind, so a program can tell them apart without reading messages:
+
+| `code`                           | Class        | When                                                                                                                                                                                                                                                                                                                          |
+| -------------------------------- | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ERR_INVALID_ARG_TYPE`           | `TypeError`  | A value of the wrong type: a JavaScript value no conversion takes for the argument's Objective-C type, a non-string selector, a non-function `fn`, an option of the wrong type in `bun:appkit`.                                                                                                                               |
+| `ERR_INVALID_ARG_VALUE`          | `TypeError`  | A value of the right type the call cannot use: the wrong number of arguments, a type encoding that does not parse or that the bridge does not convert, a `defineClass` definition the runtime refuses (a taken name, a missing required method), an option outside its fixed set (an activation policy, an `app` event name). |
+| `ERR_INVALID_RETURN_VALUE`       | `TypeError`  | A method or block you defined returned something its signature cannot carry.                                                                                                                                                                                                                                                  |
+| `ERR_OBJC_NOT_FOUND`             | `TypeError`  | No class, protocol, constant, enum member or function of that name in the loaded frameworks or the generated tables.                                                                                                                                                                                                          |
+| `ERR_OBJC_UNRECOGNIZED_SELECTOR` | `TypeError`  | The receiver does not respond to the selector (and, for an `NSProxy`, answers no signature for it).                                                                                                                                                                                                                           |
+| `ERR_OBJC_WRONG_THREAD`          | `Error`      | A main-thread-only class used off the main thread, a block or defined method called from a thread it cannot run on, or `app.start()` in a `Worker`.                                                                                                                                                                           |
+| `ERR_INVALID_STATE`              | `Error`      | A handle that was released or consumed by `init`, an object from `alloc()` not yet initialised, a function whose script has gone, an application-state change AppKit refuses, a status item without a window server, a `bun:appkit` object used after it was closed or detached.                                              |
+| `ERR_OUT_OF_RANGE`               | `RangeError` | An offset, index or size outside what a buffer, texture or struct holds.                                                                                                                                                                                                                                                      |
+| `ERR_OBJC_EXCEPTION`             | `Error`      | An Objective-C exception raised inside a message you sent; see [Calling Objective-C](#calling-objective-c).                                                                                                                                                                                                                   |
+| `ERR_OBJC_UNAVAILABLE`           | `Error`      | The module loaded anywhere but macOS, or macOS could not load the frameworks.                                                                                                                                                                                                                                                 |
+
+What the language itself refuses stays a plain `TypeError`, as a frozen object's is: assigning, defining or deleting a property on a handle, constructing an abstract `bun:appkit` view, or sending `click()` to a view it does not apply to. Metal's shader and pipeline failures are `Error`s named `GpuCompileError` and `GpuExecutionError`.
+
+---
+
+## Threads and Workers
+
+In a `Worker`, `objc` works as it does on the main thread for Foundation and for the parts of AppKit that are not user interface: strings, collections, `NSFileManager`, `NSUserDefaults`, `NSJSONSerialization`, `NSData`, `NSDate`, `NSImage`, `NSColor` and so on. The frameworks load once for the process from whichever thread touches them first, and Cocoa is put in multithreaded mode (`NSThread.isMultiThreaded()` is true) before any script uses them. Each thread keeps its own state: its own handles (the same object, `NSProcessInfo.processInfo()` say, is a different handle object in each thread and `===` only within one), its own `objc.classes` and `objc.constants` caches, an autorelease pool around every call, and its own defined classes and blocks.
+
+Off the main thread the bridge checks the receiver of every message, never its arguments or result. Sending to, allocating, or giving `objc.defineClass` as `superclass` one of these classes, or a subclass of one, throws an `ERR_OBJC_WRONG_THREAD` error naming the class (`objc: NSWindow (a kind of NSResponder) can only be used on the process's main thread, not in a Worker: …`):
+
+- the classes the AppKit headers mark main-thread-only (`NS_SWIFT_UI_ACTOR`): `NSResponder`, and with it `NSView`, every control, `NSWindow`, panels, `NSApplication`, view and window controllers and `NSPopover`; `NSCell`; `NSAlert`; `NSToolbar`, `NSTouchBar` and their items; `NSTableColumn`; `NSDocument` and `NSDocumentController`; gesture recognizers; collection-view, grid and scrubber layout objects; the print, page-layout and PDF panels and `NSPrintOperation`; `NSHelpManager`, `NSTextPreview`, `NSSliderAccessory`, `NSWritingToolsCoordinator`;
+- `NSMenu`, `NSMenuItem`, `NSStatusBar`, `NSStatusItem`, `NSNib`, `NSStoryboard` and `NSDockTile`.
+
+The messages every object answers about itself (`class`, `superclass`, `isKindOfClass:`, `isMemberOfClass:`, `respondsToSelector:`, `conformsToProtocol:`, `isEqual:`, `hash`, `self`, `isProxy`, `className`, `description`, `debugDescription`) are let through, so a Worker handed a mixed collection can tell what is in it, and looking a class up in `objc.classes` is fine. What the check cannot see is yours to keep on the main thread, as in a native program: a method of an allowed class that builds or drives user interface (`NSWorkspace` opening panels, `NSTextInputContext`), or a window or view arriving as an argument to a Worker's block. `app.start()` and the whole of `bun:appkit` are main-thread-only outright and throw in a `Worker`.
+
+A block made in a `Worker`, and the methods of a class defined in one, run only on that Worker's thread. Called anywhere else (a background queue, or the main thread) they return `0` / `NO` / `nil` to the caller there and then. One that returns `void` and takes no pointers is handed over to the Worker and runs on its next event-loop turn; any other sends the Worker an uncaught error naming the block or method, which ends the Worker unless it is handled (`process.on("uncaughtException")`), exactly as the main thread does for its own.
+
+A Worker runs no run loop, so timers and run-loop sources scheduled from it (`NSTimer`, delayed performs, streams) never fire at all. Completion handlers, operation-queue blocks and notification observers with a queue are called on other threads, and so reach the Worker by hand-over when they return `void`. What runs a Worker's functions synchronously is whatever calls them inside one of the Worker's own sends: enumeration blocks, comparators, predicates, formatters, and delegate methods the send itself triggers.
+
+`objc.defineClass` registers a class for the whole process and nothing ever unregisters it. On the main thread the class gets the `name` you give, and a taken name is a `TypeError`. On any other thread it is registered as `name_<n>`, `n` numbering the threads that have used the bridge, so `objc.classes[name]` is the main thread's class whichever thread ran the module first, and `String(cls)` says what name a Worker's class got. Every Worker that evaluates a module-scope `objc.defineClass` therefore adds classes, and keeps their functions, for the life of the process: define classes in long-lived Workers, not in one spawned per task.
+
+`objc.target()` objects are all of one class whichever thread makes them, so they add nothing per Worker; each one's function runs on the thread that made it. A class one thread defined cannot be the `superclass` of a class another thread defines.
+
+When a Worker exits, everything it held is released, and the blocks and classes it defined stay registered but inert: whoever still holds one gets `0` / `NO` / `nil` from it, the first such call is noted once on stderr (`was called after the Worker that created it exited`; for the main thread, `after the script that created it finished`), and nothing touches the Worker's JavaScript heap after it has gone. A hand-over from another thread does not keep a Worker alive any more than it keeps the process alive: a Worker waiting for one holds `app.retain()`.
+
+---
+
+## Limitations
+
+- macOS only: arm64; x64 builds but is untested. On other platforms importing `bun:objc` throws `ERR_OBJC_UNAVAILABLE`. The bridge runs on the macOS versions Bun itself does (13.0 and later): its libffi path needs nothing newer than macOS 10.15, and it checks no version. Which methods, classes and constants exist is whatever the running macOS has (a missing selector throws at the send, a missing constant at the read), while the generated TypeScript typings describe the SDK they were generated from, not the machine.
+- On x86_64 the runtime spells `BOOL` and `char` the same (`c`), so a `char` a class outside the Foundation, AppKit, QuartzCore, Metal and MetalKit headers declares reads and takes a boolean there (the SDK tables keep `NSNumber`'s `charValue`, `initWithChar:` and `numberWithChar:` as numbers on both architectures). An encoding you write (`defineClass` types, `objc.block`, `objc.fn`, `objc.constant`) means `char` by `c` and `BOOL` by `B` on both.
+- Without a window server (over plain `ssh`, on CI machines) AppKit still loads and windows, views and the application work off screen, but a status item does not: `NSStatusBar`'s `statusItemWithLength:` would make AppKit end the process there and then (exit status 0, no error, no exit listener run), so the bridge throws `ERR_INVALID_STATE` for that send instead. `app.hasDisplay` is the same predicate, for telling the two cases apart before building a user interface.
+- The user interface runs on the main thread; there is no separate UI thread. The classes AppKit marks main-thread-only (responders, cells, alerts, toolbars, documents, …) plus menus, the status bar, nibs, storyboards and the Dock tile throw in a `Worker`; the rest works there, for synchronous use, since a Worker has no run loop (see [Threads and Workers](#threads-and-workers)).
+- Not converted, each a `TypeError` naming the type: structs and unions holding an array, bit-field, pointer or `long double` or larger than 128 bytes (`NSDecimal`, so `-[NSNumber decimalValue]` and `NSDecimalNumber`'s `decimalValue`, `initWithDecimal:` and `decimalNumberWithDecimal:`; the generated typings leave such methods out, and the index signature still admits them); SIMD vectors; pointer and C-string results of methods and blocks you define; `performSelector:` and its object-returning variants; variadic methods that read C values, and anything taking a `va_list`.
+- A block or defined method called on a thread other than its own returns zero there; only one returning `void` without pointer arguments is handed over to its thread (see [Blocks called on another thread](#blocks-called-on-another-thread)).
+- Foundation timers, delayed performs and main-queue blocks need the application started (`app.start()`); a `Worker` never runs them.
+- `bun --hot` is not supported (defined classes and the application live for the whole process); use `bun --watch`. Under `bun test --isolate` (which `--parallel` implies) each file loads the module afresh and the bridge moves to it, re-binding the named classes a file defines again identically. A second global object alive beside the main one on the same thread (a `ShadowRealm`) cannot load it: that throws.
+- `bun build --compile` works: `bun:objc` stays a builtin of the compiled executable, which needs macOS to run.
+
+## Implementation note
+
+Inside Bun, `src/appkit/objc` is the Objective-C runtime layer that new native code should use; `Bun.WebView`'s older `src/runtime/webview/ObjCRuntime.h` predates it and is to be folded onto it.

@@ -163,6 +163,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "bun_appkit"
+version = "0.0.0"
+dependencies = [
+ "bun_collections",
+ "bun_core",
+ "bun_mimalloc_sys",
+ "bun_threading",
+ "bun_uws_sys",
+ "libc",
+ "thiserror",
+]
+
+[[package]]
 name = "bun_ast"
 version = "0.0.0"
 dependencies = [
@@ -1252,6 +1265,7 @@ dependencies = [
  "bstr",
  "bun_alloc",
  "bun_analytics",
+ "bun_appkit",
  "bun_ast",
  "bun_ast_jsc",
  "bun_base64",

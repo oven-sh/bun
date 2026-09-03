@@ -689,6 +689,33 @@ describe("@types/bun integration test", () => {
     });
   });
 
+  describe("bun:objc", () => {
+    // appkit.ts is the one fixture that references bun-types/objc-sdk;
+    // with it emptied nothing in the program does, so this checks the
+    // default: appkit-plain.ts still type-checks, and every selector and
+    // objc.enums name is `any`.
+    typeTest("type-checks without the bun-types/objc-sdk reference", {
+      files: {
+        "appkit.ts": "export {};",
+        "appkit-untyped.ts": `
+          import { Window } from "bun:appkit";
+          import { objc } from "bun:objc";
+          import { expectType } from "./utilities";
+          expectType(objc.classes.NSString.stringWithString_("hi")).is<any>();
+          expectType(new Window({ title: "t" }).native.contentView()).is<any>();
+          expectType(objc.enums.NSWindowStyleMask.titled).is<any>();
+          expectType(objc.enums.NSUTF8StringEncoding).is<any>();
+          expectType(objc.enums.NSSomethingLater).is<any>();
+          expectType(objc.functions.NSWhateverComesLater(1, 2)).is<any>();
+          // @ts-expect-error only bun-types/objc-sdk declares the protocols
+          type Delegate = objc.protocols.NSWindowDelegate;
+        `,
+      },
+      emptyInterfaces: expectedEmptyInterfacesWhenNoDOM,
+      diagnostics: [],
+    });
+  });
+
   describe("bun:bundle feature()", () => {
     typeTest("Registry augmentation restricts feature() to known flags", {
       files: {

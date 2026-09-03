@@ -280,6 +280,11 @@ extern "C" long Bun__crashHandlerFromJSCFrame(void*, void*, void*, void*);
 // bun_icu_default_locale.cpp
 extern "C" void Bun__ensureICUDefaultLocale();
 
+#if OS(DARWIN)
+// darwin/objc-uncaught-exception.cpp
+extern "C" void Bun__reportUncaughtObjCException();
+#endif
+
 extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(const char* ptr, size_t length), bool evalMode, bool oneShotStartup, bool shortLivedGlobals)
 {
     static std::once_flag jsc_init_flag;
@@ -290,7 +295,12 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
         // JSC options come from BUN_JSC_* (applied in the callback below), not JSC_*.
         JSC::Config::disableEnvironmentOptions();
 
-        std::set_terminate([]() { Zig__GlobalObject__onCrash(); });
+        std::set_terminate([]() {
+#if OS(DARWIN)
+            Bun__reportUncaughtObjCException();
+#endif
+            Zig__GlobalObject__onCrash();
+        });
         WTF::initializeMainThread();
 
         // Use JSC::initialize with a callback to set Options during initialization.

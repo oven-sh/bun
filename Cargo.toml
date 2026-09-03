@@ -3,6 +3,7 @@ resolver = "2"
 members = [
   "src/opaque",
   "src/analytics",
+  "src/appkit",
   "src/api",
   "src/base64",
   "src/bundler",
@@ -397,6 +398,7 @@ bun_clap = { path = "src/clap" }
 bun_clap_macros = { path = "src/clap_macros" }
 bun_crash_handler = { path = "src/crash_handler" }
 bun_csrf = { path = "src/csrf" }
+bun_appkit = { path = "src/appkit" }
 bun_css_jsc = { path = "src/css_jsc" }
 bun_dns = { path = "src/dns" }
 bun_dotenv = { path = "src/dotenv" }

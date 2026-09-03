@@ -1,5 +1,7 @@
 #pragma once
 
+// Predates src/appkit/objc, the Objective-C runtime layer new code should use; this file is to be folded onto it.
+
 #include "root.h"
 
 #if OS(DARWIN)

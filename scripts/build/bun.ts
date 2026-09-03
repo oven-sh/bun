@@ -334,6 +334,16 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     noPchSources.add(resolve(cfg.cwd, "src/jsc/bindings/highway_xml.cpp"));
   }
 
+  // macOS-only: the frame that catches Objective-C exceptions for
+  // bun:objc, and the terminate-handler side that describes an uncaught one.
+  // objc-try-invoke.cpp's fileOverrides entry turns exceptions back on for
+  // that one file, which the PCH was built without.
+  if (cfg.darwin) {
+    const tryInvoke = resolve(cfg.cwd, "src/jsc/bindings/darwin/objc-try-invoke.cpp");
+    cxxSources.push(tryInvoke, resolve(cfg.cwd, "src/jsc/bindings/darwin/objc-uncaught-exception.cpp"));
+    noPchSources.add(tryInvoke);
+  }
+
   // Windows-only cpp sources (rescle — PE resource editor for --compile).
   if (cfg.windows) {
     // rescle.h does `#define UNICODE` before including ATL; with PCH the

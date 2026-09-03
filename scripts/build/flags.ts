@@ -1575,13 +1575,12 @@ export const stripFlags: Flag[] = [
     desc: "Remove symbols, debug info, local symbols",
   },
   {
-    flag: [
-      "--remove-section=__TEXT,__eh_frame",
-      "--remove-section=__TEXT,__unwind_info",
-      "--remove-section=__TEXT,__gcc_except_tab",
-    ],
+    // __eh_frame and __gcc_except_tab stay: they are objc-try-invoke.cpp's
+    // catch frame and nothing else (a few hundred bytes; everything else is
+    // built without unwind tables and linked with -no_compact_unwind).
+    flag: ["--remove-section=__TEXT,__unwind_info"],
     when: c => c.darwin,
-    desc: "Remove unwind/exception sections (we compile with -fno-exceptions; these come from lolhtml etc., built with panic=abort)",
+    desc: "Remove compact unwind info (nothing unwinds through C++ or Rust frames: -fno-exceptions, panic=abort)",
   },
   {
     // musl: no eh_frame handling differences, but CMake gates on NOT musl so we do too.
@@ -1685,6 +1684,25 @@ export const fileOverrides: FileOverride[] = [
     extraFlags: "/EHsc",
     when: c => c.windows,
     desc: "Vendored electron/rcedit; VersionInfo ctor throws std::system_error caught in OnEnumResourceLanguage. Self-contained throw/catch — already excluded from PCH",
+  },
+  {
+    file: "src/jsc/bindings/darwin/objc-try-invoke.cpp",
+    extraFlags: c => [
+      "-fexceptions",
+      "-fasynchronous-unwind-tables",
+      "-femit-dwarf-unwind=always",
+      // -fwhole-program-vtables requires -flto; disabling one requires
+      // disabling the other or clang errors.
+      ...(c.lto ? ["-fno-lto", "-fno-whole-program-vtables"] : []),
+    ],
+    when: c => c.darwin,
+    desc:
+      "The one try/catch in the binary (NSException → JS error for bun:objc). Release strips __unwind_info " +
+      "(and Apple's ld is passed -no_compact_unwind; ld64.lld has no such flag), so this frame's unwind info has to " +
+      "be DWARF (__eh_frame): clang only writes that next to asynchronous tables, the file's inline CFI makes the " +
+      "frame DWARF-only so no linker folds it into compact unwind, and -femit-dwarf-unwind is a code generation " +
+      "flag that LTO would drop, so the file is compiled to a regular object. Excluded from the PCH, which is " +
+      "built without exceptions. Covered by test/js/bun/appkit (objc bridge: exception, and the unwind-info check).",
   },
   {
     file: "src/jsc/bindings/highway_xml.cpp",

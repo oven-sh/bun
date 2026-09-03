@@ -6293,9 +6293,12 @@ pub mod bv2_impl {
                         import_record.path = bun_paths::fs::Path::init(new_text);
                         import_record.path.namespace = b"bun";
                         import_record.source_index = Index::INVALID;
-                        import_record
-                            .flags
-                            .insert(bun_ast::ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS);
+                        // A `bun:` module this host does not know (bun:objc bundled
+                        // on Linux for a Mac) stays external under its full name.
+                        import_record.flags.insert(
+                            bun_ast::ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS
+                                | bun_ast::ImportRecordFlags::PRINT_NAMESPACE_IN_PATH,
+                        );
 
                         // don't link bun
                         continue;

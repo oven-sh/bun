@@ -20,6 +20,31 @@ const entryPointImportedBack = {
   `,
 };
 
+// Runs `bun build --compile --splitting <args>` in `dir`, then runs the executable that it writes.
+// On Windows, `executable` gets `.exe`.
+async function buildAndRun(dir: string, args: string[], executable: string) {
+  await using build = Bun.spawn({
+    cmd: [bunExe(), "build", "--compile", "--splitting", ...args],
+    env: bunEnv,
+    cwd: dir,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, buildStderr, buildExitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+  expect(buildStderr).toBe("");
+  expect(buildExitCode).toBe(0);
+
+  await using proc = Bun.spawn({
+    cmd: [join(dir, isWindows ? executable + ".exe" : executable)],
+    env: bunEnv,
+    cwd: dir,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode };
+}
+
 describe("bundler", () => {
   describe("compile with splitting", () => {
     // The executable's loader registers an entry's whole static-import closure before JSC walks the graph. These
@@ -574,7 +599,7 @@ describe("bundler", () => {
     });
 
     // The chunk of the entry point has the name of the executable, and so do its source map and its metafile output.
-    test("Bun.build: import() and require() of the main entry point from another entry point", async () => {
+    test.concurrent("Bun.build: import() and require() of the main entry point from another entry point", async () => {
       using dir = tempDir("compile-splitting-import-main", entryPointImportedBack);
       const result = await Bun.build({
         entrypoints: [join(String(dir), "main.ts"), join(String(dir), "tool.ts")],
@@ -611,34 +636,22 @@ describe("bundler", () => {
 
     // `--outfile .` writes the executable as `index`. The entry point is embedded under that name too, so `main.ts`
     // resolves `./tool.ts` next to it, and `tool.ts` can load `main.ts` back.
-    test("bun build --outfile . embeds the entry point as index", async () => {
+    test.concurrent("bun build --outfile . embeds the entry point as index", async () => {
       using dir = tempDir("compile-splitting-outfile-dot", entryPointImportedBack);
-      await using build = Bun.spawn({
-        cmd: [bunExe(), "build", "--compile", "--splitting", "./main.ts", "./tool.ts", "--outfile", "."],
-        env: bunEnv,
-        cwd: String(dir),
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [, buildStderr, buildExitCode] = await Promise.all([
-        build.stdout.text(),
-        build.stderr.text(),
-        build.exited,
-      ]);
-      expect(buildStderr).toBe("");
-      expect(buildExitCode).toBe(0);
+      const run = await buildAndRun(String(dir), ["./main.ts", "./tool.ts", "--outfile", "."], "index");
+      expect(run).toEqual({ stdout: "main ran\nmain main\n", stderr: "", exitCode: 0 });
+    });
 
-      await using proc = Bun.spawn({
-        cmd: [join(String(dir), isWindows ? "index.exe" : "index")],
-        env: bunEnv,
-        cwd: String(dir),
-        stdout: "pipe",
-        stderr: "pipe",
+    // Without `--outfile`, `src/index.ts` gives the name `src`. A directory has that name, so the executable is
+    // written as `index` (not on Windows, where it is `src.exe`). The entry point stays embedded as `src`, and the
+    // other chunks name that path.
+    test.concurrent("bun build without --outfile: an entry point at src/index.ts", async () => {
+      using dir = tempDir("compile-splitting-nested-index", {
+        "src/index.ts": entryPointImportedBack["main.ts"],
+        "src/tool.ts": entryPointImportedBack["tool.ts"].replaceAll("./main.ts", "./index.ts"),
       });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stdout).toBe("main ran\nmain main\n");
-      expect(stderr).toBe("");
-      expect(exitCode).toBe(0);
+      const run = await buildAndRun(String(dir), ["./src/index.ts", "./src/tool.ts"], isWindows ? "src" : "index");
+      expect(run).toEqual({ stdout: "main ran\nmain main\n", stderr: "", exitCode: 0 });
     });
   });
 });

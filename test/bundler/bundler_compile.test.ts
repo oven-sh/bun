@@ -1360,6 +1360,20 @@ describe("bundler", () => {
     outfile: "dist/out",
     run: { stdout: '{"main":true,"worker":false}', file: "dist/out", setCwd: true },
   });
+  // With --minify-syntax, the literal for `import.meta.main` prints as `!0` or `!1`. On the left of
+  // `**`, it needs parentheses. The parser folds `!import.meta.main` into the same node.
+  itBundled("compile/ImportMetaMainExponentMinified", {
+    backend: "cli",
+    compile: true,
+    minifySyntax: true,
+    files: {
+      "/entry.ts": /* js */ `console.log(import.meta.main ** 2, (!import.meta.main) ** 2);`,
+      "/worker.ts": /* js */ `postMessage(import.meta.main);`,
+    },
+    entryPointsRaw: ["./entry.ts", "./worker.ts"],
+    outfile: "dist/out",
+    run: { stdout: "1 0", file: "dist/out", setCwd: true },
+  });
   // The bundler lowers `require.main === module` to `import.meta.main`. So a CommonJS Worker entry
   // point also sees false, as in the output of `Bun.build` and `bun build --outdir`.
   itBundled("compile/RequireMainInCommonJSWorker", {

@@ -1814,6 +1814,14 @@ pub(crate) mod __gated_printer {
                                 v.left_level = Level::Call;
                             }
                         }
+                        // With `import_meta_main_value`, this node prints as a boolean.
+                        ExprData::EImportMetaMain(_) => {
+                            if self.options.minify_syntax
+                                && self.options.import_meta_main_value.is_some()
+                            {
+                                v.left_level = Level::Call;
+                            }
+                        }
                         _ => {}
                     }
                 }

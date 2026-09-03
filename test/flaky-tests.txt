@@ -72,6 +72,7 @@ test/js/bun/http/serve.test.ts  # 4 of 80 builds; mac
 test/js/bun/io/bun-write.test.js  # 1 of 80 builds; parallel batch; Bun.write() without uv_fs_copyfile: test timed out
 test/js/bun/jsc-stress/testFFI.test.ts  # 1 of 80 builds; debian
 test/js/bun/jsc/domjit.test.ts  # 3 of 80 builds; parallel batch; Script.runInNewContext: test timed out
+test/js/bun/net/socket-syscall-fault.test.ts  # TLS server.stop(true): a close handler that closes a sibling does not crash the teardown walk: flightsReceived 0, expected 5, in the parked scenario (build 109703, darwin x64, parallel batch), so no socket sent its handshake flight before stop(true). Likely cause: the fixture takes the child's "hellos" line as proof that the ClientHellos arrived, and on macOS the loopback bytes can arrive later
 test/js/bun/net/socket.test.ts  # 1 of 80 builds; mac
 test/js/bun/resolve/bun-main-entry-point.test.ts  # 5 of 80 builds; windows
 test/js/bun/resolve/load-same-js-file-a-lot.test.ts  # 4 of 80 builds; parallel batch; load the same file 10000 times: test timed out

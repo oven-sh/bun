@@ -27,7 +27,6 @@
     },
     "packages/bun-types": {
       "name": "bun-types",
-      "version": "0.0.0",
       "dependencies": {
         "@types/node": "*",
       },

@@ -5693,9 +5693,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             // Every key of the pattern must name a data property of the literal.
             js_ast::b::B::BObject(bo) => {
-                // Over a registered plain object literal, each key must be an own
-                // key and each value a plain binding: a write may have replaced a
-                // nested value. An empty pattern records no read, so it stays.
+                // No nested pattern: a write may have replaced the nested value.
                 if matches!(value.data, js_ast::ExprData::EIdentifier(_)) {
                     if bo.properties.slice().is_empty() {
                         return false;

@@ -1275,6 +1275,12 @@ pub struct BundleOptions<'a> {
     /// `bun build --check` / `Bun.build({ check: true })`: stop after the scan
     /// phase, report circular dependencies, and produce no output files.
     pub check: bool,
+    /// The scan keeps each file and each import that the source code has. A
+    /// barrel file does not defer a re-export, and a file that is only
+    /// `module.exports = require(x)` does not redirect its importers to `x`.
+    /// Each of these rewrites removes an edge, so a caller that reads the
+    /// scanned graph (`check`) sets this.
+    pub scan_graph_as_written: bool,
     pub load_tsconfig_json: bool,
     pub(crate) load_package_json: bool,
 
@@ -1498,6 +1504,7 @@ impl<'a> BundleOptions<'a> {
             polyfill_node_globals: self.polyfill_node_globals,
             transform_only: self.transform_only,
             check: self.check,
+            scan_graph_as_written: self.scan_graph_as_written,
             load_tsconfig_json: self.load_tsconfig_json,
             load_package_json: self.load_package_json,
             rewrite_jest_for_tests: self.rewrite_jest_for_tests,
@@ -1748,6 +1755,7 @@ impl<'a> BundleOptions<'a> {
             polyfill_node_globals: false,
             transform_only: false,
             check: false,
+            scan_graph_as_written: false,
             load_tsconfig_json: true,
             load_package_json: true,
             rewrite_jest_for_tests: false,

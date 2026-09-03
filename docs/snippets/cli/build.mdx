@@ -126,8 +126,8 @@ bun build <entry points>
 </ParamField>
 
 <ParamField path="--check" type="boolean">
-  Resolve and parse every module, report circular dependencies as errors, and write no files. Exits with code 1 when
-  there is a cycle
+  Resolve and parse each module that the entry points import, report circular dependencies as errors, and write no
+  files. Exits with code 1 when there is an error
 </ParamField>
 
 <ParamField path="--css-chunking" type="boolean">

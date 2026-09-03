@@ -445,6 +445,7 @@ impl BuildCommand {
         this_transpiler.options.code_splitting = ctx.bundler_options.code_splitting;
         this_transpiler.options.transform_only = ctx.bundler_options.transform_only;
         this_transpiler.options.check = ctx.bundler_options.check;
+        this_transpiler.options.scan_graph_as_written = ctx.bundler_options.check;
 
         this_transpiler.options.env.behavior = ctx.bundler_options.env_behavior;
         this_transpiler

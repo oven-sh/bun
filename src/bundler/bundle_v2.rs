@@ -2265,12 +2265,15 @@ pub mod bv2_impl {
         }
 
         /// `check` mode ends the build after the scan phase. It logs an error
-        /// for each circular dependency. The link and print steps do not run, so
-        /// the result has no output files.
+        /// for each circular dependency. The walk also runs when the scan
+        /// logged errors, so one run reports both. The link and print steps do
+        /// not run, so the result has no output files.
         fn check_module_graph(&self) -> Result<BuildResult, Error> {
-            if crate::circular_imports::report_circular_imports(self) > 0 {
+            crate::circular_imports::report_circular_imports(self);
+            if self.transpiler.log().has_errors() {
                 return Err(crate::Error::BuildFailed);
             }
+            self.fail_if_no_entry_points()?;
             Ok(BuildResult {
                 output_files: Vec::new(),
                 metafile: None,
@@ -4071,19 +4074,20 @@ pub mod bv2_impl {
                     / (bun_core::time::NS_PER_MS as i64)) as u64;
                 *source_code_size = this.source_code_length as u64;
 
+                if this.transpiler.options.check {
+                    let result = this.check_module_graph()?;
+                    this.scan_for_secondary_paths();
+                    let reachable_files = this.find_reachable_files()?;
+                    *reachable_files_count = reachable_files.len().saturating_sub(1); // - 1 for the runtime
+                    return Ok(result);
+                }
+
                 if this.transpiler.log().has_errors() {
                     return Err(crate::Error::BuildFailed);
                 }
                 this.fail_if_no_entry_points()?;
 
                 this.scan_for_secondary_paths();
-
-                if this.transpiler.options.check {
-                    let result = this.check_module_graph();
-                    let reachable_files = this.find_reachable_files()?;
-                    *reachable_files_count = reachable_files.len().saturating_sub(1); // - 1 for the runtime
-                    return result;
-                }
 
                 this.process_server_component_manifest_files()?;
 
@@ -5269,16 +5273,16 @@ pub mod bv2_impl {
 
             /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
 
+            if self.transpiler.options.check {
+                return self.check_module_graph();
+            }
+
             if self.transpiler.log().errors > 0 {
                 return Err(crate::Error::BuildFailed);
             }
             self.fail_if_no_entry_points()?;
 
             self.scan_for_secondary_paths();
-
-            if self.transpiler.options.check {
-                return self.check_module_graph();
-            }
 
             self.process_server_component_manifest_files()?;
 
@@ -6072,11 +6076,11 @@ pub mod bv2_impl {
 
         /// Returns true when barrel optimization is enabled. Barrel optimization
         /// can apply to any package with sideEffects: false or listed in
-        /// optimize_imports, so it is enabled for every build except `check`.
-        /// A check must follow each re-export: the unbundled program runs all
-        /// of them, so a cycle through one that a build defers is still real.
+        /// optimize_imports, so it is enabled unless the caller reads the
+        /// scanned graph: the unbundled program runs each re-export, so an
+        /// edge that a build defers is still an edge.
         fn is_barrel_optimization_enabled(&self) -> bool {
-            !self.transpiler.options.check
+            !self.transpiler.options.scan_graph_as_written
         }
 
         // TODO: remove ResolveQueue

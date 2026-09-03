@@ -70,6 +70,25 @@ describe("bun build --check", () => {
     expect(readdirSync(String(dir)).sort()).toEqual(before);
   });
 
+  test.concurrent("reports a resolve error and a cycle in one run", async () => {
+    // A file with an import that does not resolve stops the scan of its other
+    // imports, so the cycle is in a file that the scan still reaches.
+    using dir = tempDir("build-check-resolve-error", {
+      "index.ts": `import "./broken";\nimport "./a";\n`,
+      "broken.ts": `import "./missing";\n`,
+      "a.ts": `import "./b";\n`,
+      "b.ts": `import "./a";\n`,
+    });
+
+    const result = await run(String(dir), ["build", "./index.ts", "--check"]);
+
+    expect(errorLines(result.stderr)).toEqual([
+      `error: Could not resolve: "./missing"`,
+      "error: Circular dependency: a.ts -> b.ts -> a.ts",
+    ]);
+    expect(result.exitCode).toBe(1);
+  });
+
   test.concurrent("follows export-from, side-effect imports, and require()", async () => {
     using dir = tempDir("build-check-kinds", {
       "index.ts": `import "./reexport";\nimport "./bare";\nrequire("./cjs.js");\n`,

@@ -1557,7 +1557,7 @@ interface BuildMetafile {
 
 ### check
 
-Check the module graph for circular dependencies. Bun resolves and parses every module, then stops before it links or prints output. It writes no files.
+Check the module graph for circular dependencies. Bun resolves and parses each module that the entry points import, then stops before it links or prints output. It writes no files.
 
 A circular dependency is a chain of imports that leads back to the file where it starts. When a module in a cycle runs, it can read a binding from another module in the cycle before that binding is initialized. For a `let`, `const`, or `class` binding, this throws a `ReferenceError`.
 
@@ -1604,11 +1604,14 @@ Bun follows the imports that run a module when the importing module runs:
 
 Bun skips these imports:
 
-- Type-only imports. TypeScript removes them, so they do not exist at runtime.
+- Imports of types only: `import type`, and an import whose names are only used as types. Bun removes these imports when it transpiles, so they do not run in Bun. Node's type stripping keeps an import that has no `type` keyword.
 - `import()` and `import defer`. These do not run the module when the importing module runs.
 - Imports of files in `node_modules`. Bun still checks a workspace package, because it resolves the link in `node_modules` to the directory of the package.
+- Imports that the build keeps external. See [`external`](#external) and [`packages`](#packages).
 
-The CLI exits with code 1 when it finds a cycle. In the JavaScript API, the cycles are errors in `result.logs`, and the promise rejects unless you set `throw: false`. You cannot use `check` with `outdir`, `metafile`, or `compile`.
+The check also reports the errors that Bun finds when it resolves and parses a module, for example an import that does not resolve. It does not report the errors that the link step finds, for example an import of a name that a module does not export. So a build can fail after the check passes.
+
+The CLI exits with code 1 when it finds an error. In the JavaScript API, the errors are in `result.logs`, and the promise rejects unless you set `throw: false`. You cannot use `check` with `outdir`, `metafile`, or `compile`.
 
 ## Outputs
 

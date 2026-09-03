@@ -1,11 +1,9 @@
 //! Circular dependency detection for `bun build --check` and `Bun.build({ check: true })`.
 //!
 //! The walk reads the graph that the scan phase produced, before
-//! `find_reachable_files` runs. A check turns off the two scan-time rewrites
-//! that remove an edge from that graph: barrel deferral
-//! (`is_barrel_optimization_enabled`) and CommonJS redirects
-//! (`unwrap_commonjs_to_esm`). So each cycle names the files and the import
-//! statements that the user wrote.
+//! `find_reachable_files` runs. A check sets `scan_graph_as_written`, which
+//! turns off the scan-time rewrites that remove an edge from that graph. So
+//! each cycle names the files and the import statements that the user wrote.
 
 use std::io::Write;
 
@@ -60,15 +58,13 @@ fn followed_target(record: &ImportRecord, sources: &[Source]) -> Option<u32> {
 /// each import that leads back to a file on the current path. Each file is
 /// expanded once, so the number of errors is at most the number of imports,
 /// and the order follows the entry points and the import order in each file.
-/// Returns the number of errors.
-pub(crate) fn report_circular_imports(this: &BundleV2<'_>) -> usize {
+pub(crate) fn report_circular_imports(this: &BundleV2<'_>) {
     let sources = this.graph.input_files.items_source();
     let all_records = this.graph.ast.items_import_records();
     let log = this.transpiler.log_mut();
 
     let mut visits = vec![Visit::New; sources.len()];
     let mut path: Vec<Frame> = Vec::new();
-    let mut cycles = 0;
 
     for entry_point in this.graph.entry_points.iter() {
         let entry = entry_point.get();
@@ -104,7 +100,6 @@ pub(crate) fn report_circular_imports(this: &BundleV2<'_>) -> usize {
                     Visit::Active(depth) => {
                         path[last].record = record_index;
                         log_cycle(log, sources, all_records, &path[depth as usize..]);
-                        cycles += 1;
                     }
                     Visit::Done => {}
                 }
@@ -127,8 +122,6 @@ pub(crate) fn report_circular_imports(this: &BundleV2<'_>) -> usize {
             }
         }
     }
-
-    cycles
 }
 
 fn records_of<'r>(

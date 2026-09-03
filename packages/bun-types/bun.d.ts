@@ -3480,16 +3480,19 @@ declare module "bun" {
     /**
      * Check the module graph for circular dependencies, and write no files.
      *
-     * Bun resolves and parses every module, then stops before it links or
-     * prints output. Each circular dependency is an error in
-     * {@link BuildOutput.logs}. The message names the files in the cycle,
-     * for example `Circular dependency: a.ts -> b.ts -> a.ts`. With
+     * Bun resolves and parses each module that the entry points import, then
+     * stops before it links or prints output. Each circular dependency is an
+     * error in {@link BuildOutput.logs}. The message names the files in the
+     * cycle, for example `Circular dependency: a.ts -> b.ts -> a.ts`. With
      * `throw: true` (the default), the promise rejects with these errors.
-     * When there is no cycle, the build succeeds with no outputs.
+     * When there is no error, the build succeeds with no outputs.
      *
      * Bun follows `import` and `export ... from` statements and `require()`
-     * calls. It skips type-only imports, `import()`, `import defer`, and files
-     * in `node_modules`.
+     * calls. It skips imports of types only, `import()`, `import defer`,
+     * external modules, and files in `node_modules`.
+     *
+     * The check also reports resolve and parse errors. It does not run the
+     * link step, so a build can fail after the check passes.
      *
      * Cannot be used with `outdir`, `metafile`, or `compile`. Equivalent to
      * `--check` in the CLI.

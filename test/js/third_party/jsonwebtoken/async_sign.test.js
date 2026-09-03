@@ -1,24 +1,33 @@
-import { describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { generateKeyPairSync } from "crypto";
 import jwt from "jsonwebtoken";
 import jws from "jws";
+import sinon from "sinon";
 var PS_SUPPORTED = true;
 
 describe("signing a token asynchronously", function () {
   describe("when signing a token", function () {
     var secret = "shhhhhh";
 
+    // Each sign() reads Date.now() for `iat`. Freeze the clock so the async
+    // and the sync token cannot differ when a second boundary falls between them.
+    var fakeClock;
+    beforeEach(function () {
+      fakeClock = sinon.useFakeTimers({ now: 60000 });
+    });
+
+    afterEach(function () {
+      fakeClock.uninstall();
+    });
+
     it("should return the same result as singing synchronously", function (done) {
-      // Pin `iat`. Without it each sign() reads Date.now(), and the two tokens
-      // differ when a second boundary falls between the async and the sync call.
-      var payload = { foo: "bar", iat: 1700000000 };
-      jwt.sign(payload, secret, { algorithm: "HS256" }, function (err, asyncToken) {
+      jwt.sign({ foo: "bar" }, secret, { algorithm: "HS256" }, function (err, asyncToken) {
         if (err) return done(err);
         // jws runs this callback inside a try/catch and routes a throw to the
         // 'error' listener, which jsonwebtoken wrapped in once(). A failed
         // expect() here is swallowed and the test only times out. Report it.
         try {
-          var syncToken = jwt.sign(payload, secret, { algorithm: "HS256" });
+          var syncToken = jwt.sign({ foo: "bar" }, secret, { algorithm: "HS256" });
           expect(typeof asyncToken).toBe("string");
           expect(asyncToken.split(".")).toHaveLength(3);
           expect(asyncToken).toEqual(syncToken);

@@ -272,6 +272,36 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         use_system_shell: bool,
         shell_path: Option<&[u8]>,
     ) -> crate::Result<()> {
+        let code = Self::run_package_script_foreground_status(
+            ctx,
+            original_script,
+            name,
+            cwd,
+            env,
+            passthrough,
+            silent,
+            use_system_shell,
+            shell_path,
+        )?;
+        if code != 0 {
+            Global::exit(code);
+        }
+        Ok(())
+    }
+
+    /// Like [`Self::run_package_script_foreground_with_shell_path`], but returns the script's
+    /// exit code instead of exiting on a non-zero one. The error line is still printed.
+    pub(crate) fn run_package_script_foreground_status(
+        ctx: &mut ContextData,
+        original_script: &[u8],
+        name: &[u8],
+        cwd: &[u8],
+        env: &mut DotEnv::Loader,
+        passthrough: &[Box<[u8]>],
+        silent: bool,
+        use_system_shell: bool,
+        shell_path: Option<&[u8]>,
+    ) -> crate::Result<u32> {
         let shell_search_path = shell_path.unwrap_or_else(|| env.get(b"PATH").unwrap_or(b""));
         let shell_bin =
             Self::find_shell(shell_search_path, cwd).ok_or(crate::Error::MissingShell)?;
@@ -361,9 +391,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                     );
                     Output::flush();
                 }
-                Global::exit(code as u32);
+                return Ok(code as u32);
             }
-            return Ok(());
+            return Ok(0);
         }
 
         use crate::api::bun_process::{Status as SpawnStatus, sync};
@@ -426,7 +456,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                     );
                 }
                 Output::flush();
-                return Ok(());
+                return Ok(0);
             }
             Ok(Err(err)) => {
                 if !silent {
@@ -437,7 +467,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                     );
                 }
                 Output::flush();
-                return Ok(());
+                return Ok(0);
             }
             Ok(Ok(result)) => result,
         };
@@ -484,7 +514,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                         Output::flush();
                     }
 
-                    Global::exit(exit_code.code as u32);
+                    return Ok(exit_code.code as u32);
                 }
             }
 
@@ -528,13 +558,13 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 }
 
                 Output::flush();
-                return Ok(());
+                return Ok(0);
             }
 
             _ => {}
         }
 
-        Ok(())
+        Ok(0)
     }
 
     /// Allocates a

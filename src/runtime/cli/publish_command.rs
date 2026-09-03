@@ -552,6 +552,13 @@ impl PublishCommand {
         let manager_ptr: *mut PackageManager = manager;
 
         if cli.positionals.len() > 1 {
+            if Self::is_workspace_publish(manager) {
+                Output::err_generic(
+                    "--recursive and --filter cannot be used with a tarball path",
+                    (),
+                );
+                Global::crash();
+            }
             let context = match Context::<false>::from_tarball_path(
                 ctx,
                 manager,
@@ -631,10 +638,7 @@ impl PublishCommand {
         let context =
             match Context::<true>::from_workspace(ctx, manager, lockfile.as_ref(), &abs_pkg_json) {
                 Ok(c) => c,
-                Err(err) => {
-                    Self::report_pack_error(err);
-                    Global::crash();
-                }
+                Err(err) => Global::exit(Self::report_pack_error(err)),
             };
 
         // TODO: read this into memory
@@ -646,7 +650,10 @@ impl PublishCommand {
             Err(err) => err.report_and_crash(),
         }
 
-        Self::finish_directory_publish(context, &abs_pkg_json)
+        if let Err(err) = Self::finish_directory_publish(context, &abs_pkg_json) {
+            err.report_and_crash();
+        }
+        Ok(())
     }
 
     /// `-r` or `--filter`: the run covers workspace packages, not only the current one.
@@ -654,7 +661,8 @@ impl PublishCommand {
         manager.options.do_.recursive() || !manager.options.filter_patterns.is_empty()
     }
 
-    fn report_pack_error(err: FromWorkspaceError) {
+    /// Prints the error. Returns the exit code a single-package publish ends with.
+    fn report_pack_error(err: FromWorkspaceError) -> u32 {
         use pack::PackError;
         match err {
             PackError::OutOfMemory => bun_core::out_of_memory(),
@@ -676,7 +684,9 @@ impl PublishCommand {
             PackError::PrivatePackage => {
                 Output::err_generic("attempted to publish a private package", ());
             }
+            PackError::ScriptFailed(code) => return code,
         }
+        1
     }
 
     /// `-r` / `--filter`: publish each selected workspace package, dependencies first. Exits 1 at the end if any failed.
@@ -741,6 +751,24 @@ impl PublishCommand {
 
             bun_core::prettyln!("\n<b><magenta>{}<r>", bstr::BStr::new(&member.name));
 
+            // Decide the skips before `pack` runs the pre-publish scripts. An unreadable
+            // package.json falls through: `pack` reports it.
+            if let Some(manifest) = Self::read_manifest(manager, &member.abs_pkg_json) {
+                if manifest.private {
+                    bun_core::prettyln!("<d>skipping private package<r>");
+                    continue;
+                }
+                let version = dependency::without_build_tag(&manifest.version);
+                let registry = manager.scope_for_package_name(&manifest.name);
+                if Self::check_package_version_exists(&manifest.name, version, registry) {
+                    bun_core::warn!(
+                        "Registry already knows about version {}; skipping.",
+                        bstr::BStr::new(version),
+                    );
+                    continue;
+                }
+            }
+
             let context = match Context::<true>::from_workspace(
                 &mut *ctx,
                 &mut *manager,
@@ -770,13 +798,21 @@ impl PublishCommand {
                 Err(err @ (PublishError::OutOfMemory | PublishError::NeedAuth)) => {
                     err.report_and_crash();
                 }
-                Err(PublishError::RequestFailed | PublishError::Rejected) => {
+                Err(
+                    PublishError::RequestFailed
+                    | PublishError::Rejected
+                    | PublishError::ScriptFailed(_),
+                ) => {
                     failed.push(member.name.clone());
                     continue;
                 }
             }
 
-            Self::finish_directory_publish(context, &member.abs_pkg_json)?;
+            match Self::finish_directory_publish(context, &member.abs_pkg_json) {
+                Ok(()) => {}
+                Err(PublishError::ScriptFailed(_)) => failed.push(member.name.clone()),
+                Err(err) => err.report_and_crash(),
+            }
         }
 
         if !failed.is_empty() {
@@ -798,11 +834,44 @@ impl PublishCommand {
         Ok(())
     }
 
+    /// `private`, `name` and `version` of a package.json. `None` when the file cannot be read or
+    /// parsed, or lacks a string `name` or `version`.
+    fn read_manifest(manager: &mut PackageManager, abs_pkg_json: &ZStr) -> Option<Manifest> {
+        // SAFETY: `manager.log` is set once at init. `workspace_package_json_cache` is a
+        // different field, so the two `&mut` do not overlap.
+        let log: &mut bun_ast::Log = unsafe { &mut *manager.log };
+        let install::GetJsonResult::Entry(entry) =
+            manager.workspace_package_json_cache.get_with_path(
+                log,
+                abs_pkg_json.as_bytes(),
+                install::GetJsonOptions {
+                    guess_indentation: true,
+                    ..Default::default()
+                },
+            )
+        else {
+            return None;
+        };
+        let bump = bun_alloc::Arena::new();
+        let private = entry
+            .root
+            .get(b"private")
+            .and_then(|p| p.as_bool())
+            .unwrap_or(false);
+        let name = entry.root.get(b"name")?.as_string(&bump)?;
+        let version = entry.root.get(b"version")?.as_string(&bump)?;
+        Some(Manifest {
+            private,
+            name: name.into(),
+            version: version.into(),
+        })
+    }
+
     /// The `+ name@version` line, then the `publish` and `postpublish` scripts of the package at `abs_pkg_json`.
     fn finish_directory_publish(
         context: Context<'static, true>,
         abs_pkg_json: &ZStr,
-    ) -> Result<(), Error> {
+    ) -> Result<(), PublishError> {
         bun_core::prettyln!(
             "\n<green> +<r> {}@{}{}",
             bstr::BStr::new(&context.package_name),
@@ -829,58 +898,42 @@ impl PublishCommand {
             script_env
                 .map
                 .put(b"npm_command", b"publish")
-                .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
+                .map_err(|_| PublishError::OutOfMemory)?;
 
             // Note: reshaped for borrowck — `command_ctx: &mut ContextData`
             // is held by `context`; `run_package_script_foreground` needs
             // `&mut ContextData` too. Re-derive from the raw pointer.
             let cmd_ctx_ptr: *mut crate::cli::command::ContextData = context.command_ctx;
 
-            if let Some(publish_script) = &context.publish_script {
-                if let Err(e) = Run::run_package_script_foreground(
+            let scripts: [(&[u8], &Option<Box<[u8]>>); 2] = [
+                (b"publish", &context.publish_script),
+                (b"postpublish", &context.postpublish_script),
+            ];
+            for (name, script) in scripts {
+                let Some(script) = script else { continue };
+                match Run::run_package_script_foreground_status(
                     // SAFETY: see above.
                     unsafe { &mut *cmd_ctx_ptr },
-                    publish_script,
-                    b"publish",
+                    script,
+                    name,
                     &abs_workspace_path,
                     script_env,
                     &[],
                     context.manager.options.log_level == LogLevel::Silent,
                     // SAFETY: see above.
                     unsafe { &*cmd_ctx_ptr }.debug.use_system_shell,
+                    None,
                 ) {
-                    if matches!(e, crate::Error::MissingShell) {
+                    Ok(0) => {}
+                    Ok(code) => return Err(PublishError::ScriptFailed(code)),
+                    Err(crate::Error::MissingShell) => {
                         Output::err_generic(
-                            "failed to find shell executable to run publish script",
-                            (),
+                            "failed to find shell executable to run {} script",
+                            (bstr::BStr::new(name),),
                         );
                         Global::crash();
                     }
-                    return Err(e);
-                }
-            }
-
-            if let Some(postpublish_script) = &context.postpublish_script {
-                if let Err(e) = Run::run_package_script_foreground(
-                    // SAFETY: see above.
-                    unsafe { &mut *cmd_ctx_ptr },
-                    postpublish_script,
-                    b"postpublish",
-                    &abs_workspace_path,
-                    script_env,
-                    &[],
-                    context.manager.options.log_level == LogLevel::Silent,
-                    // SAFETY: see above.
-                    unsafe { &*cmd_ctx_ptr }.debug.use_system_shell,
-                ) {
-                    if matches!(e, crate::Error::MissingShell) {
-                        Output::err_generic(
-                            "failed to find shell executable to run postpublish script",
-                            (),
-                        );
-                        Global::crash();
-                    }
-                    return Err(e);
+                    Err(_) => return Err(PublishError::OutOfMemory),
                 }
             }
         }
@@ -1916,16 +1969,13 @@ impl PublishCommand {
                     }
                 };
 
-                let mut dirs: Vec<(Fd, Box<[u8]>, bool)> = Vec::new();
+                let mut dirs: Vec<(Fd, Box<[u8]>)> = Vec::new();
 
-                dirs.push((bin_dir, normalized_bin_dir.as_bytes().into(), false));
+                dirs.push((bin_dir, normalized_bin_dir.as_bytes().into()));
 
-                while let Some(dir_info) = dirs.pop() {
-                    let (dir, dir_subpath, close_dir) = dir_info;
-                    let _close = scopeguard::guard(dir, move |d| {
-                        if close_dir {
-                            let _ = d.close();
-                        }
+                while let Some((dir, dir_subpath)) = dirs.pop() {
+                    let _close = scopeguard::guard(dir, |d| {
+                        let _ = d.close();
                     });
 
                     let mut iter = DirIterator::iterate(dir);
@@ -1985,7 +2035,7 @@ impl PublishCommand {
                             else {
                                 continue;
                             };
-                            dirs.push((subdir, subpath.as_bytes().into(), true));
+                            dirs.push((subdir, subpath.as_bytes().into()));
                         }
                     }
                 }
@@ -2213,6 +2263,12 @@ impl PublishCommand {
     }
 }
 
+struct Manifest {
+    private: bool,
+    name: Box<[u8]>,
+    version: Box<[u8]>,
+}
+
 pub(crate) enum Published {
     Yes,
     /// The registry already had this `name@version`, so nothing was sent.
@@ -2231,6 +2287,9 @@ pub(crate) enum PublishError {
     /// The registry answered with an error status. Already reported.
     #[error("Rejected")]
     Rejected,
+    /// The `publish` or `postpublish` script exited with this code. Already reported.
+    #[error("ScriptFailed")]
+    ScriptFailed(u32),
 }
 bun_core::oom_from_alloc!(PublishError);
 
@@ -2243,6 +2302,7 @@ impl PublishError {
                 Global::crash();
             }
             PublishError::RequestFailed | PublishError::Rejected => Global::crash(),
+            PublishError::ScriptFailed(code) => Global::exit(code),
         }
     }
 }

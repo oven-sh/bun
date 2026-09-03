@@ -295,6 +295,7 @@ impl PackCommand {
                     );
                     Global::crash();
                 }
+                PackError::ScriptFailed(code) => Global::exit(code),
                 // for_publish-only variants — unreachable when FOR_PUBLISH=false.
                 PackError::RestrictedUnscopedPackage | PackError::PrivatePackage => unreachable!(),
             }
@@ -326,6 +327,9 @@ pub enum PackError<const FOR_PUBLISH: bool> {
     RestrictedUnscopedPackage,
     #[error("PrivatePackage")]
     PrivatePackage,
+    /// A lifecycle script exited with this non-zero code. The error line is already printed.
+    #[error("ScriptFailed")]
+    ScriptFailed(u32),
 }
 
 impl<const FOR_PUBLISH: bool> From<AllocError> for PackError<FOR_PUBLISH> {
@@ -2961,7 +2965,7 @@ fn run_lifecycle_script<const FOR_PUBLISH: bool>(
     silent: bool,
 ) -> Result<(), PackError<FOR_PUBLISH>> {
     let use_system_shell = command_ctx.debug.use_system_shell;
-    match RunCommand::run_package_script_foreground(
+    match RunCommand::run_package_script_foreground_status(
         command_ctx,
         script,
         name,
@@ -2970,8 +2974,10 @@ fn run_lifecycle_script<const FOR_PUBLISH: bool>(
         &[],
         silent,
         use_system_shell,
+        None,
     ) {
-        Ok(_) => Ok(()),
+        Ok(0) => Ok(()),
+        Ok(code) => Err(PackError::ScriptFailed(code)),
         Err(err) => {
             if matches!(err, crate::Error::MissingShell) {
                 Output::err_generic(

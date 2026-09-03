@@ -1484,15 +1484,25 @@ describe("--recursive", () => {
   }
 
   // Root plus three members: `b` depends on `a`, `c` depends on `b`, `hidden` is private.
-  // Every member has a `postpublish` script that prints `postpublish <name>`.
-  async function workspace(prefix: string, registryUrl: string, extra: Record<string, object> = {}) {
+  // Every member has `prepublishOnly` and `postpublish` scripts that print `<script> <name>`.
+  // `scripts` overrides them per member.
+  async function workspace(
+    prefix: string,
+    registryUrl: string,
+    extra: Record<string, object> = {},
+    scripts: Record<string, Record<string, string>> = {},
+  ) {
     const { packageDir } = await registry.createTestDir();
     const pkg = (name: string, dependencies?: Record<string, string>) =>
       JSON.stringify({
         name: `${prefix}-${name}`,
         version: "1.0.0",
         dependencies,
-        scripts: { postpublish: `echo postpublish ${prefix}-${name}` },
+        scripts: {
+          prepublishOnly: `echo prepublishOnly ${prefix}-${name}`,
+          postpublish: `echo postpublish ${prefix}-${name}`,
+          ...scripts[name],
+        },
       });
     await Promise.all([
       write(
@@ -1542,6 +1552,7 @@ describe("--recursive", () => {
     expect(mock.puts).toEqual(["rec-skip-b@1.0.0"]);
     // A skipped package gets no success line and runs no publish scripts.
     expect(out.match(/ \+ rec-skip-\w+@1\.0\.0/g)).toEqual([" + rec-skip-b@1.0.0"]);
+    expect(err.match(/\$ echo prepublishOnly rec-skip-\w+/g)).toEqual(["$ echo prepublishOnly rec-skip-b"]);
     expect(err.match(/\$ echo postpublish rec-skip-\w+/g)).toEqual(["$ echo postpublish rec-skip-b"]);
     expect(exitCode).toBe(0);
   });
@@ -1570,6 +1581,35 @@ describe("--recursive", () => {
     expect(mock.puts).toHaveLength(3);
     expect(mock.puts.indexOf("rec-cycle-after@1.0.0")).toBeGreaterThan(mock.puts.indexOf("rec-cycle-x@1.0.0"));
     expect(exitCode).toBe(0);
+  });
+
+  test("continues after a failing lifecycle script", async () => {
+    using mock = mockRegistry();
+    // `a` fails before the publish, `b` fails after it.
+    const packageDir = await workspace(
+      "rec-script",
+      `http://localhost:${mock.server.port}/`,
+      {},
+      { a: { prepublishOnly: "exit 3" }, b: { postpublish: "exit 4" } },
+    );
+
+    const { out, err, exitCode } = await publish(env, packageDir, "-r");
+    expect(err).toContain('script "prepublishOnly" exited with code 3');
+    expect(err).toContain('script "postpublish" exited with code 4');
+    expect(err).toContain("error: failed to publish 2 of 3 packages: rec-script-a, rec-script-b");
+    expect(mock.puts).toEqual(["rec-script-b@1.0.0", "rec-script-c@1.0.0"]);
+    expect(out.match(/ \+ rec-script-\w+@1\.0\.0/g)).toEqual([" + rec-script-b@1.0.0", " + rec-script-c@1.0.0"]);
+    expect(exitCode).toBe(1);
+  });
+
+  test("rejects a tarball path", async () => {
+    using mock = mockRegistry();
+    const packageDir = await workspace("rec-tarball", `http://localhost:${mock.server.port}/`);
+
+    const { err, exitCode } = await publish(env, packageDir, "-r", "./some.tgz");
+    expect(err).toContain("error: --recursive and --filter cannot be used with a tarball path");
+    expect(mock.puts).toEqual([]);
+    expect(exitCode).toBe(1);
   });
 
   test("continues after a 401 that does not ask for an OTP", async () => {

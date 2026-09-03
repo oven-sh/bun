@@ -235,9 +235,7 @@ pub fn install_with_manager(
                 };
 
                 had_any_diffs = manager.summary.has_diffs();
-                // A frozen install keeps the self-contained set the lockfile recorded.
-                // Every other install records the manifests' set, and saves the
-                // lockfile when only that set changed.
+                // A frozen install keeps the recorded set. A set change alone forces a save.
                 if !manager.options.enable.frozen_lockfile() {
                     let recorded = &manager.lockfile.self_contained_workspaces;
                     let declared = &lockfile.self_contained_workspaces;

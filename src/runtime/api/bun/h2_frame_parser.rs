@@ -4766,10 +4766,10 @@ impl H2FrameParser {
         // node writes each origin with `WriteOneByteV2`:
         // https://github.com/nodejs/node/blob/v26.3.0/src/node_http2.cc#L486-L489
         if origin_arg.is_string() {
-            // Owned: `write()` can run transport JS before it reads the bytes.
-            let origin_bytes =
-                header_value_bytes(&origin_arg.to_js_string_view(global_object)?).into_owned();
-            let slice = origin_bytes.as_slice();
+            // No copy: the view keeps the string alive while `write()` runs transport JS.
+            let origin_view = origin_arg.to_js_string_view(global_object)?;
+            let origin_bytes = header_value_bytes(&origin_view);
+            let slice: &[u8] = &origin_bytes;
             if slice.len() + 2 > 16384 {
                 let exception = global_object.to_type_error(
                     bun_jsc::ErrorCode::HTTP2_ORIGIN_LENGTH,
@@ -4841,11 +4841,8 @@ impl H2FrameParser {
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        // node writes both strings with `WriteOneByteV2`:
-        // https://github.com/nodejs/node/blob/v26.3.0/src/node_http2.cc#L3233-L3239
-        // Owned: `write()` can run transport JS before it reads the bytes.
-        let mut origin_bytes: Vec<u8> = Vec::new();
-        let mut value_bytes: Vec<u8> = Vec::new();
+        let mut origin_view = None;
+        let mut value_view = None;
         let mut stream_id: u32 = 0;
         let origin_string = callframe.argument(0);
         if !origin_string.is_empty_or_undefined_or_null() {
@@ -4856,8 +4853,7 @@ impl H2FrameParser {
                     origin_string,
                 ));
             }
-            origin_bytes =
-                header_value_bytes(&origin_string.to_js_string_view(global_object)?).into_owned();
+            origin_view = Some(origin_string.to_js_string_view(global_object)?);
         }
 
         let value_string = callframe.argument(1);
@@ -4869,8 +4865,7 @@ impl H2FrameParser {
                     value_string,
                 ));
             }
-            value_bytes =
-                header_value_bytes(&value_string.to_js_string_view(global_object)?).into_owned();
+            value_view = Some(value_string.to_js_string_view(global_object)?);
         }
 
         let stream_id_js = callframe.argument(2);
@@ -4886,7 +4881,16 @@ impl H2FrameParser {
                 return Ok(JSValue::UNDEFINED);
             }
         }
-        this.send_alt_svc(stream_id, &origin_bytes, &value_bytes);
+        // node writes both strings with `WriteOneByteV2`:
+        // https://github.com/nodejs/node/blob/v26.3.0/src/node_http2.cc#L3233-L3239
+        // No copy: the views keep the strings alive while `write()` runs transport JS.
+        let origin_bytes = origin_view.as_ref().map(header_value_bytes);
+        let value_bytes = value_view.as_ref().map(header_value_bytes);
+        this.send_alt_svc(
+            stream_id,
+            origin_bytes.as_deref().unwrap_or_default(),
+            value_bytes.as_deref().unwrap_or_default(),
+        );
         Ok(JSValue::UNDEFINED)
     }
 

@@ -1602,6 +1602,46 @@ describe("--recursive", () => {
     expect(exitCode).toBe(1);
   });
 
+  test.skipIf(isWindows)("continues after a lifecycle script killed by a signal", async () => {
+    using mock = mockRegistry();
+    const packageDir = await workspace(
+      "rec-signal",
+      `http://localhost:${mock.server.port}/`,
+      {},
+      { a: { prepack: "kill -TERM $$" } },
+    );
+
+    const { out, err, exitCode } = await publish(env, packageDir, "-r");
+    expect(err).toContain('script "prepack" was terminated by signal');
+    expect(err).toContain("error: failed to publish 1 of 3 packages: rec-signal-a");
+    expect(mock.puts).toEqual(["rec-signal-b@1.0.0", "rec-signal-c@1.0.0"]);
+    expect(out.match(/ \+ rec-signal-\w+@1\.0\.0/g)).toEqual([" + rec-signal-b@1.0.0", " + rec-signal-c@1.0.0"]);
+    expect(exitCode).toBe(1);
+  });
+
+  test("continues after a package whose scope has no credentials", async () => {
+    using mock = mockRegistry();
+    const packageDir = await workspace("rec-noauth", `http://localhost:${mock.server.port}/`, {
+      "packages/scoped": { name: "@rec-noauth/scoped", version: "1.0.0" },
+    });
+    await write(
+      join(packageDir, "bunfig.toml"),
+      Bun.TOML.stringify({
+        install: {
+          cache: false,
+          registry: { url: `http://localhost:${mock.server.port}/`, token: "token" },
+          scopes: { "@rec-noauth": { url: `http://localhost:${mock.server.port}/` } },
+        },
+      }),
+    );
+
+    const { err, exitCode } = await publish(env, packageDir, "-r");
+    expect(err).toContain("error: missing authentication");
+    expect(err).toContain("error: failed to publish 1 of 4 packages: @rec-noauth/scoped");
+    expect(mock.puts).toEqual(["rec-noauth-a@1.0.0", "rec-noauth-b@1.0.0", "rec-noauth-c@1.0.0"]);
+    expect(exitCode).toBe(1);
+  });
+
   test("rejects a tarball path", async () => {
     using mock = mockRegistry();
     const packageDir = await workspace("rec-tarball", `http://localhost:${mock.server.port}/`);

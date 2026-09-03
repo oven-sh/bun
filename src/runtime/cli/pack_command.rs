@@ -2976,8 +2976,10 @@ fn run_lifecycle_script<const FOR_PUBLISH: bool>(
         use_system_shell,
         None,
     ) {
-        Ok(0) => Ok(()),
-        Ok(code) => Err(PackError::ScriptFailed(code)),
+        Ok(status) => match status.exit_code() {
+            0 => Ok(()),
+            code => Err(PackError::ScriptFailed(code)),
+        },
         Err(err) => {
             if matches!(err, crate::Error::MissingShell) {
                 Output::err_generic(

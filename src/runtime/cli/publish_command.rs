@@ -794,14 +794,9 @@ impl PublishCommand {
                 Ok(Published::Yes) => {}
                 // Nothing was published: no `+` line, no `publish`/`postpublish` scripts.
                 Ok(Published::AlreadyOnRegistry) => continue,
-                Err(err @ (PublishError::OutOfMemory | PublishError::NeedAuth)) => {
-                    err.report_and_crash();
-                }
-                Err(
-                    PublishError::RequestFailed
-                    | PublishError::Rejected
-                    | PublishError::ScriptFailed(_),
-                ) => {
+                Err(PublishError::OutOfMemory) => bun_core::out_of_memory(),
+                Err(err) => {
+                    err.report();
                     failed.push(member.name.clone());
                     continue;
                 }
@@ -921,8 +916,10 @@ impl PublishCommand {
                     unsafe { &*cmd_ctx_ptr }.debug.use_system_shell,
                     None,
                 ) {
-                    Ok(0) => {}
-                    Ok(code) => return Err(PublishError::ScriptFailed(code)),
+                    Ok(status) => match status.exit_code() {
+                        0 => {}
+                        code => return Err(PublishError::ScriptFailed(code)),
+                    },
                     Err(crate::Error::MissingShell) => {
                         Output::err_generic(
                             "failed to find shell executable to run {} script",
@@ -2291,15 +2288,21 @@ pub(crate) enum PublishError {
 bun_core::oom_from_alloc!(PublishError);
 
 impl PublishError {
+    /// Prints what is not printed yet. Every variant but `NeedAuth` is reported where it arises.
+    fn report(&self) {
+        if let PublishError::NeedAuth = self {
+            Output::err_generic("missing authentication (run <cyan>`bunx npm login`<r>)", ());
+        }
+    }
+
     fn report_and_crash(self) -> ! {
+        self.report();
         match self {
             PublishError::OutOfMemory => bun_core::out_of_memory(),
-            PublishError::NeedAuth => {
-                Output::err_generic("missing authentication (run <cyan>`bunx npm login`<r>)", ());
-                Global::crash();
-            }
-            PublishError::RequestFailed | PublishError::Rejected => Global::crash(),
             PublishError::ScriptFailed(code) => Global::exit(code),
+            PublishError::NeedAuth | PublishError::RequestFailed | PublishError::Rejected => {
+                Global::crash()
+            }
         }
     }
 }

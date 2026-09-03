@@ -2964,6 +2964,15 @@ pub(crate) mod __gated_printer {
                 self.print_import_record_path(record);
                 self.print(b")");
 
+                // A split `require()` of a module that is CommonJS at link
+                // time: the chunk's only export is `default: module.exports`.
+                if record
+                    .flags
+                    .contains(ImportRecordFlags::CROSS_CHUNK_REQUIRE_DEFAULT)
+                {
+                    self.print(b".default");
+                }
+
                 if wrap_with_to_esm {
                     self.print_to_esm_suffix();
                 }

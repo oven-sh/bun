@@ -289,8 +289,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         Ok(())
     }
 
-    /// Like [`Self::run_package_script_foreground_with_shell_path`], but returns the script's
-    /// exit code instead of exiting on a non-zero one. The error line is still printed.
+    /// Returns the script's exit code (already reported) instead of exiting on it.
     pub(crate) fn run_package_script_foreground_status(
         ctx: &mut ContextData,
         original_script: &[u8],

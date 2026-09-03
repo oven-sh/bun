@@ -441,7 +441,6 @@ describe("bundler", () => {
       },
     };
   });
-  // https://github.com/oven-sh/bun/issues/2805
   itBundled("plugin/ResolveExternalRewritesPath", {
     files: {
       "index.ts": /* ts */ `

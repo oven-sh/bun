@@ -118,7 +118,7 @@ function withoutAll(frame: Frame | undefined, storage: AsyncLocalStorage): Frame
 function copyUntil(from: Frame, stop: Frame, tail: Frame | undefined): Frame | undefined {
   var copied: Frame[] = [];
   for (var f = from; f !== stop; f = f.prev!) {
-    if (f.storage !== undefined) copied.push(f);
+    if (f.storage !== undefined) $arrayPush(copied, f);
   }
   for (var i = copied.length - 1; i >= 0; i--) {
     tail = new Frame(copied[i].storage!, copied[i].value, tail);

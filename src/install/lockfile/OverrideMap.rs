@@ -1156,9 +1156,14 @@ fn parse_override_value(
     } else {
         None
     };
-    let Some(version) =
-        Dependency::parse(name, name_hash, sliced.slice, &sliced, &mut *ctx.log, alias_registry)
-    else {
+    let Some(version) = Dependency::parse(
+        name,
+        name_hash,
+        sliced.slice,
+        &sliced,
+        &mut *ctx.log,
+        alias_registry,
+    ) else {
         ctx.log.add_warning_fmt(
             Some(ctx.source),
             loc,

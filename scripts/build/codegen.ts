@@ -158,6 +158,22 @@ export function registerCodegenRules(n: Ninja, cfg: Config): void {
   });
   n.pool("bun_install", 1);
 
+  // `--root-package-manager=npm` installs the root package.json with npm.
+  // npm cannot read bun.lock, so the versions come from the package.json
+  // ranges. On Windows, npm is a batch file, and `call` returns to this line.
+  if (cfg.npm !== undefined) {
+    const npm = q(cfg.npm);
+    const args = "install --no-save --no-package-lock --include=dev --no-audit --no-fund";
+    n.rule("npm_install", {
+      command: hostWin
+        ? `cmd /c "cd /d $dir && call ${npm} ${args} && ${touch} $stamp"`
+        : `cd $dir && ${npm} ${args} && ${touch} $stamp`,
+      description: "npm install $dir",
+      restat: true,
+      pool: "bun_install",
+    });
+  }
+
   // Codegen dir stamp — all outputs go into cfg.codegenDir, but the dir must
   // exist first. Scripts generally mkdir themselves, but some (esbuild) don't.
   n.build({
@@ -258,8 +274,8 @@ export function emitCodegen(n: Ninja, cfg: Config, sources: Sources): CodegenOut
 
   const dirStamp = codegenDirStamp(cfg);
 
-  // ─── Root bun install (provides esbuild + lezer-cpp for cppbind) ───
-  const rootInstall = emitBunInstall(n, cfg, cfg.cwd);
+  // ─── Root install (provides esbuild + lezer-cpp for cppbind) ───
+  const rootInstall = emitRootInstall(n, cfg);
 
   const o: CodegenOutputs = {
     all: [],
@@ -331,7 +347,12 @@ export function emitCodegen(n: Ninja, cfg: Config, sources: Sources): CodegenOut
  * an implicit output (so deleting node_modules/ correctly retriggers install,
  * and restat prunes downstream when install was a no-op).
  */
-function emitBunInstall(n: Ninja, cfg: Config, pkgDir: string): string {
+function emitBunInstall(
+  n: Ninja,
+  cfg: Config,
+  pkgDir: string,
+  rule: "bun_install" | "npm_install" = "bun_install",
+): string {
   const depPackageJsons = readPackageDeps(pkgDir);
   assert(depPackageJsons.length > 0, `package.json has no dependencies: ${pkgDir}/package.json`);
 
@@ -356,7 +377,7 @@ function emitBunInstall(n: Ninja, cfg: Config, pkgDir: string): string {
   n.build({
     outputs: [stamp],
     implicitOutputs: depPackageJsons,
-    rule: "bun_install",
+    rule,
     inputs,
     orderOnlyInputs: [resolve(cfg.buildDir, "stamps", ".dir")],
     // stamp must be absolute — the command `cd $dir && ... && touch $stamp`
@@ -365,6 +386,15 @@ function emitBunInstall(n: Ninja, cfg: Config, pkgDir: string): string {
   });
 
   return stamp;
+}
+
+/**
+ * The install step for the repo-root package.json, with the package manager
+ * that `cfg.rootPackageManager` names. Exported for the test in
+ * test/internal/source-lints/root-package-json.test.ts.
+ */
+export function emitRootInstall(n: Ninja, cfg: Config): string {
+  return emitBunInstall(n, cfg, cfg.cwd, cfg.rootPackageManager === "npm" ? "npm_install" : "bun_install");
 }
 
 /**

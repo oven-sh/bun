@@ -15,6 +15,7 @@ import {
   type Config,
   type OS,
   type PartialConfig,
+  type RootPackageManager,
   type Toolchain,
   detectHost,
   findRepoRoot,
@@ -28,7 +29,7 @@ import { Ninja } from "./ninja.ts";
 import { getProfile } from "./profiles.ts";
 import { registerAllRules } from "./rules.ts";
 import { quote } from "./shell.ts";
-import { findBun, findCargo, findMsvcLinker, findSystemTool, resolveLlvmToolchain } from "./tools.ts";
+import { findBun, findCargo, findMsvcLinker, findNpm, findSystemTool, resolveLlvmToolchain } from "./tools.ts";
 import { ensureWindowsSysroot } from "./winsysroot.ts";
 import { checkWorkarounds } from "./workarounds.ts";
 
@@ -42,7 +43,7 @@ import { checkWorkarounds } from "./workarounds.ts";
  * Throws BuildError with a hint if a required tool is missing. Optional
  * tools (ccache, cargo if no rust deps needed) become `undefined`.
  */
-export function resolveToolchain(targetOs?: OS): Toolchain {
+export function resolveToolchain(targetOs?: OS, rootPackageManager: RootPackageManager = "bun"): Toolchain {
   const host = detectHost();
   const llvm = resolveLlvmToolchain(host.os, host.arch, targetOs ?? host.os);
 
@@ -63,13 +64,16 @@ export function resolveToolchain(targetOs?: OS): Toolchain {
   // ninja's generator rule invokes reconfigure, cwd is the build dir.
   const repoRoot = findRepoRoot();
 
-  // esbuild — comes from the root bun install. Path is deterministic.
+  // esbuild — comes from the root install. Path is deterministic.
   // If not present, the first codegen build will fail with a clear error
-  // (and the build itself runs `bun install` first via the root install
+  // (and the build itself runs the install first via the root install
   // stamp, so this path will exist by the time esbuild rules fire).
-  const esbuild = resolve(repoRoot, "node_modules", ".bin", host.os === "windows" ? "esbuild.exe" : "esbuild");
+  // On Windows, bun writes `.bin/esbuild.exe` and npm writes `.bin/esbuild.cmd`.
+  const windowsBin = rootPackageManager === "npm" ? "esbuild.cmd" : "esbuild.exe";
+  const esbuild = resolve(repoRoot, "node_modules", ".bin", host.os === "windows" ? windowsBin : "esbuild");
 
   const bun = findBun(host.os);
+  const npm = rootPackageManager === "npm" ? findNpm() : undefined;
 
   // jsRuntime: shell-ready prefix for running .ts subprocesses. Propagate
   // whatever's running us — if node, the strip-types flag comes along; if
@@ -83,6 +87,7 @@ export function resolveToolchain(targetOs?: OS): Toolchain {
     ...llvm,
     cmake,
     bun,
+    npm,
     jsRuntime,
     esbuild,
     cargo: rust?.cargo,
@@ -259,7 +264,7 @@ export async function configure(input: ConfigureInput): Promise<ConfigureResult>
     });
   }
 
-  const toolchain = resolveToolchain(partial.os);
+  const toolchain = resolveToolchain(partial.os, partial.rootPackageManager);
   mark("resolveToolchain");
   const cfg = resolveConfig(partial, toolchain);
 

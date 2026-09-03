@@ -23,6 +23,8 @@ export type Abi = "gnu" | "musl" | "android";
 export type BuildType = "Debug" | "Release" | "RelWithDebInfo" | "MinSizeRel";
 export type BuildMode = "full" | "cpp-only" | "rust-only" | "link-only" | "rust-and-link" | "archive-link";
 export type WebKitMode = "prebuilt" | "local";
+/** The package manager that installs the repo-root package.json. */
+export type RootPackageManager = "bun" | "npm";
 
 /**
  * Host platform — what's running the build. Distinguish from target
@@ -173,6 +175,11 @@ export interface Config {
    * checkout is expected to carry whatever you're iterating on).
    */
   localDeps: Record<string, string>;
+  /**
+   * Installs the repo-root package.json (esbuild, the lezer C++ parser). Set
+   * via `--root-package-manager=npm`. The other installs always use bun.
+   */
+  rootPackageManager: RootPackageManager;
 
   // ─── Paths (all absolute) ───
   /** Repository root. */
@@ -234,6 +241,8 @@ export interface Config {
   dsymutil: string | undefined;
   /** Self-host bun for codegen (bun install, bun build). */
   bun: string;
+  /** npm, set only when `rootPackageManager` is "npm". */
+  npm: string | undefined;
   /**
    * Shell-ready command prefix for running .ts subprocesses (stream.ts,
    * fetch-cli.ts, regen). Either the bun path or `node --experimental-strip-types`
@@ -350,6 +359,8 @@ export interface PartialConfig {
    * resolve against the repo root. See `Config.localDeps`.
    */
   localDeps?: string;
+  /** `bun` (default) or `npm`. See `Config.rootPackageManager`. */
+  rootPackageManager?: RootPackageManager;
   buildDir?: string;
   cacheDir?: string;
   /** Override NDK location (default: $ANDROID_NDK_ROOT etc). Only used when abi=android. */
@@ -437,6 +448,8 @@ export interface Toolchain {
   nm: string | undefined;
   dsymutil: string | undefined;
   bun: string;
+  /** Found only when the root package.json is installed with npm. */
+  npm?: string | undefined;
   jsRuntime: string;
   esbuild: string;
   ccache: string | undefined;
@@ -1086,6 +1099,12 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   const nodejsV8Version = partial.nodejsV8Version ?? versionDefaults.nodejsV8Version;
   const webkitVersion = partial.webkitVersion ?? versionDefaults.webkitVersion;
 
+  const rootPackageManager = partial.rootPackageManager ?? "bun";
+  if (rootPackageManager !== "bun" && rootPackageManager !== "npm") {
+    throw new BuildError(`Unknown rootPackageManager: ${rootPackageManager}`, { hint: "Use bun or npm" });
+  }
+  assert(rootPackageManager === "bun" || toolchain.npm !== undefined, "rootPackageManager=npm needs toolchain.npm");
+
   // ─── macOS SDK ───
   // Must be passed to nested cmake builds or they'll pick the wrong SDK.
   // Native darwin: ask xcode-select/xcrun. Cross-compiling from a non-darwin
@@ -1194,6 +1213,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     buildkite,
     webkit: partial.webkit ?? "prebuilt",
     localDeps: parseLocalDeps(partial.localDeps, cwd),
+    rootPackageManager,
     cwd,
     buildDir,
     codegenDir,
@@ -1223,6 +1243,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     nm: toolchain.nm,
     dsymutil: toolchain.dsymutil,
     bun: toolchain.bun,
+    npm: rootPackageManager === "npm" ? toolchain.npm : undefined,
     jsRuntime: toolchain.jsRuntime,
     esbuild: toolchain.esbuild,
     ccache: toolchain.ccache,
@@ -1562,6 +1583,7 @@ export function formatConfig(cfg: Config, exe: string): string {
   // Non-default modes — show so you notice when a build is unusual.
   if (cfg.webkit !== "prebuilt") features.push(`webkit:${cfg.webkit}`);
   for (const name of Object.keys(cfg.localDeps)) features.push(`local:${name}`);
+  if (cfg.rootPackageManager !== "bun") features.push(`root-package-manager:${cfg.rootPackageManager}`);
   if (cfg.mode !== "full") features.push(`mode:${cfg.mode}`);
   // Version pin overrides — show an identifying value so you catch "forgot
   // to revert my WebKit test branch" before the build goes weird. Strip the

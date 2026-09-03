@@ -4284,7 +4284,6 @@ impl<'a> LinkerContext<'a> {
     }
 
     /// Must `X.name()` keep `X` as `this`, where `X.name` is export `ref_`?
-    /// Only a lifted CommonJS export can need it, as a `module.exports` property.
     fn method_call_needs_this(&self, source_index: crate::IndexInt, ref_: Ref) -> bool {
         self.graph.ast.items_flags()[source_index as usize]
             .contains(AstFlags::COMMONJS_LIFTED_TO_ESM)
@@ -4644,101 +4643,135 @@ impl<'a> LinkerContext<'a> {
         if self.options.output_format == Format::InternalBakeDev {
             return;
         }
+        /// One `X.name` read that can bind to an export.
+        struct PropertyAccess {
+            part_index: usize,
+            base: Ref,
+            target_source: crate::IndexInt,
+            name: bun_ast::StoreStr,
+            count: u32,
+            is_call_target: bool,
+        }
+
         let id = source_index as usize;
         let parts_len = self.graph.ast.items_parts()[id].len();
-        // The printer substitutes a binding at each `X.name` of the file, so a
-        // call `X.name()` that needs `X` as `this` keeps all of them. The set
-        // is built before the loop binds any read that can need `this`.
-        let mut called: Option<HashMap<(Ref, bun_ast::StoreStr), ()>> = None;
-        let mut accesses: Vec<(Ref, crate::IndexInt, bun_ast::StoreStr, u32)> = Vec::new();
-        let mut dependencies: Vec<Dependency> = Vec::new();
-        let mut bound_bases: Vec<Ref> = Vec::new();
+        let mut accesses: Vec<PropertyAccess> = Vec::new();
         for part_index in 0..parts_len {
-            accesses.clear();
-            dependencies.clear();
-            bound_bases.clear();
-            {
-                let part = &self.graph.ast.items_parts()[id].as_slice()[part_index];
-                let Some(uses) = part.import_symbol_property_uses.as_ref() else {
+            let part = &self.graph.ast.items_parts()[id].as_slice()[part_index];
+            let Some(uses) = part.import_symbol_property_uses.as_ref() else {
+                continue;
+            };
+            for (base, properties) in uses.keys().iter().zip(uses.values()) {
+                let Some(import_data) = imports_to_bind.get(base) else {
                     continue;
                 };
-                for (base, properties) in uses.keys().iter().zip(uses.values()) {
-                    let Some(import_data) = imports_to_bind.get(base) else {
+                let target = import_data.data;
+                let target_source = target.source_index.get();
+                if !self.is_esm_namespace_ref(target_source, target.import_ref) {
+                    continue;
+                }
+                let resolved_exports =
+                    &self.graph.meta.items_resolved_exports()[target_source as usize];
+                for (name, prop_use) in properties.iter() {
+                    // Not a static export of the target (missing, or only reachable
+                    // through `export *` from CommonJS): keep the property access.
+                    let name = if let Some(index) = resolved_exports.get_index(name) {
+                        bun_ast::StoreStr::new(&resolved_exports.keys()[index])
+                    } else if &**name == b"default"
+                        && self.graph.ast.items_flags()[target_source as usize]
+                            .contains(AstFlags::COMMONJS_LIFTED_TO_ESM)
+                        && !Self::lifted_default_import_needs_wrapper(
+                            self.graph.ast.items_module_type()[id],
+                            &self.graph.ast.items_named_exports()[target_source as usize],
+                        )
+                    {
+                        // `default` of a lifted CommonJS module is `module.exports`, the
+                        // namespace itself, the same as `ns.default` on `import * as ns`.
+                        let name = bun_ast::StoreStr::new(b"default");
+                        member_resolutions
+                            .entry((target_source, name))
+                            .or_insert_with(|| {
+                                Some(ImportMemberResolution {
+                                    source_index: target_source,
+                                    r#ref: target.import_ref,
+                                    re_exports: Vec::new(),
+                                })
+                            });
+                        name
+                    } else {
                         continue;
                     };
-                    let target = import_data.data;
-                    let target_source = target.source_index.get();
-                    if !self.is_esm_namespace_ref(target_source, target.import_ref) {
-                        continue;
-                    }
-                    let resolved_exports =
-                        &self.graph.meta.items_resolved_exports()[target_source as usize];
-                    for (name, prop_use) in properties.iter() {
-                        // Not a static export of the target (missing, or only reachable
-                        // through `export *` from CommonJS): keep the property access.
-                        if let Some(index) = resolved_exports.get_index(name) {
-                            let name = bun_ast::StoreStr::new(&resolved_exports.keys()[index]);
-                            accesses.push((*base, target_source, name, prop_use.count_estimate));
-                        } else if &**name == b"default"
-                            && self.graph.ast.items_flags()[target_source as usize]
-                                .contains(AstFlags::COMMONJS_LIFTED_TO_ESM)
-                            && !Self::lifted_default_import_needs_wrapper(
-                                self.graph.ast.items_module_type()[id],
-                                &self.graph.ast.items_named_exports()[target_source as usize],
-                            )
-                        {
-                            // `default` of a lifted CommonJS module is `module.exports`, the
-                            // namespace itself, the same as `ns.default` on `import * as ns`.
-                            let name = bun_ast::StoreStr::new(b"default");
-                            member_resolutions
-                                .entry((target_source, name))
-                                .or_insert_with(|| {
-                                    Some(ImportMemberResolution {
-                                        source_index: target_source,
-                                        r#ref: target.import_ref,
-                                        re_exports: Vec::new(),
-                                    })
-                                });
-                            accesses.push((*base, target_source, name, prop_use.count_estimate));
-                        }
-                    }
+                    accesses.push(PropertyAccess {
+                        part_index,
+                        base: *base,
+                        target_source,
+                        name,
+                        count: prop_use.count_estimate,
+                        is_call_target: prop_use.is_call_target,
+                    });
                 }
             }
+        }
 
-            for &(base, target_source, name, count) in &accesses {
-                if !member_resolutions.contains_key(&(target_source, name)) {
-                    self.cycle_detector.clear();
-                    let mut re_exports: bun_alloc::AstVec<Dependency> = bun_alloc::AstAlloc::vec();
-                    let result = self.match_import_with_export_inner(
-                        ImportTracker {
-                            source_index: crate::Index::init(target_source),
-                            ..Default::default()
-                        },
-                        Some((target_source, name)),
-                        &mut re_exports,
-                    );
-                    let resolved = match result.kind {
-                        MatchImportKind::Normal | MatchImportKind::NormalAndNamespace => {
-                            Some(ImportMemberResolution {
-                                source_index: result.source_index,
-                                r#ref: result.r#ref,
-                                re_exports: re_exports.to_vec(),
-                            })
-                        }
-                        _ => None,
-                    };
-                    member_resolutions.insert((target_source, name), resolved);
+        for access in &accesses {
+            let key = (access.target_source, access.name);
+            if member_resolutions.contains_key(&key) {
+                continue;
+            }
+            self.cycle_detector.clear();
+            let mut re_exports: bun_alloc::AstVec<Dependency> = bun_alloc::AstAlloc::vec();
+            let result = self.match_import_with_export_inner(
+                ImportTracker {
+                    source_index: crate::Index::init(access.target_source),
+                    ..Default::default()
+                },
+                Some(key),
+                &mut re_exports,
+            );
+            let resolved = match result.kind {
+                MatchImportKind::Normal | MatchImportKind::NormalAndNamespace => {
+                    Some(ImportMemberResolution {
+                        source_index: result.source_index,
+                        r#ref: result.r#ref,
+                        re_exports: re_exports.to_vec(),
+                    })
                 }
-                let Some(resolved) = member_resolutions.get(&(target_source, name)).unwrap() else {
+                _ => None,
+            };
+            member_resolutions.insert(key, resolved);
+        }
+
+        // The printer substitutes a binding at each `X.name` of the file, so a
+        // call that needs `X` as `this` keeps every `X.name` of the file.
+        let mut keeps_this: Vec<(Ref, bun_ast::StoreStr)> = Vec::new();
+        for access in &accesses {
+            if access.is_call_target
+                && let Some(resolved) = member_resolutions
+                    .get(&(access.target_source, access.name))
+                    .unwrap()
+                && self.method_call_needs_this(resolved.source_index, resolved.r#ref)
+            {
+                keeps_this.push((access.base, access.name));
+            }
+        }
+
+        let mut dependencies: Vec<Dependency> = Vec::new();
+        let mut bound_bases: Vec<Ref> = Vec::new();
+        for part_accesses in accesses.chunk_by(|a, b| a.part_index == b.part_index) {
+            let part_index = part_accesses[0].part_index;
+            dependencies.clear();
+            bound_bases.clear();
+            for access in part_accesses {
+                let (base, name, count) = (access.base, access.name, access.count);
+                if keeps_this.contains(&(base, name)) {
+                    continue;
+                }
+                let Some(resolved) = member_resolutions
+                    .get(&(access.target_source, name))
+                    .unwrap()
+                else {
                     continue;
                 };
-                if self.method_call_needs_this(resolved.source_index, resolved.r#ref)
-                    && called
-                        .get_or_insert_with(|| self.called_import_properties(id))
-                        .contains_key(&(base, name))
-                {
-                    continue;
-                }
 
                 if !bound_bases.contains(&base) {
                     // First bound member of `base` in this part: depend on this
@@ -4811,24 +4844,6 @@ impl<'a> LinkerContext<'a> {
                 }
             }
         }
-    }
-
-    /// The `X.name` reads in file `id` that some use calls, as in `X.name()`.
-    fn called_import_properties(&self, id: usize) -> HashMap<(Ref, bun_ast::StoreStr), ()> {
-        let mut called = HashMap::default();
-        for part in self.graph.ast.items_parts()[id].as_slice() {
-            let Some(uses) = part.import_symbol_property_uses.as_ref() else {
-                continue;
-            };
-            for (base, properties) in uses.keys().iter().zip(uses.values()) {
-                for (name, prop_use) in properties.iter() {
-                    if prop_use.is_call_target {
-                        called.insert((*base, bun_ast::StoreStr::new(name)), ());
-                    }
-                }
-            }
-        }
-        called
     }
 
     /// Records a `Normal`/`NormalAndNamespace` match for `import_ref`.

@@ -116,8 +116,7 @@ bitflags::bitflags! {
         /// Renaming can also break any identifier used inside a "with" statement.
         const MUST_NOT_BE_RENAMED = 1 << 2;
 
-        /// A `var` or a sloppy-mode block function of the same name merged
-        /// into this function declaration, so it can set the binding.
+        /// A `var` of the same name merged into this function declaration.
         const REDECLARED_BY_VAR = 1 << 3;
 
         const REMOVE_OVERWRITTEN_FUNCTION_DECLARATION = 1 << 4;
@@ -130,8 +129,7 @@ bitflags::bitflags! {
         /// An import item for `ns.name` that some use calls, as `ns.name()`.
         const CALLED_AS_METHOD = 1 << 6;
 
-        /// A call of this function declaration, or of this lifted CommonJS
-        /// export, does not read `this`.
+        /// A call of this function declaration or lifted export ignores `this`.
         const CALL_IGNORES_THIS = 1 << 7;
     }
 }

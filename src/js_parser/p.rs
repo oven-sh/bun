@@ -5737,6 +5737,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
         if opts.is_call_target() || opts.is_template_tag() {
             self.symbols[ref_.inner_index() as usize].set_called_as_method(true);
+            // The call can print as `exports.name()`. `to_ast` drops this use
+            // from a part whose calls all ignore `this`.
+            if !self.is_revisit_for_substitution {
+                self.symbol_uses
+                    .get_or_put(self.exports_ref)
+                    .expect("OOM")
+                    .value_ptr
+                    .count_estimate += 1;
+            }
         }
     }
 
@@ -5767,8 +5776,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// A method call of an export that can read `this` reads the namespace object.
-    fn use_namespace_for_method_calls(&self, parts: &mut [js_ast::Part]) {
+    /// Only a method call of an export that can read `this` reads the namespace
+    /// object. Drops the `exports_ref` use of a part that has no such call.
+    fn drop_namespace_uses_of_calls_that_ignore_this(&self, parts: &mut [js_ast::Part]) {
         let mut method_exports = RefMap::default();
         for export in self.commonjs_named_exports.values() {
             let symbol = &self.symbols[export.loc_ref.ref_.inner_index() as usize];
@@ -5776,24 +5786,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 method_exports.insert(export.loc_ref.ref_, ());
             }
         }
-        if method_exports.is_empty() {
-            return;
-        }
         for part in parts {
-            let count: u32 = part
+            if part.symbol_uses.get(&self.exports_ref).is_none() {
+                continue;
+            }
+            let calls_method_export = part
                 .symbol_uses
                 .keys()
                 .iter()
-                .zip(part.symbol_uses.values())
-                .filter(|(ref_, _)| method_exports.contains_key(ref_))
-                .map(|(_, symbol_use)| symbol_use.count_estimate)
-                .sum();
-            if count > 0 {
-                part.symbol_uses
-                    .get_or_put_value(self.exports_ref, Default::default())
-                    .expect("OOM")
-                    .value_ptr
-                    .count_estimate += count;
+                .any(|ref_| method_exports.contains_key(ref_));
+            if !calls_method_export {
+                let _ = part.symbol_uses.swap_remove(&self.exports_ref);
             }
         }
     }
@@ -9152,8 +9155,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         if !self.commonjs_named_exports_deoptimized {
             self.mark_commonjs_exports_that_ignore_this();
-            if self.options.bundle {
-                self.use_namespace_for_method_calls(parts.as_mut_slice());
+            // With no read of `exports` itself, each `exports_ref` use in a part
+            // is a method call that `note_commonjs_export_use` recorded.
+            if self.symbols[self.exports_ref.inner_index() as usize].use_count_estimate == 0 {
+                self.drop_namespace_uses_of_calls_that_ignore_this(parts.as_mut_slice());
             }
         }
 

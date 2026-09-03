@@ -1484,6 +1484,30 @@ describe("bundler", () => {
       stdout: "free:x",
     },
   });
+  itBundled("cjs2esm/SelfMethodCallInUnusedExportKeepsNoNamespace", {
+    files: {
+      "/entry.js": /* js */ `
+        import { parse } from "./lib.cjs";
+        console.log(typeof parse);
+      `,
+      "/lib.cjs": /* js */ `
+        exports.parse = function (s) { return this._helper(s); };
+        exports._helper = function (s) { return "helped:" + s; };
+        exports.run = function () { return exports.parse("x"); };
+        exports.other = "tree-shaken";
+      `,
+    },
+    cjs2esm: true,
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      // Only the call in `run` needs the namespace object, and `run` is unused.
+      expect(out).not.toContain("exports_lib");
+      expect(out).not.toContain("tree-shaken");
+    },
+    run: {
+      stdout: "function",
+    },
+  });
   itBundled("cjs2esm/DefaultImportJsxClassicRuntime", {
     files: {
       "/entry.jsx": /* jsx */ `

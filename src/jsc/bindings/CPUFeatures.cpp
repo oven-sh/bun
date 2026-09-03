@@ -25,8 +25,7 @@ static uint8_t x86_cpu_features()
 {
     uint8_t features = 0;
 
-    // Not __builtin_cpu_supports: it links __cpu_indicator_init, a constructor that runs cpuid before main.
-    // Not IsProcessorFeaturePresent: Windows Server 2019 returns false for SSE4.2 and AVX on CPUs that have them.
+    // Not __builtin_cpu_supports (a constructor before main), not IsProcessorFeaturePresent (false on Windows Server 2019).
     unsigned eax = 0, ebx = 0, ecx = 0, edx = 0;
     if (!__get_cpuid(1, &eax, &ebx, &ecx, &edx))
         return features;

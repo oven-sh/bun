@@ -743,8 +743,7 @@ impl PublishCommand {
         let cli_tag = manager.options.publish_config.tag;
         let cli_access = manager.options.publish_config.access;
 
-        // What a pack leaves behind. No borrow of the manager or the CLI context is kept between
-        // the phases: a `Context` is rebuilt with fresh borrows for each publish.
+        // Owned output of one pack. Phase 2 rebuilds a `Context` around it with fresh borrows.
         struct Packed<'m> {
             member: &'m Member,
             package_name: Box<[u8]>,
@@ -863,8 +862,7 @@ impl PublishCommand {
                 normalized_pkg_info,
                 publish_script,
                 postpublish_script,
-                // SAFETY: the loader is its own allocation, set once at init and never freed
-                // before exit. `manager` is reborrowed above and does not overlap it.
+                // SAFETY: the loader is a separate allocation that lives until exit.
                 script_env: Some(unsafe { &mut *script_env }),
             };
 

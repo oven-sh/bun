@@ -2350,6 +2350,11 @@ impl<'a> LinkerContext<'a> {
             // .const_values = c.graph.const_values,
             ts_enums: Some(ts_enums),
             import_member_bindings: Some(import_member_bindings),
+            has_dynamic_import_items: ast
+                .dynamic_import_aliases
+                .values()
+                .iter()
+                .any(|dynamic_use| !dynamic_use.items.is_empty()),
 
             minify_whitespace: self.options.minify_whitespace,
             minify_syntax: self.options.minify_syntax,
@@ -3925,7 +3930,9 @@ impl<'a> LinkerContext<'a> {
                     }
 
                     // Warn about importing from a file that is known to not have any exports
-                    if status == ImportTrackerStatus::CjsWithoutExports {
+                    if status == ImportTrackerStatus::CjsWithoutExports
+                        && !self.is_call_record(prev_source_index, named_import.import_record_index)
+                    {
                         let source = self.get_source(tracker.source_index.get());
                         // SAFETY: `alias` is an arena `*const [u8]` valid for the link pass.
                         let alias = named_import
@@ -4019,7 +4026,11 @@ impl<'a> LinkerContext<'a> {
                         // "undefined" instead of emitting an error.
                         symbol.import_item_status = ImportItemStatus::Missing;
 
-                        if self.resolver().opts.target == Target::Browser
+                        // A name read off `import()` / `require()` is `undefined`
+                        // at run time too, so there is nothing to say.
+                        if self.is_call_record(prev_source_index, named_import.import_record_index)
+                        {
+                        } else if self.resolver().opts.target == Target::Browser
                             && bun_resolve_builtins::Alias::has(
                                 next_source.path.pretty,
                                 Target::Bun,
@@ -4211,6 +4222,62 @@ impl<'a> LinkerContext<'a> {
 
     /// Is `ref_` the `exports` object of ES module `source_index` (i.e. an
     /// import that resolved here is that module's namespace)?
+    /// The record of a named import in `source_index` is an `import()` or a
+    /// `require()`, so the name is read off the call's result.
+    fn is_call_record(&self, source_index: crate::IndexInt, record_index: u32) -> bool {
+        self.graph.ast.items_import_records()[source_index as usize]
+            .as_slice()
+            .get(record_index as usize)
+            .is_some_and(|record| matches!(record.kind, ImportKind::Dynamic | ImportKind::Require))
+    }
+
+    /// An item read off an `import()` / `require()` result is bound only to an
+    /// export the importer may read directly. Otherwise it reads as written:
+    /// `ns.a` off the namespace object, or the local a pattern binds.
+    fn binds_call_item(
+        &self,
+        source_index: crate::IndexInt,
+        import_ref: Ref,
+        named_import: &NamedImport,
+        result: &MatchImport,
+    ) -> bool {
+        if !matches!(result.kind, MatchImportKind::Normal) {
+            return false;
+        }
+        let record = &self.graph.ast.items_import_records()[source_index as usize].as_slice()
+            [named_import.import_record_index as usize];
+        let target = result.source_index as usize;
+        // Its own chunk: the name is a binding of the loaded module.
+        if !record.source_index.is_valid()
+            || self.is_external_dynamic_import(record, source_index)
+            // `require()` returns this export, not the namespace.
+            || (record.kind == ImportKind::Require
+                && self.graph.meta.items_resolved_exports()[record.source_index.get() as usize]
+                    .contains(b"module.exports"))
+            // A lifted CommonJS export changes through `exports.x = …`, which the
+            // parser does not record as an assignment.
+            || self.graph.ast.items_flags()[target].contains(AstFlags::COMMONJS_LIFTED_TO_ESM)
+        {
+            return false;
+        }
+        // `ns.a` is a live read, but a pattern copies the value: a local it
+        // binds stays a copy of an export that can change.
+        let is_pattern_local = self
+            .graph
+            .symbols
+            .get_const(import_ref)
+            .is_some_and(|symbol| symbol.namespace_alias.is_none());
+        !is_pattern_local
+            || !self
+                .graph
+                .symbols
+                .get_const(result.r#ref)
+                .is_some_and(|symbol| {
+                    // A direct `eval` in the exporting file can assign it too.
+                    symbol.has_been_assigned_to() || symbol.must_not_be_renamed()
+                })
+    }
+
     fn is_esm_namespace_ref(&self, source_index: crate::IndexInt, ref_: Ref) -> bool {
         let id = source_index as usize;
         id < self.graph.ast.len()
@@ -4291,6 +4358,12 @@ impl<'a> LinkerContext<'a> {
                 },
                 &mut re_exports,
             );
+
+            if self.is_call_record(source_index, named_import.import_record_index)
+                && !self.binds_call_item(source_index, import_ref, named_import, &result)
+            {
+                continue;
+            }
 
             match result.kind {
                 MatchImportKind::Normal | MatchImportKind::NormalAndNamespace => {

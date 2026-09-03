@@ -227,6 +227,13 @@ impl Symbol {
     pub fn has_link(&self) -> bool {
         self.link.get().is_valid()
     }
+
+    /// An import item the linker merged into the export it names. A local
+    /// that a hoisting merge links has no import item status.
+    #[inline]
+    pub fn is_bound_import_item(&self) -> bool {
+        self.import_item_status != ImportItemStatus::None && self.has_link()
+    }
 }
 
 #[repr(u8)]

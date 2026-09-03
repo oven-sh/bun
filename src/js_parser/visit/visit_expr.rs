@@ -2061,6 +2061,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             .is_some()
                             {
                                 p.note_tracked_namespace_use(im.namespace_ref);
+                                p.note_destructured_locals(obj.properties());
                             }
                         }
                         js_ast::binding::Data::BIdentifier(id) => {

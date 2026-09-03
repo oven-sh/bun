@@ -164,8 +164,26 @@ pub struct CommonJSNamedExport {
 pub type CommonJSNamedExports = StringArrayHashMap<CommonJSNamedExport, StringContext, AstAlloc>;
 
 pub type NamedImports = ArrayHashMap<Ref, NamedImport, AutoContext, AstAlloc>;
-pub type DynamicImportAliases =
-    ArrayHashMap<u32, crate::StoreSlice<crate::StoreStr>, AutoContext, AstAlloc>;
+/// One `import()` / `require()` whose every use the parser accounted for.
+#[derive(Clone, Copy, Default)]
+pub struct DynamicImportUse {
+    /// The export names read off the result, sorted and deduplicated.
+    pub aliases: crate::StoreSlice<crate::StoreStr>,
+    /// The import items those names are read through: a local a pattern
+    /// binds (`const { z } = …`) or a read off a namespace local (`ns.z`).
+    pub items: crate::StoreSlice<DynamicImportItem>,
+    /// Some use needs the namespace object whatever the linker binds: a read
+    /// that is not an item, or a local that may hold several namespaces.
+    pub needs_namespace_object: bool,
+}
+
+#[derive(Clone, Copy)]
+pub struct DynamicImportItem {
+    pub local: Ref,
+    pub alias: crate::StoreStr,
+    pub namespace_ref: Ref,
+}
+pub type DynamicImportAliases = ArrayHashMap<u32, DynamicImportUse, AutoContext, AstAlloc>;
 pub type NamedExports = StringArrayHashMap<NamedExport, StringContext, AstAlloc>;
 pub type ConstValuesMap = ArrayHashMap<Ref, Expr, AutoContext, AstAlloc>;
 pub type TsEnumsMap =

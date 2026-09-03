@@ -3381,7 +3381,7 @@ describe("bundler", () => {
   itBundled("dce/IgnoreAnnotationsDoesNotApplyToRuntime", {
     files: {
       "/entry.js": /* js */ `
-        import("./other.js").then(m => m.foo());
+        import("./other.js").then(m => Object.keys(m));
       `,
       "/other.js": /* js */ `
         export function foo() { }

@@ -97,6 +97,10 @@ bitflags::bitflags! {
         /// The linker pointed `path` at another output chunk (a split
         /// `import()` / `require()`): `text` is its path, `pretty` its id; `source_index` is cleared.
         const IMPORTS_CHUNK = 1 << 16;
+
+        /// `import()` / `require()` whose value nothing reads: the linker bound
+        /// every name read off it to an export, so it evaluates to `{}`.
+        const NAMESPACE_UNUSED = 1 << 17;
     }
 }
 

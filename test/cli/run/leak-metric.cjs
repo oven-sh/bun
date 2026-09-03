@@ -9,9 +9,10 @@
 // The allocator knows what is live. On release builds everything, JSC
 // included, allocates through mimalloc, and a walk of its heaps sums the bytes
 // in use. On ASAN builds the sanitizer allocator reports the bytes allocated
-// and not yet freed, quarantine excluded, but only sees JSC memory when the
-// process runs with Malloc=1 (WebKit then uses system malloc). The test spawns
-// the fixtures that way. Both numbers are exact to a few MB. A build where
+// and not yet freed, quarantine excluded. It sees JSC memory only when bmalloc
+// uses system malloc. bmalloc does that by itself when dlsym() finds
+// __asan_init, but src/linker.lds keeps that symbol local, so the test spawns
+// the fixtures with Malloc=1. Both numbers are exact to a few MB. A build where
 // neither sees JSC memory falls back to RSS.
 let internals;
 try {

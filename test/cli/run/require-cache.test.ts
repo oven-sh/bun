@@ -39,10 +39,11 @@ describe.concurrent("require.cache", () => {
   });
 
   // The leak fixtures measure retained bytes through leak-metric.cjs.
-  // ASAN builds read them from the sanitizer allocator. JSC memory is
-  // libpas-backed and invisible to it unless Malloc=1 makes WebKit use system
-  // malloc. Leak detection stays off: with Malloc=1, LSan misreports
-  // process-lifetime WTF allocations.
+  // ASAN builds read them from the sanitizer allocator, which sees JSC memory
+  // only when bmalloc uses system malloc. bmalloc does that by itself when
+  // dlsym() finds __asan_init, but src/linker.lds keeps that symbol local, so
+  // the fixtures set Malloc=1. Leak detection stays off: with Malloc=1, LSan
+  // misreports process-lifetime WTF allocations.
   const leakFixtureEnv = isASAN
     ? { ...bunEnv, Malloc: "1", ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":") }
     : bunEnv;
@@ -70,6 +71,9 @@ describe.concurrent("require.cache", () => {
   // Every JSC cell type that is created once per module load and owns the
   // module's transpiled source through its SourceCode. After the module is
   // evicted from the cache and collected, none of them may survive per load.
+  // A cell that survives means that JS still holds the module. The native
+  // leaks that #6790 and #12997 fixed leave no cell. The byte metric checks
+  // those.
   const MODULE_CELL_TYPES = [
     "Module", // JSCommonJSModule
     "ModuleRecord",

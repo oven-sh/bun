@@ -332,18 +332,102 @@ test.concurrent("star dep follows a same-name workspace being added and removed"
   expect(await exited).toBe(0);
   expect((await installed()).version).toBe("2.0.0");
 
+  // versionless, so only the `*` arm of the link rule matches it
   await Promise.all([
     writeRoot(["app1", "no-deps"]),
-    write(join(packageDir, "no-deps", "package.json"), JSON.stringify({ name: "no-deps", version: "9.9.9" })),
+    write(join(packageDir, "no-deps", "package.json"), JSON.stringify({ name: "no-deps" })),
   ]);
   ({ exited } = await runBunInstall(env, packageDir));
   expect(await exited).toBe(0);
-  expect((await installed()).version).toBe("9.9.9");
+  expect(await installed()).toEqual({ name: "no-deps" });
 
   await writeRoot(["app1"]);
   ({ exited } = await runBunInstall(env, packageDir));
   expect(await exited).toBe(0);
   expect((await installed()).version).toBe("2.0.0");
+});
+
+// The root both lists the workspace and depends on it by `*`; a prerelease version is not
+// satisfied by `*`, but `*` links to a same-name workspace regardless of its version.
+test.concurrent("root star dep on its own prerelease workspace links the workspace", async () => {
+  using ctx = await setupTest();
+  const { packageDir, env } = ctx;
+  await Promise.all([
+    write(
+      join(packageDir, "package.json"),
+      JSON.stringify({ name: "root", workspaces: ["no-deps"], dependencies: { "no-deps": "*" } }),
+    ),
+    write(join(packageDir, "no-deps", "package.json"), JSON.stringify({ name: "no-deps", version: "1.0.0-alpha" })),
+  ]);
+  const { exited } = await runBunInstall(env, packageDir);
+  expect(await exited).toBe(0);
+  expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toEqual({
+    name: "no-deps",
+    version: "1.0.0-alpha",
+  });
+});
+
+// The root edge is cloned into the new lockfile when `bun update` re-resolves it; the clone must
+// keep the workspace it links to, which for an alias is not recoverable from the alias name.
+test.concurrent.each([
+  { range: "npm:package1@*", pkg1: {} },
+  { range: "npm:package1@^1.0.0", pkg1: { version: "1.0.0" } },
+])("root alias $range onto a workspace survives bun update", async ({ range, pkg1 }) => {
+  using ctx = await setupTest();
+  const { packageDir, env } = ctx;
+  await Promise.all([
+    write(
+      join(packageDir, "package.json"),
+      JSON.stringify({ name: "root", workspaces: ["package1"], dependencies: { aliased: range } }),
+    ),
+    write(join(packageDir, "package1", "package.json"), JSON.stringify({ name: "package1", ...pkg1 })),
+  ]);
+  const { exited } = await runBunInstall(env, packageDir);
+  expect(await exited).toBe(0);
+  expect(await file(join(packageDir, "node_modules", "aliased", "package.json")).json()).toEqual({
+    name: "package1",
+    ...pkg1,
+  });
+
+  await using update = spawn({
+    cmd: [bunExe(), "update"],
+    cwd: packageDir,
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [err, code] = await Promise.all([update.stderr.text(), update.exited]);
+  expect(err).not.toContain("error:");
+  expect(code).toBe(0);
+  expect(await file(join(packageDir, "node_modules", "aliased", "package.json")).json()).toEqual({
+    name: "package1",
+    ...pkg1,
+  });
+});
+
+// `$name` copies the root's spec for `name`. When that spec is a range linked to a workspace, the
+// override is still the range, which is what bun.lock records, so a reload sees no change.
+test.concurrent("$ref override of a range linked to a workspace round-trips through bun.lock", async () => {
+  using ctx = await setupTest();
+  const { packageDir, env } = ctx;
+  await Promise.all([
+    write(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "root",
+        workspaces: ["no-deps"],
+        dependencies: { "no-deps": "^1.0.0", "one-range-dep": "1.0.0" },
+        overrides: { "no-deps": "$no-deps" },
+      }),
+    ),
+    write(join(packageDir, "no-deps", "package.json"), JSON.stringify({ name: "no-deps", version: "1.0.0" })),
+  ]);
+  let { exited } = await runBunInstall(env, packageDir);
+  expect(await exited).toBe(0);
+  expect(await file(join(packageDir, "bun.lock")).text()).toContain('"overrides": {\n    "no-deps": "^1.0.0"');
+
+  ({ exited } = await runBunInstall(env, packageDir, { frozenLockfile: true }));
+  expect(await exited).toBe(0);
 });
 
 test.concurrent("adding workspace in workspace edits package.json with correct version (workspace:*)", async () => {

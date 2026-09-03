@@ -578,20 +578,46 @@ test.concurrent("workspaces: prunes workspace folders, keeps workspace links, ru
 // #40393: these ranges link to the workspace at install time, so bun.lock records a workspace
 // edge; reparsing package.json must produce the same edge instead of reporting it as changed.
 test.concurrent.each([
-  { range: "* on a versionless workspace", deps: { package1: "*" }, pkg1: {}, checked: 2 },
-  { range: "* on a prerelease workspace", deps: { package1: "*" }, pkg1: { version: "1.0.0-alpha" }, checked: 2 },
+  { range: "* on a versionless workspace", app1: { dependencies: { package1: "*" } }, pkg1: {}, checked: 2 },
+  {
+    range: "* on a prerelease workspace",
+    app1: { dependencies: { package1: "*" } },
+    pkg1: { version: "1.0.0-alpha" },
+    checked: 2,
+  },
   // the alias is a third link, node_modules/aliased
-  { range: "npm:@* on a versionless workspace", deps: { aliased: "npm:package1@*" }, pkg1: {}, checked: 3 },
-  { range: "catalog: on a workspace", deps: { package1: "catalog:" }, pkg1: { version: "1.0.0" }, checked: 2 },
-  { range: "workspace: alias of a workspace", deps: { aliased: "workspace:package1@*" }, pkg1: {}, checked: 3 },
-])("workspaces: $range is in sync", async ({ deps, pkg1, checked }) => {
+  {
+    range: "npm:@* on a versionless workspace",
+    app1: { dependencies: { aliased: "npm:package1@*" } },
+    pkg1: {},
+    checked: 3,
+  },
+  {
+    range: "catalog: on a workspace",
+    app1: { dependencies: { package1: "catalog:" } },
+    pkg1: { version: "1.0.0" },
+    checked: 2,
+  },
+  {
+    range: "workspace: alias of a workspace",
+    app1: { dependencies: { aliased: "workspace:package1@*" } },
+    pkg1: {},
+    checked: 3,
+  },
+  {
+    range: "workspace:* in dev and ^1 in peer",
+    app1: { devDependencies: { package1: "workspace:*" }, peerDependencies: { package1: "^1.0.0" } },
+    pkg1: { version: "1.0.0" },
+    checked: 2,
+  },
+])("workspaces: $range is in sync", async ({ app1, pkg1, checked }) => {
   const { packageDir: dir, packageJson } = await registry.createTestDir();
   await Promise.all([
     write(
       packageJson,
       JSON.stringify({ name: "root", workspaces: { packages: ["app1", "package1"], catalog: { package1: "^1.0.0" } } }),
     ),
-    write(join(dir, "app1", "package.json"), JSON.stringify({ name: "app1", dependencies: deps })),
+    write(join(dir, "app1", "package.json"), JSON.stringify({ name: "app1", ...app1 })),
     write(join(dir, "package1", "package.json"), JSON.stringify({ name: "package1", ...pkg1 })),
   ]);
   await runBunInstall(installEnv(dir), dir);

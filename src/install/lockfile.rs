@@ -2085,12 +2085,13 @@ impl Lockfile {
         self.loaded_package_count = self.packages.len() as PackageID;
     }
 
-    /// Gives every edge that resolved to a workspace package the shape `Package::parse` gives it:
-    /// an npm range `linked_workspace` links becomes a workspace edge, and a `workspace:` edge
-    /// points at the workspace's path rather than the text after the protocol. A lockfile read from
-    /// disk (bun.lock, bun.lockb, or a migrated foreign lockfile) records only the literal, so every
-    /// loader finishes with this to agree with a reparse of the same package.json. Other tags
-    /// (`catalog:`, dist tags, folders) keep their parsed shape, as they do in `Package::parse`.
+    /// Gives every npm-range or `workspace:` edge that resolved to a workspace package the shape
+    /// `Package::parse` gives a linked edge: tag `Workspace`, value the workspace's path, literal
+    /// kept. Loaders (bun.lock, bun.lockb, migrated foreign lockfiles) rebuild edges from the
+    /// literal, so every loader finishes with this; the tag comes from the recorded resolution, so
+    /// it matches a reparse of the same package.json whenever `linked_workspace` made that
+    /// resolution (not when an override redirected it, and not once the workspace moves). Other
+    /// tags (`catalog:`, dist tags, folders) keep their parsed shape, as in `Package::parse`.
     pub(crate) fn tag_workspace_links(&mut self) {
         let pkg_resolutions = self.packages.items_resolution();
         for (dep, &pkg_id) in self

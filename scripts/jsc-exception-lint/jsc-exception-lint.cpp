@@ -408,11 +408,13 @@ static std::string summaryKey(const FunctionDecl *FD) {
   return qualifiedName(FD) + "/" + std::to_string(FD->getNumParams());
 }
 
-// `name(type, type)`. Types print with their full scope whatever the source
-// spells (`JSGlobalObject *` under a using-directive is `JSC::JSGlobalObject
-// *`), and typedefs stay typedefs, so the key is the same on every platform.
-// A template instantiation uses its pattern, so that every instantiation has
-// the key of the template (`T`, not `int`).
+// `name(type, type)`, and for a member function its qualifiers (` const`,
+// ` &&`): overloads can differ in those alone. Types print with their full
+// scope whatever the source spells (`JSGlobalObject *` under a
+// using-directive is `JSC::JSGlobalObject *`), and typedefs stay typedefs, so
+// the key is the same on every platform. A template instantiation uses its
+// pattern, so that every instantiation has the key of the template (`T`, not
+// `int`).
 static std::string signatureKey(const FunctionDecl *FD) {
   if (const FunctionDecl *pattern = FD->getTemplateInstantiationPattern())
     FD = pattern;
@@ -428,7 +430,19 @@ static std::string signatureKey(const FunctionDecl *FD) {
   if (const auto *FPT = FD->getType()->getAs<FunctionProtoType>())
     if (FPT->isVariadic())
       key += FD->getNumParams() ? ", ..." : "...";
-  return key + ")";
+  key += ")";
+  if (const auto *MD = dyn_cast<CXXMethodDecl>(FD)) {
+    Qualifiers quals = MD->getMethodQualifiers();
+    if (quals.hasConst())
+      key += " const";
+    if (quals.hasVolatile())
+      key += " volatile";
+    if (MD->getRefQualifier() == RQ_LValue)
+      key += " &";
+    else if (MD->getRefQualifier() == RQ_RValue)
+      key += " &&";
+  }
+  return key;
 }
 
 static bool isGlobalObjectRecord(const CXXRecordDecl *RD) {

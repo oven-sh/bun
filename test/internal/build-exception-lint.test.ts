@@ -289,6 +289,45 @@ JSValue twice(JSGlobalObject* g, int) {
   return v;
 }
 
+// Member overloads that differ by their qualifiers alone.
+struct Box {
+  JSValue twice(JSGlobalObject* g) {
+    auto scope = DECLARE_THROW_SCOPE(g->vm());
+    JSValue v;
+    v.toString(g);
+    v.toString(g);
+    RETURN_IF_EXCEPTION(scope, {});
+    return v;
+  }
+  JSValue twice(JSGlobalObject* g) const {
+    auto scope = DECLARE_THROW_SCOPE(g->vm());
+    JSValue v;
+    v.toString(g);
+    v.toString(g);
+    RETURN_IF_EXCEPTION(scope, {});
+    return v;
+  }
+};
+
+struct Ref {
+  JSValue twice(JSGlobalObject* g) & {
+    auto scope = DECLARE_THROW_SCOPE(g->vm());
+    JSValue v;
+    v.toString(g);
+    v.toString(g);
+    RETURN_IF_EXCEPTION(scope, {});
+    return v;
+  }
+  JSValue twice(JSGlobalObject* g) && {
+    auto scope = DECLARE_THROW_SCOPE(g->vm());
+    JSValue v;
+    v.toString(g);
+    v.toString(g);
+    RETURN_IF_EXCEPTION(scope, {});
+    return v;
+  }
+};
+
 template<typename T> JSValue generic(JSGlobalObject* g, T) {
   auto scope = DECLARE_THROW_SCOPE(g->vm());
   JSValue v;
@@ -332,6 +371,10 @@ const toString = "JSC::JSValue::toString";
 const fixtureKeys = [
   `src/fixture.cpp\ttwice(JSC::JSGlobalObject *, JSC::JSValue)\tpending-call\t${toString}`,
   `src/fixture.cpp\ttwice(JSC::JSGlobalObject *, int)\tpending-call\t${toString}`,
+  `src/fixture.cpp\tBox::twice(JSC::JSGlobalObject *)\tpending-call\t${toString}`,
+  `src/fixture.cpp\tBox::twice(JSC::JSGlobalObject *) const\tpending-call\t${toString}`,
+  `src/fixture.cpp\tRef::twice(JSC::JSGlobalObject *) &\tpending-call\t${toString}`,
+  `src/fixture.cpp\tRef::twice(JSC::JSGlobalObject *) &&\tpending-call\t${toString}`,
   `src/fixture.cpp\tgeneric(JSC::JSGlobalObject *, T)\tpending-call\t${toString}`,
   `src/fixture.cpp\t<lambda at fixture.cpp>\tpending-call\t${toString}`,
   `src/helper.h\thelperTwice(JSC::JSGlobalObject *, JSC::JSValue)\tpending-call\t${toString}`,
@@ -375,7 +418,7 @@ describe.skipIf(built === undefined)("the jsc-exception-lint plugin", () => {
     // finding, and the finding in helper.h is reported by this unit even
     // though helper.cpp exists.
     expect({ errors: result.errors, keys: result.keys, exitCode: result.exitCode }).toEqual({
-      errors: 5,
+      errors: fixtureKeys.length,
       keys: [...fixtureKeys].sort(),
       exitCode: 1,
     });
@@ -392,7 +435,7 @@ describe.skipIf(built === undefined)("the jsc-exception-lint plugin", () => {
     });
     const result = await lint(String(dir), "fixture.cpp", [`baseline=${join(String(dir), "baseline.tsv")}`]);
     expect({ errors: result.errors, keys: result.keys, stale: result.stale }).toEqual({
-      errors: 4,
+      errors: fixtureKeys.length - 1,
       keys: fixtureKeys.filter(key => !key.includes(", int)")).sort(),
       stale: [`src/fixture.cpp\tgone(int)\tpending-call\t${toString}`],
     });
@@ -401,6 +444,9 @@ describe.skipIf(built === undefined)("the jsc-exception-lint plugin", () => {
   test("a function that checks after each call compiles", async () => {
     using dir = tempDir("exception-lint-plugin", fixtures);
     const result = await lint(String(dir), "clean.cpp");
-    expect({ stderr: result.stderr, exitCode: result.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    // Only the lint's own lines: a warning of another clang version is not
+    // what this test is about.
+    const lintLines = result.stderr.split("\n").filter(line => line.includes("jsc-exception-lint"));
+    expect({ lintLines, exitCode: result.exitCode }).toEqual({ lintLines: [], exitCode: 0 });
   });
 });

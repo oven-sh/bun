@@ -4256,6 +4256,22 @@ void GlobalObject::adoptNapiEnvsForTestIsolation(GlobalObject* oldGlobal)
     m_napiEnvs.appendVector(std::exchange(oldGlobal->m_napiEnvs, {}));
 }
 
+JSObject* GlobalObject::lazyRequireCacheObject()
+{
+    if (auto* cache = m_lazyRequireCacheObject.get())
+        return cache;
+
+    auto& vm = this->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* function = JSFunction::create(vm, this, commonJSCreateRequireCacheCodeGenerator(vm), this);
+    JSValue result = JSC::profiledCall(this, ProfilingReason::API, function, JSC::getCallData(function), this, ArgList());
+    RETURN_IF_EXCEPTION(scope, nullptr);
+
+    auto* cache = asObject(result);
+    m_lazyRequireCacheObject.set(vm, this, cache);
+    return cache;
+}
+
 void GlobalObject::setNodeWorkerEnvironmentData(JSMap* data) { m_nodeWorkerEnvironmentData.set(vm(), this, data); }
 void GlobalObject::setNodeWorkerStdioPorts(JSObject* ports) { m_nodeWorkerStdioPorts.set(vm(), this, ports); }
 void GlobalObject::setNodeWorkerEntryEvaluatedHook(JSObject* hook)

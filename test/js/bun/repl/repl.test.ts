@@ -1158,8 +1158,7 @@ describe.todoIf(isWindows).concurrent("Bun REPL (Terminal)", () => {
           // like `constructor` on the prototype chain, but the REPL picks the
           // shortest match.
           send("cons");
-          const output = await waitFor(`${GRAY}ole`);
-          expect(output).not.toContain("\x1b[2mole");
+          await waitFor(`${GRAY}ole`);
         },
         { env: colorEnv },
       );

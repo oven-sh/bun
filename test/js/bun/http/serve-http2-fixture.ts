@@ -21,6 +21,9 @@ const bigFile = args["big-file"]!;
 
 const big = Buffer.alloc(5 * 1024 * 1024, "abcdefghijklmnop");
 let lateRead: PromiseWithResolvers<void> | undefined;
+// The number of /slow handlers that have started, and a wake-up for GET /stop?started=N.
+let slowStarted = 0;
+let slowEntered: (() => void) | undefined;
 
 const makeRoutes = () => ({
   "/api/:id": (req: Bun.BunRequest<"/api/:id">) =>
@@ -228,6 +231,8 @@ async function handler(req: Request, server: Bun.Server<undefined>): Promise<Res
       lateRead = undefined;
       return new Response("released");
     case "/slow": {
+      slowStarted++;
+      slowEntered?.();
       await Bun.sleep(Number(url.searchParams.get("ms") ?? "50"));
       return new Response("slow");
     }
@@ -242,9 +247,16 @@ async function handler(req: Request, server: Bun.Server<undefined>): Promise<Res
     }
     case "/passthrough":
       return new Response(req.body, { headers: { "x-passthrough": "1" } });
-    case "/stop":
+    case "/stop": {
+      // ?started=N stops only once N /slow handlers have started. Requests on
+      // different connections (an h3 one and this h2 one) have no order, so
+      // this is how a caller knows that the stop comes after its requests.
+      const started = Number(url.searchParams.get("started") ?? "0");
+      while (slowStarted < started) await new Promise<void>(r => (slowEntered = r));
+      slowEntered = undefined;
       setTimeout(() => server.stop(), 0);
       return new Response("stopping");
+    }
     case "/reload":
       server.reload({
         routes: { ...makeRoutes(), "/reloaded-route": new Response("after-reload") },

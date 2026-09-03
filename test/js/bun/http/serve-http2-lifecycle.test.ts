@@ -27,6 +27,9 @@ describe("Bun.serve http2 + http3 on one port", () => {
   test("fetch, static and file routes over both; alt-svc advertised on h2; reload; stop with a stream open on each", async () => {
     await using fx = await startFixture({ tls: true, http3: true });
     const session = await connectH2(fx.port, true);
+    // The server's GOAWAY closes this session as soon as its last h2 stream ends,
+    // which can happen before the h3 response below arrives.
+    const closed = new Promise<void>(r => session.once("close", () => r()));
     const h2hello = await request(session, { ":path": "/hello" });
     expect(h2hello.body.toString()).toBe("hello");
     expect(String(h2hello.headers["alt-svc"] ?? "")).toContain("h3=");
@@ -45,10 +48,10 @@ describe("Bun.serve http2 + http3 on one port", () => {
     // graceful stop with one slow stream in flight on each transport
     const slow2 = request(session, { ":path": "/slow?ms=300" });
     const slow3 = fetchH3(fx.port, "/slow?ms=300").then(r => r.text());
-    expect((await request(session, { ":path": "/stop" })).body.toString()).toBe("stopping");
+    expect((await request(session, { ":path": "/stop?started=2" })).body.toString()).toBe("stopping");
     expect((await slow2).body.toString()).toBe("slow");
     expect(await slow3).toBe("slow");
-    await new Promise<void>(r => session.once("close", () => r()));
+    await closed;
   }, 30000);
 
   test("http1: false with both h2 and h3", async () => {

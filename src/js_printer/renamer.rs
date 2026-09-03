@@ -953,10 +953,10 @@ pub struct NestedRenamer<'r> {
     source_index: u32,
     /// This file's names; starts as the top-level ones.
     names: Vec<NameStr>,
-    /// By name id (the root's ids, then `local_ids`): 0, or 1 + the index in
-    /// `slots` of the innermost enclosing scope's slot for that name. Slots of
-    /// scopes already left are dropped, so a present slot is always an
-    /// enclosing one.
+    /// Name id (the root's ids, then `local_ids`) -> index in `slots` of the
+    /// innermost enclosing scope's slot for that name; ids not present read
+    /// the root's slot. Slots of scopes already left are dropped, so a present
+    /// slot is always an enclosing one.
     overlay: OverlayMap,
     /// Ids `root.slots.len()..next_local_id` are this file's `local_ids`.
     next_local_id: u32,

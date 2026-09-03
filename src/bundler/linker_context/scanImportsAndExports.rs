@@ -505,6 +505,7 @@ pub(crate) fn scan_imports_and_exports(
                             source_index_stack: Vec::with_capacity(32),
                             exports_kind,
                             named_exports,
+                            ast_flags: ast_flags_list,
                         });
                     }
                     export_star_ctx.as_mut().unwrap().add_exports(
@@ -1522,6 +1523,7 @@ struct ExportStarContext<'a> {
     named_exports: *mut [NamedExports],
     imports_to_bind: *mut [RefImportData],
     export_star_records: *mut [bun_alloc::AstVec<u32>],
+    ast_flags: *mut [AstFlags],
 }
 
 impl<'a> ExportStarContext<'a> {
@@ -1541,6 +1543,11 @@ impl<'a> ExportStarContext<'a> {
         }
         self.source_index_stack.push(source_index);
         let stack_end_pos = self.source_index_stack.len();
+
+        // A lifted file's export star was `module.exports = ns`: it hands over `default` too.
+        let reexports_default = self.source_index_stack[..stack_end_pos].iter().all(|i| {
+            col_ref!(self.ast_flags)[*i as usize].contains(AstFlags::COMMONJS_LIFTED_TO_ESM)
+        });
 
         for import_id in col_ref!(self.export_star_records)[source_index as usize].iter() {
             let other_source_index = col_ref!(self.import_records_list)[source_index as usize]
@@ -1579,7 +1586,7 @@ impl<'a> ExportStarContext<'a> {
 
                 // ES6 export star statements ignore exports named "default"
                 let alias_slice: &[u8] = &alias;
-                if alias_slice == b"default" {
+                if alias_slice == b"default" && !reexports_default {
                     continue;
                 }
 

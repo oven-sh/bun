@@ -743,9 +743,17 @@ impl PublishCommand {
         let cli_tag = manager.options.publish_config.tag;
         let cli_access = manager.options.publish_config.access;
 
+        // What a pack leaves behind. No borrow of the manager or the CLI context is kept between
+        // the phases: a `Context` is rebuilt with fresh borrows for each publish.
         struct Packed<'m> {
             member: &'m Member,
-            context: Context<'static, true>,
+            package_name: Box<[u8]>,
+            package_version: Box<[u8]>,
+            abs_tarball_path: Box<ZStr>,
+            tarball_bytes: Box<[u8]>,
+            normalized_pkg_info: Box<[u8]>,
+            publish_script: Option<Box<[u8]>>,
+            postpublish_script: Option<Box<[u8]>>,
             tag: &'static [u8],
             access: Option<Access>,
         }
@@ -775,7 +783,16 @@ impl PublishCommand {
                 }
             }
 
-            let context = match Context::<true>::from_workspace(
+            let Context {
+                package_name,
+                package_version,
+                abs_tarball_path,
+                tarball_bytes,
+                normalized_pkg_info,
+                publish_script,
+                postpublish_script,
+                ..
+            } = match Context::<true>::from_workspace(
                 &mut *ctx,
                 &mut *manager,
                 Some(&lockfile),
@@ -795,10 +812,16 @@ impl PublishCommand {
                     Global::exit(code);
                 }
             };
-            let _ = bun_sys::unlink(&context.abs_tarball_path);
+            let _ = bun_sys::unlink(&abs_tarball_path);
             packed.push(Packed {
                 member,
-                context,
+                package_name,
+                package_version,
+                abs_tarball_path,
+                tarball_bytes,
+                normalized_pkg_info,
+                publish_script,
+                postpublish_script,
                 tag: manager.options.publish_config.tag,
                 access: manager.options.publish_config.access,
             });
@@ -807,9 +830,19 @@ impl PublishCommand {
         // Phase 2: publish in the same order, dependencies first.
         let attempted = packed.len();
         let mut failed: Vec<Box<[u8]>> = Vec::new();
+        let script_env: *mut dotenv::Loader = manager
+            .env
+            .map(|p| p.as_ptr())
+            .expect("env set by PackageManager::init");
         for Packed {
             member,
-            context,
+            package_name,
+            package_version,
+            abs_tarball_path,
+            tarball_bytes,
+            normalized_pkg_info,
+            publish_script,
+            postpublish_script,
             tag,
             access,
         } in packed
@@ -818,6 +851,22 @@ impl PublishCommand {
             manager.options.publish_config.access = access;
 
             bun_core::prettyln!("\n<b><magenta>{}<r>", bstr::BStr::new(&member.name));
+
+            let context = Context::<true> {
+                manager: &mut *manager,
+                command_ctx: &mut *ctx,
+                package_name,
+                package_version,
+                abs_tarball_path,
+                tarball_bytes,
+                uses_workspaces: false,
+                normalized_pkg_info,
+                publish_script,
+                postpublish_script,
+                // SAFETY: the loader is its own allocation, set once at init and never freed
+                // before exit. `manager` is reborrowed above and does not overlap it.
+                script_env: Some(unsafe { &mut *script_env }),
+            };
 
             match Self::publish::<true>(&context) {
                 Ok(Published::Yes) => {}
@@ -890,7 +939,7 @@ impl PublishCommand {
 
     /// The `+ name@version` line, then the `publish` and `postpublish` scripts of the package at `abs_pkg_json`.
     fn finish_directory_publish(
-        context: Context<'static, true>,
+        context: Context<'_, true>,
         abs_pkg_json: &ZStr,
     ) -> Result<(), PublishError> {
         bun_core::prettyln!(

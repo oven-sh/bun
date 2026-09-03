@@ -304,9 +304,8 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     // Used for forcing CommonJS
     pub(crate) has_with_scope: bool,
 
-    /// A `var` in the module scope has the name of a top-level function
-    /// declaration. Module code makes that function lexical, so a `var` with
-    /// its name is an early error there. CommonJS code with it is not lifted.
+    /// A module-scope `var` has the name of a top-level function. Module code
+    /// rejects that, so a CommonJS file with it keeps its wrapper.
     pub(crate) has_top_level_function_merged_with_var: bool,
 
     pub(crate) is_file_considered_to_have_esm_exports: bool,
@@ -5757,8 +5756,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let ignores_this = match export.decl_value {
                 CommonJSExportValue::Other => false,
                 CommonJSExportValue::FunctionIgnoringThis => true,
-                // An assignment can change `name`. A `var` of the same name can too,
-                // but `has_top_level_function_merged_with_var` keeps that file wrapped.
+                // An assignment can change `name`. A merged `var` keeps the file wrapped.
                 CommonJSExportValue::Identifier(binding) => {
                     let symbol = &self.symbols[binding.inner_index() as usize];
                     symbol.kind.is_function()

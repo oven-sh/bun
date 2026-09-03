@@ -939,7 +939,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 Expr::init_identifier(func_name.ref_, func_name.loc),
             ));
         } else if !mark_as_dead {
-            if remove_overwritten {
+            if remove_overwritten && !data.func.flags.contains(flags::Function::IsExport) {
                 // restore on early return.
                 p.react_refresh.hook_ctx_storage = prev_hook_storage;
                 if mark_as_dead {

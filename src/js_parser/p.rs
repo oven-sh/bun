@@ -3363,6 +3363,42 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // only later access is the `scope.generated` push (DerefMut, after the
         // shared borrow is dropped) and the post-loop `children` walk.
         let scope_ref = &*scope;
+
+        // Duplicate function declarations are forbidden in strict-mode blocks and
+        // at a module's top level. Checked here (not at declaration time) because
+        // strict / ESM status may be decided by a later `"use strict"` / `export`.
+        if !scope_ref.replaced.is_empty() {
+            let is_file_esm =
+                self.has_es_module_syntax || self.options.module_type == options::ModuleType::Esm;
+            let scope_rejects_duplicate_fns = (scope_ref.kind == js_ast::scope::Kind::Block
+                && (scope_ref.strict_mode != js_ast::StrictModeKind::SloppyMode || is_file_esm))
+                || (scope_ref.parent.is_none() && is_file_esm);
+            if scope_rejects_duplicate_fns {
+                for replaced in scope_ref.replaced.slice() {
+                    let symbol = &self.symbols[replaced.ref_.inner_index() as usize];
+                    if !symbol.kind.is_function() {
+                        continue;
+                    }
+                    let name: &'a [u8] = symbol.original_name.slice();
+                    let Some(member) = scope_ref.members.get(name) else {
+                        continue;
+                    };
+                    if !self.symbols[member.ref_.inner_index() as usize]
+                        .kind
+                        .is_function()
+                    {
+                        continue;
+                    }
+                    self.log().add_symbol_already_declared_error(
+                        self.source,
+                        name,
+                        member.loc,
+                        replaced.loc,
+                    );
+                }
+            }
+        }
+
         if !scope_ref.kind_stops_hoisting() {
             let arena = self.arena;
             // Re-borrow `self.symbols` after each `new_symbol` call.
@@ -4976,6 +5012,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // SAFETY: see key-lifetime note above — `name: &'a [u8]` outlives the
         // arena-owned `Scope` map.
         let entry = unsafe { scope.members.get_or_put_borrowed(name) };
+        let mut replaced_member: Option<js_ast::scope::Member> = None;
         if entry.found_existing {
             let existing: js_ast::scope::Member = *entry.value_ptr;
             let symbol_idx = existing.ref_.inner_index() as usize;
@@ -5004,6 +5041,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 MR::ReplaceWithNew => {
                     self.symbols[symbol_idx].link.set(ref_);
+                    replaced_member = Some(existing);
 
                     // If these are both functions, remove the overwritten declaration
                     if kind.is_function() && self.symbols[symbol_idx].kind.is_function() {
@@ -5022,6 +5060,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
         *entry.value_ptr = js_ast::scope::Member { ref_, loc };
+        if let Some(replaced) = replaced_member {
+            VecExt::append(&mut scope.replaced, replaced);
+        }
         Ok(ref_)
     }
 

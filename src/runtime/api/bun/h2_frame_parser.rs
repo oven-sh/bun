@@ -7521,6 +7521,11 @@ impl H2FrameParser {
         self.native_socket.detach();
     }
 
+    /// Saturating read of a numeric session limit into its u32 field.
+    fn session_option_u32(value: JSValue) -> u32 {
+        u32::try_from(value.to_uint64_no_truncate()).unwrap_or(u32::MAX)
+    }
+
     pub(crate) fn constructor(
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
@@ -7679,7 +7684,7 @@ impl H2FrameParser {
                     if max_memory.is_number() {
                         this_ref
                             .max_session_memory
-                            .set((max_memory.to_uint64_no_truncate() as u32).max(1));
+                            .set(Self::session_option_u32(max_memory).max(1));
                     }
                 }
                 if let Some(max_header_list_pairs) =
@@ -7688,14 +7693,14 @@ impl H2FrameParser {
                     if max_header_list_pairs.is_number() {
                         this_ref
                             .max_header_list_pairs
-                            .set((max_header_list_pairs.to_uint64_no_truncate() as u32).max(4));
+                            .set(Self::session_option_u32(max_header_list_pairs).max(4));
                     }
                 }
                 if let Some(max_settings) = settings_js.get(global_object, "maxSettings")? {
                     if max_settings.is_number() {
                         this_ref
                             .max_settings
-                            .set((max_settings.to_uint64_no_truncate() as u32).max(1));
+                            .set(Self::session_option_u32(max_settings).max(1));
                     }
                 }
                 if let Some(max_rejected_streams) =
@@ -7704,7 +7709,7 @@ impl H2FrameParser {
                     if max_rejected_streams.is_number() {
                         this_ref
                             .max_rejected_streams
-                            .set(max_rejected_streams.to_uint64_no_truncate() as u32);
+                            .set(Self::session_option_u32(max_rejected_streams));
                     }
                 }
                 if let Some(max_session_invalid_frames) =
@@ -7713,7 +7718,7 @@ impl H2FrameParser {
                     if max_session_invalid_frames.is_number() {
                         this_ref
                             .max_session_invalid_frames
-                            .set(max_session_invalid_frames.to_uint64_no_truncate() as u32);
+                            .set(Self::session_option_u32(max_session_invalid_frames));
                     }
                 }
                 if let Some(max_outstanding_settings) =
@@ -7722,7 +7727,7 @@ impl H2FrameParser {
                     if max_outstanding_settings.is_number() {
                         this_ref
                             .max_outstanding_settings
-                            .set((max_outstanding_settings.to_uint64_no_truncate() as u32).max(1));
+                            .set(Self::session_option_u32(max_outstanding_settings).max(1));
                     }
                 }
                 if let Some(max_send_header_block_length) =

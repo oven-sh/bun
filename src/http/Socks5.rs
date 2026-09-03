@@ -2,10 +2,11 @@
 //!
 //! The caller owns the socket. This type owns handshake data, buffers partial
 //! frames, and preserves bytes following a successful CONNECT reply.
-//! It is a pure codec: it knows nothing about URL parsing or DNS.
+//! It is a pure codec: it never touches a socket or DNS.
 
 use std::net::IpAddr;
 
+use bun_core::ip_address::to_ip_address;
 use bun_url::URL;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -14,7 +15,6 @@ pub enum Socks5Error {
     CredentialsInvalid,
     CredentialsTooLong,
     DomainTooLong,
-    DnsResolutionFailed,
     InvalidVersion,
     InvalidReserved,
     InvalidAddressType,
@@ -67,12 +67,8 @@ impl Authentication {
         {
             return Err(Socks5Error::CredentialsIncomplete);
         }
-        if username
-            .as_ref()
-            .is_some_and(|value| value.len() > 255)
-            || password
-                .as_ref()
-                .is_some_and(|value| value.len() > 255)
+        if username.as_ref().is_some_and(|value| value.len() > 255)
+            || password.as_ref().is_some_and(|value| value.len() > 255)
         {
             return Err(Socks5Error::CredentialsTooLong);
         }
@@ -103,6 +99,26 @@ impl std::fmt::Debug for Authentication {
 pub enum TargetHost {
     Ip(IpAddr),
     Domain(Box<[u8]>),
+}
+
+impl TargetHost {
+    /// Classify a URL hostname. IP literals (including bracketed IPv6) use
+    /// their native ATYP; anything else is sent as a domain name for the
+    /// proxy to resolve. Bun never resolves the target locally, so
+    /// `socks5://` and `socks5h://` behave the same.
+    pub fn parse(hostname: &[u8]) -> Result<Self, Socks5Error> {
+        let hostname = hostname
+            .strip_prefix(b"[")
+            .and_then(|h| h.strip_suffix(b"]"))
+            .unwrap_or(hostname);
+        if let Some(ip) = to_ip_address(hostname) {
+            return Ok(Self::Ip(ip));
+        }
+        if hostname.is_empty() || hostname.len() > 255 {
+            return Err(Socks5Error::DomainTooLong);
+        }
+        Ok(Self::Domain(hostname.to_vec().into_boxed_slice()))
+    }
 }
 
 impl std::fmt::Debug for TargetHost {
@@ -146,12 +162,8 @@ impl std::fmt::Debug for Socks5 {
 }
 
 impl Socks5 {
-    /// Build a handshake for the given authentication and destination.
-    ///
-    /// The caller is responsible for deciding DNS policy:
-    /// - `socks5://` + IP → `TargetHost::Ip`
-    /// - `socks5h://` + hostname → `TargetHost::Domain`
-    /// - `socks5://` + hostname → resolve off-thread, then `TargetHost::Ip`
+    /// Build a handshake for the given authentication and destination. The
+    /// greeting is queued immediately; poll `pending_write` to send it.
     pub fn new(
         authentication: Authentication,
         target: TargetHost,
@@ -179,66 +191,6 @@ impl Socks5 {
         };
         this.queue_greeting();
         Ok(this)
-    }
-
-    /// Legacy constructor that parses a proxy URL directly.
-    /// Prefer `Self::new` with an explicit `Authentication` for new code.
-    pub fn new_legacy(proxy: &URL<'_>, target: &[u8], port: u16) -> Result<Self, Socks5Error> {
-        Self::new_with_resolution(proxy, target, port, false)
-    }
-
-    /// Legacy constructor with scheme-specific hostname resolution.
-    pub fn new_with_resolution(
-        proxy: &URL<'_>,
-        target: &[u8],
-        port: u16,
-        resolve_locally: bool,
-    ) -> Result<Self, Socks5Error> {
-        use bun_core::ip_address::to_ip_address;
-        let target = target
-            .strip_prefix(b"[")
-            .and_then(|target| target.strip_suffix(b"]"))
-            .unwrap_or(target);
-        let parsed_ip = to_ip_address(target);
-
-        if resolve_locally && parsed_ip.is_none() {
-            return Err(Socks5Error::DnsResolutionFailed);
-        }
-        Self::new_with_target(proxy, target, port, parsed_ip)
-    }
-
-    /// Legacy constructor after asynchronous DNS.
-    pub fn new_with_resolved_ip(
-        proxy: &URL<'_>,
-        _target: &[u8],
-        port: u16,
-        resolved_ip: IpAddr,
-    ) -> Result<Self, Socks5Error> {
-        let auth = Authentication::from_url(proxy)?;
-        Self::new(auth, TargetHost::Ip(resolved_ip), port)
-    }
-
-    fn new_with_target(
-        proxy: &URL<'_>,
-        target: &[u8],
-        port: u16,
-        parsed_ip: Option<IpAddr>,
-    ) -> Result<Self, Socks5Error> {
-        let auth = Authentication::from_url(proxy)?;
-        let target_host = match parsed_ip {
-            Some(ip) => TargetHost::Ip(ip),
-            None => {
-                let stripped = target
-                    .strip_prefix(b"[")
-                    .and_then(|t| t.strip_suffix(b"]"))
-                    .unwrap_or(target);
-                if stripped.len() > 255 {
-                    return Err(Socks5Error::DomainTooLong);
-                }
-                TargetHost::Domain(stripped.to_vec().into_boxed_slice())
-            }
-        };
-        Self::new(auth, target_host, port)
     }
 
     #[inline]
@@ -500,20 +452,16 @@ mod tests {
         }
     }
 
-    fn connect_frame_auth(
-        auth: Authentication,
-        target: TargetHost,
-        port: u16,
-    ) -> Vec<u8> {
-        let mut socks = Socks5::new(auth, target, port).unwrap();
-        socks.written(socks.pending_write().len()).unwrap();
-        assert!(!socks.receive(&[5, 0]).unwrap());
-        socks.pending_write().to_vec()
+    fn from_url(proxy_url: &URL<'_>, target: &[u8], port: u16) -> Result<Socks5, Socks5Error> {
+        Socks5::new(
+            Authentication::from_url(proxy_url)?,
+            TargetHost::parse(target)?,
+            port,
+        )
     }
 
     fn connect_frame(proxy_url: &URL<'_>, target: &[u8], port: u16) -> Vec<u8> {
-        // Legacy helper for tests that still exercise URL parsing.
-        let mut socks = Socks5::new_legacy(proxy_url, target, port).unwrap();
+        let mut socks = from_url(proxy_url, target, port).unwrap();
         socks.written(socks.pending_write().len()).unwrap();
         assert!(!socks.receive(&[5, 0]).unwrap());
         socks.pending_write().to_vec()
@@ -521,23 +469,26 @@ mod tests {
 
     #[test]
     fn fragmented_handshake_and_leftover() {
-        let mut socks =
-            Socks5::new(auth_none(), TargetHost::Ip("127.0.0.1".parse().unwrap()), 80).unwrap();
+        let mut socks = Socks5::new(
+            auth_none(),
+            TargetHost::Ip("127.0.0.1".parse().unwrap()),
+            80,
+        )
+        .unwrap();
         assert_eq!(socks.pending_write(), &[5, 1, 0]);
         socks.written(1).unwrap();
         assert_eq!(socks.pending_write(), &[1, 0]);
         socks.written(2).unwrap();
         assert!(!socks.receive(&[5]).unwrap());
         assert!(!socks.receive(&[0]).unwrap());
-        assert_eq!(
-            socks.pending_write(),
-            &[5, 1, 0, 1, 127, 0, 0, 1, 0, 80]
-        );
+        assert_eq!(socks.pending_write(), &[5, 1, 0, 1, 127, 0, 0, 1, 0, 80]);
         socks.written(socks.pending_write().len()).unwrap();
         assert!(!socks.receive(&[5, 0, 0]).unwrap());
-        assert!(socks
-            .receive(&[1, 127, 0, 0, 1, 0, 80, b'O', b'K'])
-            .unwrap());
+        assert!(
+            socks
+                .receive(&[1, 127, 0, 0, 1, 0, 80, b'O', b'K'])
+                .unwrap()
+        );
         assert_eq!(socks.take_leftover(), b"OK");
     }
 
@@ -562,7 +513,7 @@ mod tests {
 
     #[test]
     fn auth_is_decoded_separately() {
-        let mut socks = Socks5::new_legacy(
+        let mut socks = from_url(
             &proxy(b"socks5://u%40ser:p%3Ass@127.0.0.1"),
             b"example.com",
             0,
@@ -605,23 +556,18 @@ mod tests {
     }
 
     #[test]
-    fn socks5h_forwards_names_but_socks5_uses_resolved_ip() {
-        let socks5h = connect_frame_auth(
-            auth_none(),
-            TargetHost::Domain(b"localhost".to_vec().into_boxed_slice()),
-            80,
+    fn hostnames_use_domain_atyp_for_both_schemes() {
+        for href in [&b"socks5://127.0.0.1"[..], b"socks5h://127.0.0.1"] {
+            assert_eq!(connect_frame(&proxy(href), b"localhost", 80)[3], 0x03);
+        }
+        assert_eq!(
+            TargetHost::parse(b"[::1]").unwrap(),
+            TargetHost::Ip("::1".parse().unwrap())
         );
-        assert_eq!(socks5h[3], 0x03);
-
-        let mut socks5 = Socks5::new(
-            auth_none(),
-            TargetHost::Ip("127.0.0.1".parse().unwrap()),
-            80,
-        )
-        .unwrap();
-        socks5.written(socks5.pending_write().len()).unwrap();
-        assert!(!socks5.receive(&[5, 0]).unwrap());
-        assert_ne!(socks5.pending_write()[3], 0x03);
+        assert_eq!(
+            TargetHost::parse(b"").unwrap_err(),
+            Socks5Error::DomainTooLong
+        );
     }
 
     #[test]
@@ -631,38 +577,23 @@ mod tests {
         assert_eq!(default_port_proxy.get_proxy_port_auto(), 1080);
 
         assert_eq!(
-            Socks5::new_legacy(
-                &proxy(b"socks5://user@127.0.0.1"),
-                b"example.com",
-                80
-            )
-            .unwrap_err(),
+            from_url(&proxy(b"socks5://user@127.0.0.1"), b"example.com", 80).unwrap_err(),
             Socks5Error::CredentialsIncomplete
         );
         assert_eq!(
-            Socks5::new_legacy(
-                &proxy(b"socks5://:password@127.0.0.1"),
-                b"example.com",
-                80
-            )
-            .unwrap_err(),
+            from_url(&proxy(b"socks5://:password@127.0.0.1"), b"example.com", 80).unwrap_err(),
             Socks5Error::CredentialsIncomplete
         );
         assert_eq!(
-            Socks5::new_legacy(
-                &proxy(b"socks5://user:@127.0.0.1"),
-                b"example.com",
-                80
-            )
-            .unwrap_err(),
+            from_url(&proxy(b"socks5://user:@127.0.0.1"), b"example.com", 80).unwrap_err(),
             Socks5Error::CredentialsIncomplete
         );
         assert_eq!(
-            Socks5::new_legacy(&proxy(b"socks5://:@127.0.0.1"), b"example.com", 80).unwrap_err(),
+            from_url(&proxy(b"socks5://:@127.0.0.1"), b"example.com", 80).unwrap_err(),
             Socks5Error::CredentialsIncomplete
         );
         assert_eq!(
-            Socks5::new_legacy(
+            from_url(
                 &proxy(b"socks5://bad%ZZ:value@127.0.0.1"),
                 b"example.com",
                 80
@@ -673,13 +604,13 @@ mod tests {
 
         let hostname = vec![b'a'; 256];
         assert_eq!(
-            Socks5::new_legacy(&proxy(b"socks5://127.0.0.1"), &hostname, 80).unwrap_err(),
+            from_url(&proxy(b"socks5://127.0.0.1"), &hostname, 80).unwrap_err(),
             Socks5Error::DomainTooLong
         );
 
         let href = format!("socks5://{}:password@127.0.0.1", "u".repeat(256));
         assert_eq!(
-            Socks5::new_legacy(&proxy(href.as_bytes()), b"example.com", 80).unwrap_err(),
+            from_url(&proxy(href.as_bytes()), b"example.com", 80).unwrap_err(),
             Socks5Error::CredentialsTooLong
         );
     }
@@ -734,10 +665,7 @@ mod tests {
             80,
         )
         .unwrap();
-        assert_eq!(
-            socks.written(999),
-            Err(Socks5Error::InvalidWriteProgress)
-        );
+        assert_eq!(socks.written(999), Err(Socks5Error::InvalidWriteProgress));
     }
 
     #[test]
@@ -752,9 +680,12 @@ mod tests {
             (7, Socks5Error::CommandNotSupported),
             (8, Socks5Error::AddressTypeNotSupported),
         ] {
-            let mut socks =
-                Socks5::new(auth_none(), TargetHost::Ip("127.0.0.1".parse().unwrap()), 80)
-                    .unwrap();
+            let mut socks = Socks5::new(
+                auth_none(),
+                TargetHost::Ip("127.0.0.1".parse().unwrap()),
+                80,
+            )
+            .unwrap();
             socks.written(socks.pending_write().len()).unwrap();
             socks.receive(&[5, 0]).unwrap();
             socks.written(socks.pending_write().len()).unwrap();

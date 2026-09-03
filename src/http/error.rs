@@ -425,7 +425,6 @@ impl From<crate::socks5::Socks5Error> for Error {
             Socks5Error::CredentialsInvalid => Self::SocksCredentialsInvalid,
             Socks5Error::CredentialsTooLong => Self::SocksCredentialsTooLong,
             Socks5Error::DomainTooLong => Self::SocksDomainTooLong,
-            Socks5Error::DnsResolutionFailed => Self::DNSResolveFailed,
             Socks5Error::InvalidVersion
             | Socks5Error::InvalidReserved
             | Socks5Error::InvalidAddressType

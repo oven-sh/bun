@@ -15,7 +15,21 @@ await fetch("https://example.com", {
 
 ---
 
-The `proxy` option can be a URL string, a `URL` instance, or an object with `url` (a string or a `URL`) and optional `headers`. The URL can include the username and password if the proxy requires authentication. It can be `http://` or `https://`.
+The `proxy` option can be a URL string, a `URL` instance, or an object with `url` (a string or a `URL`) and optional `headers`. The URL can include the username and password if the proxy requires authentication. It can be `http://`, `https://`, `socks5://`, or `socks5h://`.
+
+---
+
+## SOCKS5 proxies
+
+Bun speaks SOCKS5 (RFC 1928) with optional username/password authentication (RFC 1929). The default port is 1080.
+
+```ts socks5.ts icon="/icons/typescript.svg"
+await fetch("https://example.com", {
+  proxy: "socks5://username:password@proxy.example.com:1080",
+});
+```
+
+Bun always sends the target hostname to the proxy, which resolves it; `socks5://` and `socks5h://` behave the same. IP literals are sent as-is. HTTPS targets are still TLS-verified end to end—the proxy only relays bytes. Connections through a SOCKS5 proxy are not reused for later requests.
 
 ---
 

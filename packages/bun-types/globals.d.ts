@@ -1964,6 +1964,9 @@ interface BunFetchRequestInit extends RequestInit {
    * `HTTPS_PROXY` environment variables. Accepts a URL string, a URL instance,
    * or an object with `url` and optional `headers`.
    *
+   * The URL may be `http://`, `https://`, `socks5://`, or `socks5h://`
+   * (SOCKS5 with optional username/password; default port 1080).
+   *
    * If a `Proxy-Authorization` header is provided in `proxy.headers`, it takes
    * precedence over credentials parsed from the proxy URL.
    *
@@ -1999,7 +2002,7 @@ interface BunFetchRequestInit extends RequestInit {
         /**
          * Custom headers to send to the proxy server.
          * These headers are sent in the CONNECT request (for HTTPS targets)
-         * or in the proxy request (for HTTP targets).
+         * or in the proxy request (for HTTP targets). Not sent to SOCKS5 proxies.
          */
         headers?: Bun.HeadersInit;
       };

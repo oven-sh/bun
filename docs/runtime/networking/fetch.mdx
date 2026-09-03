@@ -75,6 +75,8 @@ const response = await fetch("http://example.com", {
 
 Bun sends the `headers` directly to the proxy in `CONNECT` requests (for HTTPS targets) or in the proxy request (for HTTP targets). If you provide a `Proxy-Authorization` header, it overrides any credentials in the proxy URL.
 
+The proxy URL can also be `socks5://` or `socks5h://` (default port 1080, optional `username:password@`). Bun sends the target hostname to the SOCKS5 proxy for resolution in both cases; `headers` are not sent to SOCKS5 proxies.
+
 ### Custom headers
 
 To set custom headers, pass an object with the `headers` property set to an object.

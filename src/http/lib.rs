@@ -190,12 +190,6 @@ enum HTTPUpgradeState {
 pub struct Flags {
     pub(crate) disable_timeout: bool,
     pub(crate) disable_keepalive: bool,
-    /// Source bits for transport-level keep-alive suppression. SOCKS disables
-    /// reuse for its tunnel, while an explicit request option or
-    /// `Connection: close` must survive a later proxy transition. The third
-    /// bit keeps
-    /// the pre-SOCKS value without adding three bools to every HTTP client.
-    pub(crate) disable_keepalive_sources: u8,
     pub(crate) disable_decompression: bool,
     pub(crate) did_have_handshaking_error: bool,
     /// `PooledSocket::verification` of the socket this request took from the
@@ -220,7 +214,6 @@ impl Default for Flags {
         Self {
             disable_timeout: false,
             disable_keepalive: false,
-            disable_keepalive_sources: 0,
             disable_decompression: false,
             did_have_handshaking_error: false,
             reused_socket_verification: PeerVerification::None,
@@ -240,84 +233,9 @@ impl Default for Flags {
     }
 }
 
-impl Flags {
-    const KEEPALIVE_EXPLICIT: u8 = 1 << 0;
-    const KEEPALIVE_OTHER: u8 = 1 << 1;
-
-    #[inline]
-    fn set_explicit_keepalive_disabled(&mut self, disabled: bool) {
-        if disabled {
-            self.disable_keepalive_sources |= Self::KEEPALIVE_EXPLICIT;
-        } else {
-            self.disable_keepalive_sources &= !Self::KEEPALIVE_EXPLICIT;
-        }
-        self.disable_keepalive = self.disable_keepalive_sources != 0;
-    }
-
-    #[inline]
-    fn set_other_keepalive_disabled(&mut self, disabled: bool) {
-        if disabled {
-            self.disable_keepalive_sources |= Self::KEEPALIVE_OTHER;
-        } else {
-            self.disable_keepalive_sources &= !Self::KEEPALIVE_OTHER;
-        }
-        self.disable_keepalive = self.disable_keepalive_sources != 0;
-    }
-}
-
 // ───────────────────────────── globals ─────────────────────────────
 
 pub(crate) static ASYNC_HTTP_ID_MONOTONIC: AtomicU32 = AtomicU32::new(0);
-// SOCKS hostname lookups need an ID even when request abort tracking is off
-// (`async_http_id` is zero in that common case). Allocated only for local
-// `socks5://` DNS work, so ordinary requests pay no atomic-operation cost.
-static SOCKS5_RESOLUTION_ID_MONOTONIC: AtomicU32 = AtomicU32::new(1);
-
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct SocksResolutionId(core::num::NonZeroU32);
-
-impl SocksResolutionId {
-    #[inline]
-    pub fn get(self) -> u32 {
-        self.0.get()
-    }
-
-    #[inline]
-    pub fn from_raw(raw: u32) -> Option<Self> {
-        core::num::NonZeroU32::new(raw).map(Self)
-    }
-
-    fn next() -> Self {
-        loop {
-            let raw = SOCKS5_RESOLUTION_ID_MONOTONIC.fetch_add(1, Ordering::Relaxed);
-            if let Some(nz) = core::num::NonZeroU32::new(raw) {
-                return Self(nz);
-            }
-        }
-    }
-}
-
-pub enum SocksOperation {
-    None,
-    Resolving { id: SocksResolutionId },
-    Handshaking(Box<socks5::Socks5>),
-}
-
-impl Default for SocksOperation {
-    fn default() -> Self {
-        Self::None
-    }
-}
-
-impl std::fmt::Debug for SocksOperation {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::None => write!(f, "SocksOperation::None"),
-            Self::Resolving { id } => f.debug_struct("Resolving").field("id", &id.get()).finish(),
-            Self::Handshaking(_) => write!(f, "SocksOperation::Handshaking(..)"),
-        }
-    }
-}
 
 /// Set once at startup from `--experimental-http2-fetch` (before the HTTP
 /// thread spawns) and then only read on that thread.
@@ -712,38 +630,8 @@ pub(crate) fn hash_header_name(name: &[u8]) -> u64 {
 // `bun_uws::NewSocketHandler` methods (`ext`/`timeout`/`raw_write`/`flush`/
 // `shutdown`/`connect_group`/…) land.
 
-use bun_core::ip_address::to_ip_address;
 use bun_url::URL;
 use core::ptr::NonNull;
-use std::net::{IpAddr, ToSocketAddrs};
-
-struct Socks5ResolveRequest {
-    hostname: Box<[u8]>,
-    port: u16,
-    resolution_id: u32,
-}
-
-fn resolve_socks5_target(request: Socks5ResolveRequest) {
-    let Socks5ResolveRequest {
-        hostname,
-        port,
-        resolution_id,
-    } = request;
-    let address = core::str::from_utf8(&hostname).ok().and_then(|hostname| {
-        let mut first = None;
-        // Prefer IPv4 when both families are returned. This preserves the
-        // historical local SOCKS behavior without making the choice depend on
-        // libc's address ordering on a particular platform.
-        for address in (hostname, port).to_socket_addrs().ok()? {
-            if address.ip().is_ipv4() {
-                return Some(address.ip());
-            }
-            first = Some(address.ip());
-        }
-        first
-    });
-    http_thread::HttpThread::schedule_socks5_dns_result(resolution_id, address);
-}
 
 /// Owned copies of the proxy environment captured at request creation so the
 /// HTTP thread can re-resolve `HTTPClient::http_proxy` per redirect hop.
@@ -944,11 +832,10 @@ pub struct HTTPClient<'a> {
     /// moved to the keep-alive pool with the socket. The pointee is also
     /// recovered raw from the SSLWrapper callback `ctx`, hence intrusive.
     pub(crate) proxy_tunnel: Option<RefPtr<ProxyTunnel>>,
-    /// SOCKS5 CONNECT state for the plain outer socket. This is intentionally
-    /// not pooled: every attempt owns a fresh proxy negotiation.
-    /// `Resolving` holds the pending DNS id; `Handshaking` holds the codec.
-    /// Invalid combinations (e.g. pending=true with no id) are unrepresentable.
-    pub(crate) socks: SocksOperation,
+    /// SOCKS5 handshake in progress on the plain outer socket. Never pooled:
+    /// every connect attempt negotiates a fresh tunnel and this is cleared once
+    /// CONNECT succeeds or the request fails.
+    pub(crate) socks: Option<Box<socks5::Socks5>>,
     /// Set when this request is bound to a stream on an HTTP/2 session.
     /// Owned by the session; cleared by the session when the stream completes.
     pub(crate) h2: Option<NonNull<h2::Stream>>,
@@ -1028,9 +915,10 @@ impl Drop for HTTPClient<'_> {
 // every process.
 //
 // `ThreadCell` (not `RacyCell`) to encode "HTTP-thread-only after init" in the
-// type. `claim()` is invoked from `HTTPThread::on_start`. `schedule()` uses
-// `get_unchecked` only for the lock-free `queued_tasks`; the cross-thread loop
-// waker is published separately so other producers never borrow this state.
+// type. `claim()` is invoked from `HTTPThread::on_start`. JS-side callers that
+// only touch the lock-free `queued_tasks` + `wakeup` (e.g. `schedule()`) go
+// through [`http_thread_shared`] / `get_unchecked` until those fields are
+// hoisted out of the thread-confined struct.
 pub(crate) static HTTP_THREAD: bun_core::ThreadCell<core::mem::MaybeUninit<HTTPThread>> =
     bun_core::ThreadCell::new(core::mem::MaybeUninit::uninit());
 static HTTP_THREAD_INIT: core::sync::atomic::AtomicBool =
@@ -2185,7 +2073,7 @@ impl<'a> HTTPClient<'a> {
 
     fn start_socks5<const IS_SSL: bool>(&mut self, socket: HttpSocket<IS_SSL>) {
         debug_assert!(!IS_SSL);
-        debug_assert!(matches!(self.socks, SocksOperation::Handshaking(_)));
+        debug_assert!(self.socks.is_some());
         self.state.request_stage = RequestStage::ProxyHandshake;
         self.state.response_stage = ResponseStage::ProxyHandshake;
         self.on_socks_writable::<IS_SSL>(socket);
@@ -2197,13 +2085,10 @@ impl<'a> HTTPClient<'a> {
             self.close_and_fail::<IS_SSL>(crate::Error::ConnectionClosed, socket);
             return;
         }
-        let socks = match &mut self.socks {
-            SocksOperation::Handshaking(s) => s.as_mut(),
-            _ => {
-                debug_assert!(false, "unexpected SOCKS state in on_socks_writable");
-                self.close_and_fail::<IS_SSL>(crate::Error::ConnectionClosed, socket);
-                return;
-            }
+        let Some(socks) = self.socks.as_deref_mut() else {
+            debug_assert!(false, "unexpected SOCKS state in on_socks_writable");
+            self.close_and_fail::<IS_SSL>(crate::Error::ConnectionClosed, socket);
+            return;
         };
         let pending = socks.pending_write();
         if pending.is_empty() {
@@ -2270,7 +2155,7 @@ impl<'a> HTTPClient<'a> {
             self.fail(crate::Error::Aborted);
             return;
         }
-        self.socks = SocksOperation::None;
+        self.socks = None;
         self.close_proxy_tunnel(true);
         let in_progress = self.state.stage != Stage::Done
             && self.state.stage != Stage::Fail
@@ -2382,7 +2267,9 @@ impl<'a> HTTPClient<'a> {
     }
 
     pub(crate) fn is_keep_alive_possible(&self) -> bool {
-        if self.http_proxy.as_ref().is_some_and(URL::is_socks) {
+        // A SOCKS tunnel is bound to one origin; reusing it would route the
+        // next request to the wrong host.
+        if self.is_socks_proxy() {
             return false;
         }
         if FeatureFlags::ENABLE_KEEPALIVE {
@@ -2556,11 +2443,9 @@ impl<'a> HTTPClient<'a> {
                         match connection_header_keep_alive(self.header_str(header_values[i])) {
                             Some(false) => {
                                 connection_close_requested = true;
-                                self.flags.set_explicit_keepalive_disabled(true);
                                 self.flags.disable_keepalive = true;
                             }
                             Some(true) if !connection_close_requested => {
-                                self.flags.set_explicit_keepalive_disabled(false);
                                 self.flags.disable_keepalive = false;
                             }
                             _ => {}
@@ -2626,10 +2511,7 @@ impl<'a> HTTPClient<'a> {
             header_count += 1;
         }
 
-        if !override_connection_header
-            && !self.flags.disable_keepalive
-            && !self.current_hop_forces_close()
-        {
+        if !override_connection_header && !self.flags.disable_keepalive && !self.is_socks_proxy() {
             request_headers_buf[header_count] = CONNECTION_HEADER;
             header_count += 1;
         }
@@ -2746,7 +2628,7 @@ impl<'a> HTTPClient<'a> {
         self.flags.redirected = true;
         debug_assert!(self.redirect_type == FetchRedirect::Follow);
         self.unregister_abort_tracker();
-        self.socks = SocksOperation::None;
+        self.socks = None;
 
         // By the time doRedirect runs, handleResponseMetadata has already mutated
         // this.url to the redirect destination. Pooling the tunnel here would
@@ -2834,7 +2716,6 @@ impl<'a> HTTPClient<'a> {
                 self.http_proxy = Some(proxy);
             }
         }
-
     }
 
     /// **Not thread safe while request is in-flight**
@@ -2850,11 +2731,6 @@ impl<'a> HTTPClient<'a> {
         self.http_proxy.as_ref().is_some_and(URL::is_socks)
     }
 
-    #[inline]
-    pub(crate) fn current_hop_forces_close(&self) -> bool {
-        self.is_socks_proxy()
-    }
-
     /// Whether the socket connecting to `connected_url` uses TLS. HTTP(S)
     /// proxies terminate the outer transport according to their own scheme;
     /// SOCKS and direct HTTP use a plain socket.
@@ -2868,7 +2744,7 @@ impl<'a> HTTPClient<'a> {
     pub(crate) fn start(&mut self, body: HTTPRequestBody<'a>) {
         debug_assert!(self.state.response_message_buffer.list.capacity() == 0);
         self.state = InternalState::init(body);
-        self.socks = SocksOperation::None;
+        self.socks = None;
 
         if self.uses_transport_tls() {
             self.start_::<true>();
@@ -2891,8 +2767,7 @@ impl<'a> HTTPClient<'a> {
         self.flags
             .defer_terminal_dispatch_until_connecting_is_complete = true;
 
-        // Aborted before connecting. Check before scheduling a hostname
-        // lookup so an already-cancelled request never consumes worker time.
+        // Aborted before connecting
         if self.signals.get(signals::Field::Aborted) {
             self.fail(crate::Error::AbortedBeforeConnecting);
             self.complete_connecting_process();
@@ -2906,57 +2781,16 @@ impl<'a> HTTPClient<'a> {
                 return;
             }
             let proxy = self.http_proxy.as_ref().expect("SOCKS proxy exists");
-            match &self.socks {
-                SocksOperation::Resolving { .. } => return,
-                SocksOperation::Handshaking(_) => {}
-                SocksOperation::None => {
-                    let target = self
-                        .url
-                        .hostname
-                        .strip_prefix(b"[")
-                        .and_then(|target| target.strip_suffix(b"]"))
-                        .unwrap_or(self.url.hostname);
-                    let target_ip = to_ip_address(target);
-                    if proxy.is_socks5() && target_ip.is_none() {
-                        let id = SocksResolutionId::next();
-                        self.socks = SocksOperation::Resolving { id };
-                        let context = Socks5ResolveRequest {
-                            hostname: target.to_vec().into_boxed_slice(),
-                            port: self.url.get_port_auto(),
-                            resolution_id: id.get(),
-                        };
-                        if bun_threading::work_pool::WorkPool::go(context, resolve_socks5_target)
-                            .is_err()
-                        {
-                            self.socks = SocksOperation::None;
-                            self.fail(crate::Error::DNSResolveFailed);
-                            self.complete_connecting_process();
-                        }
-                        return;
-                    }
-                    let auth = match socks5::Authentication::from_url(proxy) {
-                        Ok(a) => a,
-                        Err(err) => {
-                            self.fail(err.into());
-                            self.complete_connecting_process();
-                            return;
-                        }
-                    };
-                    let dest = if let Some(ip) = target_ip {
-                        socks5::TargetHost::Ip(ip)
-                    } else {
-                        socks5::TargetHost::Domain(target.to_vec().into_boxed_slice())
-                    };
-                    match socks5::Socks5::new(auth, dest, self.url.get_port_auto()) {
-                        Ok(socks) => {
-                            self.socks = SocksOperation::Handshaking(Box::new(socks))
-                        }
-                        Err(err) => {
-                            self.fail(err.into());
-                            self.complete_connecting_process();
-                            return;
-                        }
-                    }
+            let socks = socks5::Authentication::from_url(proxy).and_then(|auth| {
+                let target = socks5::TargetHost::parse(self.url.hostname)?;
+                socks5::Socks5::new(auth, target, self.url.get_port_auto())
+            });
+            match socks {
+                Ok(socks) => self.socks = Some(Box::new(socks)),
+                Err(err) => {
+                    self.fail(err.into());
+                    self.complete_connecting_process();
+                    return;
                 }
             }
         }
@@ -3097,62 +2931,6 @@ impl<'a> HTTPClient<'a> {
             self.register_abort_tracker::<IS_SSL>(socket);
         }
         self.complete_connecting_process();
-    }
-
-    pub(crate) fn resume_socks5_resolution(&mut self, resolution_id: u32, address: Option<IpAddr>) {
-        let SocksOperation::Resolving { id } = &self.socks else {
-            return;
-        };
-        if id.get() != resolution_id || !self.is_socks_proxy() {
-            return;
-        }
-        let Some(address) = address else {
-            self.socks = SocksOperation::None;
-            self.fail(crate::Error::DNSResolveFailed);
-            self.complete_connecting_process();
-            return;
-        };
-        let proxy = self.http_proxy.as_ref().expect("SOCKS proxy exists");
-        let auth = match socks5::Authentication::from_url(proxy) {
-            Ok(a) => a,
-            Err(err) => {
-                self.socks = SocksOperation::None;
-                self.fail(err.into());
-                self.complete_connecting_process();
-                return;
-            }
-        };
-        match socks5::Socks5::new(auth, socks5::TargetHost::Ip(address), self.url.get_port_auto())
-        {
-            Ok(socks) => {
-                self.socks = SocksOperation::Handshaking(Box::new(socks));
-                self.start_::<false>();
-            }
-            Err(err) => {
-                self.socks = SocksOperation::None;
-                self.fail(err.into());
-                self.complete_connecting_process();
-            }
-        }
-    }
-
-    /// Abort a `socks5://` request whose local `to_socket_addrs` is still in
-    /// flight on the work pool. The request has no socket in the abort tracker
-    /// while DNS is pending, so `drain_queued_shutdowns` must settle it here:
-    /// invalidate the resolution (so the late `schedule_socks5_dns_result`
-    /// is ignored as stale) and dispatch the terminal result immediately
-    /// instead of waiting for DNS to return.
-    pub(crate) fn abort_socks5_resolution(&mut self, async_http_id: u32) -> bool {
-        let SocksOperation::Resolving { id: _ } = &self.socks else {
-            return false;
-        };
-        if self.async_http_id != async_http_id {
-            return false;
-        }
-        self.socks = SocksOperation::None;
-        self.fail(crate::Error::Aborted);
-        self.complete_connecting_process();
-        true
     }
 
     /// Body length for `Content-Length` — the compressed length once
@@ -4136,16 +3914,10 @@ impl<'a> HTTPClient<'a> {
             && self.proxy_tunnel.is_none()
             && self.is_socks_proxy()
         {
-            let socks = match &mut self.socks {
-                SocksOperation::Handshaking(s) => s.as_mut(),
-                _ => {
-                    debug_assert!(
-                        false,
-                        "unexpected SOCKS state in ProxyHandshake on_data"
-                    );
-                    self.close_and_fail::<IS_SSL>(crate::Error::ConnectionClosed, socket);
-                    return;
-                }
+            let Some(socks) = self.socks.as_deref_mut() else {
+                debug_assert!(false, "unexpected SOCKS state in ProxyHandshake on_data");
+                self.close_and_fail::<IS_SSL>(crate::Error::ConnectionClosed, socket);
+                return;
             };
             let established = match socks.receive(incoming_data) {
                 Ok(established) => established,
@@ -4161,14 +3933,8 @@ impl<'a> HTTPClient<'a> {
                 return;
             }
 
-            let SocksOperation::Handshaking(socks_box) =
-                core::mem::replace(&mut self.socks, SocksOperation::None)
-            else {
-                unreachable!("SOCKS state exists");
-            };
-            let mut socks = *socks_box;
             let leftover = socks.take_leftover();
-            drop(socks);
+            self.socks = None;
             let tcp_socket = uws::SocketTCP::from_any(socket.socket);
 
             if self.url.is_https() {
@@ -4339,7 +4105,7 @@ impl<'a> HTTPClient<'a> {
         self.unregister_abort_tracker();
         self.resolve_pending_h2(PendingH2Resolution::LeaderFailed);
 
-        self.socks = SocksOperation::None;
+        self.socks = None;
         self.close_proxy_tunnel(true);
         if self.state.stage != Stage::Done && self.state.stage != Stage::Fail {
             self.state.request_stage = RequestStage::Fail;
@@ -5306,7 +5072,7 @@ impl<'a> HTTPClient<'a> {
 
             // proxy denied connection so return proxy result (407, 403 etc)
             self.flags.proxy_tunneling = false;
-            self.flags.set_other_keepalive_disabled(true);
+            self.flags.disable_keepalive = true;
             is_proxy_connect_failure = true;
         }
 
@@ -5322,7 +5088,7 @@ impl<'a> HTTPClient<'a> {
 
         if status_code == 407 {
             // If the request is being proxied and passes through the 407 status code, then let's also not do HTTP Keep-Alive.
-            self.flags.set_other_keepalive_disabled(true);
+            self.flags.disable_keepalive = true;
         }
 
         // if is no redirect or if is redirect == "manual" just proceed

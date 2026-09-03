@@ -575,6 +575,33 @@ describe("bundler", () => {
       stdout: "side effect\ndefault,version function rendered 19.0.0",
     },
   });
+  // A real `export *` of the lifted file keeps ES module semantics: `default`
+  // of the lifted namespace does not pass through it.
+  itBundled("cjs2esm/ReactSpecificUnwrappingSideEffectTargetHasDefaultBehindExportStar", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as ns from "./reexport";
+        import ReactDOM from "react-dom";
+        console.log(Object.keys(ns).sort().join(","), typeof ns.default, typeof ReactDOM.default);
+      `,
+      "/reexport.js": /* js */ `
+        export * from "react-dom";
+      `,
+      "/node_modules/react-dom/index.js": /* js */ `
+        console.log('side effect');
+        module.exports = require('./impl');
+      `,
+      "/node_modules/react-dom/impl.js": /* js */ `
+        export default function render() { return "rendered"; }
+        export const version = "19.0.0";
+      `,
+    },
+    cjs2esm: true,
+    minifySyntax: true,
+    run: {
+      stdout: "side effect\nversion undefined function",
+    },
+  });
   // The namespace the require() became stays imported when the file also
   // reads from it before the `module.exports =` assignment.
   itBundled("cjs2esm/ReactSpecificUnwrappingNamespaceStillUsed", {

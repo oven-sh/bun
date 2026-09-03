@@ -1048,41 +1048,41 @@ function fill() {
   }
 }
 
-// Waits until the server reads from the pipe. Bounded so that a broken build
-// fails with a message instead of a timeout.
+// Fills the pipe, then makes one request to this server. The server shares
+// this event loop and must poll for I/O to answer. The full pipe is readable
+// during that poll, so a reader with an armed poll reads it before the answer
+// arrives. A paused reader leaves the pipe full. Returns the bytes that the
+// server read.
+async function fillAndPoll() {
+  fill();
+  const before = pumped;
+  const res = await fetch("http://127.0.0.1:" + server.port + "/alive");
+  await res.text();
+  fill();
+  return pumped - before;
+}
+
+// Waits for a request during which the server reads from the pipe. The bound
+// on the request count makes a broken build fail with a message, not a hang.
 async function waitForRead(label) {
-  const start = pumped;
-  for (let i = 0; i < 1000 && pumped === start; i++) {
-    await Bun.sleep(5);
-    fill();
+  for (let i = 0; i < 200; i++) {
+    if ((await fillAndPoll()) > 0) return console.log(label);
   }
-  console.log(pumped > start ? label : "no read for " + label);
+  console.log("no read for " + label);
 }
 
-// Refills the pipe each time the server reads from it. This loop and the
-// server share one event loop, and every sleep polls for I/O, so a reader with
-// an armed poll empties the pipe during each sleep and the next fill() makes
-// progress. A paused reader leaves the pipe full. The kernel socket buffers on
-// loopback hold a few MiB, and LIMIT is far above that.
+// Before the kernel socket buffers fill, each request shows a read. A paused
+// reader shows none. The buffers on loopback hold a few MiB, and LIMIT is far
+// above that.
 async function waitForStall() {
-  const start = pumped;
-  let idle = 0;
-  while (idle < 5 && pumped - start < LIMIT) {
-    const before = pumped;
-    fill();
-    if (pumped === before) {
-      idle++;
-      await Bun.sleep(10);
-    } else {
-      idle = 0;
-      await Bun.sleep(0);
-    }
+  let read = 0;
+  while (read < LIMIT) {
+    const n = await fillAndPoll();
+    if (n === 0) return console.log("stalled");
+    read += n;
   }
-  console.log(idle >= 5 ? "stalled" : "still reading after " + (pumped - start) + " bytes");
+  console.log("still reading after " + read + " bytes");
 }
-
-// Fill the pipe before the request exists.
-fill();
 
 // Raw client that sends the request and then does not read the response, so
 // the body writes on the server side end up returning backpressure.
@@ -1101,16 +1101,13 @@ if (then === "resume") {
   socket.resume();
   await waitForRead("resumed");
 } else {
-  // Disconnect the stalled client; the server must survive the abort of the
-  // backpressured file stream and still answer ordinary requests.
+  // Disconnect the stalled client. The server must survive the abort of the
+  // backpressured file stream and still answer requests. The second request
+  // polls with a full pipe, so a poll that the aborted stream left armed fires.
   socket.destroy();
   let res = await fetch("http://127.0.0.1:" + server.port + "/alive");
   console.log(await res.text());
-
-  // Make sure that the pipe has data. A poll that the aborted stream left
-  // armed fires during the sleep.
   fill();
-  await Bun.sleep(10);
   res = await fetch("http://127.0.0.1:" + server.port + "/alive");
   console.log(await res.text());
 }
@@ -1139,7 +1136,6 @@ process.exit(0);
       expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     },
-    30_000,
   );
 }
 

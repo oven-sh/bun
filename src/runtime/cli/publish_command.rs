@@ -739,8 +739,7 @@ impl PublishCommand {
                 .collect()
         };
 
-        // `pack` writes each package's `publishConfig` into these. Each package packs and
-        // publishes with the flag values plus its own `publishConfig`.
+        // `pack` writes each package's `publishConfig` into these; restored before every package.
         let cli_tag = manager.options.publish_config.tag;
         let cli_access = manager.options.publish_config.access;
 

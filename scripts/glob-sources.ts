@@ -139,35 +139,43 @@ export type Sources = { [K in keyof typeof patterns]: string[] };
  */
 export function globAllSources(): Sources {
   const result = {} as Sources;
+  for (const field of Object.keys(patterns) as (keyof Sources)[]) {
+    result[field] = globSourceList(field);
+  }
+  return result;
+}
 
-  for (const [field, spec] of Object.entries(patterns) as [keyof Sources, SourcePattern][]) {
-    const excludeExact = new Set<string>();
-    const excludePrefix: string[] = [];
-    for (const ex of (spec.exclude ?? []).map(normalize)) {
-      if (ex.endsWith("/**"))
-        excludePrefix.push(ex.slice(0, -2)); // keep trailing '/'
-      else excludeExact.add(ex);
+/**
+ * Glob one source list. Tests of the build scripts use this to feed an
+ * emitter the real list for the one field it reads, since globbing every
+ * field (`src/**` walks) is slow under a debug build.
+ */
+export function globSourceList(field: keyof Sources): string[] {
+  const spec: SourcePattern = patterns[field];
+  const excludeExact = new Set<string>();
+  const excludePrefix: string[] = [];
+  for (const ex of (spec.exclude ?? []).map(normalize)) {
+    if (ex.endsWith("/**"))
+      excludePrefix.push(ex.slice(0, -2)); // keep trailing '/'
+    else excludeExact.add(ex);
+  }
+  const files: string[] = [];
+  for (const pattern of spec.paths) {
+    for (const rel of globSync(pattern, { cwd: root })) {
+      const normalized = normalize(rel);
+      if (excludeExact.has(normalized)) continue;
+      if (excludePrefix.some(p => normalized.startsWith(p))) continue;
+      files.push(resolve(root, normalized));
     }
-    const files: string[] = [];
-    for (const pattern of spec.paths) {
-      for (const rel of globSync(pattern, { cwd: root })) {
-        const normalized = normalize(rel);
-        if (excludeExact.has(normalized)) continue;
-        if (excludePrefix.some(p => normalized.startsWith(p))) continue;
-        files.push(resolve(root, normalized));
-      }
-    }
-
-    files.sort((a, b) => a.localeCompare(b));
-    assert(files.length > 0, `Source list '${field}' matched nothing`, {
-      file: import.meta.url,
-      hint: `Patterns: ${spec.paths.join(", ")}`,
-    });
-
-    result[field] = files;
   }
 
-  return result;
+  files.sort((a, b) => a.localeCompare(b));
+  assert(files.length > 0, `Source list '${field}' matched nothing`, {
+    file: import.meta.url,
+    hint: `Patterns: ${spec.paths.join(", ")}`,
+  });
+
+  return files;
 }
 
 /** Forward slashes, no leading ./ — for exclude-set comparisons. */

@@ -8,7 +8,6 @@
 // One day, this entire setup should be rewritten, but also it would be cool if Bun natively
 // supported macros that aren't json value -> json value. Otherwise, I'd use a real JS parser/ast
 // library, instead of RegExp hacks.
-import { createHash } from "crypto";
 import fs from "fs";
 import { mkdir, writeFile } from "fs/promises";
 import { builtinModules } from "node:module";
@@ -17,7 +16,7 @@ import jsclasses from "./../jsc/bindings/js_classes";
 import { sliceSourceCode } from "./builtin-parser";
 import { createAssertClientJS, createLogClientJS } from "./client-js";
 import { getJS2NativeCPP, getJS2NativeRust } from "./generate-js2native";
-import { cap, checkAscii, writeIfNotChanged, writeIfNotChangedBinary } from "./helpers";
+import { cap, checkAscii, sourceStamp, writeIfNotChanged, writeIfNotChangedBinary } from "./helpers";
 import { createInternalModuleRegistry } from "./internal-module-registry-scanner";
 import { define } from "./replacements";
 
@@ -426,12 +425,9 @@ const BUILTINS_HEADER_SIZE = 48;
 
 // Identifies these module sources to bytecode generated from them ahead of time (bun build --compile embeds bytecode for
 // the internal modules an app uses); computed over the bundled outputs so it is meaningful in debug builds too.
-const internalModulesStamp = (() => {
-  const h = createHash("sha256");
-  for (const id of moduleList.slice(0, nativeStartIndex))
-    h.update(outputs.get(id.slice(0, -3).replaceAll("/", path.sep)) ?? "");
-  return h.digest().readUInt32BE(0);
-})();
+const internalModulesStamp = sourceStamp(
+  moduleList.slice(0, nativeStartIndex).map(id => outputs.get(id.slice(0, -3).replaceAll("/", path.sep)) ?? ""),
+);
 
 // require() edges between JS internal modules (ids are enum order), as offsets into one flat list. `bun build --compile
 // --bytecode` embeds bytecode for the builtins an app imports plus everything reachable through this table.

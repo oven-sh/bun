@@ -16,7 +16,8 @@ test("generate-node-errors.ts writes its outputs with the Bun APIs disabled", as
 
   const { stderr, exitCode } = await runWithoutBunApis([script, String(dir)]);
 
-  expect(stderr).toBe("");
+  // stderr is in the object so that a failure shows the script's error.
+  expect({ exitCode, stderr }).toMatchObject({ exitCode: 0 });
   expect(readdirSync(String(dir)).sort()).toEqual([
     "ErrorCode+Data.h",
     "ErrorCode+List.h",
@@ -24,5 +25,4 @@ test("generate-node-errors.ts writes its outputs with the Bun APIs disabled", as
     "ErrorCode.generated.rs",
   ]);
   expect(readFileSync(join(String(dir), "ErrorCode+List.h"), "utf8")).toContain("ERR_INVALID_ARG_TYPE");
-  expect(exitCode).toBe(0);
 });

@@ -561,6 +561,30 @@ pub struct NumberRenamer {
 }
 
 type NameIds = bun_collections::hashbrown::HashMap<NameKey, u32, bun_wyhash::BuildHasher>;
+/// Name id -> index into `NestedRenamer::slots`, for the names the file's
+/// nested scopes bind or renumber; every other id reads the root's slot.
+type OverlayMap =
+    bun_collections::hashbrown::HashMap<u32, u32, core::hash::BuildHasherDefault<IdHasher>>;
+
+/// Name ids are dense small integers; multiply-shift spreads them for
+/// hashbrown's top-bit tag.
+#[derive(Default)]
+struct IdHasher(u64);
+
+impl core::hash::Hasher for IdHasher {
+    #[inline]
+    fn write(&mut self, _: &[u8]) {
+        unreachable!()
+    }
+    #[inline]
+    fn write_u32(&mut self, n: u32) {
+        self.0 = u64::from(n).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    }
+    #[inline]
+    fn finish(&self) -> u64 {
+        self.0
+    }
+}
 
 #[derive(Clone, Copy)]
 struct NameSlot {
@@ -934,11 +958,14 @@ pub struct NestedRenamer<'r> {
     /// `slots` of the innermost enclosing scope's slot for that name. Slots of
     /// scopes already left are dropped, so a present slot is always an
     /// enclosing one.
-    overlay: Vec<u32>,
+    overlay: OverlayMap,
+    /// Ids `root.slots.len()..next_local_id` are this file's `local_ids`.
+    next_local_id: u32,
     slots: Vec<NameSlot>,
     /// Names first seen in this file's nested scopes.
     local_ids: NameIds,
-    /// `(id, previous overlay value)`, to restore on scope exit.
+    /// `(id, 0)` for an id the scope added to `overlay`, else `(id, 1 + the
+    /// index it mapped to)`; restored on scope exit.
     undo: Vec<(u32, u32)>,
     /// The AST scope being named and its serial number (from `ROOT_SCOPE + 1`).
     scope: u32,
@@ -969,32 +996,41 @@ impl<'r> NameScopes for NestedRenamer<'r> {
     }
     fn intern(&mut self, name: NameStr) -> u32 {
         debug_assert!(self.root.ids.get(name.slice()).is_none());
-        let (id, new) = intern_into(&mut self.local_ids, self.overlay.len() as u32, name);
+        let (id, new) = intern_into(&mut self.local_ids, self.next_local_id, name);
         if new {
-            self.overlay.push(0);
+            self.next_local_id += 1;
         }
         id
     }
     fn slot(&self, id: u32) -> NameSlot {
-        match self.overlay[id as usize] {
-            0 => self
+        match self.overlay.get(&id) {
+            None => self
                 .root
                 .slots
                 .get(id as usize)
                 .copied()
                 .unwrap_or(NameSlot::EMPTY),
-            local => self.slots[local as usize - 1],
+            Some(&local) => self.slots[local as usize],
         }
     }
     fn set_slot(&mut self, id: u32, slot: NameSlot) {
         debug_assert_eq!(slot.scope, self.scope);
-        let local = self.overlay[id as usize];
-        if local != 0 && self.slots[local as usize - 1].scope == self.scope {
-            self.slots[local as usize - 1] = slot;
-        } else {
-            self.slots.push(slot);
-            self.undo.push((id, local));
-            self.overlay[id as usize] = self.slots.len() as u32;
+        match self.overlay.entry(id) {
+            bun_collections::hashbrown::hash_map::Entry::Occupied(mut entry) => {
+                let local = *entry.get();
+                if self.slots[local as usize].scope == self.scope {
+                    self.slots[local as usize] = slot;
+                } else {
+                    self.undo.push((id, local + 1));
+                    *entry.get_mut() = self.slots.len() as u32;
+                    self.slots.push(slot);
+                }
+            }
+            bun_collections::hashbrown::hash_map::Entry::Vacant(entry) => {
+                self.undo.push((id, 0));
+                entry.insert(self.slots.len() as u32);
+                self.slots.push(slot);
+            }
         }
     }
     fn sees(&self, owner: Ref) -> bool {
@@ -1015,7 +1051,8 @@ impl<'r> NestedRenamer<'r> {
             uses,
             source_index,
             names,
-            overlay: vec![0u32; root.slots.len()],
+            overlay: OverlayMap::default(),
+            next_local_id: root.slots.len() as u32,
             slots: Vec::new(),
             local_ids: NameIds::default(),
             undo: Vec::new(),
@@ -1090,7 +1127,14 @@ impl<'r> NestedRenamer<'r> {
         }
 
         for &(id, prev) in self.undo[undo_mark..].iter().rev() {
-            self.overlay[id as usize] = prev;
+            match prev {
+                0 => {
+                    self.overlay.remove(&id);
+                }
+                local => {
+                    self.overlay.insert(id, local - 1);
+                }
+            }
         }
         self.undo.truncate(undo_mark);
         self.slots.truncate(slots_mark);

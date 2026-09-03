@@ -268,6 +268,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                             // Track how many times we've referenced this symbol
                             p.record_usage(ref_);
+                            if identifier_opts.is_call_target() || identifier_opts.is_template_tag()
+                            {
+                                p.symbols[ref_.inner_index() as usize].set_called_as_method(true);
+                            }
 
                             return Some(
                                 p.handle_identifier(
@@ -424,6 +428,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             }
 
                             // rewrite `module.exports` to `exports`
+                            p.module_exports_rewrite_count += 1;
                             return Some(Expr {
                                 data: js_ast::ExprData::ESpecial(E::Special::ModuleExports),
                                 loc: name_loc,
@@ -485,6 +490,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                                     ref_: new_ref,
                                                 },
                                                 needs_decl: true,
+                                                assign_count: 0,
+                                                decl_value: Default::default(),
                                             },
                                         )
                                         .expect("unreachable");
@@ -494,6 +501,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     }
                                     new_ref
                                 };
+                                if identifier_opts.assign_target() != js_ast::AssignTarget::None {
+                                    p.count_commonjs_export_assignment(name);
+                                }
 
                                 p.ignore_usage(id.ref_);
                                 p.record_usage(ref_);
@@ -696,6 +706,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                                         ref_: new_ref,
                                                     },
                                                     needs_decl: true,
+                                                    assign_count: 0,
+                                                    decl_value: Default::default(),
                                                 },
                                             )
                                             .expect("unreachable");
@@ -705,6 +717,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         }
                                         new_ref
                                     };
+                                    if identifier_opts.assign_target() != js_ast::AssignTarget::None
+                                    {
+                                        p.count_commonjs_export_assignment(name);
+                                    }
 
                                     p.record_usage(ref_);
 

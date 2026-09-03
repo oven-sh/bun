@@ -1463,6 +1463,12 @@ impl<'a> Parser<'a> {
                             p.symbols.as_mut_slice()[p.exports_ref.inner_index() as usize]
                                 .use_count_estimate += export_refs_len as u32;
                             p.deoptimize_commonjs_named_exports();
+                        } else if p.symbols.as_slice()[p.module_ref.inner_index() as usize]
+                            .use_count_estimate
+                            > p.module_exports_rewrite_count
+                        {
+                            // `module.constructor` and other uses of `module` need the wrapper.
+                            p.deoptimize_commonjs_named_exports();
                         }
                     }
                 }

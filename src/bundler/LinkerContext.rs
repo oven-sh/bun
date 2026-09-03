@@ -760,6 +760,35 @@ impl<'a> LinkerContext<'a> {
         }
     }
 
+    /// The side of the output file of `chunk`.
+    pub(crate) fn chunk_side(&self, chunk: &Chunk) -> crate::options::Side {
+        use crate::options::Side;
+        if matches!(chunk.content, crate::chunk::Content::Css(_))
+            || chunk
+                .flags
+                .contains(crate::chunk::Flags::IS_BROWSER_CHUNK_FROM_SERVER_BUILD)
+        {
+            return Side::Client;
+        }
+        match self.graph.ast.items_target()[chunk.entry_point.source_index() as usize] {
+            Target::Browser => Side::Client,
+            _ => Side::Server,
+        }
+    }
+
+    /// The output kind of the output file of `chunk`.
+    pub(crate) fn chunk_output_kind(&self, chunk: &Chunk) -> crate::options::OutputKind {
+        use crate::options::OutputKind;
+        if matches!(chunk.content, crate::chunk::Content::Css(_)) {
+            OutputKind::Asset
+        } else if chunk.entry_point.is_entry_point() {
+            self.graph.files.items_entry_point_kind()[chunk.entry_point.source_index() as usize]
+                .output_kind()
+        } else {
+            OutputKind::Chunk
+        }
+    }
+
     /// See [`Self::load`] for why `bundle` is a raw `*mut` (caller passes
     /// `self` while the receiver is `self.linker`; field-disjoint access only).
     ///
@@ -4283,6 +4312,34 @@ impl<'a> LinkerContext<'a> {
                 })
     }
 
+    /// Must `X.name()` keep `X` as `this`, where `X.name` is export `ref_`?
+    fn method_call_needs_this(&self, source_index: crate::IndexInt, ref_: Ref) -> bool {
+        self.graph.ast.items_flags()[source_index as usize]
+            .contains(AstFlags::COMMONJS_LIFTED_TO_ESM)
+            && !self
+                .graph
+                .symbols
+                .get_const(ref_)
+                .is_some_and(|symbol| symbol.call_ignores_this())
+    }
+
+    /// `ns.name()` for `import * as ns`. An unbound item prints as `ns.name`.
+    fn method_call_item_needs_this(
+        &self,
+        import_ref: Ref,
+        named_import: &NamedImport,
+        result: &MatchImport,
+    ) -> bool {
+        self.options.output_format != Format::InternalBakeDev
+            && named_import.namespace_ref.is_valid()
+            && self
+                .graph
+                .symbols
+                .get_const(import_ref)
+                .is_some_and(|symbol| symbol.called_as_method() && symbol.namespace_alias.is_some())
+            && self.method_call_needs_this(result.source_index, result.r#ref)
+    }
+
     fn is_esm_namespace_ref(&self, source_index: crate::IndexInt, ref_: Ref) -> bool {
         let id = source_index as usize;
         id < self.graph.ast.len()
@@ -4452,6 +4509,8 @@ impl<'a> LinkerContext<'a> {
                 .cmp(&(&*keys)[b as usize].inner_index())
         });
 
+        // Items of `ns.name()` left unbound, each with its `ns`.
+        let mut method_call_items: HashMap<Ref, Ref> = HashMap::default();
         for &i in &order {
             let i = i as usize;
             // SAFETY: `keys`/`values` point into stable SoA storage (see above); read-only deref.
@@ -4484,6 +4543,11 @@ impl<'a> LinkerContext<'a> {
             }
 
             match result.kind {
+                MatchImportKind::Normal
+                    if self.method_call_item_needs_this(import_ref, named_import, &result) =>
+                {
+                    method_call_items.insert(import_ref, named_import.namespace_ref);
+                }
                 MatchImportKind::Normal | MatchImportKind::NormalAndNamespace => {
                     self.bind_matched_import(imports_to_bind, import_ref, &result, re_exports);
                 }
@@ -4560,6 +4624,34 @@ impl<'a> LinkerContext<'a> {
             }
         }
 
+        // A part that calls such an item reads its namespace.
+        if !method_call_items.is_empty() {
+            let mut namespace_uses: Vec<(Ref, u32)> = Vec::new();
+            for part in self.graph.ast.items_parts_mut()[source_index as usize].as_mut_slice() {
+                namespace_uses.clear();
+                for (item, item_use) in part
+                    .symbol_uses
+                    .keys()
+                    .iter()
+                    .zip(part.symbol_uses.values())
+                {
+                    if item_use.count_estimate == 0 {
+                        continue;
+                    }
+                    if let Some(&namespace_ref) = method_call_items.get(item) {
+                        namespace_uses.push((namespace_ref, item_use.count_estimate));
+                    }
+                }
+                for &(namespace_ref, count) in &namespace_uses {
+                    part.symbol_uses
+                        .get_or_put_value(namespace_ref, Default::default())
+                        .expect("OOM")
+                        .value_ptr
+                        .count_estimate += count;
+                }
+            }
+        }
+
         self.bind_import_property_accesses(source_index, imports_to_bind, member_resolutions);
     }
 
@@ -4580,88 +4672,133 @@ impl<'a> LinkerContext<'a> {
         if self.options.output_format == Format::InternalBakeDev {
             return;
         }
+        /// One `X.name` read that can bind to an export.
+        struct PropertyAccess {
+            part_index: usize,
+            base: Ref,
+            target_source: crate::IndexInt,
+            name: bun_ast::StoreStr,
+            count: u32,
+            is_call_target: bool,
+        }
+
         let id = source_index as usize;
         let parts_len = self.graph.ast.items_parts()[id].len();
-        let mut accesses: Vec<(Ref, crate::IndexInt, bun_ast::StoreStr, u32)> = Vec::new();
-        let mut dependencies: Vec<Dependency> = Vec::new();
-        let mut bound_bases: Vec<Ref> = Vec::new();
+        let mut accesses: Vec<PropertyAccess> = Vec::new();
         for part_index in 0..parts_len {
-            accesses.clear();
-            dependencies.clear();
-            bound_bases.clear();
-            {
-                let part = &self.graph.ast.items_parts()[id].as_slice()[part_index];
-                let Some(uses) = part.import_symbol_property_uses.as_ref() else {
+            let part = &self.graph.ast.items_parts()[id].as_slice()[part_index];
+            let Some(uses) = part.import_symbol_property_uses.as_ref() else {
+                continue;
+            };
+            for (base, properties) in uses.keys().iter().zip(uses.values()) {
+                let Some(import_data) = imports_to_bind.get(base) else {
                     continue;
                 };
-                for (base, properties) in uses.keys().iter().zip(uses.values()) {
-                    let Some(import_data) = imports_to_bind.get(base) else {
+                let target = import_data.data;
+                let target_source = target.source_index.get();
+                if !self.is_esm_namespace_ref(target_source, target.import_ref) {
+                    continue;
+                }
+                let resolved_exports =
+                    &self.graph.meta.items_resolved_exports()[target_source as usize];
+                for (name, prop_use) in properties.iter() {
+                    // Not a static export of the target (missing, or only reachable
+                    // through `export *` from CommonJS): keep the property access.
+                    let name = if let Some(index) = resolved_exports.get_index(name) {
+                        bun_ast::StoreStr::new(&resolved_exports.keys()[index])
+                    } else if &**name == b"default"
+                        && self.graph.ast.items_flags()[target_source as usize]
+                            .contains(AstFlags::COMMONJS_LIFTED_TO_ESM)
+                        && !Self::lifted_default_import_needs_wrapper(
+                            self.graph.ast.items_module_type()[id],
+                            &self.graph.ast.items_named_exports()[target_source as usize],
+                        )
+                    {
+                        // `default` of a lifted CommonJS module is `module.exports`, the
+                        // namespace itself, the same as `ns.default` on `import * as ns`.
+                        let name = bun_ast::StoreStr::new(b"default");
+                        member_resolutions
+                            .entry((target_source, name))
+                            .or_insert_with(|| {
+                                Some(ImportMemberResolution {
+                                    source_index: target_source,
+                                    r#ref: target.import_ref,
+                                    re_exports: Vec::new(),
+                                })
+                            });
+                        name
+                    } else {
                         continue;
                     };
-                    let target = import_data.data;
-                    let target_source = target.source_index.get();
-                    if !self.is_esm_namespace_ref(target_source, target.import_ref) {
-                        continue;
-                    }
-                    let resolved_exports =
-                        &self.graph.meta.items_resolved_exports()[target_source as usize];
-                    for (name, prop_use) in properties.iter() {
-                        // Not a static export of the target (missing, or only reachable
-                        // through `export *` from CommonJS): keep the property access.
-                        if let Some(index) = resolved_exports.get_index(name) {
-                            let name = bun_ast::StoreStr::new(&resolved_exports.keys()[index]);
-                            accesses.push((*base, target_source, name, prop_use.count_estimate));
-                        } else if &**name == b"default"
-                            && self.graph.ast.items_flags()[target_source as usize]
-                                .contains(AstFlags::COMMONJS_LIFTED_TO_ESM)
-                            && !Self::lifted_default_import_needs_wrapper(
-                                self.graph.ast.items_module_type()[id],
-                                &self.graph.ast.items_named_exports()[target_source as usize],
-                            )
-                        {
-                            // `default` of a lifted CommonJS module is `module.exports`, the
-                            // namespace itself, the same as `ns.default` on `import * as ns`.
-                            let name = bun_ast::StoreStr::new(b"default");
-                            member_resolutions
-                                .entry((target_source, name))
-                                .or_insert_with(|| {
-                                    Some(ImportMemberResolution {
-                                        source_index: target_source,
-                                        r#ref: target.import_ref,
-                                        re_exports: Vec::new(),
-                                    })
-                                });
-                            accesses.push((*base, target_source, name, prop_use.count_estimate));
-                        }
-                    }
+                    accesses.push(PropertyAccess {
+                        part_index,
+                        base: *base,
+                        target_source,
+                        name,
+                        count: prop_use.count_estimate,
+                        is_call_target: prop_use.is_call_target,
+                    });
                 }
             }
+        }
 
-            for &(base, target_source, name, count) in &accesses {
-                if !member_resolutions.contains_key(&(target_source, name)) {
-                    self.cycle_detector.clear();
-                    let mut re_exports: bun_alloc::AstVec<Dependency> = bun_alloc::AstAlloc::vec();
-                    let result = self.match_import_with_export_inner(
-                        ImportTracker {
-                            source_index: crate::Index::init(target_source),
-                            ..Default::default()
-                        },
-                        Some((target_source, name)),
-                        &mut re_exports,
-                    );
-                    let resolved = match result.kind {
-                        MatchImportKind::Normal | MatchImportKind::NormalAndNamespace => {
-                            Some(ImportMemberResolution {
-                                source_index: result.source_index,
-                                r#ref: result.r#ref,
-                                re_exports: re_exports.to_vec(),
-                            })
-                        }
-                        _ => None,
-                    };
-                    member_resolutions.insert((target_source, name), resolved);
+        for access in &accesses {
+            let key = (access.target_source, access.name);
+            if member_resolutions.contains_key(&key) {
+                continue;
+            }
+            self.cycle_detector.clear();
+            let mut re_exports: bun_alloc::AstVec<Dependency> = bun_alloc::AstAlloc::vec();
+            let result = self.match_import_with_export_inner(
+                ImportTracker {
+                    source_index: crate::Index::init(access.target_source),
+                    ..Default::default()
+                },
+                Some(key),
+                &mut re_exports,
+            );
+            let resolved = match result.kind {
+                MatchImportKind::Normal | MatchImportKind::NormalAndNamespace => {
+                    Some(ImportMemberResolution {
+                        source_index: result.source_index,
+                        r#ref: result.r#ref,
+                        re_exports: re_exports.to_vec(),
+                    })
                 }
-                let Some(resolved) = member_resolutions.get(&(target_source, name)).unwrap() else {
+                _ => None,
+            };
+            member_resolutions.insert(key, resolved);
+        }
+
+        // The printer substitutes a binding at each `X.name` of the file, so a
+        // call that needs `X` as `this` keeps every `X.name` of the file.
+        let mut keeps_this: Vec<(Ref, bun_ast::StoreStr)> = Vec::new();
+        for access in &accesses {
+            if access.is_call_target
+                && let Some(resolved) = member_resolutions
+                    .get(&(access.target_source, access.name))
+                    .unwrap()
+                && self.method_call_needs_this(resolved.source_index, resolved.r#ref)
+            {
+                keeps_this.push((access.base, access.name));
+            }
+        }
+
+        let mut dependencies: Vec<Dependency> = Vec::new();
+        let mut bound_bases: Vec<Ref> = Vec::new();
+        for part_accesses in accesses.chunk_by(|a, b| a.part_index == b.part_index) {
+            let part_index = part_accesses[0].part_index;
+            dependencies.clear();
+            bound_bases.clear();
+            for access in part_accesses {
+                let (base, name, count) = (access.base, access.name, access.count);
+                if keeps_this.contains(&(base, name)) {
+                    continue;
+                }
+                let Some(resolved) = member_resolutions
+                    .get(&(access.target_source, name))
+                    .unwrap()
+                else {
                     continue;
                 };
 

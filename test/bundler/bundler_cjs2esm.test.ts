@@ -1295,6 +1295,146 @@ describe("bundler", () => {
       stdout: "p id",
     },
   });
+  // A method call through the default import or the namespace of a CommonJS
+  // module passes `module.exports` as `this`. The `stack-trace` package reads it.
+  const thisReadingLib = {
+    "/lib.cjs": /* js */ `
+      exports.parse = function (s) {
+        return this._helper(s);
+      };
+      exports._helper = function (s) {
+        return "helped:" + s;
+      };
+      exports.tag = function (strings) {
+        return this._helper(strings[0]);
+      };
+    `,
+  };
+  itBundled("cjs2esm/DefaultImportMethodCallKeepsThis", {
+    files: {
+      "/entry.js": /* js */ `
+        import st from "./lib.cjs";
+        console.log(st.parse("x"), st["parse"]("y"), st.tag\`z\`);
+      `,
+      ...thisReadingLib,
+    },
+    cjs2esm: true,
+    run: {
+      stdout: "helped:x helped:y helped:z",
+    },
+  });
+  itBundled("cjs2esm/StarImportMethodCallKeepsThis", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as ns from "./lib.cjs";
+        const parse = ns.parse;
+        console.log(ns.parse("x"), ns["parse"]("y"), ns["tag"]\`z\`, parse === ns.parse);
+      `,
+      ...thisReadingLib,
+    },
+    cjs2esm: true,
+    run: {
+      stdout: "helped:x helped:y helped:z true",
+    },
+  });
+  itBundled("cjs2esm/StarImportMethodCallThroughExportStarKeepsThis", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as ns from "./barrel.js";
+        import lib from "./lib.cjs";
+        console.log(ns.parse("x"), lib.parse("y"));
+      `,
+      "/barrel.js": /* js */ `
+        export * from "./lib.cjs";
+      `,
+      ...thisReadingLib,
+    },
+    cjs2esm: true,
+    run: {
+      stdout: "helped:x helped:y",
+    },
+  });
+  itBundled("cjs2esm/MethodCallKeepsThisWhenTheValueCanReadIt", {
+    files: {
+      "/entry.js": /* js */ `
+        import lib from "./lib.cjs";
+        console.log(lib.decl(), lib.reassigned(), lib.value());
+      `,
+      "/lib.cjs": /* js */ `
+        function decl() { return this.name; }
+        exports.decl = decl;
+        exports.reassigned = function () { return "first"; };
+        exports.reassigned = function () { return this.name; };
+        exports.value = [function () { return this.name; }][0];
+        exports.name = "lib";
+      `,
+    },
+    cjs2esm: true,
+    run: {
+      stdout: "lib lib lib",
+    },
+  });
+  // A `var` with the name of a function declaration can change the value of the
+  // binding, and so can a block-level function in sloppy mode. An ES module
+  // cannot declare a function and a `var` with one name, so this output does
+  // not load. The test reads the printed calls.
+  itBundled("cjs2esm/MethodCallKeepsThisWhenAVarRedeclaresTheFunction", {
+    files: {
+      "/entry.js": /* js */ `
+        import lib from "./lib.cjs";
+        console.log(lib.nested(), lib.top(), lib.top2(), lib.block());
+      `,
+      "/lib.cjs": /* js */ `
+        function nested() { return "declaration"; }
+        if (Math.random() < 2) { var nested = function () { return this.name; }; }
+        exports.nested = nested;
+        function top() { return "declaration"; }
+        var top = function () { return this.name; };
+        exports.top = top;
+        var top2 = function () { return this.name; };
+        function top2() { return "declaration"; }
+        exports.top2 = top2;
+        function block() { return "declaration"; }
+        { function block() { return this.name; } }
+        exports.block = block;
+        exports.name = "lib";
+      `,
+    },
+    cjs2esm: true,
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toContain(
+        "console.log(exports_lib.nested(), exports_lib.top(), exports_lib.top2(), exports_lib.block());",
+      );
+    },
+  });
+  itBundled("cjs2esm/MethodCallWithoutThisBindsDirectly", {
+    files: {
+      "/entry.js": /* js */ `
+        import lib from "./lib.cjs";
+        import * as ns from "./lib.cjs";
+        console.log(lib.expr(), lib.arrow(), lib.decl(), ns.expr(), ns.decl(), lib.nested()());
+      `,
+      "/lib.cjs": /* js */ `
+        exports.expr = function () { return "expr"; };
+        exports.arrow = () => "arrow";
+        function decl() { return "decl"; }
+        exports.decl = decl;
+        exports.nested = function () { return () => "nested"; };
+        exports.unused = function () { return this.expr(); };
+      `,
+    },
+    cjs2esm: true,
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).not.toContain("exports_lib");
+      // `unused` reads `this`, but nothing calls it, so it is tree-shaken
+      expect(out).not.toContain("this.expr");
+    },
+    run: {
+      stdout: "expr arrow decl expr decl nested",
+    },
+  });
   itBundled("cjs2esm/DefaultImportJsxClassicRuntime", {
     files: {
       "/entry.jsx": /* jsx */ `
@@ -1870,5 +2010,42 @@ describe("bundler", () => {
       { file: "/out/a.js", stdout: "a true true" },
       { file: "/out/b.js", stdout: "b false" },
     ],
+  });
+  itBundled("cjs2esm/OtherModuleMemberKeepsWrapper", {
+    files: {
+      "/entry.js": /* js */ `
+        import lib, * as ns from "lib";
+        console.log(lib.addHook(), ns.hot, lib.self === lib);
+      `,
+      "/node_modules/lib/index.js": /* js */ `
+        const Module = module.constructor.length > 1 ? module.constructor : null;
+        exports.addHook = function addHook() { return typeof Module; };
+        exports.hot = typeof module.hot;
+        exports.self = module.exports;
+      `,
+    },
+    cjs2esm: {
+      unhandled: ["/node_modules/lib/index.js"],
+    },
+    run: {
+      stdout: "object undefined true",
+    },
+  });
+  itBundled("cjs2esm/ModuleExportsMemberStillLifts", {
+    files: {
+      "/entry.js": /* js */ `
+        import lib, * as ns from "lib";
+        console.log(lib.x, ns.y, lib.main);
+      `,
+      "/node_modules/lib/index.js": /* js */ `
+        module.exports.x = 1;
+        exports.y = module.exports.x + 1;
+        exports.main = require.main === module;
+      `,
+    },
+    cjs2esm: true,
+    run: {
+      stdout: "1 2 false",
+    },
   });
 });

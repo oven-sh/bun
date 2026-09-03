@@ -31,7 +31,7 @@ pub use bun_uws_sys::{
 /// hook, so no `catch_unwind` wrapper is emitted.
 pub use bun_jsc_macros::uws_callback;
 pub use bun_uws_sys::response::State;
-pub use bun_uws_sys::{h3 as H3, quic, socket_transfer, udp, vtable};
+pub use bun_uws_sys::{h2 as H2, h3 as H3, quic, socket_transfer, udp, vtable};
 pub type Socket = us_socket_t;
 
 /// Bare BoringSSL `SSL_CTX`. `SSL_CTX_up_ref`/`SSL_CTX_free` is the refcount;
@@ -54,17 +54,18 @@ pub use bun_uws_sys::WebSocketUpgradeContext;
 pub enum ResponseKind {
     Tcp = 0,
     Ssl = 1,
-    H3 = 2,
+    H2 = 2,
+    H3 = 3,
 }
 
 impl ResponseKind {
-    pub const fn from(ssl: bool, http3: bool) -> ResponseKind {
-        if http3 {
-            ResponseKind::H3
-        } else if ssl {
-            ResponseKind::Ssl
-        } else {
-            ResponseKind::Tcp
+    #[inline]
+    pub const fn of(resp: AnyResponse) -> ResponseKind {
+        match resp {
+            AnyResponse::TCP(_) => ResponseKind::Tcp,
+            AnyResponse::SSL(_) => ResponseKind::Ssl,
+            AnyResponse::H2(_) => ResponseKind::H2,
+            AnyResponse::H3(_) => ResponseKind::H3,
         }
     }
 }
@@ -85,6 +86,7 @@ pub const DEDICATED_COMPRESSOR: i32 = 248;
 pub use bun_uws_sys::{
     LIBUS_LISTEN_DEFAULT, LIBUS_LISTEN_EXCLUSIVE_PORT, LIBUS_LISTEN_REUSE_ADDR,
     LIBUS_LISTEN_REUSE_PORT, LIBUS_SOCKET_ALLOW_HALF_OPEN, LIBUS_SOCKET_IPV6_ONLY,
+    LIBUS_SOCKET_OPEN_PAUSED,
 };
 
 // Re-export the `_sys` definitions so higher tiers see one type. `to_js`
@@ -154,8 +156,8 @@ pub mod ssl_wrapper {
     mod boring_sys {
         pub(super) use bun_boringssl::c::{
             BIO_ctrl_pending, BIO_free, BIO_new, BIO_read, BIO_s_mem, BIO_set_mem_eof_return,
-            BIO_write, ERR_clear_error, SSL, SSL_CTX, SSL_CTX_free, SSL_CTX_get_verify_mode,
-            SSL_ERROR_SSL, SSL_ERROR_SYSCALL, SSL_ERROR_WANT_READ, SSL_ERROR_WANT_RENEGOTIATE,
+            BIO_write, ERR_clear_error, OwnedSslCtx, SSL, SSL_CTX_get_verify_mode, SSL_ERROR_SSL,
+            SSL_ERROR_SYSCALL, SSL_ERROR_WANT_READ, SSL_ERROR_WANT_RENEGOTIATE,
             SSL_ERROR_WANT_WRITE, SSL_ERROR_ZERO_RETURN, SSL_RECEIVED_SHUTDOWN,
             SSL_VERIFY_FAIL_IF_NO_PEER_CERT, SSL_VERIFY_NONE, SSL_VERIFY_PEER, SSL_do_handshake,
             SSL_free, SSL_get_error, SSL_get_rbio, SSL_get_shutdown, SSL_get_wbio,
@@ -198,6 +200,9 @@ pub mod ssl_wrapper {
     /// writes we loop until we have no more data to write/backpressure.
     const BUFFER_SIZE: usize = 65536;
 
+    /// Stack scratch shared by `SSL_read` / `BIO_read` / the pending-event pops.
+    type IoBuffer = bun_core::vec::UninitBuf<BUFFER_SIZE>;
+
     /// Cap on peer-initiated TLS renegotiations per
     /// [`MAX_RENEGOTIATION_WINDOW`]. Mirrors the `us_reneg_policy` defaults in
     /// the uSockets C path (openssl.c) and Node's
@@ -210,7 +215,7 @@ pub mod ssl_wrapper {
     pub struct SSLWrapper<T: Copy> {
         pub handlers: Cell<Handlers<T>>,
         pub ssl: Cell<Option<NonNull<boring_sys::SSL>>>,
-        pub(crate) ctx: Cell<Option<NonNull<boring_sys::SSL_CTX>>>,
+        pub(crate) ctx: Cell<Option<boring_sys::OwnedSslCtx>>,
         pub flags: Flags,
         pub(crate) renegotiation_count: Cell<u8>,
         pub(crate) renegotiation_window_start: Cell<Option<std::time::Instant>>,
@@ -366,16 +371,14 @@ pub mod ssl_wrapper {
     }
 
     impl<T: Copy> SSLWrapper<T> {
-        /// Initialize the SSLWrapper with a specific SSL_CTX*, remember to
-        /// call SSL_CTX_up_ref if you want to keep the SSL_CTX alive after
-        /// the SSLWrapper is deinitialized.
+        /// Takes ownership of `ctx` (dropped on `Err`).
         pub fn init_with_ctx(
-            ctx: NonNull<boring_sys::SSL_CTX>,
+            ctx: boring_sys::OwnedSslCtx,
             is_client: bool,
             handlers: Handlers<T>,
         ) -> Result<Self, InitError> {
             bun_boringssl::load();
-            // SAFETY: ctx is a valid non-null SSL_CTX*; SSL_new returns null on OOM.
+            // SAFETY: ctx is a live SSL_CTX; SSL_new returns null on OOM.
             let ssl = NonNull::new(unsafe { boring_sys::SSL_new(ctx.as_ptr()) })
                 .ok_or(InitError::OutOfMemory)?;
             // errdefer BoringSSL.SSL_free(ssl) — FFI cleanup on early return
@@ -508,19 +511,10 @@ pub mod ssl_wrapper {
             bun_boringssl::load();
 
             let mut err = crate::create_bun_socket_error_t::none;
-            let Some(ssl_ctx) = ctx_opts.create_ssl_context(&mut err).and_then(NonNull::new) else {
+            let Some(ssl_ctx) = ctx_opts.create_ssl_context(&mut err) else {
                 return Err(InitError::InvalidOptions);
             };
-            // init_with_ctx adopts the SSL_CTX* (one ref). The passphrase was
-            // already freed inside create_ssl_context, so SSL_CTX_free is
-            // sufficient on the error path.
-            let ctx_guard = scopeguard::guard(ssl_ctx, |c| {
-                // SAFETY: ssl_ctx ref was just created by create_ssl_context and not yet adopted by init_with_ctx.
-                unsafe { boring_sys::SSL_CTX_free(c.as_ptr()) };
-            });
-            let this = Self::init_with_ctx(ssl_ctx, is_client, handlers)?;
-            let _ = scopeguard::ScopeGuard::into_inner(ctx_guard);
-            Ok(this)
+            Self::init_with_ctx(ssl_ctx, is_client, handlers)
         }
 
         /// Mirror `us_socket_adopt_tls`'s server-side `SSL_set_verify` override.
@@ -687,7 +681,7 @@ pub mod ssl_wrapper {
             // SSL_shutdown only queues close_notify into the write BIO; nothing
             // else pumps it on the memory-BIO paths (duplex / named pipe), so
             // drain it now or the peer never sees our shutdown.
-            let mut buffer = [0u8; BUFFER_SIZE];
+            let mut buffer = IoBuffer::uninit();
             self.handle_writing(&mut buffer);
             ret == 1 // truly closed
         }
@@ -818,10 +812,7 @@ pub mod ssl_wrapper {
                 // SAFETY: ssl was created by SSL_new and is owned by self; SSL_free also frees the input and output BIOs.
                 unsafe { boring_sys::SSL_free(ssl.as_ptr()) };
             }
-            if let Some(ctx) = self.ctx.take() {
-                // SAFETY: ctx ref was adopted in init/init_with_ctx; SSL_CTX_free decrements the C refcount and frees the SSL context and all the certificates when it hits zero.
-                unsafe { boring_sys::SSL_CTX_free(ctx.as_ptr()) };
-            }
+            self.ctx.set(None);
         }
 
         fn trigger_handshake_callback(&self, success: bool, result: us_bun_verify_error_t) {
@@ -974,7 +965,7 @@ pub mod ssl_wrapper {
         }
 
         /// Handle reading data. Returns true if we can call handle_writing.
-        fn handle_reading(&self, buffer: &mut [u8; BUFFER_SIZE]) -> bool {
+        fn handle_reading(&self, buffer: &mut IoBuffer) -> bool {
             let mut read: usize = 0;
 
             // read data from the input BIO
@@ -984,7 +975,8 @@ pub mod ssl_wrapper {
                     return false;
                 };
 
-                let available = &mut buffer[read..];
+                // SAFETY: write-only view of the unfilled tail; SSL_read only stores into it.
+                let available = unsafe { &mut buffer.as_bytes_mut()[read..] };
                 // SAFETY: ssl is a live SSL*; available is a valid mutable slice.
                 let just_read = unsafe {
                     boring_sys::SSL_read(
@@ -1054,7 +1046,8 @@ pub mod ssl_wrapper {
                         // flush the reading
                         if read > 0 {
                             log!("triggering data callback (read {})", read);
-                            self.trigger_data_callback(&buffer[0..read]);
+                            // SAFETY: the SSL_read calls above wrote `[0..read]` contiguously.
+                            self.trigger_data_callback(unsafe { buffer.filled(read) });
                             // The data callback may have closed the connection
                             if self.ssl.get().is_none() || self.flags.closed_notified() {
                                 return false;
@@ -1079,13 +1072,14 @@ pub mod ssl_wrapper {
                 self.handle_end_of_renegotiation();
 
                 read += usize::try_from(just_read).expect("int cast");
-                if read == buffer.len() {
+                if read == BUFFER_SIZE {
                     log!(
                         "triggering data callback (read {}) and resetting read buffer",
                         read
                     );
                     // we filled the buffer
-                    self.trigger_data_callback(&buffer[0..read]);
+                    // SAFETY: the SSL_read calls above wrote `[0..read]` contiguously.
+                    self.trigger_data_callback(unsafe { buffer.filled(read) });
                     // The callback may have closed the connection - check before continuing
                     // Check ssl first as a proxy for whether we were deinited
                     if self.ssl.get().is_none() || self.flags.closed_notified() {
@@ -1097,7 +1091,8 @@ pub mod ssl_wrapper {
             // we finished reading
             if read > 0 {
                 log!("triggering data callback (read {})", read);
-                self.trigger_data_callback(&buffer[0..read]);
+                // SAFETY: the SSL_read calls above wrote `[0..read]` contiguously.
+                self.trigger_data_callback(unsafe { buffer.filled(read) });
                 // The callback may have closed the connection
                 // Check ssl first as a proxy for whether we were deinited
                 if self.ssl.get().is_none() || self.flags.closed_notified() {
@@ -1107,7 +1102,7 @@ pub mod ssl_wrapper {
             true
         }
 
-        fn handle_writing(&self, buffer: &mut [u8]) {
+        fn handle_writing(&self, buffer: &mut IoBuffer) {
             let mut read: usize = 0;
             loop {
                 let Some(ssl) = self.ssl.get() else { return };
@@ -1116,7 +1111,8 @@ pub mod ssl_wrapper {
                 else {
                     return;
                 };
-                let available = &mut buffer[read..];
+                // SAFETY: write-only view of the unfilled tail; BIO_read only stores into it.
+                let available = unsafe { &mut buffer.as_bytes_mut()[read..] };
                 // SAFETY: output is a valid BIO*; available is a valid mutable slice.
                 let just_read = unsafe {
                     boring_sys::BIO_read(
@@ -1127,8 +1123,9 @@ pub mod ssl_wrapper {
                 };
                 if just_read > 0 {
                     read += usize::try_from(just_read).expect("int cast");
-                    if read == buffer.len() {
-                        self.trigger_wanna_write_callback(&buffer[0..read]);
+                    if read == BUFFER_SIZE {
+                        // SAFETY: the BIO_read calls above wrote `[0..read]` contiguously.
+                        self.trigger_wanna_write_callback(unsafe { buffer.filled(read) });
                         read = 0;
                     }
                 } else {
@@ -1136,7 +1133,8 @@ pub mod ssl_wrapper {
                 }
             }
             if read > 0 {
-                self.trigger_wanna_write_callback(&buffer[0..read]);
+                // SAFETY: the BIO_read calls above wrote `[0..read]` contiguously.
+                self.trigger_wanna_write_callback(unsafe { buffer.filled(read) });
             }
         }
 
@@ -1148,7 +1146,7 @@ pub mod ssl_wrapper {
         fn handle_traffic(&self) {
             if self.traffic.get() != Traffic::Idle {
                 log!("handleTraffic re-entered, flushing and deferring to the outer pass");
-                let mut buffer = [0u8; BUFFER_SIZE];
+                let mut buffer = IoBuffer::uninit();
                 self.handle_writing(&mut buffer);
                 self.traffic.set(Traffic::RerunRequested);
                 return;
@@ -1168,7 +1166,7 @@ pub mod ssl_wrapper {
             if self.update_handshake_state() {
                 // shared stack buffer for reading and writing
                 // PERF: 64KiB on-stack array — verify stack-size headroom.
-                let mut buffer = [0u8; BUFFER_SIZE];
+                let mut buffer = IoBuffer::uninit();
                 // drain the input BIO first
                 self.handle_writing(&mut buffer);
 
@@ -1202,7 +1200,7 @@ pub mod ssl_wrapper {
         /// `init_with_ctx`), so this is a no-op FFI probe otherwise. The
         /// callbacks run JS which may close the wrapper; `self.ssl` is
         /// re-checked between pops.
-        fn flush_pending_events(&self, buffer: &mut [u8; BUFFER_SIZE]) {
+        fn flush_pending_events(&self, buffer: &mut IoBuffer) {
             if self.handlers.get().on_session.is_some() {
                 loop {
                     let Some(ssl) = self.ssl.get() else { return };
@@ -1218,9 +1216,11 @@ pub mod ssl_wrapper {
                     if len <= 0 {
                         break;
                     }
+                    // SAFETY: the pop memcpy'd exactly `len` bytes into `[0..len]`.
+                    let entry = unsafe { buffer.filled(len as usize) };
                     let handlers = self.handlers.get();
                     if let Some(on_session) = handlers.on_session {
-                        on_session(handlers.ctx, &buffer[..len as usize]);
+                        on_session(handlers.ctx, entry);
                     }
                 }
             }
@@ -1239,9 +1239,11 @@ pub mod ssl_wrapper {
                     if len <= 0 {
                         break;
                     }
+                    // SAFETY: the pop memcpy'd exactly `len` bytes into `[0..len]`.
+                    let entry = unsafe { buffer.filled(len as usize) };
                     let handlers = self.handlers.get();
                     if let Some(on_keylog) = handlers.on_keylog {
-                        on_keylog(handlers.ctx, &buffer[..len as usize]);
+                        on_keylog(handlers.ctx, entry);
                     }
                 }
             }

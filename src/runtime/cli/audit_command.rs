@@ -2,19 +2,23 @@ use bstr::BStr;
 use std::io::Write as _;
 
 use bun_ast::{ExprData, e as E};
-use bun_collections::{StringArrayHashMap, StringHashMap};
+use bun_collections::{DynamicBitSet, HashMap, StringHashMap, index_sort};
 use bun_core::{Global, Output, pretty, prettyln};
 use bun_core::{MutableString, strings};
 use bun_http::{self as http, HeaderBuilder};
+use bun_install::audit_fix::{self, Advisory};
 use bun_install::lockfile::package::PackageColumns as _;
+use bun_install::lockfile::reachable;
 use bun_install::package_manager_real::command_line_arguments::AuditLevel;
+use bun_install::package_manager_real::{ROOT_PACKAGE_JSON_PATH, install_with_manager};
 use bun_install::resolution::Tag as ResolutionTag;
-use bun_install::{CommandLineArguments, PackageManager, Subcommand};
+use bun_install::{CommandLineArguments, LogLevel, PackageManager, PackageNameHash, Subcommand};
 use bun_libdeflate_sys::libdeflate;
 use bun_parsers::json as bun_json;
 use bun_url::URL;
 
 use crate::cli::Command;
+use crate::cli::install_command::InstallCommand;
 use crate::cli::package_manager_command::PackageManagerCommand;
 
 // Boxed to avoid a struct lifetime param; the
@@ -28,33 +32,77 @@ struct VulnerabilityInfo {
     package_name: Box<[u8]>,
 }
 
-#[derive(Default)]
-struct PackageInfo {
-    vulnerabilities: Vec<VulnerabilityInfo>,
-    dependents: Vec<DependencyPath>,
-}
-
 struct DependencyPath {
     path: Vec<Box<[u8]>>,
 }
 
-struct AuditResult {
-    // Insertion-ordered so the printed report follows the registry's response
-    // property order instead of std HashMap's randomized iteration.
-    vulnerable_packages: StringArrayHashMap<PackageInfo>,
-    all_vulnerabilities: Vec<VulnerabilityInfo>,
+#[derive(Default)]
+struct AuditStats {
+    checked: usize,
+    skipped: usize,
+    below_level: u32,
+    ignored: u32,
 }
 
-impl AuditResult {
-    fn init() -> AuditResult {
-        AuditResult {
-            vulnerable_packages: StringArrayHashMap::default(),
-            all_vulnerabilities: Vec::new(),
-        }
+fn plural(n: usize) -> &'static str {
+    if n == 1 { "" } else { "s" }
+}
+
+fn audit_level_name(level: AuditLevel) -> &'static str {
+    match level {
+        AuditLevel::Low => "low",
+        AuditLevel::Moderate => "moderate",
+        AuditLevel::High => "high",
+        AuditLevel::Critical => "critical",
     }
 }
 
-// `deinit` body only freed owned fields → Drop is automatic on `StringHashMap`/`Vec`/`Box`.
+fn print_no_vulnerabilities(stats: &AuditStats, audit_level: Option<AuditLevel>) {
+    pretty!(
+        "<green>No vulnerabilities found<r> <d>(checked {} package{}",
+        stats.checked,
+        plural(stats.checked)
+    );
+    if stats.below_level > 0 {
+        if let Some(level) = audit_level {
+            pretty!(
+                ", {} below --audit-level={}",
+                stats.below_level,
+                audit_level_name(level)
+            );
+        }
+    }
+    if stats.ignored > 0 {
+        pretty!(", {} ignored", stats.ignored);
+    }
+    if stats.skipped > 0 {
+        pretty!(", {} skipped", stats.skipped);
+    }
+    pretty!(")<r> ");
+    Output::print_start_end_stdout(bun_core::start_time(), bun_core::time::nano_timestamp());
+    prettyln!("");
+    Output::flush();
+}
+
+fn print_command_name(fix: bool) {
+    bun_core::pretty!(
+        "<r><b>bun audit{} <r><d>v{}<r>\n\n",
+        if fix { " fix" } else { "" },
+        Global::package_json_version_with_sha
+    );
+    Output::flush();
+}
+
+fn default_registry_href(pm: &PackageManager) -> &[u8] {
+    strings::without_trailing_slash(pm.options.scope.url.href())
+}
+
+fn report_non_json_response(registry: &[u8]) {
+    Output::err_generic(
+        "{f} returned a non-JSON audit response",
+        (bun_core::fmt::redacted_npm_url(registry),),
+    );
+}
 
 pub(crate) struct AuditCommand;
 
@@ -64,10 +112,26 @@ impl AuditCommand {
         let cli = CommandLineArguments::parse(Subcommand::Audit)?;
         // Note: `init` consumes `cli`; capture the fields read after it.
         let audit_level = cli.audit_level;
-        let production = cli.production;
         let audit_ignore_list = cli.audit_ignore_list;
+        let fix = cli.positionals.len() > 1 && cli.positionals[1] == b"fix";
+        if fix && cli.positionals.len() > 2 {
+            Output::err_generic(
+                "bun audit fix does not take arguments, it always fixes the whole lockfile",
+                (),
+            );
+            bun_core::note!("run 'bun audit --help' for more information");
+            Global::exit(1);
+        }
+        if !fix && cli.positionals.len() > 1 {
+            Output::err_generic(
+                "unknown subcommand \"{s}\" for bun audit",
+                (BStr::new(cli.positionals[1]),),
+            );
+            bun_core::note!("did you mean 'bun audit fix'?");
+            Global::exit(1);
+        }
 
-        let (manager, _original_cwd) = match PackageManager::init(&mut *ctx, cli, Subcommand::Audit)
+        let (manager, original_cwd) = match PackageManager::init(&mut *ctx, cli, Subcommand::Audit)
         {
             Ok(v) => v,
             Err(err) => {
@@ -89,119 +153,149 @@ impl AuditCommand {
             }
         };
         let json_output = manager.options.json_output;
+        if fix {
+            return Self::audit_fix(
+                ctx,
+                manager,
+                json_output,
+                audit_level,
+                audit_ignore_list,
+                &original_cwd,
+            );
+        }
 
-        let code = Self::audit(
-            ctx,
-            manager,
-            json_output,
-            audit_level,
-            production,
-            audit_ignore_list,
-        )?;
+        let code = Self::audit(ctx, manager, json_output, audit_level, audit_ignore_list)?;
         Global::exit(code);
     }
 
-    /// Returns the exit code of the command. 0 if no vulnerabilities were found, 1 if vulnerabilities were found.
-    /// The exception is when you pass --json, it will simply return 0 as that was considered a successful "request
-    /// for the audit information"
     fn audit(
         _ctx: Command::Context,
         pm: &mut PackageManager,
         json_output: bool,
         audit_level: Option<AuditLevel>,
-        audit_prod_only: bool,
         ignore_list: &[&[u8]],
     ) -> Result<u32, bun_alloc::AllocError> {
-        bun_core::pretty_error!(
-            "<r><b>bun audit <r><d>v{}<r>\n",
-            Global::package_json_version_with_sha,
-        );
-        Output::flush();
+        if !json_output && pm.options.should_print_command_name() {
+            print_command_name(false);
+        }
 
         // Note: a self-referential split borrow; encapsulated upstream as
         // `PackageManager::load_lockfile_from_cwd`.
         {
             let log_level = pm.options.log_level;
             let load_lockfile = pm.load_lockfile_from_cwd::<true>();
-            PackageManagerCommand::handle_load_lockfile_errors(&load_lockfile, log_level);
+            PackageManagerCommand::handle_load_lockfile_errors_for(
+                &load_lockfile,
+                log_level,
+                "audit",
+            );
         }
 
         let dependency_tree = build_dependency_tree(pm)?;
 
-        let packages_result = collect_packages_for_audit(pm, audit_prod_only)?;
-
-        let response_text = send_audit_request(pm, &packages_result.audit_body)?;
+        let collected = collect_packages_for_audit(pm, true)?;
+        let responses = send_audit_requests(pm, &collected, true, json_output)?;
+        let mut stats = responses.stats;
+        let response_text = responses.response_text;
 
         if json_output {
             let _ = Output::writer().write_all(&response_text);
             let _ = Output::writer().write_all(b"\n");
 
-            if !response_text.is_empty() {
-                let source =
-                    bun_ast::Source::init_path_string(b"audit-response.json", &response_text[..]);
-                let mut log = bun_ast::Log::init();
+            if response_text.is_empty() {
+                return Ok(0);
+            }
 
-                let parsed = match bun_json::ParsedJson::parse_json(&source, &mut log) {
-                    Ok(e) => e,
-                    Err(_) => {
-                        bun_core::pretty_errorln!(
-                            "<red>error<r>: audit request failed to parse json. Is the registry down?"
-                        );
-                        return Ok(1); // If we can't parse then safe to assume a similar failure
-                    }
-                };
-
-                // If the response is an empty object, no vulnerabilities
-                if let ExprData::EObjectJSON(obj) = &parsed.root.data {
-                    if obj.get().properties().is_empty() {
-                        return Ok(0);
-                    }
+            let vulnerabilities =
+                collect_vulnerabilities(&response_text, audit_level, ignore_list, &mut stats)?;
+            return match vulnerabilities {
+                Some(vulnerabilities) => Ok(u32::from(!vulnerabilities.is_empty())),
+                None => {
+                    report_non_json_response(default_registry_href(pm));
+                    Ok(1)
                 }
+            };
+        }
 
-                // If there's any content in the response, there are vulnerabilities
-                return Ok(1);
-            }
-
-            return Ok(0);
-        } else if !response_text.is_empty() {
-            let exit_code = print_enhanced_audit_report(
-                &response_text,
-                pm,
-                &dependency_tree,
-                audit_level,
-                ignore_list,
-            )?;
-
-            print_skipped_packages(&packages_result.skipped_packages);
-
-            return Ok(exit_code);
-        } else {
-            prettyln!("<green>No vulnerabilities found<r>");
-
-            print_skipped_packages(&packages_result.skipped_packages);
-
+        if response_text.is_empty() {
+            print_no_vulnerabilities(&stats, audit_level);
             return Ok(0);
         }
+
+        print_enhanced_audit_report(
+            &response_text,
+            pm,
+            &collected,
+            &dependency_tree,
+            audit_level,
+            ignore_list,
+            stats,
+        )
     }
-}
 
-fn print_skipped_packages(skipped_packages: &[Box<[u8]>]) {
-    if !skipped_packages.is_empty() {
-        pretty!("<d>Skipped<r> ");
-        for (i, package_name) in skipped_packages.iter().enumerate() {
-            if i > 0 {
-                pretty!(", ");
+    fn audit_fix(
+        ctx: Command::Context,
+        pm: &mut PackageManager,
+        json_output: bool,
+        audit_level: Option<AuditLevel>,
+        ignore_list: &[&[u8]],
+        original_cwd: &[u8],
+    ) -> crate::Result<core::convert::Infallible> {
+        if !json_output && pm.options.should_print_command_name() {
+            print_command_name(true);
+        }
+
+        {
+            let log_level = pm.options.log_level;
+            let load_lockfile = pm.load_lockfile_from_cwd::<true>();
+            PackageManagerCommand::handle_load_lockfile_errors_for(
+                &load_lockfile,
+                log_level,
+                "audit",
+            );
+        }
+
+        audit_fix::exit_unless_lockfile_matches_package_json(pm)?;
+        audit_fix::exit_unless_lockfile_writable(pm);
+
+        let first = audit_for_fix(pm, audit_level, ignore_list, true)?;
+
+        if first.advisories.is_empty() && !json_output {
+            if pm.options.log_level != LogLevel::Silent {
+                print_no_vulnerabilities(&first.stats, audit_level);
             }
-            pretty!("{}", BStr::new(package_name));
+            Global::exit(0);
         }
 
-        if skipped_packages.len() > 1 {
-            prettyln!(" <d>because they do not come from the default registry<r>");
-        } else {
-            prettyln!(" <d>because it does not come from the default registry<r>");
+        let dry_run = pm.options.dry_run;
+        let mut plan = audit_fix::plan_fixes(pm, &first.advisories)?;
+        plan.unaudited = first.unaudited;
+        if !json_output {
+            plan.print_sections();
         }
 
-        prettyln!("");
+        if dry_run || plan.fixes.is_empty() {
+            Global::exit(plan.finish_planned(json_output, dry_run));
+        }
+
+        audit_fix::prepare_install(pm, &plan)?;
+
+        // SAFETY: `ROOT_PACKAGE_JSON_PATH` is written exactly once inside `PackageManager::init`; only read thereafter.
+        let root_package_json_path = unsafe { ROOT_PACKAGE_JSON_PATH.read() };
+        if let Err(e) = install_with_manager(pm, &mut *ctx, root_package_json_path, original_cwd) {
+            InstallCommand::handle_error(crate::Error::from(e))?;
+            Global::exit(1);
+        }
+
+        if pm.any_failed_to_install {
+            Global::exit(1);
+        }
+
+        let reaudit = audit_for_fix(pm, audit_level, ignore_list, false)?;
+        if json_output {
+            plan.unaudited = reaudit.unaudited;
+        }
+        Global::exit(plan.finish_installed(&pm.lockfile, &reaudit.advisories, json_output));
     }
 }
 
@@ -245,60 +339,60 @@ fn build_dependency_tree(
     Ok(dependency_tree)
 }
 
-fn build_production_package_set(
-    pm: &mut PackageManager,
-    prod_set: &mut StringHashMap<()>,
-) -> Result<(), bun_alloc::AllocError> {
-    let root_id = pm.root_package_id.get(&pm.lockfile, pm.workspace_name_hash);
+struct AuditRegistry {
+    href: Box<[u8]>,
+    url_hash: u64,
+    token: Box<[u8]>,
+    auth: Box<[u8]>,
+    is_default: bool,
+}
 
-    let packages = pm.lockfile.packages.slice();
-    let pkg_names = packages.items_name();
-    let pkg_dependencies = packages.items_dependencies();
-    let pkg_resolutions = packages.items_resolutions();
-    let buf = pm.lockfile.buffers.string_bytes.as_slice();
-    let dependencies = pm.lockfile.buffers.dependencies.as_slice();
-    let resolutions = pm.lockfile.buffers.resolutions.as_slice();
-
-    let mut queue: std::collections::VecDeque<u32> = std::collections::VecDeque::new();
-
-    let root_deps = pkg_dependencies[root_id as usize];
-    let root_resolutions = pkg_resolutions[root_id as usize];
-    let dep_slice = root_deps.get(dependencies);
-    let res_slice = root_resolutions.get(resolutions);
-
-    for (dep, &resolved_pkg_id) in dep_slice.iter().zip(res_slice.iter()) {
-        if !dep.behavior.is_dev() && (resolved_pkg_id as usize) < packages.len() {
-            let pkg_name = pkg_names[resolved_pkg_id as usize].slice(buf);
-            prod_set.put(pkg_name, ())?;
-            queue.push_back(resolved_pkg_id);
+impl AuditRegistry {
+    fn from_scope(scope: &bun_install::npm::registry::Scope, is_default: bool) -> AuditRegistry {
+        AuditRegistry {
+            href: Box::<[u8]>::from(strings::without_trailing_slash(scope.url.href())),
+            url_hash: scope.url_hash,
+            token: scope.token.clone(),
+            auth: scope.auth.clone(),
+            is_default,
         }
     }
+}
 
-    while let Some(current_pkg_id) = queue.pop_front() {
-        let current_deps = pkg_dependencies[current_pkg_id as usize];
-        let current_resolutions = pkg_resolutions[current_pkg_id as usize];
-        let current_dep_slice = current_deps.get(dependencies);
-        let current_res_slice = current_resolutions.get(resolutions);
-
-        for (_, &resolved_pkg_id) in current_dep_slice.iter().zip(current_res_slice.iter()) {
-            if (resolved_pkg_id as usize) >= pkg_names.len() {
-                continue;
-            }
-
-            let pkg_name = pkg_names[resolved_pkg_id as usize].slice(buf);
-            if !prod_set.contains_key(pkg_name) {
-                prod_set.put(pkg_name, ())?;
-                queue.push_back(resolved_pkg_id);
-            }
-        }
-    }
-
-    Ok(())
+struct AuditRequest {
+    registry: AuditRegistry,
+    packages: Vec<PackageVersions>,
+    body: Box<[u8]>,
 }
 
 struct CollectPackagesResult {
-    audit_body: Box<[u8]>,
-    skipped_packages: Vec<Box<[u8]>>,
+    requests: Vec<AuditRequest>,
+}
+
+impl CollectPackagesResult {
+    fn installed_versions(&self, name: &[u8]) -> &[Box<[u8]>] {
+        match self
+            .requests
+            .iter()
+            .flat_map(|request| request.packages.iter())
+            .find(|package| *package.name == *name)
+        {
+            Some(package) => package.versions.as_slice(),
+            None => &[],
+        }
+    }
+}
+
+struct AuditResponses {
+    response_text: Box<[u8]>,
+    unaudited: Vec<audit_fix::UnauditedRegistry>,
+    stats: AuditStats,
+}
+
+struct FixAudit {
+    advisories: Vec<Advisory>,
+    unaudited: Vec<audit_fix::UnauditedRegistry>,
+    stats: AuditStats,
 }
 
 struct PackageVersions {
@@ -306,32 +400,79 @@ struct PackageVersions {
     versions: Vec<Box<[u8]>>,
 }
 
+enum SkipReason {
+    Status(u32),
+    Send(&'static str),
+    NotJson,
+}
+
+impl core::fmt::Display for SkipReason {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            SkipReason::Status(status) => write!(f, "{status}"),
+            SkipReason::Send(name) => f.write_str(name),
+            SkipReason::NotJson => f.write_str("non-JSON response"),
+        }
+    }
+}
+
+fn unaudited(request: &AuditRequest, reason: &SkipReason) -> audit_fix::UnauditedRegistry {
+    let mut reason_text: Vec<u8> = Vec::new();
+    write!(&mut reason_text, "{reason}").expect("unreachable");
+    let registry = URL::parse(&request.registry.href).href_without_auth();
+    audit_fix::UnauditedRegistry {
+        registry: Box::from(strings::without_trailing_slash(&registry)),
+        packages: request
+            .packages
+            .iter()
+            .map(|package| package.name.clone())
+            .collect(),
+        reason: reason_text.into_boxed_slice(),
+    }
+}
+
 fn collect_packages_for_audit(
     pm: &mut PackageManager,
-    prod_only: bool,
+    apply_omit: bool,
 ) -> Result<CollectPackagesResult, bun_alloc::AllocError> {
     let root_id = pm.root_package_id.get(&pm.lockfile, pm.workspace_name_hash);
 
-    let mut packages_list: Vec<PackageVersions> = Vec::new();
-    let mut skipped_packages: Vec<Box<[u8]>> = Vec::new();
+    let mut groups: Vec<(AuditRegistry, Vec<PackageVersions>)> = vec![(
+        AuditRegistry::from_scope(&pm.options.scope, true),
+        Vec::new(),
+    )];
 
-    let mut prod_packages: Option<StringHashMap<()>> = None;
-    if prod_only {
-        let mut set = StringHashMap::default();
-        build_production_package_set(pm, &mut set)?;
-        prod_packages = Some(set);
-    }
+    let features = pm.options.local_package_features;
+    let omits_something = apply_omit
+        && !(features.dev_dependencies
+            && features.optional_dependencies
+            && features.peer_dependencies);
+    let wanted_packages: Option<DynamicBitSet> = omits_something.then(|| {
+        reachable::packages(
+            &pm.lockfile,
+            pm.lockfile.buffers.resolutions.as_slice(),
+            reachable::Options {
+                root: root_id,
+                dev: features.dev_dependencies,
+                optional: features.optional_dependencies,
+                peer: features.peer_dependencies,
+                optional_peer: false,
+                bundled: true,
+                platform: None,
+            },
+        )
+    });
 
-    // Note: reshaped for borrowck — column slices borrow `pm.lockfile`
-    // immutably for the loop, so resolve `root_id` / `prod_packages` (which
-    // need `&mut pm`) above, and split-borrow `pm.options` for the scope lookup
-    // (disjoint from `pm.lockfile`).
     let options = &pm.options;
-    let default_url_hash = options.scope.url_hash;
     let packages = pm.lockfile.packages.slice();
     let pkg_names = packages.items_name();
+    let pkg_name_hashes = packages.items_name_hash();
     let pkg_resolutions = packages.items_resolution();
     let buf = pm.lockfile.buffers.string_bytes.as_slice();
+
+    let mut by_name: HashMap<PackageNameHash, (usize, usize)> =
+        HashMap::with_capacity(pkg_names.len());
+    let mut ver_scratch: Vec<u8> = Vec::new();
 
     for (idx, (name, res)) in pkg_names.iter().zip(pkg_resolutions.iter()).enumerate() {
         if idx as u32 == root_id {
@@ -341,53 +482,72 @@ fn collect_packages_for_audit(
             continue;
         }
 
-        let name_slice = name.slice(buf);
-
-        if prod_only {
-            if let Some(ref prod) = prod_packages {
-                if !prod.contains_key(name_slice) {
-                    continue;
-                }
-            }
-        }
-
-        let package_scope = options.scope_for_package_name(name_slice);
-        if package_scope.url_hash != default_url_hash {
-            skipped_packages.push(Box::<[u8]>::from(name_slice));
+        if wanted_packages
+            .as_ref()
+            .is_some_and(|wanted| !wanted.is_set(idx))
+        {
             continue;
         }
 
-        let mut ver_str: Vec<u8> = Vec::new();
-        // `res.tag == ResolutionTag::Npm` checked above.
-        let npm = *res.npm();
-        write!(&mut ver_str, "{}", npm.version.fmt(buf)).expect("unreachable");
-        let ver_str: Box<[u8]> = ver_str.into_boxed_slice();
-
-        let found_package = packages_list
-            .iter_mut()
-            .find(|item| item.name.as_ref() == name_slice);
-
-        let found_package = match found_package {
-            Some(p) => p,
+        let (group_idx, list_idx) = match by_name.get(&pkg_name_hashes[idx]) {
+            Some(&found) => found,
             None => {
+                let name_slice = name.slice(buf);
+                let package_scope = options.scope_for_package_name(name_slice);
+                let group_idx = match groups
+                    .iter()
+                    .position(|(registry, _)| registry.url_hash == package_scope.url_hash)
+                {
+                    Some(i) => i,
+                    None => {
+                        groups.push((AuditRegistry::from_scope(package_scope, false), Vec::new()));
+                        groups.len() - 1
+                    }
+                };
+                let packages_list = &mut groups[group_idx].1;
                 packages_list.push(PackageVersions {
                     name: Box::<[u8]>::from(name_slice),
                     versions: Vec::new(),
                 });
-                packages_list.last_mut().unwrap()
+                let found = (group_idx, packages_list.len() - 1);
+                by_name.put(pkg_name_hashes[idx], found)?;
+                found
             }
         };
+        let found_package = &mut groups[group_idx].1[list_idx];
+
+        ver_scratch.clear();
+        // `res.tag == ResolutionTag::Npm` checked above.
+        let npm = *res.npm();
+        write!(&mut ver_scratch, "{}", npm.version.fmt(buf)).expect("unreachable");
 
         let version_exists = found_package
             .versions
             .iter()
-            .any(|existing_ver| existing_ver.as_ref() == ver_str.as_ref());
+            .any(|existing| existing.as_ref() == ver_scratch.as_slice());
 
         if !version_exists {
-            found_package.versions.push(ver_str);
+            found_package
+                .versions
+                .push(Box::<[u8]>::from(ver_scratch.as_slice()));
         }
     }
 
+    let requests = groups
+        .into_iter()
+        .enumerate()
+        .filter(|(i, (_, list))| *i == 0 || !list.is_empty())
+        .map(|(_, (registry, list))| AuditRequest {
+            registry,
+            body: build_body(&list),
+            packages: list,
+        })
+        .collect();
+
+    Ok(CollectPackagesResult { requests })
+}
+
+fn build_body(packages_list: &[PackageVersions]) -> Box<[u8]> {
     let mut body: Vec<u8> = Vec::with_capacity(1024);
     body.push(b'{');
 
@@ -418,22 +578,127 @@ fn collect_packages_for_audit(
     }
     body.push(b'}');
 
-    Ok(CollectPackagesResult {
-        audit_body: body.into_boxed_slice(),
-        skipped_packages,
+    body.into_boxed_slice()
+}
+
+fn send_audit_requests(
+    pm: &mut PackageManager,
+    collected: &CollectPackagesResult,
+    warn: bool,
+    echo_non_json: bool,
+) -> Result<AuditResponses, bun_alloc::AllocError> {
+    let mut bodies: Vec<Box<[u8]>> = Vec::with_capacity(collected.requests.len());
+    let mut unaudited_registries: Vec<audit_fix::UnauditedRegistry> = Vec::new();
+    let mut stats = AuditStats::default();
+
+    for request in &collected.requests {
+        match send_audit_request(pm, &request.registry, &request.body, echo_non_json)? {
+            Ok(body) => {
+                stats.checked += request.packages.len();
+                bodies.push(body);
+            }
+            Err(reason) => {
+                stats.skipped += request.packages.len();
+                unaudited_registries.push(unaudited(request, &reason));
+            }
+        }
+    }
+
+    if warn && pm.options.log_level != LogLevel::Silent {
+        audit_fix::print_unaudited(&unaudited_registries);
+    }
+
+    Ok(AuditResponses {
+        response_text: merge_bulk_bodies(&bodies),
+        unaudited: unaudited_registries,
+        stats,
     })
+}
+
+fn audit_for_fix(
+    pm: &mut PackageManager,
+    audit_level: Option<AuditLevel>,
+    ignore_list: &[&[u8]],
+    warn: bool,
+) -> Result<FixAudit, bun_alloc::AllocError> {
+    let collected = collect_packages_for_audit(pm, false)?;
+    let responses = send_audit_requests(pm, &collected, warn, false)?;
+    let mut stats = responses.stats;
+
+    let vulnerabilities = if responses.response_text.is_empty() {
+        Vec::new()
+    } else {
+        match collect_vulnerabilities(
+            &responses.response_text,
+            audit_level,
+            ignore_list,
+            &mut stats,
+        )? {
+            Some(vulnerabilities) => vulnerabilities,
+            None => {
+                report_non_json_response(default_registry_href(pm));
+                Global::exit(1);
+            }
+        }
+    };
+
+    Ok(FixAudit {
+        advisories: vulnerabilities.into_iter().map(to_advisory).collect(),
+        unaudited: responses.unaudited,
+        stats,
+    })
+}
+
+fn is_empty_bulk_body(body: &[u8]) -> bool {
+    let body = body.trim_ascii();
+    body.is_empty()
+        || body
+            .strip_prefix(b"{")
+            .and_then(|rest| rest.strip_suffix(b"}"))
+            .is_some_and(|inner| inner.trim_ascii().is_empty())
+}
+
+fn merge_bulk_bodies(bodies: &[Box<[u8]>]) -> Box<[u8]> {
+    let mut non_empty = bodies.iter().filter(|body| !is_empty_bulk_body(body));
+    let Some(first) = non_empty.next() else {
+        return bodies
+            .iter()
+            .find(|body| !body.trim_ascii().is_empty())
+            .cloned()
+            .unwrap_or_default();
+    };
+    let Some(second) = non_empty.next() else {
+        return first.clone();
+    };
+
+    let mut merged: Vec<u8> = Vec::with_capacity(bodies.iter().map(|body| body.len()).sum());
+    merged.push(b'{');
+    for (i, body) in [first, second].into_iter().chain(non_empty).enumerate() {
+        let body = body.trim_ascii();
+        let inner = body
+            .strip_prefix(b"{")
+            .and_then(|rest| rest.strip_suffix(b"}"))
+            .unwrap_or(body);
+        if i > 0 {
+            merged.push(b',');
+        }
+        merged.extend_from_slice(inner);
+    }
+    merged.push(b'}');
+    merged.into_boxed_slice()
 }
 
 fn send_audit_request(
     pm: &mut PackageManager,
+    registry: &AuditRegistry,
     body: &[u8],
-) -> Result<Box<[u8]>, bun_alloc::AllocError> {
+    echo_non_json: bool,
+) -> Result<Result<Box<[u8]>, SkipReason>, bun_alloc::AllocError> {
     libdeflate::load();
     let mut compressor = libdeflate::OwnedCompressor::new(6).ok_or(bun_alloc::AllocError)?;
 
-    let max_compressed_size = compressor.max_bytes_needed(body, libdeflate::Encoding::Gzip);
-    let mut compressed_body = Vec::with_capacity(max_compressed_size);
-    let _ = compressor.compress_to_vec(body, &mut compressed_body, libdeflate::Encoding::Gzip);
+    let mut compressed_body = Vec::new();
+    let _ = compressor.compress_to_vec(body, &mut compressed_body, libdeflate::Encoding::Gzip)?;
     drop(compressor);
     let final_compressed_body = compressed_body;
 
@@ -441,26 +706,26 @@ fn send_audit_request(
     headers.count(b"accept", b"application/json");
     headers.count(b"content-type", b"application/json");
     headers.count(b"content-encoding", b"gzip");
-    if !pm.options.scope.token.is_empty() {
+    if !registry.token.is_empty() {
         headers.count(b"authorization", b"");
-        headers.content.cap += b"Bearer ".len() + pm.options.scope.token.len();
-    } else if !pm.options.scope.auth.is_empty() {
+        headers.content.cap += b"Bearer ".len() + registry.token.len();
+    } else if !registry.auth.is_empty() {
         headers.count(b"authorization", b"");
-        headers.content.cap += b"Basic ".len() + pm.options.scope.auth.len();
+        headers.content.cap += b"Basic ".len() + registry.auth.len();
     }
     headers.allocate()?;
     headers.append(b"accept", b"application/json");
     headers.append(b"content-type", b"application/json");
     headers.append(b"content-encoding", b"gzip");
-    if !pm.options.scope.token.is_empty() {
+    if !registry.token.is_empty() {
         headers.append_fmt(
             b"authorization",
-            format_args!("Bearer {}", BStr::new(&pm.options.scope.token)),
+            format_args!("Bearer {}", BStr::new(&registry.token)),
         );
-    } else if !pm.options.scope.auth.is_empty() {
+    } else if !registry.auth.is_empty() {
         headers.append_fmt(
             b"authorization",
-            format_args!("Basic {}", BStr::new(&pm.options.scope.auth)),
+            format_args!("Basic {}", BStr::new(&registry.auth)),
         );
     }
 
@@ -468,7 +733,7 @@ fn send_audit_request(
     write!(
         &mut url_str,
         "{}/-/npm/v1/security/advisories/bulk",
-        BStr::new(strings::without_trailing_slash(pm.options.scope.url.href()))
+        BStr::new(&registry.href)
     )
     .expect("unreachable");
     let url = URL::parse(&url_str);
@@ -487,26 +752,42 @@ fn send_audit_request(
         headers_buf,
         &final_compressed_body,
         http_proxy,
-        None,
         http::FetchRedirect::Follow,
     );
-    let res = match req.send_sync(&mut response_buf) {
-        Ok(r) => r,
-        Err(err) => {
-            Output::err(err, "audit request failed", ());
-            Global::crash();
+    let reason = match req.send_sync(&mut response_buf) {
+        Ok(res) if res.status_code() >= 400 => SkipReason::Status(res.status_code()),
+        Ok(_) => {
+            let response = response_buf.list.as_slice();
+            let trimmed = response.trim_ascii();
+            if trimmed.is_empty() || trimmed[0] == b'{' {
+                return Ok(Ok(Box::<[u8]>::from(response)));
+            }
+            SkipReason::NotJson
         }
+        Err(err) => SkipReason::Send(err.name()),
     };
 
-    if res.status_code() >= 400 {
-        bun_core::pretty_errorln!(
-            "<red>error<r>: audit request failed (status {})",
-            res.status_code()
-        );
-        Global::crash();
+    if !registry.is_default {
+        return Ok(Err(reason));
     }
-
-    Ok(Box::<[u8]>::from(response_buf.list.as_slice()))
+    match reason {
+        SkipReason::NotJson => {
+            if echo_non_json {
+                let _ = Output::writer().write_all(response_buf.list.as_slice());
+                let _ = Output::writer().write_all(b"\n");
+                Output::flush();
+            }
+            report_non_json_response(&registry.href);
+        }
+        reason => {
+            bun_core::pretty_errorln!(
+                "<r><red>error<r><d>:<r> <red><b>POST<r><red> {}<d> - {}<r>",
+                bun_core::fmt::redacted_npm_url(&url_str),
+                reason
+            );
+        }
+    }
+    Global::exit(1);
 }
 
 fn parse_vulnerability(
@@ -670,18 +951,15 @@ fn find_dependency_paths(
             let mut trace: Box<[u8]> = current.clone();
             let mut seen_in_trace: StringHashMap<()> = StringHashMap::default();
 
+            // Walks dependent → dependency, so the path reads root-most first and ends at the vulnerable package.
             loop {
-                // Check for cycle before processing
                 if seen_in_trace.contains_key(&*trace) {
-                    // Cycle detected, stop tracing
                     break;
                 }
 
-                // Add to path and mark as seen
-                path.path.insert(0, trace.clone());
+                path.path.push(trace.clone());
                 seen_in_trace.put(&trace, ())?;
 
-                // Get parent for next iteration
                 if let Some(parent) = parent_map.get(&*trace) {
                     trace.clone_from(parent);
                 } else {
@@ -714,6 +992,84 @@ fn find_dependency_paths(
     Ok(paths)
 }
 
+fn keep_vulnerability(
+    vulnerability: &VulnerabilityInfo,
+    audit_level: Option<AuditLevel>,
+    ignore_list: &[&[u8]],
+    stats: &mut AuditStats,
+) -> bool {
+    if let Some(level) = audit_level {
+        if !level.should_include_severity(&vulnerability.severity) {
+            stats.below_level += 1;
+            return false;
+        }
+    }
+
+    let ignored = ignore_list.iter().any(|ignored_cve| {
+        strings::eql(&vulnerability.id, ignored_cve)
+            || strings::index_of(&vulnerability.url, ignored_cve).is_some()
+    });
+    if ignored {
+        stats.ignored += 1;
+    }
+    !ignored
+}
+
+fn ignore_token(vulnerability: &VulnerabilityInfo) -> Box<[u8]> {
+    match strings::index_of(&vulnerability.url, b"GHSA-") {
+        Some(i) => Box::from(&vulnerability.url[i..]),
+        None => vulnerability.id.clone(),
+    }
+}
+
+fn to_advisory(vulnerability: VulnerabilityInfo) -> Advisory {
+    let ignore_token = ignore_token(&vulnerability);
+    Advisory {
+        package_name: vulnerability.package_name,
+        vulnerable_versions: vulnerability.vulnerable_versions,
+        ignore_token,
+    }
+}
+
+fn collect_vulnerabilities(
+    response_text: &[u8],
+    audit_level: Option<AuditLevel>,
+    ignore_list: &[&[u8]],
+    stats: &mut AuditStats,
+) -> Result<Option<Vec<VulnerabilityInfo>>, bun_alloc::AllocError> {
+    let source = bun_ast::Source::init_path_string(b"audit-response.json", response_text);
+    let mut log = bun_ast::Log::init();
+
+    let parsed = match bun_json::ParsedJson::parse_json(&source, &mut log) {
+        Ok(e) => e,
+        Err(_) => return Ok(None),
+    };
+
+    let ExprData::EObjectJSON(obj) = &parsed.root.data else {
+        return Ok(None);
+    };
+
+    let mut vulnerabilities: Vec<VulnerabilityInfo> = Vec::new();
+    for prop in obj.get().properties() {
+        let package_name: &[u8] = prop.key.slice();
+
+        let Some(arr) = prop.value.as_array() else {
+            continue;
+        };
+        for vuln in arr.items() {
+            let Some(vuln_obj) = vuln.as_object() else {
+                continue;
+            };
+            let vulnerability = parse_vulnerability(package_name, vuln_obj)?;
+            if keep_vulnerability(&vulnerability, audit_level, ignore_list, stats) {
+                vulnerabilities.push(vulnerability);
+            }
+        }
+    }
+
+    Ok(Some(vulnerabilities))
+}
+
 #[derive(Default)]
 struct VulnCounts {
     low: u32,
@@ -722,260 +1078,156 @@ struct VulnCounts {
     critical: u32,
 }
 
+fn print_severity(severity: &[u8]) {
+    match severity {
+        b"critical" => pretty!("  <red>critical<d>:<r>"),
+        b"high" => pretty!("  <red>high<d>:<r>"),
+        b"low" => pretty!("  <cyan>low<d>:<r>"),
+        _ => pretty!("  <yellow>moderate<d>:<r>"),
+    }
+}
+
+fn print_package_heading(name: &[u8], installed: &[Box<[u8]>]) {
+    pretty!("<red>{}<r>", BStr::new(name));
+    for (i, version) in installed.iter().enumerate() {
+        pretty!("{}{}", if i == 0 { "@" } else { ", " }, BStr::new(version));
+    }
+    prettyln!("");
+}
+
+fn print_dependency_path(path: &DependencyPath, separator: &str) {
+    let Some((vulnerable_pkg, dependents)) = path.path.split_last() else {
+        return;
+    };
+    if dependents.is_empty() {
+        prettyln!("  <d>(direct dependency)<r>");
+        return;
+    }
+    let mut via: Vec<u8> = Vec::new();
+    for (i, item) in dependents.iter().enumerate() {
+        if i > 0 {
+            via.push(b' ');
+            via.extend_from_slice(separator.as_bytes());
+            via.push(b' ');
+        }
+        via.extend_from_slice(item);
+    }
+    prettyln!(
+        "  <d>{} {}<r> <red>{}<r>",
+        BStr::new(&via),
+        separator,
+        BStr::new(vulnerable_pkg)
+    );
+}
+
 fn print_enhanced_audit_report(
     response_text: &[u8],
     pm: &mut PackageManager,
+    collected: &CollectPackagesResult,
     dependency_tree: &StringHashMap<Vec<Box<[u8]>>>,
     audit_level: Option<AuditLevel>,
     ignore_list: &[&[u8]],
+    mut stats: AuditStats,
 ) -> Result<u32, bun_alloc::AllocError> {
-    let source = bun_ast::Source::init_path_string(b"audit-response.json", response_text);
-    let mut log = bun_ast::Log::init();
-
-    let parsed = match bun_json::ParsedJson::parse_json(&source, &mut log) {
-        Ok(e) => e,
-        Err(_) => {
-            let _ = Output::writer().write_all(response_text);
-            let _ = Output::writer().write_all(b"\n");
-            return Ok(1);
-        }
+    let Some(mut vulnerabilities) =
+        collect_vulnerabilities(response_text, audit_level, ignore_list, &mut stats)?
+    else {
+        report_non_json_response(default_registry_href(pm));
+        return Ok(1);
     };
-    let expr = parsed.root;
 
-    if let ExprData::EObjectJSON(obj) = &expr.data {
-        if obj.get().properties().is_empty() {
-            prettyln!("<green>No vulnerabilities found<r>");
-            return Ok(0);
-        }
+    if vulnerabilities.is_empty() {
+        print_no_vulnerabilities(&stats, audit_level);
+        return Ok(0);
     }
-
-    let mut audit_result = AuditResult::init();
 
     let mut vuln_counts = VulnCounts::default();
-
-    if let ExprData::EObjectJSON(obj) = &expr.data {
-        for prop in obj.get().properties() {
-            let package_name: &[u8] = prop.key.slice();
-
-            if let Some(arr) = prop.value.as_array() {
-                for vuln in arr.items() {
-                    if let Some(vuln_obj) = vuln.as_object() {
-                        let vulnerability = parse_vulnerability(package_name, vuln_obj)?;
-
-                        if let Some(level) = audit_level {
-                            if !level.should_include_severity(&vulnerability.severity) {
-                                continue;
-                            }
-                        }
-
-                        if !ignore_list.is_empty() {
-                            let mut should_ignore = false;
-                            for ignored_cve in ignore_list {
-                                if strings::eql(&vulnerability.id, ignored_cve)
-                                    || strings::index_of(&vulnerability.url, ignored_cve).is_some()
-                                {
-                                    should_ignore = true;
-                                    break;
-                                }
-                            }
-                            if should_ignore {
-                                continue;
-                            }
-                        }
-
-                        if vulnerability.severity.as_ref() == b"low" {
-                            vuln_counts.low += 1;
-                        } else if vulnerability.severity.as_ref() == b"moderate" {
-                            vuln_counts.moderate += 1;
-                        } else if vulnerability.severity.as_ref() == b"high" {
-                            vuln_counts.high += 1;
-                        } else if vulnerability.severity.as_ref() == b"critical" {
-                            vuln_counts.critical += 1;
-                        } else {
-                            vuln_counts.moderate += 1;
-                        }
-
-                        audit_result.all_vulnerabilities.push(vulnerability);
-                    }
-                }
-            }
+    for vulnerability in &vulnerabilities {
+        match &*vulnerability.severity {
+            b"low" => vuln_counts.low += 1,
+            b"high" => vuln_counts.high += 1,
+            b"critical" => vuln_counts.critical += 1,
+            _ => vuln_counts.moderate += 1,
         }
+    }
+    let total = vulnerabilities.len() as u32;
 
-        for vulnerability in &audit_result.all_vulnerabilities {
-            let paths = find_dependency_paths(&vulnerability.package_name, dependency_tree, pm)?;
+    index_sort::sort_vec_by(&mut vulnerabilities, |a, b| {
+        strings::order(&a.package_name, &b.package_name)
+    });
 
-            let result = audit_result
-                .vulnerable_packages
-                .get_or_put(&vulnerability.package_name)?;
-            if !result.found_existing {
-                *result.value_ptr = PackageInfo {
-                    vulnerabilities: Vec::new(),
-                    dependents: paths,
-                };
-            }
-            result.value_ptr.vulnerabilities.push(VulnerabilityInfo {
-                severity: vulnerability.severity.clone(),
-                title: vulnerability.title.clone(),
-                url: vulnerability.url.clone(),
-                vulnerable_versions: vulnerability.vulnerable_versions.clone(),
-                id: vulnerability.id.clone(),
-                package_name: vulnerability.package_name.clone(),
-            });
-        }
-
-        for (_, package_info) in audit_result.vulnerable_packages.iter() {
-            if !package_info.vulnerabilities.is_empty() {
-                let main_vuln = &package_info.vulnerabilities[0];
-
-                // const is_direct_dependency: bool = brk: {
-                //     for (package_info.dependents.items) |path| {
-                //         if (path.is_direct) {
-                //             break :brk true;
-                //         }
-                //     }
-                //
-                //     break :brk false;
-                // };
-
-                if !main_vuln.vulnerable_versions.is_empty() {
-                    prettyln!(
-                        "<red>{}<r>  {}",
-                        BStr::new(&main_vuln.package_name),
-                        BStr::new(&main_vuln.vulnerable_versions)
-                    );
-                } else {
-                    prettyln!("<red>{}<r>", BStr::new(&main_vuln.package_name));
-                }
-
-                for path in &package_info.dependents {
-                    if path.path.len() > 1 {
-                        if path.path[0].starts_with(b"workspace:") {
-                            let vulnerable_pkg = &path.path[path.path.len() - 1];
-                            let workspace_part = &path.path[0];
-
-                            prettyln!(
-                                "  <d>{} › <red>{}<r>",
-                                BStr::new(workspace_part),
-                                BStr::new(vulnerable_pkg)
-                            );
-                        } else {
-                            let vulnerable_pkg = &path.path[0];
-
-                            let mut reversed_items: Vec<&[u8]> = Vec::new();
-                            for item in &path.path[1..] {
-                                reversed_items.push(item);
-                            }
-                            reversed_items.reverse();
-
-                            let mut vuln_pkg_path: Vec<u8> = Vec::new();
-                            for (i, item) in reversed_items.iter().enumerate() {
-                                if i > 0 {
-                                    vuln_pkg_path.extend_from_slice(" › ".as_bytes());
-                                }
-                                vuln_pkg_path.extend_from_slice(item);
-                            }
-
-                            prettyln!(
-                                "  <d>{} › <red>{}<r>",
-                                BStr::new(&vuln_pkg_path),
-                                BStr::new(vulnerable_pkg)
-                            );
-                        }
-                    } else {
-                        prettyln!("  <d>(direct dependency)<r>");
-                    }
-                }
-
-                for vuln in &package_info.vulnerabilities {
-                    if !vuln.title.is_empty() {
-                        if vuln.severity.as_ref() == b"critical" {
-                            prettyln!(
-                                "  <red>critical<d>:<r> {} - <d>{}<r>",
-                                BStr::new(&vuln.title),
-                                BStr::new(&vuln.url)
-                            );
-                        } else if vuln.severity.as_ref() == b"high" {
-                            prettyln!(
-                                "  <red>high<d>:<r> {} - <d>{}<r>",
-                                BStr::new(&vuln.title),
-                                BStr::new(&vuln.url)
-                            );
-                        } else if vuln.severity.as_ref() == b"moderate" {
-                            prettyln!(
-                                "  <yellow>moderate<d>:<r> {} - <d>{}<r>",
-                                BStr::new(&vuln.title),
-                                BStr::new(&vuln.url)
-                            );
-                        } else {
-                            prettyln!(
-                                "  <cyan>low<d>:<r> {} - <d>{}<r>",
-                                BStr::new(&vuln.title),
-                                BStr::new(&vuln.url)
-                            );
-                        }
-                    }
-                }
-
-                // if (is_direct_dependency) {
-                //     Output.prettyln("  To fix: <green>`bun update {s}`<r>", .{package_info.name});
-                // } else {
-                //     Output.prettyln("  To fix: <green>`bun update --latest`<r><d> (may be a breaking change)<r>", .{});
-                // }
-
-                prettyln!("");
-            }
-        }
-
-        let total =
-            vuln_counts.low + vuln_counts.moderate + vuln_counts.high + vuln_counts.critical;
-        if total > 0 {
-            pretty!("<b>{} vulnerabilities<r> (", total);
-
-            let mut has_previous = false;
-            if vuln_counts.critical > 0 {
-                pretty!("<red><b>{} critical<r>", vuln_counts.critical);
-                has_previous = true;
-            }
-            if vuln_counts.high > 0 {
-                if has_previous {
-                    pretty!(", ");
-                }
-                pretty!("<red>{} high<r>", vuln_counts.high);
-                has_previous = true;
-            }
-            if vuln_counts.moderate > 0 {
-                if has_previous {
-                    pretty!(", ");
-                }
-                pretty!("<yellow>{} moderate<r>", vuln_counts.moderate);
-                has_previous = true;
-            }
-            if vuln_counts.low > 0 {
-                if has_previous {
-                    pretty!(", ");
-                }
-                pretty!("<cyan>{} low<r>", vuln_counts.low);
-            }
-            prettyln!(")");
-
-            prettyln!("");
-            prettyln!("To update all dependencies to the latest compatible versions:");
-            prettyln!("  <green>bun update<r>");
-            prettyln!("");
-            prettyln!(
-                "To update all dependencies to the latest versions (including breaking changes):"
-            );
-            prettyln!("  <green>bun update --latest<r>");
-            prettyln!("");
-        }
-
-        if total > 0 {
-            return Ok(1);
-        }
+    let separator = if Output::enable_ansi_colors_stdout() {
+        "›"
     } else {
-        let _ = Output::writer().write_all(response_text);
-        let _ = Output::writer().write_all(b"\n");
+        ">"
+    };
+
+    let mut rest: &[VulnerabilityInfo] = &vulnerabilities;
+    while let Some(first) = rest.first() {
+        let package_name: &[u8] = &first.package_name;
+        let run_len = rest
+            .iter()
+            .take_while(|vulnerability| *vulnerability.package_name == *package_name)
+            .count();
+        let (group, tail) = rest.split_at(run_len);
+        rest = tail;
+
+        print_package_heading(package_name, collected.installed_versions(package_name));
+
+        for path in &find_dependency_paths(package_name, dependency_tree, pm)? {
+            print_dependency_path(path, separator);
+        }
+
+        for vuln in group {
+            if vuln.title.is_empty() {
+                continue;
+            }
+            print_severity(&vuln.severity);
+            pretty!(" {}", BStr::new(&vuln.title));
+            if !vuln.vulnerable_versions.is_empty() {
+                pretty!(" <d>({})<r>", BStr::new(&vuln.vulnerable_versions));
+            }
+            prettyln!(" - <d>{}<r>", BStr::new(&vuln.url));
+        }
+
+        prettyln!("");
     }
 
-    Ok(0)
+    pretty!("<b>{} {}<r> (", total, audit_fix::vuln_word(total));
+
+    let mut has_previous = false;
+    if vuln_counts.critical > 0 {
+        pretty!("<red><b>{} critical<r>", vuln_counts.critical);
+        has_previous = true;
+    }
+    if vuln_counts.high > 0 {
+        if has_previous {
+            pretty!(", ");
+        }
+        pretty!("<red>{} high<r>", vuln_counts.high);
+        has_previous = true;
+    }
+    if vuln_counts.moderate > 0 {
+        if has_previous {
+            pretty!(", ");
+        }
+        pretty!("<yellow>{} moderate<r>", vuln_counts.moderate);
+        has_previous = true;
+    }
+    if vuln_counts.low > 0 {
+        if has_previous {
+            pretty!(", ");
+        }
+        pretty!("<cyan>{} low<r>", vuln_counts.low);
+    }
+    prettyln!(")");
+
+    prettyln!("");
+    prettyln!(
+        "  <cyan>bun audit fix<r>           <d>upgrade the vulnerable packages within their ranges<r>"
+    );
+    prettyln!("  <cyan>bun audit fix --latest<r>  <d>also cross major versions<r>");
+    Output::flush();
+
+    Ok(1)
 }

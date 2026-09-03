@@ -16,6 +16,7 @@ use bun_wyhash::hash;
 use super::diff_format::DiffFormatter;
 use super::expect::Expect;
 use super::jest::{FileColumns as _, Jest};
+use bun_collections::index_sort;
 
 // TestRunner.File.ID — concrete alias from jest.rs (`pub type FileId = u32`).
 type FileId = super::jest::FileId;
@@ -404,7 +405,7 @@ impl Snapshots {
             });
 
             // 1. sort ils_info by row, col
-            ils_info.sort_by(|a, b| {
+            index_sort::sort_slice_by(ils_info, |a, b| {
                 if InlineSnapshotToWrite::less_than_fn(a, b) {
                     core::cmp::Ordering::Less
                 } else if InlineSnapshotToWrite::less_than_fn(b, a) {
@@ -473,14 +474,7 @@ impl Snapshots {
                             },
                             format_args!(
                                 "Failed to update inline snapshot: Multiple inline snapshots on the same line must all have the same value:\n{}",
-                                DiffFormatter {
-                                    received_string: Some(&ils.value),
-                                    expected_string: Some(last_value),
-                                    global_this: Some(vm.global()),
-                                    received: None,
-                                    expected: None,
-                                    not: false,
-                                },
+                                DiffFormatter::from_strings(&ils.value, last_value, false),
                             ),
                         );
                     }

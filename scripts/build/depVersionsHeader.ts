@@ -64,8 +64,6 @@ function computeVersions(cfg: Config): [string, string][] {
   }
 
   // ─── Non-dep versions ───
-  versions.push(["BUN_VERSION", cfg.version]);
-  versions.push(["NODEJS_COMPAT_VERSION", cfg.nodejsVersion]);
   // UWS/USOCKETS are vendored at packages/bun-usockets — the bun commit
   // IS their version.
   versions.push(["UWS", cfg.revision]);
@@ -103,11 +101,8 @@ export function generateDepVersionsHeader(cfg: Config): string {
     'extern "C" {',
     "#endif",
     "",
-    "// Dependency versions",
-    ...versions.map(([name, val]) => `#define BUN_DEP_${name} "${val}"`),
-    "",
     "// C string constants for easy access",
-    ...versions.map(([name, val]) => `static const char* const BUN_VERSION_${name} = "${val}";`),
+    ...versions.map(([name, val]) => `static constexpr const char* BUN_VERSION_${name} = "${val}";`),
     "",
     "#ifdef __cplusplus",
     "}",

@@ -5,7 +5,7 @@
 
 use super::client_session::{ClientSession, stream_mut};
 use super::stream::{State as StreamState, Stream};
-use super::{LOCAL_MAX_HEADER_LIST_SIZE, WRITE_BUFFER_CONTROL_LIMIT};
+use super::{LOCAL_MAX_CONTINUATIONS, LOCAL_MAX_HEADER_LIST_SIZE, WRITE_BUFFER_CONTROL_LIMIT};
 use crate::h2_frame_parser as wire;
 use bun_picohttp as picohttp;
 
@@ -293,6 +293,7 @@ fn dispatch_frame(
             }
         }
         FT_HEADERS => {
+            session.continuation_count = 0;
             let mut fragment = payload;
             let maybe_stream = session.streams.get(&stream_id).copied();
             if maybe_stream.is_none() {
@@ -378,6 +379,11 @@ fn dispatch_frame(
         FT_CONTINUATION => {
             if session.expecting_continuation == 0 || stream_id != session.expecting_continuation {
                 session.fatal_error = Some(crate::Error::HTTP2ProtocolError);
+                return;
+            }
+            session.continuation_count += 1;
+            if session.continuation_count > LOCAL_MAX_CONTINUATIONS {
+                session.fatal_error = Some(crate::Error::HTTP2EnhanceYourCalm);
                 return;
             }
             if let Some(&stream_ptr) = session.streams.get(&session.expecting_continuation) {
@@ -480,6 +486,10 @@ fn dispatch_frame(
             };
             // SAFETY: stream pointer valid for session lifetime.
             let stream = stream_mut(stream_ptr);
+            if stream.rst_done {
+                // First RST_STREAM wins; a later STREAM_CLOSED for in-flight DATA is ignored.
+                return;
+            }
             let had_response = stream.remote_closed();
             stream.rst_done = true;
             stream.state = StreamState::Closed;

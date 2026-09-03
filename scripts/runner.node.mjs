@@ -36,6 +36,7 @@ import { parseArgs } from "node:util";
 import { prestartMap as dockerPrestartMap } from "../test/docker/prestart-map.mjs";
 import pLimit from "./p-limit.mjs";
 import {
+  createLiveOutputFilter,
   getAbi,
   getAbiVersion,
   getArch,
@@ -54,6 +55,7 @@ import {
   getSecret,
   getShell,
   getWindowsExitReason,
+  isAndroid,
   isBuildkite,
   isCI,
   isGithubAction,
@@ -62,6 +64,7 @@ import {
   isWindows,
   isX64,
   markBuildkiteStepReported,
+  parseJunitFileSuites,
   printEnvironment,
   reportAnnotationToBuildKite,
   startGroup,
@@ -73,6 +76,7 @@ import {
 let isQuiet = false;
 const cwd = import.meta.dirname ? dirname(import.meta.dirname) : process.cwd();
 const testsPath = join(cwd, "test");
+const ciRemapServerPath = join(cwd, "scripts", "ci-remap-server");
 
 const runnerStartedAt = Date.now();
 const jobBudgetMs = () => {
@@ -168,7 +172,7 @@ const { values: options, positionals: filters } = parseArgs({
     },
     ["retries"]: {
       type: "string",
-      default: isCI ? "3" : "0", // N retries = N+1 attempts
+      default: isCI ? "3" : "0", // N retries = N+1 attempts, only for files in test/flaky-tests.txt
     },
     ["junit"]: {
       type: "boolean",
@@ -184,7 +188,7 @@ const { values: options, positionals: filters } = parseArgs({
     },
     ["coredump-upload"]: {
       type: "boolean",
-      default: isBuildkite && isLinux,
+      default: isBuildkite && isLinux && !isAndroid,
     },
     ["parallel"]: {
       type: "boolean",
@@ -375,6 +379,27 @@ const skipsForLeaksan = (() => {
     .map(line => line.trim())
     .filter(line => !line.startsWith("#") && line.length > 0);
 })();
+
+// Test files that the runner may run again when they fail (see --retries).
+// Every other file runs once and a failure is final.
+const flakyTests = (() => {
+  const path = join(cwd, "test/flaky-tests.txt");
+  if (!existsSync(path)) {
+    return new Set();
+  }
+  return new Set(
+    readFileSync(path, "utf-8")
+      .split("\n")
+      .map(line => line.split("#")[0].trim())
+      .filter(line => line.length > 0),
+  );
+})();
+
+/**
+ * @param {string} title repo-relative path, as reported in the test output
+ * @returns {boolean}
+ */
+const isFlakyTest = title => flakyTests.has(title.replaceAll("\\", "/"));
 
 const parallelAllowlist = (() => {
   try {
@@ -618,7 +643,7 @@ async function runTests() {
   const flakyResultsTitles = [];
   const failedResults = [];
   const failedResultsTitles = [];
-  const maxAttempts = 1 + (parseInt(options["retries"]) || 0);
+  const retries = Math.max(parseInt(options["retries"], 10) || 0, 0);
 
   const parallelism = options["parallel"] ? availableParallelism() : 1;
   console.log("parallelism", parallelism);
@@ -657,14 +682,20 @@ async function runTests() {
    * @param {string} title
    * @param {function} fn
    * @param {boolean} [concurrent] this call may overlap with other runTest calls
+   * @param {TestResult} [priorFailure] the file already failed once, inside the
+   * parallel batch: that run was attempt 1
    * @returns {Promise<TestResult>}
    */
-  const runTest = async (title, fn, concurrent = parallelism > 1) => {
+  const runTest = async (title, fn, concurrent = parallelism > 1, priorFailure = undefined) => {
     const index = ++i;
+    // A test file runs once unless test/flaky-tests.txt lists it. The runner's
+    // own dependency installs (the package.json titles) are setup, not tests,
+    // and keep their retries.
+    const maxAttempts = title.endsWith("package.json") || isFlakyTest(title) ? 1 + retries : 1;
 
-    let result, failure, flaky;
-    let attempt = 1;
-    for (; attempt <= maxAttempts; attempt++) {
+    let result, failure;
+    let attempt;
+    for (attempt = priorFailure ? 2 : 1; attempt <= maxAttempts; attempt++) {
       if (attempt > 1) {
         await new Promise(resolve => setTimeout(resolve, 5000 + Math.random() * 10_000));
       }
@@ -680,15 +711,7 @@ async function runTests() {
       }
 
       const { ok, stdoutPreview, error } = result;
-      if (ok) {
-        if (failure) {
-          flakyResults.push(failure);
-          flakyResultsTitles.push(title);
-        } else {
-          okResults.push(result);
-        }
-        break;
-      }
+      if (ok) break;
 
       const color = attempt >= maxAttempts ? "red" : "yellow";
       const label = `${getAnsi(color)}[${index}/${total}] ${title} - ${error}${getAnsi("reset")}`;
@@ -704,20 +727,39 @@ async function runTests() {
       }
 
       failure ||= result;
-      flaky ||= true;
-
-      if (attempt >= maxAttempts || isAlwaysFailure(error)) {
-        flaky = false;
-        failedResults.push(failure);
-        failedResultsTitles.push(title);
-        break;
-      }
+      if (isAlwaysFailure(error)) break;
     }
 
+    // No attempt ran: the batch failure is the only result.
+    if (result === undefined) failure = priorFailure;
+
     if (!failure) {
+      okResults.push(result);
       return result;
     }
 
+    // The first failure of these attempts is the one reported. It is flaky when a later attempt passed.
+    const flaky = result?.ok === true;
+    if (flaky) {
+      flakyResults.push(failure);
+      flakyResultsTitles.push(title);
+    } else {
+      failedResults.push(failure);
+      failedResultsTitles.push(title);
+    }
+    reportFailure(title, failure, flaky, attempt);
+    return result ?? failure;
+  };
+
+  /**
+   * Reports a failed attempt to CI: a warning when the file later passed
+   * (flaky), an error when the failure is final.
+   * @param {string} title
+   * @param {TestResult} failure
+   * @param {boolean} flaky
+   * @param {number} attempt the attempt that passed, when flaky
+   */
+  function reportFailure(title, failure, flaky, attempt) {
     if (isBuildkite) {
       // Group flaky tests together, regardless of the title
       const context = flaky ? "flaky" : title;
@@ -751,9 +793,7 @@ async function runTests() {
       markBuildkiteStepReported();
       process.exit(getExitCode("fail"));
     }
-
-    return result;
-  };
+  }
 
   if (!isQuiet) {
     for (const path of [cwd, testsPath]) {
@@ -788,16 +828,14 @@ async function runTests() {
 
   if (!failedResults.length) {
     // TODO: remove windows exclusion here
-    if (isCI && !isWindows) {
-      // bun install has succeeded
+    if (isCI && !isWindows && (await installCiRemapServer(execPath))) {
       const { promise: portPromise, resolve: portResolve } = Promise.withResolvers();
       const { promise: errorPromise, resolve: errorResolve } = Promise.withResolvers();
-      console.log("run in", cwd);
       let exiting = false;
 
       const server = spawn(execPath, ["run", "--silent", "ci-remap-server", execPath, cwd, getCommit()], {
         stdio: ["ignore", "pipe", "inherit"],
-        cwd, // run in main repo
+        cwd: ciRemapServerPath,
         env: { ...process.env, BUN_DEBUG_QUIET_LOGS: "1", NO_COLOR: "1" },
       });
       server.unref();
@@ -828,7 +866,7 @@ async function runTests() {
       }
     }
 
-    const runOneTest = async (testPath, concurrent) => {
+    const runOneTest = async (testPath, concurrent, priorFailure = undefined) => {
       await awaitNapiPrebuild(testPath);
       const absoluteTestPath = join(testsPath, testPath);
       const title = relative(cwd, absoluteTestPath).replaceAll(sep, "/");
@@ -925,8 +963,8 @@ async function runTests() {
                 // calls from wiping each other when parallelSafeWidth > 1.
                 TEST_SERIAL_ID: String(index),
               },
-              stdout: concurrent ? () => {} : chunk => pipeTestStdout(process.stdout, chunk),
-              stderr: concurrent ? () => {} : chunk => pipeTestStdout(process.stderr, chunk),
+              stdout: concurrent ? () => {} : pipeTestStdout(process.stdout),
+              stderr: concurrent ? () => {} : pipeTestStdout(process.stderr),
             });
             const mb = 1024 ** 3;
             let stdoutPreview = stdout.slice(0, mb).split("\n").slice(0, 50).join("\n");
@@ -943,6 +981,7 @@ async function runTests() {
             };
           },
           concurrent,
+          priorFailure,
         );
       } else {
         return runTest(
@@ -950,10 +989,11 @@ async function runTests() {
           async () =>
             spawnBunTest(execPath, join("test", testPath), {
               cwd,
-              stdout: concurrent ? () => {} : chunk => pipeTestStdout(process.stdout, chunk),
-              stderr: concurrent ? () => {} : chunk => pipeTestStdout(process.stderr, chunk),
+              stdout: concurrent ? () => {} : pipeTestStdout(process.stdout),
+              stderr: concurrent ? () => {} : pipeTestStdout(process.stderr),
             }),
           concurrent,
+          priorFailure,
         );
       }
     };
@@ -978,6 +1018,10 @@ async function runTests() {
         env.LSAN_OPTIONS = `malloc_context_size=30:print_suppressions=0:suppressions=${process.cwd()}/test/leaksan.supp`;
       }
       if (isAsan) env.BUN_FEATURE_FLAG_NO_ORPHANS = "1";
+
+      // A report left behind by an earlier run on a persistent agent must not
+      // stand in for one this batch failed to write.
+      rmSync(junitPath, { force: true });
 
       const byPath = new Map(bucketFiles.map(t => [join("test", t).replaceAll("\\", "/"), t]));
       const norm = p =>
@@ -1008,54 +1052,46 @@ async function runTests() {
           idleTimeout: parseInt(process.env.BUN_RUNNER_BATCH_IDLE_MS || "", 10) || 4 * 60_000,
           gracefulTimeout: true,
           env,
-          stdout: chunk => pipeTestStdout(process.stdout, chunk),
-          stderr: chunk => pipeTestStdout(process.stderr, chunk),
+          stdout: pipeTestStdout(process.stdout),
+          stderr: pipeTestStdout(process.stderr),
         }),
       );
       if (crashes) process.stderr.write(crashes);
 
-      const suites = new Map(); // repo-relative path -> { failures, seconds, cases: [{name, message}] }
-      const unescapeXml = str =>
-        str
-          .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number(code)))
-          .replace(/&quot;/g, '"')
-          .replace(/&apos;/g, "'")
-          .replace(/&lt;/g, "<")
-          .replace(/&gt;/g, ">")
-          .replace(/&amp;/g, "&");
+      let suites = new Map(); // repo-relative path -> { failures, seconds, cases: [{name, message}] }
       try {
-        const xml = readFileSync(junitPath, "utf-8");
-        for (const [, attrs] of xml.matchAll(/<testsuite\b([^>]*)>/g)) {
-          const file = /\bfile="([^"]+)"/.exec(attrs)?.[1];
-          const failures = Number(/\bfailures="(\d+)"/.exec(attrs)?.[1] ?? 0);
-          const seconds = Number(/\btime="([\d.]+)"/.exec(attrs)?.[1] ?? 0);
-          if (file) suites.set(unescapeXml(file).replaceAll("\\", "/"), { failures, seconds, cases: [] });
-        }
-        for (const [, caseAttrs, failureAttrs] of xml.matchAll(/<testcase\b([^>]*)>\s*<failure\b([^>]*)>/g)) {
-          const file = /\bfile="([^"]+)"/.exec(caseAttrs)?.[1];
-          const entry = file && suites.get(unescapeXml(file).replaceAll("\\", "/"));
-          if (!entry) continue;
-          entry.cases.push({
-            name: unescapeXml(/\bname="([^"]*)"/.exec(caseAttrs)?.[1] ?? "(unnamed)"),
-            message: unescapeXml(/\bmessage="([^"]*)"/.exec(failureAttrs)?.[1] ?? ""),
-          });
-        }
+        suites = parseJunitFileSuites(readFileSync(junitPath, "utf-8"));
       } catch {}
       if (suites.size && isBuildkite) uploadArtifactsToBuildKite(junitPath);
       else rmSync(junitPath, { force: true });
 
-      const failed = new Set(); // ran and failed (or hung) — a solo pass is a parallel-mode flake
-      const incomplete = new Set(); // never finished/started — re-run quietly
-      let evidence = suites.size > 0;
-      if (!ok && suites.size) {
-        for (const t of bucketFiles) {
-          const suite = suites.get(join("test", t).replaceAll("\\", "/"));
-          if (suite === undefined) incomplete.add(t);
-          else if (suite.failures > 0) failed.add(t);
+      // A failure in the batch counts as it does in a serial run. A file that
+      // failed, hung, or crashed here runs again alone only when
+      // test/flaky-tests.txt lists it and isAlwaysFailure does not match its
+      // reason. A file with no complete result (the batch never started it, or
+      // a sibling's crash stopped it) runs alone once: that is its first run.
+      const failed = new Map(); // test path -> why it failed in the batch
+      const incomplete = new Set();
+      // Files whose worker died of a fatal signal or a fatal Windows exit code.
+      // The coordinator prints a banner for each one, as the crash handler does
+      // for a serial run, and such a crash is never retried.
+      const crashed = new Set();
+      // The batch as a whole failed: no file explains the exit, or the summary
+      // counts errors between tests, which the junit report does not name.
+      let batchError;
+      if (!ok) {
+        const lines = stripAnsi(stdout).split(/\r?\n/);
+        if (suites.size) {
+          for (const t of bucketFiles) {
+            const suite = suites.get(join("test", t).replaceAll("\\", "/"));
+            if (suite === undefined) incomplete.add(t);
+            else if (suite.failures > 0) failed.set(t, `${suite.failures} failing in the parallel batch`);
+          }
         }
-      } else if (!ok) {
+        // The coordinator names the files that a hang or a worker death
+        // stopped, and the status of each worker that died.
         let list = null; // "running" | "not-started" while inside an interrupt report list
-        for (const line of stripAnsi(stdout).split(/\r?\n/)) {
+        for (const line of lines) {
           if (line.startsWith("Interrupted while still running:")) {
             list = "running";
             continue;
@@ -1066,21 +1102,70 @@ async function runTests() {
           }
           if (list && /^ {2}\S/.test(line)) {
             const testPath = norm(line);
-            if (testPath) (list === "running" ? failed : incomplete).add(testPath);
+            if (!testPath) continue;
+            if (list === "running") {
+              failed.set(testPath, `${error} in the parallel batch`);
+              incomplete.delete(testPath);
+            } else if (!failed.has(testPath)) {
+              incomplete.add(testPath);
+            }
             continue;
           }
           list = null;
-          const ended = /^✗ (.+?) \((worker crashed|aborted:|no live workers)/.exec(line);
+          const banner = /^error: a test worker process crashed with (.+?) while running (.+)\.$/.exec(line);
+          if (banner) {
+            const testPath = norm(banner[2]);
+            if (!testPath) continue;
+            crashed.add(testPath);
+            failed.set(testPath, `worker crashed with ${banner[1]} in the parallel batch`);
+            incomplete.delete(testPath);
+            continue;
+          }
+          const ended = /^✗ (.+?) \((worker crashed: (.+)|aborted:|no live workers)/.exec(line);
           const testPath = ended && norm(ended[1]);
-          if (testPath) (ended[2] === "worker crashed" ? failed : incomplete).add(testPath);
+          if (!testPath) continue;
+          if (ended[3] !== undefined) {
+            failed.set(testPath, `worker crashed with ${ended[3].replace(/\)$/, "")} in the parallel batch`);
+            incomplete.delete(testPath);
+          } else if (!failed.has(testPath)) {
+            incomplete.add(testPath);
+          }
         }
-        evidence = failed.size + incomplete.size > 0;
+        if (!suites.size) {
+          // No junit report: no file has a result.
+          for (const t of bucketFiles) if (!failed.has(t)) incomplete.add(t);
+        }
+        const failAt = lines.findLastIndex(line => /^\s*\d+ fail\s*$/.test(line));
+        const unhandled = failAt === -1 ? null : /^\s*(\d+) errors?\s*$/.exec(lines[failAt + 1] ?? "");
+        if (unhandled) {
+          batchError = `${unhandled[1]} unhandled error(s) between tests in the parallel batch`;
+        } else if (!suites.size) {
+          batchError = `${error} in the parallel batch, with no junit report`;
+        } else if (failed.size === 0) {
+          batchError = `${error} in the parallel batch, and no file failed`;
+        } else if (
+          crashed.size === 0 &&
+          /crashes reported during this test|Stack trace from GDB for/.test(crashes ?? "")
+        ) {
+          // A serial run fails the file for a core dump or a crash report.
+          batchError = "a crash was reported in the parallel batch, and no worker died of it";
+        }
       }
-      const rerun = !ok && !evidence ? [...bucketFiles] : [...failed, ...incomplete];
+      const retried = [...failed.entries()]
+        .filter(
+          ([t, reason]) =>
+            retries > 0 &&
+            !crashed.has(t) &&
+            !isAlwaysFailure(reason) &&
+            isFlakyTest(join("test", t).replaceAll("\\", "/")),
+        )
+        .map(([t]) => t);
+      const retriedSet = new Set(retried);
+      const rerun = [...retried, ...incomplete];
       const rerunSet = new Set(rerun);
 
       for (const t of bucketFiles) {
-        if (rerunSet.has(t)) continue;
+        if (rerunSet.has(t) || failed.has(t)) continue;
         const title = join("test", t).replaceAll("\\", "/");
         const seconds = suites.get(title)?.seconds;
         const timing = seconds === undefined ? "" : ` ${getAnsi("gray")}(${seconds.toFixed(2)}s)${getAnsi("reset")}`;
@@ -1095,28 +1180,65 @@ async function runTests() {
           stdoutPreview: "",
         });
       }
+      const batchFailures = new Map(); // test path -> TestResult, for the files that run again alone
       for (const t of bucketFiles) {
-        if (!failed.has(t)) continue;
+        const reason = failed.get(t);
+        if (reason === undefined) continue;
         const title = join("test", t).replaceAll("\\", "/");
-        const suite = suites.get(title);
-        if (!suite?.cases.length) continue;
-        startGroup(
-          `${title} - ${suite.failures} failing in the parallel batch ${getAnsi("gray")}(${suite.seconds.toFixed(2)}s)${getAnsi("reset")}`,
-          () => {
-            for (const { name, message } of suite.cases) {
-              console.log(`${getAnsi("red")}✗${getAnsi("reset")} ${name}`);
-              if (message) console.log(message.replace(/^/gm, "    "));
-            }
-          },
-        );
+        const cases = suites.get(title)?.cases ?? [];
+        const printCases = () => {
+          for (const { name, message } of cases) {
+            console.log(`${getAnsi("red")}✗${getAnsi("reset")} ${name}`);
+            if (message) console.log(message.replace(/^/gm, "    "));
+          }
+        };
+        const preview = cases.map(({ name, message }) => `✗ ${name}\n${message}`).join("\n\n") || reason;
+        const result = {
+          testPath: title,
+          ok: false,
+          status: "fail",
+          error: reason,
+          errors: [],
+          tests: [],
+          stdout: preview,
+          stdoutPreview: preview,
+        };
+        if (retriedSet.has(t)) {
+          startGroup(`${getAnsi("yellow")}${title} - ${reason}${getAnsi("reset")}`, printCases);
+          batchFailures.set(t, result);
+          continue;
+        }
+        startGroup(`${getAnsi("red")}[${++i}/${total}] ${title} - ${reason}${getAnsi("reset")}`, printCases);
+        failedResults.push(result);
+        failedResultsTitles.push(title);
+        reportFailure(title, result, false, 1);
+      }
+      if (batchError) {
+        // No file can hold this failure, so the list cannot hold it either.
+        const preview = `${stripAnsi(stdout).split(/\r?\n/).slice(-50).join("\n")}\n${crashes ?? ""}`.trim();
+        console.log(`${getAnsi("red")}${label} - ${batchError}${getAnsi("reset")}`);
+        const result = {
+          testPath: label,
+          ok: false,
+          status: "fail",
+          error: batchError,
+          errors: [],
+          tests: [],
+          stdout,
+          stdoutPreview: preview,
+        };
+        failedResults.push(result);
+        failedResultsTitles.push(label);
+        reportFailure(label, result, false, 1);
       }
       if (rerun.length) {
         console.log(
-          `${getAnsi("yellow")}parallel bucket: ${evidence ? `retrying ${failed.size} failed and ${incomplete.size} unfinished file(s)${suites.size ? "" : " (from streamed output; no junit)"}` : `no junit and no streamed evidence, re-running all ${rerun.length} file(s)`} one at a time${getAnsi("reset")}`,
+          `${getAnsi("yellow")}parallel bucket: running ${retried.length} listed flaky file(s) that failed and ${incomplete.size} file(s) with no result, one at a time${getAnsi("reset")}`,
         );
         for (const testPath of rerun) {
-          const result = await runOneTest(testPath, false);
-          if (result?.ok && failed.has(testPath) && isBuildkite) {
+          // A listed file's batch run was its first attempt: the solo runs are its retries.
+          const result = await runOneTest(testPath, false, batchFailures.get(testPath));
+          if (result?.ok && batchFailures.has(testPath) && isBuildkite) {
             const title = join("test", testPath).replaceAll("\\", "/");
             const cases = suites.get(title)?.cases ?? [];
             const first = cases[0];
@@ -1427,8 +1549,8 @@ async function runTests() {
  * @property {string} [cwd]
  * @property {number} [timeout]
  * @property {object} [env]
- * @property {function} [stdout]
- * @property {function} [stderr]
+ * @property {((chunk: string) => void) & { end?: () => void }} [stdout] called per chunk; `end` when the stream closes
+ * @property {((chunk: string) => void) & { end?: () => void }} [stderr]
  */
 
 /**
@@ -1572,12 +1694,14 @@ async function spawnSafe(options) {
         stdout?.(text);
         buffer += text;
       });
+      subprocess.stdout.on("close", () => stdout?.end?.());
       subprocess.stderr.on("data", chunk => {
         armIdleTimer?.();
         const text = chunk.toString("utf-8");
         stderr?.(text);
         buffer += text;
       });
+      subprocess.stderr.on("close", () => stderr?.end?.());
     } catch (error) {
       spawnError = error;
       resolve();
@@ -1956,6 +2080,8 @@ async function spawnBun(execPath, { args, cwd, timeout, gracefulTimeout, idleTim
  * @param {string} [opts.cwd]
  * @param {string[]} [opts.args]
  * @param {object} [opts.env]
+ * @param {(chunk: string) => void} [opts.stdout]
+ * @param {(chunk: string) => void} [opts.stderr]
  * @returns {Promise<TestResult>}
  */
 async function spawnBunTest(execPath, testPath, opts = { cwd }) {
@@ -2020,8 +2146,8 @@ async function spawnBunTest(execPath, testPath, opts = { cwd }) {
     // per-test multiplier so the overall shard stays inside the job timeout.
     timeout: isReallyTest ? Math.ceil(timeout * (isAsan ? 2 : 1)) : 30_000,
     env,
-    stdout: options.stdout,
-    stderr: options.stderr,
+    stdout: opts.stdout ?? pipeTestStdout(process.stdout),
+    stderr: opts.stderr ?? pipeTestStdout(process.stderr),
   });
   let { tests, errors, stdout: stdoutPreview } = parseTestStdout(stdout, testPath);
   if (crashes) stdoutPreview += crashes;
@@ -2062,17 +2188,24 @@ function getTestTimeout(testPath) {
 }
 
 /**
+ * Streams the output of one child process stream to `io`, without the workflow
+ * commands bun test prints because GITHUB_ACTIONS is set (see createLiveOutputFilter).
+ * spawnSafe calls `end()` when the stream closes.
+ *
  * @param {NodeJS.WritableStream} io
- * @param {string} chunk
+ * @returns {((chunk: string) => void) & { end: () => void }}
  */
-function pipeTestStdout(io, chunk) {
-  if (isGithubAction) {
-    io.write(chunk.replace(/\:\:(?:end)?group\:\:.*(?:\r\n|\r|\n)/gim, ""));
-  } else if (isBuildkite) {
-    io.write(chunk.replace(/(?:---|\+\+\+|~~~|\^\^\^) /gim, " ").replace(/\:\:.*(?:\r\n|\r|\n)/gim, ""));
-  } else {
-    io.write(chunk.replace(/\:\:.*(?:\r\n|\r|\n)/gim, ""));
-  }
+function pipeTestStdout(io) {
+  const filter = createLiveOutputFilter();
+  const write = chunk => {
+    const text = filter(chunk);
+    if (text) io.write(text);
+  };
+  write.end = () => {
+    const text = filter.end();
+    if (text) io.write(text);
+  };
+  return write;
 }
 
 /**
@@ -2202,8 +2335,9 @@ function parseTestStdout(stdout, testPath) {
 async function spawnBunInstall(execPath, options) {
   // spawnBun sets BUN_INSTALL_CACHE_DIR to a fresh tmpdir so per-test installs
   // are hermetic. This function only runs the runner's own dependency setup
-  // (root, test/, vendor), which should hit the image's baked cache when one
-  // exists (bootstrap.{sh,ps1} set BUN_INSTALL_CACHE_DIR machine-wide).
+  // (root, test/, scripts/ci-remap-server, vendor), which should hit the
+  // image's baked cache when one exists (bootstrap.{sh,ps1} set
+  // BUN_INSTALL_CACHE_DIR machine-wide).
   const cacheDir = process.env.BUN_INSTALL_CACHE_DIR;
   let { ok, error, stdout, duration, crashes } = await spawnBun(execPath, {
     args: ["install"],
@@ -2240,6 +2374,23 @@ async function spawnBunInstall(execPath, options) {
     stdout,
     stdoutPreview: stdout,
   };
+}
+
+/**
+ * Installs `ci-remap-server`, the bin of bun-tracestrings (github:oven-sh/bun.report).
+ * It is pinned in scripts/ci-remap-server/package.json rather than the root
+ * package.json because this runner is its only user, and as a github: dependency
+ * it would otherwise put GitHub on the critical path of the root `bun install`
+ * every GitHub Actions workflow and every build runs. Best-effort, like starting
+ * the server itself: without it crash reports are not remapped, the tests still run.
+ * @param {string} execPath
+ * @returns {Promise<boolean>}
+ */
+async function installCiRemapServer(execPath) {
+  const title = relative(cwd, join(ciRemapServerPath, "package.json")).replaceAll(sep, "/");
+  const { ok, error } = await startGroup(title, () => spawnBunInstall(execPath, { cwd: ciRemapServerPath }));
+  if (!ok) console.warn(`ci-remap server not installed (${title}: ${error}), crash reports will not be remapped`);
+  return ok;
 }
 
 /**
@@ -2472,6 +2623,39 @@ async function getVendorTests(cwd) {
 }
 
 /**
+ * Checked-in median wall-clock duration per test file for this lane, from
+ * expected-durations.json (see scripts/update-test-durations.mjs).
+ * @param {string} cwd
+ * @returns {Record<string, number>}
+ */
+function loadExpectedDurations(cwd) {
+  const durations = {};
+  try {
+    const raw = JSON.parse(readFileSync(join(cwd, "expected-durations.json"), "utf8"));
+    const step = options["step"] || "";
+    // Most specific column first, then the nearest lane, then anything.
+    const columns = step.includes("asan")
+      ? ["asan"]
+      : step.includes("musl")
+        ? ["musl"]
+        : step.includes("windows-aarch64") || (isWindows && process.arch === "arm64")
+          ? ["windows-aarch64", "windows"]
+          : isWindows || step.includes("windows")
+            ? ["windows"]
+            : ["default"];
+    columns.push("default", "asan", "musl", "windows", "windows-aarch64");
+    for (const [path, entry] of Object.entries(raw)) {
+      if (path === "_meta") continue;
+      const ms = columns.map(column => entry[column]).find(value => typeof value === "number");
+      if (typeof ms === "number") durations[path] = ms;
+    }
+  } catch (e) {
+    console.warn("expected-durations.json not loaded:", e?.message || e);
+  }
+  return durations;
+}
+
+/**
  * @param {string} cwd
  * @param {string[]} testModifiers
  * @param {TestExpectation[]} testExpectations
@@ -2563,25 +2747,7 @@ function getRelevantTests(cwd, testModifiers, testExpectations) {
     // machines without any coordination. Tests absent from the table (new
     // files, or the file failing to load) fall back to the table's median so
     // they spread across shards instead of all landing on shard 0.
-    let durations = {};
-    try {
-      const raw = JSON.parse(readFileSync(join(cwd, "expected-durations.json"), "utf8"));
-      const step = options["step"] || "";
-      const lane = step.includes("asan")
-        ? "asan"
-        : step.includes("musl")
-          ? "musl"
-          : isWindows || step.includes("windows")
-            ? "windows"
-            : "default";
-      for (const [path, entry] of Object.entries(raw)) {
-        if (path === "_meta") continue;
-        const ms = entry[lane] ?? entry.default ?? entry.asan ?? entry.musl ?? entry.windows;
-        if (typeof ms === "number") durations[path] = ms;
-      }
-    } catch (e) {
-      console.warn("expected-durations.json not loaded, sharding by index:", e?.message || e);
-    }
+    const durations = loadExpectedDurations(cwd);
     const known = Object.values(durations).sort((a, b) => a - b);
     const unknownCost = known.length ? known[Math.floor(known.length / 2)] : 100;
     const costOf = testPath => durations[testPath.replaceAll("\\", "/")] ?? unknownCost;
@@ -2703,7 +2869,7 @@ async function getExecPathFromBuildKite(target, buildId) {
 
   let zipPath;
   downloadLoop: for (let i = 0; i < 10; i++) {
-    // build-bun also uploads libbun-*.a / libbun_rust.a / dep libs; only the zips are wanted here.
+    // build-bun also uploads libbun-*.a / libbun_runtime.a / dep libs; only the zips are wanted here.
     const args = ["artifact", "download", "*.zip", releasePath, "--step", target];
     if (buildId) {
       args.push("--build", buildId);
@@ -2826,7 +2992,8 @@ function formatTestToMarkdown(result, concise, retries) {
     }
 
     const testTitle = testPath.replace(/\\/g, "/");
-    const testUrl = getFileUrl(testPath, errorLine);
+    // A parallel batch that fails as a whole is reported under its label, not a file.
+    const testUrl = existsSync(join(cwd, testPath)) ? getFileUrl(testPath, errorLine) : undefined;
 
     if (concise) {
       markdown += "<li>";
@@ -2882,38 +3049,6 @@ function uploadArtifactsToBuildKite(glob) {
 }
 
 /**
- * @param {string} [glob]
- * @param {string} [step]
- */
-function listArtifactsFromBuildKite(glob, step) {
-  const args = [
-    "artifact",
-    "search",
-    "--no-color",
-    "--allow-empty-results",
-    "--include-retried-jobs",
-    "--format",
-    "%p\n",
-    glob || "*",
-  ];
-  if (step) {
-    args.push("--step", step);
-  }
-  const { error, status, signal, stdout, stderr } = spawnSync("buildkite-agent", args, {
-    stdio: ["ignore", "ignore", "ignore"],
-    encoding: "utf-8",
-    timeout: spawnTimeout,
-    cwd,
-  });
-  if (status === 0) {
-    return stdout?.split("\n").map(line => line.trim()) || [];
-  }
-  const cause = error ?? signal ?? `code ${status}`;
-  console.warn("Failed to list artifacts from BuildKite:", cause, stderr);
-  return [];
-}
-
-/**
  * @param {string} name
  * @param {string} value
  */
@@ -2956,14 +3091,6 @@ function getAnsi(color) {
  */
 function stripAnsi(string) {
   return string.replace(/\u001b\[\d+m/g, "");
-}
-
-/**
- * @param {string} string
- * @returns {string}
- */
-function escapeGitHubAction(string) {
-  return string.replace(/%/g, "%25").replace(/\r/g, "%0D").replace(/\n/g, "%0A");
 }
 
 /**

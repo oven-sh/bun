@@ -6,7 +6,7 @@
 use core::ffi::{c_char, c_long};
 use core::ptr;
 
-use bun_boringssl_sys::SSL_CTX;
+use bun_boringssl_sys::{OwnedSslCtx, SSL_CTX};
 
 use crate::create_bun_socket_error_t;
 
@@ -160,10 +160,8 @@ impl Default for BunSocketContextOptions {
 }
 
 impl BunSocketContextOptions {
-    /// Build a BoringSSL `SSL_CTX*` from these options. Caller owns one ref
-    /// and releases with `SSL_CTX_free` — the passphrase is freed inside this
-    /// call once private-key load completes, so plain `SSL_CTX_free` is
-    /// correct on every path.
+    /// Build a BoringSSL `SSL_CTX` from these options. The passphrase is freed
+    /// inside this call once private-key load completes.
     ///
     /// Mode-neutral: the same `SSL_CTX*` may back client connects and server
     /// accepts. CTX-level verify mode comes from `request_cert`/`ca`/
@@ -171,10 +169,10 @@ impl BunSocketContextOptions {
     /// chain validation, populate verify_error) is applied in
     /// `us_internal_ssl_attach`, so a server reusing this ctx never sends
     /// CertificateRequest unless these options asked it to.
-    pub fn create_ssl_context(self, err: &mut create_bun_socket_error_t) -> Option<*mut SSL_CTX> {
+    pub fn create_ssl_context(self, err: &mut create_bun_socket_error_t) -> Option<OwnedSslCtx> {
         // SAFETY: FFI call; `self` is `#[repr(C)]` and passed by value, `err` is a valid out-param.
-        let ctx = unsafe { c::us_ssl_ctx_from_options(self, err) };
-        if ctx.is_null() { None } else { Some(ctx) }
+        // A non-null return carries the +1 from `SSL_CTX_new`.
+        unsafe { OwnedSslCtx::from_raw(c::us_ssl_ctx_from_options(self, err)) }
     }
 
     /// SHA-256 over every field this struct carries, dereferencing string

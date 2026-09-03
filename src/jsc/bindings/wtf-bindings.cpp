@@ -42,7 +42,7 @@ int uv__tcsetattr(int fd, int how, const struct termios* term)
     return 0;
 }
 
-extern "C" int uv_tty_reset_mode(void)
+extern "C" BUN_EXPORT int uv_tty_reset_mode(void)
 {
     int saved_errno;
     int err;
@@ -50,11 +50,11 @@ extern "C" int uv_tty_reset_mode(void)
     saved_errno = errno;
 
     if (atomic_exchange(&orig_termios_spinlock, 1))
-        return 16; // UV_EBUSY; /* In uv_tty_set_mode(). */
+        return -EBUSY; // UV_EBUSY, ttySetMode() is taking the snapshot
 
     err = 0;
     if (orig_termios_fd != -1)
-        err = uv__tcsetattr(orig_termios_fd, TCSANOW, &orig_termios);
+        err = -uv__tcsetattr(orig_termios_fd, TCSANOW, &orig_termios); // UV__ERR(errno)
 
     atomic_store(&orig_termios_spinlock, 0);
     errno = saved_errno;
@@ -297,7 +297,10 @@ static thread_local WTF::StackBounds stackBoundsForCurrentThread = WTF::StackBou
 
 extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__StackCheck__initialize()
 {
-    stackBoundsForCurrentThread = WTF::StackBounds::currentThreadStackBounds();
+    // A thread's bounds are fixed. On Windows they are the reserved range, and the stack grows inside it.
+    if (!stackBoundsForCurrentThread.isEmpty())
+        return;
+    stackBoundsForCurrentThread = WTF::StackBounds::currentThreadStackBoundsForEmbedder();
 }
 
 extern "C" [[ZIG_EXPORT(nothrow)]] __attribute__((__always_inline__)) void* Bun__StackCheck__getMaxStack()

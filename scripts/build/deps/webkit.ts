@@ -3,7 +3,7 @@
  * for local mode. Override via `--webkit-version=<hash>` to test a branch.
  * From https://github.com/oven-sh/WebKit releases.
  */
-export const WEBKIT_VERSION = "caad865eb1a6e5ca4427f5ea1f066140b11953e7";
+export const WEBKIT_VERSION = "72e75e4ec1f9a8571874328c1502f4d8226bc2bf";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine.
@@ -331,6 +331,8 @@ export const webkit: Dependency = {
       CMAKE_EXPORT_COMPILE_COMMANDS: "ON",
       USE_BUN_JSC_ADDITIONS: "ON",
       USE_BUN_EVENT_LOOP: "ON",
+      // Match the prebuilt: JSC allocates through Bun's mimalloc, not libpas.
+      ...(cfg.asan ? {} : { USE_MIMALLOC: "ON", USE_EXTERNAL_MIMALLOC: "ON" }),
       ENABLE_BUN_SKIP_FAILING_ASSERTIONS: "ON",
       ALLOW_LINE_AND_COLUMN_NUMBER_IN_BUILTINS: "ON",
       ENABLE_REMOTE_INSPECTOR: "ON",

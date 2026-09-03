@@ -20,6 +20,10 @@ scripts/build/xmac.mjs
 # the output codeblocks need to stay minified
 docs/bundler/minifier.mdx
 
+# `declare module "*" with { type: "text" }` is TypeScript 7.1 syntax that
+# prettier's parser does not accept yet
+packages/bun-types/ts7.1
+
 # generated working notes for the Rust port — dense markdown with inline code
 # refs that prettier doesn't reformat to a fixed point (it keeps re-escaping
 # `_`/`*` differently every pass), so autofix.ci ping-pongs commits forever.

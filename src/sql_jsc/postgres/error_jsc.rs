@@ -105,9 +105,6 @@ pub(crate) fn postgres_error_to_js(
         JSError => {
             return global.take_exception(JsError::Thrown);
         }
-        JSTerminated => {
-            return global.take_exception(JsError::Terminated);
-        }
         OutOfMemory => {
             return global.create_out_of_memory_error();
         }

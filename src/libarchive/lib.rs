@@ -8,7 +8,7 @@
 use core::ffi::c_int;
 use core::ptr;
 
-use bun_collections::{ArrayHashMap, StringArrayHashMap};
+use bun_collections::StringArrayHashMap;
 use bun_core::{MutableString, slice_to_nul, strings};
 use bun_core::{Output, ZStr, slice_as_bytes};
 #[cfg(unix)]
@@ -638,6 +638,14 @@ pub mod lib {
         pub kind: bun_sys::FileKind,
     }
 
+    impl NextEntry {
+        /// The header `next()` just read; valid until the iterator advances.
+        pub fn entry(&self) -> &Entry {
+            // SAFETY: `entry` is the non-null header libarchive handed to `next()` and stays live until the next read.
+            unsafe { &*self.entry }
+        }
+    }
+
     impl ArchiveIterator {
         /// Borrow the underlying libarchive handle.
         ///
@@ -646,9 +654,17 @@ pub mod lib {
         /// until `read_free()` in [`close`]. All `Archive` methods take
         /// `&self` (FFI interior mutability), so a shared borrow suffices.
         #[inline]
-        fn archive(&self) -> &Archive {
+        pub fn archive(&self) -> &Archive {
             // SAFETY: see doc comment — non-null for the lifetime of `self`.
             unsafe { &*self.archive }
+        }
+
+        /// Reads the body of the entry `next()` just returned.
+        pub fn read_entry_data(
+            &mut self,
+            next: &NextEntry,
+        ) -> core::result::Result<IteratorResult<Box<[u8]>>, bun_core::OOM> {
+            next.read_entry_data(self.archive())
         }
 
         pub fn init(tarball_bytes: &[u8]) -> IteratorResult<Self> {
@@ -753,21 +769,34 @@ pub mod lib {
         ) -> core::result::Result<IteratorResult<Box<[u8]>>, bun_core::OOM> {
             // SAFETY: self.entry is the libarchive-owned entry from read_next_header.
             let size = unsafe { (*self.entry).size() };
-            if size < 0 || size > 64 * 1024 * 1024 {
+            let Ok(size) = usize::try_from(size) else {
                 return Ok(IteratorResult::init_err(
                     archive.as_mut_ptr(),
                     b"invalid archive entry size",
                 ));
+            };
+            // Read data incrementally so untrusted entry sizes don't drive allocation.
+            let mut buf: Vec<u8> = Vec::new();
+            while buf.len() < size {
+                let to_read = (size - buf.len()).min(64 * 1024);
+                buf.try_reserve(to_read).map_err(|_| bun_core::AllocError)?;
+                // SAFETY: `archive_read_data` only writes into the slice; the written prefix is committed below.
+                let dest = unsafe { &mut bun_core::vec::spare_bytes_mut(&mut buf)[..to_read] };
+                let read = archive.read_data(dest);
+                if read < 0 {
+                    return Ok(IteratorResult::init_err(
+                        archive.as_mut_ptr(),
+                        b"failed to read archive data",
+                    ));
+                }
+                if read == 0 {
+                    break;
+                }
+                // SAFETY: `archive_read_data` returns exactly the byte count it wrote (`<= to_read`).
+                unsafe {
+                    bun_core::vec::commit_spare(&mut buf, usize::try_from(read).expect("int cast"))
+                };
             }
-            let mut buf = vec![0u8; usize::try_from(size).expect("int cast")];
-            let read = archive.read_data(&mut buf);
-            if read < 0 {
-                return Ok(IteratorResult::init_err(
-                    archive.as_mut_ptr(),
-                    b"failed to read archive data",
-                ));
-            }
-            buf.truncate(usize::try_from(read).expect("int cast"));
             Ok(IteratorResult::init_res(buf.into_boxed_slice()))
         }
     }
@@ -917,14 +946,6 @@ impl BufferReadStream {
     }
 
     pub(crate) fn open_read(&mut self) -> lib::Result {
-        // lib.archive_read_set_open_callback(this.archive, this.);
-        // _ = lib.archive_read_set_read_callback(this.archive, archive_read_callback);
-        // _ = lib.archive_read_set_seek_callback(this.archive, archive_seek_callback);
-        // _ = lib.archive_read_set_skip_callback(this.archive, archive_skip_callback);
-        // _ = lib.archive_read_set_close_callback(this.archive, archive_close_callback);
-        // // lib.archive_read_set_switch_callback(this.archive, this.archive_s);
-        // _ = lib.archive_read_set_callback_data(this.archive, this);
-
         let archive = self.archive();
 
         let _ = archive.read_support_format_tar();
@@ -937,47 +958,12 @@ impl BufferReadStream {
         // the first concatenated archive would be read.
         let _ = archive.read_set_options(c"read_concatenated_archives");
 
-        // _ = lib.archive_read_support_filter_none(this.archive);
-
         let rc = archive.read_open_memory(self.buf());
 
         self.reading = (rc as c_int) > -1;
 
-        // _ = lib.archive_read_support_compression_all(this.archive);
-
         rc
     }
-
-    // pub fn archive_write_callback(
-    //     archive: *Archive,
-    //     ctx_: *anyopaque,
-    //     buffer: *const anyopaque,
-    //     len: usize,
-    // ) callconv(.c) lib.la_ssize_t {
-    //     var this = fromCtx(ctx_);
-    // }
-
-    // pub fn archive_close_callback(
-    //     archive: *Archive,
-    //     ctx_: *anyopaque,
-    // ) callconv(.c) c_int {
-    //     var this = fromCtx(ctx_);
-    // }
-    // pub fn archive_free_callback(
-    //     archive: *Archive,
-    //     ctx_: *anyopaque,
-    // ) callconv(.c) c_int {
-    //     var this = fromCtx(ctx_);
-    // }
-
-    // pub fn archive_switch_callback(
-    //     archive: *Archive,
-    //     ctx1: *anyopaque,
-    //     ctx2: *anyopaque,
-    // ) callconv(.c) c_int {
-    //     var this = fromCtx(ctx1);
-    //     var that = fromCtx(ctx2);
-    // }
 }
 
 impl Drop for BufferReadStream {
@@ -1183,34 +1169,6 @@ pub mod archiver {
     pub struct Context {
         pub pluckers: Vec<Plucker>,
         pub overwrite_list: StringArrayHashMap<()>,
-        pub all_files: EntryMap,
-    }
-
-    // U64Context: hash = truncate u64→u32, eql = ==; the
-    // keys are already wyhash u64s, so truncation is the entire hash.
-    pub type EntryMap = ArrayHashMap<u64, *mut u8, U64Context>;
-
-    #[derive(Default, Clone, Copy)]
-    pub struct U64Context;
-    impl bun_collections::array_hash_map::ArrayHashContext<u64> for U64Context {
-        #[inline]
-        fn hash(&self, k: &u64) -> u32 {
-            *k as u32 // @truncate
-        }
-        #[inline]
-        fn eql(&self, a: &u64, b: &u64, _: usize) -> bool {
-            a == b
-        }
-    }
-    impl bun_collections::array_hash_map::ArrayHashAdapter<u64, u64> for U64Context {
-        #[inline]
-        fn hash(&self, k: &u64) -> u32 {
-            *k as u32 // @truncate
-        }
-        #[inline]
-        fn eql(&self, a: &u64, b: &u64, _: usize) -> bool {
-            a == b
-        }
     }
 
     pub struct Plucker {
@@ -1256,8 +1214,6 @@ pub use archiver::{Context, ExtractOptions, Plucker};
 pub trait ArchiveAppender {
     /// Mirrors `@hasDecl(Child, "onFirstDirectoryName")`.
     const HAS_ON_FIRST_DIRECTORY_NAME: bool = false;
-    /// Mirrors `@hasDecl(Child, "appendMutable")`.
-    const HAS_APPEND_MUTABLE: bool = false;
 
     fn needs_first_dirname(&self) -> bool {
         false
@@ -1265,10 +1221,6 @@ pub trait ArchiveAppender {
     fn on_first_directory_name(&mut self, _name: &[u8]) {}
 
     fn append(&mut self, path: &[u8]) -> crate::Result<&[u8]> {
-        let _ = path;
-        unreachable!()
-    }
-    fn append_mutable(&mut self, path: &[OSPathChar]) -> crate::Result<&mut [OSPathChar]> {
         let _ = path;
         unreachable!()
     }
@@ -1392,7 +1344,6 @@ impl Archiver {
                         else {
                             continue 'loop_;
                         };
-                        // defer opened.close()
                         let _close_guard = scopeguard::guard(opened, |fd| fd.close());
                         let stat_size = bun_sys::get_file_size(opened)?;
 
@@ -1827,19 +1778,6 @@ impl Archiver {
                                     } else {
                                         0u64
                                     };
-
-                                    if A::HAS_APPEND_MUTABLE {
-                                        let result = ctx_
-                                            .all_files
-                                            .get_or_put_adapted(&h, &archiver::U64Context)
-                                            .expect("unreachable");
-                                        if !result.found_existing {
-                                            *result.value_ptr = appender
-                                                .append_mutable(path_slice)?
-                                                .as_mut_ptr()
-                                                .cast::<u8>();
-                                        }
-                                    }
 
                                     for plucker_ in ctx_.pluckers.iter_mut() {
                                         if plucker_.filename_hash == h {

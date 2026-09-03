@@ -6,10 +6,10 @@ import {
   bunEnv,
   bunExe,
   getMaxFD,
+  isAndroid,
   isBroken,
   isDebug,
   isLinux,
-  isMacOS,
   isPosix,
   isWindows,
   shellExe,
@@ -609,8 +609,10 @@ for (let [gcTick, label] of [
   });
 }
 
-// This is a test which should only be used when pidfd and EVTFILT_PROC is NOT available
-it.skipIf(Boolean(process.env.BUN_FEATURE_FLAG_FORCE_WAITER_THREAD) || !isPosix || isMacOS)(
+// The waiter thread is the Linux fallback for kernels/sandboxes without pidfd;
+// kqueue platforms (macOS, FreeBSD) always have EVFILT_PROC and its non-Linux
+// loop has no wakeup for processes appended after it starts.
+it.skipIf(Boolean(process.env.BUN_FEATURE_FLAG_FORCE_WAITER_THREAD) || (!isLinux && !isAndroid))(
   "with BUN_FEATURE_FLAG_FORCE_WAITER_THREAD",
   async () => {
     const result = spawnSync({
@@ -1162,6 +1164,84 @@ describe("close handling", () => {
           try { fs.closeSync(victim); } catch {}
         }
         if (hits) throw new Error("finalizer closed " + hits + "/4 recycled fds");
+        console.log("PASS");
+      `;
+      await using proc = spawn({
+        cmd: [bunExe(), "-e", fixture],
+        env: bunEnv,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "PASS", stderr: "", exitCode: 0 });
+    });
+
+    it.if(isWindows)("'pipe' at index >= 3: the handle .stdio exposes is not closed again at GC", async () => {
+      // On Windows .stdio[3] is a HANDLE value. net.connect({fd}) adopts it
+      // and closes it with the socket. The getter used to expose the handle
+      // of its own uv_pipe_t and close that handle again when the Subprocess
+      // was GC'd. Windows reuses a closed handle value at once, so the second
+      // close destroyed whatever owned the value by then (a worker thread's
+      // handle, in the crash reports). Here the new owner is an event we put
+      // into the value on purpose: it stays signaled unless something closes
+      // it out from under us.
+      const fixture = /* js */ `
+        import { dlopen } from "bun:ffi";
+        import { connect } from "node:net";
+        const k32 = dlopen("kernel32.dll", {
+          CreateEventW: { args: ["ptr", "i32", "i32", "ptr"], returns: "ptr" },
+          SetHandleInformation: { args: ["ptr", "u32", "u32"], returns: "i32" },
+          WaitForSingleObject: { args: ["ptr", "u32"], returns: "u32" },
+          CloseHandle: { args: ["ptr"], returns: "i32" },
+        }).symbols;
+        const WAIT_OBJECT_0 = 0;
+        const isOpen = handle => k32.SetHandleInformation(handle, 0, 0) !== 0;
+
+        // Returns the handle value .stdio[3] exposed, now occupied by our
+        // event, or null when something else took the value first. The
+        // Subprocess is unreachable once this returns.
+        async function spawnReadAndReoccupy() {
+          const proc = Bun.spawn({
+            cmd: [process.execPath, "-e", "require('fs').writeSync(3, 'hi')"],
+            stdio: ["ignore", "ignore", "ignore", "pipe"],
+          });
+          const handle = proc.stdio[3];
+          if (typeof handle !== "number") throw new Error("stdio[3] is " + String(handle));
+          if (proc.stdio[3] !== handle) throw new Error("stdio[3] changed between reads");
+          const socket = connect({ fd: handle });
+          let data = "";
+          socket.on("data", chunk => (data += chunk));
+          // EOF when the child exits; the socket closes the handle.
+          await new Promise(resolve => socket.once("close", resolve));
+          await proc.exited;
+          if (data !== "hi") throw new Error("read " + JSON.stringify(data) + " through stdio[3]");
+          if (isOpen(handle)) return null;
+
+          // Allocate until the kernel gives the value back to us.
+          const misses = [];
+          let occupied = false;
+          for (let i = 0; i < 4096 && !occupied && !isOpen(handle); i++) {
+            const event = Number(k32.CreateEventW(null, 1, 1, null));
+            if (event === handle) occupied = true;
+            else misses.push(event);
+          }
+          for (const event of misses) k32.CloseHandle(event);
+          return occupied ? handle : null;
+        }
+
+        const events = [];
+        for (let i = 0; i < 3; i++) {
+          const handle = await spawnReadAndReoccupy();
+          if (handle !== null) events.push(handle);
+        }
+        for (let i = 0; i < 8; i++) {
+          Bun.gc(true);
+          await Bun.sleep(0);
+        }
+        const closedAgain = events.filter(event => k32.WaitForSingleObject(event, 0) !== WAIT_OBJECT_0);
+        for (const event of events) k32.CloseHandle(event);
+        if (closedAgain.length) {
+          throw new Error("the Subprocess finalizer closed " + closedAgain.length + "/" + events.length + " handle values it had handed out");
+        }
         console.log("PASS");
       `;
       await using proc = spawn({

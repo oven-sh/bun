@@ -294,7 +294,7 @@ exports[`should not deduplicate bundled packages with un-bundled packages 1`] = 
 exports[`should not deduplicate bundled packages with un-bundled packages 2`] = `
 [
   "",
-  "Saved bun.lock (5 packages)",
+  "Done! Checked 5 packages (no changes)",
 ]
 `;
 

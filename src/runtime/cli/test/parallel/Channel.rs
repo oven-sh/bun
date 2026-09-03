@@ -62,6 +62,12 @@ pub struct Channel<Owner> {
     /// Outgoing bytes the kernel didn't accept yet.
     pub out: JsCell<Vec<u8>>,
     pub(crate) done: Cell<bool>,
+    /// The peer's byte stream stopped decoding as frames, i.e. something in
+    /// the peer wrote straight to fd 3: a length `ingest` rejected, or on
+    /// Windows a read error from libuv's own IPC framing underneath ours. Set
+    /// together with `done`, transport still attached. The coordinator kills
+    /// such a worker and reports this rather than the exit status it caused.
+    pub(crate) corrupt_frame: Cell<bool>,
 
     pub(crate) backend: Backend,
 
@@ -81,6 +87,7 @@ impl<Owner> Default for Channel<Owner> {
             r#in: JsCell::new(Vec::new()),
             out: JsCell::new(Vec::new()),
             done: Cell::new(false),
+            corrupt_frame: Cell::new(false),
             backend: Backend::default(),
             root: Cell::new(core::ptr::null_mut()),
             _owner: PhantomData,
@@ -414,8 +421,8 @@ impl<Owner: ChannelOwner> Channel<Owner> {
     }
 
     /// True while the underlying socket/pipe is still open. When `done` is set
-    /// with the transport still attached, it was a protocol error (corrupt
-    /// frame), not a clean close.
+    /// with the transport still attached, it was not a clean close: a corrupt
+    /// frame (`corrupt_frame`) or, on Windows, a failed write.
     pub(crate) fn is_attached(&self) -> bool {
         #[cfg(windows)]
         {
@@ -523,7 +530,7 @@ impl<Owner: ChannelOwner> Channel<Owner> {
         while buf.len() - head >= 5 {
             let len = u32::from_le_bytes(buf[head..][..4].try_into().unwrap());
             if len > frame::MAX_PAYLOAD {
-                self.mark_done();
+                self.mark_corrupt();
                 return;
             }
             if buf.len() - head < 5usize + len as usize {
@@ -560,6 +567,13 @@ impl<Owner: ChannelOwner> Channel<Owner> {
         self.done.set(true);
         // SAFETY: see `owner_ptr()`.
         unsafe { (*self.owner_ptr()).on_channel_done() };
+    }
+
+    /// `mark_done` for an undecodable stream; the transport is left attached
+    /// so the owner's `on_channel_done` sees it as a protocol error.
+    fn mark_corrupt(&self) {
+        self.corrupt_frame.set(true);
+        self.mark_done();
     }
 }
 
@@ -681,10 +695,16 @@ impl<Owner: ChannelOwner> WindowsHandlers<Owner> {
         let buf: &mut [u8; 16 * 1024] = unsafe { &mut *self_.backend.read_chunk.as_ptr() };
         &mut buf[..]
     }
-    fn on_error(self_: &Channel<Owner>, _err: bun_sys::E) {
-        // Mirror the POSIX on_close path: detach the transport before
-        // signalling done so the owner can tell EOF apart from a protocol
-        // error (where the pipe is still attached).
+    fn on_error(self_: &Channel<Owner>, err: bun_sys::E) {
+        // libuv frames this pipe itself (ipc=1), so bytes the peer writes
+        // straight to fd 3 fail its frame-header check and surface here as a
+        // read error instead of reaching `ingest`; report it the way `ingest`
+        // reports a bad frame, before detaching. EOF is the peer closing its
+        // end: mirror the POSIX on_close path and detach first so it reads as
+        // a clean close.
+        if err != bun_sys::E::EOF {
+            self_.mark_corrupt();
+        }
         let p = self_.backend.pipe.replace(core::ptr::null_mut());
         if !p.is_null() {
             // SAFETY: Box-allocated; close_and_destroy reclaims via heap::take.

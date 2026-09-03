@@ -29,11 +29,14 @@ pub fn load() {
         boring::OpenSSL_add_all_algorithms();
 
         if !cfg!(test) {
-            // D006 added the bun_core dep for `run_once!`; keep_symbols! could
-            // now be used here too — left as inline `black_box` for this pass.
-            core::hint::black_box(OPENSSL_memory_alloc as *const ());
-            core::hint::black_box(OPENSSL_memory_get_size as *const ());
-            core::hint::black_box(OPENSSL_memory_free as *const ());
+            bun_core::keep_symbols!(
+                OPENSSL_memory_alloc,
+                OPENSSL_memory_get_size,
+                OPENSSL_memory_free,
+                OPENSSL_system_malloc,
+                OPENSSL_system_realloc,
+                OPENSSL_system_free,
+            );
         }
     }}
 }
@@ -126,6 +129,32 @@ pub(crate) unsafe extern "C" fn OPENSSL_memory_free(ptr: *mut c_void) {
 pub(crate) extern "C" fn OPENSSL_memory_get_size(ptr: *const c_void) -> usize {
     // SAFETY: ptr was returned by OPENSSL_memory_alloc (null-safe).
     unsafe { bun_alloc::default_alloc::usable_size(ptr) }
+}
+
+// Backs the sites BoringSSL keeps off OPENSSL_malloc; see OPENSSL_system_malloc in crypto/internal.h.
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn OPENSSL_system_malloc(size: usize) -> *mut c_void {
+    bun_alloc::default_alloc::malloc(size)
+}
+
+/// # Safety
+/// `ptr` must be null or a live block from `OPENSSL_system_malloc`/`realloc`.
+#[unsafe(no_mangle)]
+pub(crate) unsafe extern "C" fn OPENSSL_system_realloc(
+    ptr: *mut c_void,
+    size: usize,
+) -> *mut c_void {
+    // SAFETY: BoringSSL only passes blocks it obtained from the two functions
+    // above, which allocate from the default allocator.
+    unsafe { bun_alloc::default_alloc::realloc(ptr, size) }
+}
+
+/// # Safety
+/// `ptr` must be null or a live block from `OPENSSL_system_malloc`/`realloc`.
+#[unsafe(no_mangle)]
+pub(crate) unsafe extern "C" fn OPENSSL_system_free(ptr: *mut c_void) {
+    // SAFETY: as for OPENSSL_system_realloc; the default allocator accepts NULL.
+    unsafe { bun_alloc::default_alloc::free(ptr) }
 }
 
 pub use bun_sys::posix::INET6_ADDRSTRLEN;

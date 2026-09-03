@@ -369,6 +369,15 @@ describe("web worker", () => {
       expect(err.message).toBe("5");
       expect(err.error).toBe(null);
     });
+
+    test("names the entry point when its path is too long for a path buffer", async () => {
+      // Resolving it failed without logging anything, so the event carried
+      // "BuildMessage: undefined". Longer than the buffer on every platform.
+      const specifier = "./" + Buffer.alloc(100_000, "w").toString();
+      const worker = new Worker(specifier);
+      const [err] = await once(worker, "error");
+      expect(err.message).toBe(`BuildMessage: ModuleNotFound resolving "${specifier}" (entry point)`);
+    });
   });
 
   describe("terminate() races and lifecycle edges", () => {

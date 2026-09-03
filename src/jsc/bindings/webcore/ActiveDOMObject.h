@@ -37,9 +37,6 @@
 
 namespace WebCore {
 
-class Event;
-class EventTarget;
-
 class WEBCORE_EXPORT ActiveDOMObject : public ContextDestructionObserver {
 public:
     // Must be called exactly once after construction: an object created on a context whose active
@@ -71,8 +68,6 @@ public:
             m_thisObject->m_pendingActivityInstanceCount.fetch_sub(1, std::memory_order_relaxed);
         }
 
-        T& object() { return m_thisObject.get(); }
-
     private:
         const Ref<T> m_thisObject;
     };
@@ -84,7 +79,6 @@ public:
     }
 
     bool isContextStopped() const;
-    bool isAllowedToRunScript() const;
 
     template<typename T, typename Task>
     static void queueTaskKeepingObjectAlive(T& object, TaskSource source, Task&& task)
@@ -93,12 +87,6 @@ public:
         object.queueTaskInEventLoop(source, [protectedObject = Ref { object }, activity = WTF::move(activity), task = WTF::move(task)]() mutable {
             task(protectedObject.get());
         });
-    }
-
-    template<typename EventTargetType>
-    static void queueTaskToDispatchEvent(EventTargetType& target, TaskSource source, Ref<Event>&& event)
-    {
-        target.queueTaskToDispatchEventInternal(target, source, WTF::move(event));
     }
 
 protected:
@@ -111,7 +99,6 @@ private:
     virtual bool virtualHasPendingActivity() const { return false; }
 
     void queueTaskInEventLoop(TaskSource, Function<void()>&&);
-    void queueTaskToDispatchEventInternal(EventTarget&, TaskSource, Ref<Event>&&);
 
     std::atomic<uint64_t> m_pendingActivityInstanceCount { 0 };
 #if ASSERT_ENABLED

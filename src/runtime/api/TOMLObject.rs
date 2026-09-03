@@ -1,7 +1,9 @@
 use bun_collections::HashMap;
 use bun_core::StackCheck;
-use bun_core::{OwnedString, String as BunString};
-use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsError, JsResult, wtf};
+use bun_core::String as BunString;
+use bun_jsc::{
+    self as jsc, CallFrame, JSGlobalObject, JSValue, JsError, JsResult, TemporalType, wtf,
+};
 use bun_parsers::toml::TOML;
 
 pub(crate) fn create(global: &JSGlobalObject) -> JSValue {
@@ -20,8 +22,8 @@ pub(crate) fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
         global,
         frame,
         b"input.toml",
-        true,
-        true,
+        super::BlobOrBufferInput::Bytes,
+        super::NullishInput::Throw,
         |arena, log, source| {
             let root = match TOML::parse(source, log, arena, false) {
                 Ok(v) => v,
@@ -70,7 +72,11 @@ fn stringify(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     }
 
     let unwrapped = value.unwrap_boxed_primitive(global)?;
-    if !unwrapped.is_object() || unwrapped.is_array() || unwrapped.is_date() {
+    if !unwrapped.is_object()
+        || unwrapped.is_array()
+        || unwrapped.is_date()
+        || temporal_object_type(unwrapped).is_some()
+    {
         return Err(global.throw(format_args!(
             "TOML.stringify expects an object at the top level (a TOML document is a table)"
         )));
@@ -80,7 +86,6 @@ fn stringify(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         stack_check: StackCheck::init(),
         builder: wtf::StringBuilder::init(),
         visiting: HashMap::default(),
-        path: Vec::new(),
         wrote: false,
     };
 
@@ -116,6 +121,9 @@ const MAX_SAFE_INTEGER_F: f64 = 9007199254740991.0;
 enum Layout {
     /// `key = value` on the current table's line block.
     Keyval,
+    /// `key = value` whose value is a Temporal object; carries the
+    /// classification so emission does not re-ask.
+    TemporalKeyval(TemporalType),
     /// `[path.key]` section.
     Table,
     /// `[[path.key]]` section per element.
@@ -130,19 +138,21 @@ struct Stringifier {
     // live on the native stack via the `stringify` recursion chain, so the
     // conservative GC scan keeps them alive.
     visiting: HashMap<JSValue, ()>,
-    /// Header path of the table currently being emitted. Entries are
-    /// borrowed, not ref-counted: each is pushed and popped within the one
-    /// `JSPropertyIterator` loop body whose iterator keeps the name alive
-    /// (the iterator's strings carry no extra reference).
-    path: Vec<BunString>,
     /// Whether any line has been written (controls blank lines before headers).
     wrote: bool,
+}
+
+/// Header path of the table being emitted: a parent-linked chain of
+/// iterator-borrowed keys on the `stringify_table_body` recursion stack.
+struct Path<'p> {
+    parent: Option<&'p Path<'p>>,
+    key: &'p BunString,
 }
 
 impl Stringifier {
     fn stringify_root(&mut self, global: &JSGlobalObject, root: JSValue) -> StringifyResult<()> {
         self.mark_visiting(global, root)?;
-        self.stringify_table_body(global, root, false)?;
+        self.stringify_table_body(global, root, None, false)?;
         self.visiting.remove(&root);
         Ok(())
     }
@@ -176,13 +186,21 @@ impl Stringifier {
             }
             while let Some(item) = iter.next()? {
                 let item = item.unwrap_boxed_primitive(global)?;
-                if !item.is_object() || item.is_array() || item.is_date() || item.is_function() {
+                if !item.is_object()
+                    || item.is_array()
+                    || item.is_date()
+                    || item.is_function()
+                    || temporal_object_type(item).is_some()
+                {
                     return Ok(Layout::Keyval);
                 }
             }
             return Ok(Layout::ArrayOfTables);
         }
         if value.is_object() && !value.is_date() {
+            if let Some(temporal_type) = temporal_object_type(value) {
+                return Ok(Layout::TemporalKeyval(temporal_type));
+            }
             return Ok(Layout::Table);
         }
         Ok(Layout::Keyval)
@@ -196,6 +214,7 @@ impl Stringifier {
         &mut self,
         global: &JSGlobalObject,
         table: JSValue,
+        path: Option<&Path<'_>>,
         own_header: bool,
     ) -> StringifyResult<()> {
         if !self.stack_check.is_safe_to_recurse() {
@@ -210,46 +229,52 @@ impl Stringifier {
         };
 
         // Pass 1: keyvals.
-        let mut iter =
-            jsc::JSPropertyIterator::init(global, table.to_object(global)?, iter_options)?;
-        while let Some(prop_name) = iter.next()? {
-            let value = iter.value.unwrap_boxed_primitive(global)?;
+        let iter = jsc::JSPropertyIterator::init(global, table.to_object(global)?, iter_options)?;
+        while let Some((prop_name, prop_value)) = iter.next()? {
+            let value = prop_value.unwrap_boxed_primitive(global)?;
             if value.is_null() {
                 return Err(self.err_null_value(global, &prop_name));
             }
-            if let Layout::Keyval = self.layout_of(global, value)? {
-                if header_pending {
-                    header_pending = false;
-                    self.append_header(false);
-                }
-                self.append_key_segment(&prop_name);
-                self.builder.append_latin1(b" = ");
-                self.stringify_inline_value(global, value)?;
-                self.builder.append_lchar(b'\n');
-                self.wrote = true;
+            let known_temporal = match self.layout_of(global, value)? {
+                Layout::Keyval => None,
+                Layout::TemporalKeyval(temporal_type) => Some(temporal_type),
+                Layout::Table | Layout::ArrayOfTables | Layout::Skip => continue,
+            };
+            if header_pending {
+                header_pending = false;
+                self.append_header(path, false);
             }
+            self.append_key_segment(&prop_name);
+            self.builder.append_latin1(b" = ");
+            self.stringify_inline_value(global, value, known_temporal)?;
+            self.builder.append_lchar(b'\n');
+            self.wrote = true;
         }
 
         // Pass 2: sections. Values are re-read; an array-of-tables element
         // that is no longer a plain object during emission gets an error.
-        let mut iter =
-            jsc::JSPropertyIterator::init(global, table.to_object(global)?, iter_options)?;
-        while let Some(prop_name) = iter.next()? {
-            let value = iter.value.unwrap_boxed_primitive(global)?;
+        let iter = jsc::JSPropertyIterator::init(global, table.to_object(global)?, iter_options)?;
+        while let Some((prop_name, prop_value)) = iter.next()? {
+            let value = prop_value.unwrap_boxed_primitive(global)?;
             match self.layout_of(global, value)? {
-                Layout::Keyval | Layout::Skip => {}
+                Layout::Keyval | Layout::TemporalKeyval(_) | Layout::Skip => {}
                 Layout::Table => {
                     header_pending = false;
                     self.mark_visiting(global, value)?;
-                    self.path.push(prop_name);
-                    self.stringify_table_body(global, value, true)?;
-                    self.path.pop();
+                    let child = Path {
+                        parent: path,
+                        key: &prop_name,
+                    };
+                    self.stringify_table_body(global, value, Some(&child), true)?;
                     self.visiting.remove(&value);
                 }
                 Layout::ArrayOfTables => {
                     header_pending = false;
                     self.mark_visiting(global, value)?;
-                    self.path.push(prop_name);
+                    let child = Path {
+                        parent: path,
+                        key: &prop_name,
+                    };
                     let mut items = value.array_iterator(global)?;
                     while let Some(item) = items.next()? {
                         let item = item.unwrap_boxed_primitive(global)?;
@@ -257,16 +282,15 @@ impl Stringifier {
                             || item.is_array()
                             || item.is_date()
                             || item.is_function()
+                            || temporal_object_type(item).is_some()
                         {
-                            self.path.pop();
                             return Err(self.err_changed(global));
                         }
                         self.mark_visiting(global, item)?;
-                        self.append_header(true);
-                        self.stringify_table_body(global, item, false)?;
+                        self.append_header(Some(&child), true);
+                        self.stringify_table_body(global, item, Some(&child), false)?;
                         self.visiting.remove(&item);
                     }
-                    self.path.pop();
                     self.visiting.remove(&value);
                 }
             }
@@ -274,18 +298,20 @@ impl Stringifier {
 
         // An empty table is materialized only by its header.
         if header_pending {
-            self.append_header(false);
+            self.append_header(path, false);
         }
 
         Ok(())
     }
 
     /// One value on the right-hand side of `=` (or inside an inline
-    /// array/table). `value` is already unboxed.
+    /// array/table). `value` is already unboxed; `known_temporal` is the
+    /// classification `layout_of` already computed for it, if any.
     fn stringify_inline_value(
         &mut self,
         global: &JSGlobalObject,
         value: JSValue,
+        known_temporal: Option<TemporalType>,
     ) -> StringifyResult<()> {
         if !self.stack_check.is_safe_to_recurse() {
             return Err(StringifyError::StackOverflow);
@@ -312,13 +338,17 @@ impl Stringifier {
         }
 
         if value.is_string() {
-            let str = OwnedString::new(value.to_bun_string(global)?);
+            let str = value.to_bun_string(global)?;
             self.append_basic_quoted(&str);
             return Ok(());
         }
 
         if value.is_date() {
             return self.append_datetime(global, value);
+        }
+
+        if let Some(temporal_type) = known_temporal.or_else(|| temporal_object_type(value)) {
+            return self.append_temporal(global, value, temporal_type);
         }
 
         if value.is_array() {
@@ -335,7 +365,7 @@ impl Stringifier {
                 if item.is_null() || item.is_undefined() || item.is_symbol() || item.is_function() {
                     return Err(self.err_in_array(global, item));
                 }
-                self.stringify_inline_value(global, item)?;
+                self.stringify_inline_value(global, item, None)?;
             }
             self.builder.append_lchar(b']');
             self.visiting.remove(&value);
@@ -344,7 +374,7 @@ impl Stringifier {
 
         // A plain object inside an inline context becomes an inline table.
         self.mark_visiting(global, value)?;
-        let mut iter = jsc::JSPropertyIterator::init(
+        let iter = jsc::JSPropertyIterator::init(
             global,
             value.to_object(global)?,
             jsc::JSPropertyIteratorOptions {
@@ -354,8 +384,8 @@ impl Stringifier {
             },
         )?;
         let mut first = true;
-        while let Some(prop_name) = iter.next()? {
-            let prop_value = iter.value.unwrap_boxed_primitive(global)?;
+        while let Some((prop_name, value)) = iter.next()? {
+            let prop_value = value.unwrap_boxed_primitive(global)?;
             if prop_value.is_undefined() || prop_value.is_symbol() || prop_value.is_function() {
                 continue;
             }
@@ -367,7 +397,7 @@ impl Stringifier {
             first = false;
             self.append_key_segment(&prop_name);
             self.builder.append_latin1(b" = ");
-            self.stringify_inline_value(global, prop_value)?;
+            self.stringify_inline_value(global, prop_value, None)?;
         }
         self.builder
             .append_latin1(if first { b"{}" } else { b" }" });
@@ -377,34 +407,33 @@ impl Stringifier {
 
     // ── output pieces ──────────────────────────────────────────────────────
 
-    /// `[a.b.c]` or `[[a.b.c]]` from `self.path`, preceded by a blank line
-    /// when the document already has content.
-    fn append_header(&mut self, array_of_tables: bool) {
+    /// `[a.b.c]` or `[[a.b.c]]`, preceded by a blank line when the document
+    /// already has content.
+    fn append_header(&mut self, path: Option<&Path<'_>>, array_of_tables: bool) {
         if self.wrote {
             self.builder.append_lchar(b'\n');
         }
         self.builder
             .append_latin1(if array_of_tables { b"[[" } else { b"[" });
-        for (i, seg) in self.path.iter().enumerate() {
-            if i > 0 {
-                self.builder.append_lchar(b'.');
-            }
-            // Inlined `append_key_segment` to avoid borrowing `self.path`
-            // across a `&mut self` call.
-            if is_bare_key(seg) {
-                self.builder.append_string(*seg);
-            } else {
-                append_basic_quoted_to(&mut self.builder, seg);
-            }
+        if let Some(path) = path {
+            self.append_path(path);
         }
         self.builder
             .append_latin1(if array_of_tables { b"]]\n" } else { b"]\n" });
         self.wrote = true;
     }
 
+    fn append_path(&mut self, path: &Path<'_>) {
+        if let Some(parent) = path.parent {
+            self.append_path(parent);
+            self.builder.append_lchar(b'.');
+        }
+        self.append_key_segment(path.key);
+    }
+
     fn append_key_segment(&mut self, name: &BunString) {
         if is_bare_key(name) {
-            self.builder.append_string(*name);
+            self.builder.append_string(name);
         } else {
             append_basic_quoted_to(&mut self.builder, name);
         }
@@ -469,18 +498,67 @@ impl Stringifier {
                 ))
                 .into());
         }
-        self.builder.append_latin1(iso);
+        // `toISOString` always prints three fraction digits; trim trailing
+        // zeros (and a bare `.`) so `Date` and `Temporal.Instant` spell the
+        // same instant identically.
+        debug_assert!(iso.len() == 24 && iso[19] == b'.' && iso[23] == b'Z');
+        let mut end = 23;
+        while end > 20 && iso[end - 1] == b'0' {
+            end -= 1;
+        }
+        if end == 20 {
+            end = 19;
+        }
+        self.builder.append_latin1(&iso[..end]);
+        self.builder.append_lchar(b'Z');
+        Ok(())
+    }
+
+    /// A Temporal object as the TOML date/time literal of its type;
+    /// `PlainYearMonth`/`PlainMonthDay`/`Duration` have no TOML form and throw.
+    fn append_temporal(
+        &mut self,
+        global: &JSGlobalObject,
+        value: JSValue,
+        temporal_type: TemporalType,
+    ) -> StringifyResult<()> {
+        if !has_toml_form(temporal_type) {
+            return Err(global
+                .throw(format_args!(
+                    "TOML.stringify cannot serialize {} (it has no TOML representation)",
+                    temporal_name(temporal_type)
+                ))
+                .into());
+        }
+        let mut buf = [0u8; 64];
+        // SAFETY: `buf` is a live stack buffer for the duration of the call.
+        let len = unsafe {
+            jsc::cpp::Bun__Temporal__toTOMLDateTime(
+                global,
+                value,
+                temporal_type,
+                buf.as_mut_ptr(),
+                buf.len(),
+            )
+        }?;
+        if len < 0 {
+            return Err(global
+                .throw(format_args!(
+                    "TOML.stringify cannot serialize a {} outside years 0000-9999",
+                    temporal_name(temporal_type)
+                ))
+                .into());
+        }
+        self.builder.append_latin1(&buf[..len as usize]);
         Ok(())
     }
 
     // ── errors ─────────────────────────────────────────────────────────────
 
     fn err_null_value(&mut self, global: &JSGlobalObject, key: &BunString) -> StringifyError {
-        let key_utf8 = key.to_utf8_bytes();
         global
             .throw(format_args!(
-                "TOML cannot represent null (key '{}'); remove the key or use a sentinel value",
-                bstr::BStr::new(&key_utf8)
+                "TOML cannot represent null (key '{key}'); remove the key or use a sentinel value",
             ))
             .into()
     }
@@ -506,6 +584,42 @@ impl Stringifier {
                 "TOML.stringify cannot serialize a value that changed during serialization"
             ))
             .into()
+    }
+}
+
+fn temporal_object_type(value: JSValue) -> Option<TemporalType> {
+    match value.temporal_type() {
+        TemporalType::None => None,
+        t => Some(t),
+    }
+}
+
+/// Whether TOML has a date/time literal for this type.
+fn has_toml_form(t: TemporalType) -> bool {
+    match t {
+        TemporalType::Instant
+        | TemporalType::PlainDateTime
+        | TemporalType::PlainDate
+        | TemporalType::PlainTime
+        | TemporalType::ZonedDateTime => true,
+        TemporalType::None
+        | TemporalType::PlainYearMonth
+        | TemporalType::PlainMonthDay
+        | TemporalType::Duration => false,
+    }
+}
+
+fn temporal_name(t: TemporalType) -> &'static str {
+    match t {
+        TemporalType::Instant => "Temporal.Instant",
+        TemporalType::PlainDateTime => "Temporal.PlainDateTime",
+        TemporalType::PlainDate => "Temporal.PlainDate",
+        TemporalType::PlainTime => "Temporal.PlainTime",
+        TemporalType::ZonedDateTime => "Temporal.ZonedDateTime",
+        TemporalType::PlainYearMonth => "Temporal.PlainYearMonth",
+        TemporalType::PlainMonthDay => "Temporal.PlainMonthDay",
+        TemporalType::Duration => "Temporal.Duration",
+        TemporalType::None => unreachable!("not a Temporal object"),
     }
 }
 

@@ -73,12 +73,6 @@ class Dequeue<T> {
     }
   }
 
-  clear(): void {
-    this._head = 0;
-    this._tail = 0;
-    this._list.fill(undefined);
-  }
-
   private _growArray(): void {
     if (this._head) {
       // copy existing data, head to end, then beginning to tail.

@@ -4234,29 +4234,25 @@ impl<'a> LinkerContext<'a> {
     /// An item read off an `import()` / `require()` result is bound only to an
     /// export the importer may read directly. Otherwise it reads as written:
     /// `ns.a` off the namespace object, or the local a pattern binds.
-    fn binds_call_item(
-        &self,
-        source_index: crate::IndexInt,
-        import_ref: Ref,
-        named_import: &NamedImport,
-        result: &MatchImport,
-    ) -> bool {
-        if !matches!(result.kind, MatchImportKind::Normal) {
-            return false;
-        }
+    fn call_record_binds(&self, source_index: crate::IndexInt, record_index: u32) -> bool {
         let record = &self.graph.ast.items_import_records()[source_index as usize].as_slice()
-            [named_import.import_record_index as usize];
-        let target = result.source_index as usize;
+            [record_index as usize];
         // Its own chunk: the name is a binding of the loaded module.
-        if !record.source_index.is_valid()
-            || self.is_external_dynamic_import(record, source_index)
+        record.source_index.is_valid()
+            && !self.is_external_dynamic_import(record, source_index)
             // `require()` returns this export, not the namespace.
-            || (record.kind == ImportKind::Require
+            && !(record.kind == ImportKind::Require
                 && self.graph.meta.items_resolved_exports()[record.source_index.get() as usize]
                     .contains(b"module.exports"))
-            // A lifted CommonJS export changes through `exports.x = …`, which the
-            // parser does not record as an assignment.
-            || self.graph.ast.items_flags()[target].contains(AstFlags::COMMONJS_LIFTED_TO_ESM)
+    }
+
+    /// Whether the export an item of such a record matched can stand in for it.
+    fn binds_call_item(&self, import_ref: Ref, result: &MatchImport) -> bool {
+        // A lifted CommonJS export changes through `exports.x = …`, which the
+        // parser does not record as an assignment.
+        if !matches!(result.kind, MatchImportKind::Normal)
+            || self.graph.ast.items_flags()[result.source_index as usize]
+                .contains(AstFlags::COMMONJS_LIFTED_TO_ESM)
         {
             return false;
         }
@@ -4346,6 +4342,15 @@ impl<'a> LinkerContext<'a> {
             // SAFETY: `keys`/`values` point into stable SoA storage (see above); read-only deref.
             let (import_ref, named_import) = unsafe { ((*keys)[i], &(*values)[i]) };
 
+            // Not matched at all: matching marks a name it can't find `Missing`,
+            // which prints `undefined` where the read should stay `ns.a`.
+            let is_call_item = self.is_call_record(source_index, named_import.import_record_index);
+            if is_call_item
+                && !self.call_record_binds(source_index, named_import.import_record_index)
+            {
+                continue;
+            }
+
             // Re-use memory for the cycle detector
             self.cycle_detector.clear();
 
@@ -4359,9 +4364,7 @@ impl<'a> LinkerContext<'a> {
                 &mut re_exports,
             );
 
-            if self.is_call_record(source_index, named_import.import_record_index)
-                && !self.binds_call_item(source_index, import_ref, named_import, &result)
-            {
+            if is_call_item && !self.binds_call_item(import_ref, &result) {
                 continue;
             }
 

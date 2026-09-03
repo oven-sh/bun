@@ -142,15 +142,15 @@ describe("bundler", () => {
 
         // AsyncEntryPoint.ts
         async function AsyncEntryPoint() {
-          const {} = await init_BaseElement().then(() => ({}));
+          await init_BaseElement();
           console.log("Launching AsyncEntryPoint", BaseElement());
         }
 
         // entry.ts
-        var {} = await Promise.resolve().then(() => ({}));
+        await Promise.resolve();
         AsyncEntryPoint();
 
-        //# debugId=C0EAF906A3A61FA864756E2164756E21
+        //# debugId=B9EF7E5F2ACBD11D64756E2164756E21
         //# sourceMappingURL=out.js.map
         "
       `);
@@ -371,15 +371,15 @@ describe("bundler", () => {
 
         // AsyncEntryPoint.ts
         async function AsyncEntryPoint() {
-          const {} = await Promise.resolve().then(() => (init_BaseElement(), {}));
+          await Promise.resolve().then(() => init_BaseElement());
           console.log("Launching AsyncEntryPoint", BaseElement());
         }
 
         // entry.ts
-        var {} = await Promise.resolve().then(() => ({}));
+        await Promise.resolve();
         AsyncEntryPoint();
 
-        //# debugId=FF7C8811411E545B64756E2164756E21
+        //# debugId=6678C3B13A630A4064756E2164756E21
         //# sourceMappingURL=out.js.map
         "
       `);

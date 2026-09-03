@@ -3592,7 +3592,7 @@ describe("bundler", () => {
     run: { stdout: "true" },
     onAfterBundle(api) {
       const out = api.readFile("/out.js");
-      expect(out).toContain("await Promise.resolve().then(() => ({}))");
+      expect(out).toContain("await Promise.resolve();");
       expect(out).toContain("console.log(isOdd(3))");
       expect(out).not.toContain("isEven");
       expect(out).not.toContain("__export");
@@ -3620,7 +3620,7 @@ describe("bundler", () => {
     },
     stdout: "before\nx init\nafter 1\nsync after import()\ny init\nthen 2",
     output(out) {
-      expect(out).toContain("init_x(), {}");
+      expect(out).toContain("await Promise.resolve().then(() => init_x());");
       expect(out).toContain("init_y(), {}");
     },
   });
@@ -4007,6 +4007,27 @@ describe("bundler", () => {
       "/y.js": `export const a = "y"; export const d = "DROPPED";`,
     },
     stdout: "x y",
+  });
+
+  // A read off a split chunk's namespace is not matched: a name it can't see
+  // (from `export *` of an external) must not print `undefined`.
+  itBundled("dynamic_import_dce/SplitChunkExternalStarRead", {
+    files: {
+      "/entry.js": /* js */ `
+        const mod = await import("./reexports.js");
+        const { rfs } = await import("./reexports.js");
+        console.log(typeof mod.join, typeof mod.rfs, typeof rfs);
+      `,
+      "/reexports.js": /* js */ `
+        export * from "node:path";
+        export { readFileSync as rfs } from "node:fs";
+      `,
+    },
+    target: "bun",
+    format: "esm",
+    splitting: true,
+    outdir: "/out",
+    run: { file: "/out/entry.js", stdout: "function function function" },
   });
 
   // A `var` with another declaration is one variable, so it stays a local.

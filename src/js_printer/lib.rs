@@ -5793,10 +5793,33 @@ pub(crate) mod __gated_printer {
                     }
                 }
                 StmtData::SLocal(s) => {
-                    self.print_indent();
-                    self.print_space_before_identifier();
-                    self.add_source_mapping(stmt.loc);
-                    self.print_decl_stmt(s.is_export, s.kind, s.decls.slice());
+                    // `const { a } = await import(…)` whose names are all bound
+                    // to exports declares nothing: only the load is left. The
+                    // other declarators keep their order around it.
+                    let decls = s.decls.slice();
+                    let mut run_start = 0;
+                    if self.options.has_dynamic_import_items && !s.is_export {
+                        for (i, decl) in decls.iter().enumerate() {
+                            if !self.binds_only_bound_imports(decl) {
+                                continue;
+                            }
+                            if run_start < i {
+                                self.print_local_stmt(
+                                    stmt.loc,
+                                    false,
+                                    s.kind,
+                                    &decls[run_start..i],
+                                );
+                            }
+                            run_start = i + 1;
+                            if let Some(value) = decl.value {
+                                self.print_unused_load(stmt.loc, value);
+                            }
+                        }
+                    }
+                    if run_start == 0 || run_start < decls.len() {
+                        self.print_local_stmt(stmt.loc, s.is_export, s.kind, &decls[run_start..]);
+                    }
                 }
                 StmtData::SIf(s) => {
                     self.print_indent();
@@ -6614,6 +6637,62 @@ pub(crate) mod __gated_printer {
                     _ => return false,
                 }
             }
+        }
+
+        /// A declarator whose pattern binds only names the linker bound to
+        /// exports, so it declares nothing.
+        fn binds_only_bound_imports(&self, decl: &G::Decl) -> bool {
+            let BindingData::BObject(object) = &decl.binding.data else {
+                return false;
+            };
+            let properties = slice_of(object.get().properties);
+            !properties.is_empty()
+                && properties.iter().all(|property| {
+                    matches!(&property.value.data, BindingData::BIdentifier(id)
+                        if self.symbols().get_const(id.get().r#ref)
+                            .is_some_and(|symbol| symbol.is_bound_import_item()))
+                })
+        }
+
+        fn print_local_stmt(
+            &mut self,
+            loc: bun_ast::Loc,
+            is_export: bool,
+            kind: S::Kind,
+            decls: &[G::Decl],
+        ) {
+            self.print_semicolon_if_needed();
+            self.print_indent();
+            self.print_space_before_identifier();
+            self.add_source_mapping(loc);
+            self.print_decl_stmt(is_export, kind, decls);
+        }
+
+        /// The initializer of such a declarator, as a statement. Its value is
+        /// `{}`, so an `await` of it is unused too.
+        fn print_unused_load(&mut self, loc: bun_ast::Loc, value: Expr) {
+            if matches!(value.data, ExprData::EIdentifier(_)) {
+                return;
+            }
+            self.print_semicolon_if_needed();
+            if !self.options.minify_whitespace && self.options.indent.count > 0 {
+                self.print_indent();
+            }
+            self.stmt_start = self.writer.written();
+            self.add_source_mapping(loc);
+            if let ExprData::EAwait(e) = value.data {
+                self.print_space_before_identifier();
+                self.print(b"await");
+                self.print_space();
+                self.print_expr(
+                    e.value,
+                    Level::Prefix.sub(1),
+                    ExprFlag::expr_result_is_unused(),
+                );
+            } else {
+                self.print_expr(value, Level::Lowest, ExprFlag::expr_result_is_unused());
+            }
+            self.print_semicolon_after_statement();
         }
 
         /// The import `target` names: an import identifier, or a local a

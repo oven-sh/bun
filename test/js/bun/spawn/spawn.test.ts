@@ -1287,14 +1287,15 @@ describe("stdin: a sliced Bun.file() sends only the slice", () => {
   });
 
   it.concurrent.each([
-    ["a Response over the slice", (slice: Blob) => new Response(slice)],
-    ["a Response over the slice's stream", (slice: Blob) => new Response(slice.stream())],
-    ["the slice's stream", (slice: Blob) => slice.stream()],
-  ])("%s", async (_, wrap) => {
+    ["a Response over the slice", 10, 20, (slice: Blob) => new Response(slice)],
+    ["a Response over the slice's stream", 10, 20, (slice: Blob) => new Response(slice.stream())],
+    ["the slice's stream", 10, 20, (slice: Blob) => slice.stream()],
+    ["the stream of a window at the start", 0, 5, (slice: Blob) => slice.stream()],
+  ])("%s", async (_, start, end, wrap) => {
     using dir = tempDir("spawn-stdin-slice-body", { "src.txt": content });
-    const slice = Bun.file(join(String(dir), "src.txt")).slice(10, 20);
+    const slice = Bun.file(join(String(dir), "src.txt")).slice(start, end);
 
-    expect(await sendToChild(wrap(slice))).toEqual({ stdout: "klmnopqrst", stderr: "", exitCode: 0 });
+    expect(await sendToChild(wrap(slice))).toEqual({ stdout: content.slice(start, end), stderr: "", exitCode: 0 });
   });
 
   it.concurrent("a window of a file descriptor, without moving its position", async () => {
@@ -1361,6 +1362,17 @@ describe("stdin: a sliced Bun.file() sends only the slice", () => {
     appendFileSync(src, "0123");
 
     expect(await sendToChild(file)).toEqual({ stdout: content + "0123", stderr: "", exitCode: 0 });
+  });
+
+  // A stat that fails must not leave a size of 0 behind.
+  it.concurrent.each(["exists()", ".size"])("a Bun.file() whose %s was read before the file existed", async probe => {
+    using dir = tempDir("spawn-stdin-created-later", {});
+    const src = join(String(dir), "src.txt");
+    const file = Bun.file(src);
+    expect(probe === "exists()" ? await file.exists() : file.size).toBe(probe === "exists()" ? false : 0);
+    writeFileSync(src, content);
+
+    expect(await sendToChild(file)).toEqual({ stdout: content, stderr: "", exitCode: 0 });
   });
 });
 

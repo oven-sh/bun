@@ -669,20 +669,15 @@ impl Stdio {
 /// The `(offset, len)` window a sliced file Blob names, clamped to the file.
 /// `None` when the Blob is the whole file, when the file is not a regular
 /// file, or when it cannot be stat'd: those go to the child as an fd or path.
+/// A pipe is not read here: that read could block the JS thread.
 fn file_view(blob: &webcore::blob::Any) -> Option<(u64, usize)> {
     let webcore::blob::Any::Blob(blob) = blob else {
         return None;
     };
-    let store = blob.store()?;
-    if !matches!(store.data, StoreData::File(_)) {
-        return None;
-    }
-    if blob.offset.get() == 0 && blob.size.get() == webcore::blob::MAX_SIZE {
-        return None;
-    }
-    // Stats the file (once per store) and clamps the view to its length.
+    blob.file_window()?;
+    // Stats the file (once per store) and clamps the window to its length.
     let (offset, size) = blob.resolved_size();
-    let file = store.data.as_file();
+    let file = blob.store()?.data.as_file();
     if file.seekable != Some(true) {
         return None;
     }

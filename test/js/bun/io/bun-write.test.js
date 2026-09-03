@@ -555,11 +555,48 @@ const IS_UV_FS_COPYFILE_DISABLED =
         response: await copy("a.txt", new Response(src.slice(10, 20))),
         responseOverStream: await copy("b.txt", new Response(src.slice(10, 20).stream())),
         stream: await copy("c.txt", src.slice(10, 20).stream()),
+        streamAtStart: await copy("d.txt", new Response(src.slice(0, 5).stream())),
       }).toEqual({
         response: [10, "klmnopqrst"],
         responseOverStream: [10, "klmnopqrst"],
         stream: [10, "klmnopqrst"],
+        streamAtStart: [5, "abcde"],
       });
+    });
+
+    // A stream has no position to seek to, so only the window's size applies.
+    it("a window of a socket", async () => {
+      using dir = tempDir("bun-write-src-slice-socket", {});
+      const dst = join(String(dir), "dst.txt");
+      const script = `process.stdout.write(String(await Bun.write(${JSON.stringify(dst)}, Bun.file(0).slice(2, 6))))`;
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: bunEnv,
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      proc.stdin.write("hello world");
+      proc.stdin.end();
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, copied: fs.readFileSync(dst).byteLength }).toEqual({
+        stdout: "4",
+        stderr: "",
+        copied: 4,
+      });
+      expect(exitCode).toBe(0);
+    });
+
+    // /dev/zero never ends, so only the window stops the copy. The child keeps
+    // a build that does not stop from filling a disk.
+    it.skipIf(isWindows)("a window of a character device", async () => {
+      const script = `process.stdout.write(String(await Bun.write("/dev/null", Bun.file("/dev/zero").slice(0, 10))))`;
+
+      await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr }).toEqual({ stdout: "10", stderr: "" });
+      expect(exitCode).toBe(0);
     });
 
     it("a window of a file larger than the preallocation threshold", async () => {
@@ -632,6 +669,24 @@ const IS_UV_FS_COPYFILE_DISABLED =
 
       await Bun.write(dst, file);
       expect(fs.readFileSync(dst, "utf8")).toBe(content + "0123");
+    });
+
+    // A stat that fails must not leave a size of 0 behind.
+    it.each(["exists()", ".size"])("a Bun.file() whose %s was read before the file existed", async probe => {
+      using dir = tempDir("bun-write-src-created-later", {});
+      const src = join(String(dir), "src.txt");
+      const dst = join(String(dir), "dst.txt");
+      const file = Bun.file(src);
+      expect(probe === "exists()" ? await file.exists() : file.size).toBe(probe === "exists()" ? false : 0);
+      fs.writeFileSync(src, content);
+
+      await Bun.write(dst, file);
+      const copied = fs.readFileSync(dst, "utf8");
+      expect({ copied, size: file.size, text: await file.text() }).toEqual({
+        copied: content,
+        size: content.length,
+        text: content,
+      });
     });
 
     it("rejects for a missing source and leaves the destination alone", async () => {

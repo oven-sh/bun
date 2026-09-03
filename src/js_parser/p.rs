@@ -5737,8 +5737,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
         if opts.is_call_target() || opts.is_template_tag() {
             self.symbols[ref_.inner_index() as usize].set_called_as_method(true);
-            // The call can print as `exports.name()`. `to_ast` drops this use
-            // from a part whose calls all ignore `this`.
+            // `to_ast` drops this use if the part's calls all ignore `this`.
             if !self.is_revisit_for_substitution {
                 self.symbol_uses
                     .get_or_put(self.exports_ref)
@@ -5776,8 +5775,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// Only a method call of an export that can read `this` reads the namespace
-    /// object. Drops the `exports_ref` use of a part that has no such call.
+    /// Drops the `exports_ref` use of each part with no call that can read `this`.
     fn drop_namespace_uses_of_calls_that_ignore_this(&self, parts: &mut [js_ast::Part]) {
         let mut method_exports = RefMap::default();
         for export in self.commonjs_named_exports.values() {
@@ -9155,8 +9153,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         if !self.commonjs_named_exports_deoptimized {
             self.mark_commonjs_exports_that_ignore_this();
-            // With no read of `exports` itself, each `exports_ref` use in a part
-            // is a method call that `note_commonjs_export_use` recorded.
+            // When nothing reads `exports`, each `exports_ref` use is a recorded call.
             if self.symbols[self.exports_ref.inner_index() as usize].use_count_estimate == 0 {
                 self.drop_namespace_uses_of_calls_that_ignore_this(parts.as_mut_slice());
             }

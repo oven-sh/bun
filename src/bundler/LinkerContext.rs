@@ -4224,14 +4224,19 @@ impl<'a> LinkerContext<'a> {
             && self.graph.meta.items_flags()[id].wrap != WrapKind::Cjs
     }
 
-    /// A default import of a lifted CommonJS module that sets `__esModule` is
-    /// `exports.default` or `module.exports` depending on that flag's run-time
-    /// value, unless the importer is an ES module by type (Node ignores the flag).
+    /// A default import of a lifted CommonJS module that sets `__esModule` and
+    /// `exports.default` is `exports.default` or `module.exports` depending on
+    /// that flag's run-time value, unless the importer is an ES module by type
+    /// (Node ignores the flag). Without an `exports.default` the default import
+    /// is `module.exports` whatever the flag says, as in Bun's runtime and in
+    /// `__toESM`.
     pub(crate) fn lifted_default_import_needs_wrapper(
         importer_module_type: crate::options::ModuleType,
         exports: &crate::bundled_ast::NamedExports,
     ) -> bool {
-        importer_module_type != crate::options::ModuleType::Esm && exports.contains(b"__esModule")
+        importer_module_type != crate::options::ModuleType::Esm
+            && exports.contains(b"__esModule")
+            && exports.contains(b"default")
     }
 
     /// Resolves every named import in one file to its matching export,

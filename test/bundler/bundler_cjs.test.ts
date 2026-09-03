@@ -12,8 +12,10 @@ import { itBundled } from "./expectBundled";
 //   Node. `__esModule` is ignored.
 // - Every other importer (`.js`, `.ts`, no package.json `"type"`, or
 //   `"type": "commonjs"`): isNodeMode=0. When `module.exports.__esModule` is
-//   truthy, the default import is `module.exports.default`. Otherwise it is
-//   the whole `module.exports`. This matches `bun run` and esbuild.
+//   truthy and `module.exports` has an own `default` property, the default
+//   import is `module.exports.default`. Otherwise it is the whole
+//   `module.exports`. This matches `bun run`. esbuild differs in one case: it
+//   gives `undefined` for a `__esModule` module with no `default` export.
 //
 // A bare `require()` never goes through `__toESM`.
 
@@ -925,6 +927,183 @@ describe("bundler", () => {
     },
     run: {
       stdout: "object",
+    },
+  });
+
+  // ============================================================================
+  // `__esModule` with no `default` export. tsc and rollup emit this shape for
+  // a module with only named exports (mobx, rxjs, graphql). Bun's runtime
+  // gives the whole `module.exports` as the default import here, so the
+  // bundler does the same for every importer kind. Only a module that also
+  // exports `default` gets `exports.default` for a non-ESM importer.
+  // ============================================================================
+
+  // The `require()` keeps `impl.js` a CommonJS module (no lifting to ESM), so
+  // `__toESM` decides at run time, as it does for a real package.
+  const esModuleNoDefaultFiles = {
+    "/node_modules/pkg/package.json": `{ "name": "pkg", "main": "index.js" }`,
+    "/node_modules/pkg/index.js": /* js */ `
+      "use strict";
+      module.exports = require("./impl.js");
+    `,
+    "/node_modules/pkg/impl.js": /* js */ `
+      "use strict";
+      Object.defineProperty(exports, "__esModule", { value: true });
+      exports.observable = function observable() {};
+      exports.version = 7;
+    `,
+  };
+  const logDefaultOfNoDefault = /* js */ `
+    import pkg from "pkg";
+    import * as ns from "pkg";
+    console.log(typeof pkg, typeof pkg.observable, pkg.version, ns.default === pkg, typeof ns.default, ns.version);
+  `;
+
+  // Test 46: a `.js` importer gets `module.exports` when there is no `default`
+  itBundled("cjs/__toESM_js_importer_esModule_without_default", {
+    files: {
+      "/entry.js": logDefaultOfNoDefault,
+      ...esModuleNoDefaultFiles,
+    },
+    onAfterBundle(api) {
+      // `index.js` is only `module.exports = require("./impl.js")`, so the
+      // bundler forwards the import straight to `impl.js`
+      api.expectFile("/out.js").toContain("__toESM(require_impl())");
+    },
+    run: {
+      stdout: "object function 7 true object 7",
+    },
+  });
+
+  // Test 47: the same for a `.ts` importer
+  itBundled("cjs/__toESM_ts_importer_esModule_without_default", {
+    files: {
+      "/entry.ts": logDefaultOfNoDefault,
+      ...esModuleNoDefaultFiles,
+    },
+    run: {
+      stdout: "object function 7 true object 7",
+    },
+  });
+
+  // Test 48: the same for a `.js` importer under package.json "type": "commonjs"
+  itBundled("cjs/__toESM_type_commonjs_importer_esModule_without_default", {
+    files: {
+      "/entry.js": logDefaultOfNoDefault,
+      "/package.json": `{ "name": "app", "type": "commonjs" }`,
+      ...esModuleNoDefaultFiles,
+    },
+    run: {
+      stdout: "object function 7 true object 7",
+    },
+  });
+
+  // Test 49: a `.mjs` importer already got `module.exports`, and still does
+  itBundled("cjs/__toESM_mjs_importer_esModule_without_default", {
+    files: {
+      "/entry.mjs": logDefaultOfNoDefault,
+      ...esModuleNoDefaultFiles,
+    },
+    run: {
+      stdout: "object function 7 true object 7",
+    },
+  });
+
+  // Test 50: the rule holds with target=node and format=cjs output
+  itBundled("cjs/__toESM_esModule_without_default_cjs_output", {
+    files: {
+      "/entry.js": logDefaultOfNoDefault,
+      ...esModuleNoDefaultFiles,
+    },
+    target: "node",
+    format: "cjs",
+    run: {
+      stdout: "object function 7 true object 7",
+    },
+  });
+
+  // Test 51: dynamic import of a CJS module with `__esModule` and no `default`
+  itBundled("cjs/__toESM_dynamic_import_esModule_without_default", {
+    files: {
+      "/entry.ts": /* js */ `
+        const m = await import("pkg");
+        console.log(typeof m.default, typeof m.default.observable, m.version);
+      `,
+      ...esModuleNoDefaultFiles,
+    },
+    run: {
+      stdout: "object function 7",
+    },
+  });
+
+  // Test 52: an external CJS module with `__esModule` and no `default`, in
+  // CJS output. `__toESM(require("pkg"))` runs against the real package.
+  itBundled("cjs/__toESM_external_esModule_without_default", {
+    files: {
+      "/entry.js": logDefaultOfNoDefault,
+    },
+    runtimeFiles: esModuleNoDefaultFiles,
+    external: ["pkg"],
+    target: "node",
+    format: "cjs",
+    run: {
+      stdout: "object function 7 true object 7",
+    },
+  });
+
+  // Test 53: `__esModule` with a `default` export still gives `exports.default`
+  // to a `.js` importer, and `module.exports` to a `.mjs` importer. The
+  // `default` export is what makes the flag matter.
+  itBundled("cjs/__toESM_esModule_with_default_still_honored", {
+    files: {
+      "/entry.js": /* js */ `
+        import pkg from "pkg";
+        import { fromMjs } from "./other.mjs";
+        console.log(typeof pkg, typeof fromMjs, fromMjs.default === pkg);
+      `,
+      "/other.mjs": /* js */ `
+        import pkg from "pkg";
+        export const fromMjs = pkg;
+      `,
+      "/node_modules/pkg/package.json": `{ "name": "pkg", "main": "index.js" }`,
+      "/node_modules/pkg/index.js": /* js */ `
+        "use strict";
+        module.exports = require("./impl.js");
+      `,
+      "/node_modules/pkg/impl.js": /* js */ `
+        "use strict";
+        Object.defineProperty(exports, "__esModule", { value: true });
+        exports.default = function theDefault() {};
+        exports.named = 1;
+      `,
+    },
+    run: {
+      stdout: "function object true",
+    },
+  });
+
+  // Test 54: an own `default` property counts even when its value is falsy.
+  // `exports.default = undefined` is still a `default` export.
+  itBundled("cjs/__toESM_esModule_with_falsy_default", {
+    files: {
+      "/entry.js": /* js */ `
+        import a from "./a.cjs";
+        import b from "./b.cjs";
+        console.log(a, b);
+      `,
+      "/a.cjs": /* js */ `
+        Object.defineProperty(exports, "__esModule", { value: true });
+        exports.default = undefined;
+        exports.named = 1;
+      `,
+      "/b.cjs": /* js */ `
+        Object.defineProperty(exports, "__esModule", { value: true });
+        exports.default = 0;
+        exports.named = 1;
+      `,
+    },
+    run: {
+      stdout: "undefined 0",
     },
   });
 });

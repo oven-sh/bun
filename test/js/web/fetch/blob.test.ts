@@ -318,21 +318,29 @@ test("new File([file], name) does not rename the source", () => {
 });
 
 test("new File(bits, name) converts the name to a USVString", async () => {
-  // `fileName` is a WebIDL USVString: an unpaired surrogate becomes U+FFFD.
-  const loneHigh = new File(["x"], "a\uD800b.txt");
-  const loneLow = new File(["x"], "a\uDC00b.txt");
-  const pairSplit = new File(["x"], "\uDC00\uD800");
-  expect([loneHigh.name, loneLow.name, pairSplit.name]).toEqual(["a\uFFFDb.txt", "a\uFFFDb.txt", "\uFFFD\uFFFD"]);
+  // `fileName` is a WebIDL USVString: each unpaired surrogate becomes U+FFFD.
+  const cases = [
+    ["a\uD800b.txt", "a\uFFFDb.txt"],
+    ["a\uDC00b.txt", "a\uFFFDb.txt"],
+    ["\uDC00\uD800", "\uFFFD\uFFFD"],
+    // a valid pair next to an unpaired surrogate stays as it is
+    ["\uD800\uD83D\uDE00", "\uFFFD\uD83D\uDE00"],
+    ["\uD800\uD800\uDC00", "\uFFFD\uD800\uDC00"],
+    ["\u{1F600}\uD800", "\u{1F600}\uFFFD"],
+    // a well-formed name does not change
+    ["\u{1F600}é.txt", "\u{1F600}é.txt"],
+  ];
+  const names = cases.map(([input]) => new File(["x"], input).name);
+  // JSON.stringify escapes an unpaired surrogate, so a failure shows which one is left.
+  expect(JSON.stringify(names)).toBe(JSON.stringify(cases.map(([, expected]) => expected)));
 
-  // a well-formed pair and a BMP character stay as they are
-  const wellFormed = new File(["x"], "\u{1F600}é.txt");
-  expect(wellFormed.name).toBe("\u{1F600}é.txt");
+  // a file-backed File converts its name too
+  expect(new File([Bun.file(import.meta.path)], "a\uD800b.txt").name).toBe("a\uFFFDb.txt");
 
   // the entry FormData hands back keeps the converted name
   const formData = new FormData();
-  formData.append("f", loneHigh);
-  const entry = formData.get("f") as File;
-  expect(entry.name).toBe("a\uFFFDb.txt");
+  formData.append("f", new File(["x"], "a\uD800b.txt"));
+  expect((formData.get("f") as File).name).toBe("a\uFFFDb.txt");
   expect(await new Response(formData).text()).toContain('filename="a\uFFFDb.txt"');
 });
 

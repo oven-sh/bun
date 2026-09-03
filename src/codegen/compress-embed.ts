@@ -3,8 +3,9 @@
 // touched while running user code, e.g. the shell completion scripts).
 //
 // usage: bun compress-embed.ts <input> <output.zst>
-import { mkdirSync } from "fs";
+import { mkdirSync, readFileSync } from "fs";
 import { dirname } from "path";
+import { constants, zstdCompressSync } from "zlib";
 import { writeIfNotChangedBinary } from "./helpers";
 
 const [input, output] = process.argv.slice(2);
@@ -13,5 +14,5 @@ if (!input || !output) {
   process.exit(1);
 }
 mkdirSync(dirname(output), { recursive: true });
-const bytes = await Bun.file(input).bytes();
-writeIfNotChangedBinary(output, Buffer.from(Bun.zstdCompressSync(bytes, { level: 19 })));
+const bytes = readFileSync(input);
+writeIfNotChangedBinary(output, zstdCompressSync(bytes, { params: { [constants.ZSTD_c_compressionLevel]: 19 } }));

@@ -1,6 +1,7 @@
 import * as fs from "fs";
 import * as Module from "module";
 import { basename, extname } from "path";
+import * as zlib from "zlib";
 
 const allFiles = fs.readdirSync(".").filter(f => f.endsWith(".js"));
 const outdir = process.argv[2];
@@ -79,7 +80,10 @@ for (let fileIndex = 0; fileIndex < allFiles.length; fileIndex++) {
       // src/resolver/node_fallbacks.rs) so the ~1 MB of polyfill text doesn't
       // sit uncompressed in the binary; debug builds keep reading the plain
       // `.js` at runtime.
-      await Bun.write(`${outdir}/${name}.zst`, Bun.zstdCompressSync(Buffer.from(outfile), { level: 19 }));
+      fs.writeFileSync(
+        `${outdir}/${name}.zst`,
+        zlib.zstdCompressSync(Buffer.from(outfile), { params: { [zlib.constants.ZSTD_c_compressionLevel]: 19 } }),
+      );
     }),
   );
 }

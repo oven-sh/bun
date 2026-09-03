@@ -1944,10 +1944,20 @@ it.skipIf(!nodeExe())(
 );
 
 it("tls.connect Happy Eyeballs timeout does not empty the peer certificate", async () => {
-  await using server = tls.createServer({ ...COMMON_CERT_ }, socket => socket.end());
+  const attemptTimeout = 10;
+  await using server = net.createServer(raw => {
+    raw.on("error", () => {});
+    // Accept TCP immediately so the family timer sees a live peer, but hold
+    // TLS past that timer. A fast loopback handshake would otherwise finish
+    // before 10ms and never hit the timeout path.
+    setTimeout(() => {
+      const secure = new TLSSocket(raw, { isServer: true, ...COMMON_CERT_ });
+      secure.on("error", () => {});
+      secure.on("secure", () => secure.end());
+    }, attemptTimeout + 10);
+  });
   await once(server.listen(0, "127.0.0.1"), "listening");
   const port = (server.address() as AddressInfo).port;
-  // Two AAAA records so IPv4 isn't last; the 10ms timer then fires during TLS.
   const addrs = [
     { address: "2001:db8::1", family: 6 },
     { address: "2001:db8::2", family: 6 },
@@ -1968,7 +1978,7 @@ it("tls.connect Happy Eyeballs timeout does not empty the peer certificate", asy
           rejectUnauthorized: false,
           lookup,
           autoSelectFamily: true,
-          autoSelectFamilyAttemptTimeout: 10,
+          autoSelectFamilyAttemptTimeout: attemptTimeout,
         },
         () => resolve(socket),
       );

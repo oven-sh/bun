@@ -1779,9 +1779,11 @@ describe.concurrent("a handler that calls server.upgrade() before it returns", (
     ],
   ])("reports a rejection to unhandledRejection when %s", async (_, handlers) => {
     const { stdout, stderr, exitCode } = await runChild(handlers);
-    expect(stdout.trim().split("\n").sort()).toEqual(["unhandledRejection: E", "ws got: hi"]);
-    expect(stderr).toBe("");
-    expect(exitCode).toBe(0);
+    expect({ stdoutLines: stdout.trim().split("\n").sort(), stderr, exitCode }).toEqual({
+      stdoutLines: ["unhandledRejection: E", "ws got: hi"],
+      stderr: "",
+      exitCode: 0,
+    });
   });
 });
 

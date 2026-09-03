@@ -1434,7 +1434,7 @@ describe.concurrent("bundler", () => {
     },
     run: {
       file: "/test.js",
-      stdout: '{"inner":{"b":456},"a":123,"b":456}',
+      stdout: '{"inner":{"b":456},"a":123}',
     },
   });
   itBundled("importstar/ReExportStarEntryPointAndInnerFile", {

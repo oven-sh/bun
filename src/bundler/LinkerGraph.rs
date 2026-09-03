@@ -687,39 +687,26 @@ impl<'a> LinkerGraph<'a> {
                     + server_component_boundaries.list.len()
                     + dynamic_import_entry_points.len(),
             )?;
-            // SAFETY: capacity reserved; columns initialized below.
-            unsafe { self.entry_points.set_len(entry_points.len()) };
-
-            // Note: `source_indices` / `path_strings` are disjoint columns of
-            // the same `MultiArrayList`. `split_mut()` hands out both at once;
-            // `self.entry_points` is not
-            // reallocated until after `path_strings`/`source_indices` are done
-            // with (the next `append_assume_capacity` is within the
-            // pre-reserved capacity, so no realloc).
-            let mut ep_slice = self.entry_points.slice();
-            let ep_cols = ep_slice.split_mut();
-            let source_indices: &mut [index::Int] = ep_cols.source_index;
-            let path_strings: &mut [RawSlice<u8>] = ep_cols.output_path;
-
-            debug_assert_eq!(entry_points.len(), path_strings.len());
-            debug_assert_eq!(entry_points.len(), source_indices.len());
-            for ((i, path_string), source_index) in entry_points
-                .iter()
-                .zip(path_strings.iter_mut())
-                .zip(source_indices.iter_mut())
-            {
+            for i in entry_points {
                 let source = &sources[i.get() as usize];
                 debug_assert!(source.index.0 == i.get());
+
+                // Two entry points can name one file, e.g. when an onResolve plugin
+                // maps two names to it. The file gets one entry point and one output.
+                if entry_point_kinds[source.index.0 as usize] != entry_point::Kind::None {
+                    continue;
+                }
                 entry_point_kinds[source.index.0 as usize] = entry_point::Kind::UserSpecified;
 
                 // Check if this entry point has an original name (from virtual entry resolution)
-                if let Some(original_name) = entry_point_original_names.get(i.get()) {
-                    *path_string = RawSlice::new(original_name);
-                } else {
-                    *path_string = RawSlice::new(source.path.text);
-                }
-
-                *source_index = source.index.0;
+                let output_path = match entry_point_original_names.get(i.get()) {
+                    Some(original_name) => RawSlice::new(original_name),
+                    None => RawSlice::new(source.path.text),
+                };
+                self.entry_points.append_assume_capacity(EntryPoint {
+                    source_index: source.index.0,
+                    output_path,
+                });
             }
 
             for &id in dynamic_import_entry_points {

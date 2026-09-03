@@ -758,6 +758,8 @@ impl LinkerContext<'_> {
         // instead of by mutating the exports object because other modules in the
         // bundle (including the entry point module) may do "import * as" to get
         // access to the exports object and should NOT see the "__esModule" flag.
+        // This stays the last statement of the part: `generate_code_for_file_in_chunk_js`
+        // drops it when another entry point's chunk prints this file.
         if force_include_exports_for_entry_point {
             let to_common_js_ref = self.runtime_function(b"__toCommonJS");
             emit_export_stmt!(Stmt::assign(

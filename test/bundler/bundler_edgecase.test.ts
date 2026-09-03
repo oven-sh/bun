@@ -3662,6 +3662,37 @@ describe("bundler", () => {
       api.expectFile("/out/b.css").toEqualIgnoringWhitespace(".a{color:red}.b{color:#00f}");
     },
   });
+  // With --format=cjs, the module.exports of each output holds the exports of its
+  // own entry point, also when the file of another entry point prints in it.
+  itBundled("edgecase/EntryPointsImportEachOtherCommonJS", {
+    files: {
+      "/a.ts": `import { b } from "./b.ts"; export function a() { return b(); }`,
+      "/b.ts": `import { a } from "./a.ts"; export function b() { return "b"; } export const useA = () => a;`,
+    },
+    runtimeFiles: {
+      "/check.js": `console.log(JSON.stringify([require("./out/a.js"), require("./out/b.js")].map(Object.keys)));`,
+    },
+    entryPoints: ["/a.ts", "/b.ts"],
+    outdir: "/out",
+    format: "cjs",
+    run: { file: "/check.js", stdout: `[["a"],["b","useA"]]` },
+  });
+  itBundled("edgecase/EntryPointImportsEntryPointCommonJS", {
+    files: {
+      "/index.ts": `import { x } from "./lib.ts"; export const y = x + 1;`,
+      "/lib.ts": `export * from "ext"; export const x = 1;`,
+    },
+    runtimeFiles: {
+      "/node_modules/ext/index.js": `module.exports = { fromExt: true };`,
+      "/check.js": `console.log(JSON.stringify([require("./out/index.js"), require("./out/lib.js")]));`,
+    },
+    entryPoints: ["/index.ts", "/lib.ts"],
+    outdir: "/out",
+    external: ["ext"],
+    target: "node",
+    format: "cjs",
+    run: { file: "/check.js", stdout: `[{"y":2},{"x":1,"fromExt":true}]` },
+  });
 });
 
 for (const backend of ["api", "cli"] as const) {

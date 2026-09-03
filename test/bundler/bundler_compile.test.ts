@@ -83,7 +83,7 @@ describe("bundler", () => {
         process.exitCode = 1;
         process.versions.bun = "bun!";
         if (process.versions.bun === "bun!") throw new Error("fail");
-        if (require("./${process.platform}-${process.arch}.js") === "${Bun.version.replaceAll("-debug", "")}") {
+        if (require("./${process.platform}-${process.arch}.js").replaceAll("-debug", "") === "${Bun.version.replaceAll("-debug", "")}") {
           process.exitCode = 0;
         }
       `,

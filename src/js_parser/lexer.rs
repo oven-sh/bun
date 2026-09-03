@@ -1960,8 +1960,12 @@ impl<'a> Lexer<'a> {
             match c {
                 b'@' | b'#' => {
                     let chunk = rest;
-                    let offset =
-                        self.scan_pragma(self.start + i + (text.len() - rest.len()), chunk, false);
+                    let offset = self.scan_pragma(
+                        self.start + i + (text.len() - rest.len()),
+                        chunk,
+                        false,
+                        true,
+                    );
 
                     rest = &rest[
                         // The min is necessary because the file could end
@@ -2086,8 +2090,20 @@ impl<'a> Lexer<'a> {
 
                     0x23 | 0x40 => {
                         let pragma_trigger_pos = self.end;
+                        // `@__PURE__` / `#__PURE__` only count as an annotation when
+                        // they are the first word of a `//` comment. Later in the
+                        // line the marker is prose, such as a `/*#__PURE__*/` that
+                        // a comment quotes. esbuild matches the marker anywhere but
+                        // only acts on it under --minify-syntax. Bun removes an
+                        // unused pure call even without minification, so a false
+                        // match deletes code. Block comments keep the esbuild rule:
+                        // they cannot quote a `/*#__PURE__*/`.
+                        let allow_pure = strings::is_all_whitespace(
+                            &contents[self.start + 2..pragma_trigger_pos],
+                        );
                         let chunk = js_ast::StoreStr::new(self.remaining());
-                        self.current += self.scan_pragma(pragma_trigger_pos, chunk.slice(), true);
+                        self.current +=
+                            self.scan_pragma(pragma_trigger_pos, chunk.slice(), true, allow_pure);
                         continue;
                     }
                     _ => {
@@ -2110,14 +2126,17 @@ impl<'a> Lexer<'a> {
 
     /// Scans the string for a pragma.
     /// offset is used when there's an issue with the JSX pragma later on.
+    /// `allow_pure` is false when a `__PURE__` match at this position is prose
+    /// and not an annotation.
     /// Returns the byte length to advance by if found, otherwise 0.
     fn scan_pragma(
         &mut self,
         offset_for_errors: usize,
         chunk: &[u8],
         allow_newline: bool,
+        allow_pure: bool,
     ) -> usize {
-        if !self.has_pure_comment_before {
+        if allow_pure && !self.has_pure_comment_before {
             if strings::has_prefix_with_word_boundary(chunk, b"__PURE__") {
                 self.has_pure_comment_before = true;
                 return "__PURE__".len();

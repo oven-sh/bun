@@ -5,7 +5,7 @@ description: Use `bun publish` to publish a package to the npm registry
 
 import Publish from "/snippets/cli/publish.mdx";
 
-`bun publish` packs your package into a tarball and strips catalog and workspace protocols from the `package.json`, resolving versions if necessary. It then publishes to the registry specified in your configuration files. Both `bunfig.toml` and `.npmrc` files are supported.
+`bun publish` packs your package into a tarball and strips catalog and workspace protocols from the `package.json`, resolving versions if necessary. It then publishes to the registry specified in your configuration files. Both `bunfig.toml` and `.npmrc` files are supported. Run [`bun login`](/pm/cli/login) first to save a token for the registry.
 
 ```sh terminal icon="terminal"
 ## Publishing the package from the current working directory

@@ -249,6 +249,12 @@ complete -c bun -n "__fish_seen_subcommand_from update" -l "no-cache" -d "Ignore
 complete -c bun -n "__fish_seen_subcommand_from update" -l "silent" -d "Don't log anything" -f
 complete -c bun -n "__fish_seen_subcommand_from update" -l "verbose" -d "Excessively verbose logging" -f
 complete -c bun -n "__fish_use_subcommand" -a "publish" -d "Publish your package from local to npm" -f
+complete -c bun -n "__fish_use_subcommand" -a "login" -d "Log in to an npm registry" -f
+complete -c bun -n "__fish_seen_subcommand_from login" -l "registry" -r -d "Log in to this registry instead of the configured one" -f
+complete -c bun -n "__fish_seen_subcommand_from login" -l "scope" -r -d "Log in to the registry configured for this scope" -f
+complete -c bun -n "__fish_use_subcommand" -a "logout" -d "Log out of an npm registry" -f
+complete -c bun -n "__fish_seen_subcommand_from logout" -l "registry" -r -d "Log out of this registry instead of the configured one" -f
+complete -c bun -n "__fish_seen_subcommand_from logout" -l "scope" -r -d "Log out of the registry configured for this scope" -f
 complete -c bun -n "__fish_use_subcommand" -a "repl" -d "Start a REPL session with Bun" -f
 complete -c bun -n "__fish_seen_subcommand_from repl" -s "e" -l "eval" -r -d "Evaluate argument as a script, then exit" -f
 complete -c bun -n "__fish_seen_subcommand_from repl" -s "p" -l "print" -r -d "Evaluate argument as a script, print the result, then exit" -f

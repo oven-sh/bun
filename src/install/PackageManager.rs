@@ -509,6 +509,8 @@ pub enum Subcommand {
     Why,
     Dedupe,
     Prune,
+    Login,
+    Logout,
     // bin,
     // hash,
     // @"hash-print",
@@ -1580,7 +1582,10 @@ pub fn init(
             //
             // probably wont matter as if package.json isn't writable, it's likely that
             // the underlying directory and node_modules isn't either.
-            let need_write = subcommand != Subcommand::Install || cli.positionals.len() > 1;
+            let need_write = !matches!(
+                subcommand,
+                Subcommand::Install | Subcommand::Login | Subcommand::Logout
+            ) || cli.positionals.len() > 1;
 
             loop {
                 let mut package_json_path_buf = PathBuffer::uninit();

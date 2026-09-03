@@ -203,7 +203,14 @@
           {
             "group": "Publishing & Analysis",
             "icon": "upload",
-            "pages": ["/pm/cli/publish", "/pm/cli/outdated", "/pm/cli/why", "/pm/cli/audit", "/pm/cli/info"]
+            "pages": [
+              "/pm/cli/publish",
+              "/pm/cli/login",
+              "/pm/cli/outdated",
+              "/pm/cli/why",
+              "/pm/cli/audit",
+              "/pm/cli/info"
+            ]
           },
           {
             "group": "Workspace Management",

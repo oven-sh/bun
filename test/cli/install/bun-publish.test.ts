@@ -900,7 +900,7 @@ describe.concurrent("credentials in the registry url", () => {
     const packageDir = await packageDirFor("no-credentials-pkg");
 
     const { err, exitCode } = await publish(env, packageDir, "--registry", `http://localhost:${mock.port}/`);
-    expect(err).toBe("error: missing authentication (run `bunx npm login`)\n");
+    expect(err).toBe("error: missing authentication (run `bun login`)\n");
     expect(mock.requests).toEqual([]);
     expect(exitCode).toBe(1);
   });
@@ -917,7 +917,7 @@ describe.concurrent("credentials in the registry url", () => {
       "--registry",
       `http://localhost:${mock.port}/`,
     );
-    expect(err).toBe("error: missing authentication (run `bunx npm login`)\n");
+    expect(err).toBe("error: missing authentication (run `bun login`)\n");
     expect(mock.requests).toEqual([]);
     expect(exitCode).toBe(1);
   });

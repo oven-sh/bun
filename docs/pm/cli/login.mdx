@@ -1,0 +1,72 @@
+---
+title: "bun login"
+description: "Log in to an npm registry and save the token for bun install and bun publish"
+---
+
+`bun login` authenticates you against an npm registry in the browser and saves the resulting token to your user-level `.npmrc`. `bun install`, `bun publish` and `bun pm whoami` read that file, so the login works for all of them.
+
+```bash terminal icon="terminal"
+bun login
+```
+
+```
+bun login v1.4.0 (abc12345)
+Logging in to https://registry.npmjs.org/
+
+Authenticate your account at (press ENTER to open in browser):
+┌──────────────────────────────────────────────────────────────┐
+│ https://www.npmjs.com/login?next=/login/cli/3f1c...          │
+└──────────────────────────────────────────────────────────────┘
+
+Saved the token to /home/me/.npmrc
+Logged in as alice on https://registry.npmjs.org/
+```
+
+Bun asks the registry for a login URL (`POST /-/v1/login`), prints it, and polls the registry until you finish the login in the browser. Pressing ENTER opens the URL in your default browser. Without a terminal (for example in CI), the URL is still printed and polled. The wait is capped at 5 minutes.
+
+The token goes to the first of these files:
+
+1. `$XDG_CONFIG_HOME/.npmrc`, if that file already exists
+2. `$HOME/.npmrc`
+
+This is the same lookup `bun install` uses, so the saved token is the one Bun reads back. The file is written with mode `0600`. Lines that `bun login` did not write, including comments and their order, stay as they are.
+
+<Note>
+  Some registries (GitHub Packages, older Verdaccio versions) do not implement web login. `bun login` then exits with an
+  error and prints the `.npmrc` line to add by hand with a token created on the registry's website.
+</Note>
+
+### `--registry`
+
+Log in to a registry other than the configured one:
+
+```bash terminal icon="terminal"
+bun login --registry https://registry.example.com
+```
+
+This writes `//registry.example.com/:_authToken=<token>`. The default registry setting is not changed.
+
+### `--scope`
+
+Log in to the registry configured for a scope, and bind the scope to that registry:
+
+```bash terminal icon="terminal"
+bun login --scope @myorg
+bun login --scope @myorg --registry https://npm.pkg.example.com
+```
+
+This writes both the token line and `@myorg:registry=<url>`. With `--scope` and no `--registry`, Bun uses the registry your `.npmrc` or `bunfig.toml` already configures for that scope, else the default registry.
+
+## `bun logout`
+
+`bun logout` revokes the saved token on the registry (`DELETE /-/user/token/<token>`) and removes its line from the user-level `.npmrc`.
+
+```bash terminal icon="terminal"
+bun logout
+bun logout --scope @myorg
+bun logout --registry https://registry.example.com
+```
+
+`--scope` also removes the `@myorg:registry` line. If the registry answers `401` or `404`, the token is already invalid and the line is removed anyway. On any other failure the file is left unchanged.
+
+`bun logout` only touches the user-level `.npmrc`. If the registry's credentials come from `bunfig.toml`, a project `.npmrc`, or an environment variable, it exits with an error that says so.

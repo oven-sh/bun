@@ -328,7 +328,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                         Npm::WhoamiError::OutOfMemory => bun_core::out_of_memory(),
                         Npm::WhoamiError::NeedAuth => {
                             Output::err_generic(
-                                "missing authentication (run <cyan>`bunx npm login`<r>)",
+                                "missing authentication (run <cyan>`bun login`<r>)",
                                 (),
                             );
                         }

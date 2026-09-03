@@ -1,5 +1,6 @@
-//! npm's web login handshake (show URL, offer the browser, poll `doneUrl`), lifted out of `bun publish`.
+//! npm's web login handshake (show URL, offer the browser, poll `doneUrl`), shared by `bun login` and `bun publish`.
 
+use std::io::Write as _;
 use std::time::{Duration, Instant};
 
 use bun_alloc::AllocError;
@@ -9,6 +10,7 @@ use bun_install::Npm;
 use bun_parsers::json as json_mod;
 use bun_url::URL;
 
+use crate::cli::ci_info as ci;
 use crate::cli::open;
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
@@ -130,6 +132,158 @@ pub(crate) fn print_auth_url(auth_url: &'static ZStr) {
     }
 }
 
+/// The headers every registry request shares; `include_auth` adds the credentials in `registry`.
+pub(crate) fn registry_headers(
+    registry: &Npm::Registry::Scope,
+    npm_command: &[u8],
+    body_len: Option<usize>,
+    include_auth: bool,
+) -> Result<http::HeaderBuilder, AllocError> {
+    let mut pairs: Vec<(&[u8], Vec<u8>)> = Vec::new();
+    pairs.push((b"accept", b"*/*".to_vec()));
+    pairs.push((b"accept-encoding", b"gzip,deflate".to_vec()));
+
+    if include_auth {
+        if !registry.token.is_empty() {
+            let mut v = b"Bearer ".to_vec();
+            v.extend_from_slice(&registry.token);
+            pairs.push((b"authorization", v));
+        } else if !registry.auth.is_empty() {
+            let mut v = b"Basic ".to_vec();
+            v.extend_from_slice(&registry.auth);
+            pairs.push((b"authorization", v));
+        }
+    }
+
+    if body_len.is_some() {
+        // verdaccio rejects anything other than exactly `application/json`
+        pairs.push((b"content-type", b"application/json".to_vec()));
+    }
+
+    pairs.push((b"npm-auth-type", b"web".to_vec()));
+    pairs.push((b"npm-command", npm_command.to_vec()));
+
+    let ci_name = ci::detect_ci_name();
+    let mut user_agent = Vec::new();
+    let _ = write!(
+        user_agent,
+        "{} {} {} workspaces/false{}{}",
+        Global::user_agent,
+        Global::os_name,
+        Global::arch_name,
+        if ci_name.is_some() { " ci/" } else { "" },
+        bstr::BStr::new(ci_name.unwrap_or(b"")),
+    );
+    pairs.push((b"user-agent", user_agent));
+
+    pairs.push((b"Connection", b"keep-alive".to_vec()));
+
+    if let Some(len) = body_len {
+        pairs.push((b"Content-Length", len.to_string().into_bytes()));
+    }
+
+    let mut headers = http::HeaderBuilder::default();
+    for (name, value) in &pairs {
+        headers.count(name, value);
+    }
+    headers.allocate()?;
+    for (name, value) in &pairs {
+        headers.append(name, value);
+    }
+    Ok(headers)
+}
+
+/// `<registry>/-/<path>`
+pub(crate) fn registry_endpoint(registry: &Npm::Registry::Scope, path: &str) -> Vec<u8> {
+    let mut url = Vec::new();
+    let _ = write!(
+        url,
+        "{}/-/{}",
+        bstr::BStr::new(strings::without_trailing_slash(registry.url.href())),
+        path,
+    );
+    url
+}
+
+pub(crate) enum WebLoginStart {
+    /// The registry accepted `POST /-/v1/login`.
+    Challenge {
+        login_url: &'static ZStr,
+        done_url: Box<[u8]>,
+    },
+    /// The registry answered `/-/v1/login` with an error or without both URLs.
+    Unsupported { status: u32 },
+}
+
+/// `POST <registry>/-/v1/login {"hostname": ...}`; non-http(s) URLs in the answer count as no web login.
+pub(crate) fn request_web_login(
+    registry: &Npm::Registry::Scope,
+    hostname: &[u8],
+    response_buf: &mut MutableString,
+) -> Result<WebLoginStart, AllocError> {
+    let mut body = Vec::new();
+    let _ = write!(
+        body,
+        "{{\"hostname\":{}}}",
+        bun_core::fmt::format_json_string_utf8(hostname, Default::default()),
+    );
+
+    let headers = registry_headers(registry, b"login", Some(body.len()), false)?;
+    let url = registry_endpoint(registry, "v1/login");
+
+    response_buf.reset();
+    let mut req = http::AsyncHTTP::init_sync(
+        http::Method::POST,
+        URL::parse(&url),
+        headers.entries.clone()?,
+        headers.content.written_slice(),
+        &body,
+        None,
+        http::FetchRedirect::Follow,
+    );
+
+    let res = match req.send_sync(response_buf) {
+        Ok(r) => r,
+        Err(bun_http::Error::Alloc(AllocError)) => return Err(AllocError),
+        Err(e) => {
+            Output::err(e, "failed to send login request", ());
+            Global::crash();
+        }
+    };
+
+    // npm-profile treats any 4xx or 500 here as "no web login" and falls back
+    let status = res.status_code();
+    if !(200..300).contains(&status) {
+        return Ok(WebLoginStart::Unsupported { status });
+    }
+
+    let bump = bun_alloc::Arena::new();
+    let mut log = bun_ast::Log::init();
+    let source = bun_ast::Source::init_path_string(b"???", response_buf.list.as_slice());
+    let json = match json_mod::parse_utf8(&source, &mut log, &bump) {
+        Ok(j) => j,
+        Err(bun_parsers::Error::Alloc(AllocError)) => return Err(AllocError),
+        Err(_) => {
+            Output::err("WebLogin", "failed to parse the login response as JSON", ());
+            Global::crash();
+        }
+    };
+
+    let login_url = json_get_string_cloned(&json, &bump, b"loginUrl")?;
+    let done_url = json_get_string_cloned(&json, &bump, b"doneUrl")?;
+    let (Some(login_url), Some(done_url)) = (login_url, done_url) else {
+        return Ok(WebLoginStart::Unsupported { status });
+    };
+    if !is_web_url(login_url) || !is_web_url(done_url) {
+        return Ok(WebLoginStart::Unsupported { status });
+    }
+
+    Ok(WebLoginStart::Challenge {
+        login_url: dupe_static_z(login_url),
+        done_url: done_url.into(),
+    })
+}
+
 /// `GET done_url` until 200 `{"token"}`; 202 waits `retry-after` seconds (else 500ms) up to `deadline`.
 pub(crate) fn poll_done_url(
     done_url: &URL<'_>,
@@ -215,4 +369,94 @@ pub(crate) fn poll_done_url(
             }
         }
     }
+}
+
+/// `GET <registry>/-/whoami` with `token`. `None` on any failure: the caller already saved the token.
+pub(crate) fn whoami_best_effort(
+    registry: &Npm::Registry::Scope,
+    token: &[u8],
+    response_buf: &mut MutableString,
+) -> Result<Option<Vec<u8>>, AllocError> {
+    let mut authed = registry.clone();
+    authed.token = token.into();
+    let headers = registry_headers(&authed, b"whoami", None, true)?;
+    let url = registry_endpoint(registry, "whoami");
+
+    response_buf.reset();
+    let mut req = http::AsyncHTTP::init_sync(
+        http::Method::GET,
+        URL::parse(&url),
+        headers.entries.clone()?,
+        headers.content.written_slice(),
+        b"",
+        None,
+        http::FetchRedirect::Follow,
+    );
+    let res = match req.send_sync(response_buf) {
+        Ok(r) => r,
+        Err(bun_http::Error::Alloc(AllocError)) => return Err(AllocError),
+        Err(_) => return Ok(None),
+    };
+    if res.status_code() != 200 {
+        return Ok(None);
+    }
+
+    let bump = bun_alloc::Arena::new();
+    let mut log = bun_ast::Log::init();
+    let source = bun_ast::Source::init_path_string(b"???", response_buf.list.as_slice());
+    let json = match json_mod::parse_utf8(&source, &mut log, &bump) {
+        Ok(j) => j,
+        Err(bun_parsers::Error::Alloc(AllocError)) => return Err(AllocError),
+        Err(_) => return Ok(None),
+    };
+    Ok(json_get_string_cloned(&json, &bump, b"username")?.map(<[u8]>::to_vec))
+}
+
+/// JavaScript's `encodeURIComponent`, so the token is one path segment.
+fn encode_uri_component(input: &[u8], out: &mut Vec<u8>) {
+    out.reserve(input.len());
+    for &byte in input {
+        if byte.is_ascii_alphanumeric() || strings::contains_char(b"-_.!~*'()", byte) {
+            out.push(byte);
+        } else {
+            let hex = bun_core::fmt::hex2_upper(byte);
+            out.extend_from_slice(&[b'%', hex[0], hex[1]]);
+        }
+    }
+}
+
+/// `DELETE <registry>/-/user/token/<token>` with that token as Bearer; the URL holds the token, never print it.
+pub(crate) fn revoke_token(
+    registry: &Npm::Registry::Scope,
+    token: &[u8],
+    response_buf: &mut MutableString,
+) -> Result<u32, AllocError> {
+    let mut authed = registry.clone();
+    authed.token = token.into();
+    let headers = registry_headers(&authed, b"logout", None, true)?;
+
+    let mut url = registry_endpoint(registry, "user/token/");
+    encode_uri_component(token, &mut url);
+
+    response_buf.reset();
+    let mut req = http::AsyncHTTP::init_sync(
+        http::Method::DELETE,
+        URL::parse(&url),
+        headers.entries.clone()?,
+        headers.content.written_slice(),
+        b"",
+        None,
+        http::FetchRedirect::Follow,
+    );
+
+    let res = match req.send_sync(response_buf) {
+        Ok(r) => r,
+        Err(bun_http::Error::Alloc(AllocError)) => return Err(AllocError),
+        Err(e) => {
+            Output::err(e, "failed to send the token revocation request", ());
+            Global::crash();
+        }
+    };
+
+    Ok(res.status_code())
 }

@@ -1868,7 +1868,7 @@ impl PublishError {
         match self {
             PublishError::OutOfMemory => bun_core::out_of_memory(),
             PublishError::NeedAuth => {
-                Output::err_generic("missing authentication (run <cyan>`bunx npm login`<r>)", ());
+                Output::err_generic("missing authentication (run <cyan>`bun login`<r>)", ());
                 Global::crash();
             }
         }

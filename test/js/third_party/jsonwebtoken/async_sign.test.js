@@ -9,12 +9,22 @@ describe("signing a token asynchronously", function () {
     var secret = "shhhhhh";
 
     it("should return the same result as singing synchronously", function (done) {
-      jwt.sign({ foo: "bar" }, secret, { algorithm: "HS256" }, function (err, asyncToken) {
+      // Pin `iat`. Without it each sign() reads Date.now(), and the two tokens
+      // differ when a second boundary falls between the async and the sync call.
+      var payload = { foo: "bar", iat: 1700000000 };
+      jwt.sign(payload, secret, { algorithm: "HS256" }, function (err, asyncToken) {
         if (err) return done(err);
-        var syncToken = jwt.sign({ foo: "bar" }, secret, { algorithm: "HS256" });
-        expect(typeof asyncToken).toBe("string");
-        expect(asyncToken.split(".")).toHaveLength(3);
-        expect(asyncToken).toEqual(syncToken);
+        // jws runs this callback inside a try/catch and routes a throw to the
+        // 'error' listener, which jsonwebtoken wrapped in once(). A failed
+        // expect() here is swallowed and the test only times out. Report it.
+        try {
+          var syncToken = jwt.sign(payload, secret, { algorithm: "HS256" });
+          expect(typeof asyncToken).toBe("string");
+          expect(asyncToken.split(".")).toHaveLength(3);
+          expect(asyncToken).toEqual(syncToken);
+        } catch (e) {
+          return done(e);
+        }
         done();
       });
     });

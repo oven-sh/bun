@@ -1305,19 +1305,22 @@ describe("bundler", () => {
       exports._helper = function (s) {
         return "helped:" + s;
       };
+      exports.tag = function (strings) {
+        return this._helper(strings[0]);
+      };
     `,
   };
   itBundled("cjs2esm/DefaultImportMethodCallKeepsThis", {
     files: {
       "/entry.js": /* js */ `
         import st from "./lib.cjs";
-        console.log(st.parse("x"), st["parse"]("y"));
+        console.log(st.parse("x"), st["parse"]("y"), st.tag\`z\`);
       `,
       ...thisReadingLib,
     },
     cjs2esm: true,
     run: {
-      stdout: "helped:x helped:y",
+      stdout: "helped:x helped:y helped:z",
     },
   });
   itBundled("cjs2esm/StarImportMethodCallKeepsThis", {
@@ -1325,13 +1328,13 @@ describe("bundler", () => {
       "/entry.js": /* js */ `
         import * as ns from "./lib.cjs";
         const parse = ns.parse;
-        console.log(ns.parse("x"), ns["parse"]("y"), parse === ns.parse);
+        console.log(ns.parse("x"), ns["parse"]("y"), ns["tag"]\`z\`, parse === ns.parse);
       `,
       ...thisReadingLib,
     },
     cjs2esm: true,
     run: {
-      stdout: "helped:x helped:y true",
+      stdout: "helped:x helped:y helped:z true",
     },
   });
   itBundled("cjs2esm/StarImportMethodCallThroughExportStarKeepsThis", {

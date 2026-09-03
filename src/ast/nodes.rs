@@ -1099,7 +1099,7 @@ pub type PartSymbolPropertyUseMap = ArrayHashMap<
 #[derive(Default, Clone, Copy)]
 pub struct PropertyUse {
     pub count_estimate: u32,
-    /// Some read is called, as in `X.name()`. That call passes `X` as `this`.
+    /// Some read is called, as `X.name()` or a template tag, with `X` as `this`.
     pub is_call_target: bool,
 }
 

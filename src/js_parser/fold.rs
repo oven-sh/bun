@@ -268,7 +268,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                             // Track how many times we've referenced this symbol
                             p.record_usage(ref_);
-                            if identifier_opts.is_call_target() {
+                            if identifier_opts.is_call_target() || identifier_opts.is_template_tag()
+                            {
                                 p.symbols[ref_.inner_index() as usize].set_called_as_method(true);
                             }
 

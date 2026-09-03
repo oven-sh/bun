@@ -3037,16 +3037,19 @@ it("http2 session.altsvc() sends an object origin unchanged, like Node", async (
   server.listen(0, "127.0.0.1", () => {
     const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
     client.on("error", reject);
+    // The ALTSVC frames are sent from the "session" handler, so they arrive
+    // before the response. Tear down only after the request closes, so the
+    // GOAWAY from client.close() does not reject the request stream.
     client.on("altsvc", (alt, origin, stream) => {
       received.push({ alt, origin, stream });
-      if (received.length === sent) {
-        client.close();
-        server.close();
-        resolve();
-      }
     });
     const req = client.request({ ":path": "/" });
     req.resume();
+    req.on("close", () => {
+      client.close();
+      server.close();
+      resolve();
+    });
     req.end();
   });
 

@@ -769,21 +769,34 @@ pub mod lib {
         ) -> core::result::Result<IteratorResult<Box<[u8]>>, bun_core::OOM> {
             // SAFETY: self.entry is the libarchive-owned entry from read_next_header.
             let size = unsafe { (*self.entry).size() };
-            if size < 0 || size > 64 * 1024 * 1024 {
+            let Ok(size) = usize::try_from(size) else {
                 return Ok(IteratorResult::init_err(
                     archive.as_mut_ptr(),
                     b"invalid archive entry size",
                 ));
+            };
+            // Read data incrementally so untrusted entry sizes don't drive allocation.
+            let mut buf: Vec<u8> = Vec::new();
+            while buf.len() < size {
+                let to_read = (size - buf.len()).min(64 * 1024);
+                buf.try_reserve(to_read).map_err(|_| bun_core::AllocError)?;
+                // SAFETY: `archive_read_data` only writes into the slice; the written prefix is committed below.
+                let dest = unsafe { &mut bun_core::vec::spare_bytes_mut(&mut buf)[..to_read] };
+                let read = archive.read_data(dest);
+                if read < 0 {
+                    return Ok(IteratorResult::init_err(
+                        archive.as_mut_ptr(),
+                        b"failed to read archive data",
+                    ));
+                }
+                if read == 0 {
+                    break;
+                }
+                // SAFETY: `archive_read_data` returns exactly the byte count it wrote (`<= to_read`).
+                unsafe {
+                    bun_core::vec::commit_spare(&mut buf, usize::try_from(read).expect("int cast"))
+                };
             }
-            let mut buf = vec![0u8; usize::try_from(size).expect("int cast")];
-            let read = archive.read_data(&mut buf);
-            if read < 0 {
-                return Ok(IteratorResult::init_err(
-                    archive.as_mut_ptr(),
-                    b"failed to read archive data",
-                ));
-            }
-            buf.truncate(usize::try_from(read).expect("int cast"));
             Ok(IteratorResult::init_res(buf.into_boxed_slice()))
         }
     }

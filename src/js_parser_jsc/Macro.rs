@@ -2,10 +2,12 @@ use bun_collections::VecExt;
 use core::cell::Cell;
 use core::ffi::c_void;
 use core::ptr::NonNull;
+use std::sync::Arc;
 
 use bun_ast::DisableStoreReset;
 use bun_ast::{E, Expr, ExprData, ExprNodeList, G, ToJSError};
 use bun_ast::{Log, Range, Source};
+use bun_bundler::options::TransformOptions;
 use bun_bundler::{Transpiler, entry_points::MacroEntryPoint};
 use bun_collections::{ArrayHashMap, HashMap};
 use bun_core::Output;
@@ -49,6 +51,7 @@ fn is_macro_path(str: &[u8]) -> bool {
 pub(crate) struct MacroContext {
     pub(crate) resolver: *mut Resolver<'static>,
     pub(crate) env: *mut DotEnvLoader,
+    pub(crate) transform_options: Arc<TransformOptions>,
     pub(crate) macros: MacroMap,
     pub(crate) remap: bun_ptr::BackRef<MacroRemap>,
     pub(crate) javascript_object: JSValue,
@@ -89,6 +92,7 @@ impl MacroContext {
             macros: MacroMap::new(),
             resolver: &raw mut transpiler.resolver,
             env: transpiler.env,
+            transform_options: Arc::clone(&transpiler.options.transform_options),
             remap: bun_ptr::BackRef::new(&transpiler.options.macro_remap),
             javascript_object: JSValue::ZERO,
             // Deferred until `call()` — see field doc.
@@ -183,6 +187,7 @@ impl MacroContext {
                 input_specifier,
                 log,
                 self.env,
+                &self.transform_options,
                 function_name,
                 &specifier_buf[0..specifier_buf_len as usize],
                 hash,
@@ -410,6 +415,7 @@ impl Macro {
         input_specifier: &[u8],
         log: &mut Log,
         env: *mut DotEnvLoader,
+        transform_options: &TransformOptions,
         function_name: &[u8],
         specifier: &[u8],
         hash: i32,
@@ -417,19 +423,17 @@ impl Macro {
         let (vm, is_new_vm): (*mut VirtualMachine, bool) = if VirtualMachine::is_loaded() {
             (VirtualMachine::get_mut_ptr(), false)
         } else {
-            // The resolver's forward-decl `BundleOptions` does not carry
-            // `transform_options` (the canonical owner is the bundler's
-            // `BundleOptions<'a>`), and
-            // `RuntimeHooks::init_runtime_state` builds the macro VM's
-            // transpiler from a fresh `TransformOptions` value rather than
-            // borrowing the caller's, so there is nothing to mutate-and-restore
-            // on `resolver.opts` here. `log`/`env_loader` *are* threaded so the
-            // CLI-path macro VM uses the caller's log sink and env loader.
+            let mut transform_options = transform_options.clone();
+            // Build-only flags about the output bundle. The macro module's own
+            // imports must still resolve.
+            transform_options.external = Vec::new();
+            transform_options.packages = None;
 
             // JSC needs to be initialized if building from CLI
             jsc::initialize(jsc::InitializeOptions::default());
 
             let _vm = VirtualMachine::init(VirtualMachineInitOptions {
+                transform_options,
                 log: Some(NonNull::from(&mut *log)),
                 env_loader: NonNull::new(env),
                 is_main_thread: false,
@@ -1063,13 +1067,18 @@ fn expr_from_blob(
     loc: bun_ast::Loc,
 ) -> crate::Result<Expr> {
     use bun_ast::{E, ExprData, StoreStr as Str};
-    use bun_http_types::MimeType::{Category, MimeType};
 
-    // `Response.json()` and most servers send parameters (`;charset=utf-8`),
-    // so classify through the same parser the runtime uses for blob types.
-    let mime_type = MimeType::init(content_type, false, None);
+    // MIME essence: `type/subtype` with the parameters cut off.
+    let essence: &[u8] = match strings::index_of_char_usize(content_type, b';') {
+        Some(semicolon) => &content_type[..semicolon],
+        None => content_type,
+    }
+    .trim_ascii();
 
-    if mime_type.category == Category::Json {
+    // `+json` is the RFC 6839 structured syntax suffix: `application/ld+json`.
+    let is_json = essence.ends_with(b"/json") || essence.ends_with(b"+json");
+
+    if is_json {
         let source = &Source::init_path_string(b"fetch.json", bytes);
         let mut out_expr: Expr = match bun_parsers::json::parse_for_macro(source, log, bump) {
             Ok(e) => e,
@@ -1084,7 +1093,16 @@ fn expr_from_blob(
         return Ok(out_expr);
     }
 
-    if mime_type.category.is_text_like() {
+    let is_text_like = essence.starts_with(b"text/")
+        || matches!(
+            essence,
+            b"application/javascript"
+                | b"application/x-javascript"
+                | b"application/ecmascript"
+                | b"application/xml"
+        );
+
+    if is_text_like {
         let mut output = bun_core::MutableString::init_empty();
         bun_core::quote_for_json(bytes, &mut output, true)?;
         let owned = output.to_owned_slice();

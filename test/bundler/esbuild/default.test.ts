@@ -234,7 +234,6 @@ describe.concurrent("bundler", () => {
       "/e.js": "export default class Foo {}",
     },
     entryPoints: ["/a.js", "/b.js", "/c.js", "/d.js", "/e.js"],
-    mode: "bundle",
     bundling: false,
     runtimeFiles: {
       "./out/f.js": /* js */ `
@@ -4859,7 +4858,7 @@ describe.concurrent("bundler", () => {
       "/is-main.js": `module.exports = require.main === module`,
     },
     format: "cjs",
-    platform: "node",
+    target: "node",
   });
   itBundled("default/ExternalES6ConvertedToCommonJS", {
     todo: true,

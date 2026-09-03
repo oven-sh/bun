@@ -595,6 +595,19 @@ impl Loader {
         }
     }
 
+    /// A `Worker`'s loader: the map, with the explicit entries marked loaded so a pipe is not read twice.
+    pub fn clone_for_worker(&self) -> Result<Loader, AllocError> {
+        Ok(Loader {
+            map: self.map.clone_with_allocator()?,
+            default_files_loaded: EnumSet::empty(),
+            custom_files_loaded: self.custom_files_loaded.clone()?,
+            quiet: false,
+            did_load_process: false,
+            reject_unauthorized: Cell::new(None),
+            aws_credentials: None,
+        })
+    }
+
     pub fn load_process(&mut self) -> Result<(), AllocError> {
         if self.did_load_process {
             return Ok(());
@@ -639,6 +652,7 @@ impl Loader {
     ) -> crate::Result<()> {
         // `suffix` is a runtime arg (avoids unstable adt_const_params; cold path).
         let start = bun_core::time::nano_timestamp();
+        let loaded_before = self.loaded_count();
 
         // Create a reusable buffer for parsing multiple files.
         let mut value_buffer: Vec<u8> = Vec::new();
@@ -658,10 +672,14 @@ impl Loader {
             }
         }
 
-        if !self.quiet {
+        if !self.quiet && self.loaded_count() > loaded_before {
             self.print_loaded(start);
         }
         Ok(())
+    }
+
+    fn loaded_count(&self) -> usize {
+        self.default_files_loaded.len() + self.custom_files_loaded.count()
     }
 
     fn load_explicit_files(
@@ -752,7 +770,7 @@ impl Loader {
     }
 
     pub(crate) fn print_loaded(&self, start: i128) {
-        let count: usize = self.default_files_loaded.len() + self.custom_files_loaded.count();
+        let count = self.loaded_count();
 
         if count == 0 {
             return;
@@ -798,7 +816,7 @@ impl Loader {
 
         // `bun_sys` is errno-based; the match arms below group the recoverable
         // errnos. Any errno not listed propagates.
-        let file = match bun_sys::File::openat(dir, base, ENV_FILE_OPEN_FLAGS, 0) {
+        let file = match bun_sys::File::openat(dir, base, DEFAULT_ENV_FILE_OPEN_FLAGS, 0) {
             Ok(file) => file,
             Err(err) => {
                 use bun_sys::E;
@@ -826,7 +844,7 @@ impl Loader {
             }
         };
 
-        match read_env_file_contents(&file)? {
+        match read_env_file_contents(&file, EnvFileSource::Default)? {
             ReadEnvFile::Empty => {}
             ReadEnvFile::ReadErr(err) => {
                 if !self.quiet {
@@ -855,17 +873,22 @@ impl Loader {
             return Ok(());
         }
 
-        let file =
-            match bun_sys::File::openat(bun_sys::Fd::cwd(), file_path, ENV_FILE_OPEN_FLAGS, 0) {
-                Ok(f) => f,
-                Err(_) => {
-                    // prevent retrying
-                    self.custom_files_loaded.insert(file_path)?;
-                    return Ok(());
-                }
-            };
+        // No `O_NONBLOCK`: an explicit FIFO waits for its writer, as in Node.
+        let file = match bun_sys::File::openat(
+            bun_sys::Fd::cwd(),
+            file_path,
+            bun_sys::O::RDONLY | bun_sys::O::CLOEXEC,
+            0,
+        ) {
+            Ok(f) => f,
+            Err(_) => {
+                // prevent retrying
+                self.custom_files_loaded.insert(file_path)?;
+                return Ok(());
+            }
+        };
 
-        match read_env_file_contents(&file)? {
+        match read_env_file_contents(&file, EnvFileSource::Explicit)? {
             ReadEnvFile::Empty => {}
             ReadEnvFile::ReadErr(err) => {
                 if !self.quiet {
@@ -886,16 +909,26 @@ impl Loader {
     }
 }
 
-/// `O_NONBLOCK`: a blocking `open` of a FIFO waits for a writer.
+/// `O_NONBLOCK`: a blocking `open` of a FIFO named `.env` waits for a writer.
 #[cfg(unix)]
-const ENV_FILE_OPEN_FLAGS: i32 = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC | bun_sys::O::NONBLOCK;
+const DEFAULT_ENV_FILE_OPEN_FLAGS: i32 =
+    bun_sys::O::RDONLY | bun_sys::O::CLOEXEC | bun_sys::O::NONBLOCK;
 /// No `O_NONBLOCK`: an overlapped Windows handle cannot be read synchronously.
 #[cfg(not(unix))]
-const ENV_FILE_OPEN_FLAGS: i32 = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC;
+const DEFAULT_ENV_FILE_OPEN_FLAGS: i32 = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC;
+
+/// Decides what happens to an env file that is not a regular file.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum EnvFileSource {
+    /// A `.env*` name from the cwd listing: skipped.
+    Default,
+    /// An `--env-file` argument: read whatever its kind, as in Node.
+    Explicit,
+}
 
 /// Shared post-open tail of `load_env_file` / `load_env_file_dynamic`.
 enum ReadEnvFile {
-    /// Zero-length or not a regular file. The caller marks the slot and returns.
+    /// Zero-length, or a default entry that is not a regular file. The caller marks the slot.
     Empty,
     /// Recoverable read errno (ENOMEM/EPIPE/EACCES/EISDIR) — caller prints
     /// (unless `quiet`), marks the slot, and returns.
@@ -904,12 +937,24 @@ enum ReadEnvFile {
     Bytes(Vec<u8>),
 }
 
-fn read_env_file_contents(file: &bun_sys::File) -> crate::Result<ReadEnvFile> {
+fn read_env_file_contents(
+    file: &bun_sys::File,
+    source: EnvFileSource,
+) -> crate::Result<ReadEnvFile> {
     let stat = file.stat()?;
-    if stat.st_size == 0 || !bun_sys::is_regular_file(stat.st_mode as _) {
+    let result = if bun_sys::is_regular_file(stat.st_mode as _) {
+        if stat.st_size == 0 {
+            return Ok(ReadEnvFile::Empty);
+        }
+        file.read_to_end()
+    } else if source == EnvFileSource::Explicit {
+        // A pipe or device is not seekable, so `read(2)` until EOF, not `pread`.
+        let mut buf = Vec::new();
+        file.read_to_end_into(&mut buf).map(|_| buf)
+    } else {
         return Ok(ReadEnvFile::Empty);
-    }
-    match file.read_to_end() {
+    };
+    match result {
         Ok(buf) if buf.is_empty() => Ok(ReadEnvFile::Empty),
         Ok(buf) => Ok(ReadEnvFile::Bytes(buf)),
         Err(err) => {
@@ -1326,25 +1371,6 @@ impl Map {
         })
     }
 
-    /// Returns a wrapper around the env map that does not duplicate the memory of
-    /// the keys and values, but instead points into the memory of the bun env map.
-    // `bun_sys::EnvMap` is `HashMap<String, String>`, which copies and is
-    // UTF-8-lossy; the lossy round-trip is accepted here.
-    #[allow(clippy::disallowed_methods)] // lossy round-trip documented above
-    pub fn std_env_map(&mut self) -> Result<StdEnvMapWrapper, AllocError> {
-        let mut env_map = bun_sys::EnvMap::default();
-        let mut it = self.map.iterator();
-        while let Some(entry) = it.next() {
-            env_map.insert(
-                String::from_utf8_lossy(entry.key_ptr).into_owned(),
-                String::from_utf8_lossy(&entry.value_ptr.value).into_owned(),
-            );
-        }
-        Ok(StdEnvMapWrapper {
-            unsafe_map: env_map,
-        })
-    }
-
     /// Build a heap-allocated Windows environment block suitable for
     /// `CreateProcessW`'s `lpEnvironment` with `CREATE_UNICODE_ENVIRONMENT`.
     ///
@@ -1515,16 +1541,6 @@ impl NullDelimitedEnvMap {
         self._storage.iter().map(|s| {
             core::ffi::CStr::from_bytes_until_nul(s).expect("entries are built NUL-terminated")
         })
-    }
-}
-
-pub struct StdEnvMapWrapper {
-    pub(crate) unsafe_map: bun_sys::EnvMap,
-}
-
-impl StdEnvMapWrapper {
-    pub fn get(&self) -> &bun_sys::EnvMap {
-        &self.unsafe_map
     }
 }
 

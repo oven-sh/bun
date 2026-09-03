@@ -1,5 +1,5 @@
 import { internalModuleBytecode } from "bun:internal-for-testing";
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 import { existsSync, readdirSync, readFileSync, renameSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import vm from "node:vm";
@@ -344,7 +344,7 @@ async function bundle(
   args: readonly string[],
   env: Record<string, string | undefined> = bunEnv,
 ) {
-  const name = basename(entry);
+  const label = `\`bun build --bytecode ${[...args, entry].join(" ")}\``;
   await using proc = Bun.spawn({
     // Relative entry + fixed cwd: the unminified output names each module by its path relative to cwd.
     cmd: [bunExe(), "build", "--bytecode", "--target=bun", ...args, "--outdir", outdir, entry],
@@ -354,11 +354,24 @@ async function bundle(
     stderr: "pipe",
   });
   const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  expect(exitCode).toBe(0);
-  const output = name.replace(/\.[cm]?js$/, ".js"); // the bundler names its output .js whatever the entry's extension
-  expect(readdirSync(outdir).sort()).toEqual([output, output + ".jsc"]);
-  return { js: readFileSync(join(outdir, output)), jsc: readFileSync(join(outdir, output + ".jsc")) };
+  expect(stderr, `${label} wrote to stderr`).toBe("");
+  expect(exitCode, `${label} exit code`).toBe(0);
+  const output = basename(entry).replace(/\.[cm]?js$/, ".js"); // the bundler names its output .js whatever the entry's extension
+  expect(readdirSync(outdir).sort(), `${label} output files`).toEqual([output, output + ".jsc"]);
+  const path = join(outdir, output);
+  return { path, js: readFileSync(path), jsc: readFileSync(path + ".jsc") };
+}
+
+// Several tests read the same build: the snapshot test fingerprints it, the load test runs it, the reject tests spoil a
+// copy. The first one to ask starts the build and the others share its result, so each entry is bundled once per run.
+// Each build gets its own directory under one temp dir that lives as long as the file.
+const buildsDir = tempDir("bytecode-portable", {});
+afterAll(() => buildsDir[Symbol.dispose]());
+const builds = new Map<string, ReturnType<typeof bundle>>();
+function build({ name, entry, args }: { name: string; entry: string; args: readonly string[] }) {
+  let pending = builds.get(name);
+  if (!pending) builds.set(name, (pending = bundle(join(String(buildsDir), String(builds.size)), entry, args)));
+  return pending;
 }
 
 // The payload starts with GenericCacheEntry { uint32 cacheVersion; uint32 headerSize; uint32 headerChecksum; ... }.
@@ -383,13 +396,9 @@ function dumpPayloads() {
 
 describe("bytecode cache portability", () => {
   test("encoder output is identical on every platform", async () => {
-    using dir = tempDir("bytecode-portable", {});
+    // The bundler builds are separate processes: start them all, then encode the in-process cases while they run.
+    const bundled = Promise.all(bundlerBuilds.map(build));
     const outputs: Record<string, unknown> = {};
-    for (const [i, { name, entry, args }] of bundlerBuilds.entries()) {
-      const { js, jsc } = await bundle(join(String(dir), String(i)), entry, args);
-      // If `js` differs between platforms the bundler is at fault, not the bytecode format.
-      outputs[name] = { js: Bun.CryptoHasher.hash("sha256", js, "hex"), jsc: fingerprint(name, jsc) };
-    }
     // Program and module code blocks straight from the encoder, without the bundler in between.
     outputs["vm.Script features.js"] = fingerprint(
       "vm.Script features.js",
@@ -437,6 +446,11 @@ describe("bytecode cache portability", () => {
       "vm.SourceTextModule acorn.mjs",
       new vm.SourceTextModule(librarySource("acorn/dist/acorn.mjs"), { identifier: "acorn.mjs" }).createCachedData(),
     );
+    for (const [i, { name }] of bundlerBuilds.entries()) {
+      const { js, jsc } = (await bundled)[i];
+      // If `js` differs between platforms the bundler is at fault, not the bytecode format.
+      outputs[name] = { js: Bun.CryptoHasher.hash("sha256", js, "hex"), jsc: fingerprint(name, jsc) };
+    }
     try {
       expectOutputs(outputs);
     } catch (e) {
@@ -460,38 +474,38 @@ describe("bytecode cache portability", () => {
           "sha256": "2a5d62fb4ca9d107e3a5bb2abe6a73f3c859a6f1a91c6c3d77653cb8c2053361",
         },
         "bun build --bytecode --minify all.js": {
-          "js": "e3c606da9d38edc94d8cda67f5e99c7f672bf0dafa039df7b85433261168336a",
+          "js": "721d67b0c2135aad554c9962b4e4505a4d6856b50da537fee7566d43f6cfdbda",
           "jsc": {
-            "bytes": 1997112,
-            "sha256": "630bfb868774cdafac22cf4e13a745a9e87e473accf4cfa0a345715a05fdba33",
+            "bytes": 1998992,
+            "sha256": "f2631b3ba2b532e52183d5e6a44a7dbf5c0515b368d95fc692bf0e5ad15eb8f6",
           },
         },
         "bun build --bytecode --minify features.js": {
           "js": "d49da0aa39824bf9eba2af5d3a010525ad14ca5c1cedc0d8adcfdd5f4984a0d0",
           "jsc": {
-            "bytes": 46112,
-            "sha256": "b130d70ee4fe38c6a2b197f895150df4903c226e9082fc552edad9941b49d5ce",
+            "bytes": 46152,
+            "sha256": "db36543ec2430a8cbdce13a6a980148f502e2c6b135cf95f62b6743c3fa30968",
           },
         },
         "bun build --bytecode --minify records.js": {
           "js": "889cbb2c9525ff69a2676a6e81d97bb87760bdee65178b836c9c1d6808ac7c6e",
           "jsc": {
-            "bytes": 88968,
-            "sha256": "62b037f5930e571ed8487c6c201b67bc346a96ac80d8a96b2702edb96d679d46",
+            "bytes": 89144,
+            "sha256": "3c3e86151fe78e6d56d7e7033dfa0e97b062af3b86d7ad75b723d91c77b11cba",
           },
         },
         "bun build --bytecode acorn/dist/acorn.mjs": {
-          "js": "2ed858fa1b38a20673cee13a857ccdaedb9da0a325ebc47e81c4851de77eef3c",
+          "js": "9750b95678aa2ad19085761db9ff451e592cd0ce4e04dd156c64a0c42bb32461",
           "jsc": {
-            "bytes": 266064,
-            "sha256": "4b431a514916bb73e8daba7977ca1ca8d3cdec350c57e45222ff9b0a56691498",
+            "bytes": 266176,
+            "sha256": "d71089597ed075372781d7f66db2ce07fbbe612ae2efc22c11194d5d3fa27735",
           },
         },
         "bun build --bytecode all.js": {
-          "js": "d1f133307f753d11a166184d9400698b1414cf7e05b87ce8615c396418561a34",
+          "js": "c0f212b766071d77e9691261160635b50ccaf7f1c56e08ba87ccbb6d5e01fcd4",
           "jsc": {
-            "bytes": 2177184,
-            "sha256": "673ed4133abe434bee57dd73e056de06e907a3776c63a27abb3e95ed285e6465",
+            "bytes": 2178656,
+            "sha256": "41d4c0ba8cce1abdd369a4ce729e1615bce65a4c1b854db5ceda6d4c6568b3e0",
           },
         },
         "bun build --bytecode big.js": {
@@ -504,50 +518,50 @@ describe("bytecode cache portability", () => {
         "bun build --bytecode features.js": {
           "js": "2ee211924620db96d6e99e9490bfe0ee60a3bc6b003f37940c5631e6eabc2c73",
           "jsc": {
-            "bytes": 48008,
-            "sha256": "77ea2e09f2d17c4d61063754e0553f1854333836507d203f14d69bc7d5292267",
+            "bytes": 48048,
+            "sha256": "457b0f1c9172a8964bf79d7b102076d410da468d4728e3731964884cbaecfa6e",
           },
         },
         "bun build --bytecode happy-dom/lib/index.js": {
-          "js": "148f0d3e4baf485281725f859deb3e717a6da25a4a08de9af288d5ef54b6414b",
+          "js": "ad001095310e6ac9cf264d5736950500bdef1928710489df4ee286c6c94b9d46",
           "jsc": {
-            "bytes": 2527376,
-            "sha256": "223d1caea3abf9e3414695448750818760e174366e88b06a7c5d6b05ba47d8ec",
+            "bytes": 2529040,
+            "sha256": "be79a30e0074fff783765e637684696fc650cc4459b4256be9769b36a8f24065",
           },
         },
         "bun build --bytecode immutable/dist/immutable.es.js": {
-          "js": "c9a2ba9f6b6a662e6bdfd44128bc66284276f5eac2a8875adb4578472328dc9f",
+          "js": "82ad84644b8be6b98cac3186bb04d17307d8d43fadd9b84b0f4067e6b29c9de4",
           "jsc": {
-            "bytes": 280016,
-            "sha256": "2a99c33a2516e2d41187bc322ddd4523318530b51c60c3d9a8bd566d4f2929a1",
+            "bytes": 280384,
+            "sha256": "02548420a1064d59943269c7148768cdb43ede4ae88cc86d52ae5fd3d4e8db73",
           },
         },
         "bun build --bytecode libraries.js": {
-          "js": "19b7140de574d94ee53835575012178296dec911613066390ade7725792fbf22",
+          "js": "046e3e45447b4dedd103218f7a9d96ef7a8192e03b51b997776c9d9a2c2e6dee",
           "jsc": {
-            "bytes": 23792536,
-            "sha256": "d2b87a793841dee8c5702630a947051952d6473b3e6a3099a3110c73dadff1a6",
+            "bytes": 23789264,
+            "sha256": "27f1a233c4d2ef984ff6ac2ce67e49328841d371b58027178b0a3d7665d21c03",
           },
         },
         "bun build --bytecode lodash/lodash.js": {
-          "js": "0b575ee1213807337c15c47d07864bb299cc361a983c8668f0ba164d646aa210",
+          "js": "e372f1aec6b2bba20581abfce3b7273aae0ec4f593ed2aa4aa5c60c66836856d",
           "jsc": {
-            "bytes": 346976,
-            "sha256": "a1cb7f310af6a00d23259578105b999d8206a52f0c103947cea4e32bf025cf35",
+            "bytes": 347488,
+            "sha256": "531d6bb544c53641289a44e72ac096560b19d360c2ee19b77483987c367b9b5e",
           },
         },
         "bun build --bytecode react-dom/cjs/react-dom.development.js": {
-          "js": "06099121265fa73020167d9aa9a72adf8f7e92f9c5f9ae801c52ea5248aab2a6",
+          "js": "e2cf34c8eb6f5952a33ca91e3949b28786349cf97ea3fbf0b3b8500dbccd4860",
           "jsc": {
-            "bytes": 979432,
-            "sha256": "3afdbd09ae9ee90215811d5ea0c0a08f19414383bb0fbe1cc0f7a7c929ac2446",
+            "bytes": 980080,
+            "sha256": "32fa8492ad9fdf3ea31395756898d556df9dc6bdfbac9bba07bcafa748ab38ca",
           },
         },
         "bun build --bytecode records.js": {
           "js": "c87ea35df4ad6b2063402c9901ef4775a82f12594f280db76f50695f4b0eba13",
           "jsc": {
-            "bytes": 91624,
-            "sha256": "a84c32cdbe2bf0467ea62ab85d20e5b767f095748ca91dedf1aab66b5d2bb7c6",
+            "bytes": 91800,
+            "sha256": "e58b77a8ed116cb6d48d82496d214eb11f8cc6b821049851b60c1f2fb27ebeea",
           },
         },
         "bun build --bytecode shapes.js": {
@@ -558,17 +572,17 @@ describe("bytecode cache portability", () => {
           },
         },
         "bun build --bytecode svelte/compiler/index.js": {
-          "js": "91d38e665639adcb4ec160c966e6d72161ee07083363c04670ee82e82c001414",
+          "js": "5ced9487e680d82a45548d0f509ecc5c931f06485a2d17bac56ddd60e3ede785",
           "jsc": {
-            "bytes": 1995224,
-            "sha256": "1a4061cb14bdd65a44a7a43a19c8e8c3e355a60fb59a0e9e15cb250956cc8464",
+            "bytes": 1996728,
+            "sha256": "1e224f518c1be57eb53460723b34128ca4c310bbe75a7a1ea93a900e24c3db74",
           },
         },
         "bun build --bytecode undici/index.js": {
           "js": "d0bd3791e7c8f77a06814429d5d95cb26a06baaa3c135502bcd3e984310f1d2c",
           "jsc": {
-            "bytes": 936576,
-            "sha256": "4ac398c827bc9c6ce3aa09798e494e7bc8e8a01d5f5438c3293ae4823c3fe27c",
+            "bytes": 937000,
+            "sha256": "d7cff4df84668b14987703bcd950a6753a574cf48e4372e4fe8779f747c0ed89",
           },
         },
         "vm.Script big.js": {
@@ -576,32 +590,32 @@ describe("bytecode cache portability", () => {
           "sha256": "c18507143f6ed98ab9e3a462d88887d26720a30f2d10873172c2c7b428cdeac8",
         },
         "vm.Script features.js": {
-          "bytes": 48064,
-          "sha256": "af32057ccd118f018fee031ddbd57501a009c47be0fce46ca054971a8644fa2c",
+          "bytes": 48104,
+          "sha256": "ee8b73b9c923192eab9694d93ca3538852e2260609137801ee57fa5e744db0f6",
         },
         "vm.Script lodash.js": {
-          "bytes": 354672,
-          "sha256": "72db1770219ed7ec38d7b6a99da1a1da7b7386003e4c0c15e924beacedb8b3e3",
+          "bytes": 354984,
+          "sha256": "3507b5aefbce08874084f508846de833bf38d2176a0a7b584773dd49fe21d7c9",
         },
         "vm.Script records.js": {
-          "bytes": 92744,
-          "sha256": "ac76af94fdd36a76cdd10ee8ec094ab7858b0c02bb597aecafce4f4bbc7f1275",
+          "bytes": 92928,
+          "sha256": "82ee58ee4885a96f8e2b55f9716d7782914d7212957b44f2109b63d3372ffcf3",
         },
         "vm.Script shapes.js": {
           "bytes": 286632,
           "sha256": "3637efdaeea6761cda4d66ca154302e178c4820d143798507cec3f262826d6ef",
         },
         "vm.Script source-forms.js": {
-          "bytes": 4968,
-          "sha256": "a546cc553ee1e687635eff92b0ae1784848db31c8ac82d3ea5e0a7254c9218df",
+          "bytes": 4976,
+          "sha256": "01418094926f5c168db7a01da064308b376fe796a3d8c96aef0719dbe1db4081",
         },
         "vm.Script typescript.js": {
-          "bytes": 12093088,
-          "sha256": "b79c0fd3d552c9f685a1bcd1af85de682317c85f804b21a0a1bf12d1ca448e1c",
+          "bytes": 12094104,
+          "sha256": "953551a49ed6db7b5fce11b21382f11f3a0d0d4945507f5e38bf6a14ca724e8a",
         },
         "vm.SourceTextModule acorn.mjs": {
-          "bytes": 264064,
-          "sha256": "a92a52916867c8d366f2c30e376b32f65617643ba8c724406e45154aed708bc6",
+          "bytes": 264176,
+          "sha256": "b39984469ff175c7b37e0255c217c8464fe9d564aa8f8da429e02ef0f05d7781",
         },
         "vm.SourceTextModule module.js": {
           "bytes": 9712,
@@ -640,16 +654,19 @@ describe("bytecode cache portability", () => {
     });
     const { entry, args } = bundlerBuilds[0];
     const hash = (bytes: Uint8Array) => fingerprint("", bytes).sha256;
-    const expected = hash((await bundle(join(String(dir), "default"), entry, args)).jsc);
     const conditions: Record<string, Record<string, string>> = {
       "collectContinuously": { BUN_JSC_collectContinuously: "1" },
       "useSourceProviderCache=0": { BUN_JSC_useSourceProviderCache: "0" },
       "gcMaxHeapSize=64KB": { BUN_JSC_gcMaxHeapSize: "65536" },
     };
-    const results: Record<string, string> = {};
-    for (const [condition, env] of Object.entries(conditions))
-      results[condition] = hash((await bundle(join(String(dir), condition), entry, args, { ...bunEnv, ...env })).jsc);
-
+    // Start every child first; this process encodes its own internal modules while they run.
+    const reference = build(bundlerBuilds[0]);
+    const conditioned = Promise.all(
+      Object.entries(conditions).map(async ([condition, env]) => {
+        const { jsc } = await bundle(join(String(dir), condition), entry, args, { ...bunEnv, ...env });
+        return [condition, hash(jsc)] as const;
+      }),
+    );
     await using proc = Bun.spawn({
       cmd: [bunExe(), join(String(dir), "api.js"), entry, join(String(dir), "api"), join(corpusDir, "features.js")],
       cwd: corpusDir, // as bundle() does, so module path comments in the output agree
@@ -657,24 +674,33 @@ describe("bytecode cache portability", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(exitCode).toBe(0);
-    results["Bun.build() after running other JS"] = hash(readFileSync(join(String(dir), "api", "features.js.jsc")));
-    expect(results).toEqual(Object.fromEntries(Object.keys(results).map(k => [k, expected])));
+    const apiRun = Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     // Every one of Bun's internal modules as builtin bytecode, in this process and in the busy one: same bytes.
     const internalModules: Record<string, string> = {};
     for (let i = 0, m; (m = internalModuleBytecode(i)); i++)
       internalModules[m.name] = hash(m.bytecode) + " " + fingerprint("", m.strings, false).sha256;
+    const vmExpected = hash(
+      new vm.Script(featuresSource, { filename: "features.js", produceCachedData: true }).cachedData!,
+    );
+
+    const [{ jsc: referenceJsc }, conditionHashes, [, stderr, exitCode]] = await Promise.all([
+      reference,
+      conditioned,
+      apiRun,
+    ]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    const expected = hash(referenceJsc);
+    const results: Record<string, string> = Object.fromEntries(conditionHashes);
+    results["Bun.build() after running other JS"] = hash(readFileSync(join(String(dir), "api", "features.js.jsc")));
+    expect(results).toEqual(Object.fromEntries(Object.keys(results).map(k => [k, expected])));
+
     expect(Object.keys(internalModules).length).toBeGreaterThan(100);
     expect(JSON.parse(readFileSync(join(String(dir), "api", "internal-modules.json"), "utf8"))).toEqual(
       internalModules,
     );
 
-    const vmExpected = hash(
-      new vm.Script(featuresSource, { filename: "features.js", produceCachedData: true }).cachedData!,
-    );
     expect({
       "vm.Script#createCachedData() after running it, in a busy VM": hash(
         readFileSync(join(String(dir), "api", "vm.cached")),
@@ -683,19 +709,18 @@ describe("bytecode cache portability", () => {
   });
 
   // Identical bytes only help if this platform also decodes what it encodes.
-  for (const { name, entry, args, output } of corpusBuilds) {
-    test.concurrent(`output of \`${name}\` loads from the cache`, async () => {
-      using dir = tempDir("bytecode-portable-run", {});
-      await bundle(String(dir), entry, args);
+  for (const corpusBuild of corpusBuilds) {
+    test.concurrent(`output of \`${corpusBuild.name}\` loads from the cache`, async () => {
+      const { path } = await build(corpusBuild);
       await using proc = Bun.spawn({
-        cmd: [bunExe(), join(String(dir), basename(entry))],
+        cmd: [bunExe(), path],
         env: { ...bunEnv, BUN_JSC_verboseDiskCache: "1" },
         stdout: "pipe",
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stderr).toStartWith("[Disk Cache] Cache hit for sourceCode");
-      expect(stdout).toBe(output + "\n");
+      expect(stdout).toBe(corpusBuild.output + "\n");
       expect(exitCode).toBe(0);
     });
   }
@@ -724,16 +749,20 @@ describe("bytecode cache portability", () => {
     test.concurrent(`\`bun build --compile --bytecode ${name}\` runs from the embedded bytecode`, async () => {
       using dir = tempDir("bytecode-portable-compile", {});
       const exe = join(String(dir), isWindows ? "app.exe" : "app");
-      await using build = Bun.spawn({
+      await using compile = Bun.spawn({
         cmd: [bunExe(), "build", "--compile", "--bytecode", ...args, "--outfile", exe, ...entries],
         cwd: corpusDir,
         env: bunEnv,
         stdout: "pipe",
         stderr: "pipe",
       });
-      const [, buildStderr, buildExit] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
-      expect(buildStderr).not.toContain("error");
-      expect(buildExit).toBe(0);
+      const [, compileStderr, compileExit] = await Promise.all([
+        compile.stdout.text(),
+        compile.stderr.text(),
+        compile.exited,
+      ]);
+      expect(compileStderr).toBe("");
+      expect(compileExit).toBe(0);
       await using proc = Bun.spawn({
         cmd: [exe],
         env: { ...bunEnv, BUN_JSC_verboseDiskCache: "1" },
@@ -749,6 +778,7 @@ describe("bytecode cache portability", () => {
 
   // A payload this build cannot use (written by an incompatible build, cut short, empty) must cost a parse, nothing more.
   // Byte 20 is the entry header's callee-save register count; changing any header byte also fails the header checksum.
+  const recordsBuild = corpusBuilds.find(({ entry, args }) => entry === "./records.js" && args.length === 0)!;
   for (const [variant, spoil] of [
     ["a different build's header", (jsc: Buffer) => ((jsc[20] ^= 0xff), jsc)],
     ["truncated", (jsc: Buffer) => jsc.subarray(0, 200)],
@@ -756,7 +786,8 @@ describe("bytecode cache portability", () => {
   ] as const) {
     test.concurrent(`a .jsc that is ${variant} is a cache miss, not a crash`, async () => {
       using dir = tempDir("bytecode-portable-reject", {});
-      const { jsc } = await bundle(String(dir), "./records.js", []);
+      const { js, jsc } = await build(recordsBuild);
+      writeFileSync(join(String(dir), "records.js"), js);
       writeFileSync(join(String(dir), "records.js.jsc"), spoil(Buffer.from(jsc)));
       await using proc = Bun.spawn({
         cmd: [bunExe(), join(String(dir), "records.js")],

@@ -421,42 +421,50 @@ impl<'a> Transpiler<'a> {
 
     fn _resolve_entry_point(&mut self, entry_point: &[u8]) -> crate::Result<resolver::Result> {
         let top_level_dir = self.fs().top_level_dir;
-        match self.resolver.resolve_with_framework(
+        let first = match self.resolver.resolve_with_framework(
             top_level_dir,
             entry_point,
             bun_ast::ImportKind::EntryPointBuild,
         ) {
-            Ok(r) => Ok(r),
-            Err(err) => {
-                // Relative entry points that were not resolved to a node_modules package are
-                // interpreted as relative to the current working directory.
-                if !bun_paths::is_absolute(entry_point)
-                    && !(entry_point.starts_with(b"./") || entry_point.starts_with(b".\\"))
-                {
-                    let mut prefixed = Vec::with_capacity(2 + entry_point.len());
-                    prefixed.extend_from_slice(b"./");
-                    prefixed.extend_from_slice(entry_point);
-                    // `Resolver::resolve` interns the path internally,
-                    // so the heap buffer can drop after the call.
-                    if let Ok(r) = self.resolver.resolve(
-                        top_level_dir,
-                        &prefixed,
-                        bun_ast::ImportKind::EntryPointBuild,
-                    ) {
-                        return Ok(r);
-                    }
-                    // return the original error
-                }
-                Err(err.into())
+            Ok(r) if !r.flags.is_external() => return Ok(r),
+            // A data: URL whose MIME type is not code; there is no module in it.
+            Ok(r) if r.path_pair.primary.is_data_url() => {
+                Err(resolver::Error::ModuleNotFound.into())
             }
+            // A builtin. `reject_unbundleable_entry_point` reports it unless the name is also a file.
+            Ok(builtin) => Ok(builtin),
+            Err(err) => Err(err.into()),
+        };
+
+        // Relative entry points that were not resolved to a node_modules package are
+        // interpreted as relative to the current working directory.
+        if !bun_paths::is_absolute(entry_point)
+            && !(entry_point.starts_with(b"./") || entry_point.starts_with(b".\\"))
+        {
+            let mut prefixed = Vec::with_capacity(2 + entry_point.len());
+            prefixed.extend_from_slice(b"./");
+            prefixed.extend_from_slice(entry_point);
+            // `Resolver::resolve` interns the path internally,
+            // so the heap buffer can drop after the call.
+            if let Ok(r) = self.resolver.resolve(
+                top_level_dir,
+                &prefixed,
+                bun_ast::ImportKind::EntryPointBuild,
+            ) {
+                if !r.flags.is_external() {
+                    return Ok(r);
+                }
+            }
+            // return the original result
         }
+        first
     }
 
     /// Resolve an entry-point specifier, busting the directory cache and
     /// retrying once on failure before reporting the error to the log.
     pub fn resolve_entry_point(&mut self, entry_point: &[u8]) -> crate::Result<resolver::Result> {
         match self._resolve_entry_point(entry_point) {
-            Ok(r) => self.reject_disabled_entry_point(r, entry_point),
+            Ok(r) => self.reject_unbundleable_entry_point(r, entry_point),
             Err(err) => {
                 let mut cache_bust_buf = bun_paths::PathBuffer::uninit();
 
@@ -511,7 +519,7 @@ impl<'a> Transpiler<'a> {
                 // Only re-query if we previously had something cached.
                 if busted {
                     if let Ok(result) = self._resolve_entry_point(entry_point) {
-                        return self.reject_disabled_entry_point(result, entry_point);
+                        return self.reject_unbundleable_entry_point(result, entry_point);
                     }
                     // ignore this error, we will print the original error
                 }
@@ -530,23 +538,28 @@ impl<'a> Transpiler<'a> {
         }
     }
 
-    /// A disabled module (no usable path) imports as `{}`, but an entry point has nothing to emit.
-    fn reject_disabled_entry_point(
+    /// A disabled module imports as `{}` and an external one stays an import. An entry point has
+    /// nothing to emit in either case. `--external` skips entry points, so external means builtin.
+    fn reject_unbundleable_entry_point(
         &self,
         resolved: resolver::Result,
         entry_point: &[u8],
     ) -> crate::Result<resolver::Result> {
-        if resolved.path_const().is_some() {
+        let is_builtin = if resolved.flags.is_external() {
+            true
+        } else if resolved.path_const().is_some() {
             return Ok(resolved);
-        }
+        } else {
+            // Stubbed builtins carry the "node" namespace; anything else came from a "browser" map.
+            resolved.path_pair.primary.namespace == b"node"
+        };
 
-        // Stubbed builtins carry the "node" namespace; anything else came from a "browser" map.
-        if resolved.path_pair.primary.namespace == b"node" {
+        if is_builtin {
             self.log_mut().add_error_fmt(
                 None,
                 bun_ast::Loc::EMPTY,
                 format_args!(
-                    "Cannot use Node.js builtin \"{}\" as an entry point",
+                    "Cannot use \"{}\" as an entry point: it resolves to a builtin module",
                     bstr::BStr::new(entry_point)
                 ),
             );
@@ -1644,6 +1657,7 @@ impl<'a> Transpiler<'a> {
                     .bundler_feature_flags
                     .as_deref()
                     .and_then(|s| s.clone().ok().map(Box::new));
+                opts.features.define_hash = self.options.define.user_hash;
                 opts.features.repl_mode = self.options.repl_mode;
 
                 // we'll just always enable top-level await
@@ -3071,7 +3085,7 @@ impl<'a> Transpiler<'a> {
         output: &[u8],
     ) -> Box<[u8]> {
         let rel_to_root = bun_paths::resolve_path::relative_platform::<
-            bun_paths::resolve_path::platform::Loose,
+            bun_paths::resolve_path::platform::Auto,
             false,
         >(&self.options.root_dir, file_path_text);
         let pathname = Fs::PathName::init(rel_to_root);

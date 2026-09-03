@@ -1,5 +1,4 @@
 import { describe, expect } from "bun:test";
-import { isWindows } from "harness";
 import { dedent, itBundled } from "../expectBundled";
 
 // Tests ported from:
@@ -341,7 +340,6 @@ describe("bundler", () => {
     },
   });
   itBundled("dce/PackageJsonSideEffectsArrayKeep", {
-    todo: isWindows,
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {foo} from "demo-pkg"
@@ -478,7 +476,6 @@ describe("bundler", () => {
     },
   });
   itBundled("dce/PackageJsonSideEffectsArrayKeepModuleUseModule", {
-    todo: isWindows,
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {foo} from "demo-pkg"
@@ -506,7 +503,6 @@ describe("bundler", () => {
     },
   });
   itBundled("dce/PackageJsonSideEffectsArrayKeepModuleUseMain", {
-    todo: isWindows,
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {foo} from "demo-pkg"
@@ -534,7 +530,6 @@ describe("bundler", () => {
     },
   });
   itBundled("dce/PackageJsonSideEffectsArrayKeepModuleImplicitModule", {
-    todo: isWindows,
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {foo} from "demo-pkg"
@@ -2137,6 +2132,73 @@ describe("bundler", () => {
     },
     dce: true,
   });
+  itBundled("dce/DCEOfDestructuring", {
+    files: {
+      "/entry.js": /* js */ `
+        // Identifier bindings
+        var remove1
+        var remove2 = null
+        var KEEP1 = x
+
+        // Array patterns over an array literal use the built-in array iterator
+        // and are side-effect free
+        var [remove3] = []
+        var [remove4 = 0] = [null]
+        var [remove5, , remove6] = [null, undefined, 0]
+        var [...remove7] = []
+        var [KEEP2] = x
+        var [KEEP3 = x] = [null]
+        var [[KEEP4]] = [[]]
+        var [{ KEEP5 }] = [{}]
+        var [KEEP6] = {}
+
+        // Object patterns over an object literal are side-effect free when
+        // every key names a data property of the literal
+        var { remove8 } = { remove8: 1 }
+        var { remove9 = 0 } = { remove9: 1 }
+        var { remove10: remove11 } = { remove10: 1 }
+        var { remove12 } = { remove12() {} }
+        var { remove13, remove14 } = { remove13: 1, remove14: 2, other: 3 }
+        var { remove15 } = { get remove15() { return 1 }, remove15: 1 }
+        var { remove16: { remove17 } } = { remove16: { remove17: 1 } }
+        var { remove18: [remove19] } = { remove18: [1] }
+
+        // Anything else in an object pattern can invoke a getter
+        var { KEEP7 } = {}
+        var { KEEP8 = 0 } = {}
+        var { KEEP9 } = x
+        var { KEEP10: { KEEP11 } } = {}
+        var { ...KEEP12 } = {}
+        var { KEEP13 } = { get KEEP13() { return 1 } }
+        var { KEEP14 } = { KEEP14: 1, get KEEP14() { return 1 } }
+        var { KEEP15 } = { __proto__: null }
+        var { KEEP16 } = { other: 1 }
+        var { ["KEEP17"]: KEEP18 } = { KEEP17: 1 }
+        var { ...KEEP19 } = { KEEP20: 1 }
+        var { KEEP21: { KEEP22 } } = { KEEP21: undefined }
+        var { KEEP23: [KEEP24] } = { KEEP23: null }
+        var { "0": KEEP25 } = { "0": 1, get 0() { return 2 } }
+      `,
+    },
+    dce: true,
+  });
+  itBundled("dce/DCEOfDestructuringSideEffects", {
+    files: {
+      "/entry.js": /* js */ `
+        const obj = { get x() { console.log("EFFECT1"); return 1 } }
+        const { x } = obj
+        const { y } = { get y() { console.log("EFFECT2"); return 2 } }
+        const iter = { [Symbol.iterator]() { console.log("EFFECT3"); return [][Symbol.iterator]() } }
+        const [a] = iter
+        const [[b]] = [iter]
+        const [{ x: c }] = [obj]
+        export function used() {}
+      `,
+    },
+    run: {
+      stdout: "EFFECT1\nEFFECT2\nEFFECT3\nEFFECT3\nEFFECT1",
+    },
+  });
   itBundled("dce/TreeShakingLoweredClassStaticField", {
     files: {
       "/entry.js": /* js */ `
@@ -3319,7 +3381,7 @@ describe("bundler", () => {
   itBundled("dce/IgnoreAnnotationsDoesNotApplyToRuntime", {
     files: {
       "/entry.js": /* js */ `
-        import("./other.js");
+        import("./other.js").then(m => m.foo());
       `,
       "/other.js": /* js */ `
         export function foo() { }

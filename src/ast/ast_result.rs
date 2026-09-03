@@ -36,6 +36,9 @@ pub struct Ast<'a> {
     pub commonjs_module_exports_assigned_deoptimized: bool,
 
     pub force_cjs_to_esm: bool,
+    /// `force_cjs_to_esm` for a file with no ES module syntax: its exports were
+    /// lifted from `exports.foo = ...`, so its `module.exports` is the namespace.
+    pub commonjs_lifted_to_esm: bool,
     pub exports_kind: ExportsKind,
 
     // This is a list of ES6 features. They are ranges instead of booleans so
@@ -51,6 +54,11 @@ pub struct Ast<'a> {
     // them under the same lifetime-erased contract as `StoreRef`.
     pub hashbang: StoreStr,
     pub directive: Option<StoreStr>,
+    /// `export default X` where `X` is an import binding in this file. When
+    /// `X` resolves to a module namespace the linker binds importers of
+    /// `default` through `X` (a namespace never changes identity, so the
+    /// default's snapshot of it is the live value).
+    pub export_default_alias_of_import: Ref,
     pub parts: PartList<'a>,
     // This list may be mutated later, so we should store the capacity
     pub symbols: SymbolList<'a>,
@@ -70,6 +78,11 @@ pub struct Ast<'a> {
     pub named_imports: NamedImports,
     pub named_exports: NamedExports,
     pub export_star_import_records: AstVec<u32>,
+    /// `import_record_index → aliases`. An entry means every use of that
+    /// `import()` call's result was a tracked property access / destructuring
+    /// of exactly these names; absence means the namespace escaped (keep all
+    /// exports).
+    pub dynamic_import_aliases: DynamicImportAliases,
 
     pub top_level_symbols_to_parts: TopLevelSymbolToParts,
 
@@ -104,12 +117,14 @@ impl<'a> Ast<'a> {
             uses_require_ref: false,
             commonjs_module_exports_assigned_deoptimized: false,
             force_cjs_to_esm: false,
+            commonjs_lifted_to_esm: false,
             exports_kind: ExportsKind::None,
             export_keyword: Range::NONE,
             top_level_await_keyword: Range::NONE,
             import_records: ImportRecordList::new_in(arena),
             hashbang: StoreStr::EMPTY,
             directive: None,
+            export_default_alias_of_import: Ref::NONE,
             parts: PartList::new_in(arena),
             symbols: SymbolList::new_in(arena),
             module_scope: Scope::default(),
@@ -121,6 +136,7 @@ impl<'a> Ast<'a> {
             named_imports: Default::default(),
             named_exports: Default::default(),
             export_star_import_records: AstAlloc::vec(),
+            dynamic_import_aliases: Default::default(),
             top_level_symbols_to_parts: Default::default(),
             commonjs_named_exports: Default::default(),
             redirect_import_record_index: None,
@@ -148,10 +164,17 @@ pub struct CommonJSNamedExport {
 pub type CommonJSNamedExports = StringArrayHashMap<CommonJSNamedExport, StringContext, AstAlloc>;
 
 pub type NamedImports = ArrayHashMap<Ref, NamedImport, AutoContext, AstAlloc>;
+pub type DynamicImportAliases =
+    ArrayHashMap<u32, crate::StoreSlice<crate::StoreStr>, AutoContext, AstAlloc>;
 pub type NamedExports = StringArrayHashMap<NamedExport, StringContext, AstAlloc>;
 pub type ConstValuesMap = ArrayHashMap<Ref, Expr, AutoContext, AstAlloc>;
 pub type TsEnumsMap =
     ArrayHashMap<Ref, StringHashMap<InlinedEnumValue, AstAlloc>, AutoContext, AstAlloc>;
+/// `import X ...; X.name` where `X` resolved to a module namespace while
+/// linking: `X` -> `name` -> the generated import symbol bound to that export.
+/// The printer emits that symbol in place of the property access.
+pub type ImportMemberBindings =
+    ArrayHashMap<Ref, StringHashMap<Ref, AstAlloc>, AutoContext, AstAlloc>;
 
 impl<'a> Ast<'a> {
     pub fn from_parts(parts: Box<[Part]>, arena: &'a bun_alloc::MimallocArena) -> Ast<'a> {

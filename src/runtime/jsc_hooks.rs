@@ -3464,7 +3464,7 @@ fn transpile_source_code_inner(
                 // Rewrite `specifier` against `vm.origin` so
                 // importing an asset via the file loader yields the public URL,
                 // not the absolute filesystem path.
-                let mut buf = std::string::String::new();
+                let mut public_path: Vec<u8> = Vec::new();
                 // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
                 // `URL<'static>` is a view struct; borrow it in place — no
                 // `&mut *jsc_vm` aliases through the call below, so there is no
@@ -3477,10 +3477,10 @@ fn transpile_source_code_inner(
                     top_level_dir,
                     origin,
                     b"",
-                    &mut buf,
+                    &mut public_path,
                     bun_paths::Platform::Loose,
                 );
-                bun_string_jsc::create_utf8_for_js(global_object, buf.as_bytes())
+                bun_string_jsc::create_utf8_for_js(global_object, &public_path)
                     .map_err(|_| crate::Error::JSError)?
             } else {
                 bun_string_jsc::create_utf8_for_js(global_object, path.text)
@@ -3789,11 +3789,17 @@ export default db;
         return Some(ResolvedSource {
             source_code: file.to_wtf_string(),
             source_url: specifier.clone(),
-            bytecode_origin_path: bun_core::String::from_bytes(file.bytecode_origin_path),
+            // An embedded file is served through the builtin-module path but is a file: its origin is its own path
+            // (or, with --bytecode, the path the cache was generated under, which must match exactly).
+            origin_path: if file.bytecode_origin_path.is_empty() {
+                specifier.clone()
+            } else {
+                bun_core::String::from_bytes(file.bytecode_origin_path)
+            },
             bytecode_cache: Bytecode::persistent(bytecode),
             source_code_hash: file.source_hash,
             module_info: if !module_info.is_empty() {
-                let decoded = bun_bundler::analyze_transpiled_module::ModuleInfoStringTable::parse(
+                let decoded = bun_bundler::analyze_transpiled_module::ModuleInfoSlotTable::parse(
                     module_info_strings,
                 )
                 .ok()

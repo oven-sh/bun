@@ -707,16 +707,17 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                                 let mut value = Expr::EMPTY;
                                 for decl in local.decls.slice() {
                                     if let Some(initializer) = decl.value {
-                                        let can_be_moved = initializer.can_be_moved();
-                                        if can_be_moved {
-                                            // if the value can be moved, move the decl directly to preserve destructuring
-                                            // ie `const { main } = class { static main() {} }` => `var {main} = class { static main() {} }`
+                                        // Keep in sync with `needs_wrapper_ref` in the parser.
+                                        if initializer.can_be_moved()
+                                            && matches!(decl.binding.data, B::B::BIdentifier(_))
+                                        {
+                                            // ie `const main = class { static main() {} }` => `var main = class { static main() {} }`
                                             hoist.decls.push(G::Decl {
                                                 binding: decl.binding,
                                                 value: decl.value,
                                             });
                                         } else {
-                                            // if the value cannot be moved, add every destructuring key separately
+                                            // A pattern runs getters or the iterator, so it stays inside the wrapper
                                             // ie `var { append } = { append() {} }` => `var append; __esm(() => ({ append } = { append() {} }))`
                                             let binding = Binding::to_expr(
                                                 &decl.binding,

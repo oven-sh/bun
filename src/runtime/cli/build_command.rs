@@ -214,6 +214,8 @@ impl BuildCommand {
         this_transpiler.options.minify_identifiers = ctx.bundler_options.minify_identifiers;
         this_transpiler.options.keep_names = ctx.bundler_options.keep_names;
         this_transpiler.options.emit_dce_annotations = ctx.bundler_options.emit_dce_annotations;
+        this_transpiler.options.deprecated_namespace_object_setters =
+            ctx.bundler_options.deprecated_namespace_object_setters;
         this_transpiler.options.ignore_dce_annotations = ctx.bundler_options.ignore_dce_annotations;
 
         this_transpiler.options.banner =
@@ -237,6 +239,7 @@ impl BuildCommand {
             };
         this_transpiler.options.css_chunking = ctx.bundler_options.css_chunking;
         this_transpiler.options.min_chunk_size = ctx.bundler_options.min_chunk_size;
+        this_transpiler.options.module_preload = ctx.bundler_options.module_preload;
         this_transpiler.options.metafile =
             !ctx.bundler_options.metafile.is_empty() || !ctx.bundler_options.metafile_md.is_empty();
 
@@ -1302,16 +1305,7 @@ pub(crate) fn collect_compile_assets(
             skipped_main_entry = true;
             continue;
         }
-        let key = strings::remove_leading_dot_slash(&f.dest_path);
-        #[cfg(windows)]
-        let _ = seen.put(
-            &key.iter()
-                .map(|&b| if b == b'\\' { b'/' } else { b })
-                .collect::<Vec<u8>>(),
-            (),
-        );
-        #[cfg(not(windows))]
-        let _ = seen.put(key, ());
+        let _ = seen.put(strings::remove_leading_dot_slash(&f.dest_path), ());
     }
     let mut push =
         |out: &mut Vec<options::OutputFile>, asset: &[u8], dest: Vec<u8>, bytes: Vec<u8>| {

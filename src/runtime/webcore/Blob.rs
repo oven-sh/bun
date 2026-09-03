@@ -2543,11 +2543,12 @@ impl BlobExt for Blob {
             let converted = match strings::to_utf16_alloc(buf, false, false) {
                 Ok(converted) => converted,
                 Err(_) => {
+                    let err = bun_string_jsc::throw_utf16_transcode_failure(global, buf);
                     if LIFETIME == Lifetime::Temporary {
                         // SAFETY: `Temporary` ⇒ caller passed a leaked `Box<[u8]>`; reclaim it.
                         unsafe { drop(bun_core::heap::take(raw_bytes)) };
                     }
-                    return Err(global.throw_out_of_memory());
+                    return Err(err);
                 }
             };
             if let Some(external) = converted {
@@ -2771,7 +2772,7 @@ impl BlobExt for Blob {
 
         if could_be_all_ascii.is_none() || !could_be_all_ascii.unwrap() {
             if let Some(external) = strings::to_utf16_alloc(buf, false, false)
-                .map_err(|_| global.throw_out_of_memory())?
+                .map_err(|_| bun_string_jsc::throw_utf16_transcode_failure(global, buf))?
             {
                 if LIFETIME != Lifetime::Temporary {
                     self.set_is_ascii_flag(false);
@@ -6584,7 +6585,10 @@ impl Internal {
                 bytes.drain(..bom_len);
                 bun_string_jsc::owned_latin1_into_js(global_this, bytes)
             }
-            Err(_) => Err(global_this.throw_out_of_memory()),
+            Err(_) => Err(bun_string_jsc::throw_utf16_transcode_failure(
+                global_this,
+                &bytes[bom_len..],
+            )),
         }
     }
 
@@ -6702,7 +6706,7 @@ pub trait FileOpener: Sized {
                     scopeguard::defer! { unsafe { bun_libuv_sys::uv_fs_req_cleanup(req); } }
                     // SAFETY: req is the live uv_fs_t from the open request.
                     let result = unsafe { (*req).result };
-                    if let Some(err_enum) = result.err_enum_e() {
+                    if let Some(err_enum) = result.errno() {
                         let path_string_2 = match self_.pathlike() {
                             PathOrFileDescriptor::Path(p) => p.clone(),
                             PathOrFileDescriptor::Fd(_) => unreachable!(),
@@ -6751,7 +6755,7 @@ pub trait FileOpener: Sized {
                     Some(wrapped_callback::<Self>),
                 )
             };
-            if let Some(errno) = rc.err_enum_e() {
+            if let Some(errno) = rc.errno() {
                 self.set_errno(bun_errno::from_errno(errno as i32).into());
                 self.set_system_error(
                     bun_sys::Error::from_code(errno, bun_sys::Tag::open)

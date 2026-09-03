@@ -106,6 +106,33 @@ impl LinkerContext<'_> {
             &[js_meta::ProbablyTypescriptType],
         ) = unsafe { (&*meta.imports_to_bind, &*meta.probably_typescript_type) };
 
+        // Every importer's view of this file's exports was accounted for in
+        // step 1 (named imports, tracked `import()` / `require()` accesses):
+        // drop the exports none of them can observe so the namespace object
+        // (or the chunk's export clause when splitting) stops keeping them
+        // alive. A user-specified entry point exports everything.
+        let referenced_filter: Option<&js_meta::DynamicImportReferencedAliases> = {
+            let files = c.graph.files.split_raw();
+            // SAFETY: read-only per-row access; neither column is mutated in step 5.
+            let (entry_point_kinds, col): (
+                &[crate::EntryPoint::Kind],
+                &[js_meta::DynamicImportReferencedAliases],
+            ) = unsafe {
+                (
+                    &*files.entry_point_kind,
+                    &*meta.dynamic_import_referenced_aliases,
+                )
+            };
+            match &col[id as usize] {
+                js_meta::DynamicImportReferencedAliases::Partial(_)
+                    if entry_point_kinds[id as usize] != crate::EntryPoint::Kind::UserSpecified =>
+                {
+                    Some(&col[id as usize])
+                }
+                _ => None,
+            }
+        };
+
         // Now that all exports have been resolved, sort and filter them to create
         // something we can iterate over later.
         // SAFETY: SoA column pointers stay valid for the worker step (no realloc).
@@ -155,6 +182,13 @@ impl LinkerContext<'_> {
                 if probably_typescript_type[this_id as usize].contains(&export_.data.import_ref) {
                     continue;
                 }
+                if let Some(js_meta::DynamicImportReferencedAliases::Partial(set)) =
+                    referenced_filter
+                {
+                    if !set.contains(&alias) {
+                        continue;
+                    }
+                }
                 re_exports_count += inner_count;
 
                 aliases.push(alias);
@@ -163,7 +197,18 @@ impl LinkerContext<'_> {
         // TODO: can this be u32 instead of a string?
         // if yes, we could just move all the hidden exports to the end of the array
         // and only store a count instead of an array
-        strings::sort_asc(aliases.as_mut_slice());
+        //
+        // A module namespace object lists its exports in code unit order. The
+        // namespace of a CommonJS module whose `exports.foo = ...` assignments
+        // were lifted to ES module exports stands in for `module.exports`, so
+        // it keeps the assignment order (the order of `resolved_exports`).
+        // SAFETY: read of this task's own row; only `create_exports_for_file`
+        // below writes it, after this read.
+        let is_lifted_commonjs = unsafe { *ast.flags.cast::<AstFlags>().add(id as usize) }
+            .contains(AstFlags::COMMONJS_LIFTED_TO_ESM);
+        if !is_lifted_commonjs {
+            strings::sort_asc(aliases.as_mut_slice());
+        }
         let export_aliases = aliases.into_bump_slice();
         *row_mut!(
             meta.sorted_and_filtered_export_aliases,
@@ -174,6 +219,11 @@ impl LinkerContext<'_> {
                 .iter()
                 .map(|s| bun_alloc::AstAlloc::vec_from_slice(*s).into_boxed_slice()),
         );
+
+        // SAFETY: read of this task's own row; step 4 wrote it, nothing in
+        // step 5 does.
+        let lifted_setter_param: Ref =
+            unsafe { *meta.lifted_setter_param.cast::<Ref>().add(id as usize) };
 
         // Export creation uses "sortedAndFilteredExportAliases" so this must
         // come second after we fill in that array
@@ -191,6 +241,7 @@ impl LinkerContext<'_> {
             imports_to_bind,
             export_aliases,
             re_exports_count,
+            lifted_setter_param,
             // Per-row mutable SoA cells (own `id` only — disjoint across tasks).
             row_mut!(meta.flags, js_meta::Flags, id),
             row_mut!(ast.flags, AstFlags, id),
@@ -256,15 +307,15 @@ impl LinkerContext<'_> {
                 None => Vec::new(),
                 Some(m) => m.keys().to_vec(),
             };
+            let symbol_uses = &mut part.symbol_uses;
             for ref_ in &prop_use_refs {
-                // Re-fetch each iteration to avoid overlapping &mut.
-                let properties: *const _ = part
+                let properties = part
                     .import_symbol_property_uses
                     .as_ref()
                     .unwrap()
                     .get(ref_)
                     .unwrap();
-                let use_: &mut SymbolUse = part.symbol_uses.get_ptr_mut(ref_).unwrap();
+                let use_: &mut SymbolUse = symbol_uses.get_ptr_mut(ref_).unwrap();
 
                 // Rare path: this import is a TypeScript enum
                 if let Some(import_data) = our_imports_to_bind.get(ref_) {
@@ -274,10 +325,7 @@ impl LinkerContext<'_> {
                             if let Some(enum_data) = c.graph.ts_enums.get(&import_ref) {
                                 let mut found_non_inlined_enum = false;
 
-                                // SAFETY: `properties` points into
-                                // `part.import_symbol_property_uses` which is not
-                                // mutated for the lifetime of this borrow.
-                                for (name, prop_use) in unsafe { (*properties).iter() } {
+                                for (name, prop_use) in properties.iter() {
                                     if enum_data.get(name).is_none() {
                                         found_non_inlined_enum = true;
                                         use_.count_estimate += prop_use.count_estimate;
@@ -286,7 +334,7 @@ impl LinkerContext<'_> {
 
                                 if !found_non_inlined_enum {
                                     if use_.count_estimate == 0 {
-                                        let _ = part.symbol_uses.swap_remove(ref_);
+                                        let _ = symbol_uses.swap_remove(ref_);
                                     }
                                     continue;
                                 }
@@ -296,9 +344,13 @@ impl LinkerContext<'_> {
                 }
 
                 // Common path: this import isn't a TypeScript enum
-                // SAFETY: see above.
-                for prop_use in unsafe { (*properties).values() } {
+                for prop_use in properties.values() {
                     use_.count_estimate += prop_use.count_estimate;
+                }
+                // Every property read was bound straight to the namespace's
+                // export by `bind_import_property_accesses`.
+                if use_.count_estimate == 0 {
+                    let _ = symbol_uses.swap_remove(ref_);
                 }
             }
 
@@ -374,6 +426,7 @@ impl LinkerContext<'_> {
         imports_to_bind: &[RefImportData],
         export_aliases: &[&[u8]],
         re_exports_count: usize,
+        lifted_setter_param: Ref,
         meta_flags: &mut js_meta::Flags,
         ast_flags: &mut AstFlags,
         ast_parts: &mut bun_ast::PartList,
@@ -395,6 +448,17 @@ impl LinkerContext<'_> {
         // 1 property per export
         let mut properties =
             bun_alloc::ArenaVec::<G::Property>::with_capacity_in(export_aliases.len(), arena);
+        // A lifted CommonJS module's namespace stands in for `module.exports`:
+        // writes through it assign the lifted bindings, so every local export
+        // also gets a setter.
+        let mut setter_properties = bun_alloc::ArenaVec::<G::Property>::with_capacity_in(
+            if lifted_setter_param.is_valid() {
+                export_aliases.len()
+            } else {
+                0
+            },
+            arena,
+        );
 
         let mut ns_export_symbol_uses = PartSymbolUseMap::default();
         ns_export_symbol_uses
@@ -504,6 +568,59 @@ impl LinkerContext<'_> {
                 )),
                 ..Default::default()
             });
+            if lifted_setter_param.is_valid()
+                && exp_data.source_index.get() == id
+                && self
+                    .graph
+                    .symbols
+                    .get_const(exp_data.import_ref)
+                    .is_some_and(|symbol| symbol.kind != bun_ast::symbol::Kind::Import)
+            {
+                let body: &mut [Stmt] = arena.alloc_slice_fill_with(1, |_| {
+                    Stmt::allocate(
+                        arena,
+                        S::Return {
+                            value: Some(Expr::assign(
+                                Expr::init_identifier(exp_data.import_ref, loc),
+                                Expr::init_identifier(lifted_setter_param, loc),
+                            )),
+                        },
+                        loc,
+                    )
+                });
+                let args: &mut [G::Arg] = arena.alloc_slice_fill_with(1, |_| G::Arg {
+                    binding: Binding::alloc(
+                        arena,
+                        bun_ast::b::Identifier {
+                            r#ref: lifted_setter_param,
+                        },
+                        loc,
+                    ),
+                    ..Default::default()
+                });
+                setter_properties.push(G::Property {
+                    key: Some(Expr::allocate(
+                        arena,
+                        // SAFETY: as for the getter key above.
+                        E::String::init(unsafe { bun_ptr::detach_lifetime(alias) }),
+                        loc,
+                    )),
+                    value: Some(Expr::allocate(
+                        arena,
+                        E::Arrow {
+                            args: bun_ast::StoreSlice::new_mut(args),
+                            prefer_expr: true,
+                            body: G::FnBody {
+                                stmts: bun_ast::StoreSlice::new_mut(body),
+                                loc,
+                            },
+                            ..Default::default()
+                        },
+                        loc,
+                    )),
+                    ..Default::default()
+                });
+            }
             ns_export_symbol_uses
                 .put_assume_capacity(exp_data.import_ref, SymbolUse { count_estimate: 1 });
 
@@ -562,15 +679,50 @@ impl LinkerContext<'_> {
                 .expect("unreachable");
         }
 
-        // "__export(exports, { foo: () => foo })"
+        // "__export(exports, { foo: () => foo })", or for a lifted CommonJS module
+        // "__exportCjs(exports, { foo: () => foo }, { foo: (value) => foo = value })"
         let mut export_ref = Ref::NONE;
         if !properties.is_empty() {
-            export_ref = self.runtime_function(b"__export");
+            let is_lifted = lifted_setter_param.is_valid();
+            export_ref = self.runtime_function(if is_lifted {
+                b"__exportCjs"
+            } else {
+                self.export_runtime_function()
+            });
             // `bumpalo::Vec` → `Vec` via the global heap;
             // `G::PropertyList` is `Vec<Property>` and currently has no
             // arena-backed `move_from_list`, so re-own.
             let mut owned_props: Vec<G::Property> = Vec::with_capacity(properties.len());
             owned_props.extend(properties.drain(..));
+            let mut args: Vec<Expr> = Vec::with_capacity(3);
+            args.push(Expr::init_identifier(exports_ref, loc));
+            args.push(Expr::allocate(
+                arena,
+                E::Object {
+                    properties: G::PropertyList::move_from_list(owned_props),
+                    ..Default::default()
+                },
+                loc,
+            ));
+            if is_lifted {
+                let mut owned_setters: Vec<G::Property> =
+                    Vec::with_capacity(setter_properties.len());
+                owned_setters.extend(setter_properties.drain(..));
+                args.push(Expr::allocate(
+                    arena,
+                    E::Object {
+                        properties: G::PropertyList::move_from_list(owned_setters),
+                        ..Default::default()
+                    },
+                    loc,
+                ));
+                declared_symbols
+                    .append(DeclaredSymbol {
+                        ref_: lifted_setter_param,
+                        is_top_level: true,
+                    })
+                    .expect("unreachable");
+            }
             emit_export_stmt!(Stmt::allocate(
                 arena,
                 S::SExpr {
@@ -578,17 +730,7 @@ impl LinkerContext<'_> {
                         arena,
                         E::Call {
                             target: Expr::init_identifier(export_ref, loc),
-                            args: bun_ast::ExprNodeList::from_slice(&[
-                                Expr::init_identifier(exports_ref, loc),
-                                Expr::allocate(
-                                    arena,
-                                    E::Object {
-                                        properties: G::PropertyList::move_from_list(owned_props),
-                                        ..Default::default()
-                                    },
-                                    loc,
-                                ),
-                            ]),
+                            args: bun_ast::ExprNodeList::from_owned_slice(args.into_boxed_slice()),
                             ..Default::default()
                         },
                         loc,

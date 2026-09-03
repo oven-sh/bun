@@ -107,9 +107,6 @@ impl Response {
     pub(crate) fn reset_timeout(&mut self) {
         c::uws_h2_res_reset_timeout(self)
     }
-    pub fn override_write_offset(&mut self, off: u64) {
-        c::uws_h2_res_override_write_offset(self, off)
-    }
     pub(crate) fn get_buffered_amount(&mut self) -> u64 {
         c::uws_h2_res_get_buffered_amount(self)
     }
@@ -127,6 +124,10 @@ impl Response {
     /// armed yet; the handle stays valid until the current call unwinds.
     pub(crate) fn is_closed(&self) -> bool {
         c::uws_h2_res_is_closed(self)
+    }
+    /// END_STREAM on the HEADERS frame, or `content-length: 0`.
+    pub fn request_body_ended(&self) -> bool {
+        c::uws_h2_res_request_body_ended(self)
     }
     pub(crate) fn is_corked(&self) -> bool {
         false
@@ -601,6 +602,7 @@ mod c {
         pub(super) safe fn uws_h2_res_end_stream(res: &mut Response, close: bool);
         pub(super) safe fn uws_h2_res_force_close(res: &mut Response);
         pub(super) safe fn uws_h2_res_is_closed(res: &Response) -> bool;
+        pub(super) safe fn uws_h2_res_request_body_ended(res: &Response) -> bool;
         pub(super) fn uws_h2_res_try_end(
             res: *mut Response,
             p: *const u8,
@@ -631,7 +633,6 @@ mod c {
         pub(super) safe fn uws_h2_res_write_mark(res: &mut Response);
         pub(super) safe fn uws_h2_res_flush_headers(res: &mut Response, immediate: bool);
         pub(super) fn uws_h2_res_write(res: *mut Response, p: *const u8, len: *mut usize) -> bool;
-        pub(super) safe fn uws_h2_res_override_write_offset(res: &mut Response, off: u64);
         pub(super) safe fn uws_h2_res_has_responded(res: &mut Response) -> bool;
         pub(super) safe fn uws_h2_res_get_buffered_amount(res: &mut Response) -> u64;
         pub(super) safe fn uws_h2_res_reset_timeout(res: &mut Response);

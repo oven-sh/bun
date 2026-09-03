@@ -931,14 +931,14 @@ size_t JSCookie::estimatedSize(JSC::JSCell* cell, JSC::VM& vm)
 
 JSC::JSValue toJS(JSC::JSGlobalObject* globalObject, CookieSameSite sameSite)
 {
-    auto& commonStrings = defaultGlobalObject(globalObject)->commonStrings();
+    auto& commonStrings = Bun::commonStrings(globalObject->vm());
     switch (sameSite) {
     case CookieSameSite::Strict:
-        return commonStrings.strictString(globalObject);
+        return commonStrings.strictString();
     case CookieSameSite::Lax:
-        return commonStrings.laxString(globalObject);
+        return commonStrings.laxString();
     case CookieSameSite::None:
-        return commonStrings.noneString(globalObject);
+        return commonStrings.noneString();
     default: {
         break;
     }

@@ -1,7 +1,19 @@
 import { Subprocess } from "bun";
 import { beforeEach, describe, expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, bunRun, tmpdirSync } from "harness";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from "fs";
+import { bunEnv, bunExe, bunRun, isWindows, tmpdirSync } from "harness";
+import { mkfifo } from "mkfifo";
 import { join } from "path";
 
 function dummyFile(size: number, cache_bust: string, value: string | { code: string }) {
@@ -228,6 +240,34 @@ describe("transpiler cache", () => {
       chmodSync(join(cache_dir), "777");
     }
   });
+  test.skipIf(isWindows)("a fifo in place of an entry is removed instead of opened", async () => {
+    writeFileSync(join(temp_dir, "a.js"), dummyFile((50 * 1024 * 1.5) | 0, "fifo", "intact"));
+    expect(await bunRun(join(temp_dir, "a.js"), env)).toSpawn("intact");
+    expect(newCacheCount()).toBe(1);
+    const entry = join(cache_dir, readdirSync(cache_dir).find(f => f.endsWith(".pile"))!);
+    const good = readFileSync(entry);
+    unlinkSync(entry);
+    mkfifo(entry);
+
+    // Opening the fifo for reading would block until a writer showed up,
+    // which never happens. The timeout only turns that hang into a failure.
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(temp_dir, "a.js")],
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 30_000,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(proc.signalCode).toBeNull();
+    expect(stdout).toBe("intact\n");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+
+    expect(statSync(entry).isFile()).toBeTrue();
+    expect(readFileSync(entry).equals(good)).toBeTrue();
+  });
   test("does not inline process.env", async () => {
     writeFileSync(
       join(temp_dir, "a.js"),
@@ -278,6 +318,139 @@ describe("transpiler cache", () => {
     expect(newCacheCount()).toBe(0); // delete + write
     expect(run(["--feature=OTHER", "--feature=SUPER_SECRET"])).toBe("enabled");
     expect(newCacheCount()).toBe(0); // cache hit, order doesn't matter
+  });
+
+  // A define replaces an identifier at parse time, so the define table is part
+  // of the cache key. The cache is shared by every project of the user, and
+  // keyed by source bytes, so two projects with the same file must not see
+  // each other's values.
+  describe("defines are part of the cache key", () => {
+    const code = `console.log(typeof BVAL === "undefined" ? "undefined" : BVAL);`;
+    const filler = Buffer.alloc((50 * 1024 * 1.5) | 0, "/").toString();
+
+    const run = (cwd: string, args: string[]) => {
+      const result = Bun.spawnSync({ cmd: [bunExe(), ...args], cwd, env });
+      if (!result.success) throw new Error(result.stderr.toString());
+      return result.stdout.toString().trim();
+    };
+
+    test("bunfig [define] invalidates cache", () => {
+      // `bun run <file>` loads bunfig.toml after the command line is parsed,
+      // so the define table only exists once the runtime is up.
+      const projectA = join(temp_dir, "a");
+      const projectB = join(temp_dir, "b");
+      for (const dir of [projectA, projectB]) {
+        mkdirSync(dir);
+        writeFileSync(join(dir, "a.js"), code + "\n//" + filler);
+      }
+      const setDefine = (dir: string, value: string | null) => {
+        if (value === null) rmSync(join(dir, "bunfig.toml"), { force: true });
+        else writeFileSync(join(dir, "bunfig.toml"), `[define]\nBVAL = '${JSON.stringify(value)}'\n`);
+      };
+
+      setDefine(projectA, "one");
+      expect(run(projectA, ["run", "./a.js"])).toBe("one");
+      expect(newCacheCount()).toBe(1);
+      expect(run(projectA, ["run", "./a.js"])).toBe("one");
+      expect(newCacheCount()).toBe(0);
+
+      // A new value: features_hash differs -> old entry deleted, new entry written
+      setDefine(projectA, "two");
+      expect(run(projectA, ["run", "./a.js"])).toBe("two");
+      expect(newCacheCount()).toBe(0);
+
+      setDefine(projectA, null);
+      expect(run(projectA, ["run", "./a.js"])).toBe("undefined");
+      expect(newCacheCount()).toBe(0);
+
+      // The same source bytes in another project, with its own define
+      setDefine(projectB, "mine");
+      expect(run(projectB, ["run", "./a.js"])).toBe("mine");
+      expect(newCacheCount()).toBe(0);
+      expect(run(projectB, ["./a.js"])).toBe("mine");
+      expect(newCacheCount()).toBe(0);
+    });
+
+    test("--define invalidates cache", () => {
+      writeFileSync(join(temp_dir, "a.js"), code + "\n//" + filler);
+
+      expect(run(temp_dir, ["--define", 'BVAL:"cli"', "a.js"])).toBe("cli");
+      expect(existsSync(cache_dir)).toBeTrue();
+      expect(newCacheCount()).toBe(1);
+      expect(run(temp_dir, ["--define", 'BVAL:"cli"', "a.js"])).toBe("cli");
+      expect(newCacheCount()).toBe(0);
+
+      expect(run(temp_dir, ["--define", 'BVAL:"other"', "a.js"])).toBe("other");
+      expect(newCacheCount()).toBe(0);
+
+      expect(run(temp_dir, ["a.js"])).toBe("undefined");
+      expect(newCacheCount()).toBe(0);
+
+      expect(run(temp_dir, ["run", "--define", 'BVAL:"cli"', "./a.js"])).toBe("cli");
+      expect(newCacheCount()).toBe(0);
+
+      // The key is built from the resolved map: flag order does not matter,
+      // and a key given twice keeps its last value, so `x` then `cli` is
+      // served the entry that `--define BVAL:"cli"` alone wrote above.
+      expect(run(temp_dir, ["--define", 'BVAL:"cli"', "--define", "OTHER:1", "a.js"])).toBe("cli");
+      expect(newCacheCount()).toBe(0);
+      const entry = join(cache_dir, readdirSync(cache_dir)[0]);
+      const written = readFileSync(entry);
+      expect(run(temp_dir, ["--define", "OTHER:1", "--define", 'BVAL:"cli"', "a.js"])).toBe("cli");
+      expect(readFileSync(entry).equals(written)).toBeTrue();
+
+      expect(run(temp_dir, ["--define", 'BVAL:"cli"', "a.js"])).toBe("cli");
+      const alone = readFileSync(entry);
+      expect(alone.equals(written)).toBeFalse();
+      expect(run(temp_dir, ["--define", 'BVAL:"x"', "--define", 'BVAL:"cli"', "a.js"])).toBe("cli");
+      expect(readFileSync(entry).equals(alone)).toBeTrue();
+      expect(newCacheCount()).toBe(0);
+    });
+
+    test("--define passed to bun test invalidates cache", () => {
+      // `bun test` builds its define table on its own boot path. The test file
+      // is below the minimum cache size; the module it imports is not, and
+      // `bun a.js` loads that same module.
+      writeFileSync(join(temp_dir, "a.js"), code + "\n//" + filler);
+      writeFileSync(
+        join(temp_dir, "a.test.js"),
+        `import "./a.js";\nimport { test } from "bun:test";\ntest("x", () => {});\n`,
+      );
+      // `bun test` prints its version banner to stdout ahead of the module's output.
+      const lastLine = (args: string[]) => run(temp_dir, args).split("\n").at(-1);
+
+      expect(lastLine(["test", "--define", 'BVAL:"cli"', "./a.test.js"])).toBe("cli");
+      expect(newCacheCount()).toBe(1);
+
+      expect(lastLine(["test", "./a.test.js"])).toBe("undefined");
+      expect(newCacheCount()).toBe(0);
+      expect(run(temp_dir, ["a.js"])).toBe("undefined");
+      expect(newCacheCount()).toBe(0);
+
+      expect(lastLine(["test", "--define", 'BVAL:"cli"', "./a.test.js"])).toBe("cli");
+      expect(newCacheCount()).toBe(0);
+      expect(run(temp_dir, ["a.js"])).toBe("undefined");
+      expect(newCacheCount()).toBe(0);
+    });
+
+    test("--drop invalidates cache", () => {
+      writeFileSync(
+        join(temp_dir, "a.js"),
+        `console.log("logged");\nprocess.stdout.write("written\\n");` + "\n//" + filler,
+      );
+
+      expect(run(temp_dir, ["a.js"])).toBe("logged\nwritten");
+      expect(newCacheCount()).toBe(1);
+
+      expect(run(temp_dir, ["--drop=console", "a.js"])).toBe("written");
+      expect(newCacheCount()).toBe(0);
+
+      expect(run(temp_dir, ["--drop=console", "a.js"])).toBe("written");
+      expect(newCacheCount()).toBe(0);
+
+      expect(run(temp_dir, ["a.js"])).toBe("logged\nwritten");
+      expect(newCacheCount()).toBe(0);
+    });
   });
 
   // Serving the entry point from the cache must not change how the modules it
@@ -338,7 +511,7 @@ test("rejects cached module records containing out-of-range string indices", () 
   //   esm_record_byte_length @ 86, esm_record_hash @ 94. Payload follows @ 102.
   // Serialized module record layout (ModuleInfoStringTable + body, see
   // `ModuleInfoDeserialized::serialize` in src/js_printer/lib.rs):
-  //   table: [offset_width u8][0;3][count u32][(count+1) offsets][bytes]
+  //   table: [offset_width u8][0;3][count u32][(count+1) offsets][pad to even][bytes]
   //   body:  [flags u8][id_width u8][0;2][n_requested u32][n_records u32]
   //          [n_records tag bytes][n_requested tag bytes][string ids @ id_width ...]
   const ESM_RECORD_BYTE_OFFSET_AT = 78;
@@ -359,7 +532,8 @@ test("rejects cached module records containing out-of-range string indices", () 
     const count = data.readUInt32LE(esmOff + 4);
     const offsetsAt = esmOff + 8;
     const total = readUint(offsetsAt + count * offsetWidth, offsetWidth);
-    const bodyAt = offsetsAt + (count + 1) * offsetWidth + total;
+    const offsetsLen = (count + 1) * offsetWidth;
+    const bodyAt = offsetsAt + offsetsLen + (offsetsLen % 2) + total;
     const nRequested = data.readUInt32LE(bodyAt + 4);
     const nRecords = data.readUInt32LE(bodyAt + 8);
     const idsAt = bodyAt + 12 + nRecords + nRequested;

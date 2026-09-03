@@ -257,6 +257,9 @@ pub mod Runtime {
         /// in watch/dev-server mode.
         pub bundler_feature_flags: Option<Box<StringSet>>,
 
+        /// `Define::user_hash` of this parse's define table (runtime transpiler cache key).
+        pub define_hash: Option<u64>,
+
         /// REPL mode: transforms code for interactive evaluation
         /// - Wraps lone object literals `{...}` in parentheses
         /// - Hoists variable declarations for REPL persistence
@@ -304,6 +307,7 @@ pub mod Runtime {
                 runtime_transpiler_cache: None,
                 lower_using: true,
                 bundler_feature_flags: None,
+                define_hash: None,
                 repl_mode: false,
                 jsx_optimization_inline: false,
             }
@@ -391,6 +395,12 @@ pub mod Runtime {
                     hasher.update(b"\x00");
                 }
             }
+
+            // Define pairs and `--drop` entries. `None` adds nothing, like an empty flag set.
+            if let Some(define_hash) = self.define_hash {
+                hasher.update(b"define");
+                hasher.update(&define_hash.to_le_bytes());
+            }
         }
 
         pub(crate) fn should_unwrap_require(&self, package_name: &[u8]) -> bool {
@@ -442,6 +452,11 @@ pub(crate) const LOC_MODULE_SCOPE: bun_ast::Loc = bun_ast::Loc { start: -100 };
 pub struct DeferredImportNamespace {
     pub(crate) namespace: LocRef,
     pub(crate) import_record_id: u32,
+    /// Scope the namespace binding lives in. Used by
+    /// `imports_to_convert_from_dynamic_import` to bail when a direct
+    /// `eval()` can observe the binding by name. Unused by
+    /// `imports_to_convert_from_require`.
+    pub(crate) scope: Option<bun_ast::StoreRef<bun_ast::Scope>>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -1177,6 +1192,7 @@ impl<'arena> ScopeOrder<'arena> {
 pub struct ParenExprOpts {
     pub(crate) is_async: bool,
     pub(crate) force_arrow_fn: bool,
+    pub(crate) is_after_question_and_before_colon: bool,
 }
 
 #[repr(u8)]

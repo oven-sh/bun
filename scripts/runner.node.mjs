@@ -36,6 +36,7 @@ import { parseArgs } from "node:util";
 import { prestartMap as dockerPrestartMap } from "../test/docker/prestart-map.mjs";
 import pLimit from "./p-limit.mjs";
 import {
+  createLiveOutputFilter,
   getAbi,
   getAbiVersion,
   getArch,
@@ -155,10 +156,6 @@ const { values: options, positionals: filters } = parseArgs({
     ["exclude"]: {
       type: "string",
       multiple: true,
-      default: undefined,
-    },
-    ["skip-slower-than"]: {
-      type: "string",
       default: undefined,
     },
     ["quiet"]: {
@@ -930,8 +927,8 @@ async function runTests() {
                 // calls from wiping each other when parallelSafeWidth > 1.
                 TEST_SERIAL_ID: String(index),
               },
-              stdout: concurrent ? () => {} : chunk => pipeTestStdout(process.stdout, chunk),
-              stderr: concurrent ? () => {} : chunk => pipeTestStdout(process.stderr, chunk),
+              stdout: concurrent ? () => {} : pipeTestStdout(process.stdout),
+              stderr: concurrent ? () => {} : pipeTestStdout(process.stderr),
             });
             const mb = 1024 ** 3;
             let stdoutPreview = stdout.slice(0, mb).split("\n").slice(0, 50).join("\n");
@@ -955,8 +952,8 @@ async function runTests() {
           async () =>
             spawnBunTest(execPath, join("test", testPath), {
               cwd,
-              stdout: concurrent ? () => {} : chunk => pipeTestStdout(process.stdout, chunk),
-              stderr: concurrent ? () => {} : chunk => pipeTestStdout(process.stderr, chunk),
+              stdout: concurrent ? () => {} : pipeTestStdout(process.stdout),
+              stderr: concurrent ? () => {} : pipeTestStdout(process.stderr),
             }),
           concurrent,
         );
@@ -1013,8 +1010,8 @@ async function runTests() {
           idleTimeout: parseInt(process.env.BUN_RUNNER_BATCH_IDLE_MS || "", 10) || 4 * 60_000,
           gracefulTimeout: true,
           env,
-          stdout: chunk => pipeTestStdout(process.stdout, chunk),
-          stderr: chunk => pipeTestStdout(process.stderr, chunk),
+          stdout: pipeTestStdout(process.stdout),
+          stderr: pipeTestStdout(process.stderr),
         }),
       );
       if (crashes) process.stderr.write(crashes);
@@ -1409,8 +1406,8 @@ async function runTests() {
  * @property {string} [cwd]
  * @property {number} [timeout]
  * @property {object} [env]
- * @property {function} [stdout]
- * @property {function} [stderr]
+ * @property {((chunk: string) => void) & { end?: () => void }} [stdout] called per chunk; `end` when the stream closes
+ * @property {((chunk: string) => void) & { end?: () => void }} [stderr]
  */
 
 /**
@@ -1554,12 +1551,14 @@ async function spawnSafe(options) {
         stdout?.(text);
         buffer += text;
       });
+      subprocess.stdout.on("close", () => stdout?.end?.());
       subprocess.stderr.on("data", chunk => {
         armIdleTimer?.();
         const text = chunk.toString("utf-8");
         stderr?.(text);
         buffer += text;
       });
+      subprocess.stderr.on("close", () => stderr?.end?.());
     } catch (error) {
       spawnError = error;
       resolve();
@@ -1938,6 +1937,8 @@ async function spawnBun(execPath, { args, cwd, timeout, gracefulTimeout, idleTim
  * @param {string} [opts.cwd]
  * @param {string[]} [opts.args]
  * @param {object} [opts.env]
+ * @param {(chunk: string) => void} [opts.stdout]
+ * @param {(chunk: string) => void} [opts.stderr]
  * @returns {Promise<TestResult>}
  */
 async function spawnBunTest(execPath, testPath, opts = { cwd }) {
@@ -2002,8 +2003,8 @@ async function spawnBunTest(execPath, testPath, opts = { cwd }) {
     // per-test multiplier so the overall shard stays inside the job timeout.
     timeout: isReallyTest ? Math.ceil(timeout * (isAsan ? 2 : 1)) : 30_000,
     env,
-    stdout: options.stdout,
-    stderr: options.stderr,
+    stdout: opts.stdout ?? pipeTestStdout(process.stdout),
+    stderr: opts.stderr ?? pipeTestStdout(process.stderr),
   });
   let { tests, errors, stdout: stdoutPreview } = parseTestStdout(stdout, testPath);
   if (crashes) stdoutPreview += crashes;
@@ -2044,17 +2045,24 @@ function getTestTimeout(testPath) {
 }
 
 /**
+ * Streams the output of one child process stream to `io`, without the workflow
+ * commands bun test prints because GITHUB_ACTIONS is set (see createLiveOutputFilter).
+ * spawnSafe calls `end()` when the stream closes.
+ *
  * @param {NodeJS.WritableStream} io
- * @param {string} chunk
+ * @returns {((chunk: string) => void) & { end: () => void }}
  */
-function pipeTestStdout(io, chunk) {
-  if (isGithubAction) {
-    io.write(chunk.replace(/\:\:(?:end)?group\:\:.*(?:\r\n|\r|\n)/gim, ""));
-  } else if (isBuildkite) {
-    io.write(chunk.replace(/(?:---|\+\+\+|~~~|\^\^\^) /gim, " ").replace(/\:\:.*(?:\r\n|\r|\n)/gim, ""));
-  } else {
-    io.write(chunk.replace(/\:\:.*(?:\r\n|\r|\n)/gim, ""));
-  }
+function pipeTestStdout(io) {
+  const filter = createLiveOutputFilter();
+  const write = chunk => {
+    const text = filter(chunk);
+    if (text) io.write(text);
+  };
+  write.end = () => {
+    const text = filter.end();
+    if (text) io.write(text);
+  };
+  return write;
 }
 
 /**
@@ -2482,16 +2490,20 @@ function loadExpectedDurations(cwd) {
   try {
     const raw = JSON.parse(readFileSync(join(cwd, "expected-durations.json"), "utf8"));
     const step = options["step"] || "";
-    const lane = step.includes("asan")
-      ? "asan"
+    // Most specific column first, then the nearest lane, then anything.
+    const columns = step.includes("asan")
+      ? ["asan"]
       : step.includes("musl")
-        ? "musl"
-        : isWindows || step.includes("windows")
-          ? "windows"
-          : "default";
+        ? ["musl"]
+        : step.includes("windows-aarch64") || (isWindows && process.arch === "arm64")
+          ? ["windows-aarch64", "windows"]
+          : isWindows || step.includes("windows")
+            ? ["windows"]
+            : ["default"];
+    columns.push("default", "asan", "musl", "windows", "windows-aarch64");
     for (const [path, entry] of Object.entries(raw)) {
       if (path === "_meta") continue;
-      const ms = entry[lane] ?? entry.default ?? entry.asan ?? entry.musl ?? entry.windows;
+      const ms = columns.map(column => entry[column]).find(value => typeof value === "number");
       if (typeof ms === "number") durations[path] = ms;
     }
   } catch (e) {
@@ -2548,22 +2560,6 @@ function getRelevantTests(cwd, testModifiers, testExpectations) {
       }
       !isQuiet && console.log("Excluding tests:", excludes, excludedTests.length, "/", availableTests.length);
     }
-  }
-
-  // Drop the slowest files by expected duration. Used on lanes that trade a
-  // little coverage for throughput; the same files still run on other lanes.
-  const skipSlowerThan = parseInt(options["skip-slower-than"]);
-  if (skipSlowerThan > 0) {
-    const durations = loadExpectedDurations(cwd);
-    const slow = availableTests.filter(testPath => (durations[testPath.replaceAll("\\", "/")] ?? 0) >= skipSlowerThan);
-    for (const testPath of slow) availableTests.splice(availableTests.indexOf(testPath), 1);
-    !isQuiet &&
-      console.log(
-        `Skipping tests slower than ${skipSlowerThan}ms:`,
-        slow.length,
-        "/",
-        availableTests.length + slow.length,
-      );
   }
 
   const skipExpectations = testExpectations

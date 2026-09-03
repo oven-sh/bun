@@ -324,7 +324,10 @@ test.concurrent("star dep follows a same-name workspace being added and removed"
       JSON.stringify({ name: "root", workspaces, dependencies: { "no-deps": "*" } }),
     );
 
-  await Promise.all([writeRoot(["app1"]), write(join(packageDir, "app1", "package.json"), JSON.stringify({ name: "app1" }))]);
+  await Promise.all([
+    writeRoot(["app1"]),
+    write(join(packageDir, "app1", "package.json"), JSON.stringify({ name: "app1" })),
+  ]);
   let { exited } = await runBunInstall(env, packageDir);
   expect(await exited).toBe(0);
   expect((await installed()).version).toBe("2.0.0");
